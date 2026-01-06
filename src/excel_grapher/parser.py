@@ -5,7 +5,8 @@ from dataclasses import dataclass
 
 import openpyxl.utils.cell
 
-from .guard import And, CellRef as GuardCellRef, Compare, GuardExpr, Literal, Not, Or
+from .guard import And, Compare, GuardExpr, Literal, Not, Or
+from .guard import CellRef as GuardCellRef
 from .node import NodeKey
 
 
@@ -339,7 +340,7 @@ def split_top_level_if(formula: str) -> tuple[str, str, str] | None:
     if not isinstance(formula, str) or not formula.startswith("="):
         return None
     s = formula[1:].lstrip()
-    if not s[:3].upper() == "IF(":
+    if s[:3].upper() != "IF(":
         return None
 
     # Parse the IF argument list at the top level of IF(...).

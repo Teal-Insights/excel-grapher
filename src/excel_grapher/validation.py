@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import contextlib
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
 from xml.etree import ElementTree as ET
@@ -104,17 +105,13 @@ def get_calc_settings(workbook_path: Path) -> WorkbookCalcSettings:
 
         ic = (calc_pr.attrib.get("iterateCount") or "").strip()
         if ic:
-            try:
+            with contextlib.suppress(ValueError):
                 iterate_count = int(ic)
-            except ValueError:
-                pass
 
         idel = (calc_pr.attrib.get("iterateDelta") or "").strip()
         if idel:
-            try:
+            with contextlib.suppress(ValueError):
                 iterate_delta = float(idel)
-            except ValueError:
-                pass
 
     return WorkbookCalcSettings(
         iterate_enabled=iterate_enabled,

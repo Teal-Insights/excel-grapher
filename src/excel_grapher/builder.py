@@ -9,15 +9,14 @@ import openpyxl
 import openpyxl.utils.cell
 
 from .graph import DependencyGraph, NodeHook
-from .guard import GuardExpr, Not
-from .guard import And, Compare, Literal
+from .guard import And, Compare, GuardExpr, Literal, Not
 from .node import Node
 from .parser import (
     expand_range,
     mask_spans,
     normalize_formula,
-    parse_guard_expr,
     parse_cell_refs,
+    parse_guard_expr,
     parse_range_refs_with_spans,
     split_top_level_choose,
     split_top_level_if,
@@ -178,7 +177,7 @@ def create_dependency_graph(
             out: dict[tuple[str, str], GuardExpr | None] = {(sh, a1): None for (sh, a1) in unconditional}
 
             prev_negations: list[GuardExpr] = []
-            for idx, (cond_s, val_s) in enumerate(zip(conditions, values, strict=False), start=1):
+            for _idx, (cond_s, val_s) in enumerate(zip(conditions, values, strict=False), start=1):
                 cond_guard = parse_guard_expr(cond_s, current_sheet=current_sheet, named_ranges=named_ranges)
                 # Build sequential guard: cond_i AND NOT(cond_1) AND ... NOT(cond_{i-1})
                 g: GuardExpr | None

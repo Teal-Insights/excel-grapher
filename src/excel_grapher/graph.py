@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-import warnings
 from typing import Any
 
 from .guard import GuardConstraints, GuardExpr, Or, or_guard
@@ -387,10 +387,7 @@ def _subgraph_has_feasible_cycle(graph: DependencyGraph, nodes: set[NodeKey]) ->
         return False
 
     seed = GuardConstraints()
-    for n in nodes:
-        if dfs(n, seed):
-            return True
-    return False
+    return any(dfs(n, seed) for n in nodes)
 
 
 def _find_feasible_cycle_path(graph: DependencyGraph, nodes: set[NodeKey]) -> list[NodeKey] | None:
