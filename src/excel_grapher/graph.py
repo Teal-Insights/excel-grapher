@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 import warnings
 from typing import Any
 
-from .guard import GuardExpr, or_guard
+from .guard import GuardConstraints, GuardExpr, Or, or_guard
 from .node import Node, NodeKey
 
 NodeHook = Callable[[NodeKey, Node], None]
@@ -156,11 +156,14 @@ class DependencyGraph:
             # If this SCC already has an unconditional cycle, it's not "may".
             if _subgraph_has_cycle(uncond, scc):
                 continue
+            # Filter out SCCs whose only cycles are infeasible due to contradictory guards.
+            if not _subgraph_has_feasible_cycle(self, scc):
+                continue
             may_sccs.append(scc)
 
         if may_sccs:
-            may_nodes = {n for s in may_sccs for n in s}
-            example_may = _find_cycle_path(all_edges, may_nodes)
+            # Best-effort: find a feasible example path inside the first may-SCC.
+            example_may = _find_feasible_cycle_path(self, may_sccs[0])
 
         return CycleReport(
             has_must_cycles=bool(must_sccs),
@@ -323,5 +326,109 @@ def _find_cycle_path(adj: dict[NodeKey, set[NodeKey]], nodes: set[NodeKey]) -> l
             p = dfs(n)
             if p is not None:
                 return p
+    return None
+
+
+def _apply_guard_constraints(
+    constraints: GuardConstraints, guard: GuardExpr | None
+) -> list[GuardConstraints]:
+    """
+    Conjoin an edge guard onto the current constraints, returning the resulting
+    constraint sets.
+
+    For disjunctive guards (OR), this returns multiple possible constraint sets,
+    one per feasible disjunct (best-effort). This keeps cycle feasibility checks
+    conservative without requiring full boolean reasoning.
+    """
+    if guard is None:
+        return [constraints]
+    if isinstance(guard, Or):
+        out: list[GuardConstraints] = []
+        # Best-effort: branch on each disjunct and keep feasible ones.
+        for g in guard.operands:
+            nxt = constraints.add(g)
+            if nxt is None:
+                continue
+            out.append(nxt)
+            # Avoid pathological blow-ups.
+            if len(out) >= 32:
+                break
+        return out
+    nxt = constraints.add(guard)
+    return [] if nxt is None else [nxt]
+
+
+def _subgraph_has_feasible_cycle(graph: DependencyGraph, nodes: set[NodeKey]) -> bool:
+    """
+    Return True if there exists at least one cycle within `nodes` whose accumulated
+    edge guards are jointly consistent (symbolic, no evaluation).
+    """
+    visited: set[tuple[NodeKey, GuardConstraints]] = set()
+    on_stack: set[NodeKey] = set()
+
+    def dfs(v: NodeKey, c: GuardConstraints) -> bool:
+        state = (v, c)
+        if state in visited:
+            return False
+        visited.add(state)
+        on_stack.add(v)
+
+        for w in graph.dependencies(v):
+            if w not in nodes:
+                continue
+            guard = graph.edge_guard(v, w)
+            for c2 in _apply_guard_constraints(c, guard):
+                if w in on_stack:
+                    return True
+                if dfs(w, c2):
+                    return True
+
+        on_stack.remove(v)
+        return False
+
+    seed = GuardConstraints()
+    for n in nodes:
+        if dfs(n, seed):
+            return True
+    return False
+
+
+def _find_feasible_cycle_path(graph: DependencyGraph, nodes: set[NodeKey]) -> list[NodeKey] | None:
+    """
+    Best-effort: find one feasible cycle path within `nodes` (symbolic constraints).
+    """
+    visited: set[tuple[NodeKey, GuardConstraints]] = set()
+    stack: list[NodeKey] = []
+    on_stack: set[NodeKey] = set()
+
+    def dfs(v: NodeKey, c: GuardConstraints) -> list[NodeKey] | None:
+        state = (v, c)
+        if state in visited:
+            return None
+        visited.add(state)
+        stack.append(v)
+        on_stack.add(v)
+
+        for w in graph.dependencies(v):
+            if w not in nodes:
+                continue
+            guard = graph.edge_guard(v, w)
+            for c2 in _apply_guard_constraints(c, guard):
+                if w in on_stack:
+                    i = stack.index(w)
+                    return stack[i:] + [w]
+                out = dfs(w, c2)
+                if out is not None:
+                    return out
+
+        stack.pop()
+        on_stack.remove(v)
+        return None
+
+    seed = GuardConstraints()
+    for n in nodes:
+        out = dfs(n, seed)
+        if out is not None:
+            return out
     return None
 

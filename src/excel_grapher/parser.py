@@ -397,6 +397,92 @@ def split_top_level_if(formula: str) -> tuple[str, str, str] | None:
     return cond, then_expr, else_expr
 
 
+def split_top_level_function(formula: str, fn: str) -> list[str] | None:
+    """
+    If formula is a top-level FN(...), return the top-level argument strings.
+
+    This is a lightweight splitter that is aware of nested parentheses and quoted
+    string literals (") so commas inside those don't split arguments.
+    """
+    if not isinstance(formula, str) or not formula.startswith("="):
+        return None
+    s = formula[1:].lstrip()
+    fn_u = fn.upper()
+    prefixes = (f"{fn_u}(", f"_XLFN.{fn_u}(")
+    if not any(s[: len(p)].upper() == p for p in prefixes):
+        return None
+
+    # Parse the argument list at the top level of FN(...).
+    i = s.find("(")
+    if i < 0:
+        return None
+    inner = s[i + 1 :]
+
+    args: list[str] = []
+    buf: list[str] = []
+    depth = 0
+    in_str = False
+    j = 0
+    while j < len(inner):
+        ch = inner[j]
+        if ch == '"':
+            in_str = not in_str
+            buf.append(ch)
+            j += 1
+            continue
+        if in_str:
+            buf.append(ch)
+            j += 1
+            continue
+        if ch == "(":
+            depth += 1
+            buf.append(ch)
+            j += 1
+            continue
+        if ch == ")":
+            if depth == 0:
+                args.append("".join(buf).strip())
+                buf = []
+                j += 1
+                break
+            depth -= 1
+            buf.append(ch)
+            j += 1
+            continue
+        if ch == "," and depth == 0:
+            args.append("".join(buf).strip())
+            buf = []
+            j += 1
+            continue
+        buf.append(ch)
+        j += 1
+
+    if in_str or depth != 0:
+        return None
+    return args
+
+
+def split_top_level_ifs(formula: str) -> list[str] | None:
+    """
+    If formula is a top-level IFS(...), return argument strings.
+    """
+    return split_top_level_function(formula, "IFS")
+
+
+def split_top_level_choose(formula: str) -> list[str] | None:
+    """
+    If formula is a top-level CHOOSE(...), return argument strings.
+    """
+    return split_top_level_function(formula, "CHOOSE")
+
+
+def split_top_level_switch(formula: str) -> list[str] | None:
+    """
+    If formula is a top-level SWITCH(...), return argument strings.
+    """
+    return split_top_level_function(formula, "SWITCH")
+
+
 _CELL_TOKEN_RE = re.compile(
     r"^(?:(?:'(?P<qs>[^']+)')|(?P<us>[A-Za-z][A-Za-z0-9_]*))!\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)$"
 )

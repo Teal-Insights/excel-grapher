@@ -29,10 +29,13 @@ class Node:
     normalized_formula: str | None
     value: Any
     is_leaf: bool
+    key_override: NodeKey | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def key(self) -> NodeKey:
+        if self.key_override is not None:
+            return self.key_override
         return f"{self.sheet}!{self.column}{self.row}"
 
     @property

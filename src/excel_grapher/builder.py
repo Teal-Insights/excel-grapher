@@ -3,13 +3,16 @@ from __future__ import annotations
 import re
 from collections import deque
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import openpyxl
 import openpyxl.utils.cell
 
 from .graph import DependencyGraph, NodeHook
 from .guard import GuardExpr, Not
+from .guard import And, Compare, GuardConstraints, Literal
 from .node import Node
 from .parser import (
     expand_range,
@@ -18,7 +21,10 @@ from .parser import (
     parse_guard_expr,
     parse_cell_refs,
     parse_range_refs_with_spans,
+    split_top_level_choose,
     split_top_level_if,
+    split_top_level_ifs,
+    split_top_level_switch,
 )
 from .resolver import build_named_range_map
 
@@ -32,6 +38,7 @@ def create_dependency_graph(
     max_range_cells: int = 5000,
     hooks: list[NodeHook] | None = None,
     load_values: bool = True,
+    project_guards: bool = False,
 ) -> DependencyGraph:
     """
     Build a dependency graph starting from target cells.
@@ -122,45 +129,196 @@ def create_dependency_graph(
                 out.append(d)
             return out
 
+        # 1) IF(cond, then, else)
         if_parts = split_top_level_if(formula)
-        if if_parts is None:
-            return [(sh, a1, None) for (sh, a1) in extract_expr_deps(formula)]
+        if if_parts is not None:
+            cond_s, then_s, else_s = if_parts
+            cond_guard = parse_guard_expr(cond_s, current_sheet=current_sheet, named_ranges=named_ranges)
 
-        cond_s, then_s, else_s = if_parts
-        guard = parse_guard_expr(cond_s, current_sheet=current_sheet, named_ranges=named_ranges)
+            unconditional = set(extract_expr_deps(cond_s))
+            out: dict[tuple[str, str], GuardExpr | None] = {(sh, a1): None for (sh, a1) in unconditional}
 
-        unconditional = set(extract_expr_deps(cond_s))
-        out: dict[tuple[str, str], GuardExpr | None] = {(sh, a1): None for (sh, a1) in unconditional}
+            # If the condition can't be parsed, branch deps are still conditional, but opaque.
+            then_guard: GuardExpr | None = cond_guard
+            else_guard: GuardExpr | None = None if cond_guard is None else Not(cond_guard)
 
-        # If the condition can't be parsed, treat branch deps as unconditional.
-        then_guard = guard
-        else_guard = None if guard is None else Not(guard)
-
-        for sh, a1 in extract_expr_deps(then_s):
-            key = (sh, a1)
-            if key in out:
-                continue
-            out[key] = then_guard
-
-        if else_s:
-            for sh, a1 in extract_expr_deps(else_s):
+            for sh, a1 in extract_expr_deps(then_s):
                 key = (sh, a1)
                 if key in out:
                     continue
-                out[key] = else_guard
+                out[key] = then_guard
 
-        return [(sh, a1, g) for (sh, a1), g in out.items()]
+            if else_s:
+                for sh, a1 in extract_expr_deps(else_s):
+                    key = (sh, a1)
+                    if key in out:
+                        continue
+                    out[key] = else_guard
+
+            return [(sh, a1, g) for (sh, a1), g in out.items()]
+
+        # 2) IFS(cond1, value1, cond2, value2, ..., [default])
+        ifs_args = split_top_level_ifs(formula)
+        if ifs_args is not None:
+            # All condition expressions may be evaluated (sequentially), so include deps from all
+            # conditions as unconditional to avoid missing required inputs.
+            conditions: list[str] = []
+            values: list[str] = []
+            default_expr: str | None = None
+            if len(ifs_args) >= 2:
+                pairs = ifs_args
+                if len(pairs) % 2 == 1:
+                    default_expr = pairs[-1]
+                    pairs = pairs[:-1]
+                for i in range(0, len(pairs), 2):
+                    conditions.append(pairs[i])
+                    values.append(pairs[i + 1])
+
+            unconditional: set[tuple[str, str]] = set()
+            for c in conditions:
+                unconditional |= set(extract_expr_deps(c))
+
+            out: dict[tuple[str, str], GuardExpr | None] = {(sh, a1): None for (sh, a1) in unconditional}
+
+            prev_negations: list[GuardExpr] = []
+            for idx, (cond_s, val_s) in enumerate(zip(conditions, values, strict=False), start=1):
+                cond_guard = parse_guard_expr(cond_s, current_sheet=current_sheet, named_ranges=named_ranges)
+                # Build sequential guard: cond_i AND NOT(cond_1) AND ... NOT(cond_{i-1})
+                g: GuardExpr | None
+                if cond_guard is None:
+                    g = None
+                else:
+                    ops: list[GuardExpr] = [cond_guard, *prev_negations]
+                    g = ops[0] if len(ops) == 1 else And(tuple(ops))
+                    prev_negations.append(Not(cond_guard))
+
+                for sh, a1 in extract_expr_deps(val_s):
+                    key = (sh, a1)
+                    if key in out:
+                        continue
+                    out[key] = g
+
+            if default_expr is not None:
+                if prev_negations:
+                    default_guard: GuardExpr = prev_negations[0] if len(prev_negations) == 1 else And(tuple(prev_negations))
+                else:
+                    default_guard = Literal(True)
+                for sh, a1 in extract_expr_deps(default_expr):
+                    key = (sh, a1)
+                    if key in out:
+                        continue
+                    out[key] = default_guard
+
+            return [(sh, a1, g) for (sh, a1), g in out.items()]
+
+        # 3) CHOOSE(index, value1, value2, ...)
+        choose_args = split_top_level_choose(formula)
+        if choose_args is not None and len(choose_args) >= 2:
+            index_s = choose_args[0]
+            choices = choose_args[1:]
+
+            index_expr = parse_guard_expr(index_s, current_sheet=current_sheet, named_ranges=named_ranges)
+            unconditional = set(extract_expr_deps(index_s))
+            out: dict[tuple[str, str], GuardExpr | None] = {(sh, a1): None for (sh, a1) in unconditional}
+
+            for i, choice_s in enumerate(choices, start=1):
+                guard: GuardExpr | None = None
+                if index_expr is not None:
+                    guard = Compare(left=index_expr, op="=", right=Literal(i))
+                for sh, a1 in extract_expr_deps(choice_s):
+                    key = (sh, a1)
+                    if key in out:
+                        continue
+                    out[key] = guard
+
+            return [(sh, a1, g) for (sh, a1), g in out.items()]
+
+        # 4) SWITCH(expr, value1, result1, ..., [default])
+        switch_args = split_top_level_switch(formula)
+        if switch_args is not None and len(switch_args) >= 3:
+            expr_s = switch_args[0]
+            expr_ge = parse_guard_expr(expr_s, current_sheet=current_sheet, named_ranges=named_ranges)
+            unconditional = set(extract_expr_deps(expr_s))
+            out: dict[tuple[str, str], GuardExpr | None] = {(sh, a1): None for (sh, a1) in unconditional}
+
+            pairs = switch_args[1:]
+            default_expr: str | None = None
+            if len(pairs) % 2 == 1:
+                default_expr = pairs[-1]
+                pairs = pairs[:-1]
+
+            prev_negations: list[GuardExpr] = []
+            for i in range(0, len(pairs), 2):
+                val_s = pairs[i]
+                res_s = pairs[i + 1]
+                val_ge = parse_guard_expr(val_s, current_sheet=current_sheet, named_ranges=named_ranges)
+                match: GuardExpr | None = None
+                if expr_ge is not None and val_ge is not None:
+                    match = Compare(left=expr_ge, op="=", right=val_ge)
+
+                guard: GuardExpr | None = None
+                if match is not None:
+                    ops2: list[GuardExpr] = [match, *prev_negations]
+                    guard = ops2[0] if len(ops2) == 1 else And(tuple(ops2))
+                    prev_negations.append(Not(match))
+
+                for sh, a1 in extract_expr_deps(res_s):
+                    key = (sh, a1)
+                    if key in out:
+                        continue
+                    out[key] = guard
+
+            if default_expr is not None:
+                if prev_negations:
+                    default_guard2: GuardExpr = prev_negations[0] if len(prev_negations) == 1 else And(tuple(prev_negations))
+                else:
+                    default_guard2 = Literal(True)
+                for sh, a1 in extract_expr_deps(default_expr):
+                    key = (sh, a1)
+                    if key in out:
+                        continue
+                    out[key] = default_guard2
+
+            return [(sh, a1, g) for (sh, a1), g in out.items()]
+
+        return [(sh, a1, None) for (sh, a1) in extract_expr_deps(formula)]
+
+    @dataclass(frozen=True)
+    class _Ctx:
+        constraints: GuardConstraints = GuardConstraints()
+
+    def _ctx_key(ctx: _Ctx) -> tuple[tuple[tuple[NodeKey, Any], ...], tuple[tuple[NodeKey, tuple[Any, ...]], ...], tuple[str, ...]]:
+        return (ctx.constraints.equalities, ctx.constraints.inequalities, ctx.constraints.opaque)
+
+    ctx_ids: dict[tuple[tuple[tuple[NodeKey, Any], ...], tuple[tuple[NodeKey, tuple[Any, ...]], ...], tuple[str, ...]], int] = {}
+    next_ctx_id = 0
+
+    def _get_ctx_id(ctx: _Ctx) -> int:
+        nonlocal next_ctx_id
+        k = _ctx_key(ctx)
+        v = ctx_ids.get(k)
+        if v is not None:
+            return v
+        ctx_ids[k] = next_ctx_id
+        next_ctx_id += 1
+        return ctx_ids[k]
+
+    def _key_with_ctx(base: str, ctx: _Ctx) -> str:
+        if not project_guards:
+            return base
+        return f"{base}__ctx__{_get_ctx_id(ctx)}"
 
     visited: set[str] = set()
-    q: deque[tuple[str, str, int]] = deque()
+    q: deque[tuple[str, str, int, _Ctx]] = deque()
     for t in targets:
         sh, a1 = parse_target(str(t))
-        q.append((sh, a1, 0))
+        q.append((sh, a1, 0, _Ctx()))
 
     try:
         while q:
-            sheet, a1, depth = q.popleft()
-            key = f"{sheet}!{a1}"
+            sheet, a1, depth, ctx = q.popleft()
+            base_key = f"{sheet}!{a1}"
+            key = _key_with_ctx(base_key, ctx)
             if key in visited:
                 continue
             visited.add(key)
@@ -196,18 +354,32 @@ def create_dependency_graph(
                 value=value,
                 is_leaf=is_leaf,
             )
+            if project_guards:
+                node.key_override = key
+                node.metadata["base_key"] = base_key
+                node.metadata["ctx_id"] = _get_ctx_id(ctx)
             graph.add_node(node)
 
             if not is_formula:
                 continue
 
             for dep_sheet, dep_a1, guard in extract_deps_with_guards(formula_str, sheet):
-                dep_key = f"{dep_sheet}!{dep_a1}"
-                graph.add_edge(key, dep_key, guard=guard)
+                dep_base = f"{dep_sheet}!{dep_a1}"
+                dep_ctx = ctx
+                dep_guard = guard
+                if project_guards and guard is not None:
+                    new_constraints = ctx.constraints.add(guard)
+                    if new_constraints is None:
+                        continue
+                    dep_ctx = _Ctx(new_constraints)
+                    dep_guard = None
+
+                dep_key = _key_with_ctx(dep_base, dep_ctx)
+                graph.add_edge(key, dep_key, guard=dep_guard)
                 if dep_key not in visited:
                     if dep_sheet not in wb_formulas.sheetnames:
                         continue
-                    q.append((dep_sheet, dep_a1, depth + 1))
+                    q.append((dep_sheet, dep_a1, depth + 1, dep_ctx))
     finally:
         if wb_values is not None:
             wb_values.close()

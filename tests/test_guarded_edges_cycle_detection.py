@@ -26,6 +26,24 @@ def _make_may_cycle_if_workbook(path: Path) -> None:
     wb.close()
 
 
+def _make_feasible_may_cycle_if_workbook(path: Path) -> None:
+    """
+    Create a workbook with a *feasible may-cycle* (guarded edges only):
+
+    A1 = IF($C$1=0, B1, 1)
+    B1 = IF($C$1=0, A1, 2)
+    C1 = 0
+    """
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+
+    ws.write_number(0, 2, 0)  # C1
+    ws.write_formula(0, 0, "=IF($C$1=0,B1,1)", None, 1)  # A1 cached
+    ws.write_formula(0, 1, "=IF($C$1=0,A1,2)", None, 2)  # B1 cached
+
+    wb.close()
+
+
 def _make_must_cycle_workbook(path: Path) -> None:
     """
     Create a workbook with a *must-cycle* (unconditional):
@@ -63,8 +81,8 @@ def test_guarded_edges_are_created_for_top_level_if(tmp_path: Path) -> None:
 
 
 def test_cycle_report_distinguishes_must_vs_may_cycles(tmp_path: Path) -> None:
-    excel_path = tmp_path / "if_may_cycle.xlsx"
-    _make_may_cycle_if_workbook(excel_path)
+    excel_path = tmp_path / "if_feasible_may_cycle.xlsx"
+    _make_feasible_may_cycle_if_workbook(excel_path)
 
     graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
     report = graph.cycle_report()
@@ -75,9 +93,52 @@ def test_cycle_report_distinguishes_must_vs_may_cycles(tmp_path: Path) -> None:
     assert any({"Sheet1!A1", "Sheet1!B1"} == s for s in report.may_cycles)
 
 
-def test_evaluation_order_strict_true_raises_on_may_cycle(tmp_path: Path) -> None:
+def test_infeasible_may_cycle_is_not_reported(tmp_path: Path) -> None:
+    """
+    This workbook contains a syntactic SCC {A1, B1} only when guarded edges are
+    included, but the only cycle requires mutually contradictory guards:
+
+      A1 -> B1 requires C1=0
+      B1 -> A1 requires C1=1
+
+    Since those cannot both be true, the cycle is infeasible and should not be
+    reported as a may-cycle.
+    """
     excel_path = tmp_path / "if_may_cycle.xlsx"
     _make_may_cycle_if_workbook(excel_path)
+
+    graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
+    report = graph.cycle_report()
+    assert report.has_must_cycles is False
+    assert report.has_may_cycles is False
+
+
+def test_projection_breaks_may_cycle_when_guards_are_incompatible(tmp_path: Path) -> None:
+    """
+    In projection mode, guarded edges are incorporated into node identity (context).
+
+    For this fixture:
+      A1 -> B1 is guarded by C1=0
+      B1 -> A1 is guarded by C1=1
+    Those guards cannot both be true, so the projected graph should not contain a cycle.
+    """
+    excel_path = tmp_path / "if_may_cycle.xlsx"
+    _make_may_cycle_if_workbook(excel_path)
+
+    projected = create_dependency_graph(
+        excel_path,
+        ["Sheet1!A1"],
+        load_values=False,
+        project_guards=True,
+    )
+    report = projected.cycle_report()
+    assert report.has_must_cycles is False
+    assert report.has_may_cycles is False
+
+
+def test_evaluation_order_strict_true_raises_on_may_cycle(tmp_path: Path) -> None:
+    excel_path = tmp_path / "if_feasible_may_cycle.xlsx"
+    _make_feasible_may_cycle_if_workbook(excel_path)
     graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
 
     from excel_grapher.graph import CycleError
@@ -88,8 +149,8 @@ def test_evaluation_order_strict_true_raises_on_may_cycle(tmp_path: Path) -> Non
 
 
 def test_evaluation_order_strict_false_warns_and_excludes_may_cycle_nodes(tmp_path: Path) -> None:
-    excel_path = tmp_path / "if_may_cycle.xlsx"
-    _make_may_cycle_if_workbook(excel_path)
+    excel_path = tmp_path / "if_feasible_may_cycle.xlsx"
+    _make_feasible_may_cycle_if_workbook(excel_path)
     graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
 
     with pytest.warns(UserWarning):
