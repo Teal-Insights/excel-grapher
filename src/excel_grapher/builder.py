@@ -3,16 +3,14 @@ from __future__ import annotations
 import re
 from collections import deque
 from collections.abc import Iterable
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import openpyxl
 import openpyxl.utils.cell
 
 from .graph import DependencyGraph, NodeHook
 from .guard import GuardExpr, Not
-from .guard import And, Compare, GuardConstraints, Literal
+from .guard import And, Compare, Literal
 from .node import Node
 from .parser import (
     expand_range,
@@ -38,7 +36,6 @@ def create_dependency_graph(
     max_range_cells: int = 5000,
     hooks: list[NodeHook] | None = None,
     load_values: bool = True,
-    project_guards: bool = False,
 ) -> DependencyGraph:
     """
     Build a dependency graph starting from target cells.
@@ -283,42 +280,16 @@ def create_dependency_graph(
 
         return [(sh, a1, None) for (sh, a1) in extract_expr_deps(formula)]
 
-    @dataclass(frozen=True)
-    class _Ctx:
-        constraints: GuardConstraints = GuardConstraints()
-
-    def _ctx_key(ctx: _Ctx) -> tuple[tuple[tuple[NodeKey, Any], ...], tuple[tuple[NodeKey, tuple[Any, ...]], ...], tuple[str, ...]]:
-        return (ctx.constraints.equalities, ctx.constraints.inequalities, ctx.constraints.opaque)
-
-    ctx_ids: dict[tuple[tuple[tuple[NodeKey, Any], ...], tuple[tuple[NodeKey, tuple[Any, ...]], ...], tuple[str, ...]], int] = {}
-    next_ctx_id = 0
-
-    def _get_ctx_id(ctx: _Ctx) -> int:
-        nonlocal next_ctx_id
-        k = _ctx_key(ctx)
-        v = ctx_ids.get(k)
-        if v is not None:
-            return v
-        ctx_ids[k] = next_ctx_id
-        next_ctx_id += 1
-        return ctx_ids[k]
-
-    def _key_with_ctx(base: str, ctx: _Ctx) -> str:
-        if not project_guards:
-            return base
-        return f"{base}__ctx__{_get_ctx_id(ctx)}"
-
     visited: set[str] = set()
-    q: deque[tuple[str, str, int, _Ctx]] = deque()
+    q: deque[tuple[str, str, int]] = deque()
     for t in targets:
         sh, a1 = parse_target(str(t))
-        q.append((sh, a1, 0, _Ctx()))
+        q.append((sh, a1, 0))
 
     try:
         while q:
-            sheet, a1, depth, ctx = q.popleft()
-            base_key = f"{sheet}!{a1}"
-            key = _key_with_ctx(base_key, ctx)
+            sheet, a1, depth = q.popleft()
+            key = f"{sheet}!{a1}"
             if key in visited:
                 continue
             visited.add(key)
@@ -354,32 +325,18 @@ def create_dependency_graph(
                 value=value,
                 is_leaf=is_leaf,
             )
-            if project_guards:
-                node.key_override = key
-                node.metadata["base_key"] = base_key
-                node.metadata["ctx_id"] = _get_ctx_id(ctx)
             graph.add_node(node)
 
             if not is_formula:
                 continue
 
             for dep_sheet, dep_a1, guard in extract_deps_with_guards(formula_str, sheet):
-                dep_base = f"{dep_sheet}!{dep_a1}"
-                dep_ctx = ctx
-                dep_guard = guard
-                if project_guards and guard is not None:
-                    new_constraints = ctx.constraints.add(guard)
-                    if new_constraints is None:
-                        continue
-                    dep_ctx = _Ctx(new_constraints)
-                    dep_guard = None
-
-                dep_key = _key_with_ctx(dep_base, dep_ctx)
-                graph.add_edge(key, dep_key, guard=dep_guard)
+                dep_key = f"{dep_sheet}!{dep_a1}"
+                graph.add_edge(key, dep_key, guard=guard)
                 if dep_key not in visited:
                     if dep_sheet not in wb_formulas.sheetnames:
                         continue
-                    q.append((dep_sheet, dep_a1, depth + 1, dep_ctx))
+                    q.append((dep_sheet, dep_a1, depth + 1))
     finally:
         if wb_values is not None:
             wb_values.close()

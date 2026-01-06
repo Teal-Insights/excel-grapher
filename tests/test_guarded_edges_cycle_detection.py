@@ -113,29 +113,6 @@ def test_infeasible_may_cycle_is_not_reported(tmp_path: Path) -> None:
     assert report.has_may_cycles is False
 
 
-def test_projection_breaks_may_cycle_when_guards_are_incompatible(tmp_path: Path) -> None:
-    """
-    In projection mode, guarded edges are incorporated into node identity (context).
-
-    For this fixture:
-      A1 -> B1 is guarded by C1=0
-      B1 -> A1 is guarded by C1=1
-    Those guards cannot both be true, so the projected graph should not contain a cycle.
-    """
-    excel_path = tmp_path / "if_may_cycle.xlsx"
-    _make_may_cycle_if_workbook(excel_path)
-
-    projected = create_dependency_graph(
-        excel_path,
-        ["Sheet1!A1"],
-        load_values=False,
-        project_guards=True,
-    )
-    report = projected.cycle_report()
-    assert report.has_must_cycles is False
-    assert report.has_may_cycles is False
-
-
 def test_evaluation_order_strict_true_raises_on_may_cycle(tmp_path: Path) -> None:
     excel_path = tmp_path / "if_feasible_may_cycle.xlsx"
     _make_feasible_may_cycle_if_workbook(excel_path)
