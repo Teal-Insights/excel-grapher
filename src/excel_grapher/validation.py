@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import zipfile
 from pathlib import Path
 from typing import NamedTuple
@@ -61,6 +62,65 @@ def _parse_calcchain_formula_cells(excel_path: Path, sheet_id_to_name: dict[str,
         keys.add(f"{sheet_name}!{cell_ref}")
 
     return keys
+
+
+@dataclass(frozen=True)
+class WorkbookCalcSettings:
+    iterate_enabled: bool
+    iterate_count: int
+    iterate_delta: float
+
+
+def get_calc_settings(workbook_path: Path) -> WorkbookCalcSettings:
+    """
+    Extract calculation settings from xl/workbook.xml.
+
+    Defaults follow Excel's typical defaults when attributes are missing.
+    """
+    with zipfile.ZipFile(workbook_path, "r") as zf:
+        xml_bytes = zf.read("xl/workbook.xml")
+
+    root = ET.fromstring(xml_bytes)
+    calc_pr = None
+    for node in root.iter():
+        if node.tag.endswith("calcPr"):
+            calc_pr = node
+            break
+
+    # Common Excel defaults:
+    # - iterate: disabled
+    # - iterateCount: 100
+    # - iterateDelta: 0.001
+    iterate_enabled = False
+    iterate_count = 100
+    iterate_delta = 0.001
+
+    if calc_pr is not None:
+        it = (calc_pr.attrib.get("iterate") or "").strip()
+        if it in {"1", "true", "TRUE"}:
+            iterate_enabled = True
+        elif it in {"0", "false", "FALSE"}:
+            iterate_enabled = False
+
+        ic = (calc_pr.attrib.get("iterateCount") or "").strip()
+        if ic:
+            try:
+                iterate_count = int(ic)
+            except ValueError:
+                pass
+
+        idel = (calc_pr.attrib.get("iterateDelta") or "").strip()
+        if idel:
+            try:
+                iterate_delta = float(idel)
+            except ValueError:
+                pass
+
+    return WorkbookCalcSettings(
+        iterate_enabled=iterate_enabled,
+        iterate_count=iterate_count,
+        iterate_delta=iterate_delta,
+    )
 
 
 def validate_graph(

@@ -13,7 +13,10 @@ import openpyxl
 import openpyxl.utils.cell
 
 from excel_grapher import (
+    CycleError,
     create_dependency_graph,
+    get_calc_settings,
+    to_graphviz,
     validate_graph,
 )
 
@@ -40,30 +43,37 @@ def discover_formula_cells_in_rows(
 ) -> list[str]:
     """
     Scan specified rows and return sheet-qualified addresses for formula cells.
-    
-    Only includes cells that contain formulas (start with '=').
+
+    Only includes cells that contain formulas (start with '=') and whose cached
+    calculated value is numeric.
     """
-    wb = openpyxl.load_workbook(wb_path, data_only=False, keep_vba=True)
+    wb_formulas = openpyxl.load_workbook(wb_path, data_only=False, keep_vba=True)
+    wb_values = openpyxl.load_workbook(wb_path, data_only=True, keep_vba=True)
     try:
-        if sheet_name not in wb.sheetnames:
+        if sheet_name not in wb_formulas.sheetnames or sheet_name not in wb_values.sheetnames:
             print(f"  Warning: Sheet '{sheet_name}' not found")
             return []
-        
-        ws = wb[sheet_name]
+
+        ws_formulas = wb_formulas[sheet_name]
+        ws_values = wb_values[sheet_name]
         targets: list[str] = []
-        
+
         for row in rows:
             # Scan all columns up to max_column
-            max_col = ws.max_column or 1
+            max_col = ws_formulas.max_column or 1
             for col_idx in range(1, max_col + 1):
-                cell = ws.cell(row=row, column=col_idx)
-                if isinstance(cell.value, str) and cell.value.startswith("="):
+                cell_formula = ws_formulas.cell(row=row, column=col_idx)
+                if isinstance(cell_formula.value, str) and cell_formula.value.startswith("="):
+                    cached_value = ws_values.cell(row=row, column=col_idx).value
+                    if not isinstance(cached_value, (int, float)) or isinstance(cached_value, bool):
+                        continue
                     col_letter = openpyxl.utils.cell.get_column_letter(col_idx)
                     targets.append(f"{sheet_name}!{col_letter}{row}")
-        
+
         return targets
     finally:
-        wb.close()
+        wb_formulas.close()
+        wb_values.close()
 
 
 def main() -> None:
@@ -118,9 +128,26 @@ def main() -> None:
     print("\n   Nodes by sheet:")
     for sheet_name in sorted(sheets.keys()):
         print(f"      {sheet_name}: {sheets[sheet_name]}")
+
+    # Workbook calc settings (useful context for interpreting cycles)
+    print("\n3. Workbook calculation settings...")
+    settings = get_calc_settings(WORKBOOK_PATH)
+    print(f"   Iterate enabled: {settings.iterate_enabled}")
+    print(f"   Iterate count:   {settings.iterate_count}")
+    print(f"   Iterate delta:   {settings.iterate_delta}")
+
+    # Cycle analysis (must-cycle vs may-cycle)
+    print("\n4. Cycle analysis...")
+    report = graph.cycle_report()
+    print(f"   Must-cycles: {len(report.must_cycles)}")
+    print(f"   May-cycles:  {len(report.may_cycles)}")
+    if report.example_must_cycle_path:
+        print(f"   Example must-cycle path: {' -> '.join(report.example_must_cycle_path)}")
+    if report.example_may_cycle_path:
+        print(f"   Example may-cycle path:  {' -> '.join(report.example_may_cycle_path)}")
     
     # Validate against calcChain.xml
-    print("\n3. Validating against calcChain.xml...")
+    print("\n5. Validating against calcChain.xml...")
     scope = {config["sheet"] for config in INDICATOR_CONFIG}
     result = validate_graph(graph, WORKBOOK_PATH, scope=scope)
     
@@ -136,25 +163,45 @@ def main() -> None:
             print(f"      ... and {len(result.in_graph_not_in_chain) - 10} more")
     
     # Evaluation order stats
-    print("\n4. Computing evaluation order...")
+    print("\n6. Computing evaluation order...")
     try:
-        order = graph.evaluation_order()
+        # Non-strict mode will warn and exclude nodes involved in may-cycles, but
+        # still fails on must-cycles.
+        order = graph.evaluation_order(strict=False)
         print(f"   Evaluation order computed: {len(order)} nodes")
         print(f"   First 5 (leaves): {order[:5]}")
         print(f"   Last 5 (targets): {order[-5:]}")
-    except ValueError as e:
-        print(f"   Error: {e}")
+    except CycleError as e:
+        kind = "must-cycle" if e.is_must_cycle else "may-cycle"
+        print(f"   Error ({kind}): {e}")
+        if e.cycle_path:
+            print(f"   Cycle path: {' -> '.join(e.cycle_path)}")
     
     # Optional: save a small subgraph visualization
-    print("\n5. Sample visualization (first target's immediate deps)...")
+    print("\n7. Sample visualization (first target's immediate deps)...")
     if all_targets:
         sample_target = all_targets[0]
         sample_deps = graph.dependencies(sample_target)
         print(f"   {sample_target} depends on {len(sample_deps)} cells:")
         for dep in sorted(sample_deps)[:5]:
-            print(f"      {dep}")
+            guard = graph.edge_attrs(sample_target, dep).get("guard")
+            if guard is None:
+                print(f"      {dep}")
+            else:
+                print(f"      {dep}  [guarded: {guard}]")
         if len(sample_deps) > 5:
             print(f"      ... and {len(sample_deps) - 5} more")
+
+        # Emit a DOT snippet for quick inspection (guarded edges render dashed + labeled).
+        try:
+            dot = to_graphviz(graph, highlight={sample_target}, rankdir="LR")
+            print("\n   GraphViz DOT (truncated to first ~40 lines):")
+            for line in dot.splitlines()[:40]:
+                print(f"      {line}")
+            if len(dot.splitlines()) > 40:
+                print("      ...")
+        except Exception as e:
+            print(f"   Could not render GraphViz DOT: {e}")
     
     print("\n" + "=" * 70)
     print("Done.")

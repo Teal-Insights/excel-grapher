@@ -5,6 +5,9 @@ from dataclasses import dataclass
 
 import openpyxl.utils.cell
 
+from .guard import And, CellRef as GuardCellRef, Compare, GuardExpr, Literal, Not, Or
+from .node import NodeKey
+
 
 @dataclass(frozen=True)
 class CellRef:
@@ -327,4 +330,241 @@ def normalize_formula(
             result = re.sub(rf"\b{re.escape(name)}\b(?!\s*!)", replacement, result)
     
     return result
+
+
+def split_top_level_if(formula: str) -> tuple[str, str, str] | None:
+    """
+    If formula is a top-level IF(...), return (cond, then_expr, else_expr) strings.
+    """
+    if not isinstance(formula, str) or not formula.startswith("="):
+        return None
+    s = formula[1:].lstrip()
+    if not s[:3].upper() == "IF(":
+        return None
+
+    # Parse the IF argument list at the top level of IF(...).
+    i = s.find("(")
+    if i < 0:
+        return None
+    inner = s[i + 1 :]
+
+    args: list[str] = []
+    buf: list[str] = []
+    depth = 0
+    in_str = False
+    j = 0
+    while j < len(inner):
+        ch = inner[j]
+        if ch == '"':
+            in_str = not in_str
+            buf.append(ch)
+            j += 1
+            continue
+        if in_str:
+            buf.append(ch)
+            j += 1
+            continue
+        if ch == "(":
+            depth += 1
+            buf.append(ch)
+            j += 1
+            continue
+        if ch == ")":
+            if depth == 0:
+                args.append("".join(buf).strip())
+                buf = []
+                # Consume the closing paren and stop; ignore any trailing whitespace.
+                j += 1
+                break
+            depth -= 1
+            buf.append(ch)
+            j += 1
+            continue
+        if ch == "," and depth == 0:
+            args.append("".join(buf).strip())
+            buf = []
+            j += 1
+            continue
+        buf.append(ch)
+        j += 1
+
+    if len(args) != 3:
+        return None
+    cond, then_expr, else_expr = args
+    if not cond or not then_expr:
+        return None
+    # Excel allows empty else, treat as "" expression (no deps).
+    return cond, then_expr, else_expr
+
+
+_CELL_TOKEN_RE = re.compile(
+    r"^(?:(?:'(?P<qs>[^']+)')|(?P<us>[A-Za-z][A-Za-z0-9_]*))!\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)$"
+)
+_LOCAL_CELL_TOKEN_RE = re.compile(r"^\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)$")
+_NUMBER_TOKEN_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
+
+
+def _to_node_key(sheet: str, col: str, row: int) -> NodeKey:
+    return f"{sheet}!{col}{row}"
+
+
+def parse_guard_expr(
+    expr: str,
+    *,
+    current_sheet: str,
+    named_ranges: dict[str, tuple[str, str]] | None = None,
+) -> GuardExpr | None:
+    """
+    Parse a minimal boolean expression suitable for IF(...) conditions.
+
+    If parsing fails (unsupported syntax), returns None.
+    """
+    if named_ranges is None:
+        named_ranges = {}
+    s = expr.strip()
+    if not s:
+        return None
+
+    # Strip redundant outer parentheses.
+    while s.startswith("(") and s.endswith(")"):
+        inner = s[1:-1].strip()
+        if not inner:
+            break
+        s = inner
+
+    # Function-like: AND(...), OR(...), NOT(...)
+    m = re.match(r"^(?P<fn>AND|OR|NOT)\s*\((?P<inner>.*)\)$", s, flags=re.IGNORECASE)
+    if m:
+        fn = m.group("fn").upper()
+        inner = m.group("inner")
+        parts = _split_top_level_args(inner)
+        if parts is None:
+            return None
+        if fn == "NOT":
+            if len(parts) != 1:
+                return None
+            operand = parse_guard_expr(parts[0], current_sheet=current_sheet, named_ranges=named_ranges)
+            return None if operand is None else Not(operand)
+        if fn in {"AND", "OR"}:
+            if len(parts) < 1:
+                return None
+            ops: list[GuardExpr] = []
+            for p in parts:
+                ge = parse_guard_expr(p, current_sheet=current_sheet, named_ranges=named_ranges)
+                if ge is None:
+                    return None
+                ops.append(ge)
+            return And(tuple(ops)) if fn == "AND" else Or(tuple(ops))
+
+    # Comparison: left op right
+    for op in ("<>", "<=", ">=", "=", "<", ">"):
+        if op in s:
+            left_s, right_s = (p.strip() for p in s.split(op, 1))
+            left = _parse_guard_atom(left_s, current_sheet=current_sheet, named_ranges=named_ranges)
+            right = _parse_guard_atom(right_s, current_sheet=current_sheet, named_ranges=named_ranges)
+            if left is None or right is None:
+                return None
+            return Compare(left=left, op=op, right=right)
+
+    # Atom (truthy cell ref or literal)
+    return _parse_guard_atom(s, current_sheet=current_sheet, named_ranges=named_ranges)
+
+
+def _split_top_level_args(s: str) -> list[str] | None:
+    buf: list[str] = []
+    args: list[str] = []
+    depth = 0
+    in_str = False
+    i = 0
+    while i < len(s):
+        ch = s[i]
+        if ch == '"':
+            in_str = not in_str
+            buf.append(ch)
+            i += 1
+            continue
+        if in_str:
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == "(":
+            depth += 1
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == ")":
+            if depth == 0:
+                return None
+            depth -= 1
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == "," and depth == 0:
+            args.append("".join(buf).strip())
+            buf = []
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    if in_str or depth != 0:
+        return None
+    args.append("".join(buf).strip())
+    return [a for a in args if a != ""]
+
+
+def _parse_guard_atom(
+    s: str,
+    *,
+    current_sheet: str,
+    named_ranges: dict[str, tuple[str, str]],
+) -> GuardExpr | None:
+    if not s:
+        return None
+
+    # TRUE/FALSE
+    if s.upper() == "TRUE":
+        return Literal(True)
+    if s.upper() == "FALSE":
+        return Literal(False)
+
+    # Number literal
+    if _NUMBER_TOKEN_RE.match(s):
+        if "." in s:
+            try:
+                return Literal(float(s))
+            except ValueError:
+                return None
+        try:
+            return Literal(int(s))
+        except ValueError:
+            return None
+
+    # String literal
+    if len(s) >= 2 and s[0] == '"' and s[-1] == '"':
+        return Literal(s[1:-1])
+
+    # Named range (single-cell only)
+    if s in named_ranges:
+        sheet, addr = named_ranges[s]
+        m2 = re.match(r"^(?P<col>[A-Z]{1,3})(?P<row>\d+)$", addr)
+        if not m2:
+            return None
+        return GuardCellRef(_to_node_key(sheet, m2.group("col"), int(m2.group("row"))))
+
+    # Sheet-qualified cell
+    m = _CELL_TOKEN_RE.match(s)
+    if m:
+        sheet = m.group("qs") or m.group("us")
+        return GuardCellRef(_to_node_key(str(sheet), m.group("col"), int(m.group("row"))))
+
+    # Local cell
+    m = _LOCAL_CELL_TOKEN_RE.match(s)
+    if m:
+        col = m.group("col")
+        if col in _FUNC_LIKE:
+            return None
+        return GuardCellRef(_to_node_key(current_sheet, col, int(m.group("row"))))
+
+    return None
+
 

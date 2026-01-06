@@ -4,11 +4,15 @@ from collections.abc import Callable
 from typing import Any
 
 from .graph import DependencyGraph
+from .guard import GuardExpr
 from .node import Node, NodeKey
 
 
 def _dot_escape(s: str) -> str:
     return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+def _guard_label(g: GuardExpr) -> str:
+    return _dot_escape(str(g))
 
 
 def to_networkx(graph: DependencyGraph):
@@ -72,7 +76,14 @@ def to_graphviz(
 
     for key in sorted(graph):
         for dep in sorted(graph.dependencies(key)):
-            lines.append(f'  "{_dot_escape(key)}" -> "{_dot_escape(dep)}";')
+            guard = graph.edge_attrs(key, dep).get("guard")
+            if guard is None:
+                lines.append(f'  "{_dot_escape(key)}" -> "{_dot_escape(dep)}";')
+            else:
+                lines.append(
+                    f'  "{_dot_escape(key)}" -> "{_dot_escape(dep)}"'
+                    f' [style=dashed label="{_guard_label(guard)}"];'
+                )
 
     lines.append("}")
     return "\n".join(lines)
@@ -118,7 +129,12 @@ def to_mermaid(
         for dep in sorted(graph.dependencies(key)):
             if dep not in node_set:
                 continue
-            lines.append(f"  {safe_id(key)} --> {safe_id(dep)}")
+            guard = graph.edge_attrs(key, dep).get("guard")
+            if guard is None:
+                lines.append(f"  {safe_id(key)} --> {safe_id(dep)}")
+            else:
+                # Mermaid dashed edge. Text labels are optional; keep simple and stable.
+                lines.append(f"  {safe_id(key)} -.-> {safe_id(dep)}")
 
     return "\n".join(lines)
 

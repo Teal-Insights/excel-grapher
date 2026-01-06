@@ -9,13 +9,16 @@ import openpyxl
 import openpyxl.utils.cell
 
 from .graph import DependencyGraph, NodeHook
+from .guard import GuardExpr, Not
 from .node import Node
 from .parser import (
     expand_range,
     mask_spans,
     normalize_formula,
+    parse_guard_expr,
     parse_cell_refs,
     parse_range_refs_with_spans,
+    split_top_level_if,
 )
 from .resolver import build_named_range_map
 
@@ -64,52 +67,89 @@ def create_dependency_graph(
             raise ValueError(f"Sheet not found: {sheet}")
         return sheet, a1
 
-    def extract_deps(formula: str, current_sheet: str) -> list[tuple[str, str]]:
+    def extract_deps_with_guards(
+        formula: str, current_sheet: str
+    ) -> list[tuple[str, str, GuardExpr | None]]:
         if not formula.startswith("="):
             return []
-        deps: list[tuple[str, str]] = []
 
-        # 0) Expand ranges first, then mask them so later cell-ref parsing doesn't
-        # misinterpret the range endpoint as a same-sheet ref (e.g. 'Sheet 2'!A1:B2).
-        masked = formula
-        if expand_ranges:
-            spans: list[tuple[int, int]] = []
-            for start, end, span in parse_range_refs_with_spans(formula):
-                spans.append(span)
-                sheet = start.sheet if start.sheet is not None else current_sheet
-                deps.extend(
-                    expand_range(
-                        sheet=sheet,
-                        start_col=start.column,
-                        start_row=start.row,
-                        end_col=end.column,
-                        end_row=end.row,
-                        max_cells=max_range_cells,
+        def extract_expr_deps(expr: str) -> list[tuple[str, str]]:
+            """
+            Extract dependencies from an expression fragment (no leading '=').
+            """
+            f = "=" + expr if not expr.startswith("=") else expr
+            deps: list[tuple[str, str]] = []
+
+            # 0) Expand ranges first, then mask them so later cell-ref parsing doesn't
+            # misinterpret the range endpoint as a same-sheet ref.
+            masked = f
+            if expand_ranges:
+                spans: list[tuple[int, int]] = []
+                for start, end, span in parse_range_refs_with_spans(f):
+                    spans.append(span)
+                    sheet = start.sheet if start.sheet is not None else current_sheet
+                    deps.extend(
+                        expand_range(
+                            sheet=sheet,
+                            start_col=start.column,
+                            start_row=start.row,
+                            end_col=end.column,
+                            end_row=end.row,
+                            max_cells=max_range_cells,
+                        )
                     )
-                )
-            masked = mask_spans(masked, spans)
+                masked = mask_spans(masked, spans)
 
-        for ref in parse_cell_refs(masked):
-            sh = ref.sheet if ref.sheet is not None else current_sheet
-            deps.append((sh, f"{ref.column}{ref.row}"))
+            for ref in parse_cell_refs(masked):
+                sh = ref.sheet if ref.sheet is not None else current_sheet
+                deps.append((sh, f"{ref.column}{ref.row}"))
 
-        # 3) Named ranges
-        for m in _NAME_TOKEN_RE.finditer(masked):
-            token = m.group(1)
-            resolved = named_ranges.get(token)
-            if resolved is None:
+            # 3) Named ranges
+            for m in _NAME_TOKEN_RE.finditer(masked):
+                token = m.group(1)
+                resolved = named_ranges.get(token)
+                if resolved is None:
+                    continue
+                deps.append(resolved)
+
+            # Deduplicate while preserving order
+            seen: set[tuple[str, str]] = set()
+            out: list[tuple[str, str]] = []
+            for d in deps:
+                if d in seen:
+                    continue
+                seen.add(d)
+                out.append(d)
+            return out
+
+        if_parts = split_top_level_if(formula)
+        if if_parts is None:
+            return [(sh, a1, None) for (sh, a1) in extract_expr_deps(formula)]
+
+        cond_s, then_s, else_s = if_parts
+        guard = parse_guard_expr(cond_s, current_sheet=current_sheet, named_ranges=named_ranges)
+
+        unconditional = set(extract_expr_deps(cond_s))
+        out: dict[tuple[str, str], GuardExpr | None] = {(sh, a1): None for (sh, a1) in unconditional}
+
+        # If the condition can't be parsed, treat branch deps as unconditional.
+        then_guard = guard
+        else_guard = None if guard is None else Not(guard)
+
+        for sh, a1 in extract_expr_deps(then_s):
+            key = (sh, a1)
+            if key in out:
                 continue
-            deps.append(resolved)
+            out[key] = then_guard
 
-        # Deduplicate while preserving order
-        seen: set[tuple[str, str]] = set()
-        out: list[tuple[str, str]] = []
-        for d in deps:
-            if d in seen:
-                continue
-            seen.add(d)
-            out.append(d)
-        return out
+        if else_s:
+            for sh, a1 in extract_expr_deps(else_s):
+                key = (sh, a1)
+                if key in out:
+                    continue
+                out[key] = else_guard
+
+        return [(sh, a1, g) for (sh, a1), g in out.items()]
 
     visited: set[str] = set()
     q: deque[tuple[str, str, int]] = deque()
@@ -161,9 +201,9 @@ def create_dependency_graph(
             if not is_formula:
                 continue
 
-            for dep_sheet, dep_a1 in extract_deps(formula_str, sheet):
+            for dep_sheet, dep_a1, guard in extract_deps_with_guards(formula_str, sheet):
                 dep_key = f"{dep_sheet}!{dep_a1}"
-                graph.add_edge(key, dep_key)
+                graph.add_edge(key, dep_key, guard=guard)
                 if dep_key not in visited:
                     if dep_sheet not in wb_formulas.sheetnames:
                         continue
