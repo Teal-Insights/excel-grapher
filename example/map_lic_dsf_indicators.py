@@ -7,6 +7,7 @@ B1, B3, and B4 sheets and validates against calcChain.xml.
 """
 
 from pathlib import Path
+from typing import TypedDict
 
 import openpyxl
 import openpyxl.utils.cell
@@ -14,17 +15,22 @@ import openpyxl.utils.cell
 from excel_grapher import (
     create_dependency_graph,
     validate_graph,
-    to_graphviz,
 )
 
+
 # Configuration: sheets and indicator rows to trace
-INDICATOR_CONFIG = [
+class IndicatorConfig(TypedDict):
+    sheet: str
+    indicator_rows: list[int]
+
+
+INDICATOR_CONFIG: list[IndicatorConfig] = [
     {"sheet": "B1_GDP_ext", "indicator_rows": [35, 36, 39, 40]},
     {"sheet": "B3_Exports_ext", "indicator_rows": [35, 36, 39, 40]},
     {"sheet": "B4_other flows_ext", "indicator_rows": [35, 36, 39, 40]},
 ]
 
-WORKBOOK_PATH = Path("Gold-Standard-LIC-DSF.xlsm")
+WORKBOOK_PATH = Path("example/data/Gold-Standard-LIC-DSF.xlsm")
 
 
 def discover_formula_cells_in_rows(
@@ -109,7 +115,7 @@ def main() -> None:
         if node:
             sheets[node.sheet] = sheets.get(node.sheet, 0) + 1
     
-    print(f"\n   Nodes by sheet:")
+    print("\n   Nodes by sheet:")
     for sheet_name in sorted(sheets.keys()):
         print(f"      {sheet_name}: {sheets[sheet_name]}")
     

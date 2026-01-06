@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import zipfile
 from pathlib import Path
 from typing import NamedTuple
-import zipfile
 from xml.etree import ElementTree as ET
 
 from .graph import DependencyGraph

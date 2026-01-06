@@ -1,16 +1,22 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
-from collections import deque
-from pathlib import Path
 import re
+from collections import deque
+from collections.abc import Iterable
+from pathlib import Path
 
 import openpyxl
 import openpyxl.utils.cell
 
 from .graph import DependencyGraph, NodeHook
 from .node import Node
-from .parser import expand_range, mask_spans, normalize_formula, parse_cell_refs, parse_range_refs_with_spans
+from .parser import (
+    expand_range,
+    mask_spans,
+    normalize_formula,
+    parse_cell_refs,
+    parse_range_refs_with_spans,
+)
 from .resolver import build_named_range_map
 
 
@@ -126,13 +132,15 @@ def create_dependency_graph(
             is_formula = isinstance(raw, str) and raw.startswith("=")
 
             if is_formula:
-                formula = str(raw)
-                normalized = normalize_formula(formula, sheet, named_ranges)
+                formula_str = str(raw)
+                formula = formula_str
+                normalized = normalize_formula(formula_str, sheet, named_ranges)
                 value = None
                 if wb_values is not None:
                     value = wb_values[sheet][a1].value
                 is_leaf = False
             else:
+                formula_str = ""
                 formula = None
                 normalized = None
                 value = raw
@@ -153,7 +161,7 @@ def create_dependency_graph(
             if not is_formula:
                 continue
 
-            for dep_sheet, dep_a1 in extract_deps(formula, sheet):
+            for dep_sheet, dep_a1 in extract_deps(formula_str, sheet):
                 dep_key = f"{dep_sheet}!{dep_a1}"
                 graph.add_edge(key, dep_key)
                 if dep_key not in visited:
