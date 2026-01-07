@@ -164,3 +164,27 @@ def test_load_values_reads_cached_formula_results(tmp_path: Path) -> None:
     assert n3.value == 5
     assert n4.value == 10
 
+
+def test_parse_target_handles_quoted_sheet_name(tmp_path: Path) -> None:
+    """
+    Target strings with quoted sheet names (e.g., 'Sheet Name'!A1) should be
+    parsed correctly, stripping the quotes to match the actual sheet name.
+    """
+    excel_path = tmp_path / "quoted_sheet.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "My Sheet"
+
+    ws["A1"].value = 42
+
+    wb.save(excel_path)
+    wb.close()
+
+    # Target uses quoted format as Excel would show it
+    graph = create_dependency_graph(excel_path, ["'My Sheet'!A1"], load_values=False)
+
+    assert "My Sheet!A1" in graph
+    node = graph.get_node("My Sheet!A1")
+    assert node is not None
+    assert node.value == 42
+

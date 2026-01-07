@@ -66,6 +66,9 @@ def create_dependency_graph(
         if "!" not in t:
             raise ValueError(f"Target must be sheet-qualified: {t}")
         sheet, a1 = t.split("!", 1)
+        # Strip quotes from sheet name (Excel uses 'Sheet Name'!A1 for names with spaces)
+        if sheet.startswith("'") and sheet.endswith("'"):
+            sheet = sheet[1:-1]
         if sheet not in wb_formulas.sheetnames:
             raise ValueError(f"Sheet not found: {sheet}")
         return sheet, a1
