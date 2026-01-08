@@ -10,6 +10,7 @@ from .graph import CycleError, CycleReport, DependencyGraph, NodeHook
 from .guard import And, Compare, GuardExpr, Literal, Not, Or
 from .guard import CellRef as GuardCellRef
 from .node import Node, NodeKey, ValueType
+from .parser import format_cell_key, format_key, needs_quoting
 from .validation import ValidationResult, WorkbookCalcSettings, get_calc_settings, validate_graph
 
 __all__ = [
@@ -35,5 +36,8 @@ __all__ = [
     "ValidationResult",
     "get_calc_settings",
     "WorkbookCalcSettings",
+    "format_cell_key",
+    "format_key",
+    "needs_quoting",
 ]
 

@@ -7,7 +7,7 @@ from typing import Any
 
 import openpyxl.utils.cell
 
-NodeKey = str  # Always in the form "SheetName!A1"
+NodeKey = str  # Always in the form "SheetName!A1" or "'Sheet Name'!A1" for quoted sheets
 
 
 class ValueType(Enum):
@@ -33,6 +33,9 @@ class Node:
 
     @property
     def key(self) -> NodeKey:
+        # Quote sheet names with spaces, hyphens, or apostrophes to match Excel syntax
+        if " " in self.sheet or "-" in self.sheet or "'" in self.sheet:
+            return f"'{self.sheet}'!{self.column}{self.row}"
         return f"{self.sheet}!{self.column}{self.row}"
 
     @property

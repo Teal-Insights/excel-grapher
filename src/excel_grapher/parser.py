@@ -186,17 +186,53 @@ def mask_spans(s: str, spans: list[tuple[int, int]]) -> str:
     return "".join(buf)
 
 
-def _needs_quoting(sheet: str) -> bool:
+def needs_quoting(sheet: str) -> bool:
     """Return True if sheet name needs quoting in a formula."""
     # Sheets with spaces or special chars need quoting
     return " " in sheet or "-" in sheet or "'" in sheet
 
 
-def _format_ref(sheet: str, col: str, row: int) -> str:
-    """Format a fully-qualified cell reference."""
-    if _needs_quoting(sheet):
+def format_cell_key(sheet: str, col: str, row: int) -> str:
+    """
+    Format a fully-qualified cell reference key.
+
+    Quotes the sheet name if it contains spaces, hyphens, or apostrophes.
+    This matches Excel's formula syntax for sheet references.
+
+    Examples:
+        >>> format_cell_key("Sheet1", "A", 1)
+        'Sheet1!A1'
+        >>> format_cell_key("My Sheet", "B", 2)
+        "'My Sheet'!B2"
+        >>> format_cell_key("Baseline - external", "M", 35)
+        "'Baseline - external'!M35"
+    """
+    if needs_quoting(sheet):
         return f"'{sheet}'!{col}{row}"
     return f"{sheet}!{col}{row}"
+
+
+def format_key(sheet: str, a1: str) -> str:
+    """
+    Format a fully-qualified cell key from sheet name and A1 address.
+
+    Quotes the sheet name if it contains spaces, hyphens, or apostrophes.
+    This matches Excel's formula syntax for sheet references.
+
+    Examples:
+        >>> format_key("Sheet1", "A1")
+        'Sheet1!A1'
+        >>> format_key("My Sheet", "B2")
+        "'My Sheet'!B2"
+    """
+    if needs_quoting(sheet):
+        return f"'{sheet}'!{a1}"
+    return f"{sheet}!{a1}"
+
+
+# Alias for internal use
+_needs_quoting = needs_quoting
+_format_ref = format_cell_key
 
 
 def normalize_formula(
@@ -492,7 +528,7 @@ _NUMBER_TOKEN_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
 
 
 def _to_node_key(sheet: str, col: str, row: int) -> NodeKey:
-    return f"{sheet}!{col}{row}"
+    return format_cell_key(sheet, col, row)
 
 
 def parse_guard_expr(

@@ -13,6 +13,7 @@ from .guard import And, Compare, GuardExpr, Literal, Not
 from .node import Node
 from .parser import (
     expand_range,
+    format_key,
     mask_spans,
     normalize_formula,
     parse_cell_refs,
@@ -65,10 +66,14 @@ def create_dependency_graph(
     def parse_target(t: str) -> tuple[str, str]:
         if "!" not in t:
             raise ValueError(f"Target must be sheet-qualified: {t}")
-        sheet, a1 = t.split("!", 1)
-        # Strip quotes from sheet name (Excel uses 'Sheet Name'!A1 for names with spaces)
-        if sheet.startswith("'") and sheet.endswith("'"):
-            sheet = sheet[1:-1]
+        # Handle quoted sheet names: 'Sheet Name'!A1 or 'Sheet!Name'!A1
+        if t.startswith("'"):
+            # Find the closing quote
+            end_quote = t.index("'", 1)
+            sheet = t[1:end_quote]
+            a1 = t[end_quote + 2:]  # Skip '!
+        else:
+            sheet, a1 = t.split("!", 1)
         if sheet not in wb_formulas.sheetnames:
             raise ValueError(f"Sheet not found: {sheet}")
         return sheet, a1
@@ -291,7 +296,7 @@ def create_dependency_graph(
     try:
         while q:
             sheet, a1, depth = q.popleft()
-            key = f"{sheet}!{a1}"
+            key = format_key(sheet, a1)
             if key in visited:
                 continue
             visited.add(key)
@@ -333,7 +338,7 @@ def create_dependency_graph(
                 continue
 
             for dep_sheet, dep_a1, guard in extract_deps_with_guards(formula_str, sheet):
-                dep_key = f"{dep_sheet}!{dep_a1}"
+                dep_key = format_key(dep_sheet, dep_a1)
                 graph.add_edge(key, dep_key, guard=guard)
                 if dep_key not in visited:
                     if dep_sheet not in wb_formulas.sheetnames:

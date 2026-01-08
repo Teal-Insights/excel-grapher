@@ -104,11 +104,12 @@ def test_cross_sheet_range_dependencies_are_expanded(tmp_path: Path) -> None:
     wb.close()
 
     graph = create_dependency_graph(excel_path, ["Sheet1!A2"], load_values=False)
+    # Sheet names with spaces are quoted in keys to match Excel formula syntax
     assert graph.dependencies("Sheet1!A2") == {
-        "Sheet 2!A1",
-        "Sheet 2!A2",
-        "Sheet 2!B1",
-        "Sheet 2!B2",
+        "'Sheet 2'!A1",
+        "'Sheet 2'!A2",
+        "'Sheet 2'!B1",
+        "'Sheet 2'!B2",
     }
 
 
@@ -168,7 +169,7 @@ def test_load_values_reads_cached_formula_results(tmp_path: Path) -> None:
 def test_parse_target_handles_quoted_sheet_name(tmp_path: Path) -> None:
     """
     Target strings with quoted sheet names (e.g., 'Sheet Name'!A1) should be
-    parsed correctly, stripping the quotes to match the actual sheet name.
+    parsed correctly. Keys in the graph use quoted format to match Excel syntax.
     """
     excel_path = tmp_path / "quoted_sheet.xlsx"
     wb = openpyxl.Workbook()
@@ -183,8 +184,11 @@ def test_parse_target_handles_quoted_sheet_name(tmp_path: Path) -> None:
     # Target uses quoted format as Excel would show it
     graph = create_dependency_graph(excel_path, ["'My Sheet'!A1"], load_values=False)
 
-    assert "My Sheet!A1" in graph
-    node = graph.get_node("My Sheet!A1")
+    # Keys are quoted when sheet names contain spaces
+    assert "'My Sheet'!A1" in graph
+    node = graph.get_node("'My Sheet'!A1")
     assert node is not None
     assert node.value == 42
+    # Node.sheet stores the unquoted name
+    assert node.sheet == "My Sheet"
 
