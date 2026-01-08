@@ -425,6 +425,11 @@ def split_top_level_if(formula: str) -> tuple[str, str, str] | None:
         buf.append(ch)
         j += 1
 
+    # Check for trailing content - if present, this is not a top-level IF
+    remaining = inner[j:].strip()
+    if remaining:
+        return None
+
     if len(args) != 3:
         return None
     cond, then_expr, else_expr = args
@@ -493,6 +498,11 @@ def split_top_level_function(formula: str, fn: str) -> list[str] | None:
             continue
         buf.append(ch)
         j += 1
+
+    # Check for trailing content - if present, this is not a top-level function
+    remaining = inner[j:].strip()
+    if remaining:
+        return None
 
     if in_str or depth != 0:
         return None
