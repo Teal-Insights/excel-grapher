@@ -92,3 +92,82 @@ print(res.is_valid, res.messages)
 
 If `xl/calcChain.xml` is missing (common for generated files), validation returns `is_valid=True` with an informational message.
 
+### Extractor (flattening for transpilation)
+
+The extractor module provides a simplified interface for extracting cell data into flat dictionaries, ready for formula expansion and Python transpilation.
+
+```python
+from pathlib import Path
+from excel_grapher import build_cell_dict
+
+# Define which sheets/rows contain your output formulas
+sheet_rows = {
+    "Sheet1": [10, 11, 12],
+    "Sheet2": [5, 6],
+}
+
+# Build the cell dictionary (traces all dependencies)
+cells = build_cell_dict(Path("model.xlsx"), sheet_rows, load_values=True)
+
+# Access cells by normalized address
+cell = cells["Sheet1!A10"]
+print(cell.formula)             # Original formula
+print(cell.normalized_formula)  # Sheet-qualified for transpilation
+print(cell.value)               # Cached value from Excel
+
+# Filter by cell type
+formula_cells = cells.formula_cells()
+value_cells = cells.value_cells()
+
+# Get sorted keys
+for key in cells.formula_keys():
+    print(key, cells[key].normalized_formula)
+```
+
+#### `CellInfo`
+
+Dataclass representing a single cell:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `formula` | `str \| None` | Original formula (None for value cells) |
+| `normalized_formula` | `str \| None` | Sheet-qualified formula for transpilation |
+| `value` | `Any` | Cached or hardcoded value |
+| `is_formula` | `bool` (property) | True if cell contains a formula |
+
+#### `CellDict`
+
+Dictionary subclass (`dict[str, CellInfo]`) with helper methods:
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `formula_cells()` | `dict[str, CellInfo]` | Only cells with formulas |
+| `value_cells()` | `dict[str, CellInfo]` | Only hardcoded value cells |
+| `formula_keys()` | `list[str]` | Sorted keys for formula cells |
+| `value_keys()` | `list[str]` | Sorted keys for value cells |
+
+#### `build_cell_dict()`
+
+Main entry point for building a cell dictionary:
+
+```python
+def build_cell_dict(
+    workbook_path: Path,
+    sheet_rows: dict[str, list[int]],
+    load_values: bool = True,
+    max_depth: int = 50,
+) -> CellDict
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `workbook_path` | Path to the Excel file |
+| `sheet_rows` | Dict mapping sheet names to output row numbers |
+| `load_values` | Whether to load cached values (default: True) |
+| `max_depth` | Maximum dependency traversal depth (default: 50) |
+
+#### Lower-level functions
+
+- `discover_formula_cells_in_rows(wb_path, sheet_name, rows)` - Scan rows for formula cells with numeric values
+- `graph_to_cell_dict(graph)` - Convert a `DependencyGraph` to a `CellDict`
+
