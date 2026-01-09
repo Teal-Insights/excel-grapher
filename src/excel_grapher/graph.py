@@ -114,9 +114,30 @@ class DependencyGraph:
         self._hooks.append(hook)
 
     def leaves(self) -> Iterator[NodeKey]:
+        """Iterate over keys of leaf nodes (no dependencies)."""
         for key, node in self._nodes.items():
             if node.is_leaf:
                 yield key
+
+    def formula_nodes(self) -> Iterator[tuple[NodeKey, Node]]:
+        """Iterate over (key, node) pairs for nodes that contain formulas."""
+        for key, node in self._nodes.items():
+            if node.formula is not None:
+                yield key, node
+
+    def leaf_node_items(self) -> Iterator[tuple[NodeKey, Node]]:
+        """Iterate over (key, node) pairs for leaf nodes (no formula)."""
+        for key, node in self._nodes.items():
+            if node.is_leaf:
+                yield key, node
+
+    def formula_keys(self) -> list[NodeKey]:
+        """Return sorted list of keys for nodes that contain formulas."""
+        return sorted(k for k, node in self._nodes.items() if node.formula is not None)
+
+    def leaf_keys(self) -> list[NodeKey]:
+        """Return sorted list of keys for leaf nodes."""
+        return sorted(k for k, node in self._nodes.items() if node.is_leaf)
 
     def roots(self) -> Iterator[NodeKey]:
         for key in self._nodes:

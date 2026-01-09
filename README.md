@@ -92,82 +92,72 @@ print(res.is_valid, res.messages)
 
 If `xl/calcChain.xml` is missing (common for generated files), validation returns `is_valid=True` with an informational message.
 
-### Extractor (flattening for transpilation)
+### Working with cell data (for transpilation)
 
-The extractor module provides a simplified interface for extracting cell data into flat dictionaries, ready for formula expansion and Python transpilation.
+The `DependencyGraph` provides direct O(1) access to cell data via `get_node()`, plus filter methods for iterating over formula vs leaf cells.
 
 ```python
 from pathlib import Path
-from excel_grapher import build_cell_dict
+from excel_grapher import create_dependency_graph, discover_formula_cells_in_rows
 
-# Define which sheets/rows contain your output formulas
-sheet_rows = {
-    "Sheet1": [10, 11, 12],
-    "Sheet2": [5, 6],
-}
+# Discover formula cells in specific rows
+targets = discover_formula_cells_in_rows(Path("model.xlsx"), "Sheet1", [10, 11, 12])
 
-# Build the cell dictionary (traces all dependencies)
-cells = build_cell_dict(Path("model.xlsx"), sheet_rows, load_values=True)
+# Build the dependency graph
+graph = create_dependency_graph(Path("model.xlsx"), targets, load_values=True)
 
-# Access cells by normalized address
-cell = cells["Sheet1!A10"]
-print(cell.formula)             # Original formula
-print(cell.normalized_formula)  # Sheet-qualified for transpilation
-print(cell.value)               # Cached value from Excel
+# Access cells by normalized address (O(1) lookup)
+node = graph.get_node("Sheet1!A10")
+print(node.formula)             # Original formula
+print(node.normalized_formula)  # Sheet-qualified for transpilation
+print(node.value)               # Cached value from Excel
 
-# Filter by cell type
-formula_cells = cells.formula_cells()
-value_cells = cells.value_cells()
+# Iterate over formula cells
+for key, node in graph.formula_nodes():
+    print(key, node.normalized_formula)
+
+# Iterate over leaf (value) cells
+for key, node in graph.leaf_node_items():
+    print(key, node.value)
 
 # Get sorted keys
-for key in cells.formula_keys():
-    print(key, cells[key].normalized_formula)
+formula_keys = graph.formula_keys()
+leaf_keys = graph.leaf_keys()
 ```
 
-#### `CellInfo`
-
-Dataclass representing a single cell:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `formula` | `str \| None` | Original formula (None for value cells) |
-| `normalized_formula` | `str \| None` | Sheet-qualified formula for transpilation |
-| `value` | `Any` | Cached or hardcoded value |
-| `is_formula` | `bool` (property) | True if cell contains a formula |
-
-#### `CellDict`
-
-Dictionary subclass (`dict[str, CellInfo]`) with helper methods:
+#### `DependencyGraph` filter methods
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `formula_cells()` | `dict[str, CellInfo]` | Only cells with formulas |
-| `value_cells()` | `dict[str, CellInfo]` | Only hardcoded value cells |
-| `formula_keys()` | `list[str]` | Sorted keys for formula cells |
-| `value_keys()` | `list[str]` | Sorted keys for value cells |
+| `get_node(key)` | `Node \| None` | O(1) lookup by cell address |
+| `formula_nodes()` | `Iterator[tuple[NodeKey, Node]]` | Cells with formulas |
+| `leaf_node_items()` | `Iterator[tuple[NodeKey, Node]]` | Leaf cells (no formula) |
+| `formula_keys()` | `list[NodeKey]` | Sorted keys for formula cells |
+| `leaf_keys()` | `list[NodeKey]` | Sorted keys for leaf cells |
 
-#### `build_cell_dict()`
+#### `Node` fields
 
-Main entry point for building a cell dictionary:
+| Field | Type | Description |
+|-------|------|-------------|
+| `formula` | `str \| None` | Original formula (None for leaf cells) |
+| `normalized_formula` | `str \| None` | Sheet-qualified formula for transpilation |
+| `value` | `Any` | Cached or hardcoded value |
+| `is_leaf` | `bool` | True if cell has no formula |
+| `sheet` | `str` | Sheet name |
+| `column` | `str` | Column letter |
+| `row` | `int` | Row number |
+
+#### `discover_formula_cells_in_rows()`
+
+Utility for scanning rows to find formula cells with numeric cached values:
 
 ```python
-def build_cell_dict(
-    workbook_path: Path,
-    sheet_rows: dict[str, list[int]],
-    load_values: bool = True,
-    max_depth: int = 50,
-) -> CellDict
+def discover_formula_cells_in_rows(
+    wb_path: Path,
+    sheet_name: str,
+    rows: list[int],
+) -> list[str]
 ```
 
-| Parameter | Description |
-|-----------|-------------|
-| `workbook_path` | Path to the Excel file |
-| `sheet_rows` | Dict mapping sheet names to output row numbers |
-| `load_values` | Whether to load cached values (default: True) |
-| `max_depth` | Maximum dependency traversal depth (default: 50) |
-
-#### Lower-level functions
-
-- `discover_formula_cells_in_rows(wb_path, sheet_name, rows)` - Scan rows for formula cells with numeric values
-- `graph_to_cell_dict(graph)` - Convert a `DependencyGraph` to a `CellDict`
+Returns sheet-qualified cell addresses (e.g., `"'Sheet Name'!A1"`) for formula cells.
 

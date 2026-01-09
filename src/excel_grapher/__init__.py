@@ -6,13 +6,7 @@ This package intentionally keeps the public API small and stable.
 
 from .builder import create_dependency_graph
 from .export import to_graphviz, to_mermaid, to_networkx
-from .extractor import (
-    CellDict,
-    CellInfo,
-    build_cell_dict,
-    discover_formula_cells_in_rows,
-    graph_to_cell_dict,
-)
+from .extractor import discover_formula_cells_in_rows
 from .graph import CycleError, CycleReport, DependencyGraph, NodeHook
 from .guard import And, Compare, GuardExpr, Literal, Not, Or
 from .guard import CellRef as GuardCellRef
@@ -47,10 +41,6 @@ __all__ = [
     "format_key",
     "needs_quoting",
     # Extractor module
-    "CellInfo",
-    "CellDict",
-    "graph_to_cell_dict",
     "discover_formula_cells_in_rows",
-    "build_cell_dict",
 ]
 

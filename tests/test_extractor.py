@@ -1,6 +1,6 @@
-"""Tests for the extractor module.
+"""Tests for the extractor module and DependencyGraph filter methods.
 
-Tests cell key format normalization and CellDict functionality.
+Tests cell key format normalization and discovery of formula cells.
 Keys should use quoted sheet names when the sheet name contains spaces,
 hyphens, or other special characters that require quoting in Excel formulas.
 
@@ -18,13 +18,9 @@ import openpyxl
 import xlsxwriter
 
 from excel_grapher import (
-    CellDict,
-    CellInfo,
-    build_cell_dict,
+    create_dependency_graph,
     discover_formula_cells_in_rows,
     format_cell_key,
-    graph_to_cell_dict,
-    create_dependency_graph,
     needs_quoting,
 )
 
@@ -79,68 +75,6 @@ class TestFormatCellKey:
         """Sheet names with multiple special characters should be quoted."""
         assert format_cell_key("Baseline - external", "M", 35) == "'Baseline - external'!M35"
         assert format_cell_key("GDP Forecast", "A", 1) == "'GDP Forecast'!A1"
-
-
-class TestCellInfo:
-    """Tests for the CellInfo dataclass."""
-
-    def test_is_formula_true_when_formula_present(self) -> None:
-        """is_formula should be True when formula is not None."""
-        info = CellInfo(formula="=A1+B1", normalized_formula="Sheet1!A1+Sheet1!B1", value=10)
-        assert info.is_formula is True
-
-    def test_is_formula_false_when_formula_none(self) -> None:
-        """is_formula should be False when formula is None."""
-        info = CellInfo(formula=None, normalized_formula=None, value=42)
-        assert info.is_formula is False
-
-
-class TestCellDict:
-    """Tests for the CellDict class."""
-
-    def test_formula_cells_filters_correctly(self) -> None:
-        """formula_cells() should return only cells with formulas."""
-        cells = CellDict()
-        cells["Sheet1!A1"] = CellInfo(formula="=B1", normalized_formula="Sheet1!B1", value=5)
-        cells["Sheet1!B1"] = CellInfo(formula=None, normalized_formula=None, value=10)
-        cells["Sheet1!C1"] = CellInfo(formula="=A1+B1", normalized_formula="Sheet1!A1+Sheet1!B1", value=15)
-
-        formula_cells = cells.formula_cells()
-        assert len(formula_cells) == 2
-        assert "Sheet1!A1" in formula_cells
-        assert "Sheet1!C1" in formula_cells
-        assert "Sheet1!B1" not in formula_cells
-
-    def test_value_cells_filters_correctly(self) -> None:
-        """value_cells() should return only cells without formulas."""
-        cells = CellDict()
-        cells["Sheet1!A1"] = CellInfo(formula="=B1", normalized_formula="Sheet1!B1", value=5)
-        cells["Sheet1!B1"] = CellInfo(formula=None, normalized_formula=None, value=10)
-        cells["Sheet1!C1"] = CellInfo(formula=None, normalized_formula=None, value=20)
-
-        value_cells = cells.value_cells()
-        assert len(value_cells) == 2
-        assert "Sheet1!B1" in value_cells
-        assert "Sheet1!C1" in value_cells
-        assert "Sheet1!A1" not in value_cells
-
-    def test_formula_keys_returns_sorted_list(self) -> None:
-        """formula_keys() should return sorted list of formula cell keys."""
-        cells = CellDict()
-        cells["Sheet1!C1"] = CellInfo(formula="=A1", normalized_formula="Sheet1!A1", value=1)
-        cells["Sheet1!A1"] = CellInfo(formula="=B1", normalized_formula="Sheet1!B1", value=2)
-        cells["Sheet1!B1"] = CellInfo(formula=None, normalized_formula=None, value=3)
-
-        assert cells.formula_keys() == ["Sheet1!A1", "Sheet1!C1"]
-
-    def test_value_keys_returns_sorted_list(self) -> None:
-        """value_keys() should return sorted list of value cell keys."""
-        cells = CellDict()
-        cells["Sheet1!C1"] = CellInfo(formula=None, normalized_formula=None, value=1)
-        cells["Sheet1!A1"] = CellInfo(formula="=B1", normalized_formula="Sheet1!B1", value=2)
-        cells["Sheet1!B1"] = CellInfo(formula=None, normalized_formula=None, value=3)
-
-        assert cells.value_keys() == ["Sheet1!B1", "Sheet1!C1"]
 
 
 class TestDiscoverFormulaCellsInRows:
@@ -202,12 +136,12 @@ class TestDiscoverFormulaCellsInRows:
         assert targets[0] == "'Sales Data'!B1"
 
 
-class TestGraphToCellDict:
-    """Tests for graph_to_cell_dict function."""
+class TestDependencyGraphFilterMethods:
+    """Tests for DependencyGraph filter methods (formula_nodes, leaf_node_items, etc.)."""
 
-    def test_converts_graph_to_cell_dict(self, tmp_path: Path) -> None:
-        """Should convert DependencyGraph to CellDict correctly."""
-        excel_path = tmp_path / "graph_test.xlsx"
+    def test_formula_nodes_returns_formula_cells(self, tmp_path: Path) -> None:
+        """formula_nodes() should iterate over nodes with formulas."""
+        excel_path = tmp_path / "filter_test.xlsx"
 
         wb = xlsxwriter.Workbook(excel_path)
         ws = wb.add_worksheet("Sheet1")
@@ -217,73 +151,108 @@ class TestGraphToCellDict:
         wb.close()
 
         graph = create_dependency_graph(excel_path, ["Sheet1!A3"], load_values=True)
-        cells = graph_to_cell_dict(graph)
+        formula_items = list(graph.formula_nodes())
 
-        assert isinstance(cells, CellDict)
-        assert "Sheet1!A1" in cells
-        assert "Sheet1!A2" in cells
-        assert "Sheet1!A3" in cells
+        assert len(formula_items) == 1
+        key, node = formula_items[0]
+        assert key == "Sheet1!A3"
+        assert node.formula == "=A1+A2"
 
-        # Check formula cell
-        assert cells["Sheet1!A3"].is_formula is True
-        assert cells["Sheet1!A3"].formula == "=A1+A2"
-        assert cells["Sheet1!A3"].value == 5
-
-        # Check value cells
-        assert cells["Sheet1!A1"].is_formula is False
-        assert cells["Sheet1!A1"].value == 2
-
-
-class TestBuildCellDict:
-    """Tests for build_cell_dict function."""
-
-    def test_builds_cell_dict_from_workbook(self, tmp_path: Path) -> None:
-        """Should build CellDict from workbook with specified rows."""
-        excel_path = tmp_path / "build_test.xlsx"
+    def test_leaf_node_items_returns_leaf_cells(self, tmp_path: Path) -> None:
+        """leaf_node_items() should iterate over leaf nodes."""
+        excel_path = tmp_path / "filter_test.xlsx"
 
         wb = xlsxwriter.Workbook(excel_path)
         ws = wb.add_worksheet("Sheet1")
+        ws.write_number(0, 0, 2)  # A1 = 2
+        ws.write_number(1, 0, 3)  # A2 = 3
+        ws.write_formula(2, 0, "=A1+A2", None, 5)  # A3 = =A1+A2
+        wb.close()
 
-        # Row 1: inputs
+        graph = create_dependency_graph(excel_path, ["Sheet1!A3"], load_values=True)
+        leaf_items = list(graph.leaf_node_items())
+
+        assert len(leaf_items) == 2
+        keys = {key for key, _ in leaf_items}
+        assert keys == {"Sheet1!A1", "Sheet1!A2"}
+
+    def test_formula_keys_returns_sorted_list(self, tmp_path: Path) -> None:
+        """formula_keys() should return sorted list of formula cell keys."""
+        excel_path = tmp_path / "filter_test.xlsx"
+
+        wb = xlsxwriter.Workbook(excel_path)
+        ws = wb.add_worksheet("Sheet1")
+        ws.write_number(0, 0, 1)  # A1 = 1
+        ws.write_formula(0, 1, "=A1*2", None, 2)  # B1 = =A1*2
+        ws.write_formula(0, 2, "=B1+1", None, 3)  # C1 = =B1+1
+        wb.close()
+
+        graph = create_dependency_graph(excel_path, ["Sheet1!C1"], load_values=True)
+        keys = graph.formula_keys()
+
+        # Should be sorted alphabetically
+        assert keys == ["Sheet1!B1", "Sheet1!C1"]
+
+    def test_leaf_keys_returns_sorted_list(self, tmp_path: Path) -> None:
+        """leaf_keys() should return sorted list of leaf node keys."""
+        excel_path = tmp_path / "filter_test.xlsx"
+
+        wb = xlsxwriter.Workbook(excel_path)
+        ws = wb.add_worksheet("Sheet1")
         ws.write_number(0, 0, 10)  # A1 = 10
         ws.write_number(0, 1, 20)  # B1 = 20
-
-        # Row 2: formulas (this is our target row)
-        ws.write_formula(1, 0, "=A1*2", None, 20)  # A2 = =A1*2
-        ws.write_formula(1, 1, "=B1+A2", None, 40)  # B2 = =B1+A2
-
+        ws.write_formula(0, 2, "=A1+B1", None, 30)  # C1 = =A1+B1
         wb.close()
 
-        cells = build_cell_dict(excel_path, {"Sheet1": [2]}, load_values=True)
+        graph = create_dependency_graph(excel_path, ["Sheet1!C1"], load_values=True)
+        keys = graph.leaf_keys()
 
-        # Should have formula cells from row 2 and their dependencies from row 1
-        assert "Sheet1!A2" in cells
-        assert "Sheet1!B2" in cells
-        assert "Sheet1!A1" in cells
-        assert "Sheet1!B1" in cells
+        assert keys == ["Sheet1!A1", "Sheet1!B1"]
 
-        # Verify formula cells
-        assert cells["Sheet1!A2"].is_formula is True
-        assert cells["Sheet1!B2"].is_formula is True
+    def test_get_node_provides_direct_access(self, tmp_path: Path) -> None:
+        """get_node() should provide O(1) access to node data."""
+        excel_path = tmp_path / "access_test.xlsx"
 
-        # Verify value cells
-        assert cells["Sheet1!A1"].is_formula is False
-        assert cells["Sheet1!B1"].is_formula is False
-
-    def test_returns_empty_for_no_formulas(self, tmp_path: Path) -> None:
-        """Should return empty CellDict when no formula cells found."""
-        excel_path = tmp_path / "no_formulas.xlsx"
-
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "Sheet1"
-        ws["A1"].value = 10
-        ws["B1"].value = 20
-        wb.save(excel_path)
+        wb = xlsxwriter.Workbook(excel_path)
+        ws = wb.add_worksheet("Sheet1")
+        ws.write_number(0, 0, 42)  # A1 = 42
+        ws.write_formula(1, 0, "=A1*2", None, 84)  # A2 = =A1*2
         wb.close()
 
-        cells = build_cell_dict(excel_path, {"Sheet1": [1]})
-        assert len(cells) == 0
+        graph = create_dependency_graph(excel_path, ["Sheet1!A2"], load_values=True)
+
+        # Access formula node
+        node = graph.get_node("Sheet1!A2")
+        assert node is not None
+        assert node.formula == "=A1*2"
+        assert node.value == 84
+
+        # Access value node
+        node = graph.get_node("Sheet1!A1")
+        assert node is not None
+        assert node.formula is None
+        assert node.value == 42
+
+    def test_graph_preserves_structure(self, tmp_path: Path) -> None:
+        """DependencyGraph should preserve edge information."""
+        excel_path = tmp_path / "structure_test.xlsx"
+
+        wb = xlsxwriter.Workbook(excel_path)
+        ws = wb.add_worksheet("Sheet1")
+        ws.write_number(0, 0, 1)  # A1 = 1
+        ws.write_number(0, 1, 2)  # B1 = 2
+        ws.write_formula(0, 2, "=A1+B1", None, 3)  # C1 = =A1+B1
+        wb.close()
+
+        graph = create_dependency_graph(excel_path, ["Sheet1!C1"], load_values=True)
+
+        # Check dependencies
+        deps = graph.dependencies("Sheet1!C1")
+        assert deps == {"Sheet1!A1", "Sheet1!B1"}
+
+        # Check reverse edges (dependents)
+        assert "Sheet1!C1" in graph.dependents("Sheet1!A1")
+        assert "Sheet1!C1" in graph.dependents("Sheet1!B1")
 
     def test_handles_quoted_sheet_names(self, tmp_path: Path) -> None:
         """Should handle sheet names that require quoting."""
@@ -295,15 +264,17 @@ class TestBuildCellDict:
         ws.write_formula(1, 0, "=A1+10", None, 15)  # A2 = =A1+10
         wb.close()
 
-        cells = build_cell_dict(excel_path, {"My Data": [2]}, load_values=True)
+        targets = discover_formula_cells_in_rows(excel_path, "My Data", [2])
+        graph = create_dependency_graph(excel_path, targets, load_values=True)
 
         # Keys should be properly quoted
-        assert "'My Data'!A2" in cells
-        assert "'My Data'!A1" in cells
+        assert graph.get_node("'My Data'!A2") is not None
+        assert graph.get_node("'My Data'!A1") is not None
 
         # Verify the formula cell
-        assert cells["'My Data'!A2"].is_formula is True
-        assert cells["'My Data'!A2"].value == 15
+        node = graph.get_node("'My Data'!A2")
+        assert node.formula is not None
+        assert node.value == 15
 
     def test_cross_sheet_references_correct_quoting(self, tmp_path: Path) -> None:
         """Should handle cross-sheet references with correct quoting."""
@@ -321,15 +292,16 @@ class TestBuildCellDict:
 
         wb.close()
 
-        cells = build_cell_dict(excel_path, {"Output Sheet": [1]}, load_values=True)
+        targets = discover_formula_cells_in_rows(excel_path, "Output Sheet", [1])
+        graph = create_dependency_graph(excel_path, targets, load_values=True)
 
         # Data sheet key should NOT be quoted
-        assert "Data!A1" in cells
+        assert graph.get_node("Data!A1") is not None
         # Output Sheet key SHOULD be quoted
-        assert "'Output Sheet'!A1" in cells
+        assert graph.get_node("'Output Sheet'!A1") is not None
 
         # Verify proper quoting in all keys
-        for key in cells:
+        for key in graph:
             if "Output Sheet" in key:
                 assert key.startswith("'Output Sheet'!"), f"Key {key} should be quoted"
             elif "Data" in key:
