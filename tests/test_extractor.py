@@ -1,6 +1,6 @@
-"""Tests for the extractor module and DependencyGraph filter methods.
+"""Tests for the DependencyGraph filter methods.
 
-Tests cell key format normalization and discovery of formula cells.
+Tests cell key format normalization.
 Keys should use quoted sheet names when the sheet name contains spaces,
 hyphens, or other special characters that require quoting in Excel formulas.
 
@@ -14,12 +14,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import openpyxl
 import xlsxwriter
 
 from excel_grapher import (
     create_dependency_graph,
-    discover_formula_cells_in_rows,
     format_cell_key,
     needs_quoting,
 )
@@ -75,65 +73,6 @@ class TestFormatCellKey:
         """Sheet names with multiple special characters should be quoted."""
         assert format_cell_key("Baseline - external", "M", 35) == "'Baseline - external'!M35"
         assert format_cell_key("GDP Forecast", "A", 1) == "'GDP Forecast'!A1"
-
-
-class TestDiscoverFormulaCellsInRows:
-    """Tests for discover_formula_cells_in_rows function."""
-
-    def test_discovers_formula_cells_with_numeric_values(self, tmp_path: Path) -> None:
-        """Should discover formula cells that have numeric cached values."""
-        excel_path = tmp_path / "discover_test.xlsx"
-
-        # Use xlsxwriter to create workbook with cached values
-        wb = xlsxwriter.Workbook(excel_path)
-        ws = wb.add_worksheet("Sheet1")
-
-        # Row 1: value, formula with numeric result, formula with text result
-        ws.write_number(0, 0, 10)  # A1 = 10 (value)
-        ws.write_formula(0, 1, "=A1*2", None, 20)  # B1 = =A1*2 (cached: 20)
-        ws.write_formula(0, 2, '="text"', None, "text")  # C1 = ="text" (cached: "text")
-
-        # Row 2: more formulas with numeric results
-        ws.write_number(1, 0, 5)  # A2 = 5 (value)
-        ws.write_formula(1, 1, "=A2+10", None, 15)  # B2 = =A2+10 (cached: 15)
-
-        wb.close()
-
-        targets = discover_formula_cells_in_rows(excel_path, "Sheet1", [1, 2])
-
-        # Should find B1 and B2 (formulas with numeric values)
-        # Should NOT find A1, A2 (values) or C1 (formula with text result)
-        assert "Sheet1!B1" in targets
-        assert "Sheet1!B2" in targets
-        assert "Sheet1!A1" not in targets
-        assert "Sheet1!A2" not in targets
-        assert "Sheet1!C1" not in targets
-
-    def test_returns_empty_for_nonexistent_sheet(self, tmp_path: Path) -> None:
-        """Should return empty list for non-existent sheet."""
-        excel_path = tmp_path / "test.xlsx"
-        wb = openpyxl.Workbook()
-        wb.active.title = "Sheet1"
-        wb.save(excel_path)
-        wb.close()
-
-        targets = discover_formula_cells_in_rows(excel_path, "NonExistent", [1])
-        assert targets == []
-
-    def test_quoted_sheet_names(self, tmp_path: Path) -> None:
-        """Should return properly quoted keys for sheets with special chars."""
-        excel_path = tmp_path / "quoted_test.xlsx"
-
-        wb = xlsxwriter.Workbook(excel_path)
-        ws = wb.add_worksheet("Sales Data")
-        ws.write_number(0, 0, 100)  # A1 = 100
-        ws.write_formula(0, 1, "=A1*2", None, 200)  # B1 = =A1*2
-        wb.close()
-
-        targets = discover_formula_cells_in_rows(excel_path, "Sales Data", [1])
-
-        assert len(targets) == 1
-        assert targets[0] == "'Sales Data'!B1"
 
 
 class TestDependencyGraphFilterMethods:
@@ -264,8 +203,8 @@ class TestDependencyGraphFilterMethods:
         ws.write_formula(1, 0, "=A1+10", None, 15)  # A2 = =A1+10
         wb.close()
 
-        targets = discover_formula_cells_in_rows(excel_path, "My Data", [2])
-        graph = create_dependency_graph(excel_path, targets, load_values=True)
+        # We know the target formula cell; sheet-name quoting is handled by the graph builder.
+        graph = create_dependency_graph(excel_path, ["My Data!A2"], load_values=True)
 
         # Keys should be properly quoted
         assert graph.get_node("'My Data'!A2") is not None
@@ -292,8 +231,8 @@ class TestDependencyGraphFilterMethods:
 
         wb.close()
 
-        targets = discover_formula_cells_in_rows(excel_path, "Output Sheet", [1])
-        graph = create_dependency_graph(excel_path, targets, load_values=True)
+        # We know the target formula cell; sheet-name quoting is handled by the graph builder.
+        graph = create_dependency_graph(excel_path, ["Output Sheet!A1"], load_values=True)
 
         # Data sheet key should NOT be quoted
         assert graph.get_node("Data!A1") is not None

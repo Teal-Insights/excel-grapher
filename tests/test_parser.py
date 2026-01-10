@@ -1,12 +1,10 @@
 """Tests for parser.py split_top_level_* functions."""
 from __future__ import annotations
 
-import pytest
-
 from excel_grapher.parser import (
+    split_top_level_choose,
     split_top_level_if,
     split_top_level_ifs,
-    split_top_level_choose,
     split_top_level_switch,
 )
 
