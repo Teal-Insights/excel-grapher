@@ -8,6 +8,7 @@ from typing import NamedTuple
 from xml.etree import ElementTree as ET
 
 from .graph import DependencyGraph
+from .parser import format_key
 
 
 class ValidationResult(NamedTuple):
@@ -60,9 +61,25 @@ def _parse_calcchain_formula_cells(excel_path: Path, sheet_id_to_name: dict[str,
         sheet_name = sheet_id_to_name.get(str(sheet_id))
         if not sheet_name:
             continue
-        keys.add(f"{sheet_name}!{cell_ref}")
+        # Match the rest of the library's NodeKey format, including quoting for sheet names
+        # that need it (spaces, hyphens, apostrophes).
+        keys.add(format_key(sheet_name, cell_ref))
 
     return keys
+
+
+def _sheet_name_from_key(key: str) -> str:
+    """
+    Extract the unquoted sheet name from a sheet-qualified key.
+
+    Supports the library's quoting convention: "'Sheet Name'!A1".
+    """
+    if "!" not in key:
+        return key
+    if key.startswith("'"):
+        end_quote = key.index("'", 1)
+        return key[1:end_quote]
+    return key.split("!", 1)[0]
 
 
 @dataclass(frozen=True)
@@ -149,7 +166,7 @@ def validate_graph(
         )
 
     if scope is not None:
-        calc = {k for k in calc if k.split("!", 1)[0] in scope}
+        calc = {k for k in calc if _sheet_name_from_key(k) in scope}
 
     in_graph_not_in_chain = graph_formulas - calc
     in_chain_not_in_graph = calc - graph_formulas
