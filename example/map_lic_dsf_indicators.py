@@ -34,7 +34,7 @@ INDICATOR_CONFIG: list[IndicatorConfig] = [
     {"sheet": "B4_other flows_ext", "indicator_rows": [35, 36, 39, 40]},
 ]
 
-WORKBOOK_PATH = Path("example/data/Gold-Standard-LIC-DSF.xlsm")
+WORKBOOK_PATH = Path("example/data/lic-dsf-template.xlsm")
 
 
 def discover_formula_cells_in_rows(
@@ -90,7 +90,7 @@ def main() -> None:
     
     if not WORKBOOK_PATH.exists():
         print(f"Error: Workbook not found at {WORKBOOK_PATH}")
-        print("Make sure Gold-Standard-LIC-DSF.xlsm is in the project root.")
+        print("Make sure lic-dsf-template.xlsm is in the project root.")
         return
     
     # Discover all formula cells in indicator rows
