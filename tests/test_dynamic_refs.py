@@ -43,6 +43,19 @@ def _build_offset_index_row_workbook(path: Path) -> None:
     wb.close()
 
 
+def _build_offset_with_arg_ref_workbook(path: Path) -> None:
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+    start = wb.add_worksheet("START")
+
+    ws.write_number(0, 1, 5)  # B1 base
+    ws.write_number(0, 2, 99)  # C1 target
+    start.write_number(9, 12, 1)  # M10 -> column offset of 1
+
+    ws.write_formula(0, 0, "=OFFSET(B1,0,START!M10)", None, 99)
+    wb.close()
+
+
 def test_offset_with_cached_named_range_warns_once(tmp_path: Path) -> None:
     excel_path = tmp_path / "offset_named_range.xlsx"
     _build_offset_named_range_workbook(excel_path)
@@ -67,3 +80,12 @@ def test_offset_index_row_resolves_named_range(tmp_path: Path) -> None:
     graph = create_dependency_graph(excel_path, ["Sheet1!B2"], load_values=False)
     deps = graph.dependencies("Sheet1!B2")
     assert deps == {"lookup!B4"}
+
+
+def test_offset_argument_references_are_dependencies(tmp_path: Path) -> None:
+    excel_path = tmp_path / "offset_arg_ref.xlsx"
+    _build_offset_with_arg_ref_workbook(excel_path)
+
+    graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
+    deps = graph.dependencies("Sheet1!A1")
+    assert deps == {"Sheet1!C1", "START!M10"}

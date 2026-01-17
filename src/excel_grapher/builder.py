@@ -109,7 +109,7 @@ def create_dependency_graph(
             # 0) Expand dynamic refs (OFFSET/INDIRECT) and mask them so underlying
             # refs don't get parsed as direct dependencies.
             dyn_spans: list[tuple[int, int]] = []
-            for start, end, span in parse_dynamic_range_refs_with_spans(
+            for start, end, span, arg_refs in parse_dynamic_range_refs_with_spans(
                 f,
                 current_sheet=current_sheet,
                 current_cell_a1=current_a1,
@@ -129,6 +129,9 @@ def create_dependency_graph(
                         max_cells=max_range_cells,
                     )
                 )
+                for ref in arg_refs:
+                    arg_sheet = ref.sheet if ref.sheet is not None else current_sheet
+                    deps.append((arg_sheet, f"{ref.column}{ref.row}"))
             masked = mask_spans(masked, dyn_spans)
 
             # 1) Expand ranges, then mask them so later cell-ref parsing doesn't

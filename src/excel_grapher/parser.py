@@ -1090,9 +1090,10 @@ def parse_dynamic_range_refs_with_spans(
     named_ranges: dict[str, tuple[str, str]] | None = None,
     named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
     value_resolver: Callable[[str, str], object] | None = None,
-) -> list[tuple[CellRef, CellRef, tuple[int, int]]]:
+) -> list[tuple[CellRef, CellRef, tuple[int, int], list[CellRef]]]:
     """
-    Extract dynamic range references (OFFSET/INDIRECT) as (start, end, span).
+    Extract dynamic range references (OFFSET/INDIRECT) as
+    (start, end, span, arg_refs).
 
     Only supports static arguments. Raises ValueError for non-literal offsets or
     non-literal INDIRECT references.
@@ -1103,12 +1104,28 @@ def parse_dynamic_range_refs_with_spans(
         named_ranges = {}
 
     calls = _find_function_calls_with_spans(formula, {"OFFSET", "INDIRECT"})
-    out: list[tuple[CellRef, CellRef, tuple[int, int]]] = []
+    out: list[tuple[CellRef, CellRef, tuple[int, int], list[CellRef]]] = []
     for fn, inner, span in calls:
         args = _split_function_args(inner)
         if args is None:
             raise ValueError(f"{fn} has unbalanced parentheses or strings")
         if fn == "OFFSET":
+            arg_refs: list[CellRef] = []
+            for arg in args[1:]:
+                normalized = normalize_formula(
+                    "=" + arg,
+                    current_sheet=current_sheet,
+                    named_ranges=named_ranges,
+                )
+                for ref in parse_cell_refs(normalized):
+                    sheet = ref.sheet if ref.sheet is not None else current_sheet
+                    arg_refs.append(
+                        CellRef(
+                            sheet=sheet,
+                            column=ref.column,
+                            row=ref.row,
+                        )
+                    )
             start_ref, end_ref = _parse_offset_call(
                 args,
                 current_sheet=current_sheet,
@@ -1124,7 +1141,8 @@ def parse_dynamic_range_refs_with_spans(
                 named_ranges=named_ranges,
                 named_range_ranges=named_range_ranges,
             )
-        out.append((start_ref, end_ref, span))
+            arg_refs = []
+        out.append((start_ref, end_ref, span, arg_refs))
     return out
 
 
