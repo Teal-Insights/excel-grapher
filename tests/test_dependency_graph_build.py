@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import openpyxl
+from openpyxl.worksheet.formula import ArrayFormula
 
 from excel_grapher import create_dependency_graph
 
@@ -164,6 +165,39 @@ def test_load_values_reads_cached_formula_results(tmp_path: Path) -> None:
     assert n3 is not None and n4 is not None
     assert n3.value == 5
     assert n4.value == 10
+
+
+def test_array_formula_cells_surface_formula_text(tmp_path: Path) -> None:
+    excel_path = tmp_path / "array_formula.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+
+    ws["B1"].value = 1
+    ws["B2"].value = 2
+    ws["B3"].value = 3
+
+    cell = ws["A1"]
+    cell.value = ArrayFormula("A1:A1", "=SUM(B1:B3)")
+
+    wb.save(excel_path)
+    wb.close()
+
+    wb_formula = openpyxl.load_workbook(excel_path, data_only=False)
+    try:
+        raw = wb_formula["Sheet1"]["A1"].value
+        assert isinstance(raw, ArrayFormula)
+    finally:
+        wb_formula.close()
+
+    graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
+    node = graph.get_node("Sheet1!A1")
+    assert node is not None
+    assert node.is_leaf is False
+    assert node.formula is not None
+    assert node.normalized_formula is not None
+    assert node.formula.startswith("=")
+    assert node.value is None
 
 
 def test_parse_target_handles_quoted_sheet_name(tmp_path: Path) -> None:

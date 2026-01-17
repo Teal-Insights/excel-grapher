@@ -212,6 +212,7 @@ class TestDependencyGraphFilterMethods:
 
         # Verify the formula cell
         node = graph.get_node("'My Data'!A2")
+        assert node is not None
         assert node.formula is not None
         assert node.value == 15
 

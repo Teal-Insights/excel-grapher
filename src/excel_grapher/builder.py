@@ -7,6 +7,7 @@ from pathlib import Path
 
 import openpyxl
 import openpyxl.utils.cell
+from openpyxl.worksheet.formula import ArrayFormula
 
 from .graph import DependencyGraph, NodeHook
 from .guard import And, Compare, GuardExpr, Literal, Not
@@ -17,6 +18,7 @@ from .parser import (
     mask_spans,
     normalize_formula,
     parse_cell_refs,
+    parse_dynamic_range_refs_with_spans,
     parse_guard_expr,
     parse_range_refs_with_spans,
     split_top_level_choose,
@@ -60,7 +62,10 @@ def create_dependency_graph(
     for h in hooks or []:
         graph.register_hook(h)
 
-    named_ranges = build_named_range_map(wb_formulas)
+    named_range_maps = build_named_range_map(wb_formulas)
+    named_ranges = named_range_maps.cell_map
+    named_range_ranges = named_range_maps.range_map
+    defined_names = {str(name) for name in wb_formulas.defined_names}
     _NAME_TOKEN_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*!)")
 
     def parse_target(t: str) -> tuple[str, str]:
@@ -79,10 +84,18 @@ def create_dependency_graph(
         return sheet, a1
 
     def extract_deps_with_guards(
-        formula: str, current_sheet: str
+        formula: str, current_sheet: str, current_a1: str
     ) -> list[tuple[str, str, GuardExpr | None]]:
         if not formula.startswith("="):
             return []
+
+        def resolve_cached_value(sheet: str, a1: str) -> object | None:
+            nonlocal wb_values
+            if wb_values is None and not isinstance(workbook, openpyxl.Workbook):
+                wb_values = load_wb(data_only=True)
+            if wb_values is None:
+                return None
+            return wb_values[sheet][a1].value
 
         def extract_expr_deps(expr: str) -> list[tuple[str, str]]:
             """
@@ -91,12 +104,38 @@ def create_dependency_graph(
             f = "=" + expr if not expr.startswith("=") else expr
             deps: list[tuple[str, str]] = []
 
-            # 0) Expand ranges first, then mask them so later cell-ref parsing doesn't
-            # misinterpret the range endpoint as a same-sheet ref.
             masked = f
+
+            # 0) Expand dynamic refs (OFFSET/INDIRECT) and mask them so underlying
+            # refs don't get parsed as direct dependencies.
+            dyn_spans: list[tuple[int, int]] = []
+            for start, end, span in parse_dynamic_range_refs_with_spans(
+                f,
+                current_sheet=current_sheet,
+                current_cell_a1=current_a1,
+                named_ranges=named_ranges,
+                named_range_ranges=named_range_ranges,
+                value_resolver=resolve_cached_value,
+            ):
+                dyn_spans.append(span)
+                sheet = start.sheet if start.sheet is not None else current_sheet
+                deps.extend(
+                    expand_range(
+                        sheet=sheet,
+                        start_col=start.column,
+                        start_row=start.row,
+                        end_col=end.column,
+                        end_row=end.row,
+                        max_cells=max_range_cells,
+                    )
+                )
+            masked = mask_spans(masked, dyn_spans)
+
+            # 1) Expand ranges, then mask them so later cell-ref parsing doesn't
+            # misinterpret the range endpoint as a same-sheet ref.
             if expand_ranges:
                 spans: list[tuple[int, int]] = []
-                for start, end, span in parse_range_refs_with_spans(f):
+                for start, end, span in parse_range_refs_with_spans(masked):
                     spans.append(span)
                     sheet = start.sheet if start.sheet is not None else current_sheet
                     deps.extend(
@@ -119,9 +158,28 @@ def create_dependency_graph(
             for m in _NAME_TOKEN_RE.finditer(masked):
                 token = m.group(1)
                 resolved = named_ranges.get(token)
-                if resolved is None:
+                if resolved is not None:
+                    deps.append(resolved)
                     continue
-                deps.append(resolved)
+                resolved_range = named_range_ranges.get(token)
+                if resolved_range is not None:
+                    if expand_ranges:
+                        sheet, start_a1, end_a1 = resolved_range
+                        start_col, start_row = openpyxl.utils.cell.coordinate_from_string(start_a1)
+                        end_col, end_row = openpyxl.utils.cell.coordinate_from_string(end_a1)
+                        deps.extend(
+                            expand_range(
+                                sheet=sheet,
+                                start_col=start_col,
+                                start_row=int(start_row),
+                                end_col=end_col,
+                                end_row=int(end_row),
+                                max_cells=max_range_cells,
+                            )
+                        )
+                    continue
+                if token in defined_names:
+                    raise ValueError(f"Unsupported defined name referenced in formula: {token}")
 
             # Deduplicate while preserving order
             seen: set[tuple[str, str]] = set()
@@ -305,6 +363,10 @@ def create_dependency_graph(
 
             ws_f = wb_formulas[sheet]
             raw = ws_f[a1].value
+            if isinstance(raw, ArrayFormula):
+                raw = raw.text or ""
+                if raw and not raw.startswith("="):
+                    raw = f"={raw}"
             is_formula = isinstance(raw, str) and raw.startswith("=")
 
             if is_formula:
@@ -337,7 +399,7 @@ def create_dependency_graph(
             if not is_formula:
                 continue
 
-            for dep_sheet, dep_a1, guard in extract_deps_with_guards(formula_str, sheet):
+            for dep_sheet, dep_a1, guard in extract_deps_with_guards(formula_str, sheet, a1):
                 dep_key = format_key(dep_sheet, dep_a1)
                 graph.add_edge(key, dep_key, guard=guard)
                 if dep_key not in visited:

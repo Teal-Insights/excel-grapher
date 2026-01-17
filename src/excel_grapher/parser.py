@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import warnings
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import openpyxl.utils.cell
@@ -535,10 +537,595 @@ _CELL_TOKEN_RE = re.compile(
 )
 _LOCAL_CELL_TOKEN_RE = re.compile(r"^\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)$")
 _NUMBER_TOKEN_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
+_INT_TOKEN_RE = re.compile(r"^[+-]?\d+$")
+_RANGE_TOKEN_QUOTED_RE = re.compile(
+    r"^'(?P<sheet>[^']+)'!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)$"
+)
+_RANGE_TOKEN_UNQUOTED_RE = re.compile(
+    r"^(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)$"
+)
+_RANGE_TOKEN_LOCAL_RE = re.compile(
+    r"^\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)$"
+)
 
 
 def _to_node_key(sheet: str, col: str, row: int) -> NodeKey:
     return format_cell_key(sheet, col, row)
+
+
+def _parse_int_literal(s: str) -> int | None:
+    s = s.strip()
+    if not _INT_TOKEN_RE.match(s):
+        return None
+    try:
+        return int(s)
+    except ValueError:
+        return None
+
+
+_WARNED_CACHED_DYNAMIC = False
+
+
+def _warn_cached_dynamic_once() -> None:
+    global _WARNED_CACHED_DYNAMIC
+    if _WARNED_CACHED_DYNAMIC:
+        return
+    _WARNED_CACHED_DYNAMIC = True
+    warnings.warn(
+        "Resolved OFFSET/INDIRECT arguments using cached workbook values. "
+        "Results may differ if cached values are stale.",
+        UserWarning,
+        stacklevel=2,
+    )
+
+
+def _parse_string_literal(s: str) -> str | None:
+    s = s.strip()
+    if len(s) < 2 or s[0] != '"' or s[-1] != '"':
+        return None
+    # Excel escapes quotes as doubled quotes within string literals.
+    return s[1:-1].replace('""', '"')
+
+
+def _eval_row_expr(
+    expr: str,
+    *,
+    current_sheet: str,
+    current_cell_a1: str | None,
+    named_ranges: dict[str, tuple[str, str]],
+    named_range_ranges: dict[str, tuple[str, str, str]] | None,
+) -> int | None:
+    s = expr.strip()
+    if not s:
+        return None
+    # Reject unsupported operators
+    if "*" in s or "/" in s or "^" in s:
+        return None
+
+    def eval_term(term: str) -> int | None:
+        term = term.strip()
+        if not term:
+            return None
+        lit = _parse_int_literal(term)
+        if lit is not None:
+            return lit
+        m = re.match(r"^ROW\s*\((?P<inner>.*)\)$", term, flags=re.IGNORECASE)
+        if m:
+            inner = m.group("inner").strip()
+            if inner == "":
+                if current_cell_a1 is None:
+                    return None
+                _col, row = openpyxl.utils.cell.coordinate_from_string(current_cell_a1)
+                return int(row)
+            parsed = _parse_ref_or_range_token(
+                inner,
+                current_sheet=current_sheet,
+                named_ranges=named_ranges,
+                named_range_ranges=named_range_ranges,
+            )
+            if parsed is None:
+                return None
+            start_ref, end_ref = parsed
+            if start_ref.sheet is None:
+                start_ref = CellRef(sheet=current_sheet, column=start_ref.column, row=start_ref.row)
+            if end_ref.sheet is None:
+                end_ref = CellRef(sheet=current_sheet, column=end_ref.column, row=end_ref.row)
+            if (start_ref.sheet != end_ref.sheet) or (start_ref.column != end_ref.column) or (start_ref.row != end_ref.row):
+                return None
+            return start_ref.row
+        return None
+
+    parts = re.split(r"([+-])", s)
+    if not parts:
+        return None
+    acc = eval_term(parts[0])
+    if acc is None:
+        return None
+    idx = 1
+    while idx < len(parts):
+        op = parts[idx]
+        term = parts[idx + 1] if idx + 1 < len(parts) else ""
+        val = eval_term(term)
+        if val is None:
+            return None
+        if op == "+":
+            acc += val
+        elif op == "-":
+            acc -= val
+        else:
+            return None
+        idx += 2
+    return acc
+
+
+def _resolve_numeric_token(
+    token: str,
+    *,
+    current_sheet: str,
+    current_cell_a1: str | None,
+    named_ranges: dict[str, tuple[str, str]],
+    named_range_ranges: dict[str, tuple[str, str, str]] | None,
+    value_resolver: Callable[[str, str], object] | None,
+) -> int | None:
+    lit = _parse_int_literal(token)
+    if lit is not None:
+        return lit
+
+    row_expr = _eval_row_expr(
+        token,
+        current_sheet=current_sheet,
+        current_cell_a1=current_cell_a1,
+        named_ranges=named_ranges,
+        named_range_ranges=named_range_ranges,
+    )
+    if row_expr is not None:
+        return row_expr
+
+    parsed = _parse_ref_or_range_token(
+        token,
+        current_sheet=current_sheet,
+        named_ranges=named_ranges,
+        named_range_ranges=named_range_ranges,
+    )
+    if parsed is None:
+        return None
+    start_ref, end_ref = parsed
+    if (start_ref.sheet != end_ref.sheet) or (start_ref.column != end_ref.column) or (start_ref.row != end_ref.row):
+        return None
+    sheet = start_ref.sheet if start_ref.sheet is not None else current_sheet
+    if value_resolver is None:
+        return None
+    raw = value_resolver(sheet, f"{start_ref.column}{start_ref.row}")
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        _warn_cached_dynamic_once()
+        return raw
+    if isinstance(raw, float) and raw.is_integer():
+        _warn_cached_dynamic_once()
+        return int(raw)
+    return None
+
+
+def _parse_index_call(
+    token: str,
+    *,
+    current_sheet: str,
+    current_cell_a1: str | None,
+    named_ranges: dict[str, tuple[str, str]],
+    named_range_ranges: dict[str, tuple[str, str, str]] | None,
+) -> CellRef | None:
+    s = token.strip()
+    if not s.upper().startswith("INDEX("):
+        return None
+    if not s.endswith(")"):
+        return None
+    inner = s[s.find("(") + 1 : -1]
+    args = _split_function_args(inner)
+    if args is None or len(args) < 2:
+        return None
+    base_arg = args[0]
+    row_arg = args[1]
+    col_arg = args[2] if len(args) >= 3 else "1"
+
+    base = _parse_ref_or_range_token(
+        base_arg,
+        current_sheet=current_sheet,
+        named_ranges=named_ranges,
+        named_range_ranges=named_range_ranges,
+    )
+    if base is None:
+        return None
+    base_start, base_end = base
+    sheet = base_start.sheet or current_sheet
+
+    row_num = _resolve_numeric_token(
+        row_arg,
+        current_sheet=current_sheet,
+        current_cell_a1=current_cell_a1,
+        named_ranges=named_ranges,
+        named_range_ranges=named_range_ranges,
+        value_resolver=None,
+    )
+    if row_num is None:
+        return None
+    col_num = _parse_int_literal(col_arg)
+    if col_num is None:
+        return None
+
+    start_col = openpyxl.utils.cell.column_index_from_string(base_start.column)
+    end_col = openpyxl.utils.cell.column_index_from_string(base_end.column)
+    start_row = base_start.row
+    end_row = base_end.row
+    min_col = min(start_col, end_col)
+    max_col = max(start_col, end_col)
+    min_row = min(start_row, end_row)
+    max_row = max(start_row, end_row)
+
+    if row_num < 1 or col_num < 1:
+        return None
+    target_row = min_row + row_num - 1
+    target_col = min_col + col_num - 1
+    if target_row > max_row or target_col > max_col:
+        return None
+
+    return CellRef(
+        sheet=sheet,
+        column=openpyxl.utils.cell.get_column_letter(target_col),
+        row=target_row,
+    )
+
+
+def _parse_ref_or_range_token(
+    token: str,
+    *,
+    current_sheet: str,
+    named_ranges: dict[str, tuple[str, str]],
+    named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
+) -> tuple[CellRef, CellRef] | None:
+    tok = token.strip()
+    if not tok:
+        return None
+
+    # Named range (single-cell)
+    if tok in named_ranges:
+        sheet, addr = named_ranges[tok]
+        m = re.match(r"^(?P<col>[A-Z]{1,3})(?P<row>\d+)$", addr)
+        if not m:
+            return None
+        ref = CellRef(sheet=sheet, column=m.group("col"), row=int(m.group("row")))
+        return ref, ref
+
+    # Named range (range)
+    if named_range_ranges is not None and tok in named_range_ranges:
+        sheet, start_a1, end_a1 = named_range_ranges[tok]
+        m1 = re.match(r"^(?P<col>[A-Z]{1,3})(?P<row>\d+)$", start_a1)
+        m2 = re.match(r"^(?P<col>[A-Z]{1,3})(?P<row>\d+)$", end_a1)
+        if not m1 or not m2:
+            return None
+        return (
+            CellRef(sheet=sheet, column=m1.group("col"), row=int(m1.group("row"))),
+            CellRef(sheet=sheet, column=m2.group("col"), row=int(m2.group("row"))),
+        )
+
+    # Quoted sheet range
+    m = _RANGE_TOKEN_QUOTED_RE.match(tok)
+    if m:
+        sheet = m.group("sheet")
+        return (
+            CellRef(sheet=sheet, column=m.group("c1"), row=int(m.group("r1"))),
+            CellRef(sheet=sheet, column=m.group("c2"), row=int(m.group("r2"))),
+        )
+
+    # Unquoted sheet range
+    m = _RANGE_TOKEN_UNQUOTED_RE.match(tok)
+    if m:
+        sheet = m.group("sheet")
+        return (
+            CellRef(sheet=sheet, column=m.group("c1"), row=int(m.group("r1"))),
+            CellRef(sheet=sheet, column=m.group("c2"), row=int(m.group("r2"))),
+        )
+
+    # Local range
+    m = _RANGE_TOKEN_LOCAL_RE.match(tok)
+    if m:
+        return (
+            CellRef(sheet=None, column=m.group("c1"), row=int(m.group("r1"))),
+            CellRef(sheet=None, column=m.group("c2"), row=int(m.group("r2"))),
+        )
+
+    # Sheet-qualified cell
+    m = _CELL_TOKEN_RE.match(tok)
+    if m:
+        sheet = m.group("qs") or m.group("us")
+        ref = CellRef(sheet=sheet, column=m.group("col"), row=int(m.group("row")))
+        return ref, ref
+
+    # Local cell
+    m = _LOCAL_CELL_TOKEN_RE.match(tok)
+    if m:
+        col = m.group("col")
+        if col in _FUNC_LIKE:
+            return None
+        ref = CellRef(sheet=None, column=col, row=int(m.group("row")))
+        return ref, ref
+
+    return None
+
+
+def _split_function_args(inner: str) -> list[str] | None:
+    return _split_top_level_args(inner)
+
+
+def _find_function_calls_with_spans(formula: str, fn_names: set[str]) -> list[tuple[str, str, tuple[int, int]]]:
+    s = formula
+    out: list[tuple[str, str, tuple[int, int]]] = []
+    i = 0
+    in_str = False
+    n = len(s)
+    while i < n:
+        ch = s[i]
+        if ch == '"':
+            in_str = not in_str
+            i += 1
+            continue
+        if in_str:
+            i += 1
+            continue
+        if ch.isalpha() or ch == "_":
+            start = i
+            j = i + 1
+            while j < n and (s[j].isalnum() or s[j] in "_."):
+                j += 1
+            token = s[start:j]
+            token_u = token.upper()
+            fn = None
+            if token_u in fn_names:
+                fn = token_u
+            else:
+                for name in fn_names:
+                    if token_u.endswith(f".{name}"):
+                        fn = name
+                        break
+            if fn is not None:
+                k = j
+                while k < n and s[k].isspace():
+                    k += 1
+                if k < n and s[k] == "(":
+                    depth = 0
+                    in_call_str = False
+                    m = k
+                    while m < n:
+                        ch2 = s[m]
+                        if ch2 == '"':
+                            in_call_str = not in_call_str
+                            m += 1
+                            continue
+                        if in_call_str:
+                            m += 1
+                            continue
+                        if ch2 == "(":
+                            depth += 1
+                        elif ch2 == ")":
+                            depth -= 1
+                            if depth == 0:
+                                inner = s[k + 1 : m]
+                                out.append((fn, inner, (start, m + 1)))
+                                i = m + 1
+                                break
+                        m += 1
+                    else:
+                        i = j
+                    continue
+            i = j
+            continue
+        i += 1
+    return out
+
+
+def _parse_offset_call(
+    args: list[str],
+    *,
+    current_sheet: str,
+    current_cell_a1: str | None,
+    named_ranges: dict[str, tuple[str, str]],
+    named_range_ranges: dict[str, tuple[str, str, str]] | None,
+    value_resolver: Callable[[str, str], object] | None,
+) -> tuple[CellRef, CellRef]:
+    if len(args) < 3 or len(args) > 5:
+        raise ValueError("OFFSET expects 3 to 5 arguments")
+    base_arg, rows_arg, cols_arg = args[0], args[1], args[2]
+    height_arg = args[3] if len(args) >= 4 else None
+    width_arg = args[4] if len(args) >= 5 else None
+
+    base = _parse_ref_or_range_token(
+        base_arg,
+        current_sheet=current_sheet,
+        named_ranges=named_ranges,
+        named_range_ranges=named_range_ranges,
+    )
+    if base is None:
+        index_ref = _parse_index_call(
+            base_arg,
+            current_sheet=current_sheet,
+            current_cell_a1=current_cell_a1,
+            named_ranges=named_ranges,
+            named_range_ranges=named_range_ranges,
+        )
+        if index_ref is None:
+            raise ValueError("OFFSET base must be a cell or range reference")
+        base_start = index_ref
+        base_end = index_ref
+    else:
+        base_start, base_end = base
+    sheet = base_start.sheet or current_sheet
+
+    base_start_col = openpyxl.utils.cell.column_index_from_string(base_start.column)
+    base_end_col = openpyxl.utils.cell.column_index_from_string(base_end.column)
+    base_start_row = base_start.row
+    base_end_row = base_end.row
+    base_min_col = min(base_start_col, base_end_col)
+    base_max_col = max(base_start_col, base_end_col)
+    base_min_row = min(base_start_row, base_end_row)
+    base_max_row = max(base_start_row, base_end_row)
+
+    rows = _resolve_numeric_token(
+        rows_arg,
+        current_sheet=current_sheet,
+        current_cell_a1=current_cell_a1,
+        named_ranges=named_ranges,
+        named_range_ranges=named_range_ranges,
+        value_resolver=value_resolver,
+    )
+    cols = _resolve_numeric_token(
+        cols_arg,
+        current_sheet=current_sheet,
+        current_cell_a1=current_cell_a1,
+        named_ranges=named_ranges,
+        named_range_ranges=named_range_ranges,
+        value_resolver=value_resolver,
+    )
+    if rows is None or cols is None:
+        raise ValueError("OFFSET rows/cols must be integer literals or cached numeric refs")
+
+    base_height = base_max_row - base_min_row + 1
+    base_width = base_max_col - base_min_col + 1
+
+    height = (
+        base_height
+        if height_arg is None or height_arg == ""
+        else _resolve_numeric_token(
+            height_arg,
+            current_sheet=current_sheet,
+            current_cell_a1=current_cell_a1,
+            named_ranges=named_ranges,
+            named_range_ranges=named_range_ranges,
+            value_resolver=value_resolver,
+        )
+    )
+    width = (
+        base_width
+        if width_arg is None or width_arg == ""
+        else _resolve_numeric_token(
+            width_arg,
+            current_sheet=current_sheet,
+            current_cell_a1=current_cell_a1,
+            named_ranges=named_ranges,
+            named_range_ranges=named_range_ranges,
+            value_resolver=value_resolver,
+        )
+    )
+    if height is None or width is None:
+        raise ValueError("OFFSET height/width must be integer literals or cached numeric refs when provided")
+    if height <= 0 or width <= 0:
+        raise ValueError("OFFSET height/width must be positive")
+
+    target_start_row = base_min_row + rows
+    target_start_col = base_min_col + cols
+    if target_start_row <= 0 or target_start_col <= 0:
+        raise ValueError("OFFSET target reference is out of bounds")
+
+    target_end_row = target_start_row + height - 1
+    target_end_col = target_start_col + width - 1
+    if target_end_row <= 0 or target_end_col <= 0:
+        raise ValueError("OFFSET target reference is out of bounds")
+
+    start_ref = CellRef(
+        sheet=sheet,
+        column=openpyxl.utils.cell.get_column_letter(target_start_col),
+        row=target_start_row,
+    )
+    end_ref = CellRef(
+        sheet=sheet,
+        column=openpyxl.utils.cell.get_column_letter(target_end_col),
+        row=target_end_row,
+    )
+    return start_ref, end_ref
+
+
+def _parse_indirect_call(
+    args: list[str],
+    *,
+    current_sheet: str,
+    named_ranges: dict[str, tuple[str, str]],
+    named_range_ranges: dict[str, tuple[str, str, str]] | None,
+) -> tuple[CellRef, CellRef]:
+    if len(args) < 1 or len(args) > 2:
+        raise ValueError("INDIRECT expects 1 or 2 arguments")
+    text_arg = args[0]
+    literal = _parse_string_literal(text_arg)
+    if literal is None:
+        raise ValueError("INDIRECT text must be a string literal")
+
+    if len(args) == 2:
+        a1_arg = args[1].strip()
+        if a1_arg.upper() in {"TRUE", "1"}:
+            pass
+        elif a1_arg.upper() in {"FALSE", "0"}:
+            raise ValueError("INDIRECT R1C1 style is not supported")
+        else:
+            raise ValueError("INDIRECT A1/R1C1 flag must be a literal TRUE/FALSE or 1/0")
+
+    parsed = _parse_ref_or_range_token(
+        literal,
+        current_sheet=current_sheet,
+        named_ranges=named_ranges,
+        named_range_ranges=named_range_ranges,
+    )
+    if parsed is None:
+        raise ValueError("INDIRECT text must resolve to a cell or range reference")
+    start_ref, end_ref = parsed
+    if start_ref.sheet is None:
+        start_ref = CellRef(sheet=current_sheet, column=start_ref.column, row=start_ref.row)
+    if end_ref.sheet is None:
+        end_ref = CellRef(sheet=current_sheet, column=end_ref.column, row=end_ref.row)
+    return start_ref, end_ref
+
+
+def parse_dynamic_range_refs_with_spans(
+    formula: str,
+    *,
+    current_sheet: str,
+    current_cell_a1: str | None = None,
+    named_ranges: dict[str, tuple[str, str]] | None = None,
+    named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
+    value_resolver: Callable[[str, str], object] | None = None,
+) -> list[tuple[CellRef, CellRef, tuple[int, int]]]:
+    """
+    Extract dynamic range references (OFFSET/INDIRECT) as (start, end, span).
+
+    Only supports static arguments. Raises ValueError for non-literal offsets or
+    non-literal INDIRECT references.
+    """
+    if not isinstance(formula, str) or not formula.startswith("="):
+        return []
+    if named_ranges is None:
+        named_ranges = {}
+
+    calls = _find_function_calls_with_spans(formula, {"OFFSET", "INDIRECT"})
+    out: list[tuple[CellRef, CellRef, tuple[int, int]]] = []
+    for fn, inner, span in calls:
+        args = _split_function_args(inner)
+        if args is None:
+            raise ValueError(f"{fn} has unbalanced parentheses or strings")
+        if fn == "OFFSET":
+            start_ref, end_ref = _parse_offset_call(
+                args,
+                current_sheet=current_sheet,
+                current_cell_a1=current_cell_a1,
+                named_ranges=named_ranges,
+                named_range_ranges=named_range_ranges,
+                value_resolver=value_resolver,
+            )
+        else:
+            start_ref, end_ref = _parse_indirect_call(
+                args,
+                current_sheet=current_sheet,
+                named_ranges=named_ranges,
+                named_range_ranges=named_range_ranges,
+            )
+        out.append((start_ref, end_ref, span))
+    return out
 
 
 def parse_guard_expr(
