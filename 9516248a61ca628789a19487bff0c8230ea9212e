@@ -1,0 +1,352 @@
+# Excel Dependency Graph Library - Implementation Plan
+
+**Date**: 2026-01-05
+**Status**: Draft - Awaiting Review
+
+## Overview
+
+A Python library to build and analyze dependency graphs from Excel workbooks. Primary goals:
+
+1. **Transpilation support**: Trace formula dependencies to enable Excel → Python translation
+2. **Interpretability**: Visualize and sanity-check complex spreadsheet models via standard graph formats (NetworkX, GraphViz, Mermaid)
+
+## Project Structure
+
+```
+excel_grapher/
+├── pyproject.toml
+├── README.md
+├── src/
+│   └── excel_grapher/
+│       ├── __init__.py          # Public API exports
+│       ├── graph.py             # DependencyGraph class (wrapper + hooks)
+│       ├── node.py              # Node dataclass, NodeKey type, ValueType enum
+│       ├── parser.py            # Formula parsing, cell ref extraction
+│       ├── resolver.py          # Named range resolution, sheet qualification
+│       ├── builder.py           # Entrypoint: create_dependency_graph()
+│       ├── export.py            # to_networkx(), to_graphviz(), to_mermaid()
+│       └── validation.py        # validate_graph() against calcChain.xml
+└── tests/
+    ├── test_parser.py
+    ├── test_resolver.py
+    ├── test_graph.py
+    ├── test_builder.py
+    ├── test_export.py
+    └── fixtures/                # Small .xlsx files for testing
+```
+
+## Core Types
+
+### NodeKey
+
+```python
+NodeKey = str  # Format: "SheetName!A1" (always sheet-qualified)
+```
+
+Simple string for hashability and readability. All internal operations use this format.
+
+### ValueType Enum
+
+```python
+class ValueType(Enum):
+    NUMBER = auto()
+    STRING = auto()
+    BOOLEAN = auto()
+    ERROR = auto()
+    DATETIME = auto()
+    EMPTY = auto()
+    UNKNOWN = auto()  # Formula cells when load_values=False
+```
+
+### Node Dataclass
+
+```python
+@dataclass
+class Node:
+    sheet: str
+    column: str              # "A", "AA", etc.
+    row: int
+    formula: str | None      # None for leaf nodes
+    value: Any               # Cached value, or None if not loaded
+    is_leaf: bool
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def key(self) -> NodeKey: ...
+
+    @property
+    def address(self) -> str: ...
+
+    @property
+    def column_index(self) -> int:
+        """1-based column index (A=1, B=2, AA=27, etc.)"""
+        ...
+
+    @property
+    def value_type(self) -> ValueType:
+        """Infer type from value at runtime."""
+        ...
+```
+
+Design decisions:
+- `column` stored as string (not int) because Excel uses letters in formulas
+- `column_index` property provides numeric form when needed (range operations, sorting)
+- `metadata` dict allows arbitrary extension without schema changes
+- `value_type` inferred on demand — no redundant storage, no sync bugs
+- For formula cells, `value` is the cached result from Excel (requires `load_values=True`)
+
+### CellRef (Parser Output)
+
+```python
+@dataclass(frozen=True)
+class CellRef:
+    sheet: str | None   # None means same sheet as formula
+    column: str
+    row: int
+    is_absolute_col: bool = False
+    is_absolute_row: bool = False
+```
+
+Immutable value object capturing exactly what was in the formula.
+
+## DependencyGraph Class
+
+```python
+NodeHook = Callable[[NodeKey, Node], None]
+
+@dataclass
+class DependencyGraph:
+    _nodes: dict[NodeKey, Node]
+    _edges: dict[NodeKey, set[NodeKey]]          # key -> dependencies
+    _reverse_edges: dict[NodeKey, set[NodeKey]]  # key -> dependents
+    _edge_attrs: dict[tuple[NodeKey, NodeKey], dict[str, Any]]
+    _hooks: list[NodeHook]
+
+    # Node operations
+    def add_node(self, node: Node) -> None: ...
+    def get_node(self, key: NodeKey) -> Node | None: ...
+    def __contains__(self, key: NodeKey) -> bool: ...
+    def __iter__(self) -> Iterator[NodeKey]: ...
+    def __len__(self) -> int: ...
+
+    # Edge operations
+    def add_edge(self, from_key: NodeKey, to_key: NodeKey, **attrs) -> None: ...
+    def dependencies(self, key: NodeKey) -> set[NodeKey]: ...
+    def dependents(self, key: NodeKey) -> set[NodeKey]: ...
+    def edge_attrs(self, from_key: NodeKey, to_key: NodeKey) -> dict[str, Any]: ...
+
+    # Hooks
+    def register_hook(self, hook: NodeHook) -> None: ...
+
+    # Queries
+    def leaves(self) -> Iterator[NodeKey]: ...
+    def roots(self) -> Iterator[NodeKey]: ...
+
+    # Algorithms
+    def evaluation_order(self) -> list[NodeKey]:
+        """Return nodes in dependency-first order (leaves before formulas that use them)."""
+        ...
+```
+
+Design decisions:
+- Dual edge storage (`_edges` + `_reverse_edges`) for O(1) bidirectional queries
+- Edge attributes stored separately — available from day one, edge hooks deferred
+- Hooks run on `add_node`, can mutate `node.metadata`
+- NetworkX built lazily via `to_networkx()`, not maintained in sync
+- Edge direction: `add_edge(A, B)` means "A depends on B" (A → B)
+- `evaluation_order()` returns leaves first, then formulas — suitable for sequential evaluation
+
+## Parser Module
+
+```python
+def parse_cell_refs(formula: str) -> list[CellRef]:
+    """Extract all cell references from formula."""
+    ...
+
+def parse_range_refs(formula: str) -> list[tuple[CellRef, CellRef]]:
+    """Extract range references as (start, end) tuples."""
+    ...
+
+def expand_range(start: CellRef, end: CellRef) -> list[CellRef]:
+    """Expand a range into individual cell refs."""
+    ...
+```
+
+Handles:
+- Local refs: `A1`, `$A$1`, `A$1`, `$A1`
+- Sheet-qualified: `Sheet1!A1`, `'Sheet Name'!A1`
+- Ranges: `A1:B10`, `Sheet1!A1:B10`
+
+Reference implementation: `find_leaf_nodes.py::get_cell_refs()`
+
+## Resolver Module
+
+```python
+class NameResolver(Protocol):
+    def resolve(self, name: str) -> tuple[str, str] | None: ...
+
+def build_named_range_map(workbook: Workbook) -> dict[str, tuple[str, str]]:
+    """Build lookup from workbook's defined names."""
+    ...
+
+def qualify_refs(
+    refs: list[CellRef],
+    current_sheet: str,
+    name_resolver: NameResolver | None = None,
+) -> list[tuple[str, str]]:
+    """Normalize to fully-qualified (sheet, address) tuples."""
+    ...
+```
+
+Design decisions:
+- `NameResolver` is a protocol for testability
+- Only single-cell named ranges supported (skip ranges, formulas, external refs)
+- Reference implementation: `find_leaf_nodes.py::build_named_range_map()`
+
+## Builder (Entrypoint)
+
+```python
+def create_dependency_graph(
+    workbook: Path | str | openpyxl.Workbook,
+    targets: Iterable[str],
+    *,
+    max_depth: int = 50,
+    expand_ranges: bool = True,
+    max_range_cells: int = 5000,
+    hooks: list[NodeHook] | None = None,
+    load_values: bool = True,
+) -> DependencyGraph:
+    """
+    Build a dependency graph starting from target cells.
+
+    Args:
+        workbook: Path to .xlsx/.xlsm, or loaded Workbook
+        targets: Cell addresses to trace from (e.g., "Sheet1!A1")
+        max_depth: Stop tracing after this many levels
+        expand_ranges: If True, expand A1:B10 into individual cells
+        max_range_cells: Cap on range expansion
+        hooks: Node hooks to register before building
+        load_values: If True, load cached values (second workbook parse)
+    """
+```
+
+Algorithm: BFS traversal from targets, adding nodes and edges until reaching leaves or max depth.
+
+Design decisions:
+- Accepts Path, string, or Workbook — flexible for scripts and tests
+- Dual workbook load only when `load_values=True` — performance opt-out
+- Depth limit prevents infinite loops on circular refs
+- Reference implementation: `find_leaf_nodes.py::find_leaf_nodes()`
+
+## Export Module
+
+```python
+def to_networkx(graph: DependencyGraph) -> nx.DiGraph:
+    """Convert to NetworkX for algorithms/visualization."""
+    ...
+
+def to_graphviz(
+    graph: DependencyGraph,
+    *,
+    label_fn: Callable[[NodeKey, Node], str] | None = None,
+    highlight: set[NodeKey] | None = None,
+    rankdir: str = "TB",
+) -> str:
+    """Generate GraphViz DOT source."""
+    ...
+
+def to_mermaid(
+    graph: DependencyGraph,
+    *,
+    label_fn: Callable[[NodeKey, Node], str] | None = None,
+    max_nodes: int = 100,
+) -> str:
+    """Generate Mermaid flowchart source."""
+    ...
+```
+
+Design decisions:
+- `to_networkx()` is the foundation — other tools consume it
+- `label_fn` callback for custom node labels
+- Mermaid capped at 100 nodes by default (chokes on large graphs)
+- Shape encodes leaf vs formula visually
+
+## Validation Module
+
+```python
+class ValidationResult(NamedTuple):
+    is_valid: bool
+    in_graph_not_in_chain: set[str]
+    in_chain_not_in_graph: set[str]
+    messages: list[str]
+
+def parse_calc_chain(workbook_path: Path) -> set[str]:
+    """Extract formula cells from xl/calcChain.xml."""
+    ...
+
+def validate_graph(
+    graph: DependencyGraph,
+    workbook_path: Path,
+    *,
+    scope: set[str] | None = None,
+) -> ValidationResult:
+    """Validate graph against Excel's calcChain."""
+    ...
+```
+
+Design decisions:
+- Opt-in validation (separate function call)
+- `in_chain_not_in_graph` is expected when tracing from specific targets
+- `in_graph_not_in_chain` is the red flag (parsing bug or named range issue)
+- Gracefully handles missing calcChain.xml
+
+## Dependencies
+
+```toml
+[project]
+name = "excel-grapher"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "openpyxl>=3.1.0",
+]
+
+[project.optional-dependencies]
+networkx = ["networkx>=3.0"]
+viz = ["graphviz"]
+dev = ["pytest", "pytest-cov"]
+```
+
+NetworkX is optional — only needed for `to_networkx()`.
+
+## What's NOT in v0.1 (YAGNI)
+
+- Edge hooks — deferred until concrete use case
+- Formula transpilation — separate library, consumes this graph
+- Circular reference resolution — detect and report, don't solve
+- Live Excel connection — file-based only
+- Write-back — read-only analysis
+
+## Implementation Order
+
+1. **node.py** — `Node`, `NodeKey`, `ValueType` (no dependencies)
+2. **parser.py** — `CellRef`, `parse_cell_refs()`, `parse_range_refs()`, `expand_range()`
+3. **resolver.py** — `NameResolver`, `build_named_range_map()`, `qualify_refs()`
+4. **graph.py** — `DependencyGraph` class with hooks
+5. **builder.py** — `create_dependency_graph()` entrypoint
+6. **export.py** — `to_networkx()`, `to_graphviz()`, `to_mermaid()`
+7. **validation.py** — `parse_calc_chain()`, `validate_graph()`
+8. **__init__.py** — public API exports
+9. **README.md** — usage docs and design decisions
+10. **tests/** — unit tests with small fixture workbooks
+
+## Testing Strategy
+
+- Unit tests for parser with known formula strings
+- Unit tests for resolver with mock workbooks
+- Integration tests with small `.xlsx` fixtures (committed to repo)
+- Validation tests comparing against known calcChain.xml contents
+
+## Open Questions
+
+None at this time — design is complete pending review.
