@@ -1,0 +1,324 @@
+# Guarded Edges and Cycle Detection — Design Plan
+
+**Date**: 2026-01-05
+**Status**: Draft
+**Depends on**: `2026-01-05-dependency-graph-library.md` (v0.1 complete)
+
+## Problem Statement
+
+Our current dependency graph treats all edges as unconditional. When a formula like `IF(cond, A, B)` references cells in both branches, we add edges to both — even though only one branch is taken at runtime.
+
+This causes **false-positive cycles**: the graph appears cyclic when the actual runtime execution is acyclic (because mutually exclusive branches are never both active).
+
+Example from LIC-DSF:
+- `I77 → I64 → ... → I95 → I77` appears cyclic
+- But several edges are inside `IF` branches with mutually exclusive conditions
+- Excel calculates it fine with `iterate=False`
+
+## Goals
+
+1. **Distinguish conditional from unconditional dependencies**
+2. **Classify cycles as must-cycle vs may-cycle**
+3. **Expose cycle information via a first-class API**
+4. **Improve `evaluation_order()` error messages**
+5. **Lay groundwork for future execution planning / branch pruning**
+
+## Non-Goals (v0.2)
+
+- Full formula AST / expression evaluator
+- Runtime branch pruning / projection graph
+- Support for `IFS`, `CHOOSE`, `SWITCH` (start with `IF` only)
+- Automatic cycle resolution
+
+---
+
+## Core Concepts
+
+### Guarded Edges
+
+An edge from `A` to `B` can be:
+
+- **Unconditional** (`guard=None`): `A` always depends on `B`
+- **Guarded** (`guard=<expr>`): `A` depends on `B` only if `guard` is true
+
+Example:
+```
+A1 = IF(S=0, B1, C1)
+```
+Produces:
+- Edge `A1 → B1` with guard `S=0`
+- Edge `A1 → C1` with guard `NOT(S=0)`
+
+### Guard Expressions
+
+A minimal boolean expression type:
+
+```python
+@dataclass(frozen=True)
+class GuardExpr:
+    """Base class for guard expressions."""
+    pass
+
+@dataclass(frozen=True)
+class CellRef(GuardExpr):
+    """A cell reference used in a condition."""
+    key: NodeKey  # e.g. "Sheet1!C79"
+
+@dataclass(frozen=True)
+class Literal(GuardExpr):
+    """A literal value."""
+    value: Any
+
+@dataclass(frozen=True)
+class Compare(GuardExpr):
+    """Comparison: left op right."""
+    left: GuardExpr
+    op: str  # "=", "<>", "<", ">", "<=", ">="
+    right: GuardExpr
+
+@dataclass(frozen=True)
+class Not(GuardExpr):
+    """Logical negation."""
+    operand: GuardExpr
+
+@dataclass(frozen=True)
+class And(GuardExpr):
+    """Logical AND."""
+    operands: tuple[GuardExpr, ...]
+
+@dataclass(frozen=True)
+class Or(GuardExpr):
+    """Logical OR."""
+    operands: tuple[GuardExpr, ...]
+```
+
+For v0.2, we only need to **construct** these from `IF` conditions; we don't need to evaluate or simplify them (that's for the execution planner later).
+
+### Must-Cycle vs May-Cycle
+
+- **Must-cycle**: An SCC (strongly connected component) that exists when considering only unconditional edges. Cannot be broken by any branch choice.
+
+- **May-cycle**: An SCC that appears only when guarded edges are included. May be illusory — could disappear at runtime depending on which branches are taken.
+
+---
+
+## API Changes
+
+### Edge Attributes
+
+Update `add_edge()` to accept an optional guard:
+
+```python
+def add_edge(
+    self,
+    from_key: NodeKey,
+    to_key: NodeKey,
+    *,
+    guard: GuardExpr | None = None,
+    **attrs: Any,
+) -> None:
+    """
+    Add edge: from_key depends on to_key.
+
+    Args:
+        guard: If provided, this dependency is conditional on the guard
+               expression being true. If None, the dependency is unconditional.
+    """
+```
+
+Store guard in `_edge_attrs`:
+```python
+self._edge_attrs[(from_key, to_key)] = {"guard": guard, **attrs}
+```
+
+### Cycle Report
+
+New dataclass and method:
+
+```python
+@dataclass
+class CycleReport:
+    """Result of cycle analysis."""
+    has_must_cycles: bool
+    has_may_cycles: bool
+    must_cycles: list[set[NodeKey]]  # SCCs with >1 node in unconditional graph
+    may_cycles: list[set[NodeKey]]   # SCCs that appear only with guarded edges
+
+    # For debugging: example path for first must-cycle (if any)
+    example_must_cycle_path: list[NodeKey] | None = None
+    example_may_cycle_path: list[NodeKey] | None = None
+
+def cycle_report(self) -> CycleReport:
+    """
+    Analyze the graph for cycles.
+
+    Returns a CycleReport distinguishing must-cycles (unconditional)
+    from may-cycles (only appear when including guarded edges).
+    """
+```
+
+### Updated `evaluation_order()`
+
+```python
+def evaluation_order(self, *, strict: bool = True) -> list[NodeKey]:
+    """
+    Return nodes in dependency-first order.
+
+    Args:
+        strict: If True (default), raise on any cycle (must or may).
+                If False, raise only on must-cycles; warn on may-cycles
+                and exclude may-cycle nodes from the order.
+
+    Raises:
+        CycleError: If a must-cycle exists, or if strict=True and
+                    any cycle exists.
+    """
+```
+
+New exception type:
+
+```python
+class CycleError(ValueError):
+    """Raised when a cycle prevents computing evaluation order."""
+    def __init__(self, message: str, cycle_path: list[NodeKey], is_must_cycle: bool):
+        super().__init__(message)
+        self.cycle_path = cycle_path
+        self.is_must_cycle = is_must_cycle
+```
+
+### Workbook Iterate Setting
+
+Add to validation module or a new `workbook_info()` function:
+
+```python
+@dataclass
+class WorkbookCalcSettings:
+    iterate_enabled: bool
+    iterate_count: int  # max iterations
+    iterate_delta: float  # convergence threshold
+
+def get_calc_settings(workbook_path: Path) -> WorkbookCalcSettings:
+    """Extract calculation settings from xl/workbook.xml."""
+```
+
+---
+
+## Parser Changes
+
+### IF Condition Extraction
+
+When parsing `IF(cond, then_expr, else_expr)`:
+
+1. Parse `cond` into a `GuardExpr`
+2. Extract dependencies from `then_expr` with guard `cond`
+3. Extract dependencies from `else_expr` with guard `Not(cond)`
+
+For v0.2, we only handle top-level `IF`. Nested `IF` in the condition itself is treated as opaque (unconditional).
+
+### Minimal Condition Parser
+
+Support:
+- Cell references: `A1`, `$A$1`, `Sheet!A1`
+- Literals: numbers, strings, booleans
+- Comparisons: `=`, `<>`, `<`, `>`, `<=`, `>=`
+- `AND(...)`, `OR(...)`, `NOT(...)`
+
+Do NOT support (treat as opaque → unconditional):
+- Arithmetic in conditions
+- Function calls other than AND/OR/NOT
+- Nested IF in the condition
+
+---
+
+## Implementation Order
+
+1. **guard.py** — `GuardExpr` types (`CellRef`, `Literal`, `Compare`, `Not`, `And`, `Or`)
+
+2. **parser.py** — Update to:
+   - Detect `IF(` at top level
+   - Parse the condition into `GuardExpr`
+   - Return dependencies with associated guards
+
+3. **graph.py** — Update:
+   - `add_edge()` accepts `guard` parameter
+   - `edge_guard(from_key, to_key) -> GuardExpr | None` accessor
+   - `_unconditional_edges()` helper (filters to guard=None)
+   - `cycle_report()` method
+   - `CycleError` exception
+   - Update `evaluation_order()` with `strict` parameter
+
+4. **builder.py** — Wire up guarded edge creation from parser output
+
+5. **validation.py** — Add `get_calc_settings()`
+
+6. **export.py** — Update `to_graphviz()` / `to_mermaid()`:
+   - Unconditional edges: solid
+   - Guarded edges: dashed + optional guard label
+
+7. **Tests** — Cover:
+   - Guarded edge creation
+   - Must-cycle vs may-cycle detection
+   - `evaluation_order(strict=True)` vs `strict=False`
+   - Edge styling in exports
+
+---
+
+## Example Behavior
+
+Given:
+```
+A1 = IF($S$1=0, B1, 1)
+B1 = IF($S$1=1, A1, 2)
+S1 = 0  (leaf)
+```
+
+**Graph edges:**
+- `A1 → B1` guard=`Compare(CellRef("Sheet1!S1"), "=", Literal(0))`
+- `A1 → S1` guard=None (condition always evaluated)
+- `B1 → A1` guard=`Compare(CellRef("Sheet1!S1"), "=", Literal(1))`
+- `B1 → S1` guard=None
+
+**cycle_report():**
+- `must_cycles = []` (no SCC in unconditional-only graph)
+- `may_cycles = [{A1, B1}]` (SCC appears only with guarded edges)
+
+**evaluation_order(strict=True):**
+- Raises `CycleError` with `is_must_cycle=False`
+
+**evaluation_order(strict=False):**
+- Warns about may-cycle
+- Returns `[S1]` (excludes A1, B1 from order)
+
+---
+
+## Future Work (Not in v0.2)
+
+- **Projection graph**: Clone nodes reached under mutually exclusive guards
+- **Support for `IFS`, `CHOOSE`, `SWITCH`**
+- **Guard evaluation**: Given leaf values, evaluate guards to prune inactive edges
+- **Execution planner**: Build an evaluation plan that handles guard dependencies
+- **Nested IF in conditions**
+
+Before closing this issue, create a new issue to create the projection graph method and to track the other future work.
+
+---
+
+## Open Questions
+
+1. **Guard string representation**: Should `GuardExpr` have a `__str__` that produces Excel-like syntax for display?
+
+2. **Guard on both branches**: For `IF(cond, A, B)`, should we:
+   - Add `A` with guard `cond` and `B` with guard `NOT(cond)` (proposed), or
+   - Add `A` with guard `cond` and `B` as unconditional (simpler but less precise)?
+
+3. **Warning mechanism**: Should `evaluation_order(strict=False)` use Python `warnings.warn()` or return a result object with warnings?
+
+---
+
+## Summary
+
+This plan introduces **guarded edges** as the core primitive for representing conditional dependencies. This enables distinguishing **must-cycles** (real algebraic circularity) from **may-cycles** (branch-dependent, potentially illusory).
+
+The `cycle_report()` API exposes this analysis, and `evaluation_order()` gains a `strict` parameter to control failure behavior. Visualization exports will style guarded edges distinctly.
+
+This lays the foundation for future execution planning that can prune inactive branches at runtime.
