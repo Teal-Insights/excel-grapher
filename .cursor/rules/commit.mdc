@@ -1,0 +1,34 @@
+---
+description: Add project management artifacts to version control as git notes associated with code commits
+alwaysApply: false
+---
+## Adding an artifact to a commit as a git note
+
+If you've completed a unit of work that has an issue description, spec, design document, or code review associated with it, add this artifact to the commit as a git note. E.g., given a file like docs/plans/YYYY-MM-DD-<topic>.md and a commit hash like abc123:
+
+```
+git notes add -f -F docs/plans/YYYY-MM-DD-<topic>.md abc123
+```
+
+When deciding what commit to associate an artifact with, choose the anchor commit (in order):**
+  - The merge commit that landed the work (if applicable), or
+  - The first commit that implements the plan's core behavior
+
+Note that artifacts like planning docs will generally be intentionally untracked/gitignored. Once a planning artifact is committed as a note, it should be deleted from the file system to avoid clutter and redundant notes.
+
+## Pushing and pulling notes to and from the remote repository
+
+We will always keep notes in sync with the remote repository. To push and pull notes to and from the remote repository, run:
+
+```
+git push origin refs/notes/*
+git fetch origin refs/notes/*:refs/notes/*
+```
+
+## Reviewing notes for a given commit
+
+We use git notes to persist project management artifacts as part of version history so we can quickly grok the thinking behind any given commit without cluttering up the file system and agent context with the full intellectual history of our project. To review the notes for a given commit, run:
+
+```
+git notes show abc123
+```
