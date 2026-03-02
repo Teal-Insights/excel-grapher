@@ -34,7 +34,8 @@ INDICATOR_CONFIG: list[IndicatorConfig] = [
     {"sheet": "B4_other flows_ext", "indicator_rows": [35, 36, 39, 40]},
 ]
 
-WORKBOOK_PATH = Path("example/data/lic-dsf-template.xlsm")
+# Dated template; adjust filename if using a different snapshot.
+WORKBOOK_PATH = Path("example/data/lic-dsf-template-2025-08-12.xlsm")
 
 
 def discover_formula_cells_in_rows(
@@ -46,20 +47,17 @@ def discover_formula_cells_in_rows(
     Scan specified rows and return sheet-qualified addresses for formula cells.
 
     Only includes cells that contain formulas (start with '=') and whose cached
-    calculated value is numeric.
-
-    Args:
-        wb_path: Path to the Excel workbook
-        sheet_name: Name of the sheet to scan
-        rows: List of row numbers to scan
-
-    Returns:
-        List of sheet-qualified cell addresses (e.g., "'Sheet Name'!A1")
+    calculated value is numeric. Uses excel_grapher's format_cell_key so keys
+    match the dependency graph.
     """
     wb_formulas = openpyxl.load_workbook(wb_path, data_only=False, keep_vba=True)
     wb_values = openpyxl.load_workbook(wb_path, data_only=True, keep_vba=True)
     try:
-        if sheet_name not in wb_formulas.sheetnames:
+        if (
+            sheet_name not in wb_formulas.sheetnames
+            or sheet_name not in wb_values.sheetnames
+        ):
+            print(f"  Warning: Sheet '{sheet_name}' not found")
             return []
 
         ws_formulas = wb_formulas[sheet_name]
@@ -90,7 +88,6 @@ def main() -> None:
     
     if not WORKBOOK_PATH.exists():
         print(f"Error: Workbook not found at {WORKBOOK_PATH}")
-        print("Make sure lic-dsf-template.xlsm is in the project root.")
         return
     
     # Discover all formula cells in indicator rows
@@ -149,9 +146,13 @@ def main() -> None:
     print(f"   Must-cycles: {len(report.must_cycles)}")
     print(f"   May-cycles:  {len(report.may_cycles)}")
     if report.example_must_cycle_path:
-        print(f"   Example must-cycle path: {' -> '.join(report.example_must_cycle_path)}")
+        print(
+            f"   Example must-cycle path: {' -> '.join(report.example_must_cycle_path)}"
+        )
     if report.example_may_cycle_path:
-        print(f"   Example may-cycle path:  {' -> '.join(report.example_may_cycle_path)}")
+        print(
+            f"   Example may-cycle path:  {' -> '.join(report.example_may_cycle_path)}"
+        )
     
     # Validate against calcChain.xml
     print("\n5. Validating against calcChain.xml...")
@@ -163,7 +164,9 @@ def main() -> None:
         print(f"   {msg}")
     
     if result.in_graph_not_in_chain:
-        print(f"\n   Cells in graph but not in calcChain ({len(result.in_graph_not_in_chain)}):")
+        print(
+            f"\n   Cells in graph but not in calcChain ({len(result.in_graph_not_in_chain)}):"
+        )
         for cell in sorted(result.in_graph_not_in_chain)[:10]:
             print(f"      {cell}")
         if len(result.in_graph_not_in_chain) > 10:
