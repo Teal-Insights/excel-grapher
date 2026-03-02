@@ -1,0 +1,53 @@
+---
+description: Maintain semantic parity between FormulaEvaluator and generated standalone code
+alwaysApply: false
+---
+## Parity contract
+
+This repo has two execution paths:
+
+- **Evaluator path**: `excel_formula_expander/FormulaEvaluator`
+- **Generated code path**: `excel_formula_expander/CodeGenerator` output
+
+**Parity requirement**: for any supported Excel feature, both paths must produce identical results (including Excel-style errors and coercions).
+
+## Single source of truth for Excel semantics
+
+- **Canonical runtime**: all Excel-compatible semantics live in `excel_formula_expander/export_runtime/*`.
+- **Evaluator**: must call runtime semantics (directly or via re-exports in `excel_formula_expander/helpers.py`).
+- **Codegen**: must emit calls to the same runtime symbols and embed them using `excel_formula_expander/export_runtime/embed.py::emit_runtime(...)`.
+
+Do not introduce a second implementation of semantics elsewhere; it will drift.
+
+## How to add or change Excel behavior (TDD workflow)
+
+When adding a new function/operator or changing semantics:
+
+1) **Add a parity test first (RED)** using `tests/parity_harness.py`.
+
+2) **Implement or update the runtime (GREEN)**
+   - Add/modify the canonical implementation in `excel_formula_expander/export_runtime/*`.
+
+3) **Wire the evaluator to the runtime**
+   - Update `FormulaEvaluator` and/or `helpers.py` so the evaluator calls the runtime implementation.
+
+4) **Wire codegen to the runtime**
+   - Ensure `CodeGenerator` emits the correct runtime symbol and `emit_runtime(...)` includes it via dependency closure.
+
+5) **Add a pruning assertion** when runtime surface area might bloat generated output (optional).
+
+6) **Run tests**: `uv run pytest`.
+
+### Parity harness quickstart
+
+Preferred pattern for most parity work:
+
+```python
+from tests.parity_harness import assert_codegen_matches_evaluator
+
+result = assert_codegen_matches_evaluator(graph, targets)
+assert result.generated_results["S!A1"] == 123
+```
+
+Avoid duplicating operator or coercion behavior in both evaluator and codegen paths.
+
