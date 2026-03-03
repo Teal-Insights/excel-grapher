@@ -8,7 +8,7 @@ import pytest
 from openpyxl.workbook.defined_name import DefinedName
 
 from excel_grapher import create_dependency_graph
-from excel_grapher.resolver import build_named_range_map
+from excel_grapher.grapher.resolver import build_named_range_map
 
 
 def _new_workbook() -> openpyxl.Workbook:

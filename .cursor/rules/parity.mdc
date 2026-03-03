@@ -6,16 +6,16 @@ alwaysApply: false
 
 This repo has two execution paths:
 
-- **Evaluator path**: `excel_formula_expander/FormulaEvaluator`
-- **Generated code path**: `excel_formula_expander/CodeGenerator` output
+- **Evaluator path**: `excel_evaluator/FormulaEvaluator`
+- **Generated code path**: `excel_evaluator/CodeGenerator` output
 
 **Parity requirement**: for any supported Excel feature, both paths must produce identical results (including Excel-style errors and coercions).
 
 ## Single source of truth for Excel semantics
 
-- **Canonical runtime**: all Excel-compatible semantics live in `excel_formula_expander/export_runtime/*`.
-- **Evaluator**: must call runtime semantics (directly or via re-exports in `excel_formula_expander/helpers.py`).
-- **Codegen**: must emit calls to the same runtime symbols and embed them using `excel_formula_expander/export_runtime/embed.py::emit_runtime(...)`.
+- **Canonical runtime**: all Excel-compatible semantics live in `excel_evaluator/export_runtime/*`.
+- **Evaluator**: must call runtime semantics (directly or via re-exports in `excel_evaluator/helpers.py`).
+- **Codegen**: must emit calls to the same runtime symbols and embed them using `excel_evaluator/export_runtime/embed.py::emit_runtime(...)`.
 
 Do not introduce a second implementation of semantics elsewhere; it will drift.
 
@@ -26,7 +26,7 @@ When adding a new function/operator or changing semantics:
 1) **Add a parity test first (RED)** using `tests/parity_harness.py`.
 
 2) **Implement or update the runtime (GREEN)**
-   - Add/modify the canonical implementation in `excel_formula_expander/export_runtime/*`.
+   - Add/modify the canonical implementation in `excel_evaluator/export_runtime/*`.
 
 3) **Wire the evaluator to the runtime**
    - Update `FormulaEvaluator` and/or `helpers.py` so the evaluator calls the runtime implementation.

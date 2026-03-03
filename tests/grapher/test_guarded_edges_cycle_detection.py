@@ -118,7 +118,7 @@ def test_evaluation_order_strict_true_raises_on_may_cycle(tmp_path: Path) -> Non
     _make_feasible_may_cycle_if_workbook(excel_path)
     graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
 
-    from excel_grapher.graph import CycleError
+    from excel_grapher import CycleError
 
     with pytest.raises(CycleError) as e:
         graph.evaluation_order(strict=True)
@@ -148,7 +148,7 @@ def test_must_cycle_is_reported_and_always_raises(tmp_path: Path) -> None:
     assert report.has_must_cycles is True
     assert any({"Sheet1!A1", "Sheet1!B1"} == s for s in report.must_cycles)
 
-    from excel_grapher.graph import CycleError
+    from excel_grapher import CycleError
 
     with pytest.raises(CycleError) as e1:
         graph.evaluation_order(strict=True)
