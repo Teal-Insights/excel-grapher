@@ -17,7 +17,7 @@ from tests.evaluator.discover_formula_cells import discover_formula_cells_in_row
 pytestmark = pytest.mark.slow
 
 # Path to the test workbook
-WORKBOOK_PATH = Path("example/data/lic-dsf-template.xlsm")
+WORKBOOK_PATH = Path("example/data/lic-dsf-template-2025-08-12.xlsm")
 
 # Configuration matching the indicator mapping script
 INDICATOR_CONFIG = {

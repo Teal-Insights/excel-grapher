@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-# Re-export from curated runtime so evaluator and generator share semantics.
-from .export_runtime.core import (  # noqa: F401
-    _format_general_number,
+from excel_grapher.core import (
+    _xl_compare,
     excel_casefold,
     flatten,
     get_error,
@@ -11,9 +10,6 @@ from .export_runtime.core import (  # noqa: F401
     to_native,
     to_number,
     to_string,
-)
-from .export_runtime.operators import (  # noqa: F401
-    _xl_compare,
     xl_add,
     xl_concat,
     xl_div,
@@ -26,11 +22,12 @@ from .export_runtime.operators import (  # noqa: F401
     xl_mul,
     xl_ne,
     xl_neg,
-    xl_pos,
     xl_percent,
+    xl_pos,
     xl_pow,
     xl_sub,
 )
+from excel_grapher.core.coercions import _format_general_number
 from .export_runtime.offset_runtime import xl_offset_ref  # noqa: F401
 from .export_runtime.reference import xl_column, xl_columns, xl_row  # noqa: F401
 

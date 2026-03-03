@@ -169,7 +169,7 @@ Create a Python library that can expand Excel formulas by substitution and trans
 
 ## Context
 
-We have an Excel workbook, `example/data/lic-dsf-template.xlsm`, that will serve as the primary target for the library (though the intent is to build a general-purpose tool.) Within the workbook, we are targeting particular indicator rows for conversion to Python code: "B1_GDP_ext" rows 35, 36, 39, 40; "B3_Exports_ext" rows 35, 36, 39, 40; "B4_other flows_ext" rows 35, 36, 39, 40.
+We have an Excel workbook, `example/data/lic-dsf-template-2025-08-12.xlsm`, that will serve as the primary target for the library (though the intent is to build a general-purpose tool.) Within the workbook, we are targeting particular indicator rows for conversion to Python code: "B1_GDP_ext" rows 35, 36, 39, 40; "B3_Exports_ext" rows 35, 36, 39, 40; "B4_other flows_ext" rows 35, 36, 39, 40.
 
 The `excel_grapher` dependency implements logic to extract all cells required for the computation of these indicators as an `excel_grapher.DependencyGraph` object. This object already represents Excel addresses in a normalized format, with all addresses sheet-qualified and all named ranges expanded to their canonical references. We control this dependency, so any bugs related to graph extraction should be reported and fixed there.
 

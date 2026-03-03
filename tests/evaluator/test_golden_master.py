@@ -23,7 +23,7 @@ from tests.evaluator.discover_formula_cells import discover_formula_cells_in_row
 
 pytestmark = pytest.mark.slow
 
-WORKBOOK_PATH = Path("example/data/lic-dsf-template.xlsm")
+WORKBOOK_PATH = Path("example/data/lic-dsf-template-2025-08-12.xlsm")
 
 INDICATOR_CONFIG = {
     cfg["sheet"]: cfg["indicator_rows"] for cfg in LIC_DSF_INDICATOR_CONFIG

@@ -5,18 +5,33 @@ from collections import deque
 from pathlib import Path
 
 
-_RUNTIME_MODULES: list[str] = [
-    "core",
-    "operators",
-    "math",
-    "text",
-    "info",
-    "logic",
-    "lookup",
-    "reference",
-    "offset_runtime",
-    "cache",
+_RUNTIME_DIR = Path(__file__).resolve().parent
+_CORE_DIR = _RUNTIME_DIR.parent.parent / "core"
+
+# Core package modules define types, coercions, and scalar operators (canonical source).
+_CORE_MODULES: list[tuple[str, Path]] = [
+    ("core.types", _CORE_DIR / "types.py"),
+    ("core.coercions", _CORE_DIR / "coercions.py"),
+    ("core.operators", _CORE_DIR / "operators.py"),
 ]
+
+# Export runtime modules (representation-specific or re-exports); order preserved for iteration.
+_RUNTIME_MODULES: list[tuple[str, Path]] = [
+    ("core", _RUNTIME_DIR / "core.py"),
+    ("operators", _RUNTIME_DIR / "operators.py"),
+    ("math", _RUNTIME_DIR / "math.py"),
+    ("text", _RUNTIME_DIR / "text.py"),
+    ("info", _RUNTIME_DIR / "info.py"),
+    ("logic", _RUNTIME_DIR / "logic.py"),
+    ("lookup", _RUNTIME_DIR / "lookup.py"),
+    ("reference", _RUNTIME_DIR / "reference.py"),
+    ("offset_runtime", _RUNTIME_DIR / "offset_runtime.py"),
+    ("cache", _RUNTIME_DIR / "cache.py"),
+]
+
+# All modules: core first so their definitions win when symbols are defined in both.
+_ALL_MODULES: list[tuple[str, Path]] = _CORE_MODULES + _RUNTIME_MODULES
+_ALL_MODULE_NAMES: list[str] = [name for name, _ in _ALL_MODULES]
 
 # Top-level names that are stdlib so emitted "import X" order satisfies ruff isort (I001).
 _ISORT_STDLIB: frozenset[str] = frozenset(
@@ -294,24 +309,22 @@ def _prune_import_lines(import_lines: list[str], *, used_names: set[str]) -> lis
 def emit_runtime(required_symbols: set[str], *, include_offset_table: bool) -> str:
     """Emit standalone runtime code for generated output.
 
-    This uses AST-based extraction from curated runtime modules and includes only
-    the requested symbols (and their transitive runtime dependencies).
+    This uses AST-based extraction from curated runtime modules and core,
+    including only the requested symbols (and their transitive runtime dependencies).
     """
-    runtime_dir = Path(__file__).parent
-
-    # Parse all runtime modules.
+    # Parse all runtime and core modules.
     module_src: dict[str, str] = {}
     module_ast: dict[str, ast.Module] = {}
     defs_by_module: dict[str, dict[str, ast.AST]] = {}
     imports_by_module: dict[str, list[str]] = {}
 
-    for mod in _RUNTIME_MODULES:
-        src = (runtime_dir / f"{mod}.py").read_text(encoding="utf-8")
-        module_src[mod] = src
-        mod_ast = ast.parse(src, filename=str(runtime_dir / f"{mod}.py"))
-        module_ast[mod] = mod_ast
-        defs_by_module[mod] = _top_level_defs(mod_ast)
-        imports_by_module[mod] = _collect_external_import_lines(mod_ast, src)
+    for mod_name, mod_path in _ALL_MODULES:
+        src = mod_path.read_text(encoding="utf-8")
+        module_src[mod_name] = src
+        mod_ast = ast.parse(src, filename=str(mod_path))
+        module_ast[mod_name] = mod_ast
+        defs_by_module[mod_name] = _top_level_defs(mod_ast)
+        imports_by_module[mod_name] = _collect_external_import_lines(mod_ast, src)
 
     symbol_to_node: dict[str, ast.AST] = {}
     symbol_to_module: dict[str, str] = {}
@@ -343,7 +356,7 @@ def emit_runtime(required_symbols: set[str], *, include_offset_table: bool) -> s
     # Imports: union external imports from modules that contribute symbols.
     used_modules = {symbol_to_module[s] for s in needed if s in symbol_to_module}
     import_lines: list[str] = []
-    for mod in _RUNTIME_MODULES:
+    for mod in _ALL_MODULE_NAMES:
         if mod not in used_modules:
             continue
         for line in imports_by_module[mod]:

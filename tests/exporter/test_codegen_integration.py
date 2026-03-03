@@ -204,7 +204,7 @@ class TestGeneratedCodeExecution:
 class TestGeneratedCodeWithRealWorkbook:
     """Integration tests using real LIC-DSF workbook."""
 
-    WORKBOOK_PATH = Path("example/data/lic-dsf-template.xlsm")
+    WORKBOOK_PATH = Path("example/data/lic-dsf-template-2025-08-12.xlsm")
     INDICATOR_CONFIG = {"B1_GDP_ext": [35, 36]}
     MAX_DEPTH = 100
     RTOL = 1e-5

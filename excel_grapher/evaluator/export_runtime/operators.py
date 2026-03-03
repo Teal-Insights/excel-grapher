@@ -1,177 +1,43 @@
+"""Re-export scalar operators from excel_grapher.core for export runtime consumers."""
+
 from __future__ import annotations
 
-from .core import CellValue, XlError, excel_casefold, to_number, to_string
+from excel_grapher.core.operators import (
+    _xl_compare,
+    xl_add,
+    xl_concat,
+    xl_div,
+    xl_eq,
+    xl_ge,
+    xl_gt,
+    xl_iferror,
+    xl_le,
+    xl_lt,
+    xl_mul,
+    xl_ne,
+    xl_neg,
+    xl_percent,
+    xl_pos,
+    xl_pow,
+    xl_sub,
+)
 
-
-def _xl_compare(op: str, left: CellValue, right: CellValue) -> bool | XlError:
-    if isinstance(left, XlError):
-        return left
-    if isinstance(right, XlError):
-        return right
-
-    def _cmp(a: str | float, b: str | float) -> bool:
-        if op == "=":
-            return a == b
-        if op == "<>":
-            return a != b
-        if op == "<":
-            return a < b  # type: ignore[operator]
-        if op == ">":
-            return a > b  # type: ignore[operator]
-        if op == "<=":
-            return a <= b  # type: ignore[operator]
-        if op == ">=":
-            return a >= b  # type: ignore[operator]
-        raise ValueError(f"Unknown comparison operator: {op}")
-
-    if isinstance(left, str) and isinstance(right, str):
-        return _cmp(excel_casefold(left), excel_casefold(right))
-
-    ln = to_number(left)
-    rn = to_number(right)
-    if isinstance(ln, XlError) or isinstance(rn, XlError):
-        return _cmp(excel_casefold(to_string(left)), excel_casefold(to_string(right)))
-
-    return _cmp(float(ln), float(rn))
-
-
-def xl_concat(left: CellValue, right: CellValue) -> str | XlError:
-    if isinstance(left, XlError):
-        return left
-    if isinstance(right, XlError):
-        return right
-    return to_string(left) + to_string(right)
-
-
-def xl_eq(left: CellValue, right: CellValue) -> bool | XlError:
-    return _xl_compare("=", left, right)
-
-
-def xl_ne(left: CellValue, right: CellValue) -> bool | XlError:
-    return _xl_compare("<>", left, right)
-
-
-def xl_lt(left: CellValue, right: CellValue) -> bool | XlError:
-    return _xl_compare("<", left, right)
-
-
-def xl_gt(left: CellValue, right: CellValue) -> bool | XlError:
-    return _xl_compare(">", left, right)
-
-
-def xl_le(left: CellValue, right: CellValue) -> bool | XlError:
-    return _xl_compare("<=", left, right)
-
-
-def xl_ge(left: CellValue, right: CellValue) -> bool | XlError:
-    return _xl_compare(">=", left, right)
-
-
-def xl_iferror(value: CellValue, value_if_error: CellValue) -> CellValue:
-    if isinstance(value, XlError):
-        return value_if_error
-    return value
-
-
-def xl_div(left: CellValue, right: CellValue) -> float | XlError:
-    if isinstance(left, XlError):
-        return left
-    if isinstance(right, XlError):
-        return right
-    ln = to_number(left)
-    rn = to_number(right)
-    if isinstance(ln, XlError):
-        return ln
-    if isinstance(rn, XlError):
-        return rn
-    if rn == 0:
-        return XlError.DIV
-    return ln / rn
-
-
-def xl_add(left: CellValue, right: CellValue) -> float | XlError:
-    if isinstance(left, XlError):
-        return left
-    if isinstance(right, XlError):
-        return right
-    ln = to_number(left)
-    rn = to_number(right)
-    if isinstance(ln, XlError):
-        return ln
-    if isinstance(rn, XlError):
-        return rn
-    return ln + rn
-
-
-def xl_sub(left: CellValue, right: CellValue) -> float | XlError:
-    if isinstance(left, XlError):
-        return left
-    if isinstance(right, XlError):
-        return right
-    ln = to_number(left)
-    rn = to_number(right)
-    if isinstance(ln, XlError):
-        return ln
-    if isinstance(rn, XlError):
-        return rn
-    return ln - rn
-
-
-def xl_mul(left: CellValue, right: CellValue) -> float | XlError:
-    if isinstance(left, XlError):
-        return left
-    if isinstance(right, XlError):
-        return right
-    ln = to_number(left)
-    rn = to_number(right)
-    if isinstance(ln, XlError):
-        return ln
-    if isinstance(rn, XlError):
-        return rn
-    return ln * rn
-
-
-def xl_pow(left: CellValue, right: CellValue) -> float | XlError:
-    if isinstance(left, XlError):
-        return left
-    if isinstance(right, XlError):
-        return right
-    ln = to_number(left)
-    rn = to_number(right)
-    if isinstance(ln, XlError):
-        return ln
-    if isinstance(rn, XlError):
-        return rn
-    try:
-        return ln**rn
-    except (ValueError, OverflowError):
-        return XlError.NUM
-
-
-def xl_neg(value: CellValue) -> float | XlError:
-    if isinstance(value, XlError):
-        return value
-    n = to_number(value)
-    if isinstance(n, XlError):
-        return n
-    return -n
-
-
-def xl_pos(value: CellValue) -> float | XlError:
-    if isinstance(value, XlError):
-        return value
-    n = to_number(value)
-    if isinstance(n, XlError):
-        return n
-    return +n
-
-
-def xl_percent(value: CellValue) -> float | XlError:
-    """Excel postfix percent operator (%): divide a numeric value by 100."""
-    if isinstance(value, XlError):
-        return value
-    n = to_number(value)
-    if isinstance(n, XlError):
-        return n
-    return n / 100.0
-
+__all__ = [
+    "_xl_compare",
+    "xl_add",
+    "xl_concat",
+    "xl_div",
+    "xl_eq",
+    "xl_ge",
+    "xl_gt",
+    "xl_iferror",
+    "xl_le",
+    "xl_lt",
+    "xl_mul",
+    "xl_ne",
+    "xl_neg",
+    "xl_percent",
+    "xl_pos",
+    "xl_pow",
+    "xl_sub",
+]
