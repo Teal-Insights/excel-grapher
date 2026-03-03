@@ -90,3 +90,209 @@ def test_offset_argument_references_are_dependencies(tmp_path: Path) -> None:
     graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
     deps = graph.dependencies("Sheet1!A1")
     assert deps == {"Sheet1!C1", "START!M10"}
+
+
+# --- Static dynamic-ref engine tests (Step 4 core) ---
+
+from excel_grapher.core.cell_types import (
+    CellKind,
+    CellType,
+    CellTypeEnv,
+    EnumDomain,
+    IntIntervalDomain,
+)
+from excel_grapher.grapher.dynamic_refs import (
+    DynamicRefError,
+    DynamicRefLimits,
+    infer_dynamic_indirect_targets,
+    infer_dynamic_offset_targets,
+)
+
+
+def _make_env(mapping: dict[str, CellType]) -> CellTypeEnv:
+    return mapping
+
+
+def test_dynamic_offset_with_small_integer_domain() -> None:
+    # A1 = OFFSET(A1, B1, 0) with B1 in {0,1} should reach A1 and A2.
+    formula = "=OFFSET(Sheet1!A1,Sheet1!B1,0)"
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntIntervalDomain(min=0, max=1),
+            )
+        }
+    )
+
+    targets = infer_dynamic_offset_targets(formula, current_sheet="Sheet1", cell_type_env=env)
+    assert targets == {"Sheet1!A1", "Sheet1!A2"}
+
+
+def test_dynamic_offset_requires_domains_for_all_leaf_cells() -> None:
+    formula = "=OFFSET(Sheet1!A1,Sheet1!B1,0)"
+    env = _make_env({})
+
+    try:
+        infer_dynamic_offset_targets(formula, current_sheet="Sheet1", cell_type_env=env)
+    except DynamicRefError as exc:
+        assert "Missing CellType" in str(exc)
+    else:
+        raise AssertionError("Expected DynamicRefError for missing domain")
+
+
+def test_dynamic_offset_uses_literal_and_enum_domains() -> None:
+    # Row offset is a literal; column offset is a small enum.
+    formula = "=OFFSET(Sheet1!A1,1,Sheet1!C1)"
+    env = _make_env(
+        {
+            "Sheet1!C1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({0, 1})),
+            )
+        }
+    )
+
+    targets = infer_dynamic_offset_targets(formula, current_sheet="Sheet1", cell_type_env=env)
+    # Base is A1; row offset 1 -> row 2; col offset in {0,1} -> columns A or B.
+    assert targets == {"Sheet1!A2", "Sheet1!B2"}
+
+
+def test_dynamic_offset_respects_branch_limit() -> None:
+    formula = "=OFFSET(Sheet1!A1,Sheet1!B1,0)"
+    # Domain with 0..10 would require 11 branches; set max_branches small to force failure.
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntIntervalDomain(min=0, max=10),
+            )
+        }
+    )
+
+    limits = DynamicRefLimits(max_branches=8)
+    try:
+        infer_dynamic_offset_targets(
+            formula,
+            current_sheet="Sheet1",
+            cell_type_env=env,
+            limits=limits,
+        )
+    except DynamicRefError as exc:
+        msg = str(exc)
+        assert "branches" in msg or "exceeds branch limit" in msg
+    else:
+        raise AssertionError("Expected DynamicRefError for branch limit")
+
+
+def test_dynamic_offset_argument_formulas_over_domains() -> None:
+    # A1 = OFFSET(A1, SUM(B1:B3), 0) with each Bi in {0,1}.
+    # SUM(B1:B3) ranges over {0,1,2,3}, so reachable rows are 1..4.
+    formula = "=OFFSET(Sheet1!A1,SUM(Sheet1!B1:Sheet1!B3),0)"
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({0, 1})),
+            ),
+            "Sheet1!B2": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({0, 1})),
+            ),
+            "Sheet1!B3": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({0, 1})),
+            ),
+        }
+    )
+
+    limits = DynamicRefLimits(max_branches=64)
+    targets = infer_dynamic_offset_targets(
+        formula,
+        current_sheet="Sheet1",
+        cell_type_env=env,
+        limits=limits,
+    )
+    assert targets == {"Sheet1!A1", "Sheet1!A2", "Sheet1!A3", "Sheet1!A4"}
+
+
+def test_dynamic_offset_respects_cell_limit() -> None:
+    # With B1 in {0,1,2,3}, reachable rows are {1,2,3,4}.
+    formula = "=OFFSET(Sheet1!A1,Sheet1!B1,0)"
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({0, 1, 2, 3})),
+            )
+        }
+    )
+
+    limits = DynamicRefLimits(max_branches=16, max_cells=2)
+    try:
+        infer_dynamic_offset_targets(
+            formula,
+            current_sheet="Sheet1",
+            cell_type_env=env,
+            limits=limits,
+        )
+    except DynamicRefError as exc:
+        msg = str(exc)
+        assert "cells" in msg or "exceed limit" in msg
+    else:
+        raise AssertionError("Expected DynamicRefError for cell limit")
+
+
+def test_dynamic_offset_respects_expr_max_depth() -> None:
+    # Deeply nested IF expression in the row argument should trip max_depth.
+    formula = "=OFFSET(Sheet1!A1,IF(TRUE,IF(TRUE,IF(TRUE,1,0),0),0),0)"
+    env = _make_env({})
+
+    limits = DynamicRefLimits(max_branches=1, max_cells=10, max_depth=1)
+    try:
+        infer_dynamic_offset_targets(
+            formula,
+            current_sheet="Sheet1",
+            cell_type_env=env,
+            limits=limits,
+        )
+    except DynamicRefError as exc:
+        msg = str(exc)
+        assert "Unsupported argument expression" in msg or "max_depth" in msg
+    else:
+        raise AssertionError("Expected DynamicRefError for expr depth limit")
+
+
+def test_dynamic_indirect_with_literal_text() -> None:
+    formula = '=INDIRECT("Sheet1!A1")'
+    env = _make_env({})
+
+    targets = infer_dynamic_indirect_targets(
+        formula,
+        current_sheet="Sheet1",
+        cell_type_env=env,
+    )
+    assert targets == {"Sheet1!A1"}
+
+
+def test_dynamic_indirect_over_enum_text_domain() -> None:
+    # A1 = INDIRECT(B1) where B1 can point to A1 or B2.
+    formula = "=INDIRECT(Sheet1!B1)"
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.STRING,
+                enum=EnumDomain(values=frozenset({"Sheet1!A1", "Sheet1!B2"})),
+            )
+        }
+    )
+
+    limits = DynamicRefLimits(max_branches=8)
+    targets = infer_dynamic_indirect_targets(
+        formula,
+        current_sheet="Sheet1",
+        cell_type_env=env,
+        limits=limits,
+    )
+    assert targets == {"Sheet1!A1", "Sheet1!B2"}
+
