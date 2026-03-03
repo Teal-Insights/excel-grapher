@@ -65,7 +65,8 @@ def test_offset_with_cached_named_range_warns_once(tmp_path: Path) -> None:
         graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
 
     deps = graph.dependencies("Sheet1!A1")
-    assert deps == {"Sheet1!D1"}
+    # A1 = OFFSET(B1,0,LANG)+OFFSET(B1,0,LANG); LANG = Sheet1!C1. Deps include C1 (offset arg) and D1 (resolved target).
+    assert deps == {"Sheet1!C1", "Sheet1!D1"}
 
     cache_warnings = [
         w for w in caught if "cached workbook values" in str(w.message)

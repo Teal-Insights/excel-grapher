@@ -6,7 +6,7 @@ from xml.etree import ElementTree as ET
 
 import xlsxwriter
 
-from excel_grapher.validation import get_calc_settings
+from excel_grapher import get_calc_settings
 
 
 def _patch_workbook_calcpr(
