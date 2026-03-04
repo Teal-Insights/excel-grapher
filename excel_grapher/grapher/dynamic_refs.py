@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from itertools import product
-from typing import Any, Iterable
+from typing import Any
 
 from openpyxl.utils.cell import coordinate_to_tuple
 
@@ -13,9 +14,7 @@ from excel_grapher.core.addressing import (
 )
 from excel_grapher.core.cell_types import (
     CellKind,
-    CellType,
     CellTypeEnv,
-    EnumDomain,
     IntIntervalDomain,
 )
 from excel_grapher.core.expr_eval import Unsupported, evaluate_expr
@@ -23,8 +22,9 @@ from excel_grapher.core.formula_ast import (
     AstNode,
     CellRefNode,
     FunctionCallNode,
-    NumberNode,
     RangeNode,
+)
+from excel_grapher.core.formula_ast import (
     parse as parse_ast,
 )
 from excel_grapher.core.types import ExcelRange, XlError
@@ -142,11 +142,11 @@ def _infer_single_offset_call(
     targets: set[str] = set()
 
     for assignment in _enumerate_assignments(domains.values(), limits):
-        addr_to_value = dict(zip(domains.keys(), assignment))
+        addr_to_value = dict(zip(domains.keys(), assignment, strict=False))
 
-        def get_cell_value(addr: str) -> float:
+        def get_cell_value(addr: str, addr_to_value_map=addr_to_value) -> float:
             try:
-                return addr_to_value[addr]
+                return addr_to_value_map[addr]
             except KeyError as exc:
                 raise DynamicRefError(
                     f"OFFSET argument formula references cell without domain: {addr!r}"
@@ -393,11 +393,11 @@ def _infer_single_indirect_call(
     targets: set[str] = set()
 
     for assignment in _enumerate_value_assignments(domains.values(), limits):
-        addr_to_value = dict(zip(domains.keys(), assignment))
+        addr_to_value = dict(zip(domains.keys(), assignment, strict=False))
 
-        def get_cell_value(addr: str) -> Any:
+        def get_cell_value(addr: str, addr_to_value_map=addr_to_value) -> Any:
             try:
-                return addr_to_value[addr]
+                return addr_to_value_map[addr]
             except KeyError as exc:
                 raise DynamicRefError(
                     f"INDIRECT argument formula references cell without domain: {addr!r}"

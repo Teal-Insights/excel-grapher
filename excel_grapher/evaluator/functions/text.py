@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from ..helpers import to_number, to_string
 from ..export_runtime.text import xl__xlfn_numbervalue as _rt_xl__xlfn_numbervalue
+from ..helpers import to_number, to_string
 from ..types import CellValue, XlError
 from . import register
 

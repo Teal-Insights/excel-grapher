@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Protocol
 
 import openpyxl.utils.cell
 
-from . import CellValue, ExcelRange, XlError, to_number, to_string
+from . import CellValue, ExcelRange, XlError, to_number
 
 
 class WorkbookBoundsProtocol(Protocol):

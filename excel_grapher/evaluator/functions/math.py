@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+# ruff: noqa: I001
+
 import math
 import re
+from typing import TypeVar
 
 import numpy as np
 
+from . import register
 from ..helpers import (
     excel_casefold,
     flatten,
@@ -14,7 +18,9 @@ from ..helpers import (
     to_string,
 )
 from ..types import CellValue, XlError
-from . import register
+
+
+T = TypeVar("T", str, float)
 
 
 @register("SUM")
@@ -64,9 +70,9 @@ def xl_count(*args: CellValue) -> int:
     """Count numeric values only."""
     count = 0
     for v in flatten(*args):
-        if isinstance(v, (int, float)) and not isinstance(v, bool):
-            count += 1
-        elif isinstance(v, np.integer) or isinstance(v, np.floating):
+        if isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(
+            v, bool
+        ):
             count += 1
     return count
 
@@ -323,7 +329,7 @@ def xl_countif(range_values: CellValue, criteria: CellValue) -> int | XlError:
     return count
 
 
-def _compare_values[T: (str, float)](op: str, left: T, right: T) -> bool:
+def _compare_values(op: str, left: T, right: T) -> bool:
     """Compare two values of the same type."""
     if op == "=":
         return left == right

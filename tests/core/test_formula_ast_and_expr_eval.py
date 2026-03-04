@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from excel_grapher.core.expr_eval import Unsupported, evaluate_expr
 from excel_grapher.core.formula_ast import (
-    BinaryOpNode,
     BoolNode,
     CellRefNode,
     FunctionCallNode,
@@ -12,7 +12,6 @@ from excel_grapher.core.formula_ast import (
     StringNode,
     parse,
 )
-from excel_grapher.core.expr_eval import Unsupported, evaluate_expr
 from excel_grapher.core.types import CellValue
 
 

@@ -1,8 +1,6 @@
 """Tests for Excel function implementations."""
 
-from excel_grapher import DependencyGraph
-from excel_grapher import Node
-
+from excel_grapher import DependencyGraph, Node
 from excel_grapher.evaluator.evaluator import FormulaEvaluator
 from excel_grapher.evaluator.name_utils import parse_address
 from excel_grapher.evaluator.types import XlError

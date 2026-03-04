@@ -4,7 +4,6 @@ import ast
 from collections import deque
 from pathlib import Path
 
-
 _RUNTIME_DIR = Path(__file__).resolve().parent
 _CORE_DIR = _RUNTIME_DIR.parent.parent / "core"
 
@@ -95,9 +94,8 @@ def _top_level_defs(module: ast.Module) -> dict[str, ast.AST]:
             for t in node.targets:
                 if isinstance(t, ast.Name):
                     out[t.id] = node
-        elif isinstance(node, ast.AnnAssign):
-            if isinstance(node.target, ast.Name):
-                out[node.target.id] = node
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            out[node.target.id] = node
     return out
 
 

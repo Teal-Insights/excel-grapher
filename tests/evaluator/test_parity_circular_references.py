@@ -3,9 +3,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from excel_grapher import DependencyGraph
-from excel_grapher import Node
 
+from excel_grapher import DependencyGraph, Node
 from excel_grapher.evaluator.evaluator import FormulaEvaluator
 from excel_grapher.evaluator.export_runtime.cache import CircularReferenceWarning
 from excel_grapher.evaluator.name_utils import parse_address
@@ -39,9 +38,8 @@ def _make_graph(*nodes: Node) -> DependencyGraph:
 def test_parity_direct_self_cycle_returns_zero() -> None:
     graph = _make_graph(_make_node("S!A1", "=S!A1", None))
 
-    with FormulaEvaluator(graph) as ev:
-        with pytest.warns(CircularReferenceWarning):
-            evaluator_result = ev.evaluate(["S!A1"])["S!A1"]
+    with FormulaEvaluator(graph) as ev, pytest.warns(CircularReferenceWarning):
+        evaluator_result = ev.evaluate(["S!A1"])["S!A1"]
 
     with pytest.warns(RuntimeWarning, match=r"Circular reference detected; returning 0") as w:
         generated_results, _code, _ns = exec_generated_code(graph, ["S!A1"])
@@ -58,9 +56,8 @@ def test_parity_indirect_cycle_returns_zero() -> None:
         _make_node("S!B1", "=S!A1", None),
     )
 
-    with FormulaEvaluator(graph) as ev:
-        with pytest.warns(CircularReferenceWarning):
-            evaluator_result = ev.evaluate(["S!A1", "S!B1"])
+    with FormulaEvaluator(graph) as ev, pytest.warns(CircularReferenceWarning):
+        evaluator_result = ev.evaluate(["S!A1", "S!B1"])
 
     with pytest.warns(RuntimeWarning, match=r"Circular reference detected; returning 0") as w:
         generated_result, _code, _ns = exec_generated_code(graph, ["S!A1", "S!B1"])

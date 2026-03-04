@@ -1,6 +1,6 @@
 import pytest
-from excel_grapher import DependencyGraph, Node
 
+from excel_grapher import DependencyGraph, Node
 from excel_grapher.evaluator.evaluator import FormulaEvaluator
 from excel_grapher.evaluator.export_runtime.cache import CircularReferenceWarning
 from excel_grapher.evaluator.name_utils import parse_address
@@ -95,19 +95,17 @@ def test_evaluator_detects_cycles() -> None:
         _make_node("S!A1", "=S!B1", None),
         _make_node("S!B1", "=S!A1", None),
     )
-    with FormulaEvaluator(graph) as ev:
-        with pytest.warns(CircularReferenceWarning):
-            assert ev.evaluate(["S!A1"]) == {"S!A1": 0}
+    with FormulaEvaluator(graph) as ev, pytest.warns(CircularReferenceWarning):
+        assert ev.evaluate(["S!A1"]) == {"S!A1": 0}
 
 
 def test_evaluator_raises_for_unimplemented_function() -> None:
     graph = _make_graph(_make_node("S!A1", "=no_such_function(1)", None))
-    with FormulaEvaluator(graph) as ev:
-        with pytest.raises(
-            NotImplementedError,
-            match=r"Excel function not implemented: NO_SUCH_FUNCTION",
-        ):
-            ev.evaluate(["S!A1"])
+    with FormulaEvaluator(graph) as ev, pytest.raises(
+        NotImplementedError,
+        match=r"Excel function not implemented: NO_SUCH_FUNCTION",
+    ):
+        ev.evaluate(["S!A1"])
 
 
 # --- Operator evaluation tests ---

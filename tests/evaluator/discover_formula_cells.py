@@ -3,6 +3,7 @@ from pathlib import Path
 import openpyxl
 import openpyxl.utils.cell
 
+
 def discover_formula_cells_in_rows(
     wb_path: Path,
     sheet_name: str,

@@ -4,6 +4,7 @@ import numpy as np
 import openpyxl.utils.cell
 
 from excel_grapher.core.addressing import offset_range
+
 from .cache import EvalContext, xl_cell
 from .core import CellValue, ExcelRange, XlError, to_number
 
