@@ -5,12 +5,11 @@ toc: true
 
 # Project overview
 
-The LIC DSF Excel reverse-engineering pipeline consists of four repositories:
+The LIC DSF Excel reverse-engineering pipeline now consists of three main repositories:
 
-1. [excel-grapher](https://github.com/Teal-Insights/excel-grapher) - Maps and extracts cells required to compute some set of target output cells
-2. [excel-formula-expander](https://github.com/Teal-Insights/excel-formula-expander) - Translates Excel formulas from the `excel-grapher` graph into Python code and either runs them directly or exports them as a library
-3. [lic-dsf-programmatic-extraction](https://github.com/Teal-Insights/lic-dsf-programmatic-extraction) - Configures and post-processes the export to make it less Excel-shaped and more economic logic-shaped
-4. [py-lic-dsf](https://github.com/Teal-Insights/py-lic-dsf) - The final output, a Python library that can be used to run the LIC DSF shock scenarios
+1. [`excel-grapher`](https://github.com/Teal-Insights/excel-grapher) - A unified engine that (a) maps and extracts cells required to compute some set of target output cells, (b) evaluates Excel formulas over that graph with Excel-equivalent semantics, and (c) exports standalone Python packages. It replaces the earlier `excel-grapher` and `excel-formula-expander` repositories.
+2. [`lic-dsf-programmatic-extraction`](https://github.com/Teal-Insights/lic-dsf-programmatic-extraction) - Configures and post-processes the export to make it less Excel-shaped and more economic logic-shaped
+3. [`py-lic-dsf`](https://github.com/Teal-Insights/py-lic-dsf) - The final output, a Python library that can be used to run the LIC DSF shock scenarios
 
 ## `excel-grapher`
 
@@ -27,7 +26,7 @@ graph = create_dependency_graph(
 )
 ```
 
-We can then add Python translation functionality to this graph in the next layer, `excel-formula-expander`.
+We can then either evaluate formulas over this graph or export them as Python code using the evaluator and exporter modules inside the same unified `excel_grapher` library (described below).
 
 ### Implementation
 
@@ -129,9 +128,9 @@ The real implementation is a bit more complicated, but these are the basics.
 
 #### Architectural decisions
 
-1. **Separate repositories for `excel-grapher` and `excel-formula-expander`, with dependency detection (using regex) happening first, and formula translation (using AST-parsing) happening second**
-    - I separated these to make them easier to reason about, but some other libraries (like `formulas`) do both in a single pass, which might be a bit faster or more efficient.
-    - As you'll see below, I had to partially implement a few functions in the `excel-grapher` repo to support cycle detection and dynamic range resolution. Maybe having had access to the full formula AST during dependency detection would have made it easier to handle those edge cases.
+1. **Unified `excel-grapher` package with layered submodules**
+    - The original design split graph construction (`excel-grapher`) and formula evaluation/export (`excel-formula-expander`) into separate repositories. The new design keeps the same conceptual layering but implements it as subpackages inside a single `excel_grapher` package: `excel_grapher.grapher` for graph-building, `excel_grapher.evaluator` for graph-driven execution, `excel_grapher.exporter` for export APIs, and `excel_grapher.core` for shared types, coercions, and scalar operators.
+    - This keeps the dependency structure explicit (no imports from `grapher` into `evaluator`/`exporter`, and `core` depending on nothing else) while making installation and reasoning about the system simpler.
 
 2. **Canonicalizing named ranges**
     - Excel lets users define "named ranges" (aliases for Excel addresses) and use them in formulas.
@@ -184,19 +183,19 @@ Note: Both top-level targets share a single dependent C1 node, which is only com
     - I implemented *some* logic to try to solve this, but I ultimately decided this is not a guarantee that `excel-grapher` needs to provide (since the Excel workbook itself doesn't provide this guarantee), so it's not a problem worth the effort to solve.
     - I *think* the reason the `formulas` library takes so long to run is because it's actually trying to solve this problem by running the code for different combinations of inputs.
 
-2. **Dynamic range resolution**
-    - There are a couple Excel formulas, `OFFSET` and `INDIRECT`, where regex doesn't cut it for identifying the dependency cells.
-    - For example, `OFFSET(B1,0,1,1,1)` means "start at cell B1, move 1 column to the right, and return a 1x1 range starting at that new cell". Which means the cell you actually need as a dependency is C1, not B1.
-    - This is easy enough to handle if all the offset arguments are literal values, but it's much harder if they're formulas themselves.
-        - For instance, `OFFSET(B1,0,A1,1,1)` means "start at cell B1, move A1 columns to the right, and return a 1x1 range starting at that new cell". Now you need to resolve A1 to get the actual dependency cell.
-        - And what if A1 is an input or formula that might change arbitrarily? Then we'd need to add every cell in the row as a dependency, just to be safe.
-    - I'm currently handling this by using the cached values from the workbook to resolve the dynamic references. For instance, for the example above, we'd look up the last computed value of A1 and use that as the offset. But this is not a perfect solution, and we need a better fix.
+2. **Dynamic range resolution and type-constrained OFFSET/INDIRECT**
+    - There are a couple Excel formulas, `OFFSET` and `INDIRECT`, where simple regex-based parsing isn't enough to identify the true dependency cells.
+    - In the unified library, we handle these in two layers:
+        - A static analyzer in `excel_grapher.grapher` walks OFFSET/INDIRECT argument formulas using a restricted expression evaluator in `excel_grapher.core` plus a **cell type environment** that describes allowed domains for input cells (for example, bounded integer intervals or small enums).
+        - Given those type constraints, we enumerate a sound (over-approximating) set of all cells that the dynamic reference could touch and add edges from the OFFSET/INDIRECT cell to each of them.
+    - If callers do not supply the necessary type constraints, or if the inferred dynamic reference set would explode beyond configured limits, graph construction fails with a clear, user-configurable error instead of silently guessing based on cached workbook values.
+    - This keeps dependency tracing sound while letting users trade off precision vs. configurability for workbooks that rely heavily on dynamic addressing.
 
-## `excel-formula-expander`
+## Formula evaluation and export (`excel_grapher.evaluator` and `excel_grapher.exporter`)
 
 ### Objective
 
-The goal of our second layer, `excel-formula-expander`, is **formula translation and execution**. That is, we want to **translate Excel formulas from a `DependencyGraph` into functionally equivalent Python code**.
+The goal of our second layer is **formula translation and execution**. Within the unified `excel_grapher` package this is handled by the `excel_grapher.evaluator` (graph-driven runtime) and `excel_grapher.exporter` (public export API). Together, they **translate Excel formulas from a `DependencyGraph` into functionally equivalent Python code**.
 
 #### Goals
 
@@ -227,6 +226,10 @@ The library provides two execution paths:
 Both paths must produce identical results (including Excel-style errors and type coercions) for any supported Excel feature—this is the **parity contract** that ensures we can trust both paths for any given workbook.
 
 ``` python
+from excel_grapher.grapher import create_dependency_graph
+from excel_grapher.evaluator import FormulaEvaluator
+from excel_grapher.exporter import CodeGenerator
+
 graph = create_dependency_graph("example.xlsm", ["Sheet1!A1"])
 
 # Path 1: Evaluate at runtime
@@ -240,7 +243,7 @@ code = CodeGenerator(graph).generate(["Sheet1!A1"])
 ### Architectural decisions
 
 1. **Custom formula parser with AST representation**
-    - Both paths share a common parser (`parser.py`) that transforms Excel formulas into an Abstract Syntax Tree (AST).
+    - Both paths share a common parser (`excel_grapher.core.formula_ast`, re-exported by the evaluator) that transforms Excel formulas into an Abstract Syntax Tree (AST).
     - The AST node types mirror Excel's structure: `NumberNode`, `StringNode`, `BoolNode`, `ErrorNode`, `CellRefNode`, `RangeNode`, `BinaryOpNode`, `UnaryOpNode`, and `FunctionCallNode`.
     - We use a Pratt parser (precedence climbing) to handle operator precedence (e.g., `%` > `^` > `*` > `+` > `&` > comparisons).
     - The `FormulaEvaluator` walks the AST to compute values, while the `CodeGenerator` walks it to emit Python source strings.
@@ -264,8 +267,8 @@ For example, the formula `=SUM(A1, 10) * (B1 + 5)` looks like this as a tree:
 
 2. **Centralized type coercion logic**
     - Excel's coercion rules are quirky (e.g., empty cells become `0` in numeric context but `""` in string context; `"FALSE"` is a boolean but `"0"` is a `#VALUE!` error).
-    - We centralized all coercion logic in `export_runtime/core.py` (`to_number`, `to_bool`, `to_string`).
-    - Both evaluator and codegen call these exact same functions, ensuring semantic parity.
+    - We centralized all scalar coercion logic in `excel_grapher.core.coercions` (`to_number`, `to_bool`, `to_string`).
+    - Both evaluator runtime and export runtime call these exact same helpers via the shared `core` package, ensuring semantic parity.
 
 3. **Excel-equivalent error type (`XlError`)**
     - We implement `XlError` as a string enum (e.g., `#N/A`, `#VALUE!`).
