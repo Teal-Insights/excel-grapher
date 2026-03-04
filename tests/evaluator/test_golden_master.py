@@ -9,17 +9,14 @@ from pathlib import Path
 import openpyxl
 import pytest
 
-from excel_grapher import create_dependency_graph
-
-from excel_grapher import FormulaEvaluator, XlError
-from excel_grapher.evaluator.name_utils import normalize_address, parse_address
 from example.map_lic_dsf_indicators import INDICATOR_CONFIG as LIC_DSF_INDICATOR_CONFIG
-
+from excel_grapher import FormulaEvaluator, XlError, create_dependency_graph
+from excel_grapher.evaluator.name_utils import normalize_address, parse_address
+from tests.evaluator.discover_formula_cells import discover_formula_cells_in_rows
 from tests.utils.modify_and_recalculate import (
     ExcelRecalculationError,
     modify_and_recalculate_workbook,
 )
-from tests.evaluator.discover_formula_cells import discover_formula_cells_in_rows
 
 pytestmark = pytest.mark.slow
 

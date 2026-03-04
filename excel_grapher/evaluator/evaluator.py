@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 import openpyxl.utils.cell
 
@@ -12,9 +13,9 @@ from .helpers import (
     get_error,
     to_bool,
     to_number,
-    xl_concat,
     xl_column,
     xl_columns,
+    xl_concat,
     xl_eq,
     xl_ge,
     xl_gt,
@@ -52,12 +53,13 @@ _SKIP_ERROR_PRECHECK = {
 
 if TYPE_CHECKING:
     import numpy
+
     from excel_grapher.grapher import DependencyGraph
 
 
 @dataclass
 class FormulaEvaluator:
-    graph: "DependencyGraph"
+    graph: DependencyGraph
     auto_detect_changes: bool = True
     eager_invalidation: bool = True
     on_cell_evaluated: Callable[[str, CellValue], None] | None = None
@@ -67,7 +69,7 @@ class FormulaEvaluator:
         self._call_stack: list[str] = []
         self._leaf_values: dict[str, CellValue] = {}  # For auto-detection
 
-    def __enter__(self) -> "FormulaEvaluator":
+    def __enter__(self) -> FormulaEvaluator:
         return self
 
     def __exit__(self, *args: object) -> None:
@@ -268,16 +270,19 @@ class FormulaEvaluator:
 
         raise TypeError(f"Unknown AST node: {type(node)}")
 
-    def _resolve_range(self, rng: ExcelRange) -> "numpy.ndarray":
+    def _resolve_range(self, rng: ExcelRange) -> numpy.ndarray:
         return rng.resolve(self._evaluate_cell)
 
     def _auto_resolve_single_cell(self, value: CellValue) -> CellValue:
         """If value is a 1x1 ExcelRange, resolve it to its single cell value."""
-        if isinstance(value, ExcelRange):
-            if value.start_row == value.end_row and value.start_col == value.end_col:
-                # 1x1 range - resolve to single value
-                arr = self._resolve_range(value)
-                return arr[0, 0]
+        if (
+            isinstance(value, ExcelRange)
+            and value.start_row == value.end_row
+            and value.start_col == value.end_col
+        ):
+            # 1x1 range - resolve to single value
+            arr = self._resolve_range(value)
+            return arr[0, 0]
         return value
 
     def _eval_binary_op(self, node: BinaryOpNode) -> CellValue:

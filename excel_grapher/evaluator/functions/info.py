@@ -9,13 +9,10 @@ from . import register
 @register("ISNUMBER")
 def xl_isnumber(value: CellValue) -> bool:
     """Return TRUE if value is a number."""
-    if isinstance(value, bool):
-        return False  # Booleans are not numbers in Excel's ISNUMBER
-    if isinstance(value, (int, float)):
-        return True
-    if isinstance(value, (np.integer, np.floating)):
-        return True
-    return False
+    # Booleans are not numbers in Excel's ISNUMBER semantics.
+    return not isinstance(value, bool) and isinstance(
+        value, (int, float, np.integer, np.floating)
+    )
 
 
 @register("ISTEXT")

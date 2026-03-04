@@ -7,10 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from excel_grapher import DependencyGraph, create_dependency_graph
-
-from excel_grapher import FormulaEvaluator, XlError
-
+from excel_grapher import DependencyGraph, FormulaEvaluator, XlError, create_dependency_graph
 from tests.evaluator.discover_formula_cells import discover_formula_cells_in_rows
 
 # This integration test loads a large workbook and can take a while to run.

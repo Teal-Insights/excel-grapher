@@ -1,10 +1,8 @@
 """Parity tests for missing cell references."""
 
 import pytest
-from excel_grapher import DependencyGraph
-from excel_grapher import Node
 
-from excel_grapher import FormulaEvaluator
+from excel_grapher import DependencyGraph, FormulaEvaluator, Node
 from excel_grapher.evaluator.name_utils import parse_address
 from tests.evaluator.parity_harness import exec_generated_code
 
@@ -40,9 +38,8 @@ def test_missing_cell_reference_raises_in_both_paths() -> None:
         # S!B1 is NOT in the graph
     )
 
-    with pytest.raises(KeyError, match="S!B1"):
-        with FormulaEvaluator(graph) as ev:
-            ev.evaluate(["S!A1"])
+    with pytest.raises(KeyError, match="S!B1"), FormulaEvaluator(graph) as ev:
+        ev.evaluate(["S!A1"])
 
     with pytest.raises(KeyError, match="S!B1"):
         exec_generated_code(graph, ["S!A1"])

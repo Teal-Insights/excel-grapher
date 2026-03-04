@@ -2,9 +2,7 @@
 
 import pytest
 
-from excel_grapher import DependencyGraph
-from excel_grapher import Node
-
+from excel_grapher import DependencyGraph, Node
 from excel_grapher.evaluator.codegen import CodeGenerator
 from excel_grapher.evaluator.name_utils import parse_address
 

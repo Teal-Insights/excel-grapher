@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping
+from typing import cast
 
 from openpyxl.utils.cell import coordinate_to_tuple
 
@@ -164,7 +165,11 @@ def _eval(
             if isinstance(value, XlError):
                 return value
 
-        flat_args: list[CellValue] = [v for v in args if not isinstance(v, XlError)]
+        flat_args: list[CellValue] = [
+            cast(CellValue, v)
+            for v in args
+            if not isinstance(v, (XlError, Unsupported))
+        ]
 
         name = node.name.upper()
         impl = functions.get(name) or _DEFAULT_FUNCTIONS.get(name)

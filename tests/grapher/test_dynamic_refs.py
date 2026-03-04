@@ -4,9 +4,23 @@ from __future__ import annotations
 import warnings
 from pathlib import Path
 
+import pytest
 import xlsxwriter
 
 from excel_grapher import create_dependency_graph
+from excel_grapher.core.cell_types import (
+    CellKind,
+    CellType,
+    CellTypeEnv,
+    EnumDomain,
+    IntIntervalDomain,
+)
+from excel_grapher.grapher.dynamic_refs import (
+    DynamicRefError,
+    DynamicRefLimits,
+    infer_dynamic_indirect_targets,
+    infer_dynamic_offset_targets,
+)
 
 
 def _build_offset_named_range_workbook(path: Path) -> None:
@@ -90,23 +104,6 @@ def test_offset_argument_references_are_dependencies(tmp_path: Path) -> None:
     graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
     deps = graph.dependencies("Sheet1!A1")
     assert deps == {"Sheet1!C1", "START!M10"}
-
-
-# --- Static dynamic-ref engine tests (Step 4 core) ---
-
-from excel_grapher.core.cell_types import (
-    CellKind,
-    CellType,
-    CellTypeEnv,
-    EnumDomain,
-    IntIntervalDomain,
-)
-from excel_grapher.grapher.dynamic_refs import (
-    DynamicRefError,
-    DynamicRefLimits,
-    infer_dynamic_indirect_targets,
-    infer_dynamic_offset_targets,
-)
 
 
 def _make_env(mapping: dict[str, CellType]) -> CellTypeEnv:
@@ -295,4 +292,14 @@ def test_dynamic_indirect_over_enum_text_domain() -> None:
         limits=limits,
     )
     assert targets == {"Sheet1!A1", "Sheet1!B2"}
+
+
+@pytest.mark.xfail(reason="Dynamic-ref constraints not yet enforced at graph level", strict=False)
+def test_create_dependency_graph_raises_on_dynamic_refs_by_default(tmp_path: Path) -> None:
+    excel_path = tmp_path / "offset_named_range.xlsx"
+    _build_offset_named_range_workbook(excel_path)
+
+    with pytest.raises(DynamicRefError):
+        # Default behavior should not silently fall back to cached values.
+        create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
 

@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..helpers import excel_casefold, to_native, to_number
 from ..export_runtime.lookup import (
     xl__xlfn_xlookup as _rt_xl__xlfn_xlookup,
+)
+from ..export_runtime.lookup import (
     xl_index as _rt_xl_index,
+)
+from ..export_runtime.lookup import (
     xl_lookup as _rt_xl_lookup,
+)
+from ..export_runtime.lookup import (
     xl_match as _rt_xl_match,
 )
+from ..helpers import excel_casefold, to_native, to_number
 from ..types import CellValue, XlError
 from . import register
 

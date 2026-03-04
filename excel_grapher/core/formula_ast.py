@@ -49,20 +49,20 @@ class RangeNode:
 @dataclass(frozen=True, slots=True)
 class FunctionCallNode:
     name: str
-    args: list["AstNode"]
+    args: list[AstNode]
 
 
 @dataclass(frozen=True, slots=True)
 class BinaryOpNode:
     op: str
-    left: "AstNode"
-    right: "AstNode"
+    left: AstNode
+    right: AstNode
 
 
 @dataclass(frozen=True, slots=True)
 class UnaryOpNode:
     op: str
-    operand: "AstNode"
+    operand: AstNode
 
 
 AstNode: TypeAlias = (

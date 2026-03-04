@@ -50,10 +50,11 @@ def to_int(value: CellValue) -> int | XlError:
     return int(n)
 
 
-def _format_general_number(value: float) -> str:
-    if value.is_integer():
-        return str(int(value))
-    return str(value)
+def _format_general_number(value: float | int) -> str:
+    f = float(value)
+    if f.is_integer():
+        return str(int(f))
+    return str(f)
 
 
 def to_string(value: CellValue) -> str:

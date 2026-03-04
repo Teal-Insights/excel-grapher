@@ -2,7 +2,9 @@
 
 import pytest
 
+from excel_grapher import DependencyGraph, Node
 from excel_grapher.evaluator.codegen import CodeGenerator
+from excel_grapher.evaluator.name_utils import parse_address
 from excel_grapher.evaluator.parser import (
     BinaryOpNode,
     BoolNode,
@@ -15,9 +17,14 @@ from excel_grapher.evaluator.parser import (
     UnaryOpNode,
 )
 from excel_grapher.evaluator.types import XlError
-from excel_grapher.evaluator.name_utils import parse_address
-from excel_grapher import DependencyGraph
-from excel_grapher import Node
+
+
+def _set_leaf_classification(graph: object, value: dict[str, str]) -> None:
+    graph.leaf_classification = value  # type: ignore[attr-defined]
+
+
+def _get_leaf_classification(graph: object) -> dict[str, str]:
+    return graph.leaf_classification  # type: ignore[attr-defined]
 
 
 class TestEmitAstLiterals:
@@ -498,10 +505,8 @@ class TestGenerate:
             _make_node("Sheet1!A1", None, 10.0),
             _make_node("Sheet1!A2", None, 20.0),
         )
-        setattr(
-            graph,
-            "leaf_classification",
-            {"Sheet1!A1": "constant", "Sheet1!A2": "input"},
+        _set_leaf_classification(
+            graph, {"Sheet1!A1": "constant", "Sheet1!A2": "input"}
         )
         gen = CodeGenerator(graph)
         code = gen.generate(["Sheet1!A1", "Sheet1!A2"])
@@ -515,10 +520,8 @@ class TestGenerate:
             _make_node("Sheet1!A1", None, 10.0),
             _make_node("Sheet1!A2", None, 20.0),
         )
-        setattr(
-            graph,
-            "leaf_classification",
-            {"Sheet1!A1": "input", "Sheet1!A2": "input"},
+        _set_leaf_classification(
+            graph, {"Sheet1!A1": "input", "Sheet1!A2": "input"}
         )
         gen = CodeGenerator(graph)
         code = gen.generate(
@@ -543,7 +546,7 @@ class TestGenerate:
         )
         assert inputs == {"Sheet1!A2"}
         assert constants == {"Sheet1!A1"}
-        assert getattr(graph, "leaf_classification") == {
+        assert _get_leaf_classification(graph) == {
             "Sheet1!A1": "constant",
             "Sheet1!A2": "input",
         }

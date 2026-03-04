@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import pytest
-from excel_grapher import DependencyGraph
-from excel_grapher import Node
 
 import tests.evaluator.parity_harness as parity_harness
+from excel_grapher import DependencyGraph, Node
 from excel_grapher.evaluator.name_utils import parse_address
 from tests.evaluator.parity_harness import (
     assert_code_does_not_embed_symbols,

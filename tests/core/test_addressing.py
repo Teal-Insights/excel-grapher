@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from excel_grapher.core import CellValue, ExcelRange, XlError, to_int, to_number, to_string
+from excel_grapher.core import CellValue, ExcelRange, XlError
 
 
 @dataclass(frozen=True)

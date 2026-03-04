@@ -58,9 +58,7 @@ def xl_max(*args: CellValue) -> float | XlError:
 def xl_count(*args: CellValue) -> int:
     count = 0
     for v in flatten(*args):
-        if isinstance(v, (int, float)) and not isinstance(v, bool):
-            count += 1
-        elif isinstance(v, (np.integer, np.floating)):
+        if isinstance(v, (int, float)) and not isinstance(v, bool) or isinstance(v, (np.integer, np.floating)):
             count += 1
     return count
 

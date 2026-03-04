@@ -27,7 +27,7 @@ from excel_grapher.core import (
     xl_pow,
     xl_sub,
 )
-from excel_grapher.core.coercions import _format_general_number
+
 from .export_runtime.offset_runtime import xl_offset_ref  # noqa: F401
 from .export_runtime.reference import xl_column, xl_columns, xl_row  # noqa: F401
 

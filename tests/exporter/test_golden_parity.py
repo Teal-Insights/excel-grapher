@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from excel_grapher import DependencyGraph
-from excel_grapher import Node
-
+from excel_grapher import DependencyGraph, Node
 from excel_grapher.evaluator.name_utils import parse_address
-from tests.evaluator.parity_harness import assert_codegen_matches_evaluator, assert_code_does_not_embed_symbols
+from tests.evaluator.parity_harness import (
+    assert_code_does_not_embed_symbols,
+    assert_codegen_matches_evaluator,
+)
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:

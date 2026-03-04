@@ -1,14 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from math import isfinite
-from typing import Callable
-from typing import cast
+from typing import Any, cast
 
-from excel_grapher import DependencyGraph
-from excel_grapher import CycleError
-
-from excel_grapher import FormulaEvaluator
+from excel_grapher import CycleError, DependencyGraph, FormulaEvaluator
 from excel_grapher.evaluator.codegen import CodeGenerator
 
 
@@ -103,7 +100,8 @@ def exec_generated_code_with_cache(
     xl_cell = cast(Callable[..., object], ns["xl_cell"])
     for target in targets:
         xl_cell(ctx, target)
-    cache = cast(dict[str, object], getattr(ctx, "cache"))
+    ctx_any = cast(Any, ctx)
+    cache = cast(dict[str, object], ctx_any.cache)
     return dict(cache), code, ns
 
 

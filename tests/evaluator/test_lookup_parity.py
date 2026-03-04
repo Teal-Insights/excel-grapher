@@ -1,8 +1,6 @@
 """Parity tests for LOOKUP."""
 
-from excel_grapher import DependencyGraph
-from excel_grapher import Node
-
+from excel_grapher import DependencyGraph, Node
 from excel_grapher.evaluator.name_utils import parse_address
 from excel_grapher.evaluator.types import XlError
 from tests.evaluator.parity_harness import assert_codegen_matches_evaluator

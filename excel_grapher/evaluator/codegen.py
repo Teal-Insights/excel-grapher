@@ -3,12 +3,8 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
-from collections.abc import Sequence
-from typing import Any
-from typing import Protocol
-from typing import TYPE_CHECKING
-from typing import TypedDict
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
 import openpyxl.utils.cell
 
@@ -20,7 +16,6 @@ from .name_utils import (
     parse_address,
     quote_sheet_if_needed,
 )
-from .types import XlError
 from .parser import (
     AstNode,
     BinaryOpNode,
@@ -34,9 +29,10 @@ from .parser import (
     UnaryOpNode,
     parse,
 )
+from .types import XlError
 
 if TYPE_CHECKING:
-    from excel_grapher.grapher import DependencyGraph
+    from excel_grapher.grapher import DependencyGraph  # noqa: F401
 
 
 class GraphNode(Protocol):
@@ -57,6 +53,8 @@ class GraphLike(Protocol):
 
     def dependencies(self, address: str) -> list[str]:
         ...
+
+    leaf_classification: dict[str, str] | None
 
 
 class GenerationParts(TypedDict):
@@ -498,11 +496,9 @@ class CodeGenerator:
             value = 0
         if isinstance(value, bool):
             return False
-        if "number" in constant_types and isinstance(value, (int, float)):
-            return True
-        if "string" in constant_types and isinstance(value, str):
-            return True
-        return False
+        return ("number" in constant_types and isinstance(value, (int, float))) or (
+            "string" in constant_types and isinstance(value, str)
+        )
 
     @staticmethod
     def _leaf_in_constant_ranges(
@@ -555,7 +551,7 @@ class CodeGenerator:
         if attach_to_graph:
             classification = {addr: "input" for addr in inputs}
             classification.update({addr: "constant" for addr in constants})
-            setattr(self.graph, "leaf_classification", classification)
+            self.graph.leaf_classification = classification  # type: ignore[assignment]
 
         return inputs, constants
 
@@ -1222,9 +1218,7 @@ class CodeGenerator:
             if upper_name == "IF":
                 funcs.add("XlError")
                 funcs.add("to_bool")
-            elif upper_name == "IFERROR":
-                funcs.add("XlError")
-            elif upper_name in {"IFNA", "_XLFN.IFNA"}:
+            elif upper_name == "IFERROR" or upper_name in {"IFNA", "_XLFN.IFNA"}:
                 funcs.add("XlError")
             elif upper_name == "CHOOSE":
                 funcs.add("XlError")
@@ -1611,9 +1605,7 @@ class CodeGenerator:
         entrypoint_py = "\n".join(entrypoint_lines)
 
         entrypoint_exports = ["compute_all", "make_context"]
-        entrypoint_exports.extend(
-            f"compute_{name}" for name in normalized_entrypoints.keys()
-        )
+        entrypoint_exports.extend(f"compute_{name}" for name in normalized_entrypoints)
         entrypoint_imports = ", ".join(entrypoint_exports)
         all_exports = entrypoint_exports + ["DEFAULT_INPUTS"]
         init_py = "\n".join(

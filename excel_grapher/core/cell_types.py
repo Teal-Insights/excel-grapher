@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Mapping, TypeAlias, get_args, get_origin, get_type_hints
+from typing import Any, TypeAlias, get_args, get_origin, get_type_hints
 
 
 class CellKind(str, Enum):

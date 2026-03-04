@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 from typing import cast
 
-from excel_grapher.evaluator.codegen import CodeGenerator
+from excel_grapher.evaluator.codegen import CodeGenerator, GraphLike
 from excel_grapher.evaluator.types import XlError
 
 
@@ -46,7 +46,7 @@ def test_codegen_does_not_embed_non_literal_leaf_values() -> None:
             "S!A1": _Node(formula=None, normalized_formula=None, value=_WeirdRepr()),
         }
     )
-    code = CodeGenerator(graph).generate(["S!A1"])
+    code = CodeGenerator(cast(GraphLike, graph)).generate(["S!A1"])
     compiled = compile(code, "<generated>", "exec")
     assert compiled is not None
     assert "<weird>" not in code
@@ -58,7 +58,7 @@ def test_codegen_serializes_xlerror_leaf_values() -> None:
             "S!A1": _Node(formula=None, normalized_formula=None, value=XlError.DIV),
         }
     )
-    code = CodeGenerator(graph).generate(["S!A1"])
+    code = CodeGenerator(cast(GraphLike, graph)).generate(["S!A1"])
     compiled = compile(code, "<generated>", "exec")
     assert compiled is not None
 

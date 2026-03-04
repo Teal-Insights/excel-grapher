@@ -5,20 +5,27 @@ Public API is namespaced by role: excel_grapher.grapher, excel_grapher.evaluator
 Convenience re-exports below keep existing call patterns working.
 """
 
+from .evaluator import (
+    CellValue,
+    ExcelRange,
+    FormulaEvaluator,
+    ParseError,
+    XlError,
+)
 from .grapher import (
     And,
-    GuardCellRef,
     Compare,
     CycleError,
     CycleReport,
     DependencyGraph,
+    GuardCellRef,
+    GuardExpr,
     Literal,
     Node,
+    NodeHook,
     NodeKey,
     Not,
-    NodeHook,
     Or,
-    GuardExpr,
     ValidationResult,
     ValueType,
     WorkbookCalcSettings,
@@ -31,13 +38,6 @@ from .grapher import (
     to_mermaid,
     to_networkx,
     validate_graph,
-)
-from .evaluator import (
-    CellValue,
-    ExcelRange,
-    FormulaEvaluator,
-    ParseError,
-    XlError,
 )
 
 __all__ = [
