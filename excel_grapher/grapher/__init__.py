@@ -5,6 +5,13 @@ This package intentionally keeps the public API small and stable.
 """
 
 from .builder import create_dependency_graph
+from .dynamic_refs import (
+    DynamicRefConfig,
+    DynamicRefError,
+    DynamicRefLimits,
+    infer_dynamic_indirect_targets,
+    infer_dynamic_offset_targets,
+)
 from .export import to_graphviz, to_mermaid, to_networkx
 from .graph import CycleError, CycleReport, DependencyGraph, NodeHook
 from .guard import And, Compare, GuardExpr, Literal, Not, Or
@@ -16,6 +23,11 @@ from .validation import ValidationResult, WorkbookCalcSettings, get_calc_setting
 __all__ = [
     "create_dependency_graph",
     "DependencyGraph",
+    "DynamicRefConfig",
+    "DynamicRefError",
+    "DynamicRefLimits",
+    "infer_dynamic_indirect_targets",
+    "infer_dynamic_offset_targets",
     "NodeHook",
     "CycleError",
     "CycleReport",

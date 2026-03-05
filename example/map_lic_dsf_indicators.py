@@ -4,22 +4,37 @@ Map dependencies for LIC-DSF indicator rows using excel-grapher.
 
 This script traces the dependency closure for key indicator rows across
 B1, B3, and B4 sheets and validates against calcChain.xml.
+
+Dynamic refs (OFFSET/INDIRECT) are resolved via a constraint-based config.
+Iterative workflow: run the script; if DynamicRefError is raised, the message
+includes the formula cell that needs a constraint. Inspect that cell and the
+row/column headers in the workbook to decide plausible input domains, add the
+address to LicDsfConstraints (with Annotated[int, Between(lo, hi)] or
+Literal[...]) and to LIC_DSF_CONSTRAINTS_DATA, then re-run until the graph
+builds.
 """
 
 from pathlib import Path
-from typing import TypedDict
+from typing import (  # noqa: F401 - Annotated/Literal used when adding constraints
+    Annotated,
+    Literal,
+    TypedDict,
+)
 
 import openpyxl
 import openpyxl.utils.cell
 
 from excel_grapher import (
     CycleError,
+    DynamicRefConfig,
+    DynamicRefError,
     create_dependency_graph,
     format_cell_key,
     get_calc_settings,
     to_graphviz,
     validate_graph,
 )
+from excel_grapher.core.cell_types import Between  # noqa: F401 - used when adding constraints
 
 
 # Configuration: sheets and indicator rows to trace
@@ -36,6 +51,24 @@ INDICATOR_CONFIG: list[IndicatorConfig] = [
 
 # Dated template; adjust filename if using a different snapshot.
 WORKBOOK_PATH = Path("example/data/lic-dsf-template-2025-08-12.xlsm")
+
+# Set True to resolve OFFSET/INDIRECT from cached workbook values (no constraints).
+# Set False to use constraint-based resolution; add address-style keys below as you hit DynamicRefError.
+USE_CACHED_DYNAMIC_REFS = False
+
+# Constraint types for cells that feed OFFSET/INDIRECT. Keys must be address-style (e.g. "Sheet1!B1").
+# Add entries when the script raises DynamicRefError for a formula cell: the *arguments* of that
+# formula (the cells that drive the offset/indirect) need domains here.
+class LicDsfConstraints(TypedDict, total=False):
+    pass
+
+# Populate __annotations__ with address -> type when you hit DynamicRefError. Only leaf cells
+# (non-formula) that feed OFFSET/INDIRECT variable arguments need constraints.
+# LANG is START!M10 (formula); it depends on leaf START!L10 (language name). The first run may
+# report other missing leaves (e.g. START!K10, lookup!BB4, lookup!BC7); add them and re-run.
+LicDsfConstraints.__annotations__["START!L10"] = Literal["English", "French", "Portuguese", "Spanish"]
+
+LIC_DSF_CONSTRAINTS_DATA: dict[str, int | str | float] = {"START!L10": "English"}
 
 
 def discover_formula_cells_in_rows(
@@ -109,15 +142,31 @@ def main() -> None:
         print("No formula cells found. Exiting.")
         return
     
-    # Build dependency graph
+    # Build dependency graph (constraint-based or cached for OFFSET/INDIRECT)
     print("\n2. Building dependency graph...")
-    graph = create_dependency_graph(
-        WORKBOOK_PATH,
-        all_targets,
-        load_values=False,  # Skip cached values for speed
-        max_depth=50,
-    )
-    
+    dynamic_refs: DynamicRefConfig | None = None
+    if not USE_CACHED_DYNAMIC_REFS and LicDsfConstraints.__annotations__:
+        dynamic_refs = DynamicRefConfig.from_constraints(
+            LicDsfConstraints, LIC_DSF_CONSTRAINTS_DATA
+        )
+    try:
+        graph = create_dependency_graph(
+            WORKBOOK_PATH,
+            all_targets,
+            load_values=False,
+            max_depth=50,
+            dynamic_refs=dynamic_refs,
+            use_cached_dynamic_refs=USE_CACHED_DYNAMIC_REFS,
+        )
+    except DynamicRefError as e:
+        print(f"\n   DynamicRefError: {e}")
+        print(
+            "   Add the reported cell's argument cells to LicDsfConstraints (address-style keys)"
+            " and LIC_DSF_CONSTRAINTS_DATA, then re-run. Or set USE_CACHED_DYNAMIC_REFS=True to"
+            " resolve from cached values."
+        )
+        raise
+
     print(f"   Nodes in graph: {len(graph)}")
     print(f"   Leaf nodes: {sum(1 for _ in graph.leaves())}")
     print(f"   Formula nodes: {len(graph) - sum(1 for _ in graph.leaves())}")
