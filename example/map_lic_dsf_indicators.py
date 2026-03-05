@@ -64,11 +64,23 @@ class LicDsfConstraints(TypedDict, total=False):
 
 # Populate __annotations__ with address -> type when you hit DynamicRefError. Only leaf cells
 # (non-formula) that feed OFFSET/INDIRECT variable arguments need constraints.
-# LANG is START!M10 (formula); it depends on leaf START!L10 (language name). The first run may
-# report other missing leaves (e.g. START!K10, lookup!BB4, lookup!BC7); add them and re-run.
+# LANG = START!M10 (formula) depends on START!L10 (VLOOKUP result); L10 depends on START!K10
+# and lookup!BB4:BC7. K10 = language selector; BB/BC = lookup table. Range expansion requires
+# every cell in BB4:BC7 to be constrained (not just corners).
+_LANG_LITERAL = Literal[
+    "English", "French", "Portuguese", "Spanish", "Français", "Portugues", "Español"
+]
 LicDsfConstraints.__annotations__["START!L10"] = Literal["English", "French", "Portuguese", "Spanish"]
+LicDsfConstraints.__annotations__["START!K10"] = Literal["English", "French", "Portuguese", "Spanish"]
+for _r in range(4, 8):
+    for _c in ("BB", "BC"):
+        LicDsfConstraints.__annotations__[f"lookup!{_c}{_r}"] = _LANG_LITERAL
 
-LIC_DSF_CONSTRAINTS_DATA: dict[str, int | str | float] = {"START!L10": "English"}
+LIC_DSF_CONSTRAINTS_DATA: dict[str, int | str | float] = {
+    "START!L10": "English",
+    "START!K10": "English",
+    **{f"lookup!{c}{r}": "English" for r in range(4, 8) for c in ("BB", "BC")},
+}
 
 
 def discover_formula_cells_in_rows(

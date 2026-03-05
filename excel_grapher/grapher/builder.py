@@ -221,6 +221,17 @@ def create_dependency_graph(
                         for ref in parse_cell_refs(norm):
                             sh = ref.sheet if ref.sheet is not None else sheet_of_cell
                             out.add(format_key(sh, f"{ref.column}{ref.row}"))
+                        for start, end, _span in parse_range_refs_with_spans(norm):
+                            sh = start.sheet if start.sheet is not None else sheet_of_cell
+                            for dep_sheet, dep_a1 in expand_range(
+                                sheet=sh,
+                                start_col=start.column,
+                                start_row=start.row,
+                                end_col=end.column,
+                                end_row=end.row,
+                                max_cells=max_range_cells,
+                            ):
+                                out.add(format_key(dep_sheet, dep_a1))
                         return out
 
                     all_refs: set[str] = set()

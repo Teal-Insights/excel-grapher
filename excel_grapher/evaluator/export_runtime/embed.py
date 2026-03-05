@@ -7,11 +7,12 @@ from pathlib import Path
 _RUNTIME_DIR = Path(__file__).resolve().parent
 _CORE_DIR = _RUNTIME_DIR.parent.parent / "core"
 
-# Core package modules define types, coercions, and scalar operators (canonical source).
+# Core package modules define types, coercions, scalar operators, and addressing (canonical source).
 _CORE_MODULES: list[tuple[str, Path]] = [
     ("core.types", _CORE_DIR / "types.py"),
     ("core.coercions", _CORE_DIR / "coercions.py"),
     ("core.operators", _CORE_DIR / "operators.py"),
+    ("core.addressing", _CORE_DIR / "addressing.py"),
 ]
 
 # Export runtime modules (representation-specific or re-exports); order preserved for iteration.
