@@ -37,16 +37,37 @@ from excel_grapher import (
 from excel_grapher.core.cell_types import Between  # noqa: F401 - used when adding constraints
 
 
-# Configuration: sheets and indicator rows to trace
+# Configuration: sheets and indicator rows to trace (row-based discovery)
 class IndicatorConfig(TypedDict):
     sheet: str
     indicator_rows: list[int]
 
 
 INDICATOR_CONFIG: list[IndicatorConfig] = [
+    # Which, if any, rows do we want from "Baseline - external" and "A1_historical_ext"?
+    # Six standardized stress tests:
     {"sheet": "B1_GDP_ext", "indicator_rows": [35, 36, 39, 40]},
     {"sheet": "B3_Exports_ext", "indicator_rows": [35, 36, 39, 40]},
     {"sheet": "B4_other flows_ext", "indicator_rows": [35, 36, 39, 40]},
+    {"sheet": "B5_depreciation_ext", "indicator_rows": [35, 36, 39, 40]},
+    {"sheet": "B6_Combo_mkt_ext", "indicator_rows": [35, 36, 39, 40]},
+    {"sheet": "B6_Combo_non-mkt_ext", "indicator_rows": [35, 36, 39, 40]},
+    # Mechanical external debt risk rating
+    # Mechanical total public debt risk rating
+]
+
+# Explicit cell ranges to extract (sheet-qualified A1 range, e.g. "'Chart Data'!D10:D17").
+# All cells in each range are included as graph targets.
+CHART_DATA_RANGES: list[tuple[str, str]] = [
+    ("External DSA risk rating signals", "'Chart Data'!D10:D17"),
+    ("Fiscal (Total Public Debt) risk rating signals", "'Chart Data'!I10:I14"),
+    ("Applicable tailored stress test signals", "'Chart Data'!I17:I19"),
+    ("Fiscal space for moderate risk category", "'Chart Data'!E25:E27"),
+    ("Overall rating", "'Chart Data'!L10:L11"),
+    ("PV of Debt-to-GDP Ratio for all stress tests", "'Chart Data'!D239:X252"),
+    ("PV of Debt-to-Revenue Ratio for all stress tests", "'Chart Data'!D281:X294"),
+    ("Debt Service-to-Revenue Ratio for all stress tests", "'Chart Data'!D318:X331"),
+    ("Debt Service-to-GDP Ratio for all stress tests", "'Chart Data'!D351:X364"),
 ]
 
 # Dated template; adjust filename if using a different snapshot.
@@ -97,6 +118,49 @@ LIC_DSF_CONSTRAINTS_DATA: dict[str, int | str | float] = {
 }
 
 
+def parse_range_spec(spec: str) -> tuple[str, str]:
+    """
+    Parse a sheet-qualified range spec into (sheet_name, range_a1).
+
+    Accepts specs like "'Chart Data'!D10:D17" or "Sheet1!A1:B2".
+    """
+    if "!" not in spec:
+        raise ValueError(f"Range spec must contain '!': {spec!r}")
+    sheet_part, range_part = spec.split("!", 1)
+    sheet_part = sheet_part.strip()
+    if sheet_part.startswith("'") and sheet_part.endswith("'"):
+        sheet_part = sheet_part[1:-1].replace("''", "'")
+    return sheet_part, range_part.strip()
+
+
+def cells_in_range(sheet: str, range_a1: str) -> list[str]:
+    """
+    Expand an A1 range to a list of sheet-qualified cell keys.
+
+    range_a1 may be a single cell ("D10") or a range ("D10:D17", "D239:X252").
+    """
+    if ":" in range_a1:
+        start_a1, end_a1 = range_a1.split(":", 1)
+        start_a1 = start_a1.strip()
+        end_a1 = end_a1.strip()
+    else:
+        start_a1 = end_a1 = range_a1.strip()
+
+    c1, r1 = openpyxl.utils.cell.coordinate_from_string(start_a1)
+    c2, r2 = openpyxl.utils.cell.coordinate_from_string(end_a1)
+    start_col_idx = openpyxl.utils.cell.column_index_from_string(c1)
+    end_col_idx = openpyxl.utils.cell.column_index_from_string(c2)
+    rlo, rhi = (r1, r2) if r1 <= r2 else (r2, r1)
+    clo, chi = (start_col_idx, end_col_idx) if start_col_idx <= end_col_idx else (end_col_idx, start_col_idx)
+
+    out: list[str] = []
+    for row in range(rlo, rhi + 1):
+        for col_idx in range(clo, chi + 1):
+            col_letter = openpyxl.utils.cell.get_column_letter(col_idx)
+            out.append(format_cell_key(sheet, col_letter, row))
+    return out
+
+
 def discover_formula_cells_in_rows(
     wb_path: Path,
     sheet_name: str,
@@ -141,19 +205,25 @@ def main() -> None:
         print(f"Error: Workbook not found at {WORKBOOK_PATH}")
         return
     
-    # Discover all formula cells in indicator rows
-    print("\n1. Discovering formula cells in indicator rows...")
+    # Discover targets: explicit ranges (all cells) and indicator rows (formula cells only)
+    print("\n1. Collecting target cells...")
     all_targets: list[str] = []
-    
+
+    for label, spec in CHART_DATA_RANGES:
+        sheet_name, range_a1 = parse_range_spec(spec)
+        targets = cells_in_range(sheet_name, range_a1)
+        print(f"   {label}: {spec} -> {len(targets)} cells")
+        all_targets.extend(targets)
+
+    print("   Indicator rows (formula cells):")
     for config in INDICATOR_CONFIG:
         sheet = config["sheet"]
         rows = config["indicator_rows"]
         print(f"   {sheet}: rows {rows}")
-        
         targets = discover_formula_cells_in_rows(WORKBOOK_PATH, sheet, rows)
         print(f"      Found {len(targets)} formula cells")
         all_targets.extend(targets)
-    
+
     print(f"\n   Total targets: {len(all_targets)}")
     
     if not all_targets:
@@ -223,7 +293,9 @@ def main() -> None:
     
     # Validate against calcChain.xml
     print("\n5. Validating against calcChain.xml...")
-    scope = {config["sheet"] for config in INDICATOR_CONFIG}
+    scope = {config["sheet"] for config in INDICATOR_CONFIG} | {
+        parse_range_spec(spec)[0] for _label, spec in CHART_DATA_RANGES
+    }
     result = validate_graph(graph, WORKBOOK_PATH, scope=scope)
     
     print(f"   Valid: {result.is_valid}")
