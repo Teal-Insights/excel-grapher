@@ -154,7 +154,15 @@ def expand_leaf_env_to_argument_env(
                 val = evaluate_expr(ast, get_cell_value=lambda _: None, max_depth=limits.max_depth)
             except Exception:
                 val = None
-            if val is None or isinstance(val, (Unsupported, XlError)):
+            if isinstance(val, Unsupported):
+                # Fail fast for unsupported formulas in the dynamic-ref argument chain.
+                reason = f": {val.reason}" if val.reason else ""
+                raise DynamicRefError(
+                    f"Unsupported dynamic-ref argument formula at {addr!r}{reason}. "
+                    "Either constrain this cell via DynamicRefConfig or avoid unsupported "
+                    "functions in the OFFSET/INDIRECT argument chain."
+                )
+            if val is None or isinstance(val, XlError):
                 cache[addr] = CellType(kind=CellKind.ANY)
                 return cache[addr]
             cache[addr] = _values_to_cell_type({val})
@@ -171,6 +179,7 @@ def expand_leaf_env_to_argument_env(
                     f"CellType for {r!r} must have interval or enum domain"
                 )
         result_values: set[Any] = set()
+        last_unsupported: Unsupported | None = None
         for assignment in product(*(domains[r] for r in refs)):
             addr_to_val = dict(zip(refs, assignment, strict=False))
 
@@ -183,9 +192,19 @@ def expand_leaf_env_to_argument_env(
                 get_cell_value=get_cell_value,
                 max_depth=limits.max_depth,
             )
-            if isinstance(val, (Unsupported, XlError)):
+            if isinstance(val, Unsupported):
+                last_unsupported = val
+                continue
+            if isinstance(val, XlError):
                 continue
             result_values.add(val)
+        if not result_values and last_unsupported is not None:
+            reason = f": {last_unsupported.reason}" if last_unsupported.reason else ""
+            raise DynamicRefError(
+                f"Unsupported dynamic-ref argument formula at {addr!r}{reason}. "
+                "Either constrain this cell via DynamicRefConfig or avoid unsupported "
+                "functions in the OFFSET/INDIRECT argument chain."
+            )
         cache[addr] = _values_to_cell_type(result_values)
         return cache[addr]
 

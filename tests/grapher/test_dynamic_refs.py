@@ -405,3 +405,93 @@ def test_create_dependency_graph_raises_when_leaf_missing_constraint(tmp_path: P
     assert "Sheet1!L10" in str(exc_info.value)
     assert "leaf" in str(exc_info.value).lower()
 
+
+def test_expand_leaf_env_raises_for_unsupported_formula_in_argument_chain() -> None:
+    """Unsupported functions in argument-chain formulas should raise a clear DynamicRefError.
+
+    This simulates a formula cell in the OFFSET/INDIRECT argument subgraph whose expression
+    cannot be evaluated by expr_eval (e.g. uses VLOOKUP). Instead of silently treating it as
+    CellKind.ANY and failing later with a generic 'must have interval or enum domain' message,
+    expand_leaf_env_to_argument_env should raise immediately with an informative error.
+    """
+    from excel_grapher.grapher.dynamic_refs import (
+        DynamicRefLimits,
+        expand_leaf_env_to_argument_env,
+    )
+
+    # Leaf cell with a small numeric interval domain.
+    leaf_env = _make_env(
+        {
+            "Sheet1!A1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntIntervalDomain(min=0, max=1),
+            )
+        }
+    )
+
+    # Argument ref is a formula cell whose formula uses an unsupported function FOO(A1).
+    argument_refs = {"Sheet1!B2"}
+
+    def _get_cell_formula(addr: str) -> str | None:
+        return "=FOO(Sheet1!A1)" if addr == "Sheet1!B2" else None
+
+    def _get_refs_from_formula(formula: str, sheet: str) -> set[str]:
+        assert sheet == "Sheet1"
+        return {"Sheet1!A1"} if "FOO" in formula else set()
+
+    with pytest.raises(DynamicRefError) as exc_info:
+        expand_leaf_env_to_argument_env(
+            argument_refs,
+            _get_cell_formula,
+            _get_refs_from_formula,
+            leaf_env,
+            DynamicRefLimits(),
+        )
+
+    msg = str(exc_info.value)
+    assert "Sheet1!B2" in msg
+    assert "unsupported" in msg.lower()
+    assert "constraint" in msg.lower() or "DynamicRefConfig" in msg
+
+
+def test_indirect_raises_when_argument_leaf_missing_domain() -> None:
+    """INDIRECT(ref) raises when ref is a leaf (non-formula) and ref has no domain in env."""
+    formula = "=INDIRECT(Sheet1!B1)"
+    env = _make_env({})  # B1 not in env; B1 is the leaf referenced by INDIRECT text arg
+
+    with pytest.raises(DynamicRefError) as exc_info:
+        infer_dynamic_indirect_targets(
+            formula,
+            current_sheet="Sheet1",
+            cell_type_env=env,
+        )
+    msg = str(exc_info.value)
+    assert "B1" in msg or "Sheet1!B1" in msg
+    assert "Missing" in msg or "interval or enum" in msg
+
+
+def test_indirect_does_not_raise_when_argument_is_intermediate_with_domain() -> None:
+    """INDIRECT(ref) does not raise when ref is an intermediate (formula) cell with enum in env.
+
+    The env is the expanded argument env: formula cells in the chain have domains computed
+    from leaf evaluation, so they have interval or enum. Only leaves need user constraints.
+    """
+    formula = "=INDIRECT(Sheet1!B2)"
+    # B2 would be a formula cell; expanded env gives it enum (e.g. sheet-qualified ref strings).
+    env = _make_env(
+        {
+            "Sheet1!B2": CellType(
+                kind=CellKind.STRING,
+                enum=EnumDomain(values=frozenset({"Sheet1!A1", "Sheet1!B2"})),
+            )
+        }
+    )
+
+    targets = infer_dynamic_indirect_targets(
+        formula,
+        current_sheet="Sheet1",
+        cell_type_env=env,
+    )
+    # No raise; targets are the resolved cells (same as test_dynamic_indirect_over_enum_text_domain).
+    assert targets == {"Sheet1!A1", "Sheet1!B2"}
+

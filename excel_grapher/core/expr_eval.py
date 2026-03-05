@@ -6,7 +6,7 @@ from typing import cast
 
 from openpyxl.utils.cell import coordinate_to_tuple
 
-from .coercions import flatten, numeric_values, to_bool, to_number
+from .coercions import flatten, numeric_values, to_bool, to_number, to_string
 from .formula_ast import (
     AstNode,
     BinaryOpNode,
@@ -172,7 +172,11 @@ def _eval(
         ]
 
         name = node.name.upper()
-        impl = functions.get(name) or _DEFAULT_FUNCTIONS.get(name)
+        impl = (
+            functions.get(name)
+            or _DEFAULT_FUNCTIONS.get(name)
+            or _DEFAULT_FUNCTIONS.get(name.split(".")[-1] if "." in name else "")
+        )
         if impl is None:
             return Unsupported(f"Unsupported function {name!r}")
         return impl(flat_args)
@@ -259,11 +263,21 @@ def _fn_if(args: list[CellValue]) -> CellValue:
     return False
 
 
+def _fn_concat(args: list[CellValue]) -> str | XlError:
+    """CONCAT(text1, [text2], ...) – concatenate all arguments as strings."""
+    flat = flatten(*args)
+    for v in flat:
+        if isinstance(v, XlError):
+            return v
+    return "".join(to_string(v) for v in flat)
+
+
 _DEFAULT_FUNCTIONS: dict[str, Callable[[list[CellValue]], CellValue]] = {
     "SUM": _fn_sum,
     "MIN": _fn_min,
     "MAX": _fn_max,
     "ABS": _fn_abs,
     "IF": _fn_if,
+    "CONCAT": _fn_concat,
 }
 

@@ -57,28 +57,40 @@ WORKBOOK_PATH = Path("example/data/lic-dsf-template-2026-01-31.xlsm")
 USE_CACHED_DYNAMIC_REFS = False
 
 # Constraint types for cells that feed OFFSET/INDIRECT. Keys must be address-style (e.g. "Sheet1!B1").
-# Add entries when the script raises DynamicRefError for a formula cell: the *arguments* of that
-# formula (the cells that drive the offset/indirect) need domains here.
+# Add entries when the script raises DynamicRefError: the message lists leaf cells that need
+# constraints. Add each to __annotations__ (with Annotated[int, Between(lo, hi)] or Literal[...])
+# and to LIC_DSF_CONSTRAINTS_DATA, then re-run. Repeat until the graph builds.
 class LicDsfConstraints(TypedDict, total=False):
     pass
 
-# Populate __annotations__ with address -> type when you hit DynamicRefError. Only leaf cells
-# (non-formula) that feed OFFSET/INDIRECT variable arguments need constraints.
-# LANG = START!M10 (formula) depends on START!L10 (VLOOKUP result); L10 depends on START!K10
-# and lookup!BB4:BC7. K10 = language selector; BB/BC = lookup table. Range expansion requires
-# every cell in BB4:BC7 to be constrained (not just corners).
-_LANG_LITERAL = Literal[
+# PV_Base!B9xx = CONCAT("$", A9xx, "$", $A$<row>) → INDIRECT($B9xx). Row-index cells A917, A941, A965 (fixed).
+LicDsfConstraints.__annotations__["PV_Base!A917"] = Literal[64]
+LicDsfConstraints.__annotations__["PV_Base!A941"] = Literal[90]
+LicDsfConstraints.__annotations__["PV_Base!A965"] = Literal[115]
+# A918:A938, A942:A962, A966:A986 each has a single cached letter D, E, …, X.
+for _start, _end in [(918, 939), (942, 963), (966, 987)]:
+    for _row in range(_start, _end):
+        _letter = chr(ord("D") + _row - _start)
+        LicDsfConstraints.__annotations__[f"PV_Base!A{_row}"] = Literal[_letter]
+
+# Language selector and lookup table (feed INDIRECT/VLOOKUP for language-dependent refs).
+# START!L10 = VLOOKUP(K10, lookup!BB4:BC7, 2); evaluator does not support VLOOKUP, so L10 is constrained too.
+_LANG = Literal["English", "French", "Portuguese", "Spanish"]
+_LANG_LOOKUP = Literal[
     "English", "French", "Portuguese", "Spanish", "Français", "Portugues", "Español"
 ]
-LicDsfConstraints.__annotations__["START!L10"] = Literal["English", "French", "Portuguese", "Spanish"]
-LicDsfConstraints.__annotations__["START!K10"] = Literal["English", "French", "Portuguese", "Spanish"]
+LicDsfConstraints.__annotations__["START!L10"] = _LANG
 for _r in range(4, 8):
     for _c in ("BB", "BC"):
-        LicDsfConstraints.__annotations__[f"lookup!{_c}{_r}"] = _LANG_LITERAL
+        LicDsfConstraints.__annotations__[f"lookup!{_c}{_r}"] = _LANG_LOOKUP
 
 LIC_DSF_CONSTRAINTS_DATA: dict[str, int | str | float] = {
+    "PV_Base!A917": 64,
+    "PV_Base!A941": 90,
+    "PV_Base!A965": 115,
+    **{f"PV_Base!A{r}": chr(ord("D") + r - _start)
+      for _start, _end in [(918, 939), (942, 963), (966, 987)] for r in range(_start, _end)},
     "START!L10": "English",
-    "START!K10": "English",
     **{f"lookup!{c}{r}": "English" for r in range(4, 8) for c in ("BB", "BC")},
 }
 
@@ -149,7 +161,7 @@ def main() -> None:
     # Build dependency graph (constraint-based or cached for OFFSET/INDIRECT)
     print("\n2. Building dependency graph...")
     dynamic_refs: DynamicRefConfig | None = None
-    if not USE_CACHED_DYNAMIC_REFS and LicDsfConstraints.__annotations__:
+    if not USE_CACHED_DYNAMIC_REFS:
         dynamic_refs = DynamicRefConfig.from_constraints(
             LicDsfConstraints, LIC_DSF_CONSTRAINTS_DATA
         )
