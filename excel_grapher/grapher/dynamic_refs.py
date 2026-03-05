@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from itertools import product
 from typing import Any
@@ -14,8 +14,11 @@ from excel_grapher.core.addressing import (
 )
 from excel_grapher.core.cell_types import (
     CellKind,
+    CellType,
     CellTypeEnv,
+    EnumDomain,
     IntIntervalDomain,
+    constraints_to_cell_type_env,
 )
 from excel_grapher.core.expr_eval import Unsupported, evaluate_expr
 from excel_grapher.core.formula_ast import (
@@ -33,7 +36,12 @@ from .parser import _find_function_calls_with_spans
 
 
 class DynamicRefError(ValueError):
-    """Raised when dynamic reference analysis cannot proceed."""
+    """Raised when dynamic reference analysis cannot proceed.
+
+    When building a dependency graph, pass a :class:`DynamicRefConfig` (e.g. via
+    :meth:`DynamicRefConfig.from_constraints`) or set ``use_cached_dynamic_refs=True``
+    to resolve OFFSET/INDIRECT instead of raising.
+    """
 
 
 @dataclass(frozen=True)
@@ -41,6 +49,34 @@ class DynamicRefLimits:
     max_branches: int = 1024
     max_cells: int = 10_000
     max_depth: int = 10
+
+
+@dataclass(frozen=True)
+class DynamicRefConfig:
+    """Configuration for resolving OFFSET/INDIRECT via constraint-based inference.
+
+    Prefer building via :meth:`from_constraints`; the constructor is for internal use.
+    """
+
+    cell_type_env: CellTypeEnv
+    limits: DynamicRefLimits
+
+    @classmethod
+    def from_constraints(
+        cls,
+        constraints_type: type[Any],
+        constraints_data: Mapping[str, Any],
+        *,
+        limits: DynamicRefLimits | None = None,
+    ) -> DynamicRefConfig:
+        """Build a config from a TypedDict (or type with type hints) and a validated instance.
+
+        Keys of constraints_type (from get_type_hints(..., include_extras=True)) should be
+        address-style cell addresses (e.g. \"Sheet1!B1\"). constraints_data must have the
+        same keys. No validation of constraints_data is performed; use TypeAdapter etc. if needed.
+        """
+        env = constraints_to_cell_type_env(constraints_type, constraints_data)
+        return cls(cell_type_env=env, limits=limits or DynamicRefLimits())
 
 
 @dataclass(frozen=True)
@@ -52,6 +88,110 @@ class GlobalWorkbookBounds(WorkbookBoundsProtocol):
     max_row: int = 1_048_576  # Excel row limit
     min_col: int = 1
     max_col: int = 16_384  # Excel column limit
+
+
+def _sheet_from_addr(addr: str) -> str:
+    """Return sheet part of address (e.g. 'Sheet1!A1' -> 'Sheet1')."""
+    if "!" not in addr:
+        return ""
+    if addr.startswith("'"):
+        end = addr.index("'", 1)
+        return addr[1:end]
+    return addr.split("!", 1)[0]
+
+
+def expand_leaf_env_to_argument_env(
+    argument_refs: set[str],
+    get_cell_formula: Callable[[str], str | None],
+    get_refs_from_formula: Callable[[str, str], set[str]],
+    leaf_env: CellTypeEnv,
+    limits: DynamicRefLimits,
+) -> dict[str, CellType]:
+    """Build a CellTypeEnv for all refs in the argument chain from leaf constraints only.
+
+    Formula cells in the chain are evaluated over the leaf env; their domains become
+    the enumerated result sets. Only leaf addresses need to be in leaf_env.
+    """
+    cache: dict[str, CellType] = {}
+
+    def _values_to_cell_type(values: set[Any]) -> CellType:
+        if not values:
+            return CellType(kind=CellKind.ANY)
+        kinds = {type(v) for v in values}
+        if kinds <= {int, float}:
+            return CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset(values)),
+            )
+        if kinds <= {str}:
+            return CellType(
+                kind=CellKind.STRING,
+                enum=EnumDomain(values=frozenset(values)),
+            )
+        if kinds <= {bool}:
+            return CellType(
+                kind=CellKind.BOOL,
+                enum=EnumDomain(values=frozenset(values)),
+            )
+        return CellType(kind=CellKind.ANY, enum=EnumDomain(values=frozenset(values)))
+
+    def cell_type_for(addr: str) -> CellType:
+        if addr in cache:
+            return cache[addr]
+        if addr in leaf_env:
+            cache[addr] = leaf_env[addr]
+            return cache[addr]
+        formula = get_cell_formula(addr)
+        if formula is None:
+            raise DynamicRefError(
+                f"Missing constraint for leaf {addr!r} that feeds OFFSET/INDIRECT. "
+                "Add constraints only for leaf cells (non-formula) in the argument subgraph."
+            )
+        refs = get_refs_from_formula(formula, _sheet_from_addr(addr))
+        if not refs:
+            ast = parse_ast(formula if formula.startswith("=") else "=" + formula)
+            try:
+                val = evaluate_expr(ast, get_cell_value=lambda _: None, max_depth=limits.max_depth)
+            except Exception:
+                val = None
+            if val is None or isinstance(val, (Unsupported, XlError)):
+                cache[addr] = CellType(kind=CellKind.ANY)
+                return cache[addr]
+            cache[addr] = _values_to_cell_type({val})
+            return cache[addr]
+        ref_types = {r: cell_type_for(r) for r in refs}
+        domains: dict[str, list[Any]] = {}
+        for r, ct in ref_types.items():
+            if ct.enum is not None:
+                domains[r] = list(ct.enum.values)
+            elif ct.interval is not None:
+                domains[r] = _interval_to_values(ct.interval, limits)
+            else:
+                raise DynamicRefError(
+                    f"CellType for {r!r} must have interval or enum domain"
+                )
+        result_values: set[Any] = set()
+        for assignment in product(*(domains[r] for r in refs)):
+            addr_to_val = dict(zip(refs, assignment, strict=False))
+
+            def get_cell_value(a: str, _av=addr_to_val) -> Any:
+                return _av.get(a)
+
+            ast = parse_ast(formula if formula.startswith("=") else "=" + formula)
+            val = evaluate_expr(
+                ast,
+                get_cell_value=get_cell_value,
+                max_depth=limits.max_depth,
+            )
+            if isinstance(val, (Unsupported, XlError)):
+                continue
+            result_values.add(val)
+        cache[addr] = _values_to_cell_type(result_values)
+        return cache[addr]
+
+    for addr in argument_refs:
+        cell_type_for(addr)
+    return cache
 
 
 def infer_dynamic_offset_targets(

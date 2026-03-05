@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import warnings
 from pathlib import Path
+from typing import Literal
 
 import pytest
 import xlsxwriter
@@ -16,6 +17,7 @@ from excel_grapher.core.cell_types import (
     IntIntervalDomain,
 )
 from excel_grapher.grapher.dynamic_refs import (
+    DynamicRefConfig,
     DynamicRefError,
     DynamicRefLimits,
     infer_dynamic_indirect_targets,
@@ -76,7 +78,9 @@ def test_offset_with_cached_named_range_warns_once(tmp_path: Path) -> None:
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
+        graph = create_dependency_graph(
+            excel_path, ["Sheet1!A1"], load_values=False, use_cached_dynamic_refs=True
+        )
 
     deps = graph.dependencies("Sheet1!A1")
     # A1 = OFFSET(B1,0,LANG)+OFFSET(B1,0,LANG); LANG = Sheet1!C1. Deps include C1 (offset arg) and D1 (resolved target).
@@ -92,7 +96,9 @@ def test_offset_index_row_resolves_named_range(tmp_path: Path) -> None:
     excel_path = tmp_path / "offset_index_row.xlsx"
     _build_offset_index_row_workbook(excel_path)
 
-    graph = create_dependency_graph(excel_path, ["Sheet1!B2"], load_values=False)
+    graph = create_dependency_graph(
+        excel_path, ["Sheet1!B2"], load_values=False, use_cached_dynamic_refs=True
+    )
     deps = graph.dependencies("Sheet1!B2")
     assert deps == {"lookup!B4"}
 
@@ -101,7 +107,9 @@ def test_offset_argument_references_are_dependencies(tmp_path: Path) -> None:
     excel_path = tmp_path / "offset_arg_ref.xlsx"
     _build_offset_with_arg_ref_workbook(excel_path)
 
-    graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
+    graph = create_dependency_graph(
+        excel_path, ["Sheet1!A1"], load_values=False, use_cached_dynamic_refs=True
+    )
     deps = graph.dependencies("Sheet1!A1")
     assert deps == {"Sheet1!C1", "START!M10"}
 
@@ -294,7 +302,6 @@ def test_dynamic_indirect_over_enum_text_domain() -> None:
     assert targets == {"Sheet1!A1", "Sheet1!B2"}
 
 
-@pytest.mark.xfail(reason="Dynamic-ref constraints not yet enforced at graph level", strict=False)
 def test_create_dependency_graph_raises_on_dynamic_refs_by_default(tmp_path: Path) -> None:
     excel_path = tmp_path / "offset_named_range.xlsx"
     _build_offset_named_range_workbook(excel_path)
@@ -302,4 +309,99 @@ def test_create_dependency_graph_raises_on_dynamic_refs_by_default(tmp_path: Pat
     with pytest.raises(DynamicRefError):
         # Default behavior should not silently fall back to cached values.
         create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
+
+
+def test_create_dependency_graph_with_dynamic_ref_config(tmp_path: Path) -> None:
+    """Graph built with DynamicRefConfig resolves OFFSET and yields expected edges."""
+    excel_path = tmp_path / "offset_constraint.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(0, 1, 0)  # B1 base
+    ws.write_number(0, 2, 1)  # C1 = row offset (domain 0 or 1)
+    ws.write_formula(0, 0, "=OFFSET(Sheet1!B1,Sheet1!C1,0)", None, 0)  # A1
+    wb.close()
+
+    env = _make_env(
+        {
+            "Sheet1!C1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntIntervalDomain(min=0, max=1),
+            )
+        }
+    )
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+
+    graph = create_dependency_graph(
+        excel_path,
+        ["Sheet1!A1"],
+        load_values=False,
+        dynamic_refs=config,
+    )
+    deps = graph.dependencies("Sheet1!A1")
+    assert deps == {"Sheet1!B1", "Sheet1!C1", "Sheet1!B2"}
+
+
+def test_create_dependency_graph_constrain_leaf_only_formula_in_chain(tmp_path: Path) -> None:
+    """Constraints are only for leaves; formula cells in the argument chain are expanded from leaf env."""
+    excel_path = tmp_path / "offset_leaf_constraint.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(0, 1, 0)  # B1 base
+    ws.write_string(9, 11, "English")  # L10 leaf (language name)
+    ws.write_formula(9, 12, '=IF(L10="English",0,1)', None, 0)  # M10 formula -> 0 or 1
+    ws.write_formula(0, 0, "=OFFSET(Sheet1!B1,Sheet1!M10,0)", None, 0)  # A1
+    wb.close()
+
+    # Constrain only the leaf L10; M10 (formula) is expanded from this.
+    env = _make_env(
+        {
+            "Sheet1!L10": CellType(
+                kind=CellKind.STRING,
+                enum=EnumDomain(values=frozenset({"English", "Other"})),
+            )
+        }
+    )
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+
+    graph = create_dependency_graph(
+        excel_path,
+        ["Sheet1!A1"],
+        load_values=False,
+        dynamic_refs=config,
+    )
+    deps = graph.dependencies("Sheet1!A1")
+    assert deps == {"Sheet1!B1", "Sheet1!M10", "Sheet1!B2"}
+
+
+def test_create_dependency_graph_raises_when_leaf_missing_constraint(tmp_path: Path) -> None:
+    """Raises DynamicRefError listing missing leaves when only a formula cell in the chain is constrained."""
+    excel_path = tmp_path / "offset_missing_leaf.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(0, 1, 0)  # B1 base
+    ws.write_string(9, 11, "English")  # L10 leaf
+    ws.write_formula(9, 12, '=IF(L10="English",0,1)', None, 0)  # M10 formula
+    ws.write_formula(0, 0, "=OFFSET(Sheet1!B1,Sheet1!M10,0)", None, 0)  # A1
+    wb.close()
+
+    # Constrain M10 (formula cell) but not L10 (leaf); should raise for missing leaf.
+    env = _make_env(
+        {
+            "Sheet1!M10": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({0, 1})),
+            )
+        }
+    )
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+
+    with pytest.raises(DynamicRefError) as exc_info:
+        create_dependency_graph(
+            excel_path,
+            ["Sheet1!A1"],
+            load_values=False,
+            dynamic_refs=config,
+        )
+    assert "Sheet1!L10" in str(exc_info.value)
+    assert "leaf" in str(exc_info.value).lower()
 

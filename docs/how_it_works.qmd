@@ -26,6 +26,8 @@ graph = create_dependency_graph(
 )
 ```
 
+Formulas that use **dynamic references** (OFFSET or INDIRECT with cell-dependent arguments) need either constraints or cached values to build the graph. By default the builder raises `DynamicRefError` when it encounters such formulas. To resolve them via constraints, pass `dynamic_refs=DynamicRefConfig.from_constraints(YourTypedDict, your_data, limits=...)` where the type’s keys are address-style cell addresses (e.g. `"Sheet1!B1"`). Alternatively, set `use_cached_dynamic_refs=True` to use cached workbook values for OFFSET/INDIRECT. The LIC-DSF example can be updated later to pass a config or use the cached path so it runs without raising.
+
 We can then either evaluate formulas over this graph or export them as Python code using the evaluator and exporter modules inside the same unified `excel_grapher` library (described below).
 
 ### Implementation
