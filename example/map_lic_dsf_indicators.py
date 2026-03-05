@@ -80,6 +80,7 @@ _LANG_LOOKUP = Literal[
     "English", "French", "Portuguese", "Spanish", "Français", "Portugues", "Español"
 ]
 LicDsfConstraints.__annotations__["START!L10"] = _LANG
+LicDsfConstraints.__annotations__["START!K10"] = _LANG
 for _r in range(4, 8):
     for _c in ("BB", "BC"):
         LicDsfConstraints.__annotations__[f"lookup!{_c}{_r}"] = _LANG_LOOKUP
@@ -91,6 +92,7 @@ LIC_DSF_CONSTRAINTS_DATA: dict[str, int | str | float] = {
     **{f"PV_Base!A{r}": chr(ord("D") + r - _start)
       for _start, _end in [(918, 939), (942, 963), (966, 987)] for r in range(_start, _end)},
     "START!L10": "English",
+    "START!K10": "English",
     **{f"lookup!{c}{r}": "English" for r in range(4, 8) for c in ("BB", "BC")},
 }
 
