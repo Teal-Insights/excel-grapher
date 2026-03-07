@@ -4,7 +4,11 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import cast
 
-from openpyxl.utils.cell import coordinate_to_tuple
+from openpyxl.utils.cell import (
+    column_index_from_string,
+    coordinate_from_string,
+    coordinate_to_tuple,
+)
 
 from .coercions import flatten, numeric_values, to_bool, to_number, to_string
 from .formula_ast import (
@@ -48,12 +52,38 @@ class Unsupported:
 _FunctionsMapping = Mapping[str, Callable[[list[CellValue]], CellValue]]
 
 
+def _cell_part_from_address(addr: str) -> str:
+    """Return the A1 cell part of a sheet-qualified address (e.g. 'Sheet'!B106 -> B106)."""
+    if "!" in addr:
+        return addr.split("!", 1)[-1].strip()
+    return addr.strip()
+
+
+def _row_from_address(addr: str) -> int:
+    """Return 1-based row number for a sheet-qualified or local cell address."""
+    cell = _cell_part_from_address(addr)
+    _col_letter, row = coordinate_from_string(cell)
+    return row
+
+
+def _column_from_address(addr: str) -> int:
+    """Return 1-based column number for a sheet-qualified or local cell address."""
+    cell = _cell_part_from_address(addr)
+    col_letter, _row = coordinate_from_string(cell)
+    return column_index_from_string(col_letter)
+
+
+EvalContext: type = dict[str, int]
+"""Optional evaluation context: 'row' and 'column' (1-based) for ROW()/COLUMN() with no args."""
+
+
 def evaluate_expr(
     node: AstNode,
     *,
     get_cell_value: Callable[[str], CellValue],
     functions: _FunctionsMapping | None = None,
     max_depth: int = 10,
+    context: EvalContext | None = None,
 ) -> CellValue | XlError | Unsupported:
     """Evaluate a restricted Excel expression AST against a cell-value callback.
 
@@ -62,12 +92,15 @@ def evaluate_expr(
     - Literals (numbers, strings, booleans, Excel error literals)
     - Sheet-qualified cell refs (via get_cell_value)
     - Simple ranges (resolved to numpy arrays via ExcelRange.resolve)
-    - A small function whitelist (SUM, MIN, MAX, ABS, IF)
+    - A small function whitelist (SUM, MIN, MAX, ABS, IF, ROW, COLUMN)
     - Basic arithmetic/comparison/string operators
+
+    When context is provided with 'row' and 'column' (1-based), ROW() and
+    COLUMN() with no arguments return that cell's row/column.
     """
 
     funcs: _FunctionsMapping = functions or {}
-    return _eval(node, get_cell_value, funcs, max_depth, depth=0)
+    return _eval(node, get_cell_value, funcs, max_depth, context=context or {}, depth=0)
 
 
 def _eval(
@@ -76,6 +109,7 @@ def _eval(
     functions: _FunctionsMapping,
     max_depth: int,
     *,
+    context: EvalContext,
     depth: int,
 ) -> CellValue | XlError | Unsupported:
     if depth > max_depth:
@@ -103,7 +137,7 @@ def _eval(
         return excel_range.resolve(get_cell_value)
 
     if isinstance(node, UnaryOpNode):
-        value = _eval(node.operand, get_cell_value, functions, max_depth, depth=depth + 1)
+        value = _eval(node.operand, get_cell_value, functions, max_depth, context=context, depth=depth + 1)
         if isinstance(value, Unsupported):
             return value
         if isinstance(value, XlError):
@@ -115,13 +149,13 @@ def _eval(
         return Unsupported(f"Unsupported unary operator {node.op!r}")
 
     if isinstance(node, BinaryOpNode):
-        left = _eval(node.left, get_cell_value, functions, max_depth, depth=depth + 1)
+        left = _eval(node.left, get_cell_value, functions, max_depth, context=context, depth=depth + 1)
         if isinstance(left, Unsupported):
             return left
         if isinstance(left, XlError):
             return left
 
-        right = _eval(node.right, get_cell_value, functions, max_depth, depth=depth + 1)
+        right = _eval(node.right, get_cell_value, functions, max_depth, context=context, depth=depth + 1)
         if isinstance(right, Unsupported):
             return right
         if isinstance(right, XlError):
@@ -155,8 +189,27 @@ def _eval(
         return Unsupported(f"Unsupported binary operator {op!r}")
 
     if isinstance(node, FunctionCallNode):
+        name = node.name.upper()
+        # ROW/COLUMN: ref argument is not evaluated; we use the reference's row/column.
+        if name == "ROW":
+            if len(node.args) == 0:
+                if "row" not in context:
+                    return Unsupported("ROW() requires evaluation context with 'row'")
+                return context["row"]
+            if len(node.args) == 1 and isinstance(node.args[0], CellRefNode):
+                return _row_from_address(node.args[0].address)
+            return Unsupported("ROW expects no argument or a single cell reference")
+        if name == "COLUMN":
+            if len(node.args) == 0:
+                if "column" not in context:
+                    return Unsupported("COLUMN() requires evaluation context with 'column'")
+                return context["column"]
+            if len(node.args) == 1 and isinstance(node.args[0], CellRefNode):
+                return _column_from_address(node.args[0].address)
+            return Unsupported("COLUMN expects no argument or a single cell reference")
+
         args: list[CellValue | XlError | Unsupported] = [
-            _eval(arg, get_cell_value, functions, max_depth, depth=depth + 1)
+            _eval(arg, get_cell_value, functions, max_depth, context=context, depth=depth + 1)
             for arg in node.args
         ]
         for value in args:
@@ -171,7 +224,6 @@ def _eval(
             if not isinstance(v, (XlError, Unsupported))
         ]
 
-        name = node.name.upper()
         impl = (
             functions.get(name)
             or _DEFAULT_FUNCTIONS.get(name)

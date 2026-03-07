@@ -91,3 +91,27 @@ def test_core_expr_eval_respects_max_depth() -> None:
     )
     assert deep_result == 1.0
 
+
+def test_core_expr_eval_row_and_column() -> None:
+    # ROW(ref) returns the row number of the reference (value in ref is ignored).
+    ast = parse("=ROW(Sheet1!B106)")
+    assert evaluate_expr(ast, get_cell_value=lambda addr: 0) == 106
+
+    ast = parse("=COLUMN(Sheet1!B106)")
+    assert evaluate_expr(ast, get_cell_value=lambda addr: 0) == 2
+
+    # ROW() and COLUMN() with no args require context.
+    ast = parse("=ROW()")
+    result = evaluate_expr(ast, get_cell_value=lambda addr: 0)
+    assert isinstance(result, Unsupported)
+
+    ast = parse("=ROW()")
+    assert evaluate_expr(
+        ast, get_cell_value=lambda addr: 0, context={"row": 106, "column": 1}
+    ) == 106
+
+    ast = parse("=ROW()-ROW(Sheet1!B106)+1")
+    assert evaluate_expr(
+        ast, get_cell_value=lambda addr: 0, context={"row": 106, "column": 1}
+    ) == 1
+
