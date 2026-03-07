@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated, Literal, TypedDict, cast
 
 from excel_grapher.core.cell_types import (
     Between,
@@ -24,11 +24,14 @@ _ConstraintsDict.__annotations__["Sheet1!D1"] = Literal["NORTH", "SOUTH"]
 
 
 def test_constraints_mapping_builds_expected_cell_type_env() -> None:
-    constraints: _ConstraintsDict = {
-        "Sheet1!B1": 5,
-        "Sheet1!C1": 2,
-        "Sheet1!D1": "NORTH",
-    }
+    constraints = cast(
+        _ConstraintsDict,
+        {
+            "Sheet1!B1": 5,
+            "Sheet1!C1": 2,
+            "Sheet1!D1": "NORTH",
+        },
+    )
 
     env: CellTypeEnv = constraints_to_cell_type_env(_ConstraintsDict, constraints)
 

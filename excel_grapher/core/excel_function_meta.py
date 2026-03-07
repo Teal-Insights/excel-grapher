@@ -10,9 +10,9 @@ decide which cell references need a numeric domain:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, TypeAlias
 
-ArgRole: type = Literal["value", "ref_only"]
+ArgRole: TypeAlias = Literal["value", "ref_only"]
 
 
 @dataclass(frozen=True, slots=True)

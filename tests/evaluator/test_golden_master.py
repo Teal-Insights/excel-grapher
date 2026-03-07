@@ -9,7 +9,6 @@ from pathlib import Path
 import openpyxl
 import pytest
 
-from example.map_lic_dsf_indicators import INDICATOR_CONFIG as LIC_DSF_INDICATOR_CONFIG
 from excel_grapher import FormulaEvaluator, XlError, create_dependency_graph
 from excel_grapher.evaluator.name_utils import normalize_address, parse_address
 from tests.evaluator.discover_formula_cells import discover_formula_cells_in_rows
@@ -22,8 +21,11 @@ pytestmark = pytest.mark.slow
 
 WORKBOOK_PATH = Path("example/data/lic-dsf-template-2025-08-12.xlsm")
 
-INDICATOR_CONFIG = {
-    cfg["sheet"]: cfg["indicator_rows"] for cfg in LIC_DSF_INDICATOR_CONFIG
+# Sheet -> list of indicator row numbers (aligned with example workbook structure).
+INDICATOR_CONFIG: dict[str, list[int]] = {
+    "B1_GDP_ext": [35, 36, 39, 40],
+    "B3_Exports_ext": [35, 36, 39, 40],
+    "B4_other flows_ext": [35, 36, 39, 40],
 }
 MAX_DEPTH = 100
 RTOL = 1e-5

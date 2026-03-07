@@ -268,7 +268,7 @@ def create_dependency_graph(
                             f"cells that feed them have no constraint: {sorted(missing_leaves)}. "
                             "Add constraints only for leaf (non-formula) cells."
                         )
-                    def _get_cell_formula(addr: str) -> object:
+                    def _get_cell_formula(addr: str) -> str | None:
                         sh, a1 = _parse_address_to_sheet_a1(addr)
                         if sh not in wb_formulas.sheetnames:
                             return None

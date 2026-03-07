@@ -109,7 +109,7 @@ LicDsfConstraints.__annotations__["PV_Base!A965"] = Literal[115]
 for _start, _end in [(918, 939), (942, 963), (966, 987)]:
     for _row in range(_start, _end):
         _letter = chr(ord("D") + _row - _start)
-        LicDsfConstraints.__annotations__[f"PV_Base!A{_row}"] = Literal[_letter]
+        LicDsfConstraints.__annotations__[f"PV_Base!A{_row}"] = str
 
 # Language selector and lookup table (feed INDIRECT/VLOOKUP for language-dependent refs).
 # START!L10 = VLOOKUP(K10, lookup!BB4:BC7, 2); evaluator does not support VLOOKUP, so L10 is constrained too.

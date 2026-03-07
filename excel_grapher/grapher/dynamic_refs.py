@@ -387,10 +387,9 @@ def _infer_single_offset_call(
 
     targets: set[str] = set()
     for base_range in base_ranges:
-        if bounds is None:
-            base_bounds = GlobalWorkbookBounds(sheet=base_range.sheet)
-        else:
-            base_bounds = bounds
+        base_bounds = (
+            GlobalWorkbookBounds(sheet=base_range.sheet) if bounds is None else bounds
+        )
 
         for assignment in _enumerate_assignments(domains.values(), limits):
             addr_to_value = dict(zip(domains.keys(), assignment, strict=False))
