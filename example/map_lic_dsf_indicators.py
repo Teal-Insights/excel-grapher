@@ -36,39 +36,56 @@ from excel_grapher import (
 )
 from excel_grapher.core.cell_types import Between  # noqa: F401 - used when adding constraints
 
-
-# Configuration: sheets and indicator rows to trace (row-based discovery)
-class IndicatorConfig(TypedDict):
-    sheet: str
-    indicator_rows: list[int]
-
-
-INDICATOR_CONFIG: list[IndicatorConfig] = [
-    # Which, if any, rows do we want from "Baseline - external" and "A1_historical_ext"?
-    # Six standardized stress tests:
-    {"sheet": "B1_GDP_ext", "indicator_rows": [35, 36, 39, 40]},
-    {"sheet": "B3_Exports_ext", "indicator_rows": [35, 36, 39, 40]},
-    {"sheet": "B4_other flows_ext", "indicator_rows": [35, 36, 39, 40]},
-    {"sheet": "B5_depreciation_ext", "indicator_rows": [35, 36, 39, 40]},
-    {"sheet": "B6_Combo_mkt_ext", "indicator_rows": [35, 36, 39, 40]},
-    {"sheet": "B6_Combo_non-mkt_ext", "indicator_rows": [35, 36, 39, 40]},
-    # Mechanical external debt risk rating
-    # Mechanical total public debt risk rating
+# Row labels for the multi-row stress-test blocks (same row layout in each block).
+# Blank string means that row is skipped when splitting by row.
+STRESS_TEST_ROW_LABELS: list[str] = [
+    "Baseline",
+    "A1. Key variables at their historical averages in 2024-2034 2/",
+    "B1. Real GDP growth",
+    "B2. Primary balance",
+    "B3. Exports",
+    "B4. Other flows 3/",
+    "B5. Depreciation",
+    "B6. Combination of B1-B5",
+    "",  # blank row
+    "C1. Combined contingent liabilities",
+    "C2. Natural disaster",
+    "C3. Commodity price",
+    "C4. Market Financing",
+    "A2. Alternative Scenario :[Customize, enter title]",
 ]
 
 # Explicit cell ranges to extract (sheet-qualified A1 range, e.g. "'Chart Data'!D10:D17").
 # All cells in each range are included as graph targets.
-CHART_DATA_RANGES: list[tuple[str, str]] = [
+# Multi-row stress-test blocks are split by row using STRESS_TEST_ROW_LABELS (blank row skipped).
+_CHART_DATA_FIXED: list[tuple[str, str]] = [
     ("External DSA risk rating signals", "'Chart Data'!D10:D17"),
     ("Fiscal (Total Public Debt) risk rating signals", "'Chart Data'!I10:I14"),
     ("Applicable tailored stress test signals", "'Chart Data'!I17:I19"),
     ("Fiscal space for moderate risk category", "'Chart Data'!E25:E27"),
     ("Overall rating", "'Chart Data'!L10:L11"),
-    ("PV of Debt-to-GDP Ratio for all stress tests", "'Chart Data'!D239:X252"),
-    ("PV of Debt-to-Revenue Ratio for all stress tests", "'Chart Data'!D281:X294"),
-    ("Debt Service-to-Revenue Ratio for all stress tests", "'Chart Data'!D318:X331"),
-    ("Debt Service-to-GDP Ratio for all stress tests", "'Chart Data'!D351:X364"),
 ]
+
+_STRESS_TEST_BLOCKS: list[tuple[str, int]] = [
+    ("PV of Debt-to-GDP Ratio", 239),
+    ("PV of Debt-to-Revenue Ratio", 281),
+    ("Debt Service-to-Revenue Ratio", 318),
+    ("Debt Service-to-GDP Ratio", 351),
+]
+
+
+def _chart_data_ranges() -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = list(_CHART_DATA_FIXED)
+    for metric_label, start_row in _STRESS_TEST_BLOCKS:
+        for i, row_label in enumerate(STRESS_TEST_ROW_LABELS):
+            if not row_label:
+                continue
+            row = start_row + i
+            out.append((f"{metric_label} - {row_label}", f"'Chart Data'!D{row}:X{row}"))
+    return out
+
+
+CHART_DATA_RANGES: list[tuple[str, str]] = _chart_data_ranges()
 
 # Dated template; adjust filename if using a different snapshot.
 WORKBOOK_PATH = Path("example/data/lic-dsf-template-2026-01-31.xlsm")
@@ -106,6 +123,12 @@ for _r in range(4, 8):
     for _c in ("BB", "BC"):
         LicDsfConstraints.__annotations__[f"lookup!{_c}{_r}"] = _LANG_LOOKUP
 
+# Imported data row 104 col B header: "Country Information". B106 is a formula (same
+# OFFSET(INDEX(Country_list,...)) pattern); its calculated value is a country name (e.g. Afghanistan).
+# It is referenced only in ROW($B$106) in the INDEX row index; ROW() uses the reference's row (106),
+# not the cell value. Constraint 106 is a numeric placeholder so the ref has a domain for inference.
+
+
 LIC_DSF_CONSTRAINTS_DATA: dict[str, int | str | float] = {
     "PV_Base!A917": 64,
     "PV_Base!A941": 90,
@@ -114,7 +137,8 @@ LIC_DSF_CONSTRAINTS_DATA: dict[str, int | str | float] = {
       for _start, _end in [(918, 939), (942, 963), (966, 987)] for r in range(_start, _end)},
     "START!L10": "English",
     "START!K10": "English",
-    **{f"lookup!{c}{r}": "English" for r in range(4, 8) for c in ("BB", "BC")},
+    **{f"lookup!{c}{r}": "English" for r in range(4, 8) for c in ("BB", "BC")}
+
 }
 
 
@@ -215,15 +239,6 @@ def main() -> None:
         print(f"   {label}: {spec} -> {len(targets)} cells")
         all_targets.extend(targets)
 
-    print("   Indicator rows (formula cells):")
-    for config in INDICATOR_CONFIG:
-        sheet = config["sheet"]
-        rows = config["indicator_rows"]
-        print(f"   {sheet}: rows {rows}")
-        targets = discover_formula_cells_in_rows(WORKBOOK_PATH, sheet, rows)
-        print(f"      Found {len(targets)} formula cells")
-        all_targets.extend(targets)
-
     print(f"\n   Total targets: {len(all_targets)}")
     
     if not all_targets:
@@ -293,9 +308,7 @@ def main() -> None:
     
     # Validate against calcChain.xml
     print("\n5. Validating against calcChain.xml...")
-    scope = {config["sheet"] for config in INDICATOR_CONFIG} | {
-        parse_range_spec(spec)[0] for _label, spec in CHART_DATA_RANGES
-    }
+    scope = {parse_range_spec(spec)[0] for _label, spec in CHART_DATA_RANGES}
     result = validate_graph(graph, WORKBOOK_PATH, scope=scope)
     
     print(f"   Valid: {result.is_valid}")
