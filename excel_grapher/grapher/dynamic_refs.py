@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from itertools import product
@@ -20,10 +21,12 @@ from excel_grapher.core.cell_types import (
     IntIntervalDomain,
     constraints_to_cell_type_env,
 )
+from excel_grapher.core.excel_function_meta import is_ref_only_arg
 from excel_grapher.core.expr_eval import Unsupported, evaluate_expr
 from excel_grapher.core.formula_ast import (
     AstNode,
     CellRefNode,
+    FormulaParseError,
     FunctionCallNode,
     RangeNode,
 )
@@ -32,7 +35,7 @@ from excel_grapher.core.formula_ast import (
 )
 from excel_grapher.core.types import ExcelRange, XlError
 
-from .parser import _find_function_calls_with_spans
+from .parser import _find_function_calls_with_spans, format_key
 
 
 class DynamicRefError(ValueError):
@@ -106,13 +109,27 @@ def expand_leaf_env_to_argument_env(
     get_refs_from_formula: Callable[[str, str], set[str]],
     leaf_env: CellTypeEnv,
     limits: DynamicRefLimits,
+    named_ranges: Mapping[str, tuple[str, str]] | None = None,
+    named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
 ) -> dict[str, CellType]:
     """Build a CellTypeEnv for all refs in the argument chain from leaf constraints only.
 
-    Formula cells in the chain are evaluated over the leaf env; their domains become
-    the enumerated result sets. Only leaf addresses need to be in leaf_env.
+    The cell env targets leaves: only leaf (non-formula) addresses need to be in
+    leaf_env. Intermediate (formula) cells are inferred by evaluating their formulas
+    over their dependencies' domains; they do not need to be constrained. If an
+    intermediate is in leaf_env, that type is used and we do not traverse that branch.
+    When an intermediate cannot be inferred (e.g. its formula is OFFSET/INDIRECT and
+    refs are empty after masking), it is assigned CellType(ANY); enumeration may then
+    require a constraint for that cell.
     """
     cache: dict[str, CellType] = {}
+    nr = named_ranges or {}
+    nrr = named_range_ranges or {}
+
+    def _formula_to_parse(raw: str) -> str:
+        body = raw[1:] if raw.startswith("=") else raw
+        qualified = _qualify_fragment(body, nr, nrr)
+        return "=" + qualified
 
     def _values_to_cell_type(values: set[Any]) -> CellType:
         if not values:
@@ -149,19 +166,19 @@ def expand_leaf_env_to_argument_env(
             )
         refs = get_refs_from_formula(formula, _sheet_from_addr(addr))
         if not refs:
-            ast = parse_ast(formula if formula.startswith("=") else "=" + formula)
+            try:
+                formula_parse = _formula_to_parse(formula)
+                ast = parse_ast(formula_parse)
+            except FormulaParseError:
+                cache[addr] = CellType(kind=CellKind.ANY)
+                return cache[addr]
             try:
                 val = evaluate_expr(ast, get_cell_value=lambda _: None, max_depth=limits.max_depth)
             except Exception:
                 val = None
             if isinstance(val, Unsupported):
-                # Fail fast for unsupported formulas in the dynamic-ref argument chain.
-                reason = f": {val.reason}" if val.reason else ""
-                raise DynamicRefError(
-                    f"Unsupported dynamic-ref argument formula at {addr!r}{reason}. "
-                    "Either constrain this cell via DynamicRefConfig or avoid unsupported "
-                    "functions in the OFFSET/INDIRECT argument chain."
-                )
+                cache[addr] = CellType(kind=CellKind.ANY)
+                return cache[addr]
             if val is None or isinstance(val, XlError):
                 cache[addr] = CellType(kind=CellKind.ANY)
                 return cache[addr]
@@ -175,9 +192,8 @@ def expand_leaf_env_to_argument_env(
             elif ct.interval is not None:
                 domains[r] = _interval_to_values(ct.interval, limits)
             else:
-                raise DynamicRefError(
-                    f"CellType for {r!r} must have interval or enum domain"
-                )
+                cache[addr] = CellType(kind=CellKind.ANY)
+                return cache[addr]
         result_values: set[Any] = set()
         last_unsupported: Unsupported | None = None
         for assignment in product(*(domains[r] for r in refs)):
@@ -186,7 +202,12 @@ def expand_leaf_env_to_argument_env(
             def get_cell_value(a: str, _av=addr_to_val) -> Any:
                 return _av.get(a)
 
-            ast = parse_ast(formula if formula.startswith("=") else "=" + formula)
+            try:
+                formula_parse = _formula_to_parse(formula)
+                ast = parse_ast(formula_parse)
+            except FormulaParseError:
+                cache[addr] = CellType(kind=CellKind.ANY)
+                return cache[addr]
             val = evaluate_expr(
                 ast,
                 get_cell_value=get_cell_value,
@@ -198,13 +219,12 @@ def expand_leaf_env_to_argument_env(
             if isinstance(val, XlError):
                 continue
             result_values.add(val)
-        if not result_values and last_unsupported is not None:
-            reason = f": {last_unsupported.reason}" if last_unsupported.reason else ""
-            raise DynamicRefError(
-                f"Unsupported dynamic-ref argument formula at {addr!r}{reason}. "
-                "Either constrain this cell via DynamicRefConfig or avoid unsupported "
-                "functions in the OFFSET/INDIRECT argument chain."
-            )
+        if not result_values:
+            if last_unsupported is not None:
+                cache[addr] = CellType(kind=CellKind.ANY)
+                return cache[addr]
+            cache[addr] = CellType(kind=CellKind.ANY)
+            return cache[addr]
         cache[addr] = _values_to_cell_type(result_values)
         return cache[addr]
 
@@ -220,6 +240,10 @@ def infer_dynamic_offset_targets(
     cell_type_env: CellTypeEnv,
     limits: DynamicRefLimits | None = None,
     bounds: WorkbookBoundsProtocol | None = None,
+    named_ranges: Mapping[str, tuple[str, str]] | None = None,
+    named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
+    current_row: int | None = None,
+    current_col: int | None = None,
 ) -> set[str]:
     """Infer the union of all possible OFFSET targets for a formula.
 
@@ -227,8 +251,9 @@ def infer_dynamic_offset_targets(
     - Only OFFSET calls are analysed (INDIRECT is currently ignored).
     - Arguments may use a small Excel expression subset supported by
       ``core.expr_eval.evaluate_expr``.
-    - All leaf cells referenced by OFFSET arguments must have a numeric
-      domain in ``cell_type_env``; otherwise DynamicRefError is raised.
+    - Leaf cells referenced by OFFSET/INDEX arguments must have a numeric
+      domain in ``cell_type_env`` unless they appear only in ref_only
+      argument positions (see :mod:`excel_grapher.core.excel_function_meta`).
     - Integer interval domains must be finite and small enough to enumerate.
     """
 
@@ -248,6 +273,10 @@ def infer_dynamic_offset_targets(
             cell_type_env=cell_type_env,
             limits=lim,
             bounds=bounds,
+            named_ranges=named_ranges,
+            named_range_ranges=named_range_ranges,
+            current_row=current_row,
+            current_col=current_col,
         )
         out |= targets
         if len(out) > lim.max_cells:
@@ -258,6 +287,33 @@ def infer_dynamic_offset_targets(
     return out
 
 
+def _qualify_fragment(
+    expr: str,
+    named_ranges: Mapping[str, tuple[str, str]],
+    named_range_ranges: Mapping[str, tuple[str, str, str]] | None,
+) -> str:
+    """Replace named range tokens in a formula fragment with sheet-qualified refs so the parser can parse it."""
+    if not expr.strip():
+        return expr
+    # Replace longer names first so "Country_list" is not partially matched by "Count".
+    all_names = sorted(
+        set(named_ranges.keys()) | (set(named_range_ranges.keys()) if named_range_ranges else set()),
+        key=lambda n: (-len(n), n),
+    )
+    result = expr
+    for name in all_names:
+        if name in named_ranges:
+            sheet, addr = named_ranges[name]
+            replacement = format_key(sheet, addr)
+        elif named_range_ranges and name in named_range_ranges:
+            sheet, start_a1, end_a1 = named_range_ranges[name]
+            replacement = f"{format_key(sheet, start_a1)}:{format_key(sheet, end_a1)}"
+        else:
+            continue
+        result = re.sub(rf"\b{re.escape(name)}\b(?!\s*!)", replacement, result)
+    return result
+
+
 def _infer_single_offset_call(
     inner_args: str,
     *,
@@ -265,6 +321,10 @@ def _infer_single_offset_call(
     cell_type_env: CellTypeEnv,
     limits: DynamicRefLimits,
     bounds: WorkbookBoundsProtocol | None,
+    named_ranges: Mapping[str, tuple[str, str]] | None = None,
+    named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
+    current_row: int | None = None,
+    current_col: int | None = None,
 ) -> set[str]:
     """Infer targets for a single OFFSET(...) call body."""
 
@@ -272,19 +332,43 @@ def _infer_single_offset_call(
     if args is None or len(args) < 3 or len(args) > 5:
         raise DynamicRefError("OFFSET expects 3 to 5 arguments")
 
-    base_expr, rows_expr, cols_expr = args[0], args[1], args[2]
-    height_expr = args[3] if len(args) >= 4 else ""
-    width_expr = args[4] if len(args) >= 5 else ""
+    named_ranges = named_ranges or {}
+    named_range_ranges = named_range_ranges or {}
 
-    base_ast = parse_ast("=" + base_expr)
-    base_range = _base_to_range(base_ast, current_sheet=current_sheet)
+    base_expr = _qualify_fragment(args[0], named_ranges, named_range_ranges)
+    rows_expr = _qualify_fragment(args[1], named_ranges, named_range_ranges)
+    cols_expr = _qualify_fragment(args[2], named_ranges, named_range_ranges)
+    height_expr = (
+        _qualify_fragment(args[3], named_ranges, named_range_ranges)
+        if len(args) >= 4 and args[3]
+        else ""
+    )
+    width_expr = (
+        _qualify_fragment(args[4], named_ranges, named_range_ranges)
+        if len(args) >= 5 and args[4]
+        else ""
+    )
+
+    try:
+        base_ast = parse_ast("=" + base_expr)
+        base_ranges = _resolve_offset_base(
+            base_ast,
+            current_sheet=current_sheet,
+            cell_type_env=cell_type_env,
+            limits=limits,
+            current_row=current_row,
+            current_col=current_col,
+        )
+    except DynamicRefError as exc:
+        raise DynamicRefError(
+            f"{exc} (OFFSET base expression {base_expr!r})"
+        ) from exc
 
     rows_ast = parse_ast("=" + rows_expr)
     cols_ast = parse_ast("=" + cols_expr)
     height_ast = parse_ast("=" + height_expr) if height_expr else None
     width_ast = parse_ast("=" + width_expr) if width_expr else None
 
-    # Collect all leaf addresses that influence arguments.
     leaf_addrs: set[str] = set()
     leaf_addrs |= _collect_addresses(rows_ast)
     leaf_addrs |= _collect_addresses(cols_ast)
@@ -295,42 +379,58 @@ def _infer_single_offset_call(
 
     domains = _build_domains(leaf_addrs, cell_type_env, limits)
 
-    if bounds is None:
-        bounds = GlobalWorkbookBounds(sheet=base_range.sheet)
+    eval_context = (
+        {"row": current_row, "column": current_col}
+        if current_row is not None and current_col is not None
+        else None
+    )
 
     targets: set[str] = set()
+    for base_range in base_ranges:
+        if bounds is None:
+            base_bounds = GlobalWorkbookBounds(sheet=base_range.sheet)
+        else:
+            base_bounds = bounds
 
-    for assignment in _enumerate_assignments(domains.values(), limits):
-        addr_to_value = dict(zip(domains.keys(), assignment, strict=False))
+        for assignment in _enumerate_assignments(domains.values(), limits):
+            addr_to_value = dict(zip(domains.keys(), assignment, strict=False))
 
-        def get_cell_value(addr: str, addr_to_value_map=addr_to_value) -> float:
-            try:
-                return addr_to_value_map[addr]
-            except KeyError as exc:
-                raise DynamicRefError(
-                    f"OFFSET argument formula references cell without domain: {addr!r}"
-                ) from exc
+            def get_cell_value(addr: str, addr_to_value_map=addr_to_value) -> float:
+                try:
+                    return addr_to_value_map[addr]
+                except KeyError as exc:
+                    raise DynamicRefError(
+                        f"OFFSET argument formula references cell without domain: {addr!r}"
+                    ) from exc
 
-        rows_val = _eval_arg(rows_ast, get_cell_value, limits)
-        cols_val = _eval_arg(cols_ast, get_cell_value, limits)
-        height_val = _eval_arg(height_ast, get_cell_value, limits) if height_ast is not None else None
-        width_val = _eval_arg(width_ast, get_cell_value, limits) if width_ast is not None else None
+            rows_val = _eval_arg(rows_ast, get_cell_value, limits, context=eval_context)
+            cols_val = _eval_arg(cols_ast, get_cell_value, limits, context=eval_context)
+            height_val = (
+                _eval_arg(height_ast, get_cell_value, limits, context=eval_context)
+                if height_ast is not None
+                else None
+            )
+            width_val = (
+                _eval_arg(width_ast, get_cell_value, limits, context=eval_context)
+                if width_ast is not None
+                else None
+            )
 
-        if isinstance(rows_val, XlError) or isinstance(cols_val, XlError):
-            continue
-        if isinstance(height_val, XlError) or isinstance(width_val, XlError):
-            continue
+            if isinstance(rows_val, XlError) or isinstance(cols_val, XlError):
+                continue
+            if isinstance(height_val, XlError) or isinstance(width_val, XlError):
+                continue
 
-        result = offset_range(
-            base_range,
-            rows=rows_val,
-            cols=cols_val,
-            height=height_val,
-            width=width_val,
-            bounds=bounds,
-        )
-        if isinstance(result, ExcelRange):
-            targets |= set(result.cell_addresses())
+            result = offset_range(
+                base_range,
+                rows=rows_val,
+                cols=cols_val,
+                height=height_val,
+                width=width_val,
+                bounds=base_bounds,
+            )
+            if isinstance(result, ExcelRange):
+                targets |= set(result.cell_addresses())
 
     return targets
 
@@ -339,11 +439,17 @@ def _eval_arg(
     node: AstNode | None,
     get_cell_value,
     limits: DynamicRefLimits,
+    context: dict[str, int] | None = None,
 ) -> float | XlError:
     if node is None:
         return 0.0
 
-    value = evaluate_expr(node, get_cell_value=get_cell_value, max_depth=limits.max_depth)
+    value = evaluate_expr(
+        node,
+        get_cell_value=get_cell_value,
+        max_depth=limits.max_depth,
+        context=context,
+    )
     if isinstance(value, Unsupported):
         raise DynamicRefError(f"Unsupported argument expression: {value.reason or ''}")
     if isinstance(value, XlError):
@@ -351,6 +457,79 @@ def _eval_arg(
     if isinstance(value, (int, float)):
         return float(value)
     raise DynamicRefError(f"Non-numeric OFFSET argument result: {value!r}")
+
+
+def _resolve_offset_base(
+    base_ast: AstNode,
+    *,
+    current_sheet: str,
+    cell_type_env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    current_row: int | None = None,
+    current_col: int | None = None,
+) -> list[ExcelRange]:
+    """Resolve OFFSET base to a list of candidate ranges (one per cell when base is INDEX)."""
+    if isinstance(base_ast, CellRefNode):
+        r = _base_to_range(base_ast, current_sheet=current_sheet)
+        return [r]
+    if isinstance(base_ast, RangeNode):
+        r = _base_to_range(base_ast, current_sheet=current_sheet)
+        return [r]
+    if isinstance(base_ast, FunctionCallNode) and base_ast.name == "INDEX":
+        if len(base_ast.args) < 2 or len(base_ast.args) > 3:
+            raise DynamicRefError(
+                "OFFSET base INDEX must have 2 or 3 arguments (array, row_num, [column_num])"
+            )
+        array_ast, row_ast = base_ast.args[0], base_ast.args[1]
+        col_ast = base_ast.args[2] if len(base_ast.args) >= 3 else None
+        array_range = _base_to_range(array_ast, current_sheet=current_sheet)
+        leaf_addrs_for_domains = _collect_addresses_needing_domain(row_ast) | (
+            _collect_addresses_needing_domain(col_ast) if col_ast is not None else set()
+        )
+        domains = _build_domains(leaf_addrs_for_domains, cell_type_env, limits)
+        bases: list[ExcelRange] = []
+        for assignment in _enumerate_assignments(domains.values(), limits):
+            addr_to_value = dict(zip(domains.keys(), assignment, strict=False))
+
+            def get_cell_value(addr: str, m=addr_to_value) -> float:
+                try:
+                    return m[addr]
+                except KeyError as exc:
+                    raise DynamicRefError(
+                        f"INDEX argument formula references cell without domain: {addr!r}"
+                    ) from exc
+
+            eval_context = (
+                {"row": current_row, "column": current_col}
+                if current_row is not None and current_col is not None
+                else None
+            )
+            row_val = _eval_arg(row_ast, get_cell_value, limits, context=eval_context)
+            col_val = (
+                _eval_arg(col_ast, get_cell_value, limits, context=eval_context)
+                if col_ast is not None
+                else 1.0
+            )
+            if isinstance(row_val, XlError) or isinstance(col_val, XlError):
+                continue
+            r1, c1 = int(row_val), int(col_val)
+            if r1 < 1 or c1 < 1:
+                continue
+            cell_row = array_range.start_row + r1 - 1
+            cell_col = array_range.start_col + c1 - 1
+            if cell_row > array_range.end_row or cell_col > array_range.end_col:
+                continue
+            bases.append(
+                ExcelRange(
+                    sheet=array_range.sheet,
+                    start_row=cell_row,
+                    start_col=cell_col,
+                    end_row=cell_row,
+                    end_col=cell_col,
+                )
+            )
+        return bases
+    raise DynamicRefError("OFFSET base must be a cell or range reference")
 
 
 def _base_to_range(base_ast: AstNode, *, current_sheet: str) -> ExcelRange:
@@ -391,6 +570,59 @@ def _split_address(addr: str, *, current_sheet: str) -> tuple[str, str]:
         sheet, coord = addr.split("!", 1)
         return sheet, coord
     return current_sheet, addr
+
+
+def _collect_addresses_needing_domain(node: AstNode) -> set[str]:
+    """Return cell/range addresses that appear in a value context (need a numeric domain).
+
+    Refs that appear only as ref_only arguments (e.g. ROW(ref), COLUMN(ref)) are
+    excluded; their implementations use only the reference, not the cell value.
+    """
+    addrs: set[str] = set()
+
+    def visit(
+        n: AstNode,
+        parent: AstNode | None = None,
+        arg_index: int | None = None,
+    ) -> None:
+        if isinstance(n, CellRefNode):
+            if not (
+                parent is not None
+                and isinstance(parent, FunctionCallNode)
+                and arg_index is not None
+                and is_ref_only_arg(parent.name, arg_index)
+            ):
+                addrs.add(n.address)
+            return
+        if isinstance(n, RangeNode):
+            try:
+                sheet, coord_start = n.start.split("!", 1)
+                _sheet2, coord_end = n.end.split("!", 1)
+            except ValueError:
+                return
+            row1, col1 = coordinate_to_tuple(coord_start)
+            row2, col2 = coordinate_to_tuple(coord_end)
+            rlo, rhi = sorted((row1, row2))
+            clo, chi = sorted((col1, col2))
+            from openpyxl.utils.cell import get_column_letter
+
+            for r in range(rlo, rhi + 1):
+                for c in range(clo, chi + 1):
+                    col_letter = get_column_letter(c)
+                    addrs.add(f"{sheet}!{col_letter}{r}")
+            return
+        if isinstance(n, FunctionCallNode):
+            for i, arg in enumerate(n.args):
+                visit(arg, n, i)
+            return
+        if hasattr(n, "left") and hasattr(n, "right"):
+            visit(n.left, n, None)  # type: ignore[arg-type]
+            visit(n.right, n, None)  # type: ignore[arg-type]
+        if hasattr(n, "operand"):
+            visit(n.operand, n, None)  # type: ignore[arg-type]
+
+    visit(node)
+    return addrs
 
 
 def _collect_addresses(node: AstNode) -> set[str]:
@@ -451,7 +683,10 @@ def _build_domains(
         elif ct.interval is not None:
             vals = _interval_to_values(ct.interval, limits)
         else:
-            raise DynamicRefError(f"CellType for {addr!r} must have an interval or enum domain")
+            raise DynamicRefError(
+                f"CellType for {addr!r} has no enum or interval domain (e.g. formula uses "
+                "OFFSET/INDIRECT and could not be inferred). Add a constraint for this cell."
+            )
         if not vals:
             raise DynamicRefError(f"Empty domain for {addr!r}")
         domains[addr] = sorted(vals)
@@ -495,6 +730,8 @@ def infer_dynamic_indirect_targets(
     cell_type_env: CellTypeEnv,
     limits: DynamicRefLimits | None = None,
     bounds: WorkbookBoundsProtocol | None = None,
+    named_ranges: Mapping[str, tuple[str, str]] | None = None,
+    named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
 ) -> set[str]:
     """Infer the union of all possible INDIRECT targets for a formula."""
 
@@ -514,6 +751,8 @@ def infer_dynamic_indirect_targets(
             cell_type_env=cell_type_env,
             limits=lim,
             bounds=bounds,
+            named_ranges=named_ranges,
+            named_range_ranges=named_range_ranges,
         )
         out |= targets
         if len(out) > lim.max_cells:
@@ -531,13 +770,17 @@ def _infer_single_indirect_call(
     cell_type_env: CellTypeEnv,
     limits: DynamicRefLimits,
     bounds: WorkbookBoundsProtocol | None,
+    named_ranges: Mapping[str, tuple[str, str]] | None = None,
+    named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
 ) -> set[str]:
     args = _split_top_level_args(inner_args)
     if args is None or len(args) < 1 or len(args) > 2:
         raise DynamicRefError("INDIRECT expects 1 or 2 arguments")
 
-    text_expr = args[0]
-    a1_expr = args[1] if len(args) == 2 else ""
+    nr = named_ranges or {}
+    nrr = named_range_ranges or {}
+    text_expr = _qualify_fragment(args[0], nr, nrr)
+    a1_expr = _qualify_fragment(args[1], nr, nrr) if len(args) == 2 else ""
 
     text_ast = parse_ast("=" + text_expr)
     a1_ast = parse_ast("=" + a1_expr) if a1_expr else None

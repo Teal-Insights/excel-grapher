@@ -193,8 +193,12 @@ def create_dependency_graph(
                                 current_sheet=current_sheet,
                                 named_ranges=named_ranges,
                             )
+                            # Variable args (OFFSET rows/cols/height/width, INDIRECT): always traverse to leaves.
+                            # OFFSET base (i==0): only traverse when base is an expression (e.g. INDEX(...))
+                            # so refs inside it (e.g. ROW()-ROW(B106)+1) get expanded; simple refs (Sheet1!A1) do not.
                             is_variable = (
                                 (fn_name == "OFFSET" and i >= 1)
+                                or (fn_name == "OFFSET" and i == 0 and "(" in normalized)
                                 or fn_name == "INDIRECT"
                             )
                             for ref in parse_cell_refs(normalized):
@@ -278,24 +282,43 @@ def create_dependency_graph(
                         _refs_in_formula_without_dynamic,
                         dynamic_refs.cell_type_env,
                         dynamic_refs.limits,
+                        named_ranges=named_ranges,
+                        named_range_ranges=named_range_ranges,
                     )
                     formula_for_infer = normalize_formula(
                         f, current_sheet=current_sheet, named_ranges=named_ranges
                     )
-                    offset_targets = infer_dynamic_offset_targets(
-                        formula_for_infer,
-                        current_sheet=current_sheet,
-                        cell_type_env=expanded_env,
-                        limits=dynamic_refs.limits,
-                        bounds=bounds,
+                    _col_letter, _current_row = openpyxl.utils.cell.coordinate_from_string(
+                        current_a1
                     )
-                    indirect_targets = infer_dynamic_indirect_targets(
-                        formula_for_infer,
-                        current_sheet=current_sheet,
-                        cell_type_env=expanded_env,
-                        limits=dynamic_refs.limits,
-                        bounds=bounds,
-                    )
+                    _current_col = openpyxl.utils.cell.column_index_from_string(_col_letter)
+                    try:
+                        offset_targets = infer_dynamic_offset_targets(
+                            formula_for_infer,
+                            current_sheet=current_sheet,
+                            cell_type_env=expanded_env,
+                            limits=dynamic_refs.limits,
+                            bounds=bounds,
+                            named_ranges=named_ranges,
+                            named_range_ranges=named_range_ranges,
+                            current_row=_current_row,
+                            current_col=_current_col,
+                        )
+                        indirect_targets = infer_dynamic_indirect_targets(
+                            formula_for_infer,
+                            current_sheet=current_sheet,
+                            cell_type_env=expanded_env,
+                            limits=dynamic_refs.limits,
+                            bounds=bounds,
+                            named_ranges=named_ranges,
+                            named_range_ranges=named_range_ranges,
+                        )
+                    except DynamicRefError as exc:
+                        cell_key = format_key(current_sheet, current_a1)
+                        raise DynamicRefError(
+                            f"{exc} (while analyzing dynamic OFFSET/INDIRECT for {cell_key}; "
+                            f"normalized formula {formula_for_infer!r})"
+                        ) from exc
                     for addr in offset_targets | indirect_targets:
                         sh, a1 = _parse_address_to_sheet_a1(addr)
                         deps.append((sh, a1))

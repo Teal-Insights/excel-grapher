@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import warnings
 from pathlib import Path
-from typing import Literal
 
 import pytest
 import xlsxwriter
@@ -132,6 +131,53 @@ def test_dynamic_offset_with_small_integer_domain() -> None:
 
     targets = infer_dynamic_offset_targets(formula, current_sheet="Sheet1", cell_type_env=env)
     assert targets == {"Sheet1!A1", "Sheet1!A2"}
+
+
+def test_dynamic_offset_base_index_infers_targets() -> None:
+    # OFFSET(INDEX(Sheet1!A1:A3, Sheet1!B1, 1), 0, 0): INDEX returns A1, A2, or A3 when B1 in {1,2,3}.
+    formula = "=OFFSET(INDEX(Sheet1!A1:Sheet1!A3,Sheet1!B1,1),0,0)"
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({1, 2, 3})),
+            )
+        }
+    )
+    targets = infer_dynamic_offset_targets(formula, current_sheet="Sheet1", cell_type_env=env)
+    assert targets == {"Sheet1!A1", "Sheet1!A2", "Sheet1!A3"}
+
+
+def test_dynamic_offset_index_row_expr_does_not_require_domain_for_row_col_ref() -> None:
+    # INDEX row argument is ROW()-ROW(Sheet1!B106)+1; B106 appears only in ROW(B106).
+    # We use the reference's row (106), not the cell value, so no numeric domain is required.
+    formula = "=OFFSET(INDEX(Sheet1!A1:Sheet1!A5,ROW()-ROW(Sheet1!B106)+1,1),0,0)"
+    env = _make_env({})
+    targets = infer_dynamic_offset_targets(
+        formula,
+        current_sheet="Sheet1",
+        cell_type_env=env,
+        current_row=106,
+        current_col=1,
+    )
+    assert targets == {"Sheet1!A1"}
+
+
+def test_dynamic_offset_index_value_and_ref_only_requires_domain() -> None:
+    # B1 appears in both ROW(B1) (ref_only) and as a value (B1); domain still required.
+    formula = "=OFFSET(INDEX(Sheet1!A1:A3,ROW()-ROW(Sheet1!B1)+Sheet1!B1,1),0,0)"
+    env = _make_env({})
+    with pytest.raises(Exception) as exc_info:
+        infer_dynamic_offset_targets(
+            formula,
+            current_sheet="Sheet1",
+            cell_type_env=env,
+            current_row=1,
+            current_col=1,
+        )
+    assert "Missing CellType" in str(exc_info.value) or "must be numeric" in str(
+        exc_info.value
+    )
 
 
 def test_dynamic_offset_requires_domains_for_all_leaf_cells() -> None:
@@ -406,20 +452,19 @@ def test_create_dependency_graph_raises_when_leaf_missing_constraint(tmp_path: P
     assert "leaf" in str(exc_info.value).lower()
 
 
-def test_expand_leaf_env_raises_for_unsupported_formula_in_argument_chain() -> None:
-    """Unsupported functions in argument-chain formulas should raise a clear DynamicRefError.
+def test_expand_leaf_env_assigns_any_when_intermediate_unsupported() -> None:
+    """Intermediates that cannot be inferred (e.g. unsupported function) get CellKind.ANY.
 
-    This simulates a formula cell in the OFFSET/INDIRECT argument subgraph whose expression
-    cannot be evaluated by expr_eval (e.g. uses VLOOKUP). Instead of silently treating it as
-    CellKind.ANY and failing later with a generic 'must have interval or enum domain' message,
-    expand_leaf_env_to_argument_env should raise immediately with an informative error.
+    The cell env targets leaves; intermediates need not be constrained. When an
+    intermediate's formula cannot be evaluated (e.g. uses VLOOKUP), we assign ANY
+    so expansion succeeds; enumeration may later require a constraint for that cell.
     """
+    from excel_grapher.core.cell_types import CellKind
     from excel_grapher.grapher.dynamic_refs import (
         DynamicRefLimits,
         expand_leaf_env_to_argument_env,
     )
 
-    # Leaf cell with a small numeric interval domain.
     leaf_env = _make_env(
         {
             "Sheet1!A1": CellType(
@@ -429,7 +474,6 @@ def test_expand_leaf_env_raises_for_unsupported_formula_in_argument_chain() -> N
         }
     )
 
-    # Argument ref is a formula cell whose formula uses an unsupported function FOO(A1).
     argument_refs = {"Sheet1!B2"}
 
     def _get_cell_formula(addr: str) -> str | None:
@@ -439,19 +483,15 @@ def test_expand_leaf_env_raises_for_unsupported_formula_in_argument_chain() -> N
         assert sheet == "Sheet1"
         return {"Sheet1!A1"} if "FOO" in formula else set()
 
-    with pytest.raises(DynamicRefError) as exc_info:
-        expand_leaf_env_to_argument_env(
-            argument_refs,
-            _get_cell_formula,
-            _get_refs_from_formula,
-            leaf_env,
-            DynamicRefLimits(),
-        )
-
-    msg = str(exc_info.value)
-    assert "Sheet1!B2" in msg
-    assert "unsupported" in msg.lower()
-    assert "constraint" in msg.lower() or "DynamicRefConfig" in msg
+    env = expand_leaf_env_to_argument_env(
+        argument_refs,
+        _get_cell_formula,
+        _get_refs_from_formula,
+        leaf_env,
+        DynamicRefLimits(),
+    )
+    assert "Sheet1!B2" in env
+    assert env["Sheet1!B2"].kind is CellKind.ANY
 
 
 def test_indirect_raises_when_argument_leaf_missing_domain() -> None:
