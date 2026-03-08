@@ -419,6 +419,32 @@ def test_create_dependency_graph_constrain_leaf_only_formula_in_chain(tmp_path: 
     assert deps == {"Sheet1!B1", "Sheet1!M10", "Sheet1!B2"}
 
 
+def test_create_dependency_graph_raises_for_empty_leaf_cell_missing_constraint(
+    tmp_path: Path,
+) -> None:
+    """Empty cells that feed OFFSET are treated as leaves; missing constraint raises DynamicRefError."""
+    excel_path = tmp_path / "offset_empty_leaf.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    # A1 base (has value); B1 left empty — it is the OFFSET rows argument
+    ws.write_number(0, 0, 0)  # A1
+    # B1 not written → empty cell
+    ws.write_formula(0, 2, "=OFFSET(Sheet1!A1,Sheet1!B1,0)", None, 0)  # C1
+    wb.close()
+
+    config = DynamicRefConfig(cell_type_env=_make_env({}), limits=DynamicRefLimits())
+
+    with pytest.raises(DynamicRefError) as exc_info:
+        create_dependency_graph(
+            excel_path,
+            ["Sheet1!C1"],
+            load_values=False,
+            dynamic_refs=config,
+        )
+    assert "Sheet1!B1" in str(exc_info.value)
+    assert "leaf" in str(exc_info.value).lower()
+
+
 def test_create_dependency_graph_raises_when_leaf_missing_constraint(tmp_path: Path) -> None:
     """Raises DynamicRefError listing missing leaves when only a formula cell in the chain is constrained."""
     excel_path = tmp_path / "offset_missing_leaf.xlsx"
