@@ -110,6 +110,12 @@ for _start, _end in [(918, 939), (942, 963), (966, 987)]:
     for _row in range(_start, _end):
         _letter = chr(ord("D") + _row - _start)
         LicDsfConstraints.__annotations__[f"PV_Base!A{_row}"] = str
+# B9xx holds the resulting ref string (e.g. "$D$64") consumed by INDIRECT; constraint needed for domain.
+for _start, _end, _anchor in [(918, 939, 64), (942, 963, 90), (966, 987, 115)]:
+    for _row in range(_start, _end):
+        _col_letter = chr(ord("D") + _row - _start)
+        _ref_str = f"${_col_letter}${_anchor}"
+        LicDsfConstraints.__annotations__[f"PV_Base!B{_row}"] = Literal[_ref_str]
 
 # Language selector and lookup table (feed INDIRECT/VLOOKUP for language-dependent refs).
 # START!L10 = VLOOKUP(K10, lookup!BB4:BC7, 2); evaluator does not support VLOOKUP, so L10 is constrained too.
@@ -135,6 +141,11 @@ LIC_DSF_CONSTRAINTS_DATA: dict[str, int | str | float] = {
     "PV_Base!A965": 115,
     **{f"PV_Base!A{r}": chr(ord("D") + r - _start)
       for _start, _end in [(918, 939), (942, 963), (966, 987)] for r in range(_start, _end)},
+    **{
+        f"PV_Base!B{r}": f"${chr(ord('D') + r - _start)}${_anchor}"
+        for _start, _end, _anchor in [(918, 939, 64), (942, 963, 90), (966, 987, 115)]
+        for r in range(_start, _end)
+    },
     "START!L10": "English",
     "START!K10": "English",
     **{f"lookup!{c}{r}": "English" for r in range(4, 8) for c in ("BB", "BC")}
