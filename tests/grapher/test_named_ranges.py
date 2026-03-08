@@ -81,6 +81,28 @@ def test_named_range_map_resolves_offset_counta_formula(tmp_path: Path) -> None:
     assert end == "C2"
 
 
+def test_named_range_map_resolves_offset_counta_fixed_width(tmp_path: Path) -> None:
+    """OFFSET with COUNTA height and literal width (e.g. DSF__COMMODITY_TABLE) resolves when result is wider than sheet used range."""
+    excel_path = tmp_path / "offset_counta_fixed_width.xlsx"
+    wb = _new_workbook()
+    wb.create_sheet("COM")
+    com = wb["COM"]
+    com["A1"].value = 1
+    com["A2"].value = 2
+    com["A3"].value = "header"
+    attr = "OFFSET(COM!$A$3,0,0,COUNTA(COM!$A:$A),7)"
+    wb.defined_names.add(DefinedName("DSF__COMMODITY_TABLE", attr_text=attr))
+    wb.save(excel_path)
+
+    wb_loaded = openpyxl.load_workbook(excel_path, data_only=False)
+    maps = build_named_range_map(wb_loaded)
+    assert "DSF__COMMODITY_TABLE" in maps.range_map
+    sheet, start, end = maps.range_map["DSF__COMMODITY_TABLE"]
+    assert sheet == "COM"
+    assert start == "A3"
+    assert end == "G5"
+
+
 def test_dependency_graph_expands_formula_based_named_range(tmp_path: Path) -> None:
     """A formula that references an OFFSET/COUNTA defined name resolves without ValueError."""
     excel_path = tmp_path / "graph_offset_name.xlsx"

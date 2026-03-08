@@ -179,7 +179,8 @@ def _eval_offset_formula_to_range(
         return None
     if width is not None and width <= 0:
         return None
-    max_r, max_c = bounds.get(base.sheet, (1048576, 16384))
+    # Use Excel grid limits so OFFSET result is accepted even when sheet used range is smaller.
+    max_r, max_c = 1048576, 16384
 
     class _Bounds:
         sheet = base.sheet
