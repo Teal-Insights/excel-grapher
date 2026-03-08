@@ -129,12 +129,6 @@ for _r in range(4, 8):
     for _c in ("BB", "BC"):
         LicDsfConstraints.__annotations__[f"lookup!{_c}{_r}"] = _LANG_LOOKUP
 
-# Imported data row 104 col B header: "Country Information". B106 is a formula (same
-# OFFSET(INDEX(Country_list,...)) pattern); its calculated value is a country name (e.g. Afghanistan).
-# It is referenced only in ROW($B$106) in the INDEX row index; ROW() uses the reference's row (106),
-# not the cell value. Constraint 106 is a numeric placeholder so the ref has a domain for inference.
-
-
 LIC_DSF_CONSTRAINTS_DATA: dict[str, int | str | float] = {
     "PV_Base!A917": 64,
     "PV_Base!A941": 90,
