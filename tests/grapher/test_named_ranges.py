@@ -57,3 +57,54 @@ def test_named_range_map_raises_on_multi_area(tmp_path: Path) -> None:
         create_dependency_graph(excel_path, ["Sheet1!C1"], load_values=False)
     assert "Multi" in str(exc.value)
 
+
+def test_named_range_map_resolves_offset_counta_formula(tmp_path: Path) -> None:
+    """Formula-based name OFFSET(Sheet!A1,0,0,COUNTA(Sheet!A:A),COUNTA(Sheet!1:1)) resolves to range."""
+    excel_path = tmp_path / "offset_counta_name.xlsx"
+    wb = _new_workbook()
+    wb.create_sheet("Country_Information")
+    ci = wb["Country_Information"]
+    ci["A1"].value = 1
+    ci["A2"].value = 2
+    ci["B1"].value = 3
+    ci["C1"].value = 4
+    attr = "OFFSET(Country_Information!$A$1,0,0,COUNTA(Country_Information!$A:$A),COUNTA(Country_Information!$1:$1))"
+    wb.defined_names.add(DefinedName("DSF__Country_Info", attr_text=attr))
+    wb.save(excel_path)
+
+    wb_loaded = openpyxl.load_workbook(excel_path, data_only=False)
+    maps = build_named_range_map(wb_loaded)
+    assert "DSF__Country_Info" in maps.range_map
+    sheet, start, end = maps.range_map["DSF__Country_Info"]
+    assert sheet == "Country_Information"
+    assert start == "A1"
+    assert end == "C2"
+
+
+def test_dependency_graph_expands_formula_based_named_range(tmp_path: Path) -> None:
+    """A formula that references an OFFSET/COUNTA defined name resolves without ValueError."""
+    excel_path = tmp_path / "graph_offset_name.xlsx"
+    wb = _new_workbook()
+    wb.create_sheet("Country_Information")
+    ci = wb["Country_Information"]
+    ci["A1"].value = "a"
+    ci["A2"].value = "b"
+    ci["B1"].value = "c"
+    ci["C1"].value = "d"
+    wb.defined_names.add(
+        DefinedName(
+            "DSF__Country_Info",
+            attr_text="OFFSET(Country_Information!$A$1,0,0,COUNTA(Country_Information!$A:$A),COUNTA(Country_Information!$1:$1))",
+        )
+    )
+    ws = wb["Sheet1"]
+    ws["D1"].value = "=COUNTA(DSF__Country_Info)"
+    wb.save(excel_path)
+
+    graph = create_dependency_graph(excel_path, ["Sheet1!D1"], load_values=False)
+    deps = graph.dependencies("Sheet1!D1")
+    assert "Country_Information!A1" in deps
+    assert "Country_Information!B1" in deps
+    assert "Country_Information!C1" in deps
+    assert "Country_Information!A2" in deps
+
