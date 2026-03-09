@@ -22,6 +22,7 @@ from excel_grapher.grapher.dynamic_refs import (
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
 )
+from excel_grapher.grapher.builder import _format_missing_leaves
 
 
 def _build_offset_named_range_workbook(path: Path) -> None:
@@ -585,4 +586,16 @@ def test_indirect_does_not_raise_when_argument_is_intermediate_with_domain() -> 
     )
     # No raise; targets are the resolved cells (same as test_dynamic_indirect_over_enum_text_domain).
     assert targets == {"Sheet1!A1", "Sheet1!B2"}
+
+
+def test_format_missing_leaves_groups_contiguous_column_into_range() -> None:
+    leaves = {"Sheet1!C4", "Sheet1!C5", "Sheet1!C6"}
+    formatted = _format_missing_leaves(leaves)
+    assert formatted == ["Sheet1!C4:Sheet1!C6"]
+
+
+def test_format_missing_leaves_groups_column_endpoints_into_range() -> None:
+    leaves = {"lookup!C4", "lookup!C73"}
+    formatted = _format_missing_leaves(leaves)
+    assert formatted == ["lookup!C4:lookup!C73"]
 

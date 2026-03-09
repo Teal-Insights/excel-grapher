@@ -52,6 +52,47 @@ def _parse_address_to_sheet_a1(addr: str) -> tuple[str, str]:
     return sheet, a1
 
 
+def _format_missing_leaves(missing_leaves: set[str]) -> list[str]:
+    """Format missing leaf cells, grouping same-column leaves into bounding ranges.
+
+    For each (sheet, column) pair we emit either a single cell or a range from
+    the minimum to maximum missing row, e.g. {"Sheet1!C4", "Sheet1!C6"} yields
+    "Sheet1!C4:Sheet1!C6".
+    """
+    from openpyxl.utils.cell import coordinate_to_tuple, get_column_letter
+
+    by_sheet_col: dict[tuple[str, str], list[int]] = {}
+    others: list[str] = []
+
+    for addr in missing_leaves:
+        if "!" not in addr:
+            others.append(addr)
+            continue
+        sheet, a1 = _parse_address_to_sheet_a1(addr)
+        try:
+            row, col = coordinate_to_tuple(a1)
+        except ValueError:
+            # Not a simple A1 address; keep as-is.
+            others.append(addr)
+            continue
+        col_letter = get_column_letter(col)
+        by_sheet_col.setdefault((sheet, col_letter), []).append(row)
+
+    parts: list[str] = []
+    for (sheet, col_letter), rows in by_sheet_col.items():
+        rows_sorted = sorted(set(rows))
+        if not rows_sorted:
+            continue
+        lo, hi = rows_sorted[0], rows_sorted[-1]
+        if lo == hi:
+            parts.append(f"{sheet}!{col_letter}{lo}")
+        else:
+            parts.append(f"{sheet}!{col_letter}{lo}:{sheet}!{col_letter}{hi}")
+
+    parts.extend(others)
+    return sorted(parts)
+
+
 def create_dependency_graph(
     workbook: Path | str | openpyxl.Workbook,
     targets: Iterable[str],
@@ -268,9 +309,10 @@ def create_dependency_graph(
                     missing_leaves = leaves - leaf_env_keys
                     if missing_leaves:
                         cell_key = format_key(current_sheet, current_a1)
+                        formatted_missing = _format_missing_leaves(missing_leaves)
                         raise DynamicRefError(
                             f"Formula at {cell_key} contains OFFSET or INDIRECT; the following leaf "
-                            f"cells that feed them have no constraint: {sorted(missing_leaves)}. "
+                            f"cells that feed them have no constraint: {formatted_missing}. "
                             "Add constraints only for leaf (non-formula) cells."
                         )
                     def _get_cell_formula(addr: str) -> str | None:
