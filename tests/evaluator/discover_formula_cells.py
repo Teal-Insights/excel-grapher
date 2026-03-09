@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 
 import openpyxl
@@ -8,15 +10,24 @@ def discover_formula_cells_in_rows(
     wb_path: Path,
     sheet_name: str,
     rows: list[int],
+    *,
+    wb_formulas: openpyxl.Workbook | None = None,
+    wb_values: openpyxl.Workbook | None = None,
 ) -> list[str]:
     """
     Scan specified rows and return sheet-qualified addresses for formula cells.
 
     Only includes cells that contain formulas (start with '=') and whose cached
     calculated value is numeric.
+
+    Pass pre-opened *wb_formulas* and *wb_values* to avoid repeated
+    ``load_workbook`` calls when scanning multiple sheets from the same file.
     """
-    wb_formulas = openpyxl.load_workbook(wb_path, data_only=False, read_only=True, keep_vba=True)
-    wb_values = openpyxl.load_workbook(wb_path, data_only=True, read_only=True, keep_vba=True)
+    owned = wb_formulas is None
+    if wb_formulas is None:
+        wb_formulas = openpyxl.load_workbook(wb_path, data_only=False, read_only=True, keep_vba=True)
+    if wb_values is None:
+        wb_values = openpyxl.load_workbook(wb_path, data_only=True, read_only=True, keep_vba=True)
     try:
         if (
             sheet_name not in wb_formulas.sheetnames
@@ -30,7 +41,6 @@ def discover_formula_cells_in_rows(
         targets: list[str] = []
 
         for row in rows:
-            # Scan all columns up to max_column
             max_col = ws_formulas.max_column or 1
             for col_idx in range(1, max_col + 1):
                 cell_formula = ws_formulas.cell(row=row, column=col_idx)
@@ -47,5 +57,6 @@ def discover_formula_cells_in_rows(
 
         return targets
     finally:
-        wb_formulas.close()
-        wb_values.close()
+        if owned:
+            wb_formulas.close()
+            wb_values.close()

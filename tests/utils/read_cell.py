@@ -53,27 +53,24 @@ def read_range_values(
     Returns:
         2D list of cell values.
     """
-    # Parse range reference
-    if ":" not in range_ref:
-        # Single cell - return as 1x1 range
-        value = read_cell_value(workbook_path, range_ref, data_only=data_only)
-        return [[value]]
-
-    # Split into sheet and range parts
     from excel_grapher.evaluator.name_utils import parse_address
 
-    sheet_name, range_part = parse_address(range_ref)
-
-    # Parse start and end cells
-    start_cell, end_cell = range_part.replace("$", "").split(":")
+    if ":" in range_ref:
+        sheet_name, range_part = parse_address(range_ref)
+        start_cell, end_cell = range_part.replace("$", "").split(":")
+        cell_range = f"{start_cell}:{end_cell}"
+    else:
+        sheet_name, cell_address = parse_cell_ref(range_ref)
+        cell_range = cell_address
 
     wb = load_workbook(str(workbook_path), data_only=data_only, read_only=True)
     try:
         ws = wb[sheet_name]
         values = []
-        for row in ws[f"{start_cell}:{end_cell}"]:
-            row_values = [cell.value for cell in row]
-            values.append(row_values)
+        for row in ws[cell_range]:
+            if not isinstance(row, tuple):
+                return [[row.value]]
+            values.append([cell.value for cell in row])
         return values
     finally:
         wb.close()

@@ -89,8 +89,18 @@ def test_golden_master_inline(tmp_path: Path) -> None:
     print("\n\nLoading graph...")
     start = time.time()
     targets: list[str] = []
-    for sheet_name, rows in INDICATOR_CONFIG.items():
-        targets.extend(discover_formula_cells_in_rows(WORKBOOK_PATH, sheet_name, rows))
+    wb_f = openpyxl.load_workbook(WORKBOOK_PATH, data_only=False, read_only=True, keep_vba=True)
+    wb_v = openpyxl.load_workbook(WORKBOOK_PATH, data_only=True, read_only=True, keep_vba=True)
+    try:
+        for sheet_name, rows in INDICATOR_CONFIG.items():
+            targets.extend(
+                discover_formula_cells_in_rows(
+                    WORKBOOK_PATH, sheet_name, rows, wb_formulas=wb_f, wb_values=wb_v,
+                )
+            )
+    finally:
+        wb_f.close()
+        wb_v.close()
     targets = [normalize_address(t) for t in targets]
     print(f"Discovered {len(targets)} targets in {time.time() - start:.1f}s")
 
