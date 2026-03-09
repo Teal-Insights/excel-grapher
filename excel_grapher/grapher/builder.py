@@ -187,26 +187,27 @@ def create_dependency_graph(
                         args = _split_function_args(inner)
                         if args is None:
                             continue
-                        for i, arg in enumerate(args):
-                            normalized = normalize_formula(
-                                "=" + arg,
-                                current_sheet=current_sheet,
-                                named_ranges=named_ranges,
-                            )
-                            # Variable args (OFFSET rows/cols/height/width, INDIRECT): always traverse to leaves.
-                            # OFFSET base (i==0): only traverse when base is an expression (e.g. INDEX(...))
-                            # so refs inside it (e.g. ROW()-ROW(B106)+1) get expanded; simple refs (Sheet1!A1) do not.
-                            is_variable = (
-                                (fn_name == "OFFSET" and i >= 1)
-                                or (fn_name == "OFFSET" and i == 0 and "(" in normalized)
-                                or fn_name == "INDIRECT"
-                            )
-                            for ref in parse_cell_refs(normalized):
-                                sh = ref.sheet if ref.sheet is not None else current_sheet
-                                a1 = f"{ref.column}{ref.row}"
-                                deps.append((sh, a1))
-                                if is_variable:
-                                    argument_addrs.add(format_key(sh, a1))
+                    for i, arg in enumerate(args):
+                        normalized = normalize_formula(
+                            "=" + arg,
+                            current_sheet=current_sheet,
+                            named_ranges=named_ranges,
+                            named_range_ranges=named_range_ranges,
+                        )
+                        # Variable args (OFFSET rows/cols/height/width, INDIRECT): always traverse to leaves.
+                        # OFFSET base (i==0): only traverse when base is an expression (e.g. INDEX(...))
+                        # so refs inside it (e.g. ROW()-ROW(B106)+1) get expanded; simple refs (Sheet1!A1) do not.
+                        is_variable = (
+                            (fn_name == "OFFSET" and i >= 1)
+                            or (fn_name == "OFFSET" and i == 0 and "(" in normalized)
+                            or fn_name == "INDIRECT"
+                        )
+                        for ref in parse_cell_refs(normalized):
+                            sh = ref.sheet if ref.sheet is not None else current_sheet
+                            a1 = f"{ref.column}{ref.row}"
+                            deps.append((sh, a1))
+                            if is_variable:
+                                argument_addrs.add(format_key(sh, a1))
 
                     def _refs_in_formula_without_dynamic(formula_str: str, sheet_of_cell: str) -> set[str]:
                         dyn = _find_function_calls_with_spans(
@@ -219,7 +220,10 @@ def create_dependency_graph(
                             spans,
                         )
                         norm = normalize_formula(
-                            masked, current_sheet=sheet_of_cell, named_ranges=named_ranges
+                            masked,
+                            current_sheet=sheet_of_cell,
+                            named_ranges=named_ranges,
+                            named_range_ranges=named_range_ranges,
                         )
                         out: set[str] = set()
                         for ref in parse_cell_refs(norm):
@@ -275,7 +279,12 @@ def create_dependency_graph(
                         v = wb_formulas[sh][a1].value
                         if not isinstance(v, str) or not v.startswith("="):
                             return None
-                        return normalize_formula(v, current_sheet=sh, named_ranges=named_ranges)
+                        return normalize_formula(
+                            v,
+                            current_sheet=sh,
+                            named_ranges=named_ranges,
+                            named_range_ranges=named_range_ranges,
+                        )
                     expanded_env = expand_leaf_env_to_argument_env(
                         all_refs,
                         _get_cell_formula,
@@ -286,7 +295,10 @@ def create_dependency_graph(
                         named_range_ranges=named_range_ranges,
                     )
                     formula_for_infer = normalize_formula(
-                        f, current_sheet=current_sheet, named_ranges=named_ranges
+                        f,
+                        current_sheet=current_sheet,
+                        named_ranges=named_ranges,
+                        named_range_ranges=named_range_ranges,
                     )
                     _col_letter, _current_row = openpyxl.utils.cell.coordinate_from_string(
                         current_a1
@@ -565,7 +577,12 @@ def create_dependency_graph(
             if is_formula:
                 formula_str = str(raw)
                 formula = formula_str
-                normalized = normalize_formula(formula_str, sheet, named_ranges)
+                normalized = normalize_formula(
+                    formula_str,
+                    sheet,
+                    named_ranges,
+                    named_range_ranges,
+                )
                 value = None
                 if wb_values is not None:
                     value = wb_values[sheet][a1].value

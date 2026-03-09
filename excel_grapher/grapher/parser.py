@@ -241,6 +241,7 @@ def normalize_formula(
     formula: str,
     current_sheet: str,
     named_ranges: dict[str, tuple[str, str]] | None = None,
+    named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
 ) -> str:
     """
     Normalize a formula for transpilation:
@@ -257,6 +258,8 @@ def normalize_formula(
     
     if named_ranges is None:
         named_ranges = {}
+    if named_range_ranges is None:
+        named_range_ranges = {}
     
     result = formula
     
@@ -349,24 +352,36 @@ def normalize_formula(
         result,
     )
     
-    # 4) Resolve named ranges
-    def replace_named_range(m: re.Match) -> str:
-        token = m.group(1)
-        if token in named_ranges:
-            sheet, addr = named_ranges[token]
-            return _format_ref(sheet, addr[:-len(addr.lstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZ"))] or addr, int(addr.lstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZ")) if addr.lstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZ").isdigit() else 0)
-        return token
-    
-    # Actually, let's do a simpler approach for named ranges
+    # 4) Resolve named ranges (single cell and range-based)
+    #
+    # We first handle single-cell names, then range-based names. This order ensures
+    # that a cell-style name used inside a larger expression is still normalized
+    # before any potential range-style replacements.
+
+    # Cell-based names: Foo -> Sheet!A1
     for name, (sheet, addr) in named_ranges.items():
-        # Parse the address to get col and row
-        col_match = re.match(r"([A-Z]+)(\d+)", addr)
-        if col_match:
-            col = col_match.group(1)
-            row = int(col_match.group(2))
-            replacement = _format_ref(sheet, col, row)
-            # Replace whole-word occurrences of the name
-            result = re.sub(rf"\b{re.escape(name)}\b(?!\s*!)", replacement, result)
+        col_match = re.match(r"^([A-Z]{1,3})(\d+)$", addr)
+        if not col_match:
+            continue
+        col = col_match.group(1)
+        row = int(col_match.group(2))
+        replacement = _format_ref(sheet, col, row)
+        result = re.sub(rf"\b{re.escape(name)}\b(?!\s*!)", replacement, result)
+
+    # Range-based names: Range1 -> Sheet!A1:Sheet!B2
+    # This is important so that downstream parsers (core.formula_ast) see only
+    # sheet-qualified ranges and never bare identifiers like NumRiskTable.
+    for name, (sheet, start_a1, end_a1) in named_range_ranges.items():
+        m_start = re.match(r"^([A-Z]{1,3})(\d+)$", start_a1)
+        m_end = re.match(r"^([A-Z]{1,3})(\d+)$", end_a1)
+        if not m_start or not m_end:
+            continue
+        start_col, start_row = m_start.group(1), int(m_start.group(2))
+        end_col, end_row = m_end.group(1), int(m_end.group(2))
+        start_ref = _format_ref(sheet, start_col, start_row)
+        end_ref = _format_ref(sheet, end_col, end_row)
+        replacement = f"{start_ref}:{end_ref}"
+        result = re.sub(rf"\b{re.escape(name)}\b(?!\s*!)", replacement, result)
     
     return result
 
@@ -1116,6 +1131,7 @@ def parse_dynamic_range_refs_with_spans(
                     "=" + arg,
                     current_sheet=current_sheet,
                     named_ranges=named_ranges,
+                    named_range_ranges=named_range_ranges,
                 )
                 for ref in parse_cell_refs(normalized):
                     sheet = ref.sheet if ref.sheet is not None else current_sheet

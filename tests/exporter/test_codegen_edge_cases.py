@@ -1,8 +1,12 @@
 """Tests for code generation edge cases."""
 
-import pytest
+from pathlib import Path
 
-from excel_grapher import DependencyGraph, Node
+import openpyxl
+import pytest
+from openpyxl.workbook.defined_name import DefinedName
+
+from excel_grapher import DependencyGraph, Node, create_dependency_graph
 from excel_grapher.evaluator.codegen import CodeGenerator
 from excel_grapher.evaluator.name_utils import parse_address
 
@@ -478,6 +482,47 @@ class TestOffsetFunction:
         exec(code, namespace)
         result = namespace["compute_all"]()
         assert result["S!C1"] == 5.0
+
+
+class TestNamedRangeRegression:
+    """Regression tests for named range handling in code generation."""
+
+    def test_vlookup_with_range_named_range_is_exportable(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """VLOOKUP over a range-based named range should not crash codegen."""
+        excel_path = tmp_path / "named_range_vlookup.xlsx"
+
+        wb = openpyxl.Workbook()
+        ws_table = wb.active
+        ws_table.title = "Table"
+        ws_table["A1"].value = 1
+        ws_table["B1"].value = 10
+
+        ws_chart = wb.create_sheet("Chart Data")
+        ws_chart["D11"].value = 1
+        ws_chart["E11"].value = (
+            "=VLOOKUP('Chart Data'!D11, NumRiskTable, 2, FALSE())"
+        )
+
+        wb.defined_names.add(
+            DefinedName("NumRiskTable", attr_text="Table!$A$1:$B$1")
+        )
+        wb.save(excel_path)
+
+        graph = create_dependency_graph(
+            excel_path,
+            ["'Chart Data'!E11"],
+            load_values=False,
+        )
+        gen = CodeGenerator(graph)
+
+        # GREEN: After normalization, NumRiskTable is expanded to a sheet-qualified
+        # range in normalized_formula, so core.formula_ast.parse succeeds and
+        # CodeGenerator can emit a runnable package without raising ParseError.
+        files = gen.generate_modules(["'Chart Data'!E11"])
+        assert "exported/entrypoint.py" in files
 
     def test_offset_dynamic_cell_table_excludes_unreachable_sheets(self):
         """Dynamic OFFSET should not force _CELL_TABLE to include unrelated sheets."""

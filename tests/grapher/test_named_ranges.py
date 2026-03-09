@@ -130,3 +130,26 @@ def test_dependency_graph_expands_formula_based_named_range(tmp_path: Path) -> N
     assert "Country_Information!C1" in deps
     assert "Country_Information!A2" in deps
 
+
+def test_normalized_formula_resolves_range_named_range(tmp_path: Path) -> None:
+    """Normalized formulas should expand range-based named ranges for codegen."""
+    excel_path = tmp_path / "named_range_normalized.xlsx"
+    wb = _new_workbook()
+    ws = wb["Sheet1"]
+    ws["A1"].value = 1
+    ws["B1"].value = 2
+    # Formula that uses a range-based defined name as table_array
+    ws["C1"].value = "=VLOOKUP(Sheet1!A1, NumRange, 2, FALSE())"
+    wb.defined_names.add(DefinedName("NumRange", attr_text="Sheet1!$A$1:$B$1"))
+    wb.save(excel_path)
+
+    graph = create_dependency_graph(excel_path, ["Sheet1!C1"], load_values=False)
+    node = graph.get_node("Sheet1!C1")
+    assert node is not None
+    # Range-based name should be fully expanded in normalized_formula so that
+    # downstream parsers never see a bare identifier like NumRange.
+    assert (
+        node.normalized_formula
+        == "=VLOOKUP(Sheet1!A1, Sheet1!A1:Sheet1!B1, 2, FALSE())"
+    )
+
