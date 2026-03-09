@@ -10,7 +10,7 @@ Iterative workflow: run the script; if DynamicRefError is raised, the message
 includes the formula cell that needs a constraint. Inspect that cell and the
 row/column headers in the workbook to decide plausible input domains, add the
 address to LicDsfConstraints (with Annotated[int, Between(lo, hi)] or
-Literal[...]) and to LIC_DSF_CONSTRAINTS_DATA, then re-run until the graph
+Literal[...]), then re-run until the graph
 builds.
 """
 
