@@ -4,7 +4,8 @@ import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from itertools import product
-from typing import Any
+from pathlib import Path
+from typing import Any, get_args, get_origin, get_type_hints
 
 from openpyxl.utils.cell import coordinate_to_tuple
 
@@ -21,6 +22,7 @@ from excel_grapher.core.cell_types import (
     IntIntervalDomain,
     constraints_to_cell_type_env,
 )
+import openpyxl
 from excel_grapher.core.excel_function_meta import is_ref_only_arg
 from excel_grapher.core.expr_eval import Unsupported, evaluate_expr
 from excel_grapher.core.formula_ast import (
@@ -80,6 +82,92 @@ class DynamicRefConfig:
         """
         env = constraints_to_cell_type_env(constraints_type, constraints_data)
         return cls(cell_type_env=env, limits=limits or DynamicRefLimits())
+
+    @classmethod
+    def from_constraints_and_workbook(
+        cls,
+        constraints_type: type[Any],
+        workbook_path: str | Path,
+        *,
+        limits: DynamicRefLimits | None = None,
+        data_only: bool = True,
+    ) -> DynamicRefConfig:
+        """Build config from constraints type plus workbook values for constant cells.
+
+        Constraints whose annotations carry a FromWorkbook marker are treated as
+        singleton domains derived from the current cached value in the workbook.
+        Other constraints are interpreted via constraints_to_cell_type_env as usual.
+        """
+        hints = get_type_hints(constraints_type, include_extras=True)
+        # Start from the type-based environment (Literal/Between/etc.).
+        dummy_data: dict[str, Any] = {k: None for k in hints}
+        env = constraints_to_cell_type_env(constraints_type, dummy_data)
+
+        wb = openpyxl.load_workbook(Path(workbook_path), data_only=data_only, keep_vba=True)
+        try:
+            for addr, annotated_type in hints.items():
+                if not _has_from_workbook_marker(annotated_type):
+                    continue
+                sheet_name, coord = _split_addr_sheet_coord(addr)
+                if sheet_name not in wb.sheetnames:
+                    raise DynamicRefError(
+                        f"Sheet {sheet_name!r} (from constraint {addr!r}) not found in workbook"
+                    )
+                ws = wb[sheet_name]
+                value = ws[coord].value
+                if value is None:
+                    # Skip empty cells; caller can add explicit constraints if needed.
+                    continue
+                kind = _infer_kind_from_value(value)
+                env[addr] = CellType(
+                    kind=kind,
+                    enum=EnumDomain(values=frozenset({value})),
+                )
+        finally:
+            wb.close()
+
+        return cls(cell_type_env=env, limits=limits or DynamicRefLimits())
+
+
+@dataclass(frozen=True)
+class FromWorkbook:
+    """Metadata marker: domain is the current workbook value."""
+
+
+def _has_from_workbook_marker(annotated_type: Any) -> bool:
+    try:
+        from typing import Annotated  # type: ignore
+    except ImportError:  # pragma: no cover - Annotated always available in supported versions
+        return False
+
+    if get_origin(annotated_type) is not Annotated:
+        return False
+    args = get_args(annotated_type)
+    if len(args) < 2:
+        return False
+    metadata = args[1:]
+    return any(isinstance(m, FromWorkbook) for m in metadata)
+
+
+def _split_addr_sheet_coord(addr: str) -> tuple[str, str]:
+    """Split an address-style key into (sheet_name, coord) and normalize quoting."""
+    if "!" not in addr:
+        raise DynamicRefError(f"Constraint address must be sheet-qualified: {addr!r}")
+    sheet_part, coord = addr.split("!", 1)
+    sheet_part = sheet_part.strip()
+    if sheet_part.startswith("'") and sheet_part.endswith("'"):
+        sheet_part = sheet_part[1:-1].replace("''", "'")
+    return sheet_part, coord
+
+
+def _infer_kind_from_value(value: Any) -> CellKind:
+    if isinstance(value, (int, float)):
+        return CellKind.NUMBER
+    if isinstance(value, bool):
+        return CellKind.BOOL
+    if isinstance(value, str):
+        return CellKind.STRING
+    return CellKind.ANY
 
 
 @dataclass(frozen=True)

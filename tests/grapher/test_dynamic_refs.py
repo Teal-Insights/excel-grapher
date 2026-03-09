@@ -22,6 +22,7 @@ from excel_grapher.grapher.dynamic_refs import (
     DynamicRefLimits,
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
+    FromWorkbook,
 )
 
 
@@ -598,4 +599,34 @@ def test_format_missing_leaves_groups_column_endpoints_into_range() -> None:
     leaves = {"lookup!C4", "lookup!C73"}
     formatted = _format_missing_leaves(leaves)
     assert formatted == ["lookup!C4:lookup!C73"]
+
+
+def _build_simple_constant_workbook(path: Path) -> None:
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(0, 1, 10)  # B1
+    ws.write_string(1, 1, "Afghanistan")  # B2
+    wb.close()
+
+
+def test_from_constraints_and_workbook_uses_workbook_values_for_constants(tmp_path: Path) -> None:
+    from typing import Annotated, TypedDict
+
+    excel_path = tmp_path / "constants.xlsx"
+    _build_simple_constant_workbook(excel_path)
+
+    class ConstConstraints(TypedDict, total=False):
+        pass
+
+    ConstConstraints.__annotations__["Sheet1!B1"] = Annotated[int, FromWorkbook()]
+    ConstConstraints.__annotations__["Sheet1!B2"] = Annotated[str, FromWorkbook()]
+
+    config = DynamicRefConfig.from_constraints_and_workbook(ConstConstraints, excel_path)
+    env = config.cell_type_env
+
+    assert env["Sheet1!B1"].kind is CellKind.NUMBER
+    assert env["Sheet1!B1"].enum == EnumDomain(values=frozenset({10}))
+
+    assert env["Sheet1!B2"].kind is CellKind.STRING
+    assert env["Sheet1!B2"].enum == EnumDomain(values=frozenset({"Afghanistan"}))
 

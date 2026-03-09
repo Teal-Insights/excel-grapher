@@ -36,6 +36,7 @@ from excel_grapher import (
     validate_graph,
 )
 from excel_grapher.core.cell_types import Between  # noqa: F401 - used when adding constraints
+from excel_grapher.grapher.dynamic_refs import FromWorkbook
 
 # Row labels for the multi-row stress-test blocks (same row layout in each block).
 # Blank string means that row is skipped when splitting by row.
@@ -97,26 +98,26 @@ USE_CACHED_DYNAMIC_REFS = False
 
 # Constraint types for cells that feed OFFSET/INDIRECT. Keys must be address-style (e.g. "Sheet1!B1").
 # Add entries when the script raises DynamicRefError: the message lists leaf cells that need
-# constraints. Add each to __annotations__ (with Annotated[int, Between(lo, hi)] or Literal[...])
-# and to LIC_DSF_CONSTRAINTS_DATA, then re-run. Repeat until the graph builds.
+# constraints. Add each to __annotations__ (with Annotated[int, Between(lo, hi)],
+# Annotated[..., FromWorkbook()], or Literal[...]) then re-run. Repeat until the graph builds.
 class LicDsfConstraints(TypedDict, total=False):
     pass
 
 # PV_Base!B9xx = CONCAT("$", A9xx, "$", $A$<row>) → INDIRECT($B9xx). Row-index cells A917, A941, A965 (fixed).
-LicDsfConstraints.__annotations__["PV_Base!A917"] = Literal[64]
-LicDsfConstraints.__annotations__["PV_Base!A941"] = Literal[90]
-LicDsfConstraints.__annotations__["PV_Base!A965"] = Literal[115]
+# Treat these as constants derived from the current workbook values.
+LicDsfConstraints.__annotations__["PV_Base!A917"] = Annotated[int, FromWorkbook()]
+LicDsfConstraints.__annotations__["PV_Base!A941"] = Annotated[int, FromWorkbook()]
+LicDsfConstraints.__annotations__["PV_Base!A965"] = Annotated[int, FromWorkbook()]
 # A918:A938, A942:A962, A966:A986 each has a single cached letter D, E, …, X.
+# Treat these as constants derived from their current workbook values.
 for _start, _end in [(918, 939), (942, 963), (966, 987)]:
     for _row in range(_start, _end):
-        _letter = chr(ord("D") + _row - _start)
-        LicDsfConstraints.__annotations__[f"PV_Base!A{_row}"] = str
-# B9xx holds the resulting ref string (e.g. "$D$64") consumed by INDIRECT; constraint needed for domain.
+        LicDsfConstraints.__annotations__[f"PV_Base!A{_row}"] = Annotated[str, FromWorkbook()]
+# B9xx holds the resulting ref string (e.g. "$D$64") consumed by INDIRECT; constrain each
+# to its current workbook value.
 for _start, _end, _anchor in [(918, 939, 64), (942, 963, 90), (966, 987, 115)]:
     for _row in range(_start, _end):
-        _col_letter = chr(ord("D") + _row - _start)
-        _ref_str = f"${_col_letter}${_anchor}"
-        LicDsfConstraints.__annotations__[f"PV_Base!B{_row}"] = Literal[_ref_str]
+        LicDsfConstraints.__annotations__[f"PV_Base!B{_row}"] = Annotated[str, FromWorkbook()]
 
 # Language selector and lookup table (feed INDIRECT/VLOOKUP for language-dependent refs).
 # START!L10 = VLOOKUP(K10, lookup!BB4:BC7, 2); evaluator does not support VLOOKUP, so L10 is constrained too.
@@ -129,23 +130,6 @@ LicDsfConstraints.__annotations__["START!K10"] = _LANG
 for _r in range(4, 8):
     for _c in ("BB", "BC"):
         LicDsfConstraints.__annotations__[f"lookup!{_c}{_r}"] = _LANG_LOOKUP
-
-LIC_DSF_CONSTRAINTS_DATA: dict[str, int | str | float] = {
-    "PV_Base!A917": 64,
-    "PV_Base!A941": 90,
-    "PV_Base!A965": 115,
-    **{f"PV_Base!A{r}": chr(ord("D") + r - _start)
-      for _start, _end in [(918, 939), (942, 963), (966, 987)] for r in range(_start, _end)},
-    **{
-        f"PV_Base!B{r}": f"${chr(ord('D') + r - _start)}${_anchor}"
-        for _start, _end, _anchor in [(918, 939, 64), (942, 963, 90), (966, 987, 115)]
-        for r in range(_start, _end)
-    },
-    "START!L10": "English",
-    "START!K10": "English",
-    **{f"lookup!{c}{r}": "English" for r in range(4, 8) for c in ("BB", "BC")}
-
-}
 
 
 def constrain_constant_range(
@@ -289,8 +273,9 @@ def main() -> None:
     print("\n2. Building dependency graph...")
     dynamic_refs: DynamicRefConfig | None = None
     if not USE_CACHED_DYNAMIC_REFS:
-        dynamic_refs = DynamicRefConfig.from_constraints(
-            LicDsfConstraints, LIC_DSF_CONSTRAINTS_DATA
+        dynamic_refs = DynamicRefConfig.from_constraints_and_workbook(
+            LicDsfConstraints,
+            WORKBOOK_PATH,
         )
     try:
         graph = create_dependency_graph(
@@ -305,8 +290,8 @@ def main() -> None:
         print(f"\n   DynamicRefError: {e}")
         print(
             "   Add the reported cell's argument cells to LicDsfConstraints (address-style keys)"
-            " and LIC_DSF_CONSTRAINTS_DATA, then re-run. Or set USE_CACHED_DYNAMIC_REFS=True to"
-            " resolve from cached values."
+            " using Annotated[..., Between(...)] / Annotated[..., FromWorkbook()] as needed,"
+            " then re-run. Or set USE_CACHED_DYNAMIC_REFS=True to resolve from cached values."
         )
         raise
 
