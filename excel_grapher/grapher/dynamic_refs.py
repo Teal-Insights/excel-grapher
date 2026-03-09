@@ -7,6 +7,7 @@ from itertools import product
 from pathlib import Path
 from typing import Any, get_args, get_origin, get_type_hints
 
+import openpyxl
 from openpyxl.utils.cell import coordinate_to_tuple
 
 from excel_grapher.core.addressing import (
@@ -22,7 +23,6 @@ from excel_grapher.core.cell_types import (
     IntIntervalDomain,
     constraints_to_cell_type_env,
 )
-import openpyxl
 from excel_grapher.core.excel_function_meta import is_ref_only_arg
 from excel_grapher.core.expr_eval import Unsupported, evaluate_expr
 from excel_grapher.core.formula_ast import (

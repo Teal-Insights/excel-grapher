@@ -20,6 +20,7 @@ from typing import (  # noqa: F401 - Annotated/Literal used when adding constrai
     Any,
     Literal,
     TypedDict,
+    cast,
 )
 
 import openpyxl
@@ -88,6 +89,8 @@ def _chart_data_ranges() -> list[tuple[str, str]]:
 
 
 CHART_DATA_RANGES: list[tuple[str, str]] = _chart_data_ranges()
+
+LiteralType = cast(Any, Literal)
 
 # Dated template; adjust filename if using a different snapshot.
 WORKBOOK_PATH = Path("example/data/lic-dsf-template-2026-01-31.xlsm")
@@ -160,7 +163,7 @@ def constrain_constant_range(
             value = ws[coord].value
             if value is None:
                 continue
-            constraints_type.__annotations__[addr] = Literal[value]
+            constraints_type.__annotations__[addr] = LiteralType[value]
             constraints_data[addr] = value
     finally:
         wb.close()

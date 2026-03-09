@@ -20,9 +20,9 @@ from excel_grapher.grapher.dynamic_refs import (
     DynamicRefConfig,
     DynamicRefError,
     DynamicRefLimits,
+    FromWorkbook,
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
-    FromWorkbook,
 )
 
 
