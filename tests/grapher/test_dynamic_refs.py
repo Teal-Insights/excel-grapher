@@ -387,6 +387,31 @@ def test_create_dependency_graph_with_dynamic_ref_config(tmp_path: Path) -> None
     assert deps == {"Sheet1!B1", "Sheet1!C1", "Sheet1!B2"}
 
 
+def test_create_dependency_graph_with_dynamic_ref_config_and_no_dynamic_calls(
+    tmp_path: Path,
+) -> None:
+    """Graph building with DynamicRefConfig should work when formula has no OFFSET/INDIRECT."""
+    excel_path = tmp_path / "no_dynamic_calls.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(0, 1, 1)  # B1
+    ws.write_number(0, 2, 2)  # C1
+    ws.write_formula(0, 0, "=Sheet1!B1+Sheet1!C1", None, 3)  # A1
+    wb.close()
+
+    env = _make_env({})
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+
+    graph = create_dependency_graph(
+        excel_path,
+        ["Sheet1!A1"],
+        load_values=False,
+        dynamic_refs=config,
+    )
+    deps = graph.dependencies("Sheet1!A1")
+    assert deps == {"Sheet1!B1", "Sheet1!C1"}
+
+
 def test_create_dependency_graph_constrain_leaf_only_formula_in_chain(tmp_path: Path) -> None:
     """Constraints are only for leaves; formula cells in the argument chain are expanded from leaf env."""
     excel_path = tmp_path / "offset_leaf_constraint.xlsx"
