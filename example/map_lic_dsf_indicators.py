@@ -17,6 +17,7 @@ builds.
 from pathlib import Path
 from typing import (  # noqa: F401 - Annotated/Literal used when adding constraints
     Annotated,
+    Any,
     Literal,
     TypedDict,
 )
@@ -145,6 +146,40 @@ LIC_DSF_CONSTRAINTS_DATA: dict[str, int | str | float] = {
     **{f"lookup!{c}{r}": "English" for r in range(4, 8) for c in ("BB", "BC")}
 
 }
+
+
+def constrain_constant_range(
+    constraints_type: type[Any],
+    constraints_data: dict[str, Any],
+    workbook_path: Path,
+    *,
+    sheet_name: str,
+    range_a1: str,
+) -> None:
+    """
+    Populate constraints and data for a range of constant cells.
+
+    For each cell in the given sheet/range, this helper reads the current
+    cached value from the workbook and constrains the cell to that single
+    value by:
+      - assigning a Literal[value] annotation on constraints_type.__annotations__
+      - storing the same value in constraints_data under the sheet-qualified key
+    """
+    wb = openpyxl.load_workbook(workbook_path, data_only=True, keep_vba=True)
+    try:
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet {sheet_name!r} not found in {workbook_path}")
+        ws = wb[sheet_name]
+
+        for addr in cells_in_range(sheet_name, range_a1):
+            _sheet, coord = addr.split("!", 1)
+            value = ws[coord].value
+            if value is None:
+                continue
+            constraints_type.__annotations__[addr] = Literal[value]
+            constraints_data[addr] = value
+    finally:
+        wb.close()
 
 
 def parse_range_spec(spec: str) -> tuple[str, str]:

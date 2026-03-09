@@ -15,6 +15,7 @@ from excel_grapher.core.cell_types import (
     EnumDomain,
     IntIntervalDomain,
 )
+from excel_grapher.grapher.builder import _format_missing_leaves
 from excel_grapher.grapher.dynamic_refs import (
     DynamicRefConfig,
     DynamicRefError,
@@ -22,7 +23,6 @@ from excel_grapher.grapher.dynamic_refs import (
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
 )
-from excel_grapher.grapher.builder import _format_missing_leaves
 
 
 def _build_offset_named_range_workbook(path: Path) -> None:
