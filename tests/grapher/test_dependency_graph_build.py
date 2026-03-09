@@ -183,7 +183,7 @@ def test_array_formula_cells_surface_formula_text(tmp_path: Path) -> None:
     wb.save(excel_path)
     wb.close()
 
-    wb_formula = openpyxl.load_workbook(excel_path, data_only=False)
+    wb_formula = openpyxl.load_workbook(excel_path, data_only=False, read_only=True)
     try:
         raw = wb_formula["Sheet1"]["A1"].value
         assert isinstance(raw, ArrayFormula)

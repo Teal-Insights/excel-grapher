@@ -131,7 +131,7 @@ def create_dependency_graph(
             return workbook
         path = Path(workbook)
         keep_vba = path.suffix.lower() == ".xlsm"
-        return openpyxl.load_workbook(path, data_only=data_only, keep_vba=keep_vba)
+        return openpyxl.load_workbook(path, data_only=data_only, read_only=True, keep_vba=keep_vba)
 
     wb_formulas = load_wb(data_only=False)
     wb_values = load_wb(data_only=True) if load_values and not isinstance(workbook, openpyxl.Workbook) else None

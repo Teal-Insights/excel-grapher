@@ -15,8 +15,8 @@ def discover_formula_cells_in_rows(
     Only includes cells that contain formulas (start with '=') and whose cached
     calculated value is numeric.
     """
-    wb_formulas = openpyxl.load_workbook(wb_path, data_only=False, keep_vba=True)
-    wb_values = openpyxl.load_workbook(wb_path, data_only=True, keep_vba=True)
+    wb_formulas = openpyxl.load_workbook(wb_path, data_only=False, read_only=True, keep_vba=True)
+    wb_values = openpyxl.load_workbook(wb_path, data_only=True, read_only=True, keep_vba=True)
     try:
         if (
             sheet_name not in wb_formulas.sheetnames

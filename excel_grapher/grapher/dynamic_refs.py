@@ -103,7 +103,7 @@ class DynamicRefConfig:
         dummy_data: dict[str, Any] = {k: None for k in hints}
         env = constraints_to_cell_type_env(constraints_type, dummy_data)
 
-        wb = openpyxl.load_workbook(Path(workbook_path), data_only=data_only, keep_vba=True)
+        wb = openpyxl.load_workbook(Path(workbook_path), data_only=data_only, read_only=True, keep_vba=True)
         try:
             for addr, annotated_type in hints.items():
                 if not _has_from_workbook_marker(annotated_type):

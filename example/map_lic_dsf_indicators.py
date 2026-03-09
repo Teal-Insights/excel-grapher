@@ -152,7 +152,7 @@ def constrain_constant_range(
       - assigning a Literal[value] annotation on constraints_type.__annotations__
       - storing the same value in constraints_data under the sheet-qualified key
     """
-    wb = openpyxl.load_workbook(workbook_path, data_only=True, keep_vba=True)
+    wb = openpyxl.load_workbook(workbook_path, data_only=True, read_only=True, keep_vba=True)
     try:
         if sheet_name not in wb.sheetnames:
             raise ValueError(f"Sheet {sheet_name!r} not found in {workbook_path}")
@@ -225,7 +225,7 @@ def discover_formula_cells_in_rows(
     Cached values are not used so workbooks with no default inputs (formulas
     returning errors) are still discovered.
     """
-    wb_formulas = openpyxl.load_workbook(wb_path, data_only=False, keep_vba=True)
+    wb_formulas = openpyxl.load_workbook(wb_path, data_only=False, read_only=True, keep_vba=True)
     try:
         if sheet_name not in wb_formulas.sheetnames:
             print(f"  Warning: Sheet '{sheet_name}' not found")
