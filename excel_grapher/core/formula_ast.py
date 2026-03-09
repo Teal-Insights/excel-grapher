@@ -65,6 +65,12 @@ class UnaryOpNode:
     operand: AstNode
 
 
+@dataclass(frozen=True, slots=True)
+class EmptyArgNode:
+    """Represents an omitted argument in a function call (e.g., INDEX(A1:B2,,1))."""
+    pass
+
+
 AstNode: TypeAlias = (
     NumberNode
     | StringNode
@@ -75,6 +81,7 @@ AstNode: TypeAlias = (
     | FunctionCallNode
     | BinaryOpNode
     | UnaryOpNode
+    | EmptyArgNode
 )
 
 
@@ -391,12 +398,28 @@ def _parse_args(s: _Scanner, original: str) -> list[AstNode]:
         return args
 
     while True:
-        args.append(_parse_expression(s, original, min_prec=0))
+        s.skip_ws()
+        ch = s.peek()
+        if ch == ",":
+            args.append(EmptyArgNode())
+        elif ch == ")":
+            # This handles the case like FUNC(arg,) where the last argument is omitted
+            args.append(EmptyArgNode())
+            s.consume()
+            return args
+        else:
+            args.append(_parse_expression(s, original, min_prec=0))
+
         s.skip_ws()
         ch = s.peek()
         if ch == ",":
             s.consume()
             s.skip_ws()
+            # If the next character is ')', it means the last argument was omitted (e.g., FUNC(arg,))
+            if s.peek() == ")":
+                args.append(EmptyArgNode())
+                s.consume()
+                return args
             continue
         if ch == ")":
             s.consume()

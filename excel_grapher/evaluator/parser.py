@@ -14,6 +14,7 @@ from excel_grapher.core.formula_ast import (
     RangeNode,
     StringNode,
     UnaryOpNode,
+    EmptyArgNode,
     parse as _core_parse,
 )
 
@@ -31,6 +32,7 @@ __all__ = [
     "RangeNode",
     "StringNode",
     "UnaryOpNode",
+    "EmptyArgNode",
     "parse",
 ]
 

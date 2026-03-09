@@ -8,6 +8,7 @@ from excel_grapher.evaluator.parser import (
     RangeNode,
     StringNode,
     UnaryOpNode,
+    EmptyArgNode,
     parse,
 )
 from excel_grapher.evaluator.types import XlError
@@ -146,3 +147,26 @@ def test_parse_range_with_quoted_sheet_on_both_ends() -> None:
             RangeNode("'Input 8'!C26", "'Input 8'!W26"),
         ],
     )
+
+
+def test_parse_omitted_arguments() -> None:
+    """Test parsing function calls with omitted arguments (e.g., INDEX(A1:B2,,1))"""
+    # Omitted middle argument
+    assert parse("=INDEX(S!A1:B2,,1)") == FunctionCallNode(
+        "INDEX", [RangeNode("S!A1", "S!B2"), EmptyArgNode(), NumberNode(1.0)]
+    )
+    # Omitted last argument
+    assert parse("=INDEX(S!A1:B2,1,)") == FunctionCallNode(
+        "INDEX", [RangeNode("S!A1", "S!B2"), NumberNode(1.0), EmptyArgNode()]
+    )
+    # Multiple omitted arguments
+    assert parse("=INDEX(S!A1:B2,,)") == FunctionCallNode(
+        "INDEX", [RangeNode("S!A1", "S!B2"), EmptyArgNode(), EmptyArgNode()]
+    )
+    # Omitted first argument
+    assert parse("=COUNT(,1)") == FunctionCallNode(
+        "COUNT", [EmptyArgNode(), NumberNode(1.0)]
+    )
+    # Only omitted argument
+    assert parse("=COUNT()") == FunctionCallNode("COUNT", [])
+    assert parse("=COUNT(,)") == FunctionCallNode("COUNT", [EmptyArgNode(), EmptyArgNode()])
