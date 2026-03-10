@@ -94,21 +94,37 @@ class DynamicRefConfig:
     ) -> DynamicRefConfig:
         """Build config from constraints type plus workbook values for constant cells.
 
-        Constraints whose annotations carry a FromWorkbook marker are treated as
-        singleton domains derived from the current cached value in the workbook.
-        Other constraints are interpreted via constraints_to_cell_type_env as usual.
+        Constraints whose annotations carry a :class:`FromWorkbook` marker are
+        treated as singleton domains derived from the current cached value in the
+        workbook.  Other constraints are interpreted via
+        :func:`constraints_to_cell_type_env` as usual.
+
+        **Performance note:** The workbook is opened once in ``read_only`` mode
+        and values are read via openpyxl's streaming parser.  ``FromWorkbook``
+        addresses are sorted by (sheet, row, column) before iteration so that
+        each sheet's XML is parsed in a single forward pass.  For large sheets
+        whose constrained cells sit far down (e.g. row 900+), the initial parse
+        to that row can take tens of seconds; subsequent sequential reads on the
+        same sheet are fast.  This is a deliberate tradeoff: ``FromWorkbook``
+        eliminates the maintenance burden of hardcoded ``Literal`` values at
+        the cost of a longer config-build step.
         """
         hints = get_type_hints(constraints_type, include_extras=True)
-        # Start from the type-based environment (Literal/Between/etc.).
         dummy_data: dict[str, Any] = {k: None for k in hints}
         env = constraints_to_cell_type_env(constraints_type, dummy_data)
 
-        wb = openpyxl.load_workbook(Path(workbook_path), data_only=data_only, read_only=True, keep_vba=True)
+        from_wb_items: list[tuple[str, str, str]] = []
+        for addr, annotated_type in hints.items():
+            if not _has_from_workbook_marker(annotated_type):
+                continue
+            sheet_name, coord = _split_addr_sheet_coord(addr)
+            from_wb_items.append((addr, sheet_name, coord))
+
+        from_wb_items.sort(key=lambda item: (item[1], coordinate_to_tuple(item[2])))
+
+        wb = openpyxl.load_workbook(Path(workbook_path), data_only=data_only, read_only=True)
         try:
-            for addr, annotated_type in hints.items():
-                if not _has_from_workbook_marker(annotated_type):
-                    continue
-                sheet_name, coord = _split_addr_sheet_coord(addr)
+            for addr, sheet_name, coord in from_wb_items:
                 if sheet_name not in wb.sheetnames:
                     raise DynamicRefError(
                         f"Sheet {sheet_name!r} (from constraint {addr!r}) not found in workbook"
@@ -116,7 +132,6 @@ class DynamicRefConfig:
                 ws = wb[sheet_name]
                 value = ws[coord].value
                 if value is None:
-                    # Skip empty cells; caller can add explicit constraints if needed.
                     continue
                 kind = _infer_kind_from_value(value)
                 env[addr] = CellType(
@@ -131,7 +146,14 @@ class DynamicRefConfig:
 
 @dataclass(frozen=True)
 class FromWorkbook:
-    """Metadata marker: domain is the current workbook value."""
+    """Metadata marker: resolve domain from the current cached workbook value.
+
+    Use ``Annotated[T, FromWorkbook()]`` in a constraints TypedDict to derive a
+    singleton domain at config-build time instead of hardcoding a ``Literal``.
+    This eliminates maintenance when the workbook template changes, at the cost
+    of a slower :meth:`DynamicRefConfig.from_constraints_and_workbook` call (the
+    workbook must be opened and each marked cell read via a streaming parser).
+    """
 
 
 def _has_from_workbook_marker(annotated_type: Any) -> bool:
