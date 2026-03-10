@@ -9,6 +9,7 @@ from excel_grapher.evaluator.parser import (
     BinaryOpNode,
     BoolNode,
     CellRefNode,
+    EmptyArgNode,
     ErrorNode,
     FunctionCallNode,
     NumberNode,
@@ -87,6 +88,32 @@ class TestEmitAstLiterals:
     def test_emit_error_div(self, gen):
         """#DIV/0! error."""
         assert gen._emit_ast(ErrorNode(XlError.DIV)) == "XlError.DIV"
+
+
+class TestEmitAstEmptyArg:
+    """Tests for _emit_ast with EmptyArgNode (omitted function arguments)."""
+
+    @pytest.fixture
+    def gen(self):
+        return CodeGenerator(None)  # type: ignore
+
+    def test_emit_empty_arg(self, gen):
+        """EmptyArgNode should emit None for omitted arguments."""
+        assert gen._emit_ast(EmptyArgNode()) == "None"
+
+    def test_emit_function_with_omitted_arg(self, gen):
+        """Function call with omitted arguments should emit None in place."""
+        node = FunctionCallNode(
+            "INDEX",
+            [
+                RangeNode("Sheet1!A1", "Sheet1!B2"),
+                EmptyArgNode(),
+                NumberNode(1.0),
+            ],
+        )
+        result = gen._emit_ast(node)
+        assert "None" in result
+        assert "1.0" in result
 
 
 class TestEmitAstReferences:

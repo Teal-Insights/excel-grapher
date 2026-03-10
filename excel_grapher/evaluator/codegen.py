@@ -21,6 +21,7 @@ from .parser import (
     BinaryOpNode,
     BoolNode,
     CellRefNode,
+    EmptyArgNode,
     ErrorNode,
     FunctionCallNode,
     NumberNode,
@@ -170,6 +171,9 @@ class CodeGenerator:
         Returns:
             Python expression as a string.
         """
+        if isinstance(node, EmptyArgNode):
+            return "None"
+
         if isinstance(node, NumberNode):
             return repr(node.value)
 
