@@ -2,8 +2,8 @@
 """
 Map dependencies for LIC-DSF indicator rows using excel-grapher.
 
-This script traces the dependency closure for key indicator rows across
-B1, B3, and B4 sheets and validates against calcChain.xml.
+This script traces the dependency closure for key indicators across sheets
+and validates against calcChain.xml.
 
 Dynamic refs (OFFSET/INDIRECT) are resolved via a constraint-based config.
 Iterative workflow: run the script; if DynamicRefError is raised, the message
