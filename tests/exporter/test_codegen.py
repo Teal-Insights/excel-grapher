@@ -512,6 +512,68 @@ class TestGenerate:
         assert "    'Sheet1!A2': 'hi'," in code
         assert "DEFAULT_INPUTS" in code
 
+    def test_generate_input_ranges_override_constant_types(self):
+        graph = _make_graph(
+            _make_node("Sheet1!A1", None, 10.0),
+            _make_node("Sheet1!A2", None, 20.0),
+        )
+        gen = CodeGenerator(graph)
+        code = gen.generate(
+            ["Sheet1!A1", "Sheet1!A2"],
+            constant_types={"number"},
+            input_ranges=["Sheet1!A1"],
+        )
+        assert "CONSTANTS = {" in code
+        assert "    'Sheet1!A2': 20.0," in code
+        assert "    'Sheet1!A1': 10.0," in code
+        assert code.index("DEFAULT_INPUTS = {") < code.index("CONSTANTS = {")
+
+    def test_generate_input_ranges_override_constant_ranges(self):
+        graph = _make_graph(
+            _make_node("Sheet1!A1", None, 1.0),
+            _make_node("Sheet1!A2", None, 2.0),
+        )
+        gen = CodeGenerator(graph)
+        code = gen.generate(
+            ["Sheet1!A1", "Sheet1!A2"],
+            constant_ranges=["Sheet1!A1:A2"],
+            input_ranges=["Sheet1!A1"],
+        )
+        assert "    'Sheet1!A1': 1.0," in code
+        assert "    'Sheet1!A2': 2.0," in code
+        assert code.index("DEFAULT_INPUTS = {") < code.index("CONSTANTS = {")
+
+    def test_generate_input_ranges_override_graph_leaf_classification(self):
+        graph = _make_graph(
+            _make_node("Sheet1!A1", None, 10.0),
+            _make_node("Sheet1!A2", None, 20.0),
+        )
+        _set_leaf_classification(
+            graph, {"Sheet1!A1": "constant", "Sheet1!A2": "constant"}
+        )
+        gen = CodeGenerator(graph)
+        code = gen.generate(
+            ["Sheet1!A1", "Sheet1!A2"],
+            input_ranges=["Sheet1!A1"],
+        )
+        assert "    'Sheet1!A1': 10.0," in code
+        assert "    'Sheet1!A2': 20.0," in code
+        assert code.index("DEFAULT_INPUTS = {") < code.index("CONSTANTS = {")
+
+    def test_classify_leaf_nodes_input_ranges(self):
+        graph = _make_graph(
+            _make_node("Sheet1!A1", None, 1.0),
+            _make_node("Sheet1!A2", None, 2.0),
+        )
+        gen = CodeGenerator(graph)
+        inputs, constants = gen.classify_leaf_nodes(
+            ["Sheet1!A1", "Sheet1!A2"],
+            constant_types={"number"},
+            input_ranges=["Sheet1!A1"],
+        )
+        assert inputs == {"Sheet1!A1"}
+        assert constants == {"Sheet1!A2"}
+
     def test_generate_constant_blanks(self):
         graph = _make_graph(
             _make_node("Sheet1!A1", None, None),
