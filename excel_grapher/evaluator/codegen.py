@@ -490,6 +490,32 @@ class CodeGenerator:
             raise TypeError("constant_ranges must be a sequence of strings")
         return [cls._parse_constant_range(item) for item in constant_ranges]
 
+    @classmethod
+    def _normalize_input_ranges(
+        cls, input_ranges: Sequence[str] | None
+    ) -> list[tuple[str, int, int, int, int]]:
+        if input_ranges is None:
+            return []
+        if isinstance(input_ranges, (str, bytes)):
+            raise TypeError("input_ranges must be a sequence of strings")
+        return [cls._parse_constant_range(item) for item in input_ranges]
+
+    @staticmethod
+    def _apply_input_ranges_override(
+        needed_leaves: set[str],
+        constants: set[str],
+        input_ranges: list[tuple[str, int, int, int, int]],
+    ) -> tuple[set[str], set[str]]:
+        """Drop constants that fall in input_ranges; input ranges win over constant rules."""
+        if not input_ranges:
+            return set(needed_leaves) - constants, constants
+        constants = set(constants)
+        for key in needed_leaves:
+            if CodeGenerator._leaf_in_constant_ranges(key, input_ranges):
+                constants.discard(key)
+        inputs = set(needed_leaves) - constants
+        return inputs, constants
+
     @staticmethod
     def _leaf_value_matches_constant_type(
         value: object | None, constant_types: set[str]
@@ -527,6 +553,7 @@ class CodeGenerator:
         constant_types: set[str] | None = None,
         constant_ranges: Sequence[str] | None = None,
         constant_blanks: bool = False,
+        input_ranges: Sequence[str] | None = None,
         attach_to_graph: bool = False,
     ) -> tuple[set[str], set[str]]:
         normalized_targets = [normalize_address(t) for t in targets]
@@ -535,21 +562,32 @@ class CodeGenerator:
 
         normalized_constant_types = self._normalize_constant_types(constant_types)
         normalized_constant_ranges = self._normalize_constant_ranges(constant_ranges)
-        use_graph_classification = not (
+        normalized_input_ranges = self._normalize_input_ranges(input_ranges)
+        explicit_constant_rules = bool(
             constant_types or constant_ranges or constant_blanks
         )
+        use_graph_classification = not explicit_constant_rules and not input_ranges
 
         if use_graph_classification:
             graph_classification = self._get_graph_leaf_classification()
             inputs, constants = self._classification_from_graph(
                 graph_classification, needed_leaves
             )
-        else:
+        elif explicit_constant_rules:
             inputs, constants = self._classify_leaf_nodes(
                 needed_leaves,
                 constant_types=normalized_constant_types,
                 constant_ranges=normalized_constant_ranges,
                 constant_blanks=constant_blanks,
+                input_ranges=normalized_input_ranges,
+            )
+        else:
+            graph_classification = self._get_graph_leaf_classification()
+            inputs, constants = self._classification_from_graph(
+                graph_classification, needed_leaves
+            )
+            inputs, constants = self._apply_input_ranges_override(
+                needed_leaves, constants, normalized_input_ranges
             )
 
         if attach_to_graph:
@@ -566,7 +604,9 @@ class CodeGenerator:
         constant_types: set[str],
         constant_ranges: list[tuple[str, int, int, int, int]],
         constant_blanks: bool,
+        input_ranges: list[tuple[str, int, int, int, int]] | None = None,
     ) -> tuple[set[str], set[str]]:
+        input_ranges = input_ranges or []
         constants: set[str] = set()
         for key in needed_leaves:
             if self._leaf_in_constant_ranges(key, constant_ranges):
@@ -579,8 +619,9 @@ class CodeGenerator:
                 continue
             if self._leaf_value_matches_constant_type(value, constant_types):
                 constants.add(key)
-        inputs = set(needed_leaves) - constants
-        return inputs, constants
+        return self._apply_input_ranges_override(
+            needed_leaves, constants, input_ranges
+        )
 
     def _emit_binary_op(self, node: BinaryOpNode) -> str:
         """Emit a binary operation."""
@@ -1300,12 +1341,15 @@ class CodeGenerator:
         constant_types: set[str] | None = None,
         constant_ranges: Sequence[str] | None = None,
         constant_blanks: bool = False,
+        input_ranges: Sequence[str] | None = None,
     ) -> str:
         """Generate standalone Python code for target cells.
 
         Args:
             targets: List of target cell addresses to compute.
             entrypoints: Optional mapping of entrypoint names to target lists.
+            input_ranges: Sheet-qualified ranges whose leaf cells are treated as inputs.
+                When a cell would otherwise be a constant, ``input_ranges`` take precedence.
 
         Returns:
             Standalone Python source code as a string.
@@ -1341,6 +1385,7 @@ class CodeGenerator:
             constant_types=constant_types,
             constant_ranges=constant_ranges,
             constant_blanks=constant_blanks,
+            input_ranges=input_ranges,
         )
         runtime_code = parts["runtime_code"]
         cell_code_lines = parts["cell_code_lines"]
@@ -1440,6 +1485,7 @@ class CodeGenerator:
         constant_types: set[str] | None = None,
         constant_ranges: Sequence[str] | None = None,
         constant_blanks: bool = False,
+        input_ranges: Sequence[str] | None = None,
     ) -> dict[str, str]:
         """Generate a multi-module Python package for target cells.
 
@@ -1483,6 +1529,7 @@ class CodeGenerator:
             constant_types=constant_types,
             constant_ranges=constant_ranges,
             constant_blanks=constant_blanks,
+            input_ranges=input_ranges,
         )
         runtime_code = parts["runtime_code"]
         cell_code_lines = parts["cell_code_lines"]
@@ -1650,6 +1697,7 @@ class CodeGenerator:
         constant_types: set[str] | None = None,
         constant_ranges: Sequence[str] | None = None,
         constant_blanks: bool = False,
+        input_ranges: Sequence[str] | None = None,
     ) -> GenerationParts:
         """Generate shared intermediate artifacts for single-file and modular exports."""
         # Reset state for this generation
@@ -1744,6 +1792,7 @@ class CodeGenerator:
 
         normalized_constant_types = self._normalize_constant_types(constant_types)
         normalized_constant_ranges = self._normalize_constant_ranges(constant_ranges)
+        normalized_input_ranges = self._normalize_input_ranges(input_ranges)
         include_constants = bool(constant_types or constant_ranges or constant_blanks)
         graph_classification = None
         if not include_constants:
@@ -1755,6 +1804,7 @@ class CodeGenerator:
             constant_blanks=constant_blanks,
             graph_classification=graph_classification,
             include_constants=include_constants,
+            input_ranges=normalized_input_ranges,
         )
         if graph_classification is not None and constants_block_lines:
             include_constants = True
@@ -1848,6 +1898,7 @@ class CodeGenerator:
         constant_blanks: bool,
         graph_classification: dict[str, str] | None,
         include_constants: bool,
+        input_ranges: list[tuple[str, int, int, int, int]],
     ) -> tuple[list[str], list[str]]:
         default_lines: list[str] = []
         default_lines.append("# --- Default inputs (leaf cells) ---")
@@ -1860,10 +1911,14 @@ class CodeGenerator:
                 constant_types=constant_types,
                 constant_ranges=constant_ranges,
                 constant_blanks=constant_blanks,
+                input_ranges=input_ranges,
             )
         else:
             inputs, constants = self._classification_from_graph(
                 graph_classification, needed_leaves
+            )
+            inputs, constants = self._apply_input_ranges_override(
+                needed_leaves, constants, input_ranges
             )
 
         for key in sorted(inputs):
