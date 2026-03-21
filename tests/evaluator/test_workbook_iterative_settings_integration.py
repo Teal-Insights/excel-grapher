@@ -26,6 +26,14 @@ def _make_iterative_convergence_workbook(path: Path) -> None:
     wb.close()
 
 
+def _make_oscillation_workbook(path: Path) -> None:
+    """A1 = 1 - A1 oscillates between 0 and 1; never converges for positive iterate_delta."""
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_formula(0, 0, "=1-A1", None, 0)
+    wb.close()
+
+
 def test_workbook_iterate_disabled_keeps_default_circular_behavior(tmp_path: Path) -> None:
     base = tmp_path / "cycle_base.xlsx"
     _make_self_cycle_workbook(base)
@@ -87,3 +95,42 @@ def test_workbook_iterate_enabled_drives_iterative_convergence(tmp_path: Path) -
 
     assert abs(float(evaluator_result["Sheet1!A1"]) - 1.0) <= 1e-4
     assert abs(float(generated_result["Sheet1!A1"]) - 1.0) <= 1e-4
+
+
+def test_workbook_iterate_max_iterations_without_convergence_parity(tmp_path: Path) -> None:
+    """Oscillation never meets iterateDelta; both paths must agree after iterateCount sweeps."""
+    base = tmp_path / "oscillation_base.xlsx"
+    _make_oscillation_workbook(base)
+    workbook = tmp_path / "oscillation_iterate_on.xlsx"
+    patch_workbook_calcpr(
+        base, workbook, iterate=True, iterate_count=3, iterate_delta=1e-12
+    )
+
+    settings = get_calc_settings(workbook)
+    assert settings.iterate_count == 3
+    assert settings.iterate_delta == 1e-12
+
+    graph = create_dependency_graph(workbook, ["Sheet1!A1"], load_values=False)
+
+    with FormulaEvaluator(
+        graph,
+        iterate_enabled=settings.iterate_enabled,
+        iterate_count=settings.iterate_count,
+        iterate_delta=settings.iterate_delta,
+    ) as ev:
+        evaluator_result = ev.evaluate(["Sheet1!A1"])
+
+    generated_code = CodeGenerator(
+        graph,
+        iterate_enabled=settings.iterate_enabled,
+        iterate_count=settings.iterate_count,
+        iterate_delta=settings.iterate_delta,
+    ).generate(["Sheet1!A1"])
+    assert "iterate_count=3" in generated_code
+    assert "iterate_delta=" in generated_code
+
+    ns: dict[str, object] = {}
+    exec(generated_code, ns)
+    generated_result = cast("dict[str, object]", ns["compute_all"]())
+
+    assert evaluator_result["Sheet1!A1"] == generated_result["Sheet1!A1"]
