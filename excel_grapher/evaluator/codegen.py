@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
 import openpyxl.utils.cell
 
+from excel_grapher.grapher.graph import CycleError
+
 from .export_runtime.embed import emit_runtime
 from .name_utils import (
     address_to_python_name,
@@ -95,13 +97,23 @@ _UNARY_OPS = {
 class CodeGenerator:
     """Generates Python code from Excel formulas."""
 
-    def __init__(self, graph: DependencyGraph | GraphLike) -> None:
+    def __init__(
+        self,
+        graph: DependencyGraph | GraphLike,
+        *,
+        iterate_enabled: bool | None = None,
+    ) -> None:
         """Initialize the code generator.
 
         Args:
             graph: Dependency graph from excel_grapher containing cell formulas.
+            iterate_enabled: If True, :meth:`DependencyGraph.evaluation_order` rejects
+                any must- or may-cycle (workbook iterative calc is unsupported in codegen).
+                Typically set from :func:`excel_grapher.get_calc_settings`. ``None`` skips
+                this check (default).
         """
         self.graph = graph
+        self._iterate_enabled = iterate_enabled
         self._emitted: set[str] = set()
         self._needs_offset_runtime = False  # Set to True if dynamic OFFSET is used
         self._offset_runtime_sheets: set[str] = set()
@@ -1857,7 +1869,11 @@ class CodeGenerator:
                         stack.append(dep_n)
 
             try:
-                ordered = list(eval_order(strict=False))
+                ordered = list(
+                    eval_order(strict=False, iterate_enabled=self._iterate_enabled)
+                )
+            except CycleError:
+                raise
             except Exception:
                 ordered = []
 

@@ -94,6 +94,31 @@ CHART_DATA_RANGES: list[tuple[str, str]] = _chart_data_ranges()
 
 LiteralType = cast(Any, Literal)
 
+
+def constrain_constant_range(
+    constraints: type[Any],
+    data: dict[str, Any],
+    workbook_path: Path,
+    *,
+    sheet_name: str,
+    range_a1: str,
+) -> None:
+    """Fill ``constraints`` and ``data`` with Literal types from a rectangular cell range."""
+    wb = openpyxl.load_workbook(workbook_path, data_only=True)
+    try:
+        ws = wb[sheet_name]
+        for row in ws[range_a1]:
+            for cell in row:
+                if cell.value is None:
+                    continue
+                key = f"{sheet_name}!{cell.coordinate}"
+                val = cell.value
+                constraints.__annotations__[key] = LiteralType[val]
+                data[key] = val
+    finally:
+        wb.close()
+
+
 # Dated template; adjust filename if using a different snapshot.
 WORKBOOK_PATH = Path("example/data/lic-dsf-template-2026-01-31.xlsm")
 

@@ -5,7 +5,9 @@ from pathlib import Path
 import pytest
 import xlsxwriter
 
-from excel_grapher import create_dependency_graph
+from excel_grapher import CycleError, create_dependency_graph
+from excel_grapher.evaluator.codegen import CodeGenerator
+from tests.utils.workbook_xml import patch_workbook_calcpr
 
 
 def _make_may_cycle_if_workbook(path: Path) -> None:
@@ -118,8 +120,6 @@ def test_evaluation_order_strict_true_raises_on_may_cycle(tmp_path: Path) -> Non
     _make_feasible_may_cycle_if_workbook(excel_path)
     graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
 
-    from excel_grapher import CycleError
-
     with pytest.raises(CycleError) as e:
         graph.evaluation_order(strict=True)
     assert e.value.is_must_cycle is False
@@ -139,6 +139,49 @@ def test_evaluation_order_strict_false_warns_and_excludes_may_cycle_nodes(tmp_pa
     assert "Sheet1!B1" not in order
 
 
+def test_evaluation_order_iterate_true_raises_on_may_cycle(tmp_path: Path) -> None:
+    """Workbook iterative calc + may-cycle: we cannot emulate convergence; fail fast."""
+    base = tmp_path / "may_cycle_base.xlsx"
+    _make_feasible_may_cycle_if_workbook(base)
+    excel_path = tmp_path / "may_cycle_iterate.xlsx"
+    patch_workbook_calcpr(base, excel_path, iterate=True, iterate_count=100, iterate_delta=0.001)
+
+    graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
+
+    with pytest.raises(CycleError) as e:
+        graph.evaluation_order(strict=False, iterate_enabled=True)
+    assert e.value.is_must_cycle is False
+    assert "guarded" in str(e.value).lower()
+    assert "iterate" in str(e.value).lower()
+
+
+def test_codegen_iterate_true_raises_on_may_cycle(tmp_path: Path) -> None:
+    base = tmp_path / "may_cycle_codegen_base.xlsx"
+    _make_feasible_may_cycle_if_workbook(base)
+    excel_path = tmp_path / "may_cycle_codegen_iterate.xlsx"
+    patch_workbook_calcpr(base, excel_path, iterate=True, iterate_count=100, iterate_delta=0.001)
+
+    graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
+
+    with pytest.raises(CycleError):
+        CodeGenerator(graph, iterate_enabled=True).generate(["Sheet1!A1"])
+
+
+def test_evaluation_order_iterate_true_raises_on_must_cycle(tmp_path: Path) -> None:
+    base = tmp_path / "must_cycle_base.xlsx"
+    _make_must_cycle_workbook(base)
+    excel_path = tmp_path / "must_cycle_iterate.xlsx"
+    patch_workbook_calcpr(base, excel_path, iterate=True, iterate_count=100, iterate_delta=0.001)
+
+    graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
+
+    with pytest.raises(CycleError) as e:
+        graph.evaluation_order(strict=False, iterate_enabled=True)
+    assert e.value.is_must_cycle is True
+    assert "unconditional" in str(e.value).lower()
+    assert "iterate" in str(e.value).lower()
+
+
 def test_must_cycle_is_reported_and_always_raises(tmp_path: Path) -> None:
     excel_path = tmp_path / "must_cycle.xlsx"
     _make_must_cycle_workbook(excel_path)
@@ -147,8 +190,6 @@ def test_must_cycle_is_reported_and_always_raises(tmp_path: Path) -> None:
     report = graph.cycle_report()
     assert report.has_must_cycles is True
     assert any({"Sheet1!A1", "Sheet1!B1"} == s for s in report.must_cycles)
-
-    from excel_grapher import CycleError
 
     with pytest.raises(CycleError) as e1:
         graph.evaluation_order(strict=True)

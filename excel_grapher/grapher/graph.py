@@ -195,14 +195,38 @@ class DependencyGraph:
             example_may_cycle_path=example_may,
         )
 
-    def evaluation_order(self, *, strict: bool = True) -> list[NodeKey]:
+    def evaluation_order(
+        self, *, strict: bool = True, iterate_enabled: bool | None = None
+    ) -> list[NodeKey]:
         """
         Return nodes in dependency-first order (leaves before formulas that use them).
 
         Edge direction is A -> B meaning A depends on B. This method returns an
         ordering suitable for sequential evaluation (dependencies first).
+
+        If ``iterate_enabled`` is True (workbook has iterative calculation on), any
+        must-cycle or may-cycle is rejected: generated Python does not emulate Excel's
+        iterative convergence. Pass ``False`` or ``None`` to apply the usual strict /
+        non-strict rules without this check.
         """
         report = self.cycle_report()
+        if iterate_enabled is True:
+            if report.has_must_cycles:
+                raise CycleError(
+                    "Iterative calculation is enabled in the workbook, but unconditional "
+                    "dependency cycles cannot be reproduced in generated code; break the cycle "
+                    "or set calcPr iterate to 0 in the workbook, which may change Excel results.",
+                    report.example_must_cycle_path or [],
+                    is_must_cycle=True,
+                )
+            if report.has_may_cycles:
+                raise CycleError(
+                    "Iterative calculation is enabled in the workbook, but guarded (may-) "
+                    "dependency cycles cannot be reproduced in generated code; break the cycle "
+                    "or set calcPr iterate to 0 in the workbook, which may change Excel results.",
+                    report.example_may_cycle_path or [],
+                    is_must_cycle=False,
+                )
         if report.has_must_cycles:
             raise CycleError(
                 "Must-cycle detected; cannot compute evaluation order",
