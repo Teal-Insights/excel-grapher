@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import openpyxl.utils.cell
 
 from .errors import ParseError
-from .export_runtime.cache import xl_circular_reference
+from .export_runtime.cache import EvalContext, xl_circular_reference, xl_iterative_compute
 from .functions import FUNCTIONS
 from .helpers import (
     get_error,
@@ -63,11 +63,15 @@ class FormulaEvaluator:
     auto_detect_changes: bool = True
     eager_invalidation: bool = True
     on_cell_evaluated: Callable[[str, CellValue], None] | None = None
+    iterate_enabled: bool = False
+    iterate_count: int = 100
+    iterate_delta: float = 0.001
 
     def __post_init__(self) -> None:
         self._cache: dict[str, CellValue] = {}
         self._call_stack: list[str] = []
         self._leaf_values: dict[str, CellValue] = {}  # For auto-detection
+        self._iteration_values: dict[str, CellValue] = {}
 
     def __enter__(self) -> FormulaEvaluator:
         return self
@@ -106,6 +110,23 @@ class FormulaEvaluator:
         # Auto-detect changes in leaf values if enabled
         if self.auto_detect_changes and self.eager_invalidation:
             self._detect_and_invalidate_changed_leaves()
+        if self.iterate_enabled:
+            target_handlers = {
+                addr: (lambda _ctx, target=addr: self._evaluate_cell(target)) for addr in targets
+            }
+            ctx = EvalContext(
+                inputs={},
+                resolver=lambda _addr: None,
+                cache=self._cache,
+                computing=set(self._call_stack),
+                iterative_enabled=True,
+                iterate_count=self.iterate_count,
+                iterate_delta=self.iterate_delta,
+                iteration_values=self._iteration_values,
+            )
+            result = xl_iterative_compute(ctx, target_handlers)
+            self._iteration_values = ctx.iteration_values
+            return result
         return {addr: self._evaluate_cell(addr) for addr in targets}
 
     def _detect_and_invalidate_changed_leaves(self) -> None:
@@ -180,6 +201,8 @@ class FormulaEvaluator:
                 return self._cache[address]
 
         if address in self._call_stack:
+            if self.iterate_enabled:
+                return self._iteration_values.get(address, 0)
             return xl_circular_reference()
 
         node = self.graph.get_node(address)

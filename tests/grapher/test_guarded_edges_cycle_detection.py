@@ -155,7 +155,7 @@ def test_evaluation_order_iterate_true_raises_on_may_cycle(tmp_path: Path) -> No
     assert "iterate" in str(e.value).lower()
 
 
-def test_codegen_iterate_true_raises_on_may_cycle(tmp_path: Path) -> None:
+def test_codegen_iterate_true_emits_iterative_runtime_on_may_cycle(tmp_path: Path) -> None:
     base = tmp_path / "may_cycle_codegen_base.xlsx"
     _make_feasible_may_cycle_if_workbook(base)
     excel_path = tmp_path / "may_cycle_codegen_iterate.xlsx"
@@ -163,8 +163,8 @@ def test_codegen_iterate_true_raises_on_may_cycle(tmp_path: Path) -> None:
 
     graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
 
-    with pytest.raises(CycleError):
-        CodeGenerator(graph, iterate_enabled=True).generate(["Sheet1!A1"])
+    code = CodeGenerator(graph, iterate_enabled=True).generate(["Sheet1!A1"])
+    assert "xl_iterative_compute" in code
 
 
 def test_evaluation_order_iterate_true_raises_on_must_cycle(tmp_path: Path) -> None:

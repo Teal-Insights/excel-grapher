@@ -102,6 +102,8 @@ class CodeGenerator:
         graph: DependencyGraph | GraphLike,
         *,
         iterate_enabled: bool | None = None,
+        iterate_count: int = 100,
+        iterate_delta: float = 0.001,
     ) -> None:
         """Initialize the code generator.
 
@@ -114,6 +116,8 @@ class CodeGenerator:
         """
         self.graph = graph
         self._iterate_enabled = iterate_enabled
+        self._iterate_count = iterate_count
+        self._iterate_delta = iterate_delta
         self._emitted: set[str] = set()
         self._needs_offset_runtime = False  # Set to True if dynamic OFFSET is used
         self._offset_runtime_sheets: set[str] = set()
@@ -1439,7 +1443,13 @@ class CodeGenerator:
             lines.append("    merged.update(CONSTANTS)")
         lines.append("    if inputs is not None:")
         lines.append("        merged.update(inputs)")
-        lines.append("    return EvalContext(inputs=merged, resolver=_resolve_formula)")
+        lines.append(
+            "    return EvalContext("
+            "inputs=merged, resolver=_resolve_formula, "
+            f"iterative_enabled={bool(self._iterate_enabled)}, "
+            f"iterate_count={int(self._iterate_count)}, "
+            f"iterate_delta={float(self._iterate_delta)!r})"
+        )
         lines.append("")
         lines.append("")
         for name, entrypoint_list in normalized_entrypoints.items():
@@ -1462,9 +1472,12 @@ class CodeGenerator:
                 '"inputs will be ignored because ctx was provided", '
                 "UserWarning, stacklevel=2)"
             )
-            lines.append(
-                f"    return {{target: handler(ctx, target) for target, handler in {targets_name}.items()}}"
-            )
+            if self._iterate_enabled:
+                lines.append(f"    return xl_iterative_compute(ctx, {targets_name})")
+            else:
+                lines.append(
+                    f"    return {{target: handler(ctx, target) for target, handler in {targets_name}.items()}}"
+                )
             lines.append("")
             lines.append("")
         lines.append("TARGETS = {")
@@ -1483,7 +1496,10 @@ class CodeGenerator:
             '"inputs will be ignored because ctx was provided", '
             "UserWarning, stacklevel=2)"
         )
-        lines.append("    return {target: handler(ctx, target) for target, handler in TARGETS.items()}")
+        if self._iterate_enabled:
+            lines.append("    return xl_iterative_compute(ctx, TARGETS)")
+        else:
+            lines.append("    return {target: handler(ctx, target) for target, handler in TARGETS.items()}")
         lines.append("")
 
         return "\n".join(lines)
@@ -1593,6 +1609,10 @@ class CodeGenerator:
                 internals_imports = (
                     "from .internals import EvalContext, xl_cell, xl_range, _resolve_formula"
                 )
+        if self._iterate_enabled:
+            internals_imports = internals_imports.replace(
+                "_resolve_formula", "xl_iterative_compute, _resolve_formula"
+            )
 
         entrypoint_lines: list[str] = [
             "from __future__ import annotations",
@@ -1612,7 +1632,13 @@ class CodeGenerator:
             ),
             "    if inputs is not None:",
             "        merged.update(inputs)",
-            "    return EvalContext(inputs=merged, resolver=_resolve_formula)",
+            (
+                "    return EvalContext("
+                "inputs=merged, resolver=_resolve_formula, "
+                f"iterative_enabled={bool(self._iterate_enabled)}, "
+                f"iterate_count={int(self._iterate_count)}, "
+                f"iterate_delta={float(self._iterate_delta)!r})"
+            ),
             "",
             "",
         ]
@@ -1637,7 +1663,9 @@ class CodeGenerator:
                     "            stacklevel=2,",
                     "        )",
                     (
-                        f"    return {{target: handler(ctx, target) for target, handler in {targets_name}.items()}}"
+                        f"    return xl_iterative_compute(ctx, {targets_name})"
+                        if self._iterate_enabled
+                        else f"    return {{target: handler(ctx, target) for target, handler in {targets_name}.items()}}"
                     ),
                     "",
                     "",
@@ -1661,7 +1689,11 @@ class CodeGenerator:
                 "            UserWarning,",
                 "            stacklevel=2,",
                 "        )",
-                "    return {target: handler(ctx, target) for target, handler in TARGETS.items()}",
+                (
+                    "    return xl_iterative_compute(ctx, TARGETS)"
+                    if self._iterate_enabled
+                    else "    return {target: handler(ctx, target) for target, handler in TARGETS.items()}"
+                ),
                 "",
             ]
         )
@@ -1799,6 +1831,8 @@ class CodeGenerator:
             "xl_range",
             "XlError",
         }
+        if self._iterate_enabled:
+            runtime_symbols.add("xl_iterative_compute")
         runtime_code = emit_runtime(runtime_symbols, include_offset_table=False)
         runtime_code = runtime_code.rstrip()
 
@@ -1868,14 +1902,15 @@ class CodeGenerator:
                     if dep_n not in closure and self.graph.get_node(dep_n) is not None:
                         stack.append(dep_n)
 
-            try:
-                ordered = list(
-                    eval_order(strict=False, iterate_enabled=self._iterate_enabled)
-                )
-            except CycleError:
-                raise
-            except Exception:
+            if self._iterate_enabled:
                 ordered = []
+            else:
+                try:
+                    ordered = list(eval_order(strict=False))
+                except CycleError:
+                    raise
+                except Exception:
+                    ordered = []
 
             out: list[str] = []
             seen: set[str] = set()

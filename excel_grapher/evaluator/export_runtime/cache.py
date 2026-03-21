@@ -3,6 +3,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from math import isfinite
 
 import openpyxl.utils.cell
 
@@ -59,6 +60,10 @@ class EvalContext:
     deps: dict[str, set[str]] = field(default_factory=dict)
     reverse_deps: dict[str, set[str]] = field(default_factory=dict)
     stack: list[str] = field(default_factory=list)
+    iterative_enabled: bool = False
+    iterate_count: int = 100
+    iterate_delta: float = 0.001
+    iteration_values: dict[str, CellValue] = field(default_factory=dict)
 
     def _record_dependency(self, parent: str, child: str) -> None:
         if parent == child:
@@ -116,6 +121,8 @@ def xl_cell(ctx: EvalContext, address: str) -> CellValue:
         return ctx.cache[address]
 
     if address in ctx.computing:
+        if ctx.iterative_enabled:
+            return ctx.iteration_values.get(address, 0)
         return xl_circular_reference()
 
     if address in ctx.inputs:
@@ -156,6 +163,8 @@ def xl_eval(
         return ctx.cache[address]
 
     if address in ctx.computing:
+        if ctx.iterative_enabled:
+            return ctx.iteration_values.get(address, 0)
         return xl_circular_reference()
 
     if address in ctx.inputs:
@@ -241,3 +250,68 @@ def xl_range(ctx: EvalContext, address: str) -> CellValue:
 
     rng = ExcelRange(sheet, start_row, start_col_idx, end_row, end_col_idx)
     return rng.resolve(lambda addr: xl_cell(ctx, addr))
+
+
+def _convergence_delta(prev: CellValue, curr: CellValue) -> float:
+    if hasattr(prev, "shape") and hasattr(curr, "shape"):
+        try:
+            import numpy as np
+
+            return 0.0 if np.array_equal(prev, curr, equal_nan=True) else float("inf")
+        except Exception:
+            return float("inf")
+
+    if isinstance(prev, bool) or isinstance(curr, bool):
+        return 0.0 if prev == curr else float("inf")
+    if isinstance(prev, (int, float)) and isinstance(curr, (int, float)):
+        pf = float(prev)
+        cf = float(curr)
+        if isfinite(pf) and isfinite(cf):
+            return abs(cf - pf)
+    try:
+        eq = prev == curr
+    except Exception:
+        return float("inf")
+    if isinstance(eq, bool):
+        return 0.0 if eq else float("inf")
+    return float("inf")
+
+
+def _has_converged(
+    previous: dict[str, CellValue],
+    current: dict[str, CellValue],
+    *,
+    iterate_delta: float,
+) -> bool:
+    for key, curr in current.items():
+        prev = previous.get(key, 0)
+        if _convergence_delta(prev, curr) > iterate_delta:
+            return False
+    return True
+
+
+def xl_iterative_compute(
+    ctx: EvalContext,
+    targets: dict[str, Callable[[EvalContext, str], CellValue]],
+) -> dict[str, CellValue]:
+    """Compute targets with Excel-style iterative convergence semantics."""
+    previous = dict(ctx.iteration_values)
+    iterations = max(1, int(ctx.iterate_count))
+    for _ in range(iterations):
+        ctx.cache.clear()
+        ctx.computing.clear()
+        ctx.stack.clear()
+        ctx.iteration_values.clear()
+        ctx.iteration_values.update(previous)
+        current = {target: handler(ctx, target) for target, handler in targets.items()}
+        next_previous = dict(current)
+        next_previous.update(ctx.cache)
+        if _has_converged(previous, next_previous, iterate_delta=float(ctx.iterate_delta)):
+            ctx.iteration_values.clear()
+            ctx.iteration_values.update(next_previous)
+            return current
+        previous = next_previous
+
+    ctx.iteration_values.clear()
+    ctx.iteration_values.update(previous)
+    return {target: handler(ctx, target) for target, handler in targets.items()}
