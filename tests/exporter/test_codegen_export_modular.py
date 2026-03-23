@@ -54,9 +54,11 @@ def test_codegen_generate_modules_executes_and_matches_evaluator(tmp_path: Path)
     files = CodeGenerator(graph).generate_modules(targets)
     assert set(files.keys()) == {
         "exported/__init__.py",
+        "exported/constants.py",
         "exported/entrypoint.py",
         "exported/inputs.py",
         "exported/internals.py",
+        "exported/runtime.py",
     }
 
     for relpath, content in files.items():
@@ -137,15 +139,15 @@ def test_codegen_generate_modules_splits_constants(tmp_path: Path) -> None:
         constant_types={"number"},
     )
     inputs_py = files["exported/inputs.py"]
-    internals_py = files["exported/internals.py"]
+    constants_py = files["exported/constants.py"]
     entrypoint_py = files["exported/entrypoint.py"]
 
     assert "DEFAULT_INPUTS = {" in inputs_py
     assert "Sheet1!A2" in inputs_py
     assert "Sheet1!A1" not in inputs_py
-    assert "CONSTANTS = {" in internals_py
-    assert "Sheet1!A1" in internals_py
-    assert "Sheet1!A3" in internals_py
+    assert "CONSTANTS = {" in constants_py
+    assert "Sheet1!A1" in constants_py
+    assert "Sheet1!A3" in constants_py
     assert "merged.update(CONSTANTS)" in entrypoint_py
 
 
@@ -159,13 +161,13 @@ def test_codegen_generate_modules_constant_blanks(tmp_path: Path) -> None:
         constant_blanks=True,
     )
     inputs_py = files["exported/inputs.py"]
-    internals_py = files["exported/internals.py"]
+    constants_py = files["exported/constants.py"]
     entrypoint_py = files["exported/entrypoint.py"]
 
     assert "Sheet1!A2" in inputs_py
     assert "Sheet1!A1" not in inputs_py
-    assert "CONSTANTS = {" in internals_py
-    assert "Sheet1!A1" in internals_py
+    assert "CONSTANTS = {" in constants_py
+    assert "Sheet1!A1" in constants_py
     assert "merged.update(CONSTANTS)" in entrypoint_py
 
 
@@ -245,7 +247,7 @@ def test_codegen_generate_modules_has_no_ty_diagnostics_with_hyphenated_dir(
 
 
 def test_codegen_generate_modules_has_no_ty_diagnostics_for_xlookup(tmp_path: Path) -> None:
-    """XLOOKUP should not introduce undefined runtime symbols in internals.py."""
+    """XLOOKUP should not introduce undefined runtime symbols in generated modules."""
     repo_root = Path(__file__).resolve().parents[1]
 
     graph = _make_graph(

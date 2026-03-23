@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Protocol, TypedDict
+from typing import TYPE_CHECKING, AbstractSet, Any, Protocol, TypedDict
 
 import openpyxl.utils.cell
 
@@ -70,6 +70,7 @@ class GenerationParts(TypedDict):
     needs_offset_table: bool
     targets: list[str]
     has_constants: bool
+    used_xl_functions: frozenset[str]
 
 # Operators that need wrapper functions for Excel semantics (error propagation)
 _BINARY_OPS = {
@@ -404,6 +405,36 @@ class CodeGenerator:
             "    return fn",
             "",
         ]
+
+    @staticmethod
+    def _internals_runtime_import_names(
+        used_xl_functions: AbstractSet[str], cell_code_lines: list[str]
+    ) -> list[str]:
+        """Names from the embedded runtime that formula cell bodies reference as globals."""
+        blob = "\n".join(cell_code_lines)
+        if "def " not in blob:
+            return []
+        names = set(used_xl_functions)
+        names.discard("numpy")
+        names.update({"xl_cell", "xl_eval"})
+        if "numpy" in used_xl_functions or "np." in blob or "np.array" in blob:
+            names.add("np")
+        if "XlError" in blob:
+            names.add("XlError")
+        if "ExcelRange(" in blob:
+            names.add("ExcelRange")
+        return sorted(names)
+
+    @staticmethod
+    def _format_from_runtime_import(names: list[str]) -> str:
+        if not names:
+            return ""
+        joined = ", ".join(names)
+        prefix = "from .runtime import "
+        if len(prefix) + len(joined) <= 88:
+            return prefix + joined
+        inner = ",\n    ".join(names)
+        return f"{prefix}(\n    {inner},\n)"
 
     def _parse_address(self, address: str) -> tuple[str, str]:
         """Parse a sheet-qualified address into (quoted_sheet, cell) tuple.
@@ -1520,11 +1551,13 @@ class CodeGenerator:
         Returns a mapping of file paths (including a normalized package directory) to file
         contents. The package name is normalized to an importable directory name.
 
-        The generated package has four flat files:
+        The generated package has six flat files:
         - __init__.py: exports compute_all and DEFAULT_INPUTS
         - entrypoint.py: compute_all implementation
         - inputs.py: DEFAULT_INPUTS
-        - internals.py: embedded runtime + formula functions + dispatch table (+ OFFSET table)
+        - constants.py: CONSTANTS (may be empty)
+        - runtime.py: embedded Excel runtime (emit_runtime)
+        - internals.py: formula cell functions + resolver dispatch
         """
         pkg = self._normalize_package_name(package_name)
         normalized_entrypoints = self._normalize_entrypoints(entrypoints)
@@ -1586,50 +1619,54 @@ class CodeGenerator:
             ]
         )
 
-        internals_lines: list[str] = [runtime_code.rstrip(), ""]
-        if parts["has_constants"]:
-            internals_lines.extend(parts["constants_block_lines"])
+        runtime_py = runtime_code.rstrip() + "\n"
+
+        constants_lines_out: list[str] = [
+            "from __future__ import annotations",
+            "",
+        ]
+        if parts["constants_block_lines"]:
+            constants_lines_out.extend(parts["constants_block_lines"])
+        else:
+            constants_lines_out.append("CONSTANTS = {}")
+        constants_lines_out.append("")
+        constants_py = "\n".join(constants_lines_out).rstrip() + "\n"
+
+        internals_import_names = self._internals_runtime_import_names(
+            parts["used_xl_functions"], cell_code_lines
+        )
+        runtime_import_block = self._format_from_runtime_import(internals_import_names)
+        internals_lines: list[str] = ["from __future__ import annotations", ""]
+        if runtime_import_block:
+            internals_lines.append(runtime_import_block)
             internals_lines.append("")
         internals_lines.append("# --- Formula cell functions ---\n")
         internals_lines.extend(cell_code_lines)
         internals_lines.extend(self._emit_resolver_lines())
         internals_py = "\n".join(internals_lines).rstrip() + "\n"
 
-        internals_imports = "from .internals import EvalContext, xl_cell, _resolve_formula"
-        if parts["has_constants"]:
-            internals_imports = (
-                "from .internals import EvalContext, xl_cell, _resolve_formula, CONSTANTS"
-            )
+        runtime_entry_names = ["EvalContext", "xl_cell"]
         if needs_range_helper:
-            if parts["has_constants"]:
-                internals_imports = (
-                    "from .internals import EvalContext, xl_cell, xl_range, _resolve_formula, CONSTANTS"
-                )
-            else:
-                internals_imports = (
-                    "from .internals import EvalContext, xl_cell, xl_range, _resolve_formula"
-                )
+            runtime_entry_names.append("xl_range")
         if self._iterate_enabled:
-            internals_imports = internals_imports.replace(
-                "_resolve_formula", "xl_iterative_compute, _resolve_formula"
-            )
+            runtime_entry_names.append("xl_iterative_compute")
+        runtime_entry_names.sort()
+        runtime_imports = self._format_from_runtime_import(runtime_entry_names)
 
         entrypoint_lines: list[str] = [
             "from __future__ import annotations",
             "",
+            "from .constants import CONSTANTS",
             "from .inputs import DEFAULT_INPUTS",
-            internals_imports,
+            "from .internals import _resolve_formula",
+            runtime_imports,
             "import warnings",
             "",
             "",
             "def make_context(inputs=None):",
             '    """Create an EvalContext with merged inputs."""',
             "    merged = dict(DEFAULT_INPUTS)",
-            *(
-                ["    merged.update(CONSTANTS)"]
-                if parts["has_constants"]
-                else []
-            ),
+            "    merged.update(CONSTANTS)",
             "    if inputs is not None:",
             "        merged.update(inputs)",
             (
@@ -1719,6 +1756,8 @@ class CodeGenerator:
             f"{pkg}/__init__.py": init_py,
             f"{pkg}/entrypoint.py": entrypoint_py,
             f"{pkg}/inputs.py": inputs_py,
+            f"{pkg}/constants.py": constants_py,
+            f"{pkg}/runtime.py": runtime_py,
             f"{pkg}/internals.py": internals_py,
         }
 
@@ -1865,6 +1904,7 @@ class CodeGenerator:
             "needs_offset_table": self._needs_offset_runtime,
             "targets": normalized_targets,
             "has_constants": include_constants,
+            "used_xl_functions": frozenset(used_xl_functions),
         }
 
     def _collect_all_cells(self, targets: list[str]) -> list[str]:
