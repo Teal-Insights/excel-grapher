@@ -6,7 +6,7 @@ from typing import cast
 import pytest
 import xlsxwriter
 
-from excel_grapher import CycleError, FormulaEvaluator, create_dependency_graph, get_calc_settings
+from excel_grapher import FormulaEvaluator, create_dependency_graph, get_calc_settings
 from excel_grapher.evaluator.codegen import CodeGenerator
 from excel_grapher.evaluator.export_runtime.cache import CircularReferenceWarning
 from tests.utils.workbook_xml import patch_workbook_calcpr
@@ -54,13 +54,18 @@ def test_workbook_iterate_disabled_keeps_default_circular_behavior(tmp_path: Pat
         evaluator_result = ev.evaluate(["Sheet1!A1"])
     assert evaluator_result["Sheet1!A1"] == 0
 
-    with pytest.raises(CycleError, match="Must-cycle"):
-        CodeGenerator(
-            graph,
-            iterate_enabled=settings.iterate_enabled,
-            iterate_count=settings.iterate_count,
-            iterate_delta=settings.iterate_delta,
-        ).generate(["Sheet1!A1"])
+    generated_code = CodeGenerator(
+        graph,
+        iterate_enabled=settings.iterate_enabled,
+        iterate_count=settings.iterate_count,
+        iterate_delta=settings.iterate_delta,
+    ).generate(["Sheet1!A1"])
+    ns: dict[str, object] = {}
+    exec(generated_code, ns)
+    with pytest.warns(RuntimeWarning, match=r"Circular reference detected; returning 0") as w:
+        generated_result = cast("dict[str, object]", ns["compute_all"]())
+    assert any(wi.category.__name__ == "CircularReferenceWarning" for wi in w)
+    assert generated_result["Sheet1!A1"] == 0
 
 
 def test_workbook_iterate_enabled_drives_iterative_convergence(tmp_path: Path) -> None:

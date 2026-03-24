@@ -1948,7 +1948,7 @@ class CodeGenerator:
                 try:
                     ordered = list(eval_order(strict=False))
                 except CycleError:
-                    raise
+                    ordered = []
                 except Exception:
                     ordered = []
 
