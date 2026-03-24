@@ -14,6 +14,7 @@ Literal[...]), then re-run until the graph
 builds.
 """
 
+import time
 from pathlib import Path
 from typing import (  # noqa: F401 - Annotated/Literal used when adding constraints
     Annotated,
@@ -311,6 +312,7 @@ def main() -> None:
     
     # Build dependency graph (constraint-based or cached for OFFSET/INDIRECT)
     print("\n2. Building dependency graph...")
+    t_build = time.perf_counter()
     dynamic_refs: DynamicRefConfig | None = None
     if not USE_CACHED_DYNAMIC_REFS:
         dynamic_refs = DynamicRefConfig.from_constraints_and_workbook(
@@ -334,6 +336,9 @@ def main() -> None:
             " then re-run. Or set USE_CACHED_DYNAMIC_REFS=True to resolve from cached values."
         )
         raise
+
+    build_s = time.perf_counter() - t_build
+    print(f"   Graph build time: {build_s:.2f}s")
 
     print(f"   Nodes in graph: {len(graph)}")
     print(f"   Leaf nodes: {sum(1 for _ in graph.leaves())}")
