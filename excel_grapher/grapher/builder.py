@@ -18,7 +18,9 @@ from .dynamic_refs import (
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
 )
+from .dependency_provenance import EdgeProvenance
 from .graph import DependencyGraph, NodeHook
+from .provenance_collect import collect_provenance_for_formula
 from .guard import And, Compare, GuardExpr, Literal, Not
 from .node import Node
 from .parser import (
@@ -105,6 +107,7 @@ def create_dependency_graph(
     load_values: bool = True,
     dynamic_refs: DynamicRefConfig | None = None,
     use_cached_dynamic_refs: bool = False,
+    capture_dependency_provenance: bool = False,
 ) -> DependencyGraph:
     """
     Build a dependency graph starting from target cells.
@@ -123,6 +126,11 @@ def create_dependency_graph(
 
     To build a config from a TypedDict of constraints, use
     :meth:`DynamicRefConfig.from_constraints`.
+
+    When ``capture_dependency_provenance`` is True, each edge stores merged
+    :class:`~excel_grapher.grapher.dependency_provenance.EdgeProvenance` under the
+    ``\"provenance\"`` key in :meth:`DependencyGraph.edge_attrs` (how the dependency
+    arises: direct reference, static range, dynamic OFFSET/INDIRECT).
     """
 
     def load_wb(data_only: bool) -> openpyxl.Workbook:
@@ -144,8 +152,16 @@ def create_dependency_graph(
     named_range_maps = build_named_range_map(wb_formulas)
     named_ranges = named_range_maps.cell_map
     named_range_ranges = named_range_maps.range_map
-    defined_names = {str(name) for name in wb_formulas.defined_names}
+    defined_names: set[str] = {str(name) for name in wb_formulas.defined_names}
     _NAME_TOKEN_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*!)")
+
+    def resolve_cached_value(sheet: str, a1: str) -> object | None:
+        nonlocal wb_values
+        if wb_values is None and not isinstance(workbook, openpyxl.Workbook):
+            wb_values = load_wb(data_only=True)
+        if wb_values is None:
+            return None
+        return wb_values[sheet][a1].value
 
     def parse_target(t: str) -> tuple[str, str]:
         if "!" not in t:
@@ -167,14 +183,6 @@ def create_dependency_graph(
     ) -> list[tuple[str, str, GuardExpr | None]]:
         if not formula.startswith("="):
             return []
-
-        def resolve_cached_value(sheet: str, a1: str) -> object | None:
-            nonlocal wb_values
-            if wb_values is None and not isinstance(workbook, openpyxl.Workbook):
-                wb_values = load_wb(data_only=True)
-            if wb_values is None:
-                return None
-            return wb_values[sheet][a1].value
 
         def extract_expr_deps(expr: str) -> list[tuple[str, str]]:
             """
@@ -686,9 +694,33 @@ def create_dependency_graph(
             if not is_formula:
                 continue
 
+            prov_map: dict[str, EdgeProvenance] | None = None
+            if capture_dependency_provenance:
+                prov_map = collect_provenance_for_formula(
+                    formula_str,
+                    normalized_formula=normalized,
+                    current_sheet=sheet,
+                    current_a1=a1,
+                    named_ranges=named_ranges,
+                    named_range_ranges=named_range_ranges,
+                    defined_names=defined_names,
+                    expand_ranges=expand_ranges,
+                    max_range_cells=max_range_cells,
+                    use_cached_dynamic_refs=use_cached_dynamic_refs,
+                    dynamic_refs=dynamic_refs,
+                    wb_formulas=wb_formulas,
+                    resolve_cached_value=resolve_cached_value,
+                )
+
             for dep_sheet, dep_a1, guard in extract_deps_with_guards(formula_str, sheet, a1):
                 dep_key = format_key(dep_sheet, dep_a1)
-                graph.add_edge(key, dep_key, guard=guard)
+                if prov_map is not None:
+                    p = prov_map.get(dep_key)
+                    if p is None:
+                        p = EdgeProvenance.empty()
+                    graph.add_edge(key, dep_key, guard=guard, provenance=p)
+                else:
+                    graph.add_edge(key, dep_key, guard=guard)
                 if dep_key not in visited:
                     if dep_sheet not in wb_formulas.sheetnames:
                         continue

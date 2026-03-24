@@ -5,6 +5,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+from .dependency_provenance import EdgeProvenance, merge_edge_provenance
 from .guard import GuardConstraints, GuardExpr, Or, or_guard
 from .node import Node, NodeKey
 
@@ -95,6 +96,13 @@ class DependencyGraph:
 
         merged.update(attrs)
         merged["guard"] = merged_guard
+        prov_new = attrs.get("provenance")
+        if prov_new is not None and isinstance(prov_new, EdgeProvenance):
+            old_prov = merged.get("provenance")
+            merged["provenance"] = merge_edge_provenance(
+                old_prov if isinstance(old_prov, EdgeProvenance) else None,
+                prov_new,
+            )
         self._edge_attrs[(from_key, to_key)] = merged
 
     def dependencies(self, key: NodeKey) -> set[NodeKey]:
@@ -276,6 +284,104 @@ class DependencyGraph:
                 visit(key)
 
         return order
+
+    def compress_identity_transits(self) -> list[NodeKey]:
+        """
+        Remove identity transit nodes (formula is a single cell reference to one dependency),
+        rewrite dependents' formulas, and rewire edges. Requires dependency provenance from
+        graph construction with ``capture_dependency_provenance=True`` for safe edges.
+
+        Node hooks are not invoked for removed or updated nodes.
+
+        Returns:
+            Keys of removed transit nodes, in removal order.
+        """
+        from .compression import (
+            compression_safe_provenance,
+            direct_provenance_for_key_in_strings,
+            is_identity_transit,
+            replace_substrings_at_spans,
+        )
+
+        removed: list[NodeKey] = []
+        while True:
+            found: tuple[NodeKey, NodeKey] | None = None
+            for t_key in sorted(self._nodes.keys()):
+                r_key = is_identity_transit(self, t_key)
+                if r_key is None:
+                    continue
+                if not self.dependents(t_key):
+                    continue
+                ok = True
+                for d_key in self.dependents(t_key):
+                    prov = self.edge_attrs(d_key, t_key).get("provenance")
+                    if not compression_safe_provenance(
+                        prov if isinstance(prov, EdgeProvenance) else None
+                    ):
+                        ok = False
+                        break
+                if not ok:
+                    continue
+                found = (t_key, r_key)
+                break
+
+            if found is None:
+                break
+
+            t_key, r_key = found
+            if t_key in self._nodes and is_identity_transit(self, t_key) == r_key:
+                self._compress_one_transit(t_key, r_key)
+                removed.append(t_key)
+
+        return removed
+
+    def _remove_edge(self, from_key: NodeKey, to_key: NodeKey) -> None:
+        self._edges.setdefault(from_key, set()).discard(to_key)
+        self._reverse_edges.setdefault(to_key, set()).discard(from_key)
+        self._edge_attrs.pop((from_key, to_key), None)
+
+    def _compress_one_transit(self, t_key: NodeKey, r_key: NodeKey) -> None:
+        from .compression import (
+            direct_provenance_for_key_in_strings,
+            replace_substrings_at_spans,
+        )
+
+        for d_key in list(self.dependents(t_key)):
+            attrs = self.edge_attrs(d_key, t_key)
+            prov = attrs.get("provenance")
+            guard = self.edge_guard(d_key, t_key)
+            d_node = self.get_node(d_key)
+            if d_node is None:
+                continue
+
+            new_formula = d_node.formula
+            new_norm = d_node.normalized_formula
+            if isinstance(prov, EdgeProvenance) and prov.direct_sites_formula and new_formula:
+                new_formula = replace_substrings_at_spans(
+                    new_formula, prov.direct_sites_formula, r_key
+                )
+            elif new_formula and t_key in new_formula:
+                new_formula = new_formula.replace(t_key, r_key)
+
+            if isinstance(prov, EdgeProvenance) and prov.direct_sites_normalized and new_norm:
+                new_norm = replace_substrings_at_spans(
+                    new_norm, prov.direct_sites_normalized, r_key
+                )
+            elif new_norm and t_key in new_norm:
+                new_norm = new_norm.replace(t_key, r_key)
+
+            object.__setattr__(d_node, "formula", new_formula)
+            object.__setattr__(d_node, "normalized_formula", new_norm)
+
+            self._remove_edge(d_key, t_key)
+            new_prov = direct_provenance_for_key_in_strings(new_formula, new_norm, r_key)
+            self.add_edge(d_key, r_key, guard=guard, provenance=new_prov)
+
+        for dep in list(self.dependencies(t_key)):
+            self._remove_edge(t_key, dep)
+        self._nodes.pop(t_key, None)
+        self._edges.pop(t_key, None)
+        self._reverse_edges.pop(t_key, None)
 
 
 def _scc_cycles(adj: dict[NodeKey, set[NodeKey]]) -> list[set[NodeKey]]:
