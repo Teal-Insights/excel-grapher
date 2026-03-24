@@ -64,6 +64,30 @@ def parse_cell_refs(formula: str) -> list[CellRef]:
     return out
 
 
+def parse_cell_refs_with_spans(formula: str) -> list[tuple[CellRef, tuple[int, int]]]:
+    """
+    Like parse_cell_refs, but returns (CellRef, (start, end)) span positions in ``formula``.
+    """
+    if not isinstance(formula, str) or not formula.startswith("="):
+        return []
+
+    out: list[tuple[CellRef, tuple[int, int]]] = []
+
+    for m in _SHEET_CELL_RE.finditer(formula):
+        sheet = m.group("qs") or m.group("us")
+        ref = CellRef(sheet=sheet, column=m.group("col"), row=int(m.group("row")))
+        out.append((ref, m.span()))
+
+    for m in _LOCAL_CELL_RE.finditer(formula):
+        col = m.group("col")
+        if col in _FUNC_LIKE:
+            continue
+        ref = CellRef(sheet=None, column=col, row=int(m.group("row")))
+        out.append((ref, m.span()))
+
+    return out
+
+
 def parse_range_refs(formula: str) -> list[tuple[CellRef, CellRef]]:
     """
     Extract range references from a formula as (start, end) CellRef pairs.
