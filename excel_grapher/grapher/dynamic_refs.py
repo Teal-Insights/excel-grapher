@@ -397,6 +397,172 @@ def infer_dynamic_offset_targets(
     return out
 
 
+def infer_dynamic_index_targets(
+    formula: str,
+    *,
+    current_sheet: str,
+    cell_type_env: CellTypeEnv,
+    limits: DynamicRefLimits | None = None,
+    bounds: WorkbookBoundsProtocol | None = None,
+    named_ranges: Mapping[str, tuple[str, str]] | None = None,
+    named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
+    current_row: int | None = None,
+    current_col: int | None = None,
+) -> set[str]:
+    """Infer the union of all possible standalone INDEX targets for a formula.
+
+    INDEX calls that appear as the first argument of OFFSET are skipped — those
+    are already handled by :func:`infer_dynamic_offset_targets`.
+    """
+
+    if not isinstance(formula, str) or not formula.startswith("="):
+        return set()
+
+    lim = limits or DynamicRefLimits()
+    out: set[str] = set()
+
+    # Find all INDEX and OFFSET calls so we can exclude INDEX-inside-OFFSET.
+    index_calls = _find_function_calls_with_spans(formula, {"INDEX"})
+    offset_calls = _find_function_calls_with_spans(formula, {"OFFSET"})
+
+    # Build set of INDEX spans that are nested as OFFSET base (arg 0).
+    nested_index_spans: set[tuple[int, int]] = set()
+    for _fn, inner, _span in offset_calls:
+        args = _split_top_level_args(inner)
+        if args and args[0].strip().upper().startswith("INDEX("):
+            # Find the INDEX call within this OFFSET's base argument.
+            base_index_calls = _find_function_calls_with_spans("=" + args[0], {"INDEX"})
+            for _ifn, _iinner, (is_start, is_end) in base_index_calls:
+                # Adjust span: the "=" prefix adds 1 to the start position relative to args[0],
+                # but we need the span relative to the original formula.
+                # The OFFSET inner starts after "OFFSET(" in the formula, and args[0] is
+                # the first chunk. We need to find the actual INDEX spans in the original formula.
+                pass
+            # Simpler approach: check each INDEX call's span to see if it falls inside an OFFSET span.
+    # Better approach: for each INDEX call, check if its span is contained within any OFFSET span.
+    offset_spans = [span for _fn, _inner, span in offset_calls]
+    for fn, inner, idx_span in index_calls:
+        if fn != "INDEX":
+            continue
+        # Check if this INDEX is inside an OFFSET call
+        is_nested = False
+        for o_start, o_end in offset_spans:
+            if idx_span[0] > o_start and idx_span[1] <= o_end:
+                is_nested = True
+                break
+        if is_nested:
+            nested_index_spans.add(idx_span)
+
+    for fn, inner, span in index_calls:
+        if fn != "INDEX":
+            continue
+        if span in nested_index_spans:
+            continue
+        targets = _infer_single_index_call(
+            inner,
+            current_sheet=current_sheet,
+            cell_type_env=cell_type_env,
+            limits=lim,
+            named_ranges=named_ranges,
+            named_range_ranges=named_range_ranges,
+            current_row=current_row,
+            current_col=current_col,
+        )
+        out |= targets
+        if len(out) > lim.max_cells:
+            raise DynamicRefError(
+                f"Dynamic ref cells exceed limit ({len(out)} > {lim.max_cells})"
+            )
+
+    return out
+
+
+def _infer_single_index_call(
+    inner_args: str,
+    *,
+    current_sheet: str,
+    cell_type_env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    named_ranges: Mapping[str, tuple[str, str]] | None = None,
+    named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
+    current_row: int | None = None,
+    current_col: int | None = None,
+) -> set[str]:
+    """Infer targets for a single INDEX(...) call body."""
+    args = _split_top_level_args(inner_args)
+    if args is None or len(args) < 2 or len(args) > 3:
+        raise DynamicRefError("INDEX expects 2 or 3 arguments (array, row_num, [column_num])")
+
+    named_ranges = named_ranges or {}
+    named_range_ranges = named_range_ranges or {}
+
+    array_expr = _qualify_fragment(args[0], named_ranges, named_range_ranges)
+    row_expr = _qualify_fragment(args[1], named_ranges, named_range_ranges)
+    col_expr = (
+        _qualify_fragment(args[2], named_ranges, named_range_ranges)
+        if len(args) >= 3
+        else ""
+    )
+
+    try:
+        array_ast = parse_ast("=" + array_expr)
+        array_range = _base_to_range(array_ast, current_sheet=current_sheet)
+    except (DynamicRefError, FormulaParseError) as exc:
+        raise DynamicRefError(
+            f"INDEX array argument must be a static range: {exc}"
+        ) from exc
+
+    row_ast = parse_ast("=" + row_expr)
+    col_ast = parse_ast("=" + col_expr) if col_expr else None
+
+    leaf_addrs = _collect_addresses_needing_domain(row_ast)
+    if col_ast is not None:
+        leaf_addrs |= _collect_addresses_needing_domain(col_ast)
+
+    domains = _build_domains(leaf_addrs, cell_type_env, limits)
+
+    eval_context = (
+        {"row": current_row, "column": current_col}
+        if current_row is not None and current_col is not None
+        else None
+    )
+
+    targets: set[str] = set()
+    for assignment in _enumerate_assignments(domains.values(), limits):
+        addr_to_value = dict(zip(domains.keys(), assignment, strict=False))
+
+        def get_cell_value(addr: str, m=addr_to_value) -> float:
+            try:
+                return m[addr]
+            except KeyError as exc:
+                raise DynamicRefError(
+                    f"INDEX argument formula references cell without domain: {addr!r}"
+                ) from exc
+
+        row_val = _eval_arg(row_ast, get_cell_value, limits, context=eval_context)
+        col_val = (
+            _eval_arg(col_ast, get_cell_value, limits, context=eval_context)
+            if col_ast is not None
+            else 1.0
+        )
+        if isinstance(row_val, XlError) or isinstance(col_val, XlError):
+            continue
+        r1, c1 = int(row_val), int(col_val)
+        if r1 < 1 or c1 < 1:
+            continue
+        cell_row = array_range.start_row + r1 - 1
+        cell_col = array_range.start_col + c1 - 1
+        if cell_row > array_range.end_row or cell_col > array_range.end_col:
+            continue
+
+        from openpyxl.utils.cell import get_column_letter
+
+        col_letter = get_column_letter(cell_col)
+        targets.add(f"{array_range.sheet}!{col_letter}{cell_row}")
+
+    return targets
+
+
 def _qualify_fragment(
     expr: str,
     named_ranges: Mapping[str, tuple[str, str]],

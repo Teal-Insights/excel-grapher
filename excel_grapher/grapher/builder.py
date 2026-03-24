@@ -14,6 +14,7 @@ from .dynamic_refs import (
     DynamicRefError,
     GlobalWorkbookBounds,
     expand_leaf_env_to_argument_env,
+    infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
 )
@@ -211,12 +212,33 @@ def create_dependency_graph(
                         arg_sheet = ref.sheet if ref.sheet is not None else current_sheet
                         deps.append((arg_sheet, f"{ref.column}{ref.row}"))
             else:
-                calls = _find_function_calls_with_spans(f, {"OFFSET", "INDIRECT"})
+                calls = _find_function_calls_with_spans(f, {"OFFSET", "INDIRECT", "INDEX"})
                 if dynamic_refs is None:
+                    # Filter out INDEX calls that only have literal args (no dynamic resolution needed).
+                    dynamic_calls = []
+                    for fn_name_check, inner_check, span_check in calls:
+                        if fn_name_check == "INDEX":
+                            # INDEX only needs dynamic resolution when row/col args are non-literal
+                            idx_args = _split_function_args(inner_check)
+                            if idx_args is not None and len(idx_args) >= 2:
+                                has_non_literal = False
+                                for j, idx_arg in enumerate(idx_args):
+                                    if j == 0:
+                                        continue  # skip array arg
+                                    try:
+                                        float(idx_arg.strip())
+                                    except ValueError:
+                                        has_non_literal = True
+                                        break
+                                if not has_non_literal:
+                                    continue
+                        dynamic_calls.append((fn_name_check, inner_check, span_check))
+                    calls = dynamic_calls
                     if calls:
                         cell_key = format_key(current_sheet, current_a1)
+                        fn_names = sorted({fn for fn, _, _ in calls})
                         raise DynamicRefError(
-                            f"Formula at {cell_key} contains OFFSET or INDIRECT that require resolution. "
+                            f"Formula at {cell_key} contains {'/'.join(fn_names)} that require resolution. "
                             "Pass dynamic_refs=DynamicRefConfig.from_constraints(...) or set "
                             "use_cached_dynamic_refs=True."
                         )
@@ -236,13 +258,14 @@ def create_dependency_graph(
                                     named_ranges=named_ranges,
                                     named_range_ranges=named_range_ranges,
                                 )
-                                # Variable args (OFFSET rows/cols/height/width, INDIRECT): always traverse to leaves.
+                                # Variable args: always traverse to leaves for domain expansion.
                                 # OFFSET base (i==0): only traverse when base is an expression (e.g. INDEX(...))
-                                # so refs inside it (e.g. ROW()-ROW(B106)+1) get expanded; simple refs (Sheet1!A1) do not.
+                                # INDEX: array arg (i==0) is not variable; row/col args (i>=1) are.
                                 is_variable = (
                                     (fn_name == "OFFSET" and i >= 1)
                                     or (fn_name == "OFFSET" and i == 0 and "(" in normalized)
                                     or fn_name == "INDIRECT"
+                                    or (fn_name == "INDEX" and i >= 1)
                                 )
                                 for ref in parse_cell_refs(normalized):
                                     sh = ref.sheet if ref.sheet is not None else current_sheet
@@ -254,7 +277,7 @@ def create_dependency_graph(
                     def _refs_in_formula_without_dynamic(formula_str: str, sheet_of_cell: str) -> set[str]:
                         dyn = _find_function_calls_with_spans(
                             formula_str if formula_str.startswith("=") else "=" + formula_str,
-                            {"OFFSET", "INDIRECT"},
+                            {"OFFSET", "INDIRECT", "INDEX"},
                         )
                         spans = [span for _fn, _inner, span in dyn]
                         masked = mask_spans(
@@ -311,7 +334,7 @@ def create_dependency_graph(
                         cell_key = format_key(current_sheet, current_a1)
                         formatted_missing = _format_missing_leaves(missing_leaves)
                         raise DynamicRefError(
-                            f"Formula at {cell_key} contains OFFSET or INDIRECT; the following leaf "
+                            f"Formula at {cell_key} contains OFFSET, INDIRECT, or INDEX; the following leaf "
                             f"cells that feed them have no constraint: {formatted_missing}. "
                             "Add constraints only for leaf (non-formula) cells."
                         )
@@ -368,13 +391,24 @@ def create_dependency_graph(
                             named_ranges=named_ranges,
                             named_range_ranges=named_range_ranges,
                         )
+                        index_targets = infer_dynamic_index_targets(
+                            formula_for_infer,
+                            current_sheet=current_sheet,
+                            cell_type_env=expanded_env,
+                            limits=dynamic_refs.limits,
+                            bounds=bounds,
+                            named_ranges=named_ranges,
+                            named_range_ranges=named_range_ranges,
+                            current_row=_current_row,
+                            current_col=_current_col,
+                        )
                     except DynamicRefError as exc:
                         cell_key = format_key(current_sheet, current_a1)
                         raise DynamicRefError(
-                            f"{exc} (while analyzing dynamic OFFSET/INDIRECT for {cell_key}; "
+                            f"{exc} (while analyzing dynamic OFFSET/INDIRECT/INDEX for {cell_key}; "
                             f"normalized formula {formula_for_infer!r})"
                         ) from exc
-                    for addr in offset_targets | indirect_targets:
+                    for addr in offset_targets | indirect_targets | index_targets:
                         sh, a1 = _parse_address_to_sheet_a1(addr)
                         deps.append((sh, a1))
             masked = mask_spans(masked, dyn_spans)
