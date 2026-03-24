@@ -9,6 +9,7 @@ from .dynamic_refs import (
     DynamicRefConfig,
     DynamicRefError,
     DynamicRefLimits,
+    infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "DynamicRefConfig",
     "DynamicRefError",
     "DynamicRefLimits",
+    "infer_dynamic_index_targets",
     "infer_dynamic_indirect_targets",
     "infer_dynamic_offset_targets",
     "NodeHook",

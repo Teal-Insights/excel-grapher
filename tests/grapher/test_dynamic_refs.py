@@ -21,6 +21,7 @@ from excel_grapher.grapher.dynamic_refs import (
     DynamicRefError,
     DynamicRefLimits,
     FromWorkbook,
+    infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
 )
@@ -629,4 +630,163 @@ def test_from_constraints_and_workbook_uses_workbook_values_for_constants(tmp_pa
 
     assert env["Sheet1!B2"].kind is CellKind.STRING
     assert env["Sheet1!B2"].enum == EnumDomain(values=frozenset({"Afghanistan"}))
+
+
+# ── Standalone INDEX inference ──────────────────────────────────────────
+
+
+def test_dynamic_index_literal_row_col() -> None:
+    """INDEX with literal row and col resolves to a single cell."""
+    formula = "=INDEX(Sheet1!A1:Sheet1!C3,2,3)"
+    env = _make_env({})
+    targets = infer_dynamic_index_targets(formula, current_sheet="Sheet1", cell_type_env=env)
+    assert targets == {"Sheet1!C2"}
+
+
+def test_dynamic_index_enum_row() -> None:
+    """INDEX with constrained row enum resolves to union of cells."""
+    formula = "=INDEX(Sheet1!A1:Sheet1!A3,Sheet1!B1,1)"
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({1, 2, 3})),
+            )
+        }
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="Sheet1", cell_type_env=env)
+    assert targets == {"Sheet1!A1", "Sheet1!A2", "Sheet1!A3"}
+
+
+def test_dynamic_index_interval_row() -> None:
+    """INDEX with interval domain on row resolves to union of cells."""
+    formula = "=INDEX(Sheet1!A1:Sheet1!A5,Sheet1!B1,1)"
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntIntervalDomain(min=1, max=3),
+            )
+        }
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="Sheet1", cell_type_env=env)
+    assert targets == {"Sheet1!A1", "Sheet1!A2", "Sheet1!A3"}
+
+
+def test_dynamic_index_row_expr_with_row_function() -> None:
+    """INDEX with ROW()-based expression; ref_only arg does not require domain."""
+    formula = "=INDEX(Sheet1!A1:Sheet1!A5,ROW()-ROW(Sheet1!B106)+1,1)"
+    env = _make_env({})
+    targets = infer_dynamic_index_targets(
+        formula,
+        current_sheet="Sheet1",
+        cell_type_env=env,
+        current_row=106,
+        current_col=1,
+    )
+    assert targets == {"Sheet1!A1"}
+
+
+def test_dynamic_index_requires_domain_for_leaf() -> None:
+    """INDEX with non-literal row that has no domain raises DynamicRefError."""
+    formula = "=INDEX(Sheet1!A1:Sheet1!A3,Sheet1!B1,1)"
+    env = _make_env({})
+    with pytest.raises(DynamicRefError) as exc_info:
+        infer_dynamic_index_targets(formula, current_sheet="Sheet1", cell_type_env=env)
+    assert "Missing CellType" in str(exc_info.value) or "B1" in str(exc_info.value)
+
+
+def test_dynamic_index_two_args() -> None:
+    """INDEX with only 2 args (array, row_num) defaults col to 1."""
+    formula = "=INDEX(Sheet1!A1:Sheet1!A3,Sheet1!B1)"
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({1, 2})),
+            )
+        }
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="Sheet1", cell_type_env=env)
+    assert targets == {"Sheet1!A1", "Sheet1!A2"}
+
+
+def test_dynamic_index_does_not_duplicate_with_offset_index() -> None:
+    """Standalone INDEX inference ignores INDEX that is nested inside OFFSET."""
+    formula = "=OFFSET(INDEX(Sheet1!A1:Sheet1!A3,Sheet1!B1,1),0,0)"
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({1, 2, 3})),
+            )
+        }
+    )
+    # Should return empty — INDEX inside OFFSET is not standalone
+    targets = infer_dynamic_index_targets(formula, current_sheet="Sheet1", cell_type_env=env)
+    assert targets == set()
+
+
+def _build_standalone_index_workbook(path: Path) -> None:
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(0, 0, 100)  # A1
+    ws.write_number(1, 0, 200)  # A2
+    ws.write_number(2, 0, 300)  # A3
+    ws.write_number(0, 1, 1)  # B1 (leaf: row selector)
+    ws.write_formula(0, 2, "=INDEX(Sheet1!A1:Sheet1!A3,Sheet1!B1,1)", None, 100)  # C1
+    wb.close()
+
+
+def test_create_dependency_graph_with_standalone_index(tmp_path: Path) -> None:
+    """Graph built with DynamicRefConfig resolves standalone INDEX and yields expected edges."""
+    excel_path = tmp_path / "standalone_index.xlsx"
+    _build_standalone_index_workbook(excel_path)
+
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({1, 2, 3})),
+            )
+        }
+    )
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+
+    graph = create_dependency_graph(
+        excel_path,
+        ["Sheet1!C1"],
+        load_values=False,
+        dynamic_refs=config,
+    )
+    deps = graph.dependencies("Sheet1!C1")
+    # C1 depends on B1 (row selector) and the resolved INDEX targets A1, A2, A3
+    assert deps == {"Sheet1!B1", "Sheet1!A1", "Sheet1!A2", "Sheet1!A3"}
+
+
+def test_create_dependency_graph_raises_on_standalone_index_by_default(tmp_path: Path) -> None:
+    """Standalone INDEX with non-literal args raises DynamicRefError by default."""
+    excel_path = tmp_path / "standalone_index_raise.xlsx"
+    _build_standalone_index_workbook(excel_path)
+
+    with pytest.raises(DynamicRefError):
+        create_dependency_graph(excel_path, ["Sheet1!C1"], load_values=False)
+
+
+def test_create_dependency_graph_standalone_index_missing_leaf(tmp_path: Path) -> None:
+    """Standalone INDEX with missing leaf constraint raises DynamicRefError listing the leaf."""
+    excel_path = tmp_path / "standalone_index_missing.xlsx"
+    _build_standalone_index_workbook(excel_path)
+
+    config = DynamicRefConfig(cell_type_env=_make_env({}), limits=DynamicRefLimits())
+
+    with pytest.raises(DynamicRefError) as exc_info:
+        create_dependency_graph(
+            excel_path,
+            ["Sheet1!C1"],
+            load_values=False,
+            dynamic_refs=config,
+        )
+    assert "Sheet1!B1" in str(exc_info.value)
+    assert "leaf" in str(exc_info.value).lower()
 
