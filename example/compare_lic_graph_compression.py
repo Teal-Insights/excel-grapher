@@ -7,10 +7,13 @@ Run from the repository root:
 
     uv run python example/compare_lic_graph_compression.py
 
-Fast profiling loop (subset of targets, compress phase only, print top callees)::
+Fast profiling (subset of targets, shallow BFS, compress only)::
 
-    uv run python example/compare_lic_graph_compression.py --max-targets 20 \\
+    uv run python example/compare_lic_graph_compression.py --max-targets 20 --max-depth 15 \\
         --cprofile-out /tmp/lic_compress.prof --profile-stage compress --cprofile-print 40
+
+To isolate ``compress_identity_transits()`` without workbook load, use
+``example/profile_identity_compress_synthetic.py``.
 
 One graph build (default): provenance is required for compression; we report node and
 edge counts before ``compress_identity_transits()`` and after.
@@ -66,7 +69,7 @@ def _fmt_s(seconds: float) -> str:
     return f"{seconds:.2f}s"
 
 
-def _build_kwargs(workbook: Path):
+def _build_kwargs(workbook: Path, *, max_depth: int):
     dynamic_refs: DynamicRefConfig | None = None
     if not lic.USE_CACHED_DYNAMIC_REFS:
         dynamic_refs = DynamicRefConfig.from_constraints_and_workbook(
@@ -75,7 +78,7 @@ def _build_kwargs(workbook: Path):
         )
     return dict(
         load_values=False,
-        max_depth=50,
+        max_depth=max_depth,
         dynamic_refs=dynamic_refs,
         use_cached_dynamic_refs=lic.USE_CACHED_DYNAMIC_REFS,
     )
@@ -101,6 +104,13 @@ def main() -> int:
         default=None,
         metavar="N",
         help="Use only the first N target cells (faster dev loop for profiling).",
+    )
+    parser.add_argument(
+        "--max-depth",
+        type=int,
+        default=50,
+        metavar="D",
+        help="BFS depth for create_dependency_graph (smaller = faster, incomplete graph).",
     )
     parser.add_argument(
         "--cprofile-out",
@@ -138,7 +148,7 @@ def main() -> int:
         print("No target cells.", file=sys.stderr)
         return 1
 
-    kwargs = _build_kwargs(wp)
+    kwargs = _build_kwargs(wp, max_depth=args.max_depth)
     prof: cProfile.Profile | None = None
     if args.cprofile_out is not None:
         prof = cProfile.Profile()
@@ -166,7 +176,9 @@ def main() -> int:
         print()
 
     print("--- With provenance: before compress_identity_transits() ---")
-    if prof is not None and args.profile_stage in ("all", "build"):
+    if prof is not None and args.profile_stage == "build":
+        prof.enable()
+    elif prof is not None and args.profile_stage == "all" and not args.dual_build:
         prof.enable()
     t0 = time.perf_counter()
     g = create_dependency_graph(wp, targets, capture_dependency_provenance=True, **kwargs)
