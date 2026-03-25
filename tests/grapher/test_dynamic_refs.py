@@ -596,10 +596,10 @@ def test_format_missing_leaves_groups_contiguous_column_into_range() -> None:
     assert formatted == ["Sheet1!C4:Sheet1!C6"]
 
 
-def test_format_missing_leaves_groups_column_endpoints_into_range() -> None:
+def test_format_missing_leaves_does_not_bridge_gaps() -> None:
     leaves = {"lookup!C4", "lookup!C73"}
     formatted = _format_missing_leaves(leaves)
-    assert formatted == ["lookup!C4:lookup!C73"]
+    assert formatted == ["lookup!C4", "lookup!C73"]
 
 
 def _build_simple_constant_workbook(path: Path) -> None:

@@ -56,11 +56,11 @@ def _parse_address_to_sheet_a1(addr: str) -> tuple[str, str]:
 
 
 def _format_missing_leaves(missing_leaves: set[str]) -> list[str]:
-    """Format missing leaf cells, grouping same-column leaves into bounding ranges.
+    """Format missing leaf cells for error messages.
 
-    For each (sheet, column) pair we emit either a single cell or a range from
-    the minimum to maximum missing row, e.g. {"Sheet1!C4", "Sheet1!C6"} yields
-    "Sheet1!C4:Sheet1!C6".
+    For each (sheet, column) pair we emit one or more entries covering only
+    *contiguous* row runs. This keeps the message compact without implying that
+    all intermediate rows are missing.
     """
     from openpyxl.utils.cell import coordinate_to_tuple, get_column_letter
 
@@ -86,11 +86,22 @@ def _format_missing_leaves(missing_leaves: set[str]) -> list[str]:
         rows_sorted = sorted(set(rows))
         if not rows_sorted:
             continue
-        lo, hi = rows_sorted[0], rows_sorted[-1]
-        if lo == hi:
-            parts.append(f"{sheet}!{col_letter}{lo}")
+        run_start = rows_sorted[0]
+        prev = rows_sorted[0]
+        for r in rows_sorted[1:]:
+            if r == prev + 1:
+                prev = r
+                continue
+            if run_start == prev:
+                parts.append(f"{sheet}!{col_letter}{run_start}")
+            else:
+                parts.append(f"{sheet}!{col_letter}{run_start}:{sheet}!{col_letter}{prev}")
+            run_start = r
+            prev = r
+        if run_start == prev:
+            parts.append(f"{sheet}!{col_letter}{run_start}")
         else:
-            parts.append(f"{sheet}!{col_letter}{lo}:{sheet}!{col_letter}{hi}")
+            parts.append(f"{sheet}!{col_letter}{run_start}:{sheet}!{col_letter}{prev}")
 
     parts.extend(others)
     return sorted(parts)
