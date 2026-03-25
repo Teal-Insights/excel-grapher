@@ -7,6 +7,11 @@ Run from the repository root:
 
     uv run python example/compare_lic_graph_compression.py
 
+Fast profiling loop (subset of targets, compress phase only, print top callees)::
+
+    uv run python example/compare_lic_graph_compression.py --max-targets 20 \\
+        --cprofile-out /tmp/lic_compress.prof --profile-stage compress --cprofile-print 40
+
 One graph build (default): provenance is required for compression; we report node and
 edge counts before ``compress_identity_transits()`` and after.
 
@@ -15,11 +20,16 @@ confirm the uncompressed graph matches the pre-compression graph (and pay roughl
 the build cost).
 
 Each step prints its own elapsed time plus a timing summary at the end.
+
+Optional ``--workbook``, ``--max-targets``, and ``--cprofile-out`` / ``--cprofile-print`` /
+``--profile-stage`` support dev workflows (smaller runs, profiling).
 """
 
 from __future__ import annotations
 
 import argparse
+import cProfile
+import pstats
 import sys
 import time
 from pathlib import Path
@@ -79,19 +89,59 @@ def main() -> int:
         help="Also build once without provenance (slow); node/edge counts should match "
         "the pre-compression graph.",
     )
+    parser.add_argument(
+        "--workbook",
+        type=Path,
+        default=None,
+        help="Override workbook path (default: map_lic_dsf_indicators.WORKBOOK_PATH).",
+    )
+    parser.add_argument(
+        "--max-targets",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Use only the first N target cells (faster dev loop for profiling).",
+    )
+    parser.add_argument(
+        "--cprofile-out",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="Write cProfile stats to this file (binary). Inspect with: "
+        "uv run python -m pstats FILE",
+    )
+    parser.add_argument(
+        "--cprofile-print",
+        type=int,
+        default=0,
+        metavar="N",
+        help="After profiling, print top N lines by cumulative time (stderr).",
+    )
+    parser.add_argument(
+        "--profile-stage",
+        choices=("all", "build", "compress"),
+        default="all",
+        help="Which phase to include under cProfile (default: all). Ignored without "
+        "--cprofile-out.",
+    )
     args = parser.parse_args()
 
-    wp = (REPO_ROOT / lic.WORKBOOK_PATH).resolve()
+    wp = (args.workbook if args.workbook is not None else REPO_ROOT / lic.WORKBOOK_PATH).resolve()
     if not wp.exists():
         print(f"Workbook not found: {wp}", file=sys.stderr)
         return 1
 
     targets = _collect_targets()
+    if args.max_targets is not None:
+        targets = targets[: max(0, args.max_targets)]
     if not targets:
         print("No target cells.", file=sys.stderr)
         return 1
 
     kwargs = _build_kwargs(wp)
+    prof: cProfile.Profile | None = None
+    if args.cprofile_out is not None:
+        prof = cProfile.Profile()
 
     t_script0 = time.perf_counter()
     timings: list[tuple[str, float]] = []
@@ -103,6 +153,8 @@ def main() -> int:
 
     if args.dual_build:
         print("--- Baseline: no provenance (not compressible) ---")
+        if prof is not None and args.profile_stage == "all":
+            prof.enable()
         t0 = time.perf_counter()
         g0 = create_dependency_graph(wp, targets, capture_dependency_provenance=False, **kwargs)
         dt = time.perf_counter() - t0
@@ -114,6 +166,8 @@ def main() -> int:
         print()
 
     print("--- With provenance: before compress_identity_transits() ---")
+    if prof is not None and args.profile_stage in ("all", "build"):
+        prof.enable()
     t0 = time.perf_counter()
     g = create_dependency_graph(wp, targets, capture_dependency_provenance=True, **kwargs)
     dt_build = time.perf_counter() - t0
@@ -123,8 +177,13 @@ def main() -> int:
     print(f"  Edges: {e_before}")
     print(f"  Elapsed: {_fmt_s(dt_build)}")
     print()
+    if prof is not None and args.profile_stage == "build":
+        prof.disable()
 
     print("--- After compress_identity_transits() ---")
+    # For "all", profiler stays on from the build section; only enable here for "compress" alone.
+    if prof is not None and args.profile_stage == "compress":
+        prof.enable()
     t0 = time.perf_counter()
     removed = g.compress_identity_transits()
     dt_comp = time.perf_counter() - t0
@@ -150,6 +209,15 @@ def main() -> int:
     print(f"  Total (measured steps): {_fmt_s(sum(dt for _, dt in timings))}")
     print(f"  Wall time (script): {_fmt_s(t_total)}")
     print()
+
+    if prof is not None:
+        prof.disable()
+        args.cprofile_out.parent.mkdir(parents=True, exist_ok=True)
+        prof.dump_stats(str(args.cprofile_out))
+        print(f"cProfile stats written to {args.cprofile_out.resolve()}", file=sys.stderr)
+        if args.cprofile_print > 0:
+            stats = pstats.Stats(prof).sort_stats(pstats.SortKey.CUMULATIVE)
+            stats.print_stats(args.cprofile_print)
 
     if args.dual_build:
         print()
