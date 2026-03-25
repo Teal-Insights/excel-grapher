@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import heapq
 import warnings
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -297,23 +298,29 @@ class DependencyGraph:
             Keys of removed transit nodes, in removal order.
         """
         from .compression import (
+            clear_identity_singleton_ref_cache,
             compression_safe_provenance,
             direct_provenance_for_key_in_strings,
             is_identity_transit,
-            replace_substrings_at_spans,
         )
 
-        removed: list[NodeKey] = []
-        while True:
-            found: tuple[NodeKey, NodeKey] | None = None
-            for t_key in sorted(self._nodes.keys()):
+        clear_identity_singleton_ref_cache()
+        try:
+            heap: list[NodeKey] = list(self._nodes.keys())
+            heapq.heapify(heap)
+            removed: list[NodeKey] = []
+            while heap:
+                t_key = heapq.heappop(heap)
+                if t_key not in self._nodes:
+                    continue
                 r_key = is_identity_transit(self, t_key)
                 if r_key is None:
                     continue
-                if not self.dependents(t_key):
+                dependents_t = self.dependents(t_key)
+                if not dependents_t:
                     continue
                 ok = True
-                for d_key in self.dependents(t_key):
+                for d_key in dependents_t:
                     prov = self.edge_attrs(d_key, t_key).get("provenance")
                     if not compression_safe_provenance(
                         prov if isinstance(prov, EdgeProvenance) else None
@@ -322,18 +329,15 @@ class DependencyGraph:
                         break
                 if not ok:
                     continue
-                found = (t_key, r_key)
-                break
 
-            if found is None:
-                break
-
-            t_key, r_key = found
-            if t_key in self._nodes and is_identity_transit(self, t_key) == r_key:
+                dependents_before = list(dependents_t)
                 self._compress_one_transit(t_key, r_key)
                 removed.append(t_key)
-
-        return removed
+                for d_key in dependents_before:
+                    heapq.heappush(heap, d_key)
+            return removed
+        finally:
+            clear_identity_singleton_ref_cache()
 
     def _remove_edge(self, from_key: NodeKey, to_key: NodeKey) -> None:
         self._edges.setdefault(from_key, set()).discard(to_key)

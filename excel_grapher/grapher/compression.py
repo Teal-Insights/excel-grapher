@@ -11,6 +11,40 @@ from .dependency_provenance import DependencyCause, EdgeProvenance
 from .graph import DependencyGraph
 from .node import NodeKey
 
+_singleton_ref_address: dict[str, str] = {}
+_singleton_ref_negative: set[str] = set()
+
+
+def clear_identity_singleton_ref_cache() -> None:
+    """Drop parse cache used by :func:`is_identity_transit` (call around compression passes)."""
+    _singleton_ref_address.clear()
+    _singleton_ref_negative.clear()
+
+
+def _singleton_cell_ref_address(normalized_formula: str) -> str | None:
+    """
+    If ``normalized_formula`` is a single unary-plus-stripped cell reference, return its
+    normalized address; otherwise return None. Results are memoized for the current process
+    until :func:`clear_identity_singleton_ref_cache`.
+    """
+    if normalized_formula in _singleton_ref_negative:
+        return None
+    hit = _singleton_ref_address.get(normalized_formula)
+    if hit is not None:
+        return hit
+    try:
+        ast = parse(normalized_formula)
+    except FormulaParseError:
+        _singleton_ref_negative.add(normalized_formula)
+        return None
+    while isinstance(ast, UnaryOpNode) and ast.op == "+":
+        ast = ast.operand
+    if not isinstance(ast, CellRefNode):
+        _singleton_ref_negative.add(normalized_formula)
+        return None
+    _singleton_ref_address[normalized_formula] = ast.address
+    return ast.address
+
 
 def is_identity_transit(graph: DependencyGraph, transit_key: NodeKey) -> NodeKey | None:
     """
@@ -26,18 +60,13 @@ def is_identity_transit(graph: DependencyGraph, transit_key: NodeKey) -> NodeKey
     r_key = next(iter(deps))
     if graph.edge_guard(transit_key, r_key) is not None:
         return None
-    try:
-        ast = parse(node.normalized_formula)
-    except FormulaParseError:
-        return None
-    while isinstance(ast, UnaryOpNode) and ast.op == "+":
-        ast = ast.operand
-    if not isinstance(ast, CellRefNode):
+    addr = _singleton_cell_ref_address(node.normalized_formula)
+    if addr is None:
         return None
     r_node = graph.get_node(r_key)
     if r_node is None:
         return None
-    if ast.address != r_node.key:
+    if addr != r_node.key:
         return None
     return r_key
 
