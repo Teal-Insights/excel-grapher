@@ -167,6 +167,40 @@ constrain(LicDsfConstraints, "START!K10", _LANG)
 constrain(LicDsfConstraints, "lookup!BB4:BC7", _LANG_LOOKUP)
 
 
+# ---------------------------------------------------------------------------
+# Market financing constraints
+# ---------------------------------------------------------------------------
+
+# Tailored stress test parameters (from Input 6 - Tailored Tests)
+constrain(LicDsfConstraints, "C4_Market_financing!AB20", Literal[0, 1])  # New commercial debt projected
+constrain(LicDsfConstraints, "C4_Market_financing!AB22", Annotated[float, Between(min=0, max=100)])  # FX depreciation shock (%)
+constrain(LicDsfConstraints, "C4_Market_financing!AB23", Annotated[float, Between(min=0, max=1)])  # ER pass-through to inflation
+constrain(LicDsfConstraints, "C4_Market_financing!AB25", Annotated[int, Between(min=0, max=2000)])  # Increase in cost, bps
+constrain(LicDsfConstraints, "C4_Market_financing!AB28", Annotated[int, Between(min=1, max=50)])  # New maturity if original > 5y
+constrain(LicDsfConstraints, "C4_Market_financing!AB29", Annotated[float, Between(min=0, max=1)])  # Maturity shortening factor if < 5y
+constrain(LicDsfConstraints, "C4_Market_financing!AB30", Annotated[float, Between(min=0, max=1)])  # Grace period shortening factor
+
+# New lending terms for the stress test (C4_Market_financing rows 35-39)
+constrain(LicDsfConstraints, "C4_Market_financing!C35:C39", Annotated[int, Between(min=0, max=50)])  # Grace period
+constrain(LicDsfConstraints, "C4_Market_financing!D35:D39", Annotated[int, Between(min=1, max=100)])  # Loan Maturity
+constrain(LicDsfConstraints, "C4_Market_financing!I35:I39", Annotated[float, Between(min=0, max=1)])  # Interest rate
+
+# Structural dependencies for INDEX/MATCH resolution
+# 1. Set the default (None) for the bulk ranges
+constrain(LicDsfConstraints, "C4_Market_financing!C4:C53", Literal[None])
+constrain(LicDsfConstraints, "C4_Market_financing!D4:D77", Literal[None])
+constrain(LicDsfConstraints, "C4_Market_financing!E4:G53", Literal[None])
+
+# 2. Overlay the specific strings (overriding the None where needed)
+constrain(LicDsfConstraints, "C4_Market_financing!D20:F20", Literal["Historical "])
+constrain(LicDsfConstraints, "C4_Market_financing!D21:F21", Literal["Average "])
+constrain(LicDsfConstraints, "C4_Market_financing!E33", Literal["Maturity - Grace (to determine bullet / amortization)"])
+constrain(LicDsfConstraints, "C4_Market_financing!E34", Literal["Bullet (1) or Amort. (>1)"])
+constrain(LicDsfConstraints, "C4_Market_financing!F33", Literal["Stress test"])
+constrain(LicDsfConstraints, "C4_Market_financing!F34", Literal["Maturity"])
+constrain(LicDsfConstraints, "C4_Market_financing!G34", Literal["Grace"])
+
+
 def _constrain_lookup_countries(constraints: type[Any]) -> None:
     """Constrain lookup!C4:C73 — LIC-DSF eligible country names.
 
