@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, get_args, get_origin, get_type_hints
 
 import openpyxl
-from openpyxl.utils.cell import coordinate_to_tuple
+from openpyxl.utils.cell import coordinate_from_string, coordinate_to_tuple
 
 from excel_grapher.core.addressing import (
     WorkbookBoundsProtocol,
@@ -37,7 +37,7 @@ from excel_grapher.core.formula_ast import (
 )
 from excel_grapher.core.types import ExcelRange, XlError
 
-from .parser import _find_function_calls_with_spans, format_key
+from .parser import _find_function_calls_with_spans, expand_range, format_key
 
 
 class DynamicRefError(ValueError):
@@ -47,6 +47,20 @@ class DynamicRefError(ValueError):
     :meth:`DynamicRefConfig.from_constraints`) or set ``use_cached_dynamic_refs=True``
     to resolve OFFSET/INDIRECT instead of raising.
     """
+
+
+def constrain(constraints: type[Any], address: str, annotation: Any) -> None:
+    """Assign an annotation to a sheet-qualified single cell or range.
+
+    Examples:
+        constrain(C, "Sheet1!B2", Literal["English"])
+        constrain(C, "'Chart Data'!I21:I22", Literal[1])
+        constrain(C, "lookup!BB4:BC7", Literal["English", "French"])
+    """
+    sheet_name, range_a1 = _split_addr_sheet_coord(address)
+    cells = _expand_sheet_qualified_range(sheet_name, range_a1)
+    for key in cells:
+        constraints.__annotations__[key] = annotation
 
 
 @dataclass(frozen=True)
@@ -190,6 +204,41 @@ def _infer_kind_from_value(value: Any) -> CellKind:
     if isinstance(value, str):
         return CellKind.STRING
     return CellKind.ANY
+
+
+def _expand_sheet_qualified_range(sheet_name: str, range_a1: str) -> list[str]:
+    """Expand a single-cell or A1 range into sheet-qualified keys."""
+    range_a1 = range_a1.strip()
+    if ":" in range_a1:
+        start_a1, end_a1 = range_a1.split(":", 1)
+        start_a1 = _strip_optional_sheet_prefix(start_a1.strip(), sheet_name)
+        end_a1 = _strip_optional_sheet_prefix(end_a1.strip(), sheet_name)
+    else:
+        start_a1 = end_a1 = _strip_optional_sheet_prefix(range_a1, sheet_name)
+
+    start_col, start_row = coordinate_from_string(start_a1)
+    end_col, end_row = coordinate_from_string(end_a1)
+    cells = expand_range(
+        sheet=sheet_name,
+        start_col=start_col,
+        start_row=start_row,
+        end_col=end_col,
+        end_row=end_row,
+        max_cells=10_000_000,
+    )
+    return [format_key(sheet, a1) for sheet, a1 in cells]
+
+
+def _strip_optional_sheet_prefix(part: str, expected_sheet: str) -> str:
+    """Accept `A1` and `Sheet!A1` forms for range endpoints."""
+    if "!" not in part:
+        return part
+    sheet_name, coord = _split_addr_sheet_coord(part)
+    if sheet_name != expected_sheet:
+        raise DynamicRefError(
+            f"Range endpoint {part!r} must use sheet {expected_sheet!r}"
+        )
+    return coord
 
 
 @dataclass(frozen=True)
