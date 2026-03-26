@@ -21,6 +21,7 @@ from excel_grapher.grapher.dynamic_refs import (
     DynamicRefError,
     DynamicRefLimits,
     FromWorkbook,
+    constrain,
     infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
@@ -660,6 +661,53 @@ def test_from_constraints_and_workbook_uses_workbook_values_for_constants(tmp_pa
 
     assert env["Sheet1!B2"].kind is CellKind.STRING
     assert env["Sheet1!B2"].enum == EnumDomain(values=frozenset({"Afghanistan"}))
+
+
+def test_constrain_sets_single_cell_annotation() -> None:
+    from typing import Literal, TypedDict
+
+    class Constraints(TypedDict, total=False):
+        pass
+
+    constrain(Constraints, "Sheet1!B2", Literal["English"])
+
+    assert Constraints.__annotations__["Sheet1!B2"] == Literal["English"]
+
+
+def test_constrain_sets_all_cells_in_range() -> None:
+    from typing import Literal, TypedDict
+
+    class Constraints(TypedDict, total=False):
+        pass
+
+    constrain(Constraints, "lookup!BB4:BC5", Literal["English", "French"])
+
+    expected_keys = {"lookup!BB4", "lookup!BC4", "lookup!BB5", "lookup!BC5"}
+    assert expected_keys <= set(Constraints.__annotations__.keys())
+    for key in expected_keys:
+        assert Constraints.__annotations__[key] == Literal["English", "French"]
+
+
+def test_constrain_accepts_quoted_sheet_range() -> None:
+    from typing import Literal, TypedDict
+
+    class Constraints(TypedDict, total=False):
+        pass
+
+    constrain(Constraints, "'Chart Data'!I21:I22", Literal[1])
+
+    assert Constraints.__annotations__["'Chart Data'!I21"] == Literal[1]
+    assert Constraints.__annotations__["'Chart Data'!I22"] == Literal[1]
+
+
+def test_constrain_requires_sheet_qualified_address() -> None:
+    from typing import Literal, TypedDict
+
+    class Constraints(TypedDict, total=False):
+        pass
+
+    with pytest.raises(DynamicRefError):
+        constrain(Constraints, "B2", Literal["English"])
 
 
 # ── Standalone INDEX inference ──────────────────────────────────────────
