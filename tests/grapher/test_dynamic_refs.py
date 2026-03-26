@@ -602,6 +602,36 @@ def test_format_missing_leaves_does_not_bridge_gaps() -> None:
     assert formatted == ["lookup!C4", "lookup!C73"]
 
 
+def test_format_missing_leaves_merges_adjacent_columns_same_row() -> None:
+    """Same row across consecutive columns → one horizontal range."""
+    leaves = {"S!AA100", "S!AB100", "S!AC100"}
+    assert _format_missing_leaves(leaves) == ["S!AA100:S!AC100"]
+
+
+def test_format_missing_leaves_merges_rectangle_when_row_runs_match() -> None:
+    """Identical vertical runs in adjacent columns → one rectangle per run."""
+    leaves = {
+        "S!AA10",
+        "S!AA11",
+        "S!AB10",
+        "S!AB11",
+    }
+    assert _format_missing_leaves(leaves) == ["S!AA10:S!AB11"]
+
+
+def test_format_missing_leaves_does_not_merge_columns_with_different_row_patterns() -> None:
+    leaves = {"S!AA100", "S!AB101"}
+    formatted = _format_missing_leaves(leaves)
+    assert formatted == ["S!AA100", "S!AB101"]
+
+
+def test_format_missing_leaves_splits_band_when_middle_column_differs() -> None:
+    """AA and AC share rows but AB does not → no single rectangle covering AA–AC."""
+    leaves = {"S!AA10", "S!AB99", "S!AC10"}
+    formatted = _format_missing_leaves(leaves)
+    assert formatted == ["S!AA10", "S!AB99", "S!AC10"]
+
+
 def _build_simple_constant_workbook(path: Path) -> None:
     wb = xlsxwriter.Workbook(path)
     ws = wb.add_worksheet("Sheet1")

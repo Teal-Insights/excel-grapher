@@ -432,7 +432,7 @@ def infer_dynamic_index_targets(
         if args and args[0].strip().upper().startswith("INDEX("):
             # Find the INDEX call within this OFFSET's base argument.
             base_index_calls = _find_function_calls_with_spans("=" + args[0], {"INDEX"})
-            for _ifn, _iinner, (is_start, is_end) in base_index_calls:
+            for _ifn, _iinner, (_is_start, _is_end) in base_index_calls:
                 # Adjust span: the "=" prefix adds 1 to the start position relative to args[0],
                 # but we need the span relative to the original formula.
                 # The OFFSET inner starts after "OFFSET(" in the formula, and args[0] is
@@ -441,7 +441,7 @@ def infer_dynamic_index_targets(
             # Simpler approach: check each INDEX call's span to see if it falls inside an OFFSET span.
     # Better approach: for each INDEX call, check if its span is contained within any OFFSET span.
     offset_spans = [span for _fn, _inner, span in offset_calls]
-    for fn, inner, idx_span in index_calls:
+    for fn, _inner, idx_span in index_calls:
         if fn != "INDEX":
             continue
         # Check if this INDEX is inside an OFFSET call

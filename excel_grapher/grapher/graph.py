@@ -300,7 +300,6 @@ class DependencyGraph:
         from .compression import (
             clear_identity_singleton_ref_cache,
             compression_safe_provenance,
-            direct_provenance_for_key_in_strings,
             is_identity_transit,
         )
 

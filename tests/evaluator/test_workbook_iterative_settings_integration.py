@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
+from typing import Any, Callable, cast
 
 import pytest
 import xlsxwriter
@@ -60,10 +60,11 @@ def test_workbook_iterate_disabled_keeps_default_circular_behavior(tmp_path: Pat
         iterate_count=settings.iterate_count,
         iterate_delta=settings.iterate_delta,
     ).generate(["Sheet1!A1"])
-    ns: dict[str, object] = {}
+    ns: dict[str, Any] = {}
     exec(generated_code, ns)
     with pytest.warns(RuntimeWarning, match=r"Circular reference detected; returning 0") as w:
-        generated_result = cast("dict[str, object]", ns["compute_all"]())
+        compute_all = cast(Callable[[], dict[str, Any]], ns["compute_all"])
+        generated_result = compute_all()
     assert any(wi.category.__name__ == "CircularReferenceWarning" for wi in w)
     assert generated_result["Sheet1!A1"] == 0
 
@@ -94,11 +95,12 @@ def test_workbook_iterate_enabled_drives_iterative_convergence(tmp_path: Path) -
         iterate_delta=settings.iterate_delta,
     ).generate(["Sheet1!A1"])
     assert "iterate_count=75" in generated_code
-    ns: dict[str, object] = {}
+    ns: dict[str, Any] = {}
     exec(generated_code, ns)
-    generated_result = cast("dict[str, object]", ns["compute_all"]())
+    compute_all = cast(Callable[[], dict[str, Any]], ns["compute_all"])
+    generated_result = compute_all()
 
-    assert abs(float(evaluator_result["Sheet1!A1"]) - 1.0) <= 1e-4
+    assert abs(float(cast(Any, evaluator_result["Sheet1!A1"])) - 1.0) <= 1e-4
     assert abs(float(generated_result["Sheet1!A1"]) - 1.0) <= 1e-4
 
 
@@ -134,8 +136,9 @@ def test_workbook_iterate_max_iterations_without_convergence_parity(tmp_path: Pa
     assert "iterate_count=3" in generated_code
     assert "iterate_delta=" in generated_code
 
-    ns: dict[str, object] = {}
+    ns: dict[str, Any] = {}
     exec(generated_code, ns)
-    generated_result = cast("dict[str, object]", ns["compute_all"]())
+    compute_all = cast(Callable[[], dict[str, Any]], ns["compute_all"])
+    generated_result = compute_all()
 
     assert evaluator_result["Sheet1!A1"] == generated_result["Sheet1!A1"]

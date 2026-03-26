@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 import pytest
 
@@ -84,13 +84,14 @@ def test_iterative_self_cycle_converges_with_parity() -> None:
     generated_code = CodeGenerator(
         graph, iterate_enabled=True, iterate_count=100, iterate_delta=1e-6
     ).generate(targets)
-    ns: dict[str, object] = {}
+    ns: dict[str, Any] = {}
     exec(generated_code, ns)
-    generated_result = cast("dict[str, float]", ns["compute_all"]())
+    compute_all = cast(Callable[[], dict[str, float]], ns["compute_all"])
+    generated_result = compute_all()
 
-    assert abs(float(evaluator_result["S!A1"]) - 1.0) <= 1e-4
+    assert abs(float(cast(Any, evaluator_result["S!A1"])) - 1.0) <= 1e-4
     assert abs(float(generated_result["S!A1"]) - 1.0) <= 1e-4
-    assert abs(float(evaluator_result["S!A1"]) - float(generated_result["S!A1"])) <= 1e-9
+    assert abs(float(cast(Any, evaluator_result["S!A1"])) - float(generated_result["S!A1"])) <= 1e-9
 
 
 def test_iterative_mutual_cycle_converges_with_parity() -> None:
@@ -108,9 +109,10 @@ def test_iterative_mutual_cycle_converges_with_parity() -> None:
     generated_code = CodeGenerator(
         graph, iterate_enabled=True, iterate_count=100, iterate_delta=1e-6
     ).generate(targets)
-    ns: dict[str, object] = {}
+    ns: dict[str, Any] = {}
     exec(generated_code, ns)
-    generated_raw = cast("dict[str, object]", ns["compute_all"]())
+    compute_all = cast(Callable[[], dict[str, Any]], ns["compute_all"])
+    generated_raw = compute_all()
     if "S!A1:S!B1" in generated_raw:
         result = cast("np.ndarray", generated_raw["S!A1:S!B1"])
         generated_result = {"S!A1": result.tolist()[0][0], "S!B1": result.tolist()[0][1]}
@@ -118,9 +120,9 @@ def test_iterative_mutual_cycle_converges_with_parity() -> None:
         generated_result = cast("dict[str, float]", generated_raw)
 
     for key in targets:
-        assert abs(float(evaluator_result[key]) - 1.0) <= 1e-4
+        assert abs(float(cast(Any, evaluator_result[key])) - 1.0) <= 1e-4
         assert abs(float(generated_result[key]) - 1.0) <= 1e-4
-        assert abs(float(evaluator_result[key]) - float(generated_result[key])) <= 1e-6
+        assert abs(float(cast(Any, evaluator_result[key])) - float(generated_result[key])) <= 1e-6
 
 
 def test_iterative_max_iterations_respected_for_oscillation() -> None:
@@ -135,9 +137,10 @@ def test_iterative_max_iterations_respected_for_oscillation() -> None:
     generated_code = CodeGenerator(
         graph, iterate_enabled=True, iterate_count=3, iterate_delta=1e-12
     ).generate(targets)
-    ns: dict[str, object] = {}
+    ns: dict[str, Any] = {}
     exec(generated_code, ns)
-    generated_result = cast("dict[str, float]", ns["compute_all"]())
+    compute_all = cast(Callable[[], dict[str, float]], ns["compute_all"])
+    generated_result = compute_all()
 
     assert evaluator_result["S!A1"] == generated_result["S!A1"]
 
@@ -158,9 +161,10 @@ def test_iterative_lazy_if_avoids_cycle_when_branch_not_taken() -> None:
     generated_code = CodeGenerator(
         graph, iterate_enabled=True, iterate_count=10, iterate_delta=1e-9
     ).generate(targets)
-    ns: dict[str, object] = {}
+    ns: dict[str, Any] = {}
     exec(generated_code, ns)
-    generated_result = cast("dict[str, float]", ns["compute_all"]())
+    compute_all = cast(Callable[[], dict[str, float]], ns["compute_all"])
+    generated_result = compute_all()
 
     assert evaluator_result["S!A1"] == 5
     assert generated_result["S!A1"] == 5

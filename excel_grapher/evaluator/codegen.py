@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, AbstractSet, Any, Protocol, TypedDict
+from collections.abc import Mapping, Sequence, Set
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
 import openpyxl.utils.cell
 
@@ -70,7 +70,7 @@ class GenerationParts(TypedDict):
     needs_offset_table: bool
     targets: list[str]
     has_constants: bool
-    used_xl_functions: frozenset[str]
+    used_xl_functions: Set[str]
 
 # Operators that need wrapper functions for Excel semantics (error propagation)
 _BINARY_OPS = {
@@ -408,7 +408,7 @@ class CodeGenerator:
 
     @staticmethod
     def _internals_runtime_import_names(
-        used_xl_functions: AbstractSet[str], cell_code_lines: list[str]
+        used_xl_functions: Set[str], cell_code_lines: list[str]
     ) -> list[str]:
         """Names from the embedded runtime that formula cell bodies reference as globals."""
         blob = "\n".join(cell_code_lines)

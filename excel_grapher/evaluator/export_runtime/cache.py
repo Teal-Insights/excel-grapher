@@ -256,8 +256,15 @@ def _convergence_delta(prev: CellValue, curr: CellValue) -> float:
     if hasattr(prev, "shape") and hasattr(curr, "shape"):
         try:
             import numpy as np
+            from typing import Any
 
-            return 0.0 if np.array_equal(prev, curr, equal_nan=True) else float("inf")
+            def _is_array(v: Any) -> bool:
+                return hasattr(v, "shape")
+
+            if _is_array(prev) and _is_array(curr):
+                from typing import cast
+                return 0.0 if np.array_equal(cast(Any, prev), cast(Any, curr), equal_nan=True) else float("inf")
+            return float("inf")
         except Exception:
             return float("inf")
 

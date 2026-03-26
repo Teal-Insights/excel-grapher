@@ -9,6 +9,7 @@ import openpyxl
 import openpyxl.utils.cell
 from openpyxl.worksheet.formula import ArrayFormula
 
+from .dependency_provenance import EdgeProvenance
 from .dynamic_refs import (
     DynamicRefConfig,
     DynamicRefError,
@@ -18,9 +19,7 @@ from .dynamic_refs import (
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
 )
-from .dependency_provenance import EdgeProvenance
 from .graph import DependencyGraph, NodeHook
-from .provenance_collect import collect_provenance_for_formula
 from .guard import And, Compare, GuardExpr, Literal, Not
 from .node import Node
 from .parser import (
@@ -39,6 +38,7 @@ from .parser import (
     split_top_level_ifs,
     split_top_level_switch,
 )
+from .provenance_collect import collect_provenance_for_formula
 from .resolver import build_named_range_map
 
 
@@ -58,52 +58,86 @@ def _parse_address_to_sheet_a1(addr: str) -> tuple[str, str]:
 def _format_missing_leaves(missing_leaves: set[str]) -> list[str]:
     """Format missing leaf cells for error messages.
 
-    For each (sheet, column) pair we emit one or more entries covering only
-    *contiguous* row runs. This keeps the message compact without implying that
-    all intermediate rows are missing.
+    Per sheet, references are summarized without overstating coverage:
+
+    - Within a column, contiguous rows become one vertical range.
+    - Adjacent columns with the same row runs merge into one rectangle per run.
     """
+    from openpyxl.utils import range_boundaries
     from openpyxl.utils.cell import coordinate_to_tuple, get_column_letter
 
-    by_sheet_col: dict[tuple[str, str], list[int]] = {}
+    by_sheet: dict[str, dict[int, list[int]]] = {}
     others: list[str] = []
 
     for addr in missing_leaves:
         if "!" not in addr:
             others.append(addr)
             continue
-        sheet, a1 = _parse_address_to_sheet_a1(addr)
+        try:
+            sheet, a1 = _parse_address_to_sheet_a1(addr)
+        except ValueError:
+            others.append(addr)
+            continue
+        if ":" in a1:
+            try:
+                min_col, min_row, max_col, max_row = range_boundaries(a1)
+            except ValueError:
+                others.append(addr)
+                continue
+            col_map = by_sheet.setdefault(sheet, {})
+            for c in range(min_col, max_col + 1):
+                col_map.setdefault(c, []).extend(range(min_row, max_row + 1))
+            continue
         try:
             row, col = coordinate_to_tuple(a1)
         except ValueError:
-            # Not a simple A1 address; keep as-is.
             others.append(addr)
             continue
-        col_letter = get_column_letter(col)
-        by_sheet_col.setdefault((sheet, col_letter), []).append(row)
+        by_sheet.setdefault(sheet, {}).setdefault(col, []).append(row)
 
     parts: list[str] = []
-    for (sheet, col_letter), rows in by_sheet_col.items():
-        rows_sorted = sorted(set(rows))
-        if not rows_sorted:
-            continue
-        run_start = rows_sorted[0]
-        prev = rows_sorted[0]
-        for r in rows_sorted[1:]:
-            if r == prev + 1:
-                prev = r
-                continue
-            if run_start == prev:
-                parts.append(f"{sheet}!{col_letter}{run_start}")
-            else:
-                parts.append(f"{sheet}!{col_letter}{run_start}:{sheet}!{col_letter}{prev}")
-            run_start = r
-            prev = r
-        if run_start == prev:
-            parts.append(f"{sheet}!{col_letter}{run_start}")
-        else:
-            parts.append(f"{sheet}!{col_letter}{run_start}:{sheet}!{col_letter}{prev}")
+    for sheet in sorted(by_sheet.keys()):
+        col_map = by_sheet[sheet]
+        intervals_by_col: dict[int, tuple[tuple[int, int], ...]] = {}
+        for col_idx, rows in col_map.items():
+            rows_sorted = sorted(set(rows))
+            merged: list[tuple[int, int]] = []
+            if rows_sorted:
+                run_start = prev = rows_sorted[0]
+                for r in rows_sorted[1:]:
+                    if r == prev + 1:
+                        prev = r
+                        continue
+                    merged.append((run_start, prev))
+                    run_start = prev = r
+                merged.append((run_start, prev))
+            intervals_by_col[col_idx] = tuple(merged)
 
-    parts.extend(others)
+        cols_sorted = sorted(intervals_by_col.keys())
+        i = 0
+        while i < len(cols_sorted):
+            c0 = cols_sorted[i]
+            ivals = intervals_by_col[c0]
+            j = i + 1
+            while (
+                j < len(cols_sorted)
+                and cols_sorted[j] == cols_sorted[j - 1] + 1
+                and intervals_by_col[cols_sorted[j]] == ivals
+            ):
+                j += 1
+            c_last = cols_sorted[j - 1]
+            c_start_letter = get_column_letter(c0)
+            c_end_letter = get_column_letter(c_last)
+            for r1, r2 in ivals:
+                if c0 == c_last and r1 == r2:
+                    parts.append(f"{sheet}!{c_start_letter}{r1}")
+                elif c0 == c_last:
+                    parts.append(f"{sheet}!{c_start_letter}{r1}:{sheet}!{c_end_letter}{r2}")
+                else:
+                    parts.append(f"{sheet}!{c_start_letter}{r1}:{sheet}!{c_end_letter}{r2}")
+            i = j
+
+    parts.extend(sorted(others))
     return sorted(parts)
 
 

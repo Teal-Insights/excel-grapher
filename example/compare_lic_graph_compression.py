@@ -176,9 +176,7 @@ def main() -> int:
         print()
 
     print("--- With provenance: before compress_identity_transits() ---")
-    if prof is not None and args.profile_stage == "build":
-        prof.enable()
-    elif prof is not None and args.profile_stage == "all" and not args.dual_build:
+    if prof is not None and args.profile_stage == "build" or prof is not None and args.profile_stage == "all" and not args.dual_build:
         prof.enable()
     t0 = time.perf_counter()
     g = create_dependency_graph(wp, targets, capture_dependency_provenance=True, **kwargs)

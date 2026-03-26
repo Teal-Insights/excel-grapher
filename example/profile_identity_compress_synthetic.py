@@ -16,10 +16,6 @@ import pstats
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
 from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.node import Node

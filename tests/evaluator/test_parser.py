@@ -2,13 +2,13 @@ from excel_grapher.evaluator.parser import (
     BinaryOpNode,
     BoolNode,
     CellRefNode,
+    EmptyArgNode,
     ErrorNode,
     FunctionCallNode,
     NumberNode,
     RangeNode,
     StringNode,
     UnaryOpNode,
-    EmptyArgNode,
     parse,
 )
 from excel_grapher.evaluator.types import XlError
