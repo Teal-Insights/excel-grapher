@@ -5,7 +5,7 @@ from excel_grapher.core.cell_types import (
     CellType,
     CellTypeEnv,
     EnumDomain,
-    IntIntervalDomain,
+    IntervalDomain,
 )
 
 
@@ -13,7 +13,7 @@ def test_cell_type_env_basic_lookup_by_a1_address() -> None:
     env: CellTypeEnv = {
         "Sheet1!B1": CellType(
             kind=CellKind.NUMBER,
-            interval=IntIntervalDomain(min=0, max=10),
+            interval=IntervalDomain(min=0, max=10),
         ),
         "Sheet1!C1": CellType(
             kind=CellKind.NUMBER,
@@ -39,7 +39,7 @@ def test_cell_type_env_can_mix_kinds_and_domains() -> None:
         "Sheet1!A2": CellType(kind=CellKind.BOOL),
         "Sheet1!A3": CellType(
             kind=CellKind.NUMBER,
-            interval=IntIntervalDomain(min=-5, max=None),
+            interval=IntervalDomain(min=-5, max=None),
         ),
     }
 

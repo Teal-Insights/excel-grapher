@@ -13,7 +13,7 @@ from excel_grapher.core.cell_types import (
     CellType,
     CellTypeEnv,
     EnumDomain,
-    IntIntervalDomain,
+    IntervalDomain,
 )
 from excel_grapher.grapher.builder import _format_missing_leaves
 from excel_grapher.grapher.dynamic_refs import (
@@ -128,7 +128,7 @@ def test_dynamic_offset_with_small_integer_domain() -> None:
         {
             "Sheet1!B1": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=0, max=1),
+                interval=IntervalDomain(min=0, max=1),
             )
         }
     )
@@ -220,7 +220,7 @@ def test_dynamic_offset_respects_branch_limit() -> None:
         {
             "Sheet1!B1": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=0, max=10),
+                interval=IntervalDomain(min=0, max=10),
             )
         }
     )
@@ -375,7 +375,7 @@ def test_create_dependency_graph_with_dynamic_ref_config(tmp_path: Path) -> None
         {
             "Sheet1!C1": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=0, max=1),
+                interval=IntervalDomain(min=0, max=1),
             )
         }
     )
@@ -524,7 +524,7 @@ def test_expand_leaf_env_assigns_any_when_intermediate_unsupported() -> None:
         {
             "Sheet1!A1": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=0, max=1),
+                interval=IntervalDomain(min=0, max=1),
             )
         }
     )
@@ -743,7 +743,7 @@ def test_dynamic_index_interval_row() -> None:
         {
             "Sheet1!B1": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=1, max=3),
+                interval=IntervalDomain(min=1, max=3),
             )
         }
     )

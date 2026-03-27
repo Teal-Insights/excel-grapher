@@ -20,7 +20,7 @@ from excel_grapher.core.cell_types import (
     CellType,
     CellTypeEnv,
     EnumDomain,
-    IntIntervalDomain,
+    IntervalDomain,
     constraints_to_cell_type_env,
 )
 from excel_grapher.core.excel_function_meta import is_ref_only_arg
@@ -1025,9 +1025,14 @@ def _build_domains(
     return domains
 
 
-def _interval_to_values(interval: IntIntervalDomain, limits: DynamicRefLimits) -> list[int]:
+def _interval_to_values(interval: IntervalDomain, limits: DynamicRefLimits) -> list[int]:
     if interval.min is None or interval.max is None:
         raise DynamicRefError("Unbounded intervals are not supported for dynamic refs")
+    if isinstance(interval.min, float) or isinstance(interval.max, float):
+        raise DynamicRefError(
+            "Float interval domains cannot be enumerated for dynamic refs; "
+            "use an enum domain or integer bounds instead"
+        )
     lo, hi = int(interval.min), int(interval.max)
     if hi < lo:
         raise DynamicRefError(f"Invalid interval domain [{lo}, {hi}]")
