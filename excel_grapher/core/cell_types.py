@@ -16,11 +16,15 @@ class CellKind(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class IntIntervalDomain:
-    """Closed integer interval domain for a cell."""
+class IntervalDomain:
+    """Closed numeric interval domain for a cell."""
 
-    min: int | None = None
-    max: int | None = None
+    min: int | float | None = None
+    max: int | float | None = None
+
+
+# Backwards-compatible alias
+IntIntervalDomain = IntervalDomain
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,7 +39,7 @@ class CellType:
     """Internal description of the allowed values for a single cell."""
 
     kind: CellKind
-    interval: IntIntervalDomain | None = None
+    interval: IntervalDomain | None = None
     enum: EnumDomain | None = None
 
 
@@ -44,10 +48,10 @@ CellTypeEnv: TypeAlias = Mapping[str, CellType]
 
 @dataclass(frozen=True, slots=True)
 class Between:
-    """Metadata marker for integer interval constraints in Annotated types."""
+    """Metadata marker for numeric interval constraints in Annotated types."""
 
-    min: int | None = None
-    max: int | None = None
+    min: int | float | None = None
+    max: int | float | None = None
 
 
 def constraints_to_cell_type_env(
@@ -100,10 +104,10 @@ def constraints_to_cell_type_env(
     return env
 
 
-def _domain_from_metadata(metadata: list[object]) -> IntIntervalDomain | EnumDomain | None:
+def _domain_from_metadata(metadata: list[object]) -> IntervalDomain | EnumDomain | None:
     for meta in metadata:
         if isinstance(meta, Between):
-            return IntIntervalDomain(min=meta.min, max=meta.max)
+            return IntervalDomain(min=meta.min, max=meta.max)
     return None
 
 
@@ -136,13 +140,13 @@ def _infer_kind_from_python_type(tp: Any) -> CellKind:
     return CellKind.ANY
 
 
-def _interval_from_domain(domain: IntIntervalDomain | EnumDomain | None) -> IntIntervalDomain | None:
-    if isinstance(domain, IntIntervalDomain):
+def _interval_from_domain(domain: IntervalDomain | EnumDomain | None) -> IntervalDomain | None:
+    if isinstance(domain, IntervalDomain):
         return domain
     return None
 
 
-def _enum_from_domain(domain: IntIntervalDomain | EnumDomain | None) -> EnumDomain | None:
+def _enum_from_domain(domain: IntervalDomain | EnumDomain | None) -> EnumDomain | None:
     if isinstance(domain, EnumDomain):
         return domain
     return None
