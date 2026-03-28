@@ -1004,9 +1004,6 @@ def main() -> None:
     if not WORKBOOK_PATH.exists():
         print(f"Error: Workbook not found at {WORKBOOK_PATH}")
         return
-    
-    # Check constraints
-    check_constraints(LicDsfConstraints)
 
     # Discover targets: explicit ranges (all cells) and indicator rows (formula cells only)
     print("\n1. Collecting target cells...")
