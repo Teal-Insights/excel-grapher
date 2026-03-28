@@ -255,8 +255,9 @@ def xl_range(ctx: EvalContext, address: str) -> CellValue:
 def _convergence_delta(prev: CellValue, curr: CellValue) -> float:
     if hasattr(prev, "shape") and hasattr(curr, "shape"):
         try:
-            import numpy as np
             from typing import Any
+
+            import numpy as np
 
             def _is_array(v: Any) -> bool:
                 return hasattr(v, "shape")

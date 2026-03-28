@@ -7,10 +7,10 @@ This package intentionally keeps the public API small and stable.
 from .builder import create_dependency_graph
 from .dependency_provenance import DependencyCause, EdgeProvenance
 from .dynamic_refs import (
-    constrain,
     DynamicRefConfig,
     DynamicRefError,
     DynamicRefLimits,
+    constrain,
     infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
