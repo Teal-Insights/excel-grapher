@@ -365,7 +365,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import openpyxl
+import fastpyxl
 
 
 def _find_repo_root(start: Path) -> Path:
@@ -378,7 +378,7 @@ def _find_repo_root(start: Path) -> Path:
 def create_synthetic_workbook(path: Path, *, sheet_name: str = "S") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    wb = openpyxl.Workbook()
+    wb = fastpyxl.Workbook()
     ws = wb.active
     ws.title = sheet_name
 

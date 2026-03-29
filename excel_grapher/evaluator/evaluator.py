@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import openpyxl.utils.cell
+import fastpyxl.utils.cell
 
 from .errors import ParseError
 from .export_runtime.cache import EvalContext, xl_circular_reference, xl_iterative_compute
@@ -486,8 +486,8 @@ class FormulaEvaluator:
 
         if isinstance(node, CellRefNode):
             sheet, coord = node.address.split("!", 1)
-            col_str, row = openpyxl.utils.cell.coordinate_from_string(coord)
-            col = openpyxl.utils.cell.column_index_from_string(col_str)
+            col_str, row = fastpyxl.utils.cell.coordinate_from_string(coord)
+            col = fastpyxl.utils.cell.column_index_from_string(col_str)
             return ExcelRange(
                 sheet=sheet, start_row=row, start_col=col, end_row=row, end_col=col
             )
@@ -509,10 +509,10 @@ def _range_from_a1(start: str, end: str) -> ExcelRange:
     if start_sheet != end_sheet:
         raise ValueError("Cross-sheet ranges are not supported")
 
-    c1, r1 = openpyxl.utils.cell.coordinate_from_string(start_coord)
-    c2, r2 = openpyxl.utils.cell.coordinate_from_string(end_coord)
-    start_col = openpyxl.utils.cell.column_index_from_string(c1)
-    end_col = openpyxl.utils.cell.column_index_from_string(c2)
+    c1, r1 = fastpyxl.utils.cell.coordinate_from_string(start_coord)
+    c2, r2 = fastpyxl.utils.cell.coordinate_from_string(end_coord)
+    start_col = fastpyxl.utils.cell.column_index_from_string(c1)
+    end_col = fastpyxl.utils.cell.column_index_from_string(c2)
     sr, er = sorted((r1, r2))
     sc, ec = sorted((start_col, end_col))
     return ExcelRange(

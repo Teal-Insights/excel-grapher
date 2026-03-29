@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import cast
 
-from openpyxl.utils.cell import (
+from fastpyxl.utils.cell import (
     column_index_from_string,
     coordinate_from_string,
     coordinate_to_tuple,

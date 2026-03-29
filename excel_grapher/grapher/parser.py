@@ -5,7 +5,7 @@ import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 
-import openpyxl.utils.cell
+import fastpyxl.utils.cell
 
 from .guard import And, Compare, GuardExpr, Literal, Not, Or
 from .guard import CellRef as GuardCellRef
@@ -182,8 +182,8 @@ def expand_range(
     """
     Expand an A1 range into individual (sheet, A1) dependencies.
     """
-    c1i = openpyxl.utils.cell.column_index_from_string(start_col)
-    c2i = openpyxl.utils.cell.column_index_from_string(end_col)
+    c1i = fastpyxl.utils.cell.column_index_from_string(start_col)
+    c2i = fastpyxl.utils.cell.column_index_from_string(end_col)
     rlo, rhi = (start_row, end_row) if start_row <= end_row else (end_row, start_row)
     clo, chi = (c1i, c2i) if c1i <= c2i else (c2i, c1i)
     n_cells = (rhi - rlo + 1) * (chi - clo + 1)
@@ -193,7 +193,7 @@ def expand_range(
     out: list[tuple[str, str]] = []
     for rr in range(rlo, rhi + 1):
         for cc in range(clo, chi + 1):
-            out.append((sheet, f"{openpyxl.utils.cell.get_column_letter(cc)}{rr}"))
+            out.append((sheet, f"{fastpyxl.utils.cell.get_column_letter(cc)}{rr}"))
     return out
 
 
@@ -654,7 +654,7 @@ def _eval_row_expr(
             if inner == "":
                 if current_cell_a1 is None:
                     return None
-                _col, row = openpyxl.utils.cell.coordinate_from_string(current_cell_a1)
+                _col, row = fastpyxl.utils.cell.coordinate_from_string(current_cell_a1)
                 return int(row)
             parsed = _parse_ref_or_range_token(
                 inner,
@@ -792,8 +792,8 @@ def _parse_index_call(
     if col_num is None:
         return None
 
-    start_col = openpyxl.utils.cell.column_index_from_string(base_start.column)
-    end_col = openpyxl.utils.cell.column_index_from_string(base_end.column)
+    start_col = fastpyxl.utils.cell.column_index_from_string(base_start.column)
+    end_col = fastpyxl.utils.cell.column_index_from_string(base_end.column)
     start_row = base_start.row
     end_row = base_end.row
     min_col = min(start_col, end_col)
@@ -810,7 +810,7 @@ def _parse_index_call(
 
     return CellRef(
         sheet=sheet,
-        column=openpyxl.utils.cell.get_column_letter(target_col),
+        column=fastpyxl.utils.cell.get_column_letter(target_col),
         row=target_row,
     )
 
@@ -999,8 +999,8 @@ def _parse_offset_call(
         base_start, base_end = base
     sheet = base_start.sheet or current_sheet
 
-    base_start_col = openpyxl.utils.cell.column_index_from_string(base_start.column)
-    base_end_col = openpyxl.utils.cell.column_index_from_string(base_end.column)
+    base_start_col = fastpyxl.utils.cell.column_index_from_string(base_start.column)
+    base_end_col = fastpyxl.utils.cell.column_index_from_string(base_end.column)
     base_start_row = base_start.row
     base_end_row = base_end.row
     base_min_col = min(base_start_col, base_end_col)
@@ -1071,12 +1071,12 @@ def _parse_offset_call(
 
     start_ref = CellRef(
         sheet=sheet,
-        column=openpyxl.utils.cell.get_column_letter(target_start_col),
+        column=fastpyxl.utils.cell.get_column_letter(target_start_col),
         row=target_start_row,
     )
     end_ref = CellRef(
         sheet=sheet,
-        column=openpyxl.utils.cell.get_column_letter(target_end_col),
+        column=fastpyxl.utils.cell.get_column_letter(target_end_col),
         row=target_end_row,
     )
     return start_ref, end_ref

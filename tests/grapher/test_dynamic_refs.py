@@ -1008,6 +1008,300 @@ def test_expand_leaf_env_if_isnumber_wide_any_interval_summarizes_to_number() ->
     assert out.interval.min == lo and out.interval.max == hi
 
 
+def test_expand_leaf_env_sum_wide_range_no_branch_limit_error() -> None:
+    """SUM over a range of wide-interval cells infers bounds without enumerating each interval."""
+    from excel_grapher.grapher.dynamic_refs import expand_leaf_env_to_argument_env
+
+    hi = 10**15
+    financial = CellType(
+        kind=CellKind.ANY,
+        interval=IntIntervalDomain(min=0, max=hi),
+    )
+    leaf_env = _make_env(
+        {
+            f"Sheet1!{c}1": financial
+            for c in ("A", "B", "C", "D", "E", "F")
+        }
+    )
+
+    def _get_cell_formula(addr: str) -> str | None:
+        if addr == "Sheet1!G1":
+            return "=SUM(Sheet1!A1:Sheet1!F1)"
+        return None
+
+    def _get_refs_from_formula(formula: str, sheet: str) -> set[str]:
+        assert sheet == "Sheet1"
+        return {f"Sheet1!{c}1" for c in ("A", "B", "C", "D", "E", "F")}
+
+    env = expand_leaf_env_to_argument_env(
+        {"Sheet1!G1"},
+        _get_cell_formula,
+        _get_refs_from_formula,
+        leaf_env,
+        DynamicRefLimits(),
+    )
+    out = env["Sheet1!G1"]
+    assert out.kind is CellKind.NUMBER
+    assert out.interval is not None
+    assert out.interval.min == 0 and out.interval.max == 6 * hi
+
+
+def test_expand_leaf_env_reports_unsupported_construct_in_fallback_error() -> None:
+    leaf_env = _make_env(
+        {
+            "Sheet1!A1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntIntervalDomain(min=0, max=10**9),
+            )
+        }
+    )
+
+    def _get_cell_formula(addr: str) -> str | None:
+        return "=ROUND(Sheet1!A1,0)" if addr == "Sheet1!B1" else None
+
+    def _get_refs_from_formula(formula: str, sheet: str) -> set[str]:
+        assert sheet == "Sheet1"
+        return {"Sheet1!A1"} if "A1" in formula else set()
+
+    with pytest.raises(DynamicRefError) as exc_info:
+        dynamic_refs_mod.expand_leaf_env_to_argument_env(
+            {"Sheet1!B1"},
+            _get_cell_formula,
+            _get_refs_from_formula,
+            leaf_env,
+            DynamicRefLimits(max_branches=8),
+        )
+
+    msg = str(exc_info.value)
+    assert "ROUND" in msg
+    assert "not covered by numeric abstract analysis" in msg
+
+
+def test_expand_leaf_env_division_wide_interval_no_branch_limit_error() -> None:
+    leaf_env = _make_env(
+        {
+            "Sheet1!A1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntIntervalDomain(min=0, max=10**15),
+            )
+        }
+    )
+
+    def _get_cell_formula(addr: str) -> str | None:
+        return "=Sheet1!A1/2" if addr == "Sheet1!B1" else None
+
+    def _get_refs_from_formula(formula: str, sheet: str) -> set[str]:
+        assert sheet == "Sheet1"
+        return {"Sheet1!A1"} if "A1" in formula else set()
+
+    env = dynamic_refs_mod.expand_leaf_env_to_argument_env(
+        {"Sheet1!B1"},
+        _get_cell_formula,
+        _get_refs_from_formula,
+        leaf_env,
+        DynamicRefLimits(max_branches=8),
+    )
+    out = env["Sheet1!B1"]
+    assert out.kind is CellKind.NUMBER
+    assert out.interval is not None
+    assert out.interval.min == 0
+    assert out.interval.max == 500_000_000_000_000
+
+
+def test_expand_leaf_env_comparison_infers_zero_one_domain() -> None:
+    leaf_env = _make_env(
+        {
+            "Sheet1!A1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntIntervalDomain(min=-10**9, max=10**9),
+            )
+        }
+    )
+
+    def _get_cell_formula(addr: str) -> str | None:
+        return "=Sheet1!A1>0" if addr == "Sheet1!B1" else None
+
+    def _get_refs_from_formula(formula: str, sheet: str) -> set[str]:
+        assert sheet == "Sheet1"
+        return {"Sheet1!A1"} if "A1" in formula else set()
+
+    env = dynamic_refs_mod.expand_leaf_env_to_argument_env(
+        {"Sheet1!B1"},
+        _get_cell_formula,
+        _get_refs_from_formula,
+        leaf_env,
+        DynamicRefLimits(max_branches=8),
+    )
+    out = env["Sheet1!B1"]
+    assert out.kind is CellKind.NUMBER
+    assert out.enum is not None
+    assert out.enum.values == frozenset({0, 1})
+
+
+def test_expand_leaf_env_cycle_detection_is_stable() -> None:
+    def _get_cell_formula(addr: str) -> str | None:
+        if addr == "Sheet1!B1":
+            return "=Sheet1!C1"
+        if addr == "Sheet1!C1":
+            return "=Sheet1!B1"
+        return None
+
+    def _get_refs_from_formula(formula: str, sheet: str) -> set[str]:
+        assert sheet == "Sheet1"
+        if "C1" in formula:
+            return {"Sheet1!C1"}
+        if "B1" in formula:
+            return {"Sheet1!B1"}
+        return set()
+
+    with pytest.raises(DynamicRefError) as exc_info:
+        dynamic_refs_mod.expand_leaf_env_to_argument_env(
+            {"Sheet1!B1"},
+            _get_cell_formula,
+            _get_refs_from_formula,
+            _make_env({}),
+            DynamicRefLimits(max_depth=4),
+        )
+
+    assert "cycle" in str(exc_info.value).lower()
+
+
+def test_expand_leaf_env_long_formula_chain_is_not_limited_by_expr_max_depth() -> None:
+    leaf_env = _make_env(
+        {
+            "Sheet1!A1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({1})),
+            )
+        }
+    )
+
+    formulas = {
+        "Sheet1!B1": "=Sheet1!A1+1",
+        "Sheet1!C1": "=Sheet1!B1+1",
+        "Sheet1!D1": "=Sheet1!C1+1",
+        "Sheet1!E1": "=Sheet1!D1+1",
+        "Sheet1!F1": "=Sheet1!E1+1",
+    }
+
+    def _get_cell_formula(addr: str) -> str | None:
+        return formulas.get(addr)
+
+    def _get_refs_from_formula(formula: str, sheet: str) -> set[str]:
+        assert sheet == "Sheet1"
+        if "A1" in formula:
+            return {"Sheet1!A1"}
+        if "B1" in formula:
+            return {"Sheet1!B1"}
+        if "C1" in formula:
+            return {"Sheet1!C1"}
+        if "D1" in formula:
+            return {"Sheet1!D1"}
+        if "E1" in formula:
+            return {"Sheet1!E1"}
+        return set()
+
+    env = dynamic_refs_mod.expand_leaf_env_to_argument_env(
+        {"Sheet1!F1"},
+        _get_cell_formula,
+        _get_refs_from_formula,
+        leaf_env,
+        DynamicRefLimits(max_depth=1),
+    )
+
+    out = env["Sheet1!F1"]
+    assert out.kind is CellKind.NUMBER
+    assert out.enum is not None
+    assert out.enum.values == frozenset({6})
+
+
+def test_expand_leaf_env_uses_ast_range_cells_when_ref_collector_only_reports_endpoints() -> None:
+    leaf_env = _make_env(
+        {
+            "Sheet1!A1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntIntervalDomain(min=0, max=10),
+            ),
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntIntervalDomain(min=0, max=10),
+            ),
+            "Sheet1!C1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntIntervalDomain(min=0, max=10),
+            ),
+            "Sheet1!D1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntIntervalDomain(min=0, max=10),
+            ),
+        }
+    )
+
+    def _get_cell_formula(addr: str) -> str | None:
+        return "=SUM(Sheet1!A1:Sheet1!D1)" if addr == "Sheet1!E1" else None
+
+    def _get_refs_from_formula(formula: str, sheet: str) -> set[str]:
+        assert sheet == "Sheet1"
+        return {"Sheet1!A1", "Sheet1!D1"}
+
+    env = dynamic_refs_mod.expand_leaf_env_to_argument_env(
+        {"Sheet1!E1"},
+        _get_cell_formula,
+        _get_refs_from_formula,
+        leaf_env,
+        DynamicRefLimits(max_branches=8),
+    )
+
+    out = env["Sheet1!E1"]
+    assert out.kind is CellKind.NUMBER
+    assert out.interval is not None
+    assert out.interval.min == 0
+    assert out.interval.max == 40
+
+
+def test_expand_leaf_env_choose_unions_selected_numeric_options() -> None:
+    leaf_env = _make_env(
+        {
+            "Sheet1!A1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({1, 3})),
+            ),
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({10})),
+            ),
+            "Sheet1!C1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({20})),
+            ),
+            "Sheet1!D1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({30})),
+            ),
+        }
+    )
+
+    def _get_cell_formula(addr: str) -> str | None:
+        return "=CHOOSE(Sheet1!A1,Sheet1!B1,Sheet1!C1,Sheet1!D1)" if addr == "Sheet1!E1" else None
+
+    def _get_refs_from_formula(formula: str, sheet: str) -> set[str]:
+        assert sheet == "Sheet1"
+        return {"Sheet1!A1", "Sheet1!B1", "Sheet1!C1", "Sheet1!D1"}
+
+    env = dynamic_refs_mod.expand_leaf_env_to_argument_env(
+        {"Sheet1!E1"},
+        _get_cell_formula,
+        _get_refs_from_formula,
+        leaf_env,
+        DynamicRefLimits(max_branches=8),
+    )
+
+    out = env["Sheet1!E1"]
+    assert out.kind is CellKind.NUMBER
+    assert out.enum is not None
+    assert out.enum.values == frozenset({10, 30})
+
+
 def test_infer_numeric_domain_parity_never_raises() -> None:
     limits = DynamicRefLimits(max_branches=64, max_depth=12)
     env: CellTypeEnv = {
@@ -1120,4 +1414,3 @@ def test_index_respects_max_cells_limit() -> None:
             limits=DynamicRefLimits(max_cells=2),
         )
     assert "cells exceed limit" in str(exc_info.value).lower()
-

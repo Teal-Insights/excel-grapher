@@ -5,7 +5,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from math import isfinite
 
-import openpyxl.utils.cell
+import fastpyxl.utils.cell
 
 from .core import CellValue, ExcelRange, XlError
 
@@ -236,10 +236,10 @@ def xl_range(ctx: EvalContext, address: str) -> CellValue:
         return parsed
     sheet, start_cell, end_cell = parsed
     try:
-        start_col, start_row = openpyxl.utils.cell.coordinate_from_string(start_cell)
-        end_col, end_row = openpyxl.utils.cell.coordinate_from_string(end_cell)
-        start_col_idx = openpyxl.utils.cell.column_index_from_string(start_col)
-        end_col_idx = openpyxl.utils.cell.column_index_from_string(end_col)
+        start_col, start_row = fastpyxl.utils.cell.coordinate_from_string(start_cell)
+        end_col, end_row = fastpyxl.utils.cell.coordinate_from_string(end_cell)
+        start_col_idx = fastpyxl.utils.cell.column_index_from_string(start_col)
+        end_col_idx = fastpyxl.utils.cell.column_index_from_string(end_col)
     except ValueError:
         return XlError.VALUE
 

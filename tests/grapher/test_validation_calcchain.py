@@ -4,7 +4,7 @@ import re
 import zipfile
 from pathlib import Path
 
-import openpyxl
+import fastpyxl
 import xlsxwriter
 
 from excel_grapher import create_dependency_graph, validate_graph
@@ -59,7 +59,7 @@ def test_validate_graph_gracefully_handles_missing_calcchain(tmp_path: Path) -> 
     Many generated workbooks won't have calcChain.xml. Validation should not crash.
     """
     excel_path = tmp_path / "no_calcchain.xlsx"
-    wb = openpyxl.Workbook()
+    wb = fastpyxl.Workbook()
     ws = wb.active
     ws.title = "Sheet1"
     ws["A1"].value = 2

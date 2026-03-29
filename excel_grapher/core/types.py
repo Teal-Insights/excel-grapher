@@ -8,7 +8,7 @@ from enum import Enum
 from typing import TypeAlias
 
 import numpy as np
-import openpyxl.utils.cell
+import fastpyxl.utils.cell
 
 
 class XlError(str, Enum):
@@ -44,7 +44,7 @@ class ExcelRange:
     def cell_addresses(self) -> Iterator[str]:
         for r in range(self.start_row, self.end_row + 1):
             for c in range(self.start_col, self.end_col + 1):
-                col = openpyxl.utils.cell.get_column_letter(c)
+                col = fastpyxl.utils.cell.get_column_letter(c)
                 yield f"{self.sheet}!{col}{r}"
 
     def resolve(self, evaluate_fn: Callable[[str], CellValue]) -> np.ndarray:

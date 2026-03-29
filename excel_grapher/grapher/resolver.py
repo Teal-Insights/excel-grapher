@@ -5,8 +5,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, cast
 
-import openpyxl
-from openpyxl.utils.cell import (
+import fastpyxl
+from fastpyxl.utils.cell import (
     column_index_from_string,
     coordinate_from_string,
     get_column_letter,
@@ -51,7 +51,7 @@ class NamedRangeMaps:
     range_map: dict[str, tuple[str, str, str]]
 
 
-def _sheet_bounds(wb: openpyxl.Workbook) -> dict[str, tuple[int, int]]:
+def _sheet_bounds(wb: fastpyxl.Workbook) -> dict[str, tuple[int, int]]:
     """Return per-sheet (max_row, max_col) from workbook dimensions."""
     bounds: dict[str, tuple[int, int]] = {}
     for name in wb.sheetnames:
@@ -262,7 +262,7 @@ def _normalize_formula_for_parse(formula: str, bounds: dict[str, tuple[int, int]
 
 def _try_resolve_formula_defined_name(
     attr_text: str,
-    wb: openpyxl.Workbook,
+    wb: fastpyxl.Workbook,
 ) -> tuple[str, str, str] | tuple[str, str] | None:
     """If attr_text is an OFFSET/INDIRECT formula, evaluate to range or cell; else None."""
     formula = attr_text.strip()
@@ -296,7 +296,7 @@ def _try_resolve_formula_defined_name(
     return None
 
 
-def build_named_range_map(wb: openpyxl.Workbook) -> NamedRangeMaps:
+def build_named_range_map(wb: fastpyxl.Workbook) -> NamedRangeMaps:
     """
     Map defined names to single-cell and range references.
 

@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import Enum, auto
 from typing import Any
 
-import openpyxl.utils.cell
+import fastpyxl.utils.cell
 
 NodeKey = str  # Always in the form "SheetName!A1" or "'Sheet Name'!A1" for quoted sheets
 
@@ -44,7 +44,7 @@ class Node:
 
     @property
     def column_index(self) -> int:
-        return int(openpyxl.utils.cell.column_index_from_string(self.column))
+        return int(fastpyxl.utils.cell.column_index_from_string(self.column))
 
     @property
     def value_type(self) -> ValueType:

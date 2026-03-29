@@ -154,7 +154,7 @@ def _modify_and_recalculate_with_libreoffice(
     """Use LibreOffice for headless Excel recalculation on Linux.
 
     This process:
-    1. Modifies cells with openpyxl (no recalculation)
+    1. Modifies cells with fastpyxl (no recalculation)
     2. Uses LibreOffice to open and re-save the file, triggering recalculation
 
     Args:
@@ -166,9 +166,9 @@ def _modify_and_recalculate_with_libreoffice(
     Raises:
         ExcelRecalculationError: If LibreOffice recalculation fails.
     """
-    from openpyxl import load_workbook
+    from fastpyxl import load_workbook
 
-    # Step 1: Copy and modify with openpyxl
+    # Step 1: Copy and modify with fastpyxl
     shutil.copy2(input_path, output_path)
 
     wb = load_workbook(str(output_path), keep_vba=True)

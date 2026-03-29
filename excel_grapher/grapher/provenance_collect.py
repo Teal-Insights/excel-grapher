@@ -4,8 +4,8 @@ import re
 from collections.abc import Callable
 from typing import Literal
 
-import openpyxl
-import openpyxl.utils.cell
+import fastpyxl
+import fastpyxl.utils.cell
 
 from .dependency_provenance import DependencyCause, EdgeProvenance, merge_provenance_maps
 from .dynamic_refs import (
@@ -89,7 +89,7 @@ def _flat_provenance_one_string(
     max_range_cells: int,
     use_cached_dynamic_refs: bool,
     dynamic_refs: DynamicRefConfig | None,
-    wb_formulas: openpyxl.Workbook,
+    wb_formulas: fastpyxl.Workbook,
     resolve_cached_value: Callable[[str, str], object | None],
     span_target: Literal["formula", "normalized"],
 ) -> dict[str, EdgeProvenance]:
@@ -264,8 +264,8 @@ def _flat_provenance_one_string(
                 named_ranges=named_ranges,
                 named_range_ranges=named_range_ranges,
             )
-            _col_letter, _current_row = openpyxl.utils.cell.coordinate_from_string(current_a1)
-            _current_col = openpyxl.utils.cell.column_index_from_string(_col_letter)
+            _col_letter, _current_row = fastpyxl.utils.cell.coordinate_from_string(current_a1)
+            _current_col = fastpyxl.utils.cell.column_index_from_string(_col_letter)
             offset_targets = infer_dynamic_offset_targets(
                 formula_for_infer,
                 current_sheet=current_sheet,
@@ -336,8 +336,8 @@ def _flat_provenance_one_string(
         if resolved_range is not None:
             if expand_ranges:
                 sheet, start_a1, end_a1 = resolved_range
-                start_col, start_row = openpyxl.utils.cell.coordinate_from_string(start_a1)
-                end_col, end_row = openpyxl.utils.cell.coordinate_from_string(end_a1)
+                start_col, start_row = fastpyxl.utils.cell.coordinate_from_string(start_a1)
+                end_col, end_row = fastpyxl.utils.cell.coordinate_from_string(end_a1)
                 for dep_sheet, dep_a1 in expand_range(
                     sheet=sheet,
                     start_col=start_col,
@@ -381,7 +381,7 @@ def _flat_provenance_formula_and_normalized(
     max_range_cells: int,
     use_cached_dynamic_refs: bool,
     dynamic_refs: DynamicRefConfig | None,
-    wb_formulas: openpyxl.Workbook,
+    wb_formulas: fastpyxl.Workbook,
     resolve_cached_value: Callable[[str, str], object | None],
 ) -> dict[str, EdgeProvenance]:
     raw_map = _flat_provenance_one_string(
@@ -456,7 +456,7 @@ def collect_provenance_for_formula(
     max_range_cells: int,
     use_cached_dynamic_refs: bool,
     dynamic_refs: DynamicRefConfig | None,
-    wb_formulas: openpyxl.Workbook,
+    wb_formulas: fastpyxl.Workbook,
     resolve_cached_value: Callable[[str, str], object | None],
 ) -> dict[str, EdgeProvenance]:
     """

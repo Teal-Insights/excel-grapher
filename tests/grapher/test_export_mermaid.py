@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import openpyxl
+import fastpyxl
 
 from excel_grapher import create_dependency_graph, to_mermaid
 
 
 def _make_chain_xlsx(path: Path) -> None:
-    wb = openpyxl.Workbook()
+    wb = fastpyxl.Workbook()
     ws = wb.active
     ws.title = "Sheet1"
     ws["A1"].value = 2

@@ -24,10 +24,10 @@ from typing import (  # noqa: F401 - Annotated/Literal used when adding constrai
     cast,
 )
 
-import openpyxl
-import openpyxl.utils.cell
-from openpyxl.utils import range_boundaries
-from openpyxl.utils.cell import get_column_letter
+import fastpyxl
+import fastpyxl.utils.cell
+from fastpyxl.utils import range_boundaries
+from fastpyxl.utils.cell import get_column_letter
 
 from excel_grapher import (
     CycleError,
@@ -106,7 +106,7 @@ def constrain_constant_range(
     range_a1: str,
 ) -> None:
     """Fill ``constraints`` and ``data`` with Literal types from a rectangular cell range."""
-    wb = openpyxl.load_workbook(workbook_path, data_only=True)
+    wb = fastpyxl.load_workbook(workbook_path, data_only=True)
     try:
         ws = wb[sheet_name]
         for row in ws[range_a1]:
@@ -137,7 +137,7 @@ Dynamic refs (OFFSET/INDIRECT/INDEX) are resolved via a constraint-based config.
 
 Then re-run until the graph builds. Note that if row/column labels or intentionally blank cells show up in error output, they have been referenced by a dynamic ref and must be constrained for the graph to resolve. Blank cells can be set to `Literal[None]`.
 
-The goal is to set sensible constraints that reflect the range of sane values we will allow for the cells. To determine the plausible range of input values, investigate the cells by using enrichment_audit.json (or the heuristic label-scanning tools in src/lic_dsf_labels.py) to see their labels, and openpyxl to check their current values. In addition to the empty template workbook, workbooks/lic-dsf-template-2025-08-12.xlsm, we also have one filled out with illustrative data: workbooks/dsf-uga.xlsm.
+The goal is to set sensible constraints that reflect the range of sane values we will allow for the cells. To determine the plausible range of input values, investigate the cells by using enrichment_audit.json (or the heuristic label-scanning tools in src/lic_dsf_labels.py) to see their labels, and fastpyxl to check their current values. In addition to the empty template workbook, workbooks/lic-dsf-template-2025-08-12.xlsm, we also have one filled out with illustrative data: workbooks/dsf-uga.xlsm.
 """
 
 LiteralType = cast(Any, Literal)
@@ -981,17 +981,17 @@ def cells_in_range(sheet: str, range_a1: str) -> list[str]:
     else:
         start_a1 = end_a1 = range_a1.strip()
 
-    c1, r1 = openpyxl.utils.cell.coordinate_from_string(start_a1)
-    c2, r2 = openpyxl.utils.cell.coordinate_from_string(end_a1)
-    start_col_idx = openpyxl.utils.cell.column_index_from_string(c1)
-    end_col_idx = openpyxl.utils.cell.column_index_from_string(c2)
+    c1, r1 = fastpyxl.utils.cell.coordinate_from_string(start_a1)
+    c2, r2 = fastpyxl.utils.cell.coordinate_from_string(end_a1)
+    start_col_idx = fastpyxl.utils.cell.column_index_from_string(c1)
+    end_col_idx = fastpyxl.utils.cell.column_index_from_string(c2)
     rlo, rhi = (r1, r2) if r1 <= r2 else (r2, r1)
     clo, chi = (start_col_idx, end_col_idx) if start_col_idx <= end_col_idx else (end_col_idx, start_col_idx)
 
     out: list[str] = []
     for row in range(rlo, rhi + 1):
         for col_idx in range(clo, chi + 1):
-            col_letter = openpyxl.utils.cell.get_column_letter(col_idx)
+            col_letter = fastpyxl.utils.cell.get_column_letter(col_idx)
             out.append(format_cell_key(sheet, col_letter, row))
     return out
 

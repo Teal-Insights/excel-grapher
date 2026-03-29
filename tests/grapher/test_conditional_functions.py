@@ -30,10 +30,10 @@ def test_choose_branches_are_guarded(tmp_path: Path) -> None:
 
 
 def test_switch_branches_are_guarded(tmp_path: Path) -> None:
-    import openpyxl
+    import fastpyxl
 
     excel_path = tmp_path / "switch.xlsx"
-    wb = openpyxl.Workbook()
+    wb = fastpyxl.Workbook()
     ws = wb.active
     ws.title = "Sheet1"
 

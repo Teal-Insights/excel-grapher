@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import openpyxl
-from openpyxl.worksheet.formula import ArrayFormula
+import fastpyxl
+from fastpyxl.worksheet.formula import ArrayFormula
 
 from excel_grapher import create_dependency_graph
 
@@ -21,7 +21,7 @@ def _create_fixture_workbook(path: Path) -> None:
     - Sheet1!A3 = =A1 + A2    (formula depends on A1, A2)
     - Sheet1!A4 = =A3 * 2     (formula depends on A3)
     """
-    wb = openpyxl.Workbook()
+    wb = fastpyxl.Workbook()
     ws = wb.active
     ws.title = "Sheet1"
 
@@ -70,7 +70,7 @@ def test_range_dependencies_are_expanded(tmp_path: Path) -> None:
     don't miss intermediate inputs inside SUM/MIN/MAX/etc.
     """
     excel_path = tmp_path / "range_chain.xlsx"
-    wb = openpyxl.Workbook()
+    wb = fastpyxl.Workbook()
     ws = wb.active
     ws.title = "Sheet1"
 
@@ -88,7 +88,7 @@ def test_range_dependencies_are_expanded(tmp_path: Path) -> None:
 
 def test_cross_sheet_range_dependencies_are_expanded(tmp_path: Path) -> None:
     excel_path = tmp_path / "cross_sheet_range.xlsx"
-    wb = openpyxl.Workbook()
+    wb = fastpyxl.Workbook()
     s1 = wb.active
     s1.title = "Sheet1"
     s2 = wb.create_sheet("Sheet 2")
@@ -116,7 +116,7 @@ def test_cross_sheet_range_dependencies_are_expanded(tmp_path: Path) -> None:
 
 def test_named_range_is_resolved(tmp_path: Path) -> None:
     excel_path = tmp_path / "named_range.xlsx"
-    wb = openpyxl.Workbook()
+    wb = fastpyxl.Workbook()
     ws = wb.active
     ws.title = "Sheet1"
 
@@ -124,7 +124,7 @@ def test_named_range_is_resolved(tmp_path: Path) -> None:
     ws["A2"].value = "=MyInput+1"
 
     # Define name: MyInput -> Sheet1!$A$1
-    from openpyxl.workbook.defined_name import DefinedName
+    from fastpyxl.workbook.defined_name import DefinedName
 
     wb.defined_names.add(DefinedName("MyInput", attr_text="Sheet1!$A$1"))
 
@@ -169,7 +169,7 @@ def test_load_values_reads_cached_formula_results(tmp_path: Path) -> None:
 
 def test_array_formula_cells_surface_formula_text(tmp_path: Path) -> None:
     excel_path = tmp_path / "array_formula.xlsx"
-    wb = openpyxl.Workbook()
+    wb = fastpyxl.Workbook()
     ws = wb.active
     ws.title = "Sheet1"
 
@@ -183,7 +183,7 @@ def test_array_formula_cells_surface_formula_text(tmp_path: Path) -> None:
     wb.save(excel_path)
     wb.close()
 
-    wb_formula = openpyxl.load_workbook(excel_path, data_only=False, read_only=True)
+    wb_formula = fastpyxl.load_workbook(excel_path, data_only=False, read_only=True)
     try:
         raw = wb_formula["Sheet1"]["A1"].value
         assert isinstance(raw, ArrayFormula)
@@ -206,7 +206,7 @@ def test_parse_target_handles_quoted_sheet_name(tmp_path: Path) -> None:
     parsed correctly. Keys in the graph use quoted format to match Excel syntax.
     """
     excel_path = tmp_path / "quoted_sheet.xlsx"
-    wb = openpyxl.Workbook()
+    wb = fastpyxl.Workbook()
     ws = wb.active
     ws.title = "My Sheet"
 

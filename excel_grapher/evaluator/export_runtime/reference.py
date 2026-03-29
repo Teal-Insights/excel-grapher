@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-import openpyxl.utils.cell
+import fastpyxl.utils.cell
 
 from .core import CellValue, ExcelRange, XlError, to_bool, to_number, to_string
 
@@ -45,7 +45,7 @@ def xl_address(
     if abs_flag not in (1, 2, 3, 4):
         return XlError.VALUE
 
-    col_letters = openpyxl.utils.cell.get_column_letter(c)
+    col_letters = fastpyxl.utils.cell.get_column_letter(c)
 
     col_abs = abs_flag in (1, 2)
     row_abs = abs_flag in (1, 3)
