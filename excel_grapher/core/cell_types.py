@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, TypeAlias, get_args, get_origin, get_type_hints
@@ -84,6 +84,9 @@ def constraints_to_cell_type_env(
     constraints is a validated instance (e.g. from TypeAdapter). The current
     implementation only inspects type metadata; it assumes the instance has
     already been validated elsewhere.
+
+    Dict keys are :func:`normalize_cell_type_env_key` of each hint key so they
+    align with ``format_key`` addresses from the grapher after normalization.
     """
 
     # Import here to avoid forcing Annotated / Literal into __all__ of core.
@@ -116,7 +119,7 @@ def constraints_to_cell_type_env(
         else:
             kind = _infer_kind_from_python_type(base_type)
 
-        env[_normalize_cell_address(key)] = CellType(
+        env[normalize_cell_type_env_key(key)] = CellType(
             kind=kind,
             interval=_interval_from_domain(domain),
             enum=_enum_from_domain(domain),
@@ -141,9 +144,9 @@ def _relations_from_metadata(metadata: list[object]) -> tuple[CellRelation, ...]
     relations: list[CellRelation] = []
     for meta in metadata:
         if isinstance(meta, GreaterThanCell):
-            relations.append(GreaterThanCell(_normalize_cell_address(meta.other)))
+            relations.append(GreaterThanCell(normalize_cell_type_env_key(meta.other)))
         elif isinstance(meta, NotEqualCell):
-            relations.append(NotEqualCell(_normalize_cell_address(meta.other)))
+            relations.append(NotEqualCell(normalize_cell_type_env_key(meta.other)))
     return tuple(relations)
 
 
@@ -188,12 +191,35 @@ def _enum_from_domain(domain: IntervalDomain | EnumDomain | None) -> EnumDomain 
     return None
 
 
-def _normalize_cell_address(addr: str) -> str:
-    sheet_part, coord = addr.split("!", 1)
+def normalize_cell_type_env_key(address: str) -> str:
+    """Return the canonical key for :class:`CellTypeEnv` / dynamic-ref constraint maps.
+
+    Graph code uses :func:`excel_grapher.grapher.parser.format_key`, which wraps
+    sheet names in single quotes when Excel requires it. TypedDict and
+    :func:`constraints_to_cell_type_env` may use the same spelling. This
+    function strips those delimiters and normalizes the cell coordinate (column
+    letters uppercased) so env lookups match regardless of quoting or case.
+
+    Not to be confused with :func:`excel_grapher.evaluator.name_utils.normalize_address`,
+    which follows evaluator node-key quoting rules and can differ for sheets
+    that contain spaces.
+    """
+    sheet_part, coord = address.split("!", 1)
     sheet = sheet_part.strip()
     if sheet.startswith("'") and sheet.endswith("'"):
         sheet = sheet[1:-1].replace("''", "'")
 
     col, row = coordinate_from_string(coord.strip().replace("$", ""))
-    return f"{sheet}!{col}{row}"
+    return f"{sheet}!{col.upper()}{row}"
+
+
+def leaves_missing_cell_type_constraints(
+    leaves: Iterable[str], cell_type_env: Mapping[str, CellType]
+) -> set[str]:
+    """Leaves whose normalized address has no entry in ``cell_type_env``."""
+    env_keys = frozenset(cell_type_env.keys())
+    return {addr for addr in leaves if normalize_cell_type_env_key(addr) not in env_keys}
+
+
+_normalize_cell_address = normalize_cell_type_env_key
 

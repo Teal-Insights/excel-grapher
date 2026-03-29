@@ -9,7 +9,7 @@ import fastpyxl
 import fastpyxl.utils.cell
 from fastpyxl.worksheet.formula import ArrayFormula
 
-from excel_grapher.core.cell_types import _normalize_cell_address
+from excel_grapher.core.cell_types import leaves_missing_cell_type_constraints
 
 from .dependency_provenance import EdgeProvenance
 from .dynamic_refs import (
@@ -383,10 +383,9 @@ def create_dependency_graph(
                         cell_val = wb_formulas[sh][a1].value
                         if not (isinstance(cell_val, str) and cell_val.startswith("=")):
                             leaves.add(addr)
-                    leaf_env_keys = set(dynamic_refs.cell_type_env.keys())
-                    missing_leaves = {
-                        addr for addr in leaves if _normalize_cell_address(addr) not in leaf_env_keys
-                    }
+                    missing_leaves = leaves_missing_cell_type_constraints(
+                        leaves, dynamic_refs.cell_type_env
+                    )
                     if missing_leaves:
                         cell_key = format_key(current_sheet, current_a1)
                         formatted_missing = _format_missing_leaves(missing_leaves)

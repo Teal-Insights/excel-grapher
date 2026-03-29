@@ -7,6 +7,8 @@ from typing import Literal
 import fastpyxl
 import fastpyxl.utils.cell
 
+from excel_grapher.core.cell_types import leaves_missing_cell_type_constraints
+
 from .dependency_provenance import DependencyCause, EdgeProvenance, merge_provenance_maps
 from .dynamic_refs import (
     DynamicRefConfig,
@@ -228,8 +230,9 @@ def _flat_provenance_one_string(
                 cell_val = wb_formulas[sh][a1].value
                 if not (isinstance(cell_val, str) and cell_val.startswith("=")):
                     leaves.add(addr)
-            leaf_env_keys = set(dynamic_refs.cell_type_env.keys())
-            missing_leaves = leaves - leaf_env_keys
+            missing_leaves = leaves_missing_cell_type_constraints(
+                leaves, dynamic_refs.cell_type_env
+            )
             if missing_leaves:
                 raise DynamicRefError(
                     f"Provenance: leaf cells feeding OFFSET/INDIRECT have no constraint: {sorted(missing_leaves)}"

@@ -1526,6 +1526,41 @@ def test_expand_leaf_env_division_relational_constraint_avoids_zero_risk_error()
     assert out.interval == IntIntervalDomain(min=-(2 * 10**16), max=2 * 10**16)
 
 
+def test_expand_leaf_env_percent_expression_stays_in_abstract_path() -> None:
+    leaf_env = _make_env(
+        {
+            "Sheet1!A1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntIntervalDomain(min=0, max=2000),
+            ),
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntIntervalDomain(min=0, max=1),
+            ),
+        }
+    )
+
+    def _get_cell_formula(addr: str) -> str | None:
+        return "=Sheet1!B1+(Sheet1!A1/100)%" if addr == "Sheet1!C1" else None
+
+    def _get_refs_from_formula(formula: str, sheet: str) -> set[str]:
+        assert sheet == "Sheet1"
+        return {"Sheet1!A1", "Sheet1!B1"}
+
+    env = dynamic_refs_mod.expand_leaf_env_to_argument_env(
+        {"Sheet1!C1"},
+        _get_cell_formula,
+        _get_refs_from_formula,
+        leaf_env,
+        DynamicRefLimits(max_branches=8),
+    )
+
+    out = env["Sheet1!C1"]
+    assert out.kind is CellKind.NUMBER
+    assert out.enum is not None
+    assert out.enum.values == frozenset({0, 1})
+
+
 def test_infer_numeric_domain_parity_never_raises() -> None:
     limits = DynamicRefLimits(max_branches=64, max_depth=12)
     env: CellTypeEnv = {
