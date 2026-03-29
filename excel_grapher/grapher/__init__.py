@@ -4,7 +4,12 @@ excel_grapher: Build and analyze dependency graphs from Excel workbooks.
 This package intentionally keeps the public API small and stable.
 """
 
-from excel_grapher.core.cell_types import GreaterThanCell, NotEqualCell, RealBetween, RealIntervalDomain
+from excel_grapher.core.cell_types import (
+    GreaterThanCell,
+    NotEqualCell,
+    RealBetween,
+    RealIntervalDomain,
+)
 
 from .builder import create_dependency_graph
 from .dependency_provenance import DependencyCause, EdgeProvenance

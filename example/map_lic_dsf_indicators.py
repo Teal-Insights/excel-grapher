@@ -42,7 +42,10 @@ from excel_grapher import (
     to_graphviz,
     validate_graph,
 )
-from excel_grapher.core.cell_types import Between, RealBetween  # noqa: F401 - used when adding constraints
+from excel_grapher.core.cell_types import (  # noqa: F401 - used when adding constraints
+    Between,
+    RealBetween,
+)
 
 # Row labels for the multi-row stress-test blocks (same row layout in each block).
 # Blank string means that row is skipped when splitting by row.
