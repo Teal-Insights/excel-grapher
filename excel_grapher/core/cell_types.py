@@ -116,7 +116,7 @@ def constraints_to_cell_type_env(
         else:
             kind = _infer_kind_from_python_type(base_type)
 
-        env[key] = CellType(
+        env[_normalize_cell_address(key)] = CellType(
             kind=kind,
             interval=_interval_from_domain(domain),
             enum=_enum_from_domain(domain),
