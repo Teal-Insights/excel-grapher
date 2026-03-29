@@ -115,3 +115,46 @@ def test_constraints_mapping_preserves_relational_metadata() -> None:
         NotEqualCell("Sheet1!C1"),
     )
 
+
+class _QuotedSheetConstraintsDict(TypedDict, total=False):
+    pass
+
+
+_SHEET_NEEDS_QUOTES = "Input 4 - External Financing"
+_QS_QUOTED_A1 = f"'{_SHEET_NEEDS_QUOTES}'!A1"
+_QS_QUOTED_B1 = f"'{_SHEET_NEEDS_QUOTES}'!B1"
+_QS_NORMAL_A1 = f"{_SHEET_NEEDS_QUOTES}!A1"
+_QS_NORMAL_B1 = f"{_SHEET_NEEDS_QUOTES}!B1"
+
+_QuotedSheetConstraintsDict.__annotations__[_QS_QUOTED_A1] = Annotated[int, Between(0, 10)]
+_QuotedSheetConstraintsDict.__annotations__[_QS_QUOTED_B1] = Annotated[
+    int,
+    Between(1, 20),
+    GreaterThanCell(_QS_QUOTED_A1),
+]
+
+
+def test_constraints_mapping_normalizes_quoted_sheet_keys_in_env() -> None:
+    """TypedDict keys may use Excel quoting; env keys match _normalize_cell_address (PR #46)."""
+    constraints = cast(
+        _QuotedSheetConstraintsDict,
+        {
+            _QS_QUOTED_A1: 1,
+            _QS_QUOTED_B1: 5,
+        },
+    )
+
+    env: CellTypeEnv = constraints_to_cell_type_env(_QuotedSheetConstraintsDict, constraints)
+
+    assert _QS_QUOTED_A1 not in env
+    assert _QS_QUOTED_B1 not in env
+    assert set(env.keys()) == {_QS_NORMAL_A1, _QS_NORMAL_B1}
+
+    a1 = env[_QS_NORMAL_A1]
+    assert a1.kind is CellKind.NUMBER
+    assert a1.interval == IntervalDomain(min=0, max=10)
+
+    b1 = env[_QS_NORMAL_B1]
+    assert b1.kind is CellKind.NUMBER
+    assert b1.relations == (GreaterThanCell(_QS_NORMAL_A1),)
+
