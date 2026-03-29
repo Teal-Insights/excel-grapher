@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class DependencyCause(str, Enum):
+class DependencyCause(StrEnum):
     """How a dependency edge arises from a formula."""
 
     direct_ref = "direct_ref"

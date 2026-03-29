@@ -41,6 +41,7 @@ class DependencyGraph:
     _reverse_edges: dict[NodeKey, set[NodeKey]] = field(default_factory=dict)  # node -> dependents
     _edge_attrs: dict[tuple[NodeKey, NodeKey], dict[str, Any]] = field(default_factory=dict)
     _hooks: list[NodeHook] = field(default_factory=list)
+    leaf_classification: dict[str, str] | None = None
 
     def add_node(self, node: Node) -> None:
         key = node.key

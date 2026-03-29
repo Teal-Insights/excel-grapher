@@ -12,30 +12,45 @@ def _xl_compare(op: str, left: CellValue, right: CellValue) -> bool | XlError:
     if isinstance(right, XlError):
         return right
 
-    def _cmp(a: str | float, b: str | float) -> bool:
+    def _cmp_str(a: str, b: str) -> bool:
         if op == "=":
             return a == b
         if op == "<>":
             return a != b
         if op == "<":
-            return a < b  # type: ignore[operator]
+            return a < b
         if op == ">":
-            return a > b  # type: ignore[operator]
+            return a > b
         if op == "<=":
-            return a <= b  # type: ignore[operator]
+            return a <= b
         if op == ">=":
-            return a >= b  # type: ignore[operator]
+            return a >= b
+        raise ValueError(f"Unknown comparison operator: {op}")
+
+    def _cmp_float(a: float, b: float) -> bool:
+        if op == "=":
+            return a == b
+        if op == "<>":
+            return a != b
+        if op == "<":
+            return a < b
+        if op == ">":
+            return a > b
+        if op == "<=":
+            return a <= b
+        if op == ">=":
+            return a >= b
         raise ValueError(f"Unknown comparison operator: {op}")
 
     if isinstance(left, str) and isinstance(right, str):
-        return _cmp(excel_casefold(left), excel_casefold(right))
+        return _cmp_str(excel_casefold(left), excel_casefold(right))
 
     ln = to_number(left)
     rn = to_number(right)
     if isinstance(ln, XlError) or isinstance(rn, XlError):
-        return _cmp(excel_casefold(to_string(left)), excel_casefold(to_string(right)))
+        return _cmp_str(excel_casefold(to_string(left)), excel_casefold(to_string(right)))
 
-    return _cmp(float(ln), float(rn))
+    return _cmp_float(float(ln), float(rn))
 
 
 def xl_concat(left: CellValue, right: CellValue) -> str | XlError:

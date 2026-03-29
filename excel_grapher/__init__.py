@@ -21,6 +21,8 @@ from .grapher import (
     DynamicRefConfig,
     DynamicRefError,
     DynamicRefLimits,
+    FromWorkbook,
+    GreaterThanCell,
     GuardCellRef,
     GuardExpr,
     Literal,
@@ -28,6 +30,7 @@ from .grapher import (
     NodeHook,
     NodeKey,
     Not,
+    NotEqualCell,
     Or,
     ValidationResult,
     ValueType,
@@ -45,6 +48,8 @@ from .grapher import (
 )
 
 __all__ = [
+    "GreaterThanCell",
+    "NotEqualCell",
     "And",
     "GuardCellRef",
     "Compare",
@@ -54,6 +59,7 @@ __all__ = [
     "DynamicRefConfig",
     "DynamicRefError",
     "DynamicRefLimits",
+    "FromWorkbook",
     "constrain",
     "Literal",
     "Node",

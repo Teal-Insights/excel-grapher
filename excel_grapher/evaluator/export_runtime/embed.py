@@ -55,7 +55,7 @@ class _RuntimeNameCollector(ast.NodeVisitor):
         if node.value is not None:
             self.visit(node.value)
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
+    def _visit_function_like(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         for deco in node.decorator_list:
             self.visit(deco)
         for d in node.args.defaults:
@@ -66,8 +66,11 @@ class _RuntimeNameCollector(ast.NodeVisitor):
         for stmt in node.body:
             self.visit(stmt)
 
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
+        self._visit_function_like(node)
+
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # noqa: N802
-        return self.visit_FunctionDef(node)  # type: ignore[arg-type]
+        self._visit_function_like(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802
         for base in node.bases:

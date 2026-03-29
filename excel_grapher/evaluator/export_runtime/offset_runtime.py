@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import numpy as np
 import fastpyxl.utils.cell
+import numpy as np
 
 from excel_grapher.core.addressing import offset_range
 

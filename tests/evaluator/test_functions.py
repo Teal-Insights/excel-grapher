@@ -1,5 +1,7 @@
 """Tests for Excel function implementations."""
 
+from typing import cast
+
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.evaluator.evaluator import FormulaEvaluator
 from excel_grapher.evaluator.name_utils import parse_address
@@ -450,7 +452,7 @@ def test_npv() -> None:
         result = ev.evaluate(["S!B1"])
         # NPV = 3000/1.1 + 4200/1.1^2 + 6800/1.1^3 = 2727.27 + 3471.07 + 5109.47 = 11307.29
         # Then -10000 + 11307.29 = 1307.29
-        assert abs(float(result["S!B1"]) - 1307.29) < 0.1  # type: ignore[arg-type]
+        assert abs(float(cast(int | float, result["S!B1"])) - 1307.29) < 0.1
 
 
 def test_npv_simple() -> None:
@@ -461,7 +463,7 @@ def test_npv_simple() -> None:
     with FormulaEvaluator(graph) as ev:
         result = ev.evaluate(["S!A1"])
         # 100/1.1 + 100/1.1^2 + 100/1.1^3 = 90.91 + 82.64 + 75.13 = 248.68
-        assert abs(float(result["S!A1"]) - 248.68) < 0.1  # type: ignore[arg-type]
+        assert abs(float(cast(int | float, result["S!A1"])) - 248.68) < 0.1
 
 
 # --- Statistical function tests ---
@@ -484,7 +486,7 @@ def test_stdev() -> None:
         result = ev.evaluate(["S!B1"])
         # Mean = 40/8 = 5, variance = sum((x-5)^2)/(n-1) = 36/7 ≈ 5.14
         # STDEV ≈ 2.27
-        assert abs(float(result["S!B1"]) - 2.138) < 0.01  # type: ignore[arg-type]
+        assert abs(float(cast(int | float, result["S!B1"])) - 2.138) < 0.01
 
 
 def test_stdev_single_value() -> None:
@@ -557,8 +559,8 @@ def test_normdist() -> None:
     )
     with FormulaEvaluator(graph) as ev:
         result = ev.evaluate(["S!A1", "S!A2"])
-        assert abs(float(result["S!A1"]) - 0.5) < 1e-12  # type: ignore[arg-type]
-        assert abs(float(result["S!A2"]) - 0.3989422804014327) < 1e-12  # type: ignore[arg-type]
+        assert abs(float(cast(int | float, result["S!A1"])) - 0.5) < 1e-12
+        assert abs(float(cast(int | float, result["S!A2"])) - 0.3989422804014327) < 1e-12
 
 
 def test_address() -> None:

@@ -640,7 +640,7 @@ class CodeGenerator:
         if attach_to_graph:
             classification = {addr: "input" for addr in inputs}
             classification.update({addr: "constant" for addr in constants})
-            self.graph.leaf_classification = classification  # type: ignore[assignment]
+            self.graph.leaf_classification = classification
 
         return inputs, constants
 
@@ -1476,7 +1476,7 @@ class CodeGenerator:
         lines.append("        merged.update(inputs)")
         lines.append(
             "    return EvalContext("
-            "inputs=merged, resolver=_resolve_formula, "
+            "inputs=coerce_inputs_dict(merged), resolver=_resolve_formula, "
             f"iterative_enabled={bool(self._iterate_enabled)}, "
             f"iterate_count={int(self._iterate_count)}, "
             f"iterate_delta={float(self._iterate_delta)!r})"
@@ -1645,7 +1645,7 @@ class CodeGenerator:
         internals_lines.extend(self._emit_resolver_lines())
         internals_py = "\n".join(internals_lines).rstrip() + "\n"
 
-        runtime_entry_names = ["EvalContext", "xl_cell"]
+        runtime_entry_names = ["EvalContext", "coerce_inputs_dict", "xl_cell"]
         if needs_range_helper:
             runtime_entry_names.append("xl_range")
         if self._iterate_enabled:
@@ -1671,7 +1671,7 @@ class CodeGenerator:
             "        merged.update(inputs)",
             (
                 "    return EvalContext("
-                "inputs=merged, resolver=_resolve_formula, "
+                "inputs=coerce_inputs_dict(merged), resolver=_resolve_formula, "
                 f"iterative_enabled={bool(self._iterate_enabled)}, "
                 f"iterate_count={int(self._iterate_count)}, "
                 f"iterate_delta={float(self._iterate_delta)!r})"
@@ -1865,6 +1865,7 @@ class CodeGenerator:
         # potentially leaf inputs), so keep it available.
         runtime_symbols = set(used_xl_functions) | {
             "EvalContext",
+            "coerce_inputs_dict",
             "xl_cell",
             "xl_eval",
             "xl_range",

@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import TypeAlias
 
-import numpy as np
 import fastpyxl.utils.cell
+import numpy as np
 
 
-class XlError(str, Enum):
+class XlError(StrEnum):
     VALUE = "#VALUE!"
     REF = "#REF!"
     DIV = "#DIV/0!"

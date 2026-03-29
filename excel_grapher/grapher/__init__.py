@@ -4,13 +4,15 @@ excel_grapher: Build and analyze dependency graphs from Excel workbooks.
 This package intentionally keeps the public API small and stable.
 """
 
+from excel_grapher.core.cell_types import GreaterThanCell, NotEqualCell
+
 from .builder import create_dependency_graph
 from .dependency_provenance import DependencyCause, EdgeProvenance
 from .dynamic_refs import (
-    constrain,
     DynamicRefConfig,
     DynamicRefError,
     DynamicRefLimits,
+    FromWorkbook,
     constrain,
     infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
@@ -32,6 +34,9 @@ __all__ = [
     "DynamicRefConfig",
     "DynamicRefError",
     "DynamicRefLimits",
+    "FromWorkbook",
+    "GreaterThanCell",
+    "NotEqualCell",
     "constrain",
     "infer_dynamic_index_targets",
     "infer_dynamic_indirect_targets",

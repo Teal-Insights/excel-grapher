@@ -194,19 +194,35 @@ def _parse_countif_criteria(criteria: str) -> tuple[str | None, str]:
     return (None, s)
 
 
-def _compare_values(op: str, left: str | float, right: str | float) -> bool:
+def _compare_numeric(op: str, left: float, right: float) -> bool:
     if op == "=":
         return left == right
     if op == "<>":
         return left != right
     if op == ">":
-        return left > right  # type: ignore[operator]
+        return left > right
     if op == "<":
-        return left < right  # type: ignore[operator]
+        return left < right
     if op == ">=":
-        return left >= right  # type: ignore[operator]
+        return left >= right
     if op == "<=":
-        return left <= right  # type: ignore[operator]
+        return left <= right
+    return False
+
+
+def _compare_str(op: str, left: str, right: str) -> bool:
+    if op == "=":
+        return left == right
+    if op == "<>":
+        return left != right
+    if op == ">":
+        return left > right
+    if op == "<":
+        return left < right
+    if op == ">=":
+        return left >= right
+    if op == "<=":
+        return left <= right
     return False
 
 
@@ -257,11 +273,11 @@ def xl_countif(range_values: CellValue, criteria: CellValue) -> int | XlError:
             vn = to_number(v)
             if isinstance(vn, XlError):
                 continue
-            match = _compare_values(op, vn, rhs_num)
+            match = _compare_numeric(op, float(vn), rhs_num)
         else:
             left_str = excel_casefold(to_string(v))
             right_str = excel_casefold(rhs)
-            match = _compare_values(op, left_str, right_str)
+            match = _compare_str(op, left_str, right_str)
         if match:
             count += 1
     return count

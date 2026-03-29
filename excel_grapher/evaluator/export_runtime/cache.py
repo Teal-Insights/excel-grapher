@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from math import isfinite
+from typing import cast
 
 import fastpyxl.utils.cell
 
@@ -43,6 +44,11 @@ def circular_safe_cache(func: Callable[[], CellValue]) -> Callable[[], CellValue
             _computing.discard(func)
 
     return wrapper
+
+
+def coerce_inputs_dict(values: Mapping[str, object]) -> dict[str, CellValue]:
+    """Widen inferred default-input dicts to ``dict[str, CellValue]`` for :class:`EvalContext`."""
+    return cast(dict[str, CellValue], dict(values))
 
 
 @dataclass(slots=True)

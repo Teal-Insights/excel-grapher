@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any, TypeAlias, get_args, get_origin, get_type_hints
 
+from fastpyxl.utils.cell import coordinate_from_string
 
-class CellKind(str, Enum):
+
+class CellKind(StrEnum):
     NUMBER = "number"
     STRING = "string"
     BOOL = "bool"
@@ -35,12 +37,30 @@ class EnumDomain:
 
 
 @dataclass(frozen=True, slots=True)
+class GreaterThanCell:
+    """Metadata marker: the annotated cell is always greater than another cell."""
+
+    other: str
+
+
+@dataclass(frozen=True, slots=True)
+class NotEqualCell:
+    """Metadata marker: the annotated cell is never equal to another cell."""
+
+    other: str
+
+
+CellRelation: TypeAlias = GreaterThanCell | NotEqualCell
+
+
+@dataclass(frozen=True, slots=True)
 class CellType:
     """Internal description of the allowed values for a single cell."""
 
     kind: CellKind
     interval: IntervalDomain | None = None
     enum: EnumDomain | None = None
+    relations: tuple[CellRelation, ...] = ()
 
 
 CellTypeEnv: TypeAlias = Mapping[str, CellType]
@@ -67,7 +87,7 @@ def constraints_to_cell_type_env(
     """
 
     # Import here to avoid forcing Annotated / Literal into __all__ of core.
-    from typing import Annotated, Literal  # type: ignore
+    from typing import Annotated, Literal
 
     hints = get_type_hints(constraints_type, include_extras=True)
     env: dict[str, CellType] = {}
@@ -85,6 +105,7 @@ def constraints_to_cell_type_env(
                 metadata = list(args[1:])
 
         domain = _domain_from_metadata(metadata)
+        relations = _relations_from_metadata(metadata)
 
         origin = get_origin(base_type)
         if origin is Literal:
@@ -95,7 +116,12 @@ def constraints_to_cell_type_env(
         else:
             kind = _infer_kind_from_python_type(base_type)
 
-        env[key] = CellType(kind=kind, interval=_interval_from_domain(domain), enum=_enum_from_domain(domain))
+        env[key] = CellType(
+            kind=kind,
+            interval=_interval_from_domain(domain),
+            enum=_enum_from_domain(domain),
+            relations=relations,
+        )
 
     # We currently ignore the concrete values in `constraints` and rely solely
     # on type metadata; this leaves room to validate presence/shape later.
@@ -109,6 +135,16 @@ def _domain_from_metadata(metadata: list[object]) -> IntervalDomain | EnumDomain
         if isinstance(meta, Between):
             return IntervalDomain(min=meta.min, max=meta.max)
     return None
+
+
+def _relations_from_metadata(metadata: list[object]) -> tuple[CellRelation, ...]:
+    relations: list[CellRelation] = []
+    for meta in metadata:
+        if isinstance(meta, GreaterThanCell):
+            relations.append(GreaterThanCell(_normalize_cell_address(meta.other)))
+        elif isinstance(meta, NotEqualCell):
+            relations.append(NotEqualCell(_normalize_cell_address(meta.other)))
+    return tuple(relations)
 
 
 def _infer_kind_from_literal_values(values: tuple[object, ...]) -> CellKind:
@@ -150,4 +186,14 @@ def _enum_from_domain(domain: IntervalDomain | EnumDomain | None) -> EnumDomain 
     if isinstance(domain, EnumDomain):
         return domain
     return None
+
+
+def _normalize_cell_address(addr: str) -> str:
+    sheet_part, coord = addr.split("!", 1)
+    sheet = sheet_part.strip()
+    if sheet.startswith("'") and sheet.endswith("'"):
+        sheet = sheet[1:-1].replace("''", "'")
+
+    col, row = coordinate_from_string(coord.strip().replace("$", ""))
+    return f"{sheet}!{col}{row}"
 
