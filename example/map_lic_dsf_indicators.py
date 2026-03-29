@@ -9,7 +9,7 @@ Dynamic refs (OFFSET/INDIRECT) are resolved via a constraint-based config.
 Iterative workflow: run the script; if DynamicRefError is raised, the message
 includes the formula cell that needs a constraint. Inspect that cell and the
 row/column headers in the workbook to decide plausible input domains, add the
-address to LicDsfConstraints (with Annotated[int, Between(lo, hi)] or
+address to LicDsfConstraints (with Annotated[int, Between(lo, hi)], Annotated[float, RealBetween(...)], or
 Literal[...]), then re-run until the graph
 builds.
 """
@@ -42,7 +42,7 @@ from excel_grapher import (
     to_graphviz,
     validate_graph,
 )
-from excel_grapher.core.cell_types import Between  # noqa: F401 - used when adding constraints
+from excel_grapher.core.cell_types import Between, RealBetween  # noqa: F401 - used when adding constraints
 
 # Row labels for the multi-row stress-test blocks (same row layout in each block).
 # Blank string means that row is skipped when splitting by row.
@@ -134,7 +134,7 @@ USE_CACHED_DYNAMIC_REFS = False
 # ---------------------------------------------------------------------------
 
 """
-Dynamic refs (OFFSET/INDIRECT/INDEX) are resolved via a constraint-based config. Iterative workflow: run the script; if DynamicRefError is raised, the message includes the formula cell whose inputs need constraints. Inspect that cell and the row/column headers in the workbook to decide plausible input domains, use `constrain` to set a constraint (e.g., `constrain(LicDsfConstraints, "'Sheet Name'!A965", Literal["value"])` for a constant or something like `Annotated[float, Between(min=0)]` in lieu of `Literal` for a numeric constraint).
+Dynamic refs (OFFSET/INDIRECT/INDEX) are resolved via a constraint-based config. Iterative workflow: run the script; if DynamicRefError is raised, the message includes the formula cell whose inputs need constraints. Inspect that cell and the row/column headers in the workbook to decide plausible input domains, use `constrain` to set a constraint (e.g., `constrain(LicDsfConstraints, "'Sheet Name'!A965", Literal["value"])` for a constant or something like `Annotated[float, RealBetween(min=0)]` in lieu of `Literal` for a numeric constraint).
 
 Then re-run until the graph builds. Note that if row/column labels or intentionally blank cells show up in error output, they have been referenced by a dynamic ref and must be constrained for the graph to resolve. Blank cells can be set to `Literal[None]`.
 
@@ -166,7 +166,7 @@ constrain(LicDsfConstraints, "PV_Base!A917", Literal[64])
 constrain(LicDsfConstraints, "PV_Base!A941", Literal[90])
 constrain(LicDsfConstraints, "PV_Base!A965", Literal[115])
 
-constrain(LicDsfConstraints, "PV_Base!A965", Annotated[float, Between(min=0)])
+constrain(LicDsfConstraints, "PV_Base!A965", Annotated[float, RealBetween(min=0)])
 
 # A918:A938, A942:A962, A966:A986 each has a single cached letter D, E, …, X.
 for _start, _end in [(918, 939), (942, 963), (966, 987)]:
@@ -191,17 +191,17 @@ constrain(LicDsfConstraints, "lookup!BB4:BC7", _LANG_LOOKUP)
 
 # Tailored stress test parameters (from Input 6 - Tailored Tests)
 constrain(LicDsfConstraints, "C4_Market_financing!AB20", Literal[0, 1])  # New commercial debt projected
-constrain(LicDsfConstraints, "C4_Market_financing!AB22", Annotated[float, Between(min=0, max=100)])  # FX depreciation shock (%)
-constrain(LicDsfConstraints, "C4_Market_financing!AB23", Annotated[float, Between(min=0, max=1)])  # ER pass-through to inflation
+constrain(LicDsfConstraints, "C4_Market_financing!AB22", Annotated[float, RealBetween(min=0, max=100)])  # FX depreciation shock (%)
+constrain(LicDsfConstraints, "C4_Market_financing!AB23", Annotated[float, RealBetween(min=0, max=1)])  # ER pass-through to inflation
 constrain(LicDsfConstraints, "C4_Market_financing!AB25", Annotated[int, Between(min=0, max=2000)])  # Increase in cost, bps
 constrain(LicDsfConstraints, "C4_Market_financing!AB28", Annotated[int, Between(min=1, max=50)])  # New maturity if original > 5y
-constrain(LicDsfConstraints, "C4_Market_financing!AB29", Annotated[float, Between(min=0, max=1)])  # Maturity shortening factor if < 5y
-constrain(LicDsfConstraints, "C4_Market_financing!AB30", Annotated[float, Between(min=0, max=1)])  # Grace period shortening factor
+constrain(LicDsfConstraints, "C4_Market_financing!AB29", Annotated[float, RealBetween(min=0, max=1)])  # Maturity shortening factor if < 5y
+constrain(LicDsfConstraints, "C4_Market_financing!AB30", Annotated[float, RealBetween(min=0, max=1)])  # Grace period shortening factor
 
 # New lending terms for the stress test (C4_Market_financing rows 35-39)
 constrain(LicDsfConstraints, "C4_Market_financing!C35:C39", Annotated[int, Between(min=0, max=50)])  # Grace period
 constrain(LicDsfConstraints, "C4_Market_financing!D35:D39", Annotated[int, Between(min=1, max=100)])  # Loan Maturity
-constrain(LicDsfConstraints, "C4_Market_financing!I35:I39", Annotated[float, Between(min=0, max=1)])  # Interest rate
+constrain(LicDsfConstraints, "C4_Market_financing!I35:I39", Annotated[float, RealBetween(min=0, max=1)])  # Interest rate
 
 # Structural dependencies for INDEX/MATCH resolution
 # 1. Set the default (None) for the bulk ranges
@@ -303,7 +303,7 @@ def _constrain_pv_stress_com(constraints: type[Any]) -> None:
     # W36:W140, X36:X140, Y36:Y140, Z36:Z140
 
     # Non-negative financial flows / values
-    financial_type = Annotated[float | None, Between(0, 10**15)]
+    financial_type = Annotated[float | None, RealBetween(0, 10**15)]
 
     # D9:D140 has some specific constants
     for r in range(9, 141):
@@ -338,7 +338,7 @@ _constrain_pv_stress_com(LicDsfConstraints)
 
 def _constrain_pv_baseline_com(constraints: type[Any]) -> None:
     # Non-negative financial flows / values (or None for empty cells)
-    financial_type = Annotated[float | None, Between(0, 10**15)]
+    financial_type = Annotated[float | None, RealBetween(0, 10**15)]
 
     # D column: mixed constants and financial values
     # D7: total commercial (financial)
@@ -378,8 +378,8 @@ def _constrain_pv_stress_and_pv_base_index_cells(constraints: type[Any]) -> None
     PV_Base AF: cumulative outputs; BD: total debt service; D: Interest rates, Base=100 scalars,
     IDA line, or maturity/Base blocks.
     """
-    financial_type = Annotated[float | None, Between(0, 10**15)]
-    unit_rate = Annotated[float | None, Between(0, 1)]
+    financial_type = Annotated[float | None, RealBetween(0, 10**15)]
+    unit_rate = Annotated[float | None, RealBetween(0, 1)]
 
     constrain(constraints, "'PV Stress'!D147", unit_rate)
     constrain(constraints, "'PV Stress'!D161", financial_type)
@@ -428,13 +428,13 @@ _constrain_pv_stress_and_pv_base_index_cells(LicDsfConstraints)
 # ---------------------------------------------------------------------------
 
 def _constrain_pv_lc_nr(constraints: type[Any], sheet: str) -> None:
-    financial_type = Annotated[float | None, Between(0, 10**15)]
+    financial_type = Annotated[float | None, RealBetween(0, 10**15)]
 
     # C28: text label "Stock of debt (in LC)"
     constrain(constraints, f"{sheet}!C28", Literal["Stock of debt (in LC)"])
 
     # BD7: interest rate (local currency) — unit rate
-    constrain(constraints, f"{sheet}!BD7", Annotated[float | None, Between(0, 1)])
+    constrain(constraints, f"{sheet}!BD7", Annotated[float | None, RealBetween(0, 1)])
 
     # Y6:AE6: tail end of gross financing row (beyond projection horizon)
     for _col in ("Y", "Z", "AA", "AB", "AC", "AD", "AE"):
@@ -468,7 +468,7 @@ _constrain_pv_lc_nr(LicDsfConstraints, "PV_LC_NR3")
 # enrichment_audit.json: first projection year; discount rate (template 0.05); ext/dom
 # definition (data validation lookup!X4:X5).
 constrain(LicDsfConstraints, "'Input 1 - Basics'!C18", Annotated[int, Between(1990, 2100)])
-constrain(LicDsfConstraints, "'Input 1 - Basics'!C25", Annotated[float, Between(0, 1)])
+constrain(LicDsfConstraints, "'Input 1 - Basics'!C25", Annotated[float, RealBetween(0, 1)])
 constrain(
     LicDsfConstraints,
     "'Input 1 - Basics'!C33",
@@ -687,7 +687,7 @@ _INPUT3_DMX_A1_RANGES: tuple[str, ...] = (
 
 def _constrain_input3_dmx(constraints: type[Any]) -> None:
     """Input 3 DMX macro series feeding INDEX (enrichment_audit: flows/GDP; may be negative)."""
-    dmx_macro = Annotated[float | None, Between(-10**15, 10**15)]
+    dmx_macro = Annotated[float | None, RealBetween(-10**15, 10**15)]
     q = "'Input 3 - Macro-Debt data(DMX)'"
     for a1 in _INPUT3_DMX_A1_RANGES:
         constrain(constraints, f"{q}!{a1}", dmx_macro)
@@ -702,8 +702,8 @@ _constrain_input3_dmx(LicDsfConstraints)
 
 def _constrain_input4_external_financing(constraints: type[Any]) -> None:
     """External financing (enrichment_audit: AG–AM and L–N flows; F interest; G grace; H maturity)."""
-    financial_type = Annotated[float | None, Between(0, 10**15)]
-    unit_rate = Annotated[float | None, Between(0, 1)]
+    financial_type = Annotated[float | None, RealBetween(0, 10**15)]
+    unit_rate = Annotated[float | None, RealBetween(0, 1)]
     grace = Annotated[int | None, Between(0, 50)]
     maturity = Annotated[int | None, Between(1, 100)]
 
@@ -757,9 +757,9 @@ def _constrain_input5_local_debt(constraints: type[Any]) -> None:
         return [get_column_letter(i) for i in range(min_c, max_c + 1)]
 
     q = "'Input 5 - Local-debt Financing'"
-    financial = Annotated[float | None, Between(0, 10**15)]
-    financial_signed = Annotated[float | None, Between(-10**15, 10**15)]
-    unit_rate = Annotated[float | None, Between(0, 1)]
+    financial = Annotated[float | None, RealBetween(0, 10**15)]
+    financial_signed = Annotated[float | None, RealBetween(-10**15, 10**15)]
+    unit_rate = Annotated[float | None, RealBetween(0, 1)]
     grace = Annotated[int | None, Between(0, 50)]
     maturity = Annotated[int | None, Between(1, 100)]
     small_int = Annotated[int | None, Between(0, 10)]
@@ -843,9 +843,9 @@ _constrain_input5_local_debt(LicDsfConstraints)
 def _constrain_input6_input8(constraints: type[Any]) -> None:
     """Tailored and standardized stress options; SDR sheet (enrichment_audit + template dropdowns)."""
     _threshold = Literal["Historical average only", "Baseline projection only", "Whichever is lower"]
-    financial = Annotated[float | None, Between(0, 10**15)]
-    financial_signed = Annotated[float | None, Between(-10**15, 10**15)]
-    unit_rate = Annotated[float | None, Between(0, 1)]
+    financial = Annotated[float | None, RealBetween(0, 10**15)]
+    financial_signed = Annotated[float | None, RealBetween(-10**15, 10**15)]
+    unit_rate = Annotated[float | None, RealBetween(0, 1)]
 
     q6t = "'Input 6 - Tailored Tests'"
     q6o = "'Input 6(optional)-Standard Test'"
@@ -857,7 +857,7 @@ def _constrain_input6_input8(constraints: type[Any]) -> None:
     constrain(constraints, f"{q6o}!C5", _threshold)
     constrain(constraints, f"{q6o}!C7", _threshold)
     constrain(constraints, f"{q6o}!C8", Literal["On", "Off"])
-    constrain(constraints, f"{q6o}!C17", Annotated[float, Between(0, 10)])
+    constrain(constraints, f"{q6o}!C17", Annotated[float, RealBetween(0, 10)])
     constrain(constraints, f"{q6o}!D8", Literal[None])
     constrain(constraints, f"{q6o}!D9", Literal[None])
     constrain(constraints, f"{q6o}!D18", _threshold)
@@ -886,10 +886,10 @@ _constrain_input6_input8(LicDsfConstraints)
 
 # AA403:AG403 — "Exchange rate (pa)" projection columns (years); may also map to
 # creditor-row financial data depending on workbook layout.
-constrain(LicDsfConstraints, "Ext_Debt_Data!AA403:AG403", Annotated[float | None, Between(0, 10**15)])
+constrain(LicDsfConstraints, "Ext_Debt_Data!AA403:AG403", Annotated[float | None, RealBetween(0, 10**15)])
 
 # F383:F384 — short-term debt principal / interest (or exchange rate in some layouts)
-constrain(LicDsfConstraints, "Ext_Debt_Data!F383:F384", Annotated[float | None, Between(0, 10**15)])
+constrain(LicDsfConstraints, "Ext_Debt_Data!F383:F384", Annotated[float | None, RealBetween(0, 10**15)])
 
 # ---------------------------------------------------------------------------
 # Translation table constraints
@@ -1050,7 +1050,7 @@ def main() -> None:
         print(f"\n   DynamicRefError: {e}")
         print(
             "   Add the reported cell's argument cells to LicDsfConstraints (address-style keys)"
-            " using Annotated[..., Between(...)] / Annotated[..., FromWorkbook()] as needed,"
+            " using Annotated[..., Between(...)] or Annotated[..., RealBetween(...)] / Annotated[..., FromWorkbook()] as needed,"
             " then re-run. Or set USE_CACHED_DYNAMIC_REFS=True to resolve from cached values."
         )
         raise

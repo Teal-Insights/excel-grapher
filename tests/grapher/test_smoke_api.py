@@ -18,4 +18,6 @@ def test_public_api_imports() -> None:
     assert eg.FromWorkbook is not None
     assert eg.GreaterThanCell is not None
     assert eg.NotEqualCell is not None
+    assert eg.RealBetween is not None
+    assert eg.RealIntervalDomain is not None
 

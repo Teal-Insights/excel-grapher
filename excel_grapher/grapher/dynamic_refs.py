@@ -433,6 +433,9 @@ def expand_leaf_env_to_argument_env(
                             f"constrain {r!r} more tightly, simplify the formula, or extend analysis "
                             f"for the unsupported construct)"
                         ) from exc
+                elif ct.real_interval is not None:
+                    cache[addr] = CellType(kind=CellKind.ANY)
+                    return cache[addr]
                 else:
                     cache[addr] = CellType(kind=CellKind.ANY)
                     return cache[addr]
@@ -1848,7 +1851,9 @@ def _infer_numeric_domain_result(
                     return _domain_result(None)
                 if ct.kind is CellKind.NUMBER:
                     return _domain_result(_FiniteInts(frozenset({1})))
-                if ct.kind is CellKind.ANY and (ct.enum is not None or ct.interval is not None):
+                if ct.kind is CellKind.ANY and (
+                    ct.enum is not None or ct.interval is not None or ct.real_interval is not None
+                ):
                     return _domain_result(_FiniteInts(frozenset({0, 1})))
                 return _domain_result(_FiniteInts(frozenset({0})))
             arg_result = _infer_numeric_domain_result(
@@ -2303,6 +2308,11 @@ def _build_domains(
             vals = [int(v) for v in ct.enum.values]
         elif ct.interval is not None:
             vals = _interval_to_values(ct.interval, limits)
+        elif ct.real_interval is not None:
+            raise DynamicRefError(
+                f"CellType for {addr!r} uses a real interval (RealBetween); "
+                "integer enum or Between bounds are required to enumerate OFFSET/INDEX arguments."
+            )
         else:
             raise DynamicRefError(
                 f"CellType for {addr!r} has no enum or interval domain (e.g. formula uses "
@@ -2325,11 +2335,6 @@ def _build_domains(
 def _interval_to_values(interval: IntervalDomain, limits: DynamicRefLimits) -> list[int]:
     if interval.min is None or interval.max is None:
         raise DynamicRefError("Unbounded intervals are not supported for dynamic refs")
-    if isinstance(interval.min, float) or isinstance(interval.max, float):
-        raise DynamicRefError(
-            "Float interval domains cannot be enumerated for dynamic refs; "
-            "use an enum domain or integer bounds instead"
-        )
     lo, hi = int(interval.min), int(interval.max)
     if hi < lo:
         raise DynamicRefError(f"Invalid interval domain [{lo}, {hi}]")
@@ -2501,6 +2506,11 @@ def _build_value_domains(
             values = list(ct.enum.values)
         elif ct.interval is not None:
             values = _interval_to_values(ct.interval, limits)
+        elif ct.real_interval is not None:
+            raise DynamicRefError(
+                f"CellType for {addr!r} uses a real interval (RealBetween); "
+                "use Literal / integer Between or an explicit enum for INDIRECT text arguments."
+            )
         else:
             raise DynamicRefError(
                 f"CellType for {addr!r} must have an interval or enum domain for INDIRECT analysis"
