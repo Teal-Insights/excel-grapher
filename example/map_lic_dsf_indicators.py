@@ -26,6 +26,8 @@ from typing import (  # noqa: F401 - Annotated/Literal used when adding constrai
 
 import openpyxl
 import openpyxl.utils.cell
+from openpyxl.utils import range_boundaries
+from openpyxl.utils.cell import get_column_letter
 
 from excel_grapher import (
     CycleError,
@@ -36,8 +38,6 @@ from excel_grapher import (
     format_cell_key,
     format_key,
     get_calc_settings,
-    get_column_letter,
-    range_boundaries,
     to_graphviz,
     validate_graph,
 )
@@ -302,7 +302,7 @@ def _constrain_pv_stress_com(constraints: type[Any]) -> None:
     # W36:W140, X36:X140, Y36:Y140, Z36:Z140
 
     # Non-negative financial flows / values
-    financial_type = Annotated[float | None, Between(0, 1e15)]
+    financial_type = Annotated[float | None, Between(0, 10**15)]
 
     # D9:D140 has some specific constants
     for r in range(9, 141):
@@ -337,7 +337,7 @@ _constrain_pv_stress_com(LicDsfConstraints)
 
 def _constrain_pv_baseline_com(constraints: type[Any]) -> None:
     # Non-negative financial flows / values (or None for empty cells)
-    financial_type = Annotated[float | None, Between(0, 1e15)]
+    financial_type = Annotated[float | None, Between(0, 10**15)]
 
     # D column: mixed constants and financial values
     # D7: total commercial (financial)
@@ -377,7 +377,7 @@ def _constrain_pv_stress_and_pv_base_index_cells(constraints: type[Any]) -> None
     PV_Base AF: cumulative outputs; BD: total debt service; D: Interest rates, Base=100 scalars,
     IDA line, or maturity/Base blocks.
     """
-    financial_type = Annotated[float | None, Between(0, 1e15)]
+    financial_type = Annotated[float | None, Between(0, 10**15)]
     unit_rate = Annotated[float | None, Between(0, 1)]
 
     constrain(constraints, "'PV Stress'!D147", unit_rate)
@@ -427,7 +427,7 @@ _constrain_pv_stress_and_pv_base_index_cells(LicDsfConstraints)
 # ---------------------------------------------------------------------------
 
 def _constrain_pv_lc_nr(constraints: type[Any], sheet: str) -> None:
-    financial_type = Annotated[float | None, Between(0, 1e15)]
+    financial_type = Annotated[float | None, Between(0, 10**15)]
 
     # C28: text label "Stock of debt (in LC)"
     constrain(constraints, f"{sheet}!C28", Literal["Stock of debt (in LC)"])
@@ -686,7 +686,7 @@ _INPUT3_DMX_A1_RANGES: tuple[str, ...] = (
 
 def _constrain_input3_dmx(constraints: type[Any]) -> None:
     """Input 3 DMX macro series feeding INDEX (enrichment_audit: flows/GDP; may be negative)."""
-    dmx_macro = Annotated[float | None, Between(-1e15, 1e15)]
+    dmx_macro = Annotated[float | None, Between(-10**15, 10**15)]
     q = "'Input 3 - Macro-Debt data(DMX)'"
     for a1 in _INPUT3_DMX_A1_RANGES:
         constrain(constraints, f"{q}!{a1}", dmx_macro)
@@ -701,7 +701,7 @@ _constrain_input3_dmx(LicDsfConstraints)
 
 def _constrain_input4_external_financing(constraints: type[Any]) -> None:
     """External financing (enrichment_audit: AG–AM and L–N flows; F interest; G grace; H maturity)."""
-    financial_type = Annotated[float | None, Between(0, 1e15)]
+    financial_type = Annotated[float | None, Between(0, 10**15)]
     unit_rate = Annotated[float | None, Between(0, 1)]
     grace = Annotated[int | None, Between(0, 50)]
     maturity = Annotated[int | None, Between(1, 100)]
@@ -750,8 +750,8 @@ def _constrain_input5_local_debt(constraints: type[Any]) -> None:
         return [get_column_letter(i) for i in range(min_c, max_c + 1)]
 
     q = "'Input 5 - Local-debt Financing'"
-    financial = Annotated[float | None, Between(0, 1e15)]
-    financial_signed = Annotated[float | None, Between(-1e15, 1e15)]
+    financial = Annotated[float | None, Between(0, 10**15)]
+    financial_signed = Annotated[float | None, Between(-10**15, 10**15)]
     unit_rate = Annotated[float | None, Between(0, 1)]
     grace = Annotated[int | None, Between(0, 50)]
     maturity = Annotated[int | None, Between(1, 100)]
@@ -836,8 +836,8 @@ _constrain_input5_local_debt(LicDsfConstraints)
 def _constrain_input6_input8(constraints: type[Any]) -> None:
     """Tailored and standardized stress options; SDR sheet (enrichment_audit + template dropdowns)."""
     _threshold = Literal["Historical average only", "Baseline projection only", "Whichever is lower"]
-    financial = Annotated[float | None, Between(0, 1e15)]
-    financial_signed = Annotated[float | None, Between(-1e15, 1e15)]
+    financial = Annotated[float | None, Between(0, 10**15)]
+    financial_signed = Annotated[float | None, Between(-10**15, 10**15)]
     unit_rate = Annotated[float | None, Between(0, 1)]
 
     q6t = "'Input 6 - Tailored Tests'"
@@ -879,10 +879,10 @@ _constrain_input6_input8(LicDsfConstraints)
 
 # AA403:AG403 — "Exchange rate (pa)" projection columns (years); may also map to
 # creditor-row financial data depending on workbook layout.
-constrain(LicDsfConstraints, "Ext_Debt_Data!AA403:AG403", Annotated[float | None, Between(0, 1e15)])
+constrain(LicDsfConstraints, "Ext_Debt_Data!AA403:AG403", Annotated[float | None, Between(0, 10**15)])
 
 # F383:F384 — short-term debt principal / interest (or exchange rate in some layouts)
-constrain(LicDsfConstraints, "Ext_Debt_Data!F383:F384", Annotated[float | None, Between(0, 1e15)])
+constrain(LicDsfConstraints, "Ext_Debt_Data!F383:F384", Annotated[float | None, Between(0, 10**15)])
 
 # ---------------------------------------------------------------------------
 # Translation table constraints
@@ -906,7 +906,7 @@ constrain(LicDsfConstraints, "translation!E898", Literal["Projecções"])
 constrain(LicDsfConstraints, "translation!F898", Literal["Proyecciones"])
 
 
-def _get_missing_constraints(specs: list[str], constraints: type[TypedDict]) -> list[str]:
+def _get_missing_constraints(specs: list[str], constraints: type[Any]) -> list[str]:
     def _normalize_sheet(sheet: str) -> str:
         """Strip surrounding single-quotes so format_key can re-add them consistently."""
         if sheet.startswith("'") and sheet.endswith("'"):

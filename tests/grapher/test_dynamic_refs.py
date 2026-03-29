@@ -15,6 +15,8 @@ from excel_grapher.core.cell_types import (
     EnumDomain,
     IntIntervalDomain,
 )
+from excel_grapher.core.formula_ast import parse as parse_ast
+from excel_grapher.grapher import dynamic_refs as dynamic_refs_mod
 from excel_grapher.grapher.builder import _format_missing_leaves
 from excel_grapher.grapher.dynamic_refs import (
     DynamicRefConfig,
@@ -867,4 +869,255 @@ def test_create_dependency_graph_standalone_index_missing_leaf(tmp_path: Path) -
         )
     assert "Sheet1!B1" in str(exc_info.value)
     assert "leaf" in str(exc_info.value).lower()
+
+
+def test_index_match_huge_lookup_array_only_needs_lookup_value_constraint() -> None:
+    """MATCH lookup_array is not expanded for per-cell domains; INDEX stays sound via shape bounds."""
+    formula = (
+        "=INDEX(Sheet1!A1:Sheet1!A3,MATCH(Sheet1!B1,Sheet1!Z1:Sheet1!Z999999,0),1)"
+    )
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({2})),
+            )
+        }
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="Sheet1", cell_type_env=env)
+    assert targets == {"Sheet1!A1", "Sheet1!A2", "Sheet1!A3"}
+
+
+def test_match_domain_collection_skips_lookup_array_but_full_closure_keeps_upstream() -> None:
+    ast = parse_ast("=MATCH(Sheet1!B1,OFFSET(Sheet1!Z1,0,0,5,1),0)")
+    need = dynamic_refs_mod._collect_addresses_needing_domain(ast)
+    assert need == {"Sheet1!B1"}
+    closure = dynamic_refs_mod._collect_addresses(ast)
+    assert "Sheet1!Z1" in closure
+
+
+def test_expand_leaf_env_wide_interval_no_interval_branch_limit_error() -> None:
+    from excel_grapher.grapher.dynamic_refs import expand_leaf_env_to_argument_env
+
+    leaf_env = _make_env(
+        {
+            "Sheet1!A1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntIntervalDomain(min=0, max=10**15),
+            )
+        }
+    )
+
+    def _get_cell_formula(addr: str) -> str | None:
+        return "=Sheet1!A1" if addr == "Sheet1!B1" else None
+
+    def _get_refs_from_formula(formula: str, sheet: str) -> set[str]:
+        assert sheet == "Sheet1"
+        return {"Sheet1!A1"} if "A1" in formula else set()
+
+    env = expand_leaf_env_to_argument_env(
+        {"Sheet1!B1"},
+        _get_cell_formula,
+        _get_refs_from_formula,
+        leaf_env,
+        DynamicRefLimits(),
+    )
+    assert env["Sheet1!B1"].kind is CellKind.NUMBER
+    assert env["Sheet1!B1"].interval is not None
+    assert env["Sheet1!B1"].interval.max == 10**15
+
+
+def test_domain_from_cell_type_any_interval_is_numeric_domain() -> None:
+    limits = DynamicRefLimits()
+    lo, hi = -10**15, 10**15
+    ct = CellType(
+        kind=CellKind.ANY,
+        interval=IntIntervalDomain(min=lo, max=hi),
+    )
+    d = dynamic_refs_mod._domain_from_cell_type(ct, limits)
+    assert isinstance(d, dynamic_refs_mod._IntBounds)
+    assert d.lo == lo and d.hi == hi
+
+
+def test_domain_from_cell_type_any_int_enum_is_finite_ints() -> None:
+    limits = DynamicRefLimits()
+    ct = CellType(
+        kind=CellKind.ANY,
+        enum=EnumDomain(values=frozenset({1, 2, 3})),
+    )
+    d = dynamic_refs_mod._domain_from_cell_type(ct, limits)
+    assert isinstance(d, dynamic_refs_mod._FiniteInts)
+    assert d.values == frozenset({1, 2, 3})
+
+
+def test_domain_from_cell_type_any_non_integral_float_enum_rejected() -> None:
+    limits = DynamicRefLimits()
+    ct = CellType(
+        kind=CellKind.ANY,
+        enum=EnumDomain(values=frozenset({1.5, 2.5})),
+    )
+    assert dynamic_refs_mod._domain_from_cell_type(ct, limits) is None
+
+
+def test_domain_from_cell_type_any_mixed_type_enum_rejected() -> None:
+    limits = DynamicRefLimits()
+    ct = CellType(
+        kind=CellKind.ANY,
+        enum=EnumDomain(values=frozenset({1, "N/A"})),
+    )
+    assert dynamic_refs_mod._domain_from_cell_type(ct, limits) is None
+
+
+def test_expand_leaf_env_if_isnumber_wide_any_interval_summarizes_to_number() -> None:
+    """Nullable-style ANY + IntInterval on a leaf feeds IF(ISNUMBER(x),x,0) without enumeration.
+
+    Covers the LIC-DSF-style guard (`IF(ISNUMBER(x), x, 0)`) without hitting
+    `_interval_to_values` / branch-limit errors on wide bounds.
+    """
+    from excel_grapher.grapher.dynamic_refs import expand_leaf_env_to_argument_env
+
+    lo, hi = -10**15, 10**15
+    leaf_env = _make_env(
+        {
+            "Sheet1!A1": CellType(
+                kind=CellKind.ANY,
+                interval=IntIntervalDomain(min=lo, max=hi),
+            )
+        }
+    )
+
+    def _get_cell_formula(addr: str) -> str | None:
+        if addr == "Sheet1!B1":
+            return "=IF(ISNUMBER(Sheet1!A1),Sheet1!A1,0)"
+        return None
+
+    def _get_refs_from_formula(formula: str, sheet: str) -> set[str]:
+        assert sheet == "Sheet1"
+        return {"Sheet1!A1"}
+
+    env = expand_leaf_env_to_argument_env(
+        {"Sheet1!B1"},
+        _get_cell_formula,
+        _get_refs_from_formula,
+        leaf_env,
+        DynamicRefLimits(),
+    )
+    out = env["Sheet1!B1"]
+    assert out.kind is CellKind.NUMBER
+    assert out.interval is not None
+    assert out.interval.min == lo and out.interval.max == hi
+
+
+def test_infer_numeric_domain_parity_never_raises() -> None:
+    limits = DynamicRefLimits(max_branches=64, max_depth=12)
+    env: CellTypeEnv = {
+        "Sheet1!A1": CellType(
+            kind=CellKind.NUMBER,
+            enum=EnumDomain(values=frozenset({1, 2})),
+        )
+    }
+    ctx = {"row": 4, "column": 2}
+    tails = [
+        "1",
+        "1.5",
+        '"x"',
+        "TRUE",
+        "FALSE",
+        "Sheet1!A1",
+        "Sheet1!A1:Sheet1!A3",
+        "-Sheet1!A1",
+        "Sheet1!A1+Sheet1!A1",
+        "Sheet1!A1-Sheet1!A1",
+        "Sheet1!A1*2",
+        "Sheet1!A1/2",
+        "2^3",
+        "2&3",
+        "1=1",
+        "1<2",
+        "1>0",
+        "1<=1",
+        "1>=0",
+        "1<>2",
+        "IF(TRUE,1,2)",
+        "IF(FALSE,1,2)",
+        "SUM(Sheet1!A1)",
+        "MIN(Sheet1!A1)",
+        "MAX(Sheet1!A1)",
+        "ABS(-1)",
+        "ROW()",
+        "COLUMN()",
+        "ROW(Sheet1!A5)",
+        "COLUMN(Sheet1!B1)",
+        'CONCAT("a","b")',
+        "MATCH(Sheet1!A1,Sheet1!Z1:Sheet1!Z3,0)",
+    ]
+    for tail in tails:
+        ast = parse_ast("=" + tail)
+        out = dynamic_refs_mod._infer_numeric_domain(
+            ast,
+            env,
+            limits,
+            context=ctx,
+            current_sheet="Sheet1",
+        )
+        assert out is None or isinstance(
+            out, (dynamic_refs_mod._FiniteInts, dynamic_refs_mod._IntBounds)
+        )
+
+
+def test_index_sparse_row_enum_stays_precise() -> None:
+    formula = "=INDEX(Sheet1!A1:Sheet1!A5,Sheet1!B1,1)"
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({1, 3})),
+            )
+        }
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="Sheet1", cell_type_env=env)
+    assert targets == {"Sheet1!A1", "Sheet1!A3"}
+
+
+def test_index_two_dimensional_dynamic_row_and_col() -> None:
+    formula = "=INDEX(Sheet1!A1:Sheet1!C3,Sheet1!B1,Sheet1!D1)"
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({1, 2})),
+            ),
+            "Sheet1!D1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({2, 3})),
+            ),
+        }
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="Sheet1", cell_type_env=env)
+    assert targets == {
+        "Sheet1!B1",
+        "Sheet1!C1",
+        "Sheet1!B2",
+        "Sheet1!C2",
+    }
+
+
+def test_index_respects_max_cells_limit() -> None:
+    formula = "=INDEX(Sheet1!A1:Sheet1!A3,Sheet1!B1,1)"
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({1, 2, 3})),
+            )
+        }
+    )
+    with pytest.raises(DynamicRefError) as exc_info:
+        infer_dynamic_index_targets(
+            formula,
+            current_sheet="Sheet1",
+            cell_type_env=env,
+            limits=DynamicRefLimits(max_cells=2),
+        )
+    assert "cells exceed limit" in str(exc_info.value).lower()
 
