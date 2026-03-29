@@ -291,6 +291,28 @@ from excel_grapher.grapher import to_networkx
 G = to_networkx(g)
 ```
 
+### Large graphs: lightweight WebGL viewer
+
+For graphs that are too large for Graphviz or Mermaid, build a **columnar** payload and open the generated HTML in a browser (no Node/npm build). The overview uses rank-based layout and module summaries; raw cell-to-cell edges are exported only in bounded **local** neighborhoods. Optional **local force** layout runs in the browser on small subgraphs only.
+
+```python
+from pathlib import Path
+
+from excel_grapher.grapher import (
+    create_dependency_graph,
+    to_lightweight_viz,
+    write_lightweight_viz_data,
+    write_lightweight_viz_html,
+)
+
+g = create_dependency_graph("model.xlsx", ["Sheet1!A1"], load_values=False)
+payload = to_lightweight_viz(g)
+write_lightweight_viz_data(payload, Path("model.viz.json"))
+write_lightweight_viz_html(payload, Path("model.html"), data_mode="auto")
+```
+
+`write_lightweight_viz_html(..., data_mode="auto")` inlines JSON when the estimated payload is at most **50 MiB** (override with `inline_size_budget_mb`); otherwise it writes a sidecar `.viz.json` next to the HTML. Stats on truncation and density are in `payload.stats`.
+
 ### Validation via `calcChain.xml`
 
 You can validate the graph against Excel’s `calcChain.xml`:

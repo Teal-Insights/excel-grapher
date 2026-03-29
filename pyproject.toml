@@ -50,6 +50,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["excel_grapher"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"excel_grapher/grapher/lightweight_viz_template.html" = "excel_grapher/grapher/lightweight_viz_template.html"
+
 [tool.hatch.build.targets.sdist]
 include = [
     "excel_grapher/",

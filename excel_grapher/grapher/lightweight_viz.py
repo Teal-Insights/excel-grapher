@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import heapq
 import json
-import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -323,16 +322,6 @@ def _edge_list_all(
     return out
 
 
-def _module_internal_edge_count(
-    module_of: list[int], edges: list[tuple[int, int, bool]]
-) -> int:
-    c = 0
-    for u, v, _ in edges:
-        if module_of[u] == module_of[v]:
-            c += 1
-    return c
-
-
 def _neighbor_sort_key(
     target: int,
     guarded: bool,
@@ -381,14 +370,12 @@ def _build_local_csr(
                     t[0], t[1], module_of, m, out_deg
                 )
             )
-            kept = 0
-            for tgt, g in raw:
-                if kept >= max_local_edges:
+            for k, (tgt, g) in enumerate(raw):
+                if k >= max_local_edges:
                     complete[src] = False
                     break
                 targets.append(tgt)
                 guarded_flags.append(g)
-                kept += 1
             if len(raw) > max_local_edges:
                 complete[src] = False
         offsets[src + 1] = len(targets)
@@ -824,6 +811,7 @@ def write_lightweight_viz_html(
     title: str = "Workbook dependency graph",
     data_mode: Literal["inline", "sidecar", "auto"] = "auto",
     data_path: Path | str | None = None,
+    inline_size_budget_mb: int = 50,
 ) -> None:
     from importlib import resources
 
@@ -831,7 +819,7 @@ def write_lightweight_viz_html(
         raise ValueError(f"Unsupported lightweight viz payload version: {payload.version}")
 
     out = Path(path)
-    budget = 50 * 1024 * 1024
+    budget = max(0, inline_size_budget_mb) * 1024 * 1024
     json_payload: str | None = None
     sidecar_name: str | None = None
 

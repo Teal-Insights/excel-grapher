@@ -23,7 +23,22 @@ from .dynamic_refs import (
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
 )
-from .export import to_graphviz, to_mermaid, to_networkx
+from .export import (
+    LightweightVizLocalEdges,
+    LightweightVizModule,
+    LightweightVizModuleEdge,
+    LightweightVizNodeColumns,
+    LightweightVizPayload,
+    LightweightVizStats,
+    LocalForceSubgraph,
+    select_local_force_subgraph,
+    to_graphviz,
+    to_lightweight_viz,
+    to_mermaid,
+    to_networkx,
+    write_lightweight_viz_data,
+    write_lightweight_viz_html,
+)
 from .graph import CycleError, CycleReport, DependencyGraph, NodeHook
 from .guard import And, Compare, GuardExpr, Literal, Not, Or
 from .guard import CellRef as GuardCellRef
@@ -61,9 +76,20 @@ __all__ = [
     "Node",
     "NodeKey",
     "ValueType",
+    "LocalForceSubgraph",
+    "LightweightVizLocalEdges",
+    "LightweightVizModule",
+    "LightweightVizModuleEdge",
+    "LightweightVizNodeColumns",
+    "LightweightVizPayload",
+    "LightweightVizStats",
+    "select_local_force_subgraph",
     "to_graphviz",
+    "to_lightweight_viz",
     "to_mermaid",
     "to_networkx",
+    "write_lightweight_viz_data",
+    "write_lightweight_viz_html",
     "validate_graph",
     "ValidationResult",
     "get_calc_settings",
