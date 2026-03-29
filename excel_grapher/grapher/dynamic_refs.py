@@ -328,8 +328,9 @@ def expand_leaf_env_to_argument_env(
             raise DynamicRefError(
                 f"Cycle detected while inferring argument-cell types for {addr!r}"
             )
-        if addr in leaf_env:
-            cache[addr] = leaf_env[addr]
+        ct_resolved = _lookup_cell_type(leaf_env, addr)
+        if ct_resolved is not None:
+            cache[addr] = ct_resolved
             return cache[addr]
         in_progress.add(addr)
         formula = get_cell_formula(addr)
