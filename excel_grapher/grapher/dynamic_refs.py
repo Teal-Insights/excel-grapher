@@ -20,7 +20,9 @@ from excel_grapher.core.cell_types import (
     CellType,
     CellTypeEnv,
     EnumDomain,
+    GreaterThanCell,
     IntervalDomain,
+    NotEqualCell,
     constraints_to_cell_type_env,
 )
 from excel_grapher.core.excel_function_meta import is_ref_only_arg
@@ -178,7 +180,7 @@ class FromWorkbook:
 
 def _has_from_workbook_marker(annotated_type: Any) -> bool:
     try:
-        from typing import Annotated  # type: ignore
+        from typing import Annotated
     except ImportError:  # pragma: no cover - Annotated always available in supported versions
         return False
 
@@ -366,13 +368,27 @@ def expand_leaf_env_to_argument_env(
                 return cache[addr]
             ref_types = {r: cell_type_for(r) for r in refs}
             if ast_root is not None:
-                inferred = _infer_numeric_domain(
+                infer_result = _infer_numeric_domain_result(
                     ast_root,
                     ref_types,
                     limits,
                     context=None,
                     current_sheet=_sheet_from_addr(addr),
                 )
+                if infer_result.diagnostic is not None:
+                    detail = infer_result.diagnostic
+                    refs_text = ", ".join(sorted(detail.refs))
+                    refs_clause = f" Constrain one or more of: {refs_text}." if refs_text else ""
+                    expr_clause = (
+                        f" Divisor expression: {detail.expression}."
+                        if detail.expression is not None
+                        else ""
+                    )
+                    raise DynamicRefError(
+                        f"Formula cell {addr!r} is not covered by numeric abstract analysis: "
+                        f"{detail.reason}.{expr_clause}{refs_clause}"
+                    )
+                inferred = infer_result.domain
                 if inferred is not None:
                     if isinstance(inferred, _FiniteInts):
                         cache[addr] = CellType(
@@ -967,6 +983,26 @@ class _FiniteInts:
     values: frozenset[int]
 
 
+@dataclass(frozen=True, slots=True)
+class _UnsupportedNumericDiagnostic:
+    reason: str
+    refs: frozenset[str] = frozenset()
+    expression: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _NumericDomainInferenceResult:
+    domain: _FiniteInts | _IntBounds | None
+    diagnostic: _UnsupportedNumericDiagnostic | None = None
+
+
+def _domain_result(
+    domain: _FiniteInts | _IntBounds | None,
+    diagnostic: _UnsupportedNumericDiagnostic | None = None,
+) -> _NumericDomainInferenceResult:
+    return _NumericDomainInferenceResult(domain=domain, diagnostic=diagnostic)
+
+
 def _domain_from_cell_type(ct: CellType | None, limits: DynamicRefLimits) -> _FiniteInts | _IntBounds | None:
     if ct is None:
         return None
@@ -1026,6 +1062,138 @@ def _normalize_to_bounds(d: _FiniteInts | _IntBounds) -> _IntBounds:
     if not d.values:
         return _IntBounds(0, -1)
     return _IntBounds(min(d.values), max(d.values))
+
+
+def _ast_to_expr_string(node: AstNode) -> str:
+    if isinstance(node, NumberNode):
+        return str(int(node.value) if isinstance(node.value, float) and node.value.is_integer() else node.value)
+    if isinstance(node, CellRefNode):
+        return node.address
+    if isinstance(node, RangeNode):
+        return f"{node.start}:{node.end}"
+    if isinstance(node, UnaryOpNode):
+        return f"{node.op}{_ast_to_expr_string(node.operand)}"
+    if isinstance(node, BinaryOpNode):
+        return f"({_ast_to_expr_string(node.left)}{node.op}{_ast_to_expr_string(node.right)})"
+    if isinstance(node, FunctionCallNode):
+        args = ",".join(_ast_to_expr_string(arg) for arg in node.args)
+        return f"{node.name.upper()}({args})"
+    if isinstance(node, StringNode):
+        return f'"{node.value}"'
+    if isinstance(node, BoolNode):
+        return "TRUE" if node.value else "FALSE"
+    if isinstance(node, ErrorNode):
+        return str(node.error)
+    return type(node).__name__
+
+
+def _domain_may_include_zero(domain: _FiniteInts | _IntBounds | None) -> bool:
+    if domain is None:
+        return True
+    if isinstance(domain, _FiniteInts):
+        return 0 in domain.values
+    return domain.lo <= 0 <= domain.hi
+
+
+def _domain_with_min(
+    domain: _FiniteInts | _IntBounds | None,
+    minimum: int,
+    limits: DynamicRefLimits,
+) -> _FiniteInts | _IntBounds | None:
+    if domain is None:
+        return None
+    if isinstance(domain, _FiniteInts):
+        values = frozenset(v for v in domain.values if v >= minimum)
+        return _FiniteInts(values) if values else None
+    lo = max(domain.lo, minimum)
+    hi = domain.hi
+    if hi < lo:
+        return None
+    span = hi - lo + 1
+    if span <= limits.max_branches:
+        return _FiniteInts(frozenset(range(lo, hi + 1)))
+    return _IntBounds(lo, hi)
+
+
+def _domain_with_max(
+    domain: _FiniteInts | _IntBounds | None,
+    maximum: int,
+    limits: DynamicRefLimits,
+) -> _FiniteInts | _IntBounds | None:
+    if domain is None:
+        return None
+    if isinstance(domain, _FiniteInts):
+        values = frozenset(v for v in domain.values if v <= maximum)
+        return _FiniteInts(values) if values else None
+    lo = domain.lo
+    hi = min(domain.hi, maximum)
+    if hi < lo:
+        return None
+    span = hi - lo + 1
+    if span <= limits.max_branches:
+        return _FiniteInts(frozenset(range(lo, hi + 1)))
+    return _IntBounds(lo, hi)
+
+
+def _domain_without_zero(domain: _FiniteInts | _IntBounds | None) -> _FiniteInts | _IntBounds | None:
+    if domain is None:
+        return None
+    if isinstance(domain, _FiniteInts):
+        values = frozenset(v for v in domain.values if v != 0)
+        return _FiniteInts(values) if values else None
+    return domain
+
+
+def _cell_has_relation(env: CellTypeEnv, addr: str, relation: type[GreaterThanCell | NotEqualCell], other: str) -> bool:
+    ct = env.get(addr)
+    if ct is None:
+        return False
+    return any(isinstance(rel, relation) and rel.other == other for rel in ct.relations)
+
+
+def _cells_are_known_not_equal(env: CellTypeEnv, left: str, right: str) -> bool:
+    return (
+        _cell_has_relation(env, left, GreaterThanCell, right)
+        or _cell_has_relation(env, right, GreaterThanCell, left)
+        or _cell_has_relation(env, left, NotEqualCell, right)
+        or _cell_has_relation(env, right, NotEqualCell, left)
+    )
+
+
+def _refine_difference_domain(
+    node: BinaryOpNode,
+    env: CellTypeEnv,
+    domain: _FiniteInts | _IntBounds | None,
+    limits: DynamicRefLimits,
+) -> _FiniteInts | _IntBounds | None:
+    if domain is None:
+        return None
+    if not isinstance(node.left, CellRefNode) or not isinstance(node.right, CellRefNode):
+        return domain
+
+    left = node.left.address
+    right = node.right.address
+    if _cell_has_relation(env, left, GreaterThanCell, right):
+        return _domain_with_min(domain, 1, limits)
+    if _cell_has_relation(env, right, GreaterThanCell, left):
+        return _domain_with_max(domain, -1, limits)
+    if _cells_are_known_not_equal(env, left, right):
+        return _domain_without_zero(domain)
+    return domain
+
+
+def _expr_is_known_nonzero(node: AstNode, env: CellTypeEnv) -> bool:
+    if isinstance(node, CellRefNode):
+        ct = env.get(node.address)
+        return ct is not None and _domain_may_include_zero(_domain_from_cell_type(ct, DynamicRefLimits())) is False
+    if (
+        isinstance(node, BinaryOpNode)
+        and node.op == "-"
+        and isinstance(node.left, CellRefNode)
+        and isinstance(node.right, CellRefNode)
+    ):
+        return _cells_are_known_not_equal(env, node.left.address, node.right.address)
+    return False
 
 
 def _union_numeric_domains(
@@ -1123,24 +1291,51 @@ def _div_numeric_domains(
     a: _FiniteInts | _IntBounds | None,
     b: _FiniteInts | _IntBounds | None,
     limits: DynamicRefLimits,
+    *,
+    known_nonzero: bool = False,
 ) -> _FiniteInts | _IntBounds | None:
     if a is None or b is None:
         return None
-    bb = _normalize_to_bounds(b)
-    if bb.lo <= 0 <= bb.hi:
-        return None
     if isinstance(a, _FiniteInts) and isinstance(b, _FiniteInts):
-        quotients = {_trunc_div_int(x, y) for x in a.values for y in b.values}
+        quotients = {_trunc_div_int(x, y) for x in a.values for y in b.values if y != 0}
+        if not quotients:
+            return None
         if len(quotients) <= limits.max_branches:
             return _FiniteInts(frozenset(quotients))
         return _IntBounds(min(quotients), max(quotients))
+    bb = _normalize_to_bounds(b)
+    if bb.lo <= 0 <= bb.hi and not known_nonzero:
+        return None
     ba = _normalize_to_bounds(a)
-    corners = (
-        _trunc_div_int(ba.lo, bb.lo),
-        _trunc_div_int(ba.lo, bb.hi),
-        _trunc_div_int(ba.hi, bb.lo),
-        _trunc_div_int(ba.hi, bb.hi),
-    )
+    corners: list[int] = []
+    if bb.hi < 0 or bb.lo > 0:
+        corners.extend(
+            [
+                _trunc_div_int(ba.lo, bb.lo),
+                _trunc_div_int(ba.lo, bb.hi),
+                _trunc_div_int(ba.hi, bb.lo),
+                _trunc_div_int(ba.hi, bb.hi),
+            ]
+        )
+    else:
+        corners.extend(
+            [
+                _trunc_div_int(ba.lo, bb.lo),
+                _trunc_div_int(ba.lo, -1),
+                _trunc_div_int(ba.hi, bb.lo),
+                _trunc_div_int(ba.hi, -1),
+            ]
+        )
+        corners.extend(
+            [
+                _trunc_div_int(ba.lo, 1),
+                _trunc_div_int(ba.lo, bb.hi),
+                _trunc_div_int(ba.hi, 1),
+                _trunc_div_int(ba.hi, bb.hi),
+            ]
+        )
+    if not corners:
+        return None
     lo, hi = min(corners), max(corners)
     if hi < lo:
         return _FiniteInts(frozenset())
@@ -1148,6 +1343,39 @@ def _div_numeric_domains(
     if span <= limits.max_branches:
         return _FiniteInts(frozenset(range(lo, hi + 1)))
     return _IntBounds(lo, hi)
+
+
+def _div_numeric_result(
+    left: _NumericDomainInferenceResult,
+    right: _NumericDomainInferenceResult,
+    node: BinaryOpNode,
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+) -> _NumericDomainInferenceResult:
+    if left.diagnostic is not None:
+        return left
+    if right.diagnostic is not None:
+        return right
+    if left.domain is None or right.domain is None:
+        return _domain_result(None)
+    refined_right = (
+        _refine_difference_domain(node.right, env, right.domain, limits)
+        if isinstance(node.right, BinaryOpNode) and node.right.op == "-"
+        else right.domain
+    )
+    known_nonzero = _expr_is_known_nonzero(node.right, env)
+    if _domain_may_include_zero(refined_right) and not known_nonzero:
+        return _domain_result(
+            None,
+            _UnsupportedNumericDiagnostic(
+                reason="divisor may include zero",
+                refs=frozenset(_collect_addresses(node.right)),
+                expression=_ast_to_expr_string(node.right),
+            ),
+        )
+    return _domain_result(
+        _div_numeric_domains(left.domain, refined_right, limits, known_nonzero=known_nonzero)
+    )
 
 
 def _comparison_numeric_domain(
@@ -1324,6 +1552,27 @@ def _infer_sum_numeric_domain(
     return acc
 
 
+def _infer_sum_numeric_domain_result(
+    node: FunctionCallNode,
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    *,
+    context: dict[str, int],
+    current_sheet: str,
+    depth: int,
+) -> _NumericDomainInferenceResult:
+    return _domain_result(
+        _infer_sum_numeric_domain(
+            node,
+            env,
+            limits,
+            context=context,
+            current_sheet=current_sheet,
+            depth=depth,
+        )
+    )
+
+
 def _infer_choose_numeric_domain(
     node: FunctionCallNode,
     env: CellTypeEnv,
@@ -1373,6 +1622,226 @@ def _infer_choose_numeric_domain(
     return out
 
 
+def _infer_choose_numeric_domain_result(
+    node: FunctionCallNode,
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    *,
+    context: dict[str, int],
+    current_sheet: str,
+    depth: int,
+) -> _NumericDomainInferenceResult:
+    if len(node.args) < 2:
+        return _domain_result(None)
+    index_result = _infer_numeric_domain_result(
+        node.args[0],
+        env,
+        limits,
+        context=context,
+        current_sheet=current_sheet,
+        depth=depth + 1,
+    )
+    if index_result.diagnostic is not None:
+        return index_result
+    index_dom = index_result.domain
+    if index_dom is None:
+        return _domain_result(None)
+    option_count = len(node.args) - 1
+    if isinstance(index_dom, _FiniteInts):
+        selected = sorted(i for i in index_dom.values if 1 <= i <= option_count)
+    else:
+        lo = max(1, index_dom.lo)
+        hi = min(option_count, index_dom.hi)
+        if hi < lo:
+            return _domain_result(None)
+        selected = list(range(lo, hi + 1))
+
+    out: _FiniteInts | _IntBounds | None = None
+    for idx in selected:
+        option_result = _infer_numeric_domain_result(
+            node.args[idx],
+            env,
+            limits,
+            context=context,
+            current_sheet=current_sheet,
+            depth=depth + 1,
+        )
+        if option_result.diagnostic is not None:
+            return option_result
+        option_dom = option_result.domain
+        if option_dom is None:
+            return _domain_result(None)
+        out = option_dom if out is None else _union_numeric_domains(out, option_dom, limits)
+        if out is None:
+            return _domain_result(None)
+    return _domain_result(out)
+
+
+def _infer_numeric_domain_result(
+    node: AstNode,
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    *,
+    context: dict[str, int] | None = None,
+    current_sheet: str = "",
+    depth: int = 0,
+) -> _NumericDomainInferenceResult:
+    """Analysis-only numeric abstract interpretation for selector expressions.
+
+    Returns ``None`` when the expression is unsupported or cannot be summarized
+    soundly as integers. Must never raise for well-formed AST nodes.
+    """
+    if depth > limits.max_depth:
+        return _domain_result(None)
+    ctx = context or {}
+
+    if isinstance(node, NumberNode):
+        v = node.value
+        if isinstance(v, bool):
+            return _domain_result(_FiniteInts(frozenset({int(v)})))
+        if isinstance(v, int):
+            return _domain_result(_FiniteInts(frozenset({v})))
+        if isinstance(v, float) and v.is_integer():
+            return _domain_result(_FiniteInts(frozenset({int(v)})))
+        return _domain_result(None)
+
+    if isinstance(node, (StringNode, BoolNode, ErrorNode)):
+        return _domain_result(None)
+
+    if isinstance(node, CellRefNode):
+        return _domain_result(_domain_from_cell_type(env.get(node.address), limits))
+
+    if isinstance(node, RangeNode):
+        return _domain_result(None)
+
+    if isinstance(node, UnaryOpNode):
+        if node.op == "-":
+            inner = _infer_numeric_domain_result(
+                node.operand, env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+            )
+            if inner.diagnostic is not None:
+                return inner
+            return _domain_result(_neg_numeric_domain(inner.domain))
+        return _domain_result(None)
+
+    if isinstance(node, BinaryOpNode):
+        left = _infer_numeric_domain_result(
+            node.left, env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+        )
+        right = _infer_numeric_domain_result(
+            node.right, env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+        )
+        if left.diagnostic is not None:
+            return left
+        if right.diagnostic is not None:
+            return right
+        op = node.op
+        if op == "+":
+            return _domain_result(_add_numeric_domains(left.domain, right.domain, limits))
+        if op == "-":
+            return _domain_result(
+                _refine_difference_domain(
+                    node,
+                    env,
+                    _sub_numeric_domains(left.domain, right.domain, limits),
+                    limits,
+                )
+            )
+        if op == "*":
+            return _domain_result(_mul_numeric_domains(left.domain, right.domain, limits))
+        if op == "/":
+            return _div_numeric_result(left, right, node, env, limits)
+        if op in {"=", "<>", "<", ">", "<=", ">="}:
+            return _domain_result(_comparison_numeric_domain(op, left.domain, right.domain))
+        return _domain_result(None)
+
+    if isinstance(node, FunctionCallNode):
+        name = node.name.upper()
+        if name == "ROW":
+            if len(node.args) == 0:
+                row = ctx.get("row")
+                if row is None:
+                    return _domain_result(None)
+                return _domain_result(_FiniteInts(frozenset({int(row)})))
+            if len(node.args) == 1 and isinstance(node.args[0], CellRefNode):
+                cell = _cell_part_from_address_for_infer(node.args[0].address)
+                _col_letter, row = coordinate_from_string(cell)
+                return _domain_result(_FiniteInts(frozenset({row})))
+            return _domain_result(None)
+        if name == "COLUMN":
+            if len(node.args) == 0:
+                col = ctx.get("column")
+                if col is None:
+                    return _domain_result(None)
+                return _domain_result(_FiniteInts(frozenset({int(col)})))
+            if len(node.args) == 1 and isinstance(node.args[0], CellRefNode):
+                cell = _cell_part_from_address_for_infer(node.args[0].address)
+                col_letter, _row = coordinate_from_string(cell)
+                from fastpyxl.utils.cell import column_index_from_string
+
+                return _domain_result(_FiniteInts(frozenset({column_index_from_string(col_letter)})))
+            return _domain_result(None)
+        if name == "MATCH":
+            if len(node.args) < 2:
+                return _domain_result(None)
+            n = _static_match_lookup_extent(node.args[1])
+            if n is None or n < 1:
+                return _domain_result(None)
+            return _domain_result(_IntBounds(1, n))
+        if name == "IF":
+            if len(node.args) < 2:
+                return _domain_result(None)
+            then_result = _infer_numeric_domain_result(
+                node.args[1], env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+            )
+            if then_result.diagnostic is not None:
+                return then_result
+            if len(node.args) >= 3:
+                else_result = _infer_numeric_domain_result(
+                    node.args[2], env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+                )
+                if else_result.diagnostic is not None:
+                    return else_result
+                else_d = else_result.domain
+            else:
+                else_d = _FiniteInts(frozenset({0}))
+            return _domain_result(_union_numeric_domains(then_result.domain, else_d, limits))
+        if name == "SUM":
+            return _infer_sum_numeric_domain_result(
+                node, env, limits, context=ctx, current_sheet=current_sheet, depth=depth
+            )
+        if name == "CHOOSE":
+            return _infer_choose_numeric_domain_result(
+                node, env, limits, context=ctx, current_sheet=current_sheet, depth=depth
+            )
+        if name == "ISNUMBER":
+            if len(node.args) != 1:
+                return _domain_result(None)
+            arg = node.args[0]
+            if isinstance(arg, CellRefNode):
+                ct = env.get(arg.address)
+                if ct is None:
+                    return _domain_result(None)
+                if ct.kind is CellKind.NUMBER:
+                    return _domain_result(_FiniteInts(frozenset({1})))
+                if ct.kind is CellKind.ANY and (ct.enum is not None or ct.interval is not None):
+                    return _domain_result(_FiniteInts(frozenset({0, 1})))
+                return _domain_result(_FiniteInts(frozenset({0})))
+            arg_result = _infer_numeric_domain_result(
+                arg, env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+            )
+            if arg_result.diagnostic is not None:
+                return arg_result
+            if arg_result.domain is None:
+                return _domain_result(_FiniteInts(frozenset({0})))
+            return _domain_result(_FiniteInts(frozenset({0, 1})))
+        if name in frozenset({"MIN", "MAX", "ABS", "CONCAT"}):
+            return _domain_result(None)
+        return _domain_result(None)
+
+    return _domain_result(None)
+
+
 def _infer_numeric_domain(
     node: AstNode,
     env: CellTypeEnv,
@@ -1382,150 +1851,14 @@ def _infer_numeric_domain(
     current_sheet: str = "",
     depth: int = 0,
 ) -> _FiniteInts | _IntBounds | None:
-    """Analysis-only numeric abstract interpretation for selector expressions.
-
-    Returns ``None`` when the expression is unsupported or cannot be summarized
-    soundly as integers. Must never raise for well-formed AST nodes.
-    """
-    if depth > limits.max_depth:
-        return None
-    ctx = context or {}
-
-    if isinstance(node, NumberNode):
-        v = node.value
-        if isinstance(v, bool):
-            return _FiniteInts(frozenset({int(v)}))
-        if isinstance(v, int):
-            return _FiniteInts(frozenset({v}))
-        if isinstance(v, float) and v.is_integer():
-            return _FiniteInts(frozenset({int(v)}))
-        return None
-
-    if isinstance(node, (StringNode, BoolNode, ErrorNode)):
-        return None
-
-    if isinstance(node, CellRefNode):
-        return _domain_from_cell_type(env.get(node.address), limits)
-
-    if isinstance(node, RangeNode):
-        return None
-
-    if isinstance(node, UnaryOpNode):
-        if node.op == "-":
-            inner = _infer_numeric_domain(
-                node.operand, env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
-            )
-            return _neg_numeric_domain(inner)
-        return None
-
-    if isinstance(node, BinaryOpNode):
-        left = _infer_numeric_domain(
-            node.left, env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
-        )
-        right = _infer_numeric_domain(
-            node.right, env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
-        )
-        op = node.op
-        if op == "+":
-            return _add_numeric_domains(left, right, limits)
-        if op == "-":
-            return _sub_numeric_domains(left, right, limits)
-        if op == "*":
-            return _mul_numeric_domains(left, right, limits)
-        if op == "/":
-            return _div_numeric_domains(left, right, limits)
-        if op in {"=", "<>", "<", ">", "<=", ">="}:
-            return _comparison_numeric_domain(op, left, right)
-        return None
-
-    if isinstance(node, FunctionCallNode):
-        name = node.name.upper()
-        if name == "ROW":
-            if len(node.args) == 0:
-                row = ctx.get("row")
-                if row is None:
-                    return None
-                return _FiniteInts(frozenset({int(row)}))
-            if len(node.args) == 1 and isinstance(node.args[0], CellRefNode):
-                cell = _cell_part_from_address_for_infer(node.args[0].address)
-                _col_letter, row = coordinate_from_string(cell)
-                return _FiniteInts(frozenset({row}))
-            return None
-        if name == "COLUMN":
-            if len(node.args) == 0:
-                col = ctx.get("column")
-                if col is None:
-                    return None
-                return _FiniteInts(frozenset({int(col)}))
-            if len(node.args) == 1 and isinstance(node.args[0], CellRefNode):
-                cell = _cell_part_from_address_for_infer(node.args[0].address)
-                col_letter, _row = coordinate_from_string(cell)
-                from fastpyxl.utils.cell import column_index_from_string
-
-                return _FiniteInts(frozenset({column_index_from_string(col_letter)}))
-            return None
-        if name == "MATCH":
-            if len(node.args) < 2:
-                return None
-            n = _static_match_lookup_extent(node.args[1])
-            if n is None or n < 1:
-                return None
-            return _IntBounds(1, n)
-        if name == "IF":
-            if len(node.args) < 2:
-                return None
-            then_d = _infer_numeric_domain(
-                node.args[1], env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
-            )
-            if len(node.args) >= 3:
-                else_d = _infer_numeric_domain(
-                    node.args[2], env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
-                )
-            else:
-                else_d = _FiniteInts(frozenset({0}))
-            return _union_numeric_domains(then_d, else_d, limits)
-        if name == "SUM":
-            return _infer_sum_numeric_domain(
-                node,
-                env,
-                limits,
-                context=ctx,
-                current_sheet=current_sheet,
-                depth=depth,
-            )
-        if name == "CHOOSE":
-            return _infer_choose_numeric_domain(
-                node,
-                env,
-                limits,
-                context=ctx,
-                current_sheet=current_sheet,
-                depth=depth,
-            )
-        if name == "ISNUMBER":
-            if len(node.args) != 1:
-                return None
-            arg = node.args[0]
-            if isinstance(arg, CellRefNode):
-                ct = env.get(arg.address)
-                if ct is None:
-                    return None
-                if ct.kind is CellKind.NUMBER:
-                    return _FiniteInts(frozenset({1}))
-                if ct.kind is CellKind.ANY and (ct.enum is not None or ct.interval is not None):
-                    return _FiniteInts(frozenset({0, 1}))
-                return _FiniteInts(frozenset({0}))
-            arg_domain = _infer_numeric_domain(
-                arg, env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
-            )
-            if arg_domain is None:
-                return _FiniteInts(frozenset({0}))
-            return _FiniteInts(frozenset({0, 1}))
-        if name in frozenset({"MIN", "MAX", "ABS", "CONCAT"}):
-            return None
-        return None
-
-    return None
+    return _infer_numeric_domain_result(
+        node,
+        env,
+        limits,
+        context=context,
+        current_sheet=current_sheet,
+        depth=depth,
+    ).domain
 
 
 def _cell_part_from_address_for_infer(addr: str) -> str:
@@ -1852,10 +2185,10 @@ def _collect_addresses_needing_domain(node: AstNode) -> set[str]:
                 visit(arg, n, i)
             return
         if hasattr(n, "left") and hasattr(n, "right"):
-            visit(n.left, n, None)  # type: ignore[arg-type]
-            visit(n.right, n, None)  # type: ignore[arg-type]
+            visit(cast(AstNode, n.left), n, None)
+            visit(cast(AstNode, n.right), n, None)
         if hasattr(n, "operand"):
-            visit(n.operand, n, None)  # type: ignore[arg-type]
+            visit(cast(AstNode, n.operand), n, None)
 
     visit(node)
     return addrs
@@ -1892,10 +2225,10 @@ def _collect_addresses(node: AstNode) -> set[str]:
             return
         # Binary/unary ops and other nodes: recurse into children where present.
         if hasattr(n, "left") and hasattr(n, "right"):
-            visit(n.left)  # type: ignore[arg-type]
-            visit(n.right)  # type: ignore[arg-type]
+            visit(cast(AstNode, n.left))
+            visit(cast(AstNode, n.right))
         if hasattr(n, "operand"):
-            visit(n.operand)  # type: ignore[arg-type]
+            visit(cast(AstNode, n.operand))
 
     visit(node)
     return addrs

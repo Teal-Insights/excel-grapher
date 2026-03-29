@@ -28,8 +28,8 @@ def _values_equal(a: object, b: object, *, rtol: float, atol: float) -> bool:
     if a == b:
         return True
     if _is_finite_number(a) and _is_finite_number(b):
-        af = float(a)  # type: ignore[arg-type]
-        bf = float(b)  # type: ignore[arg-type]
+        af = float(cast(int | float, a))
+        bf = float(cast(int | float, b))
         return abs(af - bf) <= max(atol, rtol * max(abs(af), abs(bf)))
     return False
 

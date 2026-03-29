@@ -20,12 +20,14 @@ from excel_grapher.evaluator.parser import (
 from excel_grapher.evaluator.types import XlError
 
 
-def _set_leaf_classification(graph: object, value: dict[str, str]) -> None:
-    graph.leaf_classification = value  # type: ignore[attr-defined]
+def _set_leaf_classification(graph: DependencyGraph, value: dict[str, str]) -> None:
+    graph.leaf_classification = value
 
 
-def _get_leaf_classification(graph: object) -> dict[str, str]:
-    return graph.leaf_classification  # type: ignore[attr-defined]
+def _get_leaf_classification(graph: DependencyGraph) -> dict[str, str]:
+    lc = graph.leaf_classification
+    assert lc is not None
+    return lc
 
 
 class TestEmitAstLiterals:

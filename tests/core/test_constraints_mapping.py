@@ -7,7 +7,9 @@ from excel_grapher.core.cell_types import (
     CellKind,
     CellTypeEnv,
     EnumDomain,
+    GreaterThanCell,
     IntervalDomain,
+    NotEqualCell,
     constraints_to_cell_type_env,
 )
 
@@ -79,4 +81,37 @@ def test_constraints_mapping_supports_float_between() -> None:
     assert f1.kind is CellKind.NUMBER
     assert f1.interval == IntervalDomain(min=-0.5, max=0.5)
     assert f1.enum is None
+
+
+class _RelationalConstraintsDict(TypedDict, total=False):
+    pass
+
+
+_RelationalConstraintsDict.__annotations__["Sheet1!A1"] = Annotated[int, Between(0, 10)]
+_RelationalConstraintsDict.__annotations__["Sheet1!B1"] = Annotated[
+    int,
+    Between(1, 20),
+    GreaterThanCell("'Sheet1'!A1"),
+    NotEqualCell("'Sheet1'!C1"),
+]
+_RelationalConstraintsDict.__annotations__["Sheet1!C1"] = Annotated[int, Between(0, 20)]
+
+
+def test_constraints_mapping_preserves_relational_metadata() -> None:
+    constraints = cast(
+        _RelationalConstraintsDict,
+        {
+            "Sheet1!A1": 5,
+            "Sheet1!B1": 9,
+            "Sheet1!C1": 8,
+        },
+    )
+
+    env: CellTypeEnv = constraints_to_cell_type_env(_RelationalConstraintsDict, constraints)
+
+    b1 = env["Sheet1!B1"]
+    assert b1.relations == (
+        GreaterThanCell("Sheet1!A1"),
+        NotEqualCell("Sheet1!C1"),
+    )
 

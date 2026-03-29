@@ -310,8 +310,7 @@ class TestErrorHandling:
         exec(code, namespace)
         # xl_div returns XlError.DIV for division by zero (Excel semantics)
         result = namespace["compute_all"]()
-        # Check that we got an XlError enum value (the generated code defines its own XlError)
-        assert str(result["S!C1"]) == "XlError.DIV"
+        assert result["S!C1"] == namespace["XlError"].DIV
 
     def test_error_literal_in_formula(self):
         """Formula contains error literal."""
@@ -446,7 +445,7 @@ class TestOffsetFunction:
         namespace: dict = {}
         exec(code, namespace)
         result = namespace["compute_all"]()
-        assert str(result["S!B1"]) == "XlError.REF"
+        assert result["S!B1"] == namespace["XlError"].REF
 
     def test_offset_with_formulas(self):
         """OFFSET works with formula cells."""

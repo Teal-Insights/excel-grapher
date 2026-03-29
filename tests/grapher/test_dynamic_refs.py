@@ -13,8 +13,10 @@ from excel_grapher.core.cell_types import (
     CellType,
     CellTypeEnv,
     EnumDomain,
-    IntIntervalDomain,
+    GreaterThanCell,
     IntervalDomain,
+    IntIntervalDomain,
+    NotEqualCell,
 )
 from excel_grapher.core.formula_ast import parse as parse_ast
 from excel_grapher.grapher import dynamic_refs as dynamic_refs_mod
@@ -1301,6 +1303,191 @@ def test_expand_leaf_env_choose_unions_selected_numeric_options() -> None:
     assert out.kind is CellKind.NUMBER
     assert out.enum is not None
     assert out.enum.values == frozenset({10, 30})
+
+
+def test_infer_numeric_domain_result_reports_divisor_may_include_zero() -> None:
+    limits = DynamicRefLimits(max_branches=8)
+    env: CellTypeEnv = {
+        "Sheet1!B9": CellType(
+            kind=CellKind.NUMBER,
+            interval=IntIntervalDomain(min=0, max=50),
+        ),
+        "Sheet1!B10": CellType(
+            kind=CellKind.NUMBER,
+            interval=IntIntervalDomain(min=1, max=100),
+        ),
+        "Sheet1!Q17": CellType(
+            kind=CellKind.NUMBER,
+            interval=IntIntervalDomain(min=-10, max=20),
+        ),
+        "Sheet1!Q19": CellType(
+            kind=CellKind.NUMBER,
+            interval=IntIntervalDomain(min=-10, max=20),
+        ),
+    }
+    ast = parse_ast("=(Sheet1!Q17-Sheet1!Q19)/(Sheet1!B10-Sheet1!B9)")
+
+    result = dynamic_refs_mod._infer_numeric_domain_result(
+        ast,
+        env,
+        limits,
+        current_sheet="Sheet1",
+    )
+
+    assert result.domain is None
+    assert result.diagnostic is not None
+    assert result.diagnostic.reason == "divisor may include zero"
+    assert result.diagnostic.refs == frozenset({"Sheet1!B9", "Sheet1!B10"})
+    assert result.diagnostic.expression == "(Sheet1!B10-Sheet1!B9)"
+
+
+def test_expand_leaf_env_division_zero_risk_error_points_to_divisor_cells() -> None:
+    leaf_env = _make_env(
+        {
+            "Sheet1!B9": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntIntervalDomain(min=0, max=50),
+            ),
+            "Sheet1!B10": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntIntervalDomain(min=1, max=100),
+            ),
+            "Sheet1!Q17": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntIntervalDomain(min=-10**16, max=10**16),
+            ),
+            "Sheet1!Q19": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntIntervalDomain(min=-10**16, max=10**16),
+            ),
+        }
+    )
+
+    def _get_cell_formula(addr: str) -> str | None:
+        return "=(Sheet1!Q17-Sheet1!Q19)/(Sheet1!B10-Sheet1!B9)" if addr == "Sheet1!Q28" else None
+
+    def _get_refs_from_formula(formula: str, sheet: str) -> set[str]:
+        assert sheet == "Sheet1"
+        return {"Sheet1!Q17", "Sheet1!Q19", "Sheet1!B9", "Sheet1!B10"}
+
+    with pytest.raises(DynamicRefError) as exc_info:
+        dynamic_refs_mod.expand_leaf_env_to_argument_env(
+            {"Sheet1!Q28"},
+            _get_cell_formula,
+            _get_refs_from_formula,
+            leaf_env,
+            DynamicRefLimits(max_branches=8),
+        )
+
+    msg = str(exc_info.value)
+    assert "divisor" in msg
+    assert "include zero" in msg
+    assert "Sheet1!B9" in msg
+    assert "Sheet1!B10" in msg
+    assert "(Sheet1!B10-Sheet1!B9)" in msg
+
+
+def test_infer_numeric_domain_result_uses_relational_cell_constraint_for_divisor() -> None:
+    limits = DynamicRefLimits(max_branches=8)
+    env: CellTypeEnv = {
+        "Sheet1!B9": CellType(
+            kind=CellKind.NUMBER,
+            interval=IntIntervalDomain(min=0, max=50),
+        ),
+        "Sheet1!B10": CellType(
+            kind=CellKind.NUMBER,
+            interval=IntIntervalDomain(min=1, max=100),
+            relations=(GreaterThanCell("Sheet1!B9"),),
+        ),
+        "Sheet1!Q17": CellType(
+            kind=CellKind.NUMBER,
+            interval=IntIntervalDomain(min=-10, max=20),
+        ),
+        "Sheet1!Q19": CellType(
+            kind=CellKind.NUMBER,
+            interval=IntIntervalDomain(min=-10, max=20),
+        ),
+    }
+    ast = parse_ast("=(Sheet1!Q17-Sheet1!Q19)/(Sheet1!B10-Sheet1!B9)")
+
+    result = dynamic_refs_mod._infer_numeric_domain_result(
+        ast,
+        env,
+        limits,
+        current_sheet="Sheet1",
+    )
+
+    assert result.diagnostic is None
+    assert result.domain == dynamic_refs_mod._IntBounds(-30, 30)
+
+
+def test_infer_numeric_domain_result_uses_not_equal_constraint_for_exact_divisor() -> None:
+    limits = DynamicRefLimits(max_branches=8)
+    env: CellTypeEnv = {
+        "Sheet1!A1": CellType(
+            kind=CellKind.NUMBER,
+            enum=EnumDomain(values=frozenset({1, 3})),
+            relations=(NotEqualCell("Sheet1!B1"),),
+        ),
+        "Sheet1!B1": CellType(
+            kind=CellKind.NUMBER,
+            enum=EnumDomain(values=frozenset({1, 2})),
+        ),
+    }
+    ast = parse_ast("=6/(Sheet1!A1-Sheet1!B1)")
+
+    result = dynamic_refs_mod._infer_numeric_domain_result(
+        ast,
+        env,
+        limits,
+        current_sheet="Sheet1",
+    )
+
+    assert result.diagnostic is None
+    assert result.domain == dynamic_refs_mod._FiniteInts(frozenset({-6, 3, 6}))
+
+
+def test_expand_leaf_env_division_relational_constraint_avoids_zero_risk_error() -> None:
+    leaf_env = _make_env(
+        {
+            "Sheet1!B9": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntIntervalDomain(min=0, max=50),
+            ),
+            "Sheet1!B10": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntIntervalDomain(min=1, max=100),
+                relations=(GreaterThanCell("Sheet1!B9"),),
+            ),
+            "Sheet1!Q17": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntIntervalDomain(min=-10**16, max=10**16),
+            ),
+            "Sheet1!Q19": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntIntervalDomain(min=-10**16, max=10**16),
+            ),
+        }
+    )
+
+    def _get_cell_formula(addr: str) -> str | None:
+        return "=(Sheet1!Q17-Sheet1!Q19)/(Sheet1!B10-Sheet1!B9)" if addr == "Sheet1!Q28" else None
+
+    def _get_refs_from_formula(formula: str, sheet: str) -> set[str]:
+        assert sheet == "Sheet1"
+        return {"Sheet1!Q17", "Sheet1!Q19", "Sheet1!B9", "Sheet1!B10"}
+
+    env = dynamic_refs_mod.expand_leaf_env_to_argument_env(
+        {"Sheet1!Q28"},
+        _get_cell_formula,
+        _get_refs_from_formula,
+        leaf_env,
+        DynamicRefLimits(max_branches=8),
+    )
+
+    out = env["Sheet1!Q28"]
+    assert out.kind is CellKind.NUMBER
+    assert out.interval == IntIntervalDomain(min=-(2 * 10**16), max=2 * 10**16)
 
 
 def test_infer_numeric_domain_parity_never_raises() -> None:

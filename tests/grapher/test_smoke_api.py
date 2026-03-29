@@ -15,4 +15,7 @@ def test_public_api_imports() -> None:
     assert eg.to_mermaid is not None
     assert eg.to_networkx is not None
     assert eg.validate_graph is not None
+    assert eg.FromWorkbook is not None
+    assert eg.GreaterThanCell is not None
+    assert eg.NotEqualCell is not None
 

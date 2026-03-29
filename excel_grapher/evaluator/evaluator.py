@@ -106,13 +106,19 @@ class FormulaEvaluator:
         for k in to_invalidate:
             self._cache.pop(k, None)
 
+    def _iterative_target_handler(self, addr: str) -> Callable[[EvalContext, str], CellValue]:
+        def handler(_ctx: EvalContext, _target: str) -> CellValue:
+            return self._evaluate_cell(addr)
+
+        return handler
+
     def evaluate(self, targets: list[str]) -> dict[str, CellValue]:
         # Auto-detect changes in leaf values if enabled
         if self.auto_detect_changes and self.eager_invalidation:
             self._detect_and_invalidate_changed_leaves()
         if self.iterate_enabled:
-            target_handlers = {
-                addr: (lambda _ctx, target=addr: self._evaluate_cell(target)) for addr in targets
+            target_handlers: dict[str, Callable[[EvalContext, str], CellValue]] = {
+                addr: self._iterative_target_handler(addr) for addr in targets
             }
             ctx = EvalContext(
                 inputs={},
