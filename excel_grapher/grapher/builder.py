@@ -11,6 +11,11 @@ from fastpyxl.worksheet.formula import ArrayFormula
 
 from excel_grapher.core.cell_types import leaves_missing_cell_type_constraints
 
+from .blank_ranges import (
+    address_in_blank_ranges,
+    cell_in_blank_ranges,
+    normalize_blank_range_specs,
+)
 from .dependency_provenance import EdgeProvenance
 from .dynamic_refs import (
     DynamicRefConfig,
@@ -155,6 +160,7 @@ def create_dependency_graph(
     dynamic_refs: DynamicRefConfig | None = None,
     use_cached_dynamic_refs: bool = False,
     capture_dependency_provenance: bool = False,
+    blank_ranges: Iterable[str] | None = None,
 ) -> DependencyGraph:
     """
     Build a dependency graph starting from target cells.
@@ -178,7 +184,17 @@ def create_dependency_graph(
     :class:`~excel_grapher.grapher.dependency_provenance.EdgeProvenance` under the
     ``\"provenance\"`` key in :meth:`DependencyGraph.edge_attrs` (how the dependency
     arises: direct reference, static range, dynamic OFFSET/INDIRECT).
+
+    ``blank_ranges`` is an optional iterable of sheet-qualified A1 rectangles
+    (e.g. ``\"Sheet1!B2:D10\"``) treated as structurally empty: no nodes are
+    created for those cells (edges into them are kept), and dynamic-ref leaf
+    constraints are not required for addresses inside these ranges. Pair with the
+    same declarations on :class:`~excel_grapher.FormulaEvaluator` and
+    :meth:`~excel_grapher.evaluator.codegen.CodeGenerator.generate` for evaluation
+    and export parity.
     """
+
+    blank_rects = normalize_blank_range_specs(blank_ranges)
 
     def load_wb(data_only: bool) -> fastpyxl.Workbook:
         if isinstance(workbook, fastpyxl.Workbook):
@@ -386,6 +402,12 @@ def create_dependency_graph(
                     missing_leaves = leaves_missing_cell_type_constraints(
                         leaves, dynamic_refs.cell_type_env
                     )
+                    if blank_rects:
+                        missing_leaves = {
+                            a
+                            for a in missing_leaves
+                            if not address_in_blank_ranges(a, blank_rects)
+                        }
                     if missing_leaves:
                         cell_key = format_key(current_sheet, current_a1)
                         formatted_missing = _format_missing_leaves(missing_leaves)
@@ -698,6 +720,12 @@ def create_dependency_graph(
             visited.add(key)
             if depth > max_depth:
                 continue
+
+            if blank_rects:
+                col_str, row_i = fastpyxl.utils.cell.coordinate_from_string(a1)
+                col_idx = fastpyxl.utils.cell.column_index_from_string(col_str)
+                if cell_in_blank_ranges(sheet, int(row_i), col_idx, blank_rects):
+                    continue
 
             ws_f = wb_formulas[sheet]
             raw = ws_f[a1].value

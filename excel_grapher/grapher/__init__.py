@@ -11,6 +11,7 @@ from excel_grapher.core.cell_types import (
     RealIntervalDomain,
 )
 
+from .blank_ranges import normalize_blank_range_specs
 from .builder import create_dependency_graph
 from .dependency_provenance import DependencyCause, EdgeProvenance
 from .dynamic_refs import (
@@ -33,6 +34,7 @@ from .validation import ValidationResult, WorkbookCalcSettings, get_calc_setting
 
 __all__ = [
     "create_dependency_graph",
+    "normalize_blank_range_specs",
     "DependencyCause",
     "DependencyGraph",
     "EdgeProvenance",

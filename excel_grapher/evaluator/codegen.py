@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
 import fastpyxl.utils.cell
 
+from excel_grapher.grapher.blank_ranges import BlankRangeRect, normalize_blank_range_specs
 from excel_grapher.grapher.graph import CycleError
 
 from .export_runtime.embed import emit_runtime
@@ -71,6 +72,7 @@ class GenerationParts(TypedDict):
     targets: list[str]
     has_constants: bool
     used_xl_functions: Set[str]
+    blank_rects: tuple[BlankRangeRect, ...]
 
 # Operators that need wrapper functions for Excel semantics (error propagation)
 _BINARY_OPS = {
@@ -374,8 +376,63 @@ class CodeGenerator:
         return entries
 
     @staticmethod
-    def _emit_resolver_lines() -> list[str]:
+    def _emit_blank_range_lines(rects: tuple[BlankRangeRect, ...]) -> list[str]:
+        """Emit compact structural-blank handling for declared blank rectangles."""
+        rect_repr = ",\n    ".join(
+            f"({repr(sh)}, {r1}, {c1}, {r2}, {c2})" for sh, r1, c1, r2, c2 in rects
+        )
         return [
+            "# --- Declared structural blank ranges ---",
+            "_BLANK_RANGE_RECTS = (",
+            f"    {rect_repr},",
+            ")",
+            "",
+            "def _blank_range_parse_address(address):",
+            "    if address.startswith(\"'\"):",
+            "        i = 1",
+            "        while i < len(address):",
+            "            if address[i] == \"'\":",
+            "                if i + 1 < len(address) and address[i + 1] == \"'\":",
+            "                    i += 2",
+            "                    continue",
+            "                break",
+            "            i += 1",
+            "        sheet = address[1:i].replace(\"''\", \"'\")",
+            "        rest = address[i + 1 :]",
+            "        if not rest.startswith(\"!\"):",
+            "            raise ValueError(f\"Invalid address: {address!r}\")",
+            "        return sheet, rest[1:]",
+            "    if \"!\" in address:",
+            "        sheet, cell = address.rsplit(\"!\", 1)",
+            "        return sheet, cell",
+            "    raise ValueError(f\"Address must be sheet-qualified: {address!r}\")",
+            "",
+            "def _address_in_blank_ranges(address):",
+            "    sheet, cell = _blank_range_parse_address(address)",
+            "    col_s, row = fastpyxl.utils.cell.coordinate_from_string(cell)",
+            "    col = fastpyxl.utils.cell.column_index_from_string(col_s)",
+            "    for sh, r1, c1, r2, c2 in _BLANK_RANGE_RECTS:",
+            "        if sh != sheet:",
+            "            continue",
+            "        if r1 <= row <= r2 and c1 <= col <= c2:",
+            "            return True",
+            "    return False",
+            "",
+            "def _blank_structural_cell(ctx):",
+            "    return None",
+            "",
+            "_blank_structural_cell.__structural_blank__ = True",
+            "",
+        ]
+
+    @classmethod
+    def _emit_resolver_lines(
+        cls, blank_rects: tuple[BlankRangeRect, ...] | None = None
+    ) -> list[str]:
+        prefix: list[str] = []
+        if blank_rects:
+            prefix = cls._emit_blank_range_lines(blank_rects)
+        resolve_head = [
             "# --- Formula resolver ---",
             "_RESOLVED_FORMULAS = {}",
             "def _address_to_func_name(address):",
@@ -395,16 +452,28 @@ class CodeGenerator:
             "    return f\"cell_{base}\"",
             "",
             "def _resolve_formula(address):",
-            "    fn = _RESOLVED_FORMULAS.get(address)",
-            "    if fn is not None:",
-            "        return fn",
-            "    name = _address_to_func_name(address)",
-            "    fn = globals().get(name)",
-            "    if fn is not None:",
-            "        _RESOLVED_FORMULAS[address] = fn",
-            "    return fn",
-            "",
         ]
+        if blank_rects:
+            resolve_head.extend(
+                [
+                    "    if _address_in_blank_ranges(address):",
+                    "        return _blank_structural_cell",
+                ]
+            )
+        resolve_head.extend(
+            [
+                "    fn = _RESOLVED_FORMULAS.get(address)",
+                "    if fn is not None:",
+                "        return fn",
+                "    name = _address_to_func_name(address)",
+                "    fn = globals().get(name)",
+                "    if fn is not None:",
+                "        _RESOLVED_FORMULAS[address] = fn",
+                "    return fn",
+                "",
+            ]
+        )
+        return prefix + resolve_head
 
     @staticmethod
     def _internals_runtime_import_names(
@@ -1389,6 +1458,7 @@ class CodeGenerator:
         constant_ranges: Sequence[str] | None = None,
         constant_blanks: bool = False,
         input_ranges: Sequence[str] | None = None,
+        blank_ranges: Sequence[str] | None = None,
     ) -> str:
         """Generate standalone Python code for target cells.
 
@@ -1397,6 +1467,8 @@ class CodeGenerator:
             entrypoints: Optional mapping of entrypoint names to target lists.
             input_ranges: Sheet-qualified ranges whose leaf cells are treated as inputs.
                 When a cell would otherwise be a constant, ``input_ranges`` take precedence.
+            blank_ranges: Sheet-qualified rectangles whose cells are omitted from the graph
+                but resolve as empty (``None``) at runtime; must match builder/evaluator.
 
         Returns:
             Standalone Python source code as a string.
@@ -1433,6 +1505,7 @@ class CodeGenerator:
             constant_ranges=constant_ranges,
             constant_blanks=constant_blanks,
             input_ranges=input_ranges,
+            blank_ranges=blank_ranges,
         )
         runtime_code = parts["runtime_code"]
         cell_code_lines = parts["cell_code_lines"]
@@ -1464,7 +1537,11 @@ class CodeGenerator:
         # Export formula cell implementations and a resolver.
         lines.append("# --- Formula cell functions ---\n")
         lines.extend(cell_code_lines)
-        lines.extend(self._emit_resolver_lines())
+        lines.extend(
+            self._emit_resolver_lines(
+                parts["blank_rects"] if parts["blank_rects"] else None
+            )
+        )
 
         # Generate entry point helpers
         lines.append("def make_context(inputs=None):")
@@ -1545,6 +1622,7 @@ class CodeGenerator:
         constant_ranges: Sequence[str] | None = None,
         constant_blanks: bool = False,
         input_ranges: Sequence[str] | None = None,
+        blank_ranges: Sequence[str] | None = None,
     ) -> dict[str, str]:
         """Generate a multi-module Python package for target cells.
 
@@ -1591,6 +1669,7 @@ class CodeGenerator:
             constant_ranges=constant_ranges,
             constant_blanks=constant_blanks,
             input_ranges=input_ranges,
+            blank_ranges=blank_ranges,
         )
         runtime_code = parts["runtime_code"]
         cell_code_lines = parts["cell_code_lines"]
@@ -1642,7 +1721,11 @@ class CodeGenerator:
             internals_lines.append("")
         internals_lines.append("# --- Formula cell functions ---\n")
         internals_lines.extend(cell_code_lines)
-        internals_lines.extend(self._emit_resolver_lines())
+        internals_lines.extend(
+            self._emit_resolver_lines(
+                parts["blank_rects"] if parts["blank_rects"] else None
+            )
+        )
         internals_py = "\n".join(internals_lines).rstrip() + "\n"
 
         runtime_entry_names = ["EvalContext", "coerce_inputs_dict", "xl_cell"]
@@ -1781,6 +1864,7 @@ class CodeGenerator:
         constant_ranges: Sequence[str] | None = None,
         constant_blanks: bool = False,
         input_ranges: Sequence[str] | None = None,
+        blank_ranges: Sequence[str] | None = None,
     ) -> GenerationParts:
         """Generate shared intermediate artifacts for single-file and modular exports."""
         # Reset state for this generation
@@ -1788,6 +1872,8 @@ class CodeGenerator:
         self._offset_runtime_sheets.clear()
         self._ast_cache.clear()
         self._used_graph_closure = False
+
+        blank_rects = normalize_blank_range_specs(blank_ranges)
 
         normalized_targets = [normalize_address(t) for t in targets]
         normalized_dependency_targets = (
@@ -1906,6 +1992,7 @@ class CodeGenerator:
             "targets": normalized_targets,
             "has_constants": include_constants,
             "used_xl_functions": frozenset(used_xl_functions),
+            "blank_rects": blank_rects,
         }
 
     def _collect_all_cells(self, targets: list[str]) -> list[str]:
