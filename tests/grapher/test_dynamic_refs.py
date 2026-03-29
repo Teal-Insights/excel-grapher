@@ -1421,6 +1421,42 @@ def test_infer_numeric_domain_result_uses_relational_cell_constraint_for_divisor
     assert result.domain == dynamic_refs_mod._IntBounds(-30, 30)
 
 
+def test_infer_numeric_domain_result_greater_than_relation_matches_quoted_sheet_ref() -> None:
+    """rel.other is normalized in metadata; parsed refs keep Excel quoting (gh #44)."""
+    limits = DynamicRefLimits(max_branches=8)
+    sheet = "Input 4 - External Financing"
+    env: CellTypeEnv = {
+        f"{sheet}!B9": CellType(
+            kind=CellKind.NUMBER,
+            interval=IntIntervalDomain(min=0, max=50),
+        ),
+        f"{sheet}!B10": CellType(
+            kind=CellKind.NUMBER,
+            interval=IntIntervalDomain(min=1, max=100),
+            relations=(GreaterThanCell(f"{sheet}!B9"),),
+        ),
+        f"{sheet}!Q17": CellType(
+            kind=CellKind.NUMBER,
+            interval=IntIntervalDomain(min=-10, max=20),
+        ),
+        f"{sheet}!Q19": CellType(
+            kind=CellKind.NUMBER,
+            interval=IntIntervalDomain(min=-10, max=20),
+        ),
+    }
+    ast = parse_ast(f"=('{sheet}'!Q17-'{sheet}'!Q19)/('{sheet}'!B10-'{sheet}'!B9)")
+
+    result = dynamic_refs_mod._infer_numeric_domain_result(
+        ast,
+        env,
+        limits,
+        current_sheet=sheet,
+    )
+
+    assert result.diagnostic is None
+    assert result.domain == dynamic_refs_mod._IntBounds(-30, 30)
+
+
 def test_infer_numeric_domain_result_uses_not_equal_constraint_for_exact_divisor() -> None:
     limits = DynamicRefLimits(max_branches=8)
     env: CellTypeEnv = {

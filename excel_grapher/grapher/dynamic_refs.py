@@ -23,6 +23,7 @@ from excel_grapher.core.cell_types import (
     GreaterThanCell,
     IntervalDomain,
     NotEqualCell,
+    _normalize_cell_address,
     constraints_to_cell_type_env,
 )
 from excel_grapher.core.excel_function_meta import is_ref_only_arg
@@ -1144,11 +1145,17 @@ def _domain_without_zero(domain: _FiniteInts | _IntBounds | None) -> _FiniteInts
     return domain
 
 
+def _lookup_cell_type(env: CellTypeEnv, address: str) -> CellType | None:
+    """Resolve env entry; keys match :func:`_normalize_cell_address` (no Excel quote delimiters)."""
+    return env.get(_normalize_cell_address(address))
+
+
 def _cell_has_relation(env: CellTypeEnv, addr: str, relation: type[GreaterThanCell | NotEqualCell], other: str) -> bool:
-    ct = env.get(addr)
+    ct = _lookup_cell_type(env, addr)
     if ct is None:
         return False
-    return any(isinstance(rel, relation) and rel.other == other for rel in ct.relations)
+    other_norm = _normalize_cell_address(other)
+    return any(isinstance(rel, relation) and rel.other == other_norm for rel in ct.relations)
 
 
 def _cells_are_known_not_equal(env: CellTypeEnv, left: str, right: str) -> bool:
@@ -1184,7 +1191,7 @@ def _refine_difference_domain(
 
 def _expr_is_known_nonzero(node: AstNode, env: CellTypeEnv) -> bool:
     if isinstance(node, CellRefNode):
-        ct = env.get(node.address)
+        ct = _lookup_cell_type(env, node.address)
         return ct is not None and _domain_may_include_zero(_domain_from_cell_type(ct, DynamicRefLimits())) is False
     if (
         isinstance(node, BinaryOpNode)
@@ -1471,8 +1478,10 @@ def _describe_unsupported_numeric_construct(node: AstNode | None) -> str | None:
 def _range_node_cell_addresses(node: RangeNode) -> list[str] | None:
     """Expand a single-sheet A1 range to sheet-qualified cell keys in row-major order."""
     try:
-        sheet, coord_start = node.start.split("!", 1)
-        sheet2, coord_end = node.end.split("!", 1)
+        norm_start = _normalize_cell_address(node.start)
+        norm_end = _normalize_cell_address(node.end)
+        sheet, coord_start = norm_start.split("!", 1)
+        sheet2, coord_end = norm_end.split("!", 1)
     except ValueError:
         return None
     if sheet != sheet2:
@@ -1501,14 +1510,14 @@ def _infer_sum_argument_domain(
     depth: int,
 ) -> _FiniteInts | _IntBounds | None:
     if isinstance(arg, CellRefNode):
-        return _domain_from_cell_type(env.get(arg.address), limits)
+        return _domain_from_cell_type(_lookup_cell_type(env, arg.address), limits)
     if isinstance(arg, RangeNode):
         addrs = _range_node_cell_addresses(arg)
         if addrs is None:
             return None
         acc: _FiniteInts | _IntBounds | None = _FiniteInts(frozenset({0}))
         for addr in addrs:
-            d = _domain_from_cell_type(env.get(addr), limits)
+            d = _domain_from_cell_type(_lookup_cell_type(env, addr), limits)
             if d is None:
                 return None
             acc = _add_numeric_domains(acc, d, limits)
@@ -1709,7 +1718,7 @@ def _infer_numeric_domain_result(
         return _domain_result(None)
 
     if isinstance(node, CellRefNode):
-        return _domain_result(_domain_from_cell_type(env.get(node.address), limits))
+        return _domain_result(_domain_from_cell_type(_lookup_cell_type(env, node.address), limits))
 
     if isinstance(node, RangeNode):
         return _domain_result(None)
@@ -1819,7 +1828,7 @@ def _infer_numeric_domain_result(
                 return _domain_result(None)
             arg = node.args[0]
             if isinstance(arg, CellRefNode):
-                ct = env.get(arg.address)
+                ct = _lookup_cell_type(env, arg.address)
                 if ct is None:
                     return _domain_result(None)
                 if ct.kind is CellKind.NUMBER:
@@ -2269,7 +2278,7 @@ def _build_domains(
 ) -> dict[str, list[int]]:
     domains: dict[str, list[int]] = {}
     for addr in addrs:
-        ct = env.get(addr)
+        ct = _lookup_cell_type(env, addr)
         if ct is None:
             raise DynamicRefError(f"Missing CellType for {addr!r}")
         if ct.kind is not CellKind.NUMBER:
@@ -2469,7 +2478,7 @@ def _build_value_domains(
 ) -> dict[str, list[Any]]:
     domains: dict[str, list[Any]] = {}
     for addr in addrs:
-        ct = env.get(addr)
+        ct = _lookup_cell_type(env, addr)
         if ct is None:
             raise DynamicRefError(f"Missing CellType for {addr!r}")
         values: list[Any]
