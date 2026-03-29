@@ -574,7 +574,7 @@ wheels = [
 [[package]]
 name = "fastpyxl"
 version = "3.1.5"
-source = { git = "https://github.com/Promptly-Technologies-LLC/fastpyxl#9cc47ebb2cbca7a39e9d7c5541ddde1809b4c01e" }
+source = { git = "https://github.com/Promptly-Technologies-LLC/fastpyxl#d2110c760372dc9cb5c496a75ae43bfd48a1fc48" }
 dependencies = [
     { name = "et-xmlfile" },
 ]
