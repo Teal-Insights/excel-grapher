@@ -5,6 +5,7 @@ from typing import Annotated, Literal, TypedDict, cast
 from excel_grapher.core.cell_types import (
     Between,
     CellKind,
+    CellType,
     CellTypeEnv,
     EnumDomain,
     GreaterThanCell,
@@ -12,6 +13,7 @@ from excel_grapher.core.cell_types import (
     NotEqualCell,
     constraints_to_cell_type_env,
 )
+from excel_grapher.grapher.dynamic_refs import DynamicRefLimits, expand_leaf_env_to_argument_env
 
 
 # Address-style keys (Sheet1!B1) are the convention for DynamicRefConfig; TypedDict
@@ -157,4 +159,22 @@ def test_constraints_mapping_normalizes_quoted_sheet_keys_in_env() -> None:
     b1 = env[_QS_NORMAL_B1]
     assert b1.kind is CellKind.NUMBER
     assert b1.relations == (GreaterThanCell(_QS_NORMAL_A1),)
+
+
+def test_expand_leaf_env_resolves_format_key_addr_against_normalized_env() -> None:
+    """Graph builder passes format_key addresses; env keys are normalized (PR #46)."""
+    norm = "Chart Data!I21"
+    quoted = "'Chart Data'!I21"
+    leaf_env: CellTypeEnv = {
+        norm: CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=1)),
+    }
+    out = expand_leaf_env_to_argument_env(
+        {quoted},
+        lambda _addr: None,
+        lambda _f, _sh: set(),
+        leaf_env,
+        DynamicRefLimits(),
+    )
+    assert quoted in out
+    assert out[quoted].interval == IntervalDomain(min=1, max=1)
 
