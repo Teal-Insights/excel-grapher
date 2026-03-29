@@ -239,7 +239,7 @@ class _AllNameCollector(ast.NodeVisitor):
 def _binding_name_for_import(alias: ast.alias) -> str:
     if alias.asname:
         return alias.asname
-    # `import openpyxl.utils.cell` binds `openpyxl`
+    # `import fastpyxl.utils.cell` binds `fastpyxl`
     return alias.name.split(".", 1)[0]
 
 

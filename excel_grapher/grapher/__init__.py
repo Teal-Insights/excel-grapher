@@ -11,6 +11,7 @@ from .dynamic_refs import (
     DynamicRefConfig,
     DynamicRefError,
     DynamicRefLimits,
+    constrain,
     infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,

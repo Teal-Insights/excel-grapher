@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import openpyxl
-import openpyxl.utils.cell
+import fastpyxl
+import fastpyxl.utils.cell
 
 
 def discover_formula_cells_in_rows(
@@ -11,8 +11,8 @@ def discover_formula_cells_in_rows(
     sheet_name: str,
     rows: list[int],
     *,
-    wb_formulas: openpyxl.Workbook | None = None,
-    wb_values: openpyxl.Workbook | None = None,
+    wb_formulas: fastpyxl.Workbook | None = None,
+    wb_values: fastpyxl.Workbook | None = None,
 ) -> list[str]:
     """
     Scan specified rows and return sheet-qualified addresses for formula cells.
@@ -25,9 +25,9 @@ def discover_formula_cells_in_rows(
     """
     owned = wb_formulas is None
     if wb_formulas is None:
-        wb_formulas = openpyxl.load_workbook(wb_path, data_only=False, read_only=True, keep_vba=True)
+        wb_formulas = fastpyxl.load_workbook(wb_path, data_only=False, read_only=True, keep_vba=True)
     if wb_values is None:
-        wb_values = openpyxl.load_workbook(wb_path, data_only=True, read_only=True, keep_vba=True)
+        wb_values = fastpyxl.load_workbook(wb_path, data_only=True, read_only=True, keep_vba=True)
     try:
         if (
             sheet_name not in wb_formulas.sheetnames
@@ -52,7 +52,7 @@ def discover_formula_cells_in_rows(
                         cached_value, bool
                     ):
                         continue
-                    col_letter = openpyxl.utils.cell.get_column_letter(col_idx)
+                    col_letter = fastpyxl.utils.cell.get_column_letter(col_idx)
                     targets.append(f"{sheet_name}!{col_letter}{row}")
 
         return targets

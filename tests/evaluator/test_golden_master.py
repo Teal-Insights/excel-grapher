@@ -6,7 +6,7 @@ import random
 import time
 from pathlib import Path
 
-import openpyxl
+import fastpyxl
 import pytest
 
 from excel_grapher import FormulaEvaluator, XlError, create_dependency_graph
@@ -57,7 +57,7 @@ def _format_cell_ref_for_excel(addr: str) -> str:
 
 def _read_numeric_cached_values(workbook_path: Path, addrs: list[str]) -> dict[str, float]:
     """Read cached numeric values for sheet-qualified addresses in one workbook load."""
-    wb = openpyxl.load_workbook(
+    wb = fastpyxl.load_workbook(
         str(workbook_path),
         data_only=True,
         read_only=True,
@@ -89,8 +89,8 @@ def test_golden_master_inline(tmp_path: Path) -> None:
     print("\n\nLoading graph...")
     start = time.time()
     targets: list[str] = []
-    wb_f = openpyxl.load_workbook(WORKBOOK_PATH, data_only=False, read_only=True, keep_vba=True)
-    wb_v = openpyxl.load_workbook(WORKBOOK_PATH, data_only=True, read_only=True, keep_vba=True)
+    wb_f = fastpyxl.load_workbook(WORKBOOK_PATH, data_only=False, read_only=True, keep_vba=True)
+    wb_v = fastpyxl.load_workbook(WORKBOOK_PATH, data_only=True, read_only=True, keep_vba=True)
     try:
         for sheet_name, rows in INDICATOR_CONFIG.items():
             targets.extend(

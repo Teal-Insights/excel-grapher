@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal, TypedDict, get_type_hints
 
-import openpyxl
+import fastpyxl
 
 from example.map_lic_dsf_indicators import constrain_constant_range
 
@@ -13,7 +13,7 @@ class _TestConstraints(TypedDict, total=False):
 
 
 def _build_workbook(path: Path) -> None:
-    wb = openpyxl.Workbook()
+    wb = fastpyxl.Workbook()
     ws = wb.active
     ws.title = "lookup"
     ws["C4"] = "Afghanistan"

@@ -5,9 +5,9 @@ from collections import deque
 from collections.abc import Iterable
 from pathlib import Path
 
-import openpyxl
-import openpyxl.utils.cell
-from openpyxl.worksheet.formula import ArrayFormula
+import fastpyxl
+import fastpyxl.utils.cell
+from fastpyxl.worksheet.formula import ArrayFormula
 
 from .dependency_provenance import EdgeProvenance
 from .dynamic_refs import (
@@ -63,8 +63,8 @@ def _format_missing_leaves(missing_leaves: set[str]) -> list[str]:
     - Within a column, contiguous rows become one vertical range.
     - Adjacent columns with the same row runs merge into one rectangle per run.
     """
-    from openpyxl.utils import range_boundaries
-    from openpyxl.utils.cell import coordinate_to_tuple, get_column_letter
+    from fastpyxl.utils import range_boundaries
+    from fastpyxl.utils.cell import coordinate_to_tuple, get_column_letter
 
     by_sheet: dict[str, dict[int, list[int]]] = {}
     others: list[str] = []
@@ -142,7 +142,7 @@ def _format_missing_leaves(missing_leaves: set[str]) -> list[str]:
 
 
 def create_dependency_graph(
-    workbook: Path | str | openpyxl.Workbook,
+    workbook: Path | str | fastpyxl.Workbook,
     targets: Iterable[str],
     *,
     max_depth: int = 50,
@@ -178,17 +178,17 @@ def create_dependency_graph(
     arises: direct reference, static range, dynamic OFFSET/INDIRECT).
     """
 
-    def load_wb(data_only: bool) -> openpyxl.Workbook:
-        if isinstance(workbook, openpyxl.Workbook):
+    def load_wb(data_only: bool) -> fastpyxl.Workbook:
+        if isinstance(workbook, fastpyxl.Workbook):
             if data_only:
                 raise ValueError("load_values=True is not supported when passing a Workbook instance")
             return workbook
         path = Path(workbook)
         keep_vba = path.suffix.lower() == ".xlsm"
-        return openpyxl.load_workbook(path, data_only=data_only, keep_vba=keep_vba)
+        return fastpyxl.load_workbook(path, data_only=data_only, keep_vba=keep_vba)
 
     wb_formulas = load_wb(data_only=False)
-    wb_values = load_wb(data_only=True) if load_values and not isinstance(workbook, openpyxl.Workbook) else None
+    wb_values = load_wb(data_only=True) if load_values and not isinstance(workbook, fastpyxl.Workbook) else None
 
     graph = DependencyGraph()
     for h in hooks or []:
@@ -202,7 +202,7 @@ def create_dependency_graph(
 
     def resolve_cached_value(sheet: str, a1: str) -> object | None:
         nonlocal wb_values
-        if wb_values is None and not isinstance(workbook, openpyxl.Workbook):
+        if wb_values is None and not isinstance(workbook, fastpyxl.Workbook):
             wb_values = load_wb(data_only=True)
         if wb_values is None:
             return None
@@ -419,10 +419,10 @@ def create_dependency_graph(
                         named_ranges=named_ranges,
                         named_range_ranges=named_range_ranges,
                     )
-                    _col_letter, _current_row = openpyxl.utils.cell.coordinate_from_string(
+                    _col_letter, _current_row = fastpyxl.utils.cell.coordinate_from_string(
                         current_a1
                     )
-                    _current_col = openpyxl.utils.cell.column_index_from_string(_col_letter)
+                    _current_col = fastpyxl.utils.cell.column_index_from_string(_col_letter)
                     try:
                         offset_targets = infer_dynamic_offset_targets(
                             formula_for_infer,
@@ -500,8 +500,8 @@ def create_dependency_graph(
                 if resolved_range is not None:
                     if expand_ranges:
                         sheet, start_a1, end_a1 = resolved_range
-                        start_col, start_row = openpyxl.utils.cell.coordinate_from_string(start_a1)
-                        end_col, end_row = openpyxl.utils.cell.coordinate_from_string(end_a1)
+                        start_col, start_row = fastpyxl.utils.cell.coordinate_from_string(start_a1)
+                        end_col, end_row = fastpyxl.utils.cell.coordinate_from_string(end_a1)
                         deps.extend(
                             expand_range(
                                 sheet=sheet,
@@ -724,7 +724,7 @@ def create_dependency_graph(
                 value = raw
                 is_leaf = True
 
-            col, row = openpyxl.utils.cell.coordinate_from_string(a1)
+            col, row = fastpyxl.utils.cell.coordinate_from_string(a1)
             node = Node(
                 sheet=sheet,
                 column=col,
@@ -773,7 +773,7 @@ def create_dependency_graph(
     finally:
         if wb_values is not None:
             wb_values.close()
-        if not isinstance(workbook, openpyxl.Workbook):
+        if not isinstance(workbook, fastpyxl.Workbook):
             wb_formulas.close()
 
     return graph

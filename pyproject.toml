@@ -23,8 +23,8 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "fastpyxl",
     "numpy>=1.24",
-    "openpyxl>=3.1.0",
 ]
 
 [project.optional-dependencies]
@@ -99,3 +99,6 @@ exclude_lines = [
     "raise NotImplementedError",
     "if TYPE_CHECKING:",
 ]
+
+[tool.uv.sources]
+fastpyxl = { git = "https://github.com/Promptly-Technologies-LLC/fastpyxl" }

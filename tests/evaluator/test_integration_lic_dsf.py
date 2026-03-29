@@ -5,7 +5,7 @@ Integration test: evaluate LIC-DSF workbook formulas and compare with Excel cach
 import re
 from pathlib import Path
 
-import openpyxl
+import fastpyxl
 import pytest
 
 from excel_grapher import DependencyGraph, FormulaEvaluator, XlError, create_dependency_graph
@@ -33,8 +33,8 @@ def graph() -> DependencyGraph:
 
     # Discover formula cells in the configured rows
     targets: list[str] = []
-    wb_f = openpyxl.load_workbook(WORKBOOK_PATH, data_only=False, read_only=True, keep_vba=True)
-    wb_v = openpyxl.load_workbook(WORKBOOK_PATH, data_only=True, read_only=True, keep_vba=True)
+    wb_f = fastpyxl.load_workbook(WORKBOOK_PATH, data_only=False, read_only=True, keep_vba=True)
+    wb_v = fastpyxl.load_workbook(WORKBOOK_PATH, data_only=True, read_only=True, keep_vba=True)
     try:
         for sheet_name, rows in INDICATOR_CONFIG.items():
             targets.extend(

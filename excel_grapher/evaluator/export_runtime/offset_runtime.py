@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
-import openpyxl.utils.cell
+import fastpyxl.utils.cell
 
 from excel_grapher.core.addressing import offset_range
 
@@ -17,7 +17,7 @@ def _quote_sheet_if_needed(sheet: str) -> str:
 
 def _format_address(sheet: str, row: int, col: int) -> str:
     sheet_name = _quote_sheet_if_needed(sheet)
-    col_letter = openpyxl.utils.cell.get_column_letter(col)
+    col_letter = fastpyxl.utils.cell.get_column_letter(col)
     return f"{sheet_name}!{col_letter}{row}"
 
 

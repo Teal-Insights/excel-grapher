@@ -5,10 +5,10 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from itertools import product
 from pathlib import Path
-from typing import Any, get_args, get_origin, get_type_hints
+from typing import Any, cast, get_args, get_origin, get_type_hints
 
-import openpyxl
-from openpyxl.utils.cell import coordinate_from_string, coordinate_to_tuple
+import fastpyxl
+from fastpyxl.utils.cell import coordinate_from_string, coordinate_to_tuple
 
 from excel_grapher.core.addressing import (
     WorkbookBoundsProtocol,
@@ -27,10 +27,16 @@ from excel_grapher.core.excel_function_meta import is_ref_only_arg
 from excel_grapher.core.expr_eval import Unsupported, evaluate_expr
 from excel_grapher.core.formula_ast import (
     AstNode,
+    BinaryOpNode,
+    BoolNode,
     CellRefNode,
+    ErrorNode,
     FormulaParseError,
     FunctionCallNode,
+    NumberNode,
     RangeNode,
+    StringNode,
+    UnaryOpNode,
 )
 from excel_grapher.core.formula_ast import (
     parse as parse_ast,
@@ -114,7 +120,7 @@ class DynamicRefConfig:
         :func:`constraints_to_cell_type_env` as usual.
 
         **Performance note:** The workbook is opened once in ``read_only`` mode
-        and values are read via openpyxl's streaming parser.  ``FromWorkbook``
+        and values are read via fastpyxl's streaming parser.  ``FromWorkbook``
         addresses are sorted by (sheet, row, column) before iteration so that
         each sheet's XML is parsed in a single forward pass.  For large sheets
         whose constrained cells sit far down (e.g. row 900+), the initial parse
@@ -136,7 +142,7 @@ class DynamicRefConfig:
 
         from_wb_items.sort(key=lambda item: (item[1], coordinate_to_tuple(item[2])))
 
-        wb = openpyxl.load_workbook(Path(workbook_path), data_only=data_only, read_only=True)
+        wb = fastpyxl.load_workbook(Path(workbook_path), data_only=data_only, read_only=True)
         try:
             for addr, sheet_name, coord in from_wb_items:
                 if sheet_name not in wb.sheetnames:
@@ -282,6 +288,7 @@ def expand_leaf_env_to_argument_env(
     require a constraint for that cell.
     """
     cache: dict[str, CellType] = {}
+    in_progress: set[str] = set()
     nr = named_ranges or {}
     nrr = named_range_ranges or {}
 
@@ -314,78 +321,137 @@ def expand_leaf_env_to_argument_env(
     def cell_type_for(addr: str) -> CellType:
         if addr in cache:
             return cache[addr]
+        if addr in in_progress:
+            raise DynamicRefError(
+                f"Cycle detected while inferring argument-cell types for {addr!r}"
+            )
         if addr in leaf_env:
             cache[addr] = leaf_env[addr]
             return cache[addr]
+        in_progress.add(addr)
         formula = get_cell_formula(addr)
-        if formula is None:
-            raise DynamicRefError(
-                f"Missing constraint for leaf {addr!r} that feeds OFFSET/INDIRECT. "
-                "Add constraints only for leaf cells (non-formula) in the argument subgraph."
-            )
-        refs = get_refs_from_formula(formula, _sheet_from_addr(addr))
-        if not refs:
+        try:
+            if formula is None:
+                raise DynamicRefError(
+                    f"Missing constraint for leaf {addr!r} that feeds OFFSET/INDIRECT. "
+                    "Add constraints only for leaf cells (non-formula) in the argument subgraph."
+                )
+            refs = get_refs_from_formula(formula, _sheet_from_addr(addr))
             try:
                 formula_parse = _formula_to_parse(formula)
-                ast = parse_ast(formula_parse)
+                ast_root = parse_ast(formula_parse)
             except FormulaParseError:
-                cache[addr] = CellType(kind=CellKind.ANY)
+                ast_root = None
+            if ast_root is not None:
+                refs |= _collect_static_addresses_from_ast(ast_root)
+            if not refs:
+                if ast_root is None:
+                    cache[addr] = CellType(kind=CellKind.ANY)
+                    return cache[addr]
+                try:
+                    val = evaluate_expr(
+                        ast_root,
+                        get_cell_value=lambda _: None,
+                        max_depth=limits.max_depth,
+                    )
+                except Exception:
+                    val = None
+                if isinstance(val, Unsupported):
+                    cache[addr] = CellType(kind=CellKind.ANY)
+                    return cache[addr]
+                if val is None or isinstance(val, XlError):
+                    cache[addr] = CellType(kind=CellKind.ANY)
+                    return cache[addr]
+                cache[addr] = _values_to_cell_type({val})
                 return cache[addr]
-            try:
-                val = evaluate_expr(ast, get_cell_value=lambda _: None, max_depth=limits.max_depth)
-            except Exception:
-                val = None
-            if isinstance(val, Unsupported):
-                cache[addr] = CellType(kind=CellKind.ANY)
-                return cache[addr]
-            if val is None or isinstance(val, XlError):
-                cache[addr] = CellType(kind=CellKind.ANY)
-                return cache[addr]
-            cache[addr] = _values_to_cell_type({val})
-            return cache[addr]
-        ref_types = {r: cell_type_for(r) for r in refs}
-        domains: dict[str, list[Any]] = {}
-        for r, ct in ref_types.items():
-            if ct.enum is not None:
-                domains[r] = list(ct.enum.values)
-            elif ct.interval is not None:
-                domains[r] = _interval_to_values(ct.interval, limits)
-            else:
-                cache[addr] = CellType(kind=CellKind.ANY)
-                return cache[addr]
-        result_values: set[Any] = set()
-        last_unsupported: Unsupported | None = None
-        for assignment in product(*(domains[r] for r in refs)):
-            addr_to_val = dict(zip(refs, assignment, strict=False))
+            ref_types = {r: cell_type_for(r) for r in refs}
+            if ast_root is not None:
+                inferred = _infer_numeric_domain(
+                    ast_root,
+                    ref_types,
+                    limits,
+                    context=None,
+                    current_sheet=_sheet_from_addr(addr),
+                )
+                if inferred is not None:
+                    if isinstance(inferred, _FiniteInts):
+                        cache[addr] = CellType(
+                            kind=CellKind.NUMBER,
+                            enum=EnumDomain(values=inferred.values),
+                        )
+                    else:
+                        span = inferred.hi - inferred.lo + 1
+                        if span <= limits.max_branches:
+                            cache[addr] = CellType(
+                                kind=CellKind.NUMBER,
+                                enum=EnumDomain(
+                                    values=frozenset(range(inferred.lo, inferred.hi + 1))
+                                ),
+                            )
+                        else:
+                            cache[addr] = CellType(
+                                kind=CellKind.NUMBER,
+                                interval=IntervalDomain(min=inferred.lo, max=inferred.hi),
+                            )
+                    return cache[addr]
+            unsupported = _describe_unsupported_numeric_construct(ast_root)
+            domains: dict[str, list[Any]] = {}
+            for r, ct in ref_types.items():
+                if ct.enum is not None:
+                    domains[r] = list(ct.enum.values)
+                elif ct.interval is not None:
+                    try:
+                        domains[r] = _interval_to_values(ct.interval, limits)
+                    except DynamicRefError as exc:
+                        detail = (
+                            f" First unsupported construct: {unsupported}."
+                            if unsupported is not None
+                            else ""
+                        )
+                        raise DynamicRefError(
+                            f"{exc} (while expanding types for formula cell {addr!r}, dependency {r!r}; "
+                            f"this formula is not covered by numeric abstract analysis.{detail} "
+                            f"constrain {r!r} more tightly, simplify the formula, or extend analysis "
+                            f"for the unsupported construct)"
+                        ) from exc
+                else:
+                    cache[addr] = CellType(kind=CellKind.ANY)
+                    return cache[addr]
+            result_values: set[Any] = set()
+            last_unsupported: Unsupported | None = None
+            for assignment in product(*(domains[r] for r in refs)):
+                addr_to_val = dict(zip(refs, assignment, strict=False))
 
-            def get_cell_value(a: str, _av=addr_to_val) -> Any:
-                return _av.get(a)
+                def get_cell_value(a: str, _av=addr_to_val) -> Any:
+                    return _av.get(a)
 
-            try:
-                formula_parse = _formula_to_parse(formula)
-                ast = parse_ast(formula_parse)
-            except FormulaParseError:
+                try:
+                    formula_parse = _formula_to_parse(formula)
+                    ast = parse_ast(formula_parse)
+                except FormulaParseError:
+                    cache[addr] = CellType(kind=CellKind.ANY)
+                    return cache[addr]
+                val = evaluate_expr(
+                    ast,
+                    get_cell_value=get_cell_value,
+                    max_depth=limits.max_depth,
+                )
+                if isinstance(val, Unsupported):
+                    last_unsupported = val
+                    continue
+                if isinstance(val, XlError):
+                    continue
+                result_values.add(val)
+            if not result_values:
+                if last_unsupported is not None:
+                    cache[addr] = CellType(kind=CellKind.ANY)
+                    return cache[addr]
                 cache[addr] = CellType(kind=CellKind.ANY)
                 return cache[addr]
-            val = evaluate_expr(
-                ast,
-                get_cell_value=get_cell_value,
-                max_depth=limits.max_depth,
-            )
-            if isinstance(val, Unsupported):
-                last_unsupported = val
-                continue
-            if isinstance(val, XlError):
-                continue
-            result_values.add(val)
-        if not result_values:
-            if last_unsupported is not None:
-                cache[addr] = CellType(kind=CellKind.ANY)
-                return cache[addr]
-            cache[addr] = CellType(kind=CellKind.ANY)
+            cache[addr] = _values_to_cell_type(result_values)
             return cache[addr]
-        cache[addr] = _values_to_cell_type(result_values)
-        return cache[addr]
+        finally:
+            in_progress.discard(addr)
 
     for addr in argument_refs:
         cell_type_for(addr)
@@ -474,21 +540,7 @@ def infer_dynamic_index_targets(
     index_calls = _find_function_calls_with_spans(formula, {"INDEX"})
     offset_calls = _find_function_calls_with_spans(formula, {"OFFSET"})
 
-    # Build set of INDEX spans that are nested as OFFSET base (arg 0).
     nested_index_spans: set[tuple[int, int]] = set()
-    for _fn, inner, _span in offset_calls:
-        args = _split_top_level_args(inner)
-        if args and args[0].strip().upper().startswith("INDEX("):
-            # Find the INDEX call within this OFFSET's base argument.
-            base_index_calls = _find_function_calls_with_spans("=" + args[0], {"INDEX"})
-            for _ifn, _iinner, (_is_start, _is_end) in base_index_calls:
-                # Adjust span: the "=" prefix adds 1 to the start position relative to args[0],
-                # but we need the span relative to the original formula.
-                # The OFFSET inner starts after "OFFSET(" in the formula, and args[0] is
-                # the first chunk. We need to find the actual INDEX spans in the original formula.
-                pass
-            # Simpler approach: check each INDEX call's span to see if it falls inside an OFFSET span.
-    # Better approach: for each INDEX call, check if its span is contained within any OFFSET span.
     offset_spans = [span for _fn, _inner, span in offset_calls]
     for fn, _inner, idx_span in index_calls:
         if fn != "INDEX":
@@ -564,52 +616,21 @@ def _infer_single_index_call(
     row_ast = parse_ast("=" + row_expr)
     col_ast = parse_ast("=" + col_expr) if col_expr else None
 
-    leaf_addrs = _collect_addresses_needing_domain(row_ast)
-    if col_ast is not None:
-        leaf_addrs |= _collect_addresses_needing_domain(col_ast)
-
-    domains = _build_domains(leaf_addrs, cell_type_env, limits)
-
     eval_context = (
         {"row": current_row, "column": current_col}
         if current_row is not None and current_col is not None
         else None
     )
 
-    targets: set[str] = set()
-    for assignment in _enumerate_assignments(domains.values(), limits):
-        addr_to_value = dict(zip(domains.keys(), assignment, strict=False))
-
-        def get_cell_value(addr: str, m=addr_to_value) -> float:
-            try:
-                return m[addr]
-            except KeyError as exc:
-                raise DynamicRefError(
-                    f"INDEX argument formula references cell without domain: {addr!r}"
-                ) from exc
-
-        row_val = _eval_arg(row_ast, get_cell_value, limits, context=eval_context)
-        col_val = (
-            _eval_arg(col_ast, get_cell_value, limits, context=eval_context)
-            if col_ast is not None
-            else 1.0
-        )
-        if isinstance(row_val, XlError) or isinstance(col_val, XlError):
-            continue
-        r1, c1 = int(row_val), int(col_val)
-        if r1 < 1 or c1 < 1:
-            continue
-        cell_row = array_range.start_row + r1 - 1
-        cell_col = array_range.start_col + c1 - 1
-        if cell_row > array_range.end_row or cell_col > array_range.end_col:
-            continue
-
-        from openpyxl.utils.cell import get_column_letter
-
-        col_letter = get_column_letter(cell_col)
-        targets.add(f"{array_range.sheet}!{col_letter}{cell_row}")
-
-    return targets
+    return _infer_index_targets_core(
+        array_range,
+        row_ast,
+        col_ast,
+        cell_type_env,
+        limits,
+        eval_context,
+        current_sheet=current_sheet,
+    )
 
 
 def _qualify_fragment(
@@ -694,6 +715,68 @@ def _infer_single_offset_call(
     height_ast = parse_ast("=" + height_expr) if height_expr else None
     width_ast = parse_ast("=" + width_expr) if width_expr else None
 
+    eval_context = (
+        {"row": current_row, "column": current_col}
+        if current_row is not None and current_col is not None
+        else None
+    )
+
+    rows_list = _infer_offset_scalar_domains(
+        rows_ast, cell_type_env, limits, eval_context, current_sheet=current_sheet
+    )
+    cols_list = _infer_offset_scalar_domains(
+        cols_ast, cell_type_env, limits, eval_context, current_sheet=current_sheet
+    )
+    use_infer = rows_list is not None and cols_list is not None
+    height_vals: list[int | None]
+    width_vals: list[int | None]
+    if use_infer:
+        if height_ast is None:
+            height_vals = [None]
+        else:
+            hv = _infer_offset_scalar_domains(
+                height_ast, cell_type_env, limits, eval_context, current_sheet=current_sheet
+            )
+            if hv is None:
+                use_infer = False
+            else:
+                height_vals = cast(list[int | None], hv)
+    if use_infer:
+        if width_ast is None:
+            width_vals = [None]
+        else:
+            wv = _infer_offset_scalar_domains(
+                width_ast, cell_type_env, limits, eval_context, current_sheet=current_sheet
+            )
+            if wv is None:
+                use_infer = False
+            else:
+                width_vals = cast(list[int | None], wv)
+
+    targets: set[str] = set()
+    if use_infer:
+        assert rows_list is not None
+        assert cols_list is not None
+        for base_range in base_ranges:
+            base_bounds = (
+                GlobalWorkbookBounds(sheet=base_range.sheet) if bounds is None else bounds
+            )
+            for rv in rows_list:
+                for cv in cols_list:
+                    for hv in height_vals:
+                        for wv in width_vals:
+                            result = offset_range(
+                                base_range,
+                                rows=rv,
+                                cols=cv,
+                                height=hv,
+                                width=wv,
+                                bounds=base_bounds,
+                            )
+                            if isinstance(result, ExcelRange):
+                                targets |= set(result.cell_addresses())
+        return targets
+
     leaf_addrs: set[str] = set()
     leaf_addrs |= _collect_addresses(rows_ast)
     leaf_addrs |= _collect_addresses(cols_ast)
@@ -704,13 +787,6 @@ def _infer_single_offset_call(
 
     domains = _build_domains(leaf_addrs, cell_type_env, limits)
 
-    eval_context = (
-        {"row": current_row, "column": current_col}
-        if current_row is not None and current_col is not None
-        else None
-    )
-
-    targets: set[str] = set()
     for base_range in base_ranges:
         base_bounds = (
             GlobalWorkbookBounds(sheet=base_range.sheet) if bounds is None else bounds
@@ -807,49 +883,31 @@ def _resolve_offset_base(
         array_ast, row_ast = base_ast.args[0], base_ast.args[1]
         col_ast = base_ast.args[2] if len(base_ast.args) >= 3 else None
         array_range = _base_to_range(array_ast, current_sheet=current_sheet)
-        leaf_addrs_for_domains = _collect_addresses_needing_domain(row_ast) | (
-            _collect_addresses_needing_domain(col_ast) if col_ast is not None else set()
+        eval_context = (
+            {"row": current_row, "column": current_col}
+            if current_row is not None and current_col is not None
+            else None
         )
-        domains = _build_domains(leaf_addrs_for_domains, cell_type_env, limits)
+        addr_set = _infer_index_targets_core(
+            array_range,
+            row_ast,
+            col_ast,
+            cell_type_env,
+            limits,
+            eval_context,
+            current_sheet=current_sheet,
+        )
         bases: list[ExcelRange] = []
-        for assignment in _enumerate_assignments(domains.values(), limits):
-            addr_to_value = dict(zip(domains.keys(), assignment, strict=False))
-
-            def get_cell_value(addr: str, m=addr_to_value) -> float:
-                try:
-                    return m[addr]
-                except KeyError as exc:
-                    raise DynamicRefError(
-                        f"INDEX argument formula references cell without domain: {addr!r}"
-                    ) from exc
-
-            eval_context = (
-                {"row": current_row, "column": current_col}
-                if current_row is not None and current_col is not None
-                else None
-            )
-            row_val = _eval_arg(row_ast, get_cell_value, limits, context=eval_context)
-            col_val = (
-                _eval_arg(col_ast, get_cell_value, limits, context=eval_context)
-                if col_ast is not None
-                else 1.0
-            )
-            if isinstance(row_val, XlError) or isinstance(col_val, XlError):
-                continue
-            r1, c1 = int(row_val), int(col_val)
-            if r1 < 1 or c1 < 1:
-                continue
-            cell_row = array_range.start_row + r1 - 1
-            cell_col = array_range.start_col + c1 - 1
-            if cell_row > array_range.end_row or cell_col > array_range.end_col:
-                continue
+        for addr in addr_set:
+            sheet, coord = _split_address(addr, current_sheet=current_sheet)
+            row, col = coordinate_to_tuple(coord)
             bases.append(
                 ExcelRange(
-                    sheet=array_range.sheet,
-                    start_row=cell_row,
-                    start_col=cell_col,
-                    end_row=cell_row,
-                    end_col=cell_col,
+                    sheet=sheet,
+                    start_row=row,
+                    start_col=col,
+                    end_row=row,
+                    end_col=col,
                 )
             )
         return bases
@@ -896,6 +954,855 @@ def _split_address(addr: str, *, current_sheet: str) -> tuple[str, str]:
     return current_sheet, addr
 
 
+@dataclass(frozen=True, slots=True)
+class _IntBounds:
+    """Inclusive integer bounds for analysis-only numeric domains."""
+
+    lo: int
+    hi: int
+
+
+@dataclass(frozen=True, slots=True)
+class _FiniteInts:
+    values: frozenset[int]
+
+
+def _domain_from_cell_type(ct: CellType | None, limits: DynamicRefLimits) -> _FiniteInts | _IntBounds | None:
+    if ct is None:
+        return None
+    if ct.kind not in (CellKind.NUMBER, CellKind.ANY):
+        return None
+    if ct.enum is not None:
+        if not ct.enum.values:
+            return _FiniteInts(frozenset())
+        ints: list[int] = []
+        for v in ct.enum.values:
+            if isinstance(v, bool):
+                return None
+            if not isinstance(v, int):
+                return None
+            ints.append(v)
+        return _FiniteInts(frozenset(ints))
+    if ct.interval is not None:
+        if ct.interval.min is None or ct.interval.max is None:
+            return None
+        lo, hi = int(ct.interval.min), int(ct.interval.max)
+        if hi < lo:
+            return None
+        span = hi - lo + 1
+        if span <= limits.max_branches:
+            return _FiniteInts(frozenset(range(lo, hi + 1)))
+        return _IntBounds(lo, hi)
+    return None
+
+
+def _static_match_lookup_extent(node: AstNode) -> int | None:
+    """Return N so MATCH position is within [1, N] when lookup_array has static shape."""
+    if isinstance(node, CellRefNode):
+        return 1
+    if isinstance(node, RangeNode):
+        try:
+            _s1, coord_start = node.start.split("!", 1)
+            _s2, coord_end = node.end.split("!", 1)
+        except ValueError:
+            return None
+        row1, col1 = coordinate_to_tuple(coord_start)
+        row2, col2 = coordinate_to_tuple(coord_end)
+        rlo, rhi = sorted((row1, row2))
+        clo, chi = sorted((col1, col2))
+        nrows = rhi - rlo + 1
+        ncols = chi - clo + 1
+        if nrows == 1:
+            return ncols
+        if ncols == 1:
+            return nrows
+        return nrows * ncols
+    return None
+
+
+def _normalize_to_bounds(d: _FiniteInts | _IntBounds) -> _IntBounds:
+    if isinstance(d, _IntBounds):
+        return d
+    if not d.values:
+        return _IntBounds(0, -1)
+    return _IntBounds(min(d.values), max(d.values))
+
+
+def _union_numeric_domains(
+    a: _FiniteInts | _IntBounds | None,
+    b: _FiniteInts | _IntBounds | None,
+    limits: DynamicRefLimits,
+) -> _FiniteInts | _IntBounds | None:
+    if a is None or b is None:
+        return None
+    if isinstance(a, _FiniteInts) and isinstance(b, _FiniteInts):
+        u = a.values | b.values
+        if len(u) <= limits.max_branches:
+            return _FiniteInts(u)
+        return _IntBounds(min(u), max(u))
+    ba = _normalize_to_bounds(a)
+    bb = _normalize_to_bounds(b)
+    lo, hi = min(ba.lo, bb.lo), max(ba.hi, bb.hi)
+    if hi < lo:
+        return _FiniteInts(frozenset())
+    span = hi - lo + 1
+    if span <= limits.max_branches:
+        return _FiniteInts(frozenset(range(lo, hi + 1)))
+    return _IntBounds(lo, hi)
+
+
+def _add_numeric_domains(
+    a: _FiniteInts | _IntBounds | None,
+    b: _FiniteInts | _IntBounds | None,
+    limits: DynamicRefLimits,
+) -> _FiniteInts | _IntBounds | None:
+    if a is None or b is None:
+        return None
+    if isinstance(a, _FiniteInts) and isinstance(b, _FiniteInts):
+        sums = {x + y for x in a.values for y in b.values}
+        if len(sums) <= limits.max_branches:
+            return _FiniteInts(frozenset(sums))
+        return _IntBounds(min(sums), max(sums))
+    ba, bb = _normalize_to_bounds(a), _normalize_to_bounds(b)
+    lo, hi = ba.lo + bb.lo, ba.hi + bb.hi
+    if hi < lo:
+        return _FiniteInts(frozenset())
+    span = hi - lo + 1
+    if span <= limits.max_branches:
+        return _FiniteInts(frozenset(range(lo, hi + 1)))
+    return _IntBounds(lo, hi)
+
+
+def _sub_numeric_domains(
+    a: _FiniteInts | _IntBounds | None,
+    b: _FiniteInts | _IntBounds | None,
+    limits: DynamicRefLimits,
+) -> _FiniteInts | _IntBounds | None:
+    if a is None or b is None:
+        return None
+    if isinstance(a, _FiniteInts) and isinstance(b, _FiniteInts):
+        diffs = {x - y for x in a.values for y in b.values}
+        if len(diffs) <= limits.max_branches:
+            return _FiniteInts(frozenset(diffs))
+        return _IntBounds(min(diffs), max(diffs))
+    ba, bb = _normalize_to_bounds(a), _normalize_to_bounds(b)
+    lo, hi = ba.lo - bb.hi, ba.hi - bb.lo
+    if hi < lo:
+        return _FiniteInts(frozenset())
+    span = hi - lo + 1
+    if span <= limits.max_branches:
+        return _FiniteInts(frozenset(range(lo, hi + 1)))
+    return _IntBounds(lo, hi)
+
+
+def _mul_numeric_domains(
+    a: _FiniteInts | _IntBounds | None,
+    b: _FiniteInts | _IntBounds | None,
+    limits: DynamicRefLimits,
+) -> _FiniteInts | _IntBounds | None:
+    if a is None or b is None:
+        return None
+    if isinstance(a, _FiniteInts) and isinstance(b, _FiniteInts):
+        prods = {x * y for x in a.values for y in b.values}
+        if len(prods) <= limits.max_branches:
+            return _FiniteInts(frozenset(prods))
+        return _IntBounds(min(prods), max(prods))
+    ba, bb = _normalize_to_bounds(a), _normalize_to_bounds(b)
+    corners = (ba.lo * bb.lo, ba.lo * bb.hi, ba.hi * bb.lo, ba.hi * bb.hi)
+    lo, hi = min(corners), max(corners)
+    if hi < lo:
+        return _FiniteInts(frozenset())
+    return _IntBounds(lo, hi)
+
+
+def _trunc_div_int(numerator: int, denominator: int) -> int:
+    return int(numerator / denominator)
+
+
+def _div_numeric_domains(
+    a: _FiniteInts | _IntBounds | None,
+    b: _FiniteInts | _IntBounds | None,
+    limits: DynamicRefLimits,
+) -> _FiniteInts | _IntBounds | None:
+    if a is None or b is None:
+        return None
+    bb = _normalize_to_bounds(b)
+    if bb.lo <= 0 <= bb.hi:
+        return None
+    if isinstance(a, _FiniteInts) and isinstance(b, _FiniteInts):
+        quotients = {_trunc_div_int(x, y) for x in a.values for y in b.values}
+        if len(quotients) <= limits.max_branches:
+            return _FiniteInts(frozenset(quotients))
+        return _IntBounds(min(quotients), max(quotients))
+    ba = _normalize_to_bounds(a)
+    corners = (
+        _trunc_div_int(ba.lo, bb.lo),
+        _trunc_div_int(ba.lo, bb.hi),
+        _trunc_div_int(ba.hi, bb.lo),
+        _trunc_div_int(ba.hi, bb.hi),
+    )
+    lo, hi = min(corners), max(corners)
+    if hi < lo:
+        return _FiniteInts(frozenset())
+    span = hi - lo + 1
+    if span <= limits.max_branches:
+        return _FiniteInts(frozenset(range(lo, hi + 1)))
+    return _IntBounds(lo, hi)
+
+
+def _comparison_numeric_domain(
+    op: str,
+    a: _FiniteInts | _IntBounds | None,
+    b: _FiniteInts | _IntBounds | None,
+) -> _FiniteInts | _IntBounds | None:
+    if a is None or b is None:
+        return None
+    if isinstance(a, _FiniteInts) and isinstance(b, _FiniteInts):
+        predicates: dict[str, Callable[[int, int], bool]] = {
+            "=": lambda x, y: x == y,
+            "<>": lambda x, y: x != y,
+            "<": lambda x, y: x < y,
+            ">": lambda x, y: x > y,
+            "<=": lambda x, y: x <= y,
+            ">=": lambda x, y: x >= y,
+        }
+        pred = predicates.get(op)
+        if pred is None:
+            return None
+        out = {1 if pred(x, y) else 0 for x in a.values for y in b.values}
+        return _FiniteInts(frozenset(out))
+    ba = _normalize_to_bounds(a)
+    bb = _normalize_to_bounds(b)
+    definitely_true = False
+    definitely_false = False
+    if op == "=":
+        definitely_false = ba.hi < bb.lo or bb.hi < ba.lo
+        definitely_true = ba.lo == ba.hi == bb.lo == bb.hi
+    elif op == "<>":
+        definitely_true = ba.hi < bb.lo or bb.hi < ba.lo
+        definitely_false = ba.lo == ba.hi == bb.lo == bb.hi
+    elif op == "<":
+        definitely_true = ba.hi < bb.lo
+        definitely_false = ba.lo >= bb.hi
+    elif op == ">":
+        definitely_true = ba.lo > bb.hi
+        definitely_false = ba.hi <= bb.lo
+    elif op == "<=":
+        definitely_true = ba.hi <= bb.lo
+        definitely_false = ba.lo > bb.hi
+    elif op == ">=":
+        definitely_true = ba.lo >= bb.hi
+        definitely_false = ba.hi < bb.lo
+    else:
+        return None
+    if definitely_true:
+        return _FiniteInts(frozenset({1}))
+    if definitely_false:
+        return _FiniteInts(frozenset({0}))
+    return _FiniteInts(frozenset({0, 1}))
+
+
+def _neg_numeric_domain(d: _FiniteInts | _IntBounds | None) -> _FiniteInts | _IntBounds | None:
+    if d is None:
+        return None
+    if isinstance(d, _FiniteInts):
+        vals = {-v for v in d.values}
+        return _FiniteInts(frozenset(vals))
+    return _IntBounds(-d.hi, -d.lo)
+
+
+def _describe_unsupported_numeric_construct(node: AstNode | None) -> str | None:
+    if node is None:
+        return None
+    if isinstance(node, (NumberNode, CellRefNode)):
+        return None
+    if isinstance(node, (StringNode, BoolNode, ErrorNode, RangeNode)):
+        return type(node).__name__
+    if isinstance(node, UnaryOpNode):
+        if node.op == "-":
+            return _describe_unsupported_numeric_construct(node.operand)
+        return f"unary operator {node.op!r}"
+    if isinstance(node, BinaryOpNode):
+        if node.op in {"+", "-", "*", "/", "=", "<>", "<", ">", "<=", ">="}:
+            left = _describe_unsupported_numeric_construct(node.left)
+            if left is not None:
+                return left
+            return _describe_unsupported_numeric_construct(node.right)
+        return f"binary operator {node.op!r}"
+    if isinstance(node, FunctionCallNode):
+        if node.name.upper() in {"ROW", "COLUMN", "MATCH", "IF", "SUM", "ISNUMBER", "CHOOSE"}:
+            for arg in node.args:
+                reason = _describe_unsupported_numeric_construct(arg)
+                if reason is not None:
+                    return reason
+            return None
+        return f"function {node.name.upper()!r}"
+    return type(node).__name__
+
+
+def _range_node_cell_addresses(node: RangeNode) -> list[str] | None:
+    """Expand a single-sheet A1 range to sheet-qualified cell keys in row-major order."""
+    try:
+        sheet, coord_start = node.start.split("!", 1)
+        sheet2, coord_end = node.end.split("!", 1)
+    except ValueError:
+        return None
+    if sheet != sheet2:
+        return None
+    row1, col1 = coordinate_to_tuple(coord_start)
+    row2, col2 = coordinate_to_tuple(coord_end)
+    rlo, rhi = sorted((row1, row2))
+    clo, chi = sorted((col1, col2))
+    from fastpyxl.utils.cell import get_column_letter
+
+    out: list[str] = []
+    for r in range(rlo, rhi + 1):
+        for c in range(clo, chi + 1):
+            col_letter = get_column_letter(c)
+            out.append(f"{sheet}!{col_letter}{r}")
+    return out
+
+
+def _infer_sum_argument_domain(
+    arg: AstNode,
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    *,
+    context: dict[str, int],
+    current_sheet: str,
+    depth: int,
+) -> _FiniteInts | _IntBounds | None:
+    if isinstance(arg, CellRefNode):
+        return _domain_from_cell_type(env.get(arg.address), limits)
+    if isinstance(arg, RangeNode):
+        addrs = _range_node_cell_addresses(arg)
+        if addrs is None:
+            return None
+        acc: _FiniteInts | _IntBounds | None = _FiniteInts(frozenset({0}))
+        for addr in addrs:
+            d = _domain_from_cell_type(env.get(addr), limits)
+            if d is None:
+                return None
+            acc = _add_numeric_domains(acc, d, limits)
+            if acc is None:
+                return None
+        return acc
+    return _infer_numeric_domain(
+        arg,
+        env,
+        limits,
+        context=context,
+        current_sheet=current_sheet,
+        depth=depth,
+    )
+
+
+def _infer_sum_numeric_domain(
+    node: FunctionCallNode,
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    *,
+    context: dict[str, int],
+    current_sheet: str,
+    depth: int,
+) -> _FiniteInts | _IntBounds | None:
+    acc: _FiniteInts | _IntBounds | None = _FiniteInts(frozenset({0}))
+    for arg in node.args:
+        d = _infer_sum_argument_domain(
+            arg,
+            env,
+            limits,
+            context=context,
+            current_sheet=current_sheet,
+            depth=depth + 1,
+        )
+        if d is None:
+            return None
+        acc = _add_numeric_domains(acc, d, limits)
+        if acc is None:
+            return None
+    return acc
+
+
+def _infer_choose_numeric_domain(
+    node: FunctionCallNode,
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    *,
+    context: dict[str, int],
+    current_sheet: str,
+    depth: int,
+) -> _FiniteInts | _IntBounds | None:
+    if len(node.args) < 2:
+        return None
+    index_dom = _infer_numeric_domain(
+        node.args[0],
+        env,
+        limits,
+        context=context,
+        current_sheet=current_sheet,
+        depth=depth + 1,
+    )
+    if index_dom is None:
+        return None
+    option_count = len(node.args) - 1
+    if isinstance(index_dom, _FiniteInts):
+        selected = sorted(i for i in index_dom.values if 1 <= i <= option_count)
+    else:
+        lo = max(1, index_dom.lo)
+        hi = min(option_count, index_dom.hi)
+        if hi < lo:
+            return None
+        selected = list(range(lo, hi + 1))
+
+    out: _FiniteInts | _IntBounds | None = None
+    for idx in selected:
+        option_dom = _infer_numeric_domain(
+            node.args[idx],
+            env,
+            limits,
+            context=context,
+            current_sheet=current_sheet,
+            depth=depth + 1,
+        )
+        if option_dom is None:
+            return None
+        out = option_dom if out is None else _union_numeric_domains(out, option_dom, limits)
+        if out is None:
+            return None
+    return out
+
+
+def _infer_numeric_domain(
+    node: AstNode,
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    *,
+    context: dict[str, int] | None = None,
+    current_sheet: str = "",
+    depth: int = 0,
+) -> _FiniteInts | _IntBounds | None:
+    """Analysis-only numeric abstract interpretation for selector expressions.
+
+    Returns ``None`` when the expression is unsupported or cannot be summarized
+    soundly as integers. Must never raise for well-formed AST nodes.
+    """
+    if depth > limits.max_depth:
+        return None
+    ctx = context or {}
+
+    if isinstance(node, NumberNode):
+        v = node.value
+        if isinstance(v, bool):
+            return _FiniteInts(frozenset({int(v)}))
+        if isinstance(v, int):
+            return _FiniteInts(frozenset({v}))
+        if isinstance(v, float) and v.is_integer():
+            return _FiniteInts(frozenset({int(v)}))
+        return None
+
+    if isinstance(node, (StringNode, BoolNode, ErrorNode)):
+        return None
+
+    if isinstance(node, CellRefNode):
+        return _domain_from_cell_type(env.get(node.address), limits)
+
+    if isinstance(node, RangeNode):
+        return None
+
+    if isinstance(node, UnaryOpNode):
+        if node.op == "-":
+            inner = _infer_numeric_domain(
+                node.operand, env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+            )
+            return _neg_numeric_domain(inner)
+        return None
+
+    if isinstance(node, BinaryOpNode):
+        left = _infer_numeric_domain(
+            node.left, env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+        )
+        right = _infer_numeric_domain(
+            node.right, env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+        )
+        op = node.op
+        if op == "+":
+            return _add_numeric_domains(left, right, limits)
+        if op == "-":
+            return _sub_numeric_domains(left, right, limits)
+        if op == "*":
+            return _mul_numeric_domains(left, right, limits)
+        if op == "/":
+            return _div_numeric_domains(left, right, limits)
+        if op in {"=", "<>", "<", ">", "<=", ">="}:
+            return _comparison_numeric_domain(op, left, right)
+        return None
+
+    if isinstance(node, FunctionCallNode):
+        name = node.name.upper()
+        if name == "ROW":
+            if len(node.args) == 0:
+                row = ctx.get("row")
+                if row is None:
+                    return None
+                return _FiniteInts(frozenset({int(row)}))
+            if len(node.args) == 1 and isinstance(node.args[0], CellRefNode):
+                cell = _cell_part_from_address_for_infer(node.args[0].address)
+                _col_letter, row = coordinate_from_string(cell)
+                return _FiniteInts(frozenset({row}))
+            return None
+        if name == "COLUMN":
+            if len(node.args) == 0:
+                col = ctx.get("column")
+                if col is None:
+                    return None
+                return _FiniteInts(frozenset({int(col)}))
+            if len(node.args) == 1 and isinstance(node.args[0], CellRefNode):
+                cell = _cell_part_from_address_for_infer(node.args[0].address)
+                col_letter, _row = coordinate_from_string(cell)
+                from fastpyxl.utils.cell import column_index_from_string
+
+                return _FiniteInts(frozenset({column_index_from_string(col_letter)}))
+            return None
+        if name == "MATCH":
+            if len(node.args) < 2:
+                return None
+            n = _static_match_lookup_extent(node.args[1])
+            if n is None or n < 1:
+                return None
+            return _IntBounds(1, n)
+        if name == "IF":
+            if len(node.args) < 2:
+                return None
+            then_d = _infer_numeric_domain(
+                node.args[1], env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+            )
+            if len(node.args) >= 3:
+                else_d = _infer_numeric_domain(
+                    node.args[2], env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+                )
+            else:
+                else_d = _FiniteInts(frozenset({0}))
+            return _union_numeric_domains(then_d, else_d, limits)
+        if name == "SUM":
+            return _infer_sum_numeric_domain(
+                node,
+                env,
+                limits,
+                context=ctx,
+                current_sheet=current_sheet,
+                depth=depth,
+            )
+        if name == "CHOOSE":
+            return _infer_choose_numeric_domain(
+                node,
+                env,
+                limits,
+                context=ctx,
+                current_sheet=current_sheet,
+                depth=depth,
+            )
+        if name == "ISNUMBER":
+            if len(node.args) != 1:
+                return None
+            arg = node.args[0]
+            if isinstance(arg, CellRefNode):
+                ct = env.get(arg.address)
+                if ct is None:
+                    return None
+                if ct.kind is CellKind.NUMBER:
+                    return _FiniteInts(frozenset({1}))
+                if ct.kind is CellKind.ANY and (ct.enum is not None or ct.interval is not None):
+                    return _FiniteInts(frozenset({0, 1}))
+                return _FiniteInts(frozenset({0}))
+            arg_domain = _infer_numeric_domain(
+                arg, env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+            )
+            if arg_domain is None:
+                return _FiniteInts(frozenset({0}))
+            return _FiniteInts(frozenset({0, 1}))
+        if name in frozenset({"MIN", "MAX", "ABS", "CONCAT"}):
+            return None
+        return None
+
+    return None
+
+
+def _cell_part_from_address_for_infer(addr: str) -> str:
+    if "!" in addr:
+        return addr.split("!", 1)[-1].strip()
+    return addr.strip()
+
+
+def _index_pair_to_addresses(
+    array_range: ExcelRange,
+    r: int,
+    c: int,
+    *,
+    nrows: int,
+    ncols: int,
+) -> set[str]:
+    from fastpyxl.utils.cell import get_column_letter
+
+    out: set[str] = set()
+    if r == 0 and c == 0:
+        out.update(array_range.cell_addresses())
+        return out
+    if r == 0:
+        if 1 <= c <= ncols:
+            for row_off in range(nrows):
+                cell_row = array_range.start_row + row_off
+                cell_col = array_range.start_col + c - 1
+                out.add(f"{array_range.sheet}!{get_column_letter(cell_col)}{cell_row}")
+        return out
+    if c == 0:
+        if 1 <= r <= nrows:
+            for col_off in range(ncols):
+                cell_row = array_range.start_row + r - 1
+                cell_col = array_range.start_col + col_off
+                out.add(f"{array_range.sheet}!{get_column_letter(cell_col)}{cell_row}")
+        return out
+    if 1 <= r <= nrows and 1 <= c <= ncols:
+        cell_row = array_range.start_row + r - 1
+        cell_col = array_range.start_col + c - 1
+        out.add(f"{array_range.sheet}!{get_column_letter(cell_col)}{cell_row}")
+    return out
+
+
+def _clamp_int(v: int, lo: int, hi: int) -> int:
+    return max(lo, min(hi, v))
+
+
+def _emit_index_targets_from_domains(
+    array_range: ExcelRange,
+    row_dom: _FiniteInts | _IntBounds,
+    col_dom: _FiniteInts | _IntBounds,
+    limits: DynamicRefLimits,
+) -> set[str]:
+    nrows = array_range.end_row - array_range.start_row + 1
+    ncols = array_range.end_col - array_range.start_col + 1
+    targets: set[str] = set()
+
+    if isinstance(row_dom, _FiniteInts) and isinstance(col_dom, _FiniteInts):
+        rs = sorted(row_dom.values)
+        cs = sorted(col_dom.values)
+        for r in rs:
+            for c in cs:
+                targets |= _index_pair_to_addresses(
+                    array_range, r, c, nrows=nrows, ncols=ncols
+                )
+        if len(targets) > limits.max_cells:
+            raise DynamicRefError(
+                f"INDEX target cells exceed limit ({len(targets)} > {limits.max_cells})"
+            )
+        return targets
+
+    if isinstance(row_dom, _FiniteInts) and isinstance(col_dom, _IntBounds):
+        cb = col_dom
+        clo = _clamp_int(cb.lo, 1, ncols)
+        chi = _clamp_int(cb.hi, 1, ncols)
+        if chi < clo:
+            return set()
+        for r in sorted(row_dom.values):
+            if r == 0:
+                for c in range(clo, chi + 1):
+                    targets |= _index_pair_to_addresses(
+                        array_range, 0, c, nrows=nrows, ncols=ncols
+                    )
+            else:
+                cr_lo, cr_hi = clo, chi
+                if 1 <= r <= nrows:
+                    for c in range(cr_lo, cr_hi + 1):
+                        targets |= _index_pair_to_addresses(
+                            array_range, r, c, nrows=nrows, ncols=ncols
+                        )
+        if len(targets) > limits.max_cells:
+            raise DynamicRefError(
+                f"INDEX target cells exceed limit ({len(targets)} > {limits.max_cells})"
+            )
+        return targets
+
+    if isinstance(row_dom, _IntBounds) and isinstance(col_dom, _FiniteInts):
+        rb = row_dom
+        rlo = _clamp_int(rb.lo, 1, nrows)
+        rhi = _clamp_int(rb.hi, 1, nrows)
+        if rhi < rlo:
+            return set()
+        for c in sorted(col_dom.values):
+            if c == 0:
+                for r in range(rlo, rhi + 1):
+                    targets |= _index_pair_to_addresses(
+                        array_range, r, 0, nrows=nrows, ncols=ncols
+                    )
+            else:
+                cc_lo, cc_hi = rlo, rhi
+                if 1 <= c <= ncols:
+                    for r in range(cc_lo, cc_hi + 1):
+                        targets |= _index_pair_to_addresses(
+                            array_range, r, c, nrows=nrows, ncols=ncols
+                        )
+        if len(targets) > limits.max_cells:
+            raise DynamicRefError(
+                f"INDEX target cells exceed limit ({len(targets)} > {limits.max_cells})"
+            )
+        return targets
+
+    rb = _normalize_to_bounds(row_dom)
+    cb = _normalize_to_bounds(col_dom)
+    r_has_zero = rb.lo <= 0 <= rb.hi
+    c_has_zero = cb.lo <= 0 <= cb.hi
+    r_pos_lo = max(1, rb.lo)
+    r_pos_hi = max(1, rb.hi)
+    c_pos_lo = max(1, cb.lo)
+    c_pos_hi = max(1, cb.hi)
+    r_pos_lo = _clamp_int(r_pos_lo, 1, nrows)
+    r_pos_hi = _clamp_int(r_pos_hi, 1, nrows)
+    c_pos_lo = _clamp_int(c_pos_lo, 1, ncols)
+    c_pos_hi = _clamp_int(c_pos_hi, 1, ncols)
+
+    if r_has_zero and c_has_zero:
+        targets |= _index_pair_to_addresses(array_range, 0, 0, nrows=nrows, ncols=ncols)
+    if r_has_zero and not c_has_zero and c_pos_hi >= c_pos_lo:
+        for c in range(c_pos_lo, c_pos_hi + 1):
+            targets |= _index_pair_to_addresses(array_range, 0, c, nrows=nrows, ncols=ncols)
+    if c_has_zero and not r_has_zero and r_pos_hi >= r_pos_lo:
+        for r in range(r_pos_lo, r_pos_hi + 1):
+            targets |= _index_pair_to_addresses(array_range, r, 0, nrows=nrows, ncols=ncols)
+
+    if r_pos_hi >= r_pos_lo and c_pos_hi >= c_pos_lo:
+        from fastpyxl.utils.cell import get_column_letter
+
+        for rr in range(array_range.start_row + r_pos_lo - 1, array_range.start_row + r_pos_hi):
+            for cc in range(array_range.start_col + c_pos_lo - 1, array_range.start_col + c_pos_hi):
+                targets.add(f"{array_range.sheet}!{get_column_letter(cc)}{rr}")
+
+    if len(targets) > limits.max_cells:
+        raise DynamicRefError(
+            f"INDEX target cells exceed limit ({len(targets)} > {limits.max_cells})"
+        )
+    return targets
+
+
+def _infer_index_targets_core(
+    array_range: ExcelRange,
+    row_ast: AstNode,
+    col_ast: AstNode | None,
+    cell_type_env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    eval_context: dict[str, int] | None,
+    *,
+    current_sheet: str,
+) -> set[str]:
+    col_effective = col_ast if col_ast is not None else NumberNode(1)
+    row_dom = _infer_numeric_domain(
+        row_ast,
+        cell_type_env,
+        limits,
+        context=eval_context,
+        current_sheet=current_sheet,
+    )
+    col_dom = _infer_numeric_domain(
+        col_effective,
+        cell_type_env,
+        limits,
+        context=eval_context,
+        current_sheet=current_sheet,
+    )
+
+    if row_dom is not None and col_dom is not None:
+        return _emit_index_targets_from_domains(array_range, row_dom, col_dom, limits)
+
+    leaf_addrs = _collect_addresses_needing_domain(row_ast)
+    if col_ast is not None:
+        leaf_addrs |= _collect_addresses_needing_domain(col_ast)
+    domains = _build_domains(leaf_addrs, cell_type_env, limits)
+    eval_ctx = eval_context
+
+    targets: set[str] = set()
+    for assignment in _enumerate_assignments(domains.values(), limits):
+        addr_to_value = dict(zip(domains.keys(), assignment, strict=False))
+
+        def get_cell_value(addr: str, m=addr_to_value) -> float:
+            try:
+                return m[addr]
+            except KeyError as exc:
+                raise DynamicRefError(
+                    f"INDEX argument formula references cell without domain: {addr!r}"
+                ) from exc
+
+        row_val = _eval_arg(row_ast, get_cell_value, limits, context=eval_ctx)
+        col_val = _eval_arg(col_effective, get_cell_value, limits, context=eval_ctx)
+        if isinstance(row_val, XlError) or isinstance(col_val, XlError):
+            continue
+        r1, c1 = int(row_val), int(col_val)
+        targets |= _index_pair_to_addresses(array_range, r1, c1, nrows=array_range.shape[0], ncols=array_range.shape[1])
+    if len(targets) > limits.max_cells:
+        raise DynamicRefError(
+            f"INDEX target cells exceed limit ({len(targets)} > {limits.max_cells})"
+        )
+    return targets
+
+
+def _numeric_domain_to_int_list(
+    dom: _FiniteInts | _IntBounds,
+    limits: DynamicRefLimits,
+) -> list[int] | None:
+    if isinstance(dom, _FiniteInts):
+        if len(dom.values) > limits.max_branches:
+            return None
+        return sorted(dom.values)
+    span = dom.hi - dom.lo + 1
+    if span > limits.max_branches:
+        return None
+    return list(range(dom.lo, dom.hi + 1))
+
+
+def _infer_offset_scalar_domains(
+    node: AstNode,
+    cell_type_env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    eval_context: dict[str, int] | None,
+    *,
+    current_sheet: str,
+) -> list[int] | None:
+    dom = _infer_numeric_domain(
+        node,
+        cell_type_env,
+        limits,
+        context=eval_context,
+        current_sheet=current_sheet,
+    )
+    if dom is not None:
+        listed = _numeric_domain_to_int_list(dom, limits)
+        if listed is not None:
+            return listed
+    addrs = _collect_addresses(node)
+    try:
+        bd = _build_domains(addrs, cell_type_env, limits)
+    except DynamicRefError:
+        return None
+    keys = sorted(bd.keys())
+    if not keys:
+        return None
+    total = 1
+    for k in keys:
+        total *= len(bd[k])
+        if total > limits.max_branches:
+            return None
+    out_vals: set[int] = set()
+    for assignment in product(*(bd[k] for k in keys)):
+        addr_to_value = dict(zip(keys, assignment, strict=False))
+
+        def get_cell_value(addr: str, m=addr_to_value) -> float:
+            return m[addr]
+
+        v = _eval_arg(node, get_cell_value, limits, context=eval_context)
+        if isinstance(v, XlError):
+            continue
+        out_vals.add(int(v))
+    return sorted(out_vals) if out_vals else None
+
+
 def _collect_addresses_needing_domain(node: AstNode) -> set[str]:
     """Return cell/range addresses that appear in a value context (need a numeric domain).
 
@@ -928,12 +1835,17 @@ def _collect_addresses_needing_domain(node: AstNode) -> set[str]:
             row2, col2 = coordinate_to_tuple(coord_end)
             rlo, rhi = sorted((row1, row2))
             clo, chi = sorted((col1, col2))
-            from openpyxl.utils.cell import get_column_letter
+            from fastpyxl.utils.cell import get_column_letter
 
             for r in range(rlo, rhi + 1):
                 for c in range(clo, chi + 1):
                     col_letter = get_column_letter(c)
                     addrs.add(f"{sheet}!{col_letter}{r}")
+            return
+        if isinstance(n, FunctionCallNode) and n.name.upper() == "MATCH" and len(n.args) >= 2:
+            visit(n.args[0], n, 0)
+            if len(n.args) >= 3:
+                visit(n.args[2], n, 2)
             return
         if isinstance(n, FunctionCallNode):
             for i, arg in enumerate(n.args):
@@ -969,7 +1881,7 @@ def _collect_addresses(node: AstNode) -> set[str]:
             for r in range(rlo, rhi + 1):
                 for c in range(clo, chi + 1):
                     # coordinate_to_tuple gives (row, col); we need back to A1
-                    from openpyxl.utils.cell import get_column_letter
+                    from fastpyxl.utils.cell import get_column_letter
 
                     col_letter = get_column_letter(c)
                     addrs.add(f"{sheet}!{col_letter}{r}")
@@ -984,6 +1896,34 @@ def _collect_addresses(node: AstNode) -> set[str]:
             visit(n.right)  # type: ignore[arg-type]
         if hasattr(n, "operand"):
             visit(n.operand)  # type: ignore[arg-type]
+
+    visit(node)
+    return addrs
+
+
+def _collect_static_addresses_from_ast(node: AstNode) -> set[str]:
+    """Collect static cell/range addresses while skipping dynamic-ref call subtrees."""
+    addrs: set[str] = set()
+
+    def visit(n: AstNode) -> None:
+        if isinstance(n, CellRefNode):
+            addrs.add(n.address)
+            return
+        if isinstance(n, RangeNode):
+            addrs.update(_collect_addresses(n))
+            return
+        if isinstance(n, FunctionCallNode) and n.name.upper() in {"OFFSET", "INDIRECT", "INDEX"}:
+            return
+        if isinstance(n, FunctionCallNode):
+            for arg in n.args:
+                visit(arg)
+            return
+        if isinstance(n, BinaryOpNode):
+            visit(n.left)
+            visit(n.right)
+            return
+        if isinstance(n, UnaryOpNode):
+            visit(n.operand)
 
     visit(node)
     return addrs
@@ -1271,4 +2211,3 @@ def _split_top_level_args(s: str) -> list[str] | None:
         return None
     args.append("".join(buf).strip())
     return [a for a in args if a != ""]
-

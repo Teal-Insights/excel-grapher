@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-import openpyxl.utils.cell
+import fastpyxl.utils.cell
 
 from . import CellValue, ExcelRange, XlError, to_number
 
@@ -121,10 +121,10 @@ def indirect_text_to_range(
     try:
         if ":" in addr_text:
             start_ref, end_ref = addr_text.split(":", 1)
-            start_col, start_row = openpyxl.utils.cell.coordinate_to_tuple(start_ref)
-            end_col, end_row = openpyxl.utils.cell.coordinate_to_tuple(end_ref)
+            start_col, start_row = fastpyxl.utils.cell.coordinate_to_tuple(start_ref)
+            end_col, end_row = fastpyxl.utils.cell.coordinate_to_tuple(end_ref)
         else:
-            col, row = openpyxl.utils.cell.coordinate_to_tuple(addr_text)
+            col, row = fastpyxl.utils.cell.coordinate_to_tuple(addr_text)
             start_col = end_col = col
             start_row = end_row = row
     except Exception:

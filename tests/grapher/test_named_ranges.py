@@ -3,16 +3,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import openpyxl
+import fastpyxl
 import pytest
-from openpyxl.workbook.defined_name import DefinedName
+from fastpyxl.workbook.defined_name import DefinedName
 
 from excel_grapher import create_dependency_graph
 from excel_grapher.grapher.resolver import build_named_range_map
 
 
-def _new_workbook() -> openpyxl.Workbook:
-    wb = openpyxl.Workbook()
+def _new_workbook() -> fastpyxl.Workbook:
+    wb = fastpyxl.Workbook()
     ws = wb.active
     ws.title = "Sheet1"
     return wb
@@ -25,7 +25,7 @@ def test_named_range_map_allows_simple_range(tmp_path: Path) -> None:
     wb.defined_names.add(DefinedName("Bar", attr_text="Sheet1!$A$1:$B$2"))
     wb.save(excel_path)
 
-    maps = build_named_range_map(openpyxl.load_workbook(excel_path, data_only=False, read_only=True))
+    maps = build_named_range_map(fastpyxl.load_workbook(excel_path, data_only=False, read_only=True))
     assert maps.cell_map["Foo"] == ("Sheet1", "A1")
     assert maps.range_map["Bar"] == ("Sheet1", "A1", "B2")
 
@@ -72,7 +72,7 @@ def test_named_range_map_resolves_offset_counta_formula(tmp_path: Path) -> None:
     wb.defined_names.add(DefinedName("DSF__Country_Info", attr_text=attr))
     wb.save(excel_path)
 
-    wb_loaded = openpyxl.load_workbook(excel_path, data_only=False, read_only=True)
+    wb_loaded = fastpyxl.load_workbook(excel_path, data_only=False, read_only=True)
     maps = build_named_range_map(wb_loaded)
     assert "DSF__Country_Info" in maps.range_map
     sheet, start, end = maps.range_map["DSF__Country_Info"]
@@ -94,7 +94,7 @@ def test_named_range_map_resolves_offset_counta_fixed_width(tmp_path: Path) -> N
     wb.defined_names.add(DefinedName("DSF__COMMODITY_TABLE", attr_text=attr))
     wb.save(excel_path)
 
-    wb_loaded = openpyxl.load_workbook(excel_path, data_only=False, read_only=True)
+    wb_loaded = fastpyxl.load_workbook(excel_path, data_only=False, read_only=True)
     maps = build_named_range_map(wb_loaded)
     assert "DSF__COMMODITY_TABLE" in maps.range_map
     sheet, start, end = maps.range_map["DSF__COMMODITY_TABLE"]

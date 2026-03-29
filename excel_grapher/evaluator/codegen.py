@@ -6,7 +6,7 @@ import re
 from collections.abc import Mapping, Sequence, Set
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
-import openpyxl.utils.cell
+import fastpyxl.utils.cell
 
 from excel_grapher.grapher.graph import CycleError
 
@@ -250,7 +250,7 @@ class CodeGenerator:
         """Convert a Python value into a safe Python literal expression.
 
         The generated code must be syntactically valid Python. Values pulled from
-        workbooks can include objects (e.g., openpyxl ArrayFormula) whose repr()
+        workbooks can include objects (e.g., fastpyxl ArrayFormula) whose repr()
         is not a literal and would break the generated file if embedded.
         """
         if value is None:
@@ -276,17 +276,17 @@ class CodeGenerator:
         # Use start sheet for all cells (Excel semantics)
         sheet = start_sheet
 
-        start_col, start_row = openpyxl.utils.cell.coordinate_from_string(start_cell)
-        end_col, end_row = openpyxl.utils.cell.coordinate_from_string(end_cell)
+        start_col, start_row = fastpyxl.utils.cell.coordinate_from_string(start_cell)
+        end_col, end_row = fastpyxl.utils.cell.coordinate_from_string(end_cell)
 
-        start_col_idx = openpyxl.utils.cell.column_index_from_string(start_col)
-        end_col_idx = openpyxl.utils.cell.column_index_from_string(end_col)
+        start_col_idx = fastpyxl.utils.cell.column_index_from_string(start_col)
+        end_col_idx = fastpyxl.utils.cell.column_index_from_string(end_col)
 
         rows = []
         for row in range(start_row, end_row + 1):
             row_addrs = []
             for col_idx in range(start_col_idx, end_col_idx + 1):
-                col_letter = openpyxl.utils.cell.get_column_letter(col_idx)
+                col_letter = fastpyxl.utils.cell.get_column_letter(col_idx)
                 row_addrs.append(f"{sheet}!{col_letter}{row}")
             rows.append(row_addrs)
 
@@ -300,15 +300,15 @@ class CodeGenerator:
     @staticmethod
     def _format_cell_address(sheet: str, row: int, col: int) -> str:
         sheet_name = quote_sheet_if_needed(sheet)
-        col_letter = openpyxl.utils.cell.get_column_letter(col)
+        col_letter = fastpyxl.utils.cell.get_column_letter(col)
         return f"{sheet_name}!{col_letter}{row}"
 
     def _targets_to_entries(self, targets: Sequence[str]) -> list[tuple[str, str]]:
         by_sheet: dict[str, list[tuple[int, int]]] = {}
         for address in targets:
             sheet, cell = parse_address(address)
-            col_letters, row = openpyxl.utils.cell.coordinate_from_string(cell)
-            col_idx = openpyxl.utils.cell.column_index_from_string(col_letters)
+            col_letters, row = fastpyxl.utils.cell.coordinate_from_string(cell)
+            col_idx = fastpyxl.utils.cell.column_index_from_string(col_letters)
             by_sheet.setdefault(sheet, []).append((row, col_idx))
 
         entries: list[tuple[str, str]] = []
@@ -514,10 +514,10 @@ class CodeGenerator:
         sheet, start = parse_address(f"{sheet_part}!{start_cell}")
         _, end = parse_address(f"{sheet_part}!{end_cell}")
 
-        start_col, start_row = openpyxl.utils.cell.coordinate_from_string(start)
-        end_col, end_row = openpyxl.utils.cell.coordinate_from_string(end)
-        start_col_idx = openpyxl.utils.cell.column_index_from_string(start_col)
-        end_col_idx = openpyxl.utils.cell.column_index_from_string(end_col)
+        start_col, start_row = fastpyxl.utils.cell.coordinate_from_string(start)
+        end_col, end_row = fastpyxl.utils.cell.coordinate_from_string(end)
+        start_col_idx = fastpyxl.utils.cell.column_index_from_string(start_col)
+        end_col_idx = fastpyxl.utils.cell.column_index_from_string(end_col)
 
         r1, r2 = (start_row, end_row) if start_row <= end_row else (end_row, start_row)
         c1, c2 = (
@@ -584,8 +584,8 @@ class CodeGenerator:
         if not constant_ranges:
             return False
         sheet, cell = parse_address(normalize_address(address))
-        col_str, row = openpyxl.utils.cell.coordinate_from_string(cell)
-        col = openpyxl.utils.cell.column_index_from_string(col_str)
+        col_str, row = fastpyxl.utils.cell.coordinate_from_string(cell)
+        col = fastpyxl.utils.cell.column_index_from_string(col_str)
         for range_sheet, r1, c1, r2, c2 in constant_ranges:
             if sheet != range_sheet:
                 continue
@@ -842,8 +842,8 @@ class CodeGenerator:
         arg = node.args[0]
         if isinstance(arg, CellRefNode):
             sheet, cell = parse_address(arg.address)
-            col_str, row = openpyxl.utils.cell.coordinate_from_string(cell)
-            col = openpyxl.utils.cell.column_index_from_string(col_str)
+            col_str, row = fastpyxl.utils.cell.coordinate_from_string(cell)
+            col = fastpyxl.utils.cell.column_index_from_string(col_str)
             return f"xl_row(ExcelRange({repr(sheet)}, {row}, {col}, {row}, {col}))"
         if isinstance(arg, RangeNode):
             sheet, r1, c1, r2, c2 = self._range_coords(arg.start, arg.end)
@@ -860,8 +860,8 @@ class CodeGenerator:
         arg = node.args[0]
         if isinstance(arg, CellRefNode):
             sheet, cell = parse_address(arg.address)
-            col_str, row = openpyxl.utils.cell.coordinate_from_string(cell)
-            col = openpyxl.utils.cell.column_index_from_string(col_str)
+            col_str, row = fastpyxl.utils.cell.coordinate_from_string(cell)
+            col = fastpyxl.utils.cell.column_index_from_string(col_str)
             return f"xl_column(ExcelRange({repr(sheet)}, {row}, {col}, {row}, {col}))"
         if isinstance(arg, RangeNode):
             sheet, r1, c1, r2, c2 = self._range_coords(arg.start, arg.end)
@@ -878,8 +878,8 @@ class CodeGenerator:
         arg = node.args[0]
         if isinstance(arg, CellRefNode):
             sheet, cell = parse_address(arg.address)
-            col_str, row = openpyxl.utils.cell.coordinate_from_string(cell)
-            col = openpyxl.utils.cell.column_index_from_string(col_str)
+            col_str, row = fastpyxl.utils.cell.coordinate_from_string(cell)
+            col = fastpyxl.utils.cell.column_index_from_string(col_str)
             return f"xl_columns(ExcelRange({repr(sheet)}, {row}, {col}, {row}, {col}))"
         if isinstance(arg, RangeNode):
             sheet, r1, c1, r2, c2 = self._range_coords(arg.start, arg.end)
@@ -1037,11 +1037,11 @@ class CodeGenerator:
         start_sheet, start_cell = parse_address(start)
         _, end_cell = parse_address(end)
 
-        start_col_str, start_row = openpyxl.utils.cell.coordinate_from_string(start_cell)
-        end_col_str, end_row = openpyxl.utils.cell.coordinate_from_string(end_cell)
+        start_col_str, start_row = fastpyxl.utils.cell.coordinate_from_string(start_cell)
+        end_col_str, end_row = fastpyxl.utils.cell.coordinate_from_string(end_cell)
 
-        start_col = openpyxl.utils.cell.column_index_from_string(start_col_str)
-        end_col = openpyxl.utils.cell.column_index_from_string(end_col_str)
+        start_col = fastpyxl.utils.cell.column_index_from_string(start_col_str)
+        end_col = fastpyxl.utils.cell.column_index_from_string(end_col_str)
 
         r1, r2 = (start_row, end_row) if start_row <= end_row else (end_row, start_row)
         c1, c2 = (start_col, end_col) if start_col <= end_col else (end_col, start_col)
@@ -1052,8 +1052,8 @@ class CodeGenerator:
     ) -> str:
         """Emit statically resolved OFFSET as direct cell/range reference."""
         base_sheet, base_cell = parse_address(base_address)
-        base_col_str, base_row = openpyxl.utils.cell.coordinate_from_string(base_cell)
-        base_col = openpyxl.utils.cell.column_index_from_string(base_col_str)
+        base_col_str, base_row = fastpyxl.utils.cell.coordinate_from_string(base_cell)
+        base_col = fastpyxl.utils.cell.column_index_from_string(base_col_str)
 
         # Compute target position
         target_row = base_row + rows
@@ -1063,7 +1063,7 @@ class CodeGenerator:
             # Invalid reference
             return "XlError.REF"
 
-        target_col_str = openpyxl.utils.cell.get_column_letter(target_col)
+        target_col_str = fastpyxl.utils.cell.get_column_letter(target_col)
 
         if height == 1 and width == 1:
             # Single cell reference
@@ -1073,7 +1073,7 @@ class CodeGenerator:
             # Range reference - emit as 2D array
             end_row = target_row + height - 1
             end_col = target_col + width - 1
-            end_col_str = openpyxl.utils.cell.get_column_letter(end_col)
+            end_col_str = fastpyxl.utils.cell.get_column_letter(end_col)
 
             start_addr = f"{quote_sheet_if_needed(base_sheet)}!{target_col_str}{target_row}"
             end_addr = f"{quote_sheet_if_needed(base_sheet)}!{end_col_str}{end_row}"
@@ -1099,8 +1099,8 @@ class CodeGenerator:
         if isinstance(ref_node, CellRefNode):
             base_sheet, base_cell = parse_address(ref_node.address)
             self._offset_runtime_sheets.add(base_sheet)
-            base_col_str, base_row = openpyxl.utils.cell.coordinate_from_string(base_cell)
-            base_col = openpyxl.utils.cell.column_index_from_string(base_col_str)
+            base_col_str, base_row = fastpyxl.utils.cell.coordinate_from_string(base_cell)
+            base_col = fastpyxl.utils.cell.column_index_from_string(base_col_str)
             ref_info = f"({repr(base_sheet)}, {base_row}, {base_col})"
         elif isinstance(ref_node, RangeNode):
             base_sheet, r1, c1, r2, c2 = self._range_coords(ref_node.start, ref_node.end)
@@ -1129,8 +1129,8 @@ class CodeGenerator:
 
         if isinstance(ref_node, CellRefNode):
             base_sheet, base_cell = parse_address(ref_node.address)
-            base_col_str, base_row = openpyxl.utils.cell.coordinate_from_string(base_cell)
-            base_col = openpyxl.utils.cell.column_index_from_string(base_col_str)
+            base_col_str, base_row = fastpyxl.utils.cell.coordinate_from_string(base_cell)
+            base_col = fastpyxl.utils.cell.column_index_from_string(base_col_str)
             ref_info = f"({repr(base_sheet)}, {base_row}, {base_col})"
         elif isinstance(ref_node, RangeNode):
             base_sheet, r1, c1, r2, c2 = self._range_coords(ref_node.start, ref_node.end)
@@ -1269,8 +1269,8 @@ class CodeGenerator:
             return []
 
         base_sheet, base_cell = parse_address(base_address)
-        base_col_str, base_row = openpyxl.utils.cell.coordinate_from_string(base_cell)
-        base_col = openpyxl.utils.cell.column_index_from_string(base_col_str)
+        base_col_str, base_row = fastpyxl.utils.cell.coordinate_from_string(base_cell)
+        base_col = fastpyxl.utils.cell.column_index_from_string(base_col_str)
 
         rows = int(self._get_constant_number(rows_node))
         cols = int(self._get_constant_number(cols_node))
@@ -1286,7 +1286,7 @@ class CodeGenerator:
         refs = []
         for r in range(target_row, target_row + height):
             for c in range(target_col, target_col + width):
-                col_str = openpyxl.utils.cell.get_column_letter(c)
+                col_str = fastpyxl.utils.cell.get_column_letter(c)
                 refs.append(f"{quote_sheet_if_needed(base_sheet)}!{col_str}{r}")
 
         return refs
@@ -2037,8 +2037,8 @@ class CodeGenerator:
         for address in all_cells:
             normalized = normalize_address(address)
             sheet, cell = parse_address(normalized)
-            col_str, row = openpyxl.utils.cell.coordinate_from_string(cell)
-            col = openpyxl.utils.cell.column_index_from_string(col_str)
+            col_str, row = fastpyxl.utils.cell.coordinate_from_string(cell)
+            col = fastpyxl.utils.cell.column_index_from_string(col_str)
             lines.append(f"    ({repr(sheet)}, {row}, {col}): {repr(normalized)},")
         lines.append("}")
         return lines

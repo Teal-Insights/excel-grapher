@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from openpyxl import load_workbook
+from fastpyxl import load_workbook
 
 from tests.utils._helpers import parse_cell_ref
 

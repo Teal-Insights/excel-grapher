@@ -4,8 +4,8 @@ Tests for Node.normalized_formula — the transpiler-friendly form of the formul
 
 from pathlib import Path
 
-import openpyxl
-from openpyxl.workbook.defined_name import DefinedName
+import fastpyxl
+from fastpyxl.workbook.defined_name import DefinedName
 
 from excel_grapher import create_dependency_graph
 
@@ -13,7 +13,7 @@ from excel_grapher import create_dependency_graph
 def test_normalized_formula_prefixes_same_sheet_refs(tmp_path: Path) -> None:
     """Same-sheet refs like A1 should become Sheet1!A1 in normalized form."""
     excel_path = tmp_path / "local_refs.xlsx"
-    wb = openpyxl.Workbook()
+    wb = fastpyxl.Workbook()
     ws = wb.active
     ws.title = "Sheet1"
     ws["A1"].value = 1
@@ -32,7 +32,7 @@ def test_normalized_formula_prefixes_same_sheet_refs(tmp_path: Path) -> None:
 def test_normalized_formula_resolves_named_ranges(tmp_path: Path) -> None:
     """Named ranges should be replaced with their fully-qualified target."""
     excel_path = tmp_path / "named_range.xlsx"
-    wb = openpyxl.Workbook()
+    wb = fastpyxl.Workbook()
     ws = wb.active
     ws.title = "Sheet1"
     ws["A1"].value = 10
@@ -51,7 +51,7 @@ def test_normalized_formula_resolves_named_ranges(tmp_path: Path) -> None:
 def test_normalized_formula_strips_absolute_markers(tmp_path: Path) -> None:
     """Absolute markers ($) should be stripped in normalized form."""
     excel_path = tmp_path / "absolute.xlsx"
-    wb = openpyxl.Workbook()
+    wb = fastpyxl.Workbook()
     ws = wb.active
     ws.title = "Sheet1"
     ws["A1"].value = 5
@@ -69,7 +69,7 @@ def test_normalized_formula_strips_absolute_markers(tmp_path: Path) -> None:
 def test_normalized_formula_qualifies_range_endpoints(tmp_path: Path) -> None:
     """Range endpoints should be sheet-qualified in normalized form."""
     excel_path = tmp_path / "range.xlsx"
-    wb = openpyxl.Workbook()
+    wb = fastpyxl.Workbook()
     ws = wb.active
     ws.title = "Sheet1"
     ws["A1"].value = 1
@@ -89,7 +89,7 @@ def test_normalized_formula_qualifies_range_endpoints(tmp_path: Path) -> None:
 def test_normalized_formula_preserves_cross_sheet_refs(tmp_path: Path) -> None:
     """Already-qualified refs should be preserved (just stripped of $)."""
     excel_path = tmp_path / "cross_sheet.xlsx"
-    wb = openpyxl.Workbook()
+    wb = fastpyxl.Workbook()
     s1 = wb.active
     s1.title = "Sheet1"
     s2 = wb.create_sheet("Other Sheet")
@@ -108,7 +108,7 @@ def test_normalized_formula_preserves_cross_sheet_refs(tmp_path: Path) -> None:
 def test_normalized_formula_is_none_for_leaves(tmp_path: Path) -> None:
     """Leaf nodes (constants) should have normalized_formula=None."""
     excel_path = tmp_path / "leaf.xlsx"
-    wb = openpyxl.Workbook()
+    wb = fastpyxl.Workbook()
     ws = wb.active
     ws.title = "Sheet1"
     ws["A1"].value = 42

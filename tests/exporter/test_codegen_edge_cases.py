@@ -2,9 +2,9 @@
 
 from pathlib import Path
 
-import openpyxl
+import fastpyxl
 import pytest
-from openpyxl.workbook.defined_name import DefinedName
+from fastpyxl.workbook.defined_name import DefinedName
 
 from excel_grapher import DependencyGraph, Node, create_dependency_graph
 from excel_grapher.evaluator.codegen import CodeGenerator
@@ -494,7 +494,7 @@ class TestNamedRangeRegression:
         """VLOOKUP over a range-based named range should not crash codegen."""
         excel_path = tmp_path / "named_range_vlookup.xlsx"
 
-        wb = openpyxl.Workbook()
+        wb = fastpyxl.Workbook()
         ws_table = wb.active
         ws_table.title = "Table"
         ws_table["A1"].value = 1
