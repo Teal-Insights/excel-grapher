@@ -391,7 +391,7 @@ def expand_leaf_env_to_argument_env(
                         else:
                             cache[addr] = CellType(
                                 kind=CellKind.NUMBER,
-                                interval=IntIntervalDomain(min=inferred.lo, max=inferred.hi),
+                                interval=IntervalDomain(min=inferred.lo, max=inferred.hi),
                             )
                     return cache[addr]
             unsupported = _describe_unsupported_numeric_construct(ast_root)

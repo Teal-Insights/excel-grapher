@@ -13,6 +13,7 @@ from excel_grapher.core.cell_types import (
     CellType,
     CellTypeEnv,
     EnumDomain,
+    IntIntervalDomain,
     IntervalDomain,
 )
 from excel_grapher.core.formula_ast import parse as parse_ast
