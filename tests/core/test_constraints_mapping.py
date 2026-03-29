@@ -11,6 +11,8 @@ from excel_grapher.core.cell_types import (
     GreaterThanCell,
     IntervalDomain,
     NotEqualCell,
+    RealBetween,
+    RealIntervalDomain,
     constraints_to_cell_type_env,
 )
 from excel_grapher.grapher.dynamic_refs import DynamicRefLimits, expand_leaf_env_to_argument_env
@@ -59,8 +61,8 @@ class _FloatConstraintsDict(TypedDict, total=False):
     pass
 
 
-_FloatConstraintsDict.__annotations__["Sheet1!E1"] = Annotated[float, Between(0.0, 1.0)]
-_FloatConstraintsDict.__annotations__["Sheet1!F1"] = Annotated[float, Between(-0.5, 0.5)]
+_FloatConstraintsDict.__annotations__["Sheet1!E1"] = Annotated[float, RealBetween(0.0, 1.0)]
+_FloatConstraintsDict.__annotations__["Sheet1!F1"] = Annotated[float, RealBetween(-0.5, 0.5)]
 
 
 def test_constraints_mapping_supports_float_between() -> None:
@@ -76,13 +78,38 @@ def test_constraints_mapping_supports_float_between() -> None:
 
     e1 = env["Sheet1!E1"]
     assert e1.kind is CellKind.NUMBER
-    assert e1.interval == IntervalDomain(min=0.0, max=1.0)
+    assert e1.interval is None
+    assert e1.real_interval == RealIntervalDomain(min=0.0, max=1.0)
     assert e1.enum is None
 
     f1 = env["Sheet1!F1"]
     assert f1.kind is CellKind.NUMBER
-    assert f1.interval == IntervalDomain(min=-0.5, max=0.5)
+    assert f1.interval is None
+    assert f1.real_interval == RealIntervalDomain(min=-0.5, max=0.5)
     assert f1.enum is None
+
+
+class _RealIntervalLeafEnvDict(TypedDict, total=False):
+    pass
+
+
+_RealIntervalLeafEnvDict.__annotations__["Sheet1!B1"] = Annotated[float, RealBetween(0.0, 1.0)]
+
+
+def test_expand_leaf_env_widens_formula_when_dependency_has_real_interval_only() -> None:
+    """Real intervals are not enumerable; type expansion falls back to ANY (issue #40)."""
+    constraints = cast(_RealIntervalLeafEnvDict, {"Sheet1!B1": 0.5})
+    leaf_env = constraints_to_cell_type_env(_RealIntervalLeafEnvDict, constraints)
+    out = expand_leaf_env_to_argument_env(
+        {"Sheet1!A1"},
+        lambda addr: "=Sheet1!B1+1" if addr == "Sheet1!A1" else None,
+        lambda _f, _sh: {"Sheet1!B1"},
+        leaf_env,
+        DynamicRefLimits(),
+    )
+    assert out["Sheet1!A1"].kind is CellKind.ANY
+    assert out["Sheet1!A1"].interval is None
+    assert out["Sheet1!A1"].enum is None
 
 
 class _RelationalConstraintsDict(TypedDict, total=False):

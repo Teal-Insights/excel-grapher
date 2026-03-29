@@ -19,14 +19,22 @@ class CellKind(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class IntervalDomain:
-    """Closed numeric interval domain for a cell."""
+    """Closed integer interval domain for a cell (discrete steps, enumerable for dynamic refs)."""
 
-    min: int | float | None = None
-    max: int | float | None = None
+    min: int | None = None
+    max: int | None = None
 
 
 # Backwards-compatible alias
 IntIntervalDomain = IntervalDomain
+
+
+@dataclass(frozen=True, slots=True)
+class RealIntervalDomain:
+    """Closed real-valued interval metadata; not enumerable for dynamic-ref branching."""
+
+    min: float | None = None
+    max: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +67,7 @@ class CellType:
 
     kind: CellKind
     interval: IntervalDomain | None = None
+    real_interval: RealIntervalDomain | None = None
     enum: EnumDomain | None = None
     relations: tuple[CellRelation, ...] = ()
 
@@ -68,10 +77,18 @@ CellTypeEnv: TypeAlias = Mapping[str, CellType]
 
 @dataclass(frozen=True, slots=True)
 class Between:
-    """Metadata marker for numeric interval constraints in Annotated types."""
+    """Integer interval constraint for Annotated numeric types (discrete / enumerable)."""
 
-    min: int | float | None = None
-    max: int | float | None = None
+    min: int | None = None
+    max: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RealBetween:
+    """Real-valued interval constraint for Annotated float types (not enumerable for dynamic refs)."""
+
+    min: float | int | None = None
+    max: float | int | None = None
 
 
 def constraints_to_cell_type_env(
@@ -107,22 +124,24 @@ def constraints_to_cell_type_env(
                 base_type = args[0]
                 metadata = list(args[1:])
 
-        domain = _domain_from_metadata(metadata)
+        int_domain, real_domain = _interval_domains_from_metadata(metadata)
         relations = _relations_from_metadata(metadata)
 
         origin = get_origin(base_type)
+        enum_domain: EnumDomain | None = None
         if origin is Literal:
             literal_values = get_args(base_type)
             kind = _infer_kind_from_literal_values(literal_values)
-            if domain is None:
-                domain = EnumDomain(values=frozenset(literal_values))
+            if int_domain is None and real_domain is None:
+                enum_domain = EnumDomain(values=frozenset(literal_values))
         else:
             kind = _infer_kind_from_python_type(base_type)
 
         env[normalize_cell_type_env_key(key)] = CellType(
             kind=kind,
-            interval=_interval_from_domain(domain),
-            enum=_enum_from_domain(domain),
+            interval=int_domain,
+            real_interval=real_domain,
+            enum=enum_domain,
             relations=relations,
         )
 
@@ -133,11 +152,26 @@ def constraints_to_cell_type_env(
     return env
 
 
-def _domain_from_metadata(metadata: list[object]) -> IntervalDomain | EnumDomain | None:
+def _as_real_bound(x: float | int | None) -> float | None:
+    if x is None:
+        return None
+    return float(x)
+
+
+def _interval_domains_from_metadata(
+    metadata: list[object],
+) -> tuple[IntervalDomain | None, RealIntervalDomain | None]:
+    int_domain: IntervalDomain | None = None
+    real_domain: RealIntervalDomain | None = None
     for meta in metadata:
         if isinstance(meta, Between):
-            return IntervalDomain(min=meta.min, max=meta.max)
-    return None
+            int_domain = IntervalDomain(min=meta.min, max=meta.max)
+        elif isinstance(meta, RealBetween):
+            real_domain = RealIntervalDomain(
+                min=_as_real_bound(meta.min),
+                max=_as_real_bound(meta.max),
+            )
+    return int_domain, real_domain
 
 
 def _relations_from_metadata(metadata: list[object]) -> tuple[CellRelation, ...]:
@@ -177,18 +211,6 @@ def _infer_kind_from_python_type(tp: Any) -> CellKind:
         return CellKind.STRING
     # A richer implementation could handle dates, errors, etc.
     return CellKind.ANY
-
-
-def _interval_from_domain(domain: IntervalDomain | EnumDomain | None) -> IntervalDomain | None:
-    if isinstance(domain, IntervalDomain):
-        return domain
-    return None
-
-
-def _enum_from_domain(domain: IntervalDomain | EnumDomain | None) -> EnumDomain | None:
-    if isinstance(domain, EnumDomain):
-        return domain
-    return None
 
 
 def normalize_cell_type_env_key(address: str) -> str:

@@ -23,6 +23,8 @@ from .grapher import (
     DynamicRefLimits,
     FromWorkbook,
     GreaterThanCell,
+    RealBetween,
+    RealIntervalDomain,
     GuardCellRef,
     GuardExpr,
     Literal,
@@ -50,6 +52,8 @@ from .grapher import (
 __all__ = [
     "GreaterThanCell",
     "NotEqualCell",
+    "RealBetween",
+    "RealIntervalDomain",
     "And",
     "GuardCellRef",
     "Compare",
