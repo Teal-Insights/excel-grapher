@@ -1,0 +1,1 @@
+Implements docs/plans/dynamic-ref-abstract-domains.md through Phase D (ANY+numeric interval/enum for _domain_from_cell_type). GitHub follow-up: Teal-Insights/excel-grapher#40 (float interval marker).
