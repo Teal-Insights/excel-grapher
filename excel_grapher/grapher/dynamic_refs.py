@@ -23,8 +23,8 @@ from excel_grapher.core.cell_types import (
     GreaterThanCell,
     IntervalDomain,
     NotEqualCell,
-    _normalize_cell_address,
     constraints_to_cell_type_env,
+    normalize_cell_type_env_key,
 )
 from excel_grapher.core.excel_function_meta import is_ref_only_arg
 from excel_grapher.core.expr_eval import Unsupported, evaluate_expr
@@ -285,7 +285,8 @@ def expand_leaf_env_to_argument_env(
     The cell env targets leaves: only leaf (non-formula) addresses need to be in
     leaf_env. Intermediate (formula) cells are inferred by evaluating their formulas
     over their dependencies' domains; they do not need to be constrained. If an
-    intermediate is in leaf_env, that type is used and we do not traverse that branch.
+    intermediate matches a leaf_env entry under :func:`~excel_grapher.core.cell_types.normalize_cell_type_env_key`,
+    that type is used and we do not traverse that branch.
     When an intermediate cannot be inferred (e.g. its formula is OFFSET/INDIRECT and
     refs are empty after masking), it is assigned CellType(ANY); enumeration may then
     require a constraint for that cell.
@@ -1147,15 +1148,15 @@ def _domain_without_zero(domain: _FiniteInts | _IntBounds | None) -> _FiniteInts
 
 
 def _lookup_cell_type(env: CellTypeEnv, address: str) -> CellType | None:
-    """Resolve env entry; keys match :func:`_normalize_cell_address` (no Excel quote delimiters)."""
-    return env.get(_normalize_cell_address(address))
+    """Resolve env entry; keys match :func:`~excel_grapher.core.cell_types.normalize_cell_type_env_key`."""
+    return env.get(normalize_cell_type_env_key(address))
 
 
 def _cell_has_relation(env: CellTypeEnv, addr: str, relation: type[GreaterThanCell | NotEqualCell], other: str) -> bool:
     ct = _lookup_cell_type(env, addr)
     if ct is None:
         return False
-    other_norm = _normalize_cell_address(other)
+    other_norm = normalize_cell_type_env_key(other)
     return any(isinstance(rel, relation) and rel.other == other_norm for rel in ct.relations)
 
 
@@ -1455,7 +1456,7 @@ def _describe_unsupported_numeric_construct(node: AstNode | None) -> str | None:
     if isinstance(node, (StringNode, BoolNode, ErrorNode, RangeNode)):
         return type(node).__name__
     if isinstance(node, UnaryOpNode):
-        if node.op == "-":
+        if node.op in {"-", "%"}:
             return _describe_unsupported_numeric_construct(node.operand)
         return f"unary operator {node.op!r}"
     if isinstance(node, BinaryOpNode):
@@ -1479,8 +1480,8 @@ def _describe_unsupported_numeric_construct(node: AstNode | None) -> str | None:
 def _range_node_cell_addresses(node: RangeNode) -> list[str] | None:
     """Expand a single-sheet A1 range to sheet-qualified cell keys in row-major order."""
     try:
-        norm_start = _normalize_cell_address(node.start)
-        norm_end = _normalize_cell_address(node.end)
+        norm_start = normalize_cell_type_env_key(node.start)
+        norm_end = normalize_cell_type_env_key(node.end)
         sheet, coord_start = norm_start.split("!", 1)
         sheet2, coord_end = norm_end.split("!", 1)
     except ValueError:
@@ -1732,6 +1733,19 @@ def _infer_numeric_domain_result(
             if inner.diagnostic is not None:
                 return inner
             return _domain_result(_neg_numeric_domain(inner.domain))
+        if node.op == "%":
+            inner = _infer_numeric_domain_result(
+                node.operand, env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+            )
+            if inner.diagnostic is not None:
+                return inner
+            return _domain_result(
+                _div_numeric_domains(
+                    inner.domain,
+                    _FiniteInts(frozenset({100})),
+                    limits,
+                )
+            )
         return _domain_result(None)
 
     if isinstance(node, BinaryOpNode):

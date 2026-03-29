@@ -6,6 +6,8 @@ from excel_grapher.core.cell_types import (
     CellTypeEnv,
     EnumDomain,
     IntervalDomain,
+    leaves_missing_cell_type_constraints,
+    normalize_cell_type_env_key,
 )
 
 
@@ -56,4 +58,20 @@ def test_cell_type_env_can_mix_kinds_and_domains() -> None:
     assert a3.interval is not None
     assert a3.interval.min == -5
     assert a3.interval.max is None
+
+
+def test_normalize_cell_type_env_key_strips_excel_sheet_quotes() -> None:
+    sheet = "Chart Data"
+    assert normalize_cell_type_env_key(f"'{sheet}'!B2") == f"{sheet}!B2"
+    assert normalize_cell_type_env_key(f"'{sheet}'!b2") == f"{sheet}!B2"
+    assert normalize_cell_type_env_key(f"{sheet}!B2") == f"{sheet}!B2"
+
+
+def test_leaves_missing_cell_type_constraints_ignores_format_key_quoting() -> None:
+    env: CellTypeEnv = {
+        "Chart Data!I21": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=1)),
+    }
+    leaves = {"'Chart Data'!I21", "Sheet1!Z9"}
+    missing = leaves_missing_cell_type_constraints(leaves, env)
+    assert missing == {"Sheet1!Z9"}
 
