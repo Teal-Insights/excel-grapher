@@ -133,7 +133,7 @@ def constrain_constant_range(
 
 
 # Dated template; adjust filename if using a different snapshot.
-WORKBOOK_PATH = Path("example/data/lic-dsf-template-2026-01-31.xlsm")
+WORKBOOK_PATH = Path("example/data/lic-dsf-template-2025-08-12.xlsm")
 
 # Set True to resolve OFFSET/INDIRECT from cached workbook values (no constraints).
 # Set False to use constraint-based resolution; add address-style keys below as you hit DynamicRefError.
