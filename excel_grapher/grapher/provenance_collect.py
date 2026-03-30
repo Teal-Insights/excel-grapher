@@ -114,6 +114,7 @@ def _flat_provenance_one_string(
             current_cell_a1=current_a1,
             named_ranges=named_ranges,
             named_range_ranges=named_range_ranges,
+            normalizer=normalizer,
             value_resolver=resolve_cached_value,
         ):
             dyn_spans.append(span)

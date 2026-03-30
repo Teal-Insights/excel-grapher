@@ -270,6 +270,7 @@ def create_dependency_graph(
                     current_cell_a1=current_a1,
                     named_ranges=named_ranges,
                     named_range_ranges=named_range_ranges,
+                    normalizer=normalizer,
                     value_resolver=resolve_cached_value,
                 ):
                     dyn_spans.append(span)
@@ -793,4 +794,3 @@ def create_dependency_graph(
             wb_formulas.close()
 
     return graph
-

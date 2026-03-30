@@ -1297,6 +1297,7 @@ def parse_dynamic_range_refs_with_spans(
     current_cell_a1: str | None = None,
     named_ranges: dict[str, tuple[str, str]] | None = None,
     named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
+    normalizer: FormulaNormalizer | None = None,
     value_resolver: Callable[[str, str], object] | None = None,
 ) -> list[tuple[CellRef, CellRef, tuple[int, int], list[CellRef]]]:
     """
@@ -1310,6 +1311,8 @@ def parse_dynamic_range_refs_with_spans(
         return []
     if named_ranges is None:
         named_ranges = {}
+    if normalizer is None:
+        normalizer = FormulaNormalizer(named_ranges, named_range_ranges)
 
     calls = _find_function_calls_with_spans(formula, {"OFFSET", "INDIRECT"})
     out: list[tuple[CellRef, CellRef, tuple[int, int], list[CellRef]]] = []
@@ -1320,11 +1323,9 @@ def parse_dynamic_range_refs_with_spans(
         if fn == "OFFSET":
             arg_refs: list[CellRef] = []
             for arg in args[1:]:
-                normalized = normalize_formula(
+                normalized = normalizer.normalize(
                     "=" + arg,
-                    current_sheet=current_sheet,
-                    named_ranges=named_ranges,
-                    named_range_ranges=named_range_ranges,
+                    current_sheet,
                 )
                 for ref in parse_cell_refs(normalized):
                     sheet = ref.sheet if ref.sheet is not None else current_sheet
@@ -1513,5 +1514,4 @@ def _parse_guard_atom(
         return GuardCellRef(_to_node_key(current_sheet, col, int(m.group("row"))))
 
     return None
-
 
