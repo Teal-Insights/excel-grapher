@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -78,6 +79,35 @@ def constrain(constraints: type[Any], address: str, annotation: Any) -> None:
 
 @dataclass(frozen=True)
 class DynamicRefLimits:
+    """Tuneable safety limits for dynamic-reference inference.
+
+    Pass a custom instance via the ``limits`` parameter of
+    :meth:`DynamicRefConfig.from_constraints`,
+    :meth:`DynamicRefConfig.from_constraints_and_workbook`, or
+    :meth:`DynamicRefConfig.from_workbook` to override any of these defaults.
+
+    Attributes:
+        max_branches: Maximum number of discrete value assignments explored
+            during constraint enumeration.  This cap is applied in two places:
+
+            * **Per-dependency domain size** – a single cell constrained to an
+              integer interval wider than *max_branches* values cannot be
+              enumerated; the caller must either tighten the constraint or rely
+              on the symbolic (abstract) analysis path.
+            * **Cartesian-product size** – when a formula cell falls back to
+              brute-force evaluation over all combinations of its dependencies'
+              domains, the product of those domain sizes must not exceed
+              *max_branches*.  If it does, a :class:`DynamicRefError` is raised
+              immediately (rather than hanging) with a breakdown of which
+              dependencies contributed to the explosion.  Raise this limit or
+              tighten the offending constraints to resolve the error.
+
+            Default: ``1024``.
+        max_cells: Maximum number of cells collected when expanding a range
+            reference.  Default: ``10_000``.
+        max_depth: Maximum AST-evaluation recursion depth.  Default: ``10``.
+    """
+
     max_branches: int = 1024
     max_cells: int = 10_000
     max_depth: int = 10
@@ -449,6 +479,23 @@ def expand_leaf_env_to_argument_env(
                 else:
                     cache[addr] = CellType(kind=CellKind.ANY)
                     return cache[addr]
+            total_branches = math.prod(len(v) for v in domains.values())
+            if total_branches > limits.max_branches:
+                dep_sizes = ", ".join(
+                    f"{r!r}: {len(domains[r])}" for r in sorted(domains)
+                )
+                unsupported_hint = (
+                    f" First unsupported construct: {unsupported}."
+                    if unsupported is not None
+                    else ""
+                )
+                raise DynamicRefError(
+                    f"Formula cell {addr!r} fallback enumeration would require "
+                    f"{total_branches} branches (limit {limits.max_branches}). "
+                    f"Dependency domain sizes: {dep_sizes}.{unsupported_hint} "
+                    f"Tighten constraints on one or more dependencies, simplify "
+                    f"the formula, or extend numeric abstract analysis to cover it."
+                )
             result_values: set[Any] = set()
             last_unsupported: Unsupported | None = None
             for assignment in product(*(domains[r] for r in refs)):
