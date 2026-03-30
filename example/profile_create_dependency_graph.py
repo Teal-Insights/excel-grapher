@@ -161,7 +161,9 @@ def main() -> int:
         prof.dump_stats(str(args.cprofile_out))
         print(f"cProfile stats written to {args.cprofile_out.resolve()}", file=sys.stderr)
         if args.cprofile_print > 0:
-            pstats.Stats(prof).sort_stats(pstats.SortKey.CUMULATIVE).print_stats(args.cprofile_print)
+            pstats.Stats(prof).sort_stats(pstats.SortKey.CUMULATIVE).print_stats(
+                args.cprofile_print
+            )
 
     n, e = _graph_sizes(graph)
     print(f"Nodes: {n}")

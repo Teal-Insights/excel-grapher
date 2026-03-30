@@ -50,7 +50,6 @@ class RegionConfig(TypedDict, total=False):
     annotation_axis: Literal["row", "column", "cell"]
 
 
-
 # Excel error values to filter out
 EXCEL_ERRORS = frozenset(
     {
@@ -94,11 +93,7 @@ def get_effective_indent(cell) -> int:
     leading whitespace in the cell value (a secondary visual indent cue
     used in some LIC-DSF templates).
     """
-    alignment_indent = (
-        int(cell.alignment.indent)
-        if cell.alignment and cell.alignment.indent
-        else 0
-    )
+    alignment_indent = int(cell.alignment.indent) if cell.alignment and cell.alignment.indent else 0
     text_indent = 0
     if isinstance(cell.value, str):
         stripped = cell.value.lstrip()
@@ -260,9 +255,7 @@ def detect_year_offset_headers(
             if m:
                 ref_col_letter, ref_row_str = m.group(1), m.group(2)
                 if int(ref_row_str) == header_row:
-                    ref_col = fastpyxl.utils.cell.column_index_from_string(
-                        ref_col_letter
-                    )
+                    ref_col = fastpyxl.utils.cell.column_index_from_string(ref_col_letter)
                     if ref_col in offsets:
                         offsets[col] = offsets[ref_col] + 1
                         changed = True
@@ -271,9 +264,7 @@ def detect_year_offset_headers(
             if m:
                 ref_col_letter, ref_row_str = m.group(1), m.group(2)
                 if int(ref_row_str) == header_row:
-                    ref_col = fastpyxl.utils.cell.column_index_from_string(
-                        ref_col_letter
-                    )
+                    ref_col = fastpyxl.utils.cell.column_index_from_string(ref_col_letter)
                     if ref_col in offsets:
                         offsets[col] = offsets[ref_col] - 1
                         changed = True
@@ -484,9 +475,7 @@ def get_row_labels(ws: Worksheet, row: int, col: int) -> list[str]:
         cell_value = ws.cell(row=row, column=current_col).value
 
         # Stop if we hit a blank cell
-        if cell_value is None or (
-            isinstance(cell_value, str) and cell_value.strip() == ""
-        ):
+        if cell_value is None or (isinstance(cell_value, str) and cell_value.strip() == ""):
             break
 
         # Collect text values
@@ -527,9 +516,7 @@ def get_column_labels(ws: Worksheet, row: int, col: int) -> list[str]:
         cell_value = ws.cell(row=current_row, column=col).value
 
         # Stop if we hit a blank cell
-        if cell_value is None or (
-            isinstance(cell_value, str) and cell_value.strip() == ""
-        ):
+        if cell_value is None or (isinstance(cell_value, str) and cell_value.strip() == ""):
             break
 
         # Collect text values
@@ -577,22 +564,16 @@ def enrich_graph_with_labels(
         # Precompute year-offset maps: sheet → header_row → {col → offset}
         _offset_cache: dict[str, dict[int, dict[int, int]]] = {}
 
-        def _get_offset_maps(
-            sheet: str, config: RegionConfig
-        ) -> dict[int, dict[int, int]]:
+        def _get_offset_maps(sheet: str, config: RegionConfig) -> dict[int, dict[int, int]]:
             if sheet not in _offset_cache:
                 _offset_cache[sheet] = {}
             sheet_cache = _offset_cache[sheet]
             for hr in config.get("header_rows", []):
                 if hr not in sheet_cache:
-                    ws_f = (
-                        formulas_wb[sheet] if sheet in formulas_wb.sheetnames else None
-                    )
+                    ws_f = formulas_wb[sheet] if sheet in formulas_wb.sheetnames else None
                     ws_v = values_wb[sheet] if sheet in values_wb.sheetnames else None
                     if ws_f is not None and ws_v is not None:
-                        sheet_cache[hr] = detect_year_offset_headers(
-                            ws_f, ws_v, sheet, hr
-                        )
+                        sheet_cache[hr] = detect_year_offset_headers(ws_f, ws_v, sheet, hr)
                     else:
                         sheet_cache[hr] = {}
             return sheet_cache
@@ -647,11 +628,13 @@ def enrich_graph_with_labels(
 
             if matched_region is not None:
                 offset_maps = _get_offset_maps(node.sheet, matched_region)
-                label_hierarchies = _get_label_hierarchies(
-                    node.sheet, matched_region
-                )
+                label_hierarchies = _get_label_hierarchies(node.sheet, matched_region)
                 row_labels, col_labels = get_labels_from_region_config(
-                    ws, node.row, col_idx, matched_region, offset_maps,
+                    ws,
+                    node.row,
+                    col_idx,
+                    matched_region,
+                    offset_maps,
                     label_hierarchies=label_hierarchies,
                 )
             else:
@@ -737,9 +720,7 @@ def export_enrichment_audit(
             "nodes_with_any_label": nodes_with_any,
             "nodes_without_labels": total_nodes - nodes_with_any,
             "nodes_with_row_labels": sum(s["with_row"] for s in sheet_stats.values()),
-            "nodes_with_column_labels": sum(
-                s["with_col"] for s in sheet_stats.values()
-            ),
+            "nodes_with_column_labels": sum(s["with_col"] for s in sheet_stats.values()),
         },
         "by_sheet": {
             sheet: {
@@ -784,9 +765,7 @@ def discover_formula_cells_in_rows(
 
             for col_idx in relevant_cols:
                 cell_formula = ws_formulas.cell(row=row, column=col_idx)
-                if isinstance(
-                    cell_formula.value, str
-                ) and cell_formula.value.startswith("="):
+                if isinstance(cell_formula.value, str) and cell_formula.value.startswith("="):
                     col_letter = fastpyxl.utils.cell.get_column_letter(col_idx)
                     targets.append(f"{sheet_name}!{col_letter}{row}")
 

@@ -80,15 +80,11 @@ def test_core_expr_eval_respects_max_depth() -> None:
     ast = parse(formula)
 
     # With a very small max_depth, evaluation should give an Unsupported sentinel.
-    shallow_result = evaluate_expr(
-        ast, get_cell_value=lambda addr: 0, max_depth=1
-    )
+    shallow_result = evaluate_expr(ast, get_cell_value=lambda addr: 0, max_depth=1)
     assert isinstance(shallow_result, Unsupported)
 
     # With a generous max_depth, evaluation should succeed.
-    deep_result = evaluate_expr(
-        ast, get_cell_value=lambda addr: 0, max_depth=10
-    )
+    deep_result = evaluate_expr(ast, get_cell_value=lambda addr: 0, max_depth=10)
     assert deep_result == 1.0
 
 
@@ -106,12 +102,9 @@ def test_core_expr_eval_row_and_column() -> None:
     assert isinstance(result, Unsupported)
 
     ast = parse("=ROW()")
-    assert evaluate_expr(
-        ast, get_cell_value=lambda addr: 0, context={"row": 106, "column": 1}
-    ) == 106
+    assert (
+        evaluate_expr(ast, get_cell_value=lambda addr: 0, context={"row": 106, "column": 1}) == 106
+    )
 
     ast = parse("=ROW()-ROW(Sheet1!B106)+1")
-    assert evaluate_expr(
-        ast, get_cell_value=lambda addr: 0, context={"row": 106, "column": 1}
-    ) == 1
-
+    assert evaluate_expr(ast, get_cell_value=lambda addr: 0, context={"row": 106, "column": 1}) == 1

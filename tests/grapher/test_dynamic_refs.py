@@ -1,4 +1,5 @@
 """Regression tests for dynamic reference parsing (OFFSET/INDIRECT)."""
+
 from __future__ import annotations
 
 import warnings
@@ -20,6 +21,7 @@ from excel_grapher.core.cell_types import (
 )
 from excel_grapher.core.formula_ast import parse as parse_ast
 from excel_grapher.grapher import dynamic_refs as dynamic_refs_mod
+from excel_grapher.grapher import parser as parser_mod
 from excel_grapher.grapher.builder import _format_missing_leaves
 from excel_grapher.grapher.dynamic_refs import (
     DynamicRefConfig,
@@ -32,7 +34,6 @@ from excel_grapher.grapher.dynamic_refs import (
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
 )
-from excel_grapher.grapher import parser as parser_mod
 from excel_grapher.grapher.parser import FormulaNormalizer, parse_dynamic_range_refs_with_spans
 
 
@@ -97,9 +98,7 @@ def test_offset_with_cached_named_range_warns_once(tmp_path: Path) -> None:
     # A1 = OFFSET(B1,0,LANG)+OFFSET(B1,0,LANG); LANG = Sheet1!C1. Deps include C1 (offset arg) and D1 (resolved target).
     assert deps == {"Sheet1!C1", "Sheet1!D1"}
 
-    cache_warnings = [
-        w for w in caught if "cached workbook values" in str(w.message)
-    ]
+    cache_warnings = [w for w in caught if "cached workbook values" in str(w.message)]
     assert len(cache_warnings) == 1
 
 
@@ -234,9 +233,7 @@ def test_dynamic_offset_index_value_and_ref_only_requires_domain() -> None:
             current_row=1,
             current_col=1,
         )
-    assert "Missing CellType" in str(exc_info.value) or "must be numeric" in str(
-        exc_info.value
-    )
+    assert "Missing CellType" in str(exc_info.value) or "must be numeric" in str(exc_info.value)
 
 
 def test_dynamic_offset_requires_domains_for_all_leaf_cells() -> None:
@@ -584,15 +581,9 @@ def test_dynamic_ref_arg_subgraph_aligns_ast_range_cap_with_builder_bfs_issue_56
 
     env = _make_env(
         {
-            "Sheet1!A1": CellType(
-                kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({1}))
-            ),
-            "Sheet1!C1": CellType(
-                kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({1}))
-            ),
-            "Sheet1!F1": CellType(
-                kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({0}))
-            ),
+            "Sheet1!A1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({1}))),
+            "Sheet1!C1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({1}))),
+            "Sheet1!F1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({0}))),
         }
     )
     config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
@@ -1030,9 +1021,7 @@ def test_create_dependency_graph_standalone_index_missing_leaf(tmp_path: Path) -
 
 def test_index_match_huge_lookup_array_only_needs_lookup_value_constraint() -> None:
     """MATCH lookup_array is not expanded for per-cell domains; INDEX stays sound via shape bounds."""
-    formula = (
-        "=INDEX(Sheet1!A1:Sheet1!A3,MATCH(Sheet1!B1,Sheet1!Z1:Sheet1!Z999999,0),1)"
-    )
+    formula = "=INDEX(Sheet1!A1:Sheet1!A3,MATCH(Sheet1!B1,Sheet1!Z1:Sheet1!Z999999,0),1)"
     env = _make_env(
         {
             "Sheet1!B1": CellType(
@@ -1086,7 +1075,7 @@ def test_expand_leaf_env_wide_interval_no_interval_branch_limit_error() -> None:
 
 def test_domain_from_cell_type_any_interval_is_numeric_domain() -> None:
     limits = DynamicRefLimits()
-    lo, hi = -10**15, 10**15
+    lo, hi = -(10**15), 10**15
     ct = CellType(
         kind=CellKind.ANY,
         interval=IntIntervalDomain(min=lo, max=hi),
@@ -1133,7 +1122,7 @@ def test_expand_leaf_env_if_isnumber_wide_any_interval_summarizes_to_number() ->
     """
     from excel_grapher.grapher.dynamic_refs import expand_leaf_env_to_argument_env
 
-    lo, hi = -10**15, 10**15
+    lo, hi = -(10**15), 10**15
     leaf_env = _make_env(
         {
             "Sheet1!A1": CellType(
@@ -1174,12 +1163,7 @@ def test_expand_leaf_env_sum_wide_range_no_branch_limit_error() -> None:
         kind=CellKind.ANY,
         interval=IntIntervalDomain(min=0, max=hi),
     )
-    leaf_env = _make_env(
-        {
-            f"Sheet1!{c}1": financial
-            for c in ("A", "B", "C", "D", "E", "F")
-        }
-    )
+    leaf_env = _make_env({f"Sheet1!{c}1": financial for c in ("A", "B", "C", "D", "E", "F")})
 
     def _get_cell_formula(addr: str) -> str | None:
         if addr == "Sheet1!G1":
@@ -1270,7 +1254,7 @@ def test_expand_leaf_env_comparison_infers_zero_one_domain() -> None:
         {
             "Sheet1!A1": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=-10**9, max=10**9),
+                interval=IntIntervalDomain(min=-(10**9), max=10**9),
             )
         }
     )
@@ -1509,11 +1493,11 @@ def test_expand_leaf_env_division_zero_risk_error_points_to_divisor_cells() -> N
             ),
             "Sheet1!Q17": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=-10**16, max=10**16),
+                interval=IntIntervalDomain(min=-(10**16), max=10**16),
             ),
             "Sheet1!Q19": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=-10**16, max=10**16),
+                interval=IntIntervalDomain(min=-(10**16), max=10**16),
             ),
         }
     )
@@ -1652,11 +1636,11 @@ def test_expand_leaf_env_division_relational_constraint_avoids_zero_risk_error()
             ),
             "Sheet1!Q17": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=-10**16, max=10**16),
+                interval=IntIntervalDomain(min=-(10**16), max=10**16),
             ),
             "Sheet1!Q19": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=-10**16, max=10**16),
+                interval=IntIntervalDomain(min=-(10**16), max=10**16),
             ),
         }
     )
@@ -1751,8 +1735,8 @@ def test_expand_leaf_env_cartesian_product_branch_limit_error() -> None:
 
     msg = str(exc_info.value)
     assert "Sheet1!C1" in msg  # names the formula cell
-    assert "25" in msg          # actual product size
-    assert "8" in msg           # the limit
+    assert "25" in msg  # actual product size
+    assert "8" in msg  # the limit
 
 
 def test_infer_numeric_domain_parity_never_raises() -> None:
@@ -2023,12 +2007,15 @@ def _build_graph_counting_dynamic_expansion(
         call_count += 1
         return original_expand(*args, **kwargs)
 
-    with patch(
-        "excel_grapher.grapher.builder.expand_leaf_env_to_argument_env",
-        side_effect=counting_expand,
-    ), patch(
-        "excel_grapher.grapher.provenance_collect.expand_leaf_env_to_argument_env",
-        side_effect=counting_expand,
+    with (
+        patch(
+            "excel_grapher.grapher.builder.expand_leaf_env_to_argument_env",
+            side_effect=counting_expand,
+        ),
+        patch(
+            "excel_grapher.grapher.provenance_collect.expand_leaf_env_to_argument_env",
+            side_effect=counting_expand,
+        ),
     ):
         graph = create_dependency_graph(
             excel_path,

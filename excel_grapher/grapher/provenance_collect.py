@@ -95,7 +95,8 @@ def _flat_provenance_one_string(
     wb_formulas: fastpyxl.Workbook,
     resolve_cached_value: Callable[[str, str], object | None],
     span_target: Literal["formula", "normalized"],
-    dynamic_expansion_cache: dict[tuple[str, str, str], tuple[set[str], set[str], set[str]]] | None = None,
+    dynamic_expansion_cache: dict[tuple[str, str, str], tuple[set[str], set[str], set[str]]]
+    | None = None,
 ) -> dict[str, EdgeProvenance]:
     """Mirror extract_expr_deps masking pipeline; accumulate provenance for one formula string starting with '='."""
     if normalizer is None:
@@ -179,7 +180,10 @@ def _flat_provenance_one_string(
                             if is_variable:
                                 argument_addrs.add(k)
             if calls:
-                def _refs_in_formula_without_dynamic(formula_str: str, sheet_of_cell: str) -> set[str]:
+
+                def _refs_in_formula_without_dynamic(
+                    formula_str: str, sheet_of_cell: str
+                ) -> set[str]:
                     dyn = _find_function_calls_with_spans(
                         formula_str if formula_str.startswith("=") else "=" + formula_str,
                         {"OFFSET", "INDIRECT"},
@@ -243,6 +247,7 @@ def _flat_provenance_one_string(
                 if dynamic_expansion_cache is not None and _cache_key in dynamic_expansion_cache:
                     offset_targets, indirect_targets, _ = dynamic_expansion_cache[_cache_key]
                 else:
+
                     def _get_cell_formula(addr: str) -> str | None:
                         sh, a1 = _parse_address_to_sheet_a1(addr)
                         if sh not in wb_formulas.sheetnames:
@@ -311,7 +316,9 @@ def _flat_provenance_one_string(
                 max_cells=max_range_cells,
             ):
                 k = format_key(dep_sheet, dep_a1)
-                _merge_into(acc, k, EdgeProvenance(causes=frozenset({DependencyCause.static_range})))
+                _merge_into(
+                    acc, k, EdgeProvenance(causes=frozenset({DependencyCause.static_range}))
+                )
         masked = mask_spans(masked, spans)
 
     for ref, span in parse_cell_refs_with_spans(masked):
@@ -380,7 +387,8 @@ def _flat_provenance_formula_and_normalized(
     dynamic_refs: DynamicRefConfig | None,
     wb_formulas: fastpyxl.Workbook,
     resolve_cached_value: Callable[[str, str], object | None],
-    dynamic_expansion_cache: dict[tuple[str, str, str], tuple[set[str], set[str], set[str]]] | None = None,
+    dynamic_expansion_cache: dict[tuple[str, str, str], tuple[set[str], set[str], set[str]]]
+    | None = None,
 ) -> dict[str, EdgeProvenance]:
     raw_map = _flat_provenance_one_string(
         formula_str,
@@ -461,7 +469,8 @@ def collect_provenance_for_formula(
     dynamic_refs: DynamicRefConfig | None,
     wb_formulas: fastpyxl.Workbook,
     resolve_cached_value: Callable[[str, str], object | None],
-    dynamic_expansion_cache: dict[tuple[str, str, str], tuple[set[str], set[str], set[str]]] | None = None,
+    dynamic_expansion_cache: dict[tuple[str, str, str], tuple[set[str], set[str], set[str]]]
+    | None = None,
 ) -> dict[str, EdgeProvenance]:
     """
     Build a map from dependency cell key (``format_key``) to merged :class:`EdgeProvenance`

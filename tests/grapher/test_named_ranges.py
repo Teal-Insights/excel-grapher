@@ -1,4 +1,5 @@
 """Tests for named range resolution and strict validation."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -25,7 +26,9 @@ def test_named_range_map_allows_simple_range(tmp_path: Path) -> None:
     wb.defined_names.add(DefinedName("Bar", attr_text="Sheet1!$A$1:$B$2"))
     wb.save(excel_path)
 
-    maps = build_named_range_map(fastpyxl.load_workbook(excel_path, data_only=False, read_only=True))
+    maps = build_named_range_map(
+        fastpyxl.load_workbook(excel_path, data_only=False, read_only=True)
+    )
     assert maps.cell_map["Foo"] == ("Sheet1", "A1")
     assert maps.range_map["Bar"] == ("Sheet1", "A1", "B2")
 
@@ -148,8 +151,4 @@ def test_normalized_formula_resolves_range_named_range(tmp_path: Path) -> None:
     assert node is not None
     # Range-based name should be fully expanded in normalized_formula so that
     # downstream parsers never see a bare identifier like NumRange.
-    assert (
-        node.normalized_formula
-        == "=VLOOKUP(Sheet1!A1, Sheet1!A1:Sheet1!B1, 2, FALSE())"
-    )
-
+    assert node.normalized_formula == "=VLOOKUP(Sheet1!A1, Sheet1!A1:Sheet1!B1, 2, FALSE())"

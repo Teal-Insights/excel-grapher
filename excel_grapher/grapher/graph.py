@@ -583,4 +583,3 @@ def _find_feasible_cycle_path(graph: DependencyGraph, nodes: set[NodeKey]) -> li
         if out is not None:
             return out
     return None
-

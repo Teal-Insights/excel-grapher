@@ -59,7 +59,7 @@ def test_vlookup_parity_exact_and_approximate() -> None:
         _make_node("S!E1", None, 1),
         _make_node("S!E2", None, 2),
         _make_node("S!E3", None, 3),
-        _make_node("S!F1", "=VLOOKUP(\"alpha\", S!D1:E3, 2, FALSE)", None),
+        _make_node("S!F1", '=VLOOKUP("alpha", S!D1:E3, 2, FALSE)', None),
     )
 
     result = assert_codegen_matches_evaluator(

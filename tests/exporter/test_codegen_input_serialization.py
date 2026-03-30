@@ -67,4 +67,3 @@ def test_codegen_serializes_xlerror_leaf_values() -> None:
     compute_all = cast(Callable[[], dict[str, object]], namespace["compute_all"])
     results = compute_all()
     assert results["S!A1"] == XlError.DIV
-

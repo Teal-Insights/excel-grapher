@@ -35,9 +35,7 @@ def xl_right(text: CellValue, num_chars: CellValue = 1) -> str | XlError:
 
 
 @register("MID")
-def xl_mid(
-    text: CellValue, start_num: CellValue, num_chars: CellValue
-) -> str | XlError:
+def xl_mid(text: CellValue, start_num: CellValue, num_chars: CellValue) -> str | XlError:
     """Return characters from the middle of a text string."""
     s = to_string(text)
     start = to_number(start_num)

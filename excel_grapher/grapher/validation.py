@@ -37,7 +37,9 @@ def _parse_workbook_sheetid_map(excel_path: Path) -> dict[str, str]:
     return out
 
 
-def _parse_calcchain_formula_cells(excel_path: Path, sheet_id_to_name: dict[str, str]) -> set[str] | None:
+def _parse_calcchain_formula_cells(
+    excel_path: Path, sheet_id_to_name: dict[str, str]
+) -> set[str] | None:
     """
     Return set of formula-cell keys like "SheetName!D35" as enumerated by calcChain.xml.
 
@@ -183,4 +185,3 @@ def validate_graph(
         in_chain_not_in_graph=in_chain_not_in_graph,
         messages=messages,
     )
-

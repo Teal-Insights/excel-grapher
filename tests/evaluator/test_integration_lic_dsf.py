@@ -39,7 +39,11 @@ def graph() -> DependencyGraph:
         for sheet_name, rows in INDICATOR_CONFIG.items():
             targets.extend(
                 discover_formula_cells_in_rows(
-                    WORKBOOK_PATH, sheet_name, rows, wb_formulas=wb_f, wb_values=wb_v,
+                    WORKBOOK_PATH,
+                    sheet_name,
+                    rows,
+                    wb_formulas=wb_f,
+                    wb_values=wb_v,
                 )
             )
     finally:
@@ -133,9 +137,7 @@ def test_evaluate_formulas(graph: DependencyGraph) -> None:
                 error_types[key] = error_types.get(key, 0) + 1
             elif computed is None:
                 errors += 1
-            elif isinstance(expected, (int, float)) and isinstance(
-                computed, (int, float)
-            ):
+            elif isinstance(expected, (int, float)) and isinstance(computed, (int, float)):
                 # Compare with tolerance for floating point
                 if abs(expected - computed) < 1e-6 or (
                     expected != 0 and abs((expected - computed) / expected) < 1e-6

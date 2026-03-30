@@ -33,4 +33,3 @@ def test_to_networkx_roundtrip_nodes_edges(tmp_path: Path) -> None:
     assert G.nodes["Sheet1!A4"]["is_leaf"] is False
     assert G.nodes["Sheet1!A1"]["is_leaf"] is True
     assert G.nodes["Sheet1!A4"]["value"] == 10
-

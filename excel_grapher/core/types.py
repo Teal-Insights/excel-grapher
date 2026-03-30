@@ -54,6 +54,4 @@ class ExcelRange:
 
 
 # Scalar values, references, and object-dtype ndarrays of CellValue (e.g. OFFSET result).
-CellValue: TypeAlias = (
-    float | int | str | bool | XlError | ExcelRange | np.ndarray | None
-)
+CellValue: TypeAlias = float | int | str | bool | XlError | ExcelRange | np.ndarray | None

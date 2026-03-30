@@ -206,18 +206,22 @@ def _consolidate_import_lines(import_lines: list[str]) -> list[str]:
 
     import_sorted = sorted(import_aliases.keys(), key=_import_sort_key)
     stdlib_imports = [(n, a) for (n, a) in import_sorted if n.split(".", 1)[0] in _ISORT_STDLIB]
-    third_party_imports = [(n, a) for (n, a) in import_sorted if n.split(".", 1)[0] not in _ISORT_STDLIB]
+    third_party_imports = [
+        (n, a) for (n, a) in import_sorted if n.split(".", 1)[0] not in _ISORT_STDLIB
+    ]
 
-    for (name, asname) in stdlib_imports:
+    for name, asname in stdlib_imports:
         out.append(f"import {name} as {asname}" if asname else f"import {name}")
-    for (module, level), names in sorted(from_aliases.items(), key=lambda kv: (kv[0][1], kv[0][0] or "")):
+    for (module, level), names in sorted(
+        from_aliases.items(), key=lambda kv: (kv[0][1], kv[0][0] or "")
+    ):
         if level != 0 or module is None:
             continue
         parts = [f"{n} as {a}" if a else n for n, a in sorted(names.items(), key=lambda x: x[0])]
         out.append(f"from {module} import {', '.join(parts)}")
     if third_party_imports:
         out.append("")
-    for (name, asname) in third_party_imports:
+    for name, asname in third_party_imports:
         out.append(f"import {name} as {asname}" if asname else f"import {name}")
 
     return out
@@ -262,11 +266,7 @@ def _prune_import_lines(import_lines: list[str], *, used_names: set[str]) -> lis
 
         stmt = mod.body[0]
         if isinstance(stmt, ast.Import):
-            kept = [
-                alias
-                for alias in stmt.names
-                if _binding_name_for_import(alias) in used_names
-            ]
+            kept = [alias for alias in stmt.names if _binding_name_for_import(alias) in used_names]
             for alias in kept:
                 out.append(
                     f"import {alias.name} as {alias.asname}"
@@ -288,9 +288,7 @@ def _prune_import_lines(import_lines: list[str], *, used_names: set[str]) -> lis
             for alias in stmt.names:
                 binding = alias.asname or alias.name
                 if binding in used_names:
-                    kept.append(
-                        f"{alias.name} as {alias.asname}" if alias.asname else alias.name
-                    )
+                    kept.append(f"{alias.name} as {alias.asname}" if alias.asname else alias.name)
             if kept:
                 out.append(f"from {stmt.module} import {', '.join(sorted(kept))}")
             continue
@@ -409,4 +407,3 @@ def emit_runtime(required_symbols: set[str], *, include_offset_table: bool) -> s
         out.append("")
 
     return "\n".join(out).rstrip()
-

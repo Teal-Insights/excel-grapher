@@ -35,4 +35,3 @@ def test_get_calc_settings_defaults_when_missing(tmp_path: Path) -> None:
     assert settings.iterate_enabled in {True, False}
     assert isinstance(settings.iterate_count, int)
     assert isinstance(settings.iterate_delta, float)
-

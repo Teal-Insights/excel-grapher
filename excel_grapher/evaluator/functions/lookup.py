@@ -25,9 +25,7 @@ from . import register
 
 
 @register("INDEX")
-def xl_index(
-    array: np.ndarray, row_num: CellValue, col_num: CellValue = None
-) -> CellValue:
+def xl_index(array: np.ndarray, row_num: CellValue, col_num: CellValue = None) -> CellValue:
     """Return a value from a specific position in an array."""
     return _rt_xl_index(array, row_num, col_num)
 

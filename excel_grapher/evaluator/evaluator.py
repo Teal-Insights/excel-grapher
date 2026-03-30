@@ -157,10 +157,7 @@ class FormulaEvaluator:
             if node is None:
                 continue
             current_value = node.value
-            if (
-                leaf_key in self._leaf_values
-                and self._leaf_values[leaf_key] != current_value
-            ):
+            if leaf_key in self._leaf_values and self._leaf_values[leaf_key] != current_value:
                 self._invalidate_with_dependents(leaf_key)
                 changed = True
             self._leaf_values[leaf_key] = current_value
@@ -280,9 +277,7 @@ class FormulaEvaluator:
 
             args = [self._evaluate_ast(a) for a in node.args]
             # Resolve ExcelRange objects to numpy arrays
-            args = [
-                self._resolve_range(a) if isinstance(a, ExcelRange) else a for a in args
-            ]
+            args = [self._resolve_range(a) if isinstance(a, ExcelRange) else a for a in args]
             if name not in _SKIP_ERROR_PRECHECK:
                 err = get_error(*args)
                 if err is not None:
@@ -494,9 +489,7 @@ class FormulaEvaluator:
             sheet, coord = node.address.split("!", 1)
             col_str, row = fastpyxl.utils.cell.coordinate_from_string(coord)
             col = fastpyxl.utils.cell.column_index_from_string(col_str)
-            return ExcelRange(
-                sheet=sheet, start_row=row, start_col=col, end_row=row, end_col=col
-            )
+            return ExcelRange(sheet=sheet, start_row=row, start_col=col, end_row=row, end_col=col)
 
         evaluated = self._evaluate_ast(node)
         if isinstance(evaluated, XlError):
@@ -521,6 +514,4 @@ def _range_from_a1(start: str, end: str) -> ExcelRange:
     end_col = fastpyxl.utils.cell.column_index_from_string(c2)
     sr, er = sorted((r1, r2))
     sc, ec = sorted((start_col, end_col))
-    return ExcelRange(
-        sheet=start_sheet, start_row=sr, start_col=sc, end_row=er, end_col=ec
-    )
+    return ExcelRange(sheet=start_sheet, start_row=sr, start_col=sc, end_row=er, end_col=ec)

@@ -180,4 +180,3 @@ def test_indirect_text_to_range_respects_a1_flag_for_unsupported_r1c1() -> None:
     # When a1 is False (R1C1 mode), we currently treat all text as unsupported.
     result = _indirect_text_to_range("R1C1", a1=False, bounds=bounds)
     assert result == XlError.NAME
-

@@ -55,7 +55,7 @@ def _parse_address_to_sheet_a1(addr: str) -> tuple[str, str]:
     if addr.startswith("'"):
         end_quote = addr.index("'", 1)
         sheet = addr[1:end_quote]
-        a1 = addr[end_quote + 2:]
+        a1 = addr[end_quote + 2 :]
         return sheet, a1
     sheet, a1 = addr.split("!", 1)
     return sheet, a1
@@ -195,7 +195,9 @@ def create_dependency_graph(
     def load_wb(data_only: bool) -> fastpyxl.Workbook:
         if isinstance(workbook, fastpyxl.Workbook):
             if data_only:
-                raise ValueError("load_values=True is not supported when passing a Workbook instance")
+                raise ValueError(
+                    "load_values=True is not supported when passing a Workbook instance"
+                )
             return workbook
         path = Path(workbook)
         keep_vba = path.suffix.lower() == ".xlsm"
@@ -205,7 +207,11 @@ def create_dependency_graph(
     wb_formulas = load_wb(data_only=False)
     print(f"[DIAG] Loaded formula workbook in {time.perf_counter() - _t0:.2f}s", flush=True)
     _t0 = time.perf_counter()
-    wb_values = load_wb(data_only=True) if load_values and not isinstance(workbook, fastpyxl.Workbook) else None
+    wb_values = (
+        load_wb(data_only=True)
+        if load_values and not isinstance(workbook, fastpyxl.Workbook)
+        else None
+    )
     if wb_values is not None:
         print(f"[DIAG] Loaded value workbook in {time.perf_counter() - _t0:.2f}s", flush=True)
 
@@ -240,7 +246,7 @@ def create_dependency_graph(
             # Find the closing quote
             end_quote = t.index("'", 1)
             sheet = t[1:end_quote]
-            a1 = t[end_quote + 2:]  # Skip '!
+            a1 = t[end_quote + 2 :]  # Skip '!
         else:
             sheet, a1 = t.split("!", 1)
         if sheet not in wb_formulas.sheetnames:
@@ -257,9 +263,7 @@ def create_dependency_graph(
         except DynamicRefError:
             raise
         except ValueError as exc:
-            raise ValueError(
-                f"{current_sheet}!{current_a1}: {exc}"
-            ) from exc
+            raise ValueError(f"{current_sheet}!{current_a1}: {exc}") from exc
 
     def _extract_deps_with_guards_inner(
         formula: str, current_sheet: str, current_a1: str
@@ -361,7 +365,10 @@ def create_dependency_graph(
                                     if is_variable:
                                         argument_addrs.add(format_key(sh, a1))
                     if calls:
-                        def _refs_in_formula_without_dynamic(formula_str: str, sheet_of_cell: str) -> set[str]:
+
+                        def _refs_in_formula_without_dynamic(
+                            formula_str: str, sheet_of_cell: str
+                        ) -> set[str]:
                             dyn = _find_function_calls_with_spans(
                                 formula_str if formula_str.startswith("=") else "=" + formula_str,
                                 {"OFFSET", "INDIRECT", "INDEX"},
@@ -433,6 +440,7 @@ def create_dependency_graph(
                         if _cache_key in _dyn_cache:
                             offset_targets, indirect_targets, index_targets = _dyn_cache[_cache_key]
                         else:
+
                             def _get_cell_formula(addr: str) -> str | None:
                                 sh, a1 = _parse_address_to_sheet_a1(addr)
                                 if sh not in wb_formulas.sheetnames:
@@ -441,6 +449,7 @@ def create_dependency_graph(
                                 if not isinstance(v, str) or not v.startswith("="):
                                     return None
                                 return normalizer.normalize(v, sh)
+
                             expanded_env = expand_leaf_env_to_argument_env(
                                 all_refs,
                                 _get_cell_formula,
@@ -489,7 +498,11 @@ def create_dependency_graph(
                                     f"{exc} (while analyzing dynamic OFFSET/INDIRECT/INDEX for {cell_key}; "
                                     f"normalized formula {formula_for_infer!r})"
                                 ) from exc
-                            _dyn_cache[_cache_key] = (offset_targets, indirect_targets, index_targets)
+                            _dyn_cache[_cache_key] = (
+                                offset_targets,
+                                indirect_targets,
+                                index_targets,
+                            )
                         for addr in offset_targets | indirect_targets | index_targets:
                             sh, a1 = _parse_address_to_sheet_a1(addr)
                             deps.append((sh, a1))
@@ -559,10 +572,14 @@ def create_dependency_graph(
         if_parts = split_top_level_if(formula)
         if if_parts is not None:
             cond_s, then_s, else_s = if_parts
-            cond_guard = parse_guard_expr(cond_s, current_sheet=current_sheet, named_ranges=named_ranges)
+            cond_guard = parse_guard_expr(
+                cond_s, current_sheet=current_sheet, named_ranges=named_ranges
+            )
 
             unconditional = set(extract_expr_deps(cond_s))
-            out: dict[tuple[str, str], GuardExpr | None] = {(sh, a1): None for (sh, a1) in unconditional}
+            out: dict[tuple[str, str], GuardExpr | None] = {
+                (sh, a1): None for (sh, a1) in unconditional
+            }
 
             # If the condition can't be parsed, branch deps are still conditional, but opaque.
             then_guard: GuardExpr | None = cond_guard
@@ -604,11 +621,15 @@ def create_dependency_graph(
             for c in conditions:
                 unconditional |= set(extract_expr_deps(c))
 
-            out: dict[tuple[str, str], GuardExpr | None] = {(sh, a1): None for (sh, a1) in unconditional}
+            out: dict[tuple[str, str], GuardExpr | None] = {
+                (sh, a1): None for (sh, a1) in unconditional
+            }
 
             prev_negations: list[GuardExpr] = []
             for _idx, (cond_s, val_s) in enumerate(zip(conditions, values, strict=False), start=1):
-                cond_guard = parse_guard_expr(cond_s, current_sheet=current_sheet, named_ranges=named_ranges)
+                cond_guard = parse_guard_expr(
+                    cond_s, current_sheet=current_sheet, named_ranges=named_ranges
+                )
                 # Build sequential guard: cond_i AND NOT(cond_1) AND ... NOT(cond_{i-1})
                 g: GuardExpr | None
                 if cond_guard is None:
@@ -626,7 +647,11 @@ def create_dependency_graph(
 
             if default_expr is not None:
                 if prev_negations:
-                    default_guard: GuardExpr = prev_negations[0] if len(prev_negations) == 1 else And(tuple(prev_negations))
+                    default_guard: GuardExpr = (
+                        prev_negations[0]
+                        if len(prev_negations) == 1
+                        else And(tuple(prev_negations))
+                    )
                 else:
                     default_guard = Literal(True)
                 for sh, a1 in extract_expr_deps(default_expr):
@@ -643,9 +668,13 @@ def create_dependency_graph(
             index_s = choose_args[0]
             choices = choose_args[1:]
 
-            index_expr = parse_guard_expr(index_s, current_sheet=current_sheet, named_ranges=named_ranges)
+            index_expr = parse_guard_expr(
+                index_s, current_sheet=current_sheet, named_ranges=named_ranges
+            )
             unconditional = set(extract_expr_deps(index_s))
-            out: dict[tuple[str, str], GuardExpr | None] = {(sh, a1): None for (sh, a1) in unconditional}
+            out: dict[tuple[str, str], GuardExpr | None] = {
+                (sh, a1): None for (sh, a1) in unconditional
+            }
 
             for i, choice_s in enumerate(choices, start=1):
                 guard: GuardExpr | None = None
@@ -663,9 +692,13 @@ def create_dependency_graph(
         switch_args = split_top_level_switch(formula)
         if switch_args is not None and len(switch_args) >= 3:
             expr_s = switch_args[0]
-            expr_ge = parse_guard_expr(expr_s, current_sheet=current_sheet, named_ranges=named_ranges)
+            expr_ge = parse_guard_expr(
+                expr_s, current_sheet=current_sheet, named_ranges=named_ranges
+            )
             unconditional = set(extract_expr_deps(expr_s))
-            out: dict[tuple[str, str], GuardExpr | None] = {(sh, a1): None for (sh, a1) in unconditional}
+            out: dict[tuple[str, str], GuardExpr | None] = {
+                (sh, a1): None for (sh, a1) in unconditional
+            }
 
             pairs = switch_args[1:]
             default_expr: str | None = None
@@ -677,7 +710,9 @@ def create_dependency_graph(
             for i in range(0, len(pairs), 2):
                 val_s = pairs[i]
                 res_s = pairs[i + 1]
-                val_ge = parse_guard_expr(val_s, current_sheet=current_sheet, named_ranges=named_ranges)
+                val_ge = parse_guard_expr(
+                    val_s, current_sheet=current_sheet, named_ranges=named_ranges
+                )
                 match: GuardExpr | None = None
                 if expr_ge is not None and val_ge is not None:
                     match = Compare(left=expr_ge, op="=", right=val_ge)
@@ -696,7 +731,11 @@ def create_dependency_graph(
 
             if default_expr is not None:
                 if prev_negations:
-                    default_guard2: GuardExpr = prev_negations[0] if len(prev_negations) == 1 else And(tuple(prev_negations))
+                    default_guard2: GuardExpr = (
+                        prev_negations[0]
+                        if len(prev_negations) == 1
+                        else And(tuple(prev_negations))
+                    )
                 else:
                     default_guard2 = Literal(True)
                 for sh, a1 in extract_expr_deps(default_expr):

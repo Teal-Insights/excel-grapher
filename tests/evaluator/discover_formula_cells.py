@@ -25,14 +25,13 @@ def discover_formula_cells_in_rows(
     """
     owned = wb_formulas is None
     if wb_formulas is None:
-        wb_formulas = fastpyxl.load_workbook(wb_path, data_only=False, read_only=True, keep_vba=True)
+        wb_formulas = fastpyxl.load_workbook(
+            wb_path, data_only=False, read_only=True, keep_vba=True
+        )
     if wb_values is None:
         wb_values = fastpyxl.load_workbook(wb_path, data_only=True, read_only=True, keep_vba=True)
     try:
-        if (
-            sheet_name not in wb_formulas.sheetnames
-            or sheet_name not in wb_values.sheetnames
-        ):
+        if sheet_name not in wb_formulas.sheetnames or sheet_name not in wb_values.sheetnames:
             print(f"  Warning: Sheet '{sheet_name}' not found")
             return []
 
@@ -44,13 +43,9 @@ def discover_formula_cells_in_rows(
             max_col = ws_formulas.max_column or 1
             for col_idx in range(1, max_col + 1):
                 cell_formula = ws_formulas.cell(row=row, column=col_idx)
-                if isinstance(
-                    cell_formula.value, str
-                ) and cell_formula.value.startswith("="):
+                if isinstance(cell_formula.value, str) and cell_formula.value.startswith("="):
                     cached_value = ws_values.cell(row=row, column=col_idx).value
-                    if not isinstance(cached_value, (int, float)) or isinstance(
-                        cached_value, bool
-                    ):
+                    if not isinstance(cached_value, (int, float)) or isinstance(cached_value, bool):
                         continue
                     col_letter = fastpyxl.utils.cell.get_column_letter(col_idx)
                     targets.append(f"{sheet_name}!{col_letter}{row}")

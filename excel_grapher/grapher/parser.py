@@ -4,6 +4,7 @@ import re
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import cast
 
 import fastpyxl.utils.cell
 
@@ -269,24 +270,24 @@ def normalize_formula(
 ) -> str:
     """
     Normalize a formula for transpilation:
-    
+
     - Replace same-sheet refs (A1) with sheet-qualified refs (Sheet1!A1)
     - Resolve named ranges to their targets
     - Strip absolute markers ($)
     - Qualify range endpoints
-    
+
     Returns the normalized formula string.
     """
     if not formula or not formula.startswith("="):
         return formula
-    
+
     if named_ranges is None:
         named_ranges = {}
     if named_range_ranges is None:
         named_range_ranges = {}
-    
+
     result = formula
-    
+
     # 1) Normalize ranges first (quoted sheet, unquoted sheet, local)
     # Pattern for 'Sheet Name'!$A$1:$B$2
     def replace_quoted_range(m: re.Match) -> str:
@@ -296,13 +297,13 @@ def normalize_formula(
         c2 = m.group("c2")
         r2 = m.group("r2")
         return f"'{sheet}'!{c1}{r1}:'{sheet}'!{c2}{r2}"
-    
+
     result = re.sub(
         r"'(?P<sheet>[^']+)'!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)",
         replace_quoted_range,
         result,
     )
-    
+
     # Pattern for SheetName!$A$1:$B$2 (unquoted)
     def replace_unquoted_range(m: re.Match) -> str:
         sheet = m.group("sheet")
@@ -311,13 +312,13 @@ def normalize_formula(
         c2 = m.group("c2")
         r2 = m.group("r2")
         return f"{sheet}!{c1}{r1}:{sheet}!{c2}{r2}"
-    
+
     result = re.sub(
         r"(?<![A-Za-z_'])(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)",
         replace_unquoted_range,
         result,
     )
-    
+
     # Pattern for local range A1:B2 -> Sheet!A1:Sheet!B2
     def replace_local_range(m: re.Match) -> str:
         c1 = m.group("c1")
@@ -327,13 +328,13 @@ def normalize_formula(
         ref1 = _format_ref(current_sheet, c1, int(r1))
         ref2 = _format_ref(current_sheet, c2, int(r2))
         return f"{ref1}:{ref2}"
-    
+
     result = re.sub(
         r"(?<![!A-Za-z0-9_])\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)(?![A-Za-z0-9_])",
         replace_local_range,
         result,
     )
-    
+
     # 2) Normalize sheet-qualified single-cell refs (strip $)
     # 'Sheet Name'!$A$1 -> 'Sheet Name'!A1
     def replace_quoted_cell(m: re.Match) -> str:
@@ -341,26 +342,26 @@ def normalize_formula(
         col = m.group("col")
         row = m.group("row")
         return f"'{sheet}'!{col}{row}"
-    
+
     result = re.sub(
         r"'(?P<sheet>[^']+)'!\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)",
         replace_quoted_cell,
         result,
     )
-    
+
     # SheetName!$A$1 -> SheetName!A1
     def replace_unquoted_cell(m: re.Match) -> str:
         sheet = m.group("sheet")
         col = m.group("col")
         row = m.group("row")
         return f"{sheet}!{col}{row}"
-    
+
     result = re.sub(
         r"(?<![A-Za-z_'])(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)",
         replace_unquoted_cell,
         result,
     )
-    
+
     # 3) Normalize local single-cell refs: $A$1, A$1, $A1, A1 -> Sheet!A1
     def replace_local_cell(m: re.Match) -> str:
         col = m.group("col")
@@ -369,13 +370,13 @@ def normalize_formula(
         if col in _FUNC_LIKE:
             return m.group(0)
         return _format_ref(current_sheet, col, int(row))
-    
+
     result = re.sub(
         r"(?<![!A-Za-z0-9_])\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)(?![A-Za-z0-9_])",
         replace_local_cell,
         result,
     )
-    
+
     # 4) Resolve named ranges (single cell and range-based)
     #
     # We first handle single-cell names, then range-based names. This order ensures
@@ -406,7 +407,7 @@ def normalize_formula(
         end_ref = _format_ref(sheet, end_col, end_row)
         replacement = f"{start_ref}:{end_ref}"
         result = re.sub(rf"\b{re.escape(name)}\b(?!\s*!)", replacement, result)
-    
+
     return result
 
 
@@ -461,13 +462,9 @@ class FormulaNormalizer:
         # Build a single alternation regex.  Sort longest-first so that a
         # longer name (e.g. "RateAdj") is tried before any prefix ("Rate").
         if self._replacements:
-            alt = "|".join(
-                re.escape(n)
-                for n in sorted(self._replacements, key=len, reverse=True)
-            )
-            self._names_re: re.Pattern[str] | None = re.compile(
-                rf"\b(?:{alt})\b(?!\s*!)"
-            )
+            names = cast(list[str], sorted(self._replacements, key=len, reverse=True))
+            alt = "|".join(re.escape(n) for n in names)
+            self._names_re: re.Pattern[str] | None = re.compile(rf"\b(?:{alt})\b(?!\s*!)")
         else:
             self._names_re = None
 
@@ -832,7 +829,11 @@ def _eval_row_expr(
                 start_ref = CellRef(sheet=current_sheet, column=start_ref.column, row=start_ref.row)
             if end_ref.sheet is None:
                 end_ref = CellRef(sheet=current_sheet, column=end_ref.column, row=end_ref.row)
-            if (start_ref.sheet != end_ref.sheet) or (start_ref.column != end_ref.column) or (start_ref.row != end_ref.row):
+            if (
+                (start_ref.sheet != end_ref.sheet)
+                or (start_ref.column != end_ref.column)
+                or (start_ref.row != end_ref.row)
+            ):
                 return None
             return start_ref.row
         return None
@@ -892,7 +893,11 @@ def _resolve_numeric_token(
     if parsed is None:
         return None
     start_ref, end_ref = parsed
-    if (start_ref.sheet != end_ref.sheet) or (start_ref.column != end_ref.column) or (start_ref.row != end_ref.row):
+    if (
+        (start_ref.sheet != end_ref.sheet)
+        or (start_ref.column != end_ref.column)
+        or (start_ref.row != end_ref.row)
+    ):
         return None
     sheet = start_ref.sheet if start_ref.sheet is not None else current_sheet
     if value_resolver is None:
@@ -1065,7 +1070,9 @@ def _split_function_args(inner: str) -> list[str] | None:
     return _split_top_level_args(inner)
 
 
-def _find_function_calls_with_spans(formula: str, fn_names: set[str]) -> list[tuple[str, str, tuple[int, int]]]:
+def _find_function_calls_with_spans(
+    formula: str, fn_names: set[str]
+) -> list[tuple[str, str, tuple[int, int]]]:
     s = formula
     out: list[tuple[str, str, tuple[int, int]]] = []
     i = 0
@@ -1224,7 +1231,9 @@ def _parse_offset_call(
         )
     )
     if height is None or width is None:
-        raise ValueError("OFFSET height/width must be integer literals or cached numeric refs when provided")
+        raise ValueError(
+            "OFFSET height/width must be integer literals or cached numeric refs when provided"
+        )
     if height <= 0 or width <= 0:
         raise ValueError("OFFSET height/width must be positive")
 
@@ -1391,7 +1400,9 @@ def parse_guard_expr(
         if fn == "NOT":
             if len(parts) != 1:
                 return None
-            operand = parse_guard_expr(parts[0], current_sheet=current_sheet, named_ranges=named_ranges)
+            operand = parse_guard_expr(
+                parts[0], current_sheet=current_sheet, named_ranges=named_ranges
+            )
             return None if operand is None else Not(operand)
         if fn in {"AND", "OR"}:
             if len(parts) < 1:
@@ -1409,7 +1420,9 @@ def parse_guard_expr(
         if op in s:
             left_s, right_s = (p.strip() for p in s.split(op, 1))
             left = _parse_guard_atom(left_s, current_sheet=current_sheet, named_ranges=named_ranges)
-            right = _parse_guard_atom(right_s, current_sheet=current_sheet, named_ranges=named_ranges)
+            right = _parse_guard_atom(
+                right_s, current_sheet=current_sheet, named_ranges=named_ranges
+            )
             if left is None or right is None:
                 return None
             return Compare(left=left, op=op, right=right)
@@ -1514,4 +1527,3 @@ def _parse_guard_atom(
         return GuardCellRef(_to_node_key(current_sheet, col, int(m.group("row"))))
 
     return None
-

@@ -76,14 +76,13 @@ class ExportRangeConfig(TypedDict):
     range_spec: str
     entrypoint_mode: Literal["row_group", "per_cell"]
 
+
 # ---------------------------------------------------------------------------
 # Workbook
 # ---------------------------------------------------------------------------
 
 WORKBOOK_PATH = Path("example/data/lic-dsf-template-2025-08-12.xlsm")
-WORKBOOK_TEMPLATE_URL = (
-    "https://thedocs.worldbank.org/en/doc/f0ade6bcf85b6f98dbeb2c39a2b7770c-0360012025/original/LIC-DSF-IDA21-Template-08-12-2025-vf.xlsm"
-)
+WORKBOOK_TEMPLATE_URL = "https://thedocs.worldbank.org/en/doc/f0ade6bcf85b6f98dbeb2c39a2b7770c-0360012025/original/LIC-DSF-IDA21-Template-08-12-2025-vf.xlsm"
 
 # Set True to resolve OFFSET/INDIRECT from cached workbook values (no constraints).
 # Set False to use constraint-based resolution; add address-style keys below as you hit DynamicRefError.
@@ -243,6 +242,7 @@ When the template workbook is present, ``main`` runs ``collect_lic_dsf_constrain
 
 LiteralType = cast(Any, Literal)
 
+
 # Constraint types for cells that feed OFFSET/INDIRECT. Keys must be address-style (e.g. "Sheet1!B1").
 # Add entries when the script raises DynamicRefError: the message lists leaf cells that need
 # constraints. Add each to __annotations__ (with Annotated[int, Between(lo, hi)],
@@ -250,6 +250,7 @@ LiteralType = cast(Any, Literal)
 # then re-run. Repeat until the graph builds.
 class LicDsfConstraints(TypedDict, total=False):
     pass
+
 
 # Lookup switches; treat as constants
 constrain(LicDsfConstraints, "lookup!AF4", Literal["New"])
@@ -300,76 +301,76 @@ constrain(LicDsfConstraints, "lookup!BC7", Literal["Spanish"])
 
 
 _countries: list[tuple[int, str]] = [
-    (4, 'Afghanistan'),
-    (5, 'Bangladesh'),
-    (6, 'Benin'),
-    (7, 'Bhutan'),
-    (8, 'Burkina Faso'),
-    (9, 'Burundi'),
-    (10, 'Cambodia'),
-    (11, 'Cameroon'),
-    (12, 'Cabo Verde'),
-    (13, 'Central African Republic'),
-    (14, 'Chad'),
-    (15, 'Comoros'),
-    (16, 'Congo, DR'),
-    (17, 'Congo, Republic of'),
+    (4, "Afghanistan"),
+    (5, "Bangladesh"),
+    (6, "Benin"),
+    (7, "Bhutan"),
+    (8, "Burkina Faso"),
+    (9, "Burundi"),
+    (10, "Cambodia"),
+    (11, "Cameroon"),
+    (12, "Cabo Verde"),
+    (13, "Central African Republic"),
+    (14, "Chad"),
+    (15, "Comoros"),
+    (16, "Congo, DR"),
+    (17, "Congo, Republic of"),
     (18, "Cote d'Ivoire"),
-    (19, 'Djibouti'),
-    (20, 'Dominica'),
-    (21, 'Eritrea'),
-    (22, 'Ethiopia'),
-    (23, 'Gambia, The'),
-    (24, 'Ghana'),
-    (25, 'Grenada'),
-    (26, 'Guinea'),
-    (27, 'Guinea-Bissau'),
-    (28, 'Guyana'),
-    (29, 'Haiti'),
-    (30, 'Honduras'),
-    (31, 'Kenya'),
-    (32, 'Kiribati'),
-    (33, 'Kyrgyz Republic'),
-    (34, 'Lao PDR'),
-    (35, 'Lesotho'),
-    (36, 'Liberia'),
-    (37, 'Madagascar'),
-    (38, 'Malawi'),
-    (39, 'Maldives'),
-    (40, 'Mali'),
-    (41, 'Marshall Islands'),
-    (42, 'Mauritania'),
-    (43, 'Micronesia'),
-    (44, 'Moldova'),
-    (45, 'Mozambique'),
-    (46, 'Myanmar'),
-    (47, 'Nepal'),
-    (48, 'Nicaragua'),
-    (49, 'Niger'),
-    (50, 'Papua New Guinea'),
-    (51, 'Rwanda'),
-    (52, 'Samoa'),
-    (53, 'Sao Tome & Principe'),
-    (54, 'Senegal'),
-    (55, 'Sierra Leone'),
-    (56, 'Solomon Islands'),
-    (57, 'Somalia'),
-    (58, 'South Sudan'),
-    (59, 'St. Lucia'),
-    (60, 'St. Vincent & the Grenadines'),
-    (61, 'Sudan'),
-    (62, 'Tajikistan'),
-    (63, 'Tanzania'),
-    (64, 'Timor-Leste'),
-    (65, 'Togo'),
-    (66, 'Tonga'),
-    (67, 'Tuvalu'),
-    (68, 'Uganda'),
-    (69, 'Uzbekistan'),
-    (70, 'Vanuatu'),
-    (71, 'Yemen, Republic of'),
-    (72, 'Zambia'),
-    (73, 'Zimbabwe'),
+    (19, "Djibouti"),
+    (20, "Dominica"),
+    (21, "Eritrea"),
+    (22, "Ethiopia"),
+    (23, "Gambia, The"),
+    (24, "Ghana"),
+    (25, "Grenada"),
+    (26, "Guinea"),
+    (27, "Guinea-Bissau"),
+    (28, "Guyana"),
+    (29, "Haiti"),
+    (30, "Honduras"),
+    (31, "Kenya"),
+    (32, "Kiribati"),
+    (33, "Kyrgyz Republic"),
+    (34, "Lao PDR"),
+    (35, "Lesotho"),
+    (36, "Liberia"),
+    (37, "Madagascar"),
+    (38, "Malawi"),
+    (39, "Maldives"),
+    (40, "Mali"),
+    (41, "Marshall Islands"),
+    (42, "Mauritania"),
+    (43, "Micronesia"),
+    (44, "Moldova"),
+    (45, "Mozambique"),
+    (46, "Myanmar"),
+    (47, "Nepal"),
+    (48, "Nicaragua"),
+    (49, "Niger"),
+    (50, "Papua New Guinea"),
+    (51, "Rwanda"),
+    (52, "Samoa"),
+    (53, "Sao Tome & Principe"),
+    (54, "Senegal"),
+    (55, "Sierra Leone"),
+    (56, "Solomon Islands"),
+    (57, "Somalia"),
+    (58, "South Sudan"),
+    (59, "St. Lucia"),
+    (60, "St. Vincent & the Grenadines"),
+    (61, "Sudan"),
+    (62, "Tajikistan"),
+    (63, "Tanzania"),
+    (64, "Timor-Leste"),
+    (65, "Togo"),
+    (66, "Tonga"),
+    (67, "Tuvalu"),
+    (68, "Uganda"),
+    (69, "Uzbekistan"),
+    (70, "Vanuatu"),
+    (71, "Yemen, Republic of"),
+    (72, "Zambia"),
+    (73, "Zimbabwe"),
 ]
 for _row, _name in _countries:
     constrain(LicDsfConstraints, f"lookup!C{_row}", LiteralType[_name])
@@ -402,8 +403,30 @@ def _constrain_pv_baseline_com(constraints: type[Any]) -> None:
 
     # H:AE ranges for "New forex borrowing (gross, USD)" rows
     cols = (
-        "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T",
-        "U", "V", "W", "X", "Y", "Z", "AA", "AB", "AC", "AD", "AE"
+        "H",
+        "I",
+        "J",
+        "K",
+        "L",
+        "M",
+        "N",
+        "O",
+        "P",
+        "Q",
+        "R",
+        "S",
+        "T",
+        "U",
+        "V",
+        "W",
+        "X",
+        "Y",
+        "Z",
+        "AA",
+        "AB",
+        "AC",
+        "AD",
+        "AE",
     )
     for r in (32, 58, 84, 110, 136):
         for col in cols:
@@ -530,12 +553,14 @@ def _constrain_pv_stress_and_pv_base_index_cells(constraints: type[Any]) -> None
 
     # B column = formulas from Input 4; constrain Input 4 G/H instead.
 
+
 _constrain_pv_stress_and_pv_base_index_cells(LicDsfConstraints)
 
 
 # ---------------------------------------------------------------------------
 # PV_LC_NR1 / PV_LC_NR2 / PV_LC_NR3 constraints (local-currency new-loan output blocks)
 # ---------------------------------------------------------------------------
+
 
 def _constrain_pv_lc_nr(constraints: type[Any], sheet: str) -> None:
     financial_type = Annotated[float | None, RealBetween(0, 1e15)]
@@ -1118,10 +1143,51 @@ def _constrain_input5_local_debt(constraints: type[Any]) -> None:
     ):
         constrain(constraints, f"{q}!{addr}", financial)
 
-    for row in (93, 94, 95, 100, 101, 104, 105, 106, 108, 109, 110, 250, 254, 274, 278, 298, 302, 322, 392, 461):
+    for row in (
+        93,
+        94,
+        95,
+        100,
+        101,
+        104,
+        105,
+        106,
+        108,
+        109,
+        110,
+        250,
+        254,
+        274,
+        278,
+        298,
+        302,
+        322,
+        392,
+        461,
+    ):
         constrain(constraints, f"{q}!AE{row}", financial)
 
-    for row in (93, 94, 95, 100, 101, 104, 105, 106, 108, 109, 110, 250, 274, 298, 322, 392, 461, 488, 512):
+    for row in (
+        93,
+        94,
+        95,
+        100,
+        101,
+        104,
+        105,
+        106,
+        108,
+        109,
+        110,
+        250,
+        274,
+        298,
+        322,
+        392,
+        461,
+        488,
+        512,
+    ):
         constrain(constraints, f"{q}!AF{row}", financial)
 
     # AG:BT projection grids are mostly formulas in the template; constrain true OFFSET leaves via DynamicRefError.
@@ -1189,9 +1255,12 @@ _constrain_input5_local_debt(LicDsfConstraints)
 # Input 6 (Tailored / optional Standard Test) and Input 8 (SDR)
 # ---------------------------------------------------------------------------
 
+
 def _constrain_input6_input8(constraints: type[Any]) -> None:
     """Tailored and standardized stress options; SDR sheet (enrichment_audit + template dropdowns)."""
-    _threshold = Literal["Historical average only", "Baseline projection only", "Whichever is lower"]
+    _threshold = Literal[
+        "Historical average only", "Baseline projection only", "Whichever is lower"
+    ]
     financial = Annotated[float | None, RealBetween(0, 1e15)]
     financial_signed = Annotated[float | None, RealBetween(-1e15, 1e15)]
     unit_rate = Annotated[float | None, RealBetween(0, 1)]
@@ -1267,12 +1336,18 @@ _constrain_input6_input8(LicDsfConstraints)
 
 # AA403:AG403 — "Exchange rate (pa)" projection columns (years); may also map to
 # creditor-row financial data depending on workbook layout.
-constrain(LicDsfConstraints, "Ext_Debt_Data!AA403:AG403", Annotated[float | None, RealBetween(0, 1e15)])
+constrain(
+    LicDsfConstraints, "Ext_Debt_Data!AA403:AG403", Annotated[float | None, RealBetween(0, 1e15)]
+)
 
 # F383:F384 — short-term debt principal / interest (or exchange rate in some layouts)
-constrain(LicDsfConstraints, "Ext_Debt_Data!F383:F384", Annotated[float | None, RealBetween(0, 1e15)])
+constrain(
+    LicDsfConstraints, "Ext_Debt_Data!F383:F384", Annotated[float | None, RealBetween(0, 1e15)]
+)
 
-constrain(LicDsfConstraints, "Ext_Debt_Data!BO79:CF79", Annotated[float | None, RealBetween(0, 1e15)])
+constrain(
+    LicDsfConstraints, "Ext_Debt_Data!BO79:CF79", Annotated[float | None, RealBetween(0, 1e15)]
+)
 
 # ---------------------------------------------------------------------------
 # Translation table constraints
@@ -1338,9 +1413,7 @@ def _get_missing_constraints(specs: list[str], constraints: type[Any]) -> list[s
 
 def get_dynamic_ref_config() -> DynamicRefConfig:
     """Return a DynamicRefConfig for constraint-based resolution of OFFSET/INDIRECT."""
-    return DynamicRefConfig.from_constraints_and_workbook(
-        LicDsfConstraints, WORKBOOK_PATH
-    )
+    return DynamicRefConfig.from_constraints_and_workbook(LicDsfConstraints, WORKBOOK_PATH)
 
 
 def parse_range_spec(spec: str) -> tuple[str, str]:
@@ -1376,7 +1449,11 @@ def cells_in_range(sheet: str, range_a1: str) -> list[str]:
     start_col_idx = fastpyxl.utils.cell.column_index_from_string(c1)
     end_col_idx = fastpyxl.utils.cell.column_index_from_string(c2)
     rlo, rhi = (r1, r2) if r1 <= r2 else (r2, r1)
-    clo, chi = (start_col_idx, end_col_idx) if start_col_idx <= end_col_idx else (end_col_idx, start_col_idx)
+    clo, chi = (
+        (start_col_idx, end_col_idx)
+        if start_col_idx <= end_col_idx
+        else (end_col_idx, start_col_idx)
+    )
 
     out: list[str] = []
     for row in range(rlo, rhi + 1):
@@ -1546,8 +1623,30 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
                     ann = financial
                 constrain(constraints, format_key("PV_stress_com", addr), ann)
             _cols_ps = (
-                "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T",
-                "U", "V", "W", "X", "Y", "Z", "AA", "AB", "AC", "AD", "AE",
+                "H",
+                "I",
+                "J",
+                "K",
+                "L",
+                "M",
+                "N",
+                "O",
+                "P",
+                "Q",
+                "R",
+                "S",
+                "T",
+                "U",
+                "V",
+                "W",
+                "X",
+                "Y",
+                "Z",
+                "AA",
+                "AB",
+                "AC",
+                "AD",
+                "AE",
             )
             for col in _cols_ps:
                 for r in range(36, 141):
@@ -1594,9 +1693,7 @@ def collect_lic_dsf_constraint_leaf_violations(
         return [], []
 
     # Swap curve: fastpyxl stores these as ArrayFormula, but OFFSET resolution still needs domains here.
-    _blend_o_domain = re.compile(
-        r"^'BLEND floating calculations WB'!O(10|[1-3][0-9])$"
-    )
+    _blend_o_domain = re.compile(r"^'BLEND floating calculations WB'!O(10|[1-3][0-9])$")
 
     keep_vba = workbook_path.suffix.lower() == ".xlsm"
     wb = fastpyxl.load_workbook(workbook_path, data_only=False, keep_vba=keep_vba)
@@ -1658,7 +1755,7 @@ def main() -> None:
     print("=" * 70)
     print("LIC-DSF Indicator Dependency Mapping")
     print("=" * 70)
-    
+
     if not WORKBOOK_PATH.exists():
         print(f"Error: Workbook not found at {WORKBOOK_PATH}")
         return
@@ -1692,11 +1789,11 @@ def main() -> None:
         all_targets.extend(targets)
 
     print(f"\n   Total targets: {len(all_targets)}")
-    
+
     if not all_targets:
         print("No formula cells found. Exiting.")
         return
-    
+
     # Build dependency graph (constraint-based or cached for OFFSET/INDIRECT)
     print("\n2. Building dependency graph...", flush=True)
     dynamic_refs: DynamicRefConfig | None = None
@@ -1734,14 +1831,14 @@ def main() -> None:
     print(f"   Nodes in graph: {len(graph)}")
     print(f"   Leaf nodes: {sum(1 for _ in graph.leaves())}")
     print(f"   Formula nodes: {len(graph) - sum(1 for _ in graph.leaves())}")
-    
+
     # Group nodes by sheet
     sheets: dict[str, int] = {}
     for key in graph:
         node = graph.get_node(key)
         if node:
             sheets[node.sheet] = sheets.get(node.sheet, 0) + 1
-    
+
     print("\n   Nodes by sheet:")
     for sheet_name in sorted(sheets.keys()):
         print(f"      {sheet_name}: {sheets[sheet_name]}")
@@ -1759,32 +1856,26 @@ def main() -> None:
     print(f"   Must-cycles: {len(report.must_cycles)}")
     print(f"   May-cycles:  {len(report.may_cycles)}")
     if report.example_must_cycle_path:
-        print(
-            f"   Example must-cycle path: {' -> '.join(report.example_must_cycle_path)}"
-        )
+        print(f"   Example must-cycle path: {' -> '.join(report.example_must_cycle_path)}")
     if report.example_may_cycle_path:
-        print(
-            f"   Example may-cycle path:  {' -> '.join(report.example_may_cycle_path)}"
-        )
-    
+        print(f"   Example may-cycle path:  {' -> '.join(report.example_may_cycle_path)}")
+
     # Validate against calcChain.xml
     print("\n5. Validating against calcChain.xml...")
     scope = {parse_range_spec(entry["range_spec"])[0] for entry in EXPORT_RANGES}
     result = validate_graph(graph, WORKBOOK_PATH, scope=scope)
-    
+
     print(f"   Valid: {result.is_valid}")
     for msg in result.messages:
         print(f"   {msg}")
-    
+
     if result.in_graph_not_in_chain:
-        print(
-            f"\n   Cells in graph but not in calcChain ({len(result.in_graph_not_in_chain)}):"
-        )
+        print(f"\n   Cells in graph but not in calcChain ({len(result.in_graph_not_in_chain)}):")
         for cell in sorted(result.in_graph_not_in_chain)[:10]:
             print(f"      {cell}")
         if len(result.in_graph_not_in_chain) > 10:
             print(f"      ... and {len(result.in_graph_not_in_chain) - 10} more")
-    
+
     # Evaluation order stats
     print("\n6. Computing evaluation order...")
     try:
@@ -1799,7 +1890,7 @@ def main() -> None:
         print(f"   Error ({kind}): {e}")
         if e.cycle_path:
             print(f"   Cycle path: {' -> '.join(e.cycle_path)}")
-    
+
     # Optional: save a small subgraph visualization
     print("\n7. Sample visualization (first target's immediate deps)...")
     if all_targets:
@@ -1825,7 +1916,7 @@ def main() -> None:
                 print("      ...")
         except Exception as e:
             print(f"   Could not render GraphViz DOT: {e}")
-    
+
     print("\n" + "=" * 70)
     print("Done.")
 

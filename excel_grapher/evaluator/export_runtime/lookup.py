@@ -254,4 +254,3 @@ def xl__xlfn_xlookup(
             return to_native(vals[i])
 
     return XlError.NA if if_not_found is None else if_not_found
-

@@ -130,4 +130,3 @@ def xl_offset(
             row_values.append(xl_cell(ctx, addr))
         result.append(row_values)
     return np.array(result, dtype=object)
-

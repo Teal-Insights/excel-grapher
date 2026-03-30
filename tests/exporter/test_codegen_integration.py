@@ -217,9 +217,7 @@ class TestGeneratedCodeWithRealWorkbook:
         start = time.time()
         targets: list[str] = []
         for sheet_name, rows in self.INDICATOR_CONFIG.items():
-            targets.extend(
-                discover_formula_cells_in_rows(self.WORKBOOK_PATH, sheet_name, rows)
-            )
+            targets.extend(discover_formula_cells_in_rows(self.WORKBOOK_PATH, sheet_name, rows))
         print(f"Discovered {len(targets)} targets in {time.time() - start:.1f}s")
 
         start = time.time()
@@ -247,9 +245,7 @@ class TestGeneratedCodeWithRealWorkbook:
 
         targets: list[str] = []
         for sheet_name, rows in self.INDICATOR_CONFIG.items():
-            targets.extend(
-                discover_formula_cells_in_rows(self.WORKBOOK_PATH, sheet_name, rows)
-            )
+            targets.extend(discover_formula_cells_in_rows(self.WORKBOOK_PATH, sheet_name, rows))
 
         graph = create_dependency_graph(
             self.WORKBOOK_PATH,
@@ -286,9 +282,7 @@ class TestGeneratedCodeWithRealWorkbook:
 
         targets: list[str] = []
         for sheet_name, rows in self.INDICATOR_CONFIG.items():
-            targets.extend(
-                discover_formula_cells_in_rows(self.WORKBOOK_PATH, sheet_name, rows)
-            )
+            targets.extend(discover_formula_cells_in_rows(self.WORKBOOK_PATH, sheet_name, rows))
 
         graph = create_dependency_graph(
             self.WORKBOOK_PATH,
