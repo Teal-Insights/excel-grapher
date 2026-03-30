@@ -32,6 +32,7 @@ from excel_grapher.grapher.dynamic_refs import (
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
 )
+from excel_grapher.grapher.parser import parse_dynamic_range_refs_with_spans
 
 
 def _build_offset_named_range_workbook(path: Path) -> None:
@@ -110,6 +111,24 @@ def test_offset_index_row_resolves_named_range(tmp_path: Path) -> None:
     )
     deps = graph.dependencies("Sheet1!B2")
     assert deps == {"lookup!B4"}
+
+
+def test_offset_index_clamps_row_when_resolved_index_exceeds_named_range() -> None:
+    """INDEX row from ROW()-ROW(anchor) may exceed array height; clamp for static OFFSET resolution."""
+    formula = "=OFFSET(INDEX(Country_list,ROW()-ROW($B$2)+1,1),0,-1)"
+    out = parse_dynamic_range_refs_with_spans(
+        formula,
+        current_sheet="Sheet1",
+        current_cell_a1="A10",
+        named_ranges={},
+        named_range_ranges={"Country_list": ("lookup", "C4", "C6")},
+        value_resolver=None,
+    )
+    assert len(out) == 1
+    start, end, _span, _arg_refs = out[0]
+    assert start.sheet == "lookup" and end.sheet == "lookup"
+    assert start.column == end.column == "B"
+    assert start.row == end.row == 6
 
 
 def test_offset_argument_references_are_dependencies(tmp_path: Path) -> None:

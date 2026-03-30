@@ -805,8 +805,14 @@ def _parse_index_call(
         return None
     target_row = min_row + row_num - 1
     target_col = min_col + col_num - 1
-    if target_row > max_row or target_col > max_col:
-        return None
+    if target_row < min_row:
+        target_row = min_row
+    elif target_row > max_row:
+        target_row = max_row
+    if target_col < min_col:
+        target_col = min_col
+    elif target_col > max_col:
+        target_col = max_col
 
     return CellRef(
         sheet=sheet,
