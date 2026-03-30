@@ -30,6 +30,50 @@ def _make_graph(*nodes: Node) -> DependencyGraph:
     return graph
 
 
+def test_vlookup_parity_exact_and_approximate() -> None:
+    graph = _make_graph(
+        # Table: A1:B5
+        _make_node("S!A1", None, 10),
+        _make_node("S!A2", None, 20),
+        _make_node("S!A3", None, 30),
+        _make_node("S!A4", None, 40),
+        _make_node("S!A5", None, 50),
+        _make_node("S!B1", None, "ten"),
+        _make_node("S!B2", None, "twenty"),
+        _make_node("S!B3", None, "thirty"),
+        _make_node("S!B4", None, "forty"),
+        _make_node("S!B5", None, "fifty"),
+        # Exact match
+        _make_node("S!C1", "=VLOOKUP(20, S!A1:B5, 2, FALSE)", None),
+        _make_node("S!C2", "=VLOOKUP(25, S!A1:B5, 2, FALSE)", None),
+        # Approximate match (range_lookup=TRUE)
+        _make_node("S!C3", "=VLOOKUP(25, S!A1:B5, 2, TRUE)", None),
+        _make_node("S!C4", "=VLOOKUP(5, S!A1:B5, 2, TRUE)", None),
+        _make_node("S!C5", "=VLOOKUP(100, S!A1:B5, 2, TRUE)", None),
+        # Return column 1
+        _make_node("S!C6", "=VLOOKUP(30, S!A1:B5, 1, FALSE)", None),
+        # Case-insensitive string lookup
+        _make_node("S!D1", None, "Alpha"),
+        _make_node("S!D2", None, "Beta"),
+        _make_node("S!D3", None, "Gamma"),
+        _make_node("S!E1", None, 1),
+        _make_node("S!E2", None, 2),
+        _make_node("S!E3", None, 3),
+        _make_node("S!F1", "=VLOOKUP(\"alpha\", S!D1:E3, 2, FALSE)", None),
+    )
+
+    result = assert_codegen_matches_evaluator(
+        graph, ["S!C1", "S!C2", "S!C3", "S!C4", "S!C5", "S!C6", "S!F1"]
+    )
+    assert result.generated_results["S!C1"] == "twenty"
+    assert result.generated_results["S!C2"] == XlError.NA
+    assert result.generated_results["S!C3"] == "twenty"
+    assert result.generated_results["S!C4"] == XlError.NA
+    assert result.generated_results["S!C5"] == "fifty"
+    assert result.generated_results["S!C6"] == 30
+    assert result.generated_results["S!F1"] == 1
+
+
 def test_lookup_parity_vector_and_array_forms() -> None:
     graph = _make_graph(
         _make_node("S!A1", None, 1),

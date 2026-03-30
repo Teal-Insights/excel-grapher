@@ -150,7 +150,7 @@ Then re-run until the graph builds. Note that if row/column labels or intentiona
 
 The goal is to set sensible constraints that reflect the range of sane values we will allow for the cells. To determine the plausible range of input values, investigate the cells by using enrichment_audit.json (or the heuristic label-scanning tools in src/lic_dsf_labels.py) to see their labels, and fastpyxl to check their current values. In addition to the empty template workbook, workbooks/lic-dsf-template-2025-08-12.xlsm, we also have one filled out with illustrative data: workbooks/dsf-uga.xlsm.
 
-When the template workbook is present, ``check_constraints`` scans constrained cells on sheets that are expected to hold values (not PV/COM/DMX calculation sheets) and raises if any of those cells contain an Excel formula, aside from the documented VLOOKUP exception on START!L10.
+When the template workbook is present, ``check_constraints`` scans constrained cells on sheets that are expected to hold values (not PV/COM/DMX calculation sheets) and raises if any of those cells contain an Excel formula.
 """
 
 LiteralType = cast(Any, Literal)
@@ -188,12 +188,12 @@ for _start, _end in [(918, 939), (942, 963), (966, 987)]:
         LicDsfConstraints.__annotations__[f"PV_Base!A{_row}"] = LiteralType[_letter]
 
 # Language selector and lookup table (feed INDIRECT/VLOOKUP for language-dependent refs).
-# START!L10 = VLOOKUP(K10, lookup!BB4:BC7, 2); evaluator does not support VLOOKUP, so L10 is constrained too.
+# START!L10 = VLOOKUP(K10, lookup!BB4:BC7, 2); evaluated directly by the evaluator.
+# START!K10 is an input (language selection); lookup!BB4:BC7 is constrained because it feeds INDIRECT.
 _LANG = Literal["English", "French", "Portuguese", "Spanish"]
 _LANG_LOOKUP = Literal[
     "English", "French", "Portuguese", "Spanish", "Français", "Portugues", "Español"
 ]
-constrain(LicDsfConstraints, "START!L10", _LANG)
 constrain(LicDsfConstraints, "START!K10", _LANG)
 constrain(LicDsfConstraints, "lookup!BB4:BC7", _LANG_LOOKUP)
 
@@ -1463,11 +1463,6 @@ _SHEETS_EXCLUDED_FROM_FORMULA_CONSTRAINT_CHECK: frozenset[str] = frozenset(
         "PV_baseline_com",
         "PV_stress_com",
     }
-)
-
-# START!L10 = VLOOKUP(...); constrained because the evaluator does not implement VLOOKUP.
-_FORMULA_OK_DYNAMIC_REF_CONSTRAINT_KEYS: frozenset[str] = frozenset(
-    {format_key("START", "L10")}
 )
 
 
