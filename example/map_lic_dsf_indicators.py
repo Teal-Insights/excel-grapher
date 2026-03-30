@@ -14,6 +14,7 @@ Literal[...]), then re-run until the graph
 builds.
 """
 
+import logging
 import time
 from pathlib import Path
 from typing import (  # noqa: F401 - Annotated/Literal used when adding constraints
@@ -45,6 +46,12 @@ from excel_grapher import (
 from excel_grapher.core.cell_types import (  # noqa: F401 - used when adding constraints
     Between,
     RealBetween,
+)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(message)s",
+    datefmt="%H:%M:%S",
 )
 
 # Row labels for the multi-row stress-test blocks (same row layout in each block).
@@ -1354,19 +1361,19 @@ def _constrain_input6_input8(constraints: type[Any]) -> None:
         Literal["Linear interpolation swap curve"],
     )
     constrain(constraints, f"{q_blend}!M9", Literal["Year"])
-    for _blend_m_r, _blend_m_v in zip(range(10, 15), range(1, 6)):
-        constrain(constraints, f"{q_blend}!M{_blend_m_r}", Literal[_blend_m_v])
-    for _blend_m_r, _blend_m_v in zip(range(15, 40), range(6, 31)):
-        constrain(constraints, f"{q_blend}!M{_blend_m_r}", Literal[_blend_m_v])
+    for _blend_m_r, _blend_m_v in zip(range(10, 15), range(1, 6), strict=True):
+        constrain(constraints, f"{q_blend}!M{_blend_m_r}", Literal[_blend_m_v])  # ty: ignore[invalid-type-form]
+    for _blend_m_r, _blend_m_v in zip(range(15, 40), range(6, 31), strict=True):
+        constrain(constraints, f"{q_blend}!M{_blend_m_r}", Literal[_blend_m_v])  # ty: ignore[invalid-type-form]
     constrain(constraints, f"{q_blend}!O6", Literal[None])
     constrain(constraints, f"{q_blend}!O7", Literal[None])
     constrain(constraints, f"{q_blend}!O8", Literal[None])
     constrain(constraints, f"{q_blend}!O9", Literal["Linear interpolation"])
-    constrain(constraints, f"{q_blend}!O10", Literal[0.0428])
-    constrain(constraints, f"{q_blend}!O11", Literal[0.039])
-    constrain(constraints, f"{q_blend}!O12", Literal[0.038])
-    constrain(constraints, f"{q_blend}!O13", Literal[0.0379])
-    constrain(constraints, f"{q_blend}!O14", Literal[0.0382])
+    constrain(constraints, f"{q_blend}!O10", Literal[0.0428])  # ty: ignore[invalid-type-form]
+    constrain(constraints, f"{q_blend}!O11", Literal[0.039])  # ty: ignore[invalid-type-form]
+    constrain(constraints, f"{q_blend}!O12", Literal[0.038])  # ty: ignore[invalid-type-form]
+    constrain(constraints, f"{q_blend}!O13", Literal[0.0379])  # ty: ignore[invalid-type-form]
+    constrain(constraints, f"{q_blend}!O14", Literal[0.0382])  # ty: ignore[invalid-type-form]
     _blend_o_cached = (
         (15, 0.0388),
         (16, 0.0394),
@@ -1395,7 +1402,7 @@ def _constrain_input6_input8(constraints: type[Any]) -> None:
         (39, 0.0436),
     )
     for _blend_o_r, _blend_o_v in _blend_o_cached:
-        constrain(constraints, f"{q_blend}!O{_blend_o_r}", Literal[_blend_o_v])
+        constrain(constraints, f"{q_blend}!O{_blend_o_r}", Literal[_blend_o_v])  # ty: ignore[invalid-type-form]
 
 
 _constrain_input6_input8(LicDsfConstraints)
@@ -1464,7 +1471,7 @@ _FORMULA_OK_DYNAMIC_REF_CONSTRAINT_KEYS: frozenset[str] = frozenset(
 )
 
 
-def _get_missing_constraints(specs: list[str], constraints: type[TypedDict]) -> list[str]:
+def _get_missing_constraints(specs: list[str], constraints: type[Any]) -> list[str]:
     def _normalize_sheet(sheet: str) -> str:
         """Strip surrounding single-quotes so format_key can re-add them consistently."""
         if sheet.startswith("'") and sheet.endswith("'"):

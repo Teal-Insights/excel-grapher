@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -47,6 +48,9 @@ from excel_grapher.core.formula_ast import (
 from excel_grapher.core.types import ExcelRange, XlError
 
 from .parser import _find_function_calls_with_spans, expand_range, format_key
+
+
+logger = logging.getLogger(__name__)
 
 
 class DynamicRefError(ValueError):
@@ -2077,8 +2081,15 @@ def _infer_index_targets_core(
         current_sheet=current_sheet,
     )
 
+    nrows, ncols = array_range.shape
+
     if row_dom is not None and col_dom is not None:
-        return _emit_index_targets_from_domains(array_range, row_dom, col_dom, limits)
+        targets = _emit_index_targets_from_domains(array_range, row_dom, col_dom, limits)
+        logger.info(
+            "INDEX domain (abstract): %s! shape=%dx%d row_dom=%s col_dom=%s -> %d targets",
+            array_range.sheet, nrows, ncols, row_dom, col_dom, len(targets),
+        )
+        return targets
 
     leaf_addrs = _collect_addresses_needing_domain(row_ast)
     if col_ast is not None:
@@ -2103,11 +2114,15 @@ def _infer_index_targets_core(
         if isinstance(row_val, XlError) or isinstance(col_val, XlError):
             continue
         r1, c1 = int(row_val), int(col_val)
-        targets |= _index_pair_to_addresses(array_range, r1, c1, nrows=array_range.shape[0], ncols=array_range.shape[1])
+        targets |= _index_pair_to_addresses(array_range, r1, c1, nrows=nrows, ncols=ncols)
     if len(targets) > limits.max_cells:
         raise DynamicRefError(
             f"INDEX target cells exceed limit ({len(targets)} > {limits.max_cells})"
         )
+    logger.info(
+        "INDEX domain (enumerated): %s! shape=%dx%d leaves=%d -> %d targets",
+        array_range.sheet, nrows, ncols, len(leaf_addrs), len(targets),
+    )
     return targets
 
 
