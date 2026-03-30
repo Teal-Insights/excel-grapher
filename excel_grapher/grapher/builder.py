@@ -230,7 +230,18 @@ def create_dependency_graph(
     ) -> list[tuple[str, str, GuardExpr | None]]:
         if not formula.startswith("="):
             return []
+        try:
+            return _extract_deps_with_guards_inner(formula, current_sheet, current_a1)
+        except DynamicRefError:
+            raise
+        except ValueError as exc:
+            raise ValueError(
+                f"{current_sheet}!{current_a1}: {exc}"
+            ) from exc
 
+    def _extract_deps_with_guards_inner(
+        formula: str, current_sheet: str, current_a1: str
+    ) -> list[tuple[str, str, GuardExpr | None]]:
         def extract_expr_deps(expr: str) -> list[tuple[str, str]]:
             """
             Extract dependencies from an expression fragment (no leading '=').
