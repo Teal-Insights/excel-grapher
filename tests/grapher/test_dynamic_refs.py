@@ -1667,6 +1667,45 @@ def test_expand_leaf_env_percent_expression_stays_in_abstract_path() -> None:
     assert out.enum.values == frozenset({0, 1})
 
 
+def test_expand_leaf_env_cartesian_product_branch_limit_error() -> None:
+    """Fallback product-enumeration raises DynamicRefError when the Cartesian
+    product of dependency domains exceeds max_branches, instead of hanging."""
+    # 5 * 5 = 25 combinations, which exceeds max_branches=8.
+    leaf_env = _make_env(
+        {
+            "Sheet1!A1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({1, 2, 3, 4, 5})),
+            ),
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({10, 20, 30, 40, 50})),
+            ),
+        }
+    )
+
+    def _get_cell_formula(addr: str) -> str | None:
+        # ROUND is not handled by numeric abstract analysis, forcing the fallback path.
+        return "=ROUND(Sheet1!A1+Sheet1!B1,0)" if addr == "Sheet1!C1" else None
+
+    def _get_refs_from_formula(formula: str, sheet: str) -> set[str]:
+        return {"Sheet1!A1", "Sheet1!B1"}
+
+    with pytest.raises(DynamicRefError) as exc_info:
+        dynamic_refs_mod.expand_leaf_env_to_argument_env(
+            {"Sheet1!C1"},
+            _get_cell_formula,
+            _get_refs_from_formula,
+            leaf_env,
+            DynamicRefLimits(max_branches=8),
+        )
+
+    msg = str(exc_info.value)
+    assert "Sheet1!C1" in msg  # names the formula cell
+    assert "25" in msg          # actual product size
+    assert "8" in msg           # the limit
+
+
 def test_infer_numeric_domain_parity_never_raises() -> None:
     limits = DynamicRefLimits(max_branches=64, max_depth=12)
     env: CellTypeEnv = {
