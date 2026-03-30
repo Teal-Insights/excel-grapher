@@ -27,6 +27,7 @@ from excel_grapher.grapher.dynamic_refs import (
     DynamicRefLimits,
     FromWorkbook,
     constrain,
+    expand_leaf_env_to_argument_env,
     infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
@@ -512,6 +513,39 @@ def test_create_dependency_graph_raises_when_leaf_missing_constraint(tmp_path: P
     assert "leaf" in str(exc_info.value).lower()
 
 
+def test_expand_leaf_env_mutual_formula_refs_in_argument_subgraph_issue_54() -> None:
+    """Issue #54: mutual formula refs in the argument chain must not abort type expansion.
+
+    Mirrors LIC-style patterns (e.g. aggregate cell referenced by scaled rows that also
+    feed formulas pointing back). The cycle edge is approximated as ``ANY`` so graph build
+    can continue.
+    """
+    leaf_env = _make_env({})
+    f_a1 = "=Sheet1!B1+1"
+    f_b1 = "=Sheet1!A1+1"
+
+    def _get_cell_formula(addr: str) -> str | None:
+        if addr == "Sheet1!A1":
+            return f_a1
+        if addr == "Sheet1!B1":
+            return f_b1
+        return None
+
+    def _get_refs_from_formula(formula: str, sheet: str) -> set[str]:
+        assert sheet == "Sheet1"
+        return {f_a1: {"Sheet1!B1"}, f_b1: {"Sheet1!A1"}}[formula]
+
+    env = expand_leaf_env_to_argument_env(
+        {"Sheet1!A1"},
+        _get_cell_formula,
+        _get_refs_from_formula,
+        leaf_env,
+        DynamicRefLimits(),
+    )
+    assert env["Sheet1!A1"].kind is CellKind.ANY
+    assert env["Sheet1!B1"].kind is CellKind.ANY
+
+
 def test_expand_leaf_env_assigns_any_when_intermediate_unsupported() -> None:
     """Intermediates that cannot be inferred (e.g. unsupported function) get CellKind.ANY.
 
@@ -519,12 +553,6 @@ def test_expand_leaf_env_assigns_any_when_intermediate_unsupported() -> None:
     intermediate's formula cannot be evaluated (e.g. uses VLOOKUP), we assign ANY
     so expansion succeeds; enumeration may later require a constraint for that cell.
     """
-    from excel_grapher.core.cell_types import CellKind
-    from excel_grapher.grapher.dynamic_refs import (
-        DynamicRefLimits,
-        expand_leaf_env_to_argument_env,
-    )
-
     leaf_env = _make_env(
         {
             "Sheet1!A1": CellType(
@@ -1141,7 +1169,9 @@ def test_expand_leaf_env_comparison_infers_zero_one_domain() -> None:
     assert out.enum.values == frozenset({0, 1})
 
 
-def test_expand_leaf_env_cycle_detection_is_stable() -> None:
+def test_expand_leaf_env_mutual_refs_terminates_with_any() -> None:
+    """Mutual formula-only refs: cycle edge is ANY; expansion finishes (issue #54)."""
+
     def _get_cell_formula(addr: str) -> str | None:
         if addr == "Sheet1!B1":
             return "=Sheet1!C1"
@@ -1157,16 +1187,15 @@ def test_expand_leaf_env_cycle_detection_is_stable() -> None:
             return {"Sheet1!B1"}
         return set()
 
-    with pytest.raises(DynamicRefError) as exc_info:
-        dynamic_refs_mod.expand_leaf_env_to_argument_env(
-            {"Sheet1!B1"},
-            _get_cell_formula,
-            _get_refs_from_formula,
-            _make_env({}),
-            DynamicRefLimits(max_depth=4),
-        )
-
-    assert "cycle" in str(exc_info.value).lower()
+    env = dynamic_refs_mod.expand_leaf_env_to_argument_env(
+        {"Sheet1!B1"},
+        _get_cell_formula,
+        _get_refs_from_formula,
+        _make_env({}),
+        DynamicRefLimits(max_depth=4),
+    )
+    assert env["Sheet1!B1"].kind is CellKind.ANY
+    assert env["Sheet1!C1"].kind is CellKind.ANY
 
 
 def test_expand_leaf_env_long_formula_chain_is_not_limited_by_expr_max_depth() -> None:

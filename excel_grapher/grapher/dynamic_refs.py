@@ -326,9 +326,7 @@ def expand_leaf_env_to_argument_env(
         if addr in cache:
             return cache[addr]
         if addr in in_progress:
-            raise DynamicRefError(
-                f"Cycle detected while inferring argument-cell types for {addr!r}"
-            )
+            return CellType(kind=CellKind.ANY)
         ct_resolved = _lookup_cell_type(leaf_env, addr)
         if ct_resolved is not None:
             cache[addr] = ct_resolved
