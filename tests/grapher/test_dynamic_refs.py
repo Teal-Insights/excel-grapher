@@ -1876,3 +1876,153 @@ def test_offset_per_call_max_cells_limit() -> None:
         )
     assert "cells" in str(exc_info.value).lower()
     assert "exceed limit" in str(exc_info.value).lower()
+
+
+def test_constraint_dynamic_ref_expansion_not_duplicated_with_provenance(
+    tmp_path: Path,
+) -> None:
+    """Flat OFFSET formulas should share dynamic-ref expansion with provenance."""
+    excel_path = tmp_path / "offset_provenance_perf.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(0, 1, 0)  # B1 base
+    ws.write_number(0, 2, 1)  # C1 = row offset
+    ws.write_formula(0, 0, "=OFFSET(Sheet1!B1,Sheet1!C1,0)", None, 0)  # A1
+    wb.close()
+
+    env = _make_env(
+        {
+            "Sheet1!C1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntervalDomain(min=0, max=1),
+            )
+        }
+    )
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+
+    graph, call_count = _build_graph_counting_dynamic_expansion(
+        excel_path,
+        ["Sheet1!A1"],
+        dynamic_refs=config,
+    )
+
+    assert call_count == 1, (
+        f"expand_leaf_env_to_argument_env was called {call_count} times; "
+        "expected 1 (shared between extraction and provenance collection)"
+    )
+    assert "Sheet1!B1" in graph.dependencies("Sheet1!A1")
+    assert "Sheet1!C1" in graph.dependencies("Sheet1!A1")
+
+
+def test_constraint_indirect_expansion_not_duplicated_with_provenance(
+    tmp_path: Path,
+) -> None:
+    """Flat INDIRECT formulas should share dynamic-ref expansion with provenance."""
+    excel_path = tmp_path / "indirect_provenance_perf.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_string(0, 1, "Sheet1!B2")  # B1 ref text
+    ws.write_number(1, 1, 7)  # B2 target
+    ws.write_formula(0, 0, "=INDIRECT(Sheet1!B1)", None, 7)  # A1
+    wb.close()
+
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.STRING,
+                enum=EnumDomain(values=frozenset({"Sheet1!B2"})),
+            )
+        }
+    )
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+
+    graph, call_count = _build_graph_counting_dynamic_expansion(
+        excel_path,
+        ["Sheet1!A1"],
+        dynamic_refs=config,
+    )
+
+    assert call_count == 1, (
+        f"expand_leaf_env_to_argument_env was called {call_count} times; "
+        "expected 1 for INDIRECT with provenance enabled"
+    )
+    assert "Sheet1!B1" in graph.dependencies("Sheet1!A1")
+    assert "Sheet1!B2" in graph.dependencies("Sheet1!A1")
+
+
+def test_constraint_branch_dynamic_ref_expansion_not_duplicated_with_provenance(
+    tmp_path: Path,
+) -> None:
+    """Recursive provenance traversal should reuse cached expansion for branch formulas."""
+    excel_path = tmp_path / "if_offset_provenance_perf.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(0, 1, 10)  # B1 base
+    ws.write_number(1, 1, 20)  # B2 resolved OFFSET target
+    ws.write_number(0, 2, 1)  # C1 row offset
+    ws.write_boolean(0, 3, True)  # D1 IF condition
+    ws.write_formula(0, 0, "=IF(Sheet1!D1,OFFSET(Sheet1!B1,Sheet1!C1,0),0)", None, 20)  # A1
+    wb.close()
+
+    env = _make_env(
+        {
+            "Sheet1!C1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntervalDomain(min=0, max=1),
+            )
+        }
+    )
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+
+    graph, call_count = _build_graph_counting_dynamic_expansion(
+        excel_path,
+        ["Sheet1!A1"],
+        dynamic_refs=config,
+    )
+
+    assert call_count == 1, (
+        f"expand_leaf_env_to_argument_env was called {call_count} times; "
+        "expected 1 for IF branch provenance recursion"
+    )
+    deps = graph.dependencies("Sheet1!A1")
+    assert "Sheet1!D1" in deps
+    assert "Sheet1!B1" in deps
+    assert "Sheet1!C1" in deps
+    assert "Sheet1!B2" in deps
+
+
+def _build_graph_counting_dynamic_expansion(
+    excel_path: Path,
+    targets: list[str],
+    *,
+    dynamic_refs: DynamicRefConfig,
+):
+    from unittest.mock import patch
+
+    original_expand = expand_leaf_env_to_argument_env
+    call_count = 0
+
+    def counting_expand(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return original_expand(*args, **kwargs)
+
+    with (
+        patch(
+            "excel_grapher.grapher.builder.expand_leaf_env_to_argument_env",
+            side_effect=counting_expand,
+        ),
+        patch(
+            "excel_grapher.grapher.provenance_collect.expand_leaf_env_to_argument_env",
+            side_effect=counting_expand,
+        ),
+    ):
+        graph = create_dependency_graph(
+            excel_path,
+            targets,
+            load_values=False,
+            dynamic_refs=dynamic_refs,
+            capture_dependency_provenance=True,
+        )
+
+    return graph, call_count
