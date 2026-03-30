@@ -410,6 +410,169 @@ def normalize_formula(
     return result
 
 
+class FormulaNormalizer:
+    """
+    Normalizes formulas efficiently across a graph build session.
+
+    Compared to calling ``normalize_formula`` repeatedly:
+
+    - Named-range substitution is done in a **single regex pass** over the
+      formula string (one compiled alternation pattern for all names), rather
+      than one ``re.sub`` call per name.  This reduces per-call cost from
+      O(names) to O(formula_length).
+    - Results are **cached** by ``(formula, current_sheet)`` for the lifetime
+      of the normalizer, so repeated calls (common during graph traversal) are
+      O(1) dictionary lookups.
+
+    Usage::
+
+        normalizer = FormulaNormalizer(named_ranges, named_range_ranges)
+        norm = normalizer.normalize(formula, current_sheet)
+    """
+
+    def __init__(
+        self,
+        named_ranges: dict[str, tuple[str, str]] | None = None,
+        named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
+    ) -> None:
+        named_ranges = named_ranges or {}
+        named_range_ranges = named_range_ranges or {}
+
+        # Pre-compute replacement strings for every resolvable name.
+        # Cell names and range names are kept in the same dict; cell names
+        # replace with a single ref, range names with "start:end".
+        self._replacements: dict[str, str] = {}
+
+        for name, (sheet, addr) in named_ranges.items():
+            col_match = re.match(r"^([A-Z]{1,3})(\d+)$", addr)
+            if col_match:
+                self._replacements[name] = _format_ref(
+                    sheet, col_match.group(1), int(col_match.group(2))
+                )
+
+        for name, (sheet, start_a1, end_a1) in named_range_ranges.items():
+            m_start = re.match(r"^([A-Z]{1,3})(\d+)$", start_a1)
+            m_end = re.match(r"^([A-Z]{1,3})(\d+)$", end_a1)
+            if m_start and m_end:
+                start_ref = _format_ref(sheet, m_start.group(1), int(m_start.group(2)))
+                end_ref = _format_ref(sheet, m_end.group(1), int(m_end.group(2)))
+                self._replacements[name] = f"{start_ref}:{end_ref}"
+
+        # Build a single alternation regex.  Sort longest-first so that a
+        # longer name (e.g. "RateAdj") is tried before any prefix ("Rate").
+        if self._replacements:
+            alt = "|".join(
+                re.escape(n)
+                for n in sorted(self._replacements, key=len, reverse=True)
+            )
+            self._names_re: re.Pattern[str] | None = re.compile(
+                rf"\b(?:{alt})\b(?!\s*!)"
+            )
+        else:
+            self._names_re = None
+
+        # Per-instance cache: (formula, current_sheet) -> normalized string
+        self._cache: dict[tuple[str, str], str] = {}
+
+    def normalize(self, formula: str, current_sheet: str) -> str:
+        """Return the normalized form of *formula*, using the cache when available."""
+        if not formula or not formula.startswith("="):
+            return formula
+
+        key = (formula, current_sheet)
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+
+        result = self._compute(formula, current_sheet)
+        self._cache[key] = result
+        return result
+
+    def _compute(self, formula: str, current_sheet: str) -> str:
+        """Run the full normalization pipeline (no caching)."""
+        result = formula
+
+        # 1) Normalize ranges first (quoted sheet, unquoted sheet, local)
+        def replace_quoted_range(m: re.Match) -> str:
+            sheet = m.group("sheet")
+            c1, r1, c2, r2 = m.group("c1"), m.group("r1"), m.group("c2"), m.group("r2")
+            return f"'{sheet}'!{c1}{r1}:'{sheet}'!{c2}{r2}"
+
+        result = re.sub(
+            r"'(?P<sheet>[^']+)'!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)",
+            replace_quoted_range,
+            result,
+        )
+
+        def replace_unquoted_range(m: re.Match) -> str:
+            sheet = m.group("sheet")
+            c1, r1, c2, r2 = m.group("c1"), m.group("r1"), m.group("c2"), m.group("r2")
+            return f"{sheet}!{c1}{r1}:{sheet}!{c2}{r2}"
+
+        result = re.sub(
+            r"(?<![A-Za-z_'])(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)",
+            replace_unquoted_range,
+            result,
+        )
+
+        def replace_local_range(m: re.Match) -> str:
+            c1, r1, c2, r2 = m.group("c1"), m.group("r1"), m.group("c2"), m.group("r2")
+            ref1 = _format_ref(current_sheet, c1, int(r1))
+            ref2 = _format_ref(current_sheet, c2, int(r2))
+            return f"{ref1}:{ref2}"
+
+        result = re.sub(
+            r"(?<![!A-Za-z0-9_])\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)(?![A-Za-z0-9_])",
+            replace_local_range,
+            result,
+        )
+
+        # 2) Normalize sheet-qualified single-cell refs (strip $)
+        def replace_quoted_cell(m: re.Match) -> str:
+            sheet, col, row = m.group("sheet"), m.group("col"), m.group("row")
+            return f"'{sheet}'!{col}{row}"
+
+        result = re.sub(
+            r"'(?P<sheet>[^']+)'!\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)",
+            replace_quoted_cell,
+            result,
+        )
+
+        def replace_unquoted_cell(m: re.Match) -> str:
+            sheet, col, row = m.group("sheet"), m.group("col"), m.group("row")
+            return f"{sheet}!{col}{row}"
+
+        result = re.sub(
+            r"(?<![A-Za-z_'])(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)",
+            replace_unquoted_cell,
+            result,
+        )
+
+        # 3) Normalize local single-cell refs: $A$1, A$1, $A1, A1 -> Sheet!A1
+        def replace_local_cell(m: re.Match) -> str:
+            col, row = m.group("col"), m.group("row")
+            if col in _FUNC_LIKE:
+                return m.group(0)
+            return _format_ref(current_sheet, col, int(row))
+
+        result = re.sub(
+            r"(?<![!A-Za-z0-9_])\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)(?![A-Za-z0-9_])",
+            replace_local_cell,
+            result,
+        )
+
+        # 4) Resolve named ranges in a single pass via the pre-compiled alternation regex.
+        if self._names_re is not None:
+            replacements = self._replacements
+
+            def replace_name(m: re.Match) -> str:
+                return replacements.get(m.group(0), m.group(0))
+
+            result = self._names_re.sub(replace_name, result)
+
+        return result
+
+
 def split_top_level_if(formula: str) -> tuple[str, str, str] | None:
     """
     If formula is a top-level IF(...), return (cond, then_expr, else_expr) strings.
