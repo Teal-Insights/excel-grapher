@@ -50,7 +50,6 @@ from excel_grapher.core.types import ExcelRange, XlError
 
 from .parser import _find_function_calls_with_spans, expand_range, format_key
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -2132,9 +2131,10 @@ def _infer_index_targets_core(
 
     if row_dom is not None and col_dom is not None:
         targets = _emit_index_targets_from_domains(array_range, row_dom, col_dom, limits)
-        logger.info(
-            "INDEX domain (abstract): %s! shape=%dx%d row_dom=%s col_dom=%s -> %d targets",
-            array_range.sheet, nrows, ncols, row_dom, col_dom, len(targets),
+        print(
+            f"[DIAG] INDEX (abstract): {array_range.sheet}! shape={nrows}x{ncols} "
+            f"row_dom={row_dom} col_dom={col_dom} -> {len(targets)} targets",
+            flush=True,
         )
         return targets
 
@@ -2166,9 +2166,10 @@ def _infer_index_targets_core(
         raise DynamicRefError(
             f"INDEX target cells exceed limit ({len(targets)} > {limits.max_cells})"
         )
-    logger.info(
-        "INDEX domain (enumerated): %s! shape=%dx%d leaves=%d -> %d targets",
-        array_range.sheet, nrows, ncols, len(leaf_addrs), len(targets),
+    print(
+        f"[DIAG] INDEX (enumerated): {array_range.sheet}! shape={nrows}x{ncols} "
+        f"leaves={len(leaf_addrs)} -> {len(targets)} targets",
+        flush=True,
     )
     return targets
 

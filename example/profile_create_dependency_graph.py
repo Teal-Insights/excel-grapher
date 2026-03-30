@@ -42,8 +42,8 @@ from excel_grapher.grapher.graph import DependencyGraph  # noqa: E402
 
 def _collect_targets() -> list[str]:
     out: list[str] = []
-    for _label, spec in lic.CHART_DATA_RANGES:
-        sheet_name, range_a1 = lic.parse_range_spec(spec)
+    for entry in lic.EXPORT_RANGES:
+        sheet_name, range_a1 = lic.parse_range_spec(entry["range_spec"])
         out.extend(lic.cells_in_range(sheet_name, range_a1))
     return out
 

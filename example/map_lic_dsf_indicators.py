@@ -15,6 +15,7 @@ builds.
 """
 
 import logging
+import re
 import time
 from pathlib import Path
 from typing import (  # noqa: F401 - Annotated/Literal used when adding constraints
@@ -23,12 +24,14 @@ from typing import (  # noqa: F401 - Annotated/Literal used when adding constrai
     Literal,
     TypedDict,
     cast,
+    get_type_hints,
 )
 
 import fastpyxl
 import fastpyxl.utils.cell
 from fastpyxl.utils import range_boundaries
 from fastpyxl.utils.cell import get_column_letter
+from fastpyxl.worksheet.formula import ArrayFormula
 
 from excel_grapher import (
     CycleError,
@@ -231,9 +234,11 @@ Dynamic refs (OFFSET/INDIRECT/INDEX) are resolved via a constraint-based config.
 
 Then re-run until the graph builds. Note that if row/column labels or intentionally blank cells show up in error output, they have been referenced by a dynamic ref and must be constrained for the graph to resolve. Blank cells can be set to `Literal[None]`.
 
-The goal is to set sensible constraints that reflect the range of sane values we will allow for the cells. To determine the plausible range of input values, investigate the cells by using enrichment_audit.json (or the heuristic label-scanning tools in src/lic_dsf_labels.py) to see their labels, and fastpyxl to check their current values. In addition to the empty template workbook, workbooks/lic-dsf-template-2025-08-12.xlsm, we also have one filled out with illustrative data: workbooks/dsf-uga.xlsm.
+The goal is to set sensible constraints that reflect the range of sane values we will allow for the cells. To determine the plausible range of input values, investigate the cells by using example/enrichment_audit.json (or the heuristic label-scanning tools in example/lic_dsf_labels.py) to see their labels, and fastpyxl to check their current values. In addition to the empty template workbook, workbooks/lic-dsf-template-2025-08-12.xlsm, we also have one filled out with illustrative data: workbooks/dsf-uga.xlsm. That may be particularly helpful for distinguishing cells that are structural blanks (blank in the illustrative workbook) from blanks that are meant to be populated.
 
-When the template workbook is present, ``check_constraints`` scans constrained cells on sheets that are expected to hold values (not PV/COM/DMX calculation sheets) and raises if any of those cells contain an Excel formula.
+Bulk projection domains are applied by `_apply_lic_dsf_workbook_leaf_overlays`, which opens the template once and calls `constrain` only for cells that are not formulas (so OFFSET targets stay leaf-only). The BLEND swap column `O10:O39` is an exception: those cells are array formulas but still need rate domains for dynamic-ref analysis; step 0’s leaf check skips them via a small allowlist regex.
+
+When the template workbook is present, ``main`` runs ``collect_lic_dsf_constraint_leaf_violations`` first and raises if any constrained cell contains an Excel formula (other than that BLEND allowlist), so constraints target leaves only.
 """
 
 LiteralType = cast(Any, Literal)
@@ -271,48 +276,27 @@ for _start, _end in [(918, 939), (942, 963), (966, 987)]:
         LicDsfConstraints.__annotations__[f"PV_Base!A{_row}"] = LiteralType[_letter]
 
 # Language selector and lookup table (feed INDIRECT/VLOOKUP for language-dependent refs).
-# START!L10 = VLOOKUP(K10, lookup!BB4:BC7, 2); evaluated directly by the evaluator.
-# START!K10 is an input (language selection); lookup!BB4:BC7 is constrained because it feeds INDIRECT.
+# START!L10 = VLOOKUP(K10, lookup!BB4:BC7, 2) — formula cell; only K10 is a leaf input.
+# Each lookup row must be Literal[...] for that cell only: a shared 7-value union on the whole
+# BB4:BC7 range makes the engine enumerate 7^8 combinations for INDIRECT fallbacks.
 _LANG = Literal["English", "French", "Portuguese", "Spanish"]
-_LANG_LOOKUP = Literal[
-    "English", "French", "Portuguese", "Spanish", "Français", "Portugues", "Español"
-]
 constrain(LicDsfConstraints, "START!K10", _LANG)
-constrain(LicDsfConstraints, "lookup!BB4:BC7", _LANG_LOOKUP)
+constrain(LicDsfConstraints, "lookup!BB4", Literal["English"])
+constrain(LicDsfConstraints, "lookup!BC4", Literal["English"])
+constrain(LicDsfConstraints, "lookup!BB5", Literal["Français"])
+constrain(LicDsfConstraints, "lookup!BC5", Literal["French"])
+constrain(LicDsfConstraints, "lookup!BB6", Literal["Portugues"])
+constrain(LicDsfConstraints, "lookup!BC6", Literal["Portuguese"])
+constrain(LicDsfConstraints, "lookup!BB7", Literal["Español"])
+constrain(LicDsfConstraints, "lookup!BC7", Literal["Spanish"])
 
 
 # ---------------------------------------------------------------------------
 # Market financing constraints
 # ---------------------------------------------------------------------------
 
-# Tailored stress test parameters (from Input 6 - Tailored Tests)
-constrain(LicDsfConstraints, "C4_Market_financing!AB20", Literal[0, 1])  # New commercial debt projected
-constrain(LicDsfConstraints, "C4_Market_financing!AB22", Annotated[float, RealBetween(min=0, max=100)])  # FX depreciation shock (%)
-constrain(LicDsfConstraints, "C4_Market_financing!AB23", Annotated[float, RealBetween(min=0, max=1)])  # ER pass-through to inflation
-constrain(LicDsfConstraints, "C4_Market_financing!AB25", Annotated[float, RealBetween(min=0, max=2000)])  # Increase in cost, bps
-constrain(LicDsfConstraints, "C4_Market_financing!AB28", Annotated[int, Between(min=1, max=50)])  # New maturity if original > 5y
-constrain(LicDsfConstraints, "C4_Market_financing!AB29", Annotated[float, RealBetween(min=0, max=1)])  # Maturity shortening factor if < 5y
-constrain(LicDsfConstraints, "C4_Market_financing!AB30", Annotated[float, RealBetween(min=0, max=1)])  # Grace period shortening factor
-
-# New lending terms for the stress test (C4_Market_financing rows 35-39)
-constrain(LicDsfConstraints, "C4_Market_financing!C35:C39", Annotated[int, Between(min=0, max=50)])  # Grace period
-constrain(LicDsfConstraints, "C4_Market_financing!D35:D39", Annotated[int, Between(min=1, max=100)])  # Loan Maturity
-constrain(LicDsfConstraints, "C4_Market_financing!I35:I39", Annotated[float, RealBetween(min=0, max=1)])  # Interest rate
-
-# Structural dependencies for INDEX/MATCH resolution
-# 1. Set the default (None) for the bulk ranges
-constrain(LicDsfConstraints, "C4_Market_financing!C4:C53", Literal[None])
-constrain(LicDsfConstraints, "C4_Market_financing!D4:D77", Literal[None])
-constrain(LicDsfConstraints, "C4_Market_financing!E4:G53", Literal[None])
-
-# 2. Overlay the specific strings (overriding the None where needed)
-constrain(LicDsfConstraints, "C4_Market_financing!D20:F20", Literal["Historical "])
-constrain(LicDsfConstraints, "C4_Market_financing!D21:F21", Literal["Average "])
-constrain(LicDsfConstraints, "C4_Market_financing!E33", Literal["Maturity - Grace (to determine bullet / amortization)"])
-constrain(LicDsfConstraints, "C4_Market_financing!E34", Literal["Bullet (1) or Amort. (>1)"])
-constrain(LicDsfConstraints, "C4_Market_financing!F33", Literal["Stress test"])
-constrain(LicDsfConstraints, "C4_Market_financing!F34", Literal["Maturity"])
-constrain(LicDsfConstraints, "C4_Market_financing!G34", Literal["Grace"])
+# AB20:AB30 are formulas in the template (IF / inputs from elsewhere). Add domains when
+# DynamicRefError lists true leaves in the C4 OFFSET/INDIRECT subgraph.
 
 
 _countries: list[tuple[int, str]] = [
@@ -391,61 +375,11 @@ for _row, _name in _countries:
     constrain(LicDsfConstraints, f"lookup!C{_row}", LiteralType[_name])
 
 
-def _constrain_pv_stress_com(constraints: type[Any]) -> None:
-    # Ranges from the user prompt:
-    # AA36:AA140, AB36:AB140, AC36:AC140, AD36:AD140, AE36:AE140, AF37:AF141, BD27:BD131,
-    # D9:D140, H36:H140, I36:I140, J36:J140, K36:K140, L36:L140, M36:M140, N36:N140,
-    # O36:O140, P36:P140, Q36:Q140, R36:R140, S36:S140, T36:T140, U36:U140, V36:V140,
-    # W36:W140, X36:X140, Y36:Y140, Z36:Z140
-
-    # Non-negative financial flows / values
-    financial_type = Annotated[float | None, RealBetween(0, 1e15)]
-
-    # D9:D140 has some specific constants
-    for r in range(9, 141):
-        addr = f"PV_stress_com!D{r}"
-        if r in (10, 22, 35):
-            constrain(constraints, addr, Literal[2024])
-        elif r in (23, 24, 28):
-            constrain(constraints, addr, Literal[100])
-        else:
-            constrain(constraints, addr, financial_type)
-
-    # Standard year-based columns (H-AE, rows 36-140)
-    # H: 2028, I: 2029, ..., Z: 2046, AA: 2047, ..., AE: 2051
-    cols = (
-        "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
-        "AA", "AB", "AC", "AD", "AE"
-    )
-    for col in cols:
-        for r in range(36, 141):
-            constrain(constraints, f"PV_stress_com!{col}{r}", financial_type)
-
-    # Offset ranges
-    for r in range(37, 142):
-        constrain(constraints, f"PV_stress_com!AF{r}", financial_type)
-
-    for r in range(27, 132):
-        constrain(constraints, f"PV_stress_com!BD{r}", financial_type)
-
-
-_constrain_pv_stress_com(LicDsfConstraints)
-
-
 def _constrain_pv_baseline_com(constraints: type[Any]) -> None:
     # Non-negative financial flows / values (or None for empty cells)
     financial_type = Annotated[float | None, RealBetween(0, 1e15)]
 
-    # B-column pairs reference Input 4 G38:H42; baseline COM divides by (maturity - grace).
-    _pv_bl_grace = Annotated[int | None, Between(0, 50)]
-    for _g, _m in ((18, 19), (44, 45), (70, 71), (96, 97), (122, 123)):
-        _gc = f"PV_baseline_com!B{_g}"
-        constrain(constraints, _gc, _pv_bl_grace)
-        constrain(
-            constraints,
-            f"PV_baseline_com!B{_m}",
-            Annotated[int | None, Between(1, 100), GreaterThanCell(_gc)],
-        )
+    # B column mirrors Input 4 G/H via formulas — constrain Input 4 leaves, not PV_baseline_com!B*.
 
     # D column: mixed constants and financial values
     # D7: total commercial (financial)
@@ -585,8 +519,7 @@ def _constrain_pv_stress_and_pv_base_index_cells(constraints: type[Any]) -> None
         252,
     ):
         constrain(constraints, f"PV_Base!D{_dr}", financial_type)
-    constrain(constraints, "PV_Base!AM130:BP155", financial_type)
-    constrain(constraints, "PV_Base!AM158:BP176", financial_type)
+    # AM:BP bands mix blank leaves with formula rows (e.g. AM172); add domains per DynamicRefError.
     constrain(constraints, "PV_Base!BE158:BE176", financial_type)
     constrain(constraints, "PV_Base!AD188:BX188", financial_type)
     constrain(constraints, "PV_Base!BM212:CC212", financial_type)
@@ -595,52 +528,7 @@ def _constrain_pv_stress_and_pv_base_index_cells(constraints: type[Any]) -> None
     for _r in (80, 88, 95, 97, 98, 99, 105):
         constrain(constraints, f"PV_Base!D{_r}", unit_rate)
 
-    # B-column grace/maturity mirror Input 4 G/H per creditor block; PV_Base divides by (maturity - grace).
-    _pv_base_grace = Annotated[int | None, Between(0, 50)]
-    for _g, _m in (
-        (9, 10),
-        (50, 51),
-        (76, 77),
-        (101, 102),
-        (125, 126),
-        (149, 150),
-        (173, 174),
-        (197, 198),
-        (231, 232),
-        (257, 258),
-        (283, 284),
-        (309, 310),
-        (335, 336),
-        (361, 362),
-        (387, 388),
-        (413, 414),
-        (439, 440),
-        (465, 466),
-        (491, 492),
-        (517, 518),
-        (543, 544),
-        (569, 570),
-        (595, 596),
-        (621, 622),
-        (647, 648),
-        (673, 674),
-        (699, 700),
-        (725, 726),
-        (751, 752),
-        (777, 778),
-        (803, 804),
-        (829, 830),
-        (855, 856),
-        (881, 882),
-    ):
-        _gc = f"PV_Base!B{_g}"
-        constrain(constraints, _gc, _pv_base_grace)
-        constrain(
-            constraints,
-            f"PV_Base!B{_m}",
-            Annotated[int | None, Between(1, 100), GreaterThanCell(_gc)],
-        )
-
+    # B column = formulas from Input 4; constrain Input 4 G/H instead.
 
 _constrain_pv_stress_and_pv_base_index_cells(LicDsfConstraints)
 
@@ -661,10 +549,12 @@ def _constrain_pv_lc_nr(constraints: type[Any], sheet: str) -> None:
     for _ci in range(_lc7_min_col, _lc7_max_col + 1):
         constrain(constraints, f"{sheet}!{get_column_letter(_ci)}7", _interest_lc_unit)
 
-    # Y5:BD5 / Y6:BD6: tail rows beyond projection horizon (OFFSET leaves through BC/BD)
-    _y5_min_col, _, _y5_max_col, _ = range_boundaries("Y5:BD5")
-    for _ci in range(_y5_min_col, _y5_max_col + 1):
-        constrain(constraints, f"{sheet}!{get_column_letter(_ci)}5", financial_type)
+    # BC3:BD3 / BC5:BD5 are leaves only on PV_LC_NR1; NR2/NR3 use formulas in those cells.
+    if sheet == "PV_LC_NR1":
+        constrain(constraints, f"{sheet}!BC3:BD3", Literal[None])
+        _bc5_col, _, _bd5_col, _ = range_boundaries("BC5:BD5")
+        for _ci in range(_bc5_col, _bd5_col + 1):
+            constrain(constraints, f"{sheet}!{get_column_letter(_ci)}5", financial_type)
     _y6_min_col, _, _y6_max_col, _ = range_boundaries("Y6:BD6")
     for _ci in range(_y6_min_col, _y6_max_col + 1):
         constrain(constraints, f"{sheet}!{get_column_letter(_ci)}6", financial_type)
@@ -686,8 +576,7 @@ def _constrain_pv_lc_nr(constraints: type[Any], sheet: str) -> None:
     for _block_start in range(23, 404, 19):
         # offset 0: counter/start year (literal 0)
         constrain(constraints, f"{sheet}!D{_block_start}", Literal[0])
-        # offset 5: stock of debt (initial stock, zero or positive)
-        constrain(constraints, f"{sheet}!D{_block_start + 5}", financial_type)
+        # offset 5: stock row is a formula in the template (not a leaf).
         # offset 8: interest in USD (empty in D column)
         constrain(constraints, f"{sheet}!D{_block_start + 8}", financial_type)
 
@@ -1066,31 +955,7 @@ def _constrain_input4_external_financing(constraints: type[Any]) -> None:
 
     q = "'Input 4 - External Financing'"
     constrain(constraints, f"{q}!L10:N10", financial_type)
-    # L–Q blocks: blank projection columns between formula-backed creditor rows (OFFSET leaves).
-    for a1 in (
-        "L18:Q18",
-        "L20:Q20",
-        "R18:W20",
-        "X18:AT20",
-        "L24:Q25",
-        "R24:W25",
-        "X24:AT24",
-        "X25:AT25",
-        "L31:Q31",
-        "R31:W31",
-        "X31:AT31",
-        "AC31:AM31",
-        "L37:Q37",
-        "R37:W37",
-        "X37:AT37",
-        "L43:Q43",
-        "M44:Q45",
-        "L46:Q47",
-    ):
-        constrain(constraints, f"{q}!{a1}", financial_type)
-    # Numeric spacers amid L–Q formulas (template ladder rows ~11–17).
-    for addr in ("M11", "N14:N15", "M16:O16", "M17:O17"):
-        constrain(constraints, f"{q}!{addr}", financial_type)
+    # L–AT ladder mixes blanks with formula cells (e.g. R18); add ranges when DynamicRefError lists them.
     for a1 in (
         "AG10:AM10",
         "AG11:AM17",
@@ -1130,7 +995,8 @@ def _constrain_input4_external_financing(constraints: type[Any]) -> None:
         f"{q}!E67:E75",
         Annotated[int | None, Between(0, 50)],
     )
-    constrain(constraints, f"{q}!D10:D64", financial_type)
+    constrain(constraints, f"{q}!D10", financial_type)
+    constrain(constraints, f"{q}!D12:D64", financial_type)
     constrain(constraints, f"{q}!D16", Literal["IDA NEW Blend floating"])
     constrain(constraints, f"{q}!D66:D73", financial_type)
     constrain(constraints, f"{q}!D75", financial_type)
@@ -1157,16 +1023,9 @@ def _constrain_input4_external_financing(constraints: type[Any]) -> None:
     constrain(constraints, f"{q}!B75", Literal["IDA NEW 60-year credits"])
     constrain(constraints, f"{q}!B76:B95", financial_type)
 
-    # G/H grace and maturity per creditor row; PV_Base B-column copies feed denominators (H - G).
+    # G/H grace and maturity per creditor row (only rows where G/H are leaves, not formulas).
     for row in (
         10,
-        11,
-        12,
-        13,
-        14,
-        15,
-        16,
-        17,
         18,
         19,
         21,
@@ -1187,12 +1046,8 @@ def _constrain_input4_external_financing(constraints: type[Any]) -> None:
         40,
         41,
         42,
-        54,
-        55,
-        56,
-        59,
-        60,
-        61,
+        57,
+        58,
     ):
         _g = f"{q}!G{row}"
         constrain(constraints, _g, grace)
@@ -1214,10 +1069,6 @@ def _constrain_input5_local_debt(constraints: type[Any]) -> None:
     """Domestic debt instruments: grace/maturity (C/D), interest by year (I–AA on assumption rows),
     issuance and adjustment flows (enrichment_audit + template row 5–7 headers)."""
 
-    def _cols(c1: str, c2: str) -> list[str]:
-        min_c, _min_r, max_c, _max_r = range_boundaries(f"{c1}1:{c2}1")
-        return [get_column_letter(i) for i in range(min_c, max_c + 1)]
-
     q = "'Input 5 - Local-debt Financing'"
     financial = Annotated[float | None, RealBetween(0, 1e15)]
     financial_signed = Annotated[float | None, RealBetween(-1e15, 1e15)]
@@ -1233,7 +1084,7 @@ def _constrain_input5_local_debt(constraints: type[Any]) -> None:
     constrain(constraints, f"{q}!C78", Annotated[int | None, Between(0, 1)])
 
     constrain(constraints, f"{q}!D16:D22", maturity)
-    for row in (10, 93, 94, 95, 100, 101, 104, 105, 106, 108, 109, 110):
+    for row in (10, 83, 86, 89, 90, 91, 92, 93, 94, 95, 100, 101, 104, 105, 106, 108, 109, 110):
         constrain(constraints, f"{q}!D{row}", maturity)
 
     for row in (93, 94, 95, 100, 101, 104, 105, 106, 108, 109, 110):
@@ -1256,8 +1107,10 @@ def _constrain_input5_local_debt(constraints: type[Any]) -> None:
 
     for addr in (
         "AD93",
+        "AD94",
         "AD95",
         "AD108",
+        "AD109",
         "AD110",
         "AD188",
         "AD191",
@@ -1271,37 +1124,7 @@ def _constrain_input5_local_debt(constraints: type[Any]) -> None:
     for row in (93, 94, 95, 100, 101, 104, 105, 106, 108, 109, 110, 250, 274, 298, 322, 392, 461, 488, 512):
         constrain(constraints, f"{q}!AF{row}", financial)
 
-    for row in (93, 94, 95, 100, 101, 104, 105, 106, 108, 109, 110):
-        for col in _cols("AG", "AJ"):
-            constrain(constraints, f"{q}!{col}{row}", financial)
-
-    # AG:AJ mirrors AK:AX row bands (Eurobond / local-debt ladder; row 464 has no AG:AJ cells).
-    for _lo, _hi in (
-        (5, 20),
-        (77, 78),
-        (128, 132),
-        (139, 193),
-        (199, 206),
-        (217, 220),
-        (222, 224),
-        (227, 463),
-        (465, 651),
-    ):
-        constrain(constraints, f"{q}!AG{_lo}:AJ{_hi}", financial)
-
-    # AK:BT — wide projection grid (through BM/BT; OFFSET leaves past BG); row 464 is a template gap.
-    for _lo, _hi in (
-        (5, 20),
-        (77, 78),
-        (128, 132),
-        (139, 193),
-        (199, 206),
-        (217, 220),
-        (222, 224),
-        (227, 463),
-        (465, 651),
-    ):
-        constrain(constraints, f"{q}!AK{_lo}:BT{_hi}", financial)
+    # AG:BT projection grids are mostly formulas in the template; constrain true OFFSET leaves via DynamicRefError.
 
     # Column M: blank INPUT cells between formula ladders on rows 465–651 (OFFSET leaves).
     for _m_lo, _m_hi in (
@@ -1347,38 +1170,13 @@ def _constrain_input5_local_debt(constraints: type[Any]) -> None:
     for _ae_gap in (231, 328, 350, 372, 398, 420, 442, 518, 540, 562, 588, 610, 632):
         constrain(constraints, f"{q}!AE{_ae_gap}", financial)
 
-    for row in (254, 278, 302, 392, 468, 492):
-        constrain(constraints, f"{q}!AY{row}", financial)
-
-    for row in (250, 274, 298, 322, 392, 463):
-        constrain(constraints, f"{q}!BA{row}", financial)
-
-    # BB:BT — issuance / flow grid; template has long blank runs between formula bands (BF leaf gaps).
-    _bb_bt_row_ranges: tuple[tuple[int, int], ...] = (
-        (248, 253),
-        (260, 277),
-        (284, 301),
-        (308, 326),
-        (333, 348),
-        (355, 370),
-        (377, 396),
-        (403, 418),
-        (425, 467),
-        (474, 491),
-        (498, 516),
-    )
-    for lo, hi in _bb_bt_row_ranges:
-        constrain(constraints, f"{q}!BB{lo}:BT{hi}", financial)
-
-    for row in (392, 463):
-        constrain(constraints, f"{q}!BU{row}", financial)
+    # AY:BT / BU bands mix formulas with blanks; add cell domains when graph build reports missing leaves.
 
     for row in (230, 254, 278, 302, 327, 397):
         constrain(constraints, f"{q}!H{row}", financial)
 
-    constrain(constraints, f"{q}!I461", financial)
     for row in (488, 581):
-        for col_idx in range(9, 28):  # I:AA — issuance / projection inputs
+        for col_idx in range(9, 28):  # I:AA — issuance / projection inputs (leaf rows only here)
             constrain(constraints, f"{q}!{get_column_letter(col_idx)}{row}", financial)
 
     for row in (250, 274, 298, 322, 439, 440, 488, 512, 581):
@@ -1452,40 +1250,7 @@ def _constrain_input6_input8(constraints: type[Any]) -> None:
     constrain(constraints, f"{q_blend}!O7", Literal[None])
     constrain(constraints, f"{q_blend}!O8", Literal[None])
     constrain(constraints, f"{q_blend}!O9", Literal["Linear interpolation"])
-    constrain(constraints, f"{q_blend}!O10", Literal[0.0428])  # ty: ignore[invalid-type-form]
-    constrain(constraints, f"{q_blend}!O11", Literal[0.039])  # ty: ignore[invalid-type-form]
-    constrain(constraints, f"{q_blend}!O12", Literal[0.038])  # ty: ignore[invalid-type-form]
-    constrain(constraints, f"{q_blend}!O13", Literal[0.0379])  # ty: ignore[invalid-type-form]
-    constrain(constraints, f"{q_blend}!O14", Literal[0.0382])  # ty: ignore[invalid-type-form]
-    _blend_o_cached = (
-        (15, 0.0388),
-        (16, 0.0394),
-        (17, 0.04),
-        (18, 0.0406),
-        (19, 0.0411),
-        (20, 0.0416),
-        (21, 0.0421),
-        (22, 0.042466666666666666),
-        (23, 0.042833333333333334),
-        (24, 0.0432),
-        (25, 0.04336),
-        (26, 0.04352),
-        (27, 0.043680000000000004),
-        (28, 0.043840000000000004),
-        (29, 0.044),
-        (30, 0.04400000002),
-        (31, 0.04400000004),
-        (32, 0.04400000006),
-        (33, 0.044000000080000004),
-        (34, 0.0440000001),
-        (35, 0.04392000008),
-        (36, 0.04384000006),
-        (37, 0.043760000040000004),
-        (38, 0.043680000020000005),
-        (39, 0.0436),
-    )
-    for _blend_o_r, _blend_o_v in _blend_o_cached:
-        constrain(constraints, f"{q_blend}!O{_blend_o_r}", Literal[_blend_o_v])  # ty: ignore[invalid-type-form]
+    # O10:O39 are swap-curve formulas; constrain only if DynamicRefError lists a true leaf in that subgraph.
 
 
 _constrain_input6_input8(LicDsfConstraints)
@@ -1529,24 +1294,6 @@ constrain(LicDsfConstraints, "translation!F452", Literal["Échéance  crédit "]
 constrain(LicDsfConstraints, "translation!D898", Literal["Projections"])
 constrain(LicDsfConstraints, "translation!E898", Literal["Projecções"])
 constrain(LicDsfConstraints, "translation!F898", Literal["Proyecciones"])
-
-# Sheets where constrained cells are commonly real Excel formulas (PV/COM blocks,
-# DMX grids, external/local financing ladders). Those are covered by graph/tests, not this scan.
-_SHEETS_EXCLUDED_FROM_FORMULA_CONSTRAINT_CHECK: frozenset[str] = frozenset(
-    {
-        "BLEND floating calculations WB",
-        "C4_Market_financing",
-        "Input 3 - Macro-Debt data(DMX)",
-        "Input 4 - External Financing",
-        "Input 5 - Local-debt Financing",
-        "PV_Base",
-        "PV_LC_NR1",
-        "PV_LC_NR2",
-        "PV_LC_NR3",
-        "PV_baseline_com",
-        "PV_stress_com",
-    }
-)
 
 
 def _get_missing_constraints(specs: list[str], constraints: type[Any]) -> list[str]:
@@ -1639,6 +1386,274 @@ def cells_in_range(sheet: str, range_a1: str) -> list[str]:
     return out
 
 
+def _workbook_cell_raw_is_formula(raw: object) -> bool:
+    """Match :func:`create_dependency_graph` formula detection (string or ArrayFormula)."""
+    if isinstance(raw, ArrayFormula):
+        text = raw.text or ""
+        if text and not text.startswith("="):
+            text = f"={text}"
+        return isinstance(text, str) and text.startswith("=")
+    return isinstance(raw, str) and raw.startswith("=")
+
+
+def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
+    """Add domains for OFFSET/INDIRECT leaves only (skip template formula cells)."""
+    financial = Annotated[float | None, RealBetween(0, 1e15)]
+    keep_vba = WORKBOOK_PATH.suffix.lower() == ".xlsm"
+    wb = fastpyxl.load_workbook(WORKBOOK_PATH, data_only=False, keep_vba=keep_vba)
+    try:
+
+        def add_range(sheet: str, range_a1: str, ann: Any) -> None:
+            if sheet not in wb.sheetnames:
+                return
+            ws = wb[sheet]
+            for key in cells_in_range(sheet, range_a1):
+                _, coord = parse_range_spec(key)
+                if not _workbook_cell_raw_is_formula(ws[coord].value):
+                    constrain(constraints, key, ann)
+
+        def add_cell(sheet: str, coord: str, ann: Any) -> None:
+            if sheet not in wb.sheetnames:
+                return
+            raw = wb[sheet][coord].value
+            if _workbook_cell_raw_is_formula(raw):
+                return
+            constrain(constraints, format_key(sheet, coord), ann)
+
+        # --- C4_Market_financing (structural blanks + labels; formulas e.g. C35 skipped) ---
+        _c4 = "C4_Market_financing"
+        add_range(_c4, "C4:C53", Literal[None])
+        add_range(_c4, "D4:D77", Literal[None])
+        add_range(_c4, "E4:G53", Literal[None])
+        add_range(_c4, "D20:F20", Literal["Historical "])
+        add_range(_c4, "D21:F21", Literal["Average "])
+        add_range(_c4, "E33", Literal["Maturity - Grace (to determine bullet / amortization)"])
+        add_range(_c4, "E34", Literal["Bullet (1) or Amort. (>1)"])
+        add_range(_c4, "F33", Literal["Stress test"])
+        add_range(_c4, "F34", Literal["Maturity"])
+        add_range(_c4, "G34", Literal["Grace"])
+        add_cell(_c4, "AB20", Literal[0, 1])
+        add_cell(_c4, "AB21", Literal[None])
+        add_cell(
+            _c4,
+            "AB22",
+            Annotated[float, RealBetween(min=0, max=100)],
+        )
+        add_cell(
+            _c4,
+            "AB23",
+            Annotated[float, RealBetween(min=0, max=1)],
+        )
+        add_cell(
+            _c4,
+            "AB24",
+            Annotated[float, RealBetween(min=0, max=2000)],
+        )
+        add_cell(_c4, "AB25", Annotated[int, Between(min=1, max=50)])
+        add_cell(_c4, "AB26", Annotated[float, RealBetween(min=0, max=1)])
+        add_cell(_c4, "AB27", Annotated[float, RealBetween(min=0, max=1)])
+
+        # BLEND O10:O39: array formulas; OFFSET analysis still expects rate domains on these addresses.
+        _blend = "BLEND floating calculations WB"
+        _swap_rate = Annotated[float | None, RealBetween(0, 1)]
+        if _blend in wb.sheetnames:
+            for _br in range(10, 40):
+                constrain(constraints, format_key(_blend, f"O{_br}"), _swap_rate)
+
+        # --- Input 4 — L–AT ladder blanks (formula cells skipped) ---
+        _q4 = "Input 4 - External Financing"
+        for a1 in (
+            "L18:Q18",
+            "L20:Q20",
+            "R18:W20",
+            "X18:AT20",
+            "L24:Q25",
+            "R24:W25",
+            "X24:AT24",
+            "X25:AT25",
+            "L31:Q31",
+            "R31:W31",
+            "X31:AT31",
+            "AC31:AM31",
+            "L37:Q37",
+            "R37:W37",
+            "X37:AT37",
+            "L43:Q43",
+            "M44:Q45",
+            "L46:Q47",
+        ):
+            add_range(_q4, a1, financial)
+        for addr in ("M11", "N14:N15", "M16:O16", "M17:O17"):
+            add_range(_q4, addr, financial)
+
+        # --- Input 5 — wide grids (formula columns skipped per cell) ---
+        _q5 = "Input 5 - Local-debt Financing"
+        for row in (93, 94, 95, 100, 101, 104, 105, 106, 108, 109, 110):
+            add_range(_q5, f"AG{row}:AJ{row}", financial)
+        for _lo, _hi in (
+            (5, 20),
+            (77, 78),
+            (128, 132),
+            (139, 193),
+            (199, 206),
+            (217, 220),
+            (222, 224),
+            (227, 463),
+            (465, 651),
+        ):
+            add_range(_q5, f"AG{_lo}:AJ{_hi}", financial)
+            add_range(_q5, f"AK{_lo}:BT{_hi}", financial)
+            for _mid_col in "HIJKLMNOPQRSTUVWXYZ":
+                add_range(_q5, f"{_mid_col}{_lo}:{_mid_col}{_hi}", financial)
+        for row in (254, 278, 302, 392, 468, 492):
+            add_cell(_q5, f"AY{row}", financial)
+        for row in (250, 274, 298, 322, 392, 463):
+            add_cell(_q5, f"BA{row}", financial)
+        _bb_bt_row_ranges: tuple[tuple[int, int], ...] = (
+            (248, 253),
+            (260, 277),
+            (284, 301),
+            (308, 326),
+            (333, 348),
+            (355, 370),
+            (377, 396),
+            (403, 418),
+            (425, 467),
+            (474, 491),
+            (498, 516),
+        )
+        for lo, hi in _bb_bt_row_ranges:
+            add_range(_q5, f"BB{lo}:BT{hi}", financial)
+        for row in (392, 463):
+            add_cell(_q5, f"BU{row}", financial)
+        # I461 + I461:AA520: template mixes formulas and blanks; only non-formula cells get domains.
+        add_cell(_q5, "I461", financial)
+        add_range(_q5, "I461:AA520", financial)
+
+        # --- PV_stress_com ---
+        if "PV_stress_com" in wb.sheetnames:
+            ws_ps = wb["PV_stress_com"]
+            for r in range(9, 141):
+                addr = f"D{r}"
+                raw = ws_ps[addr].value
+                if _workbook_cell_raw_is_formula(raw):
+                    continue
+                if r in (10, 22, 35):
+                    ann: Any = Literal[2024]
+                elif r in (23, 24, 28):
+                    ann = Literal[100]
+                else:
+                    ann = financial
+                constrain(constraints, format_key("PV_stress_com", addr), ann)
+            _cols_ps = (
+                "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T",
+                "U", "V", "W", "X", "Y", "Z", "AA", "AB", "AC", "AD", "AE",
+            )
+            for col in _cols_ps:
+                for r in range(36, 141):
+                    addr = f"{col}{r}"
+                    if not _workbook_cell_raw_is_formula(ws_ps[addr].value):
+                        constrain(constraints, format_key("PV_stress_com", addr), financial)
+            for r in range(37, 142):
+                addr = f"AF{r}"
+                if not _workbook_cell_raw_is_formula(ws_ps[addr].value):
+                    constrain(constraints, format_key("PV_stress_com", addr), financial)
+            for r in range(27, 132):
+                addr = f"BD{r}"
+                if not _workbook_cell_raw_is_formula(ws_ps[addr].value):
+                    constrain(constraints, format_key("PV_stress_com", addr), financial)
+            # Columns past AE (e.g. AY) appear in some OFFSET argument paths.
+            add_range("PV_stress_com", "AF36:BG140", financial)
+
+        # --- PV_Base — projection rectangles (formula cells skipped) ---
+        add_range("PV_Base", "AM130:BP176", financial)
+
+        # --- PV_LC_NR D column stock row (offset +5) when it is a leaf in this template ---
+        for _sheet in ("PV_LC_NR1", "PV_LC_NR2", "PV_LC_NR3"):
+            if _sheet not in wb.sheetnames:
+                continue
+            ws_lc = wb[_sheet]
+            for _block_start in range(23, 404, 19):
+                addr = f"D{_block_start + 5}"
+                if not _workbook_cell_raw_is_formula(ws_lc[addr].value):
+                    constrain(constraints, format_key(_sheet, addr), financial)
+    finally:
+        wb.close()
+
+
+_apply_lic_dsf_workbook_leaf_overlays(LicDsfConstraints)
+
+
+def collect_lic_dsf_constraint_leaf_violations(
+    workbook_path: Path,
+    constraints_type: type[Any],
+) -> tuple[list[str], list[str]]:
+    """Return ``(formula_cell_keys, missing_sheet_keys)`` for constrained addresses."""
+    hints = get_type_hints(constraints_type, include_extras=True)
+    if not hints:
+        return [], []
+
+    # Swap curve: fastpyxl stores these as ArrayFormula, but OFFSET resolution still needs domains here.
+    _blend_o_domain = re.compile(
+        r"^'BLEND floating calculations WB'!O(10|[1-3][0-9])$"
+    )
+
+    keep_vba = workbook_path.suffix.lower() == ".xlsm"
+    wb = fastpyxl.load_workbook(workbook_path, data_only=False, keep_vba=keep_vba)
+    try:
+        formula_cells: list[str] = []
+        missing: list[str] = []
+        for spec_key in hints:
+            sheet_name, range_a1 = parse_range_spec(spec_key)
+            for cell_key in cells_in_range(sheet_name, range_a1):
+                sh, coord = parse_range_spec(cell_key)
+                if sh not in wb.sheetnames:
+                    missing.append(cell_key)
+                    continue
+                raw = wb[sh][coord].value
+                if _workbook_cell_raw_is_formula(raw):
+                    if _blend_o_domain.match(cell_key):
+                        continue
+                    formula_cells.append(cell_key)
+    finally:
+        wb.close()
+
+    return formula_cells, missing
+
+
+def _raise_constraint_leaf_violation(
+    formula_cells: list[str],
+    missing: list[str],
+) -> None:
+    if not formula_cells and not missing:
+        return
+    parts: list[str] = []
+    if formula_cells:
+        sample = ", ".join(sorted(formula_cells)[:20])
+        more = f" (+{len(formula_cells) - 20} more)" if len(formula_cells) > 20 else ""
+        parts.append(
+            "constrained cells that contain formulas (constraints must target leaves only): "
+            f"{sample}{more}"
+        )
+    if missing:
+        ms = ", ".join(sorted(missing)[:20])
+        mmore = f" (+{len(missing) - 20} more)" if len(missing) > 20 else ""
+        parts.append(f"constrained cells on missing sheets: {ms}{mmore}")
+    raise ValueError("LicDsfConstraints validation failed: " + "; ".join(parts) + ".")
+
+
+def verify_lic_dsf_constraints_target_leaves(
+    workbook_path: Path,
+    constraints_type: type[Any],
+) -> None:
+    """Raise :exc:`ValueError` if any constrained address is a formula or missing sheet.
+
+    OFFSET/INDIRECT/INDEX resolution expects constraints on leaf inputs only.
+    """
+    fc, ms = collect_lic_dsf_constraint_leaf_violations(workbook_path, constraints_type)
+    _raise_constraint_leaf_violation(fc, ms)
+
+
 def main() -> None:
     print("=" * 70)
     print("LIC-DSF Indicator Dependency Mapping")
@@ -1647,6 +1662,22 @@ def main() -> None:
     if not WORKBOOK_PATH.exists():
         print(f"Error: Workbook not found at {WORKBOOK_PATH}")
         return
+
+    print("\n0. Checking LicDsfConstraints vs template (leaves only)...")
+    _fc, _ms = collect_lic_dsf_constraint_leaf_violations(WORKBOOK_PATH, LicDsfConstraints)
+    if _fc or _ms:
+        if _fc:
+            _prev = ", ".join(sorted(_fc)[:8])
+            _more = f" (+{len(_fc) - 8} more)" if len(_fc) > 8 else ""
+            print(
+                f"   Error: {len(_fc)} constrained cell(s) contain formulas (not leaves);"
+                f" examples: {_prev}{_more}"
+            )
+        if _ms:
+            print(f"   Error: {len(_ms)} constrained cell(s) on sheets missing from workbook.")
+        _raise_constraint_leaf_violation(_fc, _ms)
+    else:
+        print("   OK — no constrained formula cells, no missing sheets.")
 
     # Discover targets: explicit ranges (all cells) and indicator rows (formula cells only)
     print("\n1. Collecting target cells...")

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import re
+import time
 from collections import deque
 from collections.abc import Iterable
 from pathlib import Path
@@ -42,6 +44,8 @@ from .parser import (
 )
 from .provenance_collect import collect_provenance_for_formula
 from .resolver import build_named_range_map
+
+_logger = logging.getLogger(__name__)
 
 
 def _parse_address_to_sheet_a1(addr: str) -> tuple[str, str]:
@@ -189,8 +193,13 @@ def create_dependency_graph(
         keep_vba = path.suffix.lower() == ".xlsm"
         return fastpyxl.load_workbook(path, data_only=data_only, keep_vba=keep_vba)
 
+    _t0 = time.perf_counter()
     wb_formulas = load_wb(data_only=False)
+    print(f"[DIAG] Loaded formula workbook in {time.perf_counter() - _t0:.2f}s", flush=True)
+    _t0 = time.perf_counter()
     wb_values = load_wb(data_only=True) if load_values and not isinstance(workbook, fastpyxl.Workbook) else None
+    if wb_values is not None:
+        print(f"[DIAG] Loaded value workbook in {time.perf_counter() - _t0:.2f}s", flush=True)
 
     graph = DependencyGraph()
     for h in hooks or []:
@@ -701,6 +710,10 @@ def create_dependency_graph(
         sh, a1 = parse_target(str(t))
         q.append((sh, a1, 0))
 
+    _bfs_t0 = time.perf_counter()
+    _bfs_count = 0
+    _bfs_next_log = 5000
+
     try:
         while q:
             sheet, a1, depth = q.popleft()
@@ -708,6 +721,14 @@ def create_dependency_graph(
             if key in visited:
                 continue
             visited.add(key)
+            _bfs_count += 1
+            if _bfs_count >= _bfs_next_log:
+                print(
+                    f"[DIAG] BFS: {_bfs_count} nodes, queue={len(q)}, depth={depth}, "
+                    f"{time.perf_counter() - _bfs_t0:.1f}s, last={key}",
+                    flush=True,
+                )
+                _bfs_next_log += 5000
             if depth > max_depth:
                 continue
 
