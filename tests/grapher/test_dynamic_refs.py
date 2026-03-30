@@ -1837,3 +1837,28 @@ def test_index_respects_max_cells_limit() -> None:
             limits=DynamicRefLimits(max_cells=2),
         )
     assert "cells exceed limit" in str(exc_info.value).lower()
+
+
+def test_offset_per_call_max_cells_limit() -> None:
+    """A single OFFSET call that fans out to more cells than max_cells must raise
+    DynamicRefError immediately, not accumulate an unbounded result set."""
+    # OFFSET(Sheet1!A1, 0, Sheet1!B1, 1, 1) where B1 ∈ {0,1,2,3,4} → 5 distinct
+    # target cells.  With max_cells=3 the check should fire.
+    formula = "=OFFSET(Sheet1!A1,0,Sheet1!B1,1,1)"
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({0, 1, 2, 3, 4})),
+            )
+        }
+    )
+    with pytest.raises(DynamicRefError) as exc_info:
+        infer_dynamic_offset_targets(
+            formula,
+            current_sheet="Sheet1",
+            cell_type_env=env,
+            limits=DynamicRefLimits(max_cells=3),
+        )
+    assert "cells" in str(exc_info.value).lower()
+    assert "exceed limit" in str(exc_info.value).lower()

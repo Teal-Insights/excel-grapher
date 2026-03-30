@@ -853,6 +853,11 @@ def _infer_single_offset_call(
                             )
                             if isinstance(result, ExcelRange):
                                 targets |= set(result.cell_addresses())
+                                if len(targets) > limits.max_cells:
+                                    raise DynamicRefError(
+                                        f"Dynamic ref cells from single OFFSET call exceed limit "
+                                        f"({len(targets)} > {limits.max_cells})"
+                                    )
         return targets
 
     leaf_addrs: set[str] = set()
@@ -909,6 +914,11 @@ def _infer_single_offset_call(
             )
             if isinstance(result, ExcelRange):
                 targets |= set(result.cell_addresses())
+                if len(targets) > limits.max_cells:
+                    raise DynamicRefError(
+                        f"Dynamic ref cells from single OFFSET call exceed limit "
+                        f"({len(targets)} > {limits.max_cells})"
+                    )
 
     return targets
 
