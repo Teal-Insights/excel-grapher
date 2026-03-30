@@ -513,6 +513,83 @@ def test_create_dependency_graph_raises_when_leaf_missing_constraint(tmp_path: P
     assert "leaf" in str(exc_info.value).lower()
 
 
+def test_dynamic_ref_arg_subgraph_aligns_ast_range_cap_with_builder_bfs_issue_56(
+    tmp_path: Path,
+) -> None:
+    """Interior cells of oversized static ranges must not be required only by AST collection.
+
+    The builder BFS uses ``expand_range(..., max_cells=...)`` (corners only when over the
+    cap). Argument-env expansion must use the same cap when collecting range addresses
+    from the parsed AST (GitHub issue #56).
+    """
+    excel_path = tmp_path / "offset_sum_range_cap_issue_56.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(0, 0, 1)  # A1
+    # B1 interior of A1:C1 — left empty / unconstrained
+    ws.write_number(0, 2, 1)  # C1
+    ws.write_formula(0, 3, "=SUM(Sheet1!A1:C1)", None, 2)  # D1
+    ws.write_number(0, 5, 0)  # F1 OFFSET base
+    ws.write_formula(0, 4, "=OFFSET(Sheet1!F1,Sheet1!D1,0)", None, 0)  # E1
+    wb.close()
+
+    env = _make_env(
+        {
+            "Sheet1!A1": CellType(
+                kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({1}))
+            ),
+            "Sheet1!C1": CellType(
+                kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({1}))
+            ),
+            "Sheet1!F1": CellType(
+                kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({0}))
+            ),
+        }
+    )
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+
+    graph = create_dependency_graph(
+        excel_path,
+        ["Sheet1!E1"],
+        load_values=False,
+        dynamic_refs=config,
+        max_range_cells=2,
+    )
+    assert "Sheet1!B1" not in graph
+
+
+def test_dynamic_ref_missing_multiple_leaves_raises_builder_aggregate_not_per_leaf_issue_56(
+    tmp_path: Path,
+) -> None:
+    """Several unconstrained leaves in one OFFSET argument should surface in one builder error."""
+    excel_path = tmp_path / "offset_three_leaves_issue_56.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(0, 0, 0)  # A1 base
+    ws.write_formula(
+        0,
+        4,
+        "=OFFSET(Sheet1!A1,Sheet1!B1+Sheet1!C1+Sheet1!D1,0)",
+        None,
+        0,
+    )  # E1
+    wb.close()
+    config = DynamicRefConfig(cell_type_env=_make_env({}), limits=DynamicRefLimits())
+    with pytest.raises(DynamicRefError) as exc_info:
+        create_dependency_graph(
+            excel_path,
+            ["Sheet1!E1"],
+            load_values=False,
+            dynamic_refs=config,
+        )
+    msg = str(exc_info.value)
+    assert "following leaf" in msg
+    assert "have no constraint" in msg
+    assert "Missing constraint for leaf" not in msg
+    # _format_missing_leaves may merge B1:D1 into one rectangle
+    assert "Sheet1!B1" in msg and "Sheet1!D1" in msg
+
+
 def test_expand_leaf_env_mutual_formula_refs_in_argument_subgraph_issue_54() -> None:
     """Issue #54: mutual formula refs in the argument chain must not abort type expansion.
 

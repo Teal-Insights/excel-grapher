@@ -279,6 +279,8 @@ def expand_leaf_env_to_argument_env(
     limits: DynamicRefLimits,
     named_ranges: Mapping[str, tuple[str, str]] | None = None,
     named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
+    *,
+    max_range_cells: int = 5000,
 ) -> dict[str, CellType]:
     """Build a CellTypeEnv for all refs in the argument chain from leaf constraints only.
 
@@ -290,6 +292,10 @@ def expand_leaf_env_to_argument_env(
     When an intermediate cannot be inferred (e.g. its formula is OFFSET/INDIRECT and
     refs are empty after masking), it is assigned CellType(ANY); enumeration may then
     require a constraint for that cell.
+
+    ``max_range_cells`` must match the graph builder's range expansion limit so static
+    ranges collected from the AST align with
+    :func:`~excel_grapher.grapher.builder.create_dependency_graph` argument-subgraph BFS.
     """
     cache: dict[str, CellType] = {}
     in_progress: set[str] = set()
@@ -346,7 +352,9 @@ def expand_leaf_env_to_argument_env(
             except FormulaParseError:
                 ast_root = None
             if ast_root is not None:
-                refs |= _collect_static_addresses_from_ast(ast_root)
+                refs |= _collect_static_addresses_from_ast(
+                    ast_root, max_range_cells=max_range_cells
+                )
             if not refs:
                 if ast_root is None:
                     cache[addr] = CellType(kind=CellKind.ANY)
@@ -2261,16 +2269,63 @@ def _collect_addresses(node: AstNode) -> set[str]:
     return addrs
 
 
-def _collect_static_addresses_from_ast(node: AstNode) -> set[str]:
-    """Collect static cell/range addresses while skipping dynamic-ref call subtrees."""
+def _split_qualified_to_sheet_a1(qualified: str) -> tuple[str, str]:
+    if "!" not in qualified:
+        raise ValueError(f"Expected sheet-qualified reference, got {qualified!r}")
+    if qualified.startswith("'"):
+        end = qualified.index("'", 1)
+        sheet = qualified[1:end].replace("''", "'")
+        tail = qualified[end + 1 :]
+        if not tail.startswith("!"):
+            raise ValueError(f"Expected '!' after quoted sheet in {qualified!r}")
+        return sheet, tail[1:].strip()
+    sheet, a1 = qualified.split("!", 1)
+    return sheet.strip(), a1.strip()
+
+
+def _ast_address_to_ref_key(address: str) -> str:
+    sheet, a1 = _split_qualified_to_sheet_a1(address)
+    col_letter, row = coordinate_from_string(a1.replace("$", ""))
+    return format_key(sheet, f"{col_letter}{row}")
+
+
+def _collect_static_addresses_from_ast(node: AstNode, *, max_range_cells: int) -> set[str]:
+    """Collect static cell/range addresses while skipping dynamic-ref call subtrees.
+
+    Range expansion uses the same ``max_range_cells`` policy as
+    :func:`~excel_grapher.grapher.parser.expand_range` in the graph builder so the
+    argument subgraph matches :func:`expand_leaf_env_to_argument_env` traversal.
+    """
     addrs: set[str] = set()
 
     def visit(n: AstNode) -> None:
         if isinstance(n, CellRefNode):
-            addrs.add(n.address)
+            addrs.add(_ast_address_to_ref_key(n.address))
             return
         if isinstance(n, RangeNode):
-            addrs.update(_collect_addresses(n))
+            try:
+                sheet_s, coord_s = _split_qualified_to_sheet_a1(n.start)
+                sheet_e, coord_e = _split_qualified_to_sheet_a1(n.end)
+            except ValueError:
+                return
+            if sheet_s != sheet_e:
+                for raw in _collect_addresses(n):
+                    try:
+                        addrs.add(_ast_address_to_ref_key(raw))
+                    except ValueError:
+                        addrs.add(raw)
+                return
+            col_s, row_s = coordinate_from_string(coord_s.replace("$", ""))
+            col_e, row_e = coordinate_from_string(coord_e.replace("$", ""))
+            for dep_sheet, dep_a1 in expand_range(
+                sheet=sheet_s,
+                start_col=col_s,
+                start_row=row_s,
+                end_col=col_e,
+                end_row=row_e,
+                max_cells=max_range_cells,
+            ):
+                addrs.add(format_key(dep_sheet, dep_a1))
             return
         if isinstance(n, FunctionCallNode) and n.name.upper() in {"OFFSET", "INDIRECT", "INDEX"}:
             return
