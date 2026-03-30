@@ -52,10 +52,51 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(name)s %(message)s",
     datefmt="%H:%M:%S",
+    force=True,
+)
+logging.getLogger("excel_grapher.grapher.dynamic_refs").setLevel(logging.INFO)
+
+
+class ExportRangeConfig(TypedDict):
+    """
+    Explicit range specification for export/annotation targets.
+
+    Attributes:
+        label: Human-readable label for the range (used for reporting only).
+        range_spec: Sheet-qualified A1 range, e.g. "'Chart Data'!D10:D17".
+        entrypoint_mode: Controls how export entrypoints are grouped for this
+            range: "row_group" (one entrypoint per row) or "per_cell" (one
+            entrypoint per cell, no row grouping).
+    """
+
+    label: str
+    range_spec: str
+    entrypoint_mode: Literal["row_group", "per_cell"]
+
+# ---------------------------------------------------------------------------
+# Workbook
+# ---------------------------------------------------------------------------
+
+WORKBOOK_PATH = Path("example/data/lic-dsf-template-2025-08-12.xlsm")
+WORKBOOK_TEMPLATE_URL = (
+    "https://thedocs.worldbank.org/en/doc/f0ade6bcf85b6f98dbeb2c39a2b7770c-0360012025/original/LIC-DSF-IDA21-Template-08-12-2025-vf.xlsm"
 )
 
-# Row labels for the multi-row stress-test blocks (same row layout in each block).
-# Blank string means that row is skipped when splitting by row.
+# Set True to resolve OFFSET/INDIRECT from cached workbook values (no constraints).
+# Set False to use constraint-based resolution; add address-style keys below as you hit DynamicRefError.
+USE_CACHED_DYNAMIC_REFS = False
+
+# ---------------------------------------------------------------------------
+# Export package
+# ---------------------------------------------------------------------------
+
+PACKAGE_NAME = "lic_dsf_2025_08_12"
+EXPORT_DIR = Path("dist/lic-dsf-2025-08-12")
+
+# ---------------------------------------------------------------------------
+# Export ranges
+# ---------------------------------------------------------------------------
+
 STRESS_TEST_ROW_LABELS: list[str] = [
     "Baseline",
     "A1. Key variables at their historical averages in 2024-2034 2/",
@@ -65,7 +106,7 @@ STRESS_TEST_ROW_LABELS: list[str] = [
     "B4. Other flows 3/",
     "B5. Depreciation",
     "B6. Combination of B1-B5",
-    "",  # blank row
+    "",
     "C1. Combined contingent liabilities",
     "C2. Natural disaster",
     "C3. Commodity price",
@@ -73,18 +114,8 @@ STRESS_TEST_ROW_LABELS: list[str] = [
     "A2. Alternative Scenario :[Customize, enter title]",
 ]
 
-# Explicit cell ranges to extract (sheet-qualified A1 range, e.g. "'Chart Data'!D10:D17").
-# All cells in each range are included as graph targets.
-# Multi-row stress-test blocks are split by row using STRESS_TEST_ROW_LABELS (blank row skipped).
-_CHART_DATA_FIXED: list[tuple[str, str]] = [
-    ("External DSA risk rating signals", "'Chart Data'!D10:D17"),
-    ("Fiscal (Total Public Debt) risk rating signals", "'Chart Data'!I10:I14"),
-    ("Applicable tailored stress test signals", "'Chart Data'!I17:I19"),
-    ("Fiscal space for moderate risk category", "'Chart Data'!E25:E27"),
-    ("Overall rating", "'Chart Data'!L10:L11"),
-]
 
-_STRESS_TEST_BLOCKS: list[tuple[str, int]] = [
+STRESS_TEST_BLOCKS: list[tuple[str, int]] = [
     ("PV of Debt-to-GDP Ratio", 239),
     ("PV of Debt-to-Revenue Ratio", 281),
     ("Debt Service-to-Revenue Ratio", 318),
@@ -92,52 +123,104 @@ _STRESS_TEST_BLOCKS: list[tuple[str, int]] = [
 ]
 
 
-def _chart_data_ranges() -> list[tuple[str, str]]:
-    out: list[tuple[str, str]] = list(_CHART_DATA_FIXED)
-    for metric_label, start_row in _STRESS_TEST_BLOCKS:
+FIGURE_DATA_ROWS: list[int] = [
+    # Figure 1 (Output 2-1 Stress_Charts_Ex)
+    51,
+    61,
+    62,
+    63,
+    64,
+    66,
+    93,
+    103,
+    104,
+    105,
+    106,
+    108,
+    135,
+    145,
+    146,
+    147,
+    148,
+    150,
+    177,
+    187,
+    188,
+    189,
+    190,
+    192,
+    # Figure 2 extras (Output 2-2 Stress_Charts_Pub)
+    263,
+    264,
+    265,
+    267,
+    306,
+    341,
+    342,
+    343,
+]
+
+
+EXPORT_FIXED_RANGES: list[ExportRangeConfig] = [
+    {
+        "label": "External DSA risk rating signals",
+        "range_spec": "'Chart Data'!D10:D17",
+        "entrypoint_mode": "per_cell",
+    },
+    {
+        "label": "Fiscal (Total Public Debt) risk rating signals",
+        "range_spec": "'Chart Data'!I10:I14",
+        "entrypoint_mode": "per_cell",
+    },
+    {
+        "label": "Applicable tailored stress test signals",
+        "range_spec": "'Chart Data'!I17:I19",
+        "entrypoint_mode": "row_group",
+    },
+    {
+        "label": "Fiscal space for moderate risk category",
+        "range_spec": "'Chart Data'!E25:E27",
+        "entrypoint_mode": "row_group",
+    },
+    {
+        "label": "Overall rating",
+        "range_spec": "'Chart Data'!L10:L11",
+        "entrypoint_mode": "row_group",
+    },
+]
+
+
+def _export_chart_data_ranges() -> list[ExportRangeConfig]:
+    out: list[ExportRangeConfig] = list(EXPORT_FIXED_RANGES)
+    seen_row_specs = {entry["range_spec"] for entry in out}
+
+    def add_chart_data_row(row: int, label: str) -> None:
+        range_spec = f"'Chart Data'!D{row}:X{row}"
+        if range_spec in seen_row_specs:
+            return
+        out.append(
+            {
+                "label": label,
+                "range_spec": range_spec,
+                "entrypoint_mode": "row_group",
+            }
+        )
+        seen_row_specs.add(range_spec)
+
+    for metric_label, start_row in STRESS_TEST_BLOCKS:
         for i, row_label in enumerate(STRESS_TEST_ROW_LABELS):
             if not row_label:
                 continue
             row = start_row + i
-            out.append((f"{metric_label} - {row_label}", f"'Chart Data'!D{row}:X{row}"))
+            add_chart_data_row(row, f"{metric_label} - {row_label}")
+
+    for row in FIGURE_DATA_ROWS:
+        add_chart_data_row(row, f"Figure data row {row}")
+
     return out
 
 
-CHART_DATA_RANGES: list[tuple[str, str]] = _chart_data_ranges()
-
-LiteralType = cast(Any, Literal)
-
-
-def constrain_constant_range(
-    constraints: type[Any],
-    data: dict[str, Any],
-    workbook_path: Path,
-    *,
-    sheet_name: str,
-    range_a1: str,
-) -> None:
-    """Fill ``constraints`` and ``data`` with Literal types from a rectangular cell range."""
-    wb = fastpyxl.load_workbook(workbook_path, data_only=True)
-    try:
-        ws = wb[sheet_name]
-        for row in ws[range_a1]:
-            for cell in row:
-                if cell.value is None:
-                    continue
-                key = f"{sheet_name}!{cell.coordinate}"
-                val = cell.value
-                constraints.__annotations__[key] = LiteralType[val]
-                data[key] = val
-    finally:
-        wb.close()
-
-
-# Dated template; adjust filename if using a different snapshot.
-WORKBOOK_PATH = Path("example/data/lic-dsf-template-2025-08-12.xlsm")
-
-# Set True to resolve OFFSET/INDIRECT from cached workbook values (no constraints).
-# Set False to use constraint-based resolution; add address-style keys below as you hit DynamicRefError.
-USE_CACHED_DYNAMIC_REFS = False
+EXPORT_RANGES: list[ExportRangeConfig] = _export_chart_data_ranges()
 
 # ---------------------------------------------------------------------------
 # Constraints (OFFSET / INDIRECT resolution)
@@ -1569,7 +1652,9 @@ def main() -> None:
     print("\n1. Collecting target cells...")
     all_targets: list[str] = []
 
-    for label, spec in CHART_DATA_RANGES:
+    for entry in EXPORT_RANGES:
+        label = entry["label"]
+        spec = entry["range_spec"]
         sheet_name, range_a1 = parse_range_spec(spec)
         targets = cells_in_range(sheet_name, range_a1)
         print(f"   {label}: {spec} -> {len(targets)} cells")
@@ -1582,14 +1667,18 @@ def main() -> None:
         return
     
     # Build dependency graph (constraint-based or cached for OFFSET/INDIRECT)
-    print("\n2. Building dependency graph...")
-    t_build = time.perf_counter()
+    print("\n2. Building dependency graph...", flush=True)
     dynamic_refs: DynamicRefConfig | None = None
     if not USE_CACHED_DYNAMIC_REFS:
+        t_cfg = time.perf_counter()
+        print("   Building DynamicRefConfig from constraints + workbook...", flush=True)
         dynamic_refs = DynamicRefConfig.from_constraints_and_workbook(
             LicDsfConstraints,
             WORKBOOK_PATH,
         )
+        print(f"   DynamicRefConfig built in {time.perf_counter() - t_cfg:.2f}s", flush=True)
+    t_build = time.perf_counter()
+    print("   Starting create_dependency_graph...", flush=True)
     try:
         graph = create_dependency_graph(
             WORKBOOK_PATH,
@@ -1649,7 +1738,7 @@ def main() -> None:
     
     # Validate against calcChain.xml
     print("\n5. Validating against calcChain.xml...")
-    scope = {parse_range_spec(spec)[0] for _label, spec in CHART_DATA_RANGES}
+    scope = {parse_range_spec(entry["range_spec"])[0] for entry in EXPORT_RANGES}
     result = validate_graph(graph, WORKBOOK_PATH, scope=scope)
     
     print(f"   Valid: {result.is_valid}")
