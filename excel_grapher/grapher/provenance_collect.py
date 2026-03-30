@@ -95,6 +95,7 @@ def _flat_provenance_one_string(
     wb_formulas: fastpyxl.Workbook,
     resolve_cached_value: Callable[[str, str], object | None],
     span_target: Literal["formula", "normalized"],
+    dynamic_expansion_cache: dict[tuple[str, str, str], tuple[set[str], set[str], set[str]]] | None = None,
 ) -> dict[str, EdgeProvenance]:
     """Mirror extract_expr_deps masking pipeline; accumulate provenance for one formula string starting with '='."""
     if normalizer is None:
@@ -177,118 +178,122 @@ def _flat_provenance_one_string(
                             _merge_into(acc, k, EdgeProvenance(causes=frozenset({dyn_cause})))
                             if is_variable:
                                 argument_addrs.add(k)
+            if calls:
+                def _refs_in_formula_without_dynamic(formula_str: str, sheet_of_cell: str) -> set[str]:
+                    dyn = _find_function_calls_with_spans(
+                        formula_str if formula_str.startswith("=") else "=" + formula_str,
+                        {"OFFSET", "INDIRECT"},
+                    )
+                    spans = [span for _fn, _inner, span in dyn]
+                    masked2 = mask_spans(
+                        formula_str if formula_str.startswith("=") else "=" + formula_str,
+                        spans,
+                    )
+                    norm = normalizer.normalize(masked2, sheet_of_cell)
+                    out: set[str] = set()
+                    for ref in parse_cell_refs(norm):
+                        sh = ref.sheet if ref.sheet is not None else sheet_of_cell
+                        out.add(format_key(sh, f"{ref.column}{ref.row}"))
+                    for start, end, _span in parse_range_refs_with_spans(norm):
+                        sh = start.sheet if start.sheet is not None else sheet_of_cell
+                        for dep_sheet, dep_a1 in expand_range(
+                            sheet=sh,
+                            start_col=start.column,
+                            start_row=start.row,
+                            end_col=end.column,
+                            end_row=end.row,
+                            max_cells=max_range_cells,
+                        ):
+                            out.add(format_key(dep_sheet, dep_a1))
+                    return out
 
-            def _refs_in_formula_without_dynamic(formula_str: str, sheet_of_cell: str) -> set[str]:
-                dyn = _find_function_calls_with_spans(
-                    formula_str if formula_str.startswith("=") else "=" + formula_str,
-                    {"OFFSET", "INDIRECT"},
+                all_refs: set[str] = set()
+                to_visit = set(argument_addrs)
+                while to_visit:
+                    addr = to_visit.pop()
+                    if addr in all_refs:
+                        continue
+                    all_refs.add(addr)
+                    sh, a1 = _parse_address_to_sheet_a1(addr)
+                    if sh not in wb_formulas.sheetnames:
+                        continue
+                    cell_val = wb_formulas[sh][a1].value
+                    if isinstance(cell_val, str) and cell_val.startswith("="):
+                        to_visit.update(_refs_in_formula_without_dynamic(cell_val, sh))
+                leaves: set[str] = set()
+                for addr in all_refs:
+                    sh, a1 = _parse_address_to_sheet_a1(addr)
+                    if sh not in wb_formulas.sheetnames:
+                        continue
+                    cell_val = wb_formulas[sh][a1].value
+                    if not (isinstance(cell_val, str) and cell_val.startswith("=")):
+                        leaves.add(addr)
+                missing_leaves = leaves_missing_cell_type_constraints(
+                    leaves, dynamic_refs.cell_type_env
                 )
-                spans = [span for _fn, _inner, span in dyn]
-                masked2 = mask_spans(
-                    formula_str if formula_str.startswith("=") else "=" + formula_str,
-                    spans,
-                )
-                norm = normalizer.normalize(masked2, sheet_of_cell)
-                out: set[str] = set()
-                for ref in parse_cell_refs(norm):
-                    sh = ref.sheet if ref.sheet is not None else sheet_of_cell
-                    out.add(format_key(sh, f"{ref.column}{ref.row}"))
-                for start, end, _span in parse_range_refs_with_spans(norm):
-                    sh = start.sheet if start.sheet is not None else sheet_of_cell
-                    for dep_sheet, dep_a1 in expand_range(
-                        sheet=sh,
-                        start_col=start.column,
-                        start_row=start.row,
-                        end_col=end.column,
-                        end_row=end.row,
-                        max_cells=max_range_cells,
-                    ):
-                        out.add(format_key(dep_sheet, dep_a1))
-                return out
+                if missing_leaves:
+                    raise DynamicRefError(
+                        f"Provenance: leaf cells feeding OFFSET/INDIRECT have no constraint: {sorted(missing_leaves)}"
+                    )
 
-            all_refs: set[str] = set()
-            to_visit = set(argument_addrs)
-            while to_visit:
-                addr = to_visit.pop()
-                if addr in all_refs:
-                    continue
-                all_refs.add(addr)
-                sh, a1 = _parse_address_to_sheet_a1(addr)
-                if sh not in wb_formulas.sheetnames:
-                    continue
-                cell_val = wb_formulas[sh][a1].value
-                if isinstance(cell_val, str) and cell_val.startswith("="):
-                    to_visit.update(_refs_in_formula_without_dynamic(cell_val, sh))
-            leaves: set[str] = set()
-            for addr in all_refs:
-                sh, a1 = _parse_address_to_sheet_a1(addr)
-                if sh not in wb_formulas.sheetnames:
-                    continue
-                cell_val = wb_formulas[sh][a1].value
-                if not (isinstance(cell_val, str) and cell_val.startswith("=")):
-                    leaves.add(addr)
-            missing_leaves = leaves_missing_cell_type_constraints(
-                leaves, dynamic_refs.cell_type_env
-            )
-            if missing_leaves:
-                raise DynamicRefError(
-                    f"Provenance: leaf cells feeding OFFSET/INDIRECT have no constraint: {sorted(missing_leaves)}"
-                )
+                formula_for_infer = normalizer.normalize(f, current_sheet)
+                _col_letter, _current_row = fastpyxl.utils.cell.coordinate_from_string(current_a1)
+                _current_col = fastpyxl.utils.cell.column_index_from_string(_col_letter)
+                _cache_key = (formula_for_infer, current_sheet, current_a1)
+                if dynamic_expansion_cache is not None and _cache_key in dynamic_expansion_cache:
+                    offset_targets, indirect_targets, _ = dynamic_expansion_cache[_cache_key]
+                else:
+                    def _get_cell_formula(addr: str) -> str | None:
+                        sh, a1 = _parse_address_to_sheet_a1(addr)
+                        if sh not in wb_formulas.sheetnames:
+                            return None
+                        v = wb_formulas[sh][a1].value
+                        if not isinstance(v, str) or not v.startswith("="):
+                            return None
+                        return normalizer.normalize(v, sh)
 
-            def _get_cell_formula(addr: str) -> str | None:
-                sh, a1 = _parse_address_to_sheet_a1(addr)
-                if sh not in wb_formulas.sheetnames:
-                    return None
-                v = wb_formulas[sh][a1].value
-                if not isinstance(v, str) or not v.startswith("="):
-                    return None
-                return normalizer.normalize(v, sh)
-
-            expanded_env = expand_leaf_env_to_argument_env(
-                all_refs,
-                _get_cell_formula,
-                _refs_in_formula_without_dynamic,
-                dynamic_refs.cell_type_env,
-                dynamic_refs.limits,
-                named_ranges=named_ranges,
-                named_range_ranges=named_range_ranges,
-                max_range_cells=max_range_cells,
-            )
-            formula_for_infer = normalizer.normalize(f, current_sheet)
-            _col_letter, _current_row = fastpyxl.utils.cell.coordinate_from_string(current_a1)
-            _current_col = fastpyxl.utils.cell.column_index_from_string(_col_letter)
-            offset_targets = infer_dynamic_offset_targets(
-                formula_for_infer,
-                current_sheet=current_sheet,
-                cell_type_env=expanded_env,
-                limits=dynamic_refs.limits,
-                bounds=bounds,
-                named_ranges=named_ranges,
-                named_range_ranges=named_range_ranges,
-                current_row=_current_row,
-                current_col=_current_col,
-            )
-            indirect_targets = infer_dynamic_indirect_targets(
-                formula_for_infer,
-                current_sheet=current_sheet,
-                cell_type_env=expanded_env,
-                limits=dynamic_refs.limits,
-                bounds=bounds,
-                named_ranges=named_ranges,
-                named_range_ranges=named_range_ranges,
-            )
-            for addr in offset_targets:
-                _merge_into(
-                    acc,
-                    addr,
-                    EdgeProvenance(causes=frozenset({DependencyCause.dynamic_offset})),
-                )
-            for addr in indirect_targets:
-                _merge_into(
-                    acc,
-                    addr,
-                    EdgeProvenance(causes=frozenset({DependencyCause.dynamic_indirect})),
-                )
+                    expanded_env = expand_leaf_env_to_argument_env(
+                        all_refs,
+                        _get_cell_formula,
+                        _refs_in_formula_without_dynamic,
+                        dynamic_refs.cell_type_env,
+                        dynamic_refs.limits,
+                        named_ranges=named_ranges,
+                        named_range_ranges=named_range_ranges,
+                        max_range_cells=max_range_cells,
+                    )
+                    offset_targets = infer_dynamic_offset_targets(
+                        formula_for_infer,
+                        current_sheet=current_sheet,
+                        cell_type_env=expanded_env,
+                        limits=dynamic_refs.limits,
+                        bounds=bounds,
+                        named_ranges=named_ranges,
+                        named_range_ranges=named_range_ranges,
+                        current_row=_current_row,
+                        current_col=_current_col,
+                    )
+                    indirect_targets = infer_dynamic_indirect_targets(
+                        formula_for_infer,
+                        current_sheet=current_sheet,
+                        cell_type_env=expanded_env,
+                        limits=dynamic_refs.limits,
+                        bounds=bounds,
+                        named_ranges=named_ranges,
+                        named_range_ranges=named_range_ranges,
+                    )
+                for addr in offset_targets:
+                    _merge_into(
+                        acc,
+                        addr,
+                        EdgeProvenance(causes=frozenset({DependencyCause.dynamic_offset})),
+                    )
+                for addr in indirect_targets:
+                    _merge_into(
+                        acc,
+                        addr,
+                        EdgeProvenance(causes=frozenset({DependencyCause.dynamic_indirect})),
+                    )
 
     masked = mask_spans(masked, dyn_spans)
 
@@ -375,6 +380,7 @@ def _flat_provenance_formula_and_normalized(
     dynamic_refs: DynamicRefConfig | None,
     wb_formulas: fastpyxl.Workbook,
     resolve_cached_value: Callable[[str, str], object | None],
+    dynamic_expansion_cache: dict[tuple[str, str, str], tuple[set[str], set[str], set[str]]] | None = None,
 ) -> dict[str, EdgeProvenance]:
     raw_map = _flat_provenance_one_string(
         formula_str,
@@ -391,6 +397,7 @@ def _flat_provenance_formula_and_normalized(
         wb_formulas=wb_formulas,
         resolve_cached_value=resolve_cached_value,
         span_target="formula",
+        dynamic_expansion_cache=dynamic_expansion_cache,
     )
     if not normalized or normalized == formula_str:
         return raw_map
@@ -410,6 +417,7 @@ def _flat_provenance_formula_and_normalized(
         wb_formulas=wb_formulas,
         resolve_cached_value=resolve_cached_value,
         span_target="normalized",
+        dynamic_expansion_cache=dynamic_expansion_cache,
     )
     out: dict[str, EdgeProvenance] = {}
     all_keys = set(raw_map) | set(norm_map)
@@ -453,6 +461,7 @@ def collect_provenance_for_formula(
     dynamic_refs: DynamicRefConfig | None,
     wb_formulas: fastpyxl.Workbook,
     resolve_cached_value: Callable[[str, str], object | None],
+    dynamic_expansion_cache: dict[tuple[str, str, str], tuple[set[str], set[str], set[str]]] | None = None,
 ) -> dict[str, EdgeProvenance]:
     """
     Build a map from dependency cell key (``format_key``) to merged :class:`EdgeProvenance`
@@ -481,6 +490,7 @@ def collect_provenance_for_formula(
                 dynamic_refs=dynamic_refs,
                 wb_formulas=wb_formulas,
                 resolve_cached_value=resolve_cached_value,
+                dynamic_expansion_cache=dynamic_expansion_cache,
             ),
             collect_provenance_for_formula(
                 _ensure_leading_equals(then_s),
@@ -497,6 +507,7 @@ def collect_provenance_for_formula(
                 dynamic_refs=dynamic_refs,
                 wb_formulas=wb_formulas,
                 resolve_cached_value=resolve_cached_value,
+                dynamic_expansion_cache=dynamic_expansion_cache,
             ),
         ]
         if else_s:
@@ -515,6 +526,7 @@ def collect_provenance_for_formula(
                     dynamic_refs=dynamic_refs,
                     wb_formulas=wb_formulas,
                     resolve_cached_value=resolve_cached_value,
+                    dynamic_expansion_cache=dynamic_expansion_cache,
                 )
             )
         return merge_provenance_maps(maps)
@@ -544,6 +556,7 @@ def collect_provenance_for_formula(
                     dynamic_refs=dynamic_refs,
                     wb_formulas=wb_formulas,
                     resolve_cached_value=resolve_cached_value,
+                    dynamic_expansion_cache=dynamic_expansion_cache,
                 )
             )
             maps.append(
@@ -561,6 +574,7 @@ def collect_provenance_for_formula(
                     dynamic_refs=dynamic_refs,
                     wb_formulas=wb_formulas,
                     resolve_cached_value=resolve_cached_value,
+                    dynamic_expansion_cache=dynamic_expansion_cache,
                 )
             )
         if default_ifs is not None:
@@ -579,6 +593,7 @@ def collect_provenance_for_formula(
                     dynamic_refs=dynamic_refs,
                     wb_formulas=wb_formulas,
                     resolve_cached_value=resolve_cached_value,
+                    dynamic_expansion_cache=dynamic_expansion_cache,
                 )
             )
         return merge_provenance_maps(maps)
@@ -601,6 +616,7 @@ def collect_provenance_for_formula(
                 dynamic_refs=dynamic_refs,
                 wb_formulas=wb_formulas,
                 resolve_cached_value=resolve_cached_value,
+                dynamic_expansion_cache=dynamic_expansion_cache,
             )
         ]
         for choice_s in choose_args[1:]:
@@ -619,6 +635,7 @@ def collect_provenance_for_formula(
                     dynamic_refs=dynamic_refs,
                     wb_formulas=wb_formulas,
                     resolve_cached_value=resolve_cached_value,
+                    dynamic_expansion_cache=dynamic_expansion_cache,
                 )
             )
         return merge_provenance_maps(maps)
@@ -642,6 +659,7 @@ def collect_provenance_for_formula(
                 dynamic_refs=dynamic_refs,
                 wb_formulas=wb_formulas,
                 resolve_cached_value=resolve_cached_value,
+                dynamic_expansion_cache=dynamic_expansion_cache,
             )
         ]
         pairs = switch_args[1:]
@@ -667,6 +685,7 @@ def collect_provenance_for_formula(
                         dynamic_refs=dynamic_refs,
                         wb_formulas=wb_formulas,
                         resolve_cached_value=resolve_cached_value,
+                        dynamic_expansion_cache=dynamic_expansion_cache,
                     )
                 )
         if default_expr is not None:
@@ -685,6 +704,7 @@ def collect_provenance_for_formula(
                     dynamic_refs=dynamic_refs,
                     wb_formulas=wb_formulas,
                     resolve_cached_value=resolve_cached_value,
+                    dynamic_expansion_cache=dynamic_expansion_cache,
                 )
             )
         return merge_provenance_maps(maps)
@@ -704,4 +724,5 @@ def collect_provenance_for_formula(
         dynamic_refs=dynamic_refs,
         wb_formulas=wb_formulas,
         resolve_cached_value=resolve_cached_value,
+        dynamic_expansion_cache=dynamic_expansion_cache,
     )
