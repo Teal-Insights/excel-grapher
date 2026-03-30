@@ -306,7 +306,9 @@ def _flat_provenance_one_string(
                 max_cells=max_range_cells,
             ):
                 k = format_key(dep_sheet, dep_a1)
-                _merge_into(acc, k, EdgeProvenance(causes=frozenset({DependencyCause.static_range})))
+                _merge_into(
+                    acc, k, EdgeProvenance(causes=frozenset({DependencyCause.static_range}))
+                )
         masked = mask_spans(masked, spans)
 
     for ref, span in parse_cell_refs_with_spans(masked):

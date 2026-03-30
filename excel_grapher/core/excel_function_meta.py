@@ -7,6 +7,7 @@ decide which cell references need a numeric domain:
 - ref_only: the implementation uses only the reference (e.g. row/column of the
   cell), not the cell's value; no domain is required for that ref.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

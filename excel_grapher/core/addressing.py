@@ -140,4 +140,3 @@ def indirect_text_to_range(
     if not _in_bounds(rng, bounds):
         return XlError.REF
     return rng
-

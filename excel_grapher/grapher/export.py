@@ -11,6 +11,7 @@ from .node import Node, NodeKey
 def _dot_escape(s: str) -> str:
     return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
+
 def _guard_label(g: GuardExpr) -> str:
     return _dot_escape(str(g))
 
@@ -118,7 +119,7 @@ def to_mermaid(
         label_raw = label_fn(key, node) if label_fn is not None else key
         label = str(label_raw).replace('"', '\\"')
         # Box for leaves, rounded for formulas.
-        shape = f'[{label}]' if node.is_leaf else f'({label})'
+        shape = f"[{label}]" if node.is_leaf else f"({label})"
         lines.append(f"  {safe_id(key)}{shape}")
 
     if len(keys) > len(node_keys):
@@ -137,4 +138,3 @@ def to_mermaid(
                 lines.append(f"  {safe_id(key)} -.-> {safe_id(dep)}")
 
     return "\n".join(lines)
-

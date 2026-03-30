@@ -68,6 +68,7 @@ class UnaryOpNode:
 @dataclass(frozen=True, slots=True)
 class EmptyArgNode:
     """Represents an omitted argument in a function call (e.g., INDEX(A1:B2,,1))."""
+
     pass
 
 
@@ -315,9 +316,7 @@ def _parse_quoted_sheet_ref(s: _Scanner, original: str) -> AstNode:
 
     # Expect !
     if s.peek() != "!":
-        raise FormulaParseError(
-            original, f"Expected '!' after quoted sheet name '{sheet_name}'"
-        )
+        raise FormulaParseError(original, f"Expected '!' after quoted sheet name '{sheet_name}'")
     s.consume()
 
     # Parse cell coordinate
@@ -357,9 +356,7 @@ def _parse_range_end(s: _Scanner, original: str, default_sheet: str) -> str:
         while True:
             ch = s.consume()
             if ch is None:
-                raise FormulaParseError(
-                    original, "Unterminated quoted sheet name in range end"
-                )
+                raise FormulaParseError(original, "Unterminated quoted sheet name in range end")
             if ch == "'":
                 if s.peek() == "'":
                     s.consume()
@@ -459,4 +456,3 @@ def _parse_error(s: _Scanner, original: str) -> ErrorNode:
     if err is None:
         raise FormulaParseError(original, f"Unknown error literal {text!r}")
     return ErrorNode(err)
-

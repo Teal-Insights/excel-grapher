@@ -99,9 +99,7 @@ def test_codegen_generate_modules_entrypoints_exported(tmp_path: Path) -> None:
         _make_node("S!A1", None, 1.0),
         _make_node("S!B1", "=S!A1*2", None),
     )
-    files = CodeGenerator(graph).generate_modules(
-        ["S!B1"], entrypoints={"outputs-a": ["S!B1"]}
-    )
+    files = CodeGenerator(graph).generate_modules(["S!B1"], entrypoints={"outputs-a": ["S!B1"]})
     entrypoint = files["exported/entrypoint.py"]
     init_py = files["exported/__init__.py"]
     assert "def compute_outputs_a(inputs=None, *, ctx=None):" in entrypoint
@@ -218,9 +216,7 @@ def test_codegen_generate_modules_has_no_ty_diagnostics_with_hyphenated_dir(
     repo_root = Path(__file__).resolve().parents[1]
 
     graph = _make_graph(_make_node("S!A1", None, 1.0))
-    files = CodeGenerator(graph).generate_modules(
-        ["S!A1"], package_name="lic-dsf-template"
-    )
+    files = CodeGenerator(graph).generate_modules(["S!A1"], package_name="lic-dsf-template")
 
     for relpath, content in files.items():
         out_path = tmp_path / relpath
@@ -283,4 +279,3 @@ def test_codegen_generate_modules_has_no_ty_diagnostics_for_xlookup(tmp_path: Pa
     )
     assert ty.returncode == 0, f"ty failed:\n{ty.stdout}\n{ty.stderr}"
     assert ty.stderr.strip() == ""
-

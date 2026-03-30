@@ -37,4 +37,3 @@ def xl_ifna(value: CellValue, value_if_na: CellValue) -> CellValue:
     if value == XlError.NA:
         return value_if_na
     return value
-

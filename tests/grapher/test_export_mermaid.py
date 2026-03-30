@@ -36,4 +36,3 @@ def test_to_mermaid_contains_nodes_and_edges(tmp_path: Path) -> None:
     assert "Sheet1_A4 --> Sheet1_A3" in mm
     assert "Sheet1_A3 --> Sheet1_A1" in mm
     assert "Sheet1_A3 --> Sheet1_A2" in mm
-

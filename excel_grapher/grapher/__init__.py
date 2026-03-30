@@ -70,6 +70,5 @@ __all__ = [
     "WorkbookCalcSettings",
     "format_cell_key",
     "format_key",
-    "needs_quoting"
+    "needs_quoting",
 ]
-

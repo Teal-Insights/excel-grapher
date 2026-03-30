@@ -1,9 +1,8 @@
 """Tests for FormulaNormalizer — single-pass named-range substitution and caching."""
+
 from __future__ import annotations
 
 import time
-
-import pytest
 
 from excel_grapher.grapher.parser import FormulaNormalizer
 
@@ -128,8 +127,7 @@ class TestFormulaNormalizerOutlierFormula:
         # Simulate 56 cell names + 39 range names (95 total, like the LIC-DSF workbook)
         named_ranges = {f"CellName{i}": ("DataSheet", f"B{i + 1}") for i in range(56)}
         named_range_ranges = {
-            f"RangeName{i}": ("DataSheet", f"C{i + 1}", f"D{i + 10}")
-            for i in range(39)
+            f"RangeName{i}": ("DataSheet", f"C{i + 1}", f"D{i + 10}") for i in range(39)
         }
         n = FormulaNormalizer(
             named_ranges=named_ranges,

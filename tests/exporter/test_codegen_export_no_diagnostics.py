@@ -72,4 +72,3 @@ def test_codegen_export_has_no_ty_or_ruff_diagnostics(tmp_path: Path) -> None:
         assert ruff.stderr.strip() == ""
     finally:
         export_file.unlink(missing_ok=True)
-

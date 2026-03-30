@@ -103,4 +103,3 @@ def test_parity_column_and_columns_with_offset() -> None:
     assert result.generated_results["S!A2"] == 1
     assert result.generated_results["S!A3"] == 6
     assert result.generated_results["S!A4"] == 3
-

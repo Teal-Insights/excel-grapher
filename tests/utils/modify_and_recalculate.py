@@ -285,17 +285,11 @@ def modify_and_recalculate_workbook(
         ... )
     """
     if is_wsl():
-        _modify_and_recalculate_with_powershell(
-            input_path, output_path, cell_modifications
-        )
+        _modify_and_recalculate_with_powershell(input_path, output_path, cell_modifications)
     elif sys.platform in ("win32", "darwin"):
-        _modify_and_recalculate_with_xlwings(
-            input_path, output_path, cell_modifications
-        )
+        _modify_and_recalculate_with_xlwings(input_path, output_path, cell_modifications)
     elif is_libreoffice_available():
-        _modify_and_recalculate_with_libreoffice(
-            input_path, output_path, cell_modifications
-        )
+        _modify_and_recalculate_with_libreoffice(input_path, output_path, cell_modifications)
     else:
         raise RuntimeError(
             "No suitable Excel automation backend available. "

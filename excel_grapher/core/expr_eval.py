@@ -137,7 +137,9 @@ def _eval(
         return excel_range.resolve(get_cell_value)
 
     if isinstance(node, UnaryOpNode):
-        value = _eval(node.operand, get_cell_value, functions, max_depth, context=context, depth=depth + 1)
+        value = _eval(
+            node.operand, get_cell_value, functions, max_depth, context=context, depth=depth + 1
+        )
         if isinstance(value, Unsupported):
             return value
         if isinstance(value, XlError):
@@ -149,13 +151,17 @@ def _eval(
         return Unsupported(f"Unsupported unary operator {node.op!r}")
 
     if isinstance(node, BinaryOpNode):
-        left = _eval(node.left, get_cell_value, functions, max_depth, context=context, depth=depth + 1)
+        left = _eval(
+            node.left, get_cell_value, functions, max_depth, context=context, depth=depth + 1
+        )
         if isinstance(left, Unsupported):
             return left
         if isinstance(left, XlError):
             return left
 
-        right = _eval(node.right, get_cell_value, functions, max_depth, context=context, depth=depth + 1)
+        right = _eval(
+            node.right, get_cell_value, functions, max_depth, context=context, depth=depth + 1
+        )
         if isinstance(right, Unsupported):
             return right
         if isinstance(right, XlError):
@@ -219,9 +225,7 @@ def _eval(
                 return value
 
         flat_args: list[CellValue] = [
-            cast(CellValue, v)
-            for v in args
-            if not isinstance(v, (XlError, Unsupported))
+            cast(CellValue, v) for v in args if not isinstance(v, (XlError, Unsupported))
         ]
 
         impl = (
@@ -332,4 +336,3 @@ _DEFAULT_FUNCTIONS: dict[str, Callable[[list[CellValue]], CellValue]] = {
     "IF": _fn_if,
     "CONCAT": _fn_concat,
 }
-

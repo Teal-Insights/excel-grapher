@@ -204,4 +204,3 @@ def test_expand_leaf_env_resolves_format_key_addr_against_normalized_env() -> No
     )
     assert quoted in out
     assert out[quoted].interval == IntervalDomain(min=1, max=1)
-

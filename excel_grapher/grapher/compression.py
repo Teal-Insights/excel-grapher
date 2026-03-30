@@ -71,7 +71,9 @@ def is_identity_transit(graph: DependencyGraph, transit_key: NodeKey) -> NodeKey
     return r_key
 
 
-def replace_substrings_at_spans(formula: str, spans: tuple[tuple[int, int], ...], replacement: str) -> str:
+def replace_substrings_at_spans(
+    formula: str, spans: tuple[tuple[int, int], ...], replacement: str
+) -> str:
     """Replace each ``[a,b)`` span in ``formula`` with ``replacement`` (right-to-left)."""
     out = formula
     for a, b in sorted(spans, reverse=True):

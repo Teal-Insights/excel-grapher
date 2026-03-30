@@ -168,5 +168,6 @@ def assert_code_does_not_embed_symbols(code: str, *, absent: set[str]) -> None:
     """Pruning helper: assert certain top-level runtime defs are not embedded."""
     hits = {sym for sym in absent if f"def {sym}(" in code or f"class {sym}:" in code}
     if hits:
-        raise AssertionError(f"Expected symbols to be pruned, but found in generated code: {sorted(hits)}")
-
+        raise AssertionError(
+            f"Expected symbols to be pruned, but found in generated code: {sorted(hits)}"
+        )

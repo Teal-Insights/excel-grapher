@@ -198,4 +198,3 @@ def test_must_cycle_is_reported_and_always_raises(tmp_path: Path) -> None:
     with pytest.raises(CycleError) as e2:
         graph.evaluation_order(strict=False)
     assert e2.value.is_must_cycle is True
-
