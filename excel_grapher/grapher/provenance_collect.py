@@ -260,6 +260,7 @@ def _flat_provenance_one_string(
                 dynamic_refs.limits,
                 named_ranges=named_ranges,
                 named_range_ranges=named_range_ranges,
+                max_range_cells=max_range_cells,
             )
             formula_for_infer = normalize_formula(
                 f,
