@@ -19,12 +19,12 @@ from .dynamic_refs import (
     infer_dynamic_offset_targets,
 )
 from .parser import (
+    FormulaNormalizer,
     _find_function_calls_with_spans,
     _split_function_args,
     expand_range,
     format_key,
     mask_spans,
-    normalize_formula,
     parse_cell_refs,
     parse_cell_refs_with_spans,
     parse_dynamic_range_refs_with_spans,
@@ -86,6 +86,7 @@ def _flat_provenance_one_string(
     current_a1: str,
     named_ranges: dict[str, tuple[str, str]],
     named_range_ranges: dict[str, tuple[str, str, str]],
+    normalizer: FormulaNormalizer | None = None,
     defined_names: set[str],
     expand_ranges: bool,
     max_range_cells: int,
@@ -96,6 +97,8 @@ def _flat_provenance_one_string(
     span_target: Literal["formula", "normalized"],
 ) -> dict[str, EdgeProvenance]:
     """Mirror extract_expr_deps masking pipeline; accumulate provenance for one formula string starting with '='."""
+    if normalizer is None:
+        normalizer = FormulaNormalizer(named_ranges, named_range_ranges)
     acc: dict[str, EdgeProvenance] = {}
 
     if not f.startswith("="):
@@ -111,6 +114,7 @@ def _flat_provenance_one_string(
             current_cell_a1=current_a1,
             named_ranges=named_ranges,
             named_range_ranges=named_range_ranges,
+            normalizer=normalizer,
             value_resolver=resolve_cached_value,
         ):
             dyn_spans.append(span)
@@ -152,11 +156,9 @@ def _flat_provenance_one_string(
                     if args is None:
                         continue
                     for i, arg in enumerate(args):
-                        norm_arg = normalize_formula(
+                        norm_arg = normalizer.normalize(
                             "=" + arg,
-                            current_sheet=current_sheet,
-                            named_ranges=named_ranges,
-                            named_range_ranges=named_range_ranges,
+                            current_sheet,
                         )
                         is_variable = (
                             (fn_name == "OFFSET" and i >= 1)
@@ -186,12 +188,7 @@ def _flat_provenance_one_string(
                     formula_str if formula_str.startswith("=") else "=" + formula_str,
                     spans,
                 )
-                norm = normalize_formula(
-                    masked2,
-                    current_sheet=sheet_of_cell,
-                    named_ranges=named_ranges,
-                    named_range_ranges=named_range_ranges,
-                )
+                norm = normalizer.normalize(masked2, sheet_of_cell)
                 out: set[str] = set()
                 for ref in parse_cell_refs(norm):
                     sh = ref.sheet if ref.sheet is not None else sheet_of_cell
@@ -245,12 +242,7 @@ def _flat_provenance_one_string(
                 v = wb_formulas[sh][a1].value
                 if not isinstance(v, str) or not v.startswith("="):
                     return None
-                return normalize_formula(
-                    v,
-                    current_sheet=sh,
-                    named_ranges=named_ranges,
-                    named_range_ranges=named_range_ranges,
-                )
+                return normalizer.normalize(v, sh)
 
             expanded_env = expand_leaf_env_to_argument_env(
                 all_refs,
@@ -262,12 +254,7 @@ def _flat_provenance_one_string(
                 named_range_ranges=named_range_ranges,
                 max_range_cells=max_range_cells,
             )
-            formula_for_infer = normalize_formula(
-                f,
-                current_sheet=current_sheet,
-                named_ranges=named_ranges,
-                named_range_ranges=named_range_ranges,
-            )
+            formula_for_infer = normalizer.normalize(f, current_sheet)
             _col_letter, _current_row = fastpyxl.utils.cell.coordinate_from_string(current_a1)
             _current_col = fastpyxl.utils.cell.column_index_from_string(_col_letter)
             offset_targets = infer_dynamic_offset_targets(
@@ -380,6 +367,7 @@ def _flat_provenance_formula_and_normalized(
     current_a1: str,
     named_ranges: dict[str, tuple[str, str]],
     named_range_ranges: dict[str, tuple[str, str, str]],
+    normalizer: FormulaNormalizer | None = None,
     defined_names: set[str],
     expand_ranges: bool,
     max_range_cells: int,
@@ -394,6 +382,7 @@ def _flat_provenance_formula_and_normalized(
         current_a1=current_a1,
         named_ranges=named_ranges,
         named_range_ranges=named_range_ranges,
+        normalizer=normalizer,
         defined_names=defined_names,
         expand_ranges=expand_ranges,
         max_range_cells=max_range_cells,
@@ -412,6 +401,7 @@ def _flat_provenance_formula_and_normalized(
         current_a1=current_a1,
         named_ranges=named_ranges,
         named_range_ranges=named_range_ranges,
+        normalizer=normalizer,
         defined_names=defined_names,
         expand_ranges=expand_ranges,
         max_range_cells=max_range_cells,
@@ -455,6 +445,7 @@ def collect_provenance_for_formula(
     current_a1: str,
     named_ranges: dict[str, tuple[str, str]],
     named_range_ranges: dict[str, tuple[str, str, str]],
+    normalizer: FormulaNormalizer | None = None,
     defined_names: set[str],
     expand_ranges: bool,
     max_range_cells: int,
@@ -467,6 +458,8 @@ def collect_provenance_for_formula(
     Build a map from dependency cell key (``format_key``) to merged :class:`EdgeProvenance`
     for one cell's formula, including IF/IFS/CHOOSE/SWITCH branch union semantics.
     """
+    if normalizer is None:
+        normalizer = FormulaNormalizer(named_ranges, named_range_ranges)
     f = _ensure_leading_equals(formula)
 
     if_parts = split_top_level_if(f)
@@ -480,6 +473,7 @@ def collect_provenance_for_formula(
                 current_a1=current_a1,
                 named_ranges=named_ranges,
                 named_range_ranges=named_range_ranges,
+                normalizer=normalizer,
                 defined_names=defined_names,
                 expand_ranges=expand_ranges,
                 max_range_cells=max_range_cells,
@@ -495,6 +489,7 @@ def collect_provenance_for_formula(
                 current_a1=current_a1,
                 named_ranges=named_ranges,
                 named_range_ranges=named_range_ranges,
+                normalizer=normalizer,
                 defined_names=defined_names,
                 expand_ranges=expand_ranges,
                 max_range_cells=max_range_cells,
@@ -598,6 +593,7 @@ def collect_provenance_for_formula(
                 current_a1=current_a1,
                 named_ranges=named_ranges,
                 named_range_ranges=named_range_ranges,
+                normalizer=normalizer,
                 defined_names=defined_names,
                 expand_ranges=expand_ranges,
                 max_range_cells=max_range_cells,
@@ -638,6 +634,7 @@ def collect_provenance_for_formula(
                 current_a1=current_a1,
                 named_ranges=named_ranges,
                 named_range_ranges=named_range_ranges,
+                normalizer=normalizer,
                 defined_names=defined_names,
                 expand_ranges=expand_ranges,
                 max_range_cells=max_range_cells,
@@ -699,6 +696,7 @@ def collect_provenance_for_formula(
         current_a1=current_a1,
         named_ranges=named_ranges,
         named_range_ranges=named_range_ranges,
+        normalizer=normalizer,
         defined_names=defined_names,
         expand_ranges=expand_ranges,
         max_range_cells=max_range_cells,

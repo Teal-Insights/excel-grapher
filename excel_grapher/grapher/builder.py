@@ -27,12 +27,12 @@ from .graph import DependencyGraph, NodeHook
 from .guard import And, Compare, GuardExpr, Literal, Not
 from .node import Node
 from .parser import (
+    FormulaNormalizer,
     _find_function_calls_with_spans,
     _split_function_args,
     expand_range,
     format_key,
     mask_spans,
-    normalize_formula,
     parse_cell_refs,
     parse_dynamic_range_refs_with_spans,
     parse_guard_expr,
@@ -208,6 +208,7 @@ def create_dependency_graph(
     named_range_maps = build_named_range_map(wb_formulas)
     named_ranges = named_range_maps.cell_map
     named_range_ranges = named_range_maps.range_map
+    normalizer = FormulaNormalizer(named_ranges, named_range_ranges)
     defined_names: set[str] = {str(name) for name in wb_formulas.defined_names}
     _NAME_TOKEN_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*!)")
 
@@ -269,6 +270,7 @@ def create_dependency_graph(
                     current_cell_a1=current_a1,
                     named_ranges=named_ranges,
                     named_range_ranges=named_range_ranges,
+                    normalizer=normalizer,
                     value_resolver=resolve_cached_value,
                 ):
                     dyn_spans.append(span)
@@ -327,11 +329,9 @@ def create_dependency_graph(
                             if args is None:
                                 continue
                             for i, arg in enumerate(args):
-                                normalized = normalize_formula(
+                                normalized = normalizer.normalize(
                                     "=" + arg,
-                                    current_sheet=current_sheet,
-                                    named_ranges=named_ranges,
-                                    named_range_ranges=named_range_ranges,
+                                    current_sheet,
                                 )
                                 # Variable args: always traverse to leaves for domain expansion.
                                 # OFFSET base (i==0): only traverse when base is an expression (e.g. INDEX(...))
@@ -359,12 +359,7 @@ def create_dependency_graph(
                             formula_str if formula_str.startswith("=") else "=" + formula_str,
                             spans,
                         )
-                        norm = normalize_formula(
-                            masked,
-                            current_sheet=sheet_of_cell,
-                            named_ranges=named_ranges,
-                            named_range_ranges=named_range_ranges,
-                        )
+                        norm = normalizer.normalize(masked, sheet_of_cell)
                         out: set[str] = set()
                         for ref in parse_cell_refs(norm):
                             sh = ref.sheet if ref.sheet is not None else sheet_of_cell
@@ -421,12 +416,7 @@ def create_dependency_graph(
                         v = wb_formulas[sh][a1].value
                         if not isinstance(v, str) or not v.startswith("="):
                             return None
-                        return normalize_formula(
-                            v,
-                            current_sheet=sh,
-                            named_ranges=named_ranges,
-                            named_range_ranges=named_range_ranges,
-                        )
+                        return normalizer.normalize(v, sh)
                     expanded_env = expand_leaf_env_to_argument_env(
                         all_refs,
                         _get_cell_formula,
@@ -437,12 +427,7 @@ def create_dependency_graph(
                         named_range_ranges=named_range_ranges,
                         max_range_cells=max_range_cells,
                     )
-                    formula_for_infer = normalize_formula(
-                        f,
-                        current_sheet=current_sheet,
-                        named_ranges=named_ranges,
-                        named_range_ranges=named_range_ranges,
-                    )
+                    formula_for_infer = normalizer.normalize(f, current_sheet)
                     _col_letter, _current_row = fastpyxl.utils.cell.coordinate_from_string(
                         current_a1
                     )
@@ -743,12 +728,7 @@ def create_dependency_graph(
             if is_formula:
                 formula_str = str(raw)
                 formula = formula_str
-                normalized = normalize_formula(
-                    formula_str,
-                    sheet,
-                    named_ranges,
-                    named_range_ranges,
-                )
+                normalized = normalizer.normalize(formula_str, sheet)
                 value = None
                 if wb_values is not None:
                     value = wb_values[sheet][a1].value
@@ -784,6 +764,7 @@ def create_dependency_graph(
                     current_a1=a1,
                     named_ranges=named_ranges,
                     named_range_ranges=named_range_ranges,
+                    normalizer=normalizer,
                     defined_names=defined_names,
                     expand_ranges=expand_ranges,
                     max_range_cells=max_range_cells,
@@ -813,4 +794,3 @@ def create_dependency_graph(
             wb_formulas.close()
 
     return graph
-

@@ -32,7 +32,8 @@ from excel_grapher.grapher.dynamic_refs import (
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
 )
-from excel_grapher.grapher.parser import parse_dynamic_range_refs_with_spans
+from excel_grapher.grapher import parser as parser_mod
+from excel_grapher.grapher.parser import FormulaNormalizer, parse_dynamic_range_refs_with_spans
 
 
 def _build_offset_named_range_workbook(path: Path) -> None:
@@ -140,6 +141,35 @@ def test_offset_argument_references_are_dependencies(tmp_path: Path) -> None:
     )
     deps = graph.dependencies("Sheet1!A1")
     assert deps == {"Sheet1!C1", "START!M10"}
+
+
+def test_parse_dynamic_range_refs_uses_injected_normalizer(monkeypatch: pytest.MonkeyPatch) -> None:
+    class TrackingNormalizer(FormulaNormalizer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls: list[tuple[str, str]] = []
+
+        def normalize(self, formula: str, current_sheet: str) -> str:
+            self.calls.append((formula, current_sheet))
+            return super().normalize(formula, current_sheet)
+
+    def fail_normalize_formula(*args: object, **kwargs: object) -> str:
+        raise AssertionError("legacy normalize_formula path should not be used")
+
+    monkeypatch.setattr(parser_mod, "normalize_formula", fail_normalize_formula)
+    normalizer = TrackingNormalizer()
+
+    out = parse_dynamic_range_refs_with_spans(
+        "=OFFSET(B1,0,1)",
+        current_sheet="Sheet1",
+        named_ranges={},
+        named_range_ranges={},
+        normalizer=normalizer,
+        value_resolver=None,
+    )
+
+    assert len(out) == 1
+    assert normalizer.calls == [("=0", "Sheet1"), ("=1", "Sheet1")]
 
 
 def _make_env(mapping: dict[str, CellType]) -> CellTypeEnv:
