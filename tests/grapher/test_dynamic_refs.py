@@ -2026,3 +2026,245 @@ def _build_graph_counting_dynamic_expansion(
         )
 
     return graph, call_count
+
+
+# ---------------------------------------------------------------------------
+# Benchmark: INDEX inference blowup with many row-relative formulas
+# ---------------------------------------------------------------------------
+
+
+def _build_wide_index_sweep_workbook(path: Path, n_rows: int = 50) -> None:
+    """Create a workbook simulating the LIC-DSF Chart Data INDEX blowup.
+
+    Layout on 'Data' sheet:
+      - A1:K22 is a static data array (11 rows × 22 cols) with numeric values.
+      - For each row ``r`` in ``[2, 2+n_rows)``, column L contains
+        ``=INDEX(Data!$A$1:$K$22, Data!M<r>, Data!N<r>)``
+        where M<r> is a row-selector leaf and N<r> is a col-selector leaf.
+      - M and N columns hold small integer constants (leaves requiring constraints).
+
+    When all M/N leaves are constrained with a wide numeric domain, inference
+    is triggered for every L-column INDEX cell.  Without caching, this means
+    ``n_rows`` separate calls to ``expand_leaf_env_to_argument_env`` and
+    ``n_rows`` separate ``_emit_index_targets_from_domains`` invocations that
+    produce the *same* target set.
+    """
+    import xlsxwriter
+
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Data")
+
+    # Populate the static data array A1:K22 (11 rows × 22 cols).
+    for r in range(22):
+        for c in range(11):
+            ws.write_number(r, c, r * 11 + c + 1)
+
+    # For each formula row, write leaf values in M and N, and an INDEX formula in L.
+    for i in range(n_rows):
+        row = 1 + i  # rows 2..n_rows+1 (0-indexed: 1..n_rows)
+        ws.write_number(row, 12, (i % 11) + 1)  # M<row+1> = row selector (1..11)
+        ws.write_number(row, 13, (i % 22) + 1)  # N<row+1> = col selector (1..22)
+        # L<row+1> = INDEX($A$1:$K$22, M<row+1>, N<row+1>)
+        ws.write_formula(
+            row,
+            11,
+            f"=INDEX(Data!$A$1:$K$22,Data!M{row + 1},Data!N{row + 1})",
+            None,
+            42,
+        )
+
+    wb.close()
+
+
+def test_wide_index_sweep_shared_env_cache(tmp_path: Path) -> None:
+    """Benchmark: many INDEX formulas should share env expansion work.
+
+    With ``n_rows`` INDEX formulas each referencing a different (M<r>, N<r>) leaf
+    pair, every formula triggers a separate expand_leaf_env_to_argument_env call
+    (since each has a unique ``all_refs`` set).  However, since the leaf constraints
+    and intermediate cells don't overlap, we can't directly share the top-level call.
+
+    What we *can* optimise is ``_emit_index_targets_from_domains``: when every
+    formula's INDEX resolves to the same ``(array_range, row_dom, col_dom)``
+    triple (because the leaf constraints produce the same abstract bounds), the
+    target-set generation should be cached and reused.
+
+    This test asserts:
+    1. The graph is correct (all INDEX formula cells and their leaves are present).
+    2. ``_emit_index_targets_from_domains`` is called far fewer than ``n_rows`` times
+       after caching is in place.
+    """
+    n_rows = 50
+    excel_path = tmp_path / "wide_index_sweep.xlsx"
+    _build_wide_index_sweep_workbook(excel_path, n_rows=n_rows)
+
+    # Build constraints: M and N leaves get interval domains matching the full array.
+    env: CellTypeEnv = {}
+    for i in range(n_rows):
+        row = 2 + i
+        env[f"Data!M{row}"] = CellType(
+            kind=CellKind.NUMBER,
+            interval=IntervalDomain(min=1, max=11),
+        )
+        env[f"Data!N{row}"] = CellType(
+            kind=CellKind.NUMBER,
+            interval=IntervalDomain(min=1, max=22),
+        )
+
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+
+    targets = [f"Data!L{2 + i}" for i in range(n_rows)]
+
+    # Count calls to _emit_index_targets_from_domains.
+    from unittest.mock import patch
+
+    original_emit = dynamic_refs_mod._emit_index_targets_from_domains
+    emit_call_count = 0
+
+    def counting_emit(*args, **kwargs):
+        nonlocal emit_call_count
+        emit_call_count += 1
+        return original_emit(*args, **kwargs)
+
+    with patch.object(
+        dynamic_refs_mod,
+        "_emit_index_targets_from_domains",
+        side_effect=counting_emit,
+    ):
+        graph = create_dependency_graph(
+            excel_path,
+            targets,
+            load_values=False,
+            dynamic_refs=config,
+        )
+
+    # Correctness: every target should be in the graph and have M/N leaf deps.
+    for i in range(n_rows):
+        row = 2 + i
+        node_key = f"Data!L{row}"
+        deps = graph.dependencies(node_key)
+        assert f"Data!M{row}" in deps, f"Missing M leaf dep for {node_key}"
+        assert f"Data!N{row}" in deps, f"Missing N leaf dep for {node_key}"
+
+    # Optimization: with target-set caching, _emit_index_targets_from_domains
+    # should be called only once for the unique (array_range, row_dom, col_dom).
+    # Without caching it would be called n_rows times.
+    assert emit_call_count < n_rows, (
+        f"_emit_index_targets_from_domains called {emit_call_count} times for "
+        f"{n_rows} INDEX formulas; expected caching to reduce this to ~1"
+    )
+
+
+def _build_shared_intermediate_index_workbook(path: Path, n_rows: int = 30) -> None:
+    """Workbook where INDEX formulas share intermediate argument cells.
+
+    Layout on 'Sheet1':
+      - A1:E10 is the data array (10 rows × 5 cols).
+      - B1 is a shared intermediate: ``=C1+1`` (formula cell, not a leaf).
+      - C1 is a leaf (numeric constant = 2).
+      - For each row ``r`` in ``[2, 2+n_rows)``:
+        - F<r> = ``=INDEX($A$1:$E$10, Sheet1!B1, Sheet1!D<r>)``
+        - D<r> is a leaf (col selector constant).
+
+    All ``n_rows`` INDEX formulas share the intermediate cell B1 in their
+    argument subgraph.  With a shared env expansion cache, B1's type is
+    inferred once and reused across all formula cells.
+    """
+    import xlsxwriter
+
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+
+    # Data array A1:E10.
+    for r in range(10):
+        for c in range(5):
+            ws.write_number(r, c, r * 5 + c + 1)
+
+    # B1 = =C1+1 (intermediate formula).
+    ws.write_formula(0, 1, "=Sheet1!C1+1", None, 3)
+    # C1 = 2 (leaf).
+    ws.write_number(0, 2, 2)
+
+    for i in range(n_rows):
+        row = 1 + i  # 0-indexed rows 1..n_rows
+        ws.write_number(row, 3, (i % 5) + 1)  # D<row+1> col selector
+        ws.write_formula(
+            row,
+            5,
+            f"=INDEX(Sheet1!$A$1:$E$10,Sheet1!$B$1,Sheet1!D{row + 1})",
+            None,
+            42,
+        )
+
+    wb.close()
+
+
+def test_shared_intermediate_env_expansion_cache(tmp_path: Path) -> None:
+    """Many INDEX formulas sharing an intermediate cell should reuse env expansion.
+
+    All formulas reference B1 (intermediate) which depends on C1 (leaf).
+    With a shared env expansion cache, ``cell_type_for(B1)`` is computed once
+    and reused across all 30 formula cells' expand_leaf_env_to_argument_env calls.
+
+    We verify this by wrapping expand_leaf_env_to_argument_env and inspecting
+    the shared_cell_type_cache: B1 should already be present in the cache for
+    all calls after the first.
+    """
+    from unittest.mock import patch
+
+    n_rows = 30
+    excel_path = tmp_path / "shared_intermediate.xlsx"
+    _build_shared_intermediate_index_workbook(excel_path, n_rows=n_rows)
+
+    env: CellTypeEnv = {
+        "Sheet1!C1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=10))
+    }
+    for i in range(n_rows):
+        row = 2 + i
+        env[f"Sheet1!D{row}"] = CellType(
+            kind=CellKind.NUMBER,
+            interval=IntervalDomain(min=1, max=5),
+        )
+
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+    targets = [f"Sheet1!F{2 + i}" for i in range(n_rows)]
+
+    # Track how many times B1 is already in the shared cache when
+    # expand_leaf_env_to_argument_env is called.
+    original_expand = expand_leaf_env_to_argument_env
+    b1_cache_hits = 0
+    total_calls = 0
+
+    def tracking_expand(*args, **kwargs):
+        nonlocal b1_cache_hits, total_calls
+        total_calls += 1
+        shared_cache = kwargs.get("shared_cell_type_cache")
+        if shared_cache is not None and "Sheet1!B1" in shared_cache:
+            b1_cache_hits += 1
+        return original_expand(*args, **kwargs)
+
+    with patch(
+        "excel_grapher.grapher.builder.expand_leaf_env_to_argument_env",
+        side_effect=tracking_expand,
+    ):
+        graph = create_dependency_graph(
+            excel_path,
+            targets,
+            load_values=False,
+            dynamic_refs=config,
+        )
+
+    # Correctness check: each formula should depend on B1 and its D leaf.
+    for i in range(n_rows):
+        row = 2 + i
+        deps = graph.dependencies(f"Sheet1!F{row}")
+        assert "Sheet1!B1" in deps, f"Missing B1 dep for F{row}"
+        assert f"Sheet1!D{row}" in deps, f"Missing D leaf dep for F{row}"
+
+    # Optimization check: B1 should be inferred once (cache miss on first call)
+    # and served from the shared cache for all subsequent calls.
+    assert total_calls == n_rows, f"Expected {n_rows} expand calls, got {total_calls}"
+    assert b1_cache_hits == n_rows - 1, (
+        f"Expected B1 to be a cache hit on {n_rows - 1} of {n_rows} calls, "
+        f"but got {b1_cache_hits} hits. shared_cell_type_cache is not being reused."
+    )
