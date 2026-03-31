@@ -501,13 +501,9 @@ class TestNamedRangeRegression:
 
         ws_chart = wb.create_sheet("Chart Data")
         ws_chart["D11"].value = 1
-        ws_chart["E11"].value = (
-            "=VLOOKUP('Chart Data'!D11, NumRiskTable, 2, FALSE())"
-        )
+        ws_chart["E11"].value = "=VLOOKUP('Chart Data'!D11, NumRiskTable, 2, FALSE())"
 
-        wb.defined_names.add(
-            DefinedName("NumRiskTable", attr_text="Table!$A$1:$B$1")
-        )
+        wb.defined_names.add(DefinedName("NumRiskTable", attr_text="Table!$A$1:$B$1"))
         wb.save(excel_path)
 
         graph = create_dependency_graph(

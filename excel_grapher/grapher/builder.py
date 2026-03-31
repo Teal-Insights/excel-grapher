@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import re
+import time
 from collections import deque
 from collections.abc import Iterable
 from pathlib import Path
@@ -8,14 +10,16 @@ from pathlib import Path
 import fastpyxl
 import fastpyxl.utils.cell
 from fastpyxl.worksheet.formula import ArrayFormula
+from fastpyxl.worksheet.worksheet import Worksheet
 
-from excel_grapher.core.cell_types import leaves_missing_cell_type_constraints
+from excel_grapher.core.cell_types import CellType, leaves_missing_cell_type_constraints
 
 from .dependency_provenance import EdgeProvenance
 from .dynamic_refs import (
     DynamicRefConfig,
     DynamicRefError,
     GlobalWorkbookBounds,
+    clear_index_target_cache,
     expand_leaf_env_to_argument_env,
     infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
@@ -25,12 +29,12 @@ from .graph import DependencyGraph, NodeHook
 from .guard import And, Compare, GuardExpr, Literal, Not
 from .node import Node
 from .parser import (
+    FormulaNormalizer,
     _find_function_calls_with_spans,
     _split_function_args,
     expand_range,
     format_key,
     mask_spans,
-    normalize_formula,
     parse_cell_refs,
     parse_dynamic_range_refs_with_spans,
     parse_guard_expr,
@@ -43,6 +47,8 @@ from .parser import (
 from .provenance_collect import collect_provenance_for_formula
 from .resolver import build_named_range_map
 
+_logger = logging.getLogger(__name__)
+
 
 def _parse_address_to_sheet_a1(addr: str) -> tuple[str, str]:
     """Parse a sheet-qualified address (e.g. Sheet1!A1 or 'My Sheet'!A1) to (sheet, a1)."""
@@ -51,7 +57,7 @@ def _parse_address_to_sheet_a1(addr: str) -> tuple[str, str]:
     if addr.startswith("'"):
         end_quote = addr.index("'", 1)
         sheet = addr[1:end_quote]
-        a1 = addr[end_quote + 2:]
+        a1 = addr[end_quote + 2 :]
         return sheet, a1
     sheet, a1 = addr.split("!", 1)
     return sheet, a1
@@ -178,19 +184,38 @@ def create_dependency_graph(
     :class:`~excel_grapher.grapher.dependency_provenance.EdgeProvenance` under the
     ``\"provenance\"`` key in :meth:`DependencyGraph.edge_attrs` (how the dependency
     arises: direct reference, static range, dynamic OFFSET/INDIRECT).
+
+    **Cost model**: constraint-based dynamic-ref expansion (``dynamic_refs`` set,
+    ``use_cached_dynamic_refs=False``) runs :func:`expand_leaf_env_to_argument_env`
+    once per formula regardless of ``capture_dependency_provenance``.  A shared
+    per-graph cache ensures provenance collection reuses the already-computed
+    expansion instead of repeating it.  Callers doing iterative constraint-tuning
+    workflows can still set ``capture_dependency_provenance=False`` to avoid any
+    provenance overhead (formula-string span collection, branch-union merging, etc.).
     """
 
     def load_wb(data_only: bool) -> fastpyxl.Workbook:
         if isinstance(workbook, fastpyxl.Workbook):
             if data_only:
-                raise ValueError("load_values=True is not supported when passing a Workbook instance")
+                raise ValueError(
+                    "load_values=True is not supported when passing a Workbook instance"
+                )
             return workbook
         path = Path(workbook)
         keep_vba = path.suffix.lower() == ".xlsm"
         return fastpyxl.load_workbook(path, data_only=data_only, keep_vba=keep_vba)
 
+    _t0 = time.perf_counter()
     wb_formulas = load_wb(data_only=False)
-    wb_values = load_wb(data_only=True) if load_values and not isinstance(workbook, fastpyxl.Workbook) else None
+    print(f"[DIAG] Loaded formula workbook in {time.perf_counter() - _t0:.2f}s", flush=True)
+    _t0 = time.perf_counter()
+    wb_values = (
+        load_wb(data_only=True)
+        if load_values and not isinstance(workbook, fastpyxl.Workbook)
+        else None
+    )
+    if wb_values is not None:
+        print(f"[DIAG] Loaded value workbook in {time.perf_counter() - _t0:.2f}s", flush=True)
 
     graph = DependencyGraph()
     for h in hooks or []:
@@ -199,8 +224,40 @@ def create_dependency_graph(
     named_range_maps = build_named_range_map(wb_formulas)
     named_ranges = named_range_maps.cell_map
     named_range_ranges = named_range_maps.range_map
+    normalizer = FormulaNormalizer(named_ranges, named_range_ranges)
     defined_names: set[str] = {str(name) for name in wb_formulas.defined_names}
+    # Clear per-graph-build caches from previous invocations.
+    clear_index_target_cache()
+
+    # Per-graph cache: (normalized_formula, current_sheet, current_a1) → (offset_targets, indirect_targets, index_targets).
+    # Populated by extract_expr_deps (constraint path); consumed by collect_provenance_for_formula
+    # to avoid re-running the expensive expand_leaf_env_to_argument_env call.
+    _dyn_cache: dict[tuple[str, str, str], tuple[set[str], set[str], set[str]]] = {}
+    # Shared cell-type cache for expand_leaf_env_to_argument_env: intermediate
+    # formula cells inferred once are reused across BFS nodes, avoiding redundant
+    # recursive domain inference when many dynamic-ref formulas share intermediates.
+    _shared_cell_type_cache: dict[str, CellType] = {}
     _NAME_TOKEN_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*!)")
+
+    # Worksheet caches: avoid repeated O(#sheets) __getitem__ scans on every BFS node.
+    _ws_f_cache: dict[str, Worksheet] = {}
+    _ws_v_cache: dict[str, Worksheet] = {}
+
+    def _get_ws_f(sheet: str) -> Worksheet:
+        ws = _ws_f_cache.get(sheet)
+        if ws is None:
+            ws = wb_formulas[sheet]
+            _ws_f_cache[sheet] = ws
+        return ws
+
+    def _get_ws_v(sheet: str) -> Worksheet:
+        # Only called when wb_values is not None.
+        ws = _ws_v_cache.get(sheet)
+        if ws is None:
+            assert wb_values is not None
+            ws = wb_values[sheet]
+            _ws_v_cache[sheet] = ws
+        return ws
 
     def resolve_cached_value(sheet: str, a1: str) -> object | None:
         nonlocal wb_values
@@ -208,7 +265,7 @@ def create_dependency_graph(
             wb_values = load_wb(data_only=True)
         if wb_values is None:
             return None
-        return wb_values[sheet][a1].value
+        return _get_ws_v(sheet)[a1].value
 
     def parse_target(t: str) -> tuple[str, str]:
         if "!" not in t:
@@ -218,7 +275,7 @@ def create_dependency_graph(
             # Find the closing quote
             end_quote = t.index("'", 1)
             sheet = t[1:end_quote]
-            a1 = t[end_quote + 2:]  # Skip '!
+            a1 = t[end_quote + 2 :]  # Skip '!
         else:
             sheet, a1 = t.split("!", 1)
         if sheet not in wb_formulas.sheetnames:
@@ -230,7 +287,16 @@ def create_dependency_graph(
     ) -> list[tuple[str, str, GuardExpr | None]]:
         if not formula.startswith("="):
             return []
+        try:
+            return _extract_deps_with_guards_inner(formula, current_sheet, current_a1)
+        except DynamicRefError:
+            raise
+        except ValueError as exc:
+            raise ValueError(f"{current_sheet}!{current_a1}: {exc}") from exc
 
+    def _extract_deps_with_guards_inner(
+        formula: str, current_sheet: str, current_a1: str
+    ) -> list[tuple[str, str, GuardExpr | None]]:
         def extract_expr_deps(expr: str) -> list[tuple[str, str]]:
             """
             Extract dependencies from an expression fragment (no leading '=').
@@ -249,6 +315,7 @@ def create_dependency_graph(
                     current_cell_a1=current_a1,
                     named_ranges=named_ranges,
                     named_range_ranges=named_range_ranges,
+                    normalizer=normalizer,
                     value_resolver=resolve_cached_value,
                 ):
                     dyn_spans.append(span)
@@ -267,7 +334,9 @@ def create_dependency_graph(
                         arg_sheet = ref.sheet if ref.sheet is not None else current_sheet
                         deps.append((arg_sheet, f"{ref.column}{ref.row}"))
             else:
-                calls = _find_function_calls_with_spans(f, {"OFFSET", "INDIRECT", "INDEX"})
+                calls = _find_function_calls_with_spans(
+                    f, frozenset({"OFFSET", "INDIRECT", "INDEX"})
+                )
                 if dynamic_refs is None:
                     # Filter out INDEX calls that only have literal args (no dynamic resolution needed).
                     dynamic_calls = []
@@ -307,11 +376,9 @@ def create_dependency_graph(
                             if args is None:
                                 continue
                             for i, arg in enumerate(args):
-                                normalized = normalize_formula(
+                                normalized = normalizer.normalize(
                                     "=" + arg,
-                                    current_sheet=current_sheet,
-                                    named_ranges=named_ranges,
-                                    named_range_ranges=named_range_ranges,
+                                    current_sheet,
                                 )
                                 # Variable args: always traverse to leaves for domain expansion.
                                 # OFFSET base (i==0): only traverse when base is an expression (e.g. INDEX(...))
@@ -328,145 +395,151 @@ def create_dependency_graph(
                                     deps.append((sh, a1))
                                     if is_variable:
                                         argument_addrs.add(format_key(sh, a1))
+                    if calls:
 
-                    def _refs_in_formula_without_dynamic(formula_str: str, sheet_of_cell: str) -> set[str]:
-                        dyn = _find_function_calls_with_spans(
-                            formula_str if formula_str.startswith("=") else "=" + formula_str,
-                            {"OFFSET", "INDIRECT", "INDEX"},
-                        )
-                        spans = [span for _fn, _inner, span in dyn]
-                        masked = mask_spans(
-                            formula_str if formula_str.startswith("=") else "=" + formula_str,
-                            spans,
-                        )
-                        norm = normalize_formula(
-                            masked,
-                            current_sheet=sheet_of_cell,
-                            named_ranges=named_ranges,
-                            named_range_ranges=named_range_ranges,
-                        )
-                        out: set[str] = set()
-                        for ref in parse_cell_refs(norm):
-                            sh = ref.sheet if ref.sheet is not None else sheet_of_cell
-                            out.add(format_key(sh, f"{ref.column}{ref.row}"))
-                        for start, end, _span in parse_range_refs_with_spans(norm):
-                            sh = start.sheet if start.sheet is not None else sheet_of_cell
-                            for dep_sheet, dep_a1 in expand_range(
-                                sheet=sh,
-                                start_col=start.column,
-                                start_row=start.row,
-                                end_col=end.column,
-                                end_row=end.row,
-                                max_cells=max_range_cells,
-                            ):
-                                out.add(format_key(dep_sheet, dep_a1))
-                        return out
+                        def _refs_in_formula_without_dynamic(
+                            formula_str: str, sheet_of_cell: str
+                        ) -> set[str]:
+                            dyn = _find_function_calls_with_spans(
+                                formula_str if formula_str.startswith("=") else "=" + formula_str,
+                                frozenset({"OFFSET", "INDIRECT", "INDEX"}),
+                            )
+                            spans = [span for _fn, _inner, span in dyn]
+                            masked = mask_spans(
+                                formula_str if formula_str.startswith("=") else "=" + formula_str,
+                                spans,
+                            )
+                            norm = normalizer.normalize(masked, sheet_of_cell)
+                            out: set[str] = set()
+                            for ref in parse_cell_refs(norm):
+                                sh = ref.sheet if ref.sheet is not None else sheet_of_cell
+                                out.add(format_key(sh, f"{ref.column}{ref.row}"))
+                            for start, end, _span in parse_range_refs_with_spans(norm):
+                                sh = start.sheet if start.sheet is not None else sheet_of_cell
+                                for dep_sheet, dep_a1 in expand_range(
+                                    sheet=sh,
+                                    start_col=start.column,
+                                    start_row=start.row,
+                                    end_col=end.column,
+                                    end_row=end.row,
+                                    max_cells=max_range_cells,
+                                ):
+                                    out.add(format_key(dep_sheet, dep_a1))
+                            return out
 
-                    all_refs: set[str] = set()
-                    to_visit = set(argument_addrs)
-                    while to_visit:
-                        addr = to_visit.pop()
-                        if addr in all_refs:
-                            continue
-                        all_refs.add(addr)
-                        sh, a1 = _parse_address_to_sheet_a1(addr)
-                        if sh not in wb_formulas.sheetnames:
-                            continue
-                        cell_val = wb_formulas[sh][a1].value
-                        if isinstance(cell_val, str) and cell_val.startswith("="):
-                            to_visit.update(_refs_in_formula_without_dynamic(cell_val, sh))
-                    leaves = set()
-                    for addr in all_refs:
-                        sh, a1 = _parse_address_to_sheet_a1(addr)
-                        if sh not in wb_formulas.sheetnames:
-                            continue
-                        cell_val = wb_formulas[sh][a1].value
-                        if not (isinstance(cell_val, str) and cell_val.startswith("=")):
-                            leaves.add(addr)
-                    missing_leaves = leaves_missing_cell_type_constraints(
-                        leaves, dynamic_refs.cell_type_env
-                    )
-                    if missing_leaves:
-                        cell_key = format_key(current_sheet, current_a1)
-                        formatted_missing = _format_missing_leaves(missing_leaves)
-                        raise DynamicRefError(
-                            f"Formula at {cell_key} contains OFFSET, INDIRECT, or INDEX; the following leaf "
-                            f"cells that feed them have no constraint: {formatted_missing}. "
-                            "Add constraints only for leaf (non-formula) cells."
+                        all_refs: set[str] = set()
+                        to_visit = set(argument_addrs)
+                        while to_visit:
+                            addr = to_visit.pop()
+                            if addr in all_refs:
+                                continue
+                            all_refs.add(addr)
+                            sh, a1 = _parse_address_to_sheet_a1(addr)
+                            if sh not in wb_formulas.sheetnames:
+                                continue
+                            cell_val = _get_ws_f(sh)[a1].value
+                            if isinstance(cell_val, str) and cell_val.startswith("="):
+                                to_visit.update(_refs_in_formula_without_dynamic(cell_val, sh))
+                        leaves = set()
+                        for addr in all_refs:
+                            sh, a1 = _parse_address_to_sheet_a1(addr)
+                            if sh not in wb_formulas.sheetnames:
+                                continue
+                            cell_val = _get_ws_f(sh)[a1].value
+                            if not (isinstance(cell_val, str) and cell_val.startswith("=")):
+                                leaves.add(addr)
+                        missing_leaves = leaves_missing_cell_type_constraints(
+                            leaves, dynamic_refs.cell_type_env
                         )
-                    def _get_cell_formula(addr: str) -> str | None:
-                        sh, a1 = _parse_address_to_sheet_a1(addr)
-                        if sh not in wb_formulas.sheetnames:
-                            return None
-                        v = wb_formulas[sh][a1].value
-                        if not isinstance(v, str) or not v.startswith("="):
-                            return None
-                        return normalize_formula(
-                            v,
-                            current_sheet=sh,
-                            named_ranges=named_ranges,
-                            named_range_ranges=named_range_ranges,
+                        if missing_leaves:
+                            cell_key = format_key(current_sheet, current_a1)
+                            formatted_missing = _format_missing_leaves(missing_leaves)
+                            raise DynamicRefError(
+                                f"Formula at {cell_key} contains OFFSET, INDIRECT, or INDEX; the following leaf "
+                                f"cells that feed them have no constraint: {formatted_missing}. "
+                                "Add constraints only for leaf (non-formula) cells."
+                            )
+                        formula_for_infer = normalizer.normalize(
+                            f if f.startswith("=") else "=" + f,
+                            current_sheet,
                         )
-                    expanded_env = expand_leaf_env_to_argument_env(
-                        all_refs,
-                        _get_cell_formula,
-                        _refs_in_formula_without_dynamic,
-                        dynamic_refs.cell_type_env,
-                        dynamic_refs.limits,
-                        named_ranges=named_ranges,
-                        named_range_ranges=named_range_ranges,
-                    )
-                    formula_for_infer = normalize_formula(
-                        f,
-                        current_sheet=current_sheet,
-                        named_ranges=named_ranges,
-                        named_range_ranges=named_range_ranges,
-                    )
-                    _col_letter, _current_row = fastpyxl.utils.cell.coordinate_from_string(
-                        current_a1
-                    )
-                    _current_col = fastpyxl.utils.cell.column_index_from_string(_col_letter)
-                    try:
-                        offset_targets = infer_dynamic_offset_targets(
-                            formula_for_infer,
-                            current_sheet=current_sheet,
-                            cell_type_env=expanded_env,
-                            limits=dynamic_refs.limits,
-                            bounds=bounds,
-                            named_ranges=named_ranges,
-                            named_range_ranges=named_range_ranges,
-                            current_row=_current_row,
-                            current_col=_current_col,
+                        _col_letter, _current_row = fastpyxl.utils.cell.coordinate_from_string(
+                            current_a1
                         )
-                        indirect_targets = infer_dynamic_indirect_targets(
-                            formula_for_infer,
-                            current_sheet=current_sheet,
-                            cell_type_env=expanded_env,
-                            limits=dynamic_refs.limits,
-                            bounds=bounds,
-                            named_ranges=named_ranges,
-                            named_range_ranges=named_range_ranges,
-                        )
-                        index_targets = infer_dynamic_index_targets(
-                            formula_for_infer,
-                            current_sheet=current_sheet,
-                            cell_type_env=expanded_env,
-                            limits=dynamic_refs.limits,
-                            bounds=bounds,
-                            named_ranges=named_ranges,
-                            named_range_ranges=named_range_ranges,
-                            current_row=_current_row,
-                            current_col=_current_col,
-                        )
-                    except DynamicRefError as exc:
-                        cell_key = format_key(current_sheet, current_a1)
-                        raise DynamicRefError(
-                            f"{exc} (while analyzing dynamic OFFSET/INDIRECT/INDEX for {cell_key}; "
-                            f"normalized formula {formula_for_infer!r})"
-                        ) from exc
-                    for addr in offset_targets | indirect_targets | index_targets:
-                        sh, a1 = _parse_address_to_sheet_a1(addr)
-                        deps.append((sh, a1))
+                        _current_col = fastpyxl.utils.cell.column_index_from_string(_col_letter)
+                        _cache_key = (formula_for_infer, current_sheet, current_a1)
+                        if _cache_key in _dyn_cache:
+                            offset_targets, indirect_targets, index_targets = _dyn_cache[_cache_key]
+                            _dyn_stats["cache_hits"] += 1
+                        else:
+                            _dyn_stats["infer_calls"] += 1
+
+                            def _get_cell_formula(addr: str) -> str | None:
+                                sh, a1 = _parse_address_to_sheet_a1(addr)
+                                if sh not in wb_formulas.sheetnames:
+                                    return None
+                                v = _get_ws_f(sh)[a1].value
+                                if not isinstance(v, str) or not v.startswith("="):
+                                    return None
+                                return normalizer.normalize(v, sh)
+
+                            expanded_env = expand_leaf_env_to_argument_env(
+                                all_refs,
+                                _get_cell_formula,
+                                _refs_in_formula_without_dynamic,
+                                dynamic_refs.cell_type_env,
+                                dynamic_refs.limits,
+                                named_ranges=named_ranges,
+                                named_range_ranges=named_range_ranges,
+                                max_range_cells=max_range_cells,
+                                shared_cell_type_cache=_shared_cell_type_cache,
+                            )
+                            try:
+                                offset_targets = infer_dynamic_offset_targets(
+                                    formula_for_infer,
+                                    current_sheet=current_sheet,
+                                    cell_type_env=expanded_env,
+                                    limits=dynamic_refs.limits,
+                                    bounds=bounds,
+                                    named_ranges=named_ranges,
+                                    named_range_ranges=named_range_ranges,
+                                    current_row=_current_row,
+                                    current_col=_current_col,
+                                )
+                                indirect_targets = infer_dynamic_indirect_targets(
+                                    formula_for_infer,
+                                    current_sheet=current_sheet,
+                                    cell_type_env=expanded_env,
+                                    limits=dynamic_refs.limits,
+                                    bounds=bounds,
+                                    named_ranges=named_ranges,
+                                    named_range_ranges=named_range_ranges,
+                                )
+                                index_targets = infer_dynamic_index_targets(
+                                    formula_for_infer,
+                                    current_sheet=current_sheet,
+                                    cell_type_env=expanded_env,
+                                    limits=dynamic_refs.limits,
+                                    bounds=bounds,
+                                    named_ranges=named_ranges,
+                                    named_range_ranges=named_range_ranges,
+                                    current_row=_current_row,
+                                    current_col=_current_col,
+                                )
+                            except DynamicRefError as exc:
+                                cell_key = format_key(current_sheet, current_a1)
+                                raise DynamicRefError(
+                                    f"{exc} (while analyzing dynamic OFFSET/INDIRECT/INDEX for {cell_key}; "
+                                    f"normalized formula {formula_for_infer!r})"
+                                ) from exc
+                            _dyn_cache[_cache_key] = (
+                                offset_targets,
+                                indirect_targets,
+                                index_targets,
+                            )
+                        for addr in offset_targets | indirect_targets | index_targets:
+                            sh, a1 = _parse_address_to_sheet_a1(addr)
+                            deps.append((sh, a1))
             masked = mask_spans(masked, dyn_spans)
 
             # 1) Expand ranges, then mask them so later cell-ref parsing doesn't
@@ -533,10 +606,14 @@ def create_dependency_graph(
         if_parts = split_top_level_if(formula)
         if if_parts is not None:
             cond_s, then_s, else_s = if_parts
-            cond_guard = parse_guard_expr(cond_s, current_sheet=current_sheet, named_ranges=named_ranges)
+            cond_guard = parse_guard_expr(
+                cond_s, current_sheet=current_sheet, named_ranges=named_ranges
+            )
 
             unconditional = set(extract_expr_deps(cond_s))
-            out: dict[tuple[str, str], GuardExpr | None] = {(sh, a1): None for (sh, a1) in unconditional}
+            out: dict[tuple[str, str], GuardExpr | None] = {
+                (sh, a1): None for (sh, a1) in unconditional
+            }
 
             # If the condition can't be parsed, branch deps are still conditional, but opaque.
             then_guard: GuardExpr | None = cond_guard
@@ -578,11 +655,15 @@ def create_dependency_graph(
             for c in conditions:
                 unconditional |= set(extract_expr_deps(c))
 
-            out: dict[tuple[str, str], GuardExpr | None] = {(sh, a1): None for (sh, a1) in unconditional}
+            out: dict[tuple[str, str], GuardExpr | None] = {
+                (sh, a1): None for (sh, a1) in unconditional
+            }
 
             prev_negations: list[GuardExpr] = []
             for _idx, (cond_s, val_s) in enumerate(zip(conditions, values, strict=False), start=1):
-                cond_guard = parse_guard_expr(cond_s, current_sheet=current_sheet, named_ranges=named_ranges)
+                cond_guard = parse_guard_expr(
+                    cond_s, current_sheet=current_sheet, named_ranges=named_ranges
+                )
                 # Build sequential guard: cond_i AND NOT(cond_1) AND ... NOT(cond_{i-1})
                 g: GuardExpr | None
                 if cond_guard is None:
@@ -600,7 +681,11 @@ def create_dependency_graph(
 
             if default_expr is not None:
                 if prev_negations:
-                    default_guard: GuardExpr = prev_negations[0] if len(prev_negations) == 1 else And(tuple(prev_negations))
+                    default_guard: GuardExpr = (
+                        prev_negations[0]
+                        if len(prev_negations) == 1
+                        else And(tuple(prev_negations))
+                    )
                 else:
                     default_guard = Literal(True)
                 for sh, a1 in extract_expr_deps(default_expr):
@@ -617,9 +702,13 @@ def create_dependency_graph(
             index_s = choose_args[0]
             choices = choose_args[1:]
 
-            index_expr = parse_guard_expr(index_s, current_sheet=current_sheet, named_ranges=named_ranges)
+            index_expr = parse_guard_expr(
+                index_s, current_sheet=current_sheet, named_ranges=named_ranges
+            )
             unconditional = set(extract_expr_deps(index_s))
-            out: dict[tuple[str, str], GuardExpr | None] = {(sh, a1): None for (sh, a1) in unconditional}
+            out: dict[tuple[str, str], GuardExpr | None] = {
+                (sh, a1): None for (sh, a1) in unconditional
+            }
 
             for i, choice_s in enumerate(choices, start=1):
                 guard: GuardExpr | None = None
@@ -637,9 +726,13 @@ def create_dependency_graph(
         switch_args = split_top_level_switch(formula)
         if switch_args is not None and len(switch_args) >= 3:
             expr_s = switch_args[0]
-            expr_ge = parse_guard_expr(expr_s, current_sheet=current_sheet, named_ranges=named_ranges)
+            expr_ge = parse_guard_expr(
+                expr_s, current_sheet=current_sheet, named_ranges=named_ranges
+            )
             unconditional = set(extract_expr_deps(expr_s))
-            out: dict[tuple[str, str], GuardExpr | None] = {(sh, a1): None for (sh, a1) in unconditional}
+            out: dict[tuple[str, str], GuardExpr | None] = {
+                (sh, a1): None for (sh, a1) in unconditional
+            }
 
             pairs = switch_args[1:]
             default_expr: str | None = None
@@ -651,7 +744,9 @@ def create_dependency_graph(
             for i in range(0, len(pairs), 2):
                 val_s = pairs[i]
                 res_s = pairs[i + 1]
-                val_ge = parse_guard_expr(val_s, current_sheet=current_sheet, named_ranges=named_ranges)
+                val_ge = parse_guard_expr(
+                    val_s, current_sheet=current_sheet, named_ranges=named_ranges
+                )
                 match: GuardExpr | None = None
                 if expr_ge is not None and val_ge is not None:
                     match = Compare(left=expr_ge, op="=", right=val_ge)
@@ -670,7 +765,11 @@ def create_dependency_graph(
 
             if default_expr is not None:
                 if prev_negations:
-                    default_guard2: GuardExpr = prev_negations[0] if len(prev_negations) == 1 else And(tuple(prev_negations))
+                    default_guard2: GuardExpr = (
+                        prev_negations[0]
+                        if len(prev_negations) == 1
+                        else And(tuple(prev_negations))
+                    )
                 else:
                     default_guard2 = Literal(True)
                 for sh, a1 in extract_expr_deps(default_expr):
@@ -689,6 +788,11 @@ def create_dependency_graph(
         sh, a1 = parse_target(str(t))
         q.append((sh, a1, 0))
 
+    _bfs_t0 = time.perf_counter()
+    _bfs_count = 0
+    _bfs_next_log = 5000
+    _dyn_stats = {"infer_calls": 0, "cache_hits": 0}
+
     try:
         while q:
             sheet, a1, depth = q.popleft()
@@ -696,10 +800,20 @@ def create_dependency_graph(
             if key in visited:
                 continue
             visited.add(key)
+            _bfs_count += 1
+            if _bfs_count >= _bfs_next_log:
+                print(
+                    f"[DIAG] BFS: {_bfs_count} nodes, queue={len(q)}, depth={depth}, "
+                    f"{time.perf_counter() - _bfs_t0:.1f}s, last={key}, "
+                    f"dyn_infer={_dyn_stats['infer_calls']}, dyn_cache_hits={_dyn_stats['cache_hits']}, "
+                    f"env_cache_size={len(_shared_cell_type_cache)}",
+                    flush=True,
+                )
+                _bfs_next_log += 5000
             if depth > max_depth:
                 continue
 
-            ws_f = wb_formulas[sheet]
+            ws_f = _get_ws_f(sheet)
             raw = ws_f[a1].value
             if isinstance(raw, ArrayFormula):
                 raw = raw.text or ""
@@ -710,15 +824,10 @@ def create_dependency_graph(
             if is_formula:
                 formula_str = str(raw)
                 formula = formula_str
-                normalized = normalize_formula(
-                    formula_str,
-                    sheet,
-                    named_ranges,
-                    named_range_ranges,
-                )
+                normalized = normalizer.normalize(formula_str, sheet)
                 value = None
                 if wb_values is not None:
-                    value = wb_values[sheet][a1].value
+                    value = _get_ws_v(sheet)[a1].value
                 is_leaf = False
             else:
                 formula_str = ""
@@ -742,6 +851,10 @@ def create_dependency_graph(
             if not is_formula:
                 continue
 
+            # Run extraction first so that the constraint-based dynamic-ref expansion
+            # (_dyn_cache) is populated before provenance collection reads from it.
+            deps_and_guards = extract_deps_with_guards(formula_str, sheet, a1)
+
             prov_map: dict[str, EdgeProvenance] | None = None
             if capture_dependency_provenance:
                 prov_map = collect_provenance_for_formula(
@@ -751,6 +864,7 @@ def create_dependency_graph(
                     current_a1=a1,
                     named_ranges=named_ranges,
                     named_range_ranges=named_range_ranges,
+                    normalizer=normalizer,
                     defined_names=defined_names,
                     expand_ranges=expand_ranges,
                     max_range_cells=max_range_cells,
@@ -758,9 +872,10 @@ def create_dependency_graph(
                     dynamic_refs=dynamic_refs,
                     wb_formulas=wb_formulas,
                     resolve_cached_value=resolve_cached_value,
+                    dynamic_expansion_cache=_dyn_cache,
                 )
 
-            for dep_sheet, dep_a1, guard in extract_deps_with_guards(formula_str, sheet, a1):
+            for dep_sheet, dep_a1, guard in deps_and_guards:
                 dep_key = format_key(dep_sheet, dep_a1)
                 if prov_map is not None:
                     p = prov_map.get(dep_key)
@@ -774,6 +889,13 @@ def create_dependency_graph(
                         continue
                     q.append((dep_sheet, dep_a1, depth + 1))
     finally:
+        if _dyn_stats["infer_calls"] or _dyn_stats["cache_hits"]:
+            print(
+                f"[DIAG] BFS done: {_bfs_count} nodes, {time.perf_counter() - _bfs_t0:.2f}s, "
+                f"dyn_infer={_dyn_stats['infer_calls']}, dyn_cache_hits={_dyn_stats['cache_hits']}, "
+                f"env_cache_size={len(_shared_cell_type_cache)}",
+                flush=True,
+            )
         if wb_values is not None:
             wb_values.close()
         if not isinstance(workbook, fastpyxl.Workbook):
@@ -781,3 +903,267 @@ def create_dependency_graph(
 
     return graph
 
+
+def list_dynamic_ref_constraint_candidates(
+    workbook: Path | str | fastpyxl.Workbook,
+    targets: Iterable[str],
+    *,
+    dynamic_refs: DynamicRefConfig | None = None,
+    max_depth: int = 50,
+    max_range_cells: int = 5000,
+) -> list[str]:
+    """Return a sorted list of leaf cell addresses that feed dynamic-ref arguments
+    (OFFSET/INDIRECT/INDEX) but have no entry in ``dynamic_refs.cell_type_env``.
+
+    Unlike :func:`create_dependency_graph`, this function does **not** raise
+    :exc:`DynamicRefError` when constraints are missing.  Instead it collects all
+    missing leaf addresses in a single pass and returns them sorted.
+
+    When ``dynamic_refs`` is ``None`` the function treats it as an empty constraint
+    environment: all leaf cells that feed dynamic-ref arguments are returned as
+    candidates.
+
+    **Completeness caveat**: Cells reachable only through unresolvable dynamic refs
+    will not be visited, so their constraint candidates won't appear in the output.
+    A second call after adding the first batch of constraints will quickly find any
+    remaining missing entries.
+    """
+    if isinstance(workbook, fastpyxl.Workbook):
+        wb_formulas = workbook
+        _owns_wb = False
+    else:
+        path = Path(workbook)
+        keep_vba = path.suffix.lower() == ".xlsm"
+        wb_formulas = fastpyxl.load_workbook(path, data_only=False, keep_vba=keep_vba)
+        _owns_wb = True
+
+    try:
+        named_range_maps = build_named_range_map(wb_formulas)
+        named_ranges = named_range_maps.cell_map
+        named_range_ranges = named_range_maps.range_map
+        normalizer = FormulaNormalizer(named_ranges, named_range_ranges)
+        cell_type_env = {} if dynamic_refs is None else dynamic_refs.cell_type_env
+        _NAME_TOKEN_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*!)")
+
+        def _refs_without_dynamic(formula_str: str, sheet: str) -> set[str]:
+            """Static (non-dynamic-ref) cell addresses referenced by *formula_str*."""
+            f = formula_str if formula_str.startswith("=") else "=" + formula_str
+            dyn = _find_function_calls_with_spans(f, frozenset({"OFFSET", "INDIRECT", "INDEX"}))
+            spans = [span for _fn, _inner, span in dyn]
+            masked = mask_spans(f, spans)
+            norm = normalizer.normalize(masked, sheet)
+            out: set[str] = set()
+            for ref in parse_cell_refs(norm):
+                sh = ref.sheet if ref.sheet is not None else sheet
+                out.add(format_key(sh, f"{ref.column}{ref.row}"))
+            for start, end, _span in parse_range_refs_with_spans(norm):
+                sh = start.sheet if start.sheet is not None else sheet
+                for dep_sheet, dep_a1 in expand_range(
+                    sheet=sh,
+                    start_col=start.column,
+                    start_row=start.row,
+                    end_col=end.column,
+                    end_row=end.row,
+                    max_cells=max_range_cells,
+                ):
+                    out.add(format_key(dep_sheet, dep_a1))
+            for m in _NAME_TOKEN_RE.finditer(norm):
+                token = m.group(1)
+                resolved = named_ranges.get(token)
+                if resolved is not None:
+                    out.add(format_key(resolved[0], resolved[1]))
+                    continue
+                resolved_range = named_range_ranges.get(token)
+                if resolved_range is not None:
+                    rsh, start_a1, end_a1 = resolved_range
+                    s_col, s_row = fastpyxl.utils.cell.coordinate_from_string(start_a1)
+                    e_col, e_row = fastpyxl.utils.cell.coordinate_from_string(end_a1)
+                    for dep_sheet, dep_a1 in expand_range(
+                        sheet=rsh,
+                        start_col=s_col,
+                        start_row=int(s_row),
+                        end_col=e_col,
+                        end_row=int(e_row),
+                        max_cells=max_range_cells,
+                    ):
+                        out.add(format_key(dep_sheet, dep_a1))
+            return out
+
+        collected: set[str] = set()
+        visited: set[str] = set()
+        queue: deque[tuple[str, str, int]] = deque()
+
+        for t in targets:
+            t_str = str(t)
+            if "!" not in t_str:
+                raise ValueError(f"Target must be sheet-qualified: {t_str}")
+            sh, a1 = _parse_address_to_sheet_a1(t_str)
+            if sh not in wb_formulas.sheetnames:
+                raise ValueError(f"Sheet not found: {sh}")
+            queue.append((sh, a1, 0))
+
+        while queue:
+            current_sheet, current_a1, depth = queue.popleft()
+            key = format_key(current_sheet, current_a1)
+            if key in visited:
+                continue
+            visited.add(key)
+
+            if depth >= max_depth or current_sheet not in wb_formulas.sheetnames:
+                continue
+
+            cell_val = wb_formulas[current_sheet][current_a1].value
+            if isinstance(cell_val, ArrayFormula):
+                cell_val = cell_val.text or ""
+                if cell_val and not cell_val.startswith("="):
+                    cell_val = f"={cell_val}"
+            if not isinstance(cell_val, str) or not cell_val.startswith("="):
+                continue  # leaf cell — nothing to do
+
+            f = cell_val
+
+            # Find dynamic calls (OFFSET/INDIRECT/INDEX), filter static INDEX.
+            calls = _find_function_calls_with_spans(f, frozenset({"OFFSET", "INDIRECT", "INDEX"}))
+            dynamic_calls = []
+            for fn_name, inner, span in calls:
+                if fn_name == "INDEX":
+                    idx_args = _split_function_args(inner)
+                    if idx_args is not None and len(idx_args) >= 2:
+                        has_non_literal = False
+                        for j, idx_arg in enumerate(idx_args):
+                            if j == 0:
+                                continue  # skip array arg
+                            try:
+                                float(idx_arg.strip())
+                            except ValueError:
+                                has_non_literal = True
+                                break
+                        if not has_non_literal:
+                            continue  # static INDEX — skip
+                dynamic_calls.append((fn_name, inner, span))
+
+            if dynamic_calls:
+                # Collect variable argument addresses for leaf discovery.
+                argument_addrs: set[str] = set()
+                for fn_name, inner, _span in dynamic_calls:
+                    args = _split_function_args(inner)
+                    if args is None:
+                        continue
+                    for i, arg in enumerate(args):
+                        normalized_arg = normalizer.normalize("=" + arg, current_sheet)
+                        is_variable = (
+                            (fn_name == "OFFSET" and i >= 1)
+                            or (fn_name == "OFFSET" and i == 0 and "(" in normalized_arg)
+                            or fn_name == "INDIRECT"
+                            or (fn_name == "INDEX" and i >= 1)
+                        )
+                        if is_variable:
+                            for ref in parse_cell_refs(normalized_arg):
+                                sh = ref.sheet if ref.sheet is not None else current_sheet
+                                argument_addrs.add(format_key(sh, f"{ref.column}{ref.row}"))
+
+                # Walk argument_addrs to statically-reachable leaves.
+                all_refs: set[str] = set()
+                to_visit_inner = set(argument_addrs)
+                while to_visit_inner:
+                    addr = to_visit_inner.pop()
+                    if addr in all_refs:
+                        continue
+                    all_refs.add(addr)
+                    sh, a1 = _parse_address_to_sheet_a1(addr)
+                    if sh not in wb_formulas.sheetnames:
+                        continue
+                    inner_val = wb_formulas[sh][a1].value
+                    if isinstance(inner_val, str) and inner_val.startswith("="):
+                        to_visit_inner.update(_refs_without_dynamic(inner_val, sh))
+
+                leaves: set[str] = set()
+                for addr in all_refs:
+                    sh, a1 = _parse_address_to_sheet_a1(addr)
+                    if sh not in wb_formulas.sheetnames:
+                        continue
+                    inner_val = wb_formulas[sh][a1].value
+                    if not (isinstance(inner_val, str) and inner_val.startswith("=")):
+                        leaves.add(addr)
+
+                missing = leaves_missing_cell_type_constraints(leaves, cell_type_env)
+                if missing:
+                    collected.update(missing)
+                    # Skip infer — dynamic targets unknown without full constraints.
+                elif dynamic_refs is not None:
+                    # All leaves constrained — run infer to discover dynamic targets.
+                    try:
+                        bounds = GlobalWorkbookBounds(sheet=current_sheet)
+                        formula_for_infer = normalizer.normalize(f, current_sheet)
+                        _col_letter, _current_row = fastpyxl.utils.cell.coordinate_from_string(
+                            current_a1
+                        )
+                        _current_col = fastpyxl.utils.cell.column_index_from_string(_col_letter)
+
+                        def _get_cell_formula(addr: str) -> str | None:
+                            sh2, a1_2 = _parse_address_to_sheet_a1(addr)
+                            if sh2 not in wb_formulas.sheetnames:
+                                return None
+                            v = wb_formulas[sh2][a1_2].value
+                            if not isinstance(v, str) or not v.startswith("="):
+                                return None
+                            return normalizer.normalize(v, sh2)
+
+                        expanded_env = expand_leaf_env_to_argument_env(
+                            all_refs,
+                            _get_cell_formula,
+                            _refs_without_dynamic,
+                            dynamic_refs.cell_type_env,
+                            dynamic_refs.limits,
+                            named_ranges=named_ranges,
+                            named_range_ranges=named_range_ranges,
+                            max_range_cells=max_range_cells,
+                        )
+                        offset_targets = infer_dynamic_offset_targets(
+                            formula_for_infer,
+                            current_sheet=current_sheet,
+                            cell_type_env=expanded_env,
+                            limits=dynamic_refs.limits,
+                            bounds=bounds,
+                            named_ranges=named_ranges,
+                            named_range_ranges=named_range_ranges,
+                            current_row=_current_row,
+                            current_col=_current_col,
+                        )
+                        indirect_targets = infer_dynamic_indirect_targets(
+                            formula_for_infer,
+                            current_sheet=current_sheet,
+                            cell_type_env=expanded_env,
+                            limits=dynamic_refs.limits,
+                            bounds=bounds,
+                            named_ranges=named_ranges,
+                            named_range_ranges=named_range_ranges,
+                        )
+                        index_targets = infer_dynamic_index_targets(
+                            formula_for_infer,
+                            current_sheet=current_sheet,
+                            cell_type_env=expanded_env,
+                            limits=dynamic_refs.limits,
+                            bounds=bounds,
+                            named_ranges=named_ranges,
+                            named_range_ranges=named_range_ranges,
+                            current_row=_current_row,
+                            current_col=_current_col,
+                        )
+                        for addr in offset_targets | indirect_targets | index_targets:
+                            sh, a1 = _parse_address_to_sheet_a1(addr)
+                            queue.append((sh, a1, depth + 1))
+                    except DynamicRefError:
+                        pass  # best-effort: skip dynamic targets for this formula
+
+            # Queue static (non-dynamic-ref) deps for continued BFS.
+            for addr in _refs_without_dynamic(f, current_sheet):
+                sh, a1 = _parse_address_to_sheet_a1(addr)
+                if sh in wb_formulas.sheetnames:
+                    queue.append((sh, a1, depth + 1))
+
+    finally:
+        if _owns_wb:
+            wb_formulas.close()
+
+    return sorted(collected)

@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import ParamSpec, TypeVar
 
 from ..types import CellValue
 
 FUNCTIONS: dict[str, Callable[..., CellValue]] = {}
 
+P = ParamSpec("P")
+R = TypeVar("R", bound=CellValue)
+
 
 def register(
     name: str,
-) -> Callable[[Callable[..., CellValue]], Callable[..., CellValue]]:
-    def decorator(fn: Callable[..., CellValue]) -> Callable[..., CellValue]:
+) -> Callable[[Callable[P, R]], Callable[P, R]]:
+    def decorator(fn: Callable[P, R]) -> Callable[P, R]:
         FUNCTIONS[name.upper()] = fn
         return fn
 

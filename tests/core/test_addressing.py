@@ -181,3 +181,20 @@ def test_indirect_text_to_range_respects_a1_flag_for_unsupported_r1c1() -> None:
     result = _indirect_text_to_range("R1C1", a1=False, bounds=bounds)
     assert result == XlError.NAME
 
+
+def test_index_excel_range_single_column_matches_lookup_style_index() -> None:
+    from excel_grapher.core.addressing import index_excel_range
+
+    base = ExcelRange(sheet="lookup", start_row=4, start_col=3, end_row=73, end_col=3)
+    r = index_excel_range(base, 21, 1)
+    assert isinstance(r, ExcelRange)
+    assert (r.start_row, r.start_col, r.end_row, r.end_col) == (24, 3, 24, 3)
+
+
+def test_index_excel_range_two_dimensional_cell() -> None:
+    from excel_grapher.core.addressing import index_excel_range
+
+    base = ExcelRange(sheet="S", start_row=1, start_col=1, end_row=3, end_col=3)
+    r = index_excel_range(base, 2, 2)
+    assert isinstance(r, ExcelRange)
+    assert (r.start_row, r.start_col, r.end_row, r.end_col) == (2, 2, 2, 2)

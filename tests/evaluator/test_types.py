@@ -13,6 +13,12 @@ def test_excel_range_cell_addresses() -> None:
     ]
 
 
+def test_excel_range_cell_addresses_quote_sheet_with_space() -> None:
+    """Keys must match DependencyGraph / Node.key (format_cell_key rules)."""
+    r = ExcelRange(sheet="Imported data", start_row=126, start_col=1, end_row=126, end_col=1)
+    assert list(r.cell_addresses()) == ["'Imported data'!A126"]
+
+
 def test_excel_range_resolve_shapes_array() -> None:
     r = ExcelRange(sheet="S", start_row=1, start_col=1, end_row=2, end_col=3)
     mapping = {

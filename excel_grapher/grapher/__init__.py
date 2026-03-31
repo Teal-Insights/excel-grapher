@@ -11,7 +11,7 @@ from excel_grapher.core.cell_types import (
     RealIntervalDomain,
 )
 
-from .builder import create_dependency_graph
+from .builder import create_dependency_graph, list_dynamic_ref_constraint_candidates
 from .dependency_provenance import DependencyCause, EdgeProvenance
 from .dynamic_refs import (
     DynamicRefConfig,
@@ -48,6 +48,7 @@ from .validation import ValidationResult, WorkbookCalcSettings, get_calc_setting
 
 __all__ = [
     "create_dependency_graph",
+    "list_dynamic_ref_constraint_candidates",
     "DependencyCause",
     "DependencyGraph",
     "EdgeProvenance",
@@ -96,6 +97,5 @@ __all__ = [
     "WorkbookCalcSettings",
     "format_cell_key",
     "format_key",
-    "needs_quoting"
+    "needs_quoting",
 ]
-

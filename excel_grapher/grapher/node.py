@@ -63,4 +63,3 @@ class Node:
                 return ValueType.ERROR
             return ValueType.STRING
         return ValueType.UNKNOWN
-

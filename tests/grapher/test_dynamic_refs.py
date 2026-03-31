@@ -1,4 +1,5 @@
 """Regression tests for dynamic reference parsing (OFFSET/INDIRECT)."""
+
 from __future__ import annotations
 
 import warnings
@@ -20,6 +21,7 @@ from excel_grapher.core.cell_types import (
 )
 from excel_grapher.core.formula_ast import parse as parse_ast
 from excel_grapher.grapher import dynamic_refs as dynamic_refs_mod
+from excel_grapher.grapher import parser as parser_mod
 from excel_grapher.grapher.builder import _format_missing_leaves
 from excel_grapher.grapher.dynamic_refs import (
     DynamicRefConfig,
@@ -27,10 +29,12 @@ from excel_grapher.grapher.dynamic_refs import (
     DynamicRefLimits,
     FromWorkbook,
     constrain,
+    expand_leaf_env_to_argument_env,
     infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
 )
+from excel_grapher.grapher.parser import FormulaNormalizer, parse_dynamic_range_refs_with_spans
 
 
 def _build_offset_named_range_workbook(path: Path) -> None:
@@ -94,9 +98,7 @@ def test_offset_with_cached_named_range_warns_once(tmp_path: Path) -> None:
     # A1 = OFFSET(B1,0,LANG)+OFFSET(B1,0,LANG); LANG = Sheet1!C1. Deps include C1 (offset arg) and D1 (resolved target).
     assert deps == {"Sheet1!C1", "Sheet1!D1"}
 
-    cache_warnings = [
-        w for w in caught if "cached workbook values" in str(w.message)
-    ]
+    cache_warnings = [w for w in caught if "cached workbook values" in str(w.message)]
     assert len(cache_warnings) == 1
 
 
@@ -111,6 +113,24 @@ def test_offset_index_row_resolves_named_range(tmp_path: Path) -> None:
     assert deps == {"lookup!B4"}
 
 
+def test_offset_index_clamps_row_when_resolved_index_exceeds_named_range() -> None:
+    """INDEX row from ROW()-ROW(anchor) may exceed array height; clamp for static OFFSET resolution."""
+    formula = "=OFFSET(INDEX(Country_list,ROW()-ROW($B$2)+1,1),0,-1)"
+    out = parse_dynamic_range_refs_with_spans(
+        formula,
+        current_sheet="Sheet1",
+        current_cell_a1="A10",
+        named_ranges={},
+        named_range_ranges={"Country_list": ("lookup", "C4", "C6")},
+        value_resolver=None,
+    )
+    assert len(out) == 1
+    start, end, _span, _arg_refs = out[0]
+    assert start.sheet == "lookup" and end.sheet == "lookup"
+    assert start.column == end.column == "B"
+    assert start.row == end.row == 6
+
+
 def test_offset_argument_references_are_dependencies(tmp_path: Path) -> None:
     excel_path = tmp_path / "offset_arg_ref.xlsx"
     _build_offset_with_arg_ref_workbook(excel_path)
@@ -120,6 +140,35 @@ def test_offset_argument_references_are_dependencies(tmp_path: Path) -> None:
     )
     deps = graph.dependencies("Sheet1!A1")
     assert deps == {"Sheet1!C1", "START!M10"}
+
+
+def test_parse_dynamic_range_refs_uses_injected_normalizer(monkeypatch: pytest.MonkeyPatch) -> None:
+    class TrackingNormalizer(FormulaNormalizer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls: list[tuple[str, str]] = []
+
+        def normalize(self, formula: str, current_sheet: str) -> str:
+            self.calls.append((formula, current_sheet))
+            return super().normalize(formula, current_sheet)
+
+    def fail_normalize_formula(*args: object, **kwargs: object) -> str:
+        raise AssertionError("legacy normalize_formula path should not be used")
+
+    monkeypatch.setattr(parser_mod, "normalize_formula", fail_normalize_formula)
+    normalizer = TrackingNormalizer()
+
+    out = parse_dynamic_range_refs_with_spans(
+        "=OFFSET(B1,0,1)",
+        current_sheet="Sheet1",
+        named_ranges={},
+        named_range_ranges={},
+        normalizer=normalizer,
+        value_resolver=None,
+    )
+
+    assert len(out) == 1
+    assert normalizer.calls == [("=0", "Sheet1"), ("=1", "Sheet1")]
 
 
 def _make_env(mapping: dict[str, CellType]) -> CellTypeEnv:
@@ -184,9 +233,7 @@ def test_dynamic_offset_index_value_and_ref_only_requires_domain() -> None:
             current_row=1,
             current_col=1,
         )
-    assert "Missing CellType" in str(exc_info.value) or "must be numeric" in str(
-        exc_info.value
-    )
+    assert "Missing CellType" in str(exc_info.value) or "must be numeric" in str(exc_info.value)
 
 
 def test_dynamic_offset_requires_domains_for_all_leaf_cells() -> None:
@@ -512,6 +559,110 @@ def test_create_dependency_graph_raises_when_leaf_missing_constraint(tmp_path: P
     assert "leaf" in str(exc_info.value).lower()
 
 
+def test_dynamic_ref_arg_subgraph_aligns_ast_range_cap_with_builder_bfs_issue_56(
+    tmp_path: Path,
+) -> None:
+    """Interior cells of oversized static ranges must not be required only by AST collection.
+
+    The builder BFS uses ``expand_range(..., max_cells=...)`` (corners only when over the
+    cap). Argument-env expansion must use the same cap when collecting range addresses
+    from the parsed AST (GitHub issue #56).
+    """
+    excel_path = tmp_path / "offset_sum_range_cap_issue_56.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(0, 0, 1)  # A1
+    # B1 interior of A1:C1 — left empty / unconstrained
+    ws.write_number(0, 2, 1)  # C1
+    ws.write_formula(0, 3, "=SUM(Sheet1!A1:C1)", None, 2)  # D1
+    ws.write_number(0, 5, 0)  # F1 OFFSET base
+    ws.write_formula(0, 4, "=OFFSET(Sheet1!F1,Sheet1!D1,0)", None, 0)  # E1
+    wb.close()
+
+    env = _make_env(
+        {
+            "Sheet1!A1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({1}))),
+            "Sheet1!C1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({1}))),
+            "Sheet1!F1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({0}))),
+        }
+    )
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+
+    graph = create_dependency_graph(
+        excel_path,
+        ["Sheet1!E1"],
+        load_values=False,
+        dynamic_refs=config,
+        max_range_cells=2,
+    )
+    assert "Sheet1!B1" not in graph
+
+
+def test_dynamic_ref_missing_multiple_leaves_raises_builder_aggregate_not_per_leaf_issue_56(
+    tmp_path: Path,
+) -> None:
+    """Several unconstrained leaves in one OFFSET argument should surface in one builder error."""
+    excel_path = tmp_path / "offset_three_leaves_issue_56.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(0, 0, 0)  # A1 base
+    ws.write_formula(
+        0,
+        4,
+        "=OFFSET(Sheet1!A1,Sheet1!B1+Sheet1!C1+Sheet1!D1,0)",
+        None,
+        0,
+    )  # E1
+    wb.close()
+    config = DynamicRefConfig(cell_type_env=_make_env({}), limits=DynamicRefLimits())
+    with pytest.raises(DynamicRefError) as exc_info:
+        create_dependency_graph(
+            excel_path,
+            ["Sheet1!E1"],
+            load_values=False,
+            dynamic_refs=config,
+        )
+    msg = str(exc_info.value)
+    assert "following leaf" in msg
+    assert "have no constraint" in msg
+    assert "Missing constraint for leaf" not in msg
+    # _format_missing_leaves may merge B1:D1 into one rectangle
+    assert "Sheet1!B1" in msg and "Sheet1!D1" in msg
+
+
+def test_expand_leaf_env_mutual_formula_refs_in_argument_subgraph_issue_54() -> None:
+    """Issue #54: mutual formula refs in the argument chain must not abort type expansion.
+
+    Mirrors LIC-style patterns (e.g. aggregate cell referenced by scaled rows that also
+    feed formulas pointing back). The cycle edge is approximated as ``ANY`` so graph build
+    can continue.
+    """
+    leaf_env = _make_env({})
+    f_a1 = "=Sheet1!B1+1"
+    f_b1 = "=Sheet1!A1+1"
+
+    def _get_cell_formula(addr: str) -> str | None:
+        if addr == "Sheet1!A1":
+            return f_a1
+        if addr == "Sheet1!B1":
+            return f_b1
+        return None
+
+    def _get_refs_from_formula(formula: str, sheet: str) -> set[str]:
+        assert sheet == "Sheet1"
+        return {f_a1: {"Sheet1!B1"}, f_b1: {"Sheet1!A1"}}[formula]
+
+    env = expand_leaf_env_to_argument_env(
+        {"Sheet1!A1"},
+        _get_cell_formula,
+        _get_refs_from_formula,
+        leaf_env,
+        DynamicRefLimits(),
+    )
+    assert env["Sheet1!A1"].kind is CellKind.ANY
+    assert env["Sheet1!B1"].kind is CellKind.ANY
+
+
 def test_expand_leaf_env_assigns_any_when_intermediate_unsupported() -> None:
     """Intermediates that cannot be inferred (e.g. unsupported function) get CellKind.ANY.
 
@@ -519,12 +670,6 @@ def test_expand_leaf_env_assigns_any_when_intermediate_unsupported() -> None:
     intermediate's formula cannot be evaluated (e.g. uses VLOOKUP), we assign ANY
     so expansion succeeds; enumeration may later require a constraint for that cell.
     """
-    from excel_grapher.core.cell_types import CellKind
-    from excel_grapher.grapher.dynamic_refs import (
-        DynamicRefLimits,
-        expand_leaf_env_to_argument_env,
-    )
-
     leaf_env = _make_env(
         {
             "Sheet1!A1": CellType(
@@ -876,9 +1021,7 @@ def test_create_dependency_graph_standalone_index_missing_leaf(tmp_path: Path) -
 
 def test_index_match_huge_lookup_array_only_needs_lookup_value_constraint() -> None:
     """MATCH lookup_array is not expanded for per-cell domains; INDEX stays sound via shape bounds."""
-    formula = (
-        "=INDEX(Sheet1!A1:Sheet1!A3,MATCH(Sheet1!B1,Sheet1!Z1:Sheet1!Z999999,0),1)"
-    )
+    formula = "=INDEX(Sheet1!A1:Sheet1!A3,MATCH(Sheet1!B1,Sheet1!Z1:Sheet1!Z999999,0),1)"
     env = _make_env(
         {
             "Sheet1!B1": CellType(
@@ -932,7 +1075,7 @@ def test_expand_leaf_env_wide_interval_no_interval_branch_limit_error() -> None:
 
 def test_domain_from_cell_type_any_interval_is_numeric_domain() -> None:
     limits = DynamicRefLimits()
-    lo, hi = -10**15, 10**15
+    lo, hi = -(10**15), 10**15
     ct = CellType(
         kind=CellKind.ANY,
         interval=IntIntervalDomain(min=lo, max=hi),
@@ -979,7 +1122,7 @@ def test_expand_leaf_env_if_isnumber_wide_any_interval_summarizes_to_number() ->
     """
     from excel_grapher.grapher.dynamic_refs import expand_leaf_env_to_argument_env
 
-    lo, hi = -10**15, 10**15
+    lo, hi = -(10**15), 10**15
     leaf_env = _make_env(
         {
             "Sheet1!A1": CellType(
@@ -1020,12 +1163,7 @@ def test_expand_leaf_env_sum_wide_range_no_branch_limit_error() -> None:
         kind=CellKind.ANY,
         interval=IntIntervalDomain(min=0, max=hi),
     )
-    leaf_env = _make_env(
-        {
-            f"Sheet1!{c}1": financial
-            for c in ("A", "B", "C", "D", "E", "F")
-        }
-    )
+    leaf_env = _make_env({f"Sheet1!{c}1": financial for c in ("A", "B", "C", "D", "E", "F")})
 
     def _get_cell_formula(addr: str) -> str | None:
         if addr == "Sheet1!G1":
@@ -1116,7 +1254,7 @@ def test_expand_leaf_env_comparison_infers_zero_one_domain() -> None:
         {
             "Sheet1!A1": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=-10**9, max=10**9),
+                interval=IntIntervalDomain(min=-(10**9), max=10**9),
             )
         }
     )
@@ -1141,7 +1279,9 @@ def test_expand_leaf_env_comparison_infers_zero_one_domain() -> None:
     assert out.enum.values == frozenset({0, 1})
 
 
-def test_expand_leaf_env_cycle_detection_is_stable() -> None:
+def test_expand_leaf_env_mutual_refs_terminates_with_any() -> None:
+    """Mutual formula-only refs: cycle edge is ANY; expansion finishes (issue #54)."""
+
     def _get_cell_formula(addr: str) -> str | None:
         if addr == "Sheet1!B1":
             return "=Sheet1!C1"
@@ -1157,16 +1297,15 @@ def test_expand_leaf_env_cycle_detection_is_stable() -> None:
             return {"Sheet1!B1"}
         return set()
 
-    with pytest.raises(DynamicRefError) as exc_info:
-        dynamic_refs_mod.expand_leaf_env_to_argument_env(
-            {"Sheet1!B1"},
-            _get_cell_formula,
-            _get_refs_from_formula,
-            _make_env({}),
-            DynamicRefLimits(max_depth=4),
-        )
-
-    assert "cycle" in str(exc_info.value).lower()
+    env = dynamic_refs_mod.expand_leaf_env_to_argument_env(
+        {"Sheet1!B1"},
+        _get_cell_formula,
+        _get_refs_from_formula,
+        _make_env({}),
+        DynamicRefLimits(max_depth=4),
+    )
+    assert env["Sheet1!B1"].kind is CellKind.ANY
+    assert env["Sheet1!C1"].kind is CellKind.ANY
 
 
 def test_expand_leaf_env_long_formula_chain_is_not_limited_by_expr_max_depth() -> None:
@@ -1354,11 +1493,11 @@ def test_expand_leaf_env_division_zero_risk_error_points_to_divisor_cells() -> N
             ),
             "Sheet1!Q17": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=-10**16, max=10**16),
+                interval=IntIntervalDomain(min=-(10**16), max=10**16),
             ),
             "Sheet1!Q19": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=-10**16, max=10**16),
+                interval=IntIntervalDomain(min=-(10**16), max=10**16),
             ),
         }
     )
@@ -1497,11 +1636,11 @@ def test_expand_leaf_env_division_relational_constraint_avoids_zero_risk_error()
             ),
             "Sheet1!Q17": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=-10**16, max=10**16),
+                interval=IntIntervalDomain(min=-(10**16), max=10**16),
             ),
             "Sheet1!Q19": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=-10**16, max=10**16),
+                interval=IntIntervalDomain(min=-(10**16), max=10**16),
             ),
         }
     )
@@ -1559,6 +1698,45 @@ def test_expand_leaf_env_percent_expression_stays_in_abstract_path() -> None:
     assert out.kind is CellKind.NUMBER
     assert out.enum is not None
     assert out.enum.values == frozenset({0, 1})
+
+
+def test_expand_leaf_env_cartesian_product_branch_limit_error() -> None:
+    """Fallback product-enumeration raises DynamicRefError when the Cartesian
+    product of dependency domains exceeds max_branches, instead of hanging."""
+    # 5 * 5 = 25 combinations, which exceeds max_branches=8.
+    leaf_env = _make_env(
+        {
+            "Sheet1!A1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({1, 2, 3, 4, 5})),
+            ),
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({10, 20, 30, 40, 50})),
+            ),
+        }
+    )
+
+    def _get_cell_formula(addr: str) -> str | None:
+        # ROUND is not handled by numeric abstract analysis, forcing the fallback path.
+        return "=ROUND(Sheet1!A1+Sheet1!B1,0)" if addr == "Sheet1!C1" else None
+
+    def _get_refs_from_formula(formula: str, sheet: str) -> set[str]:
+        return {"Sheet1!A1", "Sheet1!B1"}
+
+    with pytest.raises(DynamicRefError) as exc_info:
+        dynamic_refs_mod.expand_leaf_env_to_argument_env(
+            {"Sheet1!C1"},
+            _get_cell_formula,
+            _get_refs_from_formula,
+            leaf_env,
+            DynamicRefLimits(max_branches=8),
+        )
+
+    msg = str(exc_info.value)
+    assert "Sheet1!C1" in msg  # names the formula cell
+    assert "25" in msg  # actual product size
+    assert "8" in msg  # the limit
 
 
 def test_infer_numeric_domain_parity_never_raises() -> None:
@@ -1673,3 +1851,420 @@ def test_index_respects_max_cells_limit() -> None:
             limits=DynamicRefLimits(max_cells=2),
         )
     assert "cells exceed limit" in str(exc_info.value).lower()
+
+
+def test_offset_per_call_max_cells_limit() -> None:
+    """A single OFFSET call that fans out to more cells than max_cells must raise
+    DynamicRefError immediately, not accumulate an unbounded result set."""
+    # OFFSET(Sheet1!A1, 0, Sheet1!B1, 1, 1) where B1 ∈ {0,1,2,3,4} → 5 distinct
+    # target cells.  With max_cells=3 the check should fire.
+    formula = "=OFFSET(Sheet1!A1,0,Sheet1!B1,1,1)"
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({0, 1, 2, 3, 4})),
+            )
+        }
+    )
+    with pytest.raises(DynamicRefError) as exc_info:
+        infer_dynamic_offset_targets(
+            formula,
+            current_sheet="Sheet1",
+            cell_type_env=env,
+            limits=DynamicRefLimits(max_cells=3),
+        )
+    assert "cells" in str(exc_info.value).lower()
+    assert "exceed limit" in str(exc_info.value).lower()
+
+
+def test_constraint_dynamic_ref_expansion_not_duplicated_with_provenance(
+    tmp_path: Path,
+) -> None:
+    """Flat OFFSET formulas should share dynamic-ref expansion with provenance."""
+    excel_path = tmp_path / "offset_provenance_perf.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(0, 1, 0)  # B1 base
+    ws.write_number(0, 2, 1)  # C1 = row offset
+    ws.write_formula(0, 0, "=OFFSET(Sheet1!B1,Sheet1!C1,0)", None, 0)  # A1
+    wb.close()
+
+    env = _make_env(
+        {
+            "Sheet1!C1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntervalDomain(min=0, max=1),
+            )
+        }
+    )
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+
+    graph, call_count = _build_graph_counting_dynamic_expansion(
+        excel_path,
+        ["Sheet1!A1"],
+        dynamic_refs=config,
+    )
+
+    assert call_count == 1, (
+        f"expand_leaf_env_to_argument_env was called {call_count} times; "
+        "expected 1 (shared between extraction and provenance collection)"
+    )
+    assert "Sheet1!B1" in graph.dependencies("Sheet1!A1")
+    assert "Sheet1!C1" in graph.dependencies("Sheet1!A1")
+
+
+def test_constraint_indirect_expansion_not_duplicated_with_provenance(
+    tmp_path: Path,
+) -> None:
+    """Flat INDIRECT formulas should share dynamic-ref expansion with provenance."""
+    excel_path = tmp_path / "indirect_provenance_perf.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_string(0, 1, "Sheet1!B2")  # B1 ref text
+    ws.write_number(1, 1, 7)  # B2 target
+    ws.write_formula(0, 0, "=INDIRECT(Sheet1!B1)", None, 7)  # A1
+    wb.close()
+
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.STRING,
+                enum=EnumDomain(values=frozenset({"Sheet1!B2"})),
+            )
+        }
+    )
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+
+    graph, call_count = _build_graph_counting_dynamic_expansion(
+        excel_path,
+        ["Sheet1!A1"],
+        dynamic_refs=config,
+    )
+
+    assert call_count == 1, (
+        f"expand_leaf_env_to_argument_env was called {call_count} times; "
+        "expected 1 for INDIRECT with provenance enabled"
+    )
+    assert "Sheet1!B1" in graph.dependencies("Sheet1!A1")
+    assert "Sheet1!B2" in graph.dependencies("Sheet1!A1")
+
+
+def test_constraint_branch_dynamic_ref_expansion_not_duplicated_with_provenance(
+    tmp_path: Path,
+) -> None:
+    """Recursive provenance traversal should reuse cached expansion for branch formulas."""
+    excel_path = tmp_path / "if_offset_provenance_perf.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(0, 1, 10)  # B1 base
+    ws.write_number(1, 1, 20)  # B2 resolved OFFSET target
+    ws.write_number(0, 2, 1)  # C1 row offset
+    ws.write_boolean(0, 3, True)  # D1 IF condition
+    ws.write_formula(0, 0, "=IF(Sheet1!D1,OFFSET(Sheet1!B1,Sheet1!C1,0),0)", None, 20)  # A1
+    wb.close()
+
+    env = _make_env(
+        {
+            "Sheet1!C1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntervalDomain(min=0, max=1),
+            )
+        }
+    )
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+
+    graph, call_count = _build_graph_counting_dynamic_expansion(
+        excel_path,
+        ["Sheet1!A1"],
+        dynamic_refs=config,
+    )
+
+    assert call_count == 1, (
+        f"expand_leaf_env_to_argument_env was called {call_count} times; "
+        "expected 1 for IF branch provenance recursion"
+    )
+    deps = graph.dependencies("Sheet1!A1")
+    assert "Sheet1!D1" in deps
+    assert "Sheet1!B1" in deps
+    assert "Sheet1!C1" in deps
+    assert "Sheet1!B2" in deps
+
+
+def _build_graph_counting_dynamic_expansion(
+    excel_path: Path,
+    targets: list[str],
+    *,
+    dynamic_refs: DynamicRefConfig,
+):
+    from unittest.mock import patch
+
+    original_expand = expand_leaf_env_to_argument_env
+    call_count = 0
+
+    def counting_expand(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return original_expand(*args, **kwargs)
+
+    with (
+        patch(
+            "excel_grapher.grapher.builder.expand_leaf_env_to_argument_env",
+            side_effect=counting_expand,
+        ),
+        patch(
+            "excel_grapher.grapher.provenance_collect.expand_leaf_env_to_argument_env",
+            side_effect=counting_expand,
+        ),
+    ):
+        graph = create_dependency_graph(
+            excel_path,
+            targets,
+            load_values=False,
+            dynamic_refs=dynamic_refs,
+            capture_dependency_provenance=True,
+        )
+
+    return graph, call_count
+
+
+# ---------------------------------------------------------------------------
+# Benchmark: INDEX inference blowup with many row-relative formulas
+# ---------------------------------------------------------------------------
+
+
+def _build_wide_index_sweep_workbook(path: Path, n_rows: int = 50) -> None:
+    """Create a workbook simulating the LIC-DSF Chart Data INDEX blowup.
+
+    Layout on 'Data' sheet:
+      - A1:K22 is a static data array (11 rows × 22 cols) with numeric values.
+      - For each row ``r`` in ``[2, 2+n_rows)``, column L contains
+        ``=INDEX(Data!$A$1:$K$22, Data!M<r>, Data!N<r>)``
+        where M<r> is a row-selector leaf and N<r> is a col-selector leaf.
+      - M and N columns hold small integer constants (leaves requiring constraints).
+
+    When all M/N leaves are constrained with a wide numeric domain, inference
+    is triggered for every L-column INDEX cell.  Without caching, this means
+    ``n_rows`` separate calls to ``expand_leaf_env_to_argument_env`` and
+    ``n_rows`` separate ``_emit_index_targets_from_domains`` invocations that
+    produce the *same* target set.
+    """
+    import xlsxwriter
+
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Data")
+
+    # Populate the static data array A1:K22 (11 rows × 22 cols).
+    for r in range(22):
+        for c in range(11):
+            ws.write_number(r, c, r * 11 + c + 1)
+
+    # For each formula row, write leaf values in M and N, and an INDEX formula in L.
+    for i in range(n_rows):
+        row = 1 + i  # rows 2..n_rows+1 (0-indexed: 1..n_rows)
+        ws.write_number(row, 12, (i % 11) + 1)  # M<row+1> = row selector (1..11)
+        ws.write_number(row, 13, (i % 22) + 1)  # N<row+1> = col selector (1..22)
+        # L<row+1> = INDEX($A$1:$K$22, M<row+1>, N<row+1>)
+        ws.write_formula(
+            row,
+            11,
+            f"=INDEX(Data!$A$1:$K$22,Data!M{row + 1},Data!N{row + 1})",
+            None,
+            42,
+        )
+
+    wb.close()
+
+
+def test_wide_index_sweep_shared_env_cache(tmp_path: Path) -> None:
+    """Benchmark: many INDEX formulas should share env expansion work.
+
+    With ``n_rows`` INDEX formulas each referencing a different (M<r>, N<r>) leaf
+    pair, every formula triggers a separate expand_leaf_env_to_argument_env call
+    (since each has a unique ``all_refs`` set).  However, since the leaf constraints
+    and intermediate cells don't overlap, we can't directly share the top-level call.
+
+    What we *can* optimise is ``_emit_index_targets_from_domains``: when every
+    formula's INDEX resolves to the same ``(array_range, row_dom, col_dom)``
+    triple (because the leaf constraints produce the same abstract bounds), the
+    target-set generation should be cached and reused.
+
+    This test asserts:
+    1. The graph is correct (all INDEX formula cells and their leaves are present).
+    2. ``_emit_index_targets_from_domains`` is called far fewer than ``n_rows`` times
+       after caching is in place.
+    """
+    n_rows = 50
+    excel_path = tmp_path / "wide_index_sweep.xlsx"
+    _build_wide_index_sweep_workbook(excel_path, n_rows=n_rows)
+
+    # Build constraints: M and N leaves get interval domains matching the full array.
+    env: CellTypeEnv = {}
+    for i in range(n_rows):
+        row = 2 + i
+        env[f"Data!M{row}"] = CellType(
+            kind=CellKind.NUMBER,
+            interval=IntervalDomain(min=1, max=11),
+        )
+        env[f"Data!N{row}"] = CellType(
+            kind=CellKind.NUMBER,
+            interval=IntervalDomain(min=1, max=22),
+        )
+
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+
+    targets = [f"Data!L{2 + i}" for i in range(n_rows)]
+
+    # Count calls to _emit_index_targets_from_domains.
+    from unittest.mock import patch
+
+    original_emit = dynamic_refs_mod._emit_index_targets_from_domains
+    emit_call_count = 0
+
+    def counting_emit(*args, **kwargs):
+        nonlocal emit_call_count
+        emit_call_count += 1
+        return original_emit(*args, **kwargs)
+
+    with patch.object(
+        dynamic_refs_mod,
+        "_emit_index_targets_from_domains",
+        side_effect=counting_emit,
+    ):
+        graph = create_dependency_graph(
+            excel_path,
+            targets,
+            load_values=False,
+            dynamic_refs=config,
+        )
+
+    # Correctness: every target should be in the graph and have M/N leaf deps.
+    for i in range(n_rows):
+        row = 2 + i
+        node_key = f"Data!L{row}"
+        deps = graph.dependencies(node_key)
+        assert f"Data!M{row}" in deps, f"Missing M leaf dep for {node_key}"
+        assert f"Data!N{row}" in deps, f"Missing N leaf dep for {node_key}"
+
+    # Optimization: with target-set caching, _emit_index_targets_from_domains
+    # should be called only once for the unique (array_range, row_dom, col_dom).
+    # Without caching it would be called n_rows times.
+    assert emit_call_count < n_rows, (
+        f"_emit_index_targets_from_domains called {emit_call_count} times for "
+        f"{n_rows} INDEX formulas; expected caching to reduce this to ~1"
+    )
+
+
+def _build_shared_intermediate_index_workbook(path: Path, n_rows: int = 30) -> None:
+    """Workbook where INDEX formulas share intermediate argument cells.
+
+    Layout on 'Sheet1':
+      - A1:E10 is the data array (10 rows × 5 cols).
+      - B1 is a shared intermediate: ``=C1+1`` (formula cell, not a leaf).
+      - C1 is a leaf (numeric constant = 2).
+      - For each row ``r`` in ``[2, 2+n_rows)``:
+        - F<r> = ``=INDEX($A$1:$E$10, Sheet1!B1, Sheet1!D<r>)``
+        - D<r> is a leaf (col selector constant).
+
+    All ``n_rows`` INDEX formulas share the intermediate cell B1 in their
+    argument subgraph.  With a shared env expansion cache, B1's type is
+    inferred once and reused across all formula cells.
+    """
+    import xlsxwriter
+
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+
+    # Data array A1:E10.
+    for r in range(10):
+        for c in range(5):
+            ws.write_number(r, c, r * 5 + c + 1)
+
+    # B1 = =C1+1 (intermediate formula).
+    ws.write_formula(0, 1, "=Sheet1!C1+1", None, 3)
+    # C1 = 2 (leaf).
+    ws.write_number(0, 2, 2)
+
+    for i in range(n_rows):
+        row = 1 + i  # 0-indexed rows 1..n_rows
+        ws.write_number(row, 3, (i % 5) + 1)  # D<row+1> col selector
+        ws.write_formula(
+            row,
+            5,
+            f"=INDEX(Sheet1!$A$1:$E$10,Sheet1!$B$1,Sheet1!D{row + 1})",
+            None,
+            42,
+        )
+
+    wb.close()
+
+
+def test_shared_intermediate_env_expansion_cache(tmp_path: Path) -> None:
+    """Many INDEX formulas sharing an intermediate cell should reuse env expansion.
+
+    All formulas reference B1 (intermediate) which depends on C1 (leaf).
+    With a shared env expansion cache, ``cell_type_for(B1)`` is computed once
+    and reused across all 30 formula cells' expand_leaf_env_to_argument_env calls.
+
+    We verify this by wrapping expand_leaf_env_to_argument_env and inspecting
+    the shared_cell_type_cache: B1 should already be present in the cache for
+    all calls after the first.
+    """
+    from unittest.mock import patch
+
+    n_rows = 30
+    excel_path = tmp_path / "shared_intermediate.xlsx"
+    _build_shared_intermediate_index_workbook(excel_path, n_rows=n_rows)
+
+    env: CellTypeEnv = {
+        "Sheet1!C1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=10))
+    }
+    for i in range(n_rows):
+        row = 2 + i
+        env[f"Sheet1!D{row}"] = CellType(
+            kind=CellKind.NUMBER,
+            interval=IntervalDomain(min=1, max=5),
+        )
+
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+    targets = [f"Sheet1!F{2 + i}" for i in range(n_rows)]
+
+    # Track how many times B1 is already in the shared cache when
+    # expand_leaf_env_to_argument_env is called.
+    original_expand = expand_leaf_env_to_argument_env
+    b1_cache_hits = 0
+    total_calls = 0
+
+    def tracking_expand(*args, **kwargs):
+        nonlocal b1_cache_hits, total_calls
+        total_calls += 1
+        shared_cache = kwargs.get("shared_cell_type_cache")
+        if shared_cache is not None and "Sheet1!B1" in shared_cache:
+            b1_cache_hits += 1
+        return original_expand(*args, **kwargs)
+
+    with patch(
+        "excel_grapher.grapher.builder.expand_leaf_env_to_argument_env",
+        side_effect=tracking_expand,
+    ):
+        graph = create_dependency_graph(
+            excel_path,
+            targets,
+            load_values=False,
+            dynamic_refs=config,
+        )
+
+    # Correctness check: each formula should depend on B1 and its D leaf.
+    for i in range(n_rows):
+        row = 2 + i
+        deps = graph.dependencies(f"Sheet1!F{row}")
+        assert "Sheet1!B1" in deps, f"Missing B1 dep for F{row}"
+        assert f"Sheet1!D{row}" in deps, f"Missing D leaf dep for F{row}"
+
+    # Optimization check: B1 should be inferred once (cache miss on first call)
+    # and served from the shared cache for all subsequent calls.
+    assert total_calls == n_rows, f"Expected {n_rows} expand calls, got {total_calls}"
+    assert b1_cache_hits == n_rows - 1, (
+        f"Expected B1 to be a cache hit on {n_rows - 1} of {n_rows} calls, "
+        f"but got {b1_cache_hits} hits. shared_cell_type_cache is not being reused."
+    )

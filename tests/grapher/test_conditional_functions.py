@@ -77,4 +77,3 @@ def test_ifs_branches_are_guarded(tmp_path: Path) -> None:
     assert graph.edge_attrs("Sheet1!A1", "Sheet1!C1").get("guard") is None
     assert graph.edge_attrs("Sheet1!A1", "Sheet1!B1").get("guard") is not None
     assert graph.edge_attrs("Sheet1!A1", "Sheet1!D1").get("guard") is not None
-

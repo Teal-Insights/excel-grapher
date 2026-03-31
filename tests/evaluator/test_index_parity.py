@@ -41,3 +41,43 @@ def test_index_parity_with_non_array_input() -> None:
     assert result.generated_results["S!A1"] == XlError.VALUE
     assert result.generated_results["S!A2"] == XlError.VALUE
     assert result.generated_results["S!A3"] == XlError.VALUE
+
+
+def test_index_omit_row_returns_column_for_match() -> None:
+    """INDEX(range,,k) returns column k; used by LIC-DSF classification table."""
+    graph = _make_graph(
+        _make_node("S!A1", "1", None),
+        _make_node("S!A2", "4", None),
+        _make_node("S!A3", "7", None),
+        _make_node("S!B1", "2", None),
+        _make_node("S!B2", "5", None),
+        _make_node("S!B3", "8", None),
+        _make_node("S!C1", "3", None),
+        _make_node("S!C2", "6", None),
+        _make_node("S!C3", "9", None),
+        _make_node("S!D1", "5", None),
+        _make_node("S!E1", "=MATCH(S!D1, INDEX(S!A1:S!C3,,2), 0)", None),
+    )
+    result = assert_codegen_matches_evaluator(graph, ["S!E1"])
+    assert result.evaluator_results["S!E1"] == 2
+    assert result.generated_results["S!E1"] == 2
+
+
+def test_index_omit_col_returns_row_for_match() -> None:
+    """INDEX(range,k,) returns row k for 2-D arrays."""
+    graph = _make_graph(
+        _make_node("S!A1", "1", None),
+        _make_node("S!A2", "4", None),
+        _make_node("S!A3", "7", None),
+        _make_node("S!B1", "2", None),
+        _make_node("S!B2", "5", None),
+        _make_node("S!B3", "8", None),
+        _make_node("S!C1", "3", None),
+        _make_node("S!C2", "6", None),
+        _make_node("S!C3", "9", None),
+        _make_node("S!D1", "5", None),
+        _make_node("S!E1", "=MATCH(S!D1, INDEX(S!A1:S!C3,2,), 0)", None),
+    )
+    result = assert_codegen_matches_evaluator(graph, ["S!E1"])
+    assert result.evaluator_results["S!E1"] == 2
+    assert result.generated_results["S!E1"] == 2

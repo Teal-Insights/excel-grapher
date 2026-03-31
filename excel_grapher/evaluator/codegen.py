@@ -45,17 +45,13 @@ class GraphNode(Protocol):
 
 
 class GraphLike(Protocol):
-    def get_node(self, address: str) -> GraphNode | None:
-        ...
+    def get_node(self, address: str) -> GraphNode | None: ...
 
-    def leaf_keys(self) -> list[str]:
-        ...
+    def leaf_keys(self) -> list[str]: ...
 
-    def formula_keys(self) -> list[str]:
-        ...
+    def formula_keys(self) -> list[str]: ...
 
-    def dependencies(self, address: str) -> list[str]:
-        ...
+    def dependencies(self, address: str) -> list[str]: ...
 
     leaf_classification: dict[str, str] | None
 
@@ -71,6 +67,7 @@ class GenerationParts(TypedDict):
     targets: list[str]
     has_constants: bool
     used_xl_functions: Set[str]
+
 
 # Operators that need wrapper functions for Excel semantics (error propagation)
 _BINARY_OPS = {
@@ -121,10 +118,12 @@ class CodeGenerator:
         self._iterate_delta = iterate_delta
         self._emitted: set[str] = set()
         self._needs_offset_runtime = False  # Set to True if dynamic OFFSET is used
+        self._needs_index_ref_runtime = False  # OFFSET(INDEX(...), ...) requires xl_index_ref
         self._offset_runtime_sheets: set[str] = set()
         self._temp_var_counter = 0  # Counter for unique temp variable names
         self._ast_cache: dict[str, AstNode] = {}
         self._used_graph_closure: bool = False
+        self._formula_cell_address: str | None = None
 
     @staticmethod
     def _normalize_entrypoint_name(name: str) -> str:
@@ -152,8 +151,7 @@ class CodeGenerator:
             if normalized_name in normalized:
                 original = seen_names[normalized_name]
                 raise ValueError(
-                    "Entrypoint names normalize to the same identifier: "
-                    f"{original!r} and {name!r}"
+                    f"Entrypoint names normalize to the same identifier: {original!r} and {name!r}"
                 )
             normalized_targets = [normalize_address(t) for t in targets]
             normalized[normalized_name] = normalized_targets
@@ -382,17 +380,17 @@ class CodeGenerator:
             "    name = []",
             "    prev_underscore = False",
             "    for ch in address.lower():",
-            "        if ch == \"'\":",
+            '        if ch == "\'":',
             "            continue",
-            "        if \"a\" <= ch <= \"z\" or \"0\" <= ch <= \"9\":",
+            '        if "a" <= ch <= "z" or "0" <= ch <= "9":',
             "            name.append(ch)",
             "            prev_underscore = False",
             "        else:",
             "            if not prev_underscore:",
-            "                name.append(\"_\")",
+            '                name.append("_")',
             "                prev_underscore = True",
-            "    base = \"\".join(name).strip(\"_\")",
-            "    return f\"cell_{base}\"",
+            '    base = "".join(name).strip("_")',
+            '    return f"cell_{base}"',
             "",
             "def _resolve_formula(address):",
             "    fn = _RESOLVED_FORMULAS.get(address)",
@@ -455,9 +453,7 @@ class CodeGenerator:
             if not isinstance(key, str):
                 raise TypeError("leaf_classification keys must be strings")
             if value not in {"input", "constant"}:
-                raise ValueError(
-                    "leaf_classification values must be 'input' or 'constant'"
-                )
+                raise ValueError("leaf_classification values must be 'input' or 'constant'")
             normalized[normalize_address(key)] = value
         return normalized
 
@@ -491,11 +487,7 @@ class CodeGenerator:
     ) -> tuple[set[str], set[str]]:
         if graph_classification is None:
             return set(needed_leaves), set()
-        constants = {
-            addr
-            for addr in needed_leaves
-            if graph_classification.get(addr) == "constant"
-        }
+        constants = {addr for addr in needed_leaves if graph_classification.get(addr) == "constant"}
         inputs = set(needed_leaves) - constants
         return inputs, constants
 
@@ -564,9 +556,7 @@ class CodeGenerator:
         return inputs, constants
 
     @staticmethod
-    def _leaf_value_matches_constant_type(
-        value: object | None, constant_types: set[str]
-    ) -> bool:
+    def _leaf_value_matches_constant_type(value: object | None, constant_types: set[str]) -> bool:
         if not constant_types:
             return False
         if value is None:
@@ -610,16 +600,12 @@ class CodeGenerator:
         normalized_constant_types = self._normalize_constant_types(constant_types)
         normalized_constant_ranges = self._normalize_constant_ranges(constant_ranges)
         normalized_input_ranges = self._normalize_input_ranges(input_ranges)
-        explicit_constant_rules = bool(
-            constant_types or constant_ranges or constant_blanks
-        )
+        explicit_constant_rules = bool(constant_types or constant_ranges or constant_blanks)
         use_graph_classification = not explicit_constant_rules and not input_ranges
 
         if use_graph_classification:
             graph_classification = self._get_graph_leaf_classification()
-            inputs, constants = self._classification_from_graph(
-                graph_classification, needed_leaves
-            )
+            inputs, constants = self._classification_from_graph(graph_classification, needed_leaves)
         elif explicit_constant_rules:
             inputs, constants = self._classify_leaf_nodes(
                 needed_leaves,
@@ -630,9 +616,7 @@ class CodeGenerator:
             )
         else:
             graph_classification = self._get_graph_leaf_classification()
-            inputs, constants = self._classification_from_graph(
-                graph_classification, needed_leaves
-            )
+            inputs, constants = self._classification_from_graph(graph_classification, needed_leaves)
             inputs, constants = self._apply_input_ranges_override(
                 needed_leaves, constants, normalized_input_ranges
             )
@@ -666,9 +650,7 @@ class CodeGenerator:
                 continue
             if self._leaf_value_matches_constant_type(value, constant_types):
                 constants.add(key)
-        return self._apply_input_ranges_override(
-            needed_leaves, constants, input_ranges
-        )
+        return self._apply_input_ranges_override(needed_leaves, constants, input_ranges)
 
     def _emit_binary_op(self, node: BinaryOpNode) -> str:
         """Emit a binary operation."""
@@ -836,8 +818,14 @@ class CodeGenerator:
         )
 
     def _emit_row(self, node: FunctionCallNode) -> str:
-        if len(node.args) < 1:
-            return "XlError.VALUE"
+        if not node.args or (len(node.args) == 1 and isinstance(node.args[0], EmptyArgNode)):
+            addr = self._formula_cell_address
+            if addr is None:
+                return "XlError.VALUE"
+            _sheet, cell = parse_address(addr)
+            cell_clean = cell.replace("$", "")
+            _col_str, row = fastpyxl.utils.cell.coordinate_from_string(cell_clean)
+            return repr(int(row))
 
         arg = node.args[0]
         if isinstance(arg, CellRefNode):
@@ -854,8 +842,15 @@ class CodeGenerator:
         return f"xl_row({self._emit_ast(arg)})"
 
     def _emit_column(self, node: FunctionCallNode) -> str:
-        if len(node.args) < 1:
-            return "XlError.VALUE"
+        if not node.args or (len(node.args) == 1 and isinstance(node.args[0], EmptyArgNode)):
+            addr = self._formula_cell_address
+            if addr is None:
+                return "XlError.VALUE"
+            _sheet, cell = parse_address(addr)
+            cell_clean = cell.replace("$", "")
+            col_str, _row = fastpyxl.utils.cell.coordinate_from_string(cell_clean)
+            col = fastpyxl.utils.cell.column_index_from_string(col_str)
+            return repr(int(col))
 
         arg = node.args[0]
         if isinstance(arg, CellRefNode):
@@ -992,20 +987,12 @@ class CodeGenerator:
         # Try static resolution if reference is a cell and offsets are constants
         if self._can_offset_be_static(node):
             assert isinstance(ref_node, (CellRefNode, RangeNode))
-            base_address = (
-                ref_node.address if isinstance(ref_node, CellRefNode) else ref_node.start
-            )
+            base_address = ref_node.address if isinstance(ref_node, CellRefNode) else ref_node.start
             base_h, base_w = self._offset_base_shape(ref_node)
             height = (
-                int(self._get_constant_number(height_node))
-                if height_node is not None
-                else base_h
+                int(self._get_constant_number(height_node)) if height_node is not None else base_h
             )
-            width = (
-                int(self._get_constant_number(width_node))
-                if width_node is not None
-                else base_w
-            )
+            width = int(self._get_constant_number(width_node)) if width_node is not None else base_w
             return self._emit_offset_static(
                 base_address,
                 int(self._get_constant_number(rows_node)),
@@ -1016,9 +1003,7 @@ class CodeGenerator:
 
         # Fall back to runtime resolution
         self._needs_offset_runtime = True
-        return self._emit_offset_dynamic(
-            ref_node, rows_node, cols_node, height_node, width_node
-        )
+        return self._emit_offset_dynamic(ref_node, rows_node, cols_node, height_node, width_node)
 
     def _offset_base_shape(self, ref_node: AstNode) -> tuple[int, int]:
         """Return (height, width) for an OFFSET base reference."""
@@ -1106,6 +1091,35 @@ class CodeGenerator:
             base_sheet, r1, c1, r2, c2 = self._range_coords(ref_node.start, ref_node.end)
             self._offset_runtime_sheets.add(base_sheet)
             ref_info = f"({repr(base_sheet)}, {r1}, {c1}, {r2}, {c2})"
+        elif isinstance(ref_node, FunctionCallNode) and ref_node.name.upper() == "INDEX":
+            if len(ref_node.args) < 1:
+                return "XlError.VALUE"
+            base = ref_node.args[0]
+            if isinstance(base, CellRefNode):
+                base_sheet, base_cell = parse_address(base.address)
+                self._offset_runtime_sheets.add(base_sheet)
+                base_col_str, base_row = fastpyxl.utils.cell.coordinate_from_string(base_cell)
+                base_col = fastpyxl.utils.cell.column_index_from_string(base_col_str)
+                base_ref_info = f"({repr(base_sheet)}, {base_row}, {base_col})"
+            elif isinstance(base, RangeNode):
+                base_sheet, r1, c1, r2, c2 = self._range_coords(base.start, base.end)
+                self._offset_runtime_sheets.add(base_sheet)
+                base_ref_info = f"({repr(base_sheet)}, {r1}, {c1}, {r2}, {c2})"
+            else:
+                return "XlError.REF"
+
+            row_expr = (
+                "None"
+                if len(ref_node.args) < 2 or isinstance(ref_node.args[1], EmptyArgNode)
+                else self._emit_ast(ref_node.args[1])
+            )
+            col_expr = (
+                "None"
+                if len(ref_node.args) < 3 or isinstance(ref_node.args[2], EmptyArgNode)
+                else self._emit_ast(ref_node.args[2])
+            )
+            self._needs_index_ref_runtime = True
+            ref_info = f"xl_index_ref({base_ref_info}, {row_expr}, {col_expr})"
         else:
             # If reference is not a simple cell, we can't handle it
             return "XlError.REF"
@@ -1135,6 +1149,33 @@ class CodeGenerator:
         elif isinstance(ref_node, RangeNode):
             base_sheet, r1, c1, r2, c2 = self._range_coords(ref_node.start, ref_node.end)
             ref_info = f"({repr(base_sheet)}, {r1}, {c1}, {r2}, {c2})"
+        elif isinstance(ref_node, FunctionCallNode) and ref_node.name.upper() == "INDEX":
+            if len(ref_node.args) < 1:
+                return "XlError.VALUE"
+            base = ref_node.args[0]
+            if isinstance(base, CellRefNode):
+                base_sheet, base_cell = parse_address(base.address)
+                base_col_str, base_row = fastpyxl.utils.cell.coordinate_from_string(base_cell)
+                base_col = fastpyxl.utils.cell.column_index_from_string(base_col_str)
+                base_ref_info = f"({repr(base_sheet)}, {base_row}, {base_col})"
+            elif isinstance(base, RangeNode):
+                base_sheet, r1, c1, r2, c2 = self._range_coords(base.start, base.end)
+                base_ref_info = f"({repr(base_sheet)}, {r1}, {c1}, {r2}, {c2})"
+            else:
+                return "XlError.REF"
+
+            row_expr = (
+                "None"
+                if len(ref_node.args) < 2 or isinstance(ref_node.args[1], EmptyArgNode)
+                else self._emit_ast(ref_node.args[1])
+            )
+            col_expr = (
+                "None"
+                if len(ref_node.args) < 3 or isinstance(ref_node.args[2], EmptyArgNode)
+                else self._emit_ast(ref_node.args[2])
+            )
+            self._needs_index_ref_runtime = True
+            ref_info = f"xl_index_ref({base_ref_info}, {row_expr}, {col_expr})"
         else:
             return "XlError.REF"
 
@@ -1169,7 +1210,12 @@ class CodeGenerator:
         self._temp_var_counter = 0
         ast = self._get_or_parse_ast(normalized)
         assert ast is not None
-        expr = self._emit_ast(ast)
+        prev_cell = self._formula_cell_address
+        self._formula_cell_address = normalized
+        try:
+            expr = self._emit_ast(ast)
+        finally:
+            self._formula_cell_address = prev_cell
         lines.append(f"    return {expr}")
 
         return "\n".join(lines)
@@ -1319,10 +1365,7 @@ class CodeGenerator:
                 funcs.add("xl_row")
                 if node.args:
                     ref = node.args[0]
-                    if (
-                        isinstance(ref, FunctionCallNode)
-                        and ref.name.upper() == "OFFSET"
-                    ):
+                    if isinstance(ref, FunctionCallNode) and ref.name.upper() == "OFFSET":
                         funcs.add("xl_offset_ref")
                         for off_arg in ref.args:
                             funcs.update(self._extract_xl_functions(off_arg))
@@ -1332,10 +1375,7 @@ class CodeGenerator:
                 funcs.add("xl_column" if upper_name == "COLUMN" else "xl_columns")
                 if node.args:
                     ref = node.args[0]
-                    if (
-                        isinstance(ref, FunctionCallNode)
-                        and ref.name.upper() == "OFFSET"
-                    ):
+                    if isinstance(ref, FunctionCallNode) and ref.name.upper() == "OFFSET":
                         funcs.add("xl_offset_ref")
                         for off_arg in ref.args:
                             funcs.update(self._extract_xl_functions(off_arg))
@@ -1411,9 +1451,8 @@ class CodeGenerator:
                     seen_targets.add(target)
                     entrypoint_targets.append(target)
 
-        compute_all_targets = (
-            normalized_targets
-            or (entrypoint_targets if normalized_entrypoints else normalized_targets)
+        compute_all_targets = normalized_targets or (
+            entrypoint_targets if normalized_entrypoints else normalized_targets
         )
         dependency_targets: list[str] = []
         seen_dependency: set[str] = set()
@@ -1492,9 +1531,7 @@ class CodeGenerator:
             lines.append("")
             lines.append("")
             lines.append(f"def compute_{name}(inputs=None, *, ctx=None):")
-            lines.append(
-                f'    """Compute {name} target cells and return results."""'
-            )
+            lines.append(f'    """Compute {name} target cells and return results."""')
             lines.append("    if ctx is None:")
             lines.append("        ctx = make_context(inputs)")
             lines.append("    elif inputs is not None:")
@@ -1530,7 +1567,9 @@ class CodeGenerator:
         if self._iterate_enabled:
             lines.append("    return xl_iterative_compute(ctx, TARGETS)")
         else:
-            lines.append("    return {target: handler(ctx, target) for target, handler in TARGETS.items()}")
+            lines.append(
+                "    return {target: handler(ctx, target) for target, handler in TARGETS.items()}"
+            )
         lines.append("")
 
         return "\n".join(lines)
@@ -1569,9 +1608,8 @@ class CodeGenerator:
                 if target not in seen_targets:
                     seen_targets.add(target)
                     entrypoint_targets.append(target)
-        compute_all_targets = (
-            normalized_targets
-            or (entrypoint_targets if normalized_entrypoints else normalized_targets)
+        compute_all_targets = normalized_targets or (
+            entrypoint_targets if normalized_entrypoints else normalized_targets
         )
         dependency_targets: list[str] = []
         seen_dependency: set[str] = set()
@@ -1833,16 +1871,15 @@ class CodeGenerator:
         # closure), we intentionally *do not* widen the export surface area here.
         if self._needs_offset_runtime:
             used_xl_functions.add("xl_offset")
+            if self._needs_index_ref_runtime:
+                used_xl_functions.add("xl_index_ref")
             if not self._used_graph_closure:
-                all_graph_cells = (
-                    list(self.graph.leaf_keys()) + list(self.graph.formula_keys())
-                )
+                all_graph_cells = list(self.graph.leaf_keys()) + list(self.graph.formula_keys())
                 if self._offset_runtime_sheets:
                     all_graph_cells = [
                         addr
                         for addr in all_graph_cells
-                        if parse_address(normalize_address(addr))[0]
-                        in self._offset_runtime_sheets
+                        if parse_address(normalize_address(addr))[0] in self._offset_runtime_sheets
                     ]
                 for address in all_graph_cells:
                     if address in self._emitted:
@@ -2006,9 +2043,7 @@ class CodeGenerator:
                 input_ranges=input_ranges,
             )
         else:
-            inputs, constants = self._classification_from_graph(
-                graph_classification, needed_leaves
-            )
+            inputs, constants = self._classification_from_graph(graph_classification, needed_leaves)
             inputs, constants = self._apply_input_ranges_override(
                 needed_leaves, constants, input_ranges
             )

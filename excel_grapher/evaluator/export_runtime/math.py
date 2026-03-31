@@ -58,7 +58,11 @@ def xl_max(*args: CellValue) -> float | XlError:
 def xl_count(*args: CellValue) -> int:
     count = 0
     for v in flatten(*args):
-        if isinstance(v, (int, float)) and not isinstance(v, bool) or isinstance(v, (np.integer, np.floating)):
+        if (
+            isinstance(v, (int, float))
+            and not isinstance(v, bool)
+            or isinstance(v, (np.integer, np.floating))
+        ):
             count += 1
     return count
 
@@ -253,7 +257,9 @@ def xl_countif(range_values: CellValue, criteria: CellValue) -> int | XlError:
         if any(ch in rhs for ch in ("*", "?", "~")):
             rx = _wildcard_to_regex(rhs)
             return sum(
-                1 for v in values if not isinstance(v, XlError) and rx.match(to_string(v)) is not None
+                1
+                for v in values
+                if not isinstance(v, XlError) and rx.match(to_string(v)) is not None
             )
         rhs_cf = excel_casefold(rhs)
         return sum(
@@ -341,4 +347,3 @@ def xl_normdist(
     if cc:
         return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
     return (1.0 / (sd * math.sqrt(2.0 * math.pi))) * math.exp(-0.5 * z * z)
-

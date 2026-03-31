@@ -18,4 +18,3 @@ def xl_isblank(value: CellValue) -> bool:
 
 def xl_na() -> XlError:
     return XlError.NA
-

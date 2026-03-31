@@ -77,4 +77,3 @@ def xl_columns(ref: CellValue) -> int | XlError:
     if isinstance(ref, ExcelRange):
         return ref.end_col - ref.start_col + 1
     return XlError.VALUE
-

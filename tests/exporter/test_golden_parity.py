@@ -55,4 +55,3 @@ def test_golden_parity_mixed_features_small_graph() -> None:
     # No OFFSET in this scenario, so dynamic OFFSET runtime should not be included.
     assert "_CELL_TABLE = {" not in result.generated_code
     assert_code_does_not_embed_symbols(result.generated_code, absent={"xl_offset"})
-

@@ -52,6 +52,37 @@ def is_libreoffice_available() -> bool:
     return shutil.which("soffice") is not None
 
 
+_MIN_LO_VERSION = (25, 8)
+
+
+def check_libreoffice_version() -> None:
+    """Assert that LibreOffice 25.8+ is installed.
+
+    Raises:
+        RuntimeError: If soffice is missing or its version is too old.
+    """
+    import re
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["soffice", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except FileNotFoundError:
+        raise RuntimeError("soffice not found — install LibreOffice 25.8+") from None
+
+    m = re.search(r"(\d+)\.(\d+)", result.stdout)
+    if not m:
+        raise RuntimeError(f"Could not parse LibreOffice version from: {result.stdout.strip()}")
+
+    major, minor = int(m.group(1)), int(m.group(2))
+    if (major, minor) < _MIN_LO_VERSION:
+        raise RuntimeError(f"LibreOffice {major}.{minor} is too old — 25.8+ is required")
+
+
 def parse_cell_ref(cell_ref: str) -> tuple[str, str]:
     """Parse a cell reference into sheet name and cell address.
 

@@ -1,7 +1,5 @@
 ## `excel-grapher`
 
-> **Proprietary software** — © 2026 Teal Insights. All rights reserved.
-
 Build and analyze dependency graphs from Excel workbooks, **evaluate formulas with Excel semantics**, and **export standalone Python code**.
 
 ### Why this exists
@@ -604,7 +602,5 @@ print(generated_results)
 
 ## 6. Roadmap
 
-- Modularize or vectorize parts of the computation in the exported code. Static analysis can identify “pyramidal” regions (single-cell or row/range entrypoints) that are natural candidates for refactoring or vectorization.
-- Extract row and column labels from the Excel workbook for each referenced cell and carry them in the data model, to support more interpretable downstream representations. Early work along these lines lives in the `lic-dsf-programmatic-extraction` repository.
 - Continue expanding parity tests between the evaluator runtime and export runtime, especially for representation-sensitive areas such as `OFFSET`, `INDIRECT`, `LOOKUP`, `MATCH`, and `INDEX`.
 - Refine the dynamic-reference configuration API and constraints tooling (e.g., better TypedDict ergonomics, validation helpers) as more real-world models and templates are integrated.

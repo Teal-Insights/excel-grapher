@@ -68,4 +68,3 @@ def test_ty_check_generated_choose_has_no_diagnostics(tmp_path: Path) -> None:
         assert ty.stderr.strip() == ""
     finally:
         export_file.unlink(missing_ok=True)
-

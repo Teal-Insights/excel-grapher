@@ -142,7 +142,11 @@ class GuardConstraints:
                 elif c.op == "<>":
                     expr2 = Compare(left=c.left, op="=", right=c.right)
 
-            if isinstance(expr2, Compare) and isinstance(expr2.left, CellRef) and isinstance(expr2.right, Literal):
+            if (
+                isinstance(expr2, Compare)
+                and isinstance(expr2.left, CellRef)
+                and isinstance(expr2.right, Literal)
+            ):
                 key = expr2.left.key
                 val = expr2.right.value
                 if expr2.op == "=":
@@ -163,7 +167,8 @@ class GuardConstraints:
             opaque.add(str(expr2))
 
         eq_items = tuple(sorted(eq.items(), key=lambda kv: kv[0]))
-        ne_items = tuple(sorted(((k, tuple(sorted(vs))) for k, vs in ne.items()), key=lambda kv: kv[0]))
+        ne_items = tuple(
+            sorted(((k, tuple(sorted(vs))) for k, vs in ne.items()), key=lambda kv: kv[0])
+        )
         opaque_items = tuple(sorted(opaque))
         return GuardConstraints(equalities=eq_items, inequalities=ne_items, opaque=opaque_items)
-

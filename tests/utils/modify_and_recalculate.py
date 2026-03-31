@@ -14,7 +14,12 @@ import sys
 from pathlib import Path
 from textwrap import dedent
 
-from tests.utils._helpers import is_libreoffice_available, is_wsl, parse_cell_ref
+from tests.utils._helpers import (
+    check_libreoffice_version,
+    is_libreoffice_available,
+    is_wsl,
+    parse_cell_ref,
+)
 
 
 class ExcelRecalculationError(Exception):
@@ -166,6 +171,8 @@ def _modify_and_recalculate_with_libreoffice(
     Raises:
         ExcelRecalculationError: If LibreOffice recalculation fails.
     """
+    check_libreoffice_version()
+
     from fastpyxl import load_workbook
 
     # Step 1: Copy and modify with fastpyxl
@@ -285,17 +292,11 @@ def modify_and_recalculate_workbook(
         ... )
     """
     if is_wsl():
-        _modify_and_recalculate_with_powershell(
-            input_path, output_path, cell_modifications
-        )
+        _modify_and_recalculate_with_powershell(input_path, output_path, cell_modifications)
     elif sys.platform in ("win32", "darwin"):
-        _modify_and_recalculate_with_xlwings(
-            input_path, output_path, cell_modifications
-        )
+        _modify_and_recalculate_with_xlwings(input_path, output_path, cell_modifications)
     elif is_libreoffice_available():
-        _modify_and_recalculate_with_libreoffice(
-            input_path, output_path, cell_modifications
-        )
+        _modify_and_recalculate_with_libreoffice(input_path, output_path, cell_modifications)
     else:
         raise RuntimeError(
             "No suitable Excel automation backend available. "

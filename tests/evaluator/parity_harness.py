@@ -141,9 +141,20 @@ def assert_codegen_matches_evaluator(
             if fail_fast:
                 node = graph.get_node(t)
                 formula = None if node is None else node.formula
-                detail = f" (formula={formula})" if formula else ""
+                normalized = None if node is None else node.normalized_formula
+                detail_parts: list[str] = []
+                if formula:
+                    detail_parts.append(f"formula={formula}")
+                if normalized and normalized != formula:
+                    detail_parts.append(f"normalized_formula={normalized}")
+                kind = (
+                    "numeric_drift"
+                    if (_is_finite_number(ev_val) and _is_finite_number(gen_val))
+                    else "value_mismatch"
+                )
+                detail = (" (" + "; ".join(detail_parts) + ")") if detail_parts else ""
                 raise AssertionError(
-                    "First parity mismatch at "
+                    f"First parity mismatch ({kind}) at "
                     f"{t}{detail} [{idx + 1}/{len(compare_targets)}]: "
                     f"evaluator={ev_val!r} generated={gen_val!r}"
                 )
@@ -168,5 +179,6 @@ def assert_code_does_not_embed_symbols(code: str, *, absent: set[str]) -> None:
     """Pruning helper: assert certain top-level runtime defs are not embedded."""
     hits = {sym for sym in absent if f"def {sym}(" in code or f"class {sym}:" in code}
     if hits:
-        raise AssertionError(f"Expected symbols to be pruned, but found in generated code: {sorted(hits)}")
-
+        raise AssertionError(
+            f"Expected symbols to be pruned, but found in generated code: {sorted(hits)}"
+        )

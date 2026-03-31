@@ -91,4 +91,3 @@ def test_validate_graph_compares_formula_cells_to_calcchain(tmp_path: Path) -> N
     assert result.is_valid is True
     assert result.in_graph_not_in_chain == set()
     assert result.in_chain_not_in_graph == set()
-

@@ -70,9 +70,7 @@ def xl_count(*args: CellValue) -> int:
     """Count numeric values only."""
     count = 0
     for v in flatten(*args):
-        if isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(
-            v, bool
-        ):
+        if isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, bool):
             count += 1
     return count
 

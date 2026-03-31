@@ -51,4 +51,3 @@ def test_networkx_includes_guard_attr_on_guarded_edges(tmp_path: Path) -> None:
 
     assert ("Sheet1!A1", "Sheet1!B1") in G.edges
     assert G.edges[("Sheet1!A1", "Sheet1!B1")].get("guard") is not None
-

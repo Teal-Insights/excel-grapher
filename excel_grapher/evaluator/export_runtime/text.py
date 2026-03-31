@@ -73,7 +73,7 @@ def xl__xlfn_numbervalue(
     if dec_sep == "" or dec_sep == grp_sep:
         return XlError.VALUE
 
-    s = text.replace("\u00A0", " ").strip()
+    s = text.replace("\u00a0", " ").strip()
     if s == "":
         return 0.0
     currency_symbols = "$€£¥"
@@ -126,4 +126,3 @@ def xl_numbervalue(
 ) -> float | XlError:
     """Excel NUMBERVALUE wrapper (non _xlfn prefix)."""
     return xl__xlfn_numbervalue(text, decimal_separator, group_separator)
-

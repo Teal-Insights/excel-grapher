@@ -217,9 +217,7 @@ class TestGeneratedCodeWithRealWorkbook:
         start = time.time()
         targets: list[str] = []
         for sheet_name, rows in self.INDICATOR_CONFIG.items():
-            targets.extend(
-                discover_formula_cells_in_rows(self.WORKBOOK_PATH, sheet_name, rows)
-            )
+            targets.extend(discover_formula_cells_in_rows(self.WORKBOOK_PATH, sheet_name, rows))
         print(f"Discovered {len(targets)} targets in {time.time() - start:.1f}s")
 
         start = time.time()
@@ -228,6 +226,7 @@ class TestGeneratedCodeWithRealWorkbook:
             targets,
             load_values=True,
             max_depth=self.MAX_DEPTH,
+            use_cached_dynamic_refs=True,
         )
         print(f"Built graph with {len(graph)} nodes in {time.time() - start:.1f}s")
 
@@ -247,15 +246,14 @@ class TestGeneratedCodeWithRealWorkbook:
 
         targets: list[str] = []
         for sheet_name, rows in self.INDICATOR_CONFIG.items():
-            targets.extend(
-                discover_formula_cells_in_rows(self.WORKBOOK_PATH, sheet_name, rows)
-            )
+            targets.extend(discover_formula_cells_in_rows(self.WORKBOOK_PATH, sheet_name, rows))
 
         graph = create_dependency_graph(
             self.WORKBOOK_PATH,
             targets[:5],  # Just use first 5 targets for speed
             load_values=True,
             max_depth=self.MAX_DEPTH,
+            use_cached_dynamic_refs=True,
         )
 
         gen = CodeGenerator(graph)
@@ -286,15 +284,14 @@ class TestGeneratedCodeWithRealWorkbook:
 
         targets: list[str] = []
         for sheet_name, rows in self.INDICATOR_CONFIG.items():
-            targets.extend(
-                discover_formula_cells_in_rows(self.WORKBOOK_PATH, sheet_name, rows)
-            )
+            targets.extend(discover_formula_cells_in_rows(self.WORKBOOK_PATH, sheet_name, rows))
 
         graph = create_dependency_graph(
             self.WORKBOOK_PATH,
             targets,
             load_values=True,
             max_depth=self.MAX_DEPTH,
+            use_cached_dynamic_refs=True,
         )
 
         # Compute dependency closure (graph-native). Normalize addresses to match generated runtime.

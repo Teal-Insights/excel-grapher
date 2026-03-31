@@ -95,7 +95,11 @@ def test_golden_master_inline(tmp_path: Path) -> None:
         for sheet_name, rows in INDICATOR_CONFIG.items():
             targets.extend(
                 discover_formula_cells_in_rows(
-                    WORKBOOK_PATH, sheet_name, rows, wb_formulas=wb_f, wb_values=wb_v,
+                    WORKBOOK_PATH,
+                    sheet_name,
+                    rows,
+                    wb_formulas=wb_f,
+                    wb_values=wb_v,
                 )
             )
     finally:
@@ -110,6 +114,7 @@ def test_golden_master_inline(tmp_path: Path) -> None:
         targets,
         load_values=True,
         max_depth=MAX_DEPTH,
+        use_cached_dynamic_refs=True,
     )
     print(f"Built graph with {len(graph)} nodes in {time.time() - start:.1f}s")
 
@@ -240,4 +245,6 @@ def test_golden_master_inline(tmp_path: Path) -> None:
     accuracy = matches / total if total > 0 else 0
     print(f"Accuracy: {accuracy:.1%}")
 
-    assert accuracy == 1.0, f"100% of golden master values must match with rtol {RTOL}. Measured accuracy: {accuracy:.1%}"
+    assert accuracy == 1.0, (
+        f"100% of golden master values must match with rtol {RTOL}. Measured accuracy: {accuracy:.1%}"
+    )

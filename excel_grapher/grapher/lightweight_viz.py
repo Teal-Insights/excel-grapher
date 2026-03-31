@@ -97,6 +97,7 @@ class LocalForceSubgraph:
 
 # --- Iterative graph algorithms (no recursion) -------------------------------
 
+
 def _dfs_postorder_finish(adj: list[list[int]], n: int) -> list[int]:
     """Iterative postorder; adjacency lists must be sorted for determinism."""
     visited = [False] * n
@@ -121,9 +122,7 @@ def _dfs_postorder_finish(adj: list[list[int]], n: int) -> list[int]:
     return order
 
 
-def _assign_components_reverse(
-    adj_rev: list[list[int]], order_rev: list[int], n: int
-) -> list[int]:
+def _assign_components_reverse(adj_rev: list[list[int]], order_rev: list[int], n: int) -> list[int]:
     comp = [-1] * n
     label = 0
     for start in order_rev:
@@ -280,6 +279,7 @@ def _compact_module_ids(labels: list[int]) -> tuple[list[int], int]:
 
 # --- Core export --------------------------------------------------------------
 
+
 def _build_int_adjacencies(
     graph: DependencyGraph, keys: list[NodeKey], key_id: dict[NodeKey, int]
 ) -> tuple[list[list[int]], list[list[int]]]:
@@ -350,26 +350,17 @@ def _build_local_csr(
     for src in range(n):
         m = module_of[src]
         small_module = (
-            mod_node_count[m] <= max_local_nodes
-            and mod_internal_edges[m] <= max_local_edges
+            mod_node_count[m] <= max_local_nodes and mod_internal_edges[m] <= max_local_edges
         )
         raw = list(out_edges_by_src[src])
         out_deg = [len(out_edges_by_src[i]) for i in range(n)]
         if small_module:
-            raw.sort(
-                key=lambda t: _neighbor_sort_key(
-                    t[0], t[1], module_of, m, out_deg
-                )
-            )
+            raw.sort(key=lambda t: _neighbor_sort_key(t[0], t[1], module_of, m, out_deg))
             for tgt, g in raw:
                 targets.append(tgt)
                 guarded_flags.append(g)
         else:
-            raw.sort(
-                key=lambda t: _neighbor_sort_key(
-                    t[0], t[1], module_of, m, out_deg
-                )
-            )
+            raw.sort(key=lambda t: _neighbor_sort_key(t[0], t[1], module_of, m, out_deg))
             for k, (tgt, g) in enumerate(raw):
                 if k >= max_local_edges:
                     complete[src] = False
@@ -439,7 +430,7 @@ def to_lightweight_viz(
         )
     key_id = {k: i for i, k in enumerate(keys)}
 
-    sheets_sorted = sorted({graph.get_node(k).sheet for k in keys if graph.get_node(k)})
+    sheets_sorted = sorted({node.sheet for k in keys if (node := graph.get_node(k)) is not None})
     sheet_index_map = {s: i for i, s in enumerate(sheets_sorted)}
 
     uncond, all_adj = _build_int_adjacencies(graph, keys, key_id)
@@ -455,9 +446,7 @@ def to_lightweight_viz(
     scc_rank = longest_path_ranks(adj_cond, n_comp) if n_comp else []
 
     scc_labels = (
-        _module_labels_async(adj_cond, n_comp, scc_rank, module_iterations)
-        if n_comp
-        else []
+        _module_labels_async(adj_cond, n_comp, scc_rank, module_iterations) if n_comp else []
     )
     module_of_scc, _n_mod = _compact_module_ids(scc_labels) if n_comp else ([], 0)
     module_of = [module_of_scc[comp[i]] for i in range(n)] if n else []
@@ -499,9 +488,7 @@ def to_lightweight_viz(
         b = (node_rank[i], module_of[i])
         bucket_counts[b] = bucket_counts.get(b, 0) + 1
 
-    dense_bucket_count = sum(
-        1 for _b, c in bucket_counts.items() if c > DENSE_BUCKET_THRESHOLD
-    )
+    dense_bucket_count = sum(1 for _b, c in bucket_counts.items() if c > DENSE_BUCKET_THRESHOLD)
 
     xs = [0.0] * n
     ys = [0.0] * n
@@ -515,11 +502,7 @@ def to_lightweight_viz(
         bkey = (rnk, mid)
         cnt = bucket_counts[bkey]
         bucket_density[i] = cnt
-        idx_in_bucket = sum(
-            1
-            for j in range(i)
-            if node_rank[j] == rnk and module_of[j] == mid
-        )
+        idx_in_bucket = sum(1 for j in range(i) if node_rank[j] == rnk and module_of[j] == mid)
         if cnt <= DENSE_BUCKET_THRESHOLD:
             ys[i] = base_y + float(idx_in_bucket) * 4.0
         else:
@@ -722,6 +705,7 @@ def select_local_force_subgraph(
 
 # --- Serialization ------------------------------------------------------------
 
+
 def _payload_to_jsonable(payload: LightweightVizPayload) -> dict[str, Any]:
     return {
         "version": payload.version,
@@ -837,16 +821,12 @@ def write_lightweight_viz_html(
             json_payload = serialize_lightweight_viz_json(payload)
         else:
             sidecar_name = (
-                Path(data_path).name
-                if data_path is not None
-                else out.with_suffix(".viz.json").name
+                Path(data_path).name if data_path is not None else out.with_suffix(".viz.json").name
             )
 
     if json_payload is not None and len(json_payload.encode("utf-8")) > budget:
         sidecar_name = (
-            Path(data_path).name
-            if data_path is not None
-            else out.with_suffix(".viz.json").name
+            Path(data_path).name if data_path is not None else out.with_suffix(".viz.json").name
         )
         json_payload = None
 
@@ -856,8 +836,10 @@ def write_lightweight_viz_html(
         data_file = out.parent / sidecar_name
         write_lightweight_viz_data(payload, data_file)
 
-    tpl = resources.files(__package__).joinpath("lightweight_viz_template.html").read_text(
-        encoding="utf-8"
+    tpl = (
+        resources.files(__package__ or __name__)
+        .joinpath("lightweight_viz_template.html")
+        .read_text(encoding="utf-8")
     )
     bootstrap = (
         f"window.__VIZ_DATA__ = {json_payload};"
@@ -869,7 +851,9 @@ def write_lightweight_viz_html(
         if json_payload is None
         else "window.__VIZ_DATA_URL__ = null;"
     )
-    html = tpl.replace("__TITLE__", title).replace("/*__BOOTSTRAP__*/", bootstrap).replace(
-        "/*__SIDECAR__*/", sidecar_js
+    html = (
+        tpl.replace("__TITLE__", title)
+        .replace("/*__BOOTSTRAP__*/", bootstrap)
+        .replace("/*__SIDECAR__*/", sidecar_js)
     )
     out.write_text(html, encoding="utf-8")

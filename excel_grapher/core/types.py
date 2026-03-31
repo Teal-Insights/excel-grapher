@@ -10,6 +10,8 @@ from typing import TypeAlias
 import fastpyxl.utils.cell
 import numpy as np
 
+from excel_grapher.evaluator.name_utils import format_address
+
 
 class XlError(StrEnum):
     VALUE = "#VALUE!"
@@ -45,7 +47,7 @@ class ExcelRange:
         for r in range(self.start_row, self.end_row + 1):
             for c in range(self.start_col, self.end_col + 1):
                 col = fastpyxl.utils.cell.get_column_letter(c)
-                yield f"{self.sheet}!{col}{r}"
+                yield format_address(self.sheet, f"{col}{r}")
 
     def resolve(self, evaluate_fn: Callable[[str], CellValue]) -> np.ndarray:
         values: list[CellValue] = [evaluate_fn(addr) for addr in self.cell_addresses()]
@@ -54,6 +56,4 @@ class ExcelRange:
 
 
 # Scalar values, references, and object-dtype ndarrays of CellValue (e.g. OFFSET result).
-CellValue: TypeAlias = (
-    float | int | str | bool | XlError | ExcelRange | np.ndarray | None
-)
+CellValue: TypeAlias = float | int | str | bool | XlError | ExcelRange | np.ndarray | None
