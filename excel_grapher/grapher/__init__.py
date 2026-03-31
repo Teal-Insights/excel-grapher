@@ -11,6 +11,7 @@ from excel_grapher.core.cell_types import (
     RealIntervalDomain,
 )
 
+from .blank_ranges import normalize_blank_range_specs
 from .builder import create_dependency_graph, list_dynamic_ref_constraint_candidates
 from .cache import (
     GRAPH_CACHE_SCHEMA_VERSION,
@@ -56,6 +57,7 @@ from .validation import ValidationResult, WorkbookCalcSettings, get_calc_setting
 
 __all__ = [
     "create_dependency_graph",
+    "normalize_blank_range_specs",
     "list_dynamic_ref_constraint_candidates",
     "GRAPH_CACHE_SCHEMA_VERSION",
     "build_graph_cache_meta",

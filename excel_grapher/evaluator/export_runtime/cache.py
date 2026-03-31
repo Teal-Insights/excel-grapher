@@ -145,9 +145,10 @@ def xl_cell(ctx: EvalContext, address: str) -> CellValue:
     ctx.stack.append(address)
     try:
         v = fn(ctx)
-        # Excel treats "empty" results as 0 in most numeric contexts; the evaluator
-        # normalizes formula results of None to 0, so do the same here for parity.
-        if v is None:
+        # Excel treats "empty" formula results as 0 in most numeric contexts; the evaluator
+        # normalizes those Nones to 0. Structural blank-range cells intentionally stay None
+        # so INDEX/MATCH (and similar) see true empty cells in object arrays.
+        if v is None and not getattr(fn, "__structural_blank__", False):
             v = 0
         ctx.cache[address] = v
         return v
