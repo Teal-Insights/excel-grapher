@@ -74,7 +74,7 @@ class ExportRangeConfig(TypedDict):
 WORKBOOK_PATH = Path("example/data/lic-dsf-template-2025-08-12.xlsm")
 WORKBOOK_TEMPLATE_URL = "https://thedocs.worldbank.org/en/doc/f0ade6bcf85b6f98dbeb2c39a2b7770c-0360012025/original/LIC-DSF-IDA21-Template-08-12-2025-vf.xlsm"
 
-GRAPH_CACHE_SCHEMA = 1
+GRAPH_CACHE_SCHEMA = 2
 GRAPH_MAX_DEPTH = 50
 GRAPH_LOAD_VALUES = True
 GRAPH_USE_CACHED_DYNAMIC_REFS = True
@@ -349,7 +349,7 @@ def try_load_graph_cache(
     try:
         with cache_path.open("rb") as f:
             payload = pickle.load(f)
-    except (OSError, pickle.UnpicklingError, EOFError, AttributeError):
+    except (OSError, pickle.UnpicklingError, EOFError, AttributeError, TypeError):
         return None
     if not isinstance(payload, tuple) or len(payload) != 2:
         return None
