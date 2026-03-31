@@ -2867,16 +2867,15 @@ class TestLazyIfEval:
 
     def _eval(self, expr: str, env: dict[str, object] | None = None) -> object:
         from excel_grapher.core.expr_eval import evaluate_expr
+        from excel_grapher.core.types import CellValue, XlError
 
         cell_values = env or {}
 
-        def get_cell_value(addr: str) -> object:
+        def get_cell_value(addr: str) -> CellValue:
             v = cell_values.get(addr)
             if v is None:
-                from excel_grapher.core.types import XlError
-
                 return XlError.REF
-            return v
+            return v  # type: ignore[return-value]
 
         return evaluate_expr(parse_ast("=" + expr), get_cell_value=get_cell_value)
 
