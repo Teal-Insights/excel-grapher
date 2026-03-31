@@ -284,6 +284,10 @@ class FormulaEvaluator:
                 return self._eval_column(node.args)
             if name == "COLUMNS":
                 return self._eval_columns(node.args)
+            if name in {"TRUE", "_XLFN.TRUE"}:
+                return True
+            if name in {"FALSE", "_XLFN.FALSE"}:
+                return False
 
             args = [self._evaluate_ast(a) for a in node.args]
             # Resolve ExcelRange objects to numpy arrays

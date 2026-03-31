@@ -720,6 +720,12 @@ class CodeGenerator:
         if upper_name == "COLUMNS":
             return self._emit_columns(node)
 
+        # TRUE()/FALSE() as zero-arg function calls
+        if upper_name in {"TRUE", "_XLFN.TRUE"}:
+            return "True"
+        if upper_name in {"FALSE", "_XLFN.FALSE"}:
+            return "False"
+
         # Functions that need numpy arrays for their array/table arguments
         # Maps function name -> set of argument indices that need np.array wrapping
         numpy_array_args: dict[str, set[int]] = {
