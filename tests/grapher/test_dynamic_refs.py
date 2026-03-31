@@ -19,6 +19,7 @@ from excel_grapher.core.cell_types import (
     IntIntervalDomain,
     NotEqualCell,
 )
+from excel_grapher.core.formula_ast import AstNode
 from excel_grapher.core.formula_ast import parse as parse_ast
 from excel_grapher.grapher import dynamic_refs as dynamic_refs_mod
 from excel_grapher.grapher import parser as parser_mod
@@ -2275,7 +2276,7 @@ def test_shared_intermediate_env_expansion_cache(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _parse_selector(expr: str) -> object:
+def _parse_selector(expr: str) -> AstNode:
     """Parse a bare selector expression (without the leading '=') into an AST node.
 
     Wraps the expression with '=' so that parse_ast can handle it, then unwraps
