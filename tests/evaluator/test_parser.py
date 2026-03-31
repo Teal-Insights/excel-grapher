@@ -122,14 +122,10 @@ def test_parse_quoted_sheet_names() -> None:
     # Single cell reference with quoted sheet name
     assert parse("='My Sheet'!A1") == CellRefNode("'My Sheet'!A1")
     # Range reference with quoted sheet name
-    assert parse("='Data Sheet'!A1:B2") == RangeNode(
-        "'Data Sheet'!A1", "'Data Sheet'!B2"
-    )
+    assert parse("='Data Sheet'!A1:B2") == RangeNode("'Data Sheet'!A1", "'Data Sheet'!B2")
     # Function with quoted sheet name
     ast = parse("=SUM('Input Data'!A1:A10)")
-    assert ast == FunctionCallNode(
-        "SUM", [RangeNode("'Input Data'!A1", "'Input Data'!A10")]
-    )
+    assert ast == FunctionCallNode("SUM", [RangeNode("'Input Data'!A1", "'Input Data'!A10")])
 
 
 def test_parse_range_with_quoted_sheet_on_both_ends() -> None:
@@ -164,9 +160,7 @@ def test_parse_omitted_arguments() -> None:
         "INDEX", [RangeNode("S!A1", "S!B2"), EmptyArgNode(), EmptyArgNode()]
     )
     # Omitted first argument
-    assert parse("=COUNT(,1)") == FunctionCallNode(
-        "COUNT", [EmptyArgNode(), NumberNode(1.0)]
-    )
+    assert parse("=COUNT(,1)") == FunctionCallNode("COUNT", [EmptyArgNode(), NumberNode(1.0)])
     # Only omitted argument
     assert parse("=COUNT()") == FunctionCallNode("COUNT", [])
     assert parse("=COUNT(,)") == FunctionCallNode("COUNT", [EmptyArgNode(), EmptyArgNode()])

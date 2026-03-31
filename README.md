@@ -1,7 +1,5 @@
 ## `excel-grapher`
 
-> **Proprietary software** — © 2026 Teal Insights. All rights reserved.
-
 Build and analyze dependency graphs from Excel workbooks, **evaluate formulas with Excel semantics**, and **export standalone Python code**.
 
 ### Why this exists
@@ -291,6 +289,28 @@ from excel_grapher.grapher import to_networkx
 G = to_networkx(g)
 ```
 
+### Large graphs: lightweight WebGL viewer
+
+For graphs that are too large for Graphviz or Mermaid, build a **columnar** payload and open the generated HTML in a browser (no Node/npm build). The overview uses rank-based layout and module summaries; raw cell-to-cell edges are exported only in bounded **local** neighborhoods. Optional **local force** layout runs in the browser on small subgraphs only.
+
+```python
+from pathlib import Path
+
+from excel_grapher.grapher import (
+    create_dependency_graph,
+    to_lightweight_viz,
+    write_lightweight_viz_data,
+    write_lightweight_viz_html,
+)
+
+g = create_dependency_graph("model.xlsx", ["Sheet1!A1"], load_values=False)
+payload = to_lightweight_viz(g)
+write_lightweight_viz_data(payload, Path("model.viz.json"))
+write_lightweight_viz_html(payload, Path("model.html"), data_mode="auto")
+```
+
+`write_lightweight_viz_html(..., data_mode="auto")` inlines JSON when the estimated payload is at most **50 MiB** (override with `inline_size_budget_mb`); otherwise it writes a sidecar `.viz.json` next to the HTML. Stats on truncation and density are in `payload.stats`.
+
 ### Validation via `calcChain.xml`
 
 You can validate the graph against Excel’s `calcChain.xml`:
@@ -468,6 +488,56 @@ print(evaluator_results)
 # {'S!B1': 20.0}
 ```
 
+### Caching an extracted graph (optional)
+
+If graph extraction is expensive and you expect to re-use the same workbook + targets + extraction settings,
+you can cache the `DependencyGraph` to disk as JSON.
+
+Strict caching (requires access to the workbook file to validate fingerprints):
+
+```python
+from pathlib import Path
+
+from excel_grapher import (
+    CacheValidationPolicy,
+    build_graph_cache_meta,
+    create_dependency_graph,
+    save_graph_cache,
+    try_load_graph_cache,
+)
+
+workbook_path = Path("workbook.xlsx")
+targets = ["S!B1"]
+extraction_params = {"load_values": True, "max_depth": 50}
+
+expected = build_graph_cache_meta(workbook_path, targets, extraction_params=extraction_params)
+graph = try_load_graph_cache(Path("graph-cache.json"), expected_meta=expected)
+if graph is None:
+    graph = create_dependency_graph(workbook_path, targets, **extraction_params)
+    save_graph_cache(Path("graph-cache.json"), graph, expected)
+```
+
+Portable caching (for `FormulaEvaluator` on machines without the workbook file):
+
+```python
+from excel_grapher import (
+    CacheValidationPolicy,
+    build_graph_cache_meta_portable,
+    try_load_graph_cache,
+)
+
+targets = ["S!B1"]
+expected = build_graph_cache_meta_portable(targets, extraction_params={"load_values": True, "max_depth": 50})
+
+graph = try_load_graph_cache(
+    Path("graph-cache.json"),
+    expected_meta=expected,
+    policy=CacheValidationPolicy.PORTABLE,
+)
+if graph is None:
+    raise FileNotFoundError("No valid cached graph found for the requested targets/settings.")
+```
+
 **Tradeoffs for the evaluator approach:**
 
 - **Advantages**
@@ -582,7 +652,5 @@ print(generated_results)
 
 ## 6. Roadmap
 
-- Modularize or vectorize parts of the computation in the exported code. Static analysis can identify “pyramidal” regions (single-cell or row/range entrypoints) that are natural candidates for refactoring or vectorization.
-- Extract row and column labels from the Excel workbook for each referenced cell and carry them in the data model, to support more interpretable downstream representations. Early work along these lines lives in the `lic-dsf-programmatic-extraction` repository.
 - Continue expanding parity tests between the evaluator runtime and export runtime, especially for representation-sensitive areas such as `OFFSET`, `INDIRECT`, `LOOKUP`, `MATCH`, and `INDEX`.
 - Refine the dynamic-reference configuration API and constraints tooling (e.g., better TypedDict ergonomics, validation helpers) as more real-world models and templates are integrated.

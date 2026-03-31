@@ -212,9 +212,7 @@ def test_eager_invalidation_checks_all_leaves_upfront() -> None:
     graph.add_edge("S!B1", "S!A1")
     graph.add_edge("S!B2", "S!A2")
 
-    with FormulaEvaluator(
-        graph, auto_detect_changes=True, eager_invalidation=True
-    ) as ev:
+    with FormulaEvaluator(graph, auto_detect_changes=True, eager_invalidation=True) as ev:
         # First evaluation
         ev.evaluate(["S!B1", "S!B2"])
 
@@ -242,9 +240,7 @@ def test_lazy_invalidation_only_checks_visited_leaves() -> None:
     graph.add_edge("S!B1", "S!A1")
     graph.add_edge("S!B2", "S!A2")
 
-    with FormulaEvaluator(
-        graph, auto_detect_changes=True, eager_invalidation=False
-    ) as ev:
+    with FormulaEvaluator(graph, auto_detect_changes=True, eager_invalidation=False) as ev:
         # First evaluation of both
         ev.evaluate(["S!B1", "S!B2"])
         assert ev._cache["S!B2"] == 15.0  # noqa: SLF001
@@ -268,9 +264,7 @@ def test_lazy_invalidation_detects_changes_in_evaluation_path() -> None:
     )
     graph.add_edge("S!B1", "S!A1")
 
-    with FormulaEvaluator(
-        graph, auto_detect_changes=True, eager_invalidation=False
-    ) as ev:
+    with FormulaEvaluator(graph, auto_detect_changes=True, eager_invalidation=False) as ev:
         # First evaluation
         result1 = ev.evaluate(["S!B1"])
         assert result1["S!B1"] == 20.0

@@ -13,6 +13,7 @@ from .core import CellValue, ExcelRange, XlError
 _cell_cache: dict[Callable[[], CellValue], CellValue] = {}
 _computing: set[Callable[[], CellValue]] = set()
 
+
 class CircularReferenceWarning(RuntimeWarning):
     """Warning emitted when a circular reference is encountered (default Excel mode)."""
 
@@ -271,7 +272,12 @@ def _convergence_delta(prev: CellValue, curr: CellValue) -> float:
 
             if _is_array(prev) and _is_array(curr):
                 from typing import cast
-                return 0.0 if np.array_equal(cast(Any, prev), cast(Any, curr), equal_nan=True) else float("inf")
+
+                return (
+                    0.0
+                    if np.array_equal(cast(Any, prev), cast(Any, curr), equal_nan=True)
+                    else float("inf")
+                )
             return float("inf")
         except Exception:
             return float("inf")

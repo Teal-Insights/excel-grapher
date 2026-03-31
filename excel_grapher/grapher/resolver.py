@@ -166,15 +166,27 @@ def _eval_offset_formula_to_range(
     """Evaluate OFFSET(...) to (sheet, start_a1, end_a1) or None."""
     if node.name.upper() != "OFFSET" or len(node.args) < 3:
         return None
-    base = _base_node_to_excel_range(node.args[0], bounds) if isinstance(node.args[0], (CellRefNode, RangeNode)) else None
+    base = (
+        _base_node_to_excel_range(node.args[0], bounds)
+        if isinstance(node.args[0], (CellRefNode, RangeNode))
+        else None
+    )
     if base is None:
         return None
     rows = _eval_number_for_defined_name(node.args[1], get_cell_value, bounds)
     cols = _eval_number_for_defined_name(node.args[2], get_cell_value, bounds)
     if rows is None or cols is None:
         return None
-    height = _eval_number_for_defined_name(node.args[3], get_cell_value, bounds) if len(node.args) >= 4 else None
-    width = _eval_number_for_defined_name(node.args[4], get_cell_value, bounds) if len(node.args) >= 5 else None
+    height = (
+        _eval_number_for_defined_name(node.args[3], get_cell_value, bounds)
+        if len(node.args) >= 4
+        else None
+    )
+    width = (
+        _eval_number_for_defined_name(node.args[4], get_cell_value, bounds)
+        if len(node.args) >= 5
+        else None
+    )
     if height is not None and height <= 0:
         return None
     if width is not None and width <= 0:
@@ -354,4 +366,3 @@ def build_named_range_map(wb: fastpyxl.Workbook) -> NamedRangeMaps:
 def qualify_cell_ref(ref: CellRef, current_sheet: str) -> tuple[str, str]:
     sheet = ref.sheet if ref.sheet is not None else current_sheet
     return sheet, f"{ref.column}{ref.row}"
-

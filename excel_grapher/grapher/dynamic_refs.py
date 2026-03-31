@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import math
 import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -48,6 +50,8 @@ from excel_grapher.core.types import ExcelRange, XlError
 
 from .parser import _find_function_calls_with_spans, expand_range, format_key
 
+logger = logging.getLogger(__name__)
+
 
 class DynamicRefError(ValueError):
     """Raised when dynamic reference analysis cannot proceed.
@@ -74,6 +78,35 @@ def constrain(constraints: type[Any], address: str, annotation: Any) -> None:
 
 @dataclass(frozen=True)
 class DynamicRefLimits:
+    """Tuneable safety limits for dynamic-reference inference.
+
+    Pass a custom instance via the ``limits`` parameter of
+    :meth:`DynamicRefConfig.from_constraints`,
+    :meth:`DynamicRefConfig.from_constraints_and_workbook`, or
+    :meth:`DynamicRefConfig.from_workbook` to override any of these defaults.
+
+    Attributes:
+        max_branches: Maximum number of discrete value assignments explored
+            during constraint enumeration.  This cap is applied in two places:
+
+            * **Per-dependency domain size** – a single cell constrained to an
+              integer interval wider than *max_branches* values cannot be
+              enumerated; the caller must either tighten the constraint or rely
+              on the symbolic (abstract) analysis path.
+            * **Cartesian-product size** – when a formula cell falls back to
+              brute-force evaluation over all combinations of its dependencies'
+              domains, the product of those domain sizes must not exceed
+              *max_branches*.  If it does, a :class:`DynamicRefError` is raised
+              immediately (rather than hanging) with a breakdown of which
+              dependencies contributed to the explosion.  Raise this limit or
+              tighten the offending constraints to resolve the error.
+
+            Default: ``1024``.
+        max_cells: Maximum number of cells collected when expanding a range
+            reference.  Default: ``10_000``.
+        max_depth: Maximum AST-evaluation recursion depth.  Default: ``10``.
+    """
+
     max_branches: int = 1024
     max_cells: int = 10_000
     max_depth: int = 10
@@ -244,9 +277,7 @@ def _strip_optional_sheet_prefix(part: str, expected_sheet: str) -> str:
         return part
     sheet_name, coord = _split_addr_sheet_coord(part)
     if sheet_name != expected_sheet:
-        raise DynamicRefError(
-            f"Range endpoint {part!r} must use sheet {expected_sheet!r}"
-        )
+        raise DynamicRefError(f"Range endpoint {part!r} must use sheet {expected_sheet!r}")
     return coord
 
 
@@ -279,6 +310,9 @@ def expand_leaf_env_to_argument_env(
     limits: DynamicRefLimits,
     named_ranges: Mapping[str, tuple[str, str]] | None = None,
     named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
+    *,
+    max_range_cells: int = 5000,
+    shared_cell_type_cache: dict[str, CellType] | None = None,
 ) -> dict[str, CellType]:
     """Build a CellTypeEnv for all refs in the argument chain from leaf constraints only.
 
@@ -290,8 +324,18 @@ def expand_leaf_env_to_argument_env(
     When an intermediate cannot be inferred (e.g. its formula is OFFSET/INDIRECT and
     refs are empty after masking), it is assigned CellType(ANY); enumeration may then
     require a constraint for that cell.
+
+    ``max_range_cells`` must match the graph builder's range expansion limit so static
+    ranges collected from the AST align with
+    :func:`~excel_grapher.grapher.builder.create_dependency_graph` argument-subgraph BFS.
+
+    When ``shared_cell_type_cache`` is provided, intermediate cell type inferences
+    are persisted across multiple calls.  This avoids redundant work when many
+    BFS nodes share intermediate formula cells in their argument subgraphs.
     """
-    cache: dict[str, CellType] = {}
+    cache: dict[str, CellType] = (
+        shared_cell_type_cache if shared_cell_type_cache is not None else {}
+    )
     in_progress: set[str] = set()
     nr = named_ranges or {}
     nrr = named_range_ranges or {}
@@ -326,9 +370,7 @@ def expand_leaf_env_to_argument_env(
         if addr in cache:
             return cache[addr]
         if addr in in_progress:
-            raise DynamicRefError(
-                f"Cycle detected while inferring argument-cell types for {addr!r}"
-            )
+            return CellType(kind=CellKind.ANY)
         ct_resolved = _lookup_cell_type(leaf_env, addr)
         if ct_resolved is not None:
             cache[addr] = ct_resolved
@@ -348,7 +390,9 @@ def expand_leaf_env_to_argument_env(
             except FormulaParseError:
                 ast_root = None
             if ast_root is not None:
-                refs |= _collect_static_addresses_from_ast(ast_root)
+                refs |= _collect_static_addresses_from_ast(
+                    ast_root, max_range_cells=max_range_cells
+                )
             if not refs:
                 if ast_root is None:
                     cache[addr] = CellType(kind=CellKind.ANY)
@@ -439,6 +483,21 @@ def expand_leaf_env_to_argument_env(
                 else:
                     cache[addr] = CellType(kind=CellKind.ANY)
                     return cache[addr]
+            total_branches = math.prod(len(v) for v in domains.values())
+            if total_branches > limits.max_branches:
+                dep_sizes = ", ".join(f"{r!r}: {len(domains[r])}" for r in sorted(domains))
+                unsupported_hint = (
+                    f" First unsupported construct: {unsupported}."
+                    if unsupported is not None
+                    else ""
+                )
+                raise DynamicRefError(
+                    f"Formula cell {addr!r} fallback enumeration would require "
+                    f"{total_branches} branches (limit {limits.max_branches}). "
+                    f"Dependency domain sizes: {dep_sizes}.{unsupported_hint} "
+                    f"Tighten constraints on one or more dependencies, simplify "
+                    f"the formula, or extend numeric abstract analysis to cover it."
+                )
             result_values: set[Any] = set()
             last_unsupported: Unsupported | None = None
             for assignment in product(*(domains[r] for r in refs)):
@@ -510,7 +569,7 @@ def infer_dynamic_offset_targets(
     lim = limits or DynamicRefLimits()
     out: set[str] = set()
 
-    calls = _find_function_calls_with_spans(formula, {"OFFSET"})
+    calls = _find_function_calls_with_spans(formula, frozenset({"OFFSET"}))
     for fn, inner, _span in calls:
         if fn != "OFFSET":
             continue
@@ -527,9 +586,7 @@ def infer_dynamic_offset_targets(
         )
         out |= targets
         if len(out) > lim.max_cells:
-            raise DynamicRefError(
-                f"Dynamic ref cells exceed limit ({len(out)} > {lim.max_cells})"
-            )
+            raise DynamicRefError(f"Dynamic ref cells exceed limit ({len(out)} > {lim.max_cells})")
 
     return out
 
@@ -559,8 +616,8 @@ def infer_dynamic_index_targets(
     out: set[str] = set()
 
     # Find all INDEX and OFFSET calls so we can exclude INDEX-inside-OFFSET.
-    index_calls = _find_function_calls_with_spans(formula, {"INDEX"})
-    offset_calls = _find_function_calls_with_spans(formula, {"OFFSET"})
+    index_calls = _find_function_calls_with_spans(formula, frozenset({"INDEX"}))
+    offset_calls = _find_function_calls_with_spans(formula, frozenset({"OFFSET"}))
 
     nested_index_spans: set[tuple[int, int]] = set()
     offset_spans = [span for _fn, _inner, span in offset_calls]
@@ -593,9 +650,7 @@ def infer_dynamic_index_targets(
         )
         out |= targets
         if len(out) > lim.max_cells:
-            raise DynamicRefError(
-                f"Dynamic ref cells exceed limit ({len(out)} > {lim.max_cells})"
-            )
+            raise DynamicRefError(f"Dynamic ref cells exceed limit ({len(out)} > {lim.max_cells})")
 
     return out
 
@@ -622,18 +677,14 @@ def _infer_single_index_call(
     array_expr = _qualify_fragment(args[0], named_ranges, named_range_ranges)
     row_expr = _qualify_fragment(args[1], named_ranges, named_range_ranges)
     col_expr = (
-        _qualify_fragment(args[2], named_ranges, named_range_ranges)
-        if len(args) >= 3
-        else ""
+        _qualify_fragment(args[2], named_ranges, named_range_ranges) if len(args) >= 3 else ""
     )
 
     try:
         array_ast = parse_ast("=" + array_expr)
         array_range = _base_to_range(array_ast, current_sheet=current_sheet)
     except (DynamicRefError, FormulaParseError) as exc:
-        raise DynamicRefError(
-            f"INDEX array argument must be a static range: {exc}"
-        ) from exc
+        raise DynamicRefError(f"INDEX array argument must be a static range: {exc}") from exc
 
     row_ast = parse_ast("=" + row_expr)
     col_ast = parse_ast("=" + col_expr) if col_expr else None
@@ -665,7 +716,8 @@ def _qualify_fragment(
         return expr
     # Replace longer names first so "Country_list" is not partially matched by "Count".
     all_names = sorted(
-        set(named_ranges.keys()) | (set(named_range_ranges.keys()) if named_range_ranges else set()),
+        set(named_ranges.keys())
+        | (set(named_range_ranges.keys()) if named_range_ranges else set()),
         key=lambda n: (-len(n), n),
     )
     result = expr
@@ -728,9 +780,7 @@ def _infer_single_offset_call(
             current_col=current_col,
         )
     except DynamicRefError as exc:
-        raise DynamicRefError(
-            f"{exc} (OFFSET base expression {base_expr!r})"
-        ) from exc
+        raise DynamicRefError(f"{exc} (OFFSET base expression {base_expr!r})") from exc
 
     rows_ast = parse_ast("=" + rows_expr)
     cols_ast = parse_ast("=" + cols_expr)
@@ -780,9 +830,7 @@ def _infer_single_offset_call(
         assert rows_list is not None
         assert cols_list is not None
         for base_range in base_ranges:
-            base_bounds = (
-                GlobalWorkbookBounds(sheet=base_range.sheet) if bounds is None else bounds
-            )
+            base_bounds = GlobalWorkbookBounds(sheet=base_range.sheet) if bounds is None else bounds
             for rv in rows_list:
                 for cv in cols_list:
                     for hv in height_vals:
@@ -797,6 +845,11 @@ def _infer_single_offset_call(
                             )
                             if isinstance(result, ExcelRange):
                                 targets |= set(result.cell_addresses())
+                                if len(targets) > limits.max_cells:
+                                    raise DynamicRefError(
+                                        f"Dynamic ref cells from single OFFSET call exceed limit "
+                                        f"({len(targets)} > {limits.max_cells})"
+                                    )
         return targets
 
     leaf_addrs: set[str] = set()
@@ -810,9 +863,7 @@ def _infer_single_offset_call(
     domains = _build_domains(leaf_addrs, cell_type_env, limits)
 
     for base_range in base_ranges:
-        base_bounds = (
-            GlobalWorkbookBounds(sheet=base_range.sheet) if bounds is None else bounds
-        )
+        base_bounds = GlobalWorkbookBounds(sheet=base_range.sheet) if bounds is None else bounds
 
         for assignment in _enumerate_assignments(domains.values(), limits):
             addr_to_value = dict(zip(domains.keys(), assignment, strict=False))
@@ -853,6 +904,11 @@ def _infer_single_offset_call(
             )
             if isinstance(result, ExcelRange):
                 targets |= set(result.cell_addresses())
+                if len(targets) > limits.max_cells:
+                    raise DynamicRefError(
+                        f"Dynamic ref cells from single OFFSET call exceed limit "
+                        f"({len(targets)} > {limits.max_cells})"
+                    )
 
     return targets
 
@@ -1009,7 +1065,9 @@ def _domain_result(
     return _NumericDomainInferenceResult(domain=domain, diagnostic=diagnostic)
 
 
-def _domain_from_cell_type(ct: CellType | None, limits: DynamicRefLimits) -> _FiniteInts | _IntBounds | None:
+def _domain_from_cell_type(
+    ct: CellType | None, limits: DynamicRefLimits
+) -> _FiniteInts | _IntBounds | None:
     if ct is None:
         return None
     if ct.kind not in (CellKind.NUMBER, CellKind.ANY):
@@ -1072,7 +1130,11 @@ def _normalize_to_bounds(d: _FiniteInts | _IntBounds) -> _IntBounds:
 
 def _ast_to_expr_string(node: AstNode) -> str:
     if isinstance(node, NumberNode):
-        return str(int(node.value) if isinstance(node.value, float) and node.value.is_integer() else node.value)
+        return str(
+            int(node.value)
+            if isinstance(node.value, float) and node.value.is_integer()
+            else node.value
+        )
     if isinstance(node, CellRefNode):
         return node.address
     if isinstance(node, RangeNode):
@@ -1141,7 +1203,9 @@ def _domain_with_max(
     return _IntBounds(lo, hi)
 
 
-def _domain_without_zero(domain: _FiniteInts | _IntBounds | None) -> _FiniteInts | _IntBounds | None:
+def _domain_without_zero(
+    domain: _FiniteInts | _IntBounds | None,
+) -> _FiniteInts | _IntBounds | None:
     if domain is None:
         return None
     if isinstance(domain, _FiniteInts):
@@ -1155,7 +1219,9 @@ def _lookup_cell_type(env: CellTypeEnv, address: str) -> CellType | None:
     return env.get(normalize_cell_type_env_key(address))
 
 
-def _cell_has_relation(env: CellTypeEnv, addr: str, relation: type[GreaterThanCell | NotEqualCell], other: str) -> bool:
+def _cell_has_relation(
+    env: CellTypeEnv, addr: str, relation: type[GreaterThanCell | NotEqualCell], other: str
+) -> bool:
     ct = _lookup_cell_type(env, addr)
     if ct is None:
         return False
@@ -1197,7 +1263,10 @@ def _refine_difference_domain(
 def _expr_is_known_nonzero(node: AstNode, env: CellTypeEnv) -> bool:
     if isinstance(node, CellRefNode):
         ct = _lookup_cell_type(env, node.address)
-        return ct is not None and _domain_may_include_zero(_domain_from_cell_type(ct, DynamicRefLimits())) is False
+        return (
+            ct is not None
+            and _domain_may_include_zero(_domain_from_cell_type(ct, DynamicRefLimits())) is False
+        )
     if (
         isinstance(node, BinaryOpNode)
         and node.op == "-"
@@ -1451,6 +1520,286 @@ def _neg_numeric_domain(d: _FiniteInts | _IntBounds | None) -> _FiniteInts | _In
     return _IntBounds(-d.hi, -d.lo)
 
 
+# ---------------------------------------------------------------------------
+# Phase 1: ABS / MIN / MAX transfer rules
+# ---------------------------------------------------------------------------
+
+
+def _abs_numeric_domain(
+    d: _FiniteInts | _IntBounds | None,
+) -> _FiniteInts | _IntBounds | None:
+    if d is None:
+        return None
+    if isinstance(d, _FiniteInts):
+        return _FiniteInts(frozenset(abs(v) for v in d.values))
+    lo, hi = d.lo, d.hi
+    if lo >= 0:
+        return _IntBounds(lo, hi)
+    if hi <= 0:
+        return _IntBounds(-hi, -lo)
+    # Mixed: crosses zero — hull [0, max(|lo|, hi)]
+    return _IntBounds(0, max(-lo, hi))
+
+
+def _min_numeric_domains(
+    a: _FiniteInts | _IntBounds,
+    b: _FiniteInts | _IntBounds,
+    limits: DynamicRefLimits,
+) -> _FiniteInts | _IntBounds:
+    if isinstance(a, _FiniteInts) and isinstance(b, _FiniteInts):
+        vals = frozenset(min(x, y) for x in a.values for y in b.values)
+        if len(vals) <= limits.max_branches:
+            return _FiniteInts(vals)
+        return _IntBounds(min(vals), max(vals))
+    ba, bb = _normalize_to_bounds(a), _normalize_to_bounds(b)
+    lo = min(ba.lo, bb.lo)
+    hi = min(ba.hi, bb.hi)
+    span = hi - lo + 1
+    if span <= limits.max_branches:
+        return _FiniteInts(frozenset(range(lo, hi + 1)))
+    return _IntBounds(lo, hi)
+
+
+def _max_numeric_domains(
+    a: _FiniteInts | _IntBounds,
+    b: _FiniteInts | _IntBounds,
+    limits: DynamicRefLimits,
+) -> _FiniteInts | _IntBounds:
+    if isinstance(a, _FiniteInts) and isinstance(b, _FiniteInts):
+        vals = frozenset(max(x, y) for x in a.values for y in b.values)
+        if len(vals) <= limits.max_branches:
+            return _FiniteInts(vals)
+        return _IntBounds(min(vals), max(vals))
+    ba, bb = _normalize_to_bounds(a), _normalize_to_bounds(b)
+    lo = max(ba.lo, bb.lo)
+    hi = max(ba.hi, bb.hi)
+    span = hi - lo + 1
+    if span <= limits.max_branches:
+        return _FiniteInts(frozenset(range(lo, hi + 1)))
+    return _IntBounds(lo, hi)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Branch-local env refinement helpers for IF
+# ---------------------------------------------------------------------------
+
+_NARROW_PREDICATES: dict[str, Callable[[int, int], bool]] = {
+    "=": lambda v, b: v == b,
+    "<>": lambda v, b: v != b,
+    "<": lambda v, b: v < b,
+    ">": lambda v, b: v > b,
+    "<=": lambda v, b: v <= b,
+    ">=": lambda v, b: v >= b,
+}
+_NEG_OP: dict[str, str] = {"=": "<>", "<>": "=", "<": ">=", ">": "<=", "<=": ">", ">=": "<"}
+_FLIP_OP: dict[str, str] = {"<": ">", ">": "<", "<=": ">=", ">=": "<=", "=": "=", "<>": "<>"}
+
+
+def _narrow_domain(
+    d: _FiniteInts | _IntBounds,
+    op: str,
+    bound: int,
+) -> _FiniteInts | _IntBounds | None:
+    """Narrow domain d by applying ``d op bound`` (e.g. d > 3, d <= 5)."""
+    if isinstance(d, _FiniteInts):
+        predicates = _NARROW_PREDICATES
+        pred = predicates.get(op)
+        if pred is None:
+            return d
+        return _FiniteInts(frozenset(v for v in d.values if pred(v, bound)))
+    lo, hi = d.lo, d.hi
+    if op == "=":
+        if lo <= bound <= hi:
+            return _FiniteInts(frozenset({bound}))
+        return _FiniteInts(frozenset())
+    elif op == "<>":
+        return d  # can't tighten interval for not-equal; keep conservatively
+    elif op == ">":
+        lo = max(lo, bound + 1)
+    elif op == ">=":
+        lo = max(lo, bound)
+    elif op == "<":
+        hi = min(hi, bound - 1)
+    elif op == "<=":
+        hi = min(hi, bound)
+    else:
+        return d
+    if hi < lo:
+        return _FiniteInts(frozenset())
+    return _IntBounds(lo, hi)
+
+
+def _domain_to_cell_type(domain: _FiniteInts | _IntBounds, kind: CellKind) -> CellType:
+    """Convert a narrowed numeric domain back to a CellType for env updates."""
+    if isinstance(domain, _FiniteInts):
+        return CellType(kind=kind, enum=EnumDomain(values=frozenset(domain.values)))
+    return CellType(kind=kind, interval=IntervalDomain(min=domain.lo, max=domain.hi))
+
+
+def _refine_env_for_condition(
+    env: CellTypeEnv,
+    cond_node: AstNode,
+    limits: DynamicRefLimits,
+    *,
+    negate: bool = False,
+) -> dict[str, CellType] | None:
+    """Return a copy of env narrowed by the condition, or None if unsupported.
+
+    Supports:
+    - ``CellRefNode op NumberNode`` and ``NumberNode op CellRefNode``
+    - ``AND(pred1, pred2, ...)`` (intersects each predicate)
+
+    The ``negate`` flag applies the opposite constraint (for the else-branch).
+    """
+    if isinstance(cond_node, FunctionCallNode) and cond_node.name.upper() == "AND":
+        refined: dict[str, CellType] = dict(env)
+        changed = False
+        for arg in cond_node.args:
+            sub = _refine_env_for_condition(refined, arg, limits, negate=negate)
+            if sub is not None:
+                refined = sub
+                changed = True
+        return refined if changed else None
+
+    if not isinstance(cond_node, BinaryOpNode):
+        return None
+    op = cond_node.op
+    if op not in {"=", "<>", "<", ">", "<=", ">="}:
+        return None
+
+    left, right = cond_node.left, cond_node.right
+
+    if isinstance(left, CellRefNode) and isinstance(right, NumberNode):
+        addr, bound_val = left.address, right.value
+        if isinstance(bound_val, bool):
+            return None
+        if not isinstance(bound_val, (int, float)) or not float(bound_val).is_integer():
+            return None
+        bound = int(bound_val)
+        if negate:
+            op = _NEG_OP.get(op)
+            if op is None:
+                return None
+        ct = env.get(addr)
+        if ct is None:
+            return None
+        current_domain = _domain_from_cell_type(ct, limits)
+        if current_domain is None:
+            return None
+        narrowed = _narrow_domain(current_domain, op, bound)
+        if narrowed is None:
+            return None
+        return {**env, addr: _domain_to_cell_type(narrowed, ct.kind)}
+    elif isinstance(left, NumberNode) and isinstance(right, CellRefNode):
+        addr, bound_val = right.address, left.value
+        if isinstance(bound_val, bool):
+            return None
+        if not isinstance(bound_val, (int, float)) or not float(bound_val).is_integer():
+            return None
+        bound = int(bound_val)
+        # Flip op to express as: cell op bound
+        op = _FLIP_OP.get(op, op)
+        if negate:
+            op = _NEG_OP.get(op)
+            if op is None:
+                return None
+        ct = env.get(addr)
+        if ct is None:
+            return None
+        current_domain = _domain_from_cell_type(ct, limits)
+        if current_domain is None:
+            return None
+        narrowed = _narrow_domain(current_domain, op, bound)
+        if narrowed is None:
+            return None
+        return {**env, addr: _domain_to_cell_type(narrowed, ct.kind)}
+    elif isinstance(left, CellRefNode) and isinstance(right, CellRefNode):
+        # cell op cell: use the other cell's domain bounds and add GreaterThanCell relations.
+        laddr, raddr = left.address, right.address
+        lct = env.get(laddr)
+        rct = env.get(raddr)
+        if lct is None or rct is None:
+            return None
+        ldom = _domain_from_cell_type(lct, limits)
+        rdom = _domain_from_cell_type(rct, limits)
+        if ldom is None or rdom is None:
+            return None
+        lb = _normalize_to_bounds(ldom)
+        rb = _normalize_to_bounds(rdom)
+
+        effective_op = op
+        if negate:
+            effective_op = _NEG_OP.get(op)
+            if effective_op is None:
+                return None
+
+        result_env: dict[str, CellType] = dict(env)
+        # Narrow left using right's bounds and vice-versa.
+        if effective_op == ">":
+            # left > right: left >= rb.lo+1, right <= lb.hi-1; add GreaterThanCell to left
+            ln = _narrow_domain(ldom, ">=", rb.lo + 1)
+            rn = _narrow_domain(rdom, "<=", lb.hi - 1)
+            if ln is not None:
+                new_relations = lct.relations + (GreaterThanCell(raddr),)
+                result_env[laddr] = CellType(
+                    kind=lct.kind,
+                    enum=_domain_to_cell_type(ln, lct.kind).enum,
+                    interval=_domain_to_cell_type(ln, lct.kind).interval,
+                    relations=new_relations,
+                )
+            if rn is not None:
+                result_env[raddr] = _domain_to_cell_type(rn, rct.kind)
+        elif effective_op == ">=":
+            ln = _narrow_domain(ldom, ">=", rb.lo)
+            rn = _narrow_domain(rdom, "<=", lb.hi)
+            if ln is not None:
+                result_env[laddr] = _domain_to_cell_type(ln, lct.kind)
+            if rn is not None:
+                result_env[raddr] = _domain_to_cell_type(rn, rct.kind)
+        elif effective_op == "<":
+            ln = _narrow_domain(ldom, "<=", rb.hi - 1)
+            rn = _narrow_domain(rdom, ">=", lb.lo + 1)
+            if rn is not None:
+                new_relations = rct.relations + (GreaterThanCell(laddr),)
+                result_env[raddr] = CellType(
+                    kind=rct.kind,
+                    enum=_domain_to_cell_type(rn, rct.kind).enum,
+                    interval=_domain_to_cell_type(rn, rct.kind).interval,
+                    relations=new_relations,
+                )
+            if ln is not None:
+                result_env[laddr] = _domain_to_cell_type(ln, lct.kind)
+        elif effective_op == "<=":
+            ln = _narrow_domain(ldom, "<=", rb.hi)
+            rn = _narrow_domain(rdom, ">=", lb.lo)
+            if ln is not None:
+                result_env[laddr] = _domain_to_cell_type(ln, lct.kind)
+            if rn is not None:
+                result_env[raddr] = _domain_to_cell_type(rn, rct.kind)
+        elif effective_op == "=":
+            # Intersection of both domains (use tighter bounds)
+            lo = max(lb.lo, rb.lo)
+            hi = min(lb.hi, rb.hi)
+            if lo > hi:
+                eq_dom: _FiniteInts | _IntBounds = _FiniteInts(frozenset())
+            elif hi - lo + 1 <= limits.max_branches:
+                eq_dom = _FiniteInts(frozenset(range(lo, hi + 1)))
+            else:
+                eq_dom = _IntBounds(lo, hi)
+            result_env[laddr] = _domain_to_cell_type(eq_dom, lct.kind)
+            result_env[raddr] = _domain_to_cell_type(eq_dom, rct.kind)
+        elif effective_op == "<>":
+            new_relations_l = lct.relations + (NotEqualCell(raddr),)
+            result_env[laddr] = CellType(
+                kind=lct.kind, enum=lct.enum, interval=lct.interval, relations=new_relations_l
+            )
+        else:
+            return None
+        return result_env
+    else:
+        return None
+
+
 def _describe_unsupported_numeric_construct(node: AstNode | None) -> str | None:
     if node is None:
         return None
@@ -1470,7 +1819,18 @@ def _describe_unsupported_numeric_construct(node: AstNode | None) -> str | None:
             return _describe_unsupported_numeric_construct(node.right)
         return f"binary operator {node.op!r}"
     if isinstance(node, FunctionCallNode):
-        if node.name.upper() in {"ROW", "COLUMN", "MATCH", "IF", "SUM", "ISNUMBER", "CHOOSE"}:
+        if node.name.upper() in {
+            "ROW",
+            "COLUMN",
+            "MATCH",
+            "IF",
+            "SUM",
+            "ISNUMBER",
+            "CHOOSE",
+            "MIN",
+            "MAX",
+            "ABS",
+        }:
             for arg in node.args:
                 reason = _describe_unsupported_numeric_construct(arg)
                 if reason is not None:
@@ -1806,7 +2166,9 @@ def _infer_numeric_domain_result(
                 col_letter, _row = coordinate_from_string(cell)
                 from fastpyxl.utils.cell import column_index_from_string
 
-                return _domain_result(_FiniteInts(frozenset({column_index_from_string(col_letter)})))
+                return _domain_result(
+                    _FiniteInts(frozenset({column_index_from_string(col_letter)}))
+                )
             return _domain_result(None)
         if name == "MATCH":
             if len(node.args) < 2:
@@ -1818,17 +2180,63 @@ def _infer_numeric_domain_result(
         if name == "IF":
             if len(node.args) < 2:
                 return _domain_result(None)
+            # Check if condition is provably true or false using Excel truthiness:
+            # any non-zero value is truthy; zero is falsy.
+            cond_result = _infer_numeric_domain_result(
+                node.args[0], env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+            )
+            if cond_result.domain is not None and isinstance(cond_result.domain, _FiniteInts):
+                if cond_result.domain.values and all(v != 0 for v in cond_result.domain.values):
+                    # Provably truthy: all values are non-zero.
+                    return _infer_numeric_domain_result(
+                        node.args[1],
+                        env,
+                        limits,
+                        context=ctx,
+                        current_sheet=current_sheet,
+                        depth=depth + 1,
+                    )
+                if all(v == 0 for v in cond_result.domain.values):
+                    # Provably falsy: all values are zero.
+                    if len(node.args) >= 3:
+                        return _infer_numeric_domain_result(
+                            node.args[2],
+                            env,
+                            limits,
+                            context=ctx,
+                            current_sheet=current_sheet,
+                            depth=depth + 1,
+                        )
+                    return _domain_result(_FiniteInts(frozenset({0})))
+            # Ambiguous condition: try branch-local environment refinement.
+            then_env: CellTypeEnv = (
+                _refine_env_for_condition(env, node.args[0], limits, negate=False) or env
+            )
+            else_env: CellTypeEnv = (
+                _refine_env_for_condition(env, node.args[0], limits, negate=True) or env
+            )
             then_result = _infer_numeric_domain_result(
-                node.args[1], env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+                node.args[1],
+                then_env,
+                limits,
+                context=ctx,
+                current_sheet=current_sheet,
+                depth=depth + 1,
             )
             if then_result.diagnostic is not None:
-                return then_result
+                # Diagnostic from one branch must not propagate through IF; fall back.
+                return _domain_result(None)
             if len(node.args) >= 3:
                 else_result = _infer_numeric_domain_result(
-                    node.args[2], env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+                    node.args[2],
+                    else_env,
+                    limits,
+                    context=ctx,
+                    current_sheet=current_sheet,
+                    depth=depth + 1,
                 )
                 if else_result.diagnostic is not None:
-                    return else_result
+                    return _domain_result(None)
                 else_d = else_result.domain
             else:
                 else_d = _FiniteInts(frozenset({0}))
@@ -1864,7 +2272,37 @@ def _infer_numeric_domain_result(
             if arg_result.domain is None:
                 return _domain_result(_FiniteInts(frozenset({0})))
             return _domain_result(_FiniteInts(frozenset({0, 1})))
-        if name in frozenset({"MIN", "MAX", "ABS", "CONCAT"}):
+        if name == "ABS":
+            if len(node.args) != 1:
+                return _domain_result(None)
+            inner = _infer_numeric_domain_result(
+                node.args[0], env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+            )
+            if inner.diagnostic is not None:
+                return inner
+            if inner.domain is None:
+                return _domain_result(None)
+            return _domain_result(_abs_numeric_domain(inner.domain))
+        if name in {"MIN", "MAX"}:
+            if len(node.args) < 1:
+                return _domain_result(None)
+            acc: _FiniteInts | _IntBounds | None = None
+            for arg in node.args:
+                arg_result = _infer_numeric_domain_result(
+                    arg, env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+                )
+                if arg_result.diagnostic is not None:
+                    return arg_result
+                if arg_result.domain is None:
+                    return _domain_result(None)
+                if acc is None:
+                    acc = arg_result.domain
+                elif name == "MIN":
+                    acc = _min_numeric_domains(acc, arg_result.domain, limits)
+                else:
+                    acc = _max_numeric_domains(acc, arg_result.domain, limits)
+            return _domain_result(acc)
+        if name == "CONCAT":
             return _domain_result(None)
         return _domain_result(None)
 
@@ -1935,6 +2373,26 @@ def _clamp_int(v: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, v))
 
 
+# Per-graph-build cache for INDEX target emission: avoids regenerating the same
+# target set when multiple INDEX formulas resolve to identical
+# (array_range, row_dom, col_dom) triples within a single graph build.
+# Cleared at the start of each create_dependency_graph call via
+# clear_index_target_cache().
+_emit_index_cache: dict[
+    tuple[ExcelRange, _FiniteInts | _IntBounds, _FiniteInts | _IntBounds],
+    frozenset[str],
+] = {}
+
+
+def clear_index_target_cache() -> None:
+    """Clear the INDEX target emission cache.
+
+    Called at the start of each graph build to scope the cache to a single
+    invocation and prevent unbounded memory retention across builds.
+    """
+    _emit_index_cache.clear()
+
+
 def _emit_index_targets_from_domains(
     array_range: ExcelRange,
     row_dom: _FiniteInts | _IntBounds,
@@ -1950,9 +2408,7 @@ def _emit_index_targets_from_domains(
         cs = sorted(col_dom.values)
         for r in rs:
             for c in cs:
-                targets |= _index_pair_to_addresses(
-                    array_range, r, c, nrows=nrows, ncols=ncols
-                )
+                targets |= _index_pair_to_addresses(array_range, r, c, nrows=nrows, ncols=ncols)
         if len(targets) > limits.max_cells:
             raise DynamicRefError(
                 f"INDEX target cells exceed limit ({len(targets)} > {limits.max_cells})"
@@ -1968,9 +2424,7 @@ def _emit_index_targets_from_domains(
         for r in sorted(row_dom.values):
             if r == 0:
                 for c in range(clo, chi + 1):
-                    targets |= _index_pair_to_addresses(
-                        array_range, 0, c, nrows=nrows, ncols=ncols
-                    )
+                    targets |= _index_pair_to_addresses(array_range, 0, c, nrows=nrows, ncols=ncols)
             else:
                 cr_lo, cr_hi = clo, chi
                 if 1 <= r <= nrows:
@@ -1993,9 +2447,7 @@ def _emit_index_targets_from_domains(
         for c in sorted(col_dom.values):
             if c == 0:
                 for r in range(rlo, rhi + 1):
-                    targets |= _index_pair_to_addresses(
-                        array_range, r, 0, nrows=nrows, ncols=ncols
-                    )
+                    targets |= _index_pair_to_addresses(array_range, r, 0, nrows=nrows, ncols=ncols)
             else:
                 cc_lo, cc_hi = rlo, rhi
                 if 1 <= c <= ncols:
@@ -2071,8 +2523,21 @@ def _infer_index_targets_core(
         current_sheet=current_sheet,
     )
 
+    nrows, ncols = array_range.shape
+
     if row_dom is not None and col_dom is not None:
-        return _emit_index_targets_from_domains(array_range, row_dom, col_dom, limits)
+        _cache_key = (array_range, row_dom, col_dom)
+        cached = _emit_index_cache.get(_cache_key)
+        if cached is not None:
+            return set(cached)
+        targets = _emit_index_targets_from_domains(array_range, row_dom, col_dom, limits)
+        print(
+            f"[DIAG] INDEX (abstract): {array_range.sheet}! shape={nrows}x{ncols} "
+            f"row_dom={row_dom} col_dom={col_dom} -> {len(targets)} targets",
+            flush=True,
+        )
+        _emit_index_cache[_cache_key] = frozenset(targets)
+        return targets
 
     leaf_addrs = _collect_addresses_needing_domain(row_ast)
     if col_ast is not None:
@@ -2097,11 +2562,16 @@ def _infer_index_targets_core(
         if isinstance(row_val, XlError) or isinstance(col_val, XlError):
             continue
         r1, c1 = int(row_val), int(col_val)
-        targets |= _index_pair_to_addresses(array_range, r1, c1, nrows=array_range.shape[0], ncols=array_range.shape[1])
+        targets |= _index_pair_to_addresses(array_range, r1, c1, nrows=nrows, ncols=ncols)
     if len(targets) > limits.max_cells:
         raise DynamicRefError(
             f"INDEX target cells exceed limit ({len(targets)} > {limits.max_cells})"
         )
+    print(
+        f"[DIAG] INDEX (enumerated): {array_range.sheet}! shape={nrows}x{ncols} "
+        f"leaves={len(leaf_addrs)} -> {len(targets)} targets",
+        flush=True,
+    )
     return targets
 
 
@@ -2165,19 +2635,48 @@ def _infer_offset_scalar_domains(
     return sorted(out_vals) if out_vals else None
 
 
-def _collect_addresses_needing_domain(node: AstNode) -> set[str]:
+def _narrowed_branch_is_infeasible(
+    original_env: CellTypeEnv,
+    narrowed_env: dict[str, CellType],
+    limits: DynamicRefLimits,
+) -> bool:
+    """Return True if any cell narrowed by the condition now has an empty domain.
+
+    Only cells that actually changed (different object identity from original_env)
+    are checked, so unrelated empty domains do not incorrectly trigger pruning.
+    """
+    for addr, ct in narrowed_env.items():
+        if original_env.get(addr) is ct:
+            continue  # unchanged entry
+        d = _domain_from_cell_type(ct, limits)
+        if isinstance(d, _FiniteInts) and not d.values:
+            return True
+    return False
+
+
+def _collect_addresses_needing_domain(
+    node: AstNode,
+    env: CellTypeEnv | None = None,
+    limits: DynamicRefLimits | None = None,
+) -> set[str]:
     """Return cell/range addresses that appear in a value context (need a numeric domain).
 
     Refs that appear only as ref_only arguments (e.g. ROW(ref), COLUMN(ref)) are
     excluded; their implementations use only the reference, not the cell value.
+
+    When ``env`` and ``limits`` are provided, IF and CHOOSE branches that are
+    provably dead are skipped, reducing the set of required domains.
     """
     addrs: set[str] = set()
+    _limits = limits or DynamicRefLimits()
 
     def visit(
         n: AstNode,
         parent: AstNode | None = None,
         arg_index: int | None = None,
+        local_env: CellTypeEnv | None = None,
     ) -> None:
+        eff_env = local_env if local_env is not None else env
         if isinstance(n, CellRefNode):
             if not (
                 parent is not None
@@ -2205,19 +2704,83 @@ def _collect_addresses_needing_domain(node: AstNode) -> set[str]:
                     addrs.add(f"{sheet}!{col_letter}{r}")
             return
         if isinstance(n, FunctionCallNode) and n.name.upper() == "MATCH" and len(n.args) >= 2:
-            visit(n.args[0], n, 0)
+            visit(n.args[0], n, 0, eff_env)
             if len(n.args) >= 3:
-                visit(n.args[2], n, 2)
+                visit(n.args[2], n, 2, eff_env)
             return
+        if isinstance(n, FunctionCallNode) and n.name.upper() == "IF" and env is not None:
+            cond_args = n.args
+            if len(cond_args) >= 2:
+                # Always collect refs from the condition expression.
+                visit(cond_args[0], n, 0, eff_env)
+                # Determine if the condition is provably truthy or falsy (Excel: non-zero = true).
+                cond_dom = _infer_numeric_domain(cond_args[0], eff_env or {}, _limits)
+                if (
+                    isinstance(cond_dom, _FiniteInts)
+                    and cond_dom.values
+                    and all(v != 0 for v in cond_dom.values)
+                ):
+                    # Condition provably truthy: only visit then-branch.
+                    visit(cond_args[1], n, 1, eff_env)
+                elif isinstance(cond_dom, _FiniteInts) and all(v == 0 for v in cond_dom.values):
+                    # Condition provably falsy: only visit else-branch.
+                    if len(cond_args) >= 3:
+                        visit(cond_args[2], n, 2, eff_env)
+                else:
+                    # Ambiguous: refine envs per branch and skip infeasible branches.
+                    base_env = eff_env or {}
+                    then_env_refined = _refine_env_for_condition(
+                        base_env, cond_args[0], _limits, negate=False
+                    )
+                    else_env_refined = _refine_env_for_condition(
+                        base_env, cond_args[0], _limits, negate=True
+                    )
+                    then_env = then_env_refined or base_env
+                    else_env = else_env_refined or base_env
+                    then_infeasible = (
+                        then_env_refined is not None
+                        and _narrowed_branch_is_infeasible(base_env, then_env_refined, _limits)
+                    )
+                    else_infeasible = (
+                        else_env_refined is not None
+                        and _narrowed_branch_is_infeasible(base_env, else_env_refined, _limits)
+                    )
+                    if not then_infeasible:
+                        visit(cond_args[1], n, 1, then_env)
+                    if not else_infeasible and len(cond_args) >= 3:
+                        visit(cond_args[2], n, 2, else_env)
+                return
+        if (
+            isinstance(n, FunctionCallNode)
+            and n.name.upper() == "CHOOSE"
+            and env is not None
+            and len(n.args) >= 2
+        ):
+            # Always collect the index expression refs.
+            visit(n.args[0], n, 0, eff_env)
+            # Determine which branches are reachable.
+            index_dom = _infer_numeric_domain(n.args[0], eff_env or {}, _limits)
+            option_count = len(n.args) - 1
+            if index_dom is not None:
+                if isinstance(index_dom, _FiniteInts):
+                    live = sorted(i for i in index_dom.values if 1 <= i <= option_count)
+                else:
+                    lo = max(1, index_dom.lo)
+                    hi = min(option_count, index_dom.hi)
+                    live = list(range(lo, hi + 1)) if lo <= hi else []
+                for idx in live:
+                    visit(n.args[idx], n, idx, eff_env)
+                return
+            # index_dom is None: fall through to generic handler to collect all option refs.
         if isinstance(n, FunctionCallNode):
             for i, arg in enumerate(n.args):
-                visit(arg, n, i)
+                visit(arg, n, i, eff_env)
             return
         if hasattr(n, "left") and hasattr(n, "right"):
-            visit(cast(AstNode, n.left), n, None)
-            visit(cast(AstNode, n.right), n, None)
+            visit(cast(AstNode, n.left), n, None, eff_env)
+            visit(cast(AstNode, n.right), n, None, eff_env)
         if hasattr(n, "operand"):
-            visit(cast(AstNode, n.operand), n, None)
+            visit(cast(AstNode, n.operand), n, None, eff_env)
 
     visit(node)
     return addrs
@@ -2263,16 +2826,63 @@ def _collect_addresses(node: AstNode) -> set[str]:
     return addrs
 
 
-def _collect_static_addresses_from_ast(node: AstNode) -> set[str]:
-    """Collect static cell/range addresses while skipping dynamic-ref call subtrees."""
+def _split_qualified_to_sheet_a1(qualified: str) -> tuple[str, str]:
+    if "!" not in qualified:
+        raise ValueError(f"Expected sheet-qualified reference, got {qualified!r}")
+    if qualified.startswith("'"):
+        end = qualified.index("'", 1)
+        sheet = qualified[1:end].replace("''", "'")
+        tail = qualified[end + 1 :]
+        if not tail.startswith("!"):
+            raise ValueError(f"Expected '!' after quoted sheet in {qualified!r}")
+        return sheet, tail[1:].strip()
+    sheet, a1 = qualified.split("!", 1)
+    return sheet.strip(), a1.strip()
+
+
+def _ast_address_to_ref_key(address: str) -> str:
+    sheet, a1 = _split_qualified_to_sheet_a1(address)
+    col_letter, row = coordinate_from_string(a1.replace("$", ""))
+    return format_key(sheet, f"{col_letter}{row}")
+
+
+def _collect_static_addresses_from_ast(node: AstNode, *, max_range_cells: int) -> set[str]:
+    """Collect static cell/range addresses while skipping dynamic-ref call subtrees.
+
+    Range expansion uses the same ``max_range_cells`` policy as
+    :func:`~excel_grapher.grapher.parser.expand_range` in the graph builder so the
+    argument subgraph matches :func:`expand_leaf_env_to_argument_env` traversal.
+    """
     addrs: set[str] = set()
 
     def visit(n: AstNode) -> None:
         if isinstance(n, CellRefNode):
-            addrs.add(n.address)
+            addrs.add(_ast_address_to_ref_key(n.address))
             return
         if isinstance(n, RangeNode):
-            addrs.update(_collect_addresses(n))
+            try:
+                sheet_s, coord_s = _split_qualified_to_sheet_a1(n.start)
+                sheet_e, coord_e = _split_qualified_to_sheet_a1(n.end)
+            except ValueError:
+                return
+            if sheet_s != sheet_e:
+                for raw in _collect_addresses(n):
+                    try:
+                        addrs.add(_ast_address_to_ref_key(raw))
+                    except ValueError:
+                        addrs.add(raw)
+                return
+            col_s, row_s = coordinate_from_string(coord_s.replace("$", ""))
+            col_e, row_e = coordinate_from_string(coord_e.replace("$", ""))
+            for dep_sheet, dep_a1 in expand_range(
+                sheet=sheet_s,
+                start_col=col_s,
+                start_row=row_s,
+                end_col=col_e,
+                end_row=row_e,
+                max_cells=max_range_cells,
+            ):
+                addrs.add(format_key(dep_sheet, dep_a1))
             return
         if isinstance(n, FunctionCallNode) and n.name.upper() in {"OFFSET", "INDIRECT", "INDEX"}:
             return
@@ -2340,9 +2950,7 @@ def _interval_to_values(interval: IntervalDomain, limits: DynamicRefLimits) -> l
         raise DynamicRefError(f"Invalid interval domain [{lo}, {hi}]")
     count = hi - lo + 1
     if count > limits.max_branches:
-        raise DynamicRefError(
-            f"Interval size {count} exceeds branch limit {limits.max_branches}"
-        )
+        raise DynamicRefError(f"Interval size {count} exceeds branch limit {limits.max_branches}")
     return list(range(lo, hi + 1))
 
 
@@ -2372,7 +2980,7 @@ def infer_dynamic_indirect_targets(
     lim = limits or DynamicRefLimits()
     out: set[str] = set()
 
-    calls = _find_function_calls_with_spans(formula, {"INDIRECT"})
+    calls = _find_function_calls_with_spans(formula, frozenset({"INDIRECT"}))
     for fn, inner, _span in calls:
         if fn != "INDIRECT":
             continue
@@ -2387,9 +2995,7 @@ def infer_dynamic_indirect_targets(
         )
         out |= targets
         if len(out) > lim.max_cells:
-            raise DynamicRefError(
-                f"Dynamic ref cells exceed limit ({len(out)} > {lim.max_cells})"
-            )
+            raise DynamicRefError(f"Dynamic ref cells exceed limit ({len(out)} > {lim.max_cells})")
 
     return out
 
@@ -2436,20 +3042,30 @@ def _infer_single_indirect_call(
                     f"INDIRECT argument formula references cell without domain: {addr!r}"
                 ) from exc
 
-        text_value = evaluate_expr(text_ast, get_cell_value=get_cell_value, max_depth=limits.max_depth)
+        text_value = evaluate_expr(
+            text_ast, get_cell_value=get_cell_value, max_depth=limits.max_depth
+        )
         if isinstance(text_value, Unsupported):
-            raise DynamicRefError(f"Unsupported INDIRECT text expression: {text_value.reason or ''}")
+            raise DynamicRefError(
+                f"Unsupported INDIRECT text expression: {text_value.reason or ''}"
+            )
         if isinstance(text_value, XlError):
             continue
         if not isinstance(text_value, str):
-            raise DynamicRefError(f"INDIRECT text argument must be a string, got {type(text_value).__name__}")
+            raise DynamicRefError(
+                f"INDIRECT text argument must be a string, got {type(text_value).__name__}"
+            )
 
         if a1_ast is None:
             a1_flag = True
         else:
-            a1_value = evaluate_expr(a1_ast, get_cell_value=get_cell_value, max_depth=limits.max_depth)
+            a1_value = evaluate_expr(
+                a1_ast, get_cell_value=get_cell_value, max_depth=limits.max_depth
+            )
             if isinstance(a1_value, Unsupported):
-                raise DynamicRefError(f"Unsupported INDIRECT A1/R1C1 flag expression: {a1_value.reason or ''}")
+                raise DynamicRefError(
+                    f"Unsupported INDIRECT A1/R1C1 flag expression: {a1_value.reason or ''}"
+                )
             if isinstance(a1_value, XlError):
                 continue
             if isinstance(a1_value, bool):

@@ -74,4 +74,3 @@ def test_leaves_missing_cell_type_constraints_ignores_format_key_quoting() -> No
     leaves = {"'Chart Data'!I21", "Sheet1!Z9"}
     missing = leaves_missing_cell_type_constraints(leaves, env)
     assert missing == {"Sheet1!Z9"}
-

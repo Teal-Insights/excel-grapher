@@ -7,10 +7,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .dependency_provenance import EdgeProvenance, merge_edge_provenance
-from .guard import GuardConstraints, GuardExpr, Or, or_guard
+from .guard import And, CellRef, Compare, GuardConstraints, GuardExpr, Not, Or, or_guard
 from .node import Node, NodeKey
 
 NodeHook = Callable[[NodeKey, Node], None]
+
+_PICKLE_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -39,7 +41,8 @@ class DependencyGraph:
     _nodes: dict[NodeKey, Node] = field(default_factory=dict)
     _edges: dict[NodeKey, set[NodeKey]] = field(default_factory=dict)  # node -> deps
     _reverse_edges: dict[NodeKey, set[NodeKey]] = field(default_factory=dict)  # node -> dependents
-    _edge_attrs: dict[tuple[NodeKey, NodeKey], dict[str, Any]] = field(default_factory=dict)
+    _guards: dict[tuple[NodeKey, NodeKey], GuardExpr] = field(default_factory=dict)
+    _edge_extra: dict[tuple[NodeKey, NodeKey], dict[str, Any]] = field(default_factory=dict)
     _hooks: list[NodeHook] = field(default_factory=list)
     leaf_classification: dict[str, str] | None = None
 
@@ -72,40 +75,44 @@ class DependencyGraph:
         **attrs: Any,
     ) -> None:
         """Add edge: from_key depends on to_key (from_key -> to_key)."""
+        ek = (from_key, to_key)
+        deps_existing = self._edges.get(from_key)
+        was_present = deps_existing is not None and to_key in deps_existing
+
         self._edges.setdefault(from_key, set()).add(to_key)
         self._reverse_edges.setdefault(to_key, set()).add(from_key)
-        existing = self._edge_attrs.get((from_key, to_key))
-        if existing is None:
-            merged_guard = guard
-            merged: dict[str, Any] = {}
-        else:
-            # Distinguish "missing" from explicit unconditional guard=None.
-            had_guard = "guard" in existing
-            existing_guard = existing.get("guard")
 
-            if not had_guard:
+        if not was_present:
+            merged_guard = guard
+            merged_extra: dict[str, Any] = {}
+        else:
+            existing_guard = self._guards.get(ek)
+            if existing_guard is None or guard is None:
+                merged_guard = None
+            elif existing_guard == guard:
                 merged_guard = guard
             else:
-                # Unconditional dominates any guarded variant.
-                if existing_guard is None or guard is None:
-                    merged_guard = None
-                elif existing_guard == guard:
-                    merged_guard = guard
-                else:
-                    merged_guard = or_guard(existing_guard, guard)
+                merged_guard = or_guard(existing_guard, guard)
+            merged_extra = dict(self._edge_extra.get(ek, {}))
 
-            merged = dict(existing)
-
-        merged.update(attrs)
-        merged["guard"] = merged_guard
+        merged_extra.update({k: v for k, v in attrs.items() if k != "guard"})
         prov_new = attrs.get("provenance")
         if prov_new is not None and isinstance(prov_new, EdgeProvenance):
-            old_prov = merged.get("provenance")
-            merged["provenance"] = merge_edge_provenance(
+            old_prov = merged_extra.get("provenance")
+            merged_extra["provenance"] = merge_edge_provenance(
                 old_prov if isinstance(old_prov, EdgeProvenance) else None,
                 prov_new,
             )
-        self._edge_attrs[(from_key, to_key)] = merged
+
+        if merged_guard is not None:
+            self._guards[ek] = merged_guard
+        else:
+            self._guards.pop(ek, None)
+
+        if merged_extra:
+            self._edge_extra[ek] = merged_extra
+        else:
+            self._edge_extra.pop(ek, None)
 
     def dependencies(self, key: NodeKey) -> set[NodeKey]:
         return self._edges.get(key, set())
@@ -114,10 +121,14 @@ class DependencyGraph:
         return self._reverse_edges.get(key, set())
 
     def edge_attrs(self, from_key: NodeKey, to_key: NodeKey) -> dict[str, Any]:
-        return self._edge_attrs.get((from_key, to_key), {})
+        if to_key not in self._edges.get(from_key, set()):
+            return {}
+        out = dict(self._edge_extra.get((from_key, to_key), {}))
+        out["guard"] = self._guards.get((from_key, to_key))
+        return out
 
     def edge_guard(self, from_key: NodeKey, to_key: NodeKey) -> GuardExpr | None:
-        v = self._edge_attrs.get((from_key, to_key), {}).get("guard")
+        v = self._guards.get((from_key, to_key))
         return v if isinstance(v, GuardExpr) else None
 
     def register_hook(self, hook: NodeHook) -> None:
@@ -339,10 +350,56 @@ class DependencyGraph:
         finally:
             clear_identity_singleton_ref_cache()
 
+    def __getstate__(self) -> dict[str, Any]:
+        keys_sorted = _collect_graph_keys(self)
+        idx = {k: i for i, k in enumerate(keys_sorted)}
+        return {
+            "v": _PICKLE_VERSION,
+            "keys": keys_sorted,
+            "_nodes": {idx[k]: n for k, n in self._nodes.items()},
+            "_edges": {idx[k]: {idx[d] for d in ds} for k, ds in self._edges.items()},
+            "_reverse_edges": {
+                idx[k]: {idx[d] for d in ds} for k, ds in self._reverse_edges.items()
+            },
+            "_guards": [(idx[a], idx[b], g) for (a, b), g in self._guards.items()],
+            "_edge_extra": [(idx[a], idx[b], dict(e)) for (a, b), e in self._edge_extra.items()],
+            "_hooks": self._hooks,
+            "leaf_classification": self.leaf_classification,
+        }
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        if not isinstance(state, dict) or state.get("v") != _PICKLE_VERSION:
+            raise TypeError(
+                "Unsupported or corrupted DependencyGraph pickle; rebuild the graph cache."
+            )
+        keys = state["keys"]
+
+        def i2k(i: int) -> NodeKey:
+            return keys[i]
+
+        self._nodes = {i2k(i): n for i, n in state["_nodes"].items()}
+        self._edges = {i2k(i): {i2k(d) for d in ds} for i, ds in state["_edges"].items()}
+        self._reverse_edges = {
+            i2k(i): {i2k(d) for d in ds} for i, ds in state["_reverse_edges"].items()
+        }
+        self._guards = {
+            (i2k(a), i2k(b)): _intern_guard_cell_refs(g, keys) for a, b, g in state["_guards"]
+        }
+        self._edge_extra = {(i2k(a), i2k(b)): dict(e) for a, b, e in state["_edge_extra"]}
+        self._hooks = state["_hooks"]
+        lc = state["leaf_classification"]
+        if lc:
+            rev = {s: i for i, s in enumerate(keys)}
+            self.leaf_classification = {keys[rev[k]]: v for k, v in lc.items()}
+        else:
+            self.leaf_classification = None
+
     def _remove_edge(self, from_key: NodeKey, to_key: NodeKey) -> None:
         self._edges.setdefault(from_key, set()).discard(to_key)
         self._reverse_edges.setdefault(to_key, set()).discard(from_key)
-        self._edge_attrs.pop((from_key, to_key), None)
+        ek = (from_key, to_key)
+        self._guards.pop(ek, None)
+        self._edge_extra.pop(ek, None)
 
     def _compress_one_transit(self, t_key: NodeKey, r_key: NodeKey) -> None:
         from .compression import (
@@ -386,6 +443,72 @@ class DependencyGraph:
         self._nodes.pop(t_key, None)
         self._edges.pop(t_key, None)
         self._reverse_edges.pop(t_key, None)
+
+
+def _collect_graph_keys(g: DependencyGraph) -> list[str]:
+    seen: set[str] = set()
+
+    def add(s: str) -> None:
+        seen.add(s)
+
+    for k in g._nodes:
+        add(k)
+    for k, deps in g._edges.items():
+        add(k)
+        for d in deps:
+            add(d)
+    for k, deps in g._reverse_edges.items():
+        add(k)
+        for d in deps:
+            add(d)
+    for a, b in g._guards:
+        add(a)
+        add(b)
+    for a, b in g._edge_extra:
+        add(a)
+        add(b)
+    for guard in g._guards.values():
+        _guard_collect_cellref_keys(guard, add)
+    if g.leaf_classification:
+        for k in g.leaf_classification:
+            add(k)
+    return sorted(seen)
+
+
+def _guard_collect_cellref_keys(expr: GuardExpr, add: Callable[[str], None]) -> None:
+    if isinstance(expr, CellRef):
+        add(expr.key)
+    elif isinstance(expr, Compare):
+        _guard_collect_cellref_keys(expr.left, add)
+        _guard_collect_cellref_keys(expr.right, add)
+    elif isinstance(expr, Not):
+        _guard_collect_cellref_keys(expr.operand, add)
+    elif isinstance(expr, (And, Or)):
+        for o in expr.operands:
+            _guard_collect_cellref_keys(o, add)
+
+
+def _intern_guard_cell_refs(expr: GuardExpr, keys: list[str]) -> GuardExpr:
+    rev = {s: i for i, s in enumerate(keys)}
+    canon = keys
+
+    def ckey(s: str) -> NodeKey:
+        return canon[rev[s]]
+
+    def rec(e: GuardExpr) -> GuardExpr:
+        if isinstance(e, CellRef):
+            return CellRef(key=ckey(e.key))
+        if isinstance(e, Compare):
+            return Compare(left=rec(e.left), op=e.op, right=rec(e.right))
+        if isinstance(e, Not):
+            return Not(operand=rec(e.operand))
+        if isinstance(e, And):
+            return And(operands=tuple(rec(o) for o in e.operands))
+        if isinstance(e, Or):
+            return Or(operands=tuple(rec(o) for o in e.operands))
+        return e
+
+    return rec(expr)
 
 
 def _scc_cycles(adj: dict[NodeKey, set[NodeKey]]) -> list[set[NodeKey]]:
@@ -583,4 +706,3 @@ def _find_feasible_cycle_path(graph: DependencyGraph, nodes: set[NodeKey]) -> li
         if out is not None:
             return out
     return None
-

@@ -34,16 +34,15 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT / "example") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "example"))
 
-import map_lic_dsf_indicators as lic  # noqa: E402
-
+import example.extract_graph_uncached as lic  # noqa: E402
 from excel_grapher import DynamicRefConfig, create_dependency_graph  # noqa: E402
 from excel_grapher.grapher.graph import DependencyGraph  # noqa: E402
 
 
 def _collect_targets() -> list[str]:
     out: list[str] = []
-    for _label, spec in lic.CHART_DATA_RANGES:
-        sheet_name, range_a1 = lic.parse_range_spec(spec)
+    for entry in lic.EXPORT_RANGES:
+        sheet_name, range_a1 = lic.parse_range_spec(entry["range_spec"])
         out.extend(lic.cells_in_range(sheet_name, range_a1))
     return out
 
@@ -161,7 +160,9 @@ def main() -> int:
         prof.dump_stats(str(args.cprofile_out))
         print(f"cProfile stats written to {args.cprofile_out.resolve()}", file=sys.stderr)
         if args.cprofile_print > 0:
-            pstats.Stats(prof).sort_stats(pstats.SortKey.CUMULATIVE).print_stats(args.cprofile_print)
+            pstats.Stats(prof).sort_stats(pstats.SortKey.CUMULATIVE).print_stats(
+                args.cprofile_print
+            )
 
     n, e = _graph_sizes(graph)
     print(f"Nodes: {n}")

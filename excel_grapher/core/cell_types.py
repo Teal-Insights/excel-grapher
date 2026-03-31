@@ -244,4 +244,3 @@ def leaves_missing_cell_type_constraints(
 
 
 _normalize_cell_address = normalize_cell_type_env_key
-

@@ -41,4 +41,3 @@ def test_to_graphviz_contains_nodes_edges_and_shapes(tmp_path: Path) -> None:
     # Leaf nodes are boxes; formula nodes are ellipses
     assert '"Sheet1!A1" [label="Sheet1!A1" shape=box' in dot
     assert '"Sheet1!A4" [label="Sheet1!A4" shape=ellipse' in dot
-

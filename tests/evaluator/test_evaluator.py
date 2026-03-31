@@ -101,9 +101,12 @@ def test_evaluator_detects_cycles() -> None:
 
 def test_evaluator_raises_for_unimplemented_function() -> None:
     graph = _make_graph(_make_node("S!A1", "=no_such_function(1)", None))
-    with FormulaEvaluator(graph) as ev, pytest.raises(
-        NotImplementedError,
-        match=r"Excel function not implemented: NO_SUCH_FUNCTION",
+    with (
+        FormulaEvaluator(graph) as ev,
+        pytest.raises(
+            NotImplementedError,
+            match=r"Excel function not implemented: NO_SUCH_FUNCTION",
+        ),
     ):
         ev.evaluate(["S!A1"])
 

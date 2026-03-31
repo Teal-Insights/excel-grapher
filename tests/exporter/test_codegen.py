@@ -57,7 +57,7 @@ class TestEmitAstLiterals:
 
     def test_emit_string_with_quotes(self, gen):
         """String containing double quotes uses single quote delimiters."""
-        assert gen._emit_ast(StringNode('say "hi"')) == '\'say "hi"\''
+        assert gen._emit_ast(StringNode('say "hi"')) == "'say \"hi\"'"
 
     def test_emit_string_empty(self, gen):
         """Empty string."""
@@ -131,9 +131,7 @@ class TestEmitAstReferences:
 
     def test_emit_cell_ref_quoted_sheet(self, gen):
         """Cell reference with quoted sheet name."""
-        assert (
-            gen._emit_ast(CellRefNode("'My Sheet'!B2")) == "xl_cell(ctx, \"'My Sheet'!B2\")"
-        )
+        assert gen._emit_ast(CellRefNode("'My Sheet'!B2")) == "xl_cell(ctx, \"'My Sheet'!B2\")"
 
     def test_emit_range_1d_column(self, gen):
         """1D range (column)."""
@@ -550,9 +548,7 @@ class TestGenerate:
             _make_node("Sheet1!A1", None, 10.0),
             _make_node("Sheet1!A2", None, 20.0),
         )
-        _set_leaf_classification(
-            graph, {"Sheet1!A1": "constant", "Sheet1!A2": "constant"}
-        )
+        _set_leaf_classification(graph, {"Sheet1!A1": "constant", "Sheet1!A2": "constant"})
         gen = CodeGenerator(graph)
         code = gen.generate(
             ["Sheet1!A1", "Sheet1!A2"],
@@ -596,9 +592,7 @@ class TestGenerate:
             _make_node("Sheet1!A1", None, 10.0),
             _make_node("Sheet1!A2", None, 20.0),
         )
-        _set_leaf_classification(
-            graph, {"Sheet1!A1": "constant", "Sheet1!A2": "input"}
-        )
+        _set_leaf_classification(graph, {"Sheet1!A1": "constant", "Sheet1!A2": "input"})
         gen = CodeGenerator(graph)
         code = gen.generate(["Sheet1!A1", "Sheet1!A2"])
         assert "CONSTANTS = {" in code
@@ -611,9 +605,7 @@ class TestGenerate:
             _make_node("Sheet1!A1", None, 10.0),
             _make_node("Sheet1!A2", None, 20.0),
         )
-        _set_leaf_classification(
-            graph, {"Sheet1!A1": "input", "Sheet1!A2": "input"}
-        )
+        _set_leaf_classification(graph, {"Sheet1!A1": "input", "Sheet1!A2": "input"})
         gen = CodeGenerator(graph)
         code = gen.generate(
             ["Sheet1!A1", "Sheet1!A2"],
@@ -656,7 +648,10 @@ class TestGenerate:
         gen = CodeGenerator(graph)
         code = gen.generate(["Sheet1!A1"])
         assert "TARGETS = {" in code
-        assert "    return {target: handler(ctx, target) for target, handler in TARGETS.items()}" in code
+        assert (
+            "    return {target: handler(ctx, target) for target, handler in TARGETS.items()}"
+            in code
+        )
 
     def test_generate_entrypoint_emits_ranges_for_contiguous_row(self):
         graph = _make_graph(

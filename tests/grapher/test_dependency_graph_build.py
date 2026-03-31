@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import fastpyxl
+import pytest
+import xlsxwriter
 from fastpyxl.worksheet.formula import ArrayFormula
 
 from excel_grapher import create_dependency_graph
@@ -226,3 +228,21 @@ def test_parse_target_handles_quoted_sheet_name(tmp_path: Path) -> None:
     # Node.sheet stores the unquoted name
     assert node.sheet == "My Sheet"
 
+
+def test_offset_invalid_base_error_includes_cell_address(tmp_path: Path) -> None:
+    """
+    When OFFSET's base argument is not a cell/range reference, the ValueError
+    should include the cell address (sheet + A1) for easy diagnosis.
+    """
+    excel_path = tmp_path / "offset_bad_base.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    # OFFSET(1,0,0) — base is a literal number, not a cell reference
+    ws.write_formula(0, 0, "=OFFSET(1,0,0)", None, 0)
+    wb.close()
+
+    with pytest.raises(ValueError, match="Sheet1") as exc_info:
+        create_dependency_graph(
+            excel_path, ["Sheet1!A1"], load_values=False, use_cached_dynamic_refs=True
+        )
+    assert "A1" in str(exc_info.value)

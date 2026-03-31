@@ -1,4 +1,5 @@
 """Tests for parser.py split_top_level_* functions."""
+
 from __future__ import annotations
 
 from excel_grapher.grapher.parser import (

@@ -120,6 +120,19 @@ class TestGeneratedCodeExecution:
         assert result.generated_results["S!B1"] == 10
         assert result.generated_results["S!B2"] == 5
 
+    def test_generated_code_true_false_function_calls(self) -> None:
+        """TRUE() and FALSE() as zero-arg function calls should codegen correctly."""
+        graph = _make_graph(
+            _make_node("S!A1", "=TRUE()", None),
+            _make_node("S!A2", "=FALSE()", None),
+            _make_node("S!A3", "=IF(TRUE(), 10, 20)", None),
+        )
+        targets = ["S!A1", "S!A2", "S!A3"]
+        result = assert_codegen_matches_evaluator(graph, targets)
+        assert result.generated_results["S!A1"] is True
+        assert result.generated_results["S!A2"] is False
+        assert result.generated_results["S!A3"] == 10
+
     def test_generated_code_if_uses_excel_boolean_coercion(self) -> None:
         """IF should use Excel-style boolean coercion (e.g., 'FALSE' -> False)."""
         graph = _make_graph(
@@ -217,9 +230,7 @@ class TestGeneratedCodeWithRealWorkbook:
         start = time.time()
         targets: list[str] = []
         for sheet_name, rows in self.INDICATOR_CONFIG.items():
-            targets.extend(
-                discover_formula_cells_in_rows(self.WORKBOOK_PATH, sheet_name, rows)
-            )
+            targets.extend(discover_formula_cells_in_rows(self.WORKBOOK_PATH, sheet_name, rows))
         print(f"Discovered {len(targets)} targets in {time.time() - start:.1f}s")
 
         start = time.time()
@@ -228,6 +239,7 @@ class TestGeneratedCodeWithRealWorkbook:
             targets,
             load_values=True,
             max_depth=self.MAX_DEPTH,
+            use_cached_dynamic_refs=True,
         )
         print(f"Built graph with {len(graph)} nodes in {time.time() - start:.1f}s")
 
@@ -247,15 +259,14 @@ class TestGeneratedCodeWithRealWorkbook:
 
         targets: list[str] = []
         for sheet_name, rows in self.INDICATOR_CONFIG.items():
-            targets.extend(
-                discover_formula_cells_in_rows(self.WORKBOOK_PATH, sheet_name, rows)
-            )
+            targets.extend(discover_formula_cells_in_rows(self.WORKBOOK_PATH, sheet_name, rows))
 
         graph = create_dependency_graph(
             self.WORKBOOK_PATH,
             targets[:5],  # Just use first 5 targets for speed
             load_values=True,
             max_depth=self.MAX_DEPTH,
+            use_cached_dynamic_refs=True,
         )
 
         gen = CodeGenerator(graph)
@@ -286,15 +297,14 @@ class TestGeneratedCodeWithRealWorkbook:
 
         targets: list[str] = []
         for sheet_name, rows in self.INDICATOR_CONFIG.items():
-            targets.extend(
-                discover_formula_cells_in_rows(self.WORKBOOK_PATH, sheet_name, rows)
-            )
+            targets.extend(discover_formula_cells_in_rows(self.WORKBOOK_PATH, sheet_name, rows))
 
         graph = create_dependency_graph(
             self.WORKBOOK_PATH,
             targets,
             load_values=True,
             max_depth=self.MAX_DEPTH,
+            use_cached_dynamic_refs=True,
         )
 
         # Compute dependency closure (graph-native). Normalize addresses to match generated runtime.

@@ -3,7 +3,7 @@ from __future__ import annotations
 import fastpyxl.utils.cell
 import numpy as np
 
-from excel_grapher.core.addressing import offset_range
+from excel_grapher.core.addressing import index_excel_range, offset_range
 
 from .cache import EvalContext, xl_cell
 from .core import CellValue, ExcelRange, XlError, to_number
@@ -70,6 +70,31 @@ def xl_offset_ref(
     )
 
 
+def xl_index_ref(
+    ref: ExcelRange | tuple[str, int, int] | tuple[str, int, int, int, int],
+    row_num: CellValue | None,
+    col_num: CellValue | None,
+) -> ExcelRange | tuple[str, int, int] | tuple[str, int, int, int, int] | XlError:
+    """INDEX semantics that return a reference suitable for OFFSET."""
+    if isinstance(ref, ExcelRange):
+        base = ref
+    else:
+        match ref:
+            case (sheet, r1, c1):
+                base = ExcelRange(sheet=sheet, start_row=r1, start_col=c1, end_row=r1, end_col=c1)
+            case (sheet, r1, c1, r2, c2):
+                base = ExcelRange(sheet=sheet, start_row=r1, start_col=c1, end_row=r2, end_col=c2)
+            case _:
+                return XlError.VALUE
+
+    out = index_excel_range(base, row_num, col_num)
+    if isinstance(out, XlError):
+        return out
+    if out.start_row == out.end_row and out.start_col == out.end_col:
+        return (out.sheet, out.start_row, out.start_col)
+    return (out.sheet, out.start_row, out.start_col, out.end_row, out.end_col)
+
+
 def xl_offset(
     ctx: EvalContext,
     ref_info: tuple[str, int, int] | tuple[str, int, int, int, int],
@@ -130,4 +155,3 @@ def xl_offset(
             row_values.append(xl_cell(ctx, addr))
         result.append(row_values)
     return np.array(result, dtype=object)
-

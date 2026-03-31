@@ -39,19 +39,20 @@ def test_workbook_iterate_disabled_keeps_default_circular_behavior(tmp_path: Pat
     base = tmp_path / "cycle_base.xlsx"
     _make_self_cycle_workbook(base)
     workbook = tmp_path / "cycle_iterate_off.xlsx"
-    patch_workbook_calcpr(
-        base, workbook, iterate=False, iterate_count=100, iterate_delta=0.001
-    )
+    patch_workbook_calcpr(base, workbook, iterate=False, iterate_count=100, iterate_delta=0.001)
 
     settings = get_calc_settings(workbook)
     graph = create_dependency_graph(workbook, ["Sheet1!A1"], load_values=False)
 
-    with FormulaEvaluator(
-        graph,
-        iterate_enabled=settings.iterate_enabled,
-        iterate_count=settings.iterate_count,
-        iterate_delta=settings.iterate_delta,
-    ) as ev, pytest.warns(CircularReferenceWarning):
+    with (
+        FormulaEvaluator(
+            graph,
+            iterate_enabled=settings.iterate_enabled,
+            iterate_count=settings.iterate_count,
+            iterate_delta=settings.iterate_delta,
+        ) as ev,
+        pytest.warns(CircularReferenceWarning),
+    ):
         evaluator_result = ev.evaluate(["Sheet1!A1"])
     assert evaluator_result["Sheet1!A1"] == 0
 
@@ -74,9 +75,7 @@ def test_workbook_iterate_enabled_drives_iterative_convergence(tmp_path: Path) -
     base = tmp_path / "iterative_base.xlsx"
     _make_iterative_convergence_workbook(base)
     workbook = tmp_path / "iterative_on.xlsx"
-    patch_workbook_calcpr(
-        base, workbook, iterate=True, iterate_count=75, iterate_delta=1e-6
-    )
+    patch_workbook_calcpr(base, workbook, iterate=True, iterate_count=75, iterate_delta=1e-6)
 
     settings = get_calc_settings(workbook)
     graph = create_dependency_graph(workbook, ["Sheet1!A1"], load_values=False)
@@ -110,9 +109,7 @@ def test_workbook_iterate_max_iterations_without_convergence_parity(tmp_path: Pa
     base = tmp_path / "oscillation_base.xlsx"
     _make_oscillation_workbook(base)
     workbook = tmp_path / "oscillation_iterate_on.xlsx"
-    patch_workbook_calcpr(
-        base, workbook, iterate=True, iterate_count=3, iterate_delta=1e-12
-    )
+    patch_workbook_calcpr(base, workbook, iterate=True, iterate_count=3, iterate_delta=1e-12)
 
     settings = get_calc_settings(workbook)
     assert settings.iterate_count == 3

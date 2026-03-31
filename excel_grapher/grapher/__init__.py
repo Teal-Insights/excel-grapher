@@ -12,7 +12,15 @@ from excel_grapher.core.cell_types import (
 )
 
 from .blank_ranges import normalize_blank_range_specs
-from .builder import create_dependency_graph
+from .builder import create_dependency_graph, list_dynamic_ref_constraint_candidates
+from .cache import (
+    GRAPH_CACHE_SCHEMA_VERSION,
+    CacheValidationPolicy,
+    build_graph_cache_meta,
+    build_graph_cache_meta_portable,
+    save_graph_cache,
+    try_load_graph_cache,
+)
 from .dependency_provenance import DependencyCause, EdgeProvenance
 from .dynamic_refs import (
     DynamicRefConfig,
@@ -24,7 +32,22 @@ from .dynamic_refs import (
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
 )
-from .export import to_graphviz, to_mermaid, to_networkx
+from .export import (
+    LightweightVizLocalEdges,
+    LightweightVizModule,
+    LightweightVizModuleEdge,
+    LightweightVizNodeColumns,
+    LightweightVizPayload,
+    LightweightVizStats,
+    LocalForceSubgraph,
+    select_local_force_subgraph,
+    to_graphviz,
+    to_lightweight_viz,
+    to_mermaid,
+    to_networkx,
+    write_lightweight_viz_data,
+    write_lightweight_viz_html,
+)
 from .graph import CycleError, CycleReport, DependencyGraph, NodeHook
 from .guard import And, Compare, GuardExpr, Literal, Not, Or
 from .guard import CellRef as GuardCellRef
@@ -35,6 +58,13 @@ from .validation import ValidationResult, WorkbookCalcSettings, get_calc_setting
 __all__ = [
     "create_dependency_graph",
     "normalize_blank_range_specs",
+    "list_dynamic_ref_constraint_candidates",
+    "GRAPH_CACHE_SCHEMA_VERSION",
+    "build_graph_cache_meta",
+    "build_graph_cache_meta_portable",
+    "CacheValidationPolicy",
+    "save_graph_cache",
+    "try_load_graph_cache",
     "DependencyCause",
     "DependencyGraph",
     "EdgeProvenance",
@@ -63,15 +93,25 @@ __all__ = [
     "Node",
     "NodeKey",
     "ValueType",
+    "LocalForceSubgraph",
+    "LightweightVizLocalEdges",
+    "LightweightVizModule",
+    "LightweightVizModuleEdge",
+    "LightweightVizNodeColumns",
+    "LightweightVizPayload",
+    "LightweightVizStats",
+    "select_local_force_subgraph",
     "to_graphviz",
+    "to_lightweight_viz",
     "to_mermaid",
     "to_networkx",
+    "write_lightweight_viz_data",
+    "write_lightweight_viz_html",
     "validate_graph",
     "ValidationResult",
     "get_calc_settings",
     "WorkbookCalcSettings",
     "format_cell_key",
     "format_key",
-    "needs_quoting"
+    "needs_quoting",
 ]
-
