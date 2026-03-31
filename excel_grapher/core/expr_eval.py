@@ -10,6 +10,8 @@ from fastpyxl.utils.cell import (
     coordinate_to_tuple,
 )
 
+from excel_grapher.evaluator.name_utils import parse_address
+
 from .coercions import flatten, numeric_values, to_bool, to_number, to_string
 from .formula_ast import (
     AstNode,
@@ -244,16 +246,19 @@ def _range_node_to_excel_range(node: RangeNode) -> ExcelRange | None:
     """Convert a RangeNode into an ExcelRange, if it refers to a single sheet."""
 
     try:
-        sheet_start, coord_start = node.start.split("!", 1)
-        sheet_end, coord_end = node.end.split("!", 1)
+        sheet_start, coord_start = parse_address(node.start)
+        if "!" in node.end:
+            sheet_end, coord_end = parse_address(node.end)
+        else:
+            sheet_end, coord_end = sheet_start, node.end
     except ValueError:
         return None
 
     if sheet_start != sheet_end:
         return None
 
-    row1, col1 = coordinate_to_tuple(coord_start)
-    row2, col2 = coordinate_to_tuple(coord_end)
+    row1, col1 = coordinate_to_tuple(coord_start.replace("$", ""))
+    row2, col2 = coordinate_to_tuple(coord_end.replace("$", ""))
 
     start_row, end_row = sorted((row1, row2))
     start_col, end_col = sorted((col1, col2))

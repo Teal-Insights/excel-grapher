@@ -6,9 +6,12 @@ from typing import TYPE_CHECKING
 
 import fastpyxl.utils.cell
 
+from excel_grapher.core.addressing import index_excel_range
+
 from .errors import ParseError
 from .export_runtime.cache import EvalContext, xl_circular_reference, xl_iterative_compute
 from .functions import FUNCTIONS
+from .functions.info import xl_isblank
 from .helpers import (
     get_error,
     to_bool,
@@ -269,6 +272,8 @@ class FormulaEvaluator:
                 return self._eval_iserror(node.args)
             if name == "ISNA":
                 return self._eval_isna(node.args)
+            if name == "ISBLANK":
+                return self._eval_isblank(node.args)
             if name == "CHOOSE":
                 return self._eval_choose(node.args)
             if name == "OFFSET":
@@ -422,6 +427,16 @@ class FormulaEvaluator:
         v = self._evaluate_ast(args[0])
         return v == XlError.NA
 
+    def _eval_isblank(self, args: list[AstNode]) -> bool:
+        if len(args) != 1:
+            raise ParseError("ISBLANK(...)", "ISBLANK requires 1 argument")
+        v = self._evaluate_ast(args[0])
+        if isinstance(v, ExcelRange):
+            if v.start_row != v.end_row or v.start_col != v.end_col:
+                return False
+            v = self._resolve_range(v)[0, 0]
+        return xl_isblank(v)
+
     def _eval_choose(self, args: list[AstNode]) -> CellValue:
         if len(args) < 2:
             raise ParseError("CHOOSE(...)", "CHOOSE requires at least 2 arguments")
@@ -496,16 +511,46 @@ class FormulaEvaluator:
             return ref
         return xl_columns(ref)
 
+    def _index_call_to_range(self, node: FunctionCallNode) -> ExcelRange | XlError:
+        if len(node.args) < 1:
+            return XlError.VALUE
+        array_node = node.args[0]
+        if isinstance(array_node, RangeNode):
+            base = _range_from_a1(array_node.start, array_node.end)
+        else:
+            inner = self._range_from_ref_node(array_node)
+            if not isinstance(inner, ExcelRange):
+                return XlError.VALUE
+            base = inner
+
+        if len(node.args) < 2 or isinstance(node.args[1], EmptyArgNode):
+            row_num = None
+        else:
+            row_num = self._evaluate_ast(node.args[1])
+            if isinstance(row_num, XlError):
+                return row_num
+        if len(node.args) < 3 or isinstance(node.args[2], EmptyArgNode):
+            col_num = None
+        else:
+            col_num = self._evaluate_ast(node.args[2])
+            if isinstance(col_num, XlError):
+                return col_num
+        return index_excel_range(base, row_num, col_num)
+
     def _range_from_ref_node(self, node: AstNode) -> ExcelRange | XlError:
         """Interpret an AST node as a reference (cell or range) without evaluating its value."""
         if isinstance(node, RangeNode):
             return _range_from_a1(node.start, node.end)
 
         if isinstance(node, CellRefNode):
-            sheet, coord = node.address.split("!", 1)
+            sheet, coord = parse_address(node.address)
+            coord = coord.replace("$", "")
             col_str, row = fastpyxl.utils.cell.coordinate_from_string(coord)
             col = fastpyxl.utils.cell.column_index_from_string(col_str)
             return ExcelRange(sheet=sheet, start_row=row, start_col=col, end_row=row, end_col=col)
+
+        if isinstance(node, FunctionCallNode) and node.name.upper() == "INDEX":
+            return self._index_call_to_range(node)
 
         evaluated = self._evaluate_ast(node)
         if isinstance(evaluated, XlError):
@@ -516,14 +561,16 @@ class FormulaEvaluator:
 
 
 def _range_from_a1(start: str, end: str) -> ExcelRange:
-    start_sheet, start_coord = start.split("!", 1)
+    start_sheet, start_coord = parse_address(start)
     if "!" in end:
-        end_sheet, end_coord = end.split("!", 1)
+        end_sheet, end_coord = parse_address(end)
     else:
         end_sheet, end_coord = start_sheet, end
     if start_sheet != end_sheet:
         raise ValueError("Cross-sheet ranges are not supported")
 
+    start_coord = start_coord.replace("$", "")
+    end_coord = end_coord.replace("$", "")
     c1, r1 = fastpyxl.utils.cell.coordinate_from_string(start_coord)
     c2, r2 = fastpyxl.utils.cell.coordinate_from_string(end_coord)
     start_col = fastpyxl.utils.cell.column_index_from_string(c1)

@@ -7,6 +7,85 @@ import fastpyxl.utils.cell
 from . import CellValue, ExcelRange, XlError, to_number
 
 
+def index_excel_range(
+    base: ExcelRange,
+    row_num: CellValue | None,
+    col_num: CellValue | None,
+) -> ExcelRange | XlError:
+    """Map INDEX(row,col) over *base* to an absolute range (single cell or slice).
+
+    Mirrors :func:`excel_grapher.evaluator.export_runtime.lookup.xl_index` geometry
+    so OFFSET(INDEX(...), ...) receives a true cell reference.
+    """
+    nrows = base.end_row - base.start_row + 1
+    ncols = base.end_col - base.start_col + 1
+    row_omitted = row_num is None
+    col_omitted = col_num is None
+
+    def abs_cell(r0: int, c0: int) -> ExcelRange:
+        r = base.start_row + r0
+        c = base.start_col + c0
+        return ExcelRange(base.sheet, r, c, r, c)
+
+    if row_omitted and col_omitted:
+        if nrows == 1 and ncols == 1:
+            return abs_cell(0, 0)
+        if nrows == 1:
+            return abs_cell(0, ncols - 1)
+        if ncols == 1:
+            return abs_cell(nrows - 1, 0)
+        return XlError.VALUE
+
+    if row_omitted:
+        cn = to_number(col_num)
+        if isinstance(cn, XlError):
+            return cn
+        col = int(cn)
+        if col < 1 or col > ncols:
+            return XlError.REF
+        if nrows == 1:
+            return abs_cell(0, col - 1)
+        c0 = base.start_col + col - 1
+        return ExcelRange(base.sheet, base.start_row, c0, base.end_row, c0)
+
+    rn = to_number(row_num)
+    if isinstance(rn, XlError):
+        return rn
+    row = int(rn)
+
+    if col_omitted:
+        if nrows == 1:
+            if row < 1 or row > ncols:
+                return XlError.REF
+            return abs_cell(0, row - 1)
+        if ncols == 1:
+            if row < 1 or row > nrows:
+                return XlError.REF
+            return abs_cell(row - 1, 0)
+        if row < 1 or row > nrows:
+            return XlError.REF
+        r0 = base.start_row + row - 1
+        return ExcelRange(base.sheet, r0, base.start_col, r0, base.end_col)
+
+    cn = to_number(col_num)
+    if isinstance(cn, XlError):
+        return cn
+    col = int(cn)
+    if nrows == 1:
+        if row < 1 or row > ncols:
+            return XlError.REF
+        return abs_cell(0, row - 1)
+    if ncols == 1:
+        if row < 1 or row > nrows:
+            return XlError.REF
+        return abs_cell(row - 1, 0)
+    if row < 1 or row > nrows:
+        return XlError.REF
+    if col < 1 or col > ncols:
+        return XlError.REF
+    return abs_cell(row - 1, col - 1)
+
+
 class WorkbookBoundsProtocol(Protocol):
     """Minimal protocol for workbook/sheet bounds used by addressing helpers."""
 
