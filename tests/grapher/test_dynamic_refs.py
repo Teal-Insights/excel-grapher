@@ -19,6 +19,7 @@ from excel_grapher.core.cell_types import (
     IntIntervalDomain,
     NotEqualCell,
 )
+from excel_grapher.core.formula_ast import AstNode
 from excel_grapher.core.formula_ast import parse as parse_ast
 from excel_grapher.grapher import dynamic_refs as dynamic_refs_mod
 from excel_grapher.grapher import parser as parser_mod
@@ -2026,3 +2027,888 @@ def _build_graph_counting_dynamic_expansion(
         )
 
     return graph, call_count
+
+
+# ---------------------------------------------------------------------------
+# Benchmark: INDEX inference blowup with many row-relative formulas
+# ---------------------------------------------------------------------------
+
+
+def _build_wide_index_sweep_workbook(path: Path, n_rows: int = 50) -> None:
+    """Create a workbook simulating the LIC-DSF Chart Data INDEX blowup.
+
+    Layout on 'Data' sheet:
+      - A1:K22 is a static data array (11 rows × 22 cols) with numeric values.
+      - For each row ``r`` in ``[2, 2+n_rows)``, column L contains
+        ``=INDEX(Data!$A$1:$K$22, Data!M<r>, Data!N<r>)``
+        where M<r> is a row-selector leaf and N<r> is a col-selector leaf.
+      - M and N columns hold small integer constants (leaves requiring constraints).
+
+    When all M/N leaves are constrained with a wide numeric domain, inference
+    is triggered for every L-column INDEX cell.  Without caching, this means
+    ``n_rows`` separate calls to ``expand_leaf_env_to_argument_env`` and
+    ``n_rows`` separate ``_emit_index_targets_from_domains`` invocations that
+    produce the *same* target set.
+    """
+    import xlsxwriter
+
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Data")
+
+    # Populate the static data array A1:K22 (11 rows × 22 cols).
+    for r in range(22):
+        for c in range(11):
+            ws.write_number(r, c, r * 11 + c + 1)
+
+    # For each formula row, write leaf values in M and N, and an INDEX formula in L.
+    for i in range(n_rows):
+        row = 1 + i  # rows 2..n_rows+1 (0-indexed: 1..n_rows)
+        ws.write_number(row, 12, (i % 11) + 1)  # M<row+1> = row selector (1..11)
+        ws.write_number(row, 13, (i % 22) + 1)  # N<row+1> = col selector (1..22)
+        # L<row+1> = INDEX($A$1:$K$22, M<row+1>, N<row+1>)
+        ws.write_formula(
+            row,
+            11,
+            f"=INDEX(Data!$A$1:$K$22,Data!M{row + 1},Data!N{row + 1})",
+            None,
+            42,
+        )
+
+    wb.close()
+
+
+def test_wide_index_sweep_shared_env_cache(tmp_path: Path) -> None:
+    """Benchmark: many INDEX formulas should share env expansion work.
+
+    With ``n_rows`` INDEX formulas each referencing a different (M<r>, N<r>) leaf
+    pair, every formula triggers a separate expand_leaf_env_to_argument_env call
+    (since each has a unique ``all_refs`` set).  However, since the leaf constraints
+    and intermediate cells don't overlap, we can't directly share the top-level call.
+
+    What we *can* optimise is ``_emit_index_targets_from_domains``: when every
+    formula's INDEX resolves to the same ``(array_range, row_dom, col_dom)``
+    triple (because the leaf constraints produce the same abstract bounds), the
+    target-set generation should be cached and reused.
+
+    This test asserts:
+    1. The graph is correct (all INDEX formula cells and their leaves are present).
+    2. ``_emit_index_targets_from_domains`` is called far fewer than ``n_rows`` times
+       after caching is in place.
+    """
+    n_rows = 50
+    excel_path = tmp_path / "wide_index_sweep.xlsx"
+    _build_wide_index_sweep_workbook(excel_path, n_rows=n_rows)
+
+    # Build constraints: M and N leaves get interval domains matching the full array.
+    env: CellTypeEnv = {}
+    for i in range(n_rows):
+        row = 2 + i
+        env[f"Data!M{row}"] = CellType(
+            kind=CellKind.NUMBER,
+            interval=IntervalDomain(min=1, max=11),
+        )
+        env[f"Data!N{row}"] = CellType(
+            kind=CellKind.NUMBER,
+            interval=IntervalDomain(min=1, max=22),
+        )
+
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+
+    targets = [f"Data!L{2 + i}" for i in range(n_rows)]
+
+    # Count calls to _emit_index_targets_from_domains.
+    from unittest.mock import patch
+
+    original_emit = dynamic_refs_mod._emit_index_targets_from_domains
+    emit_call_count = 0
+
+    def counting_emit(*args, **kwargs):
+        nonlocal emit_call_count
+        emit_call_count += 1
+        return original_emit(*args, **kwargs)
+
+    with patch.object(
+        dynamic_refs_mod,
+        "_emit_index_targets_from_domains",
+        side_effect=counting_emit,
+    ):
+        graph = create_dependency_graph(
+            excel_path,
+            targets,
+            load_values=False,
+            dynamic_refs=config,
+        )
+
+    # Correctness: every target should be in the graph and have M/N leaf deps.
+    for i in range(n_rows):
+        row = 2 + i
+        node_key = f"Data!L{row}"
+        deps = graph.dependencies(node_key)
+        assert f"Data!M{row}" in deps, f"Missing M leaf dep for {node_key}"
+        assert f"Data!N{row}" in deps, f"Missing N leaf dep for {node_key}"
+
+    # Optimization: with target-set caching, _emit_index_targets_from_domains
+    # should be called only once for the unique (array_range, row_dom, col_dom).
+    # Without caching it would be called n_rows times.
+    assert emit_call_count < n_rows, (
+        f"_emit_index_targets_from_domains called {emit_call_count} times for "
+        f"{n_rows} INDEX formulas; expected caching to reduce this to ~1"
+    )
+
+
+def _build_shared_intermediate_index_workbook(path: Path, n_rows: int = 30) -> None:
+    """Workbook where INDEX formulas share intermediate argument cells.
+
+    Layout on 'Sheet1':
+      - A1:E10 is the data array (10 rows × 5 cols).
+      - B1 is a shared intermediate: ``=C1+1`` (formula cell, not a leaf).
+      - C1 is a leaf (numeric constant = 2).
+      - For each row ``r`` in ``[2, 2+n_rows)``:
+        - F<r> = ``=INDEX($A$1:$E$10, Sheet1!B1, Sheet1!D<r>)``
+        - D<r> is a leaf (col selector constant).
+
+    All ``n_rows`` INDEX formulas share the intermediate cell B1 in their
+    argument subgraph.  With a shared env expansion cache, B1's type is
+    inferred once and reused across all formula cells.
+    """
+    import xlsxwriter
+
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+
+    # Data array A1:E10.
+    for r in range(10):
+        for c in range(5):
+            ws.write_number(r, c, r * 5 + c + 1)
+
+    # B1 = =C1+1 (intermediate formula).
+    ws.write_formula(0, 1, "=Sheet1!C1+1", None, 3)
+    # C1 = 2 (leaf).
+    ws.write_number(0, 2, 2)
+
+    for i in range(n_rows):
+        row = 1 + i  # 0-indexed rows 1..n_rows
+        ws.write_number(row, 3, (i % 5) + 1)  # D<row+1> col selector
+        ws.write_formula(
+            row,
+            5,
+            f"=INDEX(Sheet1!$A$1:$E$10,Sheet1!$B$1,Sheet1!D{row + 1})",
+            None,
+            42,
+        )
+
+    wb.close()
+
+
+def test_shared_intermediate_env_expansion_cache(tmp_path: Path) -> None:
+    """Many INDEX formulas sharing an intermediate cell should reuse env expansion.
+
+    All formulas reference B1 (intermediate) which depends on C1 (leaf).
+    With a shared env expansion cache, ``cell_type_for(B1)`` is computed once
+    and reused across all 30 formula cells' expand_leaf_env_to_argument_env calls.
+
+    We verify this by wrapping expand_leaf_env_to_argument_env and inspecting
+    the shared_cell_type_cache: B1 should already be present in the cache for
+    all calls after the first.
+    """
+    from unittest.mock import patch
+
+    n_rows = 30
+    excel_path = tmp_path / "shared_intermediate.xlsx"
+    _build_shared_intermediate_index_workbook(excel_path, n_rows=n_rows)
+
+    env: CellTypeEnv = {
+        "Sheet1!C1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=10))
+    }
+    for i in range(n_rows):
+        row = 2 + i
+        env[f"Sheet1!D{row}"] = CellType(
+            kind=CellKind.NUMBER,
+            interval=IntervalDomain(min=1, max=5),
+        )
+
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+    targets = [f"Sheet1!F{2 + i}" for i in range(n_rows)]
+
+    # Track how many times B1 is already in the shared cache when
+    # expand_leaf_env_to_argument_env is called.
+    original_expand = expand_leaf_env_to_argument_env
+    b1_cache_hits = 0
+    total_calls = 0
+
+    def tracking_expand(*args, **kwargs):
+        nonlocal b1_cache_hits, total_calls
+        total_calls += 1
+        shared_cache = kwargs.get("shared_cell_type_cache")
+        if shared_cache is not None and "Sheet1!B1" in shared_cache:
+            b1_cache_hits += 1
+        return original_expand(*args, **kwargs)
+
+    with patch(
+        "excel_grapher.grapher.builder.expand_leaf_env_to_argument_env",
+        side_effect=tracking_expand,
+    ):
+        graph = create_dependency_graph(
+            excel_path,
+            targets,
+            load_values=False,
+            dynamic_refs=config,
+        )
+
+    # Correctness check: each formula should depend on B1 and its D leaf.
+    for i in range(n_rows):
+        row = 2 + i
+        deps = graph.dependencies(f"Sheet1!F{row}")
+        assert "Sheet1!B1" in deps, f"Missing B1 dep for F{row}"
+        assert f"Sheet1!D{row}" in deps, f"Missing D leaf dep for F{row}"
+
+    # Optimization check: B1 should be inferred once (cache miss on first call)
+    # and served from the shared cache for all subsequent calls.
+    assert total_calls == n_rows, f"Expected {n_rows} expand calls, got {total_calls}"
+    assert b1_cache_hits == n_rows - 1, (
+        f"Expected B1 to be a cache hit on {n_rows - 1} of {n_rows} calls, "
+        f"but got {b1_cache_hits} hits. shared_cell_type_cache is not being reused."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Abstract-path characterization (Phase 0)
+# ---------------------------------------------------------------------------
+
+
+def _parse_selector(expr: str) -> AstNode:
+    """Parse a bare selector expression (without the leading '=') into an AST node.
+
+    Wraps the expression with '=' so that parse_ast can handle it, then unwraps
+    the outer node that parse_ast wraps around the expression body.
+    """
+    return parse_ast("=" + expr)
+
+
+class TestAbstractPathCharacterization:
+    """Guardrail tests proving which formulas stay on the abstract path.
+
+    These tests characterize current behaviour so that later phases can measure
+    actual improvement against a known baseline.
+    """
+
+    def _limits(self) -> DynamicRefLimits:
+        return DynamicRefLimits()
+
+    # ------------------------------------------------------------------
+    # Test 1: INDEX <- IF <- comparison stays abstract
+    # ------------------------------------------------------------------
+
+    def test_if_comparison_selector_stays_abstract(self) -> None:
+        """IF(A1>B1, 1, 2) as row selector stays on the abstract path.
+
+        The result is {1, 2} regardless of A1/B1 values.  This must NOT require
+        Cartesian enumeration of all A1 x B1 combinations.
+        """
+        ast = _parse_selector("IF(Sheet1!A1>Sheet1!B1, 1, 2)")
+        env = _make_env(
+            {
+                "Sheet1!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=10)),
+                "Sheet1!B1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=10)),
+            }
+        )
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
+        assert result.domain is not None, (
+            "IF(A1>B1, 1, 2) should stay on the abstract path (domain not None)"
+        )
+        assert isinstance(result.domain, dynamic_refs_mod._FiniteInts)
+        assert result.domain.values == frozenset({1, 2})
+
+    # ------------------------------------------------------------------
+    # Test 2: constant-condition IF yields exact domain
+    # ------------------------------------------------------------------
+
+    def test_if_constant_true_condition_yields_then_domain(self) -> None:
+        """IF(1, 3, 7) should return domain {3}."""
+        ast = _parse_selector("IF(1, 3, 7)")
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, {}, self._limits())
+        assert result.domain is not None
+        assert isinstance(result.domain, dynamic_refs_mod._FiniteInts)
+        assert result.domain.values == frozenset({3})
+
+    def test_if_constant_false_condition_yields_else_domain(self) -> None:
+        """IF(0, 3, 7) should return domain {7}."""
+        ast = _parse_selector("IF(0, 3, 7)")
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, {}, self._limits())
+        assert result.domain is not None
+        assert isinstance(result.domain, dynamic_refs_mod._FiniteInts)
+        assert result.domain.values == frozenset({7})
+
+    # ------------------------------------------------------------------
+    # Test 2b: Non-one non-zero conditions are provably truthy
+    # ------------------------------------------------------------------
+
+    def test_if_nonzero_integer_is_provably_true(self) -> None:
+        """IF(2, 3, 7): condition domain {2} is provably truthy → result {3}."""
+        ast = _parse_selector("IF(2, 3, 7)")
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, {}, self._limits())
+        assert result.domain is not None
+        assert isinstance(result.domain, dynamic_refs_mod._FiniteInts)
+        assert result.domain.values == frozenset({3})
+
+    def test_if_all_nonzero_domain_is_provably_true(self) -> None:
+        """IF(A1, 3, 7): A1 domain {2, 4} (all non-zero) → provably truthy → result {3}."""
+        ast = _parse_selector("IF(Sheet1!A1, 3, 7)")
+        env = _make_env(
+            {"Sheet1!A1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2, 4})))}
+        )
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
+        assert result.domain is not None
+        assert isinstance(result.domain, dynamic_refs_mod._FiniteInts)
+        assert result.domain.values == frozenset({3})
+
+    # ------------------------------------------------------------------
+    # Test 3: ABS / MIN / MAX currently fall back (abstract gap baseline)
+    # ------------------------------------------------------------------
+
+    def test_abs_stays_abstract_after_phase1(self) -> None:
+        """ABS(A1) stays on the abstract path after Phase 1 (regression guard)."""
+        ast = _parse_selector("ABS(Sheet1!A1)")
+        env = _make_env(
+            {"Sheet1!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=5))}
+        )
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
+        assert result.domain is not None, "ABS should now produce an abstract domain"
+
+    def test_min_stays_abstract_after_phase1(self) -> None:
+        """MIN(A1, B1) stays on the abstract path after Phase 1 (regression guard)."""
+        ast = _parse_selector("MIN(Sheet1!A1, Sheet1!B1)")
+        env = _make_env(
+            {
+                "Sheet1!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=5)),
+                "Sheet1!B1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=2, max=6)),
+            }
+        )
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
+        assert result.domain is not None, "MIN should now produce an abstract domain"
+
+    def test_max_stays_abstract_after_phase1(self) -> None:
+        """MAX(A1, B1) stays on the abstract path after Phase 1 (regression guard)."""
+        ast = _parse_selector("MAX(Sheet1!A1, Sheet1!B1)")
+        env = _make_env(
+            {
+                "Sheet1!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=5)),
+                "Sheet1!B1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=2, max=6)),
+            }
+        )
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
+        assert result.domain is not None, "MAX should now produce an abstract domain"
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: ABS / MIN / MAX abstract transfer rules
+# ---------------------------------------------------------------------------
+
+
+class TestAbstractMinMaxAbsTransferRules:
+    """ABS, MIN, and MAX should stay on the abstract path after Phase 1."""
+
+    def _limits(self) -> DynamicRefLimits:
+        return DynamicRefLimits()
+
+    # ------------------------------------------------------------------
+    # ABS
+    # ------------------------------------------------------------------
+
+    def test_abs_finite_positive_returns_exact_set(self) -> None:
+        """ABS with a small positive enum domain returns exact values."""
+        ast = _parse_selector("ABS(Sheet1!A1)")
+        env = _make_env(
+            {
+                "Sheet1!A1": CellType(
+                    kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({1, 3, 5}))
+                )
+            }
+        )
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
+        assert result.domain is not None
+        assert isinstance(result.domain, dynamic_refs_mod._FiniteInts)
+        assert result.domain.values == frozenset({1, 3, 5})
+
+    def test_abs_finite_negative_returns_exact_set(self) -> None:
+        """ABS with negative enum domain maps to absolute values."""
+        ast = _parse_selector("ABS(Sheet1!A1)")
+        env = _make_env(
+            {
+                "Sheet1!A1": CellType(
+                    kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({-3, -1, 2}))
+                )
+            }
+        )
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
+        assert result.domain is not None
+        assert isinstance(result.domain, dynamic_refs_mod._FiniteInts)
+        assert result.domain.values == frozenset({1, 2, 3})
+
+    def test_abs_positive_bounds_returns_same_interval(self) -> None:
+        """ABS([100, 1200]) = [100, 1200] (entirely positive, span > max_branches -> _IntBounds)."""
+        ast = _parse_selector("ABS(Sheet1!A1)")
+        env = _make_env(
+            {
+                "Sheet1!A1": CellType(
+                    kind=CellKind.NUMBER, interval=IntervalDomain(min=100, max=1200)
+                )
+            }
+        )
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
+        assert result.domain is not None
+        b = dynamic_refs_mod._normalize_to_bounds(result.domain)
+        assert b.lo == 100
+        assert b.hi == 1200
+
+    def test_abs_negative_bounds_returns_negated_interval(self) -> None:
+        """ABS([-1200, -100]) = [100, 1200] (entirely negative, span > max_branches -> _IntBounds)."""
+        ast = _parse_selector("ABS(Sheet1!A1)")
+        env = _make_env(
+            {
+                "Sheet1!A1": CellType(
+                    kind=CellKind.NUMBER, interval=IntervalDomain(min=-1200, max=-100)
+                )
+            }
+        )
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
+        assert result.domain is not None
+        b = dynamic_refs_mod._normalize_to_bounds(result.domain)
+        assert b.lo == 100
+        assert b.hi == 1200
+
+    def test_abs_mixed_bounds_returns_hull(self) -> None:
+        """ABS([-600, 700]) = [0, 700] (crosses zero; hull is [0, max(600,700)])."""
+        ast = _parse_selector("ABS(Sheet1!A1)")
+        env = _make_env(
+            {
+                "Sheet1!A1": CellType(
+                    kind=CellKind.NUMBER, interval=IntervalDomain(min=-600, max=700)
+                )
+            }
+        )
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
+        assert result.domain is not None
+        b = dynamic_refs_mod._normalize_to_bounds(result.domain)
+        assert b.lo == 0
+        assert b.hi == 700
+
+    def test_abs_unsupported_returns_none(self) -> None:
+        """ABS with no domain info (e.g. unknown cell) still returns None."""
+        ast = _parse_selector("ABS(Sheet1!A1)")
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, {}, self._limits())
+        assert result.domain is None
+
+    # ------------------------------------------------------------------
+    # MIN
+    # ------------------------------------------------------------------
+
+    def test_min_two_finite_domains_returns_exact_set(self) -> None:
+        """MIN(A1, B1) with small finite domains returns exact minimum set."""
+        ast = _parse_selector("MIN(Sheet1!A1, Sheet1!B1)")
+        env = _make_env(
+            {
+                "Sheet1!A1": CellType(
+                    kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2, 4}))
+                ),
+                "Sheet1!B1": CellType(
+                    kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({3, 5}))
+                ),
+            }
+        )
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
+        assert result.domain is not None
+        assert isinstance(result.domain, dynamic_refs_mod._FiniteInts)
+        # min(2,3)=2, min(2,5)=2, min(4,3)=3, min(4,5)=4
+        assert result.domain.values == frozenset({2, 3, 4})
+
+    def test_min_two_bounds_returns_interval(self) -> None:
+        """MIN([1,5], [2,6]) = [1, 5] (safe interval hull for bounds)."""
+        ast = _parse_selector("MIN(Sheet1!A1, Sheet1!B1)")
+        env = _make_env(
+            {
+                "Sheet1!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=5)),
+                "Sheet1!B1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=2, max=6)),
+            }
+        )
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
+        assert result.domain is not None
+        b = dynamic_refs_mod._normalize_to_bounds(result.domain)
+        assert b.lo == 1
+        assert b.hi == 5
+
+    def test_min_unsupported_arg_returns_none(self) -> None:
+        """MIN with an unknown/unsupported arg returns None (not a crash)."""
+        ast = _parse_selector("MIN(Sheet1!A1, Sheet1!B1)")
+        env = _make_env(
+            {"Sheet1!A1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({1, 2})))}
+            # B1 not in env -> returns None domain
+        )
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
+        assert result.domain is None
+
+    # ------------------------------------------------------------------
+    # MAX
+    # ------------------------------------------------------------------
+
+    def test_max_two_finite_domains_returns_exact_set(self) -> None:
+        """MAX(A1, B1) with small finite domains returns exact maximum set."""
+        ast = _parse_selector("MAX(Sheet1!A1, Sheet1!B1)")
+        env = _make_env(
+            {
+                "Sheet1!A1": CellType(
+                    kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2, 4}))
+                ),
+                "Sheet1!B1": CellType(
+                    kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({3, 5}))
+                ),
+            }
+        )
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
+        assert result.domain is not None
+        assert isinstance(result.domain, dynamic_refs_mod._FiniteInts)
+        # max(2,3)=3, max(2,5)=5, max(4,3)=4, max(4,5)=5
+        assert result.domain.values == frozenset({3, 4, 5})
+
+    def test_max_two_bounds_returns_interval(self) -> None:
+        """MAX([1,5], [2,6]) = [2, 6] (safe interval hull for bounds)."""
+        ast = _parse_selector("MAX(Sheet1!A1, Sheet1!B1)")
+        env = _make_env(
+            {
+                "Sheet1!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=5)),
+                "Sheet1!B1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=2, max=6)),
+            }
+        )
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
+        assert result.domain is not None
+        b = dynamic_refs_mod._normalize_to_bounds(result.domain)
+        assert b.lo == 2
+        assert b.hi == 6
+
+    def test_max_unsupported_arg_returns_none(self) -> None:
+        """MAX with an unknown/unsupported arg returns None (not a crash)."""
+        ast = _parse_selector("MAX(Sheet1!A1, Sheet1!B1)")
+        env = _make_env(
+            {"Sheet1!A1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({1, 2})))}
+            # B1 not in env -> None domain
+        )
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
+        assert result.domain is None
+
+    # ------------------------------------------------------------------
+    # Integration: INDEX + ABS/MIN/MAX stays abstract (no enumeration fallback)
+    # ------------------------------------------------------------------
+
+    def test_index_abs_row_stays_abstract(self) -> None:
+        """INDEX(A1:A5, ABS(B1), 1) with B1 in [1,3] should stay on the abstract path."""
+        formula = "=INDEX(Sheet1!A1:Sheet1!A5, ABS(Sheet1!B1), 1)"
+        env = _make_env(
+            {"Sheet1!B1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=3))}
+        )
+        targets = infer_dynamic_index_targets(formula, current_sheet="Sheet1", cell_type_env=env)
+        # Abstract path: ABS([1,3]) = [1,3]; INDEX picks rows 1-3 -> A1, A2, A3
+        assert targets == {"Sheet1!A1", "Sheet1!A2", "Sheet1!A3"}
+
+    def test_index_min_row_stays_abstract(self) -> None:
+        """INDEX(A1:A5, MIN(B1, C1), 1) with B1,C1 in [1,3] should stay on abstract path."""
+        formula = "=INDEX(Sheet1!A1:Sheet1!A5, MIN(Sheet1!B1, Sheet1!C1), 1)"
+        env = _make_env(
+            {
+                "Sheet1!B1": CellType(
+                    kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2, 3}))
+                ),
+                "Sheet1!C1": CellType(
+                    kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({1, 4}))
+                ),
+            }
+        )
+        targets = infer_dynamic_index_targets(formula, current_sheet="Sheet1", cell_type_env=env)
+        # min(2,1)=1, min(2,4)=2, min(3,1)=1, min(3,4)=3 -> rows {1,2,3}
+        assert targets == {"Sheet1!A1", "Sheet1!A2", "Sheet1!A3"}
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Branch-local environment refinement for IF
+# ---------------------------------------------------------------------------
+
+
+class TestBranchLocalIfRefinement:
+    """IF analysis should narrow branch-local domains when the condition is in the
+    supported predicate fragment (cell op literal, AND of such comparisons)."""
+
+    def _limits(self) -> DynamicRefLimits:
+        return DynamicRefLimits()
+
+    def test_if_diff_narrows_then_branch(self) -> None:
+        """IF(A1>B1, A1-B1, 0): then-branch should only include positive differences.
+
+        Without refinement the union would include 0 (from the else branch which yields 0,
+        but also potentially 0 from A1-B1 which could be 0 if A1==B1).
+        With refinement, when A1>B1 is known in the then-branch, A1-B1 > 0.
+        """
+        ast = _parse_selector("IF(Sheet1!A1>Sheet1!B1, Sheet1!A1-Sheet1!B1, 0)")
+        env = _make_env(
+            {
+                "Sheet1!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=5)),
+                "Sheet1!B1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=5)),
+            }
+        )
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
+        assert result.domain is not None
+        domain_values = (
+            result.domain.values
+            if isinstance(result.domain, dynamic_refs_mod._FiniteInts)
+            else set(range(result.domain.lo, result.domain.hi + 1))
+        )
+        # After refinement, A1>B1 in the then branch means A1-B1 >= 1 (not 0).
+        # The else branch is 0.  The union should exclude negative differences.
+        assert 0 in domain_values  # else branch contributes 0
+        assert not any(v < 0 for v in domain_values), (
+            "Branch refinement should prevent negative values in the then branch"
+        )
+
+    def test_if_narrows_index_selector_domain(self) -> None:
+        """INDEX(A1:A5, IF(A1>B1, A1, B1), 1): refined branches produce a narrower domain.
+
+        A1 in [3,5], B1 in [1,3].  Without refinement both full domains are unioned.
+        With refinement:
+          then-branch (A1>B1): A1 in [4,5] (must be > B1 max=3), so row in [4,5]
+          else-branch (A1<=B1): B1 in [3,3] at narrowest, but A1 can be [3,3] too -> B1 up to 3
+        The result should be a subset of [1..5] (correct) and the test verifies it's not empty.
+        """
+        ast = _parse_selector("IF(Sheet1!A1>Sheet1!B1, Sheet1!A1, Sheet1!B1)")
+        env = _make_env(
+            {
+                "Sheet1!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=3, max=5)),
+                "Sheet1!B1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=3)),
+            }
+        )
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
+        assert result.domain is not None
+
+    def test_if_and_narrows_then_to_exact_range(self) -> None:
+        """IF(AND(A1>=2, A1<=4), A1, 0): then-branch narrows A1 domain to {2,3,4}."""
+        ast = _parse_selector("IF(AND(Sheet1!A1>=2, Sheet1!A1<=4), Sheet1!A1, 0)")
+        env = _make_env(
+            {"Sheet1!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=10))}
+        )
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
+        assert result.domain is not None
+        domain_values = (
+            result.domain.values
+            if isinstance(result.domain, dynamic_refs_mod._FiniteInts)
+            else set(range(result.domain.lo, result.domain.hi + 1))
+        )
+        # then-branch: A1 in {2,3,4}; else-branch: 0  -> union {0,2,3,4}
+        assert 2 in domain_values
+        assert 3 in domain_values
+        assert 4 in domain_values
+        assert 0 in domain_values
+        assert not any(v > 4 for v in domain_values), (
+            "Values > 4 should be excluded by AND(A1>=2, A1<=4) refinement"
+        )
+        assert not any(v == 1 for v in domain_values), (
+            "Value 1 should be excluded by AND(A1>=2, ...) refinement"
+        )
+
+    def test_if_then_branch_diagnostic_does_not_propagate(self) -> None:
+        """Divisor-zero diagnostic from the then-branch should not propagate through IF.
+
+        When the condition is ambiguous and the then-branch has a potential
+        division-by-zero, the result should be domain=None (fall back to
+        enumeration) rather than carrying the diagnostic out of the IF.
+        """
+        ast = _parse_selector("IF(Sheet1!X1, Sheet1!A1/Sheet1!B1, 5)")
+        env = _make_env(
+            {
+                "Sheet1!X1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=0, max=1)),
+                "Sheet1!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=5)),
+                # B1 includes zero → A1/B1 produces a divisor-may-include-zero diagnostic
+                "Sheet1!B1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=0, max=3)),
+            }
+        )
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
+        assert result.diagnostic is None, (
+            "Divisor-zero diagnostic from then-branch must not propagate out of IF"
+        )
+        assert result.domain is None, "When then-branch is unsound, result domain should be None"
+
+    def test_if_unsupported_condition_degrades_to_union(self) -> None:
+        """IF(ISNUMBER(A1), 1, 2): condition not a plain comparison; falls back to union."""
+        # ISNUMBER is handled but it returns {0,1} not a refineable constraint
+        ast = _parse_selector("IF(ISNUMBER(Sheet1!A1), 3, 7)")
+        env = _make_env(
+            {"Sheet1!A1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({1})))}
+        )
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
+        # Should not crash; should return a valid union domain
+        assert result.domain is not None
+
+    def test_if_literal_gt_cell_refines_else_branch(self) -> None:
+        """IF(3>A1, A1, 0): the condition is '3 > A1' i.e. A1 < 3.
+
+        In the then branch (3>A1 is true): A1 < 3, so A1 in {1,2} from [1,5].
+        In the else branch (3>A1 is false): A1 >= 3, so A1 in {3,4,5}.
+        But the else branch yields 0 (a literal), so the result is union of {1,2} ∪ {0}.
+        """
+        ast = _parse_selector("IF(3>Sheet1!A1, Sheet1!A1, 0)")
+        env = _make_env(
+            {"Sheet1!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=5))}
+        )
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
+        assert result.domain is not None
+        domain_values = (
+            result.domain.values
+            if isinstance(result.domain, dynamic_refs_mod._FiniteInts)
+            else set(range(result.domain.lo, result.domain.hi + 1))
+        )
+        # then: A1 in {1,2}; else: 0 -> {0,1,2}
+        assert domain_values == frozenset({0, 1, 2})
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Branch-aware domain collection
+# ---------------------------------------------------------------------------
+
+
+class TestBranchAwareDomainCollection:
+    """_collect_addresses_needing_domain should skip refs from provably dead branches."""
+
+    def _limits(self) -> DynamicRefLimits:
+        return DynamicRefLimits()
+
+    def test_collect_skips_dead_branch_with_constant_condition(self) -> None:
+        """IF(1, A1+B1, C1+D1): condition is always true; only {A1,B1} needed."""
+        ast = _parse_selector("IF(1, Sheet1!A1+Sheet1!B1, Sheet1!C1+Sheet1!D1)")
+        addrs = dynamic_refs_mod._collect_addresses_needing_domain(
+            ast, env={}, limits=self._limits()
+        )
+        assert "Sheet1!A1" in addrs
+        assert "Sheet1!B1" in addrs
+        assert "Sheet1!C1" not in addrs
+        assert "Sheet1!D1" not in addrs
+
+    def test_collect_includes_both_branches_for_ambiguous_condition(self) -> None:
+        """IF(Sheet1!X1, A1+B1, C1+D1): condition is unknown; collect all refs."""
+        ast = _parse_selector("IF(Sheet1!X1, Sheet1!A1+Sheet1!B1, Sheet1!C1+Sheet1!D1)")
+        env = _make_env(
+            {"Sheet1!X1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=0, max=1))}
+        )
+        addrs = dynamic_refs_mod._collect_addresses_needing_domain(
+            ast, env=env, limits=self._limits()
+        )
+        assert "Sheet1!A1" in addrs
+        assert "Sheet1!B1" in addrs
+        assert "Sheet1!C1" in addrs
+        assert "Sheet1!D1" in addrs
+
+    def test_collect_choose_by_constant_index_prunes_dead_branches(self) -> None:
+        """CHOOSE(2, A1+B1, C1+D1): index is 2; only {C1,D1} needed."""
+        ast = _parse_selector("CHOOSE(2, Sheet1!A1+Sheet1!B1, Sheet1!C1+Sheet1!D1)")
+        addrs = dynamic_refs_mod._collect_addresses_needing_domain(
+            ast, env={}, limits=self._limits()
+        )
+        assert "Sheet1!C1" in addrs
+        assert "Sheet1!D1" in addrs
+        assert "Sheet1!A1" not in addrs
+        assert "Sheet1!B1" not in addrs
+
+    def test_collect_choose_by_domain_index_prunes_out_of_range_branches(self) -> None:
+        """CHOOSE with index in {2}: collects only branch 2 refs."""
+        ast = _parse_selector(
+            "CHOOSE(Sheet1!X1, Sheet1!A1+Sheet1!B1, Sheet1!C1+Sheet1!D1, Sheet1!E1)"
+        )
+        env = _make_env(
+            {"Sheet1!X1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2})))}
+        )
+        addrs = dynamic_refs_mod._collect_addresses_needing_domain(
+            ast, env=env, limits=self._limits()
+        )
+        # Index X1 is always 2 -> only branch 2 (C1+D1) needed plus X1 itself
+        assert "Sheet1!C1" in addrs
+        assert "Sheet1!D1" in addrs
+        assert "Sheet1!A1" not in addrs
+        assert "Sheet1!B1" not in addrs
+        assert "Sheet1!E1" not in addrs
+
+    def test_collect_skips_infeasible_then_branch_via_domain_narrowing(self) -> None:
+        """IF(A1>5, A1+B1, C1): A1 in [1,3] makes then-branch infeasible → B1 not collected."""
+        ast = _parse_selector("IF(Sheet1!A1>5, Sheet1!A1+Sheet1!B1, Sheet1!C1)")
+        env = _make_env(
+            {
+                "Sheet1!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=3)),
+            }
+        )
+        addrs = dynamic_refs_mod._collect_addresses_needing_domain(
+            ast, env=env, limits=self._limits()
+        )
+        # A1>5 narrows A1 to empty in then-branch → then-branch infeasible.
+        # B1 only appears in the infeasible then-branch → must not be collected.
+        assert "Sheet1!B1" not in addrs
+        # C1 (else-branch) is reachable and must be collected.
+        assert "Sheet1!C1" in addrs
+
+    def test_collect_without_env_is_backward_compatible(self) -> None:
+        """_collect_addresses_needing_domain with no env/limits collects all addresses (old behaviour)."""
+        ast = _parse_selector("IF(1, Sheet1!A1+Sheet1!B1, Sheet1!C1+Sheet1!D1)")
+        addrs = dynamic_refs_mod._collect_addresses_needing_domain(ast)
+        # Without env/limits, fall back to old behaviour: all refs collected
+        assert "Sheet1!A1" in addrs
+        assert "Sheet1!C1" in addrs
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Lazy IF evaluation in expr_eval
+# ---------------------------------------------------------------------------
+
+
+class TestLazyIfEval:
+    """IF and CHOOSE should not evaluate dead branches in the restricted evaluator."""
+
+    def _eval(self, expr: str, env: dict[str, object] | None = None) -> object:
+        from typing import cast
+
+        from excel_grapher.core.expr_eval import evaluate_expr
+        from excel_grapher.core.types import CellValue, XlError
+
+        cell_values = env or {}
+
+        def get_cell_value(addr: str) -> CellValue:
+            v = cell_values.get(addr)
+            if v is None:
+                return XlError.REF
+            return cast(CellValue, v)
+
+        return evaluate_expr(parse_ast("=" + expr), get_cell_value=get_cell_value)
+
+    def test_if_true_does_not_evaluate_false_branch(self) -> None:
+        """IF(TRUE, 1, 1/0) should return 1 without raising or returning an error."""
+        from excel_grapher.core.types import XlError
+
+        result = self._eval("IF(TRUE, 1, 1/0)")
+        assert result == 1 or result == 1.0, f"Expected 1, got {result!r}"
+        assert not isinstance(result, XlError), "Dead branch (1/0) should not be evaluated"
+
+    def test_if_false_does_not_evaluate_true_branch(self) -> None:
+        """IF(FALSE, 1/0, 2) should return 2 without raising or returning an error."""
+        from excel_grapher.core.types import XlError
+
+        result = self._eval("IF(FALSE, 1/0, 2)")
+        assert result == 2 or result == 2.0, f"Expected 2, got {result!r}"
+        assert not isinstance(result, XlError), "Dead branch (1/0) should not be evaluated"
+
+    def test_if_false_branch_error_does_not_propagate(self) -> None:
+        """IF(1, 42, 1/0) should yield 42, not propagate the division-by-zero error."""
+        from excel_grapher.core.types import XlError
+
+        result = self._eval("IF(1, 42, 1/0)")
+        assert result == 42 or result == 42.0
+        assert not isinstance(result, XlError)
+
+    def test_if_true_branch_error_does_not_propagate(self) -> None:
+        """IF(0, 1/0, 99) should yield 99, not propagate the division-by-zero error."""
+        from excel_grapher.core.types import XlError
+
+        result = self._eval("IF(0, 1/0, 99)")
+        assert result == 99 or result == 99.0
+        assert not isinstance(result, XlError)

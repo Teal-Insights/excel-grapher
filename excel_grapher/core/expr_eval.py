@@ -216,6 +216,40 @@ def _eval(
                 return _column_from_address(node.args[0].address)
             return Unsupported("COLUMN expects no argument or a single cell reference")
 
+        # IF: evaluate lazily so dead branches are never executed.
+        if name == "IF":
+            if len(node.args) < 2:
+                return XlError.VALUE
+            cond = _eval(
+                node.args[0], get_cell_value, functions, max_depth, context=context, depth=depth + 1
+            )
+            if isinstance(cond, Unsupported):
+                return cond
+            if isinstance(cond, XlError):
+                return cond
+            cond_bool = to_bool(cond)
+            if isinstance(cond_bool, XlError):
+                return cond_bool
+            if cond_bool:
+                return _eval(
+                    node.args[1],
+                    get_cell_value,
+                    functions,
+                    max_depth,
+                    context=context,
+                    depth=depth + 1,
+                )
+            if len(node.args) >= 3:
+                return _eval(
+                    node.args[2],
+                    get_cell_value,
+                    functions,
+                    max_depth,
+                    context=context,
+                    depth=depth + 1,
+                )
+            return False
+
         args: list[CellValue | XlError | Unsupported] = [
             _eval(arg, get_cell_value, functions, max_depth, context=context, depth=depth + 1)
             for arg in node.args

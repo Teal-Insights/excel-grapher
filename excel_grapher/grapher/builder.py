@@ -12,13 +12,14 @@ import fastpyxl.utils.cell
 from fastpyxl.worksheet.formula import ArrayFormula
 from fastpyxl.worksheet.worksheet import Worksheet
 
-from excel_grapher.core.cell_types import leaves_missing_cell_type_constraints
+from excel_grapher.core.cell_types import CellType, leaves_missing_cell_type_constraints
 
 from .dependency_provenance import EdgeProvenance
 from .dynamic_refs import (
     DynamicRefConfig,
     DynamicRefError,
     GlobalWorkbookBounds,
+    clear_index_target_cache,
     expand_leaf_env_to_argument_env,
     infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
@@ -225,10 +226,17 @@ def create_dependency_graph(
     named_range_ranges = named_range_maps.range_map
     normalizer = FormulaNormalizer(named_ranges, named_range_ranges)
     defined_names: set[str] = {str(name) for name in wb_formulas.defined_names}
+    # Clear per-graph-build caches from previous invocations.
+    clear_index_target_cache()
+
     # Per-graph cache: (normalized_formula, current_sheet, current_a1) → (offset_targets, indirect_targets, index_targets).
     # Populated by extract_expr_deps (constraint path); consumed by collect_provenance_for_formula
     # to avoid re-running the expensive expand_leaf_env_to_argument_env call.
     _dyn_cache: dict[tuple[str, str, str], tuple[set[str], set[str], set[str]]] = {}
+    # Shared cell-type cache for expand_leaf_env_to_argument_env: intermediate
+    # formula cells inferred once are reused across BFS nodes, avoiding redundant
+    # recursive domain inference when many dynamic-ref formulas share intermediates.
+    _shared_cell_type_cache: dict[str, CellType] = {}
     _NAME_TOKEN_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*!)")
 
     # Worksheet caches: avoid repeated O(#sheets) __getitem__ scans on every BFS node.
@@ -462,7 +470,9 @@ def create_dependency_graph(
                         _cache_key = (formula_for_infer, current_sheet, current_a1)
                         if _cache_key in _dyn_cache:
                             offset_targets, indirect_targets, index_targets = _dyn_cache[_cache_key]
+                            _dyn_stats["cache_hits"] += 1
                         else:
+                            _dyn_stats["infer_calls"] += 1
 
                             def _get_cell_formula(addr: str) -> str | None:
                                 sh, a1 = _parse_address_to_sheet_a1(addr)
@@ -482,6 +492,7 @@ def create_dependency_graph(
                                 named_ranges=named_ranges,
                                 named_range_ranges=named_range_ranges,
                                 max_range_cells=max_range_cells,
+                                shared_cell_type_cache=_shared_cell_type_cache,
                             )
                             try:
                                 offset_targets = infer_dynamic_offset_targets(
@@ -780,6 +791,7 @@ def create_dependency_graph(
     _bfs_t0 = time.perf_counter()
     _bfs_count = 0
     _bfs_next_log = 5000
+    _dyn_stats = {"infer_calls": 0, "cache_hits": 0}
 
     try:
         while q:
@@ -792,7 +804,9 @@ def create_dependency_graph(
             if _bfs_count >= _bfs_next_log:
                 print(
                     f"[DIAG] BFS: {_bfs_count} nodes, queue={len(q)}, depth={depth}, "
-                    f"{time.perf_counter() - _bfs_t0:.1f}s, last={key}",
+                    f"{time.perf_counter() - _bfs_t0:.1f}s, last={key}, "
+                    f"dyn_infer={_dyn_stats['infer_calls']}, dyn_cache_hits={_dyn_stats['cache_hits']}, "
+                    f"env_cache_size={len(_shared_cell_type_cache)}",
                     flush=True,
                 )
                 _bfs_next_log += 5000
@@ -875,6 +889,13 @@ def create_dependency_graph(
                         continue
                     q.append((dep_sheet, dep_a1, depth + 1))
     finally:
+        if _dyn_stats["infer_calls"] or _dyn_stats["cache_hits"]:
+            print(
+                f"[DIAG] BFS done: {_bfs_count} nodes, {time.perf_counter() - _bfs_t0:.2f}s, "
+                f"dyn_infer={_dyn_stats['infer_calls']}, dyn_cache_hits={_dyn_stats['cache_hits']}, "
+                f"env_cache_size={len(_shared_cell_type_cache)}",
+                flush=True,
+            )
         if wb_values is not None:
             wb_values.close()
         if not isinstance(workbook, fastpyxl.Workbook):
