@@ -142,7 +142,7 @@ def _flat_provenance_one_string(
                 k = format_key(arg_sheet, f"{ref.column}{ref.row}")
                 _merge_into(acc, k, EdgeProvenance(causes=frozenset({cause_dyn})))
     else:
-        calls = _find_function_calls_with_spans(f, {"OFFSET", "INDIRECT"})
+        calls = _find_function_calls_with_spans(f, frozenset({"OFFSET", "INDIRECT"}))
         if dynamic_refs is None:
             if calls:
                 raise DynamicRefError(
@@ -186,7 +186,7 @@ def _flat_provenance_one_string(
                 ) -> set[str]:
                     dyn = _find_function_calls_with_spans(
                         formula_str if formula_str.startswith("=") else "=" + formula_str,
-                        {"OFFSET", "INDIRECT"},
+                        frozenset({"OFFSET", "INDIRECT"}),
                     )
                     spans = [span for _fn, _inner, span in dyn]
                     masked2 = mask_spans(
@@ -364,7 +364,7 @@ def _flat_provenance_one_string(
 
 def _call_kind_at_span(formula: str, span: tuple[int, int]) -> str:
     """Return 'OFFSET' or 'INDIRECT' for the dynamic call covering span (cached path)."""
-    calls = _find_function_calls_with_spans(formula, {"OFFSET", "INDIRECT"})
+    calls = _find_function_calls_with_spans(formula, frozenset({"OFFSET", "INDIRECT"}))
     for fn, _inner, sp in calls:
         if sp == span:
             return fn
