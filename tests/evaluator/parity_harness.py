@@ -124,9 +124,7 @@ def assert_codegen_matches_evaluator(
     def _record(address: str, value: object) -> None:
         eval_computed[address] = value
 
-    with FormulaEvaluator(
-        graph, on_cell_evaluated=_record, blank_ranges=blank_ranges
-    ) as ev:
+    with FormulaEvaluator(graph, on_cell_evaluated=_record, blank_ranges=blank_ranges) as ev:
         evaluator_results = cast(dict[str, object], ev.evaluate(targets))
 
     generated_cache, code, _ns = exec_generated_code_with_cache(

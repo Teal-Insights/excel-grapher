@@ -117,13 +117,9 @@ def test_blank_range_codegen_compact_and_parity(tmp_path: Path) -> None:
 
     from excel_grapher.evaluator.codegen import CodeGenerator
 
-    code = CodeGenerator(graph).generate(
-        ["Sheet1!D1", "Sheet1!E1"], blank_ranges=blank
-    )
+    code = CodeGenerator(graph).generate(["Sheet1!D1", "Sheet1!E1"], blank_ranges=blank)
     assert "_BLANK_RANGE_RECTS" in code
     assert "def cell_sheet1_a2(" not in code
     assert "_blank_structural_cell" in code
 
-    assert_codegen_matches_evaluator(
-        graph, ["Sheet1!D1", "Sheet1!E1"], blank_ranges=blank
-    )
+    assert_codegen_matches_evaluator(graph, ["Sheet1!D1", "Sheet1!E1"], blank_ranges=blank)

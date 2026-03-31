@@ -6,11 +6,11 @@ from typing import TYPE_CHECKING
 
 import fastpyxl.utils.cell
 
+from excel_grapher.core.addressing import index_excel_range
 from excel_grapher.grapher.blank_ranges import (
     address_in_blank_ranges,
     normalize_blank_range_specs,
 )
-from excel_grapher.core.addressing import index_excel_range
 
 from .errors import ParseError
 from .export_runtime.cache import EvalContext, xl_circular_reference, xl_iterative_compute
@@ -221,9 +221,7 @@ class FormulaEvaluator:
                 return self._iteration_values.get(norm, 0)
             return xl_circular_reference()
 
-        if self._blank_range_rects and address_in_blank_ranges(
-            norm, self._blank_range_rects
-        ):
+        if self._blank_range_rects and address_in_blank_ranges(norm, self._blank_range_rects):
             self._cache[norm] = None
             if self.on_cell_evaluated is not None:
                 self.on_cell_evaluated(norm, None)

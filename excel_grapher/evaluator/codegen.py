@@ -386,24 +386,24 @@ class CodeGenerator:
             ")",
             "",
             "def _blank_range_parse_address(address):",
-            "    if address.startswith(\"'\"):",
+            '    if address.startswith("\'"):',
             "        i = 1",
             "        while i < len(address):",
-            "            if address[i] == \"'\":",
-            "                if i + 1 < len(address) and address[i + 1] == \"'\":",
+            '            if address[i] == "\'":',
+            '                if i + 1 < len(address) and address[i + 1] == "\'":',
             "                    i += 2",
             "                    continue",
             "                break",
             "            i += 1",
-            "        sheet = address[1:i].replace(\"''\", \"'\")",
+            '        sheet = address[1:i].replace("\'\'", "\'")',
             "        rest = address[i + 1 :]",
-            "        if not rest.startswith(\"!\"):",
-            "            raise ValueError(f\"Invalid address: {address!r}\")",
+            '        if not rest.startswith("!"):',
+            '            raise ValueError(f"Invalid address: {address!r}")',
             "        return sheet, rest[1:]",
-            "    if \"!\" in address:",
-            "        sheet, cell = address.rsplit(\"!\", 1)",
+            '    if "!" in address:',
+            '        sheet, cell = address.rsplit("!", 1)',
             "        return sheet, cell",
-            "    raise ValueError(f\"Address must be sheet-qualified: {address!r}\")",
+            '    raise ValueError(f"Address must be sheet-qualified: {address!r}")',
             "",
             "def _address_in_blank_ranges(address):",
             "    sheet, cell = _blank_range_parse_address(address)",
@@ -1583,9 +1583,7 @@ class CodeGenerator:
         lines.append("# --- Formula cell functions ---\n")
         lines.extend(cell_code_lines)
         lines.extend(
-            self._emit_resolver_lines(
-                parts["blank_rects"] if parts["blank_rects"] else None
-            )
+            self._emit_resolver_lines(parts["blank_rects"] if parts["blank_rects"] else None)
         )
 
         # Generate entry point helpers
@@ -1766,9 +1764,7 @@ class CodeGenerator:
         internals_lines.append("# --- Formula cell functions ---\n")
         internals_lines.extend(cell_code_lines)
         internals_lines.extend(
-            self._emit_resolver_lines(
-                parts["blank_rects"] if parts["blank_rects"] else None
-            )
+            self._emit_resolver_lines(parts["blank_rects"] if parts["blank_rects"] else None)
         )
         internals_py = "\n".join(internals_lines).rstrip() + "\n"
 
