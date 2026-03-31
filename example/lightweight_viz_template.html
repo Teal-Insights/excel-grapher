@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>__TITLE__</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; background: #0f1419; color: #e6edf3; }
+    #toolbar {
+      display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+      padding: 8px 12px; background: #161b22; border-bottom: 1px solid #30363d;
+      font-size: 13px;
+    }
+    #toolbar label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+    #toolbar button, #toolbar select {
+      background: #21262d; color: #e6edf3; border: 1px solid #30363d;
+      border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 13px;
+    }
+    #toolbar button:hover, #toolbar select:hover { background: #30363d; }
+    #wrap { position: relative; width: 100%; height: calc(100% - 48px); }
+    #glcanvas, #overlay { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; }
+    #overlay { pointer-events: none; }
+    #tip {
+      position: fixed; z-index: 20; pointer-events: none; display: none;
+      max-width: 320px; padding: 8px 10px; background: #21262d; border: 1px solid #484f58;
+      border-radius: 8px; font-size: 12px; line-height: 1.45; box-shadow: 0 4px 24px rgba(0,0,0,.45);
+    }
+    #stats { margin-left: auto; opacity: 0.85; font-size: 12px; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/regl@2.1.0/dist/regl.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3-force@3.0.0/dist/d3-force.min.js"></script>
+</head>
+<body>
+  <div id="toolbar">
+    <strong id="docTitle">__TITLE__</strong>
+    <label><input type="checkbox" id="showModEdges" checked /> Module edges</label>
+    <label><input type="checkbox" id="showGuardedStyle" checked /> Dashed = guarded flow</label>
+    <select id="moduleFilter"><option value="">All modules</option></select>
+    <button type="button" id="btnForce">Local force (selection)</button>
+    <button type="button" id="btnOverview">Back to overview</button>
+    <span id="stats"></span>
+  </div>
+  <div id="wrap">
+    <canvas id="glcanvas"></canvas>
+    <canvas id="overlay"></canvas>
+  </div>
+  <div id="tip"></div>
+  <script>
+    /*__BOOTSTRAP__*/
+    /*__SIDECAR__*/
+  </script>
+  <script>
+(function () {
+  'use strict';
+
+  function moduleColor(mid, nMod) {
+    const h = ((mid * 47 + 13) % 360);
+    const s = 62 + (mid % 3) * 6;
+    const l = 52 + (mid % 2) * 5;
+    return hslToRgb(h / 360, s / 100, l / 100);
+  }
+
+  function hslToRgb(h, s, l) {
+    let r, g, b;
+    if (s === 0) { r = g = b = l; }
+    else {
+      const hue2rgb = function(p, q, t) {
+        if (t < 0) t += 1; if (t > 1) t -= 1;
+        if (t < 1/6) return p + (q - p) * 6 * t;
+        if (t < 1/2) return q;
+        if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+        return p;
+      };
+      const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+      const p = 2 * l - q;
+      r = hue2rgb(p, q, h + 1/3);
+      g = hue2rgb(p, q, h);
+      b = hue2rgb(p, q, h - 1/3);
+    }
+    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+  }
+
+  function buildSpatialIndex(data, bin) {
+    const n = data.stats.node_count;
+    const map = new Map();
+    for (let i = 0; i < n; i++) {
+      const bx = Math.floor(data.nodes.x[i] / bin);
+      const by = Math.floor(data.nodes.y[i] / bin);
+      const k = bx + ',' + by;
+      let arr = map.get(k);
+      if (!arr) { arr = []; map.set(k, arr); }
+      arr.push(i);
+    }
+    return { map, bin };
+  }
+
+  function pickNearest(ix, data, mx, my, scale, tx, ty, maxD2) {
+    const wx = (mx - tx) / scale;
+    const wy = (my - ty) / scale;
+    const bx = Math.floor(wx / ix.bin);
+    const by = Math.floor(wy / ix.bin);
+    let best = -1;
+    let bestD = maxD2;
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const arr = ix.map.get((bx + dx) + ',' + (by + dy));
+        if (!arr) continue;
+        for (let j = 0; j < arr.length; j++) {
+          const i = arr[j];
+          const px = data.nodes.x[i];
+          const py = data.nodes.y[i];
+          const d2 = (px - wx) * (px - wx) + (py - wy) * (py - wy);
+          if (d2 < bestD) { bestD = d2; best = i; }
+        }
+      }
+    }
+    return best;
+  }
+
+  function neighborSet(data, nodeId) {
+    const off = data.local_edges.offsets;
+    const tgt = data.local_edges.targets;
+    const s = new Set([nodeId]);
+    for (let k = off[nodeId]; k < off[nodeId + 1]; k++) {
+      s.add(tgt[k]);
+    }
+    for (let u = 0; u < data.stats.node_count; u++) {
+      for (let k = off[u]; k < off[u + 1]; k++) {
+        if (tgt[k] === nodeId) s.add(u);
+      }
+    }
+    return s;
+  }
+
+  function localForceSubgraph(data, nodeId) {
+    const n = data.stats.node_count;
+    const maxN = data.max_local_nodes;
+    const maxE = data.max_local_edges;
+    const mid = data.nodes.module_id[nodeId];
+    const mod = data.modules[mid];
+    if (mod.node_count <= maxN) {
+      const nodes = [];
+      for (let i = 0; i < n; i++) {
+        if (data.nodes.module_id[i] === mid) nodes.push(i);
+      }
+      nodes.sort(function(a,b){return a-b;});
+      const set = new Set(nodes);
+      const ef = [], et = [], eg = [];
+      const off = data.local_edges.offsets;
+      const tg = data.local_edges.targets;
+      const gd = data.local_edges.guarded;
+      for (let ni = 0; ni < nodes.length; ni++) {
+        const u = nodes[ni];
+        for (let k = off[u]; k < off[u + 1]; k++) {
+          const v = tg[k];
+          if (set.has(v)) {
+            ef.push(u); et.push(v); eg.push(gd[k]);
+          }
+        }
+      }
+      return {
+        nodeIds: nodes,
+        edgesFrom: ef, edgesTo: et, edgesGuarded: eg,
+        moduleScope: true,
+        truncated: !data.local_edges.complete[nodeId]
+      };
+    }
+    const expanded = new Set();
+    const seeds = [nodeId];
+    const ef = [], et = [], eg = [];
+    const off = data.local_edges.offsets;
+    const tg = data.local_edges.targets;
+    const gd = data.local_edges.guarded;
+    while (seeds.length && expanded.size < maxN) {
+      seeds.sort(function(a,b){return a-b;});
+      const u = seeds.shift();
+      if (expanded.has(u)) continue;
+      expanded.add(u);
+      for (let k = off[u]; k < off[u + 1]; k++) {
+        const v = tg[k];
+        ef.push(u); et.push(v); eg.push(gd[k]);
+        if (!expanded.has(v) && expanded.size + seeds.length < maxN) seeds.push(v);
+        if (ef.length >= maxE) {
+          return {
+            nodeIds: Array.from(expanded).sort(function(a,b){return a-b;}),
+            edgesFrom: ef, edgesTo: et, edgesGuarded: eg,
+            moduleScope: false, truncated: true
+          };
+        }
+      }
+    }
+    return {
+      nodeIds: Array.from(expanded).sort(function(a,b){return a-b;}),
+      edgesFrom: ef, edgesTo: et, edgesGuarded: eg,
+      moduleScope: false,
+      truncated: !data.local_edges.complete[nodeId]
+    };
+  }
+
+  async function loadData() {
+    if (window.__VIZ_DATA__) return window.__VIZ_DATA__;
+    const url = window.__VIZ_DATA_URL__;
+    if (!url) throw new Error('No visualization data');
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('Failed to load ' + url);
+    return r.json();
+  }
+
+  function fmtAddr(data, i) {
+    const sh = data.sheets[data.nodes.sheet_index[i]];
+    const col = data.nodes.column[i];
+    const row = data.nodes.row[i];
+    const q = /[ '\\-]/.test(sh) ? "'" + sh.replace(/'/g, "''") + "'" : sh;
+    return q + '!' + col + row;
+  }
+
+  function main(data) {
+    if (data.version !== 1) throw new Error('Unsupported payload version: ' + data.version);
+
+    const canvas = document.getElementById('glcanvas');
+    const overlay = document.getElementById('overlay');
+    const tip = document.getElementById('tip');
+    const ctx2 = overlay.getContext('2d');
+
+    const n = data.stats.node_count;
+    const statsEl = document.getElementById('stats');
+    statsEl.textContent = n + ' nodes · ' + data.stats.module_count + ' modules · '
+      + data.stats.local_edge_count + ' local edges (exported)';
+
+    const positions = new Float32Array(n * 2);
+    const colors = new Float32Array(n * 3);
+    const baseColors = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      positions[i * 2] = data.nodes.x[i];
+      positions[i * 2 + 1] = data.nodes.y[i];
+      const rgb = moduleColor(data.nodes.module_id[i], data.stats.module_count);
+      baseColors[i * 3] = rgb[0] / 255;
+      baseColors[i * 3 + 1] = rgb[1] / 255;
+      baseColors[i * 3 + 2] = rgb[2] / 255;
+      colors[i * 3] = baseColors[i * 3];
+      colors[i * 3 + 1] = baseColors[i * 3 + 1];
+      colors[i * 3 + 2] = baseColors[i * 3 + 2];
+    }
+
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (let i = 0; i < n; i++) {
+      const x = positions[i * 2], y = positions[i * 2 + 1];
+      minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+    }
+    if (!isFinite(minX)) { minX = 0; maxX = 1; minY = 0; maxY = 1; }
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    const span = Math.max(maxX - minX, maxY - minY, 1);
+
+    let view = { scale: 1, tx: 0, ty: 0 };
+    function fitView() {
+      const w = canvas.clientWidth, h = canvas.clientHeight;
+      const s = 0.85 * Math.min(w, h) / span;
+      view.scale = s;
+      view.tx = w / 2 - cx * s;
+      view.ty = h / 2 + cy * s;
+    }
+
+    function resize() {
+      const w = canvas.clientWidth, h = canvas.clientHeight;
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = overlay.width = Math.floor(w * dpr);
+      canvas.height = overlay.height = Math.floor(h * dpr);
+      canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+      overlay.style.width = w + 'px'; overlay.style.height = h + 'px';
+      ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+      fitView();
+    }
+    window.addEventListener('resize', resize);
+
+    const bin = Math.max(span / 80, 1e-6);
+    const spatial = buildSpatialIndex(data, bin);
+
+    const regl = createREGL({ canvas: canvas });
+
+    const drawPoints = regl({
+      vert: `
+        precision highp float;
+        attribute vec2 position;
+        attribute vec3 color;
+        uniform vec2 u_canvas;
+        uniform float u_scale;
+        uniform vec2 u_translate;
+        varying vec3 vColor;
+        void main() {
+          vColor = color;
+          float sx = position.x * u_scale + u_translate.x;
+          float sy = position.y * u_scale + u_translate.y;
+          vec2 clip = vec2(
+            sx / u_canvas.x * 2.0 - 1.0,
+            -(sy / u_canvas.y * 2.0 - 1.0)
+          );
+          gl_Position = vec4(clip, 0, 1);
+          gl_PointSize = 6.0;
+        }
+      `,
+      frag: `
+        precision highp float;
+        varying vec3 vColor;
+        void main() {
+          vec2 p = gl_PointCoord - vec2(0.5);
+          if (dot(p,p) > 0.25) discard;
+          gl_FragColor = vec4(vColor, 1);
+        }
+      `,
+      attributes: {
+        position: regl.prop('posBuf'),
+        color: regl.prop('colBuf')
+      },
+      uniforms: {
+        u_canvas: function (ctx) { return [ctx.viewportWidth, ctx.viewportHeight]; },
+        u_scale: regl.prop('scale'),
+        u_translate: regl.prop('translate')
+      },
+      count: n,
+      primitive: 'points'
+    });
+
+    const posBuf = regl.buffer(positions);
+    const colBuf = regl.buffer(colors);
+
+    let mode = 'overview';
+    let hoverId = -1;
+    let pinnedId = -1;
+    let filterMod = '';
+    let highlight = null;
+
+    const sel = document.getElementById('moduleFilter');
+    for (let m = 0; m < data.stats.module_count; m++) {
+      const o = document.createElement('option');
+      o.value = String(m);
+      o.textContent = 'Module ' + m + ' (' + data.modules[m].node_count + ')';
+      sel.appendChild(o);
+    }
+
+    function applyFilterAndHighlight() {
+      const f = filterMod === '' ? null : parseInt(filterMod, 10);
+      const neigh = highlight;
+      for (let i = 0; i < n; i++) {
+        let dim = 1;
+        if (f !== null && data.nodes.module_id[i] !== f) dim = 0.2;
+        if (neigh && !neigh.has(i)) dim = 0.15;
+        if (pinnedId === i || hoverId === i) dim = 1;
+        colors[i * 3] = baseColors[i * 3] * dim;
+        colors[i * 3 + 1] = baseColors[i * 3 + 1] * dim;
+        colors[i * 3 + 2] = baseColors[i * 3 + 2] * dim;
+      }
+      colBuf.subdata(colors);
+    }
+
+    function drawOverlay() {
+      const w = canvas.clientWidth, h = canvas.clientHeight;
+      ctx2.clearRect(0, 0, w, h);
+      if (!document.getElementById('showModEdges').checked) return;
+
+      const showDash = document.getElementById('showGuardedStyle').checked;
+      ctx2.save();
+      ctx2.lineWidth = 1.2;
+      for (let e = 0; e < data.module_edges.length; e++) {
+        const ed = data.module_edges[e];
+        const a = data.modules[ed.source_module_id];
+        const b = data.modules[ed.target_module_id];
+        const x1 = a.centroid_x * view.scale + view.tx;
+        const y1 = a.centroid_y * view.scale + view.ty;
+        const x2 = b.centroid_x * view.scale + view.tx;
+        const y2 = b.centroid_y * view.scale + view.ty;
+        if (ed.unconditional_weight > 0) {
+          ctx2.strokeStyle = 'rgba(130, 180, 255, 0.55)';
+          ctx2.setLineDash([]);
+          ctx2.beginPath(); ctx2.moveTo(x1, y1); ctx2.lineTo(x2, y2); ctx2.stroke();
+        }
+        if (ed.guarded_weight > 0 && showDash) {
+          ctx2.strokeStyle = 'rgba(255, 200, 120, 0.45)';
+          ctx2.setLineDash([6, 4]);
+          ctx2.beginPath(); ctx2.moveTo(x1, y1 + 3); ctx2.lineTo(x2, y2 + 3); ctx2.stroke();
+          ctx2.setLineDash([]);
+        }
+      }
+      ctx2.restore();
+    }
+
+    function frame() {
+      regl.clear({ color: [0.06, 0.08, 0.1, 1], depth: 1 });
+      drawPoints({ posBuf: posBuf, colBuf: colBuf, scale: view.scale, translate: [view.tx, view.ty] });
+      drawOverlay();
+    }
+
+    regl.frame(frame);
+
+    let dragging = false, lx = 0, ly = 0;
+    canvas.addEventListener('mousedown', function (ev) {
+      dragging = true; lx = ev.clientX; ly = ev.clientY;
+    });
+    window.addEventListener('mouseup', function () { dragging = false; });
+    window.addEventListener('mousemove', function (ev) {
+      if (dragging) {
+        view.tx += ev.clientX - lx; view.ty += ev.clientY - ly;
+        lx = ev.clientX; ly = ev.clientY;
+        return;
+      }
+      if (mode !== 'overview' || n === 0) return;
+      const rect = canvas.getBoundingClientRect();
+      const mx = ev.clientX - rect.left;
+      const my = ev.clientY - rect.top;
+        const pickR2 = (14 / view.scale) * (14 / view.scale);
+        const id = pickNearest(spatial, data, mx, my, view.scale, view.tx, view.ty, pickR2);
+      hoverId = id;
+      applyFilterAndHighlight();
+      if (id >= 0) {
+        const g = neighborSet(data, id);
+        let gn = 0, gu = 0;
+        const off = data.local_edges.offsets, tg = data.local_edges.targets, gd = data.local_edges.guarded;
+        for (let k = off[id]; k < off[id + 1]; k++) {
+          gn++;
+          if (gd[k]) gu++;
+        }
+        tip.style.display = 'block';
+        tip.style.left = (ev.clientX + 14) + 'px';
+        tip.style.top = (ev.clientY + 14) + 'px';
+        tip.innerHTML =
+          '<b>' + fmtAddr(data, id) + '</b><br/>' +
+          'module ' + data.nodes.module_id[id] + ' · rank ' + data.nodes.rank[id] + '<br/>' +
+          'in ' + data.nodes.in_degree[id] + ' / out ' + data.nodes.out_degree[id] + '<br/>' +
+          'guarded out (exported) ' + gu + ' / ' + gn;
+      } else {
+        tip.style.display = 'none';
+      }
+    });
+
+    canvas.addEventListener('wheel', function (ev) {
+      ev.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
+      const factor = ev.deltaY > 0 ? 0.9 : 1.1;
+      const wx = (mx - view.tx) / view.scale;
+      const wy = (my - view.ty) / view.scale;
+      view.scale *= factor;
+      view.tx = mx - wx * view.scale;
+      view.ty = my - wy * view.scale;
+    }, { passive: false });
+
+    canvas.addEventListener('click', function () {
+      if (hoverId >= 0) {
+        pinnedId = hoverId;
+        highlight = neighborSet(data, pinnedId);
+        applyFilterAndHighlight();
+      }
+    });
+
+    document.getElementById('showModEdges').addEventListener('change', drawOverlay);
+    document.getElementById('showGuardedStyle').addEventListener('change', drawOverlay);
+
+    sel.addEventListener('change', function () {
+      filterMod = sel.value;
+      applyFilterAndHighlight();
+    });
+
+    document.getElementById('btnForce').addEventListener('click', function () {
+      const nid = pinnedId >= 0 ? pinnedId : (hoverId >= 0 ? hoverId : 0);
+      if (n === 0) return;
+      const sub = localForceSubgraph(data, nid);
+      mode = 'force';
+      runForceLayout(sub);
+    });
+
+    function runForceLayout(sub) {
+      const nodes = sub.nodeIds.map(function (id) {
+        return { id: id, x: data.nodes.x[id], y: data.nodes.y[id] };
+      });
+      const idToIdx = {};
+      for (let i = 0; i < nodes.length; i++) idToIdx[nodes[i].id] = i;
+      const links = [];
+      for (let e = 0; e < sub.edgesFrom.length; e++) {
+        const s = idToIdx[sub.edgesFrom[e]];
+        const t = idToIdx[sub.edgesTo[e]];
+        if (s === undefined || t === undefined) continue;
+        links.push({ source: nodes[s], target: nodes[t], guarded: sub.edgesGuarded[e] });
+      }
+      const sim = d3.forceSimulation(nodes)
+        .force('link', d3.forceLink(links).distance(40).strength(0.6))
+        .force('charge', d3.forceManyBody().strength(-120))
+        .force('cx', d3.forceX(0).strength(0.05))
+        .force('cy', d3.forceY(0).strength(0.05));
+      for (let t = 0; t < 120; t++) sim.tick();
+      sim.stop();
+
+      let fx = Infinity, fX = -Infinity, fy = Infinity, fY = -Infinity;
+      for (let i = 0; i < nodes.length; i++) {
+        fx = Math.min(fx, nodes[i].x); fX = Math.max(fX, nodes[i].x);
+        fy = Math.min(fy, nodes[i].y); fY = Math.max(fY, nodes[i].y);
+      }
+      const fspan = Math.max(fX - fx, fY - fy, 1);
+      const fcx = (fx + fX) / 2, fcy = (fy + fY) / 2;
+
+      for (let i = 0; i < nodes.length; i++) {
+        const id = nodes[i].id;
+        positions[id * 2] = (nodes[i].x - fcx) * (span / fspan) + cx;
+        positions[id * 2 + 1] = (nodes[i].y - fcy) * (span / fspan) + cy;
+      }
+      posBuf.subdata(positions);
+      for (let i = 0; i < n; i++) {
+        const on = sub.nodeIds.indexOf(i) >= 0;
+        const dim = on ? 1 : 0.08;
+        colors[i * 3] = baseColors[i * 3] * dim;
+        colors[i * 3 + 1] = baseColors[i * 3 + 1] * dim;
+        colors[i * 3 + 2] = baseColors[i * 3 + 2] * dim;
+      }
+      colBuf.subdata(colors);
+      document.getElementById('showModEdges').checked = false;
+    }
+
+    document.getElementById('btnOverview').addEventListener('click', function () {
+      mode = 'overview';
+      for (let i = 0; i < n; i++) {
+        positions[i * 2] = data.nodes.x[i];
+        positions[i * 2 + 1] = data.nodes.y[i];
+      }
+      posBuf.subdata(positions);
+      highlight = null;
+      pinnedId = -1;
+      applyFilterAndHighlight();
+      document.getElementById('showModEdges').checked = true;
+      fitView();
+    });
+
+    resize();
+    applyFilterAndHighlight();
+  }
+
+  loadData().then(main).catch(function (e) {
+    document.body.innerHTML = '<pre style="padding:16px;color:#f85149;">' + String(e.stack || e) + '</pre>';
+  });
+})();
+  </script>
+</body>
+</html>

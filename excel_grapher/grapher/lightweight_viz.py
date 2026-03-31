@@ -493,6 +493,7 @@ def to_lightweight_viz(
     xs = [0.0] * n
     ys = [0.0] * n
     bucket_density = [0] * n
+    bucket_running_idx: dict[tuple[int, int], int] = {}
 
     for i in range(n):
         rnk = node_rank[i]
@@ -502,7 +503,8 @@ def to_lightweight_viz(
         bkey = (rnk, mid)
         cnt = bucket_counts[bkey]
         bucket_density[i] = cnt
-        idx_in_bucket = sum(1 for j in range(i) if node_rank[j] == rnk and module_of[j] == mid)
+        idx_in_bucket = bucket_running_idx.get(bkey, 0)
+        bucket_running_idx[bkey] = idx_in_bucket + 1
         if cnt <= DENSE_BUCKET_THRESHOLD:
             ys[i] = base_y + float(idx_in_bucket) * 4.0
         else:
