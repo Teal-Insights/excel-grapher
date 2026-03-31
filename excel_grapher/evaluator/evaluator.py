@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 import fastpyxl.utils.cell
 
 from .errors import ParseError
-from .name_utils import parse_address
 from .export_runtime.cache import EvalContext, xl_circular_reference, xl_iterative_compute
 from .functions import FUNCTIONS
 from .helpers import (
@@ -28,6 +27,7 @@ from .helpers import (
     xl_pow,
     xl_row,
 )
+from .name_utils import parse_address
 from .parser import (
     AstNode,
     BinaryOpNode,

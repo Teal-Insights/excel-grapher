@@ -147,9 +147,11 @@ def assert_codegen_matches_evaluator(
                     detail_parts.append(f"formula={formula}")
                 if normalized and normalized != formula:
                     detail_parts.append(f"normalized_formula={normalized}")
-                kind = "numeric_drift" if (
-                    _is_finite_number(ev_val) and _is_finite_number(gen_val)
-                ) else "value_mismatch"
+                kind = (
+                    "numeric_drift"
+                    if (_is_finite_number(ev_val) and _is_finite_number(gen_val))
+                    else "value_mismatch"
+                )
                 detail = (" (" + "; ".join(detail_parts) + ")") if detail_parts else ""
                 raise AssertionError(
                     f"First parity mismatch ({kind}) at "
