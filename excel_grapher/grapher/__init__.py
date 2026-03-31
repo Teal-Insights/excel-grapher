@@ -12,6 +12,14 @@ from excel_grapher.core.cell_types import (
 )
 
 from .builder import create_dependency_graph, list_dynamic_ref_constraint_candidates
+from .cache import (
+    GRAPH_CACHE_SCHEMA_VERSION,
+    CacheValidationPolicy,
+    build_graph_cache_meta,
+    build_graph_cache_meta_portable,
+    save_graph_cache,
+    try_load_graph_cache,
+)
 from .dependency_provenance import DependencyCause, EdgeProvenance
 from .dynamic_refs import (
     DynamicRefConfig,
@@ -49,6 +57,12 @@ from .validation import ValidationResult, WorkbookCalcSettings, get_calc_setting
 __all__ = [
     "create_dependency_graph",
     "list_dynamic_ref_constraint_candidates",
+    "GRAPH_CACHE_SCHEMA_VERSION",
+    "build_graph_cache_meta",
+    "build_graph_cache_meta_portable",
+    "CacheValidationPolicy",
+    "save_graph_cache",
+    "try_load_graph_cache",
     "DependencyCause",
     "DependencyGraph",
     "EdgeProvenance",

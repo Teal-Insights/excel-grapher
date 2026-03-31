@@ -488,6 +488,56 @@ print(evaluator_results)
 # {'S!B1': 20.0}
 ```
 
+### Caching an extracted graph (optional)
+
+If graph extraction is expensive and you expect to re-use the same workbook + targets + extraction settings,
+you can cache the `DependencyGraph` to disk as JSON.
+
+Strict caching (requires access to the workbook file to validate fingerprints):
+
+```python
+from pathlib import Path
+
+from excel_grapher import (
+    CacheValidationPolicy,
+    build_graph_cache_meta,
+    create_dependency_graph,
+    save_graph_cache,
+    try_load_graph_cache,
+)
+
+workbook_path = Path("workbook.xlsx")
+targets = ["S!B1"]
+extraction_params = {"load_values": True, "max_depth": 50}
+
+expected = build_graph_cache_meta(workbook_path, targets, extraction_params=extraction_params)
+graph = try_load_graph_cache(Path("graph-cache.json"), expected_meta=expected)
+if graph is None:
+    graph = create_dependency_graph(workbook_path, targets, **extraction_params)
+    save_graph_cache(Path("graph-cache.json"), graph, expected)
+```
+
+Portable caching (for `FormulaEvaluator` on machines without the workbook file):
+
+```python
+from excel_grapher import (
+    CacheValidationPolicy,
+    build_graph_cache_meta_portable,
+    try_load_graph_cache,
+)
+
+targets = ["S!B1"]
+expected = build_graph_cache_meta_portable(targets, extraction_params={"load_values": True, "max_depth": 50})
+
+graph = try_load_graph_cache(
+    Path("graph-cache.json"),
+    expected_meta=expected,
+    policy=CacheValidationPolicy.PORTABLE,
+)
+if graph is None:
+    raise FileNotFoundError("No valid cached graph found for the requested targets/settings.")
+```
+
 **Tradeoffs for the evaluator approach:**
 
 - **Advantages**
