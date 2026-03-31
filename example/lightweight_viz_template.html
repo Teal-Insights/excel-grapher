@@ -343,9 +343,9 @@
       const f = filterMod === '' ? null : parseInt(filterMod, 10);
       const neigh = highlight;
       for (let i = 0; i < n; i++) {
-        let dim = 0.35;
-        if (f !== null && data.nodes.module_id[i] !== f) dim = 0.12;
-        if (neigh && !neigh.has(i)) dim = 0.1;
+        let dim = 1;
+        if (f !== null && data.nodes.module_id[i] !== f) dim = 0.2;
+        if (neigh && !neigh.has(i)) dim = 0.15;
         if (pinnedId === i || hoverId === i) dim = 1;
         colors[i * 3] = baseColors[i * 3] * dim;
         colors[i * 3 + 1] = baseColors[i * 3 + 1] * dim;
