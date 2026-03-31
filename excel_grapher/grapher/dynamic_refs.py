@@ -312,6 +312,7 @@ def expand_leaf_env_to_argument_env(
     named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
     *,
     max_range_cells: int = 5000,
+    shared_cell_type_cache: dict[str, CellType] | None = None,
 ) -> dict[str, CellType]:
     """Build a CellTypeEnv for all refs in the argument chain from leaf constraints only.
 
@@ -327,8 +328,14 @@ def expand_leaf_env_to_argument_env(
     ``max_range_cells`` must match the graph builder's range expansion limit so static
     ranges collected from the AST align with
     :func:`~excel_grapher.grapher.builder.create_dependency_graph` argument-subgraph BFS.
+
+    When ``shared_cell_type_cache`` is provided, intermediate cell type inferences
+    are persisted across multiple calls.  This avoids redundant work when many
+    BFS nodes share intermediate formula cells in their argument subgraphs.
     """
-    cache: dict[str, CellType] = {}
+    cache: dict[str, CellType] = (
+        shared_cell_type_cache if shared_cell_type_cache is not None else {}
+    )
     in_progress: set[str] = set()
     nr = named_ranges or {}
     nrr = named_range_ranges or {}
@@ -2004,6 +2011,15 @@ def _clamp_int(v: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, v))
 
 
+# Module-level cache for _emit_index_targets_from_domains: avoids regenerating
+# the same target set when multiple INDEX formulas resolve to identical
+# (array_range, row_dom, col_dom) triples.
+_emit_index_cache: dict[
+    tuple[ExcelRange, _FiniteInts | _IntBounds, _FiniteInts | _IntBounds],
+    frozenset[str],
+] = {}
+
+
 def _emit_index_targets_from_domains(
     array_range: ExcelRange,
     row_dom: _FiniteInts | _IntBounds,
@@ -2137,12 +2153,17 @@ def _infer_index_targets_core(
     nrows, ncols = array_range.shape
 
     if row_dom is not None and col_dom is not None:
+        _cache_key = (array_range, row_dom, col_dom)
+        cached = _emit_index_cache.get(_cache_key)
+        if cached is not None:
+            return set(cached)
         targets = _emit_index_targets_from_domains(array_range, row_dom, col_dom, limits)
         print(
             f"[DIAG] INDEX (abstract): {array_range.sheet}! shape={nrows}x{ncols} "
             f"row_dom={row_dom} col_dom={col_dom} -> {len(targets)} targets",
             flush=True,
         )
+        _emit_index_cache[_cache_key] = frozenset(targets)
         return targets
 
     leaf_addrs = _collect_addresses_needing_domain(row_ast)
