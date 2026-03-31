@@ -10,6 +10,7 @@ from pathlib import Path
 import fastpyxl
 import fastpyxl.utils.cell
 from fastpyxl.worksheet.formula import ArrayFormula
+from fastpyxl.worksheet.worksheet import Worksheet
 
 from excel_grapher.core.cell_types import leaves_missing_cell_type_constraints
 
@@ -231,21 +232,22 @@ def create_dependency_graph(
     _NAME_TOKEN_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*!)")
 
     # Worksheet caches: avoid repeated O(#sheets) __getitem__ scans on every BFS node.
-    _ws_f_cache: dict[str, object] = {}
-    _ws_v_cache: dict[str, object] = {}
+    _ws_f_cache: dict[str, Worksheet] = {}
+    _ws_v_cache: dict[str, Worksheet] = {}
 
-    def _get_ws_f(sheet: str) -> object:
+    def _get_ws_f(sheet: str) -> Worksheet:
         ws = _ws_f_cache.get(sheet)
         if ws is None:
             ws = wb_formulas[sheet]
             _ws_f_cache[sheet] = ws
         return ws
 
-    def _get_ws_v(sheet: str) -> object:
+    def _get_ws_v(sheet: str) -> Worksheet:
         # Only called when wb_values is not None.
         ws = _ws_v_cache.get(sheet)
         if ws is None:
-            ws = wb_values[sheet]  # type: ignore[index]
+            assert wb_values is not None
+            ws = wb_values[sheet]
             _ws_v_cache[sheet] = ws
         return ws
 

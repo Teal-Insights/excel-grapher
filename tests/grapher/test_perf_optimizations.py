@@ -22,7 +22,6 @@ import xlsxwriter
 from excel_grapher import create_dependency_graph
 from excel_grapher.grapher.dependency_provenance import DependencyCause
 
-
 # ---------------------------------------------------------------------------
 # A. parse-function caching
 # ---------------------------------------------------------------------------
