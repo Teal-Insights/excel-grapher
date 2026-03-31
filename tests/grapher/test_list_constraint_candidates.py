@@ -17,7 +17,6 @@ from excel_grapher.core.cell_types import (
 from excel_grapher.grapher.builder import list_dynamic_ref_constraint_candidates
 from excel_grapher.grapher.dynamic_refs import DynamicRefConfig, DynamicRefLimits
 
-
 # ---------------------------------------------------------------------------
 # Workbook factories
 # ---------------------------------------------------------------------------
@@ -37,7 +36,7 @@ def _build_single_offset_missing_leaf(path: Path) -> None:
     wb = xlsxwriter.Workbook(path)
     ws = wb.add_worksheet("Sheet1")
     ws.write_number(0, 1, 10)  # B1 base
-    ws.write_number(0, 2, 1)   # C1 row-offset leaf (missing constraint)
+    ws.write_number(0, 2, 1)  # C1 row-offset leaf (missing constraint)
     ws.write_formula(0, 0, "=OFFSET(Sheet1!B1,0,Sheet1!C1)", None, 10)  # A1
     wb.close()
 
@@ -54,9 +53,9 @@ def _build_two_offsets_missing_leaves(path: Path) -> None:
     ws.write_formula(0, 1, "=OFFSET(Sheet1!D1,0,Sheet1!E1)", None, 0)  # B1
     ws.write_formula(0, 2, "=OFFSET(Sheet1!F1,0,Sheet1!G1)", None, 0)  # C1
     ws.write_number(0, 3, 10)  # D1 base
-    ws.write_number(0, 4, 1)   # E1 missing constraint
+    ws.write_number(0, 4, 1)  # E1 missing constraint
     ws.write_number(0, 5, 20)  # F1 base
-    ws.write_number(0, 6, 1)   # G1 missing constraint
+    ws.write_number(0, 6, 1)  # G1 missing constraint
     wb.close()
 
 
@@ -65,7 +64,7 @@ def _build_all_leaves_constrained(path: Path) -> None:
     wb = xlsxwriter.Workbook(path)
     ws = wb.add_worksheet("Sheet1")
     ws.write_number(0, 1, 10)  # B1 base
-    ws.write_number(0, 2, 1)   # C1 leaf (will be constrained)
+    ws.write_number(0, 2, 1)  # C1 leaf (will be constrained)
     ws.write_formula(0, 0, "=OFFSET(Sheet1!B1,0,Sheet1!C1)", None, 10)  # A1
     wb.close()
 
@@ -78,12 +77,14 @@ def _build_partial_constraint(path: Path) -> None:
     wb = xlsxwriter.Workbook(path)
     ws = wb.add_worksheet("Sheet1")
     ws.write_number(0, 1, 10)  # B1 base
-    ws.write_number(0, 2, 0)   # C1 constrained
-    ws.write_number(0, 3, 1)   # D1 missing
+    ws.write_number(0, 2, 0)  # C1 constrained
+    ws.write_number(0, 3, 1)  # D1 missing
     ws.write_formula(
-        0, 0,
+        0,
+        0,
         "=OFFSET(Sheet1!B1,0,Sheet1!C1)+OFFSET(Sheet1!B1,0,Sheet1!D1)",
-        None, 10,
+        None,
+        10,
     )  # A1
     wb.close()
 
@@ -107,7 +108,7 @@ def _build_infer_raises_branch_limit(path: Path) -> None:
     wb = xlsxwriter.Workbook(path)
     ws = wb.add_worksheet("Sheet1")
     ws.write_number(0, 1, 10)  # B1 base
-    ws.write_number(0, 2, 0)   # C1 constrained (large interval → branch explosion)
+    ws.write_number(0, 2, 0)  # C1 constrained (large interval → branch explosion)
     ws.write_formula(0, 0, "=OFFSET(Sheet1!B1,0,Sheet1!C1)", None, 10)  # A1
     wb.close()
 
