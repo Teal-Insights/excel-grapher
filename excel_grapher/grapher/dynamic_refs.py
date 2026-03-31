@@ -1520,6 +1520,286 @@ def _neg_numeric_domain(d: _FiniteInts | _IntBounds | None) -> _FiniteInts | _In
     return _IntBounds(-d.hi, -d.lo)
 
 
+# ---------------------------------------------------------------------------
+# Phase 1: ABS / MIN / MAX transfer rules
+# ---------------------------------------------------------------------------
+
+
+def _abs_numeric_domain(
+    d: _FiniteInts | _IntBounds | None,
+) -> _FiniteInts | _IntBounds | None:
+    if d is None:
+        return None
+    if isinstance(d, _FiniteInts):
+        return _FiniteInts(frozenset(abs(v) for v in d.values))
+    lo, hi = d.lo, d.hi
+    if lo >= 0:
+        return _IntBounds(lo, hi)
+    if hi <= 0:
+        return _IntBounds(-hi, -lo)
+    # Mixed: crosses zero — hull [0, max(|lo|, hi)]
+    return _IntBounds(0, max(-lo, hi))
+
+
+def _min_numeric_domains(
+    a: _FiniteInts | _IntBounds,
+    b: _FiniteInts | _IntBounds,
+    limits: DynamicRefLimits,
+) -> _FiniteInts | _IntBounds:
+    if isinstance(a, _FiniteInts) and isinstance(b, _FiniteInts):
+        vals = frozenset(min(x, y) for x in a.values for y in b.values)
+        if len(vals) <= limits.max_branches:
+            return _FiniteInts(vals)
+        return _IntBounds(min(vals), max(vals))
+    ba, bb = _normalize_to_bounds(a), _normalize_to_bounds(b)
+    lo = min(ba.lo, bb.lo)
+    hi = min(ba.hi, bb.hi)
+    span = hi - lo + 1
+    if span <= limits.max_branches:
+        return _FiniteInts(frozenset(range(lo, hi + 1)))
+    return _IntBounds(lo, hi)
+
+
+def _max_numeric_domains(
+    a: _FiniteInts | _IntBounds,
+    b: _FiniteInts | _IntBounds,
+    limits: DynamicRefLimits,
+) -> _FiniteInts | _IntBounds:
+    if isinstance(a, _FiniteInts) and isinstance(b, _FiniteInts):
+        vals = frozenset(max(x, y) for x in a.values for y in b.values)
+        if len(vals) <= limits.max_branches:
+            return _FiniteInts(vals)
+        return _IntBounds(min(vals), max(vals))
+    ba, bb = _normalize_to_bounds(a), _normalize_to_bounds(b)
+    lo = max(ba.lo, bb.lo)
+    hi = max(ba.hi, bb.hi)
+    span = hi - lo + 1
+    if span <= limits.max_branches:
+        return _FiniteInts(frozenset(range(lo, hi + 1)))
+    return _IntBounds(lo, hi)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Branch-local env refinement helpers for IF
+# ---------------------------------------------------------------------------
+
+_NARROW_PREDICATES: dict[str, Callable[[int, int], bool]] = {
+    "=": lambda v, b: v == b,
+    "<>": lambda v, b: v != b,
+    "<": lambda v, b: v < b,
+    ">": lambda v, b: v > b,
+    "<=": lambda v, b: v <= b,
+    ">=": lambda v, b: v >= b,
+}
+_NEG_OP: dict[str, str] = {"=": "<>", "<>": "=", "<": ">=", ">": "<=", "<=": ">", ">=": "<"}
+_FLIP_OP: dict[str, str] = {"<": ">", ">": "<", "<=": ">=", ">=": "<=", "=": "=", "<>": "<>"}
+
+
+def _narrow_domain(
+    d: _FiniteInts | _IntBounds,
+    op: str,
+    bound: int,
+) -> _FiniteInts | _IntBounds | None:
+    """Narrow domain d by applying ``d op bound`` (e.g. d > 3, d <= 5)."""
+    if isinstance(d, _FiniteInts):
+        predicates = _NARROW_PREDICATES
+        pred = predicates.get(op)
+        if pred is None:
+            return d
+        return _FiniteInts(frozenset(v for v in d.values if pred(v, bound)))
+    lo, hi = d.lo, d.hi
+    if op == "=":
+        if lo <= bound <= hi:
+            return _FiniteInts(frozenset({bound}))
+        return _FiniteInts(frozenset())
+    elif op == "<>":
+        return d  # can't tighten interval for not-equal; keep conservatively
+    elif op == ">":
+        lo = max(lo, bound + 1)
+    elif op == ">=":
+        lo = max(lo, bound)
+    elif op == "<":
+        hi = min(hi, bound - 1)
+    elif op == "<=":
+        hi = min(hi, bound)
+    else:
+        return d
+    if hi < lo:
+        return _FiniteInts(frozenset())
+    return _IntBounds(lo, hi)
+
+
+def _domain_to_cell_type(domain: _FiniteInts | _IntBounds, kind: CellKind) -> CellType:
+    """Convert a narrowed numeric domain back to a CellType for env updates."""
+    if isinstance(domain, _FiniteInts):
+        return CellType(kind=kind, enum=EnumDomain(values=frozenset(domain.values)))
+    return CellType(kind=kind, interval=IntervalDomain(min=domain.lo, max=domain.hi))
+
+
+def _refine_env_for_condition(
+    env: CellTypeEnv,
+    cond_node: AstNode,
+    limits: DynamicRefLimits,
+    *,
+    negate: bool = False,
+) -> dict[str, CellType] | None:
+    """Return a copy of env narrowed by the condition, or None if unsupported.
+
+    Supports:
+    - ``CellRefNode op NumberNode`` and ``NumberNode op CellRefNode``
+    - ``AND(pred1, pred2, ...)`` (intersects each predicate)
+
+    The ``negate`` flag applies the opposite constraint (for the else-branch).
+    """
+    if isinstance(cond_node, FunctionCallNode) and cond_node.name.upper() == "AND":
+        refined: dict[str, CellType] = dict(env)
+        changed = False
+        for arg in cond_node.args:
+            sub = _refine_env_for_condition(refined, arg, limits, negate=negate)
+            if sub is not None:
+                refined = sub
+                changed = True
+        return refined if changed else None
+
+    if not isinstance(cond_node, BinaryOpNode):
+        return None
+    op = cond_node.op
+    if op not in {"=", "<>", "<", ">", "<=", ">="}:
+        return None
+
+    left, right = cond_node.left, cond_node.right
+
+    if isinstance(left, CellRefNode) and isinstance(right, NumberNode):
+        addr, bound_val = left.address, right.value
+        if isinstance(bound_val, bool):
+            return None
+        if not isinstance(bound_val, (int, float)) or not float(bound_val).is_integer():
+            return None
+        bound = int(bound_val)
+        if negate:
+            op = _NEG_OP.get(op)
+            if op is None:
+                return None
+        ct = env.get(addr)
+        if ct is None:
+            return None
+        current_domain = _domain_from_cell_type(ct, limits)
+        if current_domain is None:
+            return None
+        narrowed = _narrow_domain(current_domain, op, bound)
+        if narrowed is None:
+            return None
+        return {**env, addr: _domain_to_cell_type(narrowed, ct.kind)}
+    elif isinstance(left, NumberNode) and isinstance(right, CellRefNode):
+        addr, bound_val = right.address, left.value
+        if isinstance(bound_val, bool):
+            return None
+        if not isinstance(bound_val, (int, float)) or not float(bound_val).is_integer():
+            return None
+        bound = int(bound_val)
+        # Flip op to express as: cell op bound
+        op = _FLIP_OP.get(op, op)
+        if negate:
+            op = _NEG_OP.get(op)
+            if op is None:
+                return None
+        ct = env.get(addr)
+        if ct is None:
+            return None
+        current_domain = _domain_from_cell_type(ct, limits)
+        if current_domain is None:
+            return None
+        narrowed = _narrow_domain(current_domain, op, bound)
+        if narrowed is None:
+            return None
+        return {**env, addr: _domain_to_cell_type(narrowed, ct.kind)}
+    elif isinstance(left, CellRefNode) and isinstance(right, CellRefNode):
+        # cell op cell: use the other cell's domain bounds and add GreaterThanCell relations.
+        laddr, raddr = left.address, right.address
+        lct = env.get(laddr)
+        rct = env.get(raddr)
+        if lct is None or rct is None:
+            return None
+        ldom = _domain_from_cell_type(lct, limits)
+        rdom = _domain_from_cell_type(rct, limits)
+        if ldom is None or rdom is None:
+            return None
+        lb = _normalize_to_bounds(ldom)
+        rb = _normalize_to_bounds(rdom)
+
+        effective_op = op
+        if negate:
+            effective_op = _NEG_OP.get(op)
+            if effective_op is None:
+                return None
+
+        result_env: dict[str, CellType] = dict(env)
+        # Narrow left using right's bounds and vice-versa.
+        if effective_op == ">":
+            # left > right: left >= rb.lo+1, right <= lb.hi-1; add GreaterThanCell to left
+            ln = _narrow_domain(ldom, ">=", rb.lo + 1)
+            rn = _narrow_domain(rdom, "<=", lb.hi - 1)
+            if ln is not None:
+                new_relations = lct.relations + (GreaterThanCell(raddr),)
+                result_env[laddr] = CellType(
+                    kind=lct.kind,
+                    enum=_domain_to_cell_type(ln, lct.kind).enum,
+                    interval=_domain_to_cell_type(ln, lct.kind).interval,
+                    relations=new_relations,
+                )
+            if rn is not None:
+                result_env[raddr] = _domain_to_cell_type(rn, rct.kind)
+        elif effective_op == ">=":
+            ln = _narrow_domain(ldom, ">=", rb.lo)
+            rn = _narrow_domain(rdom, "<=", lb.hi)
+            if ln is not None:
+                result_env[laddr] = _domain_to_cell_type(ln, lct.kind)
+            if rn is not None:
+                result_env[raddr] = _domain_to_cell_type(rn, rct.kind)
+        elif effective_op == "<":
+            ln = _narrow_domain(ldom, "<=", rb.hi - 1)
+            rn = _narrow_domain(rdom, ">=", lb.lo + 1)
+            if rn is not None:
+                new_relations = rct.relations + (GreaterThanCell(laddr),)
+                result_env[raddr] = CellType(
+                    kind=rct.kind,
+                    enum=_domain_to_cell_type(rn, rct.kind).enum,
+                    interval=_domain_to_cell_type(rn, rct.kind).interval,
+                    relations=new_relations,
+                )
+            if ln is not None:
+                result_env[laddr] = _domain_to_cell_type(ln, lct.kind)
+        elif effective_op == "<=":
+            ln = _narrow_domain(ldom, "<=", rb.hi)
+            rn = _narrow_domain(rdom, ">=", lb.lo)
+            if ln is not None:
+                result_env[laddr] = _domain_to_cell_type(ln, lct.kind)
+            if rn is not None:
+                result_env[raddr] = _domain_to_cell_type(rn, rct.kind)
+        elif effective_op == "=":
+            # Intersection of both domains (use tighter bounds)
+            lo = max(lb.lo, rb.lo)
+            hi = min(lb.hi, rb.hi)
+            if lo > hi:
+                eq_dom: _FiniteInts | _IntBounds = _FiniteInts(frozenset())
+            elif hi - lo + 1 <= limits.max_branches:
+                eq_dom = _FiniteInts(frozenset(range(lo, hi + 1)))
+            else:
+                eq_dom = _IntBounds(lo, hi)
+            result_env[laddr] = _domain_to_cell_type(eq_dom, lct.kind)
+            result_env[raddr] = _domain_to_cell_type(eq_dom, rct.kind)
+        elif effective_op == "<>":
+            new_relations_l = lct.relations + (NotEqualCell(raddr),)
+            result_env[laddr] = CellType(
+                kind=lct.kind, enum=lct.enum, interval=lct.interval, relations=new_relations_l
+            )
+        else:
+            return None
+        return result_env
+    else:
+        return None
+
+
 def _describe_unsupported_numeric_construct(node: AstNode | None) -> str | None:
     if node is None:
         return None
@@ -1539,7 +1819,18 @@ def _describe_unsupported_numeric_construct(node: AstNode | None) -> str | None:
             return _describe_unsupported_numeric_construct(node.right)
         return f"binary operator {node.op!r}"
     if isinstance(node, FunctionCallNode):
-        if node.name.upper() in {"ROW", "COLUMN", "MATCH", "IF", "SUM", "ISNUMBER", "CHOOSE"}:
+        if node.name.upper() in {
+            "ROW",
+            "COLUMN",
+            "MATCH",
+            "IF",
+            "SUM",
+            "ISNUMBER",
+            "CHOOSE",
+            "MIN",
+            "MAX",
+            "ABS",
+        }:
             for arg in node.args:
                 reason = _describe_unsupported_numeric_construct(arg)
                 if reason is not None:
@@ -1889,22 +2180,63 @@ def _infer_numeric_domain_result(
         if name == "IF":
             if len(node.args) < 2:
                 return _domain_result(None)
+            # Check if condition is provably true or false using Excel truthiness:
+            # any non-zero value is truthy; zero is falsy.
+            cond_result = _infer_numeric_domain_result(
+                node.args[0], env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+            )
+            if cond_result.domain is not None and isinstance(cond_result.domain, _FiniteInts):
+                if cond_result.domain.values and all(v != 0 for v in cond_result.domain.values):
+                    # Provably truthy: all values are non-zero.
+                    return _infer_numeric_domain_result(
+                        node.args[1],
+                        env,
+                        limits,
+                        context=ctx,
+                        current_sheet=current_sheet,
+                        depth=depth + 1,
+                    )
+                if all(v == 0 for v in cond_result.domain.values):
+                    # Provably falsy: all values are zero.
+                    if len(node.args) >= 3:
+                        return _infer_numeric_domain_result(
+                            node.args[2],
+                            env,
+                            limits,
+                            context=ctx,
+                            current_sheet=current_sheet,
+                            depth=depth + 1,
+                        )
+                    return _domain_result(_FiniteInts(frozenset({0})))
+            # Ambiguous condition: try branch-local environment refinement.
+            then_env: CellTypeEnv = (
+                _refine_env_for_condition(env, node.args[0], limits, negate=False) or env
+            )
+            else_env: CellTypeEnv = (
+                _refine_env_for_condition(env, node.args[0], limits, negate=True) or env
+            )
             then_result = _infer_numeric_domain_result(
-                node.args[1], env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+                node.args[1],
+                then_env,
+                limits,
+                context=ctx,
+                current_sheet=current_sheet,
+                depth=depth + 1,
             )
             if then_result.diagnostic is not None:
-                return then_result
+                # Diagnostic from one branch must not propagate through IF; fall back.
+                return _domain_result(None)
             if len(node.args) >= 3:
                 else_result = _infer_numeric_domain_result(
                     node.args[2],
-                    env,
+                    else_env,
                     limits,
                     context=ctx,
                     current_sheet=current_sheet,
                     depth=depth + 1,
                 )
                 if else_result.diagnostic is not None:
-                    return else_result
+                    return _domain_result(None)
                 else_d = else_result.domain
             else:
                 else_d = _FiniteInts(frozenset({0}))
@@ -1940,7 +2272,37 @@ def _infer_numeric_domain_result(
             if arg_result.domain is None:
                 return _domain_result(_FiniteInts(frozenset({0})))
             return _domain_result(_FiniteInts(frozenset({0, 1})))
-        if name in frozenset({"MIN", "MAX", "ABS", "CONCAT"}):
+        if name == "ABS":
+            if len(node.args) != 1:
+                return _domain_result(None)
+            inner = _infer_numeric_domain_result(
+                node.args[0], env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+            )
+            if inner.diagnostic is not None:
+                return inner
+            if inner.domain is None:
+                return _domain_result(None)
+            return _domain_result(_abs_numeric_domain(inner.domain))
+        if name in {"MIN", "MAX"}:
+            if len(node.args) < 1:
+                return _domain_result(None)
+            acc: _FiniteInts | _IntBounds | None = None
+            for arg in node.args:
+                arg_result = _infer_numeric_domain_result(
+                    arg, env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+                )
+                if arg_result.diagnostic is not None:
+                    return arg_result
+                if arg_result.domain is None:
+                    return _domain_result(None)
+                if acc is None:
+                    acc = arg_result.domain
+                elif name == "MIN":
+                    acc = _min_numeric_domains(acc, arg_result.domain, limits)
+                else:
+                    acc = _max_numeric_domains(acc, arg_result.domain, limits)
+            return _domain_result(acc)
+        if name == "CONCAT":
             return _domain_result(None)
         return _domain_result(None)
 
@@ -2273,19 +2635,48 @@ def _infer_offset_scalar_domains(
     return sorted(out_vals) if out_vals else None
 
 
-def _collect_addresses_needing_domain(node: AstNode) -> set[str]:
+def _narrowed_branch_is_infeasible(
+    original_env: CellTypeEnv,
+    narrowed_env: dict[str, CellType],
+    limits: DynamicRefLimits,
+) -> bool:
+    """Return True if any cell narrowed by the condition now has an empty domain.
+
+    Only cells that actually changed (different object identity from original_env)
+    are checked, so unrelated empty domains do not incorrectly trigger pruning.
+    """
+    for addr, ct in narrowed_env.items():
+        if original_env.get(addr) is ct:
+            continue  # unchanged entry
+        d = _domain_from_cell_type(ct, limits)
+        if isinstance(d, _FiniteInts) and not d.values:
+            return True
+    return False
+
+
+def _collect_addresses_needing_domain(
+    node: AstNode,
+    env: CellTypeEnv | None = None,
+    limits: DynamicRefLimits | None = None,
+) -> set[str]:
     """Return cell/range addresses that appear in a value context (need a numeric domain).
 
     Refs that appear only as ref_only arguments (e.g. ROW(ref), COLUMN(ref)) are
     excluded; their implementations use only the reference, not the cell value.
+
+    When ``env`` and ``limits`` are provided, IF and CHOOSE branches that are
+    provably dead are skipped, reducing the set of required domains.
     """
     addrs: set[str] = set()
+    _limits = limits or DynamicRefLimits()
 
     def visit(
         n: AstNode,
         parent: AstNode | None = None,
         arg_index: int | None = None,
+        local_env: CellTypeEnv | None = None,
     ) -> None:
+        eff_env = local_env if local_env is not None else env
         if isinstance(n, CellRefNode):
             if not (
                 parent is not None
@@ -2313,19 +2704,83 @@ def _collect_addresses_needing_domain(node: AstNode) -> set[str]:
                     addrs.add(f"{sheet}!{col_letter}{r}")
             return
         if isinstance(n, FunctionCallNode) and n.name.upper() == "MATCH" and len(n.args) >= 2:
-            visit(n.args[0], n, 0)
+            visit(n.args[0], n, 0, eff_env)
             if len(n.args) >= 3:
-                visit(n.args[2], n, 2)
+                visit(n.args[2], n, 2, eff_env)
             return
+        if isinstance(n, FunctionCallNode) and n.name.upper() == "IF" and env is not None:
+            cond_args = n.args
+            if len(cond_args) >= 2:
+                # Always collect refs from the condition expression.
+                visit(cond_args[0], n, 0, eff_env)
+                # Determine if the condition is provably truthy or falsy (Excel: non-zero = true).
+                cond_dom = _infer_numeric_domain(cond_args[0], eff_env or {}, _limits)
+                if (
+                    isinstance(cond_dom, _FiniteInts)
+                    and cond_dom.values
+                    and all(v != 0 for v in cond_dom.values)
+                ):
+                    # Condition provably truthy: only visit then-branch.
+                    visit(cond_args[1], n, 1, eff_env)
+                elif isinstance(cond_dom, _FiniteInts) and all(v == 0 for v in cond_dom.values):
+                    # Condition provably falsy: only visit else-branch.
+                    if len(cond_args) >= 3:
+                        visit(cond_args[2], n, 2, eff_env)
+                else:
+                    # Ambiguous: refine envs per branch and skip infeasible branches.
+                    base_env = eff_env or {}
+                    then_env_refined = _refine_env_for_condition(
+                        base_env, cond_args[0], _limits, negate=False
+                    )
+                    else_env_refined = _refine_env_for_condition(
+                        base_env, cond_args[0], _limits, negate=True
+                    )
+                    then_env = then_env_refined or base_env
+                    else_env = else_env_refined or base_env
+                    then_infeasible = (
+                        then_env_refined is not None
+                        and _narrowed_branch_is_infeasible(base_env, then_env_refined, _limits)
+                    )
+                    else_infeasible = (
+                        else_env_refined is not None
+                        and _narrowed_branch_is_infeasible(base_env, else_env_refined, _limits)
+                    )
+                    if not then_infeasible:
+                        visit(cond_args[1], n, 1, then_env)
+                    if not else_infeasible and len(cond_args) >= 3:
+                        visit(cond_args[2], n, 2, else_env)
+                return
+        if (
+            isinstance(n, FunctionCallNode)
+            and n.name.upper() == "CHOOSE"
+            and env is not None
+            and len(n.args) >= 2
+        ):
+            # Always collect the index expression refs.
+            visit(n.args[0], n, 0, eff_env)
+            # Determine which branches are reachable.
+            index_dom = _infer_numeric_domain(n.args[0], eff_env or {}, _limits)
+            option_count = len(n.args) - 1
+            if index_dom is not None:
+                if isinstance(index_dom, _FiniteInts):
+                    live = sorted(i for i in index_dom.values if 1 <= i <= option_count)
+                else:
+                    lo = max(1, index_dom.lo)
+                    hi = min(option_count, index_dom.hi)
+                    live = list(range(lo, hi + 1)) if lo <= hi else []
+                for idx in live:
+                    visit(n.args[idx], n, idx, eff_env)
+                return
+            # index_dom is None: fall through to generic handler to collect all option refs.
         if isinstance(n, FunctionCallNode):
             for i, arg in enumerate(n.args):
-                visit(arg, n, i)
+                visit(arg, n, i, eff_env)
             return
         if hasattr(n, "left") and hasattr(n, "right"):
-            visit(cast(AstNode, n.left), n, None)
-            visit(cast(AstNode, n.right), n, None)
+            visit(cast(AstNode, n.left), n, None, eff_env)
+            visit(cast(AstNode, n.right), n, None, eff_env)
         if hasattr(n, "operand"):
-            visit(cast(AstNode, n.operand), n, None)
+            visit(cast(AstNode, n.operand), n, None, eff_env)
 
     visit(node)
     return addrs
