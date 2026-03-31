@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from excel_grapher.grapher.parser import FormulaNormalizer
+from excel_grapher.grapher.parser import FormulaNormalizer, normalize_formula
 
 
 class TestFormulaNormalizerBasicNormalization:
@@ -21,6 +21,14 @@ class TestFormulaNormalizerBasicNormalization:
     def test_cross_sheet_ref_preserved(self) -> None:
         n = FormulaNormalizer()
         assert n.normalize("='Other Sheet'!$B$5+1", "Sheet1") == "='Other Sheet'!B5+1"
+
+    def test_quoted_sheet_redundant_quotes_stripped_to_match_graph_keys(self) -> None:
+        """Excel may quote sheet names unnecessarily; keys use format_cell_key rules."""
+        n = FormulaNormalizer()
+        f = "='C3_commodity_prices_pub'!$E$13"
+        expected = "=C3_commodity_prices_pub!E13"
+        assert n.normalize(f, "Sheet1") == expected
+        assert normalize_formula(f, "Sheet1") == expected
 
     def test_local_range_qualified(self) -> None:
         n = FormulaNormalizer()

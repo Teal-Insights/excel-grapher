@@ -297,7 +297,9 @@ def normalize_formula(
         r1 = m.group("r1")
         c2 = m.group("c2")
         r2 = m.group("r2")
-        return f"'{sheet}'!{c1}{r1}:'{sheet}'!{c2}{r2}"
+        a = _format_ref(sheet, c1, int(r1))
+        b = _format_ref(sheet, c2, int(r2))
+        return f"{a}:{b}"
 
     result = re.sub(
         r"'(?P<sheet>[^']+)'!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)",
@@ -342,7 +344,7 @@ def normalize_formula(
         sheet = m.group("sheet")
         col = m.group("col")
         row = m.group("row")
-        return f"'{sheet}'!{col}{row}"
+        return _format_ref(sheet, col, int(row))
 
     result = re.sub(
         r"'(?P<sheet>[^']+)'!\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)",
@@ -494,7 +496,9 @@ class FormulaNormalizer:
         def replace_quoted_range(m: re.Match) -> str:
             sheet = m.group("sheet")
             c1, r1, c2, r2 = m.group("c1"), m.group("r1"), m.group("c2"), m.group("r2")
-            return f"'{sheet}'!{c1}{r1}:'{sheet}'!{c2}{r2}"
+            a = _format_ref(sheet, c1, int(r1))
+            b = _format_ref(sheet, c2, int(r2))
+            return f"{a}:{b}"
 
         result = re.sub(
             r"'(?P<sheet>[^']+)'!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)",
@@ -528,7 +532,7 @@ class FormulaNormalizer:
         # 2) Normalize sheet-qualified single-cell refs (strip $)
         def replace_quoted_cell(m: re.Match) -> str:
             sheet, col, row = m.group("sheet"), m.group("col"), m.group("row")
-            return f"'{sheet}'!{col}{row}"
+            return _format_ref(sheet, col, int(row))
 
         result = re.sub(
             r"'(?P<sheet>[^']+)'!\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)",

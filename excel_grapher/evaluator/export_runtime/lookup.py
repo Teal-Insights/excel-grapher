@@ -82,29 +82,63 @@ def xl_lookup(
 def xl_index(array: np.ndarray, row_num: CellValue, col_num: CellValue = None) -> CellValue:
     if not isinstance(array, np.ndarray):
         return XlError.VALUE
-    rn = to_number(row_num)
-    if isinstance(rn, XlError):
-        return rn
-    row = int(rn)
-    if col_num is None:
-        col = 1
-    else:
+    nrows, ncols = array.shape
+    row_omitted = row_num is None
+    col_omitted = col_num is None
+
+    if row_omitted and col_omitted:
+        if nrows == 1 and ncols == 1:
+            return to_native(array[0, 0])
+        if nrows == 1:
+            return to_native(array[0, ncols - 1])
+        if ncols == 1:
+            return to_native(array[nrows - 1, 0])
+        return XlError.VALUE
+
+    if row_omitted:
         cn = to_number(col_num)
         if isinstance(cn, XlError):
             return cn
         col = int(cn)
-    rows, cols = array.shape
-    if rows == 1:
-        if row < 1 or row > cols:
+        if col < 1 or col > ncols:
+            return XlError.REF
+        if nrows == 1:
+            return to_native(array[0, col - 1])
+        return array[:, col - 1 : col]
+
+    rn = to_number(row_num)
+    if isinstance(rn, XlError):
+        return rn
+    row = int(rn)
+
+    if col_omitted:
+        if nrows == 1:
+            if row < 1 or row > ncols:
+                return XlError.REF
+            return to_native(array[0, row - 1])
+        if ncols == 1:
+            if row < 1 or row > nrows:
+                return XlError.REF
+            return to_native(array[row - 1, 0])
+        if row < 1 or row > nrows:
+            return XlError.REF
+        return array[row - 1 : row, :]
+
+    cn = to_number(col_num)
+    if isinstance(cn, XlError):
+        return cn
+    col = int(cn)
+    if nrows == 1:
+        if row < 1 or row > ncols:
             return XlError.REF
         return to_native(array[0, row - 1])
-    if cols == 1:
-        if row < 1 or row > rows:
+    if ncols == 1:
+        if row < 1 or row > nrows:
             return XlError.REF
         return to_native(array[row - 1, 0])
-    if row < 1 or row > rows:
+    if row < 1 or row > nrows:
         return XlError.REF
-    if col < 1 or col > cols:
+    if col < 1 or col > ncols:
         return XlError.REF
     return to_native(array[row - 1, col - 1])
 
