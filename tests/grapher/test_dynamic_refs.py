@@ -2866,6 +2866,8 @@ class TestLazyIfEval:
     """IF and CHOOSE should not evaluate dead branches in the restricted evaluator."""
 
     def _eval(self, expr: str, env: dict[str, object] | None = None) -> object:
+        from typing import cast
+
         from excel_grapher.core.expr_eval import evaluate_expr
         from excel_grapher.core.types import CellValue, XlError
 
@@ -2875,7 +2877,7 @@ class TestLazyIfEval:
             v = cell_values.get(addr)
             if v is None:
                 return XlError.REF
-            return v  # type: ignore[return-value]
+            return cast(CellValue, v)
 
         return evaluate_expr(parse_ast("=" + expr), get_cell_value=get_cell_value)
 
