@@ -2291,7 +2291,7 @@ class TestAbstractPathCharacterization:
     actual improvement against a known baseline.
     """
 
-    def _limits(self) -> object:
+    def _limits(self) -> DynamicRefLimits:
         return DynamicRefLimits()
 
     # ------------------------------------------------------------------
@@ -2407,7 +2407,7 @@ class TestAbstractPathCharacterization:
 class TestAbstractMinMaxAbsTransferRules:
     """ABS, MIN, and MAX should stay on the abstract path after Phase 1."""
 
-    def _limits(self) -> object:
+    def _limits(self) -> DynamicRefLimits:
         return DynamicRefLimits()
 
     # ------------------------------------------------------------------
@@ -2418,7 +2418,11 @@ class TestAbstractMinMaxAbsTransferRules:
         """ABS with a small positive enum domain returns exact values."""
         ast = _parse_selector("ABS(Sheet1!A1)")
         env = _make_env(
-            {"Sheet1!A1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({1, 3, 5})))}
+            {
+                "Sheet1!A1": CellType(
+                    kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({1, 3, 5}))
+                )
+            }
         )
         result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
         assert result.domain is not None
@@ -2429,7 +2433,11 @@ class TestAbstractMinMaxAbsTransferRules:
         """ABS with negative enum domain maps to absolute values."""
         ast = _parse_selector("ABS(Sheet1!A1)")
         env = _make_env(
-            {"Sheet1!A1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({-3, -1, 2})))}
+            {
+                "Sheet1!A1": CellType(
+                    kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({-3, -1, 2}))
+                )
+            }
         )
         result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
         assert result.domain is not None
@@ -2440,7 +2448,11 @@ class TestAbstractMinMaxAbsTransferRules:
         """ABS([100, 1200]) = [100, 1200] (entirely positive, span > max_branches -> _IntBounds)."""
         ast = _parse_selector("ABS(Sheet1!A1)")
         env = _make_env(
-            {"Sheet1!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=100, max=1200))}
+            {
+                "Sheet1!A1": CellType(
+                    kind=CellKind.NUMBER, interval=IntervalDomain(min=100, max=1200)
+                )
+            }
         )
         result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
         assert result.domain is not None
@@ -2452,7 +2464,11 @@ class TestAbstractMinMaxAbsTransferRules:
         """ABS([-1200, -100]) = [100, 1200] (entirely negative, span > max_branches -> _IntBounds)."""
         ast = _parse_selector("ABS(Sheet1!A1)")
         env = _make_env(
-            {"Sheet1!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=-1200, max=-100))}
+            {
+                "Sheet1!A1": CellType(
+                    kind=CellKind.NUMBER, interval=IntervalDomain(min=-1200, max=-100)
+                )
+            }
         )
         result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
         assert result.domain is not None
@@ -2464,7 +2480,11 @@ class TestAbstractMinMaxAbsTransferRules:
         """ABS([-600, 700]) = [0, 700] (crosses zero; hull is [0, max(600,700)])."""
         ast = _parse_selector("ABS(Sheet1!A1)")
         env = _make_env(
-            {"Sheet1!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=-600, max=700))}
+            {
+                "Sheet1!A1": CellType(
+                    kind=CellKind.NUMBER, interval=IntervalDomain(min=-600, max=700)
+                )
+            }
         )
         result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
         assert result.domain is not None
@@ -2487,8 +2507,12 @@ class TestAbstractMinMaxAbsTransferRules:
         ast = _parse_selector("MIN(Sheet1!A1, Sheet1!B1)")
         env = _make_env(
             {
-                "Sheet1!A1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2, 4}))),
-                "Sheet1!B1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({3, 5}))),
+                "Sheet1!A1": CellType(
+                    kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2, 4}))
+                ),
+                "Sheet1!B1": CellType(
+                    kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({3, 5}))
+                ),
             }
         )
         result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
@@ -2531,8 +2555,12 @@ class TestAbstractMinMaxAbsTransferRules:
         ast = _parse_selector("MAX(Sheet1!A1, Sheet1!B1)")
         env = _make_env(
             {
-                "Sheet1!A1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2, 4}))),
-                "Sheet1!B1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({3, 5}))),
+                "Sheet1!A1": CellType(
+                    kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2, 4}))
+                ),
+                "Sheet1!B1": CellType(
+                    kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({3, 5}))
+                ),
             }
         )
         result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
@@ -2607,7 +2635,7 @@ class TestBranchLocalIfRefinement:
     """IF analysis should narrow branch-local domains when the condition is in the
     supported predicate fragment (cell op literal, AND of such comparisons)."""
 
-    def _limits(self) -> object:
+    def _limits(self) -> DynamicRefLimits:
         return DynamicRefLimits()
 
     def test_if_diff_narrows_then_branch(self) -> None:
@@ -2678,7 +2706,7 @@ class TestBranchLocalIfRefinement:
         assert not any(v > 4 for v in domain_values), (
             "Values > 4 should be excluded by AND(A1>=2, A1<=4) refinement"
         )
-        assert not any(1 == v for v in domain_values), (
+        assert not any(v == 1 for v in domain_values), (
             "Value 1 should be excluded by AND(A1>=2, ...) refinement"
         )
 
@@ -2745,7 +2773,7 @@ class TestBranchLocalIfRefinement:
 class TestBranchAwareDomainCollection:
     """_collect_addresses_needing_domain should skip refs from provably dead branches."""
 
-    def _limits(self) -> object:
+    def _limits(self) -> DynamicRefLimits:
         return DynamicRefLimits()
 
     def test_collect_skips_dead_branch_with_constant_condition(self) -> None:
@@ -2761,9 +2789,7 @@ class TestBranchAwareDomainCollection:
 
     def test_collect_includes_both_branches_for_ambiguous_condition(self) -> None:
         """IF(Sheet1!X1, A1+B1, C1+D1): condition is unknown; collect all refs."""
-        ast = _parse_selector(
-            "IF(Sheet1!X1, Sheet1!A1+Sheet1!B1, Sheet1!C1+Sheet1!D1)"
-        )
+        ast = _parse_selector("IF(Sheet1!X1, Sheet1!A1+Sheet1!B1, Sheet1!C1+Sheet1!D1)")
         env = _make_env(
             {"Sheet1!X1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=0, max=1))}
         )

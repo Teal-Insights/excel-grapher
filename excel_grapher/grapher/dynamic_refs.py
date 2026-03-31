@@ -1790,7 +1790,9 @@ def _refine_env_for_condition(
             result_env[raddr] = _domain_to_cell_type(eq_dom, rct.kind)
         elif effective_op == "<>":
             new_relations_l = lct.relations + (NotEqualCell(raddr),)
-            result_env[laddr] = CellType(kind=lct.kind, enum=lct.enum, interval=lct.interval, relations=new_relations_l)
+            result_env[laddr] = CellType(
+                kind=lct.kind, enum=lct.enum, interval=lct.interval, relations=new_relations_l
+            )
         else:
             return None
         return result_env
@@ -1817,7 +1819,18 @@ def _describe_unsupported_numeric_construct(node: AstNode | None) -> str | None:
             return _describe_unsupported_numeric_construct(node.right)
         return f"binary operator {node.op!r}"
     if isinstance(node, FunctionCallNode):
-        if node.name.upper() in {"ROW", "COLUMN", "MATCH", "IF", "SUM", "ISNUMBER", "CHOOSE", "MIN", "MAX", "ABS"}:
+        if node.name.upper() in {
+            "ROW",
+            "COLUMN",
+            "MATCH",
+            "IF",
+            "SUM",
+            "ISNUMBER",
+            "CHOOSE",
+            "MIN",
+            "MAX",
+            "ABS",
+        }:
             for arg in node.args:
                 reason = _describe_unsupported_numeric_construct(arg)
                 if reason is not None:
@@ -2176,20 +2189,39 @@ def _infer_numeric_domain_result(
                 if cond_result.domain.values and all(v != 0 for v in cond_result.domain.values):
                     # Provably truthy: all values are non-zero.
                     return _infer_numeric_domain_result(
-                        node.args[1], env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+                        node.args[1],
+                        env,
+                        limits,
+                        context=ctx,
+                        current_sheet=current_sheet,
+                        depth=depth + 1,
                     )
                 if all(v == 0 for v in cond_result.domain.values):
                     # Provably falsy: all values are zero.
                     if len(node.args) >= 3:
                         return _infer_numeric_domain_result(
-                            node.args[2], env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+                            node.args[2],
+                            env,
+                            limits,
+                            context=ctx,
+                            current_sheet=current_sheet,
+                            depth=depth + 1,
                         )
                     return _domain_result(_FiniteInts(frozenset({0})))
             # Ambiguous condition: try branch-local environment refinement.
-            then_env: CellTypeEnv = _refine_env_for_condition(env, node.args[0], limits, negate=False) or env
-            else_env: CellTypeEnv = _refine_env_for_condition(env, node.args[0], limits, negate=True) or env
+            then_env: CellTypeEnv = (
+                _refine_env_for_condition(env, node.args[0], limits, negate=False) or env
+            )
+            else_env: CellTypeEnv = (
+                _refine_env_for_condition(env, node.args[0], limits, negate=True) or env
+            )
             then_result = _infer_numeric_domain_result(
-                node.args[1], then_env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+                node.args[1],
+                then_env,
+                limits,
+                context=ctx,
+                current_sheet=current_sheet,
+                depth=depth + 1,
             )
             if then_result.diagnostic is not None:
                 # Diagnostic from one branch must not propagate through IF; fall back.
@@ -2697,8 +2729,12 @@ def _collect_addresses_needing_domain(
                 else:
                     # Ambiguous: refine envs per branch and skip infeasible branches.
                     base_env = eff_env or {}
-                    then_env_refined = _refine_env_for_condition(base_env, cond_args[0], _limits, negate=False)
-                    else_env_refined = _refine_env_for_condition(base_env, cond_args[0], _limits, negate=True)
+                    then_env_refined = _refine_env_for_condition(
+                        base_env, cond_args[0], _limits, negate=False
+                    )
+                    else_env_refined = _refine_env_for_condition(
+                        base_env, cond_args[0], _limits, negate=True
+                    )
                     then_env = then_env_refined or base_env
                     else_env = else_env_refined or base_env
                     then_infeasible = (
@@ -2714,24 +2750,28 @@ def _collect_addresses_needing_domain(
                     if not else_infeasible and len(cond_args) >= 3:
                         visit(cond_args[2], n, 2, else_env)
                 return
-        if isinstance(n, FunctionCallNode) and n.name.upper() == "CHOOSE" and env is not None:
-            if len(n.args) >= 2:
-                # Always collect the index expression refs.
-                visit(n.args[0], n, 0, eff_env)
-                # Determine which branches are reachable.
-                index_dom = _infer_numeric_domain(n.args[0], eff_env or {}, _limits)
-                option_count = len(n.args) - 1
-                if index_dom is not None:
-                    if isinstance(index_dom, _FiniteInts):
-                        live = sorted(i for i in index_dom.values if 1 <= i <= option_count)
-                    else:
-                        lo = max(1, index_dom.lo)
-                        hi = min(option_count, index_dom.hi)
-                        live = list(range(lo, hi + 1)) if lo <= hi else []
-                    for idx in live:
-                        visit(n.args[idx], n, idx, eff_env)
-                    return
-                # index_dom is None: fall through to generic handler to collect all option refs.
+        if (
+            isinstance(n, FunctionCallNode)
+            and n.name.upper() == "CHOOSE"
+            and env is not None
+            and len(n.args) >= 2
+        ):
+            # Always collect the index expression refs.
+            visit(n.args[0], n, 0, eff_env)
+            # Determine which branches are reachable.
+            index_dom = _infer_numeric_domain(n.args[0], eff_env or {}, _limits)
+            option_count = len(n.args) - 1
+            if index_dom is not None:
+                if isinstance(index_dom, _FiniteInts):
+                    live = sorted(i for i in index_dom.values if 1 <= i <= option_count)
+                else:
+                    lo = max(1, index_dom.lo)
+                    hi = min(option_count, index_dom.hi)
+                    live = list(range(lo, hi + 1)) if lo <= hi else []
+                for idx in live:
+                    visit(n.args[idx], n, idx, eff_env)
+                return
+            # index_dom is None: fall through to generic handler to collect all option refs.
         if isinstance(n, FunctionCallNode):
             for i, arg in enumerate(n.args):
                 visit(arg, n, i, eff_env)
