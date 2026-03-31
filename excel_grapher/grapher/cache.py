@@ -4,17 +4,16 @@ import gzip
 import hashlib
 import importlib.metadata
 import json
-from dataclasses import asdict, dataclass
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal, TypedDict, cast
 
 from .dependency_provenance import DependencyCause, EdgeProvenance
 from .graph import DependencyGraph
-from .guard import And, CellRef, Compare, GuardExpr, Literal as GuardLiteral, Not, Or
+from .guard import And, CellRef, Compare, GuardExpr, Not, Or
+from .guard import Literal as GuardLiteral
 from .node import Node, NodeKey
-
 
 GRAPH_CACHE_SCHEMA_VERSION = 1
 
@@ -35,7 +34,7 @@ class GraphCacheFile(TypedDict):
     graph: dict[str, Any]
 
 
-class CacheValidationPolicy(str, Enum):
+class CacheValidationPolicy(StrEnum):
     STRICT = "strict"
     PORTABLE = "portable"
 
@@ -178,8 +177,9 @@ def try_load_graph_cache(
         return None
     if not isinstance(payload, dict):
         return None
-    meta = payload.get("meta")
-    graph = payload.get("graph")
+    root = cast(dict[str, Any], payload)
+    meta = root.get("meta")
+    graph = root.get("graph")
     if not isinstance(meta, dict) or not isinstance(graph, dict):
         return None
     stored_meta = cast(GraphCacheMeta, meta)
@@ -215,8 +215,9 @@ def _value_to_json(v: Any) -> _JsonValue:
 def _value_from_json(v: object) -> Any:
     if not isinstance(v, dict):
         raise TypeError("value must be a dict")
-    t = v.get("t")
-    payload = v.get("v")
+    d = cast(dict[str, Any], v)
+    t = d.get("t")
+    payload = d.get("v")
     if t == "none":
         return None
     if t == "bool":
@@ -250,7 +251,12 @@ def _guard_to_json(g: GuardExpr | None) -> object:
     if isinstance(g, GuardLiteral):
         return {"type": "lit", "value": _value_to_json(g.value)}
     if isinstance(g, Compare):
-        return {"type": "cmp", "op": g.op, "left": _guard_to_json(g.left), "right": _guard_to_json(g.right)}
+        return {
+            "type": "cmp",
+            "op": g.op,
+            "left": _guard_to_json(g.left),
+            "right": _guard_to_json(g.right),
+        }
     if isinstance(g, Not):
         return {"type": "not", "operand": _guard_to_json(g.operand)}
     if isinstance(g, And):
@@ -265,38 +271,51 @@ def _guard_from_json(v: object) -> GuardExpr | None:
         return None
     if not isinstance(v, dict):
         raise TypeError("guard must be dict or null")
-    typ = v.get("type")
+    d = cast(dict[str, Any], v)
+    typ = d.get("type")
     if typ == "cell":
-        key = v.get("key")
+        key = d.get("key")
         if not isinstance(key, str):
             raise TypeError("cell guard key must be str")
         return CellRef(key=cast(NodeKey, key))
     if typ == "lit":
-        return GuardLiteral(value=_value_from_json(v.get("value")))
+        return GuardLiteral(value=_value_from_json(d.get("value")))
     if typ == "cmp":
-        op = v.get("op")
+        op = d.get("op")
         if not isinstance(op, str):
             raise TypeError("cmp op must be str")
-        left = _guard_from_json(v.get("left"))
-        right = _guard_from_json(v.get("right"))
+        left = _guard_from_json(d.get("left"))
+        right = _guard_from_json(d.get("right"))
         if left is None or right is None:
             raise TypeError("cmp left/right cannot be null")
         return Compare(left=left, op=op, right=right)
     if typ == "not":
-        operand = _guard_from_json(v.get("operand"))
+        operand = _guard_from_json(d.get("operand"))
         if operand is None:
             raise TypeError("not operand cannot be null")
         return Not(operand=operand)
     if typ == "and":
-        ops = v.get("operands")
+        ops = d.get("operands")
         if not isinstance(ops, list):
             raise TypeError("and operands must be list")
-        return And(tuple(_guard_from_json(o) for o in ops))  # type: ignore[arg-type]
+        parts: list[GuardExpr] = []
+        for o in ops:
+            g = _guard_from_json(o)
+            if g is None:
+                raise TypeError("and operands cannot be null")
+            parts.append(g)
+        return And(tuple(parts))
     if typ == "or":
-        ops = v.get("operands")
+        ops = d.get("operands")
         if not isinstance(ops, list):
             raise TypeError("or operands must be list")
-        return Or(tuple(_guard_from_json(o) for o in ops))  # type: ignore[arg-type]
+        parts_o: list[GuardExpr] = []
+        for o in ops:
+            g = _guard_from_json(o)
+            if g is None:
+                raise TypeError("or operands cannot be null")
+            parts_o.append(g)
+        return Or(tuple(parts_o))
     raise ValueError(f"Unknown guard JSON type: {typ!r}")
 
 
@@ -311,12 +330,13 @@ def _edge_provenance_to_json(p: EdgeProvenance) -> dict[str, Any]:
 def _edge_provenance_from_json(v: object) -> EdgeProvenance:
     if not isinstance(v, dict):
         raise TypeError("provenance must be dict")
-    causes_v = v.get("causes")
+    d = cast(dict[str, Any], v)
+    causes_v = d.get("causes")
     if not isinstance(causes_v, list) or not all(isinstance(x, str) for x in causes_v):
         raise TypeError("provenance.causes must be list[str]")
     causes = frozenset(DependencyCause(x) for x in causes_v)
-    dsf = v.get("direct_sites_formula", [])
-    dsn = v.get("direct_sites_normalized", [])
+    dsf = d.get("direct_sites_formula", [])
+    dsn = d.get("direct_sites_normalized", [])
     if not isinstance(dsf, list) or not isinstance(dsn, list):
         raise TypeError("provenance sites must be lists")
     return EdgeProvenance(
@@ -358,7 +378,9 @@ def dependency_graph_to_json(graph: DependencyGraph) -> dict[str, Any]:
                 {
                     "from": from_key,
                     "to": to_key,
-                    "guard": _guard_to_json(guard if isinstance(guard, GuardExpr) or guard is None else None),
+                    "guard": _guard_to_json(
+                        guard if isinstance(guard, GuardExpr) or guard is None else None
+                    ),
                     "attrs": attrs,
                 }
             )
@@ -410,4 +432,3 @@ def dependency_graph_from_json(payload: dict[str, Any]) -> DependencyGraph:
         g.add_edge(from_key, to_key, guard=guard, **attrs)
 
     return g
-

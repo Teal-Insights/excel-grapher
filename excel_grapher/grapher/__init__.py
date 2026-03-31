@@ -13,8 +13,8 @@ from excel_grapher.core.cell_types import (
 
 from .builder import create_dependency_graph, list_dynamic_ref_constraint_candidates
 from .cache import (
-    CacheValidationPolicy,
     GRAPH_CACHE_SCHEMA_VERSION,
+    CacheValidationPolicy,
     build_graph_cache_meta,
     build_graph_cache_meta_portable,
     save_graph_cache,

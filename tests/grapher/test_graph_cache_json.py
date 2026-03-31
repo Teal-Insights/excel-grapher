@@ -8,10 +8,10 @@ import xlsxwriter
 from excel_grapher import FormulaEvaluator, create_dependency_graph
 from excel_grapher.grapher.cache import (
     GRAPH_CACHE_SCHEMA_VERSION,
+    CacheValidationPolicy,
     build_graph_cache_meta,
     build_graph_cache_meta_portable,
     save_graph_cache,
-    CacheValidationPolicy,
     try_load_graph_cache,
 )
 
@@ -75,7 +75,9 @@ def test_cache_invalidation_when_extraction_params_differ(tmp_path: Path) -> Non
     cache_path = tmp_path / "graph.json"
     save_graph_cache(cache_path, graph, meta)
 
-    meta_other_params = build_graph_cache_meta(workbook, targets, extraction_params={"max_depth": 51})
+    meta_other_params = build_graph_cache_meta(
+        workbook, targets, extraction_params={"max_depth": 51}
+    )
     loaded = try_load_graph_cache(cache_path, expected_meta=meta_other_params)
     assert loaded is None
 
@@ -156,4 +158,3 @@ def test_portable_load_skips_workbook_checks_but_enforces_others(tmp_path: Path)
         )
         is None
     )
-
