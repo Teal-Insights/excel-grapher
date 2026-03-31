@@ -413,9 +413,7 @@ def _print_trace_summary(
     print(f"  Top {min(top_events, len(interesting))} trace events:")
     for event in interesting[:top_events]:
         branch_text = (
-            f" branches~{event.branch_estimate}"
-            if event.branch_estimate is not None
-            else ""
+            f" branches~{event.branch_estimate}" if event.branch_estimate is not None else ""
         )
         print(
             "    "
@@ -514,7 +512,9 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    workbook = (REPO_ROOT / args.workbook).resolve() if not args.workbook.is_absolute() else args.workbook
+    workbook = (
+        (REPO_ROOT / args.workbook).resolve() if not args.workbook.is_absolute() else args.workbook
+    )
     if not workbook.exists():
         print(f"Workbook not found: {workbook}", file=sys.stderr)
         return 1

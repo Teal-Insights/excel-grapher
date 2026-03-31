@@ -4,21 +4,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from excel_grapher.core.cell_types import (
-    CellKind,
-    CellType,
-    EnumDomain,
-    IntervalDomain,
-    RealIntervalDomain,
-)
-
-
 # ---------------------------------------------------------------------------
 # Import the module under test (must exist for GREEN phase)
 # ---------------------------------------------------------------------------
 from example.diagnose_constraint_candidates import (
     TargetEntry,
-    TargetSubset,
     TraceCollector,
     TraceEvent,
     _cell_type_domain_summary,
@@ -31,7 +21,13 @@ from example.diagnose_constraint_candidates import (
     install_trace_hooks,
     select_entries,
 )
-
+from excel_grapher.core.cell_types import (
+    CellKind,
+    CellType,
+    EnumDomain,
+    IntervalDomain,
+    RealIntervalDomain,
+)
 
 # ---------------------------------------------------------------------------
 # _stable_unique
@@ -149,8 +145,14 @@ def test_format_seconds_over_60() -> None:
 
 def _make_entries() -> list[TargetEntry]:
     return [
-        TargetEntry(label="Alpha signals", range_spec="Sheet1!A1:A2", targets=("Sheet1!A1", "Sheet1!A2")),
-        TargetEntry(label="Beta output", range_spec="Sheet1!B1:B3", targets=("Sheet1!B1", "Sheet1!B2", "Sheet1!B3")),
+        TargetEntry(
+            label="Alpha signals", range_spec="Sheet1!A1:A2", targets=("Sheet1!A1", "Sheet1!A2")
+        ),
+        TargetEntry(
+            label="Beta output",
+            range_spec="Sheet1!B1:B3",
+            targets=("Sheet1!B1", "Sheet1!B2", "Sheet1!B3"),
+        ),
         TargetEntry(label="Gamma", range_spec="Sheet1!C1", targets=("Sheet1!C1",)),
     ]
 
@@ -278,9 +280,8 @@ def test_trace_collector_context_label_captured_in_record() -> None:
 
 def test_trace_collector_nested_context_joins_with_arrow() -> None:
     trace = TraceCollector()
-    with trace.context("A"):
-        with trace.context("B"):
-            trace.record(kind="k", caller="fn", elapsed_s=0.0, detail="")
+    with trace.context("A"), trace.context("B"):
+        trace.record(kind="k", caller="fn", elapsed_s=0.0, detail="")
     assert trace._events[0].context == "A > B"
 
 
@@ -294,9 +295,8 @@ def test_trace_collector_context_pops_after_exit() -> None:
 
 def test_trace_collector_context_pops_on_exception() -> None:
     trace = TraceCollector()
-    with pytest.raises(ValueError):
-        with trace.context("ephemeral"):
-            raise ValueError("boom")
+    with pytest.raises(ValueError), trace.context("ephemeral"):
+        raise ValueError("boom")
     trace.record(kind="k", caller="fn", elapsed_s=0.0, detail="")
     assert trace._events[0].context == ""
 
@@ -357,9 +357,7 @@ def test_estimate_branch_product_deduplicates_refs() -> None:
 
 def test_estimate_branch_product_interval_known() -> None:
     ct = CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=5))
-    total, detail = _estimate_branch_product(
-        ["X1"], {}, lookup_cell_type=lambda env, addr: ct
-    )
+    total, detail = _estimate_branch_product(["X1"], {}, lookup_cell_type=lambda env, addr: ct)
     assert total == 5
 
 
@@ -391,9 +389,8 @@ def test_install_trace_hooks_restores_on_body_exception() -> None:
 
     original_offset = dr.infer_dynamic_offset_targets
     trace = TraceCollector()
-    with pytest.raises(RuntimeError, match="body error"):
-        with install_trace_hooks(trace):
-            raise RuntimeError("body error")
+    with pytest.raises(RuntimeError, match="body error"), install_trace_hooks(trace):
+        raise RuntimeError("body error")
     assert dr.infer_dynamic_offset_targets is original_offset
 
 
@@ -407,9 +404,10 @@ def test_install_trace_hooks_wrap_infer_records_event() -> None:
 
     trace = TraceCollector()
     stub = MagicMock(return_value={"Sheet1!X1"})
-    with patch.object(dr, "infer_dynamic_offset_targets", stub):
-        with install_trace_hooks(trace):
-            result = dr.infer_dynamic_offset_targets("=OFFSET(A1,1,0)", current_sheet="Sheet1")
+    with patch.object(dr, "infer_dynamic_offset_targets", stub), install_trace_hooks(trace):
+        result = dr.infer_dynamic_offset_targets(
+            "=OFFSET(A1,1,0)", current_sheet="Sheet1", cell_type_env={}
+        )
     assert result == {"Sheet1!X1"}
     assert len(trace._events) == 1
     ev = trace._events[0]
@@ -424,9 +422,8 @@ def test_install_trace_hooks_wrap_infer_context_includes_formula_preview() -> No
 
     trace = TraceCollector()
     stub = MagicMock(return_value=set())
-    with patch.object(dr, "infer_dynamic_index_targets", stub):
-        with install_trace_hooks(trace):
-            dr.infer_dynamic_index_targets("=INDEX(A:A,1)", current_sheet="Data")
+    with patch.object(dr, "infer_dynamic_index_targets", stub), install_trace_hooks(trace):
+        dr.infer_dynamic_index_targets("=INDEX(A:A,1)", current_sheet="Data", cell_type_env={})
     # The infer event context should encode the function name, sheet, and formula preview
     ev = trace._events[0]
     assert "infer_dynamic_index_targets" in ev.context
@@ -443,9 +440,10 @@ def test_install_trace_hooks_wrap_expand_records_event() -> None:
 
     trace = TraceCollector()
     stub = MagicMock(return_value={"Sheet1!A1": CellType(kind=CellKind.NUMBER)})
-    with patch.object(dr, "expand_leaf_env_to_argument_env", stub):
-        with install_trace_hooks(trace):
-            result = dr.expand_leaf_env_to_argument_env({"Sheet1!A1", "Sheet1!B1"})
+    with patch.object(dr, "expand_leaf_env_to_argument_env", stub), install_trace_hooks(trace):
+        result = dr.expand_leaf_env_to_argument_env(
+            {"Sheet1!A1", "Sheet1!B1"}, lambda addr: None, lambda f, s: set(), {}, MagicMock()
+        )
     assert result == {"Sheet1!A1": CellType(kind=CellKind.NUMBER)}
     assert len(trace._events) == 1
     ev = trace._events[0]
@@ -460,10 +458,14 @@ def test_install_trace_hooks_wrap_expand_records_error_event() -> None:
 
     trace = TraceCollector()
     stub = MagicMock(side_effect=ValueError("bad env"))
-    with patch.object(dr, "expand_leaf_env_to_argument_env", stub):
-        with install_trace_hooks(trace):
-            with pytest.raises(ValueError, match="bad env"):
-                dr.expand_leaf_env_to_argument_env({"Sheet1!A1"})
+    with (
+        patch.object(dr, "expand_leaf_env_to_argument_env", stub),
+        install_trace_hooks(trace),
+        pytest.raises(ValueError, match="bad env"),
+    ):
+        dr.expand_leaf_env_to_argument_env(
+            {"Sheet1!A1"}, lambda addr: None, lambda f, s: set(), {}, MagicMock()
+        )
     assert len(trace._events) == 1
     ev = trace._events[0]
     assert ev.kind == "argument-env-error"
@@ -482,9 +484,8 @@ def test_install_trace_hooks_wrap_domains_records_fallback_domains_event() -> No
     trace = TraceCollector()
     stub = MagicMock(return_value={})
     limits = MagicMock()
-    with patch.object(dr, "_build_domains", stub):
-        with install_trace_hooks(trace):
-            result = dr._build_domains([], {}, limits)
+    with patch.object(dr, "_build_domains", stub), install_trace_hooks(trace):
+        result = dr._build_domains([], {}, limits)
     assert result == {}
     assert len(trace._events) == 1
     ev = trace._events[0]
@@ -499,10 +500,12 @@ def test_install_trace_hooks_wrap_domains_records_error_event() -> None:
     trace = TraceCollector()
     stub = MagicMock(side_effect=RuntimeError("too many branches"))
     limits = MagicMock()
-    with patch.object(dr, "_build_domains", stub):
-        with install_trace_hooks(trace):
-            with pytest.raises(RuntimeError, match="too many branches"):
-                dr._build_domains([], {}, limits)
+    with (
+        patch.object(dr, "_build_domains", stub),
+        install_trace_hooks(trace),
+        pytest.raises(RuntimeError, match="too many branches"),
+    ):
+        dr._build_domains([], {}, limits)
     assert len(trace._events) == 1
     ev = trace._events[0]
     assert ev.kind == "fallback-domains-error"
@@ -515,9 +518,8 @@ def test_install_trace_hooks_wrap_value_domains_records_event() -> None:
     trace = TraceCollector()
     stub = MagicMock(return_value={})
     limits = MagicMock()
-    with patch.object(dr, "_build_value_domains", stub):
-        with install_trace_hooks(trace):
-            dr._build_value_domains([], {}, limits)
+    with patch.object(dr, "_build_value_domains", stub), install_trace_hooks(trace):
+        dr._build_value_domains([], {}, limits)
     assert len(trace._events) == 1
     assert trace._events[0].kind == "fallback-value-domains"
 
@@ -533,12 +535,14 @@ def test_install_trace_hooks_wrap_offset_scalar_fallback_records_event() -> None
     trace = TraceCollector()
     stub = MagicMock(return_value=None)  # None -> fallback
     fake_node = MagicMock()
-    with patch.object(dr, "_infer_offset_scalar_domains", stub):
-        with patch.object(dr, "_ast_to_expr_string", return_value="OFFSET(A1,1,0)"):
-            with install_trace_hooks(trace):
-                result = dr._infer_offset_scalar_domains(
-                    fake_node, {}, MagicMock(), None, current_sheet="Sheet1"
-                )
+    with (
+        patch.object(dr, "_infer_offset_scalar_domains", stub),
+        patch.object(dr, "_ast_to_expr_string", return_value="OFFSET(A1,1,0)"),
+        install_trace_hooks(trace),
+    ):
+        result = dr._infer_offset_scalar_domains(
+            fake_node, {}, MagicMock(), None, current_sheet="Sheet1"
+        )
     assert result is None
     assert len(trace._events) == 1
     ev = trace._events[0]
@@ -552,12 +556,14 @@ def test_install_trace_hooks_wrap_offset_scalar_wide_records_event() -> None:
     trace = TraceCollector()
     stub = MagicMock(return_value=list(range(20)))  # > 8 -> wide
     fake_node = MagicMock()
-    with patch.object(dr, "_infer_offset_scalar_domains", stub):
-        with patch.object(dr, "_ast_to_expr_string", return_value="IDX"):
-            with install_trace_hooks(trace):
-                result = dr._infer_offset_scalar_domains(
-                    fake_node, {}, MagicMock(), None, current_sheet="Sheet1"
-                )
+    with (
+        patch.object(dr, "_infer_offset_scalar_domains", stub),
+        patch.object(dr, "_ast_to_expr_string", return_value="IDX"),
+        install_trace_hooks(trace),
+    ):
+        result = dr._infer_offset_scalar_domains(
+            fake_node, {}, MagicMock(), None, current_sheet="Sheet1"
+        )
     assert result == list(range(20))
     assert len(trace._events) == 1
     ev = trace._events[0]
@@ -571,12 +577,14 @@ def test_install_trace_hooks_wrap_offset_scalar_small_result_records_no_event() 
     trace = TraceCollector()
     stub = MagicMock(return_value=[1, 2, 3])  # <= 8 -> no event
     fake_node = MagicMock()
-    with patch.object(dr, "_infer_offset_scalar_domains", stub):
-        with patch.object(dr, "_ast_to_expr_string", return_value="IDX"):
-            with install_trace_hooks(trace):
-                result = dr._infer_offset_scalar_domains(
-                    fake_node, {}, MagicMock(), None, current_sheet="Sheet1"
-                )
+    with (
+        patch.object(dr, "_infer_offset_scalar_domains", stub),
+        patch.object(dr, "_ast_to_expr_string", return_value="IDX"),
+        install_trace_hooks(trace),
+    ):
+        result = dr._infer_offset_scalar_domains(
+            fake_node, {}, MagicMock(), None, current_sheet="Sheet1"
+        )
     assert result == [1, 2, 3]
     assert len(trace._events) == 0
 
@@ -606,8 +614,17 @@ def test_print_trace_summary_shows_kind_counts(capsys) -> None:
 
 def test_print_trace_summary_filters_low_branch_events(capsys) -> None:
     events = [
-        TraceEvent(kind="k", caller="fn", context="", elapsed_s=0.0, detail="low_detail", branch_estimate=4),
-        TraceEvent(kind="k", caller="fn", context="", elapsed_s=0.0, detail="high_detail", branch_estimate=100),
+        TraceEvent(
+            kind="k", caller="fn", context="", elapsed_s=0.0, detail="low_detail", branch_estimate=4
+        ),
+        TraceEvent(
+            kind="k",
+            caller="fn",
+            context="",
+            elapsed_s=0.0,
+            detail="high_detail",
+            branch_estimate=100,
+        ),
     ]
     _print_trace_summary(events, top_events=5, trace_min_branches=16)
     out = capsys.readouterr().out
@@ -617,7 +634,14 @@ def test_print_trace_summary_filters_low_branch_events(capsys) -> None:
 
 def test_print_trace_summary_falls_back_to_all_when_none_pass_filter(capsys) -> None:
     events = [
-        TraceEvent(kind="k", caller="fn", context="", elapsed_s=0.0, detail="small_detail", branch_estimate=2),
+        TraceEvent(
+            kind="k",
+            caller="fn",
+            context="",
+            elapsed_s=0.0,
+            detail="small_detail",
+            branch_estimate=2,
+        ),
     ]
     _print_trace_summary(events, top_events=5, trace_min_branches=16)
     out = capsys.readouterr().out
@@ -626,8 +650,17 @@ def test_print_trace_summary_falls_back_to_all_when_none_pass_filter(capsys) -> 
 
 def test_print_trace_summary_none_branch_estimate_always_included(capsys) -> None:
     events = [
-        TraceEvent(kind="k", caller="fn", context="", elapsed_s=0.0, detail="low_detail", branch_estimate=2),
-        TraceEvent(kind="err", caller="fn", context="", elapsed_s=0.0, detail="err_detail", branch_estimate=None),
+        TraceEvent(
+            kind="k", caller="fn", context="", elapsed_s=0.0, detail="low_detail", branch_estimate=2
+        ),
+        TraceEvent(
+            kind="err",
+            caller="fn",
+            context="",
+            elapsed_s=0.0,
+            detail="err_detail",
+            branch_estimate=None,
+        ),
     ]
     _print_trace_summary(events, top_events=5, trace_min_branches=16)
     out = capsys.readouterr().out
@@ -637,7 +670,9 @@ def test_print_trace_summary_none_branch_estimate_always_included(capsys) -> Non
 
 def test_print_trace_summary_respects_top_events_limit(capsys) -> None:
     events = [
-        TraceEvent(kind="k", caller="fn", context="", elapsed_s=0.0, detail=f"ev{i}", branch_estimate=100)
+        TraceEvent(
+            kind="k", caller="fn", context="", elapsed_s=0.0, detail=f"ev{i}", branch_estimate=100
+        )
         for i in range(10)
     ]
     _print_trace_summary(events, top_events=3, trace_min_branches=16)
