@@ -196,4 +196,5 @@ def test_index_excel_range_two_dimensional_cell() -> None:
 
     base = ExcelRange(sheet="S", start_row=1, start_col=1, end_row=3, end_col=3)
     r = index_excel_range(base, 2, 2)
+    assert isinstance(r, ExcelRange)
     assert (r.start_row, r.start_col, r.end_row, r.end_col) == (2, 2, 2, 2)

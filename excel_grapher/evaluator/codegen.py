@@ -118,6 +118,7 @@ class CodeGenerator:
         self._iterate_delta = iterate_delta
         self._emitted: set[str] = set()
         self._needs_offset_runtime = False  # Set to True if dynamic OFFSET is used
+        self._needs_index_ref_runtime = False  # OFFSET(INDEX(...), ...) requires xl_index_ref
         self._offset_runtime_sheets: set[str] = set()
         self._temp_var_counter = 0  # Counter for unique temp variable names
         self._ast_cache: dict[str, AstNode] = {}
@@ -1090,6 +1091,35 @@ class CodeGenerator:
             base_sheet, r1, c1, r2, c2 = self._range_coords(ref_node.start, ref_node.end)
             self._offset_runtime_sheets.add(base_sheet)
             ref_info = f"({repr(base_sheet)}, {r1}, {c1}, {r2}, {c2})"
+        elif isinstance(ref_node, FunctionCallNode) and ref_node.name.upper() == "INDEX":
+            if len(ref_node.args) < 1:
+                return "XlError.VALUE"
+            base = ref_node.args[0]
+            if isinstance(base, CellRefNode):
+                base_sheet, base_cell = parse_address(base.address)
+                self._offset_runtime_sheets.add(base_sheet)
+                base_col_str, base_row = fastpyxl.utils.cell.coordinate_from_string(base_cell)
+                base_col = fastpyxl.utils.cell.column_index_from_string(base_col_str)
+                base_ref_info = f"({repr(base_sheet)}, {base_row}, {base_col})"
+            elif isinstance(base, RangeNode):
+                base_sheet, r1, c1, r2, c2 = self._range_coords(base.start, base.end)
+                self._offset_runtime_sheets.add(base_sheet)
+                base_ref_info = f"({repr(base_sheet)}, {r1}, {c1}, {r2}, {c2})"
+            else:
+                return "XlError.REF"
+
+            row_expr = (
+                "None"
+                if len(ref_node.args) < 2 or isinstance(ref_node.args[1], EmptyArgNode)
+                else self._emit_ast(ref_node.args[1])
+            )
+            col_expr = (
+                "None"
+                if len(ref_node.args) < 3 or isinstance(ref_node.args[2], EmptyArgNode)
+                else self._emit_ast(ref_node.args[2])
+            )
+            self._needs_index_ref_runtime = True
+            ref_info = f"xl_index_ref({base_ref_info}, {row_expr}, {col_expr})"
         else:
             # If reference is not a simple cell, we can't handle it
             return "XlError.REF"
@@ -1119,6 +1149,33 @@ class CodeGenerator:
         elif isinstance(ref_node, RangeNode):
             base_sheet, r1, c1, r2, c2 = self._range_coords(ref_node.start, ref_node.end)
             ref_info = f"({repr(base_sheet)}, {r1}, {c1}, {r2}, {c2})"
+        elif isinstance(ref_node, FunctionCallNode) and ref_node.name.upper() == "INDEX":
+            if len(ref_node.args) < 1:
+                return "XlError.VALUE"
+            base = ref_node.args[0]
+            if isinstance(base, CellRefNode):
+                base_sheet, base_cell = parse_address(base.address)
+                base_col_str, base_row = fastpyxl.utils.cell.coordinate_from_string(base_cell)
+                base_col = fastpyxl.utils.cell.column_index_from_string(base_col_str)
+                base_ref_info = f"({repr(base_sheet)}, {base_row}, {base_col})"
+            elif isinstance(base, RangeNode):
+                base_sheet, r1, c1, r2, c2 = self._range_coords(base.start, base.end)
+                base_ref_info = f"({repr(base_sheet)}, {r1}, {c1}, {r2}, {c2})"
+            else:
+                return "XlError.REF"
+
+            row_expr = (
+                "None"
+                if len(ref_node.args) < 2 or isinstance(ref_node.args[1], EmptyArgNode)
+                else self._emit_ast(ref_node.args[1])
+            )
+            col_expr = (
+                "None"
+                if len(ref_node.args) < 3 or isinstance(ref_node.args[2], EmptyArgNode)
+                else self._emit_ast(ref_node.args[2])
+            )
+            self._needs_index_ref_runtime = True
+            ref_info = f"xl_index_ref({base_ref_info}, {row_expr}, {col_expr})"
         else:
             return "XlError.REF"
 
@@ -1814,6 +1871,8 @@ class CodeGenerator:
         # closure), we intentionally *do not* widen the export surface area here.
         if self._needs_offset_runtime:
             used_xl_functions.add("xl_offset")
+            if self._needs_index_ref_runtime:
+                used_xl_functions.add("xl_index_ref")
             if not self._used_graph_closure:
                 all_graph_cells = list(self.graph.leaf_keys()) + list(self.graph.formula_keys())
                 if self._offset_runtime_sheets:
