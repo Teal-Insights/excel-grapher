@@ -120,6 +120,19 @@ class TestGeneratedCodeExecution:
         assert result.generated_results["S!B1"] == 10
         assert result.generated_results["S!B2"] == 5
 
+    def test_generated_code_true_false_function_calls(self) -> None:
+        """TRUE() and FALSE() as zero-arg function calls should codegen correctly."""
+        graph = _make_graph(
+            _make_node("S!A1", "=TRUE()", None),
+            _make_node("S!A2", "=FALSE()", None),
+            _make_node("S!A3", "=IF(TRUE(), 10, 20)", None),
+        )
+        targets = ["S!A1", "S!A2", "S!A3"]
+        result = assert_codegen_matches_evaluator(graph, targets)
+        assert result.generated_results["S!A1"] is True
+        assert result.generated_results["S!A2"] is False
+        assert result.generated_results["S!A3"] == 10
+
     def test_generated_code_if_uses_excel_boolean_coercion(self) -> None:
         """IF should use Excel-style boolean coercion (e.g., 'FALSE' -> False)."""
         graph = _make_graph(

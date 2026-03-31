@@ -35,6 +35,26 @@ def _make_graph(*nodes: Node) -> DependencyGraph:
 # --- Logic function tests ---
 
 
+def test_true_false_as_function_calls() -> None:
+    """TRUE() and FALSE() as zero-arg function calls should return booleans."""
+    graph = _make_graph(
+        _make_node("S!A1", "=TRUE()", None),
+        _make_node("S!A2", "=FALSE()", None),
+        _make_node("S!A3", "=IF(TRUE(), 1, 2)", None),
+        _make_node("S!A4", "=VLOOKUP(1, S!B1:S!C2, 2, FALSE())", None),
+        _make_node("S!B1", None, 1),
+        _make_node("S!B2", None, 2),
+        _make_node("S!C1", None, "found"),
+        _make_node("S!C2", None, "other"),
+    )
+    with FormulaEvaluator(graph) as ev:
+        result = ev.evaluate(["S!A1", "S!A2", "S!A3", "S!A4"])
+        assert result["S!A1"] is True
+        assert result["S!A2"] is False
+        assert result["S!A3"] == 1
+        assert result["S!A4"] == "found"
+
+
 def test_iserror() -> None:
     """Test ISERROR function."""
     graph = _make_graph(
