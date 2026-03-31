@@ -19,6 +19,7 @@ from .dynamic_refs import (
     DynamicRefConfig,
     DynamicRefError,
     GlobalWorkbookBounds,
+    clear_index_target_cache,
     expand_leaf_env_to_argument_env,
     infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
@@ -225,6 +226,9 @@ def create_dependency_graph(
     named_range_ranges = named_range_maps.range_map
     normalizer = FormulaNormalizer(named_ranges, named_range_ranges)
     defined_names: set[str] = {str(name) for name in wb_formulas.defined_names}
+    # Clear per-graph-build caches from previous invocations.
+    clear_index_target_cache()
+
     # Per-graph cache: (normalized_formula, current_sheet, current_a1) → (offset_targets, indirect_targets, index_targets).
     # Populated by extract_expr_deps (constraint path); consumed by collect_provenance_for_formula
     # to avoid re-running the expensive expand_leaf_env_to_argument_env call.

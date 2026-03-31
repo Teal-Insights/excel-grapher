@@ -2203,8 +2203,15 @@ def test_shared_intermediate_env_expansion_cache(tmp_path: Path) -> None:
     """Many INDEX formulas sharing an intermediate cell should reuse env expansion.
 
     All formulas reference B1 (intermediate) which depends on C1 (leaf).
-    With a shared env expansion cache, ``cell_type_for(B1)`` is computed once.
+    With a shared env expansion cache, ``cell_type_for(B1)`` is computed once
+    and reused across all 30 formula cells' expand_leaf_env_to_argument_env calls.
+
+    We verify this by wrapping expand_leaf_env_to_argument_env and inspecting
+    the shared_cell_type_cache: B1 should already be present in the cache for
+    all calls after the first.
     """
+    from unittest.mock import patch
+
     n_rows = 30
     excel_path = tmp_path / "shared_intermediate.xlsx"
     _build_shared_intermediate_index_workbook(excel_path, n_rows=n_rows)
@@ -2222,12 +2229,30 @@ def test_shared_intermediate_env_expansion_cache(tmp_path: Path) -> None:
     config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
     targets = [f"Sheet1!F{2 + i}" for i in range(n_rows)]
 
-    graph = create_dependency_graph(
-        excel_path,
-        targets,
-        load_values=False,
-        dynamic_refs=config,
-    )
+    # Track how many times B1 is already in the shared cache when
+    # expand_leaf_env_to_argument_env is called.
+    original_expand = expand_leaf_env_to_argument_env
+    b1_cache_hits = 0
+    total_calls = 0
+
+    def tracking_expand(*args, **kwargs):
+        nonlocal b1_cache_hits, total_calls
+        total_calls += 1
+        shared_cache = kwargs.get("shared_cell_type_cache")
+        if shared_cache is not None and "Sheet1!B1" in shared_cache:
+            b1_cache_hits += 1
+        return original_expand(*args, **kwargs)
+
+    with patch(
+        "excel_grapher.grapher.builder.expand_leaf_env_to_argument_env",
+        side_effect=tracking_expand,
+    ):
+        graph = create_dependency_graph(
+            excel_path,
+            targets,
+            load_values=False,
+            dynamic_refs=config,
+        )
 
     # Correctness check: each formula should depend on B1 and its D leaf.
     for i in range(n_rows):
@@ -2235,3 +2260,11 @@ def test_shared_intermediate_env_expansion_cache(tmp_path: Path) -> None:
         deps = graph.dependencies(f"Sheet1!F{row}")
         assert "Sheet1!B1" in deps, f"Missing B1 dep for F{row}"
         assert f"Sheet1!D{row}" in deps, f"Missing D leaf dep for F{row}"
+
+    # Optimization check: B1 should be inferred once (cache miss on first call)
+    # and served from the shared cache for all subsequent calls.
+    assert total_calls == n_rows, f"Expected {n_rows} expand calls, got {total_calls}"
+    assert b1_cache_hits == n_rows - 1, (
+        f"Expected B1 to be a cache hit on {n_rows - 1} of {n_rows} calls, "
+        f"but got {b1_cache_hits} hits. shared_cell_type_cache is not being reused."
+    )

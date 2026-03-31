@@ -2011,13 +2011,24 @@ def _clamp_int(v: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, v))
 
 
-# Module-level cache for _emit_index_targets_from_domains: avoids regenerating
-# the same target set when multiple INDEX formulas resolve to identical
-# (array_range, row_dom, col_dom) triples.
+# Per-graph-build cache for INDEX target emission: avoids regenerating the same
+# target set when multiple INDEX formulas resolve to identical
+# (array_range, row_dom, col_dom) triples within a single graph build.
+# Cleared at the start of each create_dependency_graph call via
+# clear_index_target_cache().
 _emit_index_cache: dict[
     tuple[ExcelRange, _FiniteInts | _IntBounds, _FiniteInts | _IntBounds],
     frozenset[str],
 ] = {}
+
+
+def clear_index_target_cache() -> None:
+    """Clear the INDEX target emission cache.
+
+    Called at the start of each graph build to scope the cache to a single
+    invocation and prevent unbounded memory retention across builds.
+    """
+    _emit_index_cache.clear()
 
 
 def _emit_index_targets_from_domains(
