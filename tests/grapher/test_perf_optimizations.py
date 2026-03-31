@@ -203,9 +203,9 @@ def test_ifs_formula_provenance_causes(tmp_path: Path) -> None:
     excel_path = tmp_path / "ifs_prov.xlsx"
     wb = xlsxwriter.Workbook(excel_path)
     ws = wb.add_worksheet("Sheet1")
-    ws.write_number(0, 0, 5)   # A1 leaf (value branch)
+    ws.write_number(0, 0, 5)  # A1 leaf (value branch)
     ws.write_number(0, 1, 10)  # B1 leaf (value branch)
-    ws.write_number(0, 2, 3)   # C1 leaf (condition input)
+    ws.write_number(0, 2, 3)  # C1 leaf (condition input)
     # D1 = IFS(C1>5, A1, C1<=5, B1)
     ws.write_formula(0, 3, "=IFS(Sheet1!C1>5,Sheet1!A1,Sheet1!C1<=5,Sheet1!B1)", None, 10)
     wb.close()
@@ -233,11 +233,9 @@ def test_switch_formula_provenance_causes(tmp_path: Path) -> None:
     ws.write_number(0, 0, 10)  # A1 result for case 1
     ws.write_number(0, 1, 20)  # B1 result for case 2
     ws.write_number(0, 2, 30)  # C1 default
-    ws.write_number(0, 3, 1)   # D1 switch expression input
+    ws.write_number(0, 3, 1)  # D1 switch expression input
     # E1 = SWITCH(D1, 1, A1, 2, B1, C1)
-    ws.write_formula(
-        0, 4, "=SWITCH(Sheet1!D1,1,Sheet1!A1,2,Sheet1!B1,Sheet1!C1)", None, 10
-    )
+    ws.write_formula(0, 4, "=SWITCH(Sheet1!D1,1,Sheet1!A1,2,Sheet1!B1,Sheet1!C1)", None, 10)
     wb.close()
 
     graph = create_dependency_graph(

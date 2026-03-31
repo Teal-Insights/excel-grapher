@@ -326,7 +326,9 @@ def create_dependency_graph(
                         arg_sheet = ref.sheet if ref.sheet is not None else current_sheet
                         deps.append((arg_sheet, f"{ref.column}{ref.row}"))
             else:
-                calls = _find_function_calls_with_spans(f, frozenset({"OFFSET", "INDIRECT", "INDEX"}))
+                calls = _find_function_calls_with_spans(
+                    f, frozenset({"OFFSET", "INDIRECT", "INDEX"})
+                )
                 if dynamic_refs is None:
                     # Filter out INDEX calls that only have literal args (no dynamic resolution needed).
                     dynamic_calls = []
