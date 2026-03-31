@@ -5,6 +5,19 @@ from typing import Any
 
 from .graph import DependencyGraph
 from .guard import GuardExpr
+from .lightweight_viz import (
+    LightweightVizLocalEdges,
+    LightweightVizModule,
+    LightweightVizModuleEdge,
+    LightweightVizNodeColumns,
+    LightweightVizPayload,
+    LightweightVizStats,
+    LocalForceSubgraph,
+    select_local_force_subgraph,
+    to_lightweight_viz,
+    write_lightweight_viz_data,
+    write_lightweight_viz_html,
+)
 from .node import Node, NodeKey
 
 
@@ -138,3 +151,21 @@ def to_mermaid(
                 lines.append(f"  {safe_id(key)} -.-> {safe_id(dep)}")
 
     return "\n".join(lines)
+
+
+__all__ = [
+    "LocalForceSubgraph",
+    "LightweightVizLocalEdges",
+    "LightweightVizModule",
+    "LightweightVizModuleEdge",
+    "LightweightVizNodeColumns",
+    "LightweightVizPayload",
+    "LightweightVizStats",
+    "select_local_force_subgraph",
+    "to_graphviz",
+    "to_lightweight_viz",
+    "to_mermaid",
+    "to_networkx",
+    "write_lightweight_viz_data",
+    "write_lightweight_viz_html",
+]
