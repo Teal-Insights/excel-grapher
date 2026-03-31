@@ -562,7 +562,7 @@ def infer_dynamic_offset_targets(
     lim = limits or DynamicRefLimits()
     out: set[str] = set()
 
-    calls = _find_function_calls_with_spans(formula, {"OFFSET"})
+    calls = _find_function_calls_with_spans(formula, frozenset({"OFFSET"}))
     for fn, inner, _span in calls:
         if fn != "OFFSET":
             continue
@@ -609,8 +609,8 @@ def infer_dynamic_index_targets(
     out: set[str] = set()
 
     # Find all INDEX and OFFSET calls so we can exclude INDEX-inside-OFFSET.
-    index_calls = _find_function_calls_with_spans(formula, {"INDEX"})
-    offset_calls = _find_function_calls_with_spans(formula, {"OFFSET"})
+    index_calls = _find_function_calls_with_spans(formula, frozenset({"INDEX"}))
+    offset_calls = _find_function_calls_with_spans(formula, frozenset({"OFFSET"}))
 
     nested_index_spans: set[tuple[int, int]] = set()
     offset_spans = [span for _fn, _inner, span in offset_calls]
@@ -2493,7 +2493,7 @@ def infer_dynamic_indirect_targets(
     lim = limits or DynamicRefLimits()
     out: set[str] = set()
 
-    calls = _find_function_calls_with_spans(formula, {"INDIRECT"})
+    calls = _find_function_calls_with_spans(formula, frozenset({"INDIRECT"}))
     for fn, inner, _span in calls:
         if fn != "INDIRECT":
             continue

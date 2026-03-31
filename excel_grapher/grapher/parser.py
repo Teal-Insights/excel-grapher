@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import re
 import warnings
 from collections.abc import Callable
@@ -570,6 +571,7 @@ class FormulaNormalizer:
         return result
 
 
+@functools.lru_cache(maxsize=4096)
 def split_top_level_if(formula: str) -> tuple[str, str, str] | None:
     """
     If formula is a top-level IF(...), return (cond, then_expr, else_expr) strings.
@@ -710,6 +712,7 @@ def split_top_level_function(formula: str, fn: str) -> list[str] | None:
     return args
 
 
+@functools.lru_cache(maxsize=4096)
 def split_top_level_ifs(formula: str) -> list[str] | None:
     """
     If formula is a top-level IFS(...), return argument strings.
@@ -717,6 +720,7 @@ def split_top_level_ifs(formula: str) -> list[str] | None:
     return split_top_level_function(formula, "IFS")
 
 
+@functools.lru_cache(maxsize=4096)
 def split_top_level_choose(formula: str) -> list[str] | None:
     """
     If formula is a top-level CHOOSE(...), return argument strings.
@@ -724,6 +728,7 @@ def split_top_level_choose(formula: str) -> list[str] | None:
     return split_top_level_function(formula, "CHOOSE")
 
 
+@functools.lru_cache(maxsize=4096)
 def split_top_level_switch(formula: str) -> list[str] | None:
     """
     If formula is a top-level SWITCH(...), return argument strings.
@@ -1070,8 +1075,9 @@ def _split_function_args(inner: str) -> list[str] | None:
     return _split_top_level_args(inner)
 
 
+@functools.lru_cache(maxsize=4096)
 def _find_function_calls_with_spans(
-    formula: str, fn_names: set[str]
+    formula: str, fn_names: frozenset[str]
 ) -> list[tuple[str, str, tuple[int, int]]]:
     s = formula
     out: list[tuple[str, str, tuple[int, int]]] = []
@@ -1323,7 +1329,7 @@ def parse_dynamic_range_refs_with_spans(
     if normalizer is None:
         normalizer = FormulaNormalizer(named_ranges, named_range_ranges)
 
-    calls = _find_function_calls_with_spans(formula, {"OFFSET", "INDIRECT"})
+    calls = _find_function_calls_with_spans(formula, frozenset({"OFFSET", "INDIRECT"}))
     out: list[tuple[CellRef, CellRef, tuple[int, int], list[CellRef]]] = []
     for fn, inner, span in calls:
         args = _split_function_args(inner)

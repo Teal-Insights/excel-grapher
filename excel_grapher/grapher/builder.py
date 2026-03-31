@@ -10,6 +10,7 @@ from pathlib import Path
 import fastpyxl
 import fastpyxl.utils.cell
 from fastpyxl.worksheet.formula import ArrayFormula
+from fastpyxl.worksheet.worksheet import Worksheet
 
 from excel_grapher.core.cell_types import leaves_missing_cell_type_constraints
 
@@ -230,13 +231,33 @@ def create_dependency_graph(
     _dyn_cache: dict[tuple[str, str, str], tuple[set[str], set[str], set[str]]] = {}
     _NAME_TOKEN_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*!)")
 
+    # Worksheet caches: avoid repeated O(#sheets) __getitem__ scans on every BFS node.
+    _ws_f_cache: dict[str, Worksheet] = {}
+    _ws_v_cache: dict[str, Worksheet] = {}
+
+    def _get_ws_f(sheet: str) -> Worksheet:
+        ws = _ws_f_cache.get(sheet)
+        if ws is None:
+            ws = wb_formulas[sheet]
+            _ws_f_cache[sheet] = ws
+        return ws
+
+    def _get_ws_v(sheet: str) -> Worksheet:
+        # Only called when wb_values is not None.
+        ws = _ws_v_cache.get(sheet)
+        if ws is None:
+            assert wb_values is not None
+            ws = wb_values[sheet]
+            _ws_v_cache[sheet] = ws
+        return ws
+
     def resolve_cached_value(sheet: str, a1: str) -> object | None:
         nonlocal wb_values
         if wb_values is None and not isinstance(workbook, fastpyxl.Workbook):
             wb_values = load_wb(data_only=True)
         if wb_values is None:
             return None
-        return wb_values[sheet][a1].value
+        return _get_ws_v(sheet)[a1].value
 
     def parse_target(t: str) -> tuple[str, str]:
         if "!" not in t:
@@ -305,7 +326,9 @@ def create_dependency_graph(
                         arg_sheet = ref.sheet if ref.sheet is not None else current_sheet
                         deps.append((arg_sheet, f"{ref.column}{ref.row}"))
             else:
-                calls = _find_function_calls_with_spans(f, {"OFFSET", "INDIRECT", "INDEX"})
+                calls = _find_function_calls_with_spans(
+                    f, frozenset({"OFFSET", "INDIRECT", "INDEX"})
+                )
                 if dynamic_refs is None:
                     # Filter out INDEX calls that only have literal args (no dynamic resolution needed).
                     dynamic_calls = []
@@ -371,7 +394,7 @@ def create_dependency_graph(
                         ) -> set[str]:
                             dyn = _find_function_calls_with_spans(
                                 formula_str if formula_str.startswith("=") else "=" + formula_str,
-                                {"OFFSET", "INDIRECT", "INDEX"},
+                                frozenset({"OFFSET", "INDIRECT", "INDEX"}),
                             )
                             spans = [span for _fn, _inner, span in dyn]
                             masked = mask_spans(
@@ -406,7 +429,7 @@ def create_dependency_graph(
                             sh, a1 = _parse_address_to_sheet_a1(addr)
                             if sh not in wb_formulas.sheetnames:
                                 continue
-                            cell_val = wb_formulas[sh][a1].value
+                            cell_val = _get_ws_f(sh)[a1].value
                             if isinstance(cell_val, str) and cell_val.startswith("="):
                                 to_visit.update(_refs_in_formula_without_dynamic(cell_val, sh))
                         leaves = set()
@@ -414,7 +437,7 @@ def create_dependency_graph(
                             sh, a1 = _parse_address_to_sheet_a1(addr)
                             if sh not in wb_formulas.sheetnames:
                                 continue
-                            cell_val = wb_formulas[sh][a1].value
+                            cell_val = _get_ws_f(sh)[a1].value
                             if not (isinstance(cell_val, str) and cell_val.startswith("=")):
                                 leaves.add(addr)
                         missing_leaves = leaves_missing_cell_type_constraints(
@@ -445,7 +468,7 @@ def create_dependency_graph(
                                 sh, a1 = _parse_address_to_sheet_a1(addr)
                                 if sh not in wb_formulas.sheetnames:
                                     return None
-                                v = wb_formulas[sh][a1].value
+                                v = _get_ws_f(sh)[a1].value
                                 if not isinstance(v, str) or not v.startswith("="):
                                     return None
                                 return normalizer.normalize(v, sh)
@@ -776,7 +799,7 @@ def create_dependency_graph(
             if depth > max_depth:
                 continue
 
-            ws_f = wb_formulas[sheet]
+            ws_f = _get_ws_f(sheet)
             raw = ws_f[a1].value
             if isinstance(raw, ArrayFormula):
                 raw = raw.text or ""
@@ -790,7 +813,7 @@ def create_dependency_graph(
                 normalized = normalizer.normalize(formula_str, sheet)
                 value = None
                 if wb_values is not None:
-                    value = wb_values[sheet][a1].value
+                    value = _get_ws_v(sheet)[a1].value
                 is_leaf = False
             else:
                 formula_str = ""
