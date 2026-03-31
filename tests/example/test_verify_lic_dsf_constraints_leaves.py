@@ -6,7 +6,7 @@ from typing import Any, Literal, TypedDict
 import fastpyxl
 import pytest
 
-from example.map_lic_dsf_indicators import (
+from example.extract_graph_uncached import (
     collect_lic_dsf_constraint_leaf_violations,
     verify_lic_dsf_constraints_target_leaves,
 )

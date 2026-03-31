@@ -34,8 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT / "example") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "example"))
 
-import map_lic_dsf_indicators as lic  # noqa: E402
-
+import example.extract_graph_uncached as lic  # noqa: E402
 from excel_grapher import DynamicRefConfig, create_dependency_graph  # noqa: E402
 from excel_grapher.grapher.graph import DependencyGraph  # noqa: E402
 

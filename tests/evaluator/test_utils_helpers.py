@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from tests.utils._helpers import (
+    check_libreoffice_version,
     is_libreoffice_available,
     is_wsl,
     parse_cell_ref,
@@ -112,3 +114,42 @@ class TestIsLibreofficeAvailable:
         """Test returns False when soffice is not in PATH."""
         with patch("shutil.which", return_value=None):
             assert is_libreoffice_available() is False
+
+
+class TestCheckLibreofficeVersion:
+    """Tests for check_libreoffice_version() function."""
+
+    def test_accepts_25_8(self) -> None:
+        result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="LibreOffice 25.8.5.2 580(Build:2)\n"
+        )
+        with patch("subprocess.run", return_value=result):
+            check_libreoffice_version()  # should not raise
+
+    def test_accepts_26_2(self) -> None:
+        result = subprocess.CompletedProcess(args=[], returncode=0, stdout="LibreOffice 26.2.0.1\n")
+        with patch("subprocess.run", return_value=result):
+            check_libreoffice_version()
+
+    def test_rejects_24_8(self) -> None:
+        result = subprocess.CompletedProcess(args=[], returncode=0, stdout="LibreOffice 24.8.4.2\n")
+        with (
+            patch("subprocess.run", return_value=result),
+            pytest.raises(RuntimeError, match="25.8"),
+        ):
+            check_libreoffice_version()
+
+    def test_rejects_25_2(self) -> None:
+        result = subprocess.CompletedProcess(args=[], returncode=0, stdout="LibreOffice 25.2.3.1\n")
+        with (
+            patch("subprocess.run", return_value=result),
+            pytest.raises(RuntimeError, match="25.8"),
+        ):
+            check_libreoffice_version()
+
+    def test_raises_when_soffice_missing(self) -> None:
+        with (
+            patch("subprocess.run", side_effect=FileNotFoundError),
+            pytest.raises(RuntimeError, match="not found"),
+        ):
+            check_libreoffice_version()
