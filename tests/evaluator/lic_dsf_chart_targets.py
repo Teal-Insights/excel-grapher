@@ -28,6 +28,7 @@ def chart_parity_shortlist_keys() -> list[str]:
     """Normalized keys for the small Chart Data parity slice (MX shock + Threshold column U)."""
     return [normalize_address(k) for k in _CHART_PARITY_SHORTLIST_RAW]
 
+
 GRAPH_MAX_DEPTH = 50
 GRAPH_USE_CACHED_DYNAMIC_REFS = True
 

@@ -46,7 +46,9 @@ def lic_dsf_chart_shortlist_graph():
     )
 
 
-def test_lic_dsf_chart_shortlist_graph_has_numeric_excel_cache(lic_dsf_chart_shortlist_graph) -> None:
+def test_lic_dsf_chart_shortlist_graph_has_numeric_excel_cache(
+    lic_dsf_chart_shortlist_graph,
+) -> None:
     """Graph build loads Excel cached numeric results for the chart parity probe cells."""
     for key in chart_parity_shortlist_keys():
         node = lic_dsf_chart_shortlist_graph.get_node(key)
@@ -56,7 +58,9 @@ def test_lic_dsf_chart_shortlist_graph_has_numeric_excel_cache(lic_dsf_chart_sho
         )
 
 
-def test_lic_dsf_chart_shortlist_evaluator_matches_excel_cache(lic_dsf_chart_shortlist_graph) -> None:
+def test_lic_dsf_chart_shortlist_evaluator_matches_excel_cache(
+    lic_dsf_chart_shortlist_graph,
+) -> None:
     """Cached path: MX shock (U63) and Threshold (U66) must match Excel cache on the graph nodes."""
     assert_workbook_parity(
         lic_dsf_chart_shortlist_graph,
@@ -136,6 +140,7 @@ def test_lic_dsf_full_chart_export_evaluator_matches_excel_cache(lic_dsf_full_ch
             by_kind[m.kind.value] = by_kind.get(m.kind.value, 0) + 1
         summary = f"counts_by_kind={by_kind!r}\n"
         raise AssertionError(
-            summary + format_workbook_parity_report(mismatches[:50])
+            summary
+            + format_workbook_parity_report(mismatches[:50])
             + (f"\n... and {len(mismatches) - 50} more" if len(mismatches) > 50 else "")
         )
