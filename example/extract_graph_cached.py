@@ -71,7 +71,7 @@ class ExportRangeConfig(TypedDict):
 # Workbook
 # ---------------------------------------------------------------------------
 
-WORKBOOK_PATH = Path("dsf-uga.xlsm")
+WORKBOOK_PATH = Path("example/data/lic-dsf-template-2025-08-12.xlsm")
 WORKBOOK_TEMPLATE_URL = "https://thedocs.worldbank.org/en/doc/f0ade6bcf85b6f98dbeb2c39a2b7770c-0360012025/original/LIC-DSF-IDA21-Template-08-12-2025-vf.xlsm"
 
 GRAPH_CACHE_SCHEMA = 1
