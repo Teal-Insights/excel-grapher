@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import fastpyxl.utils.cell
 
 from .errors import ParseError
+from .name_utils import parse_address
 from .export_runtime.cache import EvalContext, xl_circular_reference, xl_iterative_compute
 from .functions import FUNCTIONS
 from .helpers import (
@@ -24,6 +25,7 @@ from .helpers import (
     xl_ne,
     xl_offset_ref,
     xl_percent,
+    xl_pow,
     xl_row,
 )
 from .parser import (
@@ -31,6 +33,7 @@ from .parser import (
     BinaryOpNode,
     BoolNode,
     CellRefNode,
+    EmptyArgNode,
     ErrorNode,
     FunctionCallNode,
     NumberNode,
@@ -240,6 +243,8 @@ class FormulaEvaluator:
             self._call_stack.pop()
 
     def _evaluate_ast(self, node: AstNode) -> CellValue:
+        if isinstance(node, EmptyArgNode):
+            return None
         if isinstance(node, NumberNode):
             return node.value
         if isinstance(node, StringNode):
@@ -356,7 +361,7 @@ class FormulaEvaluator:
                 return XlError.DIV
             return ln / rn
         if op == "^":
-            return ln**rn
+            return xl_pow(left, right)
 
         raise ValueError(f"Unknown binary operator: {op}")
 
@@ -456,17 +461,28 @@ class FormulaEvaluator:
 
         return xl_offset_ref(base, rows_val, cols_val, height_val, width_val)
 
+    def _current_formula_row_col(self) -> tuple[int, int] | None:
+        if not self._call_stack:
+            return None
+        _sheet, cell = parse_address(self._call_stack[-1])
+        cell = cell.replace("$", "")
+        col_str, row = fastpyxl.utils.cell.coordinate_from_string(cell)
+        col = fastpyxl.utils.cell.column_index_from_string(col_str)
+        return row, col
+
     def _eval_row(self, args: list[AstNode]) -> int | XlError:
-        if len(args) < 1:
-            raise ParseError("ROW(...)", "ROW requires 1 argument")
+        if not args or (len(args) == 1 and isinstance(args[0], EmptyArgNode)):
+            pos = self._current_formula_row_col()
+            return XlError.VALUE if pos is None else pos[0]
         ref = self._range_from_ref_node(args[0])
         if isinstance(ref, XlError):
             return ref
         return xl_row(ref)
 
     def _eval_column(self, args: list[AstNode]) -> int | XlError:
-        if len(args) < 1:
-            raise ParseError("COLUMN(...)", "COLUMN requires 1 argument")
+        if not args or (len(args) == 1 and isinstance(args[0], EmptyArgNode)):
+            pos = self._current_formula_row_col()
+            return XlError.VALUE if pos is None else pos[1]
         ref = self._range_from_ref_node(args[0])
         if isinstance(ref, XlError):
             return ref

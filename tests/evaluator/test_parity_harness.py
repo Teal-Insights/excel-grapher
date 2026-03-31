@@ -87,6 +87,12 @@ def test_parity_row_with_reference_and_offset() -> None:
     assert result.generated_results["S!A2"] == 5
 
 
+def test_parity_row_without_reference_matches_evaluator() -> None:
+    graph = _make_graph(_make_node("S!E12", "=ROW()", None))
+    result = assert_codegen_matches_evaluator(graph, ["S!E12"])
+    assert result.generated_results["S!E12"] == 12
+
+
 def test_parity_column_and_columns_with_offset() -> None:
     graph = _make_graph(
         _make_node("S!D4", None, 10),

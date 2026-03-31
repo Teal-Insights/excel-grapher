@@ -114,6 +114,7 @@ def test_golden_master_inline(tmp_path: Path) -> None:
         targets,
         load_values=True,
         max_depth=MAX_DEPTH,
+        use_cached_dynamic_refs=True,
     )
     print(f"Built graph with {len(graph)} nodes in {time.time() - start:.1f}s")
 

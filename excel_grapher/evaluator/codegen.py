@@ -122,6 +122,7 @@ class CodeGenerator:
         self._temp_var_counter = 0  # Counter for unique temp variable names
         self._ast_cache: dict[str, AstNode] = {}
         self._used_graph_closure: bool = False
+        self._formula_cell_address: str | None = None
 
     @staticmethod
     def _normalize_entrypoint_name(name: str) -> str:
@@ -816,8 +817,14 @@ class CodeGenerator:
         )
 
     def _emit_row(self, node: FunctionCallNode) -> str:
-        if len(node.args) < 1:
-            return "XlError.VALUE"
+        if not node.args or (len(node.args) == 1 and isinstance(node.args[0], EmptyArgNode)):
+            addr = self._formula_cell_address
+            if addr is None:
+                return "XlError.VALUE"
+            _sheet, cell = parse_address(addr)
+            cell_clean = cell.replace("$", "")
+            _col_str, row = fastpyxl.utils.cell.coordinate_from_string(cell_clean)
+            return repr(int(row))
 
         arg = node.args[0]
         if isinstance(arg, CellRefNode):
@@ -834,8 +841,15 @@ class CodeGenerator:
         return f"xl_row({self._emit_ast(arg)})"
 
     def _emit_column(self, node: FunctionCallNode) -> str:
-        if len(node.args) < 1:
-            return "XlError.VALUE"
+        if not node.args or (len(node.args) == 1 and isinstance(node.args[0], EmptyArgNode)):
+            addr = self._formula_cell_address
+            if addr is None:
+                return "XlError.VALUE"
+            _sheet, cell = parse_address(addr)
+            cell_clean = cell.replace("$", "")
+            col_str, _row = fastpyxl.utils.cell.coordinate_from_string(cell_clean)
+            col = fastpyxl.utils.cell.column_index_from_string(col_str)
+            return repr(int(col))
 
         arg = node.args[0]
         if isinstance(arg, CellRefNode):
@@ -1139,7 +1153,12 @@ class CodeGenerator:
         self._temp_var_counter = 0
         ast = self._get_or_parse_ast(normalized)
         assert ast is not None
-        expr = self._emit_ast(ast)
+        prev_cell = self._formula_cell_address
+        self._formula_cell_address = normalized
+        try:
+            expr = self._emit_ast(ast)
+        finally:
+            self._formula_cell_address = prev_cell
         lines.append(f"    return {expr}")
 
         return "\n".join(lines)

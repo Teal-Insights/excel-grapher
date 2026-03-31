@@ -1,5 +1,8 @@
 """
 Integration test: evaluate LIC-DSF workbook formulas and compare with Excel cached values.
+
+Chart Data export slice (figure rows, stress blocks) lives in
+``tests/evaluator/test_lic_dsf_chart_parity.py`` and ``tests/evaluator/lic_dsf_chart_targets.py``.
 """
 
 import re
@@ -55,6 +58,7 @@ def graph() -> DependencyGraph:
         targets,
         load_values=True,
         max_depth=100,
+        use_cached_dynamic_refs=True,
     )
 
 

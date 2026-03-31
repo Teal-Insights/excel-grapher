@@ -226,6 +226,7 @@ class TestGeneratedCodeWithRealWorkbook:
             targets,
             load_values=True,
             max_depth=self.MAX_DEPTH,
+            use_cached_dynamic_refs=True,
         )
         print(f"Built graph with {len(graph)} nodes in {time.time() - start:.1f}s")
 
@@ -252,6 +253,7 @@ class TestGeneratedCodeWithRealWorkbook:
             targets[:5],  # Just use first 5 targets for speed
             load_values=True,
             max_depth=self.MAX_DEPTH,
+            use_cached_dynamic_refs=True,
         )
 
         gen = CodeGenerator(graph)
@@ -289,6 +291,7 @@ class TestGeneratedCodeWithRealWorkbook:
             targets,
             load_values=True,
             max_depth=self.MAX_DEPTH,
+            use_cached_dynamic_refs=True,
         )
 
         # Compute dependency closure (graph-native). Normalize addresses to match generated runtime.
