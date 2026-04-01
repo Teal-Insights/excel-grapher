@@ -3,8 +3,11 @@ from __future__ import annotations
 import logging
 import math
 import re
-from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+import time
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from itertools import product
 from pathlib import Path
 from typing import Any, cast, get_args, get_origin, get_type_hints
@@ -51,6 +54,60 @@ from excel_grapher.core.types import ExcelRange, XlError
 from .parser import _find_function_calls_with_spans, expand_range, format_key
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Tracing infrastructure
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class DynamicRefTraceEvent:
+    """A single trace event emitted during dynamic-ref inference.
+
+    Attributes:
+        kind: Event type (``"infer"``, ``"expand-env"``, ``"build-domains"``,
+            ``"build-value-domains"``, ``"offset-scalar-fallback"``,
+            ``"offset-scalar-wide"``, plus ``"-error"`` variants).
+        name: Function that emitted the event.
+        elapsed_s: Wall-clock seconds spent in the traced operation.
+        detail: Flexible per-event payload (target counts, branch estimates,
+            expressions, etc.).
+    """
+
+    kind: str
+    name: str
+    elapsed_s: float
+    detail: dict[str, Any] = field(default_factory=dict)
+
+
+DynamicRefTraceFn = Callable[[DynamicRefTraceEvent], None]
+"""Callback signature for receiving trace events."""
+
+_active_tracer: ContextVar[DynamicRefTraceFn | None] = ContextVar(
+    "_active_tracer", default=None
+)
+
+
+@contextmanager
+def trace_dynamic_refs(callback: DynamicRefTraceFn) -> Iterator[None]:
+    """Activate *callback* as the dynamic-ref tracer for the enclosed block.
+
+    Nestable: an inner ``trace_dynamic_refs`` overrides the outer one; the
+    outer tracer is restored when the inner block exits.
+    """
+    token = _active_tracer.set(callback)
+    try:
+        yield
+    finally:
+        _active_tracer.reset(token)
+
+
+def _emit_trace(event: DynamicRefTraceEvent) -> None:
+    """Deliver *event* to the active tracer, if any."""
+    tracer = _active_tracer.get()
+    if tracer is not None:
+        tracer(event)
 
 
 class DynamicRefError(ValueError):
@@ -121,6 +178,7 @@ class DynamicRefConfig:
 
     cell_type_env: CellTypeEnv
     limits: DynamicRefLimits
+    tracer: DynamicRefTraceFn | None = None
 
     @classmethod
     def from_constraints(
@@ -534,8 +592,34 @@ def expand_leaf_env_to_argument_env(
         finally:
             in_progress.discard(addr)
 
-    for addr in argument_refs:
-        cell_type_for(addr)
+    t0 = time.perf_counter()
+    try:
+        for addr in argument_refs:
+            cell_type_for(addr)
+    except Exception as exc:
+        _emit_trace(
+            DynamicRefTraceEvent(
+                kind="expand-env-error",
+                name="expand_leaf_env_to_argument_env",
+                elapsed_s=time.perf_counter() - t0,
+                detail={
+                    "argument_refs": len(argument_refs),
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+            )
+        )
+        raise
+    _emit_trace(
+        DynamicRefTraceEvent(
+            kind="expand-env",
+            name="expand_leaf_env_to_argument_env",
+            elapsed_s=time.perf_counter() - t0,
+            detail={
+                "argument_refs": len(argument_refs),
+                "inferred_cells": len(cache),
+            },
+        )
+    )
     return cache
 
 
@@ -566,6 +650,7 @@ def infer_dynamic_offset_targets(
     if not isinstance(formula, str) or not formula.startswith("="):
         return set()
 
+    t0 = time.perf_counter()
     lim = limits or DynamicRefLimits()
     out: set[str] = set()
 
@@ -588,6 +673,14 @@ def infer_dynamic_offset_targets(
         if len(out) > lim.max_cells:
             raise DynamicRefError(f"Dynamic ref cells exceed limit ({len(out)} > {lim.max_cells})")
 
+    _emit_trace(
+        DynamicRefTraceEvent(
+            kind="infer",
+            name="infer_dynamic_offset_targets",
+            elapsed_s=time.perf_counter() - t0,
+            detail={"targets": len(out), "formula": formula, "current_sheet": current_sheet},
+        )
+    )
     return out
 
 
@@ -612,6 +705,7 @@ def infer_dynamic_index_targets(
     if not isinstance(formula, str) or not formula.startswith("="):
         return set()
 
+    t0 = time.perf_counter()
     lim = limits or DynamicRefLimits()
     out: set[str] = set()
 
@@ -652,6 +746,14 @@ def infer_dynamic_index_targets(
         if len(out) > lim.max_cells:
             raise DynamicRefError(f"Dynamic ref cells exceed limit ({len(out)} > {lim.max_cells})")
 
+    _emit_trace(
+        DynamicRefTraceEvent(
+            kind="infer",
+            name="infer_dynamic_index_targets",
+            elapsed_s=time.perf_counter() - t0,
+            detail={"targets": len(out), "formula": formula, "current_sheet": current_sheet},
+        )
+    )
     return out
 
 
@@ -2531,10 +2633,19 @@ def _infer_index_targets_core(
         if cached is not None:
             return set(cached)
         targets = _emit_index_targets_from_domains(array_range, row_dom, col_dom, limits)
-        print(
-            f"[DIAG] INDEX (abstract): {array_range.sheet}! shape={nrows}x{ncols} "
-            f"row_dom={row_dom} col_dom={col_dom} -> {len(targets)} targets",
-            flush=True,
+        _emit_trace(
+            DynamicRefTraceEvent(
+                kind="index-abstract",
+                name="_emit_index_targets",
+                elapsed_s=0.0,
+                detail={
+                    "sheet": array_range.sheet,
+                    "shape": f"{nrows}x{ncols}",
+                    "row_dom": str(row_dom),
+                    "col_dom": str(col_dom),
+                    "targets": len(targets),
+                },
+            )
         )
         _emit_index_cache[_cache_key] = frozenset(targets)
         return targets
@@ -2567,10 +2678,18 @@ def _infer_index_targets_core(
         raise DynamicRefError(
             f"INDEX target cells exceed limit ({len(targets)} > {limits.max_cells})"
         )
-    print(
-        f"[DIAG] INDEX (enumerated): {array_range.sheet}! shape={nrows}x{ncols} "
-        f"leaves={len(leaf_addrs)} -> {len(targets)} targets",
-        flush=True,
+    _emit_trace(
+        DynamicRefTraceEvent(
+            kind="index-enumerated",
+            name="_emit_index_targets",
+            elapsed_s=0.0,
+            detail={
+                "sheet": array_range.sheet,
+                "shape": f"{nrows}x{ncols}",
+                "leaves": len(leaf_addrs),
+                "targets": len(targets),
+            },
+        )
     )
     return targets
 
@@ -2597,6 +2716,9 @@ def _infer_offset_scalar_domains(
     *,
     current_sheet: str,
 ) -> list[int] | None:
+    t0 = time.perf_counter()
+    expr_str = _ast_to_expr_string(node)
+
     dom = _infer_numeric_domain(
         node,
         cell_type_env,
@@ -2607,19 +2729,52 @@ def _infer_offset_scalar_domains(
     if dom is not None:
         listed = _numeric_domain_to_int_list(dom, limits)
         if listed is not None:
+            if len(listed) > 8:
+                _emit_trace(
+                    DynamicRefTraceEvent(
+                        kind="offset-scalar-wide",
+                        name="_infer_offset_scalar_domains",
+                        elapsed_s=time.perf_counter() - t0,
+                        detail={"expr": expr_str, "count": len(listed)},
+                    )
+                )
             return listed
     addrs = _collect_addresses(node)
     try:
         bd = _build_domains(addrs, cell_type_env, limits)
     except DynamicRefError:
+        _emit_trace(
+            DynamicRefTraceEvent(
+                kind="offset-scalar-fallback",
+                name="_infer_offset_scalar_domains",
+                elapsed_s=time.perf_counter() - t0,
+                detail={"expr": expr_str},
+            )
+        )
         return None
     keys = sorted(bd.keys())
     if not keys:
+        _emit_trace(
+            DynamicRefTraceEvent(
+                kind="offset-scalar-fallback",
+                name="_infer_offset_scalar_domains",
+                elapsed_s=time.perf_counter() - t0,
+                detail={"expr": expr_str},
+            )
+        )
         return None
     total = 1
     for k in keys:
         total *= len(bd[k])
         if total > limits.max_branches:
+            _emit_trace(
+                DynamicRefTraceEvent(
+                    kind="offset-scalar-fallback",
+                    name="_infer_offset_scalar_domains",
+                    elapsed_s=time.perf_counter() - t0,
+                    detail={"expr": expr_str},
+                )
+            )
             return None
     out_vals: set[int] = set()
     for assignment in product(*(bd[k] for k in keys)):
@@ -2632,7 +2787,26 @@ def _infer_offset_scalar_domains(
         if isinstance(v, XlError):
             continue
         out_vals.add(int(v))
-    return sorted(out_vals) if out_vals else None
+    result = sorted(out_vals) if out_vals else None
+    if result is None:
+        _emit_trace(
+            DynamicRefTraceEvent(
+                kind="offset-scalar-fallback",
+                name="_infer_offset_scalar_domains",
+                elapsed_s=time.perf_counter() - t0,
+                detail={"expr": expr_str},
+            )
+        )
+    elif len(result) > 8:
+        _emit_trace(
+            DynamicRefTraceEvent(
+                kind="offset-scalar-wide",
+                name="_infer_offset_scalar_domains",
+                elapsed_s=time.perf_counter() - t0,
+                detail={"expr": expr_str, "count": len(result)},
+            )
+        )
+    return result
 
 
 def _narrowed_branch_is_infeasible(
@@ -2906,39 +3080,62 @@ def _build_domains(
     env: CellTypeEnv,
     limits: DynamicRefLimits,
 ) -> dict[str, list[int]]:
+    t0 = time.perf_counter()
     domains: dict[str, list[int]] = {}
-    for addr in addrs:
-        ct = _lookup_cell_type(env, addr)
-        if ct is None:
-            raise DynamicRefError(f"Missing CellType for {addr!r}")
-        if ct.kind is not CellKind.NUMBER:
-            raise DynamicRefError(f"CellType for {addr!r} must be numeric, got {ct.kind!r}")
-        vals: list[int]
-        if ct.enum is not None:
-            vals = [int(v) for v in ct.enum.values]
-        elif ct.interval is not None:
-            vals = _interval_to_values(ct.interval, limits)
-        elif ct.real_interval is not None:
-            raise DynamicRefError(
-                f"CellType for {addr!r} uses a real interval (RealBetween); "
-                "integer enum or Between bounds are required to enumerate OFFSET/INDEX arguments."
-            )
-        else:
-            raise DynamicRefError(
-                f"CellType for {addr!r} has no enum or interval domain (e.g. formula uses "
-                "OFFSET/INDIRECT and could not be inferred). Add a constraint for this cell."
-            )
-        if not vals:
-            raise DynamicRefError(f"Empty domain for {addr!r}")
-        domains[addr] = sorted(vals)
+    try:
+        for addr in addrs:
+            ct = _lookup_cell_type(env, addr)
+            if ct is None:
+                raise DynamicRefError(f"Missing CellType for {addr!r}")
+            if ct.kind is not CellKind.NUMBER:
+                raise DynamicRefError(f"CellType for {addr!r} must be numeric, got {ct.kind!r}")
+            vals: list[int]
+            if ct.enum is not None:
+                vals = [int(v) for v in ct.enum.values]
+            elif ct.interval is not None:
+                vals = _interval_to_values(ct.interval, limits)
+            elif ct.real_interval is not None:
+                raise DynamicRefError(
+                    f"CellType for {addr!r} uses a real interval (RealBetween); "
+                    "integer enum or Between bounds are required to enumerate OFFSET/INDEX arguments."
+                )
+            else:
+                raise DynamicRefError(
+                    f"CellType for {addr!r} has no enum or interval domain (e.g. formula uses "
+                    "OFFSET/INDIRECT and could not be inferred). Add a constraint for this cell."
+                )
+            if not vals:
+                raise DynamicRefError(f"Empty domain for {addr!r}")
+            domains[addr] = sorted(vals)
 
-    total = 1
-    for vs in domains.values():
-        total *= len(vs)
-        if total > limits.max_branches:
-            raise DynamicRefError(
-                f"Dynamic ref branches exceed limit ({total} > {limits.max_branches})"
+        total = 1
+        for vs in domains.values():
+            total *= len(vs)
+            if total > limits.max_branches:
+                raise DynamicRefError(
+                    f"Dynamic ref branches exceed limit ({total} > {limits.max_branches})"
+                )
+    except Exception as exc:
+        _emit_trace(
+            DynamicRefTraceEvent(
+                kind="build-domains-error",
+                name="_build_domains",
+                elapsed_s=time.perf_counter() - t0,
+                detail={"refs": len(domains), "error": f"{type(exc).__name__}: {exc}"},
             )
+        )
+        raise
+    branch_estimate = 1
+    for vs in domains.values():
+        branch_estimate *= len(vs)
+    _emit_trace(
+        DynamicRefTraceEvent(
+            kind="build-domains",
+            name="_build_domains",
+            elapsed_s=time.perf_counter() - t0,
+            detail={"refs": len(domains), "branch_estimate": branch_estimate},
+        )
+    )
     return domains
 
 
@@ -2977,6 +3174,7 @@ def infer_dynamic_indirect_targets(
     if not isinstance(formula, str) or not formula.startswith("="):
         return set()
 
+    t0 = time.perf_counter()
     lim = limits or DynamicRefLimits()
     out: set[str] = set()
 
@@ -2997,6 +3195,14 @@ def infer_dynamic_indirect_targets(
         if len(out) > lim.max_cells:
             raise DynamicRefError(f"Dynamic ref cells exceed limit ({len(out)} > {lim.max_cells})")
 
+    _emit_trace(
+        DynamicRefTraceEvent(
+            kind="infer",
+            name="infer_dynamic_indirect_targets",
+            elapsed_s=time.perf_counter() - t0,
+            detail={"targets": len(out), "formula": formula, "current_sheet": current_sheet},
+        )
+    )
     return out
 
 
@@ -3112,36 +3318,59 @@ def _build_value_domains(
     env: CellTypeEnv,
     limits: DynamicRefLimits,
 ) -> dict[str, list[Any]]:
+    t0 = time.perf_counter()
     domains: dict[str, list[Any]] = {}
-    for addr in addrs:
-        ct = _lookup_cell_type(env, addr)
-        if ct is None:
-            raise DynamicRefError(f"Missing CellType for {addr!r}")
-        values: list[Any]
-        if ct.enum is not None:
-            values = list(ct.enum.values)
-        elif ct.interval is not None:
-            values = _interval_to_values(ct.interval, limits)
-        elif ct.real_interval is not None:
-            raise DynamicRefError(
-                f"CellType for {addr!r} uses a real interval (RealBetween); "
-                "use Literal / integer Between or an explicit enum for INDIRECT text arguments."
-            )
-        else:
-            raise DynamicRefError(
-                f"CellType for {addr!r} must have an interval or enum domain for INDIRECT analysis"
-            )
-        if not values:
-            raise DynamicRefError(f"Empty domain for {addr!r}")
-        domains[addr] = values
+    try:
+        for addr in addrs:
+            ct = _lookup_cell_type(env, addr)
+            if ct is None:
+                raise DynamicRefError(f"Missing CellType for {addr!r}")
+            values: list[Any]
+            if ct.enum is not None:
+                values = list(ct.enum.values)
+            elif ct.interval is not None:
+                values = _interval_to_values(ct.interval, limits)
+            elif ct.real_interval is not None:
+                raise DynamicRefError(
+                    f"CellType for {addr!r} uses a real interval (RealBetween); "
+                    "use Literal / integer Between or an explicit enum for INDIRECT text arguments."
+                )
+            else:
+                raise DynamicRefError(
+                    f"CellType for {addr!r} must have an interval or enum domain for INDIRECT analysis"
+                )
+            if not values:
+                raise DynamicRefError(f"Empty domain for {addr!r}")
+            domains[addr] = values
 
-    total = 1
-    for vs in domains.values():
-        total *= len(vs)
-        if total > limits.max_branches:
-            raise DynamicRefError(
-                f"Dynamic ref branches exceed limit ({total} > {limits.max_branches})"
+        total = 1
+        for vs in domains.values():
+            total *= len(vs)
+            if total > limits.max_branches:
+                raise DynamicRefError(
+                    f"Dynamic ref branches exceed limit ({total} > {limits.max_branches})"
+                )
+    except Exception as exc:
+        _emit_trace(
+            DynamicRefTraceEvent(
+                kind="build-value-domains-error",
+                name="_build_value_domains",
+                elapsed_s=time.perf_counter() - t0,
+                detail={"refs": len(domains), "error": f"{type(exc).__name__}: {exc}"},
             )
+        )
+        raise
+    branch_estimate = 1
+    for vs in domains.values():
+        branch_estimate *= len(vs)
+    _emit_trace(
+        DynamicRefTraceEvent(
+            kind="build-value-domains",
+            name="_build_value_domains",
+            elapsed_s=time.perf_counter() - t0,
+            detail={"refs": len(domains), "branch_estimate": branch_estimate},
+        )
+    )
     return domains
 
 

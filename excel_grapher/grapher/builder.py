@@ -23,12 +23,15 @@ from .dependency_provenance import EdgeProvenance
 from .dynamic_refs import (
     DynamicRefConfig,
     DynamicRefError,
+    DynamicRefTraceEvent,
     GlobalWorkbookBounds,
+    _emit_trace,
     clear_index_target_cache,
     expand_leaf_env_to_argument_env,
     infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
+    trace_dynamic_refs,
 )
 from .graph import DependencyGraph, NodeHook
 from .guard import And, Compare, GuardExpr, Literal, Not
@@ -210,6 +213,13 @@ def create_dependency_graph(
 
     blank_rects = normalize_blank_range_specs(blank_ranges)
 
+    # Activate the tracer from DynamicRefConfig if one is set.
+    _tracer_token = None
+    if dynamic_refs is not None and dynamic_refs.tracer is not None:
+        from .dynamic_refs import _active_tracer
+
+        _tracer_token = _active_tracer.set(dynamic_refs.tracer)
+
     def load_wb(data_only: bool) -> fastpyxl.Workbook:
         if isinstance(workbook, fastpyxl.Workbook):
             if data_only:
@@ -223,7 +233,14 @@ def create_dependency_graph(
 
     _t0 = time.perf_counter()
     wb_formulas = load_wb(data_only=False)
-    print(f"[DIAG] Loaded formula workbook in {time.perf_counter() - _t0:.2f}s", flush=True)
+    _emit_trace(
+        DynamicRefTraceEvent(
+            kind="workbook-loaded",
+            name="create_dependency_graph",
+            elapsed_s=time.perf_counter() - _t0,
+            detail={"data_only": False},
+        )
+    )
     _t0 = time.perf_counter()
     wb_values = (
         load_wb(data_only=True)
@@ -231,7 +248,14 @@ def create_dependency_graph(
         else None
     )
     if wb_values is not None:
-        print(f"[DIAG] Loaded value workbook in {time.perf_counter() - _t0:.2f}s", flush=True)
+        _emit_trace(
+            DynamicRefTraceEvent(
+                kind="workbook-loaded",
+                name="create_dependency_graph",
+                elapsed_s=time.perf_counter() - _t0,
+                detail={"data_only": True},
+            )
+        )
 
     graph = DependencyGraph()
     for h in hooks or []:
@@ -824,12 +848,21 @@ def create_dependency_graph(
             visited.add(key)
             _bfs_count += 1
             if _bfs_count >= _bfs_next_log:
-                print(
-                    f"[DIAG] BFS: {_bfs_count} nodes, queue={len(q)}, depth={depth}, "
-                    f"{time.perf_counter() - _bfs_t0:.1f}s, last={key}, "
-                    f"dyn_infer={_dyn_stats['infer_calls']}, dyn_cache_hits={_dyn_stats['cache_hits']}, "
-                    f"env_cache_size={len(_shared_cell_type_cache)}",
-                    flush=True,
+                _emit_trace(
+                    DynamicRefTraceEvent(
+                        kind="bfs-progress",
+                        name="create_dependency_graph",
+                        elapsed_s=time.perf_counter() - _bfs_t0,
+                        detail={
+                            "nodes": _bfs_count,
+                            "queue": len(q),
+                            "depth": depth,
+                            "last": key,
+                            "infer_calls": _dyn_stats["infer_calls"],
+                            "cache_hits": _dyn_stats["cache_hits"],
+                            "env_cache_size": len(_shared_cell_type_cache),
+                        },
+                    )
                 )
                 _bfs_next_log += 5000
             if depth > max_depth:
@@ -918,16 +951,27 @@ def create_dependency_graph(
                     q.append((dep_sheet, dep_a1, depth + 1))
     finally:
         if _dyn_stats["infer_calls"] or _dyn_stats["cache_hits"]:
-            print(
-                f"[DIAG] BFS done: {_bfs_count} nodes, {time.perf_counter() - _bfs_t0:.2f}s, "
-                f"dyn_infer={_dyn_stats['infer_calls']}, dyn_cache_hits={_dyn_stats['cache_hits']}, "
-                f"env_cache_size={len(_shared_cell_type_cache)}",
-                flush=True,
+            _emit_trace(
+                DynamicRefTraceEvent(
+                    kind="bfs-done",
+                    name="create_dependency_graph",
+                    elapsed_s=time.perf_counter() - _bfs_t0,
+                    detail={
+                        "nodes": _bfs_count,
+                        "infer_calls": _dyn_stats["infer_calls"],
+                        "cache_hits": _dyn_stats["cache_hits"],
+                        "env_cache_size": len(_shared_cell_type_cache),
+                    },
+                )
             )
         if wb_values is not None:
             wb_values.close()
         if not isinstance(workbook, fastpyxl.Workbook):
             wb_formulas.close()
+        if _tracer_token is not None:
+            from .dynamic_refs import _active_tracer
+
+            _active_tracer.reset(_tracer_token)
 
     return graph
 

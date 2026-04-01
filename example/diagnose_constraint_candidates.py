@@ -9,7 +9,6 @@ you can inspect where inference falls back to combinatorial enumeration.
 from __future__ import annotations
 
 import argparse
-import inspect
 import sys
 import time
 from collections import Counter
@@ -23,8 +22,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from excel_grapher import DynamicRefConfig, list_dynamic_ref_constraint_candidates  # noqa: E402
-from excel_grapher.core.cell_types import CellType, IntervalDomain  # noqa: E402
+from excel_grapher import (  # noqa: E402
+    DynamicRefConfig,
+    DynamicRefTraceEvent,
+    list_dynamic_ref_constraint_candidates,
+    trace_dynamic_refs,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +86,32 @@ class TraceCollector:
                 detail=detail,
                 branch_estimate=branch_estimate,
             )
+        )
+
+    def on_library_event(self, event: DynamicRefTraceEvent) -> None:
+        """Translate a library-emitted :class:`DynamicRefTraceEvent` to a local :class:`TraceEvent`."""
+        detail = event.detail
+        branch_estimate = detail.get("branch_estimate")
+        if isinstance(branch_estimate, int):
+            pass
+        elif "count" in detail:
+            branch_estimate = detail["count"]
+        else:
+            branch_estimate = None
+
+        detail_parts: list[str] = []
+        for key, value in detail.items():
+            if key == "branch_estimate":
+                continue
+            detail_parts.append(f"{key}={value}")
+        detail_str = "; ".join(detail_parts) if detail_parts else ""
+
+        self.record(
+            kind=event.kind,
+            caller=event.name,
+            elapsed_s=event.elapsed_s,
+            detail=detail_str,
+            branch_estimate=branch_estimate,
         )
 
     def snapshot(self) -> int:
@@ -171,205 +200,6 @@ def build_dynamic_ref_config(workbook: Path) -> DynamicRefConfig:
         uncached.LicDsfConstraints,
         workbook,
     )
-
-
-def _domain_size_from_interval(interval: IntervalDomain | None) -> int | None:
-    if interval is None or interval.min is None or interval.max is None:
-        return None
-    lo = int(interval.min)
-    hi = int(interval.max)
-    if hi < lo:
-        return 0
-    return hi - lo + 1
-
-
-def _cell_type_domain_summary(cell_type: CellType | None) -> tuple[int | None, str]:
-    if cell_type is None:
-        return None, "missing"
-    if cell_type.enum is not None:
-        return len(cell_type.enum.values), f"enum[{len(cell_type.enum.values)}]"
-    if cell_type.interval is not None:
-        size = _domain_size_from_interval(cell_type.interval)
-        bounds = f"[{cell_type.interval.min},{cell_type.interval.max}]"
-        return size, f"interval{bounds}"
-    if cell_type.real_interval is not None:
-        return None, f"real[{cell_type.real_interval.min},{cell_type.real_interval.max}]"
-    return None, cell_type.kind.value
-
-
-def _estimate_branch_product(
-    addrs: Iterable[str],
-    env: Any,
-    *,
-    lookup_cell_type,
-) -> tuple[int | None, list[str]]:
-    refs = sorted(set(addrs))
-    detail: list[str] = []
-    total = 1
-    known = True
-    for addr in refs:
-        cell_type = lookup_cell_type(env, addr)
-        size, summary = _cell_type_domain_summary(cell_type)
-        detail.append(f"{addr}={summary}")
-        if size is None:
-            known = False
-            continue
-        total *= size
-    return (total if known else None), detail
-
-
-@contextmanager
-def install_trace_hooks(trace: TraceCollector) -> Iterator[None]:
-    import excel_grapher.grapher.dynamic_refs as dynamic_refs
-
-    originals = {
-        "infer_dynamic_offset_targets": dynamic_refs.infer_dynamic_offset_targets,
-        "infer_dynamic_index_targets": dynamic_refs.infer_dynamic_index_targets,
-        "infer_dynamic_indirect_targets": dynamic_refs.infer_dynamic_indirect_targets,
-        "expand_leaf_env_to_argument_env": dynamic_refs.expand_leaf_env_to_argument_env,
-        "_build_domains": dynamic_refs._build_domains,
-        "_build_value_domains": dynamic_refs._build_value_domains,
-        "_infer_offset_scalar_domains": dynamic_refs._infer_offset_scalar_domains,
-    }
-
-    def _caller_name() -> str:
-        frame = inspect.currentframe()
-        if frame is None or frame.f_back is None or frame.f_back.f_back is None:
-            return "unknown"
-        return frame.f_back.f_back.f_code.co_name
-
-    def _wrap_infer(name: str, fn):
-        def wrapped(formula: str, *args, current_sheet: str, **kwargs):
-            preview = " ".join(formula.split())[:120]
-            with trace.context(f"{name}:{current_sheet}:{preview}"):
-                t0 = time.perf_counter()
-                result = fn(formula, *args, current_sheet=current_sheet, **kwargs)
-                trace.record(
-                    kind="infer",
-                    caller=name,
-                    elapsed_s=time.perf_counter() - t0,
-                    detail=f"targets={len(result)}",
-                )
-                return result
-
-        return wrapped
-
-    def _wrap_expand(fn):
-        def wrapped(*args, **kwargs):
-            argument_refs = args[0] if args else kwargs.get("argument_refs", set())
-            t0 = time.perf_counter()
-            try:
-                result = fn(*args, **kwargs)
-            except Exception as exc:
-                trace.record(
-                    kind="argument-env-error",
-                    caller="expand_leaf_env_to_argument_env",
-                    elapsed_s=time.perf_counter() - t0,
-                    detail=f"argument_refs={len(argument_refs)} error={type(exc).__name__}: {exc}",
-                )
-                raise
-            trace.record(
-                kind="argument-env",
-                caller="expand_leaf_env_to_argument_env",
-                elapsed_s=time.perf_counter() - t0,
-                detail=f"argument_refs={len(argument_refs)} inferred_cells={len(result)}",
-            )
-            return result
-
-        return wrapped
-
-    def _wrap_domains(kind: str, fn):
-        def wrapped(addrs, env, limits):
-            t0 = time.perf_counter()
-            branch_estimate, detail = _estimate_branch_product(
-                addrs,
-                env,
-                lookup_cell_type=dynamic_refs._lookup_cell_type,
-            )
-            detail_preview = "; ".join(detail[:8])
-            if len(detail) > 8:
-                detail_preview += f"; ... +{len(detail) - 8} more"
-            try:
-                result = fn(addrs, env, limits)
-            except Exception as exc:
-                trace.record(
-                    kind=f"{kind}-error",
-                    caller=_caller_name(),
-                    elapsed_s=time.perf_counter() - t0,
-                    branch_estimate=branch_estimate,
-                    detail=f"refs={len(set(addrs))} {detail_preview} :: {type(exc).__name__}: {exc}",
-                )
-                raise
-            trace.record(
-                kind=kind,
-                caller=_caller_name(),
-                elapsed_s=time.perf_counter() - t0,
-                branch_estimate=branch_estimate,
-                detail=f"refs={len(set(addrs))} {detail_preview}",
-            )
-            return result
-
-        return wrapped
-
-    def _wrap_offset_scalar(fn):
-        def wrapped(node, cell_type_env, limits, eval_context, *, current_sheet):
-            expr = dynamic_refs._ast_to_expr_string(node)
-            t0 = time.perf_counter()
-            result = fn(
-                node,
-                cell_type_env,
-                limits,
-                eval_context,
-                current_sheet=current_sheet,
-            )
-            if result is None:
-                trace.record(
-                    kind="offset-scalar-fallback",
-                    caller=_caller_name(),
-                    elapsed_s=time.perf_counter() - t0,
-                    detail=f"{expr}",
-                )
-            elif len(result) > 8:
-                trace.record(
-                    kind="offset-scalar-wide",
-                    caller=_caller_name(),
-                    elapsed_s=time.perf_counter() - t0,
-                    branch_estimate=len(result),
-                    detail=f"{expr} -> {len(result)} values",
-                )
-            return result
-
-        return wrapped
-
-    dynamic_refs.infer_dynamic_offset_targets = _wrap_infer(
-        "infer_dynamic_offset_targets", originals["infer_dynamic_offset_targets"]
-    )
-    dynamic_refs.infer_dynamic_index_targets = _wrap_infer(
-        "infer_dynamic_index_targets", originals["infer_dynamic_index_targets"]
-    )
-    dynamic_refs.infer_dynamic_indirect_targets = _wrap_infer(
-        "infer_dynamic_indirect_targets", originals["infer_dynamic_indirect_targets"]
-    )
-    dynamic_refs.expand_leaf_env_to_argument_env = _wrap_expand(
-        originals["expand_leaf_env_to_argument_env"]
-    )
-    dynamic_refs._build_domains = _wrap_domains("fallback-domains", originals["_build_domains"])
-    dynamic_refs._build_value_domains = _wrap_domains(
-        "fallback-value-domains", originals["_build_value_domains"]
-    )
-    dynamic_refs._infer_offset_scalar_domains = _wrap_offset_scalar(
-        originals["_infer_offset_scalar_domains"]
-    )
-    try:
-        yield
-    finally:
-        dynamic_refs.infer_dynamic_offset_targets = originals["infer_dynamic_offset_targets"]
-        dynamic_refs.infer_dynamic_index_targets = originals["infer_dynamic_index_targets"]
-        dynamic_refs.infer_dynamic_indirect_targets = originals["infer_dynamic_indirect_targets"]
-        dynamic_refs.expand_leaf_env_to_argument_env = originals["expand_leaf_env_to_argument_env"]
-        dynamic_refs._build_domains = originals["_build_domains"]
-        dynamic_refs._build_value_domains = originals["_build_value_domains"]
-        dynamic_refs._infer_offset_scalar_domains = originals["_infer_offset_scalar_domains"]
 
 
 def _format_seconds(seconds: float) -> str:
@@ -551,7 +381,7 @@ def main() -> int:
     print()
 
     trace = TraceCollector()
-    with install_trace_hooks(trace):
+    with trace_dynamic_refs(trace.on_library_event):
         for subset in subsets:
             scan_start = trace.snapshot()
             with trace.context(f"subset:{subset.name}"):

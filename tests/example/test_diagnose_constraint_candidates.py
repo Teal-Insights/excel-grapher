@@ -1,33 +1,21 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
-
 import pytest
 
 # ---------------------------------------------------------------------------
-# Import the module under test (must exist for GREEN phase)
+# Import the module under test
 # ---------------------------------------------------------------------------
 from example.diagnose_constraint_candidates import (
     TargetEntry,
     TraceCollector,
     TraceEvent,
-    _cell_type_domain_summary,
-    _domain_size_from_interval,
-    _estimate_branch_product,
     _format_seconds,
     _print_trace_summary,
     _stable_unique,
     build_subsets,
-    install_trace_hooks,
     select_entries,
 )
-from excel_grapher.core.cell_types import (
-    CellKind,
-    CellType,
-    EnumDomain,
-    IntervalDomain,
-    RealIntervalDomain,
-)
+from excel_grapher import DynamicRefTraceEvent
 
 # ---------------------------------------------------------------------------
 # _stable_unique
@@ -45,76 +33,6 @@ def test_stable_unique_empty() -> None:
 
 def test_stable_unique_no_duplicates() -> None:
     assert _stable_unique(["x", "y", "z"]) == ("x", "y", "z")
-
-
-# ---------------------------------------------------------------------------
-# _domain_size_from_interval
-# ---------------------------------------------------------------------------
-
-
-def test_domain_size_known_interval() -> None:
-    assert _domain_size_from_interval(IntervalDomain(min=1, max=5)) == 5
-
-
-def test_domain_size_single_value() -> None:
-    assert _domain_size_from_interval(IntervalDomain(min=3, max=3)) == 1
-
-
-def test_domain_size_inverted_is_zero() -> None:
-    assert _domain_size_from_interval(IntervalDomain(min=5, max=2)) == 0
-
-
-def test_domain_size_none_interval() -> None:
-    assert _domain_size_from_interval(None) is None
-
-
-def test_domain_size_unbounded_min() -> None:
-    assert _domain_size_from_interval(IntervalDomain(min=None, max=5)) is None
-
-
-def test_domain_size_unbounded_max() -> None:
-    assert _domain_size_from_interval(IntervalDomain(min=1, max=None)) is None
-
-
-# ---------------------------------------------------------------------------
-# _cell_type_domain_summary
-# ---------------------------------------------------------------------------
-
-
-def test_cell_type_domain_summary_none() -> None:
-    size, desc = _cell_type_domain_summary(None)
-    assert size is None
-    assert desc == "missing"
-
-
-def test_cell_type_domain_summary_enum() -> None:
-    ct = CellType(kind=CellKind.STRING, enum=EnumDomain(values=frozenset(["a", "b", "c"])))
-    size, desc = _cell_type_domain_summary(ct)
-    assert size == 3
-    assert "enum[3]" in desc
-
-
-def test_cell_type_domain_summary_interval() -> None:
-    ct = CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=4))
-    size, desc = _cell_type_domain_summary(ct)
-    assert size == 4
-    assert "interval" in desc
-    assert "1" in desc
-    assert "4" in desc
-
-
-def test_cell_type_domain_summary_real_interval() -> None:
-    ct = CellType(kind=CellKind.NUMBER, real_interval=RealIntervalDomain(min=0.0, max=1.0))
-    size, desc = _cell_type_domain_summary(ct)
-    assert size is None
-    assert "real" in desc
-
-
-def test_cell_type_domain_summary_plain_kind() -> None:
-    ct = CellType(kind=CellKind.ANY)
-    size, desc = _cell_type_domain_summary(ct)
-    assert size is None
-    assert desc == CellKind.ANY.value
 
 
 # ---------------------------------------------------------------------------
@@ -316,277 +234,73 @@ def test_trace_collector_snapshot_and_since() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _estimate_branch_product
+# TraceCollector.on_library_event
 # ---------------------------------------------------------------------------
 
 
-def test_estimate_branch_product_empty_refs_returns_one() -> None:
-    total, detail = _estimate_branch_product([], {}, lookup_cell_type=lambda env, addr: None)
-    assert total == 1
-    assert detail == []
-
-
-def test_estimate_branch_product_all_enum_returns_product() -> None:
-    ct_a = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset([1, 2, 3])))
-    ct_b = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset([10, 20])))
-    total, detail = _estimate_branch_product(
-        ["A1", "B1"], {}, lookup_cell_type=lambda env, addr: ct_a if addr == "A1" else ct_b
-    )
-    assert total == 6  # 3 * 2
-    assert len(detail) == 2
-
-
-def test_estimate_branch_product_unknown_size_returns_none() -> None:
-    ct_a = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset([1, 2])))
-    # B1 lookup returns None (missing) -> known=False
-    total, detail = _estimate_branch_product(
-        ["A1", "B1"], {}, lookup_cell_type=lambda env, addr: ct_a if addr == "A1" else None
-    )
-    assert total is None
-    assert len(detail) == 2
-
-
-def test_estimate_branch_product_deduplicates_refs() -> None:
-    ct = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset([1, 2])))
-    total, detail = _estimate_branch_product(
-        ["A1", "A1", "A1"], {}, lookup_cell_type=lambda env, addr: ct
-    )
-    assert total == 2  # A1 counted once
-    assert len(detail) == 1
-
-
-def test_estimate_branch_product_interval_known() -> None:
-    ct = CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=5))
-    total, detail = _estimate_branch_product(["X1"], {}, lookup_cell_type=lambda env, addr: ct)
-    assert total == 5
-
-
-# ---------------------------------------------------------------------------
-# install_trace_hooks — restoration
-# ---------------------------------------------------------------------------
-
-
-def test_install_trace_hooks_restores_originals_after_exit() -> None:
-    import excel_grapher.grapher.dynamic_refs as dr
-
-    originals = {
-        "infer_dynamic_offset_targets": dr.infer_dynamic_offset_targets,
-        "expand_leaf_env_to_argument_env": dr.expand_leaf_env_to_argument_env,
-        "_build_domains": dr._build_domains,
-        "_build_value_domains": dr._build_value_domains,
-        "_infer_offset_scalar_domains": dr._infer_offset_scalar_domains,
-    }
+def test_on_library_event_maps_kind_and_name() -> None:
     trace = TraceCollector()
-    with install_trace_hooks(trace):
-        assert dr.infer_dynamic_offset_targets is not originals["infer_dynamic_offset_targets"]
-        assert dr._build_domains is not originals["_build_domains"]
-    for name, original in originals.items():
-        assert getattr(dr, name) is original
-
-
-def test_install_trace_hooks_restores_on_body_exception() -> None:
-    import excel_grapher.grapher.dynamic_refs as dr
-
-    original_offset = dr.infer_dynamic_offset_targets
-    trace = TraceCollector()
-    with pytest.raises(RuntimeError, match="body error"), install_trace_hooks(trace):
-        raise RuntimeError("body error")
-    assert dr.infer_dynamic_offset_targets is original_offset
-
-
-# ---------------------------------------------------------------------------
-# install_trace_hooks — _wrap_infer
-# ---------------------------------------------------------------------------
-
-
-def test_install_trace_hooks_wrap_infer_records_event() -> None:
-    import excel_grapher.grapher.dynamic_refs as dr
-
-    trace = TraceCollector()
-    stub = MagicMock(return_value={"Sheet1!X1"})
-    with patch.object(dr, "infer_dynamic_offset_targets", stub), install_trace_hooks(trace):
-        result = dr.infer_dynamic_offset_targets(
-            "=OFFSET(A1,1,0)", current_sheet="Sheet1", cell_type_env={}
-        )
-    assert result == {"Sheet1!X1"}
+    lib_event = DynamicRefTraceEvent(
+        kind="infer",
+        name="infer_dynamic_offset_targets",
+        elapsed_s=0.5,
+        detail={"targets": 3, "formula": "=OFFSET(A1,1,0)", "current_sheet": "Sheet1"},
+    )
+    trace.on_library_event(lib_event)
     assert len(trace._events) == 1
     ev = trace._events[0]
     assert ev.kind == "infer"
     assert ev.caller == "infer_dynamic_offset_targets"
-    assert ev.elapsed_s >= 0
-    assert "targets=1" in ev.detail
+    assert ev.elapsed_s == 0.5
+    assert "targets=3" in ev.detail
 
 
-def test_install_trace_hooks_wrap_infer_context_includes_formula_preview() -> None:
-    import excel_grapher.grapher.dynamic_refs as dr
-
+def test_on_library_event_extracts_branch_estimate() -> None:
     trace = TraceCollector()
-    stub = MagicMock(return_value=set())
-    with patch.object(dr, "infer_dynamic_index_targets", stub), install_trace_hooks(trace):
-        dr.infer_dynamic_index_targets("=INDEX(A:A,1)", current_sheet="Data", cell_type_env={})
-    # The infer event context should encode the function name, sheet, and formula preview
+    lib_event = DynamicRefTraceEvent(
+        kind="build-domains",
+        name="_build_domains",
+        elapsed_s=0.1,
+        detail={"refs": 2, "branch_estimate": 42},
+    )
+    trace.on_library_event(lib_event)
     ev = trace._events[0]
-    assert "infer_dynamic_index_targets" in ev.context
-    assert "Data" in ev.context
+    assert ev.branch_estimate == 42
 
 
-# ---------------------------------------------------------------------------
-# install_trace_hooks — _wrap_expand
-# ---------------------------------------------------------------------------
-
-
-def test_install_trace_hooks_wrap_expand_records_event() -> None:
-    import excel_grapher.grapher.dynamic_refs as dr
-
+def test_on_library_event_extracts_count_as_branch_estimate() -> None:
     trace = TraceCollector()
-    stub = MagicMock(return_value={"Sheet1!A1": CellType(kind=CellKind.NUMBER)})
-    with patch.object(dr, "expand_leaf_env_to_argument_env", stub), install_trace_hooks(trace):
-        result = dr.expand_leaf_env_to_argument_env(
-            {"Sheet1!A1", "Sheet1!B1"}, lambda addr: None, lambda f, s: set(), {}, MagicMock()
-        )
-    assert result == {"Sheet1!A1": CellType(kind=CellKind.NUMBER)}
-    assert len(trace._events) == 1
+    lib_event = DynamicRefTraceEvent(
+        kind="offset-scalar-wide",
+        name="_infer_offset_scalar_domains",
+        elapsed_s=0.0,
+        detail={"expr": "B1", "count": 20},
+    )
+    trace.on_library_event(lib_event)
     ev = trace._events[0]
-    assert ev.kind == "argument-env"
-    assert ev.caller == "expand_leaf_env_to_argument_env"
-    assert "argument_refs=2" in ev.detail
-    assert "inferred_cells=1" in ev.detail
-
-
-def test_install_trace_hooks_wrap_expand_records_error_event() -> None:
-    import excel_grapher.grapher.dynamic_refs as dr
-
-    trace = TraceCollector()
-    stub = MagicMock(side_effect=ValueError("bad env"))
-    with (
-        patch.object(dr, "expand_leaf_env_to_argument_env", stub),
-        install_trace_hooks(trace),
-        pytest.raises(ValueError, match="bad env"),
-    ):
-        dr.expand_leaf_env_to_argument_env(
-            {"Sheet1!A1"}, lambda addr: None, lambda f, s: set(), {}, MagicMock()
-        )
-    assert len(trace._events) == 1
-    ev = trace._events[0]
-    assert ev.kind == "argument-env-error"
-    assert "ValueError" in ev.detail
-    assert "bad env" in ev.detail
-
-
-# ---------------------------------------------------------------------------
-# install_trace_hooks — _wrap_domains
-# ---------------------------------------------------------------------------
-
-
-def test_install_trace_hooks_wrap_domains_records_fallback_domains_event() -> None:
-    import excel_grapher.grapher.dynamic_refs as dr
-
-    trace = TraceCollector()
-    stub = MagicMock(return_value={})
-    limits = MagicMock()
-    with patch.object(dr, "_build_domains", stub), install_trace_hooks(trace):
-        result = dr._build_domains([], {}, limits)
-    assert result == {}
-    assert len(trace._events) == 1
-    ev = trace._events[0]
-    assert ev.kind == "fallback-domains"
-    assert ev.branch_estimate == 1  # empty addrs -> product 1, all known
-    assert "refs=0" in ev.detail
-
-
-def test_install_trace_hooks_wrap_domains_records_error_event() -> None:
-    import excel_grapher.grapher.dynamic_refs as dr
-
-    trace = TraceCollector()
-    stub = MagicMock(side_effect=RuntimeError("too many branches"))
-    limits = MagicMock()
-    with (
-        patch.object(dr, "_build_domains", stub),
-        install_trace_hooks(trace),
-        pytest.raises(RuntimeError, match="too many branches"),
-    ):
-        dr._build_domains([], {}, limits)
-    assert len(trace._events) == 1
-    ev = trace._events[0]
-    assert ev.kind == "fallback-domains-error"
-    assert "RuntimeError" in ev.detail
-
-
-def test_install_trace_hooks_wrap_value_domains_records_event() -> None:
-    import excel_grapher.grapher.dynamic_refs as dr
-
-    trace = TraceCollector()
-    stub = MagicMock(return_value={})
-    limits = MagicMock()
-    with patch.object(dr, "_build_value_domains", stub), install_trace_hooks(trace):
-        dr._build_value_domains([], {}, limits)
-    assert len(trace._events) == 1
-    assert trace._events[0].kind == "fallback-value-domains"
-
-
-# ---------------------------------------------------------------------------
-# install_trace_hooks — _wrap_offset_scalar
-# ---------------------------------------------------------------------------
-
-
-def test_install_trace_hooks_wrap_offset_scalar_fallback_records_event() -> None:
-    import excel_grapher.grapher.dynamic_refs as dr
-
-    trace = TraceCollector()
-    stub = MagicMock(return_value=None)  # None -> fallback
-    fake_node = MagicMock()
-    with (
-        patch.object(dr, "_infer_offset_scalar_domains", stub),
-        patch.object(dr, "_ast_to_expr_string", return_value="OFFSET(A1,1,0)"),
-        install_trace_hooks(trace),
-    ):
-        result = dr._infer_offset_scalar_domains(
-            fake_node, {}, MagicMock(), None, current_sheet="Sheet1"
-        )
-    assert result is None
-    assert len(trace._events) == 1
-    ev = trace._events[0]
-    assert ev.kind == "offset-scalar-fallback"
-    assert "OFFSET(A1,1,0)" in ev.detail
-
-
-def test_install_trace_hooks_wrap_offset_scalar_wide_records_event() -> None:
-    import excel_grapher.grapher.dynamic_refs as dr
-
-    trace = TraceCollector()
-    stub = MagicMock(return_value=list(range(20)))  # > 8 -> wide
-    fake_node = MagicMock()
-    with (
-        patch.object(dr, "_infer_offset_scalar_domains", stub),
-        patch.object(dr, "_ast_to_expr_string", return_value="IDX"),
-        install_trace_hooks(trace),
-    ):
-        result = dr._infer_offset_scalar_domains(
-            fake_node, {}, MagicMock(), None, current_sheet="Sheet1"
-        )
-    assert result == list(range(20))
-    assert len(trace._events) == 1
-    ev = trace._events[0]
-    assert ev.kind == "offset-scalar-wide"
     assert ev.branch_estimate == 20
 
 
-def test_install_trace_hooks_wrap_offset_scalar_small_result_records_no_event() -> None:
-    import excel_grapher.grapher.dynamic_refs as dr
-
+def test_on_library_event_no_branch_estimate_when_absent() -> None:
     trace = TraceCollector()
-    stub = MagicMock(return_value=[1, 2, 3])  # <= 8 -> no event
-    fake_node = MagicMock()
-    with (
-        patch.object(dr, "_infer_offset_scalar_domains", stub),
-        patch.object(dr, "_ast_to_expr_string", return_value="IDX"),
-        install_trace_hooks(trace),
-    ):
-        result = dr._infer_offset_scalar_domains(
-            fake_node, {}, MagicMock(), None, current_sheet="Sheet1"
-        )
-    assert result == [1, 2, 3]
-    assert len(trace._events) == 0
+    lib_event = DynamicRefTraceEvent(
+        kind="offset-scalar-fallback",
+        name="_infer_offset_scalar_domains",
+        elapsed_s=0.0,
+        detail={"expr": "Z99"},
+    )
+    trace.on_library_event(lib_event)
+    ev = trace._events[0]
+    assert ev.branch_estimate is None
+
+
+def test_on_library_event_respects_context_stack() -> None:
+    trace = TraceCollector()
+    lib_event = DynamicRefTraceEvent(kind="infer", name="fn", elapsed_s=0.0)
+    with trace.context("subset:Test"):
+        trace.on_library_event(lib_event)
+    ev = trace._events[0]
+    assert ev.context == "subset:Test"
 
 
 # ---------------------------------------------------------------------------
