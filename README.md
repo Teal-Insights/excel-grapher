@@ -333,20 +333,20 @@ Open the exported HTML directly in a browser. The interface supports panning, zo
 
 #### Interpreting the overview for module inference
 
-The overview is most useful as a **module-finding aid** for generated-library design, not as a literal geometric embedding of workbook logic. Color primarily indicates inferred module membership. Horizontal position is the important structural axis: farther right usually means more upstream precedent-like logic, while farther left usually means more downstream consumer, output, or report logic.
+The overview is most useful as a **module-finding aid** for generated-library design, not as a literal geometric embedding of workbook logic. Color primarily indicates inferred module membership. Vertical position is the important structural axis: farther down usually means more upstream precedent-like logic, while farther up usually means more downstream consumer, output, or report logic.
 
 When reading the graph:
 
-- A same-color band that spans several X slices is a strong candidate for one extracted library module, especially if it has relatively few blue inter-module lines leaving it.
-- A same-color cluster all in one narrow X slice is often just a batch of parallel formulas at one stage, not necessarily a full standalone boundary, though it may still be patternized into a small helper for deduplication.
-- Modules on the far right are good candidates for shared primitives, base calculations, normalization, lookups, or assumptions.
-- Modules on the far left are more likely report assembly, presentation logic, or output-specific composition.
+- A same-color band that spans several Y slices is a strong candidate for one extracted library module, especially if it has relatively few blue inter-module lines leaving it.
+- A same-color cluster all in one narrow Y slice is often just a batch of parallel formulas at one stage, not necessarily a full standalone boundary, though it may still be patternized into a small helper for deduplication.
+- Modules near the bottom are good candidates for shared primitives, base calculations, normalization, lookups, or assumptions.
+- Modules near the top are more likely report assembly, presentation logic, or output-specific composition.
 - A module with heavy fan-in and fan-out across many colors is probably cross-cutting glue, not a clean package boundary.
-- If you see several adjacent same-color or tightly coupled colors stepping left-to-right, that often suggests a higher-level package split rather than one tiny module per color.
+- If you see several adjacent same-color or tightly coupled colors stepping top-to-bottom, that often suggests a higher-level package split rather than one tiny module per color.
 
 Some caution is warranted when interpreting the picture:
 
-- The Y axis mainly separates module bands and reduces overplotting; vertical proximity is much less semantically important than horizontal position.
+- The X axis mainly separates module bands and reduces overplotting; horizontal proximity is much less semantically important than vertical position.
 - Similar colors do not imply similar semantics; color is just a deterministic visual label for `module_id`.
 - The blue overlay lines show module-to-module connectivity, which is useful for spotting coupling hot spots, but they are summary edges rather than a complete rendering of every cell-to-cell dependency.
 - The `Force` button is for local inspection only. Use the `Overview` view, not the force-layout view, when reasoning about global library boundaries.

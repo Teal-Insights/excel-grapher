@@ -540,6 +540,8 @@ def to_lightweight_viz(
             ys[i] = base_y + jx + jy
 
     _balance_overview_layout_spans(xs, ys)
+    # Export the overview with rank increasing down the page.
+    xs, ys = ys, xs
 
     mod_rank_min = [10**9] * n_mod
     mod_rank_max = [-1] * n_mod

@@ -189,13 +189,13 @@ def test_module_edges_aggregate_matches_graph() -> None:
     assert g_act == g_exp
 
 
-def test_layout_x_monotone_with_rank() -> None:
+def test_layout_y_monotone_with_rank() -> None:
     p = to_lightweight_viz(_fork_join_graph())
     n = p.stats.node_count
     for i in range(n):
         for j in range(n):
             if p.nodes.rank[i] < p.nodes.rank[j]:
-                assert p.nodes.x[i] <= p.nodes.x[j]
+                assert p.nodes.y[i] <= p.nodes.y[j]
 
 
 def test_dense_bucket_metadata() -> None:
