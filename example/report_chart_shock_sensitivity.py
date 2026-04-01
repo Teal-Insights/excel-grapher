@@ -228,7 +228,9 @@ def _print_table(
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("--workbook", type=Path, required=True, help="Source .xlsm path")
     p.add_argument("--input-sheet", default=DEFAULT_INPUT_SHEET, help="Sheet holding input row")
     p.add_argument("--input-row", type=int, default=DEFAULT_INPUT_ROW)

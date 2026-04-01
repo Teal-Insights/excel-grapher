@@ -103,7 +103,9 @@ def test_gdp_bps_shock_chart_evaluator_matches_recalc(
 
     mods = _collect_gdp_bps_modifications(WORKBOOK_PATH, float(bps))
     if not mods:
-        pytest.skip(f"No numeric cells to shock in {INPUT_SHEET!r} {INPUT_COL_START}{INPUT_ROW}:{INPUT_COL_END}{INPUT_ROW}")
+        pytest.skip(
+            f"No numeric cells to shock in {INPUT_SHEET!r} {INPUT_COL_START}{INPUT_ROW}:{INPUT_COL_END}{INPUT_ROW}"
+        )
 
     out_path = tmp_path / f"lic_dsf_gdp_shock_{bps:+d}bps.xlsm"
     try:
