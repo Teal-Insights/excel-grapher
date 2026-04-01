@@ -84,9 +84,7 @@ class DynamicRefTraceEvent:
 DynamicRefTraceFn = Callable[[DynamicRefTraceEvent], None]
 """Callback signature for receiving trace events."""
 
-_active_tracer: ContextVar[DynamicRefTraceFn | None] = ContextVar(
-    "_active_tracer", default=None
-)
+_active_tracer: ContextVar[DynamicRefTraceFn | None] = ContextVar("_active_tracer", default=None)
 
 
 @contextmanager

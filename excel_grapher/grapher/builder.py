@@ -31,7 +31,6 @@ from .dynamic_refs import (
     infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
-    trace_dynamic_refs,
 )
 from .graph import DependencyGraph, NodeHook
 from .guard import And, Compare, GuardExpr, Literal, Not

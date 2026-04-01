@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
 from excel_grapher.grapher.dynamic_refs import (
@@ -26,11 +24,9 @@ class TestDynamicRefTraceEvent:
         assert event.detail == {"targets": 3}
 
     def test_frozen(self) -> None:
-        event = DynamicRefTraceEvent(
-            kind="infer", name="test", elapsed_s=0.0, detail={}
-        )
+        event = DynamicRefTraceEvent(kind="infer", name="test", elapsed_s=0.0, detail={})
         with pytest.raises(AttributeError):
-            event.kind = "other"  # type: ignore[misc]
+            event.kind = "other"  # type: ignore[misc]  # ty: ignore[invalid-assignment]
 
     def test_defaults(self) -> None:
         event = DynamicRefTraceEvent(kind="infer", name="test", elapsed_s=0.0)
@@ -81,10 +77,9 @@ class TestTraceDynamicRefs:
 
         collected: list[DynamicRefTraceEvent] = []
 
-        with pytest.raises(RuntimeError):
-            with trace_dynamic_refs(collected.append):
-                _emit_trace(DynamicRefTraceEvent(kind="ok", name="f", elapsed_s=0.0))
-                raise RuntimeError("boom")
+        with pytest.raises(RuntimeError), trace_dynamic_refs(collected.append):
+            _emit_trace(DynamicRefTraceEvent(kind="ok", name="f", elapsed_s=0.0))
+            raise RuntimeError("boom")
 
         # After the context exits, no tracer should be active
         stray: list[DynamicRefTraceEvent] = []
@@ -97,12 +92,11 @@ class TestTraceEmissions:
     """Verify that the 7 hook points emit trace events."""
 
     def _collect(self, fn, *args, **kwargs) -> list[DynamicRefTraceEvent]:
+        import contextlib
+
         collected: list[DynamicRefTraceEvent] = []
-        with trace_dynamic_refs(collected.append):
-            try:
-                fn(*args, **kwargs)
-            except Exception:
-                pass
+        with trace_dynamic_refs(collected.append), contextlib.suppress(Exception):
+            fn(*args, **kwargs)
         return collected
 
     def test_infer_offset_emits(self) -> None:
@@ -137,12 +131,10 @@ class TestTraceEmissions:
             current_sheet="Sheet1",
             cell_type_env={},
         )
-        assert any(
-            e.kind == "infer" and e.name == "infer_dynamic_indirect_targets" for e in events
-        )
+        assert any(e.kind == "infer" and e.name == "infer_dynamic_indirect_targets" for e in events)
 
     def test_build_domains_emits(self) -> None:
-        from excel_grapher.core.cell_types import CellType, CellKind, IntervalDomain
+        from excel_grapher.core.cell_types import CellKind, CellType, IntervalDomain
         from excel_grapher.grapher.dynamic_refs import (
             DynamicRefLimits,
             _build_domains,
@@ -177,7 +169,7 @@ class TestTraceEmissions:
         assert any(e.kind == "build-domains-error" for e in events)
 
     def test_build_value_domains_emits(self) -> None:
-        from excel_grapher.core.cell_types import CellType, CellKind, EnumDomain
+        from excel_grapher.core.cell_types import CellKind, CellType, EnumDomain
         from excel_grapher.grapher.dynamic_refs import (
             DynamicRefLimits,
             _build_value_domains,
@@ -186,7 +178,7 @@ class TestTraceEmissions:
         env: dict[str, CellType] = {
             "Sheet1!A1": CellType(
                 kind=CellKind.STRING,
-                enum=EnumDomain(values=("hello", "world")),
+                enum=EnumDomain(values=frozenset({"hello", "world"})),
             ),
         }
         events = self._collect(
@@ -219,7 +211,7 @@ class TestTraceEmissions:
 
     def test_offset_scalar_wide_emits(self) -> None:
         """When _infer_offset_scalar_domains returns >8 values, it emits a wide event."""
-        from excel_grapher.core.cell_types import CellType, CellKind, IntervalDomain
+        from excel_grapher.core.cell_types import CellKind, CellType, IntervalDomain
         from excel_grapher.core.formula_ast import CellRefNode
         from excel_grapher.grapher.dynamic_refs import (
             DynamicRefLimits,
