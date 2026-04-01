@@ -70,14 +70,17 @@ class DynamicRefTraceEvent:
             ``"build-value-domains"``, ``"offset-scalar-fallback"``,
             ``"offset-scalar-wide"``, plus ``"-error"`` variants).
         name: Function that emitted the event.
-        elapsed_s: Wall-clock seconds spent in the traced operation.
+        elapsed_s: Wall-clock seconds spent in the traced operation.  Defaults
+            to ``0.0`` for structural events (e.g. ``"index-abstract"``,
+            ``"index-enumerated"``) that report *what* happened rather than
+            how long it took.
         detail: Flexible per-event payload (target counts, branch estimates,
             expressions, etc.).
     """
 
     kind: str
     name: str
-    elapsed_s: float
+    elapsed_s: float = 0.0
     detail: dict[str, Any] = field(default_factory=dict)
 
 
@@ -176,7 +179,6 @@ class DynamicRefConfig:
 
     cell_type_env: CellTypeEnv
     limits: DynamicRefLimits
-    tracer: DynamicRefTraceFn | None = None
 
     @classmethod
     def from_constraints(
@@ -2635,7 +2637,6 @@ def _infer_index_targets_core(
             DynamicRefTraceEvent(
                 kind="index-abstract",
                 name="_emit_index_targets",
-                elapsed_s=0.0,
                 detail={
                     "sheet": array_range.sheet,
                     "shape": f"{nrows}x{ncols}",
@@ -2680,7 +2681,6 @@ def _infer_index_targets_core(
         DynamicRefTraceEvent(
             kind="index-enumerated",
             name="_emit_index_targets",
-            elapsed_s=0.0,
             detail={
                 "sheet": array_range.sheet,
                 "shape": f"{nrows}x{ncols}",
@@ -2717,75 +2717,10 @@ def _infer_offset_scalar_domains(
     t0 = time.perf_counter()
     expr_str = _ast_to_expr_string(node)
 
-    dom = _infer_numeric_domain(
-        node,
-        cell_type_env,
-        limits,
-        context=eval_context,
-        current_sheet=current_sheet,
+    result = _infer_offset_scalar_domains_core(
+        node, cell_type_env, limits, eval_context, current_sheet=current_sheet
     )
-    if dom is not None:
-        listed = _numeric_domain_to_int_list(dom, limits)
-        if listed is not None:
-            if len(listed) > 8:
-                _emit_trace(
-                    DynamicRefTraceEvent(
-                        kind="offset-scalar-wide",
-                        name="_infer_offset_scalar_domains",
-                        elapsed_s=time.perf_counter() - t0,
-                        detail={"expr": expr_str, "count": len(listed)},
-                    )
-                )
-            return listed
-    addrs = _collect_addresses(node)
-    try:
-        bd = _build_domains(addrs, cell_type_env, limits)
-    except DynamicRefError:
-        _emit_trace(
-            DynamicRefTraceEvent(
-                kind="offset-scalar-fallback",
-                name="_infer_offset_scalar_domains",
-                elapsed_s=time.perf_counter() - t0,
-                detail={"expr": expr_str},
-            )
-        )
-        return None
-    keys = sorted(bd.keys())
-    if not keys:
-        _emit_trace(
-            DynamicRefTraceEvent(
-                kind="offset-scalar-fallback",
-                name="_infer_offset_scalar_domains",
-                elapsed_s=time.perf_counter() - t0,
-                detail={"expr": expr_str},
-            )
-        )
-        return None
-    total = 1
-    for k in keys:
-        total *= len(bd[k])
-        if total > limits.max_branches:
-            _emit_trace(
-                DynamicRefTraceEvent(
-                    kind="offset-scalar-fallback",
-                    name="_infer_offset_scalar_domains",
-                    elapsed_s=time.perf_counter() - t0,
-                    detail={"expr": expr_str},
-                )
-            )
-            return None
-    out_vals: set[int] = set()
-    for assignment in product(*(bd[k] for k in keys)):
-        addr_to_value = dict(zip(keys, assignment, strict=False))
 
-        def get_cell_value(addr: str, m=addr_to_value) -> float:
-            return m[addr]
-
-        v = _eval_arg(node, get_cell_value, limits, context=eval_context)
-        if isinstance(v, XlError):
-            continue
-        out_vals.add(int(v))
-    result = sorted(out_vals) if out_vals else None
     if result is None:
         _emit_trace(
             DynamicRefTraceEvent(
@@ -2805,6 +2740,52 @@ def _infer_offset_scalar_domains(
             )
         )
     return result
+
+
+def _infer_offset_scalar_domains_core(
+    node: AstNode,
+    cell_type_env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    eval_context: dict[str, int] | None,
+    *,
+    current_sheet: str,
+) -> list[int] | None:
+    dom = _infer_numeric_domain(
+        node,
+        cell_type_env,
+        limits,
+        context=eval_context,
+        current_sheet=current_sheet,
+    )
+    if dom is not None:
+        listed = _numeric_domain_to_int_list(dom, limits)
+        if listed is not None:
+            return listed
+    addrs = _collect_addresses(node)
+    try:
+        bd = _build_domains(addrs, cell_type_env, limits)
+    except DynamicRefError:
+        return None
+    keys = sorted(bd.keys())
+    if not keys:
+        return None
+    total = 1
+    for k in keys:
+        total *= len(bd[k])
+        if total > limits.max_branches:
+            return None
+    out_vals: set[int] = set()
+    for assignment in product(*(bd[k] for k in keys)):
+        addr_to_value = dict(zip(keys, assignment, strict=False))
+
+        def get_cell_value(addr: str, m=addr_to_value) -> float:
+            return m[addr]
+
+        v = _eval_arg(node, get_cell_value, limits, context=eval_context)
+        if isinstance(v, XlError):
+            continue
+        out_vals.add(int(v))
+    return sorted(out_vals) if out_vals else None
 
 
 def _narrowed_branch_is_infeasible(
@@ -3106,12 +3087,12 @@ def _build_domains(
                 raise DynamicRefError(f"Empty domain for {addr!r}")
             domains[addr] = sorted(vals)
 
-        total = 1
+        branch_estimate = 1
         for vs in domains.values():
-            total *= len(vs)
-            if total > limits.max_branches:
+            branch_estimate *= len(vs)
+            if branch_estimate > limits.max_branches:
                 raise DynamicRefError(
-                    f"Dynamic ref branches exceed limit ({total} > {limits.max_branches})"
+                    f"Dynamic ref branches exceed limit ({branch_estimate} > {limits.max_branches})"
                 )
     except Exception as exc:
         _emit_trace(
@@ -3123,9 +3104,6 @@ def _build_domains(
             )
         )
         raise
-    branch_estimate = 1
-    for vs in domains.values():
-        branch_estimate *= len(vs)
     _emit_trace(
         DynamicRefTraceEvent(
             kind="build-domains",
@@ -3341,12 +3319,12 @@ def _build_value_domains(
                 raise DynamicRefError(f"Empty domain for {addr!r}")
             domains[addr] = values
 
-        total = 1
+        branch_estimate = 1
         for vs in domains.values():
-            total *= len(vs)
-            if total > limits.max_branches:
+            branch_estimate *= len(vs)
+            if branch_estimate > limits.max_branches:
                 raise DynamicRefError(
-                    f"Dynamic ref branches exceed limit ({total} > {limits.max_branches})"
+                    f"Dynamic ref branches exceed limit ({branch_estimate} > {limits.max_branches})"
                 )
     except Exception as exc:
         _emit_trace(
@@ -3358,9 +3336,6 @@ def _build_value_domains(
             )
         )
         raise
-    branch_estimate = 1
-    for vs in domains.values():
-        branch_estimate *= len(vs)
     _emit_trace(
         DynamicRefTraceEvent(
             kind="build-value-domains",

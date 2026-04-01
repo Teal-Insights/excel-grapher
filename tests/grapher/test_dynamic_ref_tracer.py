@@ -189,6 +189,43 @@ class TestTraceEmissions:
         )
         assert any(e.kind == "build-value-domains" for e in events)
 
+    def test_expand_env_emits(self) -> None:
+        """expand_leaf_env_to_argument_env emits an expand-env event on success."""
+        from excel_grapher.grapher.dynamic_refs import (
+            DynamicRefLimits,
+            expand_leaf_env_to_argument_env,
+        )
+
+        events = self._collect(
+            expand_leaf_env_to_argument_env,
+            set(),
+            lambda addr: None,
+            lambda f, s: set(),
+            {},
+            DynamicRefLimits(),
+        )
+        assert any(e.kind == "expand-env" and e.name == "expand_leaf_env_to_argument_env" for e in events)
+
+    def test_expand_env_error_emits(self) -> None:
+        """expand_leaf_env_to_argument_env emits an expand-env-error event on failure."""
+        from excel_grapher.grapher.dynamic_refs import (
+            DynamicRefLimits,
+            expand_leaf_env_to_argument_env,
+        )
+
+        def bad_formula(addr: str) -> str:
+            raise RuntimeError("boom")
+
+        events = self._collect(
+            expand_leaf_env_to_argument_env,
+            {"Sheet1!A1"},
+            bad_formula,
+            lambda f, s: set(),
+            {},
+            DynamicRefLimits(),
+        )
+        assert any(e.kind == "expand-env-error" and e.name == "expand_leaf_env_to_argument_env" for e in events)
+
     def test_offset_scalar_fallback_emits(self) -> None:
         """When _infer_offset_scalar_domains returns None, it emits a fallback event."""
         from excel_grapher.core.formula_ast import CellRefNode

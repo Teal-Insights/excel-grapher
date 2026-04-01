@@ -26,6 +26,7 @@ from .dynamic_refs import (
     DynamicRefTraceEvent,
     GlobalWorkbookBounds,
     _emit_trace,
+    trace_dynamic_refs,
     clear_index_target_cache,
     expand_leaf_env_to_argument_env,
     infer_dynamic_index_targets,
@@ -211,13 +212,6 @@ def create_dependency_graph(
     """
 
     blank_rects = normalize_blank_range_specs(blank_ranges)
-
-    # Activate the tracer from DynamicRefConfig if one is set.
-    _tracer_token = None
-    if dynamic_refs is not None and dynamic_refs.tracer is not None:
-        from .dynamic_refs import _active_tracer
-
-        _tracer_token = _active_tracer.set(dynamic_refs.tracer)
 
     def load_wb(data_only: bool) -> fastpyxl.Workbook:
         if isinstance(workbook, fastpyxl.Workbook):
@@ -967,10 +961,6 @@ def create_dependency_graph(
             wb_values.close()
         if not isinstance(workbook, fastpyxl.Workbook):
             wb_formulas.close()
-        if _tracer_token is not None:
-            from .dynamic_refs import _active_tracer
-
-            _active_tracer.reset(_tracer_token)
 
     return graph
 
