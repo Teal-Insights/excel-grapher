@@ -26,7 +26,6 @@ from .dynamic_refs import (
     DynamicRefTraceEvent,
     GlobalWorkbookBounds,
     _emit_trace,
-    trace_dynamic_refs,
     clear_index_target_cache,
     expand_leaf_env_to_argument_env,
     infer_dynamic_index_targets,

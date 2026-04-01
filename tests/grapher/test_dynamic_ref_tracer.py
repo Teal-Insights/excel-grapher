@@ -204,7 +204,9 @@ class TestTraceEmissions:
             {},
             DynamicRefLimits(),
         )
-        assert any(e.kind == "expand-env" and e.name == "expand_leaf_env_to_argument_env" for e in events)
+        assert any(
+            e.kind == "expand-env" and e.name == "expand_leaf_env_to_argument_env" for e in events
+        )
 
     def test_expand_env_error_emits(self) -> None:
         """expand_leaf_env_to_argument_env emits an expand-env-error event on failure."""
@@ -224,7 +226,10 @@ class TestTraceEmissions:
             {},
             DynamicRefLimits(),
         )
-        assert any(e.kind == "expand-env-error" and e.name == "expand_leaf_env_to_argument_env" for e in events)
+        assert any(
+            e.kind == "expand-env-error" and e.name == "expand_leaf_env_to_argument_env"
+            for e in events
+        )
 
     def test_offset_scalar_fallback_emits(self) -> None:
         """When _infer_offset_scalar_domains returns None, it emits a fallback event."""
