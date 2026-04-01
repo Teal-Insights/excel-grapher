@@ -6,27 +6,33 @@
   <title>__TITLE__</title>
   <style>
     * { box-sizing: border-box; }
-    html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; background: #0f1419; color: #e6edf3; }
+    html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; background: #e8eaed; color: #24292f; }
     #toolbar {
       display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
-      padding: 8px 12px; background: #161b22; border-bottom: 1px solid #30363d;
+      padding: 8px 12px; background: #f0f2f5; border-bottom: 1px solid #d0d7de;
       font-size: 13px;
     }
     #toolbar label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
     #toolbar button, #toolbar select {
-      background: #21262d; color: #e6edf3; border: 1px solid #30363d;
+      background: #fff; color: #24292f; border: 1px solid #d0d7de;
       border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 13px;
     }
-    #toolbar button:hover, #toolbar select:hover { background: #30363d; }
-    #wrap { position: relative; width: 100%; height: calc(100% - 48px); }
+    #toolbar button:hover, #toolbar select:hover { background: #f6f8fa; }
+    #wrap {
+      position: relative; width: 100%; height: calc(100% - 48px);
+      background: #fff;
+      box-shadow: inset 0 1px 0 rgba(0,0,0,.06);
+    }
     #glcanvas, #overlay { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; }
-    #overlay { pointer-events: none; }
+    #glcanvas { z-index: 1; background: #fff; }
+    #overlay { z-index: 2; pointer-events: none; }
     #tip {
       position: fixed; z-index: 20; pointer-events: none; display: none;
-      max-width: 320px; padding: 8px 10px; background: #21262d; border: 1px solid #484f58;
-      border-radius: 8px; font-size: 12px; line-height: 1.45; box-shadow: 0 4px 24px rgba(0,0,0,.45);
+      max-width: 320px; padding: 8px 10px; background: #fff; border: 1px solid #d0d7de;
+      border-radius: 8px; font-size: 12px; line-height: 1.45; box-shadow: 0 4px 24px rgba(0,0,0,.12);
+      color: #24292f;
     }
-    #stats { margin-left: auto; opacity: 0.85; font-size: 12px; }
+    #stats { margin-left: auto; opacity: 0.75; font-size: 12px; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/regl@2.1.0/dist/regl.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/d3-force@3.0.0/dist/d3-force.min.js"></script>
@@ -35,7 +41,6 @@
   <div id="toolbar">
     <strong id="docTitle">__TITLE__</strong>
     <label><input type="checkbox" id="showModEdges" checked /> Module edges</label>
-    <label><input type="checkbox" id="showGuardedStyle" checked /> Dashed = guarded flow</label>
     <select id="moduleFilter"><option value="">All modules</option></select>
     <button type="button" id="btnForce">Local force (selection)</button>
     <button type="button" id="btnOverview">Back to overview</button>
@@ -56,8 +61,8 @@
 
   function moduleColor(mid, nMod) {
     const h = ((mid * 47 + 13) % 360);
-    const s = 62 + (mid % 3) * 6;
-    const l = 52 + (mid % 2) * 5;
+    const s = 72 + (mid % 3) * 5;
+    const l = 36 + (mid % 2) * 7;
     return hslToRgb(h / 360, s / 100, l / 100);
   }
 
@@ -277,7 +282,10 @@
     const bin = Math.max(span / 80, 1e-6);
     const spatial = buildSpatialIndex(data, bin);
 
-    const regl = createREGL({ canvas: canvas });
+    const regl = createREGL({
+      canvas: canvas,
+      attributes: { alpha: true, premultipliedAlpha: false },
+    });
 
     const drawPoints = regl({
       vert: `
@@ -344,8 +352,8 @@
       const neigh = highlight;
       for (let i = 0; i < n; i++) {
         let dim = 1;
-        if (f !== null && data.nodes.module_id[i] !== f) dim = 0.2;
-        if (neigh && !neigh.has(i)) dim = 0.15;
+        if (f !== null && data.nodes.module_id[i] !== f) dim = 0.48;
+        if (neigh && !neigh.has(i)) dim = 0.38;
         if (pinnedId === i || hoverId === i) dim = 1;
         colors[i * 3] = baseColors[i * 3] * dim;
         colors[i * 3 + 1] = baseColors[i * 3 + 1] * dim;
@@ -359,34 +367,27 @@
       ctx2.clearRect(0, 0, w, h);
       if (!document.getElementById('showModEdges').checked) return;
 
-      const showDash = document.getElementById('showGuardedStyle').checked;
       ctx2.save();
+      ctx2.globalCompositeOperation = 'source-over';
       ctx2.lineWidth = 1.2;
+      ctx2.strokeStyle = 'rgba(20, 75, 170, 0.16)';
+      ctx2.setLineDash([]);
       for (let e = 0; e < data.module_edges.length; e++) {
         const ed = data.module_edges[e];
+        if (ed.unconditional_weight + ed.guarded_weight <= 0) continue;
         const a = data.modules[ed.source_module_id];
         const b = data.modules[ed.target_module_id];
         const x1 = a.centroid_x * view.scale + view.tx;
         const y1 = a.centroid_y * view.scale + view.ty;
         const x2 = b.centroid_x * view.scale + view.tx;
         const y2 = b.centroid_y * view.scale + view.ty;
-        if (ed.unconditional_weight > 0) {
-          ctx2.strokeStyle = 'rgba(130, 180, 255, 0.55)';
-          ctx2.setLineDash([]);
-          ctx2.beginPath(); ctx2.moveTo(x1, y1); ctx2.lineTo(x2, y2); ctx2.stroke();
-        }
-        if (ed.guarded_weight > 0 && showDash) {
-          ctx2.strokeStyle = 'rgba(255, 200, 120, 0.45)';
-          ctx2.setLineDash([6, 4]);
-          ctx2.beginPath(); ctx2.moveTo(x1, y1 + 3); ctx2.lineTo(x2, y2 + 3); ctx2.stroke();
-          ctx2.setLineDash([]);
-        }
+        ctx2.beginPath(); ctx2.moveTo(x1, y1); ctx2.lineTo(x2, y2); ctx2.stroke();
       }
       ctx2.restore();
     }
 
     function frame() {
-      regl.clear({ color: [0.06, 0.08, 0.1, 1], depth: 1 });
+      regl.clear({ color: [1, 1, 1, 1], depth: 1 });
       drawPoints({ posBuf: posBuf, colBuf: colBuf, scale: view.scale, translate: [view.tx, view.ty] });
       drawOverlay();
     }
@@ -454,7 +455,6 @@
     });
 
     document.getElementById('showModEdges').addEventListener('change', drawOverlay);
-    document.getElementById('showGuardedStyle').addEventListener('change', drawOverlay);
 
     sel.addEventListener('change', function () {
       filterMod = sel.value;
@@ -506,7 +506,7 @@
       posBuf.subdata(positions);
       for (let i = 0; i < n; i++) {
         const on = sub.nodeIds.indexOf(i) >= 0;
-        const dim = on ? 1 : 0.08;
+        const dim = on ? 1 : 0.28;
         colors[i * 3] = baseColors[i * 3] * dim;
         colors[i * 3 + 1] = baseColors[i * 3 + 1] * dim;
         colors[i * 3 + 2] = baseColors[i * 3 + 2] * dim;
@@ -534,7 +534,7 @@
   }
 
   loadData().then(main).catch(function (e) {
-    document.body.innerHTML = '<pre style="padding:16px;color:#f85149;">' + String(e.stack || e) + '</pre>';
+    document.body.innerHTML = '<pre style="padding:16px;background:#fff;color:#cf222e;">' + String(e.stack || e) + '</pre>';
   });
 })();
   </script>
