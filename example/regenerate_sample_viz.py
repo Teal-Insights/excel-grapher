@@ -32,7 +32,9 @@ def _package_template() -> str:
     import excel_grapher.grapher.lightweight_viz as lv
 
     pkg = lv.__package__ or "excel_grapher.grapher"
-    return resources.files(pkg).joinpath("lightweight_viz_template.html").read_text(encoding="utf-8")
+    return (
+        resources.files(pkg).joinpath("lightweight_viz_template.html").read_text(encoding="utf-8")
+    )
 
 
 def _extract_title(html_head: str) -> str:

@@ -117,10 +117,14 @@ def main() -> None:
         signal.SIGTERM: "SIGTERM",
         signal.SIGINT: "SIGINT",
     }
+
     def on_signal(signum: int, _frame: object | None) -> None:
         nonlocal exit_reason
         exit_reason = _sig_names.get(signum, f"signal_{signum}")
-        print(f"\n[profile_lightweight_viz] caught {exit_reason}; will flush profile in finally…", file=sys.stderr)
+        print(
+            f"\n[profile_lightweight_viz] caught {exit_reason}; will flush profile in finally…",
+            file=sys.stderr,
+        )
         raise SystemExit(128 + signum if signum != signal.SIGINT else 130)
 
     signal.signal(signal.SIGTERM, on_signal)
