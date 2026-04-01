@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
 import re
@@ -7,7 +8,10 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from itertools import product
 from pathlib import Path
-from typing import Any, cast, get_args, get_origin, get_type_hints
+from typing import TYPE_CHECKING, Any, cast, get_args, get_origin, get_type_hints
+
+if TYPE_CHECKING:
+    from excel_grapher.grapher.type_analysis_cache import TypeAnalysisCache
 
 import fastpyxl
 from fastpyxl.utils.cell import coordinate_from_string, coordinate_to_tuple
@@ -313,6 +317,8 @@ def expand_leaf_env_to_argument_env(
     *,
     max_range_cells: int = 5000,
     shared_cell_type_cache: dict[str, CellType] | None = None,
+    type_analysis_cache: TypeAnalysisCache | None = None,
+    workbook_sha256: str | None = None,
 ) -> dict[str, CellType]:
     """Build a CellTypeEnv for all refs in the argument chain from leaf constraints only.
 
@@ -332,6 +338,9 @@ def expand_leaf_env_to_argument_env(
     When ``shared_cell_type_cache`` is provided, intermediate cell type inferences
     are persisted across multiple calls.  This avoids redundant work when many
     BFS nodes share intermediate formula cells in their argument subgraphs.
+
+    When ``type_analysis_cache`` and ``workbook_sha256`` are provided, successful
+    intermediate formula-cell type results are persisted to SQLite across runs.
     """
     cache: dict[str, CellType] = (
         shared_cell_type_cache if shared_cell_type_cache is not None else {}
@@ -339,6 +348,25 @@ def expand_leaf_env_to_argument_env(
     in_progress: set[str] = set()
     nr = named_ranges or {}
     nrr = named_range_ranges or {}
+
+    # Persistent cache support
+    from excel_grapher.grapher.type_analysis_cache import (
+        _compute_leaf_env_subset_fingerprint,
+        _compute_limits_fingerprint,
+    )
+
+    _tac = (
+        type_analysis_cache
+        if (type_analysis_cache is not None and workbook_sha256 is not None)
+        else None
+    )
+    _limits_fp = _compute_limits_fingerprint(limits) if _tac else ""
+    # Track which leaf_env keys each formula cell consumes during analysis
+    _consumed_leaves: dict[str, set[str]] = {}
+    # Addresses loaded from persistent cache (skip re-persisting in finally block)
+    _loaded_from_persistent: set[str] = set()
+    # Stack of formula cells being analysed (for recording consumed leaves)
+    _analysis_stack: list[str] = []
 
     def _formula_to_parse(raw: str) -> str:
         body = raw[1:] if raw.startswith("=") else raw
@@ -366,14 +394,78 @@ def expand_leaf_env_to_argument_env(
             )
         return CellType(kind=CellKind.ANY, enum=EnumDomain(values=frozenset(values)))
 
+    def _record_consumed_leaf(leaf_addr: str) -> None:
+        """Record that every formula cell on the analysis stack consumed a leaf.
+
+        A leaf referenced by a child formula transitively affects every
+        ancestor on the stack, so all of them must include that leaf in
+        their fingerprint for correct cache invalidation.
+        """
+        for ancestor in _analysis_stack:
+            _consumed_leaves.setdefault(ancestor, set()).add(leaf_addr)
+
+    def _try_persistent_lookup(addr: str, formula: str) -> tuple[CellType, list[str]] | None:
+        """Try to load a cached type from the persistent SQLite cache.
+
+        Returns ``(cell_type, consumed_leaf_keys)`` on hit, or ``None``.
+        """
+        if _tac is None or workbook_sha256 is None:
+            return None
+        norm_formula_sha = hashlib.sha256(formula.encode()).hexdigest()
+        return _tac.get_formula_cell_type(
+            workbook_sha256=workbook_sha256,
+            address=addr,
+            normalized_formula_sha256=norm_formula_sha,
+            limits_fingerprint=_limits_fp,
+            current_leaf_env=leaf_env,
+        )
+
+    def _persist_result(addr: str, formula: str, ct: CellType) -> None:
+        """Write a successful formula-cell type to the persistent cache."""
+        if _tac is None or workbook_sha256 is None:
+            return
+        # Don't cache ANY results in v1
+        if ct.kind is CellKind.ANY and ct.enum is None:
+            return
+        norm_formula_sha = hashlib.sha256(formula.encode()).hexdigest()
+        consumed = sorted(_consumed_leaves.get(addr, set()))
+        fp = _compute_leaf_env_subset_fingerprint(consumed, leaf_env)
+        _tac.put_formula_cell_type(
+            workbook_sha256=workbook_sha256,
+            address=addr,
+            normalized_formula_sha256=norm_formula_sha,
+            limits_fingerprint=_limits_fp,
+            leaf_env_subset_fingerprint=fp,
+            consumed_leaf_keys=consumed,
+            cell_type=ct,
+        )
+
+    def _propagate_consumed_leaves_to_ancestors(addr: str) -> None:
+        """Propagate a cell's consumed leaves to all ancestors on the stack.
+
+        Called when ``addr`` is served from the in-memory cache so that
+        ancestors still record its transitive leaf dependencies even though
+        ``_record_consumed_leaf`` won't fire for the cached cell's refs.
+        """
+        child_leaves = _consumed_leaves.get(addr)
+        if child_leaves:
+            for ancestor in _analysis_stack:
+                _consumed_leaves.setdefault(ancestor, set()).update(child_leaves)
+
     def cell_type_for(addr: str) -> CellType:
         if addr in cache:
+            _propagate_consumed_leaves_to_ancestors(addr)
             return cache[addr]
         if addr in in_progress:
             return CellType(kind=CellKind.ANY)
         ct_resolved = _lookup_cell_type(leaf_env, addr)
         if ct_resolved is not None:
             cache[addr] = ct_resolved
+            norm_key = normalize_cell_type_env_key(addr)
+            # Record the leaf as its own consumed-leaf so that cache hits
+            # for this address can propagate it to future ancestors.
+            _consumed_leaves.setdefault(addr, set()).add(norm_key)
+            _record_consumed_leaf(norm_key)
             return cache[addr]
         in_progress.add(addr)
         formula = get_cell_formula(addr)
@@ -383,6 +475,16 @@ def expand_leaf_env_to_argument_env(
                     f"Missing constraint for leaf {addr!r} that feeds OFFSET/INDIRECT. "
                     "Add constraints only for leaf cells (non-formula) in the argument subgraph."
                 )
+            # Check persistent cache before expensive analysis
+            _persistent_result = _try_persistent_lookup(addr, formula)
+            if _persistent_result is not None:
+                cached_ct, cached_consumed = _persistent_result
+                cache[addr] = cached_ct
+                _consumed_leaves[addr] = set(cached_consumed)
+                _loaded_from_persistent.add(addr)
+                _propagate_consumed_leaves_to_ancestors(addr)
+                return cache[addr]
+            _analysis_stack.append(addr)
             refs = get_refs_from_formula(formula, _sheet_from_addr(addr))
             try:
                 formula_parse = _formula_to_parse(formula)
@@ -413,7 +515,7 @@ def expand_leaf_env_to_argument_env(
                     return cache[addr]
                 cache[addr] = _values_to_cell_type({val})
                 return cache[addr]
-            ref_types = {r: cell_type_for(r) for r in refs}
+            ref_types = {r: cell_type_for(r) for r in sorted(refs)}
             if ast_root is not None:
                 infer_result = _infer_numeric_domain_result(
                     ast_root,
@@ -533,9 +635,27 @@ def expand_leaf_env_to_argument_env(
             return cache[addr]
         finally:
             in_progress.discard(addr)
+            if _analysis_stack and _analysis_stack[-1] == addr:
+                _analysis_stack.pop()
+                # Propagate this cell's consumed leaves to the parent on the
+                # stack.  This covers the case where a child was served from
+                # the in-memory cache (so _record_consumed_leaf was never
+                # called for its leaves during *this* traversal).
+                if _analysis_stack:
+                    parent = _analysis_stack[-1]
+                    child_leaves = _consumed_leaves.get(addr)
+                    if child_leaves:
+                        _consumed_leaves.setdefault(parent, set()).update(child_leaves)
+            # Persist successful result to SQLite cache (skip if loaded from persistent cache)
+            if addr in cache and formula is not None and addr not in _loaded_from_persistent:
+                _persist_result(addr, formula, cache[addr])
 
-    for addr in argument_refs:
-        cell_type_for(addr)
+    try:
+        for addr in sorted(argument_refs):
+            cell_type_for(addr)
+    finally:
+        if _tac is not None:
+            _tac.flush()
     return cache
 
 

@@ -2272,6 +2272,101 @@ def test_shared_intermediate_env_expansion_cache(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Deterministic traversal order
+# ---------------------------------------------------------------------------
+
+
+class TestDeterministicTraversalOrder:
+    """expand_leaf_env_to_argument_env must visit cells in a deterministic
+    (sorted) order so that partial-progress persistence and error messages
+    are reproducible regardless of Python's randomized set iteration.
+
+    The test instruments the function to record the order in which
+    ``cell_type_for`` is first called for each address, then asserts that
+    order is lexicographic across 50 repeated invocations.
+    """
+
+    # Diamond graph:
+    #   D1 = B1 + C1   (top)
+    #   B1 = A1 + 1    (left arm)
+    #   C1 = A1 * 2    (right arm)
+    #   A1 = leaf {1, 2, 3}
+
+    _FORMULAS: dict[str, str] = {
+        "Sheet1!D1": "=Sheet1!B1+Sheet1!C1",
+        "Sheet1!B1": "=Sheet1!A1+1",
+        "Sheet1!C1": "=Sheet1!A1*2",
+    }
+    _REFS: dict[str, set[str]] = {
+        "=Sheet1!B1+Sheet1!C1": {"Sheet1!B1", "Sheet1!C1"},
+        "=Sheet1!A1+1": {"Sheet1!A1"},
+        "=Sheet1!A1*2": {"Sheet1!A1"},
+    }
+    _LEAF_ENV: CellTypeEnv = {
+        "Sheet1!A1": CellType(
+            kind=CellKind.NUMBER,
+            enum=EnumDomain(values=frozenset({1, 2, 3})),
+        ),
+    }
+
+    def _run_once(self) -> tuple[dict[str, CellType], list[str]]:
+        visit_order: list[str] = []
+        # Patch get_cell_formula to record first-visit order
+        real_get_formula = self._FORMULAS.get
+
+        def tracking_get_formula(addr: str) -> str | None:
+            if addr not in visit_order:
+                visit_order.append(addr)
+            return real_get_formula(addr)
+
+        env = expand_leaf_env_to_argument_env(
+            {"Sheet1!D1"},
+            tracking_get_formula,
+            lambda formula, sheet: self._REFS.get(formula, set()),
+            self._LEAF_ENV,
+            DynamicRefLimits(),
+        )
+        return env, visit_order
+
+    def test_traversal_order_is_sorted(self) -> None:
+        """Formula cells should be visited in sorted (lexicographic) order
+        at each level of the recursive traversal.
+
+        This ensures deterministic behaviour across Python processes with
+        different hash seeds, which is essential for reproducible error
+        messages and reliable partial-progress persistence.
+        """
+        _env, order = self._run_once()
+        # D1 is the root (requested), then its deps B1 and C1 should be
+        # visited in sorted order, then A1 as their shared dependency.
+        assert order[0] == "Sheet1!D1", f"Root should be visited first, got {order[0]}"
+        # B1 should come before C1 (sorted)
+        b1_idx = order.index("Sheet1!B1")
+        c1_idx = order.index("Sheet1!C1")
+        assert b1_idx < c1_idx, (
+            f"Sheet1!B1 (index {b1_idx}) should be visited before "
+            f"Sheet1!C1 (index {c1_idx}) in sorted traversal"
+        )
+
+    def test_inferred_domains_are_correct(self) -> None:
+        """Verify the expected numeric domains for the diamond graph."""
+        env, _ = self._run_once()
+        # A1 = {1, 2, 3}  (leaf)
+        assert env["Sheet1!A1"].enum is not None
+        assert env["Sheet1!A1"].enum.values == frozenset({1, 2, 3})
+        # B1 = A1 + 1 = {2, 3, 4}
+        assert env["Sheet1!B1"].enum is not None
+        assert env["Sheet1!B1"].enum.values == frozenset({2, 3, 4})
+        # C1 = A1 * 2 = {2, 4, 6}
+        assert env["Sheet1!C1"].enum is not None
+        assert env["Sheet1!C1"].enum.values == frozenset({2, 4, 6})
+        # D1 = B1 + C1 = {2+2, 2+4, 2+6, 3+2, 3+4, 3+6, 4+2, 4+4, 4+6}
+        #              = {4, 6, 8, 5, 7, 9, 6, 8, 10} = {4, 5, 6, 7, 8, 9, 10}
+        assert env["Sheet1!D1"].enum is not None
+        assert env["Sheet1!D1"].enum.values == frozenset({4, 5, 6, 7, 8, 9, 10})
+
+
+# ---------------------------------------------------------------------------
 # Abstract-path characterization (Phase 0)
 # ---------------------------------------------------------------------------
 

@@ -11,3 +11,4 @@ wheels/
 
 # Coding agents
 .claude
+.codex
