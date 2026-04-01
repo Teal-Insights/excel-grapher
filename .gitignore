@@ -12,3 +12,5 @@ wheels/
 # Coding agents
 .claude
 .codex
+*.prof.txt
+*.prof

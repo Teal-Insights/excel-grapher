@@ -210,6 +210,31 @@ def kahn_toposort(adj: list[list[int]], n: int) -> list[int] | None:
     return order
 
 
+def _balance_overview_layout_spans(xs: list[float], ys: list[float]) -> None:
+    """Scale about the centroid so horizontal and vertical extents match.
+
+    Raw placement uses rank on X and module index on Y; large graphs often have
+    many more modules than rank layers, producing a tall narrow layout. Matching
+    axis spans makes overview framing use the canvas more evenly.
+    """
+    if not xs:
+        return
+    min_x = min(xs)
+    max_x = max(xs)
+    min_y = min(ys)
+    max_y = max(ys)
+    cx = 0.5 * (min_x + max_x)
+    cy = 0.5 * (min_y + max_y)
+    span_x = max(max_x - min_x, 1.0)
+    span_y = max(max_y - min_y, 1.0)
+    target = max(span_x, span_y)
+    sx = target / span_x
+    sy = target / span_y
+    for i in range(len(xs)):
+        xs[i] = cx + (xs[i] - cx) * sx
+        ys[i] = cy + (ys[i] - cy) * sy
+
+
 def longest_path_ranks(adj_cond: list[list[int]], n_comp: int) -> list[int]:
     """
     For a DAG, rank[v] = max(rank[u]+1) over predecessors u (sources rank 0).
@@ -346,6 +371,7 @@ def _build_local_csr(
     targets: list[int] = []
     guarded_flags: list[bool] = []
     complete = [True] * n
+    out_deg = [len(out_edges_by_src[i]) for i in range(n)]
 
     for src in range(n):
         m = module_of[src]
@@ -353,7 +379,6 @@ def _build_local_csr(
             mod_node_count[m] <= max_local_nodes and mod_internal_edges[m] <= max_local_edges
         )
         raw = list(out_edges_by_src[src])
-        out_deg = [len(out_edges_by_src[i]) for i in range(n)]
         if small_module:
             raw.sort(key=lambda t: _neighbor_sort_key(t[0], t[1], module_of, m, out_deg))
             for tgt, g in raw:
@@ -513,6 +538,8 @@ def to_lightweight_viz(
             jx = ((t % 10000) / 10000.0 - 0.5) * y_band * 0.85
             jy = (((t // 10000) % 10000) / 10000.0 - 0.5) * 8.0
             ys[i] = base_y + jx + jy
+
+    _balance_overview_layout_spans(xs, ys)
 
     mod_rank_min = [10**9] * n_mod
     mod_rank_max = [-1] * n_mod

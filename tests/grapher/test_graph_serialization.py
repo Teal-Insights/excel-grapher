@@ -4,6 +4,7 @@ Covers:
   - Round-trip correctness: nodes, edges, guards, extra attrs survive pickle
   - Compact storage: guards stored directly, not wrapped in per-edge dicts
   - String interning: NodeKey references share identity after deserialization
+  - Unpickle builds one key-index map for all guards (not O(guards × nodes) rebuilds)
 """
 
 from __future__ import annotations
@@ -85,6 +86,28 @@ def test_pickle_round_trip_preserves_guards() -> None:
     guard_b = restored.edge_guard("Sheet1!D1", "Sheet1!B1")
     assert guard_b is not None
     assert isinstance(guard_b, Compare)
+
+
+def test_pickle_round_trip_many_guarded_edges() -> None:
+    """Regression: unpickle must not rebuild a full key→index map per guarded edge."""
+    g = DependencyGraph()
+    g.add_node(Node("Sheet1", "A", 1, None, None, 1, True))
+    g.add_node(
+        Node("Sheet1", "D", 1, "=1", "=1", None, False),
+    )
+    guard = Compare(CellRef("Sheet1!A1"), "=", Literal(True))
+    n_extra = 800
+    for i in range(2, 2 + n_extra):
+        g.add_node(Node("Sheet1", "B", i, None, None, 1, True))
+        g.add_edge("Sheet1!D1", f"Sheet1!B{i}", guard=guard)
+
+    blob = pickle.dumps(g)
+    restored: DependencyGraph = pickle.loads(blob)
+    assert len(restored._guards) == n_extra
+    for i in range(2, 2 + n_extra):
+        g_edge = restored.edge_guard("Sheet1!D1", f"Sheet1!B{i}")
+        assert g_edge is not None
+        assert isinstance(g_edge, Compare)
 
 
 def test_pickle_round_trip_preserves_extra_attrs() -> None:

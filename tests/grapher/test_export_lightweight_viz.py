@@ -11,6 +11,7 @@ from excel_grapher.grapher.export import (
 )
 from excel_grapher.grapher.lightweight_viz import (
     DENSE_BUCKET_THRESHOLD,
+    _build_local_csr,
     select_local_force_subgraph,
     serialize_lightweight_viz_json,
 )
@@ -79,6 +80,32 @@ def _guarded_back_edge_graph() -> DependencyGraph:
     g.add_edge(nb.key, na.key)
     g.add_edge(na.key, nb.key, guard=Literal(True))
     return g
+
+
+def test_build_local_csr_hoisted_out_degree_sort() -> None:
+    """Neighbor sort uses global out-degree; regression guard for O(n) precompute (not per-src)."""
+    n = 4
+    module_of = [0, 0, 0, 0]
+    out_edges_by_src: list[list[tuple[int, bool]]] = [
+        [(1, False), (2, False), (3, False)],
+        [(2, False)],
+        [(3, False)],
+        [],
+    ]
+    mod_internal_edges = 5
+    offsets, targets, guarded, complete = _build_local_csr(
+        n,
+        module_of,
+        out_edges_by_src,
+        [4],
+        [mod_internal_edges],
+        max_local_nodes=5000,
+        max_local_edges=20000,
+    )
+    assert offsets == [0, 3, 4, 5, 5]
+    assert targets == [1, 2, 3, 2, 3]
+    assert guarded == [False] * 5
+    assert all(complete)
 
 
 def test_payload_contract_and_version() -> None:

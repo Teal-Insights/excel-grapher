@@ -373,6 +373,7 @@ class DependencyGraph:
                 "Unsupported or corrupted DependencyGraph pickle; rebuild the graph cache."
             )
         keys = state["keys"]
+        key_index = {s: i for i, s in enumerate(keys)}
 
         def i2k(i: int) -> NodeKey:
             return keys[i]
@@ -383,14 +384,14 @@ class DependencyGraph:
             i2k(i): {i2k(d) for d in ds} for i, ds in state["_reverse_edges"].items()
         }
         self._guards = {
-            (i2k(a), i2k(b)): _intern_guard_cell_refs(g, keys) for a, b, g in state["_guards"]
+            (i2k(a), i2k(b)): _intern_guard_cell_refs(g, keys, key_index=key_index)
+            for a, b, g in state["_guards"]
         }
         self._edge_extra = {(i2k(a), i2k(b)): dict(e) for a, b, e in state["_edge_extra"]}
         self._hooks = state["_hooks"]
         lc = state["leaf_classification"]
         if lc:
-            rev = {s: i for i, s in enumerate(keys)}
-            self.leaf_classification = {keys[rev[k]]: v for k, v in lc.items()}
+            self.leaf_classification = {keys[key_index[k]]: v for k, v in lc.items()}
         else:
             self.leaf_classification = None
 
@@ -488,8 +489,13 @@ def _guard_collect_cellref_keys(expr: GuardExpr, add: Callable[[str], None]) -> 
             _guard_collect_cellref_keys(o, add)
 
 
-def _intern_guard_cell_refs(expr: GuardExpr, keys: list[str]) -> GuardExpr:
-    rev = {s: i for i, s in enumerate(keys)}
+def _intern_guard_cell_refs(
+    expr: GuardExpr,
+    keys: list[str],
+    *,
+    key_index: dict[str, int] | None = None,
+) -> GuardExpr:
+    rev = key_index if key_index is not None else {s: i for i, s in enumerate(keys)}
     canon = keys
 
     def ckey(s: str) -> NodeKey:

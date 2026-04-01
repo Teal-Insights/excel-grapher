@@ -71,9 +71,10 @@ def exec_generated_code(
     targets: list[str],
     *,
     namespace_seed: dict[str, object] | None = None,
+    blank_ranges: list[str] | tuple[str, ...] | None = None,
 ) -> tuple[dict[str, object], str, dict[str, object]]:
     """Generate + exec code for targets and return (results, code, namespace)."""
-    code = CodeGenerator(graph).generate(targets)
+    code = CodeGenerator(graph).generate(targets, blank_ranges=blank_ranges)
     ns: dict[str, object] = dict(namespace_seed or {})
     exec(code, ns)
     compute_all = ns["compute_all"]
@@ -89,9 +90,10 @@ def exec_generated_code_with_cache(
     targets: list[str],
     *,
     namespace_seed: dict[str, object] | None = None,
+    blank_ranges: list[str] | tuple[str, ...] | None = None,
 ) -> tuple[dict[str, object], str, dict[str, object]]:
     """Generate + exec code for targets and return (cache, code, namespace)."""
-    code = CodeGenerator(graph).generate(targets)
+    code = CodeGenerator(graph).generate(targets, blank_ranges=blank_ranges)
     ns: dict[str, object] = dict(namespace_seed or {})
     exec(code, ns)
     merged = dict(cast(dict[str, object], ns["DEFAULT_INPUTS"]))
@@ -113,6 +115,7 @@ def assert_codegen_matches_evaluator(
     atol: float = 0.0,
     dependency_order: bool = False,
     fail_fast: bool = False,
+    blank_ranges: tuple[str, ...] | None = None,
 ) -> ParityResult:
     """Assert evaluator results match generated code for the given targets."""
     compare_targets = _dependency_order(graph, targets) if dependency_order else list(targets)
@@ -121,10 +124,12 @@ def assert_codegen_matches_evaluator(
     def _record(address: str, value: object) -> None:
         eval_computed[address] = value
 
-    with FormulaEvaluator(graph, on_cell_evaluated=_record) as ev:
+    with FormulaEvaluator(graph, on_cell_evaluated=_record, blank_ranges=blank_ranges) as ev:
         evaluator_results = cast(dict[str, object], ev.evaluate(targets))
 
-    generated_cache, code, _ns = exec_generated_code_with_cache(graph, targets)
+    generated_cache, code, _ns = exec_generated_code_with_cache(
+        graph, targets, blank_ranges=blank_ranges
+    )
     generated_results = {t: generated_cache[t] for t in targets}
 
     missing = [t for t in targets if t not in evaluator_results or t not in generated_results]

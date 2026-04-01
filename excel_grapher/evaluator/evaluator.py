@@ -7,6 +7,10 @@ from typing import TYPE_CHECKING
 import fastpyxl.utils.cell
 
 from excel_grapher.core.addressing import index_excel_range
+from excel_grapher.grapher.blank_ranges import (
+    address_in_blank_ranges,
+    normalize_blank_range_specs,
+)
 
 from .errors import ParseError
 from .export_runtime.cache import EvalContext, xl_circular_reference, xl_iterative_compute
@@ -30,7 +34,7 @@ from .helpers import (
     xl_pow,
     xl_row,
 )
-from .name_utils import parse_address
+from .name_utils import normalize_address, parse_address
 from .parser import (
     AstNode,
     BinaryOpNode,
@@ -72,12 +76,14 @@ class FormulaEvaluator:
     iterate_enabled: bool = False
     iterate_count: int = 100
     iterate_delta: float = 0.001
+    blank_ranges: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         self._cache: dict[str, CellValue] = {}
         self._call_stack: list[str] = []
         self._leaf_values: dict[str, CellValue] = {}  # For auto-detection
         self._iteration_values: dict[str, CellValue] = {}
+        self._blank_range_rects = normalize_blank_range_specs(self.blank_ranges)
 
     def __enter__(self) -> FormulaEvaluator:
         return self
@@ -198,38 +204,45 @@ class FormulaEvaluator:
         return leaves
 
     def _evaluate_cell(self, address: str) -> CellValue:
-        if address in self._cache:
+        norm = normalize_address(address)
+        if norm in self._cache:
             # Lazy invalidation: check if leaf dependencies have changed
             if self.auto_detect_changes and not self.eager_invalidation:
-                if self._check_and_invalidate_if_leaves_changed(address):
+                if self._check_and_invalidate_if_leaves_changed(norm):
                     # Cache was invalidated, need to re-evaluate (fall through)
                     pass
                 else:
-                    return self._cache[address]
+                    return self._cache[norm]
             else:
-                return self._cache[address]
+                return self._cache[norm]
 
-        if address in self._call_stack:
+        if norm in self._call_stack:
             if self.iterate_enabled:
-                return self._iteration_values.get(address, 0)
+                return self._iteration_values.get(norm, 0)
             return xl_circular_reference()
 
-        node = self.graph.get_node(address)
+        if self._blank_range_rects and address_in_blank_ranges(norm, self._blank_range_rects):
+            self._cache[norm] = None
+            if self.on_cell_evaluated is not None:
+                self.on_cell_evaluated(norm, None)
+            return None
+
+        node = self.graph.get_node(norm)
         if node is None:
             raise KeyError(f"Cell {address} not found in graph")
 
         if node.formula is None:
-            self._cache[address] = node.value
-            self._leaf_values[address] = node.value  # Track for change detection
+            self._cache[norm] = node.value
+            self._leaf_values[norm] = node.value  # Track for change detection
             if self.on_cell_evaluated is not None:
-                self.on_cell_evaluated(address, node.value)
+                self.on_cell_evaluated(norm, node.value)
             return node.value
 
         formula = node.normalized_formula or node.formula
         if not isinstance(formula, str):
             raise ParseError(str(formula), "Formula is missing or not a string")
 
-        self._call_stack.append(address)
+        self._call_stack.append(norm)
         try:
             ast = parse(formula)
             result = self._evaluate_ast(ast)
@@ -238,9 +251,9 @@ class FormulaEvaluator:
             # Excel treats formula results of None (empty cell reference) as 0
             if result is None:
                 result = 0
-            self._cache[address] = result
+            self._cache[norm] = result
             if self.on_cell_evaluated is not None:
-                self.on_cell_evaluated(address, result)
+                self.on_cell_evaluated(norm, result)
             return result
         finally:
             self._call_stack.pop()
@@ -284,6 +297,10 @@ class FormulaEvaluator:
                 return self._eval_column(node.args)
             if name == "COLUMNS":
                 return self._eval_columns(node.args)
+            if name in {"TRUE", "_XLFN.TRUE"}:
+                return True
+            if name in {"FALSE", "_XLFN.FALSE"}:
+                return False
 
             args = [self._evaluate_ast(a) for a in node.args]
             # Resolve ExcelRange objects to numpy arrays

@@ -311,6 +311,46 @@ write_lightweight_viz_html(payload, Path("model.html"), data_mode="auto")
 
 `write_lightweight_viz_html(..., data_mode="auto")` inlines JSON when the estimated payload is at most **50 MiB** (override with `inline_size_budget_mb`); otherwise it writes a sidecar `.viz.json` next to the HTML. Stats on truncation and density are in `payload.stats`.
 
+To refresh the checked-in LIC-DSF sample viewer:
+
+```bash
+uv run example/regenerate_sample_viz.py --full
+```
+
+This rebuilds `example/data/lic-dsf-template-sample-exported-viz.html` from the cached dependency graph in `example/.cache/`. If you only changed the HTML template and want to re-embed the current `lightweight_viz_template.html` without rebuilding the payload, run:
+
+```bash
+uv run example/regenerate_sample_viz.py
+```
+
+Open the exported HTML directly in a browser. The interface supports panning, zooming, module filtering, module-edge overlays, hover tooltips, and a local force-layout mode for inspecting a bounded neighborhood without trying to force-layout the entire workbook.
+
+#### Example interface
+
+![Full lightweight dependency graph overview](README_files/lightweight-viz-overview.png)
+
+![Zoomed lightweight dependency graph overview](README_files/lightweight-viz-zoomed-overview.png)
+
+#### Interpreting the overview for module inference
+
+The overview is most useful as a **module-finding aid** for generated-library design, not as a literal geometric embedding of workbook logic. Color primarily indicates inferred module membership. Horizontal position is the important structural axis: farther right usually means more upstream precedent-like logic, while farther left usually means more downstream consumer, output, or report logic.
+
+When reading the graph:
+
+- A same-color band that spans several X slices is a strong candidate for one extracted library module, especially if it has relatively few blue inter-module lines leaving it.
+- A same-color cluster all in one narrow X slice is often just a batch of parallel formulas at one stage, not necessarily a full standalone boundary, though it may still be patternized into a small helper for deduplication.
+- Modules on the far right are good candidates for shared primitives, base calculations, normalization, lookups, or assumptions.
+- Modules on the far left are more likely report assembly, presentation logic, or output-specific composition.
+- A module with heavy fan-in and fan-out across many colors is probably cross-cutting glue, not a clean package boundary.
+- If you see several adjacent same-color or tightly coupled colors stepping left-to-right, that often suggests a higher-level package split rather than one tiny module per color.
+
+Some caution is warranted when interpreting the picture:
+
+- The Y axis mainly separates module bands and reduces overplotting; vertical proximity is much less semantically important than horizontal position.
+- Similar colors do not imply similar semantics; color is just a deterministic visual label for `module_id`.
+- The blue overlay lines show module-to-module connectivity, which is useful for spotting coupling hot spots, but they are summary edges rather than a complete rendering of every cell-to-cell dependency.
+- The `Force` button is for local inspection only. Use the `Overview` view, not the force-layout view, when reasoning about global library boundaries.
+
 ### Validation via `calcChain.xml`
 
 You can validate the graph against Excel’s `calcChain.xml`:
@@ -486,6 +526,56 @@ with FormulaEvaluator(graph) as ev:
 
 print(evaluator_results)
 # {'S!B1': 20.0}
+```
+
+### Caching an extracted graph (optional)
+
+If graph extraction is expensive and you expect to re-use the same workbook + targets + extraction settings,
+you can cache the `DependencyGraph` to disk as JSON.
+
+Strict caching (requires access to the workbook file to validate fingerprints):
+
+```python
+from pathlib import Path
+
+from excel_grapher import (
+    CacheValidationPolicy,
+    build_graph_cache_meta,
+    create_dependency_graph,
+    save_graph_cache,
+    try_load_graph_cache,
+)
+
+workbook_path = Path("workbook.xlsx")
+targets = ["S!B1"]
+extraction_params = {"load_values": True, "max_depth": 50}
+
+expected = build_graph_cache_meta(workbook_path, targets, extraction_params=extraction_params)
+graph = try_load_graph_cache(Path("graph-cache.json"), expected_meta=expected)
+if graph is None:
+    graph = create_dependency_graph(workbook_path, targets, **extraction_params)
+    save_graph_cache(Path("graph-cache.json"), graph, expected)
+```
+
+Portable caching (for `FormulaEvaluator` on machines without the workbook file):
+
+```python
+from excel_grapher import (
+    CacheValidationPolicy,
+    build_graph_cache_meta_portable,
+    try_load_graph_cache,
+)
+
+targets = ["S!B1"]
+expected = build_graph_cache_meta_portable(targets, extraction_params={"load_values": True, "max_depth": 50})
+
+graph = try_load_graph_cache(
+    Path("graph-cache.json"),
+    expected_meta=expected,
+    policy=CacheValidationPolicy.PORTABLE,
+)
+if graph is None:
+    raise FileNotFoundError("No valid cached graph found for the requested targets/settings.")
 ```
 
 **Tradeoffs for the evaluator approach:**
