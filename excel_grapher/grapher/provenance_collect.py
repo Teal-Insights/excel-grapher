@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from excel_grapher.grapher.type_analysis_cache import TypeAnalysisCache
 
 import fastpyxl
 import fastpyxl.utils.cell
@@ -97,6 +100,8 @@ def _flat_provenance_one_string(
     span_target: Literal["formula", "normalized"],
     dynamic_expansion_cache: dict[tuple[str, str, str], tuple[set[str], set[str], set[str]]]
     | None = None,
+    type_analysis_cache: TypeAnalysisCache | None = None,
+    workbook_sha256: str | None = None,
 ) -> dict[str, EdgeProvenance]:
     """Mirror extract_expr_deps masking pipeline; accumulate provenance for one formula string starting with '='."""
     if normalizer is None:
@@ -266,6 +271,8 @@ def _flat_provenance_one_string(
                         named_ranges=named_ranges,
                         named_range_ranges=named_range_ranges,
                         max_range_cells=max_range_cells,
+                        type_analysis_cache=type_analysis_cache,
+                        workbook_sha256=workbook_sha256,
                     )
                     offset_targets = infer_dynamic_offset_targets(
                         formula_for_infer,
@@ -387,6 +394,8 @@ def _flat_provenance_formula_and_normalized(
     dynamic_refs: DynamicRefConfig | None,
     wb_formulas: fastpyxl.Workbook,
     resolve_cached_value: Callable[[str, str], object | None],
+    type_analysis_cache: TypeAnalysisCache | None = None,
+    workbook_sha256: str | None = None,
     dynamic_expansion_cache: dict[tuple[str, str, str], tuple[set[str], set[str], set[str]]]
     | None = None,
 ) -> dict[str, EdgeProvenance]:
@@ -406,6 +415,8 @@ def _flat_provenance_formula_and_normalized(
         resolve_cached_value=resolve_cached_value,
         span_target="formula",
         dynamic_expansion_cache=dynamic_expansion_cache,
+        type_analysis_cache=type_analysis_cache,
+        workbook_sha256=workbook_sha256,
     )
     if not normalized or normalized == formula_str:
         return raw_map
@@ -426,6 +437,8 @@ def _flat_provenance_formula_and_normalized(
         resolve_cached_value=resolve_cached_value,
         span_target="normalized",
         dynamic_expansion_cache=dynamic_expansion_cache,
+        type_analysis_cache=type_analysis_cache,
+        workbook_sha256=workbook_sha256,
     )
     out: dict[str, EdgeProvenance] = {}
     all_keys = set(raw_map) | set(norm_map)
@@ -471,6 +484,8 @@ def collect_provenance_for_formula(
     resolve_cached_value: Callable[[str, str], object | None],
     dynamic_expansion_cache: dict[tuple[str, str, str], tuple[set[str], set[str], set[str]]]
     | None = None,
+    type_analysis_cache: TypeAnalysisCache | None = None,
+    workbook_sha256: str | None = None,
 ) -> dict[str, EdgeProvenance]:
     """
     Build a map from dependency cell key (``format_key``) to merged :class:`EdgeProvenance`
@@ -536,6 +551,8 @@ def collect_provenance_for_formula(
                     wb_formulas=wb_formulas,
                     resolve_cached_value=resolve_cached_value,
                     dynamic_expansion_cache=dynamic_expansion_cache,
+                    type_analysis_cache=type_analysis_cache,
+                    workbook_sha256=workbook_sha256,
                 )
             )
         return merge_provenance_maps(maps)
@@ -566,6 +583,8 @@ def collect_provenance_for_formula(
                     wb_formulas=wb_formulas,
                     resolve_cached_value=resolve_cached_value,
                     dynamic_expansion_cache=dynamic_expansion_cache,
+                    type_analysis_cache=type_analysis_cache,
+                    workbook_sha256=workbook_sha256,
                 )
             )
             maps.append(
@@ -584,6 +603,8 @@ def collect_provenance_for_formula(
                     wb_formulas=wb_formulas,
                     resolve_cached_value=resolve_cached_value,
                     dynamic_expansion_cache=dynamic_expansion_cache,
+                    type_analysis_cache=type_analysis_cache,
+                    workbook_sha256=workbook_sha256,
                 )
             )
         if default_ifs is not None:
@@ -603,6 +624,8 @@ def collect_provenance_for_formula(
                     wb_formulas=wb_formulas,
                     resolve_cached_value=resolve_cached_value,
                     dynamic_expansion_cache=dynamic_expansion_cache,
+                    type_analysis_cache=type_analysis_cache,
+                    workbook_sha256=workbook_sha256,
                 )
             )
         return merge_provenance_maps(maps)
@@ -645,6 +668,8 @@ def collect_provenance_for_formula(
                     wb_formulas=wb_formulas,
                     resolve_cached_value=resolve_cached_value,
                     dynamic_expansion_cache=dynamic_expansion_cache,
+                    type_analysis_cache=type_analysis_cache,
+                    workbook_sha256=workbook_sha256,
                 )
             )
         return merge_provenance_maps(maps)
@@ -714,6 +739,8 @@ def collect_provenance_for_formula(
                     wb_formulas=wb_formulas,
                     resolve_cached_value=resolve_cached_value,
                     dynamic_expansion_cache=dynamic_expansion_cache,
+                    type_analysis_cache=type_analysis_cache,
+                    workbook_sha256=workbook_sha256,
                 )
             )
         return merge_provenance_maps(maps)
@@ -734,4 +761,6 @@ def collect_provenance_for_formula(
         wb_formulas=wb_formulas,
         resolve_cached_value=resolve_cached_value,
         dynamic_expansion_cache=dynamic_expansion_cache,
+        type_analysis_cache=type_analysis_cache,
+        workbook_sha256=workbook_sha256,
     )

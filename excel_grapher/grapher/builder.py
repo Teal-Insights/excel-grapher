@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import time
@@ -53,6 +54,7 @@ from .parser import (
 )
 from .provenance_collect import collect_provenance_for_formula
 from .resolver import build_named_range_map
+from .type_analysis_cache import TypeAnalysisCache
 
 _logger = logging.getLogger(__name__)
 
@@ -169,6 +171,7 @@ def create_dependency_graph(
     use_cached_dynamic_refs: bool = False,
     capture_dependency_provenance: bool = False,
     blank_ranges: Iterable[str] | None = None,
+    type_analysis_cache: TypeAnalysisCache | None = None,
 ) -> DependencyGraph:
     """
     Build a dependency graph starting from target cells.
@@ -248,6 +251,12 @@ def create_dependency_graph(
                 detail={"data_only": True},
             )
         )
+
+    # Compute workbook SHA-256 for persistent type-analysis cache
+    _wb_sha256: str | None = None
+    if type_analysis_cache is not None and isinstance(workbook, (str, Path)):
+        with open(workbook, "rb") as _f:
+            _wb_sha256 = hashlib.file_digest(_f, "sha256").hexdigest()
 
     graph = DependencyGraph()
     for h in hooks or []:
@@ -531,6 +540,8 @@ def create_dependency_graph(
                                 named_range_ranges=named_range_ranges,
                                 max_range_cells=max_range_cells,
                                 shared_cell_type_cache=_shared_cell_type_cache,
+                                type_analysis_cache=type_analysis_cache,
+                                workbook_sha256=_wb_sha256,
                             )
                             try:
                                 offset_targets = infer_dynamic_offset_targets(
@@ -926,6 +937,8 @@ def create_dependency_graph(
                     wb_formulas=wb_formulas,
                     resolve_cached_value=resolve_cached_value,
                     dynamic_expansion_cache=_dyn_cache,
+                    type_analysis_cache=type_analysis_cache,
+                    workbook_sha256=_wb_sha256,
                 )
 
             for dep_sheet, dep_a1, guard in deps_and_guards:
@@ -971,6 +984,7 @@ def list_dynamic_ref_constraint_candidates(
     dynamic_refs: DynamicRefConfig | None = None,
     max_depth: int = 50,
     max_range_cells: int = 5000,
+    type_analysis_cache: TypeAnalysisCache | None = None,
 ) -> list[str]:
     """Return a sorted list of leaf cell addresses that feed dynamic-ref arguments
     (OFFSET/INDIRECT/INDEX) but have no entry in ``dynamic_refs.cell_type_env``.
@@ -996,6 +1010,11 @@ def list_dynamic_ref_constraint_candidates(
         keep_vba = path.suffix.lower() == ".xlsm"
         wb_formulas = fastpyxl.load_workbook(path, data_only=False, keep_vba=keep_vba)
         _owns_wb = True
+
+    _wb_sha256_cand: str | None = None
+    if type_analysis_cache is not None and isinstance(workbook, (str, Path)):
+        with open(workbook, "rb") as _f:
+            _wb_sha256_cand = hashlib.file_digest(_f, "sha256").hexdigest()
 
     try:
         named_range_maps = build_named_range_map(wb_formulas)
@@ -1178,6 +1197,8 @@ def list_dynamic_ref_constraint_candidates(
                             named_ranges=named_ranges,
                             named_range_ranges=named_range_ranges,
                             max_range_cells=max_range_cells,
+                            type_analysis_cache=type_analysis_cache,
+                            workbook_sha256=_wb_sha256_cand,
                         )
                         offset_targets = infer_dynamic_offset_targets(
                             formula_for_infer,
