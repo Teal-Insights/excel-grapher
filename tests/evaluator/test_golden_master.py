@@ -170,7 +170,7 @@ def test_golden_master_inline(tmp_path: Path) -> None:
     output_path = tmp_path / "modified.xlsm"
 
     try:
-        print("Running LibreOffice recalculation...")
+        print("Recalculating workbook (platform automation)...")
         start = time.time()
         modify_and_recalculate_workbook(
             input_path=WORKBOOK_PATH,

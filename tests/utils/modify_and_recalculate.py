@@ -138,8 +138,8 @@ def _modify_and_recalculate_with_xlwings(
             sheet = wb.sheets[sheet_name]
             sheet.range(cell_address).value = value
 
-        # Recalculate
-        wb.api.Calculate()
+        # Recalculate (Workbook COM object has no Calculate; use Application)
+        wb.app.api.CalculateFull()
 
         # Save to output path
         wb.save(str(output_path))
