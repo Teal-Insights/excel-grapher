@@ -34,7 +34,32 @@ INPUT_COL_START = "X"
 INPUT_COL_END = "AR"
 
 CHART_SHEET = "Chart Data"
-CHART_ROWS = (61, 62, 63, 103, 104, 105, 145, 146, 147, 187, 188, 189)
+CHART_ROWS = (
+    51,
+    61,
+    62,
+    63,
+    64,
+    66,
+    93,
+    103,
+    104,
+    105,
+    106,
+    108,
+    135,
+    145,
+    146,
+    147,
+    148,
+    150,
+    177,
+    187,
+    188,
+    189,
+    190,
+    192,
+)
 CHART_COL_START = "D"
 CHART_COL_END = "X"
 
