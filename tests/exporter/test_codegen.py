@@ -419,8 +419,8 @@ class TestGenerate:
         )
         gen = CodeGenerator(graph)
 
-        # Monkeypatch codegen.parse (not parser.parse) because codegen imports parse directly.
-        import excel_grapher.evaluator.codegen as codegen_module
+        # Monkeypatch exporter.codegen.parse; implementation lives there (evaluator.codegen is a shim).
+        import excel_grapher.exporter.codegen as codegen_module
 
         original_parse = codegen_module.parse
         calls: list[str] = []

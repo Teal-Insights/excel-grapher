@@ -18,8 +18,8 @@ The unified distribution is `excel-grapher` and exposes a single import package,
 
 - `excel_grapher/core/` — shared semantic types, coercions, and scalar operators.
 - `excel_grapher/grapher/` — graph-building, validation, and workbook-loading logic.
-- `excel_grapher/evaluator/` — evaluator runtime and `FormulaEvaluator`, plus codegen/export runtime for embedding.
-- `excel_grapher/exporter/` — public export API (re-exports `CodeGenerator` and export helpers from `evaluator`).
+- `excel_grapher/evaluator/` — `FormulaEvaluator` and formula parsing utilities.
+- `excel_grapher/exporter/` — `CodeGenerator` and `export_runtime` for standalone Python export.
 
 Typical imports:
 

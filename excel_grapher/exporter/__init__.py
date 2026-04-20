@@ -1,11 +1,12 @@
 """
 Export dependency graphs to standalone Python packages.
 
-Re-exports CodeGenerator and export_runtime from the evaluator package.
+Canonical implementation: :class:`~excel_grapher.exporter.codegen.CodeGenerator`
+and :mod:`excel_grapher.exporter.export_runtime`.
 """
 
-from excel_grapher.evaluator import export_runtime
-from excel_grapher.evaluator.codegen import CodeGenerator
+from . import export_runtime
+from .codegen import CodeGenerator
 
 __all__ = [
     "CodeGenerator",

@@ -1,7 +1,6 @@
-"""Curated runtime for standalone code generation.
+"""Backward compatibility for ``excel_grapher.evaluator.export_runtime``.
 
-Generated code embeds a subset of these symbols via `export_runtime.embed.emit_runtime`.
-This package should not import from other `excel_evaluator` modules.
+Implementation lives in ``excel_grapher.exporter.export_runtime``.
 """
 
 from __future__ import annotations

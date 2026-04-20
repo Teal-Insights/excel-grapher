@@ -201,7 +201,7 @@ def create_dependency_graph(
     created for those cells (edges into them are kept), and dynamic-ref leaf
     constraints are not required for addresses inside these ranges. Pair with the
     same declarations on :class:`~excel_grapher.FormulaEvaluator` and
-    :meth:`~excel_grapher.evaluator.codegen.CodeGenerator.generate` for evaluation
+    :meth:`~excel_grapher.exporter.codegen.CodeGenerator.generate` for evaluation
     and export parity.
 
     **Cost model**: constraint-based dynamic-ref expansion (``dynamic_refs`` set,
