@@ -3,7 +3,7 @@ LIC-DSF: GDP forecast bps shocks vs recalculated workbook (slow).
 
 Applies multiplicative shocks ``v * (1 + bps/10000)`` to **Input 3** row **12**
 columns **X:AR**, recalculates via ``modify_and_recalculate_workbook`` (xlwings /
-PowerShell+COM / LibreOffice), then asserts ``FormulaEvaluator`` matches cached
+PowerShell+COM), then asserts ``FormulaEvaluator`` matches cached
 values on selected **Chart Data** strips within ``rtol=1e-5``.
 """
 

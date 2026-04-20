@@ -1,29 +1,45 @@
 ---
-description: Maintain semantic parity between FormulaEvaluator and generated standalone code
+description: Three-way behavioral parity — Excel reference, FormulaEvaluator, and exported code — plus run-if-available automation tests
 alwaysApply: false
 ---
 ## Parity contract
 
-This repo has two execution paths:
+**Behavioral parity** spans three artifacts that should agree on supported formulas:
 
-- **Evaluator path**: `excel_grapher/evaluator/FormulaEvaluator`
-- **Generated code path**: `excel_grapher/exporter/CodeGenerator` output
+- **Excel** — Reference implementation (desktop Excel via automation when tests run it; otherwise values last saved in the workbook).
+- **Evaluator path** — `excel_grapher/evaluator/FormulaEvaluator`.
+- **Generated code path** — output of `excel_grapher/exporter/CodeGenerator`.
 
-**Parity requirement**: for any supported Excel feature, both paths must produce identical results (including Excel-style errors and coercions).
+**Pairwise guarantees:**
+
+| Check | Typical tests / helpers |
+| ----- | ----------------------- |
+| **Evaluator ↔ Excel** | Compare evaluator output to workbook **cached** values (`tests/evaluator/excel_workbook_parity.py`), or to **live-recalculated** results when xlwings / Windows Excel / WSL+COM is available. |
+| **Evaluator ↔ exported code (`export parity`)** | `tests/evaluator/parity_harness.py` (`assert_codegen_matches_evaluator`, etc.). |
+
+When both evaluator↔Excel and evaluator↔export hold for overlapping coverage, you get **three-way parity** for those cells/features.
 
 ## Single source of truth for Excel semantics
 
-- **Canonical runtime**: all Excel-compatible semantics live in `excel_grapher/exporter/export_runtime/*`.
+- **Canonical runtime**: Excel-compatible semantics live in `excel_grapher/exporter/export_runtime/*`.
 - **Evaluator**: must call runtime semantics (directly or via re-exports in `excel_grapher/evaluator/helpers.py`).
 - **Codegen**: must emit calls to the same runtime symbols and embed them using `excel_grapher/exporter/export_runtime/embed.py::emit_runtime(...)`.
 
 Do not introduce a second implementation of semantics elsewhere; it will drift.
 
+## Tests that require Excel automation (run-if-available)
+
+Prefer **live Excel** over cached workbook snapshots when validating against the real engine. Automation options in this repo include **xlwings** on Windows/macOS and **PowerShell/COM** to Excel from **WSL** (`tests/utils/modify_and_recalculate.py`).
+
+**Convention:** tests that need Excel MUST **attempt** automation and **`pytest.skip(...)`** with an explicit reason when it is unavailable (see `tests/evaluator/test_golden_master.py`). CI and Linux-only clones without Excel should skip cleanly—not fail.
+
+Do **not** substitute alternative spreadsheet engines (for example LibreOffice Calc) as an “Excel”; they diverge semantically.
+
 ## How to add or change Excel behavior (TDD workflow)
 
 When adding a new function/operator or changing semantics:
 
-1) **Add a parity test first (RED)** using `tests/parity_harness.py`.
+1) **Add a parity test first (RED)** using `tests/evaluator/parity_harness.py`.
 
 2) **Implement or update the runtime (GREEN)**
    - Add/modify the canonical implementation in `excel_grapher/exporter/export_runtime/*`.
@@ -38,16 +54,15 @@ When adding a new function/operator or changing semantics:
 
 6) **Run tests**: `uv run pytest`.
 
-### Parity harness quickstart
+### Evaluator ↔ export parity quickstart
 
-Preferred pattern for most parity work:
+Preferred pattern for codegen parity:
 
 ```python
-from tests.parity_harness import assert_codegen_matches_evaluator
+from tests.evaluator.parity_harness import assert_codegen_matches_evaluator
 
 result = assert_codegen_matches_evaluator(graph, targets)
 assert result.generated_results["S!A1"] == 123
 ```
 
 Avoid duplicating operator or coercion behavior in both evaluator and codegen paths.
-

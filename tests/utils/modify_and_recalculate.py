@@ -1,25 +1,17 @@
 """Excel modification and recalculation utilities.
 
-Supports multiple backends:
-- WSL: PowerShell/COM to Windows Excel
-- Windows/macOS: xlwings
-- Linux: LibreOffice (fallback)
+Supports Windows Excel automation only (xlwings on Windows/macOS, PowerShell/COM
+from WSL). LibreOffice is not used: its results diverge from Excel.
 """
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 from textwrap import dedent
 
-from tests.utils._helpers import (
-    check_libreoffice_version,
-    is_libreoffice_available,
-    is_wsl,
-    parse_cell_ref,
-)
+from tests.utils._helpers import is_wsl, parse_cell_ref
 
 
 class ExcelRecalculationError(Exception):
@@ -150,117 +142,6 @@ def _modify_and_recalculate_with_xlwings(
         app.quit()
 
 
-def _modify_and_recalculate_with_libreoffice(
-    input_path: Path,
-    output_path: Path,
-    cell_modifications: dict[str, float],
-    timeout: int = 120,
-) -> None:
-    """Use LibreOffice for headless Excel recalculation on Linux.
-
-    This process:
-    1. Modifies cells with fastpyxl (no recalculation)
-    2. Uses LibreOffice to open and re-save the file, triggering recalculation
-
-    Args:
-        input_path: Path to the source Excel workbook.
-        output_path: Path to save the modified workbook.
-        cell_modifications: Dict mapping cell references to new values.
-        timeout: Timeout in seconds for LibreOffice execution.
-
-    Raises:
-        ExcelRecalculationError: If LibreOffice recalculation fails.
-    """
-    check_libreoffice_version()
-
-    from fastpyxl import load_workbook
-
-    # Step 1: Copy and modify with fastpyxl
-    shutil.copy2(input_path, output_path)
-
-    wb = load_workbook(str(output_path), keep_vba=True)
-    try:
-        for cell_ref, value in cell_modifications.items():
-            sheet_name, cell_address = parse_cell_ref(cell_ref)
-            wb[sheet_name][cell_address] = value
-        wb.save(str(output_path))
-    finally:
-        wb.close()
-
-    # Step 2: Use LibreOffice to recalculate by converting to xlsx
-    # LibreOffice will recalculate all formulas when it opens the file
-    # We convert to xlsx and back to xlsm to force recalculation
-    temp_xlsx = output_path.with_suffix(".xlsx")
-    output_dir = output_path.parent
-
-    try:
-        # Convert xlsm to xlsx (triggers recalculation)
-        cmd = [
-            "soffice",
-            "--headless",
-            "--norestore",
-            "--convert-to",
-            "xlsx",
-            "--outdir",
-            str(output_dir),
-            str(output_path.resolve()),
-        ]
-
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-
-        if result.returncode != 0:
-            raise ExcelRecalculationError(
-                f"LibreOffice xlsx conversion failed:\n"
-                f"stdout: {result.stdout}\n"
-                f"stderr: {result.stderr}"
-            )
-
-        # Check if the xlsx file was created
-        if not temp_xlsx.exists():
-            raise ExcelRecalculationError(
-                f"LibreOffice did not create expected output file: {temp_xlsx}"
-            )
-
-        # Convert back to xlsm (to preserve macro structure if any)
-        cmd = [
-            "soffice",
-            "--headless",
-            "--norestore",
-            "--convert-to",
-            "xlsm",
-            "--outdir",
-            str(output_dir),
-            str(temp_xlsx),
-        ]
-
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-
-        if result.returncode != 0:
-            raise ExcelRecalculationError(
-                f"LibreOffice xlsm conversion failed:\n"
-                f"stdout: {result.stdout}\n"
-                f"stderr: {result.stderr}"
-            )
-
-    except subprocess.TimeoutExpired as e:
-        raise ExcelRecalculationError(
-            f"LibreOffice recalculation timed out after {timeout}s"
-        ) from e
-    finally:
-        # Clean up temp xlsx file
-        temp_xlsx.unlink(missing_ok=True)
-
-
 def modify_and_recalculate_workbook(
     input_path: Path,
     output_path: Path,
@@ -271,7 +152,6 @@ def modify_and_recalculate_workbook(
     Auto-selects the appropriate backend based on the platform:
     - WSL: PowerShell/COM to Windows Excel
     - Windows/macOS: xlwings
-    - Linux: LibreOffice (fallback)
 
     Args:
         input_path: Path to the source Excel workbook.
@@ -295,10 +175,8 @@ def modify_and_recalculate_workbook(
         _modify_and_recalculate_with_powershell(input_path, output_path, cell_modifications)
     elif sys.platform in ("win32", "darwin"):
         _modify_and_recalculate_with_xlwings(input_path, output_path, cell_modifications)
-    elif is_libreoffice_available():
-        _modify_and_recalculate_with_libreoffice(input_path, output_path, cell_modifications)
     else:
         raise RuntimeError(
-            "No suitable Excel automation backend available. "
-            "On Linux, install LibreOffice: sudo apt install libreoffice"
+            "No Excel automation backend available (need Windows/macOS with xlwings, "
+            "or WSL with Excel via PowerShell/COM)."
         )

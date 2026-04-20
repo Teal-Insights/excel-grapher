@@ -690,7 +690,13 @@ print(generated_results)
 
 ---
 
-## 6. Roadmap
+## 6. Parity testing
 
-- Continue expanding parity tests between the evaluator runtime and export runtime, especially for representation-sensitive areas such as `OFFSET`, `INDIRECT`, `LOOKUP`, `MATCH`, and `INDEX`.
+**Behavioral parity** is defined across three layers: **Excel** (reference), **`FormulaEvaluator`**, and **standalone exported code**. Shared semantics live in `excel_grapher/exporter/export_runtime/` so the evaluator and generated code stay aligned (**evaluator ↔ export** checks use `tests/evaluator/parity_harness.py`). **Evaluator ↔ Excel** checks use values saved in the workbook and, when automation is available, **live recalculation** via xlwings or WSL+COM—tests that require Excel should **run when automation works** and **`pytest.skip`** otherwise (see `tests/evaluator/test_golden_master.py`).
+
+---
+
+## 7. Roadmap
+
+- Continue expanding **three-way parity** coverage: evaluator ↔ export runtime, evaluator ↔ Excel (cache and live automation where available), especially for representation-sensitive areas such as `OFFSET`, `INDIRECT`, `LOOKUP`, `MATCH`, and `INDEX`.
 - Refine the dynamic-reference configuration API and constraints tooling (e.g., better TypedDict ergonomics, validation helpers) as more real-world models and templates are integrated.

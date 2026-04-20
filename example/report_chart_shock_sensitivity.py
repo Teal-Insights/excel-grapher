@@ -2,7 +2,7 @@
 """Recalculate a workbook and verify Chart Data sensitivity to an input shock.
 
 Relates to `https://github.com/Teal-Insights/excel-grapher/issues/79` (GDP / macro
-shock and LO vs Excel recalc). This script formalizes a check that a small change
+shock via Excel recalc). This script formalizes a check that a small change
 on a configured input row (default: **Input 3** row **12**, columns **X:AR**)
 moves **Chart Data** row **63** across **D:X** by roughly the expected magnitude
 (default band: ~5% vs baseline), after full recalculation.
@@ -12,8 +12,8 @@ where ``bps`` is ``--bps / 10000`` (e.g. ``--bps 10`` → factor ``1.001`` / ``0
 
 Backends:
   * ``auto`` — same selection as ``tests.utils.modify_and_recalculate`` (xlwings on
-    Windows/macOS, PowerShell/COM on WSL, LibreOffice on Linux when available).
-  * ``libreoffice`` / ``excel`` — force one engine (``excel`` is xlwings/COM as above).
+    Windows/macOS, PowerShell/COM on WSL).
+  * ``excel`` — force xlwings (Windows/macOS) or PowerShell/COM (WSL).
 
 Examples::
 
@@ -26,7 +26,7 @@ Examples::
         --input-start-col X --input-end-col AR --bps-mode absolute --bps 10
 
 Requires a local ``.xlsm`` (not committed in all clones). Install xlwings on
-Windows/macOS for the Excel path; LibreOffice 25.8+ for the LO path.
+Windows/macOS, or run from WSL with Excel via PowerShell/COM.
 """
 
 from __future__ import annotations
@@ -50,7 +50,6 @@ if str(_REPO_ROOT) not in sys.path:
 from tests.utils._helpers import is_wsl  # noqa: E402
 from tests.utils.modify_and_recalculate import (  # noqa: E402
     ExcelRecalculationError,
-    _modify_and_recalculate_with_libreoffice,
     _modify_and_recalculate_with_powershell,
     _modify_and_recalculate_with_xlwings,
     modify_and_recalculate_workbook,
@@ -180,9 +179,6 @@ def _run_recalc(
     if backend == "auto":
         modify_and_recalculate_workbook(input_path, output_path, cell_modifications)
         return
-    if backend == "libreoffice":
-        _modify_and_recalculate_with_libreoffice(input_path, output_path, cell_modifications)
-        return
     if backend == "excel":
         if sys.platform in ("win32", "darwin"):
             _modify_and_recalculate_with_xlwings(input_path, output_path, cell_modifications)
@@ -254,7 +250,7 @@ def main() -> int:
     )
     p.add_argument(
         "--backend",
-        choices=("auto", "excel", "libreoffice"),
+        choices=("auto", "excel"),
         default="auto",
         help="Recalculation engine",
     )
@@ -348,8 +344,7 @@ def main() -> int:
             print("PASS: median impact within configured band.")
         else:
             print(
-                "FAIL: median impact outside band — adjust inputs, bps-mode, or bounds; "
-                "or compare backends (Excel vs LibreOffice).",
+                "FAIL: median impact outside band — adjust inputs, bps-mode, or bounds.",
                 file=sys.stderr,
             )
 

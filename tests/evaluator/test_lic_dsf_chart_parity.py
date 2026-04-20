@@ -1,8 +1,9 @@
 """
-LIC-DSF Chart Data: evaluator vs Excel cached values (slow).
+LIC-DSF Chart Data: evaluator vs Excel **cached** workbook values (slow).
 
 Graphs are built with ``use_cached_dynamic_refs=True`` (cached dynamic-ref path).
-Parity tests below assert ``FormulaEvaluator`` matches those workbook caches.
+These tests assert ``FormulaEvaluator`` matches last-saved Excel results in the
+file (one **evaluator ↔ Excel** path). Live Excel automation is covered elsewhere.
 
 Strict-resolution coverage (``use_cached_dynamic_refs=False`` → ``DynamicRefError``)
 is separate: ``test_lic_dsf_chart_shortlist_without_cached_dynamic_refs_raises`` stays

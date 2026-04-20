@@ -1,5 +1,9 @@
 """
-Compare FormulaEvaluator output to Excel workbook cached values on a DependencyGraph.
+Compare FormulaEvaluator output to **Excel workbook cached values** on a DependencyGraph.
+
+This is one **evaluator ↔ Excel** path: last-saved results in the file (no live
+recalc). For parity against **live Excel**, use xlwings / COM automation when
+available (see ``modify_and_recalculate_workbook`` and ``test_golden_master``).
 
 Used by slow LIC-DSF tests for triage reporting and assertions.
 """
