@@ -10,6 +10,18 @@ import fastpyxl.utils.cell
 
 from .core import CellValue, ExcelRange, XlError
 
+__all__ = [
+    "CircularReferenceWarning",
+    "EvalContext",
+    "circular_safe_cache",
+    "coerce_inputs_dict",
+    "xl_cell",
+    "xl_circular_reference",
+    "xl_eval",
+    "xl_iterative_compute",
+    "xl_range",
+]
+
 _cell_cache: dict[Callable[[], CellValue], CellValue] = {}
 _computing: set[Callable[[], CellValue]] = set()
 

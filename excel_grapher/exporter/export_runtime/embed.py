@@ -4,6 +4,8 @@ import ast
 from collections import deque
 from pathlib import Path
 
+__all__ = ["emit_runtime"]
+
 _RUNTIME_DIR = Path(__file__).resolve().parent
 _CORE_DIR = _RUNTIME_DIR.parent.parent / "core"
 

@@ -2,6 +2,16 @@ from __future__ import annotations
 
 from .core import CellValue, XlError, to_number, to_string
 
+__all__ = [
+    "xl__xlfn_numbervalue",
+    "xl_concatenate",
+    "xl_left",
+    "xl_mid",
+    "xl_numbervalue",
+    "xl_right",
+    "xl_text",
+]
+
 
 def xl_left(text: CellValue, num_chars: CellValue = 1) -> str | XlError:
     t = to_string(text)

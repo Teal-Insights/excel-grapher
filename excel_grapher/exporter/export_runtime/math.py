@@ -16,6 +16,24 @@ from .core import (
     to_string,
 )
 
+__all__ = [
+    "xl_average",
+    "xl_count",
+    "xl_counta",
+    "xl_countif",
+    "xl_large",
+    "xl_max",
+    "xl_min",
+    "xl_normdist",
+    "xl_npv",
+    "xl_rank",
+    "xl_round",
+    "xl_rounddown",
+    "xl_stdev",
+    "xl_sum",
+    "xl_sumproduct",
+]
+
 
 def xl_sum(*args: CellValue) -> float | XlError:
     values = list(flatten(*args))

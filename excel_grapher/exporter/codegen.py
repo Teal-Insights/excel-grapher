@@ -34,6 +34,8 @@ from excel_grapher.exporter.export_runtime.embed import emit_runtime
 from excel_grapher.grapher.blank_ranges import BlankRangeRect, normalize_blank_range_specs
 from excel_grapher.grapher.graph import CycleError
 
+__all__ = ["CodeGenerator", "GenerationParts", "GraphLike", "GraphNode"]
+
 if TYPE_CHECKING:
     from excel_grapher.grapher import DependencyGraph  # noqa: F401
 

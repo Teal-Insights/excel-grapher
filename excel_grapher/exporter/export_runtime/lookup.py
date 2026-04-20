@@ -4,6 +4,15 @@ import numpy as np
 
 from .core import CellValue, XlError, excel_casefold, to_native, to_number
 
+__all__ = [
+    "xl__xlfn_xlookup",
+    "xl_hlookup",
+    "xl_index",
+    "xl_lookup",
+    "xl_match",
+    "xl_vlookup",
+]
+
 
 def _values_match(a: CellValue, b: CellValue) -> bool:
     if isinstance(a, str) and isinstance(b, str):

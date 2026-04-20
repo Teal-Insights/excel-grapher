@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from .core import CellValue, XlError, to_bool, to_number
 
+__all__ = ["xl_and", "xl_choose", "xl_ifna", "xl_or"]
+
 
 def xl_and(*args: CellValue) -> bool | XlError:
     for a in args:

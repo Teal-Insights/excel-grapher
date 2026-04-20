@@ -8,6 +8,8 @@ from excel_grapher.core.addressing import index_excel_range, offset_range
 from .cache import EvalContext, xl_cell
 from .core import CellValue, ExcelRange, XlError, to_number
 
+__all__ = ["xl_index_ref", "xl_offset", "xl_offset_ref"]
+
 
 def _quote_sheet_if_needed(sheet: str) -> str:
     if " " in sheet or "-" in sheet or "'" in sheet:

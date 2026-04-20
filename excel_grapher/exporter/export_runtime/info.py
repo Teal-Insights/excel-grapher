@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from .core import CellValue, XlError, to_number
 
+__all__ = ["xl_isblank", "xl_isnumber", "xl_istext", "xl_na"]
+
 
 def xl_isnumber(value: CellValue) -> bool:
     n = to_number(value)
