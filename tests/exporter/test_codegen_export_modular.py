@@ -8,8 +8,8 @@ import sys
 from pathlib import Path
 
 from excel_grapher import DependencyGraph, FormulaEvaluator, Node
-from excel_grapher.exporter.codegen import CodeGenerator
 from excel_grapher.evaluator.name_utils import parse_address
+from excel_grapher.exporter.codegen import CodeGenerator
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:

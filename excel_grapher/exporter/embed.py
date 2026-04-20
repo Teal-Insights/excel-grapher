@@ -6,8 +6,9 @@ from pathlib import Path
 
 __all__ = ["emit_runtime"]
 
-_RUNTIME_DIR = Path(__file__).resolve().parent
-_CORE_DIR = _RUNTIME_DIR.parent.parent / "core"
+_PACKAGE_ROOT = Path(__file__).resolve().parent.parent
+_RUNTIME_DIR = _PACKAGE_ROOT / "runtime"
+_CORE_DIR = _PACKAGE_ROOT / "core"
 
 # Core package modules define types, coercions, scalar operators, and addressing (canonical source).
 _CORE_MODULES: list[tuple[str, Path]] = [

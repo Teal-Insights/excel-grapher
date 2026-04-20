@@ -6,10 +6,10 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 
 from excel_grapher import DependencyGraph, Node
-from excel_grapher.exporter.codegen import CodeGenerator
 from excel_grapher.evaluator.evaluator import FormulaEvaluator
-from excel_grapher.exporter.export_runtime.cache import CircularReferenceWarning
 from excel_grapher.evaluator.name_utils import parse_address
+from excel_grapher.exporter.codegen import CodeGenerator
+from excel_grapher.runtime.cache import CircularReferenceWarning
 from tests.evaluator.parity_harness import exec_generated_code
 
 if TYPE_CHECKING:

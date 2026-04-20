@@ -14,7 +14,7 @@ def index_excel_range(
 ) -> ExcelRange | XlError:
     """Map INDEX(row,col) over *base* to an absolute range (single cell or slice).
 
-    Mirrors :func:`excel_grapher.exporter.export_runtime.lookup.xl_index` geometry
+    Mirrors :func:`excel_grapher.runtime.lookup.xl_index` geometry
     so OFFSET(INDEX(...), ...) receives a true cell reference.
     """
     nrows = base.end_row - base.start_row + 1

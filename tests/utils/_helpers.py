@@ -37,7 +37,7 @@ def wsl_path_to_windows_unc(path: Path) -> str:
             "This function can only be used inside WSL."
         )
     abs_path = path.resolve()
-    rel = str(abs_path).lstrip("/")
+    rel = abs_path.as_posix().lstrip("/")
     return r"\\wsl.localhost\{}\{}".format(distro, rel.replace("/", "\\"))
 
 

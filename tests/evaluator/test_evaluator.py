@@ -2,9 +2,9 @@ import pytest
 
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.evaluator.evaluator import FormulaEvaluator
-from excel_grapher.exporter.export_runtime.cache import CircularReferenceWarning
 from excel_grapher.evaluator.name_utils import parse_address
 from excel_grapher.evaluator.types import XlError
+from excel_grapher.runtime.cache import CircularReferenceWarning
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:

@@ -3,7 +3,6 @@
 import pytest
 
 from excel_grapher import DependencyGraph, Node
-from excel_grapher.exporter.codegen import CodeGenerator
 from excel_grapher.evaluator.name_utils import parse_address
 from excel_grapher.evaluator.parser import (
     BinaryOpNode,
@@ -18,6 +17,7 @@ from excel_grapher.evaluator.parser import (
     UnaryOpNode,
 )
 from excel_grapher.evaluator.types import XlError
+from excel_grapher.exporter.codegen import CodeGenerator
 
 
 def _set_leaf_classification(graph: DependencyGraph, value: dict[str, str]) -> None:

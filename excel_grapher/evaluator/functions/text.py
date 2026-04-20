@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from excel_grapher.exporter.export_runtime.text import xl__xlfn_numbervalue as _rt_xl__xlfn_numbervalue
+from excel_grapher.runtime.text import xl__xlfn_numbervalue as _rt_xl__xlfn_numbervalue
+
 from ..helpers import to_number, to_string
 from ..types import CellValue, XlError
 from . import register

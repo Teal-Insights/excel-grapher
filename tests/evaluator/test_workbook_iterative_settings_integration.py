@@ -9,7 +9,7 @@ import xlsxwriter
 
 from excel_grapher import FormulaEvaluator, create_dependency_graph, get_calc_settings
 from excel_grapher.exporter.codegen import CodeGenerator
-from excel_grapher.exporter.export_runtime.cache import CircularReferenceWarning
+from excel_grapher.runtime.cache import CircularReferenceWarning
 from tests.utils.workbook_xml import patch_workbook_calcpr
 
 

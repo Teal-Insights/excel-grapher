@@ -2,24 +2,25 @@ from __future__ import annotations
 
 import numpy as np
 
-from excel_grapher.exporter.export_runtime.lookup import (
+from excel_grapher.runtime.lookup import (
     xl__xlfn_xlookup as _rt_xl__xlfn_xlookup,
 )
-from excel_grapher.exporter.export_runtime.lookup import (
+from excel_grapher.runtime.lookup import (
     xl_hlookup as _rt_xl_hlookup,
 )
-from excel_grapher.exporter.export_runtime.lookup import (
+from excel_grapher.runtime.lookup import (
     xl_index as _rt_xl_index,
 )
-from excel_grapher.exporter.export_runtime.lookup import (
+from excel_grapher.runtime.lookup import (
     xl_lookup as _rt_xl_lookup,
 )
-from excel_grapher.exporter.export_runtime.lookup import (
+from excel_grapher.runtime.lookup import (
     xl_match as _rt_xl_match,
 )
-from excel_grapher.exporter.export_runtime.lookup import (
+from excel_grapher.runtime.lookup import (
     xl_vlookup as _rt_xl_vlookup,
 )
+
 from ..types import CellValue, XlError
 from . import register
 

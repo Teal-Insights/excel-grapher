@@ -11,9 +11,9 @@ from excel_grapher.grapher.blank_ranges import (
     address_in_blank_ranges,
     normalize_blank_range_specs,
 )
+from excel_grapher.runtime.cache import EvalContext, xl_circular_reference, xl_iterative_compute
 
 from .errors import ParseError
-from excel_grapher.exporter.export_runtime.cache import EvalContext, xl_circular_reference, xl_iterative_compute
 from .functions import FUNCTIONS
 from .functions.info import xl_isblank
 from .helpers import (

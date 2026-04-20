@@ -4,8 +4,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import cast
 
-from excel_grapher.exporter.codegen import CodeGenerator, GraphLike
 from excel_grapher.evaluator.types import XlError
+from excel_grapher.exporter.codegen import CodeGenerator, GraphLike
 
 
 class _WeirdRepr:
