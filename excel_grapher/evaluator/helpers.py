@@ -28,8 +28,8 @@ from excel_grapher.core import (
     xl_sub,
 )
 
-from .export_runtime.offset_runtime import xl_offset_ref  # noqa: F401
-from .export_runtime.reference import xl_column, xl_columns, xl_row  # noqa: F401
+from excel_grapher.exporter.export_runtime.offset_runtime import xl_offset_ref  # noqa: F401
+from excel_grapher.exporter.export_runtime.reference import xl_column, xl_columns, xl_row  # noqa: F401
 
 __all__ = [
     "to_native",

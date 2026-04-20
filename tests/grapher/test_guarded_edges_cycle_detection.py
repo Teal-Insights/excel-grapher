@@ -6,7 +6,7 @@ import pytest
 import xlsxwriter
 
 from excel_grapher import CycleError, create_dependency_graph
-from excel_grapher.evaluator.codegen import CodeGenerator
+from excel_grapher.exporter.codegen import CodeGenerator
 from tests.utils.workbook_xml import patch_workbook_calcpr
 
 

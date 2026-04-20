@@ -115,7 +115,7 @@ def test_blank_range_codegen_compact_and_parity(tmp_path: Path) -> None:
         path, ["Sheet1!D1", "Sheet1!E1"], load_values=True, blank_ranges=blank
     )
 
-    from excel_grapher.evaluator.codegen import CodeGenerator
+    from excel_grapher.exporter.codegen import CodeGenerator
 
     code = CodeGenerator(graph).generate(["Sheet1!D1", "Sheet1!E1"], blank_ranges=blank)
     assert "_BLANK_RANGE_RECTS" in code

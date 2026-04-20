@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from excel_grapher import DependencyGraph, FormulaEvaluator, Node
-from excel_grapher.evaluator.codegen import CodeGenerator
+from excel_grapher.exporter.codegen import CodeGenerator
 from excel_grapher.evaluator.name_utils import parse_address
 
 

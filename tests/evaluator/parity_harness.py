@@ -6,7 +6,7 @@ from math import isfinite
 from typing import Any, cast
 
 from excel_grapher import CycleError, DependencyGraph, FormulaEvaluator
-from excel_grapher.evaluator.codegen import CodeGenerator
+from excel_grapher.exporter.codegen import CodeGenerator
 
 
 @dataclass(frozen=True, slots=True)

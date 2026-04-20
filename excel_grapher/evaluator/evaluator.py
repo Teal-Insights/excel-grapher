@@ -13,7 +13,7 @@ from excel_grapher.grapher.blank_ranges import (
 )
 
 from .errors import ParseError
-from .export_runtime.cache import EvalContext, xl_circular_reference, xl_iterative_compute
+from excel_grapher.exporter.export_runtime.cache import EvalContext, xl_circular_reference, xl_iterative_compute
 from .functions import FUNCTIONS
 from .functions.info import xl_isblank
 from .helpers import (

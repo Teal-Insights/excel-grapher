@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from excel_grapher import CycleError, DependencyGraph, Node, create_dependency_graph
-from excel_grapher.evaluator.codegen import CodeGenerator
+from excel_grapher.exporter.codegen import CodeGenerator
 from excel_grapher.evaluator.name_utils import normalize_address, parse_address
 from tests.evaluator.discover_formula_cells import discover_formula_cells_in_rows
 from tests.evaluator.parity_harness import assert_codegen_matches_evaluator, exec_generated_code
