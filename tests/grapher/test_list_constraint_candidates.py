@@ -113,6 +113,25 @@ def _build_infer_raises_branch_limit(path: Path) -> None:
     wb.close()
 
 
+def _build_blocked_downstream_blank_leaf(path: Path) -> None:
+    """
+    A1 -> B1 statically.
+    B1 = OFFSET(F1, C1, 0), so candidate discovery must infer F1/F2 targets.
+    F2 = INDIRECT(G1), and G1 is blank.
+
+    If B1's target inference fails, a robust candidate scan should still surface G1
+    rather than silently skipping the downstream dynamic-ref subgraph.
+    """
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_formula(0, 0, "=Sheet1!B1", None, 0)  # A1
+    ws.write_formula(0, 1, "=OFFSET(Sheet1!F1,Sheet1!C1,0)", None, 0)  # B1
+    ws.write_number(0, 2, 1)  # C1 controls which F-row is selected
+    ws.write_number(0, 5, 999)  # F1 static base
+    ws.write_formula(1, 5, "=INDIRECT(Sheet1!G1)", None, 0)  # F2
+    wb.close()
+
+
 def _make_env(mapping: dict[str, CellType]) -> CellTypeEnv:
     return mapping
 
@@ -256,6 +275,31 @@ def test_infer_raises_dynamic_ref_error_is_caught(tmp_path: Path) -> None:
     # Must not raise — branch explosion is swallowed
     result = list_dynamic_ref_constraint_candidates(path, ["Sheet1!A1"], dynamic_refs=config)
     assert isinstance(result, list)
+
+
+@pytest.mark.xfail(reason="Known issue #97: downstream blank leaf can be skipped")
+def test_candidate_scan_surfaces_downstream_blank_leaf_despite_blocking_infer_issue_97(
+    tmp_path: Path,
+) -> None:
+    """
+    A failed upstream dynamic-ref inference should not hide a downstream blank leaf
+    that later causes graph extraction to fail.
+    """
+    path = tmp_path / "blocked_downstream_blank_leaf.xlsx"
+    _build_blocked_downstream_blank_leaf(path)
+    env = _make_env(
+        {
+            "Sheet1!C1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntervalDomain(min=0, max=100),
+            )
+        }
+    )
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits(max_branches=1))
+
+    result = list_dynamic_ref_constraint_candidates(path, ["Sheet1!A1"], dynamic_refs=config)
+
+    assert result == ["Sheet1!G1"]
 
 
 def test_missing_sheet_raises_value_error(tmp_path: Path) -> None:
