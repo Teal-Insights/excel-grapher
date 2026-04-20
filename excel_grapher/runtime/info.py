@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from .core import CellValue, XlError, to_number
+import numpy as np
+
+from .core import CellValue, XlError
 
 __all__ = ["xl_isblank", "xl_isnumber", "xl_istext", "xl_na"]
 
 
 def xl_isnumber(value: CellValue) -> bool:
-    n = to_number(value)
-    return isinstance(n, float) and not isinstance(value, bool)
+    return not isinstance(value, bool) and isinstance(value, (int, float, np.integer, np.floating))
 
 
 def xl_istext(value: CellValue) -> bool:

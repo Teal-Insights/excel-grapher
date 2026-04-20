@@ -14,35 +14,42 @@ __all__ = [
 
 
 def xl_left(text: CellValue, num_chars: CellValue = 1) -> str | XlError:
-    t = to_string(text)
+    s = to_string(text)
     n = to_number(num_chars)
     if isinstance(n, XlError):
         return n
-    return t[: max(0, int(n))]
+    chars = int(n)
+    if chars < 0:
+        return XlError.VALUE
+    return s[:chars]
 
 
 def xl_right(text: CellValue, num_chars: CellValue = 1) -> str | XlError:
-    t = to_string(text)
+    s = to_string(text)
     n = to_number(num_chars)
     if isinstance(n, XlError):
         return n
-    k = max(0, int(n))
-    return t[-k:] if k else ""
+    chars = int(n)
+    if chars < 0:
+        return XlError.VALUE
+    if chars == 0:
+        return ""
+    return s[-chars:]
 
 
 def xl_mid(text: CellValue, start_num: CellValue, num_chars: CellValue) -> str | XlError:
-    t = to_string(text)
-    s = to_number(start_num)
-    if isinstance(s, XlError):
-        return s
-    n = to_number(num_chars)
-    if isinstance(n, XlError):
-        return n
-    start = int(s) - 1
-    length = max(0, int(n))
-    if start < 0:
-        return ""
-    return t[start : start + length]
+    s = to_string(text)
+    start = to_number(start_num)
+    if isinstance(start, XlError):
+        return start
+    num = to_number(num_chars)
+    if isinstance(num, XlError):
+        return num
+    start_idx = int(start) - 1
+    chars = int(num)
+    if start_idx < 0 or chars < 0:
+        return XlError.VALUE
+    return s[start_idx : start_idx + chars]
 
 
 def xl_concatenate(*args: CellValue) -> str | XlError:
@@ -55,11 +62,33 @@ def xl_concatenate(*args: CellValue) -> str | XlError:
 
 
 def xl_text(value: CellValue, format_text: CellValue) -> str | XlError:
-    if isinstance(value, XlError):
-        return value
-    if isinstance(format_text, XlError):
-        return format_text
-    return to_string(value)
+    fmt = to_string(format_text)
+    n = to_number(value)
+    if isinstance(n, XlError):
+        return to_string(value)
+
+    if fmt == "0":
+        return str(int(round(n)))
+    if fmt == "0.0":
+        return f"{n:.1f}"
+    if fmt == "0.00":
+        return f"{n:.2f}"
+    if fmt == "0.000":
+        return f"{n:.3f}"
+    if fmt == "#,##0":
+        return f"{int(round(n)):,}"
+    if fmt == "#,##0.00":
+        return f"{n:,.2f}"
+    if fmt == "0%":
+        return f"{int(round(n * 100))}%"
+    if fmt == "0.0%":
+        return f"{n * 100:.1f}%"
+    if fmt == "0.00%":
+        return f"{n * 100:.2f}%"
+
+    if n == int(n):
+        return str(int(n))
+    return str(n)
 
 
 def xl__xlfn_numbervalue(

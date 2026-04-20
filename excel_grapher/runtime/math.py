@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import re
+from typing import TypeVar
 
 import numpy as np
 
@@ -15,6 +16,8 @@ from .core import (
     to_number,
     to_string,
 )
+
+T = TypeVar("T", str, float)
 
 __all__ = [
     "xl_average",
@@ -76,11 +79,7 @@ def xl_max(*args: CellValue) -> float | XlError:
 def xl_count(*args: CellValue) -> int:
     count = 0
     for v in flatten(*args):
-        if (
-            isinstance(v, (int, float))
-            and not isinstance(v, bool)
-            or isinstance(v, (np.integer, np.floating))
-        ):
+        if isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, bool):
             count += 1
     return count
 
@@ -216,38 +215,6 @@ def _parse_countif_criteria(criteria: str) -> tuple[str | None, str]:
     return (None, s)
 
 
-def _compare_numeric(op: str, left: float, right: float) -> bool:
-    if op == "=":
-        return left == right
-    if op == "<>":
-        return left != right
-    if op == ">":
-        return left > right
-    if op == "<":
-        return left < right
-    if op == ">=":
-        return left >= right
-    if op == "<=":
-        return left <= right
-    return False
-
-
-def _compare_str(op: str, left: str, right: str) -> bool:
-    if op == "=":
-        return left == right
-    if op == "<>":
-        return left != right
-    if op == ">":
-        return left > right
-    if op == "<":
-        return left < right
-    if op == ">=":
-        return left >= right
-    if op == "<=":
-        return left <= right
-    return False
-
-
 def xl_countif(range_values: CellValue, criteria: CellValue) -> int | XlError:
     if isinstance(criteria, XlError):
         return criteria
@@ -271,6 +238,8 @@ def xl_countif(range_values: CellValue, criteria: CellValue) -> int | XlError:
         return sum(1 for v in values if pred(v))
 
     op, rhs = _parse_countif_criteria(criteria)
+
+    # Wildcard / equality mode.
     if op is None:
         if any(ch in rhs for ch in ("*", "?", "~")):
             rx = _wildcard_to_regex(rhs)
@@ -279,32 +248,58 @@ def xl_countif(range_values: CellValue, criteria: CellValue) -> int | XlError:
                 for v in values
                 if not isinstance(v, XlError) and rx.match(to_string(v)) is not None
             )
+
         rhs_cf = excel_casefold(rhs)
         return sum(
             1
             for v in values
             if not isinstance(v, XlError) and excel_casefold(to_string(v)) == rhs_cf
         )
+
+    # Operator mode: try numeric compare first if RHS parses as a number.
+    rhs_num: float | None
     try:
-        rhs_num: float | None = float(rhs) if rhs != "" else 0.0
+        rhs_num = float(rhs) if rhs != "" else 0.0
     except ValueError:
         rhs_num = None
+
     count = 0
     for v in values:
         if isinstance(v, XlError):
             continue
+
         if rhs_num is not None:
             vn = to_number(v)
             if isinstance(vn, XlError):
+                # Non-numeric cells simply don't match numeric criteria.
                 continue
-            match = _compare_numeric(op, float(vn), rhs_num)
+            match = _compare_values(op, vn, rhs_num)
         else:
             left_str = excel_casefold(to_string(v))
             right_str = excel_casefold(rhs)
-            match = _compare_str(op, left_str, right_str)
+            match = _compare_values(op, left_str, right_str)
+
         if match:
             count += 1
+
     return count
+
+
+def _compare_values(op: str, left: T, right: T) -> bool:
+    """Compare two values of the same type."""
+    if op == "=":
+        return left == right
+    if op == "<>":
+        return left != right
+    if op == ">":
+        return left > right  # type: ignore[operator]
+    if op == "<":
+        return left < right  # type: ignore[operator]
+    if op == ">=":
+        return left >= right  # type: ignore[operator]
+    if op == "<=":
+        return left <= right  # type: ignore[operator]
+    return False
 
 
 def xl_large(array: CellValue, k: CellValue) -> float | XlError:
