@@ -12,6 +12,7 @@ from .evaluator import (
     ParseError,
     XlError,
 )
+from .exporter import to_lightweight_viz
 from .grapher import (
     GRAPH_CACHE_SCHEMA_VERSION,
     And,
@@ -56,7 +57,6 @@ from .grapher import (
     save_graph_cache,
     select_local_force_subgraph,
     to_graphviz,
-    to_lightweight_viz,
     to_mermaid,
     to_networkx,
     trace_dynamic_refs,

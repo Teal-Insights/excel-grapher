@@ -14,8 +14,10 @@ Dependency rules (strictest first):
 
 from __future__ import annotations
 
+import ast
 import importlib
 import pkgutil
+from pathlib import Path
 
 
 def _leaked_imports(package_name: str, forbidden_prefixes: tuple[str, ...]) -> list[tuple[str, str]]:
@@ -57,3 +59,23 @@ def test_grapher_has_no_upward_deps() -> None:
 def test_evaluator_does_not_import_exporter() -> None:
     offenders = _leaked_imports("excel_grapher.evaluator", ("excel_grapher.exporter",))
     assert not offenders, f"evaluator leaked imports from exporter: {offenders}"
+
+
+def test_grapher_package_init_does_not_import_exporter() -> None:
+    """The package ``__init__`` is not traversed by walk_packages; assert it stays layer-clean."""
+    repo_root = Path(__file__).resolve().parents[1]
+    init_path = repo_root / "excel_grapher" / "grapher" / "__init__.py"
+    tree = ast.parse(init_path.read_text(encoding="utf-8"))
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            if node.module == "excel_grapher.exporter" or node.module.startswith(
+                "excel_grapher.exporter."
+            ):
+                offenders.append(f"from {node.module} import ...")
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                name = alias.name
+                if name == "excel_grapher.exporter" or name.startswith("excel_grapher.exporter."):
+                    offenders.append(f"import {name}")
+    assert not offenders, f"grapher/__init__.py must not import exporter: {offenders}"

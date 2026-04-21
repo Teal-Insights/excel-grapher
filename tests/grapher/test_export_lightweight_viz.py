@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import pytest
 
+from excel_grapher.exporter import to_lightweight_viz
 from excel_grapher.grapher import DependencyGraph, Literal, Node
 from excel_grapher.grapher.export import (
     to_graphviz,
-    to_lightweight_viz,
     to_mermaid,
     to_networkx,
 )
 from excel_grapher.grapher.lightweight_viz import (
     DENSE_BUCKET_THRESHOLD,
+    VIZ_PAYLOAD_VERSION,
     _build_local_csr,
+    lightweight_viz_flat,
     select_local_force_subgraph,
     serialize_lightweight_viz_json,
 )
@@ -110,8 +112,9 @@ def test_build_local_csr_hoisted_out_degree_sort() -> None:
 
 def test_payload_contract_and_version() -> None:
     g = _chain_graph()
-    p = to_lightweight_viz(g)
-    assert p.version == 1
+    payload = to_lightweight_viz(g)
+    assert payload.version == VIZ_PAYLOAD_VERSION
+    p = lightweight_viz_flat(payload)
     assert p.stats.node_count == 3
     assert len(p.sheets) == 1 and p.sheets[0] == "S"
     assert len(p.nodes.sheet_index) == 3
@@ -123,7 +126,8 @@ def test_payload_contract_and_version() -> None:
 
 def test_deterministic_ids_and_serialization() -> None:
     g = _fork_join_graph()
-    a = serialize_lightweight_viz_json(to_lightweight_viz(g))
+    payload = to_lightweight_viz(g)
+    a = serialize_lightweight_viz_json(payload)
     b = serialize_lightweight_viz_json(to_lightweight_viz(g))
     assert a == b
 
@@ -138,7 +142,7 @@ def test_existing_exports_unchanged() -> None:
 
 def test_rank_chain_monotonic_along_flow() -> None:
     """Ranks are longest-path from condensation sources (roots); A3 -> A2 -> A1 implies non-increasing toward the leaf."""
-    p = to_lightweight_viz(_chain_graph())
+    p = lightweight_viz_flat(to_lightweight_viz(_chain_graph()))
     ranks = p.nodes.rank
     keys = sorted(_chain_graph())
     idx = {k: i for i, k in enumerate(keys)}
@@ -146,7 +150,7 @@ def test_rank_chain_monotonic_along_flow() -> None:
 
 
 def test_rank_fork_join() -> None:
-    p = to_lightweight_viz(_fork_join_graph())
+    p = lightweight_viz_flat(to_lightweight_viz(_fork_join_graph()))
     r = list(p.nodes.rank)
     keys = sorted(_fork_join_graph())
     idx = {k: i for i, k in enumerate(keys)}
@@ -155,19 +159,19 @@ def test_rank_fork_join() -> None:
 
 
 def test_cycle_single_scc_shared_rank() -> None:
-    p = to_lightweight_viz(_two_cycle_graph())
+    p = lightweight_viz_flat(to_lightweight_viz(_two_cycle_graph()))
     assert p.stats.scc_count == 1
     assert p.nodes.rank[0] == p.nodes.rank[1]
 
 
 def test_guarded_does_not_create_uncond_cycle_scc() -> None:
-    p = to_lightweight_viz(_guarded_back_edge_graph())
+    p = lightweight_viz_flat(to_lightweight_viz(_guarded_back_edge_graph()))
     assert p.stats.scc_count == 2
 
 
 def test_module_edges_aggregate_matches_graph() -> None:
     g = _fork_join_graph()
-    p = to_lightweight_viz(g, module_iterations=8)
+    p = lightweight_viz_flat(to_lightweight_viz(g, module_iterations=8))
     keys = sorted(g)
     key_id = {k: i for i, k in enumerate(keys)}
     mod = list(p.nodes.module_id)
@@ -190,7 +194,7 @@ def test_module_edges_aggregate_matches_graph() -> None:
 
 
 def test_layout_y_monotone_with_rank() -> None:
-    p = to_lightweight_viz(_fork_join_graph())
+    p = lightweight_viz_flat(to_lightweight_viz(_fork_join_graph()))
     n = p.stats.node_count
     for i in range(n):
         for j in range(n):
@@ -206,18 +210,18 @@ def test_dense_bucket_metadata() -> None:
     g.add_node(hub)
     for i in range(1, DENSE_BUCKET_THRESHOLD + 4):
         g.add_edge(hub.key, f"S!B{i}")
-    p = to_lightweight_viz(g, module_iterations=8)
+    p = lightweight_viz_flat(to_lightweight_viz(g, module_iterations=8))
     assert p.stats.dense_bucket_count >= 1
     assert any(d > DENSE_BUCKET_THRESHOLD for d in p.nodes.bucket_density)
 
 
 def test_small_module_local_edges_complete() -> None:
-    p = to_lightweight_viz(_chain_graph(), max_local_nodes=100, max_local_edges=100)
+    p = lightweight_viz_flat(to_lightweight_viz(_chain_graph(), max_local_nodes=100, max_local_edges=100))
     assert all(p.local_edges.complete)
 
 
 def test_local_edges_valid_targets() -> None:
-    p = to_lightweight_viz(_fork_join_graph())
+    p = lightweight_viz_flat(to_lightweight_viz(_fork_join_graph()))
     n = p.stats.node_count
     off = p.local_edges.offsets
     tg = p.local_edges.targets
@@ -239,7 +243,7 @@ def test_truncation_prefers_unconditional_first() -> None:
         leaves.append(n)
         g.add_edge(root.key, n.key, guard=Literal(True))
     g.add_edge(root.key, na.key)
-    p = to_lightweight_viz(g, max_local_nodes=5000, max_local_edges=5)
+    p = lightweight_viz_flat(to_lightweight_viz(g, max_local_nodes=5000, max_local_edges=5))
     ri = sorted(g).index(root.key)
     off = p.local_edges.offsets
     tg = p.local_edges.targets
@@ -274,9 +278,10 @@ def test_lightweight_viz_large_chain_benchmark() -> None:
         g.add_node(_n("S", "A", r, leaf=False, formula=f"=A{r - 1}"))
         g.add_edge(f"S!A{r}", f"S!A{r - 1}")
     t0 = time.perf_counter()
-    p = to_lightweight_viz(g, max_local_nodes=500, max_local_edges=2000)
+    payload = to_lightweight_viz(g, max_local_nodes=500, max_local_edges=2000)
     elapsed = time.perf_counter() - t0
-    raw = serialize_lightweight_viz_json(p)
-    assert p.stats.node_count == n_nodes
+    raw = serialize_lightweight_viz_json(payload)
+    flat = lightweight_viz_flat(payload)
+    assert flat.stats.node_count == n_nodes
     assert elapsed < 120.0
     assert len(raw.encode("utf-8")) < 50 * 1024 * 1024

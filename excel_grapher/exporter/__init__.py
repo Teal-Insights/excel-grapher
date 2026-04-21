@@ -6,5 +6,6 @@ The shared runtime embedded in generated code lives at :mod:`excel_grapher.runti
 """
 
 from .codegen import CodeGenerator
+from .lightweight_viz import ensure_default_overlay_builders, to_lightweight_viz
 
-__all__ = ["CodeGenerator"]
+__all__ = ["CodeGenerator", "ensure_default_overlay_builders", "to_lightweight_viz"]

@@ -4,7 +4,11 @@ Refresh the LIC-DSF sample lightweight viz HTML.
 
 Default (fast): re-embed the current package ``lightweight_viz_template.html`` into
 ``example/data/lic-dsf-template-sample-exported-viz.html`` while keeping the existing
-inline ``window.__VIZ_DATA__`` payload (no graph rebuild).
+inline ``window.__VIZ_DATA__`` payload (no graph rebuild). That embedded JSON may be an
+older **flat** snapshot (legacy inline shape); the viewer still accepts it. To regenerate
+current wire JSON from the cached graph, use ``--full``. Choose ``--mode core`` to
+rebuild a core-only payload (BFS layout defaults) or ``--mode exporter`` to include
+module-inference overlays.
 
 Use ``--full`` to rebuild from ``example/.cache/...-dependency-graph.pkl`` (slow, large
 RAM; re-runs ``to_lightweight_viz`` and serializes ~tens of MB of JSON).
@@ -21,11 +25,37 @@ import re
 import sys
 from importlib import resources
 from pathlib import Path
+from typing import Literal
 
 _EXAMPLE_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _EXAMPLE_DIR.parent
 _DEFAULT_HTML = _EXAMPLE_DIR / "data" / "lic-dsf-template-sample-exported-viz.html"
 _DEFAULT_CACHE = _EXAMPLE_DIR / ".cache" / "lic-dsf-template-2025-08-12-dependency-graph.pkl"
+
+
+def _lic_dsf_export_targets() -> tuple[str, ...]:
+    from example.extract_graph_cached import EXPORT_RANGES, cells_in_range, parse_range_spec
+
+    targets: list[str] = []
+    seen: set[str] = set()
+    for entry in EXPORT_RANGES:
+        sheet, a1 = parse_range_spec(entry["range_spec"])
+        for key in cells_in_range(sheet, a1):
+            if key in seen:
+                continue
+            seen.add(key)
+            targets.append(key)
+    return tuple(targets)
+
+
+def _embedded_payload_version(sample_path: Path) -> int | None:
+    """Best-effort parse of ``\"version\"`` from the ``__VIZ_DATA__`` bootstrap line."""
+    with sample_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            if "window.__VIZ_DATA__" in line and "window.__VIZ_DATA_URL__" not in line:
+                m = re.search(r'"version"\s*:\s*(\d+)', line)
+                return int(m.group(1)) if m else None
+    return None
 
 
 def _package_template() -> str:
@@ -86,10 +116,17 @@ def refresh_template_only(sample_html: Path) -> None:
     sample_html.write_text(out_html, encoding="utf-8")
 
 
-def full_rebuild(sample_html: Path, cache_pkl: Path, budget_mb: int) -> None:
+def full_rebuild(
+    sample_html: Path,
+    cache_pkl: Path,
+    budget_mb: int,
+    mode: Literal["exporter", "core"],
+    *,
+    exclude_guarded: bool = False,
+) -> None:
     sys.path.insert(0, str(_REPO_ROOT))
     from excel_grapher.grapher.graph import DependencyGraph
-    from excel_grapher.grapher.lightweight_viz import to_lightweight_viz, write_lightweight_viz_html
+    from excel_grapher.grapher.lightweight_viz import write_lightweight_viz_html
 
     with cache_pkl.open("rb") as f:
         blob = pickle.load(f)
@@ -99,7 +136,26 @@ def full_rebuild(sample_html: Path, cache_pkl: Path, budget_mb: int) -> None:
     if not isinstance(graph, DependencyGraph):
         raise SystemExit("Pickle graph is not a DependencyGraph")
 
-    payload = to_lightweight_viz(graph)
+    if mode == "exporter":
+        from excel_grapher.exporter.lightweight_viz import to_lightweight_viz
+
+        payload = to_lightweight_viz(graph)
+    else:
+        from excel_grapher.grapher.lightweight_viz import (
+            VizLimits,
+            assemble_lightweight_viz_payload,
+            build_lightweight_viz_core,
+        )
+
+        core = build_lightweight_viz_core(
+            graph,
+            limits=VizLimits(),
+            include_guarded_edges=not exclude_guarded,
+            bfs_seed_keys=_lic_dsf_export_targets(),
+            exclude_unreachable_from_bfs=True,
+        )
+        payload = assemble_lightweight_viz_payload(core, [])
+
     write_lightweight_viz_html(
         payload,
         sample_html,
@@ -110,6 +166,8 @@ def full_rebuild(sample_html: Path, cache_pkl: Path, budget_mb: int) -> None:
 
 
 def main() -> None:
+    from excel_grapher.grapher.lightweight_viz import VIZ_PAYLOAD_VERSION
+
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
         "--full",
@@ -134,14 +192,37 @@ def main() -> None:
         default=512,
         help="Inline JSON size budget for --full (default: 512)",
     )
+    p.add_argument(
+        "--mode",
+        choices=("exporter", "core"),
+        default="core",
+        help=(
+            "Payload mode for --full (default: core): 'core' builds a core-only payload "
+            "using grapher defaults (BFS layout); 'exporter' includes module-inference overlays."
+        ),
+    )
+    p.add_argument(
+        "--exclude-guarded",
+        action="store_true",
+        help=(
+            "Core mode only: exclude guarded edges from core payload; unreachable nodes from "
+            "the BFS seed set are pruned automatically."
+        ),
+    )
     args = p.parse_args()
     out = args.output.resolve()
     if args.full:
         cache = args.cache.resolve()
         if not cache.is_file():
             raise SystemExit(f"Missing cache: {cache}")
-        print("Full rebuild from pickle (this may take many minutes)...", flush=True)
-        full_rebuild(out, cache, args.inline_budget_mb)
+        print(f"Full rebuild from pickle in {args.mode!r} mode (this may take many minutes)...", flush=True)
+        full_rebuild(
+            out,
+            cache,
+            args.inline_budget_mb,
+            args.mode,
+            exclude_guarded=args.exclude_guarded,
+        )
         print(f"Wrote {out} ({out.stat().st_size // 1024 // 1024} MiB)", flush=True)
         return
 
@@ -150,8 +231,18 @@ def main() -> None:
             f"Missing {out}; run with --full once after extract_graph_cached.py, "
             "or create the sample HTML first."
         )
+    ver = _embedded_payload_version(out)
     refresh_template_only(out)
     print(f"Refreshed package template into {out} (data payload unchanged).", flush=True)
+    if ver is not None and ver != VIZ_PAYLOAD_VERSION:
+        print(
+            f"Note: embedded JSON wire version is still {ver} "
+            f"(expected {VIZ_PAYLOAD_VERSION} for current wire output). "
+            f"Template-only refresh does not rebuild data. "
+            f"Run with --full to rewrite inline data from the pickle: "
+            f"{args.cache}",
+            flush=True,
+        )
 
 
 if __name__ == "__main__":

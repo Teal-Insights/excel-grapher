@@ -14,7 +14,6 @@ from .lightweight_viz import (
     LightweightVizStats,
     LocalForceSubgraph,
     select_local_force_subgraph,
-    to_lightweight_viz,
     write_lightweight_viz_data,
     write_lightweight_viz_html,
 )
@@ -163,7 +162,6 @@ __all__ = [
     "LightweightVizStats",
     "select_local_force_subgraph",
     "to_graphviz",
-    "to_lightweight_viz",
     "to_mermaid",
     "to_networkx",
     "write_lightweight_viz_data",

@@ -1,7 +1,12 @@
+"""Lightweight workbook graph visualization: core payload, overlays, JSON, and HTML."""
+
 from __future__ import annotations
 
 import heapq
 import json
+import math
+from collections import deque
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -9,300 +14,13 @@ from typing import Any, Literal
 from .graph import DependencyGraph
 from .node import NodeKey
 
-# --- Public payload types -----------------------------------------------------
+# --- Constants ----------------------------------------------------------------
 
-VIZ_PAYLOAD_VERSION = 1
-
-# Overview layout: nodes in the same (rank, module) bucket beyond this count use density metadata.
 DENSE_BUCKET_THRESHOLD = 12
+VIZ_PAYLOAD_VERSION = 2
+MODULE_INFERENCE_OVERLAY_ID = "exporter.module_inference"
 
-
-@dataclass(frozen=True, slots=True)
-class LightweightVizStats:
-    node_count: int
-    scc_count: int
-    module_count: int
-    module_edge_count: int
-    local_edge_count: int
-    truncated_local_nodes: int
-    dense_bucket_count: int
-
-
-@dataclass(frozen=True, slots=True)
-class LightweightVizNodeColumns:
-    sheet_index: tuple[int, ...]
-    row: tuple[int, ...]
-    column: tuple[str, ...]
-    is_leaf: tuple[bool, ...]
-    in_degree: tuple[int, ...]
-    out_degree: tuple[int, ...]
-    module_id: tuple[int, ...]
-    rank: tuple[int, ...]
-    x: tuple[float, ...]
-    y: tuple[float, ...]
-    bucket_density: tuple[int, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class LightweightVizModule:
-    id: int
-    node_count: int
-    rank_min: int
-    rank_max: int
-    centroid_x: float
-    centroid_y: float
-    density_mode: bool
-
-
-@dataclass(frozen=True, slots=True)
-class LightweightVizModuleEdge:
-    source_module_id: int
-    target_module_id: int
-    unconditional_weight: int
-    guarded_weight: int
-
-
-@dataclass(frozen=True, slots=True)
-class LightweightVizLocalEdges:
-    offsets: tuple[int, ...]
-    targets: tuple[int, ...]
-    guarded: tuple[bool, ...]
-    complete: tuple[bool, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class LightweightVizPayload:
-    version: int
-    stats: LightweightVizStats
-    sheets: tuple[str, ...]
-    nodes: LightweightVizNodeColumns
-    modules: tuple[LightweightVizModule, ...]
-    module_edges: tuple[LightweightVizModuleEdge, ...]
-    local_edges: LightweightVizLocalEdges
-    max_local_nodes: int
-    max_local_edges: int
-
-
-@dataclass(frozen=True, slots=True)
-class LocalForceSubgraph:
-    """Explicit bounded subgraph for client-side force layout."""
-
-    node_ids: tuple[int, ...]
-    edges_from: tuple[int, ...]
-    edges_to: tuple[int, ...]
-    edges_guarded: tuple[bool, ...]
-    is_module_scope: bool
-    truncated: bool
-
-
-# --- Iterative graph algorithms (no recursion) -------------------------------
-
-
-def _dfs_postorder_finish(adj: list[list[int]], n: int) -> list[int]:
-    """Iterative postorder; adjacency lists must be sorted for determinism."""
-    visited = [False] * n
-    order: list[int] = []
-    for start in range(n):
-        if visited[start]:
-            continue
-        stack: list[tuple[int, int]] = [(start, 0)]
-        visited[start] = True
-        while stack:
-            v, ni = stack[-1]
-            nbrs = adj[v]
-            if ni < len(nbrs):
-                w = nbrs[ni]
-                stack[-1] = (v, ni + 1)
-                if not visited[w]:
-                    visited[w] = True
-                    stack.append((w, 0))
-            else:
-                stack.pop()
-                order.append(v)
-    return order
-
-
-def _assign_components_reverse(adj_rev: list[list[int]], order_rev: list[int], n: int) -> list[int]:
-    comp = [-1] * n
-    label = 0
-    for start in order_rev:
-        if comp[start] >= 0:
-            continue
-        stack = [start]
-        comp[start] = label
-        while stack:
-            v = stack.pop()
-            for w in adj_rev[v]:
-                if comp[w] < 0:
-                    comp[w] = label
-                    stack.append(w)
-        label += 1
-    return comp
-
-
-def iterative_kosaraju_scc(adj_out: list[list[int]], n: int) -> list[int]:
-    """
-    Strongly connected components as integer labels 0..k-1 (not necessarily topo order).
-    Uses Kosaraju with iterative DFS only.
-    """
-    order = _dfs_postorder_finish(adj_out, n)
-    adj_rev = [[] for _ in range(n)]
-    for u in range(n):
-        for v in adj_out[u]:
-            adj_rev[v].append(u)
-    for row in adj_rev:
-        row.sort()
-    comp = _assign_components_reverse(adj_rev, list(reversed(order)), n)
-    return comp
-
-
-def _remap_components(comp: list[int]) -> tuple[list[int], int]:
-    """Remap arbitrary SCC labels to 0..c-1 in order of first appearance in node order."""
-    mapping: dict[int, int] = {}
-    out = [0] * len(comp)
-    nxt = 0
-    for i, c in enumerate(comp):
-        if c not in mapping:
-            mapping[c] = nxt
-            nxt += 1
-        out[i] = mapping[c]
-    return out, nxt
-
-
-def build_condensation_edges(
-    adj: list[list[int]], n: int, comp: list[int], n_comp: int
-) -> list[list[int]]:
-    edges: set[tuple[int, int]] = set()
-    for u in range(n):
-        cu = comp[u]
-        for v in adj[u]:
-            cv = comp[v]
-            if cu != cv:
-                edges.add((cu, cv))
-    cond = [[] for _ in range(n_comp)]
-    for a, b in sorted(edges):
-        cond[a].append(b)
-    return cond
-
-
-def condensation_indegree(adj_cond: list[list[int]], n_comp: int) -> list[int]:
-    indeg = [0] * n_comp
-    for u in range(n_comp):
-        for v in adj_cond[u]:
-            indeg[v] += 1
-    return indeg
-
-
-def kahn_toposort(adj: list[list[int]], n: int) -> list[int] | None:
-    indeg = condensation_indegree(adj, n)
-    heap = [i for i in range(n) if indeg[i] == 0]
-    heapq.heapify(heap)
-    order: list[int] = []
-    while heap:
-        u = heapq.heappop(heap)
-        order.append(u)
-        for v in adj[u]:
-            indeg[v] -= 1
-            if indeg[v] == 0:
-                heapq.heappush(heap, v)
-    if len(order) != n:
-        return None
-    return order
-
-
-def _balance_overview_layout_spans(xs: list[float], ys: list[float]) -> None:
-    """Scale about the centroid so horizontal and vertical extents match.
-
-    Raw placement uses rank on X and module index on Y; large graphs often have
-    many more modules than rank layers, producing a tall narrow layout. Matching
-    axis spans makes overview framing use the canvas more evenly.
-    """
-    if not xs:
-        return
-    min_x = min(xs)
-    max_x = max(xs)
-    min_y = min(ys)
-    max_y = max(ys)
-    cx = 0.5 * (min_x + max_x)
-    cy = 0.5 * (min_y + max_y)
-    span_x = max(max_x - min_x, 1.0)
-    span_y = max(max_y - min_y, 1.0)
-    target = max(span_x, span_y)
-    sx = target / span_x
-    sy = target / span_y
-    for i in range(len(xs)):
-        xs[i] = cx + (xs[i] - cx) * sx
-        ys[i] = cy + (ys[i] - cy) * sy
-
-
-def longest_path_ranks(adj_cond: list[list[int]], n_comp: int) -> list[int]:
-    """
-    For a DAG, rank[v] = max(rank[u]+1) over predecessors u (sources rank 0).
-    Deterministic: process in Kahn topological order.
-    """
-    preds = [[] for _ in range(n_comp)]
-    for u in range(n_comp):
-        for v in adj_cond[u]:
-            preds[v].append(u)
-    for row in preds:
-        row.sort()
-
-    topo = kahn_toposort(adj_cond, n_comp)
-    if topo is None:
-        # Should not happen for condensation of SCCs; fall back to zero ranks.
-        return [0] * n_comp
-
-    rank = [0] * n_comp
-    for v in topo:
-        pr = preds[v]
-        if not pr:
-            rank[v] = 0
-        else:
-            rank[v] = max(rank[u] + 1 for u in pr)
-    return rank
-
-
-def _module_labels_async(
-    adj_cond: list[list[int]],
-    n_comp: int,
-    rank: list[int],
-    iterations: int,
-) -> list[int]:
-    preds = [[] for _ in range(n_comp)]
-    for u in range(n_comp):
-        for v in adj_cond[u]:
-            preds[v].append(u)
-    for row in preds:
-        row.sort()
-
-    label = list(range(n_comp))
-    for _ in range(iterations):
-        order = sorted(range(n_comp), key=lambda s: (rank[s], s))
-        for c in order:
-            neigh = sorted(set(adj_cond[c]) | set(preds[c]))
-            best_key: tuple[float, int] | None = None
-            best_lbl = label[c]
-            for nb in neigh:
-                if nb == c:
-                    continue
-                dr = abs(rank[nb] - rank[c])
-                w = 1.0 / (1.0 + dr)
-                cand = label[nb]
-                key = (-w, cand)
-                if best_key is None or key < best_key:
-                    best_key = key
-                    best_lbl = cand
-            label[c] = min(label[c], best_lbl)
-    return label
-
-
-def _compact_module_ids(labels: list[int]) -> tuple[list[int], int]:
-    uniq = sorted(set(labels))
-    m = {v: i for i, v in enumerate(uniq)}
-    return [m[v] for v in labels], len(uniq)
-
-
-# --- Core export --------------------------------------------------------------
+# --- CSR / edge extraction ----------------------------------------------------
 
 
 def _build_int_adjacencies(
@@ -332,8 +50,12 @@ def _reverse_adj(adj: list[list[int]], n: int) -> list[list[int]]:
     return rev
 
 
-def _edge_list_all(
-    graph: DependencyGraph, keys: list[NodeKey], key_id: dict[NodeKey, int]
+def _edge_list_filtered(
+    graph: DependencyGraph,
+    keys: list[NodeKey],
+    key_id: dict[NodeKey, int],
+    *,
+    include_guarded: bool,
 ) -> list[tuple[int, int, bool]]:
     out: list[tuple[int, int, bool]] = []
     for fk in keys:
@@ -343,6 +65,8 @@ def _edge_list_all(
             if ti is None:
                 continue
             g = graph.edge_attrs(fk, tk).get("guard") is not None
+            if g and not include_guarded:
+                continue
             out.append((fi, ti, g))
     return out
 
@@ -399,115 +123,101 @@ def _build_local_csr(
     return offsets, targets, guarded_flags, complete
 
 
-def to_lightweight_viz(
-    graph: DependencyGraph,
-    *,
-    max_local_nodes: int = 5000,
-    max_local_edges: int = 20000,
-    module_iterations: int = 8,
-    inline_size_budget_mb: int = 50,
-) -> LightweightVizPayload:
-    """
-    Build a columnar, deterministic visualization payload for large dependency graphs.
+def _resolve_local_limits(
+    n: int,
+    total_out_edges: int,
+    max_local_nodes: int | None,
+    max_local_edges: int | None,
+) -> tuple[int, int]:
+    max_nodes_eff = n if max_local_nodes is None else max(0, max_local_nodes)
+    max_edges_eff = total_out_edges if max_local_edges is None else max(0, max_local_edges)
+    return max_nodes_eff, max_edges_eff
 
-    ``inline_size_budget_mb`` is reserved for HTML writers that choose inline vs sidecar mode;
-    it does not change the payload structure.
-    """
-    _ = inline_size_budget_mb
-    keys = sorted(graph)
-    n = len(keys)
-    if n == 0:
-        return LightweightVizPayload(
-            version=VIZ_PAYLOAD_VERSION,
-            stats=LightweightVizStats(
-                node_count=0,
-                scc_count=0,
-                module_count=0,
-                module_edge_count=0,
-                local_edge_count=0,
-                truncated_local_nodes=0,
-                dense_bucket_count=0,
-            ),
-            sheets=tuple(),
-            nodes=LightweightVizNodeColumns(
-                sheet_index=tuple(),
-                row=tuple(),
-                column=tuple(),
-                is_leaf=tuple(),
-                in_degree=tuple(),
-                out_degree=tuple(),
-                module_id=tuple(),
-                rank=tuple(),
-                x=tuple(),
-                y=tuple(),
-                bucket_density=tuple(),
-            ),
-            modules=tuple(),
-            module_edges=tuple(),
-            local_edges=LightweightVizLocalEdges(
-                offsets=(0,),
-                targets=tuple(),
-                guarded=tuple(),
-                complete=tuple(),
-            ),
-            max_local_nodes=max_local_nodes,
-            max_local_edges=max_local_edges,
-        )
-    key_id = {k: i for i, k in enumerate(keys)}
 
-    sheets_sorted = sorted({node.sheet for k in keys if (node := graph.get_node(k)) is not None})
-    sheet_index_map = {s: i for i, s in enumerate(sheets_sorted)}
+# --- Shared edge column type --------------------------------------------------
 
-    uncond, all_adj = _build_int_adjacencies(graph, keys, key_id)
-    rev_all = _reverse_adj(all_adj, n)
 
-    in_deg = [len(rev_all[i]) for i in range(n)]
-    out_deg = [len(all_adj[i]) for i in range(n)]
+@dataclass(frozen=True, slots=True)
+class LightweightVizLocalEdges:
+    offsets: tuple[int, ...]
+    targets: tuple[int, ...]
+    guarded: tuple[bool, ...]
+    complete: tuple[bool, ...]
 
-    comp_raw = iterative_kosaraju_scc(uncond, n) if n else []
-    comp, n_comp = _remap_components(comp_raw) if n else ([], 0)
 
-    adj_cond = build_condensation_edges(uncond, n, comp, n_comp) if n else []
-    scc_rank = longest_path_ranks(adj_cond, n_comp) if n_comp else []
+# --- Core payload (structural + layout) ---------------------------------------
 
-    scc_labels = (
-        _module_labels_async(adj_cond, n_comp, scc_rank, module_iterations) if n_comp else []
-    )
-    module_of_scc, _n_mod = _compact_module_ids(scc_labels) if n_comp else ([], 0)
-    module_of = [module_of_scc[comp[i]] for i in range(n)] if n else []
 
-    node_rank = [scc_rank[comp[i]] for i in range(n)] if n else []
+@dataclass(frozen=True, slots=True)
+class VizLimits:
+    max_local_nodes: int | None = None
+    max_local_edges: int | None = None
 
-    n_mod = _n_mod if n_comp else 0
-    mod_node_count = [0] * n_mod
-    for m in module_of:
-        mod_node_count[m] += 1
 
-    all_edges = _edge_list_all(graph, keys, key_id)
-    mod_internal_edges = [0] * n_mod
-    for u, v, _ in all_edges:
-        if module_of[u] == module_of[v]:
-            mod_internal_edges[module_of[u]] += 1
+@dataclass(frozen=True, slots=True)
+class LightweightVizLayoutInput:
+    module_of: tuple[int, ...]
+    node_rank: tuple[int, ...]
 
-    out_edges_by_src: list[list[tuple[int, bool]]] = [[] for _ in range(n)]
-    for u, v, g in all_edges:
-        out_edges_by_src[u].append((v, g))
 
-    offsets, loc_tgts, loc_guarded, loc_complete = _build_local_csr(
-        n,
-        module_of,
-        out_edges_by_src,
-        mod_node_count,
-        mod_internal_edges,
-        max_local_nodes,
-        max_local_edges,
-    )
-    truncated_local = sum(1 for c in loc_complete if not c)
-    local_edge_count = len(loc_tgts)
+@dataclass(frozen=True, slots=True)
+class LightweightVizCoreStats:
+    node_count: int
+    local_edge_count: int
+    truncated_local_nodes: int
+    dense_bucket_count: int
 
+
+@dataclass(frozen=True, slots=True)
+class LightweightVizCoreNodeColumns:
+    sheet_index: tuple[int, ...]
+    row: tuple[int, ...]
+    column: tuple[str, ...]
+    is_leaf: tuple[bool, ...]
+    in_degree: tuple[int, ...]
+    out_degree: tuple[int, ...]
+    rank: tuple[int, ...]
+    x: tuple[float, ...]
+    y: tuple[float, ...]
+    bucket_density: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class LightweightVizCore:
+    stats: LightweightVizCoreStats
+    sheets: tuple[str, ...]
+    nodes: LightweightVizCoreNodeColumns
+    local_edges: LightweightVizLocalEdges
+    max_local_nodes: int | None
+    max_local_edges: int | None
+
+
+def _balance_overview_layout_spans(xs: list[float], ys: list[float]) -> None:
+    if not xs:
+        return
+    min_x = min(xs)
+    max_x = max(xs)
+    min_y = min(ys)
+    max_y = max(ys)
+    cx = 0.5 * (min_x + max_x)
+    cy = 0.5 * (min_y + max_y)
+    span_x = max(max_x - min_x, 1.0)
+    span_y = max(max_y - min_y, 1.0)
+    target = max(span_x, span_y)
+    sx = target / span_x
+    sy = target / span_y
+    for i in range(len(xs)):
+        xs[i] = cx + (xs[i] - cx) * sx
+        ys[i] = cy + (ys[i] - cy) * sy
+
+
+def _rank_band_xy(
+    n: int,
+    module_of: list[int],
+    node_rank: list[int],
+) -> tuple[list[float], list[float], list[int], int]:
     x_scale = 120.0
     y_band = 36.0
-
     bucket_counts: dict[tuple[int, int], int] = {}
     for i in range(n):
         b = (node_rank[i], module_of[i])
@@ -531,24 +241,538 @@ def to_lightweight_viz(
         idx_in_bucket = bucket_running_idx.get(bkey, 0)
         bucket_running_idx[bkey] = idx_in_bucket + 1
         if cnt <= DENSE_BUCKET_THRESHOLD:
-            ys[i] = base_y + float(idx_in_bucket) * 4.0
+            centered = float(idx_in_bucket) - 0.5 * float(cnt - 1)
+            ys[i] = base_y + centered * 4.0
         else:
-            # Deterministic jitter inside the band for overloaded buckets.
             t = (i * 1103515245 + 12345) & 0x7FFFFFFF
             jx = ((t % 10000) / 10000.0 - 0.5) * y_band * 0.85
             jy = (((t // 10000) % 10000) / 10000.0 - 0.5) * 8.0
             ys[i] = base_y + jx + jy
 
     _balance_overview_layout_spans(xs, ys)
-    # Export the overview with rank increasing down the page.
     xs, ys = ys, xs
+    return xs, ys, bucket_density, dense_bucket_count
+
+
+def _grid_xy(n: int) -> tuple[list[float], list[float], list[int], int]:
+    x_scale = 120.0
+    y_band = 36.0
+    cols = max(1, int(math.ceil(math.sqrt(max(n, 1)))))
+    xs = [0.0] * n
+    ys = [0.0] * n
+    bucket_density = [1] * n
+    for i in range(n):
+        r = i // cols
+        c = i % cols
+        xs[i] = float(c) * x_scale
+        ys[i] = float(r) * y_band
+    _balance_overview_layout_spans(xs, ys)
+    xs, ys = ys, xs
+    return xs, ys, bucket_density, 0
+
+
+def _dfs_postorder_finish(adj: list[list[int]], n: int) -> list[int]:
+    visited = [False] * n
+    order: list[int] = []
+    for start in range(n):
+        if visited[start]:
+            continue
+        stack: list[tuple[int, int]] = [(start, 0)]
+        visited[start] = True
+        while stack:
+            v, ni = stack[-1]
+            nbrs = adj[v]
+            if ni < len(nbrs):
+                w = nbrs[ni]
+                stack[-1] = (v, ni + 1)
+                if not visited[w]:
+                    visited[w] = True
+                    stack.append((w, 0))
+            else:
+                stack.pop()
+                order.append(v)
+    return order
+
+
+def _assign_components_reverse(adj_rev: list[list[int]], order_rev: list[int], n: int) -> list[int]:
+    comp = [-1] * n
+    label = 0
+    for start in order_rev:
+        if comp[start] >= 0:
+            continue
+        stack = [start]
+        comp[start] = label
+        while stack:
+            v = stack.pop()
+            for w in adj_rev[v]:
+                if comp[w] < 0:
+                    comp[w] = label
+                    stack.append(w)
+        label += 1
+    return comp
+
+
+def _iterative_kosaraju_scc(adj_out: list[list[int]], n: int) -> list[int]:
+    order = _dfs_postorder_finish(adj_out, n)
+    adj_rev = [[] for _ in range(n)]
+    for u in range(n):
+        for v in adj_out[u]:
+            adj_rev[v].append(u)
+    for row in adj_rev:
+        row.sort()
+    return _assign_components_reverse(adj_rev, list(reversed(order)), n)
+
+
+def _remap_components(comp: list[int]) -> tuple[list[int], int]:
+    mapping: dict[int, int] = {}
+    out = [0] * len(comp)
+    nxt = 0
+    for i, c in enumerate(comp):
+        if c not in mapping:
+            mapping[c] = nxt
+            nxt += 1
+        out[i] = mapping[c]
+    return out, nxt
+
+
+def _build_condensation_edges(
+    adj: list[list[int]], n: int, comp: list[int], n_comp: int
+) -> list[list[int]]:
+    edges: set[tuple[int, int]] = set()
+    for u in range(n):
+        cu = comp[u]
+        for v in adj[u]:
+            cv = comp[v]
+            if cu != cv:
+                edges.add((cu, cv))
+    cond = [[] for _ in range(n_comp)]
+    for a, b in sorted(edges):
+        cond[a].append(b)
+    return cond
+
+
+def _condensation_indegree(adj_cond: list[list[int]], n_comp: int) -> list[int]:
+    indeg = [0] * n_comp
+    for u in range(n_comp):
+        for v in adj_cond[u]:
+            indeg[v] += 1
+    return indeg
+
+
+def _kahn_toposort(adj: list[list[int]], n: int) -> list[int] | None:
+    indeg = _condensation_indegree(adj, n)
+    heap = [i for i in range(n) if indeg[i] == 0]
+    heapq.heapify(heap)
+    order: list[int] = []
+    while heap:
+        u = heapq.heappop(heap)
+        order.append(u)
+        for v in adj[u]:
+            indeg[v] -= 1
+            if indeg[v] == 0:
+                heapq.heappush(heap, v)
+    if len(order) != n:
+        return None
+    return order
+
+
+def _longest_path_ranks(adj_cond: list[list[int]], n_comp: int) -> list[int]:
+    preds = [[] for _ in range(n_comp)]
+    for u in range(n_comp):
+        for v in adj_cond[u]:
+            preds[v].append(u)
+    for row in preds:
+        row.sort()
+    topo = _kahn_toposort(adj_cond, n_comp)
+    if topo is None:
+        return [0] * n_comp
+    rank = [0] * n_comp
+    for v in topo:
+        pr = preds[v]
+        if not pr:
+            rank[v] = 0
+        else:
+            rank[v] = max(rank[u] + 1 for u in pr)
+    return rank
+
+
+def _default_unconditional_node_ranks(uncond: list[list[int]], n: int) -> list[int]:
+    if n == 0:
+        return []
+    comp_raw = _iterative_kosaraju_scc(uncond, n)
+    comp, n_comp = _remap_components(comp_raw)
+    adj_cond = _build_condensation_edges(uncond, n, comp, n_comp)
+    comp_rank = _longest_path_ranks(adj_cond, n_comp)
+    return [comp_rank[comp[i]] for i in range(n)]
+
+
+def _default_bfs_target_ranks(adj: list[list[int]], rev_adj: list[list[int]], n: int) -> list[int]:
+    if n == 0:
+        return []
+    target_like = [i for i in range(n) if not rev_adj[i]]
+    if not target_like:
+        target_like = list(range(n))
+    target_like.sort()
+
+    dist = [-1] * n
+    q: deque[int] = deque()
+    for s in target_like:
+        dist[s] = 0
+        q.append(s)
+    while q:
+        u = q.popleft()
+        du = dist[u]
+        for v in adj[u]:
+            if dist[v] >= 0:
+                continue
+            dist[v] = du + 1
+            q.append(v)
+    return [d if d >= 0 else 0 for d in dist]
+
+
+def _bfs_distances_from_seed_ids(adj: list[list[int]], n: int, seed_ids: Sequence[int]) -> list[int]:
+    dist = [-1] * n
+    q: deque[int] = deque()
+    for s in seed_ids:
+        if not (0 <= s < n):
+            continue
+        if dist[s] >= 0:
+            continue
+        dist[s] = 0
+        q.append(s)
+    while q:
+        u = q.popleft()
+        du = dist[u]
+        for v in adj[u]:
+            if dist[v] >= 0:
+                continue
+            dist[v] = du + 1
+            q.append(v)
+    return dist
+
+
+def _induced_dependency_subgraph(
+    graph: DependencyGraph,
+    keep_keys: set[NodeKey],
+) -> DependencyGraph:
+    sub = DependencyGraph()
+    sub.leaf_classification = graph.leaf_classification
+    for k in sorted(keep_keys):
+        node = graph.get_node(k)
+        if node is None:
+            continue
+        sub.add_node(node)
+    for fk in sorted(keep_keys):
+        for tk in sorted(graph.dependencies(fk)):
+            if tk not in keep_keys:
+                continue
+            attrs = graph.edge_attrs(fk, tk)
+            guard = attrs.pop("guard", None)
+            sub.add_edge(fk, tk, guard=guard, **attrs)
+    return sub
+
+
+def build_lightweight_viz_core(
+    graph: DependencyGraph,
+    *,
+    limits: VizLimits | None = None,
+    layout_input: LightweightVizLayoutInput | None = None,
+    layout_mode: Literal["bfs", "layered", "grid"] = "bfs",
+    include_guarded_edges: bool = True,
+    bfs_seed_keys: Sequence[NodeKey] | None = None,
+    exclude_unreachable_from_bfs: bool = False,
+) -> LightweightVizCore:
+    lim = limits or VizLimits()
+    keys = sorted(graph)
+    n = len(keys)
+    if n == 0:
+        return LightweightVizCore(
+            stats=LightweightVizCoreStats(
+                node_count=0,
+                local_edge_count=0,
+                truncated_local_nodes=0,
+                dense_bucket_count=0,
+            ),
+            sheets=tuple(),
+            nodes=LightweightVizCoreNodeColumns(
+                sheet_index=tuple(),
+                row=tuple(),
+                column=tuple(),
+                is_leaf=tuple(),
+                in_degree=tuple(),
+                out_degree=tuple(),
+                rank=tuple(),
+                x=tuple(),
+                y=tuple(),
+                bucket_density=tuple(),
+            ),
+            local_edges=LightweightVizLocalEdges(
+                offsets=(0,),
+                targets=tuple(),
+                guarded=tuple(),
+                complete=tuple(),
+            ),
+            max_local_nodes=lim.max_local_nodes,
+            max_local_edges=lim.max_local_edges,
+        )
+
+    key_id = {k: i for i, k in enumerate(keys)}
+    sheets_sorted = sorted({node.sheet for k in keys if (node := graph.get_node(k)) is not None})
+    sheet_index_map = {s: i for i, s in enumerate(sheets_sorted)}
+    uncond, all_adj = _build_int_adjacencies(graph, keys, key_id)
+    selected_adj = all_adj if include_guarded_edges else uncond
+    rev_selected = _reverse_adj(selected_adj, n)
+
+    in_deg = [len(rev_selected[i]) for i in range(n)]
+    out_deg = [len(selected_adj[i]) for i in range(n)]
+
+    if layout_input is None:
+        module_of = [0] * n
+        if layout_mode == "grid":
+            xs, ys, bucket_density, dense_bucket_count = _grid_xy(n)
+            cols = max(1, int(math.ceil(math.sqrt(n))))
+            ranks = [i // cols for i in range(n)]
+        elif layout_mode == "bfs":
+            if bfs_seed_keys is None:
+                seed_ids = [i for i in range(n) if not rev_selected[i]]
+                if not seed_ids:
+                    seed_ids = list(range(n))
+            else:
+                seed_ids = [key_id[k] for k in bfs_seed_keys if k in key_id]
+                if not seed_ids:
+                    seed_ids = [i for i in range(n) if not rev_selected[i]]
+                    if not seed_ids:
+                        seed_ids = list(range(n))
+            dist = _bfs_distances_from_seed_ids(selected_adj, n, seed_ids)
+            should_exclude_unreachable = exclude_unreachable_from_bfs or not include_guarded_edges
+            if should_exclude_unreachable:
+                keep_ids = [i for i, d in enumerate(dist) if d >= 0]
+                if keep_ids and len(keep_ids) < n:
+                    keep_keys = {keys[i] for i in keep_ids}
+                    subgraph = _induced_dependency_subgraph(graph, keep_keys)
+                    sub_seeds = (
+                        None if bfs_seed_keys is None else tuple(k for k in bfs_seed_keys if k in keep_keys)
+                    )
+                    return build_lightweight_viz_core(
+                        subgraph,
+                        limits=lim,
+                        layout_input=None,
+                        layout_mode=layout_mode,
+                        include_guarded_edges=include_guarded_edges,
+                        bfs_seed_keys=sub_seeds,
+                        exclude_unreachable_from_bfs=should_exclude_unreachable,
+                    )
+            ranks = [d if d >= 0 else 0 for d in dist]
+            xs, ys, bucket_density, dense_bucket_count = _rank_band_xy(n, module_of, ranks)
+        elif layout_mode == "layered":
+            ranks = _default_unconditional_node_ranks(uncond, n)
+            xs, ys, bucket_density, dense_bucket_count = _rank_band_xy(n, module_of, ranks)
+        else:
+            raise ValueError(f"Unsupported layout_mode: {layout_mode!r}")
+    else:
+        if len(layout_input.module_of) != n or len(layout_input.node_rank) != n:
+            raise ValueError("layout_input tuple lengths must match graph order")
+        module_of = list(layout_input.module_of)
+        node_rank = list(layout_input.node_rank)
+        xs, ys, bucket_density, dense_bucket_count = _rank_band_xy(n, module_of, node_rank)
+        ranks = node_rank
+
+    n_mod = max(module_of) + 1 if module_of else 0
+    mod_node_count = [0] * n_mod
+    for m in module_of:
+        mod_node_count[m] += 1
+
+    all_edges = _edge_list_filtered(graph, keys, key_id, include_guarded=include_guarded_edges)
+    mod_internal_edges = [0] * n_mod
+    for u, v, _ in all_edges:
+        if module_of[u] == module_of[v]:
+            mod_internal_edges[module_of[u]] += 1
+
+    out_edges_by_src: list[list[tuple[int, bool]]] = [[] for _ in range(n)]
+    for u, v, g in all_edges:
+        out_edges_by_src[u].append((v, g))
+
+    total_out_edges = sum(len(row) for row in out_edges_by_src)
+    max_local_nodes_eff, max_local_edges_eff = _resolve_local_limits(
+        n, total_out_edges, lim.max_local_nodes, lim.max_local_edges
+    )
+    offsets, loc_tgts, loc_guarded, loc_complete = _build_local_csr(
+        n,
+        module_of,
+        out_edges_by_src,
+        mod_node_count,
+        mod_internal_edges,
+        max_local_nodes_eff,
+        max_local_edges_eff,
+    )
+    truncated_local = sum(1 for c in loc_complete if not c)
+    local_edge_count = len(loc_tgts)
+
+    rows: list[int] = []
+    cols: list[str] = []
+    sheet_ix: list[int] = []
+    is_leaf: list[bool] = []
+    for k in keys:
+        node = graph.get_node(k)
+        assert node is not None
+        rows.append(node.row)
+        cols.append(node.column)
+        sheet_ix.append(sheet_index_map[node.sheet])
+        is_leaf.append(node.is_leaf)
+
+    stats = LightweightVizCoreStats(
+        node_count=n,
+        local_edge_count=local_edge_count,
+        truncated_local_nodes=truncated_local,
+        dense_bucket_count=dense_bucket_count,
+    )
+
+    nodes = LightweightVizCoreNodeColumns(
+        sheet_index=tuple(sheet_ix),
+        row=tuple(rows),
+        column=tuple(cols),
+        is_leaf=tuple(is_leaf),
+        in_degree=tuple(in_deg),
+        out_degree=tuple(out_deg),
+        rank=tuple(ranks),
+        x=tuple(xs),
+        y=tuple(ys),
+        bucket_density=tuple(bucket_density),
+    )
+
+    local_edges = LightweightVizLocalEdges(
+        offsets=tuple(offsets),
+        targets=tuple(loc_tgts),
+        guarded=tuple(loc_guarded),
+        complete=tuple(loc_complete),
+    )
+
+    return LightweightVizCore(
+        stats=stats,
+        sheets=tuple(sheets_sorted),
+        nodes=nodes,
+        local_edges=local_edges,
+        max_local_nodes=lim.max_local_nodes,
+        max_local_edges=lim.max_local_edges,
+    )
+
+
+# --- Overlays + wire payload --------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class LightweightVizOverlay:
+    overlay_id: str
+    schema_version: int
+    kind: str
+    data: Mapping[str, Any]
+    display_name: str | None = None
+    default_visible: bool = True
+    supplemental_stats: Mapping[str, Any] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LightweightVizPayload:
+    version: int
+    core: LightweightVizCore
+    overlays: tuple[LightweightVizOverlay, ...]
+
+
+def assemble_lightweight_viz_payload(
+    core: LightweightVizCore,
+    overlays: Sequence[LightweightVizOverlay],
+) -> LightweightVizPayload:
+    return LightweightVizPayload(version=VIZ_PAYLOAD_VERSION, core=core, overlays=tuple(overlays))
+
+
+# --- Flat view (core + partition overlay) for tools, tests, force layout ------
+
+
+@dataclass(frozen=True, slots=True)
+class LightweightVizStats:
+    node_count: int
+    scc_count: int
+    module_count: int
+    module_edge_count: int
+    local_edge_count: int
+    truncated_local_nodes: int
+    dense_bucket_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class LightweightVizNodeColumns:
+    sheet_index: tuple[int, ...]
+    row: tuple[int, ...]
+    column: tuple[str, ...]
+    is_leaf: tuple[bool, ...]
+    in_degree: tuple[int, ...]
+    out_degree: tuple[int, ...]
+    module_id: tuple[int, ...]
+    rank: tuple[int, ...]
+    x: tuple[float, ...]
+    y: tuple[float, ...]
+    bucket_density: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class LightweightVizModule:
+    id: int
+    node_count: int
+    rank_min: int
+    rank_max: int
+    centroid_x: float
+    centroid_y: float
+    density_mode: bool
+
+
+@dataclass(frozen=True, slots=True)
+class LightweightVizModuleEdge:
+    source_module_id: int
+    target_module_id: int
+    unconditional_weight: int
+    guarded_weight: int
+
+
+@dataclass(frozen=True, slots=True)
+class LightweightVizFlat:
+    stats: LightweightVizStats
+    sheets: tuple[str, ...]
+    nodes: LightweightVizNodeColumns
+    modules: tuple[LightweightVizModule, ...]
+    module_edges: tuple[LightweightVizModuleEdge, ...]
+    local_edges: LightweightVizLocalEdges
+    max_local_nodes: int | None
+    max_local_edges: int | None
+
+
+def derive_partition_modules_table(
+    core: LightweightVizCore,
+    module_id: tuple[int, ...],
+    node_rank: tuple[int, ...],
+) -> tuple[LightweightVizModule, ...]:
+    n = core.stats.node_count
+    if n == 0:
+        return tuple()
+
+    n_mod = max(module_id) + 1
+    mod_node_count = [0] * n_mod
+    for m in module_id:
+        mod_node_count[m] += 1
+
+    bucket_counts: dict[tuple[int, int], int] = {}
+    for i in range(n):
+        b = (node_rank[i], module_id[i])
+        bucket_counts[b] = bucket_counts.get(b, 0) + 1
+
+    xs = list(core.nodes.x)
+    ys = list(core.nodes.y)
 
     mod_rank_min = [10**9] * n_mod
     mod_rank_max = [-1] * n_mod
     sum_x = [0.0] * n_mod
     sum_y = [0.0] * n_mod
     for i in range(n):
-        m = module_of[i]
+        m = module_id[i]
         r = node_rank[i]
         mod_rank_min[m] = min(mod_rank_min[m], r)
         mod_rank_max[m] = max(mod_rank_max[m], r)
@@ -573,83 +797,106 @@ def to_lightweight_viz(
                 density_mode=density_mode,
             )
         )
+    return tuple(modules)
 
-    mod_edge_map: dict[tuple[int, int], list[int]] = {}
-    for u, v, g in all_edges:
-        mu, mv = module_of[u], module_of[v]
-        if mu == mv:
-            continue
-        key = (mu, mv)
-        mod_edge_map.setdefault(key, [0, 0])
-        if g:
-            mod_edge_map[key][1] += 1
-        else:
-            mod_edge_map[key][0] += 1
 
-    module_edges = tuple(
-        LightweightVizModuleEdge(
-            source_module_id=a,
-            target_module_id=b,
-            unconditional_weight=pair[0],
-            guarded_weight=pair[1],
+def lightweight_viz_flat(payload: LightweightVizPayload) -> LightweightVizFlat:
+    if payload.version != VIZ_PAYLOAD_VERSION:
+        raise ValueError(f"Unsupported lightweight viz payload version: {payload.version}")
+    core = payload.core
+    n = core.stats.node_count
+
+    mod_ov: LightweightVizOverlay | None = None
+    for ov in payload.overlays:
+        if ov.overlay_id == MODULE_INFERENCE_OVERLAY_ID:
+            mod_ov = ov
+            break
+
+    if mod_ov is not None:
+        data = mod_ov.data
+        module_id = tuple(int(x) for x in data["node_module_id"])
+        node_rank_out = tuple(int(x) for x in data["node_rank"])
+        raw_edges = data["module_edges"]
+        module_edges = tuple(
+            LightweightVizModuleEdge(
+                source_module_id=int(e["source_module_id"]),
+                target_module_id=int(e["target_module_id"]),
+                unconditional_weight=int(e["unconditional_weight"]),
+                guarded_weight=int(e["guarded_weight"]),
+            )
+            for e in raw_edges
         )
-        for (a, b), pair in sorted(mod_edge_map.items())
-    )
-
-    rows: list[int] = []
-    cols: list[str] = []
-    sheet_ix: list[int] = []
-    is_leaf: list[bool] = []
-    for k in keys:
-        node = graph.get_node(k)
-        assert node is not None
-        rows.append(node.row)
-        cols.append(node.column)
-        sheet_ix.append(sheet_index_map[node.sheet])
-        is_leaf.append(node.is_leaf)
-
-    stats = LightweightVizStats(
-        node_count=n,
-        scc_count=n_comp,
-        module_count=n_mod,
-        module_edge_count=len(module_edges),
-        local_edge_count=local_edge_count,
-        truncated_local_nodes=truncated_local,
-        dense_bucket_count=dense_bucket_count,
-    )
+        raw_mods = data["modules"]
+        modules = tuple(
+            LightweightVizModule(
+                id=int(m["id"]),
+                node_count=int(m["node_count"]),
+                rank_min=int(m["rank_min"]),
+                rank_max=int(m["rank_max"]),
+                centroid_x=float(m["centroid_x"]),
+                centroid_y=float(m["centroid_y"]),
+                density_mode=bool(m["density_mode"]),
+            )
+            for m in raw_mods
+        )
+        stats = LightweightVizStats(
+            node_count=n,
+            scc_count=int(data["scc_count"]),
+            module_count=len(modules),
+            module_edge_count=len(module_edges),
+            local_edge_count=core.stats.local_edge_count,
+            truncated_local_nodes=core.stats.truncated_local_nodes,
+            dense_bucket_count=core.stats.dense_bucket_count,
+        )
+    else:
+        module_id = (0,) * n if n else tuple()
+        node_rank_out = tuple(core.nodes.rank)
+        modules = derive_partition_modules_table(core, module_id, node_rank_out)
+        module_edges = tuple()
+        stats = LightweightVizStats(
+            node_count=n,
+            scc_count=0,
+            module_count=len(modules) if n else 0,
+            module_edge_count=0,
+            local_edge_count=core.stats.local_edge_count,
+            truncated_local_nodes=core.stats.truncated_local_nodes,
+            dense_bucket_count=core.stats.dense_bucket_count,
+        )
 
     nodes = LightweightVizNodeColumns(
-        sheet_index=tuple(sheet_ix),
-        row=tuple(rows),
-        column=tuple(cols),
-        is_leaf=tuple(is_leaf),
-        in_degree=tuple(in_deg),
-        out_degree=tuple(out_deg),
-        module_id=tuple(module_of),
-        rank=tuple(node_rank),
-        x=tuple(xs),
-        y=tuple(ys),
-        bucket_density=tuple(bucket_density),
+        sheet_index=core.nodes.sheet_index,
+        row=core.nodes.row,
+        column=core.nodes.column,
+        is_leaf=core.nodes.is_leaf,
+        in_degree=core.nodes.in_degree,
+        out_degree=core.nodes.out_degree,
+        module_id=module_id,
+        rank=node_rank_out,
+        x=core.nodes.x,
+        y=core.nodes.y,
+        bucket_density=core.nodes.bucket_density,
     )
 
-    local_edges = LightweightVizLocalEdges(
-        offsets=tuple(offsets),
-        targets=tuple(loc_tgts),
-        guarded=tuple(loc_guarded),
-        complete=tuple(loc_complete),
-    )
-
-    return LightweightVizPayload(
-        version=VIZ_PAYLOAD_VERSION,
+    return LightweightVizFlat(
         stats=stats,
-        sheets=tuple(sheets_sorted),
+        sheets=core.sheets,
         nodes=nodes,
-        modules=tuple(modules),
+        modules=modules,
         module_edges=module_edges,
-        local_edges=local_edges,
-        max_local_nodes=max_local_nodes,
-        max_local_edges=max_local_edges,
+        local_edges=core.local_edges,
+        max_local_nodes=core.max_local_nodes,
+        max_local_edges=core.max_local_edges,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class LocalForceSubgraph:
+    node_ids: tuple[int, ...]
+    edges_from: tuple[int, ...]
+    edges_to: tuple[int, ...]
+    edges_guarded: tuple[bool, ...]
+    is_module_scope: bool
+    truncated: bool
 
 
 def select_local_force_subgraph(
@@ -657,26 +904,25 @@ def select_local_force_subgraph(
     *,
     node_id: int,
 ) -> LocalForceSubgraph:
-    """
-    Choose a node-induced subgraph for d3-force: whole module if small enough,
-    otherwise a bounded 1-hop neighborhood around ``node_id``.
-    """
-    n = payload.stats.node_count
+    data = lightweight_viz_flat(payload)
+    n = data.stats.node_count
+    max_nodes = data.max_local_nodes if data.max_local_nodes is not None else n
+    max_edges = data.max_local_edges
     if not (0 <= node_id < n):
         raise ValueError(f"node_id out of range: {node_id}")
 
-    mid = payload.nodes.module_id[node_id]
-    mod = payload.modules[mid]
-    if mod.node_count <= payload.max_local_nodes:
-        nodes = [i for i in range(n) if payload.nodes.module_id[i] == mid]
+    mid = data.nodes.module_id[node_id]
+    mod = data.modules[mid]
+    if mod.node_count <= max_nodes:
+        nodes = [i for i in range(n) if data.nodes.module_id[i] == mid]
         nodes.sort()
         node_set = set(nodes)
         ef: list[int] = []
         et: list[int] = []
         eg: list[bool] = []
-        off = payload.local_edges.offsets
-        tg = payload.local_edges.targets
-        gd = payload.local_edges.guarded
+        off = data.local_edges.offsets
+        tg = data.local_edges.targets
+        gd = data.local_edges.guarded
         for u in nodes:
             for k in range(off[u], off[u + 1]):
                 v = tg[k]
@@ -690,19 +936,18 @@ def select_local_force_subgraph(
             edges_to=tuple(et),
             edges_guarded=tuple(eg),
             is_module_scope=True,
-            truncated=not payload.local_edges.complete[node_id],
+            truncated=not data.local_edges.complete[node_id],
         )
 
-    # k-hop: start with 1-hop from node_id using exported local edges only.
-    off = payload.local_edges.offsets
-    tg = payload.local_edges.targets
-    gd = payload.local_edges.guarded
+    off = data.local_edges.offsets
+    tg = data.local_edges.targets
+    gd = data.local_edges.guarded
     seeds = {node_id}
     expanded: set[int] = set()
     edges_from: list[int] = []
     edges_to: list[int] = []
     edges_guarded: list[bool] = []
-    while seeds and len(expanded) < payload.max_local_nodes:
+    while seeds and len(expanded) < max_nodes:
         u = min(seeds)
         seeds.discard(u)
         if u in expanded:
@@ -713,9 +958,9 @@ def select_local_force_subgraph(
             edges_from.append(u)
             edges_to.append(v)
             edges_guarded.append(gd[k])
-            if v not in expanded and len(expanded) + len(seeds) < payload.max_local_nodes:
+            if v not in expanded and len(expanded) + len(seeds) < max_nodes:
                 seeds.add(v)
-            if len(edges_from) >= payload.max_local_edges:
+            if max_edges is not None and len(edges_from) >= max_edges:
                 return LocalForceSubgraph(
                     node_ids=tuple(sorted(expanded)),
                     edges_from=tuple(edges_from),
@@ -730,93 +975,90 @@ def select_local_force_subgraph(
         edges_to=tuple(edges_to),
         edges_guarded=tuple(edges_guarded),
         is_module_scope=False,
-        truncated=not payload.local_edges.complete[node_id],
+        truncated=not data.local_edges.complete[node_id],
     )
 
 
 # --- Serialization ------------------------------------------------------------
 
 
+def lightweight_viz_overlay_to_jsonable(overlay: LightweightVizOverlay) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "overlay_id": overlay.overlay_id,
+        "schema_version": overlay.schema_version,
+        "kind": overlay.kind,
+        "data": dict(overlay.data),
+    }
+    if overlay.display_name is not None:
+        out["display_name"] = overlay.display_name
+    out["default_visible"] = overlay.default_visible
+    if overlay.supplemental_stats is not None:
+        out["supplemental_stats"] = dict(overlay.supplemental_stats)
+    return out
+
+
+def _core_to_jsonable(c: LightweightVizCore) -> dict[str, Any]:
+    nc = c.nodes
+    return {
+        "stats": {
+            "node_count": c.stats.node_count,
+            "local_edge_count": c.stats.local_edge_count,
+            "truncated_local_nodes": c.stats.truncated_local_nodes,
+            "dense_bucket_count": c.stats.dense_bucket_count,
+        },
+        "sheets": list(c.sheets),
+        "nodes": {
+            "sheet_index": list(nc.sheet_index),
+            "row": list(nc.row),
+            "column": list(nc.column),
+            "is_leaf": list(nc.is_leaf),
+            "in_degree": list(nc.in_degree),
+            "out_degree": list(nc.out_degree),
+            "rank": list(nc.rank),
+            "x": list(nc.x),
+            "y": list(nc.y),
+            "bucket_density": list(nc.bucket_density),
+        },
+        "local_edges": {
+            "offsets": list(c.local_edges.offsets),
+            "targets": list(c.local_edges.targets),
+            "guarded": list(c.local_edges.guarded),
+            "complete": list(c.local_edges.complete),
+        },
+        "max_local_nodes": c.max_local_nodes,
+        "max_local_edges": c.max_local_edges,
+    }
+
+
 def _payload_to_jsonable(payload: LightweightVizPayload) -> dict[str, Any]:
     return {
         "version": payload.version,
-        "stats": {
-            "node_count": payload.stats.node_count,
-            "scc_count": payload.stats.scc_count,
-            "module_count": payload.stats.module_count,
-            "module_edge_count": payload.stats.module_edge_count,
-            "local_edge_count": payload.stats.local_edge_count,
-            "truncated_local_nodes": payload.stats.truncated_local_nodes,
-            "dense_bucket_count": payload.stats.dense_bucket_count,
-        },
-        "max_local_nodes": payload.max_local_nodes,
-        "max_local_edges": payload.max_local_edges,
-        "sheets": list(payload.sheets),
-        "nodes": {
-            "sheet_index": list(payload.nodes.sheet_index),
-            "row": list(payload.nodes.row),
-            "column": list(payload.nodes.column),
-            "is_leaf": list(payload.nodes.is_leaf),
-            "in_degree": list(payload.nodes.in_degree),
-            "out_degree": list(payload.nodes.out_degree),
-            "module_id": list(payload.nodes.module_id),
-            "rank": list(payload.nodes.rank),
-            "x": list(payload.nodes.x),
-            "y": list(payload.nodes.y),
-            "bucket_density": list(payload.nodes.bucket_density),
-        },
-        "modules": [
-            {
-                "id": m.id,
-                "node_count": m.node_count,
-                "rank_min": m.rank_min,
-                "rank_max": m.rank_max,
-                "centroid_x": m.centroid_x,
-                "centroid_y": m.centroid_y,
-                "density_mode": m.density_mode,
-            }
-            for m in payload.modules
-        ],
-        "module_edges": [
-            {
-                "source_module_id": e.source_module_id,
-                "target_module_id": e.target_module_id,
-                "unconditional_weight": e.unconditional_weight,
-                "guarded_weight": e.guarded_weight,
-            }
-            for e in payload.module_edges
-        ],
-        "local_edges": {
-            "offsets": list(payload.local_edges.offsets),
-            "targets": list(payload.local_edges.targets),
-            "guarded": list(payload.local_edges.guarded),
-            "complete": list(payload.local_edges.complete),
-        },
+        "core": _core_to_jsonable(payload.core),
+        "overlays": [lightweight_viz_overlay_to_jsonable(o) for o in payload.overlays],
     }
 
 
 def estimate_serialized_json_bytes(payload: LightweightVizPayload) -> int:
-    """Fast structural upper bound without a full ``json.dumps`` of huge payloads."""
-    n = payload.stats.node_count
-    e_loc = payload.stats.local_edge_count
-    # Rough bracketing: integers ~6 chars avg, floats ~12, bools 5, brackets overhead ~15%.
-    est = 2000
+    n = payload.core.stats.node_count
+    e_loc = payload.core.stats.local_edge_count
+    est = 4000
     est += n * (6 * 11 + 12 * 2 + 5 + 8 * 4)
     est += e_loc * 12
-    est += len(payload.module_edges) * 40
-    est += len(payload.modules) * 60
-    est += sum(len(s) for s in payload.sheets) + n * 4
+    est += sum(len(o.data.get("module_edges", ())) for o in payload.overlays) * 40
+    est += sum(len(o.data.get("modules", ())) for o in payload.overlays) * 60
+    est += sum(len(s) for s in payload.core.sheets) + n * 4
     return int(est * 1.15)
 
 
 def serialize_lightweight_viz_json(payload: LightweightVizPayload) -> str:
+    if payload.version != VIZ_PAYLOAD_VERSION:
+        raise ValueError(f"Unsupported lightweight viz payload version: {payload.version}")
     return json.dumps(_payload_to_jsonable(payload), separators=(",", ":"))
 
 
 def write_lightweight_viz_data(payload: LightweightVizPayload, path: Path | str) -> None:
     p = Path(path)
-    data = serialize_lightweight_viz_json(payload)
-    p.write_text(data, encoding="utf-8")
+    p.write_text(serialize_lightweight_viz_json(payload), encoding="utf-8")
 
 
 def write_lightweight_viz_html(

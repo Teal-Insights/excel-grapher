@@ -40,7 +40,7 @@
 <body>
   <div id="toolbar">
     <strong id="docTitle">__TITLE__</strong>
-    <label><input type="checkbox" id="showModEdges" checked /> Module edges</label>
+    <label><input type="checkbox" id="showModEdges" checked /><span id="edgeLabel"> Overview edges</span></label>
     <select id="moduleFilter"><option value="">All modules</option></select>
     <button type="button" id="btnForce">Local force (selection)</button>
     <button type="button" id="btnOverview">Back to overview</button>
@@ -123,6 +123,47 @@
     return best;
   }
 
+  function buildOverviewEdges(data, maxLocalEdgeDraw) {
+    const moduleEdges = [];
+    for (let e = 0; e < data.module_edges.length; e++) {
+      const ed = data.module_edges[e];
+      if (ed.unconditional_weight + ed.guarded_weight <= 0) continue;
+      moduleEdges.push(ed);
+    }
+    if (moduleEdges.length > 0) {
+      return {
+        mode: 'module',
+        edges: moduleEdges,
+        totalEdges: moduleEdges.length,
+        sampled: false
+      };
+    }
+
+    const off = data.local_edges.offsets;
+    const tg = data.local_edges.targets;
+    const gd = data.local_edges.guarded;
+    const total = tg.length;
+    if (total === 0) {
+      return { mode: 'local', edges: [], totalEdges: 0, sampled: false };
+    }
+    const effectiveCap = maxLocalEdgeDraw == null ? total : maxLocalEdgeDraw;
+    const stride = total <= effectiveCap ? 1 : Math.ceil(total / effectiveCap);
+    const sampled = stride > 1;
+    const localEdges = [];
+    for (let u = 0; u < data.stats.node_count; u++) {
+      for (let k = off[u]; k < off[u + 1]; k++) {
+        if ((k % stride) !== 0) continue;
+        localEdges.push({ source: u, target: tg[k], guarded: gd[k] });
+      }
+    }
+    return {
+      mode: 'local',
+      edges: localEdges,
+      totalEdges: total,
+      sampled: sampled
+    };
+  }
+
   function neighborSet(data, nodeId) {
     const off = data.local_edges.offsets;
     const tgt = data.local_edges.targets;
@@ -140,8 +181,8 @@
 
   function localForceSubgraph(data, nodeId) {
     const n = data.stats.node_count;
-    const maxN = data.max_local_nodes;
-    const maxE = data.max_local_edges;
+    const maxN = data.max_local_nodes == null ? n : data.max_local_nodes;
+    const maxE = data.max_local_edges == null ? null : data.max_local_edges;
     const mid = data.nodes.module_id[nodeId];
     const mod = data.modules[mid];
     if (mod.node_count <= maxN) {
@@ -186,7 +227,7 @@
         const v = tg[k];
         ef.push(u); et.push(v); eg.push(gd[k]);
         if (!expanded.has(v) && expanded.size + seeds.length < maxN) seeds.push(v);
-        if (ef.length >= maxE) {
+        if (maxE !== null && ef.length >= maxE) {
           return {
             nodeIds: Array.from(expanded).sort(function(a,b){return a-b;}),
             edgesFrom: ef, edgesTo: et, edgesGuarded: eg,
@@ -212,6 +253,165 @@
     return r.json();
   }
 
+  var MODULE_INFERENCE_OVERLAY_ID = 'exporter.module_inference';
+  var DENSE_BUCKET_THRESHOLD = 12;
+  var VIZ_PAYLOAD_VERSION = 2;
+
+  function derivePartitionModulesTable(core, moduleId, nodeRank) {
+    var n = core.stats.node_count;
+    if (n === 0) return [];
+    var nMod = 0;
+    for (var i = 0; i < moduleId.length; i++) {
+      if (moduleId[i] >= nMod) nMod = moduleId[i] + 1;
+    }
+    var modNodeCount = new Array(nMod);
+    for (var j = 0; j < nMod; j++) modNodeCount[j] = 0;
+    for (var k = 0; k < moduleId.length; k++) {
+      modNodeCount[moduleId[k]]++;
+    }
+    var bucketCounts = {};
+    for (var i = 0; i < n; i++) {
+      var bk = nodeRank[i] + ',' + moduleId[i];
+      bucketCounts[bk] = (bucketCounts[bk] || 0) + 1;
+    }
+    var xs = core.nodes.x;
+    var ys = core.nodes.y;
+    var modRankMin = new Array(nMod);
+    var modRankMax = new Array(nMod);
+    var sumX = new Array(nMod);
+    var sumY = new Array(nMod);
+    for (var j = 0; j < nMod; j++) {
+      modRankMin[j] = 1e9;
+      modRankMax[j] = -1;
+      sumX[j] = 0;
+      sumY[j] = 0;
+    }
+    for (var i = 0; i < n; i++) {
+      var m = moduleId[i];
+      var rnk = nodeRank[i];
+      modRankMin[m] = Math.min(modRankMin[m], rnk);
+      modRankMax[m] = Math.max(modRankMax[m], rnk);
+      sumX[m] += xs[i];
+      sumY[m] += ys[i];
+    }
+    var modules = [];
+    for (var m = 0; m < nMod; m++) {
+      var c = modNodeCount[m];
+      var r0 = modRankMin[m];
+      var r1 = modRankMax[m];
+      var densityMode = false;
+      for (var r = r0; r <= r1; r++) {
+        var cnt = bucketCounts[r + ',' + m] || 0;
+        if (cnt > DENSE_BUCKET_THRESHOLD) {
+          densityMode = true;
+          break;
+        }
+      }
+      modules.push({
+        id: m,
+        node_count: c,
+        rank_min: c ? r0 : 0,
+        rank_max: c ? r1 : 0,
+        centroid_x: c ? sumX[m] / c : 0,
+        centroid_y: c ? sumY[m] / c : 0,
+        density_mode: densityMode
+      });
+    }
+    return modules;
+  }
+
+  function lightweightVizFlat(raw) {
+    /* Legacy flat snapshot (historical exporter output): one object with stats/nodes/modules. */
+    if (raw.version === 1 && raw.core === undefined && raw.stats != null && raw.sheets) {
+      return raw;
+    }
+    if (raw.version !== VIZ_PAYLOAD_VERSION) {
+      throw new Error('Unsupported lightweight viz payload version: ' + raw.version);
+    }
+    var core = raw.core;
+    var n = core.stats.node_count;
+
+    var modOv = null;
+    for (var i = 0; i < raw.overlays.length; i++) {
+      if (raw.overlays[i].overlay_id === MODULE_INFERENCE_OVERLAY_ID) {
+        modOv = raw.overlays[i];
+        break;
+      }
+    }
+
+    var stats, nodes, modules, moduleEdges;
+
+    if (modOv) {
+      var d = modOv.data;
+      var moduleId = d.node_module_id;
+      var nodeRankOut = d.node_rank;
+      moduleEdges = d.module_edges;
+      modules = d.modules;
+      stats = {
+        node_count: n,
+        scc_count: d.scc_count,
+        module_count: modules.length,
+        module_edge_count: moduleEdges.length,
+        local_edge_count: core.stats.local_edge_count,
+        truncated_local_nodes: core.stats.truncated_local_nodes,
+        dense_bucket_count: core.stats.dense_bucket_count
+      };
+      nodes = {
+        sheet_index: core.nodes.sheet_index,
+        row: core.nodes.row,
+        column: core.nodes.column,
+        is_leaf: core.nodes.is_leaf,
+        in_degree: core.nodes.in_degree,
+        out_degree: core.nodes.out_degree,
+        module_id: moduleId,
+        rank: nodeRankOut,
+        x: core.nodes.x,
+        y: core.nodes.y,
+        bucket_density: core.nodes.bucket_density
+      };
+    } else {
+      var moduleIdEmpty = n ? new Array(n) : [];
+      for (var z = 0; z < n; z++) moduleIdEmpty[z] = 0;
+      var nodeRankCore = core.nodes.rank;
+      modules = derivePartitionModulesTable(core, moduleIdEmpty, nodeRankCore);
+      moduleEdges = [];
+      stats = {
+        node_count: n,
+        scc_count: 0,
+        module_count: n ? modules.length : 0,
+        module_edge_count: 0,
+        local_edge_count: core.stats.local_edge_count,
+        truncated_local_nodes: core.stats.truncated_local_nodes,
+        dense_bucket_count: core.stats.dense_bucket_count
+      };
+      nodes = {
+        sheet_index: core.nodes.sheet_index,
+        row: core.nodes.row,
+        column: core.nodes.column,
+        is_leaf: core.nodes.is_leaf,
+        in_degree: core.nodes.in_degree,
+        out_degree: core.nodes.out_degree,
+        module_id: moduleIdEmpty,
+        rank: nodeRankCore,
+        x: core.nodes.x,
+        y: core.nodes.y,
+        bucket_density: core.nodes.bucket_density
+      };
+    }
+
+    return {
+      version: 1,
+      stats: stats,
+      sheets: core.sheets,
+      nodes: nodes,
+      modules: modules,
+      module_edges: moduleEdges,
+      local_edges: core.local_edges,
+      max_local_nodes: core.max_local_nodes,
+      max_local_edges: core.max_local_edges
+    };
+  }
+
   function fmtAddr(data, i) {
     const sh = data.sheets[data.nodes.sheet_index[i]];
     const col = data.nodes.column[i];
@@ -220,8 +420,8 @@
     return q + '!' + col + row;
   }
 
-  function main(data) {
-    if (data.version !== 1) throw new Error('Unsupported payload version: ' + data.version);
+  function main(raw) {
+    const data = lightweightVizFlat(raw);
 
     const canvas = document.getElementById('glcanvas');
     const overlay = document.getElementById('overlay');
@@ -232,6 +432,11 @@
     const statsEl = document.getElementById('stats');
     statsEl.textContent = n + ' nodes · ' + data.stats.module_count + ' modules · '
       + data.stats.local_edge_count + ' local edges (exported)';
+    const overviewEdges = buildOverviewEdges(data, null);
+    const edgeToggleLabel = document.getElementById('edgeLabel');
+    if (edgeToggleLabel) {
+      edgeToggleLabel.textContent = overviewEdges.mode === 'module' ? ' Module edges' : ' Graph edges';
+    }
 
     const positions = new Float32Array(n * 2);
     const colors = new Float32Array(n * 3);
@@ -366,22 +571,36 @@
       const w = canvas.clientWidth, h = canvas.clientHeight;
       ctx2.clearRect(0, 0, w, h);
       if (!document.getElementById('showModEdges').checked) return;
+      if (!overviewEdges.edges.length) return;
 
       ctx2.save();
       ctx2.globalCompositeOperation = 'source-over';
-      ctx2.lineWidth = 1.2;
-      ctx2.strokeStyle = 'rgba(20, 75, 170, 0.16)';
-      ctx2.setLineDash([]);
-      for (let e = 0; e < data.module_edges.length; e++) {
-        const ed = data.module_edges[e];
-        if (ed.unconditional_weight + ed.guarded_weight <= 0) continue;
-        const a = data.modules[ed.source_module_id];
-        const b = data.modules[ed.target_module_id];
-        const x1 = a.centroid_x * view.scale + view.tx;
-        const y1 = a.centroid_y * view.scale + view.ty;
-        const x2 = b.centroid_x * view.scale + view.tx;
-        const y2 = b.centroid_y * view.scale + view.ty;
-        ctx2.beginPath(); ctx2.moveTo(x1, y1); ctx2.lineTo(x2, y2); ctx2.stroke();
+      if (overviewEdges.mode === 'module') {
+        ctx2.lineWidth = 1.2;
+        ctx2.strokeStyle = 'rgba(20, 75, 170, 0.16)';
+        ctx2.setLineDash([]);
+        for (let e = 0; e < overviewEdges.edges.length; e++) {
+          const ed = overviewEdges.edges[e];
+          const a = data.modules[ed.source_module_id];
+          const b = data.modules[ed.target_module_id];
+          const x1 = a.centroid_x * view.scale + view.tx;
+          const y1 = a.centroid_y * view.scale + view.ty;
+          const x2 = b.centroid_x * view.scale + view.tx;
+          const y2 = b.centroid_y * view.scale + view.ty;
+          ctx2.beginPath(); ctx2.moveTo(x1, y1); ctx2.lineTo(x2, y2); ctx2.stroke();
+        }
+      } else {
+        ctx2.lineWidth = 0.6;
+        ctx2.strokeStyle = 'rgba(20, 75, 170, 0.09)';
+        ctx2.setLineDash([]);
+        for (let e = 0; e < overviewEdges.edges.length; e++) {
+          const ed = overviewEdges.edges[e];
+          const x1 = data.nodes.x[ed.source] * view.scale + view.tx;
+          const y1 = data.nodes.y[ed.source] * view.scale + view.ty;
+          const x2 = data.nodes.x[ed.target] * view.scale + view.tx;
+          const y2 = data.nodes.y[ed.target] * view.scale + view.ty;
+          ctx2.beginPath(); ctx2.moveTo(x1, y1); ctx2.lineTo(x2, y2); ctx2.stroke();
+        }
       }
       ctx2.restore();
     }

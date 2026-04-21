@@ -139,11 +139,9 @@ def main() -> None:
         )
 
     sys.path.insert(0, str(_REPO_ROOT))
+    from excel_grapher.exporter.lightweight_viz import to_lightweight_viz
     from excel_grapher.grapher.graph import DependencyGraph
-    from excel_grapher.grapher.lightweight_viz import (
-        serialize_lightweight_viz_json,
-        to_lightweight_viz,
-    )
+    from excel_grapher.grapher.lightweight_viz import serialize_lightweight_viz_json
 
     phase: Literal["pickle", "viz", "json"] | None = None
     try:
@@ -161,9 +159,10 @@ def main() -> None:
 
         payload = to_lightweight_viz(graph)
         phase = "viz"
+        core_stats = payload.core.stats
         print(
-            f"[profile_lightweight_viz] nodes={payload.stats.node_count} "
-            f"local_edges={payload.stats.local_edge_count}",
+            f"[profile_lightweight_viz] nodes={core_stats.node_count} "
+            f"local_edges={core_stats.local_edge_count}",
             file=sys.stderr,
         )
         if args.stop_after == "viz":

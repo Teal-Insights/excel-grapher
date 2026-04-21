@@ -6,12 +6,31 @@ from pathlib import Path
 import pytest
 
 import excel_grapher.grapher.lightweight_viz as lightweight_viz_mod
-from excel_grapher.grapher import (
-    to_lightweight_viz,
-    write_lightweight_viz_data,
-    write_lightweight_viz_html,
-)
+from excel_grapher.exporter import to_lightweight_viz
+from excel_grapher.grapher import write_lightweight_viz_data, write_lightweight_viz_html
+from excel_grapher.grapher.lightweight_viz import VIZ_PAYLOAD_VERSION
 from tests.grapher.test_export_lightweight_viz import _chain_graph
+
+
+def test_write_html_core_only_no_overlays(tmp_path: Path) -> None:
+    from excel_grapher.grapher.lightweight_viz import (
+        VizLimits,
+        assemble_lightweight_viz_payload,
+        build_lightweight_viz_core,
+    )
+
+    g = _chain_graph()
+    core = build_lightweight_viz_core(g, limits=VizLimits(), layout_input=None)
+    payload = assemble_lightweight_viz_payload(core, [])
+    assert payload.version == VIZ_PAYLOAD_VERSION
+    assert payload.overlays == ()
+    out = tmp_path / "core_only.html"
+    write_lightweight_viz_html(payload, out, title="Core only", data_mode="inline")
+    assert out.is_file()
+    text = out.read_text(encoding="utf-8")
+    ver = str(VIZ_PAYLOAD_VERSION)
+    assert f'"version":{ver}' in text or f'"version": {ver}' in text.replace(" ", "")
+    assert "Core only" in text
 
 
 def test_write_html_creates_file(tmp_path: Path) -> None:
@@ -32,7 +51,8 @@ def test_inline_embeds_payload_under_budget(tmp_path: Path) -> None:
     write_lightweight_viz_html(p, out, data_mode="inline", inline_size_budget_mb=50)
     text = out.read_text(encoding="utf-8")
     assert "window.__VIZ_DATA__" in text
-    assert '"version":1' in text or '"version": 1' in text.replace(" ", "")
+    ver = str(VIZ_PAYLOAD_VERSION)
+    assert f'"version":{ver}' in text or f'"version": {ver}' in text.replace(" ", "")
 
 
 def test_sidecar_writes_sibling_json(tmp_path: Path) -> None:
