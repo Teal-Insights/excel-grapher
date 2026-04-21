@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .core import CellValue, XlError, to_number, to_string
+from excel_grapher.core import CellValue, XlError, to_number, to_string
 
 __all__ = [
     "xl__xlfn_numbervalue",

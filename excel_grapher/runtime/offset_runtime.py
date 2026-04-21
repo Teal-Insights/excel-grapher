@@ -5,8 +5,9 @@ import numpy as np
 
 from excel_grapher.core.addressing import index_excel_range, offset_range
 
+from excel_grapher.core import CellValue, ExcelRange, XlError, to_number
+
 from .cache import EvalContext, xl_cell
-from .core import CellValue, ExcelRange, XlError, to_number
 
 __all__ = ["xl_index_ref", "xl_offset", "xl_offset_ref"]
 

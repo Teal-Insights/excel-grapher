@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .core import CellValue, XlError
+from excel_grapher.core import CellValue, XlError
 
 __all__ = ["xl_isblank", "xl_isnumber", "xl_istext", "xl_na"]
 

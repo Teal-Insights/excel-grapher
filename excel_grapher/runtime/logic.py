@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .core import CellValue, XlError, get_error, to_bool, to_number
+from excel_grapher.core import CellValue, XlError, get_error, to_bool, to_number
 
 __all__ = ["xl_and", "xl_choose", "xl_ifna", "xl_or"]
 

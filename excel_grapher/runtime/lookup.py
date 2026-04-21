@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .core import CellValue, XlError, excel_casefold, to_native, to_number
+from excel_grapher.core import CellValue, XlError, excel_casefold, to_native, to_number
 
 __all__ = [
     "xl__xlfn_xlookup",

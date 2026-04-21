@@ -8,7 +8,7 @@ from typing import cast
 
 import fastpyxl.utils.cell
 
-from .core import CellValue, ExcelRange, XlError
+from excel_grapher.core import CellValue, ExcelRange, XlError
 
 __all__ = [
     "CircularReferenceWarning",

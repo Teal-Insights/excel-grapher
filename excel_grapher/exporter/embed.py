@@ -18,10 +18,8 @@ _CORE_MODULES: list[tuple[str, Path]] = [
     ("core.addressing", _CORE_DIR / "addressing.py"),
 ]
 
-# Export runtime modules (representation-specific or re-exports); order preserved for iteration.
+# Export runtime modules (representation-specific implementations); order preserved for iteration.
 _RUNTIME_MODULES: list[tuple[str, Path]] = [
-    ("core", _RUNTIME_DIR / "core.py"),
-    ("operators", _RUNTIME_DIR / "operators.py"),
     ("math", _RUNTIME_DIR / "math.py"),
     ("text", _RUNTIME_DIR / "text.py"),
     ("info", _RUNTIME_DIR / "info.py"),
@@ -139,6 +137,12 @@ def _collect_external_import_lines(module: ast.Module, src: str) -> list[str]:
                 continue
             # The generated output always includes the __future__ annotations import.
             if node.module == "__future__":
+                continue
+            # Skip imports from the core/runtime packages — their symbols are inlined.
+            if node.module and any(
+                node.module == pkg or node.module.startswith(f"{pkg}.")
+                for pkg in ("excel_grapher.core", "excel_grapher.runtime")
+            ):
                 continue
             seg = ast.get_source_segment(src, node)
             if seg:

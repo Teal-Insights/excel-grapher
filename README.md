@@ -14,12 +14,13 @@ Build and analyze dependency graphs from Excel workbooks, **evaluate formulas wi
 
 ### Library layout
 
-The unified distribution is `excel-grapher` and exposes a single import package, `excel_grapher`, with four main subpackages:
+The unified distribution is `excel-grapher` and exposes a single import package, `excel_grapher`, with five main subpackages:
 
 - `excel_grapher/core/` — shared semantic types, coercions, and scalar operators.
-- `excel_grapher/grapher/` — graph-building, validation, and workbook-loading logic.
-- `excel_grapher/evaluator/` — `FormulaEvaluator` and formula parsing utilities.
-- `excel_grapher/exporter/` — `CodeGenerator` and `export_runtime` for standalone Python export.
+- `excel_grapher/runtime/` — Excel-equivalent function implementations and runtime semantics.
+- `excel_grapher/grapher/` — workbook loading, graph extraction, and visualization logic.
+- `excel_grapher/evaluator/` — `FormulaEvaluator`: an Excel emulator for recomputing formulas in the extracted graph in Python.
+- `excel_grapher/exporter/` — `CodeGenerator`: an transpiler for exporting the extracted graph as a standalone Python library.
 
 Typical imports:
 

@@ -4,7 +4,7 @@ import re
 
 import fastpyxl.utils.cell
 
-from .core import CellValue, ExcelRange, XlError, to_bool, to_number, to_string
+from excel_grapher.core import CellValue, ExcelRange, XlError, to_bool, to_number, to_string
 
 __all__ = ["xl_address", "xl_column", "xl_columns", "xl_row"]
 

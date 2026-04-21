@@ -6,7 +6,7 @@ from typing import TypeVar
 
 import numpy as np
 
-from .core import (
+from excel_grapher.core import (
     CellValue,
     XlError,
     excel_casefold,
