@@ -19,7 +19,7 @@ from tests.utils.modify_and_recalculate import (
 
 pytestmark = pytest.mark.slow
 
-WORKBOOK_PATH = Path("example/data/lic-dsf-template-2025-08-12.xlsm")
+WORKBOOK_PATH = Path("examples/lic_dsf/data/lic-dsf-template-2025-08-12.xlsm")
 
 # Sheet -> list of indicator row numbers (aligned with example workbook structure).
 INDICATOR_CONFIG: dict[str, list[int]] = {

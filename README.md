@@ -686,13 +686,13 @@ write_lightweight_viz_html(payload, Path("model.html"), data_mode="auto")
 To refresh the checked-in LIC-DSF sample viewer:
 
 ```bash
-uv run example/regenerate_sample_viz.py --full
+uv run examples/lic_dsf/regenerate_sample_viz.py --full
 ```
 
-This rebuilds `example/data/lic-dsf-template-sample-exported-viz.html` from the cached dependency graph in `example/.cache/`. If you only changed the HTML template and want to re-embed the current `lightweight_viz_template.html` without rebuilding the payload, run:
+This rebuilds `examples/lic_dsf/data/lic-dsf-template-sample-exported-viz.html` from the cached dependency graph in `examples/lic_dsf/.cache/`. If you only changed the HTML template and want to re-embed the current `lightweight_viz_template.html` without rebuilding the payload, run:
 
 ```bash
-uv run example/regenerate_sample_viz.py
+uv run examples/lic_dsf/regenerate_sample_viz.py
 ```
 
 #### Example interface

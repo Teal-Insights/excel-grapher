@@ -13,6 +13,7 @@ from excel_grapher.grapher.lightweight_viz import (
     BFS_HORIZONTAL_SWEEP_COUNT,
     DENSE_BUCKET_THRESHOLD,
     VIZ_PAYLOAD_VERSION,
+    VizLimits,
     _bfs_horizontal_iteration_order,
     _build_local_csr,
     _build_out_adj_guarded,
@@ -21,7 +22,6 @@ from excel_grapher.grapher.lightweight_viz import (
     lightweight_viz_flat,
     select_local_force_subgraph,
     serialize_lightweight_viz_json,
-    VizLimits,
 )
 
 

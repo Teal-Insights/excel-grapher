@@ -3,9 +3,8 @@ from __future__ import annotations
 import fastpyxl.utils.cell
 import numpy as np
 
-from excel_grapher.core.addressing import index_excel_range, offset_range
-
 from excel_grapher.core import CellValue, ExcelRange, XlError, to_number
+from excel_grapher.core.addressing import index_excel_range, offset_range
 
 from .cache import EvalContext, xl_cell
 

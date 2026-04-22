@@ -1,5 +1,5 @@
 """
-LIC-DSF Chart Data export targets (aligned with example/map_lic_dsf_indicators.py).
+LIC-DSF Chart Data export targets (aligned with examples/lic_dsf/map_lic_dsf_indicators.py).
 
 Used by slow integration tests to build the same dependency closure as the
 indicator-mapping script: fixed signal ranges plus stress-test and figure rows.
@@ -15,7 +15,7 @@ import fastpyxl.utils.cell
 from excel_grapher import format_cell_key
 from excel_grapher.evaluator.name_utils import normalize_address
 
-WORKBOOK_PATH = Path("example/data/lic-dsf-template-2025-08-12.xlsm")
+WORKBOOK_PATH = Path("examples/lic_dsf/data/lic-dsf-template-2025-08-12.xlsm")
 
 # Figure 1 chart series: MX shock (U63) and Threshold (U66) — common parity probes.
 _CHART_PARITY_SHORTLIST_RAW: list[str] = [
