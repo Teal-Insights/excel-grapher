@@ -13,9 +13,11 @@ from excel_grapher.grapher.lightweight_viz import (
     DENSE_BUCKET_THRESHOLD,
     VIZ_PAYLOAD_VERSION,
     _build_local_csr,
+    build_lightweight_viz_core,
     lightweight_viz_flat,
     select_local_force_subgraph,
     serialize_lightweight_viz_json,
+    VizLimits,
 )
 
 
@@ -130,6 +132,25 @@ def test_deterministic_ids_and_serialization() -> None:
     a = serialize_lightweight_viz_json(payload)
     b = serialize_lightweight_viz_json(to_lightweight_viz(g))
     assert a == b
+
+
+def test_exporter_force_layout_opt_in_changes_core_xy() -> None:
+    """Exporter can request core force layout; default exporter payload unchanged otherwise."""
+    g = _chain_graph()
+    default_p = to_lightweight_viz(g)
+    force_p = to_lightweight_viz(g, layout_mode="force")
+    fd = lightweight_viz_flat(force_p)
+    dd = lightweight_viz_flat(default_p)
+    assert fd.stats.node_count == dd.stats.node_count == 3
+    assert list(fd.nodes.x) != list(dd.nodes.x) or list(fd.nodes.y) != list(dd.nodes.y)
+
+
+def test_exporter_default_layout_mode_matches_explicit_bfs_core() -> None:
+    g = _chain_graph()
+    exported = to_lightweight_viz(g)
+    core_only = build_lightweight_viz_core(g, limits=VizLimits(), layout_mode="bfs")
+    assert list(exported.core.nodes.x) == list(core_only.nodes.x)
+    assert list(exported.core.nodes.y) == list(core_only.nodes.y)
 
 
 def test_existing_exports_unchanged() -> None:

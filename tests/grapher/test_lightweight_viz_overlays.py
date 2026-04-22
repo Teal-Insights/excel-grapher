@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from excel_grapher.grapher.graph import DependencyGraph
@@ -201,6 +203,39 @@ def test_core_layout_modes_available() -> None:
     layered = build_lightweight_viz_core(g, limits=VizLimits(), layout_mode="layered")
     grid = build_lightweight_viz_core(g, limits=VizLimits(), layout_mode="grid")
     assert bfs.stats.node_count == layered.stats.node_count == grid.stats.node_count == 3
+
+
+def test_core_force_layout_accepted_and_positions_valid() -> None:
+    g = _tiny_chain_graph()
+    core = build_lightweight_viz_core(g, limits=VizLimits(), layout_mode="force")
+    assert core.stats.node_count == 3
+    assert core.stats.local_edge_count == 2
+    xs = list(core.nodes.x)
+    ys = list(core.nodes.y)
+    assert all(math.isfinite(x) and math.isfinite(y) for x, y in zip(xs, ys, strict=True))
+    assert not all(x == xs[0] for x in xs) or not all(y == ys[0] for y in ys)
+
+
+def test_core_force_layout_deterministic() -> None:
+    g = _tiny_chain_graph()
+    a = build_lightweight_viz_core(g, limits=VizLimits(), layout_mode="force")
+    b = build_lightweight_viz_core(g, limits=VizLimits(), layout_mode="force")
+    assert list(a.nodes.x) == list(b.nodes.x)
+    assert list(a.nodes.y) == list(b.nodes.y)
+
+
+def test_core_force_layout_differs_from_rank_band_on_chain() -> None:
+    """Force-mode coordinates differ from rank-band layouts on the tiny chain fixture."""
+    g = _tiny_chain_graph()
+    bfs = build_lightweight_viz_core(g, limits=VizLimits(), layout_mode="bfs")
+    layered = build_lightweight_viz_core(g, limits=VizLimits(), layout_mode="layered")
+    grid = build_lightweight_viz_core(g, limits=VizLimits(), layout_mode="grid")
+    force = build_lightweight_viz_core(g, limits=VizLimits(), layout_mode="force")
+    assert list(bfs.nodes.rank) == list(layered.nodes.rank)
+    assert list(bfs.nodes.x) != list(force.nodes.x) or list(bfs.nodes.y) != list(force.nodes.y)
+    assert all(math.isfinite(x) for x in bfs.nodes.x)
+    assert all(math.isfinite(x) for x in layered.nodes.x)
+    assert all(math.isfinite(x) for x in grid.nodes.x)
 
 
 def test_core_bfs_can_exclude_unreachable_from_explicit_seed_set() -> None:

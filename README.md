@@ -321,7 +321,9 @@ write_lightweight_viz_html(payload, Path("model.html"), data_mode="auto")
 
 ### Customizing the visualization
 
-You can select `layout_mode="layered"` for SCC + rank-band layering or `layout_mode="grid"` to arrange nodes in a grid. By default, visualization includes both guarded and unguarded edges; set `include_guarded_edges=False` to exclude guarded edges (nodes unreachable from the BFS seed set are pruned in this mode). Local edge export limits are unbounded by default (`VizLimits(max_local_nodes=None, max_local_edges=None)`).
+You can select `layout_mode="layered"` for SCC + rank-band layering or `layout_mode="grid"` to arrange nodes in a grid. Optional `layout_mode="force"` runs a deterministic export-time force-directed layout over the whole graph (spring-like edges plus repulsion); it is **not** the default because cost scales with graph size and can take minutes on very large workbooks—use it for offline or batch exports when you want dense-layout coordinates baked into `core.nodes.x` / `core.nodes.y`. With `excel_grapher.exporter.to_lightweight_viz(...)`, pass `layout_mode="force"` to apply force placement while keeping module-inference overlays; omit it for the usual rank-band core positions.
+
+By default, visualization includes both guarded and unguarded edges; set `include_guarded_edges=False` to exclude guarded edges (nodes unreachable from the BFS seed set are pruned in this mode). Local edge export limits are unbounded by default (`VizLimits(max_local_nodes=None, max_local_edges=None)`).
 
 `write_lightweight_viz_html(..., data_mode="auto")` inlines JSON when the estimated payload is at most **50 MiB** (override with `inline_size_budget_mb`); otherwise it writes a sidecar `.viz.json` next to the HTML. The serialized payload has top-level keys `version`, `core`, and `overlays`; truncation and density metadata live on `payload.core.stats`. For the flattened stats/nodes/modules view used in tests and tooling, use `lightweight_viz_flat(payload)`.
 

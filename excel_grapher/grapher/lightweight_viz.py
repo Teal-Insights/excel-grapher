@@ -254,6 +254,115 @@ def _rank_band_xy(
     return xs, ys, bucket_density, dense_bucket_count
 
 
+# Whole-graph force layout (export-time); pairwise repulsion only for modest n.
+_FORCE_PAIRWISE_REPULSION_MAX_N = 512
+_FORCE_LINK_DISTANCE = 40.0
+_FORCE_LINK_STRENGTH = 0.06
+_FORCE_CHARGE = 120.0
+_FORCE_CENTER_STRENGTH = 0.05
+_FORCE_TICKS_MIN = 40
+_FORCE_TICKS_MAX = 120
+_FORCE_GRID_REPULSE_CELL_DIVISOR = 48.0
+
+
+def _force_directed_xy(n: int, adj: list[list[int]]) -> tuple[list[float], list[float]]:
+    """Deterministic force-directed placement using link springs, pairwise repulsion, and weak centering."""
+    if n == 0:
+        return [], []
+    radius = 100.0 * math.sqrt(float(max(n, 1)))
+    xs = [0.0] * n
+    ys = [0.0] * n
+    for i in range(n):
+        ang = 2.0 * math.pi * float(i) / float(n)
+        xs[i] = math.cos(ang) * radius
+        ys[i] = math.sin(ang) * radius
+
+    edges: list[tuple[int, int]] = []
+    for u in range(n):
+        for v in adj[u]:
+            edges.append((u, v))
+
+    ticks = min(_FORCE_TICKS_MAX, max(_FORCE_TICKS_MIN, n // 50))
+    if n > 50_000:
+        ticks = min(ticks, 80)
+
+    for tick in range(ticks):
+        tnorm = tick / max(ticks - 1, 1) if ticks > 1 else 1.0
+        alpha = (1.0 - tnorm) ** 0.5
+
+        fx = [0.0] * n
+        fy = [0.0] * n
+
+        for u, v in edges:
+            dx = xs[v] - xs[u]
+            dy = ys[v] - ys[u]
+            dist = math.hypot(dx, dy)
+            if dist < 1e-9:
+                dist = 1e-9
+            fmag = _FORCE_LINK_STRENGTH * (dist - _FORCE_LINK_DISTANCE)
+            fx_u = fmag * dx / dist
+            fy_u = fmag * dy / dist
+            fx[u] += fx_u
+            fy[u] += fy_u
+            fx[v] -= fx_u
+            fy[v] -= fy_u
+
+        if n <= _FORCE_PAIRWISE_REPULSION_MAX_N:
+            for i in range(n):
+                xi, yi = xs[i], ys[i]
+                for j in range(i + 1, n):
+                    dx = xs[j] - xi
+                    dy = ys[j] - yi
+                    dist2 = dx * dx + dy * dy + 0.01
+                    dist = math.sqrt(dist2)
+                    inv_cubed = _FORCE_CHARGE / (dist2 * dist)
+                    fx[i] -= inv_cubed * dx
+                    fy[i] -= inv_cubed * dy
+                    fx[j] += inv_cubed * dx
+                    fy[j] += inv_cubed * dy
+        else:
+            min_x = min(xs)
+            max_x = max(xs)
+            min_y = min(ys)
+            max_y = max(ys)
+            span = max(max_x - min_x, max_y - min_y, 1.0)
+            cell = span / _FORCE_GRID_REPULSE_CELL_DIVISOR
+            if cell < 1e-9:
+                cell = 1e-9
+            buckets: dict[tuple[int, int], list[int]] = {}
+            for i in range(n):
+                bx = int(xs[i] / cell)
+                by = int(ys[i] / cell)
+                buckets.setdefault((bx, by), []).append(i)
+            for i in range(n):
+                bx = int(xs[i] / cell)
+                by = int(ys[i] / cell)
+                for ox in (-1, 0, 1):
+                    for oy in (-1, 0, 1):
+                        for j in buckets.get((bx + ox, by + oy), []):
+                            if j <= i:
+                                continue
+                            dx = xs[j] - xs[i]
+                            dy = ys[j] - ys[i]
+                            dist2 = dx * dx + dy * dy + 0.01
+                            dist = math.sqrt(dist2)
+                            inv_cubed = _FORCE_CHARGE / (dist2 * dist)
+                            fx[i] -= inv_cubed * dx
+                            fy[i] -= inv_cubed * dy
+                            fx[j] += inv_cubed * dx
+                            fy[j] += inv_cubed * dy
+
+        for i in range(n):
+            fx[i] -= _FORCE_CENTER_STRENGTH * xs[i]
+            fy[i] -= _FORCE_CENTER_STRENGTH * ys[i]
+
+        for i in range(n):
+            xs[i] += fx[i] * alpha
+            ys[i] += fy[i] * alpha
+
+    return xs, ys
+
+
 def _grid_xy(n: int) -> tuple[list[float], list[float], list[int], int]:
     x_scale = 120.0
     y_band = 36.0
@@ -477,7 +586,7 @@ def build_lightweight_viz_core(
     *,
     limits: VizLimits | None = None,
     layout_input: LightweightVizLayoutInput | None = None,
-    layout_mode: Literal["bfs", "layered", "grid"] = "bfs",
+    layout_mode: Literal["bfs", "layered", "grid", "force"] = "bfs",
     include_guarded_edges: bool = True,
     bfs_seed_keys: Sequence[NodeKey] | None = None,
     exclude_unreachable_from_bfs: bool = False,
@@ -567,6 +676,12 @@ def build_lightweight_viz_core(
         elif layout_mode == "layered":
             ranks = _default_unconditional_node_ranks(uncond, n)
             xs, ys, bucket_density, dense_bucket_count = _rank_band_xy(n, module_of, ranks)
+        elif layout_mode == "force":
+            ranks = _default_bfs_target_ranks(selected_adj, rev_selected, n)
+            _, _, bucket_density, dense_bucket_count = _rank_band_xy(n, module_of, ranks)
+            xs, ys = _force_directed_xy(n, selected_adj)
+            _balance_overview_layout_spans(xs, ys)
+            xs, ys = ys, xs
         else:
             raise ValueError(f"Unsupported layout_mode: {layout_mode!r}")
     else:
@@ -574,8 +689,14 @@ def build_lightweight_viz_core(
             raise ValueError("layout_input tuple lengths must match graph order")
         module_of = list(layout_input.module_of)
         node_rank = list(layout_input.node_rank)
-        xs, ys, bucket_density, dense_bucket_count = _rank_band_xy(n, module_of, node_rank)
         ranks = node_rank
+        if layout_mode == "force":
+            _, _, bucket_density, dense_bucket_count = _rank_band_xy(n, module_of, node_rank)
+            xs, ys = _force_directed_xy(n, selected_adj)
+            _balance_overview_layout_spans(xs, ys)
+            xs, ys = ys, xs
+        else:
+            xs, ys, bucket_density, dense_bucket_count = _rank_band_xy(n, module_of, node_rank)
 
     n_mod = max(module_of) + 1 if module_of else 0
     mod_node_count = [0] * n_mod

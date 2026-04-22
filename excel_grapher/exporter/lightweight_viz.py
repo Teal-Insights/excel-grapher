@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import heapq
 from dataclasses import dataclass
+from typing import Literal
 
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.lightweight_viz import (
@@ -335,6 +336,7 @@ def to_lightweight_viz(
     include_guarded_edges: bool = True,
     module_iterations: int = 8,
     inline_size_budget_mb: int = 50,
+    layout_mode: Literal["bfs", "layered", "grid", "force"] | None = None,
 ) -> LightweightVizPayload:
     """
     Build the columnar visualization payload used by ``write_lightweight_viz_html``.
@@ -347,10 +349,12 @@ def to_lightweight_viz(
     ma = analyze_modules_for_viz(graph, module_iterations=module_iterations)
     limits = VizLimits(max_local_nodes=max_local_nodes, max_local_edges=max_local_edges)
     layout = LightweightVizLayoutInput(ma.module_of, ma.node_rank)
+    core_mode: Literal["bfs", "layered", "grid", "force"] = layout_mode or "bfs"
     core = build_lightweight_viz_core(
         graph,
         limits=limits,
         layout_input=layout,
+        layout_mode=core_mode,
         include_guarded_edges=include_guarded_edges,
     )
 

@@ -7,8 +7,9 @@ Default (fast): re-embed the current package ``lightweight_viz_template.html`` i
 inline ``window.__VIZ_DATA__`` payload (no graph rebuild). That embedded JSON may be an
 older **flat** snapshot (legacy inline shape); the viewer still accepts it. To regenerate
 current wire JSON from the cached graph, use ``--full``. Choose ``--mode core`` to
-rebuild a core-only payload (BFS layout defaults) or ``--mode exporter`` to include
-module-inference overlays.
+rebuild a core-only payload or ``--mode exporter`` to include module-inference overlays.
+Use ``--layout force`` for export-time force-directed coordinates (slow on large graphs;
+default for this script). Timings print for pickle load and viz payload build.
 
 Use ``--full`` to rebuild from ``example/.cache/...-dependency-graph.pkl`` (slow, large
 RAM; re-runs ``to_lightweight_viz`` and serializes ~tens of MB of JSON).
@@ -23,6 +24,7 @@ import argparse
 import pickle
 import re
 import sys
+import time
 from importlib import resources
 from pathlib import Path
 from typing import Literal
@@ -123,23 +125,30 @@ def full_rebuild(
     mode: Literal["exporter", "core"],
     *,
     exclude_guarded: bool = False,
+    layout: Literal["bfs", "layered", "grid", "force"] = "force",
 ) -> None:
     sys.path.insert(0, str(_REPO_ROOT))
     from excel_grapher.grapher.graph import DependencyGraph
     from excel_grapher.grapher.lightweight_viz import write_lightweight_viz_html
 
+    t0 = time.perf_counter()
     with cache_pkl.open("rb") as f:
         blob = pickle.load(f)
+    pickle_sec = time.perf_counter() - t0
     if not isinstance(blob, tuple) or len(blob) != 2:
         raise SystemExit("Pickle must be (meta, graph) tuple")
     _, graph = blob
     if not isinstance(graph, DependencyGraph):
         raise SystemExit("Pickle graph is not a DependencyGraph")
 
+    t1 = time.perf_counter()
     if mode == "exporter":
         from excel_grapher.exporter.lightweight_viz import to_lightweight_viz
 
-        payload = to_lightweight_viz(graph)
+        payload = to_lightweight_viz(
+            graph,
+            layout_mode=None if layout == "bfs" else layout,
+        )
     else:
         from excel_grapher.grapher.lightweight_viz import (
             VizLimits,
@@ -150,11 +159,20 @@ def full_rebuild(
         core = build_lightweight_viz_core(
             graph,
             limits=VizLimits(),
+            layout_mode=layout,
             include_guarded_edges=not exclude_guarded,
             bfs_seed_keys=_lic_dsf_export_targets(),
             exclude_unreachable_from_bfs=True,
         )
         payload = assemble_lightweight_viz_payload(core, [])
+    build_sec = time.perf_counter() - t1
+
+    n_nodes = payload.core.stats.node_count
+    print(
+        f"Timing: pickle_load={pickle_sec:.3f}s, viz_payload_build={build_sec:.3f}s "
+        f"(nodes={n_nodes}, layout={layout!r})",
+        flush=True,
+    )
 
     write_lightweight_viz_html(
         payload,
@@ -197,8 +215,18 @@ def main() -> None:
         choices=("exporter", "core"),
         default="core",
         help=(
-            "Payload mode for --full (default: core): 'core' builds a core-only payload "
-            "using grapher defaults (BFS layout); 'exporter' includes module-inference overlays."
+            "Payload mode for --full (default: core): 'core' builds a core-only payload; "
+            "'exporter' includes module-inference overlays."
+        ),
+    )
+    p.add_argument(
+        "--layout",
+        choices=("bfs", "layered", "grid", "force"),
+        default="force",
+        help=(
+            "Core node placement for --full (default: force). "
+            "'bfs' / 'layered' / 'grid' use rank-band layouts; 'force' runs export-time "
+            "force-directed layout (can take minutes on large graphs)."
         ),
     )
     p.add_argument(
@@ -215,13 +243,18 @@ def main() -> None:
         cache = args.cache.resolve()
         if not cache.is_file():
             raise SystemExit(f"Missing cache: {cache}")
-        print(f"Full rebuild from pickle in {args.mode!r} mode (this may take many minutes)...", flush=True)
+        print(
+            f"Full rebuild from pickle in {args.mode!r} mode, layout={args.layout!r} "
+            "(this may take many minutes)...",
+            flush=True,
+        )
         full_rebuild(
             out,
             cache,
             args.inline_budget_mb,
             args.mode,
             exclude_guarded=args.exclude_guarded,
+            layout=args.layout,
         )
         print(f"Wrote {out} ({out.stat().st_size // 1024 // 1024} MiB)", flush=True)
         return
