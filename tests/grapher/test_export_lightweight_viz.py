@@ -10,9 +10,13 @@ from excel_grapher.grapher.export import (
     to_networkx,
 )
 from excel_grapher.grapher.lightweight_viz import (
+    BFS_HORIZONTAL_SWEEP_COUNT,
     DENSE_BUCKET_THRESHOLD,
     VIZ_PAYLOAD_VERSION,
+    _bfs_horizontal_iteration_order,
     _build_local_csr,
+    _build_out_adj_guarded,
+    _reverse_adj_flagged,
     build_lightweight_viz_core,
     lightweight_viz_flat,
     select_local_force_subgraph,
@@ -84,6 +88,128 @@ def _guarded_back_edge_graph() -> DependencyGraph:
     g.add_edge(nb.key, na.key)
     g.add_edge(na.key, nb.key, guard=Literal(True))
     return g
+
+
+def _two_hub_rank1_graph() -> DependencyGraph:
+    """Rank-0 formulas na, nb feed hubs nh, nk (rank 1). Keys order nb (C1) before na (D1); layout aligns na left under nh (A)."""
+    g = DependencyGraph()
+    nh = _n("S", "A", 1, leaf=True, formula=None)
+    nk = _n("S", "B", 1, leaf=True, formula=None)
+    na = _n("S", "D", 1, leaf=False, formula="=A1")
+    nb = _n("S", "C", 1, leaf=False, formula="=B1")
+    for node in (nh, nk, na, nb):
+        g.add_node(node)
+    g.add_edge(na.key, nh.key)
+    g.add_edge(nb.key, nk.key)
+    return g
+
+
+def _rank2_guard_mix_graph() -> DependencyGraph:
+    """Two nodes at rank 2 sharing parents A2,B2; nz2 weights the edge to A2 as guarded (pulls toward B2 vs nz1)."""
+    g = DependencyGraph()
+    na = _n("S", "A", 1, leaf=True, formula=None)
+    nb = _n("S", "B", 1, leaf=True, formula=None)
+    na2 = _n("S", "A", 2, leaf=False, formula="=A1")
+    nb2 = _n("S", "B", 2, leaf=False, formula="=B1")
+    nz1 = _n("S", "Z", 3, leaf=False, formula="=A2+B2")
+    nz2 = _n("S", "Z", 4, leaf=False, formula="=A2+B2")
+    for n in (na, nb, na2, nb2, nz1, nz2):
+        g.add_node(n)
+    g.add_edge(na2.key, na.key)
+    g.add_edge(nb2.key, nb.key)
+    g.add_edge(nz1.key, na2.key)
+    g.add_edge(nz1.key, nb2.key)
+    g.add_edge(nz2.key, na2.key, guard=Literal(True))
+    g.add_edge(nz2.key, nb2.key)
+    return g
+
+
+def test_bfs_core_chain_ranks_explicit() -> None:
+    """Lock BFS hop distances from sources (issue #109 ordering must not change ranks)."""
+    g = _chain_graph()
+    core = build_lightweight_viz_core(g, limits=VizLimits(), layout_mode="bfs")
+    keys = sorted(g)
+    idx = {k: i for i, k in enumerate(keys)}
+    assert core.nodes.rank[idx["S!A3"]] == 0
+    assert core.nodes.rank[idx["S!A2"]] == 1
+    assert core.nodes.rank[idx["S!A1"]] == 2
+
+
+def test_bfs_core_deterministic_xy_twice() -> None:
+    g = _fork_join_graph()
+    a = build_lightweight_viz_core(g, limits=VizLimits(), layout_mode="bfs")
+    b = build_lightweight_viz_core(g, limits=VizLimits(), layout_mode="bfs")
+    assert list(a.nodes.x) == list(b.nodes.x)
+    assert list(a.nodes.y) == list(b.nodes.y)
+
+
+def test_bfs_horizontal_rank1_order_follows_parents() -> None:
+    """na aligns under hub A; nb under hub B: na.x < nb.x even when keys order nb before na."""
+    g = _two_hub_rank1_graph()
+    core = build_lightweight_viz_core(g, limits=VizLimits(), layout_mode="bfs")
+    idx = {k: i for i, k in enumerate(sorted(g))}
+    ia = idx["S!D1"]
+    ib = idx["S!C1"]
+    assert ib < ia
+    assert core.nodes.x[ia] < core.nodes.x[ib]
+
+
+def test_bfs_horizontal_same_rank_min_separation() -> None:
+    g = _two_hub_rank1_graph()
+    core = build_lightweight_viz_core(g, limits=VizLimits(), layout_mode="bfs")
+    idx = {k: i for i, k in enumerate(sorted(g))}
+    ia = idx["S!D1"]
+    ib = idx["S!C1"]
+    assert abs(core.nodes.x[ia] - core.nodes.x[ib]) >= 1e-6
+
+
+def test_bfs_guarded_edges_weight_less_than_unconditional() -> None:
+    """nz2 pulls toward B2 when the A2 edge is guarded; nz1 is centered between A2 and B2."""
+    g = _rank2_guard_mix_graph()
+    core = build_lightweight_viz_core(g, limits=VizLimits(), layout_mode="bfs")
+    keys = sorted(g)
+    idx = {k: i for i, k in enumerate(keys)}
+    iz1 = idx["S!Z3"]
+    iz2 = idx["S!Z4"]
+    assert core.nodes.x[iz1] < core.nodes.x[iz2]
+
+
+def test_bfs_horizontal_iteration_order_matches_public_layout() -> None:
+    """Internal permutation lists na before nb for the two-hub fixture (na left of nb)."""
+    g = _two_hub_rank1_graph()
+    keys = sorted(g)
+    n = len(keys)
+    key_id = {k: i for i, k in enumerate(keys)}
+    core = build_lightweight_viz_core(g, limits=VizLimits(), layout_mode="bfs")
+    ranks = list(core.nodes.rank)
+    module_of = [0] * n
+    adj = _build_out_adj_guarded(g, keys, key_id, include_guarded=True)
+    rev = _reverse_adj_flagged(adj, n)
+    order = _bfs_horizontal_iteration_order(n, ranks, module_of, adj, rev)
+    pos = {nid: p for p, nid in enumerate(order)}
+    ia = key_id["S!D1"]
+    ib = key_id["S!C1"]
+    assert pos[ia] < pos[ib]
+
+
+def test_bfs_horizontal_order_idempotent() -> None:
+    """Weighted barycentric sweeps yield a stable permutation when called twice."""
+    g = _two_hub_rank1_graph()
+    keys = sorted(g)
+    n = len(keys)
+    key_id = {k: i for i, k in enumerate(keys)}
+    core = build_lightweight_viz_core(g, limits=VizLimits(), layout_mode="bfs")
+    ranks = list(core.nodes.rank)
+    module_of = [0] * n
+    adj = _build_out_adj_guarded(g, keys, key_id, include_guarded=True)
+    rev = _reverse_adj_flagged(adj, n)
+    a = _bfs_horizontal_iteration_order(n, ranks, module_of, adj, rev)
+    b = _bfs_horizontal_iteration_order(n, ranks, module_of, adj, rev)
+    assert a == b
+
+
+def test_bfs_horizontal_sweep_count_constant() -> None:
+    assert BFS_HORIZONTAL_SWEEP_COUNT >= 2
 
 
 def test_build_local_csr_hoisted_out_degree_sort() -> None:

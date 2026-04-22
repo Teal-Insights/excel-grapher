@@ -20,6 +20,12 @@ DENSE_BUCKET_THRESHOLD = 12
 VIZ_PAYLOAD_VERSION = 2
 MODULE_INFERENCE_OVERLAY_ID = "exporter.module_inference"
 
+# BFS overview: weighted barycentric ordering within each (rank, module) bucket
+BFS_HORIZONTAL_UNGUARDED_WEIGHT = 1.0
+BFS_HORIZONTAL_GUARDED_WEIGHT = 0.35
+BFS_HORIZONTAL_SWEEP_COUNT = 6
+BFS_HORIZONTAL_MIN_SLOT_GAP = 1.0
+
 # --- CSR / edge extraction ----------------------------------------------------
 
 
@@ -192,6 +198,150 @@ class LightweightVizCore:
     max_local_edges: int | None
 
 
+def _build_out_adj_guarded(
+    graph: DependencyGraph,
+    keys: list[NodeKey],
+    key_id: dict[NodeKey, int],
+    *,
+    include_guarded: bool,
+) -> list[list[tuple[int, bool]]]:
+    """Outgoing adjacency with guarded flags, aligned with ``selected_adj`` edge filtering."""
+    n = len(keys)
+    out: list[list[tuple[int, bool]]] = [[] for _ in range(n)]
+    for fk in keys:
+        fi = key_id[fk]
+        for tk in sorted(graph.dependencies(fk)):
+            ti = key_id.get(tk)
+            if ti is None:
+                continue
+            guarded = graph.edge_attrs(fk, tk).get("guard") is not None
+            if guarded and not include_guarded:
+                continue
+            out[fi].append((ti, guarded))
+    for row in out:
+        row.sort(key=lambda t: t[0])
+    return out
+
+
+def _reverse_adj_flagged(
+    adj_flagged: list[list[tuple[int, bool]]], n: int
+) -> list[list[tuple[int, bool]]]:
+    rev: list[list[tuple[int, bool]]] = [[] for _ in range(n)]
+    for u in range(n):
+        for v, g in adj_flagged[u]:
+            rev[v].append((u, g))
+    for row in rev:
+        row.sort(key=lambda t: t[0])
+    return rev
+
+
+def _edge_weight(guarded: bool) -> float:
+    return BFS_HORIZONTAL_GUARDED_WEIGHT if guarded else BFS_HORIZONTAL_UNGUARDED_WEIGHT
+
+
+def _bucket_keys_sorted(ranks: list[int], module_of: list[int]) -> list[tuple[int, int]]:
+    buckets = {(ranks[i], module_of[i]) for i in range(len(ranks))}
+    return sorted(buckets)
+
+
+def _bfs_bucket_sort_key(
+    vid: int,
+    ranks: list[int],
+    adj_flagged: list[list[tuple[int, bool]]],
+    rev_flagged: list[list[tuple[int, bool]]],
+) -> tuple[int, int]:
+    """Stable tie-break for initial bucket order using the closest rank neighbor when present."""
+    r = ranks[vid]
+    preds = [u for u, _ in rev_flagged[vid] if ranks[u] == r - 1]
+    if preds:
+        return (min(preds), vid)
+    succs = [w for w, _ in adj_flagged[vid] if ranks[w] == r + 1]
+    if succs:
+        return (min(succs), vid)
+    return (vid, vid)
+
+
+def _bfs_horizontal_iteration_order(
+    n: int,
+    ranks: list[int],
+    module_of: list[int],
+    adj_flagged: list[list[tuple[int, bool]]],
+    rev_flagged: list[list[tuple[int, bool]]],
+) -> list[int]:
+    """Deterministic permutation for ``_rank_band_xy``: within each (rank, module) bucket, order by weighted barycentric sweeps."""
+    if n == 0:
+        return []
+    bucket_order: dict[tuple[int, int], list[int]] = {}
+    for bk in _bucket_keys_sorted(ranks, module_of):
+        members = [i for i in range(n) if ranks[i] == bk[0] and module_of[i] == bk[1]]
+        members.sort(key=lambda vid: _bfs_bucket_sort_key(vid, ranks, adj_flagged, rev_flagged))
+        bucket_order[bk] = members
+
+    slot_x = [0.0] * n
+    for members in bucket_order.values():
+        for j, nid in enumerate(members):
+            slot_x[nid] = float(j) * BFS_HORIZONTAL_MIN_SLOT_GAP
+
+    rank_min = min(ranks)
+    rank_max = max(ranks)
+
+    def respace_bucket(bk: tuple[int, int]) -> None:
+        for j, nid in enumerate(bucket_order[bk]):
+            slot_x[nid] = float(j) * BFS_HORIZONTAL_MIN_SLOT_GAP
+
+    def down_sweep() -> None:
+        for r in range(rank_min, rank_max + 1):
+            for mid in sorted({module_of[i] for i in range(n) if ranks[i] == r}):
+                bk = (r, mid)
+                members = bucket_order[bk]
+                scores: list[tuple[float, int]] = []
+                for v in members:
+                    num = 0.0
+                    den = 0.0
+                    for u, guarded in rev_flagged[v]:
+                        if ranks[u] != r - 1:
+                            continue
+                        if module_of[u] != module_of[v]:
+                            continue
+                        w = _edge_weight(guarded)
+                        num += w * slot_x[u]
+                        den += w
+                    sc = (num / den) if den > 0.0 else slot_x[v]
+                    scores.append((sc, v))
+                scores.sort(key=lambda t: (t[0], t[1]))
+                bucket_order[bk] = [v for _, v in scores]
+                respace_bucket(bk)
+
+    def up_sweep() -> None:
+        for r in range(rank_max, rank_min - 1, -1):
+            for mid in sorted({module_of[i] for i in range(n) if ranks[i] == r}):
+                bk = (r, mid)
+                members = bucket_order[bk]
+                scores: list[tuple[float, int]] = []
+                for v in members:
+                    num = 0.0
+                    den = 0.0
+                    for wn, guarded in adj_flagged[v]:
+                        if ranks[wn] != r + 1:
+                            continue
+                        if module_of[wn] != module_of[v]:
+                            continue
+                        w = _edge_weight(guarded)
+                        num += w * slot_x[wn]
+                        den += w
+                    sc = (num / den) if den > 0.0 else slot_x[v]
+                    scores.append((sc, v))
+                scores.sort(key=lambda t: (t[0], t[1]))
+                bucket_order[bk] = [v for _, v in scores]
+                respace_bucket(bk)
+
+    for _ in range(BFS_HORIZONTAL_SWEEP_COUNT):
+        down_sweep()
+        up_sweep()
+
+    return sorted(range(n), key=lambda i: (ranks[i], module_of[i], slot_x[i], i))
+
+
 def _balance_overview_layout_spans(xs: list[float], ys: list[float]) -> None:
     if not xs:
         return
@@ -215,6 +365,8 @@ def _rank_band_xy(
     n: int,
     module_of: list[int],
     node_rank: list[int],
+    *,
+    iteration_order: Sequence[int] | None = None,
 ) -> tuple[list[float], list[float], list[int], int]:
     x_scale = 120.0
     y_band = 36.0
@@ -230,7 +382,13 @@ def _rank_band_xy(
     bucket_density = [0] * n
     bucket_running_idx: dict[tuple[int, int], int] = {}
 
-    for i in range(n):
+    order = list(range(n)) if iteration_order is None else list(iteration_order)
+    if len(order) != n:
+        raise ValueError("iteration_order length must equal node count")
+    if set(order) != set(range(n)):
+        raise ValueError("iteration_order must be a permutation of range(n)")
+
+    for i in order:
         rnk = node_rank[i]
         mid = module_of[i]
         xs[i] = float(rnk) * x_scale
@@ -672,7 +830,16 @@ def build_lightweight_viz_core(
                         exclude_unreachable_from_bfs=should_exclude_unreachable,
                     )
             ranks = [d if d >= 0 else 0 for d in dist]
-            xs, ys, bucket_density, dense_bucket_count = _rank_band_xy(n, module_of, ranks)
+            adj_flagged = _build_out_adj_guarded(
+                graph, keys, key_id, include_guarded=include_guarded_edges
+            )
+            rev_flagged = _reverse_adj_flagged(adj_flagged, n)
+            iteration_order = _bfs_horizontal_iteration_order(
+                n, ranks, module_of, adj_flagged, rev_flagged
+            )
+            xs, ys, bucket_density, dense_bucket_count = _rank_band_xy(
+                n, module_of, ranks, iteration_order=iteration_order
+            )
         elif layout_mode == "layered":
             ranks = _default_unconditional_node_ranks(uncond, n)
             xs, ys, bucket_density, dense_bucket_count = _rank_band_xy(n, module_of, ranks)
