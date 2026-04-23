@@ -66,6 +66,7 @@ include = [
 dev = [
     "graphviz>=0.21",
     "jupyter>=1.1.1",
+    "matplotlib>=3.10.8",
     "nbformat>=5.10.4",
     "networkx>=3.6.1",
     "pre-commit>=4.5.1",
