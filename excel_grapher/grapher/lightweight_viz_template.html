@@ -320,6 +320,14 @@
     return modules;
   }
 
+  function nodeFormulaColumn(core, n) {
+    var f = core.nodes.formula;
+    if (f && f.length === n) return f;
+    var out = [];
+    for (var i = 0; i < n; i++) out.push(null);
+    return out;
+  }
+
   function lightweightVizFlat(raw) {
     /* Legacy flat snapshot (historical exporter output): one object with stats/nodes/modules. */
     if (raw.version === 1 && raw.core === undefined && raw.stats != null && raw.sheets) {
@@ -361,6 +369,7 @@
         row: core.nodes.row,
         column: core.nodes.column,
         is_leaf: core.nodes.is_leaf,
+        formula: nodeFormulaColumn(core, n),
         in_degree: core.nodes.in_degree,
         out_degree: core.nodes.out_degree,
         module_id: moduleId,
@@ -389,6 +398,7 @@
         row: core.nodes.row,
         column: core.nodes.column,
         is_leaf: core.nodes.is_leaf,
+        formula: nodeFormulaColumn(core, n),
         in_degree: core.nodes.in_degree,
         out_degree: core.nodes.out_degree,
         module_id: moduleIdEmpty,
@@ -418,6 +428,14 @@
     const row = data.nodes.row[i];
     const q = /[ '\\-]/.test(sh) ? "'" + sh.replace(/'/g, "''") + "'" : sh;
     return q + '!' + col + row;
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
   }
 
   function main(raw) {
@@ -643,8 +661,13 @@
         tip.style.display = 'block';
         tip.style.left = (ev.clientX + 14) + 'px';
         tip.style.top = (ev.clientY + 14) + 'px';
+        var fLine = '';
+        var disp = data.nodes.formula && data.nodes.formula[id];
+        if (disp) {
+          fLine = '<br/>formula ' + escapeHtml(disp);
+        }
         tip.innerHTML =
-          '<b>' + fmtAddr(data, id) + '</b><br/>' +
+          '<b>' + fmtAddr(data, id) + '</b>' + fLine + '<br/>' +
           'module ' + data.nodes.module_id[id] + ' · rank ' + data.nodes.rank[id] + '<br/>' +
           'in ' + data.nodes.in_degree[id] + ' / out ' + data.nodes.out_degree[id] + '<br/>' +
           'guarded out (exported) ' + gu + ' / ' + gn;

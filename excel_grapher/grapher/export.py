@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from .formula_label import truncate_formula_display, validate_max_formula_length
 from .graph import DependencyGraph
 from .guard import GuardExpr
 from .lightweight_viz import (
@@ -28,13 +29,35 @@ def _guard_label(g: GuardExpr) -> str:
     return _dot_escape(str(g))
 
 
-def to_networkx(graph: DependencyGraph):
+def _node_display_label(
+    key: NodeKey,
+    node: Node,
+    *,
+    label_fn: Callable[[NodeKey, Node], str] | None,
+    include_formula_on_nodes: bool,
+    max_formula_length: int | None,
+) -> str:
+    base = label_fn(key, node) if label_fn is not None else str(key)
+    if not include_formula_on_nodes or not node.formula:
+        return base
+    shown = truncate_formula_display(node.formula, max_formula_length)
+    return f"{base}\n{shown}"
+
+
+def to_networkx(
+    graph: DependencyGraph,
+    *,
+    include_formula_on_nodes: bool = True,
+    max_formula_length: int | None = 120,
+):
     """
     Convert DependencyGraph to a NetworkX DiGraph.
 
     NetworkX is an optional dependency. If not installed, raises ImportError with a
     helpful message.
     """
+    validate_max_formula_length(max_formula_length)
+
     try:
         import networkx as nx  # type: ignore[import-not-found]
     except Exception as e:  # pragma: no cover
@@ -54,6 +77,13 @@ def to_networkx(graph: DependencyGraph):
             "value": node.value,
             "value_type": node.value_type.name,
             "is_leaf": node.is_leaf,
+            "label": _node_display_label(
+                key,
+                node,
+                label_fn=None,
+                include_formula_on_nodes=include_formula_on_nodes,
+                max_formula_length=max_formula_length,
+            ),
         }
         attrs.update(node.metadata)
         G.add_node(key, **attrs)
@@ -72,14 +102,24 @@ def to_graphviz(
     label_fn: Callable[[NodeKey, Node], str] | None = None,
     highlight: set[NodeKey] | None = None,
     rankdir: str = "TB",
+    include_formula_on_nodes: bool = True,
+    max_formula_length: int | None = 120,
 ) -> str:
+    validate_max_formula_length(max_formula_length)
+
     lines: list[str] = ["digraph dependencies {", f"  rankdir={_dot_escape(rankdir)};"]
 
     for key in sorted(graph):
         node = graph.get_node(key)
         if node is None:
             continue
-        label_raw = label_fn(key, node) if label_fn is not None else key
+        label_raw = _node_display_label(
+            key,
+            node,
+            label_fn=label_fn,
+            include_formula_on_nodes=include_formula_on_nodes,
+            max_formula_length=max_formula_length,
+        )
         label = _dot_escape(str(label_raw))
         shape = "box" if node.is_leaf else "ellipse"
         style = ""
@@ -107,7 +147,11 @@ def to_mermaid(
     *,
     label_fn: Callable[[NodeKey, Node], str] | None = None,
     max_nodes: int = 100,
+    include_formula_on_nodes: bool = True,
+    max_formula_length: int | None = 120,
 ) -> str:
+    validate_max_formula_length(max_formula_length)
+
     def safe_id(key: str) -> str:
         # Mermaid node IDs can't contain many punctuation characters; keep it simple.
         return (
@@ -119,6 +163,9 @@ def to_mermaid(
             .replace(".", "_")
         )
 
+    def escape_mermaid_label(label: str) -> str:
+        return label.replace("\\", "\\\\").replace('"', '\\"')
+
     lines: list[str] = ["flowchart TD"]
 
     keys = sorted(list(graph))
@@ -128,10 +175,17 @@ def to_mermaid(
         node = graph.get_node(key)
         if node is None:
             continue
-        label_raw = label_fn(key, node) if label_fn is not None else key
-        label = str(label_raw).replace('"', '\\"')
+        label_raw = _node_display_label(
+            key,
+            node,
+            label_fn=label_fn,
+            include_formula_on_nodes=include_formula_on_nodes,
+            max_formula_length=max_formula_length,
+        )
+        # Mermaid flowchart labels use <br> for line breaks inside shapes.
+        label = escape_mermaid_label(str(label_raw).replace("\n", "<br>"))
         # Box for leaves, rounded for formulas.
-        shape = f"[{label}]" if node.is_leaf else f"({label})"
+        shape = f'["{label}"]' if node.is_leaf else f'("{label}")'
         lines.append(f"  {safe_id(key)}{shape}")
 
     if len(keys) > len(node_keys):
@@ -146,8 +200,8 @@ def to_mermaid(
             if guard is None:
                 lines.append(f"  {safe_id(key)} --> {safe_id(dep)}")
             else:
-                # Mermaid dashed edge. Text labels are optional; keep simple and stable.
-                lines.append(f"  {safe_id(key)} -.-> {safe_id(dep)}")
+                guard_label = escape_mermaid_label(str(guard))
+                lines.append(f'  {safe_id(key)} -.->|"{guard_label}"| {safe_id(dep)}')
 
     return "\n".join(lines)
 

@@ -247,9 +247,27 @@ def test_payload_contract_and_version() -> None:
     assert len(p.sheets) == 1 and p.sheets[0] == "S"
     assert len(p.nodes.sheet_index) == 3
     assert all(si == 0 for si in p.nodes.sheet_index)
+    idx = {k: i for i, k in enumerate(sorted(g))}
+    assert p.nodes.formula[idx["S!A1"]] is None
+    assert p.nodes.formula[idx["S!A2"]] == "=A1"
+    assert p.nodes.formula[idx["S!A3"]] == "=A2"
     assert len(p.modules) >= 1
     assert p.local_edges.offsets[0] == 0
     assert p.local_edges.offsets[-1] == len(p.local_edges.targets)
+
+
+def test_lightweight_payload_omit_formula_column() -> None:
+    g = _chain_graph()
+    payload = to_lightweight_viz(g, include_formula_on_nodes=False)
+    assert all(x is None for x in payload.core.nodes.formula)
+
+
+def test_lightweight_truncates_formula_display() -> None:
+    long_f = "=" + "x" * 200
+    g = DependencyGraph()
+    g.add_node(_n("S", "A", 1, leaf=False, formula=long_f))
+    payload = to_lightweight_viz(g, max_formula_length=10)
+    assert payload.core.nodes.formula[0] == "=" + "x" * 9 + "..."
 
 
 def test_deterministic_ids_and_serialization() -> None:

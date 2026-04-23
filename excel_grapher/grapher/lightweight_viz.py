@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from .formula_label import truncate_formula_display, validate_max_formula_length
 from .graph import DependencyGraph
 from .node import NodeKey
 
@@ -180,6 +181,7 @@ class LightweightVizCoreNodeColumns:
     row: tuple[int, ...]
     column: tuple[str, ...]
     is_leaf: tuple[bool, ...]
+    formula: tuple[str | None, ...]
     in_degree: tuple[int, ...]
     out_degree: tuple[int, ...]
     rank: tuple[int, ...]
@@ -748,7 +750,11 @@ def build_lightweight_viz_core(
     include_guarded_edges: bool = True,
     bfs_seed_keys: Sequence[NodeKey] | None = None,
     exclude_unreachable_from_bfs: bool = False,
+    include_formula_on_nodes: bool = True,
+    max_formula_length: int | None = 120,
 ) -> LightweightVizCore:
+    validate_max_formula_length(max_formula_length)
+
     lim = limits or VizLimits()
     keys = sorted(graph)
     n = len(keys)
@@ -766,6 +772,7 @@ def build_lightweight_viz_core(
                 row=tuple(),
                 column=tuple(),
                 is_leaf=tuple(),
+                formula=tuple(),
                 in_degree=tuple(),
                 out_degree=tuple(),
                 rank=tuple(),
@@ -828,6 +835,8 @@ def build_lightweight_viz_core(
                         include_guarded_edges=include_guarded_edges,
                         bfs_seed_keys=sub_seeds,
                         exclude_unreachable_from_bfs=should_exclude_unreachable,
+                        include_formula_on_nodes=include_formula_on_nodes,
+                        max_formula_length=max_formula_length,
                     )
             ranks = [d if d >= 0 else 0 for d in dist]
             adj_flagged = _build_out_adj_guarded(
@@ -900,6 +909,7 @@ def build_lightweight_viz_core(
     cols: list[str] = []
     sheet_ix: list[int] = []
     is_leaf: list[bool] = []
+    formulas: list[str | None] = []
     for k in keys:
         node = graph.get_node(k)
         assert node is not None
@@ -907,6 +917,10 @@ def build_lightweight_viz_core(
         cols.append(node.column)
         sheet_ix.append(sheet_index_map[node.sheet])
         is_leaf.append(node.is_leaf)
+        if include_formula_on_nodes and node.formula:
+            formulas.append(truncate_formula_display(node.formula, max_formula_length))
+        else:
+            formulas.append(None)
 
     stats = LightweightVizCoreStats(
         node_count=n,
@@ -920,6 +934,7 @@ def build_lightweight_viz_core(
         row=tuple(rows),
         column=tuple(cols),
         is_leaf=tuple(is_leaf),
+        formula=tuple(formulas),
         in_degree=tuple(in_deg),
         out_degree=tuple(out_deg),
         rank=tuple(ranks),
@@ -993,6 +1008,7 @@ class LightweightVizNodeColumns:
     row: tuple[int, ...]
     column: tuple[str, ...]
     is_leaf: tuple[bool, ...]
+    formula: tuple[str | None, ...]
     in_degree: tuple[int, ...]
     out_degree: tuple[int, ...]
     module_id: tuple[int, ...]
@@ -1156,6 +1172,7 @@ def lightweight_viz_flat(payload: LightweightVizPayload) -> LightweightVizFlat:
         row=core.nodes.row,
         column=core.nodes.column,
         is_leaf=core.nodes.is_leaf,
+        formula=core.nodes.formula,
         in_degree=core.nodes.in_degree,
         out_degree=core.nodes.out_degree,
         module_id=module_id,
@@ -1300,6 +1317,7 @@ def _core_to_jsonable(c: LightweightVizCore) -> dict[str, Any]:
             "row": list(nc.row),
             "column": list(nc.column),
             "is_leaf": list(nc.is_leaf),
+            "formula": list(nc.formula),
             "in_degree": list(nc.in_degree),
             "out_degree": list(nc.out_degree),
             "rank": list(nc.rank),
@@ -1335,6 +1353,7 @@ def estimate_serialized_json_bytes(payload: LightweightVizPayload) -> int:
     est += sum(len(o.data.get("module_edges", ())) for o in payload.overlays) * 40
     est += sum(len(o.data.get("modules", ())) for o in payload.overlays) * 60
     est += sum(len(s) for s in payload.core.sheets) + n * 4
+    est += sum(len(f or "") for f in payload.core.nodes.formula)
     return int(est * 1.15)
 
 

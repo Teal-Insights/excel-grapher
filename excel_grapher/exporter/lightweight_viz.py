@@ -337,6 +337,8 @@ def to_lightweight_viz(
     module_iterations: int = 8,
     inline_size_budget_mb: int = 50,
     layout_mode: Literal["bfs", "layered", "grid", "force"] | None = None,
+    include_formula_on_nodes: bool = True,
+    max_formula_length: int | None = 120,
 ) -> LightweightVizPayload:
     """
     Build the columnar visualization payload used by ``write_lightweight_viz_html``.
@@ -356,6 +358,8 @@ def to_lightweight_viz(
         layout_input=layout,
         layout_mode=core_mode,
         include_guarded_edges=include_guarded_edges,
+        include_formula_on_nodes=include_formula_on_nodes,
+        max_formula_length=max_formula_length,
     )
 
     overlays = build_overlays(

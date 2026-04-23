@@ -33,3 +33,14 @@ def test_to_networkx_roundtrip_nodes_edges(tmp_path: Path) -> None:
     assert G.nodes["Sheet1!A4"]["is_leaf"] is False
     assert G.nodes["Sheet1!A1"]["is_leaf"] is True
     assert G.nodes["Sheet1!A4"]["value"] == 10
+
+    assert G.nodes["Sheet1!A1"]["label"] == "Sheet1!A1"
+    assert G.nodes["Sheet1!A4"]["label"] == "Sheet1!A4\n=A3*2"
+
+
+def test_to_networkx_truncates_formula(tmp_path: Path) -> None:
+    excel_path = tmp_path / "simple_chain.xlsx"
+    _make_chain_xlsx(excel_path)
+    graph = create_dependency_graph(excel_path, ["Sheet1!A4"], load_values=True)
+    G = to_networkx(graph, max_formula_length=4)
+    assert G.nodes["Sheet1!A4"]["label"] == "Sheet1!A4\n=A3*..."

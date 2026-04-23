@@ -39,7 +39,20 @@ def test_mermaid_uses_dashed_arrow_for_guarded_edges(tmp_path: Path) -> None:
     mm = to_mermaid(graph, max_nodes=10)
 
     # Guarded edge should use dashed arrow syntax.
-    assert "Sheet1_A1 -.-> Sheet1_B1" in mm or "Sheet1_A1 -. " in mm
+    assert "Sheet1_A1 -.->" in mm
+
+
+def test_mermaid_places_guard_label_on_edge_not_node(tmp_path: Path) -> None:
+    excel_path = tmp_path / "if_guarded.xlsx"
+    _make_if_guarded_workbook(excel_path)
+    graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
+    mm = to_mermaid(graph, max_nodes=10, include_formula_on_nodes=False)
+
+    assert "Sheet1_A1 -.->|" in mm
+    assert "| Sheet1_B1" in mm
+
+    node_lines = [line.strip() for line in mm.splitlines() if "-->" not in line and "-.->" not in line]
+    assert all("|" not in line for line in node_lines if line and not line.startswith("flowchart"))
 
 
 def test_networkx_includes_guard_attr_on_guarded_edges(tmp_path: Path) -> None:

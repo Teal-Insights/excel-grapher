@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import fastpyxl
+import pytest
 
 from excel_grapher import create_dependency_graph, to_graphviz
 
@@ -38,6 +39,42 @@ def test_to_graphviz_contains_nodes_edges_and_shapes(tmp_path: Path) -> None:
     assert '"Sheet1!A3" -> "Sheet1!A1"' in dot
     assert '"Sheet1!A3" -> "Sheet1!A2"' in dot
 
-    # Leaf nodes are boxes; formula nodes are ellipses
+    # Leaf nodes are boxes; formula nodes are ellipses (labels include formula by default)
     assert '"Sheet1!A1" [label="Sheet1!A1" shape=box' in dot
+    assert '"Sheet1!A4" [label="Sheet1!A4\\n=A3*2" shape=ellipse' in dot
+
+
+def test_to_graphviz_can_omit_formula_labels(tmp_path: Path) -> None:
+    excel_path = tmp_path / "simple_chain.xlsx"
+    _make_chain_xlsx(excel_path)
+    graph = create_dependency_graph(excel_path, ["Sheet1!A4"], load_values=False)
+    dot = to_graphviz(graph, rankdir="LR", include_formula_on_nodes=False)
     assert '"Sheet1!A4" [label="Sheet1!A4" shape=ellipse' in dot
+
+
+def test_to_graphviz_truncates_formula(tmp_path: Path) -> None:
+    excel_path = tmp_path / "simple_chain.xlsx"
+    _make_chain_xlsx(excel_path)
+    graph = create_dependency_graph(excel_path, ["Sheet1!A4"], load_values=False)
+    dot = to_graphviz(graph, rankdir="LR", max_formula_length=4)
+    assert '"Sheet1!A4" [label="Sheet1!A4\\n=A3*..." shape=ellipse' in dot
+
+
+def test_to_graphviz_invalid_max_formula_length() -> None:
+    from excel_grapher.grapher.graph import DependencyGraph
+    from excel_grapher.grapher.node import Node
+
+    g = DependencyGraph()
+    g.add_node(
+        Node(
+            sheet="S",
+            column="A",
+            row=1,
+            formula=None,
+            normalized_formula=None,
+            value=1,
+            is_leaf=True,
+        )
+    )
+    with pytest.raises(ValueError, match="max_formula_length"):
+        to_graphviz(g, max_formula_length=0)

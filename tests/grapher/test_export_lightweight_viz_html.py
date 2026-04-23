@@ -53,6 +53,7 @@ def test_inline_embeds_payload_under_budget(tmp_path: Path) -> None:
     assert "window.__VIZ_DATA__" in text
     ver = str(VIZ_PAYLOAD_VERSION)
     assert f'"version":{ver}' in text or f'"version": {ver}' in text.replace(" ", "")
+    assert '"formula"' in text
 
 
 def test_sidecar_writes_sibling_json(tmp_path: Path) -> None:

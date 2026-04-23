@@ -290,6 +290,12 @@ from excel_grapher.grapher import to_networkx
 G = to_networkx(g)
 ```
 
+### Formula text on nodes
+
+For `to_graphviz`, `to_mermaid`, and `to_networkx`, formula cells get a **second line** in the node label (cell address, then the formula). This is on by default (`include_formula_on_nodes=True`). Set `include_formula_on_nodes=False` to use only the cell address. Long formulas are truncated for display: `max_formula_length` defaults to `120` characters; use `None` for no limit. Truncated text ends with `...`.
+
+`to_lightweight_viz` and `build_lightweight_viz_core` take the same `include_formula_on_nodes` and `max_formula_length` parameters. The serialized `core.nodes` object includes a `formula` array (per-node display string or `null` for value cells) and the HTML viewer shows it in the hover tooltip.
+
 ### Large graphs: lightweight WebGL viewer
 
 For graphs that are too large for Graphviz or Mermaid, build a **columnar** payload and open the generated HTML in a browser (no Node/npm build). The core workflow builds a structural payload (`core`) and writes HTML/JSON artifacts.
