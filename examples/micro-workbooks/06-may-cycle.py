@@ -5,10 +5,10 @@ from excel_grapher.grapher import create_dependency_graph, to_graphviz
 
 if __name__ == "__main__":
     # Path to the workbook to extract the graph from
-    WORKBOOK_PATH: Path = Path("examples/micro-workbooks/03-four-cell-conditional-branch.xlsx")
-    TARGET: str = "Sheet1!A4"
+    WORKBOOK_PATH: Path = Path("examples/micro-workbooks/06-may-cycle.xlsx")
+    TARGET: str = "Sheet1!A3"
 
-    # Extract the graph from the workbook with A4 as the target
+    # Extract the graph from the workbook with A1 as the target
     print(f"Extracting graph from {WORKBOOK_PATH} with target {TARGET}...")
     graph = create_dependency_graph(WORKBOOK_PATH, [TARGET], load_values=False)
 
@@ -20,5 +20,5 @@ if __name__ == "__main__":
 
     # Export to graphviz and write to file
     dot = to_graphviz(graph)
-    with open("examples/micro-workbooks/03-four-cell-conditional-branch.qmd", "w") as f:
+    with open("examples/micro-workbooks/06-may-cycle.qmd", "w") as f:
         f.write(f"```{{dot}}\n{dot}\n```")

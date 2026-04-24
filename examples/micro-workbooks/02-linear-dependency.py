@@ -8,7 +8,7 @@ from excel_grapher.grapher import create_dependency_graph, to_networkx
 
 if __name__ == "__main__":
     # Path to the workbook to extract the graph from
-    WORKBOOK_PATH: Path = Path("examples/micro-workbooks/02-two-cell-linear-dependency.xlsx")
+    WORKBOOK_PATH: Path = Path("examples/micro-workbooks/02-linear-dependency.xlsx")
     TARGET: str = "Sheet1!A2"
 
     # Extract the graph from the workbook with A2 as the target
@@ -29,4 +29,4 @@ if __name__ == "__main__":
     plt.title("Dependency Graph")
     plt.axis("off")
     plt.tight_layout()
-    plt.savefig("examples/micro-workbooks/02-two-cell-linear-dependency.png", dpi=150)
+    plt.savefig("examples/micro-workbooks/02-linear-dependency.png", dpi=150)

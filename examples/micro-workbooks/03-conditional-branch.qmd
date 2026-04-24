@@ -1,0 +1,12 @@
+```{dot}
+digraph dependencies {
+  rankdir=TB;
+  "Sheet1!A1" [label="Sheet1!A1" shape=box];
+  "Sheet1!A2" [label="Sheet1!A2" shape=box];
+  "Sheet1!A3" [label="Sheet1!A3" shape=box];
+  "Sheet1!A4" [label="Sheet1!A4\n=IF(A1=1,A2,A3)" shape=ellipse];
+  "Sheet1!A4" -> "Sheet1!A1";
+  "Sheet1!A4" -> "Sheet1!A2" [style=dashed label="Sheet1!A1=1"];
+  "Sheet1!A4" -> "Sheet1!A3" [style=dashed label="NOT(Sheet1!A1=1)"];
+}
+```

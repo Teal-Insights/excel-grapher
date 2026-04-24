@@ -1,14 +1,14 @@
 from pathlib import Path
 from pprint import pprint
 
-from excel_grapher.grapher import create_dependency_graph, to_graphviz
+from excel_grapher.grapher import create_dependency_graph, to_mermaid
 
 if __name__ == "__main__":
     # Path to the workbook to extract the graph from
-    WORKBOOK_PATH: Path = Path("examples/micro-workbooks/04-three-cell-illusory-cycle.xlsx")
-    TARGET: str = "Sheet1!A3"
+    WORKBOOK_PATH: Path = Path("examples/micro-workbooks/01-no-deps.xlsx")
+    TARGET: str = "Sheet1!A1"
 
-    # Extract the graph from the workbook with A3 as the target
+    # Extract the graph from the workbook with A1 as the target
     print(f"Extracting graph from {WORKBOOK_PATH} with target {TARGET}...")
     graph = create_dependency_graph(WORKBOOK_PATH, [TARGET], load_values=False)
 
@@ -18,7 +18,7 @@ if __name__ == "__main__":
     # Print the graph as a Python object
     pprint(graph, indent=4)
 
-    # Export to graphviz and write to file
-    dot = to_graphviz(graph)
-    with open("examples/micro-workbooks/04-three-cell-illusory-cycle.qmd", "w") as f:
-        f.write(f"```{{dot}}\n{dot}\n```")
+    # Export to mermaid and write to file
+    mermaid = to_mermaid(graph)
+    with open("examples/micro-workbooks/01-no-deps.qmd", "w") as f:
+        f.write(f"```{{mermaid}}\n{mermaid}\n```")
