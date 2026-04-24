@@ -31,7 +31,7 @@ Do not introduce a second implementation of semantics elsewhere; it will drift.
 
 Prefer **live Excel** over cached workbook snapshots when validating against the real engine. Automation options in this repo include **xlwings** on Windows/macOS and **PowerShell/COM** to Excel from **WSL** (`tests/utils/modify_and_recalculate.py`).
 
-**Convention:** tests that need Excel MUST **attempt** automation and **`pytest.skip(...)`** with an explicit reason when it is unavailable (see `tests/evaluator/test_golden_master.py`). CI and Linux-only clones without Excel should skip cleanly—not fail.
+**Convention:** tests that need Excel MUST **attempt** automation and **`pytest.skip(...)`** with an explicit reason when it is unavailable (see `tests/integration/evaluator/test_golden_master.py`). CI and Linux-only clones without Excel should skip cleanly—not fail.
 
 Do **not** substitute alternative spreadsheet engines (for example LibreOffice Calc) as an “Excel”; they diverge semantically.
 

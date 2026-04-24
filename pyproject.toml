@@ -90,9 +90,9 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = ["--import-mode=prepend", "-m", "not slow"]
+addopts = ["--import-mode=importlib", "-m", "not slow"]
 markers = [
-    "slow: opt-in tests that are long-running (deselected by default)",
+    "slow: opt-in tests that are long-running (deselected by default)"
 ]
 
 [tool.coverage.run]
