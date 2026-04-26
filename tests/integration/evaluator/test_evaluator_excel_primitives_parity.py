@@ -7,8 +7,8 @@ evaluator and transpiled runtime; complements workbook-heavy parity elsewhere.
 from __future__ import annotations
 
 from excel_grapher import DependencyGraph, Node
-from excel_grapher.evaluator.evaluator import FormulaEvaluator
 from excel_grapher.core.address_keys import parse_address
+from excel_grapher.evaluator.evaluator import FormulaEvaluator
 from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
 
 

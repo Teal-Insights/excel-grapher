@@ -2,8 +2,8 @@
 
 
 from excel_grapher import DependencyGraph, Node
-from excel_grapher.evaluator.evaluator import FormulaEvaluator
 from excel_grapher.core.address_keys import parse_address
+from excel_grapher.evaluator.evaluator import FormulaEvaluator
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:

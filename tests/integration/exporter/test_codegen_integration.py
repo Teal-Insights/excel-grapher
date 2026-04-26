@@ -14,6 +14,8 @@ import pytest
 from excel_grapher import CycleError, DependencyGraph, Node, create_dependency_graph
 from excel_grapher.core.address_keys import (
     normalize_key as normalize_address,
+)
+from excel_grapher.core.address_keys import (
     parse_address,
 )
 from excel_grapher.exporter.codegen import CodeGenerator

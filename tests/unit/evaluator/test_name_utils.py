@@ -4,7 +4,11 @@ import pytest
 
 from excel_grapher.core.address_keys import (
     format_key as format_address,
+)
+from excel_grapher.core.address_keys import (
     normalize_key as normalize_address,
+)
+from excel_grapher.core.address_keys import (
     parse_address,
     quote_sheet_if_needed,
 )

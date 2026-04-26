@@ -6,11 +6,13 @@ from typing import TYPE_CHECKING
 
 import fastpyxl.utils.cell
 
-from excel_grapher.core.addressing import index_excel_range
 from excel_grapher.core.address_keys import (
     normalize_key as normalize_address,
+)
+from excel_grapher.core.address_keys import (
     parse_address,
 )
+from excel_grapher.core.addressing import index_excel_range
 from excel_grapher.grapher.blank_ranges import (
     address_in_blank_ranges,
     normalize_blank_range_specs,

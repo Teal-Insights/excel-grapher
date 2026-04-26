@@ -17,6 +17,8 @@ import pytest
 from excel_grapher import FormulaEvaluator, XlError, create_dependency_graph
 from excel_grapher.core.address_keys import (
     normalize_key as normalize_address,
+)
+from excel_grapher.core.address_keys import (
     parse_address,
 )
 from tests.utils.discover_formula_cells import discover_formula_cells_in_rows
