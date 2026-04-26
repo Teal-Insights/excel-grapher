@@ -107,7 +107,7 @@ The sections below go into more detail.
 
 - **Node identity**: nodes are keyed by sheet-qualified A1 strings like `Sheet1!A1` (`NodeKey`).
 - **Edge direction**: an edge `A -> B` means **A depends on B** (dependency-first evaluation).
-- **Leaf definition**: a leaf is any non-formula cell (`Node.is_leaf=True`).
+- **Leaf definition**: a leaf is any node with no cell dependencies (`Node.is_leaf=True`), including non-formula cells and literal-only formulas (e.g. `=1+1`).
 - **Values are optional**: `load_values=True` loads cached Excel results (second workbook load); otherwise formula nodes have `value=None`.
 - **Extensible metadata**: each `Node` has a `metadata: dict[str, Any]` that hooks can mutate.
 - **Range expansion**: ranges like `A1:A10` are expanded to individual cell dependencies (bounded by `max_range_cells`).
@@ -231,7 +231,7 @@ leaf_keys = graph.leaf_keys()
 |---------------------|----------------------------------------|---------------------------------------|
 | `get_node(key)`     | `Node \| None`                       | O(1) lookup by cell address           |
 | `formula_nodes()`   | `Iterator[tuple[NodeKey, Node]]`     | Cells with formulas                   |
-| `leaf_node_items()` | `Iterator[tuple[NodeKey, Node]]`     | Leaf cells (no formula)               |
+| `leaf_node_items()` | `Iterator[tuple[NodeKey, Node]]`     | Leaf cells (no cell dependencies)     |
 | `formula_keys()`    | `list[NodeKey]`                      | Sorted keys for formula cells         |
 | `leaf_keys()`       | `list[NodeKey]`                      | Sorted keys for leaf cells            |
 
@@ -239,10 +239,10 @@ leaf_keys = graph.leaf_keys()
 
 | Field                | Type         | Description                               |
 |----------------------|--------------|-------------------------------------------|
-| `formula`            | `str \| None` | Original formula (None for leaf cells)  |
+| `formula`            | `str \| None` | Original formula (``None`` for value-only cells)  |
 | `normalized_formula` | `str \| None` | Sheet-qualified formula for transpilation |
 | `value`              | `Any`         | Cached or hardcoded value               |
-| `is_leaf`            | `bool`        | True if cell has no formula             |
+| `is_leaf`            | `bool`        | True if the node has no cell dependencies  |
 | `sheet`              | `str`         | Sheet name                              |
 | `column`             | `str`         | Column letter                           |
 | `row`                | `int`         | Row number                              |

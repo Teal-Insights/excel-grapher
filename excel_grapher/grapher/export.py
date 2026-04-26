@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 from .formula_label import truncate_formula_display, validate_max_formula_length
@@ -44,6 +45,22 @@ def _node_display_label(
     return f"{base}\n{shown}"
 
 
+def _networkx_value_type(node: Node | NodeView) -> str:
+    value = node.value
+    if value is None:
+        return "UNKNOWN" if node.formula is not None else "EMPTY"
+    # bool must be checked before int, since bool subclasses int.
+    if isinstance(value, bool):
+        return "BOOLEAN"
+    if isinstance(value, (int, float)):
+        return "NUMBER"
+    if isinstance(value, datetime):
+        return "DATETIME"
+    if isinstance(value, str):
+        return "ERROR" if value.startswith("#") else "STRING"
+    return "UNKNOWN"
+
+
 def to_networkx(
     graph: DependencyGraph,
     *,
@@ -75,7 +92,7 @@ def to_networkx(
             "row": node.row,
             "formula": node.formula,
             "value": node.value,
-            "value_type": node.value_type.name,
+            "value_type": _networkx_value_type(node),
             "is_leaf": node.is_leaf,
             "label": _node_display_label(
                 key,

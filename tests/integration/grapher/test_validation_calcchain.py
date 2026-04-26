@@ -29,6 +29,15 @@ def _make_simple_chain_xlsx(path: Path) -> None:
     wb.close()
 
 
+def _make_no_dependency_formula_xlsx(path: Path) -> None:
+    """Single formula cell with no cell references (literal-only), one row."""
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_string(0, 0, "label")
+    ws.write_formula(0, 1, "=1+1", None, 2)  # B1
+    wb.close()
+
+
 def _sheet_id_for_sheet1(xlsx_path: Path) -> str:
     with zipfile.ZipFile(xlsx_path, "r") as zf:
         wb_xml = zf.read("xl/workbook.xml").decode("utf-8", errors="replace")
@@ -92,6 +101,27 @@ def test_validate_graph_compares_formula_cells_to_calcchain(tmp_path: Path) -> N
     _with_calcchain(src, with_chain, sheet_id=sheet_id, cell_refs=["A3", "A4"])
 
     graph = create_dependency_graph(with_chain, ["Sheet1!A4"], load_values=False)
+    result = validate_graph(graph, with_chain, scope={"Sheet1"})
+
+    assert result.is_valid is True
+    assert result.in_graph_not_in_chain == set()
+    assert result.in_chain_not_in_graph == set()
+
+
+def test_validate_graph_includes_literal_only_formula_in_calcchain_comparison(
+    tmp_path: Path,
+) -> None:
+    """
+    No-dependency formulas are graph leaves but must still count as formula cells
+    when compared to ``calcChain.xml`` (see issue #127).
+    """
+    src = tmp_path / "no_dep.xlsx"
+    _make_no_dependency_formula_xlsx(src)
+    sheet_id = _sheet_id_for_sheet1(src)
+    with_chain = tmp_path / "no_dep_chain.xlsx"
+    _with_calcchain(src, with_chain, sheet_id=sheet_id, cell_refs=["B1"])
+
+    graph = create_dependency_graph(with_chain, ["Sheet1!B1"], load_values=False)
     result = validate_graph(graph, with_chain, scope={"Sheet1"})
 
     assert result.is_valid is True

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
-from enum import Enum, auto
 from types import MappingProxyType
 from typing import Any
 
@@ -14,35 +12,14 @@ from excel_grapher.core.address_keys import format_cell_key as _format_node_key
 NodeKey = str  # Always in the form "SheetName!A1" or "'Sheet Name'!A1" for quoted sheets
 
 
-class ValueType(Enum):
-    NUMBER = auto()
-    STRING = auto()
-    BOOLEAN = auto()
-    ERROR = auto()
-    DATETIME = auto()
-    EMPTY = auto()
-    UNKNOWN = auto()
-
-
-def _classify_value(value: Any, *, is_leaf: bool) -> ValueType:
-    if value is None:
-        return ValueType.EMPTY if is_leaf else ValueType.UNKNOWN
-    # bool must be checked before int, since bool subclasses int.
-    if isinstance(value, bool):
-        return ValueType.BOOLEAN
-    if isinstance(value, (int, float)):
-        return ValueType.NUMBER
-    if isinstance(value, datetime):
-        return ValueType.DATETIME
-    if isinstance(value, str):
-        if value.startswith("#"):
-            return ValueType.ERROR
-        return ValueType.STRING
-    return ValueType.UNKNOWN
-
-
 @dataclass
 class Node:
+    """Workbook cell in a dependency graph.
+
+    ``is_leaf`` is true when the node has no outgoing dependency edges (value-only
+    cells and literal-only formulas such as ``=1+1``).
+    """
+
     sheet: str
     column: str
     row: int
@@ -63,10 +40,6 @@ class Node:
     @property
     def column_index(self) -> int:
         return int(fastpyxl.utils.cell.column_index_from_string(self.column))
-
-    @property
-    def value_type(self) -> ValueType:
-        return _classify_value(self.value, is_leaf=self.is_leaf)
 
 
 @dataclass(frozen=True)
@@ -99,10 +72,6 @@ class NodeView:
     @property
     def column_index(self) -> int:
         return int(fastpyxl.utils.cell.column_index_from_string(self.column))
-
-    @property
-    def value_type(self) -> ValueType:
-        return _classify_value(self.value, is_leaf=self.is_leaf)
 
 
 def node_to_view(node: Node) -> NodeView:

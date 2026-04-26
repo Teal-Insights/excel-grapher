@@ -237,7 +237,7 @@ class DependencyGraph:
                 yield key, node
 
     def leaf_node_items(self) -> Iterator[tuple[NodeKey, Node]]:
-        """Iterate over (key, node) pairs for leaf nodes (no formula)."""
+        """Iterate over (key, node) pairs for leaf nodes (no cell dependencies)."""
         for key, node in self._nodes.items():
             if node.is_leaf:
                 yield key, node
@@ -247,7 +247,7 @@ class DependencyGraph:
         return sorted(k for k, node in self._nodes.items() if node.formula is not None)
 
     def leaf_keys(self) -> list[NodeKey]:
-        """Return sorted list of keys for leaf nodes."""
+        """Return sorted list of keys for nodes with no dependency edges (leaves)."""
         return sorted(k for k, node in self._nodes.items() if node.is_leaf)
 
     def roots(self) -> Iterator[NodeKey]:

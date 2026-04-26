@@ -153,7 +153,7 @@ def validate_graph(
         node = graph.get_node(key)
         if node is None:
             continue
-        if node.is_leaf:
+        if node.formula is None:
             continue
         if scope is not None and node.sheet not in scope:
             continue

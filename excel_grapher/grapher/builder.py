@@ -954,6 +954,9 @@ def create_dependency_graph(
                     if dep_sheet not in wb_formulas.sheetnames:
                         continue
                     q.append((dep_sheet, dep_a1, depth + 1))
+
+            if not graph.get_dependencies(key):
+                node.is_leaf = True
     finally:
         if _dyn_stats["infer_calls"] or _dyn_stats["cache_hits"]:
             _emit_trace(

@@ -16,7 +16,6 @@ def test_public_api_imports() -> None:
     assert eg.create_dependency_graph is not None
     assert eg.DependencyGraph is not None
     assert eg.Node is not None
-    assert eg.ValueType is not None
     assert eg.to_graphviz is not None
     assert eg.to_mermaid is not None
     assert eg.to_networkx is not None

@@ -50,3 +50,19 @@ def test_to_networkx_truncates_formula(tmp_path: Path) -> None:
     graph = create_dependency_graph(excel_path, ["Sheet1!A4"], load_values=True)
     G = to_networkx(graph, max_formula_length=4)
     assert G.nodes["Sheet1!A4"]["label"] == "Sheet1!A4\n=A3*..."
+
+
+def test_to_networkx_value_type_for_none_distinguishes_formula_vs_blank(tmp_path: Path) -> None:
+    excel_path = tmp_path / "none_value_types.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_formula(0, 1, "=1+1", None, 2)  # B1 formula (value remains None when load_values=False)
+    wb.close()
+
+    formula_graph = create_dependency_graph(excel_path, ["Sheet1!B1"], load_values=False)
+    formula_nx = to_networkx(formula_graph)
+    assert formula_nx.nodes["Sheet1!B1"]["value_type"] == "UNKNOWN"
+
+    blank_graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
+    blank_nx = to_networkx(blank_graph)
+    assert blank_nx.nodes["Sheet1!A1"]["value_type"] == "EMPTY"
