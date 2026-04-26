@@ -18,7 +18,7 @@ from .lightweight_viz import (
     write_lightweight_viz_data,
     write_lightweight_viz_html,
 )
-from .node import Node, NodeKey
+from .node import Node, NodeKey, NodeView
 
 
 def _dot_escape(s: str) -> str:
@@ -31,9 +31,9 @@ def _guard_label(g: GuardExpr) -> str:
 
 def _node_display_label(
     key: NodeKey,
-    node: Node,
+    node: Node | NodeView,
     *,
-    label_fn: Callable[[NodeKey, Node], str] | None,
+    label_fn: Callable[[NodeKey, Node | NodeView], str] | None,
     include_formula_on_nodes: bool,
     max_formula_length: int | None,
 ) -> str:
@@ -89,9 +89,14 @@ def to_networkx(
         G.add_node(key, **attrs)
 
     for key in graph:
-        for dep in graph.dependencies(key):
-            attrs = graph.edge_attrs(key, dep)
-            G.add_edge(key, dep, **attrs)
+        for dep in graph.get_dependencies(key):
+            edge = graph.get_edge_attrs(key, dep)
+            edge_kwargs: dict[str, Any] = {}
+            if edge.guard is not None:
+                edge_kwargs["guard"] = edge.guard
+            if edge.provenance is not None:
+                edge_kwargs["provenance"] = edge.provenance
+            G.add_edge(key, dep, **edge_kwargs)
 
     return G
 
@@ -99,7 +104,7 @@ def to_networkx(
 def to_graphviz(
     graph: DependencyGraph,
     *,
-    label_fn: Callable[[NodeKey, Node], str] | None = None,
+    label_fn: Callable[[NodeKey, Node | NodeView], str] | None = None,
     highlight: set[NodeKey] | None = None,
     rankdir: str = "TB",
     include_formula_on_nodes: bool = True,
@@ -128,8 +133,8 @@ def to_graphviz(
         lines.append(f'  "{_dot_escape(key)}" [label="{label}" shape={shape}{style}];')
 
     for key in sorted(graph):
-        for dep in sorted(graph.dependencies(key)):
-            guard = graph.edge_attrs(key, dep).get("guard")
+        for dep in sorted(graph.get_dependencies(key)):
+            guard = graph.get_edge_guard(key, dep)
             if guard is None:
                 lines.append(f'  "{_dot_escape(key)}" -> "{_dot_escape(dep)}";')
             else:
@@ -145,7 +150,7 @@ def to_graphviz(
 def to_mermaid(
     graph: DependencyGraph,
     *,
-    label_fn: Callable[[NodeKey, Node], str] | None = None,
+    label_fn: Callable[[NodeKey, Node | NodeView], str] | None = None,
     max_nodes: int = 100,
     include_formula_on_nodes: bool = True,
     max_formula_length: int | None = 120,
@@ -193,10 +198,10 @@ def to_mermaid(
 
     node_set = set(node_keys)
     for key in node_keys:
-        for dep in sorted(graph.dependencies(key)):
+        for dep in sorted(graph.get_dependencies(key)):
             if dep not in node_set:
                 continue
-            guard = graph.edge_attrs(key, dep).get("guard")
+            guard = graph.get_edge_guard(key, dep)
             if guard is None:
                 lines.append(f"  {safe_id(key)} --> {safe_id(dep)}")
             else:

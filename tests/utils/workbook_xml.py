@@ -1,4 +1,19 @@
-"""Shared helpers for patching OOXML inside .xlsx test fixtures."""
+"""
+We have .xlsx files that we use as fixtures in our tests. In some cases, we want to patch
+these with different calculation settings to see how those settings change test results.
+
+An .xlsx is a ZIP of XML files. The module exposes patch_workbook_calcpr, which:
+
+1. Reads the source workbook as a zip and loads xl/workbook.xml.
+2. Finds or creates the calcPr element (Office Open XML “calculation properties”).
+3. Sets iterative-calculation attributes: iterate (on/off), iterateCount, and iterateDelta.
+4. Writes a new zip at dst with the updated xl/workbook.xml and everything else unchanged.
+
+Note: The implementation still does a full read of the whole .xlsx: it loads every zip
+member into a dict (zin.read(name) for each name), changes one XML blob, then writes a new
+zip. A truly minimal-on-disk approach would stream-copy zip entries and only parse/replace
+xl/workbook.xml; this helper trades that for simplicity.
+"""
 
 from __future__ import annotations
 

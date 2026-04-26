@@ -56,7 +56,7 @@ def parse_cell_ref(cell_ref: str) -> tuple[str, str]:
         >>> parse_cell_ref("Data!B2")
         ('Data', 'B2')
     """
-    from excel_grapher.evaluator.name_utils import parse_address
+    from excel_grapher.core.address_keys import parse_address
 
     sheet_name, cell_part = parse_address(cell_ref)
     # Strip $ signs from cell address (absolute reference markers)

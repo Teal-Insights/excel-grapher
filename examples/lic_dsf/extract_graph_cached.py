@@ -534,10 +534,10 @@ def main() -> None:
     print("\n7. Sample visualization (first target's immediate deps)...")
     if all_targets:
         sample_target = all_targets[0]
-        sample_deps = graph.dependencies(sample_target)
+        sample_deps = graph.get_dependencies(sample_target)
         print(f"   {sample_target} depends on {len(sample_deps)} cells:")
         for dep in sorted(sample_deps)[:5]:
-            guard = graph.edge_attrs(sample_target, dep).get("guard")
+            guard = graph.get_edge_guard(sample_target, dep)
             if guard is None:
                 print(f"      {dep}")
             else:

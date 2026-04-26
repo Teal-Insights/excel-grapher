@@ -48,7 +48,7 @@ def _collect_targets() -> list[str]:
 
 def _graph_sizes(g: DependencyGraph) -> tuple[int, int]:
     nodes = len(g)
-    edges = sum(len(g.dependencies(k)) for k in g)
+    edges = sum(len(g.get_dependencies(k)) for k in g)
     return nodes, edges
 
 

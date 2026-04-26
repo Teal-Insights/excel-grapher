@@ -6,6 +6,12 @@ from typing import TYPE_CHECKING
 
 import fastpyxl.utils.cell
 
+from excel_grapher.core.address_keys import (
+    normalize_key as normalize_address,
+)
+from excel_grapher.core.address_keys import (
+    parse_address,
+)
 from excel_grapher.core.addressing import index_excel_range
 from excel_grapher.grapher.blank_ranges import (
     address_in_blank_ranges,
@@ -34,7 +40,6 @@ from .helpers import (
     xl_pow,
     xl_row,
 )
-from .name_utils import normalize_address, parse_address
 from .parser import (
     AstNode,
     BinaryOpNode,
@@ -91,30 +96,16 @@ class FormulaEvaluator:
     def __exit__(self, *args: object) -> None:
         return None
 
-    def set_value(self, key: str, value: CellValue) -> None:
-        """Update a cell's value and invalidate cache for it and its dependents."""
-        node = self.graph.get_node(key)
-        if node is None:
-            raise KeyError(f"Cell {key} not found in graph")
-        # Update the node's value (Node is a dataclass, so we can use object.__setattr__)
-        object.__setattr__(node, "value", value)
-        # Also update our tracked leaf values
-        self._leaf_values[key] = value
-        # Invalidate cache
-        self._invalidate_with_dependents(key)
-
     def _invalidate_with_dependents(self, key: str) -> None:
         """Invalidate cache for a key and all cells that depend on it (transitively)."""
         to_invalidate = {key}
-        # BFS to find all transitive dependents
         queue = [key]
         while queue:
             current = queue.pop(0)
-            for dependent in self.graph.dependents(current):
+            for dependent in self.graph.get_dependents(current):
                 if dependent not in to_invalidate:
                     to_invalidate.add(dependent)
                     queue.append(dependent)
-        # Remove all from cache
         for k in to_invalidate:
             self._cache.pop(k, None)
 
@@ -197,7 +188,7 @@ class FormulaEvaluator:
                 leaves.add(current)
             else:
                 # Add its dependencies to the queue
-                for dep in self.graph.dependencies(current):
+                for dep in self.graph.get_dependencies(current):
                     if dep not in visited:
                         queue.append(dep)
 

@@ -10,7 +10,7 @@ from fastpyxl.utils.cell import (
     coordinate_to_tuple,
 )
 
-from excel_grapher.evaluator.name_utils import parse_address
+from excel_grapher.core.address_keys import parse_address
 
 from .coercions import flatten, numeric_values, to_bool, to_number, to_string
 from .formula_ast import (
