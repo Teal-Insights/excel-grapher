@@ -1,6 +1,5 @@
 """Tests for incremental computation and cache invalidation."""
 
-
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.evaluator.evaluator import FormulaEvaluator

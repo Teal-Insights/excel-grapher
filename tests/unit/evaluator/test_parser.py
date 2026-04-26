@@ -1,4 +1,3 @@
-
 from excel_grapher.evaluator.parser import (
     BinaryOpNode,
     BoolNode,

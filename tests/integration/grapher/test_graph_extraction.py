@@ -2,7 +2,7 @@
 Tests that ``grapher`` correctly and reliably extracts cells, dependencies,
 and guards for different cases, including nested conditionals and cycles.
 
-Test cases (roadmap; only the first is implemented here):
+Test cases (roadmap):
 [
     ("Formula with no dependencies","=1+1"),
     ("Linear dependency",1,"=B1+1"),
@@ -67,11 +67,11 @@ def _populate_single_row(
 
 
 @pytest.mark.xfail(
-        reason="This test is expected to fail until business logic for identifying"
-         "leaf nodes is successfully updated from 'not a formula' to 'no dependencies'."
-        )
+    reason="This test is expected to fail until business logic for identifying"
+    "leaf nodes is successfully updated from 'not a formula' to 'no dependencies'."
+)
 def test_formula_with_no_dependencies_is_extracted_as_single_formula_leaf_node(
-    workbook_path_factory: Callable[[tuple[int | float | str, ...]], Path]
+    workbook_path_factory: Callable[[tuple[int | float | str, ...]], Path],
 ) -> None:
     path = workbook_path_factory(("Formula with no dependencies", "=1+1"))
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!B1"], load_values=True)
@@ -100,7 +100,7 @@ def test_formula_with_no_dependencies_is_extracted_as_single_formula_leaf_node(
 
 
 def test_linear_dependency_is_extracted_as_two_nodes_with_one_edge(
-    workbook_path_factory: Callable[[tuple[int | float | str, ...]], Path]
+    workbook_path_factory: Callable[[tuple[int | float | str, ...]], Path],
 ) -> None:
     path = workbook_path_factory(("Linear dependency", 1, "=B1+1"))
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!C1"], load_values=True)

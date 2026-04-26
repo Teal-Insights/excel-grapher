@@ -4,7 +4,6 @@ Uses ``assert_codegen_matches_evaluator`` for INDEX variants that commonly diver
 between hand-rolled evaluators and transpiled code.
 """
 
-
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.evaluator.types import XlError

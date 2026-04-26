@@ -4,7 +4,6 @@ Guards numeric parsing parity through ``assert_codegen_matches_evaluator`` for s
 dependency graphs.
 """
 
-
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
 from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator

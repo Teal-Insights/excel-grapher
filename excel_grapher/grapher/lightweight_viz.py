@@ -699,7 +699,9 @@ def _default_bfs_target_ranks(adj: list[list[int]], rev_adj: list[list[int]], n:
     return [d if d >= 0 else 0 for d in dist]
 
 
-def _bfs_distances_from_seed_ids(adj: list[list[int]], n: int, seed_ids: Sequence[int]) -> list[int]:
+def _bfs_distances_from_seed_ids(
+    adj: list[list[int]], n: int, seed_ids: Sequence[int]
+) -> list[int]:
     dist = [-1] * n
     q: deque[int] = deque()
     for s in seed_ids:
@@ -827,7 +829,9 @@ def build_lightweight_viz_core(
                     keep_keys = {keys[i] for i in keep_ids}
                     subgraph = _induced_dependency_subgraph(graph, keep_keys)
                     sub_seeds = (
-                        None if bfs_seed_keys is None else tuple(k for k in bfs_seed_keys if k in keep_keys)
+                        None
+                        if bfs_seed_keys is None
+                        else tuple(k for k in bfs_seed_keys if k in keep_keys)
                     )
                     return build_lightweight_viz_core(
                         subgraph,

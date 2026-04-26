@@ -4,7 +4,6 @@ Exercises vector lookup parity with ``assert_codegen_matches_evaluator`` across
 representative formulas and error paths.
 """
 
-
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.evaluator.types import XlError
