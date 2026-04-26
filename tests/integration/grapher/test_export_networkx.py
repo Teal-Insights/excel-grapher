@@ -56,7 +56,9 @@ def test_to_networkx_value_type_for_none_distinguishes_formula_vs_blank(tmp_path
     excel_path = tmp_path / "none_value_types.xlsx"
     wb = xlsxwriter.Workbook(excel_path)
     ws = wb.add_worksheet("Sheet1")
-    ws.write_formula(0, 1, "=1+1", None, 2)  # B1 formula (value remains None when load_values=False)
+    ws.write_formula(
+        0, 1, "=1+1", None, 2
+    )  # B1 formula (value remains None when load_values=False)
     wb.close()
 
     formula_graph = create_dependency_graph(excel_path, ["Sheet1!B1"], load_values=False)
