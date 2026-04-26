@@ -10,8 +10,8 @@ Test cases (roadmap):
     ("Nested conditional in a cell",0,10,"=IF(NOT(B1=1),IF(B1=0,C1,1),0)"),
     ("Nested conditional across cells",1,1,"=IF(B1=0,B1,2)","=IF(A1=1,B1,C1)"),
     ("Will cycle","=C1+1","=B1+1"),
-    ("Won't cycle","=IF(B1=0,1,D1)","=IF(NOT(B1=0),2,C1)"),
-    ("May cycle","=IF(B1=0,1,D1)","=IF(B1=1,2,C1)"),
+    ("Won't cycle",0,"=IF(B1=0,1,D1)","=IF(NOT(B1=0),2,C1)"),
+    ("May cycle",0,"=IF(B1=0,1,D1)","=IF(B1=1,2,C1)"),
 ]
 """
 
@@ -66,10 +66,6 @@ def _populate_single_row(
             ws.write_number(0, col, cell)
 
 
-@pytest.mark.xfail(
-    reason="This test is expected to fail until business logic for identifying"
-    "leaf nodes is successfully updated from 'not a formula' to 'no dependencies'."
-)
 def test_formula_with_no_dependencies_is_extracted_as_single_formula_leaf_node(
     workbook_path_factory: Callable[[tuple[int | float | str, ...]], Path],
 ) -> None:
