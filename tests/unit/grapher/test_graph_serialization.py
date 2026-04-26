@@ -66,8 +66,8 @@ def test_pickle_round_trip_preserves_edges() -> None:
     restored: DependencyGraph = pickle.loads(pickle.dumps(original))
 
     for key in original:
-        assert restored.dependencies(key) == original.dependencies(key)
-        assert restored.dependents(key) == original.dependents(key)
+        assert restored.get_dependencies(key) == original.get_dependencies(key)
+        assert restored.get_dependents(key) == original.get_dependents(key)
 
 
 def test_pickle_round_trip_preserves_guards() -> None:
@@ -75,15 +75,15 @@ def test_pickle_round_trip_preserves_guards() -> None:
     restored: DependencyGraph = pickle.loads(pickle.dumps(original))
 
     # Unguarded edge
-    assert restored.edge_guard("Sheet1!D1", "Sheet1!C1") is None
+    assert restored.get_edge_guard("Sheet1!D1", "Sheet1!C1") is None
 
     # Guarded edges
-    guard_a = restored.edge_guard("Sheet1!D1", "Sheet1!A1")
+    guard_a = restored.get_edge_guard("Sheet1!D1", "Sheet1!A1")
     assert guard_a is not None
     assert isinstance(guard_a, Compare)
     assert guard_a.op == "="
 
-    guard_b = restored.edge_guard("Sheet1!D1", "Sheet1!B1")
+    guard_b = restored.get_edge_guard("Sheet1!D1", "Sheet1!B1")
     assert guard_b is not None
     assert isinstance(guard_b, Compare)
 
@@ -105,7 +105,7 @@ def test_pickle_round_trip_many_guarded_edges() -> None:
     restored: DependencyGraph = pickle.loads(blob)
     assert len(restored._guards) == n_extra
     for i in range(2, 2 + n_extra):
-        g_edge = restored.edge_guard("Sheet1!D1", f"Sheet1!B{i}")
+        g_edge = restored.get_edge_guard("Sheet1!D1", f"Sheet1!B{i}")
         assert g_edge is not None
         assert isinstance(g_edge, Compare)
 
@@ -126,9 +126,9 @@ def test_pickle_round_trip_preserves_extra_attrs() -> None:
     g.add_edge("Sheet1!B1", "Sheet1!A1", provenance=prov)
 
     restored: DependencyGraph = pickle.loads(pickle.dumps(g))
-    attrs = restored.edge_attrs("Sheet1!B1", "Sheet1!A1")
-    assert "provenance" in attrs
-    assert attrs["provenance"].causes == frozenset({DependencyCause.direct_ref})
+    attrs = restored.get_edge_attrs("Sheet1!B1", "Sheet1!A1")
+    assert attrs.provenance is not None
+    assert attrs.provenance.causes == frozenset({DependencyCause.direct_ref})
 
 
 def test_pickle_round_trip_preserves_leaf_classification() -> None:

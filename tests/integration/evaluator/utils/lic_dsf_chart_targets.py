@@ -13,7 +13,7 @@ from typing import Literal, TypedDict
 import fastpyxl.utils.cell
 
 from excel_grapher import format_cell_key
-from excel_grapher.evaluator.name_utils import normalize_address
+from excel_grapher.core.address_keys import normalize_key as normalize_address
 
 WORKBOOK_PATH = Path("examples/lic_dsf/data/lic-dsf-template-2025-08-12.xlsm")
 

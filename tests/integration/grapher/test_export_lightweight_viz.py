@@ -350,11 +350,11 @@ def test_module_edges_aggregate_matches_graph() -> None:
     g_exp = 0
     for fk in keys:
         fi = key_id[fk]
-        for tk in sorted(g.dependencies(fk)):
+        for tk in sorted(g.get_dependencies(fk)):
             ti = key_id.get(tk)
             if ti is None or mod[fi] == mod[ti]:
                 continue
-            if g.edge_attrs(fk, tk).get("guard") is not None:
+            if g.get_edge_guard(fk, tk) is not None:
                 g_exp += 1
             else:
                 u_exp += 1

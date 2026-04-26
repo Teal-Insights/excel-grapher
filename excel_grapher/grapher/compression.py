@@ -54,11 +54,11 @@ def is_identity_transit(graph: DependencyGraph, transit_key: NodeKey) -> NodeKey
     node = graph.get_node(transit_key)
     if node is None or node.is_leaf or not node.normalized_formula:
         return None
-    deps = graph.dependencies(transit_key)
+    deps = graph.get_dependencies(transit_key)
     if len(deps) != 1:
         return None
     r_key = next(iter(deps))
-    if graph.edge_guard(transit_key, r_key) is not None:
+    if graph.get_edge_guard(transit_key, r_key) is not None:
         return None
     addr = _singleton_cell_ref_address(node.normalized_formula)
     if addr is None:

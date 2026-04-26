@@ -54,10 +54,10 @@ def test_create_dependency_graph_traces_dependencies(tmp_path: Path) -> None:
     assert "Sheet1!A2" in graph
     assert "Sheet1!A1" in graph
 
-    assert graph.dependencies("Sheet1!A4") == {"Sheet1!A3"}
-    assert graph.dependencies("Sheet1!A3") == {"Sheet1!A1", "Sheet1!A2"}
-    assert graph.dependencies("Sheet1!A2") == set()
-    assert graph.dependencies("Sheet1!A1") == set()
+    assert graph.get_dependencies("Sheet1!A4") == {"Sheet1!A3"}
+    assert graph.get_dependencies("Sheet1!A3") == {"Sheet1!A1", "Sheet1!A2"}
+    assert graph.get_dependencies("Sheet1!A2") == set()
+    assert graph.get_dependencies("Sheet1!A1") == set()
 
 
 def test_evaluation_order_is_dependency_first(tmp_path: Path) -> None:
@@ -91,7 +91,7 @@ def test_range_dependencies_are_expanded(tmp_path: Path) -> None:
     wb.close()
 
     graph = create_dependency_graph(excel_path, ["Sheet1!A4"], load_values=False)
-    assert graph.dependencies("Sheet1!A4") == {"Sheet1!A1", "Sheet1!A2", "Sheet1!A3"}
+    assert graph.get_dependencies("Sheet1!A4") == {"Sheet1!A1", "Sheet1!A2", "Sheet1!A3"}
 
 
 def test_cross_sheet_range_dependencies_are_expanded(tmp_path: Path) -> None:
@@ -114,7 +114,7 @@ def test_cross_sheet_range_dependencies_are_expanded(tmp_path: Path) -> None:
 
     graph = create_dependency_graph(excel_path, ["Sheet1!A2"], load_values=False)
     # Sheet names with spaces are quoted in keys to match Excel formula syntax
-    assert graph.dependencies("Sheet1!A2") == {
+    assert graph.get_dependencies("Sheet1!A2") == {
         "'Sheet 2'!A1",
         "'Sheet 2'!A2",
         "'Sheet 2'!B1",
@@ -140,7 +140,7 @@ def test_named_range_is_resolved(tmp_path: Path) -> None:
     wb.close()
 
     graph = create_dependency_graph(excel_path, ["Sheet1!A2"], load_values=False)
-    assert graph.dependencies("Sheet1!A2") == {"Sheet1!A1"}
+    assert graph.get_dependencies("Sheet1!A2") == {"Sheet1!A1"}
 
 
 def test_load_values_reads_cached_formula_results(tmp_path: Path) -> None:

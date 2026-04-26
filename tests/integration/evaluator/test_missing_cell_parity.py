@@ -7,7 +7,7 @@ consistent when formulas reference empty cells.
 import pytest
 
 from excel_grapher import DependencyGraph, FormulaEvaluator, Node
-from excel_grapher.evaluator.name_utils import parse_address
+from excel_grapher.core.address_keys import parse_address
 from tests.integration.utils.parity_harness import exec_generated_code
 
 

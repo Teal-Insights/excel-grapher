@@ -16,15 +16,13 @@ import pytest
 from fastpyxl.utils.cell import column_index_from_string, get_column_letter
 
 from excel_grapher import create_dependency_graph, format_cell_key
-from excel_grapher.evaluator.name_utils import normalize_address
+from excel_grapher.core.address_keys import normalize_key as normalize_address
 from tests.integration.evaluator.utils.lic_dsf_chart_targets import WORKBOOK_PATH
 from tests.utils.excel_workbook_parity import assert_workbook_parity
 from tests.utils.modify_and_recalculate import (
     ExcelRecalculationError,
     modify_and_recalculate_workbook,
 )
-
-pytestmark = [pytest.mark.slow, pytest.mark.integration]
 
 RTOL = 1e-5
 ATOL = 1e-9
@@ -91,6 +89,7 @@ def chart_strip_targets() -> list[str]:
     return _chart_strip_target_keys()
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("bps", BPS_LEVELS, ids=lambda b: f"{b:+d}bps")
 def test_gdp_bps_shock_chart_evaluator_matches_recalc(
     bps: int,

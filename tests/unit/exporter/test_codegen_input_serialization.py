@@ -36,8 +36,8 @@ class _FakeGraph:
     def formula_keys(self) -> list[str]:
         return [k for k, n in self._nodes.items() if n.formula is not None]
 
-    def dependencies(self, address: str) -> list[str]:
-        return self._deps.get(address, [])
+    def get_dependencies(self, address: str) -> frozenset[str]:
+        return frozenset(self._deps.get(address, ()))
 
 
 def test_codegen_does_not_embed_non_literal_leaf_values() -> None:

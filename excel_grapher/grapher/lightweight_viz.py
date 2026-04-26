@@ -37,12 +37,12 @@ def _build_int_adjacencies(
     uncond: list[list[int]] = [[] for _ in range(n)]
     all_e: list[list[int]] = [[] for _ in range(n)]
     for i, fk in enumerate(keys):
-        for tk in sorted(graph.dependencies(fk)):
+        for tk in sorted(graph.get_dependencies(fk)):
             tid = key_id.get(tk)
             if tid is None:
                 continue
             all_e[i].append(tid)
-            if graph.edge_attrs(fk, tk).get("guard") is None:
+            if graph.get_edge_guard(fk, tk) is None:
                 uncond[i].append(tid)
     return uncond, all_e
 
@@ -67,11 +67,11 @@ def _edge_list_filtered(
     out: list[tuple[int, int, bool]] = []
     for fk in keys:
         fi = key_id[fk]
-        for tk in sorted(graph.dependencies(fk)):
+        for tk in sorted(graph.get_dependencies(fk)):
             ti = key_id.get(tk)
             if ti is None:
                 continue
-            g = graph.edge_attrs(fk, tk).get("guard") is not None
+            g = graph.get_edge_guard(fk, tk) is not None
             if g and not include_guarded:
                 continue
             out.append((fi, ti, g))
@@ -212,11 +212,11 @@ def _build_out_adj_guarded(
     out: list[list[tuple[int, bool]]] = [[] for _ in range(n)]
     for fk in keys:
         fi = key_id[fk]
-        for tk in sorted(graph.dependencies(fk)):
+        for tk in sorted(graph.get_dependencies(fk)):
             ti = key_id.get(tk)
             if ti is None:
                 continue
-            guarded = graph.edge_attrs(fk, tk).get("guard") is not None
+            guarded = graph.get_edge_guard(fk, tk) is not None
             if guarded and not include_guarded:
                 continue
             out[fi].append((ti, guarded))
@@ -727,17 +727,19 @@ def _induced_dependency_subgraph(
     sub = DependencyGraph()
     sub.leaf_classification = graph.leaf_classification
     for k in sorted(keep_keys):
-        node = graph.get_node(k)
+        node = graph._get_internal_node(k)
         if node is None:
             continue
         sub.add_node(node)
     for fk in sorted(keep_keys):
-        for tk in sorted(graph.dependencies(fk)):
+        for tk in sorted(graph.get_dependencies(fk)):
             if tk not in keep_keys:
                 continue
-            attrs = graph.edge_attrs(fk, tk)
-            guard = attrs.pop("guard", None)
-            sub.add_edge(fk, tk, guard=guard, **attrs)
+            edge = graph.get_edge_attrs(fk, tk)
+            edge_kwargs: dict[str, Any] = {}
+            if edge.provenance is not None:
+                edge_kwargs["provenance"] = edge.provenance
+            sub.add_edge(fk, tk, guard=edge.guard, **edge_kwargs)
     return sub
 
 

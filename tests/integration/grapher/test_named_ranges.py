@@ -49,7 +49,7 @@ def test_named_range_range_is_expanded(tmp_path: Path) -> None:
     wb.save(excel_path)
 
     graph = create_dependency_graph(excel_path, ["Sheet1!C1"], load_values=False)
-    deps = graph.dependencies("Sheet1!C1")
+    deps = graph.get_dependencies("Sheet1!C1")
     assert deps == {"Sheet1!A1", "Sheet1!B1"}
 
 
@@ -132,7 +132,7 @@ def test_dependency_graph_expands_formula_based_named_range(tmp_path: Path) -> N
     wb.save(excel_path)
 
     graph = create_dependency_graph(excel_path, ["Sheet1!D1"], load_values=False)
-    deps = graph.dependencies("Sheet1!D1")
+    deps = graph.get_dependencies("Sheet1!D1")
     assert "Country_Information!A1" in deps
     assert "Country_Information!B1" in deps
     assert "Country_Information!C1" in deps

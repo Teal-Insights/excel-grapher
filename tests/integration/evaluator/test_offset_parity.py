@@ -7,7 +7,7 @@ dynamic reference behavior matches embedded runtime helpers.
 from __future__ import annotations
 
 from excel_grapher import DependencyGraph, Node
-from excel_grapher.evaluator.name_utils import parse_address
+from excel_grapher.core.address_keys import parse_address
 from excel_grapher.evaluator.types import XlError
 from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
 

@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from excel_grapher import DependencyGraph, FormulaEvaluator, Node
-from excel_grapher.evaluator.name_utils import parse_address
+from excel_grapher.core.address_keys import parse_address
 from excel_grapher.exporter.codegen import CodeGenerator
 
 

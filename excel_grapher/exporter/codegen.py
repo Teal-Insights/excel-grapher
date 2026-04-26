@@ -8,12 +8,14 @@ from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
 import fastpyxl.utils.cell
 
+from excel_grapher.core.address_keys import (
+    normalize_key as normalize_address,
+    parse_address,
+    quote_sheet_if_needed,
+)
 from excel_grapher.evaluator.name_utils import (
     address_to_python_name,
     excel_func_to_python,
-    normalize_address,
-    parse_address,
-    quote_sheet_if_needed,
 )
 from excel_grapher.evaluator.parser import (
     AstNode,
@@ -53,7 +55,7 @@ class GraphLike(Protocol):
 
     def formula_keys(self) -> list[str]: ...
 
-    def dependencies(self, address: str) -> list[str]: ...
+    def get_dependencies(self, address: str) -> frozenset[str]: ...
 
     leaf_classification: dict[str, str] | None
 
@@ -2050,7 +2052,7 @@ class CodeGenerator:
             # Heuristic: only use graph edges if any target has at least one dependency edge.
             # (Graphs constructed via create_dependency_graph(...) will satisfy this for
             # non-leaf targets; test graphs that only add nodes will not.)
-            has_edges = any(bool(self.graph.dependencies(t)) for t in targets)
+            has_edges = any(bool(self.graph.get_dependencies(t)) for t in targets)
             if not has_edges:
                 return self._collect_all_cells_via_ast(targets)
 
@@ -2065,7 +2067,7 @@ class CodeGenerator:
                 if node is None:
                     continue
                 closure.add(addr)
-                for dep in self.graph.dependencies(addr):
+                for dep in self.graph.get_dependencies(addr):
                     dep_n = normalize_address(dep)
                     if dep_n not in closure and self.graph.get_node(dep_n) is not None:
                         stack.append(dep_n)

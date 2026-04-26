@@ -15,9 +15,6 @@ import pytest
 from excel_grapher import DependencyGraph, FormulaEvaluator, XlError, create_dependency_graph
 from tests.utils.discover_formula_cells import discover_formula_cells_in_rows
 
-# This integration test loads a large workbook and can take a while to run.
-pytestmark = [pytest.mark.slow, pytest.mark.integration]
-
 # Path to the test workbook
 WORKBOOK_PATH = Path("examples/lic_dsf/data/lic-dsf-template-2025-08-12.xlsm")
 
@@ -79,6 +76,7 @@ def extract_functions_from_formulas(graph: DependencyGraph) -> set[str]:
     return functions
 
 
+@pytest.mark.slow
 def test_list_functions_used(graph: DependencyGraph) -> None:
     """Diagnostic test: list all functions used in the workbook."""
     functions = extract_functions_from_formulas(graph)
@@ -87,6 +85,7 @@ def test_list_functions_used(graph: DependencyGraph) -> None:
         print(f"  {func}")
 
 
+@pytest.mark.slow
 def test_graph_loaded(graph: DependencyGraph) -> None:
     """Verify DependencyGraph was loaded successfully."""
     assert len(graph) > 0
@@ -99,6 +98,7 @@ def test_graph_loaded(graph: DependencyGraph) -> None:
     print(f"  Leaf cells: {leaf_cells}")
 
 
+@pytest.mark.slow
 def test_evaluate_formulas(graph: DependencyGraph) -> None:
     """Evaluate all formulas and compare with Excel cached values."""
     # Get list of formula cells that have cached numeric values (our targets)

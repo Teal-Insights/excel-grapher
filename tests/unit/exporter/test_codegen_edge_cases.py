@@ -7,7 +7,7 @@ import pytest
 from fastpyxl.workbook.defined_name import DefinedName
 
 from excel_grapher import DependencyGraph, Node, create_dependency_graph
-from excel_grapher.evaluator.name_utils import parse_address
+from excel_grapher.core.address_keys import parse_address
 from excel_grapher.exporter.codegen import CodeGenerator
 
 

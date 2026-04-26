@@ -4,7 +4,7 @@ import pytest
 
 import tests.integration.utils.parity_harness as parity_harness
 from excel_grapher import DependencyGraph, Node
-from excel_grapher.evaluator.name_utils import parse_address
+from excel_grapher.core.address_keys import parse_address
 from tests.integration.utils.parity_harness import (
     assert_code_does_not_embed_symbols,
     assert_codegen_matches_evaluator,

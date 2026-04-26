@@ -186,12 +186,12 @@ class TestDependencyGraphFilterMethods:
         graph = create_dependency_graph(excel_path, ["Sheet1!C1"], load_values=True)
 
         # Check dependencies
-        deps = graph.dependencies("Sheet1!C1")
+        deps = graph.get_dependencies("Sheet1!C1")
         assert deps == {"Sheet1!A1", "Sheet1!B1"}
 
         # Check reverse edges (dependents)
-        assert "Sheet1!C1" in graph.dependents("Sheet1!A1")
-        assert "Sheet1!C1" in graph.dependents("Sheet1!B1")
+        assert "Sheet1!C1" in graph.get_dependents("Sheet1!A1")
+        assert "Sheet1!C1" in graph.get_dependents("Sheet1!B1")
 
     def test_handles_quoted_sheet_names(self, tmp_path: Path) -> None:
         """Should handle sheet names that require quoting."""

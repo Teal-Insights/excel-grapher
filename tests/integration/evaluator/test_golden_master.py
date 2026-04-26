@@ -15,14 +15,15 @@ import fastpyxl
 import pytest
 
 from excel_grapher import FormulaEvaluator, XlError, create_dependency_graph
-from excel_grapher.evaluator.name_utils import normalize_address, parse_address
+from excel_grapher.core.address_keys import (
+    normalize_key as normalize_address,
+    parse_address,
+)
 from tests.utils.discover_formula_cells import discover_formula_cells_in_rows
 from tests.utils.modify_and_recalculate import (
     ExcelRecalculationError,
     modify_and_recalculate_workbook,
 )
-
-pytestmark = [pytest.mark.slow, pytest.mark.integration]
 
 WORKBOOK_PATH = Path("examples/lic_dsf/data/lic-dsf-template-2025-08-12.xlsm")
 
@@ -86,6 +87,7 @@ def _read_numeric_cached_values(workbook_path: Path, addrs: list[str]) -> dict[s
         wb.close()
 
 
+@pytest.mark.slow
 def test_golden_master_inline(tmp_path: Path) -> None:
     """Inline golden master test."""
     if not WORKBOOK_PATH.exists():
@@ -210,10 +212,9 @@ def test_golden_master_inline(tmp_path: Path) -> None:
 
     # Compute Python values with all perturbations applied
     print("Computing Python values...")
+    for leaf_addr, _old, new_value in perturbation_details:
+        graph.set_node_value(leaf_addr, new_value)
     with FormulaEvaluator(graph) as ev:
-        # Apply all perturbations
-        for leaf_addr, _old, new_value in perturbation_details:
-            ev.set_value(leaf_addr, new_value)
         results = ev.evaluate(list(excel_values.keys()))
 
     python_values = {

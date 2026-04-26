@@ -17,12 +17,13 @@ Test cases (roadmap; only the first is implemented here):
 
 from __future__ import annotations
 
+from collections.abc import Callable, Generator
 from contextlib import suppress
-import pytest
-from typing import Callable, Generator
 from pathlib import Path
 
+import pytest
 import xlsxwriter
+from xlsxwriter.worksheet import Worksheet
 
 from excel_grapher.grapher import DependencyGraph, create_dependency_graph
 from excel_grapher.grapher.node import NodeKey, NodeView
@@ -52,9 +53,9 @@ def workbook_path_factory(
 
 
 def _populate_single_row(
-    ws: xlsxwriter.Worksheet,
-    row_cells: tuple[int | float | str, ...]
-):
+    ws: Worksheet,
+    row_cells: tuple[int | float | str, ...],
+) -> None:
     for col, cell in enumerate(row_cells):
         if isinstance(cell, str) and cell.startswith("="):
             # Write formulas with cached value 0 for purposes of this test

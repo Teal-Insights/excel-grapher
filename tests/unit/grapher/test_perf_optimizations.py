@@ -167,7 +167,7 @@ def test_if_formula_provenance_causes(tmp_path: Path) -> None:
     )
 
     for dep in ("Sheet1!A1", "Sheet1!A2", "Sheet1!A3"):
-        prov = graph.edge_attrs("Sheet1!A4", dep).get("provenance")
+        prov = graph.get_edge_attrs("Sheet1!A4", dep).provenance
         assert prov is not None, f"Missing provenance for edge A4→{dep}"
         assert DependencyCause.direct_ref in prov.causes, (
             f"Expected direct_ref in causes for A4→{dep}, got {prov.causes}"
@@ -193,7 +193,7 @@ def test_choose_formula_provenance_causes(tmp_path: Path) -> None:
     )
 
     for dep in ("Sheet1!A1", "Sheet1!B1", "Sheet1!C1"):
-        prov = graph.edge_attrs("Sheet1!D1", dep).get("provenance")
+        prov = graph.get_edge_attrs("Sheet1!D1", dep).provenance
         assert prov is not None, f"Missing provenance for D1→{dep}"
         assert DependencyCause.direct_ref in prov.causes
 
@@ -218,7 +218,7 @@ def test_ifs_formula_provenance_causes(tmp_path: Path) -> None:
     )
 
     for dep in ("Sheet1!A1", "Sheet1!B1", "Sheet1!C1"):
-        prov = graph.edge_attrs("Sheet1!D1", dep).get("provenance")
+        prov = graph.get_edge_attrs("Sheet1!D1", dep).provenance
         assert prov is not None, f"Missing provenance for D1→{dep}"
         assert DependencyCause.direct_ref in prov.causes, (
             f"Expected direct_ref in causes for D1→{dep}, got {prov.causes}"
@@ -246,7 +246,7 @@ def test_switch_formula_provenance_causes(tmp_path: Path) -> None:
     )
 
     for dep in ("Sheet1!A1", "Sheet1!B1", "Sheet1!C1", "Sheet1!D1"):
-        prov = graph.edge_attrs("Sheet1!E1", dep).get("provenance")
+        prov = graph.get_edge_attrs("Sheet1!E1", dep).provenance
         assert prov is not None, f"Missing provenance for E1→{dep}"
         assert DependencyCause.direct_ref in prov.causes, (
             f"Expected direct_ref in causes for E1→{dep}, got {prov.causes}"

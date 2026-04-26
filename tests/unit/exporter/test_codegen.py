@@ -3,7 +3,7 @@
 import pytest
 
 from excel_grapher import DependencyGraph, Node
-from excel_grapher.evaluator.name_utils import parse_address
+from excel_grapher.core.address_keys import parse_address
 from excel_grapher.evaluator.parser import (
     BinaryOpNode,
     BoolNode,

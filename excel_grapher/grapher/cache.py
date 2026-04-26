@@ -362,25 +362,22 @@ def dependency_graph_to_json(graph: DependencyGraph) -> dict[str, Any]:
                 "normalized_formula": node.normalized_formula,
                 "value": _value_to_json(node.value),
                 "is_leaf": node.is_leaf,
-                "metadata": node.metadata,
+                "metadata": dict(node.metadata),
             }
         )
 
     edges: list[dict[str, Any]] = []
     for from_key in graph:
-        for to_key in graph.dependencies(from_key):
-            attrs = dict(graph.edge_attrs(from_key, to_key))
-            guard = attrs.pop("guard", None)
-            prov = attrs.get("provenance")
-            if isinstance(prov, EdgeProvenance):
-                attrs["provenance"] = _edge_provenance_to_json(prov)
+        for to_key in graph.get_dependencies(from_key):
+            edge = graph.get_edge_attrs(from_key, to_key)
+            attrs: dict[str, Any] = {}
+            if edge.provenance is not None:
+                attrs["provenance"] = _edge_provenance_to_json(edge.provenance)
             edges.append(
                 {
                     "from": from_key,
                     "to": to_key,
-                    "guard": _guard_to_json(
-                        guard if isinstance(guard, GuardExpr) or guard is None else None
-                    ),
+                    "guard": _guard_to_json(edge.guard),
                     "attrs": attrs,
                 }
             )

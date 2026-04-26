@@ -2,7 +2,7 @@ import pytest
 
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.evaluator.evaluator import FormulaEvaluator
-from excel_grapher.evaluator.name_utils import parse_address
+from excel_grapher.core.address_keys import parse_address
 from excel_grapher.evaluator.types import XlError
 from excel_grapher.runtime.cache import CircularReferenceWarning
 

@@ -642,9 +642,10 @@ def enrich_graph_with_labels(
                 row_labels = get_row_labels(ws, node.row, col_idx)
                 col_labels = get_column_labels(ws, node.row, col_idx)
 
-            # Store in node metadata
-            node.metadata["row_labels"] = row_labels
-            node.metadata["column_labels"] = col_labels
+            metadata = dict(node.metadata)
+            metadata["row_labels"] = row_labels
+            metadata["column_labels"] = col_labels
+            graph.set_node_metadata(key, metadata)
 
             # Track for reporting (all nodes, not just those with labels)
             enrichment_results[key] = {

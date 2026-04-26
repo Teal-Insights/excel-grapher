@@ -2,17 +2,33 @@ from __future__ import annotations
 
 import heapq
 import warnings
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from excel_grapher.core.address_keys import normalize_key
+
 from .dependency_provenance import EdgeProvenance, merge_edge_provenance
 from .guard import And, CellRef, Compare, GuardConstraints, GuardExpr, Not, Or, or_guard
-from .node import Node, NodeKey
+from .node import Node, NodeKey, NodeView, node_to_view
 
 NodeHook = Callable[[NodeKey, Node], None]
 
+EdgeKey = tuple[NodeKey, NodeKey]
+
 _PICKLE_VERSION = 2
+
+
+@dataclass(frozen=True)
+class EdgeAttrs:
+    """Typed read-only container for dependency-edge attributes.
+
+    Returned by :meth:`DependencyGraph.get_edge_attrs`. A missing edge yields an
+    ``EdgeAttrs`` with all fields set to ``None``.
+    """
+
+    guard: GuardExpr | None = None
+    provenance: EdgeProvenance | None = None
 
 
 @dataclass(frozen=True)
@@ -41,10 +57,12 @@ class DependencyGraph:
     _nodes: dict[NodeKey, Node] = field(default_factory=dict)
     _edges: dict[NodeKey, set[NodeKey]] = field(default_factory=dict)  # node -> deps
     _reverse_edges: dict[NodeKey, set[NodeKey]] = field(default_factory=dict)  # node -> dependents
-    _guards: dict[tuple[NodeKey, NodeKey], GuardExpr] = field(default_factory=dict)
-    _edge_extra: dict[tuple[NodeKey, NodeKey], dict[str, Any]] = field(default_factory=dict)
+    _guards: dict[EdgeKey, GuardExpr] = field(default_factory=dict)
+    _edge_extra: dict[EdgeKey, dict[str, Any]] = field(default_factory=dict)
     _hooks: list[NodeHook] = field(default_factory=list)
     leaf_classification: dict[str, str] | None = None
+
+    # ---- node insertion and iteration ---------------------------------------
 
     def add_node(self, node: Node) -> None:
         key = node.key
@@ -54,17 +72,16 @@ class DependencyGraph:
         for hook in self._hooks:
             hook(key, node)
 
-    def get_node(self, key: NodeKey) -> Node | None:
-        return self._nodes.get(key)
-
     def __contains__(self, key: NodeKey) -> bool:
-        return key in self._nodes
+        return normalize_key(key) in self._nodes
 
     def __iter__(self) -> Iterator[NodeKey]:
         return iter(self._nodes)
 
     def __len__(self) -> int:
         return len(self._nodes)
+
+    # ---- edge insertion -----------------------------------------------------
 
     def add_edge(
         self,
@@ -75,6 +92,12 @@ class DependencyGraph:
         **attrs: Any,
     ) -> None:
         """Add edge: from_key depends on to_key (from_key -> to_key)."""
+        from_key = normalize_key(from_key)
+        to_key = normalize_key(to_key)
+        unknown_attrs = [k for k in attrs if k != "provenance"]
+        if unknown_attrs:
+            names = ", ".join(sorted(unknown_attrs))
+            raise ValueError(f"Unsupported edge attrs: {names}")
         ek = (from_key, to_key)
         deps_existing = self._edges.get(from_key)
         was_present = deps_existing is not None and to_key in deps_existing
@@ -95,7 +118,7 @@ class DependencyGraph:
                 merged_guard = or_guard(existing_guard, guard)
             merged_extra = dict(self._edge_extra.get(ek, {}))
 
-        merged_extra.update({k: v for k, v in attrs.items() if k != "guard"})
+        merged_extra.update({k: v for k, v in attrs.items() if k != "provenance"})
         prov_new = attrs.get("provenance")
         if prov_new is not None and isinstance(prov_new, EdgeProvenance):
             old_prov = merged_extra.get("provenance")
@@ -114,25 +137,92 @@ class DependencyGraph:
         else:
             self._edge_extra.pop(ek, None)
 
-    def dependencies(self, key: NodeKey) -> set[NodeKey]:
-        return self._edges.get(key, set())
+    # ---- public read API ----------------------------------------------------
 
-    def dependents(self, key: NodeKey) -> set[NodeKey]:
-        return self._reverse_edges.get(key, set())
+    def get_node(self, key: NodeKey) -> NodeView | None:
+        """Return an immutable ``NodeView`` snapshot, or ``None`` if missing."""
+        node = self._nodes.get(normalize_key(key))
+        if node is None:
+            return None
+        return node_to_view(node)
 
-    def edge_attrs(self, from_key: NodeKey, to_key: NodeKey) -> dict[str, Any]:
-        if to_key not in self._edges.get(from_key, set()):
-            return {}
-        out = dict(self._edge_extra.get((from_key, to_key), {}))
-        out["guard"] = self._guards.get((from_key, to_key))
-        return out
+    def get_dependencies(self, key: NodeKey) -> frozenset[NodeKey]:
+        """Return an immutable snapshot of ``key``'s dependencies (cells it reads)."""
+        deps = self._edges.get(normalize_key(key))
+        if not deps:
+            return frozenset()
+        return frozenset(deps)
 
-    def edge_guard(self, from_key: NodeKey, to_key: NodeKey) -> GuardExpr | None:
-        v = self._guards.get((from_key, to_key))
+    def get_dependents(self, key: NodeKey) -> frozenset[NodeKey]:
+        """Return an immutable snapshot of cells that depend on ``key``."""
+        deps = self._reverse_edges.get(normalize_key(key))
+        if not deps:
+            return frozenset()
+        return frozenset(deps)
+
+    def get_edge_attrs(self, from_key: NodeKey, to_key: NodeKey) -> EdgeAttrs:
+        """Return a typed snapshot of the attributes on edge ``from_key -> to_key``.
+
+        When the edge does not exist, returns an ``EdgeAttrs`` with all fields
+        set to ``None``.
+        """
+        fk = normalize_key(from_key)
+        tk = normalize_key(to_key)
+        if tk not in self._edges.get(fk, set()):
+            return EdgeAttrs()
+        extra = self._edge_extra.get((fk, tk), {})
+        prov = extra.get("provenance")
+        return EdgeAttrs(
+            guard=self._guards.get((fk, tk)),
+            provenance=prov if isinstance(prov, EdgeProvenance) else None,
+        )
+
+    def get_edge_guard(self, from_key: NodeKey, to_key: NodeKey) -> GuardExpr | None:
+        """Return the guard on edge ``from_key -> to_key``, or ``None`` if none."""
+        fk = normalize_key(from_key)
+        tk = normalize_key(to_key)
+        v = self._guards.get((fk, tk))
         return v if isinstance(v, GuardExpr) else None
+
+    # ---- durable node mutation ---------------------------------------------
+
+    def set_node_value(self, key: NodeKey, value: Any) -> None:
+        """Set a node's ``value`` field durably. Raises ``KeyError`` if missing."""
+        nk = normalize_key(key)
+        node = self._nodes.get(nk)
+        if node is None:
+            raise KeyError(f"Cell {key} not found in graph")
+        node.value = value
+
+    def set_node_metadata(self, key: NodeKey, metadata: Mapping[str, Any]) -> None:
+        """Replace a node's metadata mapping durably.
+
+        The provided mapping is copied; subsequent mutations to the caller's
+        object do not affect graph state. Raises ``KeyError`` if the node is
+        missing.
+        """
+        nk = normalize_key(key)
+        node = self._nodes.get(nk)
+        if node is None:
+            raise KeyError(f"Cell {key} not found in graph")
+        node.metadata = dict(metadata)
+
+    # ---- internal accessors -------------------------------------------------
+
+    def _get_internal_node(self, key: NodeKey) -> Node | None:
+        """Internal accessor for the live stored ``Node`` (normalizes key).
+
+        Internal-only: external callers must use ``get_node`` which returns an
+        immutable ``NodeView``.
+        """
+        return self._nodes.get(normalize_key(key))
+
+    # ---- hooks --------------------------------------------------------------
 
     def register_hook(self, hook: NodeHook) -> None:
         self._hooks.append(hook)
+
+    # ---- classifications / iterators ---------------------------------------
 
     def leaves(self) -> Iterator[NodeKey]:
         """Iterate over keys of leaf nodes (no dependencies)."""
@@ -165,20 +255,22 @@ class DependencyGraph:
             if not self._reverse_edges.get(key):
                 yield key
 
+    # ---- adjacency helpers for cycle/order analysis ------------------------
+
     def _unconditional_adjacency(self) -> dict[NodeKey, set[NodeKey]]:
         out: dict[NodeKey, set[NodeKey]] = {k: set() for k in self._nodes}
         for k in self._nodes:
-            for dep in self.dependencies(k):
+            for dep in self._edges.get(k, ()):
                 if dep not in self._nodes:
                     continue
-                if self.edge_guard(k, dep) is None:
+                if (k, dep) not in self._guards:
                     out[k].add(dep)
         return out
 
     def _all_adjacency(self) -> dict[NodeKey, set[NodeKey]]:
         out: dict[NodeKey, set[NodeKey]] = {k: set() for k in self._nodes}
         for k in self._nodes:
-            for dep in self.dependencies(k):
+            for dep in self._edges.get(k, ()):
                 if dep not in self._nodes:
                     continue
                 out[k].add(dep)
@@ -327,12 +419,12 @@ class DependencyGraph:
                 r_key = is_identity_transit(self, t_key)
                 if r_key is None:
                     continue
-                dependents_t = self.dependents(t_key)
+                dependents_t = self._reverse_edges.get(t_key, set())
                 if not dependents_t:
                     continue
                 ok = True
                 for d_key in dependents_t:
-                    prov = self.edge_attrs(d_key, t_key).get("provenance")
+                    prov = self._edge_extra.get((d_key, t_key), {}).get("provenance")
                     if not compression_safe_provenance(
                         prov if isinstance(prov, EdgeProvenance) else None
                     ):
@@ -349,6 +441,8 @@ class DependencyGraph:
             return removed
         finally:
             clear_identity_singleton_ref_cache()
+
+    # ---- serialization ------------------------------------------------------
 
     def __getstate__(self) -> dict[str, Any]:
         keys_sorted = _collect_graph_keys(self)
@@ -395,6 +489,8 @@ class DependencyGraph:
         else:
             self.leaf_classification = None
 
+    # ---- internal edge mutation --------------------------------------------
+
     def _remove_edge(self, from_key: NodeKey, to_key: NodeKey) -> None:
         self._edges.setdefault(from_key, set()).discard(to_key)
         self._reverse_edges.setdefault(to_key, set()).discard(from_key)
@@ -408,11 +504,11 @@ class DependencyGraph:
             replace_substrings_at_spans,
         )
 
-        for d_key in list(self.dependents(t_key)):
-            attrs = self.edge_attrs(d_key, t_key)
-            prov = attrs.get("provenance")
-            guard = self.edge_guard(d_key, t_key)
-            d_node = self.get_node(d_key)
+        for d_key in list(self._reverse_edges.get(t_key, set())):
+            extra = self._edge_extra.get((d_key, t_key), {})
+            prov = extra.get("provenance")
+            guard = self._guards.get((d_key, t_key))
+            d_node = self._nodes.get(d_key)
             if d_node is None:
                 continue
 
@@ -432,14 +528,14 @@ class DependencyGraph:
             elif new_norm and t_key in new_norm:
                 new_norm = new_norm.replace(t_key, r_key)
 
-            object.__setattr__(d_node, "formula", new_formula)
-            object.__setattr__(d_node, "normalized_formula", new_norm)
+            d_node.formula = new_formula
+            d_node.normalized_formula = new_norm
 
             self._remove_edge(d_key, t_key)
             new_prov = direct_provenance_for_key_in_strings(new_formula, new_norm, r_key)
             self.add_edge(d_key, r_key, guard=guard, provenance=new_prov)
 
-        for dep in list(self.dependencies(t_key)):
+        for dep in list(self._edges.get(t_key, set())):
             self._remove_edge(t_key, dep)
         self._nodes.pop(t_key, None)
         self._edges.pop(t_key, None)
@@ -657,10 +753,10 @@ def _subgraph_has_feasible_cycle(graph: DependencyGraph, nodes: set[NodeKey]) ->
         visited.add(state)
         on_stack.add(v)
 
-        for w in graph.dependencies(v):
+        for w in graph._edges.get(v, ()):
             if w not in nodes:
                 continue
-            guard = graph.edge_guard(v, w)
+            guard = graph._guards.get((v, w))
             for c2 in _apply_guard_constraints(c, guard):
                 if w in on_stack:
                     return True
@@ -690,10 +786,10 @@ def _find_feasible_cycle_path(graph: DependencyGraph, nodes: set[NodeKey]) -> li
         stack.append(v)
         on_stack.add(v)
 
-        for w in graph.dependencies(v):
+        for w in graph._edges.get(v, ()):
             if w not in nodes:
                 continue
-            guard = graph.edge_guard(v, w)
+            guard = graph._guards.get((v, w))
             for c2 in _apply_guard_constraints(c, guard):
                 if w in on_stack:
                     i = stack.index(w)

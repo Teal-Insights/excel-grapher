@@ -222,7 +222,7 @@ def normalize_cell_type_env_key(address: str) -> str:
     function strips those delimiters and normalizes the cell coordinate (column
     letters uppercased) so env lookups match regardless of quoting or case.
 
-    Not to be confused with :func:`excel_grapher.evaluator.name_utils.normalize_address`,
+    Not to be confused with :func:`excel_grapher.core.address_keys.normalize_key`,
     which follows evaluator node-key quoting rules and can differ for sheets
     that contain spaces.
     """

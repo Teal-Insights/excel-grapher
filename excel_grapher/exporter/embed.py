@@ -12,6 +12,7 @@ _CORE_DIR = _PACKAGE_ROOT / "core"
 
 # Core package modules define types, coercions, scalar operators, and addressing (canonical source).
 _CORE_MODULES: list[tuple[str, Path]] = [
+    ("core.address_keys", _CORE_DIR / "address_keys.py"),
     ("core.types", _CORE_DIR / "types.py"),
     ("core.coercions", _CORE_DIR / "coercions.py"),
     ("core.operators", _CORE_DIR / "operators.py"),

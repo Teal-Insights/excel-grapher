@@ -6,7 +6,7 @@ between hand-rolled evaluators and transpiled code.
 
 
 from excel_grapher import DependencyGraph, Node
-from excel_grapher.evaluator.name_utils import parse_address
+from excel_grapher.core.address_keys import parse_address
 from excel_grapher.evaluator.types import XlError
 from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
 

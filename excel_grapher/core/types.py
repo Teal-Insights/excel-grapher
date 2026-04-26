@@ -10,7 +10,7 @@ from typing import TypeAlias
 import fastpyxl.utils.cell
 import numpy as np
 
-from excel_grapher.evaluator.name_utils import format_address
+from excel_grapher.core.address_keys import format_key
 
 
 class XlError(StrEnum):
@@ -47,7 +47,7 @@ class ExcelRange:
         for r in range(self.start_row, self.end_row + 1):
             for c in range(self.start_col, self.end_col + 1):
                 col = fastpyxl.utils.cell.get_column_letter(c)
-                yield format_address(self.sheet, f"{col}{r}")
+                yield format_key(self.sheet, f"{col}{r}")
 
     def resolve(self, evaluate_fn: Callable[[str], CellValue]) -> np.ndarray:
         values: list[CellValue] = [evaluate_fn(addr) for addr in self.cell_addresses()]

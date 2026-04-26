@@ -25,14 +25,14 @@ def test_choose_branches_are_guarded(tmp_path: Path) -> None:
     wb.close()
 
     graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
-    deps = graph.dependencies("Sheet1!A1")
+    deps = graph.get_dependencies("Sheet1!A1")
     # Selector cell (C1) is unconditional; branch values are guarded.
     assert "Sheet1!C1" in deps
     assert "Sheet1!B1" in deps
     assert "Sheet1!D1" in deps
-    assert graph.edge_attrs("Sheet1!A1", "Sheet1!C1").get("guard") is None
-    assert graph.edge_attrs("Sheet1!A1", "Sheet1!B1").get("guard") is not None
-    assert graph.edge_attrs("Sheet1!A1", "Sheet1!D1").get("guard") is not None
+    assert graph.get_edge_guard("Sheet1!A1", "Sheet1!C1") is None
+    assert graph.get_edge_guard("Sheet1!A1", "Sheet1!B1") is not None
+    assert graph.get_edge_guard("Sheet1!A1", "Sheet1!D1") is not None
 
 
 def test_switch_branches_are_guarded(tmp_path: Path) -> None:
@@ -52,15 +52,15 @@ def test_switch_branches_are_guarded(tmp_path: Path) -> None:
     wb.close()
 
     graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
-    deps = graph.dependencies("Sheet1!A1")
+    deps = graph.get_dependencies("Sheet1!A1")
     assert "Sheet1!C1" in deps
     assert "Sheet1!B1" in deps
     assert "Sheet1!D1" in deps
     assert "Sheet1!E1" in deps
-    assert graph.edge_attrs("Sheet1!A1", "Sheet1!C1").get("guard") is None
-    assert graph.edge_attrs("Sheet1!A1", "Sheet1!B1").get("guard") is not None
-    assert graph.edge_attrs("Sheet1!A1", "Sheet1!D1").get("guard") is not None
-    assert graph.edge_attrs("Sheet1!A1", "Sheet1!E1").get("guard") is not None
+    assert graph.get_edge_guard("Sheet1!A1", "Sheet1!C1") is None
+    assert graph.get_edge_guard("Sheet1!A1", "Sheet1!B1") is not None
+    assert graph.get_edge_guard("Sheet1!A1", "Sheet1!D1") is not None
+    assert graph.get_edge_guard("Sheet1!A1", "Sheet1!E1") is not None
 
 
 def test_ifs_branches_are_guarded(tmp_path: Path) -> None:
@@ -76,10 +76,10 @@ def test_ifs_branches_are_guarded(tmp_path: Path) -> None:
     wb.close()
 
     graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
-    deps = graph.dependencies("Sheet1!A1")
+    deps = graph.get_dependencies("Sheet1!A1")
     assert "Sheet1!C1" in deps
     assert "Sheet1!B1" in deps
     assert "Sheet1!D1" in deps
-    assert graph.edge_attrs("Sheet1!A1", "Sheet1!C1").get("guard") is None
-    assert graph.edge_attrs("Sheet1!A1", "Sheet1!B1").get("guard") is not None
-    assert graph.edge_attrs("Sheet1!A1", "Sheet1!D1").get("guard") is not None
+    assert graph.get_edge_guard("Sheet1!A1", "Sheet1!C1") is None
+    assert graph.get_edge_guard("Sheet1!A1", "Sheet1!B1") is not None
+    assert graph.get_edge_guard("Sheet1!A1", "Sheet1!D1") is not None

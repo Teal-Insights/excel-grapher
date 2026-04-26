@@ -95,7 +95,7 @@ def test_offset_with_cached_named_range_warns_once(tmp_path: Path) -> None:
             excel_path, ["Sheet1!A1"], load_values=False, use_cached_dynamic_refs=True
         )
 
-    deps = graph.dependencies("Sheet1!A1")
+    deps = graph.get_dependencies("Sheet1!A1")
     # A1 = OFFSET(B1,0,LANG)+OFFSET(B1,0,LANG); LANG = Sheet1!C1. Deps include C1 (offset arg) and D1 (resolved target).
     assert deps == {"Sheet1!C1", "Sheet1!D1"}
 
@@ -110,7 +110,7 @@ def test_offset_index_row_resolves_named_range(tmp_path: Path) -> None:
     graph = create_dependency_graph(
         excel_path, ["Sheet1!B2"], load_values=False, use_cached_dynamic_refs=True
     )
-    deps = graph.dependencies("Sheet1!B2")
+    deps = graph.get_dependencies("Sheet1!B2")
     assert deps == {"lookup!B4"}
 
 
@@ -139,7 +139,7 @@ def test_offset_argument_references_are_dependencies(tmp_path: Path) -> None:
     graph = create_dependency_graph(
         excel_path, ["Sheet1!A1"], load_values=False, use_cached_dynamic_refs=True
     )
-    deps = graph.dependencies("Sheet1!A1")
+    deps = graph.get_dependencies("Sheet1!A1")
     assert deps == {"Sheet1!C1", "START!M10"}
 
 
@@ -440,7 +440,7 @@ def test_create_dependency_graph_with_dynamic_ref_config(tmp_path: Path) -> None
         load_values=False,
         dynamic_refs=config,
     )
-    deps = graph.dependencies("Sheet1!A1")
+    deps = graph.get_dependencies("Sheet1!A1")
     assert deps == {"Sheet1!B1", "Sheet1!C1", "Sheet1!B2"}
 
 
@@ -465,7 +465,7 @@ def test_create_dependency_graph_with_dynamic_ref_config_and_no_dynamic_calls(
         load_values=False,
         dynamic_refs=config,
     )
-    deps = graph.dependencies("Sheet1!A1")
+    deps = graph.get_dependencies("Sheet1!A1")
     assert deps == {"Sheet1!B1", "Sheet1!C1"}
 
 
@@ -497,7 +497,7 @@ def test_create_dependency_graph_constrain_leaf_only_formula_in_chain(tmp_path: 
         load_values=False,
         dynamic_refs=config,
     )
-    deps = graph.dependencies("Sheet1!A1")
+    deps = graph.get_dependencies("Sheet1!A1")
     assert deps == {"Sheet1!B1", "Sheet1!M10", "Sheet1!B2"}
 
 
@@ -988,7 +988,7 @@ def test_create_dependency_graph_with_standalone_index(tmp_path: Path) -> None:
         load_values=False,
         dynamic_refs=config,
     )
-    deps = graph.dependencies("Sheet1!C1")
+    deps = graph.get_dependencies("Sheet1!C1")
     # C1 depends on B1 (row selector) and the resolved INDEX targets A1, A2, A3
     assert deps == {"Sheet1!B1", "Sheet1!A1", "Sheet1!A2", "Sheet1!A3"}
 
@@ -1911,8 +1911,8 @@ def test_constraint_dynamic_ref_expansion_not_duplicated_with_provenance(
         f"expand_leaf_env_to_argument_env was called {call_count} times; "
         "expected 1 (shared between extraction and provenance collection)"
     )
-    assert "Sheet1!B1" in graph.dependencies("Sheet1!A1")
-    assert "Sheet1!C1" in graph.dependencies("Sheet1!A1")
+    assert "Sheet1!B1" in graph.get_dependencies("Sheet1!A1")
+    assert "Sheet1!C1" in graph.get_dependencies("Sheet1!A1")
 
 
 def test_constraint_indirect_expansion_not_duplicated_with_provenance(
@@ -1947,8 +1947,8 @@ def test_constraint_indirect_expansion_not_duplicated_with_provenance(
         f"expand_leaf_env_to_argument_env was called {call_count} times; "
         "expected 1 for INDIRECT with provenance enabled"
     )
-    assert "Sheet1!B1" in graph.dependencies("Sheet1!A1")
-    assert "Sheet1!B2" in graph.dependencies("Sheet1!A1")
+    assert "Sheet1!B1" in graph.get_dependencies("Sheet1!A1")
+    assert "Sheet1!B2" in graph.get_dependencies("Sheet1!A1")
 
 
 def test_constraint_branch_dynamic_ref_expansion_not_duplicated_with_provenance(
@@ -1985,7 +1985,7 @@ def test_constraint_branch_dynamic_ref_expansion_not_duplicated_with_provenance(
         f"expand_leaf_env_to_argument_env was called {call_count} times; "
         "expected 1 for IF branch provenance recursion"
     )
-    deps = graph.dependencies("Sheet1!A1")
+    deps = graph.get_dependencies("Sheet1!A1")
     assert "Sheet1!D1" in deps
     assert "Sheet1!B1" in deps
     assert "Sheet1!C1" in deps
@@ -2143,7 +2143,7 @@ def test_wide_index_sweep_shared_env_cache(tmp_path: Path) -> None:
     for i in range(n_rows):
         row = 2 + i
         node_key = f"Data!L{row}"
-        deps = graph.dependencies(node_key)
+        deps = graph.get_dependencies(node_key)
         assert f"Data!M{row}" in deps, f"Missing M leaf dep for {node_key}"
         assert f"Data!N{row}" in deps, f"Missing N leaf dep for {node_key}"
 
@@ -2258,7 +2258,7 @@ def test_shared_intermediate_env_expansion_cache(tmp_path: Path) -> None:
     # Correctness check: each formula should depend on B1 and its D leaf.
     for i in range(n_rows):
         row = 2 + i
-        deps = graph.dependencies(f"Sheet1!F{row}")
+        deps = graph.get_dependencies(f"Sheet1!F{row}")
         assert "Sheet1!B1" in deps, f"Missing B1 dep for F{row}"
         assert f"Sheet1!D{row}" in deps, f"Missing D leaf dep for F{row}"
 

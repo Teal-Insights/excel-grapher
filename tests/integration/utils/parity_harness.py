@@ -50,7 +50,7 @@ def _dependency_closure(graph: DependencyGraph, targets: list[str]) -> set[str]:
         if graph.get_node(addr) is None:
             continue
         closure.add(addr)
-        for dep in graph.dependencies(addr):
+        for dep in graph.get_dependencies(addr):
             if graph.get_node(dep) is None:
                 continue
             stack.append(dep)

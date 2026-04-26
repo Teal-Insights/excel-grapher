@@ -2,14 +2,13 @@
 
 import pytest
 
-from excel_grapher.evaluator.name_utils import (
-    address_to_python_name,
-    excel_func_to_python,
-    format_address,
-    normalize_address,
+from excel_grapher.core.address_keys import (
+    format_key as format_address,
+    normalize_key as normalize_address,
     parse_address,
     quote_sheet_if_needed,
 )
+from excel_grapher.evaluator.name_utils import address_to_python_name, excel_func_to_python
 
 
 class TestAddressToPythonName:
@@ -152,7 +151,7 @@ class TestQuoteSheetIfNeeded:
 
     def test_sheet_with_apostrophe_needs_quotes(self):
         """Sheet with apostrophe needs quotes."""
-        assert quote_sheet_if_needed("It's Data") == "'It's Data'"
+        assert quote_sheet_if_needed("It's Data") == "'It''s Data'"
 
     def test_numeric_sheet_no_quotes(self):
         """Purely numeric sheet doesn't need quotes."""
@@ -176,7 +175,7 @@ class TestFormatAddress:
 
     def test_address_with_apostrophe(self):
         """Format address with apostrophe in sheet name."""
-        assert format_address("It's Data", "C3") == "'It's Data'!C3"
+        assert format_address("It's Data", "C3") == "'It''s Data'!C3"
 
 
 class TestNormalizeAddress:
@@ -198,4 +197,4 @@ class TestNormalizeAddress:
 
     def test_handles_escaped_quotes(self):
         """Properly handle escaped quotes in sheet names."""
-        assert normalize_address("'It''s Data'!C3") == "'It's Data'!C3"
+        assert normalize_address("'It''s Data'!C3") == "'It''s Data'!C3"

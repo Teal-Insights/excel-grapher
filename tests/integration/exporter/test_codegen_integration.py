@@ -12,7 +12,10 @@ from pathlib import Path
 import pytest
 
 from excel_grapher import CycleError, DependencyGraph, Node, create_dependency_graph
-from excel_grapher.evaluator.name_utils import normalize_address, parse_address
+from excel_grapher.core.address_keys import (
+    normalize_key as normalize_address,
+    parse_address,
+)
 from excel_grapher.exporter.codegen import CodeGenerator
 from tests.integration.utils.parity_harness import (
     assert_codegen_matches_evaluator,
@@ -325,7 +328,7 @@ class TestGeneratedCodeWithRealWorkbook:
             if node is None:
                 continue
             closure.add(addr)
-            for dep in graph.dependencies(addr):
+            for dep in graph.get_dependencies(addr):
                 dep_n = normalize_address(dep)
                 if dep_n not in closure and graph.get_node(dep_n) is not None:
                     stack.append(dep_n)

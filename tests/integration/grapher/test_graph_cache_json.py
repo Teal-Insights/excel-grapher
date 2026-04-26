@@ -49,7 +49,7 @@ def test_cache_roundtrip_strict_hit(tmp_path: Path) -> None:
 
     loaded = try_load_graph_cache(cache_path, expected_meta=meta)
     assert loaded is not None
-    assert loaded.dependencies("Sheet1!A3") == {"Sheet1!A1", "Sheet1!A2"}
+    assert loaded.get_dependencies("Sheet1!A3") == {"Sheet1!A1", "Sheet1!A2"}
 
     with FormulaEvaluator(loaded) as ev:
         assert ev.evaluate(["Sheet1!A3"])["Sheet1!A3"] == 5

@@ -71,7 +71,7 @@ def test_compress_happy_path_manual_graph() -> None:
     removed = graph.compress_identity_transits()
     assert "Sheet1!B1" in removed
     assert "Sheet1!B1" not in graph
-    assert graph.dependencies("Sheet1!A1") == {"Sheet1!C1"}
+    assert graph.get_dependencies("Sheet1!A1") == {"Sheet1!C1"}
     na = graph.get_node("Sheet1!A1")
     assert na is not None
     assert na.normalized_formula == "=Sheet1!C1"
@@ -108,7 +108,7 @@ def test_compress_chain_manual_graph() -> None:
     removed = graph.compress_identity_transits()
     assert "Sheet1!B1" in removed
     assert "Sheet1!C1" in removed
-    assert graph.dependencies("Sheet1!A1") == {"Sheet1!D1"}
+    assert graph.get_dependencies("Sheet1!A1") == {"Sheet1!D1"}
 
 
 def test_static_range_blocks_compression(tmp_path: Path) -> None:
@@ -127,7 +127,7 @@ def test_static_range_blocks_compression(tmp_path: Path) -> None:
         load_values=False,
         capture_dependency_provenance=True,
     )
-    assert "Sheet1!B1" in graph.dependencies("Sheet1!A1")
+    assert "Sheet1!B1" in graph.get_dependencies("Sheet1!A1")
     removed = graph.compress_identity_transits()
     assert "Sheet1!B1" not in removed
     assert "Sheet1!B1" in graph
@@ -149,7 +149,7 @@ def test_offset_blocks_compression(tmp_path: Path) -> None:
         use_cached_dynamic_refs=True,
         capture_dependency_provenance=True,
     )
-    prov = graph.edge_attrs("Sheet1!A1", "Sheet1!B1").get("provenance")
+    prov = graph.get_edge_attrs("Sheet1!A1", "Sheet1!B1").provenance
     assert prov is not None
     assert DependencyCause.dynamic_offset in prov.causes
     removed = graph.compress_identity_transits()
@@ -254,7 +254,7 @@ def test_indirect_enum_blocks_when_direct_same_cell(tmp_path: Path) -> None:
         dynamic_refs=cfg,
         capture_dependency_provenance=True,
     )
-    prov = graph.edge_attrs("Sheet1!E1", "Sheet1!A1").get("provenance")
+    prov = graph.get_edge_attrs("Sheet1!E1", "Sheet1!A1").provenance
     assert prov is not None
     assert DependencyCause.direct_ref in prov.causes
     assert DependencyCause.dynamic_indirect in prov.causes

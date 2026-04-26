@@ -24,8 +24,6 @@ from tests.utils.excel_workbook_parity import (
     format_workbook_parity_report,
 )
 
-pytestmark = [pytest.mark.slow, pytest.mark.integration]
-
 RTOL = 1e-5
 ATOL = 1e-9
 
@@ -44,6 +42,7 @@ def lic_dsf_chart_shortlist_graph():
     )
 
 
+@pytest.mark.slow
 def test_lic_dsf_chart_shortlist_graph_has_numeric_excel_cache(
     lic_dsf_chart_shortlist_graph,
 ) -> None:
@@ -56,6 +55,7 @@ def test_lic_dsf_chart_shortlist_graph_has_numeric_excel_cache(
         )
 
 
+@pytest.mark.slow
 def test_lic_dsf_chart_shortlist_evaluator_matches_excel_cache(
     lic_dsf_chart_shortlist_graph,
 ) -> None:
@@ -69,6 +69,7 @@ def test_lic_dsf_chart_shortlist_evaluator_matches_excel_cache(
     )
 
 
+@pytest.mark.slow
 @pytest.mark.xfail(
     raises=DynamicRefError,
     strict=True,
@@ -103,6 +104,7 @@ def lic_dsf_full_chart_graph():
     )
 
 
+@pytest.mark.slow
 def test_lic_dsf_full_chart_export_graph_builds(lic_dsf_full_chart_graph) -> None:
     """Full chart export targets produce a non-empty graph with cached dynamic refs."""
     assert len(lic_dsf_full_chart_graph) > 0
@@ -111,6 +113,7 @@ def test_lic_dsf_full_chart_export_graph_builds(lic_dsf_full_chart_graph) -> Non
     assert hits == len(export_keys)
 
 
+@pytest.mark.slow
 def test_lic_dsf_full_chart_export_evaluator_matches_excel_cache(lic_dsf_full_chart_graph) -> None:
     """
     Cached path: formula cells in the export set with numeric Excel cache must match evaluator.

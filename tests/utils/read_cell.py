@@ -53,7 +53,7 @@ def read_range_values(
     Returns:
         2D list of cell values.
     """
-    from excel_grapher.evaluator.name_utils import parse_address
+    from excel_grapher.core.address_keys import parse_address
 
     if ":" in range_ref:
         sheet_name, range_part = parse_address(range_ref)
