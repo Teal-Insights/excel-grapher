@@ -6,6 +6,31 @@ The shared runtime embedded in generated code lives at :mod:`excel_grapher.runti
 """
 
 from .codegen import CodeGenerator
-from .lightweight_viz import ensure_default_overlay_builders, to_lightweight_viz
+from .lightweight_viz import (
+    WebVizPayload,
+    to_web_viz_payload,
+)
+from .web_viz_layout import (
+    LAYOUT_FORCEATLAS2,
+    LAYOUT_GRAPHVIZ_DOT,
+    LAYOUT_GRAPHVIZ_SFDP,
+    LAYOUT_MULTIPARTITE,
+    LAYOUT_SPRING,
+    LAYOUT_STRATIFIED_MULTIPARTITE,
+    list_web_viz_layouts,
+    register_web_viz_layout,
+)
 
-__all__ = ["CodeGenerator", "ensure_default_overlay_builders", "to_lightweight_viz"]
+__all__ = [
+    "CodeGenerator",
+    "WebVizPayload",
+    "to_web_viz_payload",
+    "LAYOUT_STRATIFIED_MULTIPARTITE",
+    "LAYOUT_SPRING",
+    "LAYOUT_FORCEATLAS2",
+    "LAYOUT_MULTIPARTITE",
+    "LAYOUT_GRAPHVIZ_DOT",
+    "LAYOUT_GRAPHVIZ_SFDP",
+    "list_web_viz_layouts",
+    "register_web_viz_layout",
+]

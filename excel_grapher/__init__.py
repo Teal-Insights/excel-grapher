@@ -12,7 +12,7 @@ from .evaluator import (
     ParseError,
     XlError,
 )
-from .exporter import to_lightweight_viz
+from .exporter import to_web_viz_payload
 from .grapher import (
     GRAPH_CACHE_SCHEMA_VERSION,
     And,
@@ -63,6 +63,7 @@ from .grapher import (
     validate_graph,
     write_lightweight_viz_data,
     write_lightweight_viz_html,
+    write_web_viz_html,
 )
 
 __all__ = [
@@ -108,11 +109,12 @@ __all__ = [
     "LightweightVizPayload",
     "select_local_force_subgraph",
     "to_graphviz",
-    "to_lightweight_viz",
+    "to_web_viz_payload",
     "to_mermaid",
     "to_networkx",
     "write_lightweight_viz_data",
     "write_lightweight_viz_html",
+    "write_web_viz_html",
     "validate_graph",
     "save_graph_cache",
     "try_load_graph_cache",

@@ -124,6 +124,29 @@
   }
 
   function buildOverviewEdges(data, maxLocalEdgeDraw) {
+    const off0 = data.local_edges.offsets;
+    const tg0 = data.local_edges.targets;
+    const gd0 = data.local_edges.guarded;
+    const totalLocal = tg0.length;
+    if (totalLocal > 0) {
+      const effectiveCap = maxLocalEdgeDraw == null ? totalLocal : maxLocalEdgeDraw;
+      const stride = totalLocal <= effectiveCap ? 1 : Math.ceil(totalLocal / effectiveCap);
+      const sampled = stride > 1;
+      const localEdges = [];
+      for (let u = 0; u < data.stats.node_count; u++) {
+        for (let k = off0[u]; k < off0[u + 1]; k++) {
+          if ((k % stride) !== 0) continue;
+          localEdges.push({ source: u, target: tg0[k], guarded: gd0[k] });
+        }
+      }
+      return {
+        mode: 'local',
+        edges: localEdges,
+        totalEdges: totalLocal,
+        sampled: sampled
+      };
+    }
+
     const moduleEdges = [];
     for (let e = 0; e < data.module_edges.length; e++) {
       const ed = data.module_edges[e];
@@ -138,30 +161,7 @@
         sampled: false
       };
     }
-
-    const off = data.local_edges.offsets;
-    const tg = data.local_edges.targets;
-    const gd = data.local_edges.guarded;
-    const total = tg.length;
-    if (total === 0) {
-      return { mode: 'local', edges: [], totalEdges: 0, sampled: false };
-    }
-    const effectiveCap = maxLocalEdgeDraw == null ? total : maxLocalEdgeDraw;
-    const stride = total <= effectiveCap ? 1 : Math.ceil(total / effectiveCap);
-    const sampled = stride > 1;
-    const localEdges = [];
-    for (let u = 0; u < data.stats.node_count; u++) {
-      for (let k = off[u]; k < off[u + 1]; k++) {
-        if ((k % stride) !== 0) continue;
-        localEdges.push({ source: u, target: tg[k], guarded: gd[k] });
-      }
-    }
-    return {
-      mode: 'local',
-      edges: localEdges,
-      totalEdges: total,
-      sampled: sampled
-    };
+    return { mode: 'local', edges: [], totalEdges: 0, sampled: false };
   }
 
   function neighborSet(data, nodeId) {
@@ -253,7 +253,10 @@
     return r.json();
   }
 
-  var MODULE_INFERENCE_OVERLAY_ID = 'exporter.module_inference';
+  var WEBVIZ_LOUVAIN_DIRECTED_OVERLAY_ID = 'webviz.louvain_directed';
+  function isPartitionModuleOverlay(overlayId) {
+    return overlayId === WEBVIZ_LOUVAIN_DIRECTED_OVERLAY_ID;
+  }
   var DENSE_BUCKET_THRESHOLD = 12;
   var VIZ_PAYLOAD_VERSION = 2;
 
@@ -341,7 +344,7 @@
 
     var modOv = null;
     for (var i = 0; i < raw.overlays.length; i++) {
-      if (raw.overlays[i].overlay_id === MODULE_INFERENCE_OVERLAY_ID) {
+      if (isPartitionModuleOverlay(raw.overlays[i].overlay_id)) {
         modOv = raw.overlays[i];
         break;
       }
@@ -448,9 +451,28 @@
 
     const n = data.stats.node_count;
     const statsEl = document.getElementById('stats');
-    statsEl.textContent = n + ' nodes · ' + data.stats.module_count + ' modules · '
-      + data.stats.local_edge_count + ' local edges (exported)';
-    const overviewEdges = buildOverviewEdges(data, null);
+    const localEdgeCount = data.stats.local_edge_count;
+    var maxLocalEdgeDraw = null;
+    if (raw.viewer_hints && raw.viewer_hints.max_overview_local_edges != null) {
+      const cap = Number(raw.viewer_hints.max_overview_local_edges);
+      if (!isNaN(cap) && cap > 0) {
+        maxLocalEdgeDraw = cap;
+      }
+    }
+    if (maxLocalEdgeDraw == null) {
+    if (n > 40000) {
+      maxLocalEdgeDraw = 200000;
+    } else if (n > 10000) {
+      maxLocalEdgeDraw = 500000;
+    }
+    }
+    var statsText = n + ' nodes · ' + data.stats.module_count + ' modules · '
+      + localEdgeCount + ' local edges (exported)';
+    const overviewEdges = buildOverviewEdges(data, maxLocalEdgeDraw);
+    if (overviewEdges.sampled) {
+      statsText += ' · edge draw sampled for overview';
+    }
+    statsEl.textContent = statsText;
     const edgeToggleLabel = document.getElementById('edgeLabel');
     if (edgeToggleLabel) {
       edgeToggleLabel.textContent = overviewEdges.mode === 'module' ? ' Module edges' : ' Graph edges';

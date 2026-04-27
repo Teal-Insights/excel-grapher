@@ -19,7 +19,7 @@ from .node import NodeKey
 
 DENSE_BUCKET_THRESHOLD = 12
 VIZ_PAYLOAD_VERSION = 2
-MODULE_INFERENCE_OVERLAY_ID = "exporter.module_inference"
+WEBVIZ_LOUVAIN_DIRECTED_OVERLAY_ID = "webviz.louvain_directed"
 
 # BFS overview: weighted barycentric ordering within each (rank, module) bucket
 BFS_HORIZONTAL_UNGUARDED_WEIGHT = 1.0
@@ -985,13 +985,24 @@ class LightweightVizPayload:
     version: int
     core: LightweightVizCore
     overlays: tuple[LightweightVizOverlay, ...]
+    annotations: Mapping[str, Any] | None = None
+    viewer_hints: Mapping[str, Any] | None = None
 
 
 def assemble_lightweight_viz_payload(
     core: LightweightVizCore,
     overlays: Sequence[LightweightVizOverlay],
+    *,
+    annotations: Mapping[str, Any] | None = None,
+    viewer_hints: Mapping[str, Any] | None = None,
 ) -> LightweightVizPayload:
-    return LightweightVizPayload(version=VIZ_PAYLOAD_VERSION, core=core, overlays=tuple(overlays))
+    return LightweightVizPayload(
+        version=VIZ_PAYLOAD_VERSION,
+        core=core,
+        overlays=tuple(overlays),
+        annotations=annotations,
+        viewer_hints=viewer_hints,
+    )
 
 
 # --- Flat view (core + partition overlay) for tools, tests, force layout ------
@@ -1118,7 +1129,7 @@ def lightweight_viz_flat(payload: LightweightVizPayload) -> LightweightVizFlat:
 
     mod_ov: LightweightVizOverlay | None = None
     for ov in payload.overlays:
-        if ov.overlay_id == MODULE_INFERENCE_OVERLAY_ID:
+        if ov.overlay_id == WEBVIZ_LOUVAIN_DIRECTED_OVERLAY_ID:
             mod_ov = ov
             break
 
@@ -1343,11 +1354,16 @@ def _core_to_jsonable(c: LightweightVizCore) -> dict[str, Any]:
 
 
 def _payload_to_jsonable(payload: LightweightVizPayload) -> dict[str, Any]:
-    return {
+    d: dict[str, Any] = {
         "version": payload.version,
         "core": _core_to_jsonable(payload.core),
         "overlays": [lightweight_viz_overlay_to_jsonable(o) for o in payload.overlays],
     }
+    if payload.annotations is not None:
+        d["annotations"] = dict(payload.annotations)
+    if payload.viewer_hints is not None:
+        d["viewer_hints"] = dict(payload.viewer_hints)
+    return d
 
 
 def estimate_serialized_json_bytes(payload: LightweightVizPayload) -> int:
@@ -1382,6 +1398,7 @@ def write_lightweight_viz_html(
     data_mode: Literal["inline", "sidecar", "auto"] = "auto",
     data_path: Path | str | None = None,
     inline_size_budget_mb: int = 50,
+    template_path: Path | str | None = None,
 ) -> None:
     from importlib import resources
 
@@ -1422,11 +1439,14 @@ def write_lightweight_viz_html(
         data_file = out.parent / sidecar_name
         write_lightweight_viz_data(payload, data_file)
 
-    tpl = (
-        resources.files(__package__ or __name__)
-        .joinpath("lightweight_viz_template.html")
-        .read_text(encoding="utf-8")
-    )
+    if template_path is None:
+        tpl = (
+            resources.files(__package__ or __name__)
+            .joinpath("lightweight_viz_template.html")
+            .read_text(encoding="utf-8")
+        )
+    else:
+        tpl = Path(template_path).read_text(encoding="utf-8")
     bootstrap = (
         f"window.__VIZ_DATA__ = {json_payload};"
         if json_payload is not None
@@ -1443,3 +1463,25 @@ def write_lightweight_viz_html(
         .replace("/*__SIDECAR__*/", sidecar_js)
     )
     out.write_text(html, encoding="utf-8")
+
+
+def write_web_viz_html(
+    payload: LightweightVizPayload,
+    path: Path | str,
+    *,
+    title: str = "Workbook dependency graph",
+    data_mode: Literal["inline", "sidecar", "auto"] = "auto",
+    data_path: Path | str | None = None,
+    inline_size_budget_mb: int = 50,
+    template_path: Path | str | None = None,
+) -> None:
+    """Write a web visualization HTML bundle from a web-viz payload."""
+    write_lightweight_viz_html(
+        payload,
+        path,
+        title=title,
+        data_mode=data_mode,
+        data_path=data_path,
+        inline_size_budget_mb=inline_size_budget_mb,
+        template_path=template_path,
+    )

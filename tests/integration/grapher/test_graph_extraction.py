@@ -26,6 +26,7 @@ import xlsxwriter
 from xlsxwriter.worksheet import Worksheet
 
 from excel_grapher.grapher import DependencyGraph, create_dependency_graph
+from excel_grapher.grapher.guard import CellRef, Compare, GuardExpr, Literal, Not
 from excel_grapher.grapher.node import NodeKey, NodeView
 
 
@@ -132,3 +133,43 @@ def test_linear_dependency_is_extracted_as_two_nodes_with_one_edge(
     assert not graph._edge_extra
     assert not graph._hooks
     assert graph.leaf_classification is None
+
+
+def test_conditions_are_extracted_as_unguarded_but_conditional_branches_as_guarded(
+    workbook_path_factory: Callable[[tuple[int | float | str, ...]], Path],
+) -> None:
+    path = workbook_path_factory(("Conditional branches", 1, 10, 20, "=IF(B1=1,C1,D1)"))
+    graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!E1"], load_values=True)
+    assert len(graph._nodes) == 4
+
+    target_node: NodeView | None = graph.get_node("Sheet1!E1")
+    assert target_node is not None
+    assert target_node.sheet == "Sheet1"
+    assert target_node.column == "E"
+    assert target_node.row == 1
+    assert target_node.formula == "=IF(B1=1,C1,D1)"
+    assert target_node.normalized_formula == "=IF(Sheet1!B1=1,Sheet1!C1,Sheet1!D1)"
+    assert target_node.value == 0
+    assert target_node.is_leaf is False
+    assert dict(target_node.metadata) == {}
+
+    dependencies: frozenset[NodeKey] = graph.get_dependencies("Sheet1!E1")
+    assert dependencies == frozenset(["Sheet1!B1", "Sheet1!C1", "Sheet1!D1"])
+    dependents: frozenset[NodeKey] = graph.get_dependents("Sheet1!E1")
+    assert dependents == frozenset()
+    guard: GuardExpr | None = graph.get_edge_guard("Sheet1!E1", "Sheet1!B1")
+    # TODO: We are going to need to modify these assertions when we support multiple guards per edge
+    guard = graph.get_edge_guard("Sheet1!E1", "Sheet1!C1")
+    assert guard == Compare(
+        left=CellRef(key='Sheet1!B1'),
+        op='=',
+        right=Literal(value=1)
+    )
+    guard = graph.get_edge_guard("Sheet1!E1", "Sheet1!D1")
+    assert guard == Not(
+        operand=Compare(
+            left=CellRef(key='Sheet1!B1'),
+            op='=',
+            right=Literal(value=1)
+        )
+    )

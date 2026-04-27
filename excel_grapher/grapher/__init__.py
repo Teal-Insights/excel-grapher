@@ -47,6 +47,7 @@ from .export import (
     to_graphviz,
     to_mermaid,
     to_networkx,
+    write_web_viz_html,
     write_lightweight_viz_data,
     write_lightweight_viz_html,
 )
@@ -108,6 +109,7 @@ __all__ = [
     "to_graphviz",
     "to_mermaid",
     "to_networkx",
+    "write_web_viz_html",
     "write_lightweight_viz_data",
     "write_lightweight_viz_html",
     "validate_graph",

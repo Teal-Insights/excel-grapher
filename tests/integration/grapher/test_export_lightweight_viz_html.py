@@ -1,8 +1,4 @@
-"""HTML lightweight viz output embeds coherent payloads from graph inputs (integration).
-
-Covers ``write_lightweight_viz_html`` / ``write_lightweight_viz_data`` with real files
-so inline ``__VIZ_DATA__`` and version markers stay contract-stable for static pages.
-"""
+"""HTML web-viz output embeds coherent payloads from graph inputs (integration)."""
 
 from __future__ import annotations
 
@@ -12,19 +8,59 @@ from pathlib import Path
 import pytest
 
 import excel_grapher.grapher.lightweight_viz as lightweight_viz_mod
-from excel_grapher.exporter import to_lightweight_viz
+from excel_grapher.exporter import to_web_viz_payload
 from excel_grapher.grapher import write_lightweight_viz_data, write_lightweight_viz_html
-from excel_grapher.grapher.lightweight_viz import VIZ_PAYLOAD_VERSION
-from tests.integration.grapher.test_export_lightweight_viz import _chain_graph
+from excel_grapher.grapher.lightweight_viz import (
+    VIZ_PAYLOAD_VERSION,
+    VizLimits,
+    assemble_lightweight_viz_payload,
+    build_lightweight_viz_core,
+)
+from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.grapher.node import Node
+
+
+def _n(sheet: str, col: str, row: int, *, leaf: bool, formula: str | None) -> Node:
+    return Node(
+        sheet=sheet,
+        column=col,
+        row=row,
+        formula=formula,
+        normalized_formula=formula,
+        value=1 if leaf else None,
+        is_leaf=leaf,
+    )
+
+
+def _chain_graph() -> DependencyGraph:
+    g = DependencyGraph()
+    n1 = _n("S", "A", 1, leaf=True, formula=None)
+    n2 = _n("S", "A", 2, leaf=False, formula="=A1")
+    n3 = _n("S", "A", 3, leaf=False, formula="=A2")
+    for n in (n1, n2, n3):
+        g.add_node(n)
+    g.add_edge(n3.key, n2.key)
+    g.add_edge(n2.key, n1.key)
+    return g
+
+
+def _chain_nx():
+    import networkx as nx
+
+    g = nx.DiGraph()
+    g.add_node("S!A1", formula=None, value=1, is_leaf=True, sheet="S", column="A", row=1)
+    g.add_node("S!A2", formula="=A1", value=None, is_leaf=False, sheet="S", column="A", row=2)
+    g.add_node("S!A3", formula="=A2", value=None, is_leaf=False, sheet="S", column="A", row=3)
+    g.add_edge("S!A3", "S!A2")
+    g.add_edge("S!A2", "S!A1")
+    return g
+
+
+def _payload():
+    return to_web_viz_payload(_chain_nx(), layout="stratified_multipartite")
 
 
 def test_write_html_core_only_no_overlays(tmp_path: Path) -> None:
-    from excel_grapher.grapher.lightweight_viz import (
-        VizLimits,
-        assemble_lightweight_viz_payload,
-        build_lightweight_viz_core,
-    )
-
     g = _chain_graph()
     core = build_lightweight_viz_core(g, limits=VizLimits(), layout_input=None)
     payload = assemble_lightweight_viz_payload(core, [])
@@ -40,7 +76,7 @@ def test_write_html_core_only_no_overlays(tmp_path: Path) -> None:
 
 
 def test_write_html_creates_file(tmp_path: Path) -> None:
-    p = to_lightweight_viz(_chain_graph())
+    p = _payload()
     out = tmp_path / "v.html"
     write_lightweight_viz_html(p, out, title="T", data_mode="inline")
     assert out.is_file()
@@ -52,7 +88,7 @@ def test_write_html_creates_file(tmp_path: Path) -> None:
 
 
 def test_inline_embeds_payload_under_budget(tmp_path: Path) -> None:
-    p = to_lightweight_viz(_chain_graph())
+    p = _payload()
     out = tmp_path / "v.html"
     write_lightweight_viz_html(p, out, data_mode="inline", inline_size_budget_mb=50)
     text = out.read_text(encoding="utf-8")
@@ -63,7 +99,7 @@ def test_inline_embeds_payload_under_budget(tmp_path: Path) -> None:
 
 
 def test_sidecar_writes_sibling_json(tmp_path: Path) -> None:
-    p = to_lightweight_viz(_chain_graph())
+    p = _payload()
     out = tmp_path / "v.html"
     write_lightweight_viz_html(p, out, data_mode="sidecar", data_path=tmp_path / "data.viz.json")
     data = tmp_path / "data.viz.json"
@@ -72,7 +108,7 @@ def test_sidecar_writes_sibling_json(tmp_path: Path) -> None:
 
 
 def test_auto_sidecar_when_estimate_large(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    p = to_lightweight_viz(_chain_graph())
+    p = _payload()
     monkeypatch.setattr(
         lightweight_viz_mod,
         "estimate_serialized_json_bytes",
@@ -87,13 +123,13 @@ def test_auto_sidecar_when_estimate_large(tmp_path: Path, monkeypatch: pytest.Mo
 
 
 def test_invalid_payload_version_raises(tmp_path: Path) -> None:
-    p = replace(to_lightweight_viz(_chain_graph()), version=99)
+    p = replace(_payload(), version=99)
     with pytest.raises(ValueError, match="Unsupported"):
         write_lightweight_viz_html(p, tmp_path / "x.html", data_mode="inline")
 
 
 def test_write_data_roundtrip(tmp_path: Path) -> None:
-    p = to_lightweight_viz(_chain_graph())
+    p = _payload()
     path = tmp_path / "d.json"
     write_lightweight_viz_data(p, path)
     assert path.read_text(encoding="utf-8").startswith("{")
@@ -109,7 +145,7 @@ def test_write_data_roundtrip(tmp_path: Path) -> None:
     ],
 )
 def test_overview_viewer_contract(tmp_path: Path, needle: str) -> None:
-    p = to_lightweight_viz(_chain_graph())
+    p = _payload()
     out = tmp_path / "v.html"
     write_lightweight_viz_html(p, out, data_mode="inline")
     assert needle.lower() in out.read_text(encoding="utf-8").lower()

@@ -294,48 +294,64 @@ G = to_networkx(g)
 
 For `to_graphviz`, `to_mermaid`, and `to_networkx`, formula cells get a **second line** in the node label (cell address, then the formula). This is on by default (`include_formula_on_nodes=True`). Set `include_formula_on_nodes=False` to use only the cell address. Long formulas are truncated for display: `max_formula_length` defaults to `120` characters; use `None` for no limit. Truncated text ends with `...`.
 
-`to_lightweight_viz` and `build_lightweight_viz_core` take the same `include_formula_on_nodes` and `max_formula_length` parameters. The serialized `core.nodes` object includes a `formula` array (per-node display string or `null` for value cells) and the HTML viewer shows it in the hover tooltip.
+### Large graphs and module inference: NetworkX visualization
 
-### Large graphs: lightweight WebGL viewer
+For graphs that are too large for Graphviz or Mermaid, the current recommended workflow is:
 
-For graphs that are too large for Graphviz or Mermaid, build a **columnar** payload and open the generated HTML in a browser (no Node/npm build). The core workflow builds a structural payload (`core`) and writes HTML/JSON artifacts.
+- `DependencyGraph` -> `to_networkx(...)` -> `to_web_viz_payload(...)`
+- `write_web_viz_html(...)` for rendering
 
-By default, node placement uses depth from user-defined extraction targets. The cells you selected as your output targets when extracting the graph will appear in the top row of nodes in the visualization, while the bottom row will consist entirely of input cells (hardcoded values with no formula dependencies).
+This builds a NetworkX graph, converts it to a visualization payload, generates a static HTML viewer that wraps the payload, and opens the generated HTML in a browser. The payload stores node coordinates, module/rank metadata, and edge columns; the browser viewer consumes those directly.
 
 ```python
 from pathlib import Path
 
-from excel_grapher.grapher import create_dependency_graph
-from excel_grapher.grapher.lightweight_viz import (
-    VizLimits,
-    assemble_lightweight_viz_payload,
-    build_lightweight_viz_core,
-    write_lightweight_viz_data,
-    write_lightweight_viz_html,
-)
+from excel_grapher.exporter import to_web_viz_payload
+from excel_grapher.grapher import create_dependency_graph, to_networkx, write_web_viz_html
 
 g = create_dependency_graph("model.xlsx", ["Sheet1!A1"], load_values=False)
-core = build_lightweight_viz_core(
-    g, limits=VizLimits(max_local_nodes=None, max_local_edges=None)
-)
-payload = assemble_lightweight_viz_payload(core, overlays=[])
-write_lightweight_viz_data(payload, Path("model.viz.json"))
-write_lightweight_viz_html(payload, Path("model.html"), data_mode="auto")
+payload = to_web_viz_payload(to_networkx(g))
+write_web_viz_html(payload, Path("model.html"), data_mode="auto")
 ```
 
-![Lightweight visualization overview](README_files/lightweight_viz.png)
+![Lightweight visualization overview](README_files/lightweight_viewer.png)
 
-### Customizing the visualization
+#### Customizing NetworkX visualization
 
-You can select `layout_mode="layered"` for SCC + rank-band layering or `layout_mode="grid"` to arrange nodes in a grid. Optional `layout_mode="force"` runs a deterministic export-time force-directed layout over the whole graph (spring-like edges plus repulsion); it is **not** the default because cost scales with graph size and can take minutes on very large workbooks—use it for offline or batch exports when you want dense-layout coordinates baked into `core.nodes.x` / `core.nodes.y`. With `excel_grapher.exporter.to_lightweight_viz(...)`, pass `layout_mode="force"` to apply force placement while keeping module-inference overlays; omit it for the usual rank-band core positions.
+The payload builder (`to_web_viz_payload`) and the viewer (`write_web_viz_html`) are powered by plugins. A single default plugin is provided for each, but you are encouraged to write your own. Configure `to_web_viz_payload(...)` via:
 
-By default, visualization includes both guarded and unguarded edges; set `include_guarded_edges=False` to exclude guarded edges (nodes unreachable from the BFS seed set are pruned in this mode). Local edge export limits are unbounded by default (`VizLimits(max_local_nodes=None, max_local_edges=None)`).
+- `layout="..."`: layout plugin id (`stratified_multipartite` default; see `list_web_viz_layouts()`).
+- `layout_config={...}`: plugin-specific optional config.
+- `include_guarded_edges`: include/exclude guarded edges in core/local edge export.
+- `include_guarded_edges_for_partition`: include/exclude guarded edges in module partitioning.
+- `include_module_overlay`: include partition overlay metadata and module color semantics.
 
-`write_lightweight_viz_html(..., data_mode="auto")` inlines JSON when the estimated payload is at most **50 MiB** (override with `inline_size_budget_mb`); otherwise it writes a sidecar `.viz.json` next to the HTML. The serialized payload has top-level keys `version`, `core`, and `overlays`; truncation and density metadata live on `payload.core.stats`. For the flattened stats/nodes/modules view used in tests and tooling, use `lightweight_viz_flat(payload)`.
+#### Default layout: `stratified_multipartite`
 
-Open the exported HTML directly in a browser. The interface supports panning, zooming, hover tooltips, and a local force-layout mode for inspecting a neighborhood around a selected node.
+The default layout is `stratified_multipartite`, which uses SCC-condensation longest-path rank on the vertical axis and Louvain community ordering on the horizontal axis.
 
-`excel_grapher.exporter.to_lightweight_viz(...)` adds module-inference overlays on top of this core payload; see Section 5 for that exporter-specific workflow and interpretation guidance.
+```python
+from excel_grapher.exporter import to_web_viz_payload, list_web_viz_layouts
+from excel_grapher.grapher import write_web_viz_html
+
+payload = to_web_viz_payload(
+    G,
+    layout="stratified_multipartite",  # default
+    layout_config=None,                # plugin-specific options
+    include_module_overlay=True,       # include Louvain partition overlay
+)
+write_web_viz_html(payload, "model-web.html", data_mode="auto")
+```
+
+This layout is partly intended to inform refactoring and modularization of generated code. Interpret the viewer with this mental model:
+
+- **Position**: `x`/`y` - SCC-rank vertical strata and Louvain-based horizontal ordering.
+- **Color**: node color maps to `module_id` (partition/community id). With no module overlay, all nodes are one module color.
+- **Edges**: overview prefers node-level `local_edges`; if unavailable, it falls back to module-centroid edges.
+- **Label `Module edges` / `Graph edges`**: reflects which edge set is currently drawn in overview.
+- **Rank** in tooltip is node rank metadata and may differ from visual layering for force-directed layouts.
+
+`excel_grapher.exporter.to_web_viz_payload(...)` includes the partition overlay by default and is the canonical payload entrypoint for this visualization workflow. Open the exported HTML directly in a browser. The interface supports panning, zooming, hover tooltips, and a local force-layout mode for inspecting a neighborhood around a selected node.
 
 ### Validation via `calcChain.xml`
 
@@ -673,57 +689,6 @@ print(generated_results)
 - **Disadvantages**
   - **Still Excel-shaped**: the structure is still cell-centric and Excel-like; interpretability gains are incremental.
   - **Regeneration required**: changes to the workbook require re-extracting and re-exporting.
-
-### Module inference overlay for package planning
-
-`excel_grapher.exporter.to_lightweight_viz(...)` builds the lightweight payload and adds the default module-inference overlay used for package-boundary exploration.
-
-```python
-from pathlib import Path
-
-from excel_grapher.exporter import to_lightweight_viz
-from excel_grapher.grapher import create_dependency_graph, write_lightweight_viz_html
-
-g = create_dependency_graph("model.xlsx", ["Sheet1!A1"], load_values=False)
-payload = to_lightweight_viz(g)
-write_lightweight_viz_html(payload, Path("model.html"), data_mode="auto")
-```
-
-To refresh the checked-in LIC-DSF sample viewer:
-
-```bash
-uv run examples/lic_dsf/regenerate_sample_viz.py --full
-```
-
-This rebuilds `examples/lic_dsf/data/lic-dsf-template-sample-exported-viz.html` from the cached dependency graph in `examples/lic_dsf/.cache/`. If you only changed the HTML template and want to re-embed the current `lightweight_viz_template.html` without rebuilding the payload, run:
-
-```bash
-uv run examples/lic_dsf/regenerate_sample_viz.py
-```
-
-#### Example interface
-
-![Inferred module graph](README_files/inferred_module_graph.png)
-
-#### Interpreting module inference in the overview
-
-The overview is most useful as a **module-finding aid** for generated-library design, not as a literal geometric embedding of workbook logic. Color primarily indicates inferred module membership. Vertical position is the important structural axis: farther down usually means more upstream precedent-like logic, while farther up usually means more downstream consumer, output, or report logic.
-
-When reading the graph:
-
-- A same-color band that spans several Y slices is a strong candidate for one extracted library module, especially if it has relatively few blue inter-module lines leaving it.
-- A same-color cluster all in one narrow Y slice is often just a batch of parallel formulas at one stage, not necessarily a full standalone boundary, though it may still be patternized into a small helper for deduplication.
-- Modules near the bottom are good candidates for shared primitives, base calculations, normalization, lookups, or assumptions.
-- Modules near the top are more likely report assembly, presentation logic, or output-specific composition.
-- A module with heavy fan-in and fan-out across many colors is probably cross-cutting glue, not a clean package boundary.
-- If you see several adjacent same-color or tightly coupled colors stepping top-to-bottom, that often suggests a higher-level package split rather than one tiny module per color.
-
-Some caution is warranted when interpreting the picture:
-
-- The X axis mainly separates module bands and reduces overplotting; horizontal proximity is much less semantically important than vertical position.
-- Similar colors do not imply similar semantics; color is just a deterministic visual label for `module_id`.
-- The blue overlay lines show module-to-module connectivity, which is useful for spotting coupling hot spots, but they are summary edges rather than a complete rendering of every cell-to-cell dependency.
-- The `Force` button is for local inspection only. Use the `Overview` view, not the force-layout view, when reasoning about global library boundaries.
 
 ---
 
