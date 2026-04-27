@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import fastpyxl.utils.cell
+
 from excel_grapher.core.address_keys import normalize_key, parse_address
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.lightweight_viz import (
@@ -256,9 +257,7 @@ def _dependency_graph_from_networkx(nx_graph: Any) -> DependencyGraph:
 
     for raw_from, raw_to, edge_attrs in nx_graph.edges(data=True):
         if not isinstance(raw_from, str) or not isinstance(raw_to, str):
-            raise TypeError(
-                "to_web_viz_payload expects string edge endpoints in NodeKey format"
-            )
+            raise TypeError("to_web_viz_payload expects string edge endpoints in NodeKey format")
         edge_kwargs: dict[str, Any] = {}
         if "provenance" in edge_attrs:
             edge_kwargs["provenance"] = edge_attrs["provenance"]
@@ -433,9 +432,7 @@ def _compute_networkx_layout_positions(
     work,
     *,
     keys: list[str],
-    layout_mode: Literal[
-        "spring", "forceatlas2", "multipartite", "graphviz_dot", "graphviz_sfdp"
-    ],
+    layout_mode: Literal["spring", "forceatlas2", "multipartite", "graphviz_dot", "graphviz_sfdp"],
     node_rank: tuple[int, ...],
     seed: int,
     weight_attr: str | None,

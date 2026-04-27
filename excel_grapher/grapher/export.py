@@ -16,9 +16,9 @@ from .lightweight_viz import (
     LightweightVizStats,
     LocalForceSubgraph,
     select_local_force_subgraph,
-    write_web_viz_html,
     write_lightweight_viz_data,
     write_lightweight_viz_html,
+    write_web_viz_html,
 )
 from .node import Node, NodeKey, NodeView
 

@@ -10,13 +10,13 @@ import pytest
 import excel_grapher.grapher.lightweight_viz as lightweight_viz_mod
 from excel_grapher.exporter import to_web_viz_payload
 from excel_grapher.grapher import write_lightweight_viz_data, write_lightweight_viz_html
+from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.lightweight_viz import (
     VIZ_PAYLOAD_VERSION,
     VizLimits,
     assemble_lightweight_viz_payload,
     build_lightweight_viz_core,
 )
-from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.node import Node
 
 

@@ -54,42 +54,58 @@ print_mermaid(graph)
 
 ## 02. Linear dependency
 
+The second example consists of two cells: one hardcoded and one a formula that depends on the hardcoded cell.
+
 ```{python}
-print_case(2, "Linear dependency", "Sheet1!C2", False)
+graph: DependencyGraph = create_dependency_graph(workbook, ["Sheet1!C2"], load_values=False)
+
+print_mermaid(graph)
 ```
 
 ## 03. Conditional branches
 
 ```{python}
-print_case(3, "Conditional branches", "Sheet1!E3", True)
+graph: DependencyGraph = create_dependency_graph(workbook, ["Sheet1!E3"], load_values=False)
+
+print_mermaid(graph)
 ```
 
 ## 04. Nested conditional in a cell
 
 ```{python}
-print_case(4, "Nested conditional in a cell", "Sheet1!D4", False)
+graph: DependencyGraph = create_dependency_graph(workbook, ["Sheet1!D4"], load_values=False)
+
+print_mermaid(graph)
 ```
 
 ## 05. Nested conditional across cells
 
 ```{python}
-print_case(5, "Nested conditional across cells", "Sheet1!E5", False)
+graph: DependencyGraph = create_dependency_graph(workbook, ["Sheet1!E5"], load_values=False)
+
+print_mermaid(graph)
 ```
 
 ## 06. Will cycle
 
 ```{python}
-print_case(6, "Will cycle", "Sheet1!C6", False)
+graph: DependencyGraph = create_dependency_graph(workbook, ["Sheet1!C6"], load_values=False)
+
+print_mermaid(graph)
 ```
 
 ## 07. Won't cycle
 
 ```{python}
-print_case(7, "Won't cycle", "Sheet1!C7", False)
+graph: DependencyGraph = create_dependency_graph(workbook, ["Sheet1!C7"], load_values=False)
+
+print_mermaid(graph)
 ```
 
 ## 08. May cycle
 
 ```{python}
-print_case(8, "May cycle", "Sheet1!C8", False)
+graph: DependencyGraph = create_dependency_graph(workbook, ["Sheet1!C8"], load_values=False)
+
+print_mermaid(graph)
 ```

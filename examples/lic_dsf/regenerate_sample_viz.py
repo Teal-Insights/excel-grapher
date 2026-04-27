@@ -12,6 +12,7 @@ _DIR = Path(__file__).resolve().parent
 OUT = _DIR / "data" / "lic-dsf-template-sample-exported-viz.html"
 PKL = _DIR / ".cache" / "lic-dsf-template-2025-08-12-dependency-graph.pkl"
 
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("-o", "--output", type=Path, default=OUT)
@@ -52,6 +53,7 @@ def main() -> None:
         f"nodes={payload.core.stats.node_count}  -> {args.output.resolve()}",
         flush=True,
     )
+
 
 if __name__ == "__main__":
     main()

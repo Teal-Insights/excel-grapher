@@ -17,14 +17,12 @@ LAYOUT_MULTIPARTITE = "multipartite"
 LAYOUT_GRAPHVIZ_DOT = "graphviz_dot"
 LAYOUT_GRAPHVIZ_SFDP = "graphviz_sfdp"
 
-_NX_SUBMODES = frozenset(
-    {
-        LAYOUT_SPRING,
-        LAYOUT_FORCEATLAS2,
-        LAYOUT_MULTIPARTITE,
-        LAYOUT_GRAPHVIZ_DOT,
-        LAYOUT_GRAPHVIZ_SFDP,
-    }
+_NX_SUBMODES: tuple[WebVizNxSubmode, ...] = (
+    "spring",
+    "forceatlas2",
+    "multipartite",
+    "graphviz_dot",
+    "graphviz_sfdp",
 )
 
 WebVizNxSubmode = Literal["spring", "forceatlas2", "multipartite", "graphviz_dot", "graphviz_sfdp"]
@@ -87,7 +85,8 @@ def run_web_viz_layout(
 
 
 def _positions_stratified_scc_louvain(
-    keys: list[str], ma: Any,
+    keys: list[str],
+    ma: Any,
 ) -> dict[str, tuple[float, float]]:
     n = len(keys)
     if n == 0:
@@ -116,8 +115,9 @@ def _positions_stratified_scc_louvain(
 
 
 def _stratified_multipartite(
-    ctx: WebVizLayoutContext, _layout_config: dict[str, Any]
+    ctx: WebVizLayoutContext, layout_config: dict[str, Any]
 ) -> WebVizLayoutResult:
+    del layout_config
     if not ctx.include_module_overlay:
         from excel_grapher.exporter import lightweight_viz as lv
 
@@ -174,7 +174,8 @@ def _stratified_multipartite(
 def _nx_submode(
     submode: WebVizNxSubmode,
 ) -> WebVizLayoutPlugin:
-    def _impl(ctx: WebVizLayoutContext, _layout_config: dict[str, Any]) -> WebVizLayoutResult:
+    def _impl(ctx: WebVizLayoutContext, layout_config: dict[str, Any]) -> WebVizLayoutResult:
+        del layout_config
         from excel_grapher.exporter import lightweight_viz as lv
         from excel_grapher.grapher.lightweight_viz import build_lightweight_viz_core
 
@@ -236,7 +237,7 @@ def _nx_submode(
 def _register_builtin_plugins() -> None:
     register_web_viz_layout(LAYOUT_STRATIFIED_MULTIPARTITE, _stratified_multipartite)
     for sid in _NX_SUBMODES:
-        register_web_viz_layout(sid, _nx_submode(sid))  # type: ignore[arg-type]
+        register_web_viz_layout(sid, _nx_submode(sid))
 
 
 _register_builtin_plugins()

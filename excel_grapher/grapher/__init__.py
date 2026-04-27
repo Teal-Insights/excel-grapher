@@ -47,9 +47,9 @@ from .export import (
     to_graphviz,
     to_mermaid,
     to_networkx,
-    write_web_viz_html,
     write_lightweight_viz_data,
     write_lightweight_viz_html,
+    write_web_viz_html,
 )
 from .graph import CycleError, CycleReport, DependencyGraph, NodeHook
 from .guard import And, Compare, GuardExpr, Literal, Not, Or

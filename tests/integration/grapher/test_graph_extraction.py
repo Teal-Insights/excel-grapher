@@ -160,16 +160,8 @@ def test_conditions_are_extracted_as_unguarded_but_conditional_branches_as_guard
     guard: GuardExpr | None = graph.get_edge_guard("Sheet1!E1", "Sheet1!B1")
     # TODO: We are going to need to modify these assertions when we support multiple guards per edge
     guard = graph.get_edge_guard("Sheet1!E1", "Sheet1!C1")
-    assert guard == Compare(
-        left=CellRef(key='Sheet1!B1'),
-        op='=',
-        right=Literal(value=1)
-    )
+    assert guard == Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=1))
     guard = graph.get_edge_guard("Sheet1!E1", "Sheet1!D1")
     assert guard == Not(
-        operand=Compare(
-            left=CellRef(key='Sheet1!B1'),
-            op='=',
-            right=Literal(value=1)
-        )
+        operand=Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=1))
     )

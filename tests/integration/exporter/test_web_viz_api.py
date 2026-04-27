@@ -12,7 +12,10 @@ import pytest
 
 from excel_grapher import write_web_viz_html
 from excel_grapher.exporter import to_web_viz_payload
-from excel_grapher.exporter.web_viz_layout import LAYOUT_STRATIFIED_MULTIPARTITE, list_web_viz_layouts
+from excel_grapher.exporter.web_viz_layout import (
+    LAYOUT_STRATIFIED_MULTIPARTITE,
+    list_web_viz_layouts,
+)
 from excel_grapher.grapher.lightweight_viz import lightweight_viz_flat
 
 
