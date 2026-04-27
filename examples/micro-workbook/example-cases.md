@@ -1,13 +1,12 @@
 # Consolidated Micro-Workbook Graph Examples
 
-
 Each row of
 [examples/micro-workbook/example-cases.xlsx](example-cases.xlsx)
 contains a self-contained example that can be extracted as a graph. This
 workbook demonstrates the workflow and application behavior for
 different Excel dependency scenarios.
 
-``` python
+```python
 from pathlib import Path
 from pprint import pformat
 
@@ -41,13 +40,13 @@ extract the graph with the `create_dependency_graph` function. This
 returns a `DependencyGraph` object, which we can pretty-print using the
 helper defined above.
 
-``` python
+```python
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!B1"], load_values=False)
 
 print_text(pformat(graph, indent=4, width=100))
 ```
 
-``` text
+```text
 DependencyGraph(_nodes={   'Sheet1!B1': Node(sheet='Sheet1',
                                              column='B',
                                              row=1,
@@ -67,55 +66,59 @@ DependencyGraph(_nodes={   'Sheet1!B1': Node(sheet='Sheet1',
 If we render this to Mermaid, we can see that it is a single-node graph
 with no dependencies.
 
-``` python
+```python
 print_mermaid(graph)
 ```
 
-``` mermaid
+```mermaid
 flowchart TD
   Sheet1_B1["Sheet1!B1<br>=1+1"]
 ```
+
+
 
 ## 02. Linear dependency
 
 The second example consists of two cells: one hardcoded and one a
 formula that depends on the hardcoded cell.
 
-``` python
+```python
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C2"], load_values=True)
 
 print_mermaid(graph)
 ```
 
-``` mermaid
+```mermaid
 flowchart TD
   Sheet1_B2["Sheet1!B2"]
   Sheet1_C2("Sheet1!C2<br>=B2+1")
   Sheet1_C2 --> Sheet1_B2
 ```
 
+
+
 The default value of “Sheet1!B2” is `1` and the formula is `=B2+1`, so
 the Excel-cached value of “Sheet1!C2” is `2`, as we can see on the
 node’s value field. We can use `get_node` for a read-only view of the
 node:
 
-``` python
+```python
 node = graph.get_node("Sheet1!C2")
 print_text(str(node.value))
 ```
 
-``` text
+```text
 2
 ```
 
 We can also use `get_dependencies` to get the dependencies of the node:
 
-``` python
+```python
 dependencies = graph.get_dependencies("Sheet1!C2")
 print_text(str(dependencies))
 ```
 
-``` text
+```text
 frozenset({'Sheet1!B2'})
 ```
 
@@ -124,7 +127,7 @@ What would “Sheet1!C2” evaluate to if we set the value of “Sheet1!B2” to
 passing the graph to `FormulaEvaluator` (an Excel emulator) for
 recomputation:
 
-``` python
+```python
 graph.set_node_value("Sheet1!B2", 2)
 
 with FormulaEvaluator(graph) as evaluator:
@@ -132,7 +135,7 @@ with FormulaEvaluator(graph) as evaluator:
     print_text(str(value))
 ```
 
-``` text
+```text
 3.0
 ```
 
@@ -145,7 +148,7 @@ emulator, we can transpile the graph to standalone Python code using the
 `CodeGenerator` class. We’ll write the code to a file called
 `linear_dependency.py` in the current folder.
 
-``` python
+```python
 code = CodeGenerator(graph).generate(["Sheet1!C2"])
 with open("linear_dependency.py", "w") as f:
     f.write(code)
@@ -154,7 +157,7 @@ with open("linear_dependency.py", "w") as f:
 We can then append the file as a module to our current session and run
 the code:
 
-``` python
+```python
 import sys
 sys.path.append(".")
 from linear_dependency import compute_all
@@ -163,7 +166,7 @@ result = compute_all()
 print_text(str(result["Sheet1!C2"]))
 ```
 
-``` text
+```text
 3.0
 ```
 
@@ -175,19 +178,19 @@ To compute with the original value of “Sheet1!B2” (which was `1`), we
 can call `compute_all` with an `inputs` override that restores that
 value:
 
-``` python
+```python
 result = compute_all(inputs={"Sheet1!B2": 1})
 print_text(str(result["Sheet1!C2"]))
 ```
 
-``` text
+```text
 2.0
 ```
 
 Or we can create a `context` object with our desired inputs and call
 `compute_all` with it:
 
-``` python
+```python
 from linear_dependency import make_context
 
 context = make_context(inputs={"Sheet1!B2": 1})
@@ -195,7 +198,7 @@ result = compute_all(ctx=context)
 print_text(str(result["Sheet1!C2"]))
 ```
 
-``` text
+```text
 2.0
 ```
 
@@ -217,13 +220,13 @@ with a logical condition. Visualization tools such as Mermaid mostly
 show guarded edges as dashed lines with labels indicating the guard
 condition.
 
-``` python
+```python
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!E3"], load_values=False)
 
 print_mermaid(graph)
 ```
 
-``` mermaid
+```mermaid
 flowchart TD
   Sheet1_B3["Sheet1!B3"]
   Sheet1_C3["Sheet1!C3"]
@@ -234,14 +237,16 @@ flowchart TD
   Sheet1_E3 -.->|"NOT(Sheet1!B3=1)"| Sheet1_D3
 ```
 
+
+
 To see the representation of guards in Python, we can inspect the
 `_guards` attribute on the graph:
 
-``` python
+```python
 print_text(pformat(graph._guards, indent=4, width=100))
 ```
 
-``` text
+```text
 {   ('Sheet1!E3', 'Sheet1!C3'): Compare(left=CellRef(key='Sheet1!B3'),
                                         op='=',
                                         right=Literal(value=1)),
@@ -254,12 +259,12 @@ The graph object exposes a `get_edge_guard` method to get the guard
 expression for a given edge. Printing the returned `GuardExpr` object
 gives us an Excel-style interpretation of the guard expression:
 
-``` python
+```python
 guard = graph.get_edge_guard("Sheet1!E3", "Sheet1!C3")
 print_text(str(guard))
 ```
 
-``` text
+```text
 Sheet1!B3=1
 ```
 
@@ -272,13 +277,13 @@ edge is on the project roadmap. For instance,
 either as a list of guard conditions or as a single guard with
 conditions joined by logical `AND`: `NOT(Sheet1!B4=1) AND Sheet1!B4=0`.
 
-``` python
+```python
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!D4"], load_values=False)
 
 print_mermaid(graph)
 ```
 
-``` mermaid
+```mermaid
 flowchart TD
   Sheet1_B4["Sheet1!B4"]
   Sheet1_C4["Sheet1!C4"]
@@ -287,6 +292,8 @@ flowchart TD
   Sheet1_D4 -.->|"NOT(Sheet1!B4=1)"| Sheet1_C4
 ```
 
+
+
 ## 05. Nested conditional across cells
 
 Conditional dependencies across cells are supported. For example,
@@ -294,13 +301,13 @@ tracing the path between “Sheet1!E3” and “Sheet1!C5” reveals that C5
 will be needed to compute E3 only if two conditions are met:
 `NOT(Sheet1!A5=1)` and `Sheet1!B5=0`.
 
-``` python
+```python
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!E5"], load_values=False)
 
 print_mermaid(graph)
 ```
 
-``` mermaid
+```mermaid
 flowchart TD
   Sheet1_A5["Sheet1!A5"]
   Sheet1_B5["Sheet1!B5"]
@@ -314,24 +321,28 @@ flowchart TD
   Sheet1_E5 -.->|"NOT(Sheet1!A5=1)"| Sheet1_D5
 ```
 
+
+
 ## 06. Must cycle
 
 If formula cells make a cycle, the graph will be extracted successfully,
 as dependency traversal stops when it hits an already-visited cell.
 
-``` python
+```python
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C6"], load_values=False)
 
 print_mermaid(graph)
 ```
 
-``` mermaid
+```mermaid
 flowchart TD
   Sheet1_B6("Sheet1!B6<br>=C6+1")
   Sheet1_C6("Sheet1!C6<br>=B6+1")
   Sheet1_B6 --> Sheet1_C6
   Sheet1_C6 --> Sheet1_B6
 ```
+
+
 
 Excel’s internal behavior with respect to cycles is different depending
 on workbook settings. If `iterate` is enabled in the workbook, Excel
@@ -341,24 +352,26 @@ any cell already seen before in a formula chain. In `FormulaEvaluator`,
 we replicate this behavior with a `CircularReferenceWarning` unless the
 workbook is configured to allow cycles:
 
-``` python
+```python
 with FormulaEvaluator(graph) as evaluator:
     # Note: warning may not always be emitted due to Quarto caching behavior
     value = evaluator.evaluate("Sheet1!C6")
     print_text(str(value))
 ```
 
-``` text
+```text
 2.0
 ```
 
-    C:\Users\chris\Software\excel-grapher\excel_grapher\evaluator\evaluator.py:218: CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).
-      return xl_circular_reference()
+```
+C:\Users\chris\Software\excel-grapher\excel_grapher\evaluator\evaluator.py:218: CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).
+  return xl_circular_reference()
+```
 
 Similarly, if we generate and run standalone Python code with
 `CodeGenerator`, we will see the same behavior:
 
-``` python
+```python
 import sys
 
 code = CodeGenerator(graph).generate(["Sheet1!C6"])
@@ -372,22 +385,24 @@ result = compute_all()
 print_text(str(result["Sheet1!C6"]))
 ```
 
-``` text
+```text
 2.0
 ```
 
-    C:\Users\chris\Software\excel-grapher\examples\micro-workbook\must_cycle.py:284: CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).
-      return xl_circular_reference()
+```
+C:\Users\chris\Software\excel-grapher\examples\micro-workbook\must_cycle.py:284: CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).
+  return xl_circular_reference()
+```
 
 For a detailed report on cycles in the graph, we can use the
 `cycle_report` method:
 
-``` python
+```python
 report = graph.cycle_report()
 print_text(pformat(report, indent=4, width=100))
 ```
 
-``` text
+```text
 CycleReport(has_must_cycles=True,
             has_may_cycles=False,
             must_cycles=[{'Sheet1!B6', 'Sheet1!C6'}],
@@ -402,7 +417,7 @@ If edge guards involved in a cycle are mutually logically exclusive, the
 cycle should be broken and should not appear in the cycle report. This
 functionality is on the roadmap but not yet correctly implemented.
 
-``` python
+```python
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C7"], load_values=False)
 
 print_mermaid(graph)
@@ -411,7 +426,7 @@ report = graph.cycle_report()
 print_text(pformat(report, indent=4, width=100))
 ```
 
-``` mermaid
+```mermaid
 flowchart TD
   Sheet1_B7["Sheet1!B7"]
   Sheet1_C7("Sheet1!C7<br>=IF(B7=0,1,D7)")
@@ -422,7 +437,9 @@ flowchart TD
   Sheet1_D7 -.->|"NOT(NOT(Sheet1!B7=0))"| Sheet1_C7
 ```
 
-``` text
+
+
+```text
 CycleReport(has_must_cycles=False,
             has_may_cycles=True,
             must_cycles=[],
@@ -440,7 +457,7 @@ mutually exclusive only if B8 is either 1 or 0. For any other value of
 B8 (e.g., `2`), both conditions are true and a cycle will occur. So this
 cycle is flagged as a may-cycle in the cycle report.
 
-``` python
+```python
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C8"], load_values=False)
 
 print_mermaid(graph)
@@ -449,7 +466,7 @@ report = graph.cycle_report()
 print_text(pformat(report, indent=4, width=100))
 ```
 
-``` mermaid
+```mermaid
 flowchart TD
   Sheet1_B8["Sheet1!B8"]
   Sheet1_C8("Sheet1!C8<br>=IF(B8=0,1,D8)")
@@ -460,7 +477,9 @@ flowchart TD
   Sheet1_D8 -.->|"NOT(Sheet1!B8=1)"| Sheet1_C8
 ```
 
-``` text
+
+
+```text
 CycleReport(has_must_cycles=False,
             has_may_cycles=True,
             must_cycles=[],
@@ -476,7 +495,7 @@ constraint API expresses this by attaching a `Literal[...]` (or
 `TypedDict`, then building a `DynamicRefConfig` from it and passing it
 to `create_dependency_graph` via the `dynamic_refs` parameter:
 
-``` python
+```python
 from typing import Literal, TypedDict
 
 from excel_grapher import DynamicRefConfig, constrain
@@ -497,7 +516,7 @@ report = graph.cycle_report()
 print_text(pformat(report, indent=4, width=100))
 ```
 
-``` text
+```text
 CycleReport(has_must_cycles=False,
             has_may_cycles=True,
             must_cycles=[],
@@ -518,17 +537,21 @@ surface.
 
 ### A note on domain constraints
 
-I don't love the current constraints API shape. The problem it's trying to solve is that cell addresses aren't valid Python identifiers. A normal TypedDict declares fields at class-definition time:                                                                                                                  
+I don't love the current constraints API shape. The problem it's trying to  
+solve is that cell addresses aren't valid Python identifiers. A norma  
+TypedDict declares fields at class-definition time:                                                                                                                  
 
-``` python
+```python
 class MyDict(TypedDict):
     field_one: int
     field_two: str
 ```
 
-But cell addresses like "Sheet1!B8" contain `!` and `'` characters, so you can't write them as class attributes. The `constrain` helper sidesteps this by writing directly to `__annotations__`:
+But cell addresses like "Sheet1!B8" contain `!` and `'` characters, so you  
+can't write them as class attributes. The `constrain` helper sidesteps this  
+by writing directly to `__annotations__`:
 
-``` python
+```python
 def constrain(constraints: type[Any], address: str, annotation: Any) -> None:
     ...
     for key in cells:
@@ -537,7 +560,7 @@ def constrain(constraints: type[Any], address: str, annotation: Any) -> None:
 
 So this:
 
-``` python
+```python
 class MayCycleConstraints(TypedDict, total=False):
     pass
 
@@ -545,18 +568,28 @@ constrain(MayCycleConstraints, "Sheet1!B8", Literal[0, 1])
 ```
 
 is equivalent to (if Python syntax allowed it):
-``` python
+
+```python
 
 class MayCycleConstraints(TypedDict, total=False):
     "Sheet1!B8": Literal[0, 1]   # not legal — `!` is not a valid identifier char
 ```
 
-After the `constrain` call, `MayCycleConstraints.__annotations__ == {"Sheet1!B8": Literal[0, 1]}`.
+After the `constrain` call,  
+`MayCycleConstraints.__annotations__ == {"Sheet1!B8": Literal[0, 1]}`.
 
 Why a `TypedDict` rather than a plain `dict`?
 
 Two reasons:
-1. The annotation system already exists. `TypedDict.__annotations__ + get_type_hints` gives you `Annotated[...]` and `Literal[...]` for free, so domains can be expressed using standard Python typing instead of a bespoke DSL.
-2. Reusability across the codebase. The same constraints type is consumed elsewhere (e.g. `verify_lic_dsf_constraints_target_leaves`) for validation against the workbook. Once you express domains as type hints, mypy and `TypeAdapter` can also see them.
+
+1. The annotation system already exists.  
+`TypedDict.__annotations__ + get_type_hints` gives you  
+`Annotated[...]` and `Literal[...]` for free, so domains can be  
+expressed using standard Python typing instead of a bespoke DSL.
+2. Reusability across the codebase. The same constraints type is  
+consumed elsewhere (e.g.  
+`verify_lic_dsf_constraints_target_leaves`) for validation against the  
+workbook. Once you express domains as type hints, mypy and  
+`TypeAdapter` can also see them.
 
 However, there is likely a better API shape. I'm open to suggestions.
