@@ -1,6 +1,7 @@
 ---
 title: "Consolidated Micro-Workbook Graph Examples"
 format: gfm
+output: asis
 ---
 
 Each row of [examples/micro-workbook/example-cases.xlsx](example-cases.xlsx) contains a self-contained example that can be extracted as a graph. This workbook demonstrates the workflow and application behavior for different Excel dependency scenarios.
@@ -10,28 +11,24 @@ Each row of [examples/micro-workbook/example-cases.xlsx](example-cases.xlsx) con
 from pathlib import Path
 from pprint import pformat
 
-import fastpyxl
-
 from excel_grapher.grapher import (
     create_dependency_graph, DependencyGraph, to_mermaid
 )
+from excel_grapher.evaluator import FormulaEvaluator
 
 # Load the example workbook
 workbook_path = Path("example-cases.xlsx")
-workbook = fastpyxl.load_workbook(workbook_path, data_only=False)
-sheet = workbook["Sheet1"]
 
 # Define helper functions to print the graph object and Mermaid diagram
-def print_graph_object(graph: DependencyGraph):
-    print("Graph object:\n")
+def print_text(text: str):
     print("```text")
-    print(pformat(graph, indent=4, width=100))
+    print(text)
     print("```\n")
 
 def print_mermaid(graph: DependencyGraph):
     mermaid = to_mermaid(graph)
 
-    print("```{mermaid}")
+    print("```mermaid")
     print(mermaid)
     print("```\n")
 ```
@@ -41,9 +38,9 @@ def print_mermaid(graph: DependencyGraph):
 The first example is a single-cell formula with no dependencies. We can extract the graph with the `create_dependency_graph` function. This returns a `DependencyGraph` object, which we can pretty-print using the helper defined above.
 
 ```{python}
-graph: DependencyGraph = create_dependency_graph(workbook, ["Sheet1!B1"], load_values=False)
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!B1"], load_values=False)
 
-print_graph_object(graph)
+print_text(pformat(graph, indent=4, width=100))
 ```
 
 If we render this to Mermaid, we can see that it is a single-node graph with no dependencies.
@@ -57,15 +54,41 @@ print_mermaid(graph)
 The second example consists of two cells: one hardcoded and one a formula that depends on the hardcoded cell.
 
 ```{python}
-graph: DependencyGraph = create_dependency_graph(workbook, ["Sheet1!C2"], load_values=False)
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C2"], load_values=True)
 
 print_mermaid(graph)
 ```
 
+The default value of "Sheet1!B2" is `1` and the formula is `=B2+1`, so the Excel-cached value of "Sheet1!C2" is `2`, as we can see on the node's value field. We can use `get_node` for a read-only view of the node:
+
+```{python}
+node = graph.get_node("Sheet1!C2")
+print_text(str(node.value))
+```
+
+We can also use `get_dependencies` to get the dependencies of the node:
+
+```{python}
+dependencies = graph.get_dependencies("Sheet1!C2")
+print_text(str(dependencies))
+```
+
+What would "Sheet1!C2" evaluate to if we set the value of "Sheet1!B2" to `2`? We can find out by changing its value with `set_node_value`, then passing the graph to `FormulaEvaluator` for recomputation:
+
+```{python}
+graph.set_node_value("Sheet1!B2", 2)
+
+with FormulaEvaluator(graph) as evaluator:
+    value = evaluator.evaluate("Sheet1!C2")
+    print_text(str(value))
+```
+
+Under the hood, `FormulaEvaluator` parses the graph's Excel formulas and translates them to Python, then evaluates them in the context of the graph.
+
 ## 03. Conditional branches
 
 ```{python}
-graph: DependencyGraph = create_dependency_graph(workbook, ["Sheet1!E3"], load_values=False)
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!E3"], load_values=False)
 
 print_mermaid(graph)
 ```
@@ -73,7 +96,7 @@ print_mermaid(graph)
 ## 04. Nested conditional in a cell
 
 ```{python}
-graph: DependencyGraph = create_dependency_graph(workbook, ["Sheet1!D4"], load_values=False)
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!D4"], load_values=False)
 
 print_mermaid(graph)
 ```
@@ -81,7 +104,7 @@ print_mermaid(graph)
 ## 05. Nested conditional across cells
 
 ```{python}
-graph: DependencyGraph = create_dependency_graph(workbook, ["Sheet1!E5"], load_values=False)
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!E5"], load_values=False)
 
 print_mermaid(graph)
 ```
@@ -89,7 +112,7 @@ print_mermaid(graph)
 ## 06. Will cycle
 
 ```{python}
-graph: DependencyGraph = create_dependency_graph(workbook, ["Sheet1!C6"], load_values=False)
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C6"], load_values=False)
 
 print_mermaid(graph)
 ```
@@ -97,7 +120,7 @@ print_mermaid(graph)
 ## 07. Won't cycle
 
 ```{python}
-graph: DependencyGraph = create_dependency_graph(workbook, ["Sheet1!C7"], load_values=False)
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C7"], load_values=False)
 
 print_mermaid(graph)
 ```
@@ -105,7 +128,7 @@ print_mermaid(graph)
 ## 08. May cycle
 
 ```{python}
-graph: DependencyGraph = create_dependency_graph(workbook, ["Sheet1!C8"], load_values=False)
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C8"], load_values=False)
 
 print_mermaid(graph)
 ```

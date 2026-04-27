@@ -1,71 +1,50 @@
 # Consolidated Micro-Workbook Graph Examples
 
 
-# Consolidated Micro-Workbook Graph Examples
-
-This walkthrough uses runnable Python cells to extract each example
-graph from a single row-formatted workbook.
+Each row of
+[examples/micro-workbook/example-cases.xlsx](example-cases.xlsx)
+contains a self-contained example that can be extracted as a graph. This
+workbook demonstrates the workflow and application behavior for
+different Excel dependency scenarios.
 
 ``` python
 from pathlib import Path
 from pprint import pformat
 
-import fastpyxl
-from IPython.display import Markdown, display
+from excel_grapher.grapher import (
+    create_dependency_graph, DependencyGraph, to_mermaid
+)
+from excel_grapher.evaluator import FormulaEvaluator
 
-from excel_grapher.grapher import create_dependency_graph, to_mermaid
-
+# Load the example workbook
 workbook_path = Path("example-cases.xlsx")
-workbook = fastpyxl.load_workbook(workbook_path, data_only=False)
-sheet = workbook["Sheet1"]
 
-cases = [
-    ("Formula with no dependencies", "Sheet1!B1", True),
-    ("Linear dependency", "Sheet1!C2", False),
-    ("Conditional branches", "Sheet1!E3", True),
-    ("Nested conditional in a cell", "Sheet1!D4", False),
-    ("Nested conditional across cells", "Sheet1!E5", False),
-    ("Will cycle", "Sheet1!C6", False),
-    ("Won't cycle", "Sheet1!C7", False),
-    ("May cycle", "Sheet1!C8", False),
-]
-```
+# Define helper functions to print the graph object and Mermaid diagram
+def print_text(text: str):
+    print("```text")
+    print(text)
+    print("```\n")
 
-``` python
-for idx, (label, target, show_graph_object) in enumerate(cases, start=1):
-    graph = create_dependency_graph(workbook, [target], load_values=False)
+def print_mermaid(graph: DependencyGraph):
     mermaid = to_mermaid(graph)
 
-    print(f"## {idx:02d}. {label}\n")
-    print(f"Target: `{target}`\n")
-
-    if show_graph_object:
-        print("Graph type:\n")
-        print("```text")
-        print(type(graph))
-        print("```\n")
-
-        print("Graph object:\n")
-        print("```text")
-        print(pformat(graph, indent=4, width=100))
-        print("```\n")
-
-    print("```{mermaid}")
+    print("```mermaid")
     print(mermaid)
     print("```\n")
 ```
 
 ## 01. Formula with no dependencies
 
-Target: `Sheet1!B1`
+The first example is a single-cell formula with no dependencies. We can
+extract the graph with the `create_dependency_graph` function. This
+returns a `DependencyGraph` object, which we can pretty-print using the
+helper defined above.
 
-Graph type:
+``` python
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!B1"], load_values=False)
 
-``` text
-<class 'excel_grapher.grapher.graph.DependencyGraph'>
+print_text(pformat(graph, indent=4, width=100))
 ```
-
-Graph object:
 
 ``` text
 DependencyGraph(_nodes={   'Sheet1!B1': Node(sheet='Sheet1',
@@ -74,7 +53,7 @@ DependencyGraph(_nodes={   'Sheet1!B1': Node(sheet='Sheet1',
                                              formula='=1+1',
                                              normalized_formula='=1+1',
                                              value=None,
-                                             is_leaf=False,
+                                             is_leaf=True,
                                              metadata={})},
                 _edges={'Sheet1!B1': set()},
                 _reverse_edges={'Sheet1!B1': set()},
@@ -84,14 +63,28 @@ DependencyGraph(_nodes={   'Sheet1!B1': Node(sheet='Sheet1',
                 leaf_classification=None)
 ```
 
+If we render this to Mermaid, we can see that it is a single-node graph
+with no dependencies.
+
+``` python
+print_mermaid(graph)
+```
+
 ``` mermaid
 flowchart TD
-  Sheet1_B1("Sheet1!B1<br>=1+1")
+  Sheet1_B1["Sheet1!B1<br>=1+1"]
 ```
 
 ## 02. Linear dependency
 
-Target: `Sheet1!C2`
+The second example consists of two cells: one hardcoded and one a
+formula that depends on the hardcoded cell.
+
+``` python
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C2"], load_values=True)
+
+print_mermaid(graph)
+```
 
 ``` mermaid
 flowchart TD
@@ -100,68 +93,57 @@ flowchart TD
   Sheet1_C2 --> Sheet1_B2
 ```
 
-## 03. Conditional branches
+The default value of “Sheet1!B2” is `1` and the formula is `=B2+1`, so
+the Excel-cached value of “Sheet1!C2” is `2`, as we can see on the
+node’s value field. We can use `get_node` for a read-only view of the
+node:
 
-Target: `Sheet1!E3`
-
-Graph type:
-
-``` text
-<class 'excel_grapher.grapher.graph.DependencyGraph'>
+``` python
+node = graph.get_node("Sheet1!C2")
+print_text(str(node.value))
 ```
 
-Graph object:
+``` text
+2
+```
+
+We can also use `get_dependencies` to get the dependencies of the node:
+
+``` python
+dependencies = graph.get_dependencies("Sheet1!C2")
+print_text(str(dependencies))
+```
 
 ``` text
-DependencyGraph(_nodes={   'Sheet1!B3': Node(sheet='Sheet1',
-                                             column='B',
-                                             row=3,
-                                             formula=None,
-                                             normalized_formula=None,
-                                             value=1,
-                                             is_leaf=True,
-                                             metadata={}),
-                           'Sheet1!C3': Node(sheet='Sheet1',
-                                             column='C',
-                                             row=3,
-                                             formula=None,
-                                             normalized_formula=None,
-                                             value=10,
-                                             is_leaf=True,
-                                             metadata={}),
-                           'Sheet1!D3': Node(sheet='Sheet1',
-                                             column='D',
-                                             row=3,
-                                             formula=None,
-                                             normalized_formula=None,
-                                             value=20,
-                                             is_leaf=True,
-                                             metadata={}),
-                           'Sheet1!E3': Node(sheet='Sheet1',
-                                             column='E',
-                                             row=3,
-                                             formula='=IF(B3=1,C3,D3)',
-                                             normalized_formula='=IF(Sheet1!B3=1,Sheet1!C3,Sheet1!D3)',
-                                             value=None,
-                                             is_leaf=False,
-                                             metadata={})},
-                _edges={   'Sheet1!B3': set(),
-                           'Sheet1!C3': set(),
-                           'Sheet1!D3': set(),
-                           'Sheet1!E3': {'Sheet1!C3', 'Sheet1!B3', 'Sheet1!D3'}},
-                _reverse_edges={   'Sheet1!B3': {'Sheet1!E3'},
-                                   'Sheet1!C3': {'Sheet1!E3'},
-                                   'Sheet1!D3': {'Sheet1!E3'},
-                                   'Sheet1!E3': set()},
-                _guards={   ('Sheet1!E3', 'Sheet1!C3'): Compare(left=CellRef(key='Sheet1!B3'),
-                                                                op='=',
-                                                                right=Literal(value=1)),
-                            ('Sheet1!E3', 'Sheet1!D3'): Not(operand=Compare(left=CellRef(key='Sheet1!B3'),
-                                                                            op='=',
-                                                                            right=Literal(value=1)))},
-                _edge_extra={},
-                _hooks=[],
-                leaf_classification=None)
+frozenset({'Sheet1!B2'})
+```
+
+What would “Sheet1!C2” evaluate to if we set the value of “Sheet1!B2” to
+`2`? We can find out by changing its value with `set_node_value`, then
+passing the graph to `FormulaEvaluator` for recomputation:
+
+``` python
+graph.set_node_value("Sheet1!B2", 2)
+
+with FormulaEvaluator(graph) as evaluator:
+    value = evaluator.evaluate("Sheet1!C2")
+    print_text(str(value))
+```
+
+``` text
+3.0
+```
+
+Under the hood, `FormulaEvaluator` parses the graph’s Excel formulas and
+translates them to Python, then evaluates them in the context of the
+graph.
+
+## 03. Conditional branches
+
+``` python
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!E3"], load_values=False)
+
+print_mermaid(graph)
 ```
 
 ``` mermaid
@@ -177,7 +159,11 @@ flowchart TD
 
 ## 04. Nested conditional in a cell
 
-Target: `Sheet1!D4`
+``` python
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!D4"], load_values=False)
+
+print_mermaid(graph)
+```
 
 ``` mermaid
 flowchart TD
@@ -190,7 +176,11 @@ flowchart TD
 
 ## 05. Nested conditional across cells
 
-Target: `Sheet1!E5`
+``` python
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!E5"], load_values=False)
+
+print_mermaid(graph)
+```
 
 ``` mermaid
 flowchart TD
@@ -205,7 +195,11 @@ flowchart TD
 
 ## 06. Will cycle
 
-Target: `Sheet1!C6`
+``` python
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C6"], load_values=False)
+
+print_mermaid(graph)
+```
 
 ``` mermaid
 flowchart TD
@@ -217,7 +211,11 @@ flowchart TD
 
 ## 07. Won’t cycle
 
-Target: `Sheet1!C7`
+``` python
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C7"], load_values=False)
+
+print_mermaid(graph)
+```
 
 ``` mermaid
 flowchart TD
@@ -232,7 +230,11 @@ flowchart TD
 
 ## 08. May cycle
 
-Target: `Sheet1!C8`
+``` python
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C8"], load_values=False)
+
+print_mermaid(graph)
+```
 
 ``` mermaid
 flowchart TD
