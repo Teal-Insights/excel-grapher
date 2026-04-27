@@ -115,13 +115,17 @@ class FormulaEvaluator:
 
         return handler
 
-    def evaluate(self, targets: list[str]) -> dict[str, CellValue]:
+    def evaluate(
+        self, targets: str | list[str]
+    ) -> CellValue | dict[str, CellValue]:
+        single = isinstance(targets, str)
+        target_list: list[str] = [targets] if single else list(targets)
         # Auto-detect changes in leaf values if enabled
         if self.auto_detect_changes and self.eager_invalidation:
             self._detect_and_invalidate_changed_leaves()
         if self.iterate_enabled:
             target_handlers: dict[str, Callable[[EvalContext, str], CellValue]] = {
-                addr: self._iterative_target_handler(addr) for addr in targets
+                addr: self._iterative_target_handler(addr) for addr in target_list
             }
             ctx = EvalContext(
                 inputs={},
@@ -135,8 +139,9 @@ class FormulaEvaluator:
             )
             result = xl_iterative_compute(ctx, target_handlers)
             self._iteration_values = ctx.iteration_values
-            return result
-        return {addr: self._evaluate_cell(addr) for addr in targets}
+            return next(iter(result.values())) if single else result
+        results = {addr: self._evaluate_cell(addr) for addr in target_list}
+        return next(iter(results.values())) if single else results
 
     def _detect_and_invalidate_changed_leaves(self) -> None:
         """Scan all leaves and invalidate any whose values have changed."""

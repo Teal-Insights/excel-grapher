@@ -46,6 +46,15 @@ def test_evaluator_evaluates_cell_reference_formula() -> None:
         assert ev.evaluate(["S!B1"]) == {"S!B1": 7}
 
 
+def test_evaluator_single_string_target_returns_scalar() -> None:
+    graph = _make_graph(
+        _make_node("S!A1", None, 7),
+        _make_node("S!B1", "=S!A1", None),
+    )
+    with FormulaEvaluator(graph) as ev:
+        assert ev.evaluate("S!B1") == 7
+
+
 def test_evaluator_vlookup_ignores_errors_in_unrelated_table_cells() -> None:
     graph = _make_graph(
         _make_node("S!B1", None, "key"),
