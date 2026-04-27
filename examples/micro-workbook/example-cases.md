@@ -238,11 +238,16 @@ To see the representation of guards in Python, we can inspect the
 `_guards` attribute on the graph:
 
 ``` python
-print_text(str(graph._guards))
+print_text(pformat(graph._guards, indent=4, width=100))
 ```
 
 ``` text
-{('Sheet1!E3', 'Sheet1!C3'): Compare(left=CellRef(key='Sheet1!B3'), op='=', right=Literal(value=1)), ('Sheet1!E3', 'Sheet1!D3'): Not(operand=Compare(left=CellRef(key='Sheet1!B3'), op='=', right=Literal(value=1)))}
+{   ('Sheet1!E3', 'Sheet1!C3'): Compare(left=CellRef(key='Sheet1!B3'),
+                                        op='=',
+                                        right=Literal(value=1)),
+    ('Sheet1!E3', 'Sheet1!D3'): Not(operand=Compare(left=CellRef(key='Sheet1!B3'),
+                                                    op='=',
+                                                    right=Literal(value=1)))}
 ```
 
 The graph object exposes a `get_edge_guard` method to get the guard
@@ -347,6 +352,9 @@ with FormulaEvaluator(graph) as evaluator:
 2.0
 ```
 
+    C:\Users\chris\Software\excel-grapher\excel_grapher\evaluator\evaluator.py:218: CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).
+      return xl_circular_reference()
+
 Similarly, if we generate and run standalone Python code with
 `CodeGenerator`, we will see the same behavior:
 
@@ -367,6 +375,9 @@ print_text(str(result["Sheet1!C6"]))
 ``` text
 2.0
 ```
+
+    C:\Users\chris\Software\excel-grapher\examples\micro-workbook\must_cycle.py:284: CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).
+      return xl_circular_reference()
 
 For a detailed report on cycles in the graph, we can use the
 `cycle_report` method:
@@ -415,17 +426,27 @@ flowchart TD
 CycleReport(has_must_cycles=False,
             has_may_cycles=True,
             must_cycles=[],
-            may_cycles=[{'Sheet1!D7', 'Sheet1!C7'}],
+            may_cycles=[{'Sheet1!C7', 'Sheet1!D7'}],
             example_must_cycle_path=None,
-            example_may_cycle_path=['Sheet1!D7', 'Sheet1!C7', 'Sheet1!D7'])
+            example_may_cycle_path=['Sheet1!C7', 'Sheet1!D7', 'Sheet1!C7'])
 ```
 
 ## 08. May cycle
+
+Guarded dependencies can form may-cycles. For example, Sheet1!D8 depends
+on Sheet1!C8 only if `NOT(Sheet1!B8=1)`, and Sheet1!C8 depends on
+Sheet1!D8 only if `NOT(Sheet1!B8=0)`. These guard conditions are
+mutually exclusive only if B8 is either 1 or 0. For any other value of
+B8 (e.g., `2`), both conditions are true and a cycle will occur. So this
+cycle is flagged as a may-cycle in the cycle report.
 
 ``` python
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C8"], load_values=False)
 
 print_mermaid(graph)
+
+report = graph.cycle_report()
+print_text(pformat(report, indent=4, width=100))
 ```
 
 ``` mermaid
@@ -438,3 +459,104 @@ flowchart TD
   Sheet1_D8 --> Sheet1_B8
   Sheet1_D8 -.->|"NOT(Sheet1!B8=1)"| Sheet1_C8
 ```
+
+``` text
+CycleReport(has_must_cycles=False,
+            has_may_cycles=True,
+            must_cycles=[],
+            may_cycles=[{'Sheet1!D8', 'Sheet1!C8'}],
+            example_must_cycle_path=None,
+            example_may_cycle_path=['Sheet1!D8', 'Sheet1!C8', 'Sheet1!D8'])
+```
+
+If we know from the workbook’s domain that Sheet1!B8 can only ever be
+`0` or `1`, the cycle becomes infeasible and should not be reported. The
+constraint API expresses this by attaching a `Literal[...]` (or
+`Annotated[..., Between(...)]`, etc.) annotation to the leaf cell on a
+`TypedDict`, then building a `DynamicRefConfig` from it and passing it
+to `create_dependency_graph` via the `dynamic_refs` parameter:
+
+``` python
+from typing import Literal, TypedDict
+
+from excel_grapher import DynamicRefConfig, constrain
+
+
+class MayCycleConstraints(TypedDict, total=False):
+    pass
+
+
+constrain(MayCycleConstraints, "Sheet1!B8", Literal[0, 1])
+config = DynamicRefConfig.from_constraints(MayCycleConstraints, {})
+
+graph: DependencyGraph = create_dependency_graph(
+    workbook_path, ["Sheet1!C8"], load_values=False, dynamic_refs=config
+)
+
+report = graph.cycle_report()
+print_text(pformat(report, indent=4, width=100))
+```
+
+``` text
+CycleReport(has_must_cycles=False,
+            has_may_cycles=True,
+            must_cycles=[],
+            may_cycles=[{'Sheet1!D8', 'Sheet1!C8'}],
+            example_must_cycle_path=None,
+            example_may_cycle_path=['Sheet1!D8', 'Sheet1!C8', 'Sheet1!D8'])
+```
+
+In theory, this constraint should render the cycle infeasible: the
+conjunction of guards `NOT(Sheet1!B8=0) AND NOT(Sheet1!B8=1)` is
+unsatisfiable under the domain `{0, 1}`, so the may-cycle should drop
+out of the report. In practice, however, the cycle feasibility check
+(`_subgraph_has_feasible_cycle`) currently only consults guard mutual
+exclusion and does not yet consume leaf-cell domain constraints from
+`cell_type_env`. Wiring leaf domains into may-cycle feasibility is on
+the project roadmap; for now, this example demonstrates the intended API
+surface.
+
+### A note on domain constraints
+
+I don't love the current constraints API shape. The problem it's trying to solve is that cell addresses aren't valid Python identifiers. A normal TypedDict declares fields at class-definition time:                                                                                                                  
+
+``` python
+class MyDict(TypedDict):
+    field_one: int
+    field_two: str
+```
+
+But cell addresses like "Sheet1!B8" contain `!` and `'` characters, so you can't write them as class attributes. The `constrain` helper sidesteps this by writing directly to `__annotations__`:
+
+``` python
+def constrain(constraints: type[Any], address: str, annotation: Any) -> None:
+    ...
+    for key in cells:
+        constraints.__annotations__[key] = annotation
+```
+
+So this:
+
+``` python
+class MayCycleConstraints(TypedDict, total=False):
+    pass
+
+constrain(MayCycleConstraints, "Sheet1!B8", Literal[0, 1])
+```
+
+is equivalent to (if Python syntax allowed it):
+``` python
+
+class MayCycleConstraints(TypedDict, total=False):
+    "Sheet1!B8": Literal[0, 1]   # not legal — `!` is not a valid identifier char
+```
+
+After the `constrain` call, `MayCycleConstraints.__annotations__ == {"Sheet1!B8": Literal[0, 1]}`.
+
+Why a `TypedDict` rather than a plain `dict`?
+
+Two reasons:
+1. The annotation system already exists. `TypedDict.__annotations__ + get_type_hints` gives you `Annotated[...]` and `Literal[...]` for free, so domains can be expressed using standard Python typing instead of a bespoke DSL.
+2. Reusability across the codebase. The same constraints type is consumed elsewhere (e.g. `verify_lic_dsf_constraints_target_leaves`) for validation against the workbook. Once you express domains as type hints, mypy and `TypeAdapter` can also see them.
+
+However, there is likely a better API shape. I'm open to suggestions.

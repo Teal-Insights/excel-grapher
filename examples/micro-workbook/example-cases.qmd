@@ -263,3 +263,48 @@ print_text(pformat(report, indent=4, width=100))
 ```
 
 In theory, this constraint should render the cycle infeasible: the conjunction of guards `NOT(Sheet1!B8=0) AND NOT(Sheet1!B8=1)` is unsatisfiable under the domain `{0, 1}`, so the may-cycle should drop out of the report. In practice, however, the cycle feasibility check (`_subgraph_has_feasible_cycle`) currently only consults guard mutual exclusion and does not yet consume leaf-cell domain constraints from `cell_type_env`. Wiring leaf domains into may-cycle feasibility is on the project roadmap; for now, this example demonstrates the intended API surface.
+
+### A note on domain constraints
+
+I don't love the current constraints API shape. The problem it's trying to solve is that cell addresses aren't valid Python identifiers. A normal TypedDict declares fields at class-definition time:                                                                                                                  
+
+``` python
+class MyDict(TypedDict):
+    field_one: int
+    field_two: str
+```
+
+But cell addresses like "Sheet1!B8" contain `!` and `'` characters, so you can't write them as class attributes. The `constrain` helper sidesteps this by writing directly to `__annotations__`:
+
+``` python
+def constrain(constraints: type[Any], address: str, annotation: Any) -> None:
+    ...
+    for key in cells:
+        constraints.__annotations__[key] = annotation
+```
+
+So this:
+
+``` python
+class MayCycleConstraints(TypedDict, total=False):
+    pass
+
+constrain(MayCycleConstraints, "Sheet1!B8", Literal[0, 1])
+```
+
+is equivalent to (if Python syntax allowed it):
+``` python
+
+class MayCycleConstraints(TypedDict, total=False):
+    "Sheet1!B8": Literal[0, 1]   # not legal — `!` is not a valid identifier char
+```
+
+After the `constrain` call, `MayCycleConstraints.__annotations__ == {"Sheet1!B8": Literal[0, 1]}`.
+
+Why a `TypedDict` rather than a plain `dict`?
+
+Two reasons:
+1. The annotation system already exists. `TypedDict.__annotations__ + get_type_hints` gives you `Annotated[...]` and `Literal[...]` for free, so domains can be expressed using standard Python typing instead of a bespoke DSL.
+2. Reusability across the codebase. The same constraints type is consumed elsewhere (e.g. `verify_lic_dsf_constraints_target_leaves`) for validation against the workbook. Once you express domains as type hints, mypy and `TypeAdapter` can also see them.
+
+However, there is likely a better API shape. I'm open to suggestions.
