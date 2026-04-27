@@ -211,6 +211,12 @@ scenarios in parallel in the same session.
 
 ## 03. Conditional branches
 
+When extracting the dependencies of conditional Excel functions such as
+`IF`, `SWITCH`, and `CHOOSE`, `excel-grapher` will “guard” the edges
+with a logical condition. Visualization tools such as Mermaid mostly
+show guarded edges as dashed lines with labels indicating the guard
+condition.
+
 ``` python
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!E3"], load_values=False)
 
@@ -228,7 +234,38 @@ flowchart TD
   Sheet1_E3 -.->|"NOT(Sheet1!B3=1)"| Sheet1_D3
 ```
 
+To see the representation of guards in Python, we can inspect the
+`_guards` attribute on the graph:
+
+``` python
+print_text(str(graph._guards))
+```
+
+``` text
+{('Sheet1!E3', 'Sheet1!C3'): Compare(left=CellRef(key='Sheet1!B3'), op='=', right=Literal(value=1)), ('Sheet1!E3', 'Sheet1!D3'): Not(operand=Compare(left=CellRef(key='Sheet1!B3'), op='=', right=Literal(value=1)))}
+```
+
+The graph object exposes a `get_edge_guard` method to get the guard
+expression for a given edge. Printing the returned `GuardExpr` object
+gives us an Excel-style interpretation of the guard expression:
+
+``` python
+guard = graph.get_edge_guard("Sheet1!E3", "Sheet1!C3")
+print_text(str(guard))
+```
+
+``` text
+Sheet1!B3=1
+```
+
 ## 04. Nested conditional in a cell
+
+Currently, only one guard per edge is supported. The top-level guard
+takes precedence over nested guards. Support for multiple guards per
+edge is on the project roadmap. For instance,
+`=IF(NOT(B4=1),IF(B4=0,C4,1),0)` in “Sheet1!D4” could be expressed
+either as a list of guard conditions or as a single guard with
+conditions joined by logical `AND`: `NOT(Sheet1!B4=1) AND Sheet1!B4=0`.
 
 ``` python
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!D4"], load_values=False)
@@ -247,6 +284,11 @@ flowchart TD
 
 ## 05. Nested conditional across cells
 
+Conditional dependencies across cells are supported. For example,
+tracing the path between “Sheet1!E3” and “Sheet1!C5” reveals that C5
+will be needed to compute E3 only if two conditions are met:
+`NOT(Sheet1!A5=1)` and `Sheet1!B5=0`.
+
 ``` python
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!E5"], load_values=False)
 
@@ -258,13 +300,19 @@ flowchart TD
   Sheet1_A5["Sheet1!A5"]
   Sheet1_B5["Sheet1!B5"]
   Sheet1_C5["Sheet1!C5"]
-  Sheet1_E5("Sheet1!E5<br>=IF(A5=1,B5,C5)")
+  Sheet1_D5("Sheet1!D5<br>=IF(B5=0,C5,2)")
+  Sheet1_E5("Sheet1!E5<br>=IF(A5=1,B5,D5)")
+  Sheet1_D5 --> Sheet1_B5
+  Sheet1_D5 -.->|"Sheet1!B5=0"| Sheet1_C5
   Sheet1_E5 --> Sheet1_A5
   Sheet1_E5 -.->|"Sheet1!A5=1"| Sheet1_B5
-  Sheet1_E5 -.->|"NOT(Sheet1!A5=1)"| Sheet1_C5
+  Sheet1_E5 -.->|"NOT(Sheet1!A5=1)"| Sheet1_D5
 ```
 
-## 06. Will cycle
+## 06. Must cycle
+
+If formula cells make a cycle, the graph will be extracted successfully,
+as dependency traversal stops when it hits an already-visited cell.
 
 ``` python
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C6"], load_values=False)
@@ -280,12 +328,76 @@ flowchart TD
   Sheet1_C6 --> Sheet1_B6
 ```
 
+Excel’s internal behavior with respect to cycles is different depending
+on workbook settings. If `iterate` is enabled in the workbook, Excel
+will iterate over the cycle until it converges on a value or hits a
+maximum number of iterations. Otherwise, it will stop and return 0 from
+any cell already seen before in a formula chain. In `FormulaEvaluator`,
+we replicate this behavior with a `CircularReferenceWarning` unless the
+workbook is configured to allow cycles:
+
+``` python
+with FormulaEvaluator(graph) as evaluator:
+    # Note: warning may not always be emitted due to Quarto caching behavior
+    value = evaluator.evaluate("Sheet1!C6")
+    print_text(str(value))
+```
+
+``` text
+2.0
+```
+
+Similarly, if we generate and run standalone Python code with
+`CodeGenerator`, we will see the same behavior:
+
+``` python
+import sys
+
+code = CodeGenerator(graph).generate(["Sheet1!C6"])
+with open("must_cycle.py", "w") as f:
+    f.write(code)
+
+sys.path.append(".")
+from must_cycle import compute_all
+
+result = compute_all()
+print_text(str(result["Sheet1!C6"]))
+```
+
+``` text
+2.0
+```
+
+For a detailed report on cycles in the graph, we can use the
+`cycle_report` method:
+
+``` python
+report = graph.cycle_report()
+print_text(pformat(report, indent=4, width=100))
+```
+
+``` text
+CycleReport(has_must_cycles=True,
+            has_may_cycles=False,
+            must_cycles=[{'Sheet1!B6', 'Sheet1!C6'}],
+            may_cycles=[],
+            example_must_cycle_path=['Sheet1!B6', 'Sheet1!C6', 'Sheet1!B6'],
+            example_may_cycle_path=None)
+```
+
 ## 07. Won’t cycle
+
+If edge guards involved in a cycle are mutually logically exclusive, the
+cycle should be broken and should not appear in the cycle report. This
+functionality is on the roadmap but not yet correctly implemented.
 
 ``` python
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C7"], load_values=False)
 
 print_mermaid(graph)
+
+report = graph.cycle_report()
+print_text(pformat(report, indent=4, width=100))
 ```
 
 ``` mermaid
@@ -297,6 +409,15 @@ flowchart TD
   Sheet1_C7 -.->|"NOT(Sheet1!B7=0)"| Sheet1_D7
   Sheet1_D7 --> Sheet1_B7
   Sheet1_D7 -.->|"NOT(NOT(Sheet1!B7=0))"| Sheet1_C7
+```
+
+``` text
+CycleReport(has_must_cycles=False,
+            has_may_cycles=True,
+            must_cycles=[],
+            may_cycles=[{'Sheet1!D7', 'Sheet1!C7'}],
+            example_must_cycle_path=None,
+            example_may_cycle_path=['Sheet1!D7', 'Sheet1!C7', 'Sheet1!D7'])
 ```
 
 ## 08. May cycle

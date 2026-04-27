@@ -8,8 +8,8 @@ Test cases (roadmap):
     ("Linear dependency",1,"=B1+1"),
     ("Conditional branches",1,10,20,"=IF(B1=1,C1,D1)"),
     ("Nested conditional in a cell",0,10,"=IF(NOT(B1=1),IF(B1=0,C1,1),0)"),
-    ("Nested conditional across cells",1,1,"=IF(B1=0,B1,2)","=IF(A1=1,B1,C1)"),
-    ("Will cycle","=C1+1","=B1+1"),
+    ("Nested conditional across cells",1,1,"=IF(B1=0,C1,2)","=IF(B1=1,C1,D1)"),
+    ("Must cycle","=C1+1","=B1+1"),
     ("Won't cycle",0,"=IF(B1=0,1,D1)","=IF(NOT(B1=0),2,C1)"),
     ("May cycle",0,"=IF(B1=0,1,D1)","=IF(B1=1,2,C1)"),
 ]
@@ -26,7 +26,7 @@ import xlsxwriter
 from xlsxwriter.worksheet import Worksheet
 
 from excel_grapher.grapher import DependencyGraph, create_dependency_graph
-from excel_grapher.grapher.guard import CellRef, Compare, GuardExpr, Literal, Not
+from excel_grapher.grapher.guard import And, CellRef, Compare, GuardExpr, Literal, Not
 from excel_grapher.grapher.node import NodeKey, NodeView
 
 
@@ -158,10 +158,25 @@ def test_conditions_are_extracted_as_unguarded_but_conditional_branches_as_guard
     dependents: frozenset[NodeKey] = graph.get_dependents("Sheet1!E1")
     assert dependents == frozenset()
     guard: GuardExpr | None = graph.get_edge_guard("Sheet1!E1", "Sheet1!B1")
-    # TODO: We are going to need to modify these assertions when we support multiple guards per edge
     guard = graph.get_edge_guard("Sheet1!E1", "Sheet1!C1")
     assert guard == Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=1))
     guard = graph.get_edge_guard("Sheet1!E1", "Sheet1!D1")
     assert guard == Not(
         operand=Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=1))
+    )
+
+
+@pytest.mark.xfail(
+    reason="Nested conditionals are not currently being correctly consolidated into a single AND guard"
+)
+def test_nested_conditional_in_a_cell_is_extracted_as_an_AND_guard(
+    workbook_path_factory: Callable[[tuple[int | float | str, ...]], Path],
+) -> None:
+    path = workbook_path_factory(("Nested conditional in a cell", 0, 10, "=IF(NOT(B1=1),IF(B1=0,C1,1),0)"))
+    graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!D1"], load_values=True)
+    assert len(graph._nodes) == 3
+    guard: GuardExpr | None = graph.get_edge_guard("Sheet1!D1", "Sheet1!B1")
+    assert guard == And(
+        left=Not(operand=Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=1))),
+        right=Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=0))
     )
