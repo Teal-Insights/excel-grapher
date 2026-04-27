@@ -15,6 +15,7 @@ from excel_grapher.grapher import (
     create_dependency_graph, DependencyGraph, to_mermaid
 )
 from excel_grapher.evaluator import FormulaEvaluator
+from excel_grapher.exporter import CodeGenerator
 
 # Load the example workbook
 workbook_path = Path("example-cases.xlsx")
@@ -73,7 +74,7 @@ dependencies = graph.get_dependencies("Sheet1!C2")
 print_text(str(dependencies))
 ```
 
-What would "Sheet1!C2" evaluate to if we set the value of "Sheet1!B2" to `2`? We can find out by changing its value with `set_node_value`, then passing the graph to `FormulaEvaluator` for recomputation:
+What would "Sheet1!C2" evaluate to if we set the value of "Sheet1!B2" to `2`? We can find out by changing its value with `set_node_value`, then passing the graph to `FormulaEvaluator` (an Excel emulator) for recomputation:
 
 ```{python}
 graph.set_node_value("Sheet1!B2", 2)
@@ -84,6 +85,46 @@ with FormulaEvaluator(graph) as evaluator:
 ```
 
 Under the hood, `FormulaEvaluator` parses the graph's Excel formulas and translates them to Python, then evaluates them in the context of the graph.
+
+Instead of running the graph using the `FormulaEvaluator` Excel emulator, we can transpile the graph to standalone Python code using the `CodeGenerator` class. We'll write the code to a file called `linear_dependency.py` in the current folder.
+
+```{python}
+code = CodeGenerator(graph).generate(["Sheet1!C2"])
+with open("linear_dependency.py", "w") as f:
+    f.write(code)
+```
+
+We can then append the file as a module to our current session and run the code:
+
+```{python}
+import sys
+sys.path.append(".")
+from linear_dependency import compute_all
+
+result = compute_all()
+print_text(str(result["Sheet1!C2"]))
+```
+
+Since `set_node_value` permanently changed the value of "Sheet1!B2" in the graph to `2`, it is still `2` in our generated code, and the computed value of "Sheet1!C2" is `3`.
+
+To compute with the original value of "Sheet1!B2" (which was `1`), we can call `compute_all` with an `inputs` override that restores that value:
+
+```{python}
+result = compute_all(inputs={"Sheet1!B2": 1})
+print_text(str(result["Sheet1!C2"]))
+```
+
+Or we can create a `context` object with our desired inputs and call `compute_all` with it:
+
+```{python}
+from linear_dependency import make_context
+
+context = make_context(inputs={"Sheet1!B2": 1})
+result = compute_all(ctx=context)
+print_text(str(result["Sheet1!C2"]))
+```
+
+Note that `CodeGenerator`'s `generate` method exports a miniature Excel runtime, with error handling and formula/operator implementations for the Excel functions used in the graph. So while the implementation of our two-cell linear dependency is brief (lines 326-336), the full export runs to a rather more verbose 387 lines of code. Also note that the exported code is object-oriented rather than functional, with inputs and computation caching stored in a mutable `Context` object, so you must take care not to share the same `Context` instance if running multiple scenarios in parallel in the same session.
 
 ## 03. Conditional branches
 

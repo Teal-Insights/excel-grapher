@@ -159,7 +159,7 @@ def _format_missing_leaves(missing_leaves: set[str]) -> list[str]:
 
 
 def create_dependency_graph(
-    workbook: Path | str | fastpyxl.Workbook,
+    workbook: Path | str,
     targets: Iterable[str],
     *,
     max_depth: int = 50,
@@ -213,15 +213,17 @@ def create_dependency_graph(
     provenance overhead (formula-string span collection, branch-union merging, etc.).
     """
 
+    if not isinstance(workbook, (str, Path)):
+        raise TypeError(
+            "create_dependency_graph requires a path or path-like string for "
+            f"`workbook`; got {type(workbook).__name__}. Pre-loaded Workbook "
+            "instances cannot supply both formulas and cached values, so "
+            "callers must pass a path that the builder can load in both modes."
+        )
+
     blank_rects = normalize_blank_range_specs(blank_ranges)
 
     def load_wb(data_only: bool) -> fastpyxl.Workbook:
-        if isinstance(workbook, fastpyxl.Workbook):
-            if data_only:
-                raise ValueError(
-                    "load_values=True is not supported when passing a Workbook instance"
-                )
-            return workbook
         path = Path(workbook)
         keep_vba = path.suffix.lower() == ".xlsm"
         return fastpyxl.load_workbook(path, data_only=data_only, keep_vba=keep_vba)
@@ -237,11 +239,7 @@ def create_dependency_graph(
         )
     )
     _t0 = time.perf_counter()
-    wb_values = (
-        load_wb(data_only=True)
-        if load_values and not isinstance(workbook, fastpyxl.Workbook)
-        else None
-    )
+    wb_values = load_wb(data_only=True) if load_values else None
     if wb_values is not None:
         _emit_trace(
             DynamicRefTraceEvent(
@@ -254,7 +252,7 @@ def create_dependency_graph(
 
     # Compute workbook SHA-256 for persistent type-analysis cache
     _wb_sha256: str | None = None
-    if type_analysis_cache is not None and isinstance(workbook, (str, Path)):
+    if type_analysis_cache is not None:
         with open(workbook, "rb") as _f:
             _wb_sha256 = hashlib.file_digest(_f, "sha256").hexdigest()
 

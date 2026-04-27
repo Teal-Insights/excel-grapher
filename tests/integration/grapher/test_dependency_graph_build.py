@@ -235,6 +235,20 @@ def test_parse_target_handles_quoted_sheet_name(tmp_path: Path) -> None:
     assert node.sheet == "My Sheet"
 
 
+def test_rejects_workbook_instance_input(tmp_path: Path) -> None:
+    """
+    Pre-loaded ``fastpyxl.Workbook`` instances cannot supply both formulas and
+    cached values, so the builder must reject them up-front with a TypeError
+    rather than silently producing nodes with ``value=None``.
+    """
+    excel_path = tmp_path / "instance_input.xlsx"
+    _create_fixture_workbook(excel_path)
+    wb = fastpyxl.load_workbook(excel_path, data_only=False)
+
+    with pytest.raises(TypeError, match="path"):
+        create_dependency_graph(wb, ["Sheet1!A4"], load_values=True)
+
+
 def test_offset_invalid_base_error_includes_cell_address(tmp_path: Path) -> None:
     """
     When OFFSET's base argument is not a cell/range reference, the ValueError
