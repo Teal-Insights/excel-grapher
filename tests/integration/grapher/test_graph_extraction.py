@@ -25,7 +25,7 @@ import pytest
 import xlsxwriter
 from xlsxwriter.worksheet import Worksheet
 
-from excel_grapher.grapher import DependencyGraph, create_dependency_graph
+from excel_grapher.grapher import CycleReport, DependencyGraph, create_dependency_graph
 from excel_grapher.grapher.guard import And, CellRef, Compare, GuardExpr, Literal, Not
 from excel_grapher.grapher.node import NodeKey, NodeView
 
@@ -180,3 +180,71 @@ def test_nested_conditional_in_a_cell_is_extracted_as_an_AND_guard(
         left=Not(operand=Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=1))),
         right=Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=0))
     )
+
+
+def test_must_cycle_is_reported_as_unconditional_cycle(
+    workbook_path_factory: Callable[[tuple[int | float | str, ...]], Path],
+) -> None:
+    path = workbook_path_factory(("Must cycle", "=C1+1", "=B1+1"))
+    graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!C1"], load_values=False)
+    assert len(graph._nodes) == 2
+
+    # The cycle is unconditional (no guards on either edge).
+    assert not graph._guards
+    assert graph.get_dependencies("Sheet1!C1") == frozenset(["Sheet1!B1"])
+    assert graph.get_dependencies("Sheet1!B1") == frozenset(["Sheet1!C1"])
+
+    report: CycleReport = graph.cycle_report()
+    assert report.has_must_cycles is True
+    assert report.has_may_cycles is False
+    assert report.must_cycles == [{"Sheet1!B1", "Sheet1!C1"}]
+    assert report.may_cycles == []
+    # Example path should be a closed traversal of the 2-cycle.
+    assert report.example_must_cycle_path is not None
+    assert len(report.example_must_cycle_path) == 3
+    assert report.example_must_cycle_path[0] == report.example_must_cycle_path[-1]
+    assert set(report.example_must_cycle_path) == {"Sheet1!B1", "Sheet1!C1"}
+    assert report.example_may_cycle_path is None
+
+
+@pytest.mark.xfail(
+    reason="Mutually exclusive edge guards do not currently break the cycle in the cycle report"
+)
+def test_wont_cycle_is_not_reported_when_guards_are_mutually_exclusive(
+    workbook_path_factory: Callable[[tuple[int | float | str, ...]], Path],
+) -> None:
+    path = workbook_path_factory(
+        ("Won't cycle", 0, "=IF(B1=0,1,D1)", "=IF(NOT(B1=0),2,C1)")
+    )
+    graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!C1"], load_values=False)
+    assert len(graph._nodes) == 3
+
+    report: CycleReport = graph.cycle_report()
+    assert report.has_must_cycles is False
+    assert report.has_may_cycles is False
+    assert report.must_cycles == []
+    assert report.may_cycles == []
+    assert report.example_must_cycle_path is None
+    assert report.example_may_cycle_path is None
+
+
+def test_may_cycle_is_reported_when_guards_are_jointly_feasible(
+    workbook_path_factory: Callable[[tuple[int | float | str, ...]], Path],
+) -> None:
+    path = workbook_path_factory(
+        ("May cycle", 0, "=IF(B1=0,1,D1)", "=IF(B1=1,2,C1)")
+    )
+    graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!C1"], load_values=False)
+    assert len(graph._nodes) == 3
+
+    report: CycleReport = graph.cycle_report()
+    assert report.has_must_cycles is False
+    assert report.has_may_cycles is True
+    assert report.must_cycles == []
+    assert report.may_cycles == [{"Sheet1!C1", "Sheet1!D1"}]
+    assert report.example_must_cycle_path is None
+    # Example may-cycle path should be a closed traversal of the C1 <-> D1 cycle.
+    assert report.example_may_cycle_path is not None
+    assert len(report.example_may_cycle_path) == 3
+    assert report.example_may_cycle_path[0] == report.example_may_cycle_path[-1]
+    assert set(report.example_may_cycle_path) == {"Sheet1!C1", "Sheet1!D1"}

@@ -238,3 +238,28 @@ print_mermaid(graph)
 report = graph.cycle_report()
 print_text(pformat(report, indent=4, width=100))
 ```
+
+If we know from the workbook's domain that Sheet1!B8 can only ever be `0` or `1`, the cycle becomes infeasible and should not be reported. The constraint API expresses this by attaching a `Literal[...]` (or `Annotated[..., Between(...)]`, etc.) annotation to the leaf cell on a `TypedDict`, then building a `DynamicRefConfig` from it and passing it to `create_dependency_graph` via the `dynamic_refs` parameter:
+
+```{python}
+from typing import Literal, TypedDict
+
+from excel_grapher import DynamicRefConfig, constrain
+
+
+class MayCycleConstraints(TypedDict, total=False):
+    pass
+
+
+constrain(MayCycleConstraints, "Sheet1!B8", Literal[0, 1])
+config = DynamicRefConfig.from_constraints(MayCycleConstraints, {})
+
+graph: DependencyGraph = create_dependency_graph(
+    workbook_path, ["Sheet1!C8"], load_values=False, dynamic_refs=config
+)
+
+report = graph.cycle_report()
+print_text(pformat(report, indent=4, width=100))
+```
+
+In theory, this constraint should render the cycle infeasible: the conjunction of guards `NOT(Sheet1!B8=0) AND NOT(Sheet1!B8=1)` is unsatisfiable under the domain `{0, 1}`, so the may-cycle should drop out of the report. In practice, however, the cycle feasibility check (`_subgraph_has_feasible_cycle`) currently only consults guard mutual exclusion and does not yet consume leaf-cell domain constraints from `cell_type_env`. Wiring leaf domains into may-cycle feasibility is on the project roadmap; for now, this example demonstrates the intended API surface.
