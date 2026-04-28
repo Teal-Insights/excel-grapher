@@ -1,6 +1,23 @@
 from __future__ import annotations
 
-from excel_grapher.grapher.guard import CellRef, Compare, GuardConstraints, Literal, Not, Or
+import random
+
+from excel_grapher.grapher.guard import (
+    CellRef,
+    Compare,
+    GuardConstraints,
+    Literal,
+    Not,
+    Or,
+    canonicalize_guard,
+)
+
+
+def _nest_not(expr: Compare, count: int) -> Compare | Not:
+    out: Compare | Not = expr
+    for _ in range(count):
+        out = Not(out)
+    return out
 
 
 def test_guard_constraints_detects_contradiction_with_double_negation_equivalent() -> None:
@@ -38,3 +55,16 @@ def test_guard_constraints_normalizes_nested_and_or_variants() -> None:
     assert c2 is not None
     assert len(c2.opaque) == 1
     assert "NOT(NOT(" not in c2.opaque[0]
+
+
+def test_canonicalize_guard_random_not_depth_matches_odd_even_parity() -> None:
+    key = "Sheet1!A1"
+    eq_one = Compare(left=CellRef(key=key), op="=", right=Literal(value=1))
+    rng = random.Random(20260427)
+    not_depth = rng.randint(3, 10)
+
+    normalized = canonicalize_guard(_nest_not(eq_one, not_depth))
+    if not_depth % 2 == 0:
+        assert normalized == eq_one
+    else:
+        assert normalized == Not(eq_one)
