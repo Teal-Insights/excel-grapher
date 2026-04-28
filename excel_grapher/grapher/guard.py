@@ -80,6 +80,36 @@ class Or(GuardExpr):
         return f"OR({inner})"
 
 
+def canonicalize_guard(expr: GuardExpr) -> GuardExpr:
+    """
+    Return a canonicalized guard expression for conservative symbolic reasoning.
+
+    Canonicalization is intentionally minimal:
+    - recurse through And / Or / Compare / Not
+    - eliminate double negation: Not(Not(x)) -> x
+    """
+    if isinstance(expr, Compare):
+        left = canonicalize_guard(expr.left)
+        right = canonicalize_guard(expr.right)
+        if left is expr.left and right is expr.right:
+            return expr
+        return Compare(left=left, op=expr.op, right=right)
+    if isinstance(expr, And):
+        ops = tuple(canonicalize_guard(o) for o in expr.operands)
+        return And(ops)
+    if isinstance(expr, Or):
+        ops = tuple(canonicalize_guard(o) for o in expr.operands)
+        return Or(ops)
+    if isinstance(expr, Not):
+        operand = canonicalize_guard(expr.operand)
+        if isinstance(operand, Not):
+            return canonicalize_guard(operand.operand)
+        if operand is expr.operand:
+            return expr
+        return Not(operand=operand)
+    return expr
+
+
 def or_guard(a: GuardExpr, b: GuardExpr) -> GuardExpr:
     """
     Combine two guards with OR, flattening nested ORs.
@@ -133,7 +163,7 @@ class GuardConstraints:
         ne: dict[NodeKey, set[Any]] = {k: set(vs) for k, vs in self.inequalities}
         opaque: set[str] = set(self.opaque)
 
-        for expr in flatten(g):
+        for expr in flatten(canonicalize_guard(g)):
             expr2: GuardExpr = expr
             if isinstance(expr2, Not) and isinstance(expr2.operand, Compare):
                 c = expr2.operand

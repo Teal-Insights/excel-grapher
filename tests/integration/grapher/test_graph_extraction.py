@@ -172,13 +172,17 @@ def test_conditions_are_extracted_as_unguarded_but_conditional_branches_as_guard
 def test_nested_conditional_in_a_cell_is_extracted_as_an_AND_guard(
     workbook_path_factory: Callable[[tuple[int | float | str, ...]], Path],
 ) -> None:
-    path = workbook_path_factory(("Nested conditional in a cell", 0, 10, "=IF(NOT(B1=1),IF(B1=0,C1,1),0)"))
+    path = workbook_path_factory(
+        ("Nested conditional in a cell", 0, 10, "=IF(NOT(B1=1),IF(B1=0,C1,1),0)")
+    )
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!D1"], load_values=True)
     assert len(graph._nodes) == 3
     guard: GuardExpr | None = graph.get_edge_guard("Sheet1!D1", "Sheet1!B1")
     assert guard == And(
-        left=Not(operand=Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=1))),
-        right=Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=0))
+        operands=(
+            Not(operand=Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=1))),
+            Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=0)),
+        )
     )
 
 
@@ -207,15 +211,10 @@ def test_must_cycle_is_reported_as_unconditional_cycle(
     assert report.example_may_cycle_path is None
 
 
-@pytest.mark.xfail(
-    reason="Mutually exclusive edge guards do not currently break the cycle in the cycle report"
-)
 def test_wont_cycle_is_not_reported_when_guards_are_mutually_exclusive(
     workbook_path_factory: Callable[[tuple[int | float | str, ...]], Path],
 ) -> None:
-    path = workbook_path_factory(
-        ("Won't cycle", 0, "=IF(B1=0,1,D1)", "=IF(NOT(B1=0),2,C1)")
-    )
+    path = workbook_path_factory(("Won't cycle", 0, "=IF(B1=0,1,D1)", "=IF(NOT(B1=0),2,C1)"))
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!C1"], load_values=False)
     assert len(graph._nodes) == 3
 
@@ -231,9 +230,7 @@ def test_wont_cycle_is_not_reported_when_guards_are_mutually_exclusive(
 def test_may_cycle_is_reported_when_guards_are_jointly_feasible(
     workbook_path_factory: Callable[[tuple[int | float | str, ...]], Path],
 ) -> None:
-    path = workbook_path_factory(
-        ("May cycle", 0, "=IF(B1=0,1,D1)", "=IF(B1=1,2,C1)")
-    )
+    path = workbook_path_factory(("May cycle", 0, "=IF(B1=0,1,D1)", "=IF(B1=1,2,C1)"))
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!C1"], load_values=False)
     assert len(graph._nodes) == 3
 

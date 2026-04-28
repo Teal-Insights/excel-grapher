@@ -215,7 +215,7 @@ print_text(pformat(report, indent=4, width=100))
 
 ## 07. Won't cycle
 
-If edge guards involved in a cycle are mutually logically exclusive, the cycle should be broken and should not appear in the cycle report. This functionality is on the roadmap but not yet correctly implemented.
+If edge guards involved in a cycle are mutually logically exclusive, the cycle is broken and does not appear in the cycle report.
 
 ```{python}
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C7"], load_values=False)
