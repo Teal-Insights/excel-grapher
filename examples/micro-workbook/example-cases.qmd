@@ -293,8 +293,8 @@ constrain(MayCycleConstraints, "Sheet1!B8", Literal[0, 1])
 ```
 
 is equivalent to (if Python syntax allowed it):
-``` python
 
+``` python
 class MayCycleConstraints(TypedDict, total=False):
     "Sheet1!B8": Literal[0, 1]   # not legal — `!` is not a valid identifier char
 ```
@@ -308,3 +308,21 @@ Two reasons:
 2. Reusability across the codebase. The same constraints type is consumed elsewhere (e.g. `verify_lic_dsf_constraints_target_leaves`) for validation against the workbook. Once you express domains as type hints, mypy and `TypeAdapter` can also see them.
 
 However, there is likely a better API shape. I'm open to suggestions.
+
+## 09. OFFSET/INDIRECT reference resolution with scalar arguments
+
+Functions like `OFFSET` and `INDIRECT` construct the address(es) of their dependencies at runtime, so constructing their dependency graph via static analysis requires provisionally evaluating the function calls at extraction time.
+
+A dynamic reference with scalar arguments is easy to resolve. In this case, we have a starting cell address and a column offset of `1`, so we can easily identify the dependency cell it will resolve to by incrementing the column index by `1`.
+
+```{python}
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!D9"], load_values=False, use_cached_dynamic_refs=True)
+
+print_mermaid(graph)
+```
+
+## 10. OFFSET/INDIRECT reference resolution with dynamic arguments
+
+A much harder case is when the arguments of `OFFSET` or `INDIRECT` involve computation and references to other cells. In this case, we must either have scalar values for the arguments or know the range of possible values the arguments might resolve to.
+
+In theory, we should be able to use constraints to help with this, but in practice it's very hard.

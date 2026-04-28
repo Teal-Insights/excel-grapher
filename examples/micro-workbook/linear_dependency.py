@@ -11,10 +11,8 @@ from typing import TypeAlias, cast
 import fastpyxl.utils.cell
 import numpy as np
 
-
 class CircularReferenceWarning(RuntimeWarning):
     """Warning emitted when a circular reference is encountered (default Excel mode)."""
-
 
 @dataclass(slots=True)
 class EvalContext:
@@ -75,7 +73,6 @@ class EvalContext:
         if changed:
             self.invalidate(changed)
 
-
 class XlError(StrEnum):
     VALUE = "#VALUE!"
     REF = "#REF!"
@@ -93,11 +90,9 @@ class XlError(StrEnum):
                 return err
         return None
 
-
 def _escape_sheet_for_formula(sheet: str) -> str:
     """Escape apostrophes for use inside quoted sheet names."""
     return sheet.replace("'", "''")
-
 
 def _parse_sheet_address(address: str) -> tuple[str, str] | None:
     if address.startswith("'"):
@@ -121,7 +116,6 @@ def _parse_sheet_address(address: str) -> tuple[str, str] | None:
 
     return None
 
-
 def _parse_range_address(address: str) -> tuple[str, str, str] | XlError:
     if ":" not in address:
         return XlError.VALUE
@@ -141,11 +135,9 @@ def _parse_range_address(address: str) -> tuple[str, str, str] | XlError:
         end_cell = end_text
     return sheet, start_cell, end_cell
 
-
 def needs_quoting(sheet: str) -> bool:
     """Return True if a sheet name must be wrapped in single quotes in a formula."""
     return " " in sheet or "-" in sheet or "'" in sheet
-
 
 def quote_sheet_if_needed(sheet: str) -> str:
     """Return a sheet name quoted for formulas when quoting is required."""
@@ -153,11 +145,9 @@ def quote_sheet_if_needed(sheet: str) -> str:
         return sheet
     return "'" + _escape_sheet_for_formula(sheet) + "'"
 
-
 def format_key(sheet: str, cell: str) -> str:
     """Format a sheet and A1 cell coordinate into a canonical address string."""
     return f"{quote_sheet_if_needed(sheet)}!{cell}"
-
 
 @dataclass(frozen=True, slots=True)
 class ExcelRange:
@@ -182,14 +172,11 @@ class ExcelRange:
         rows, cols = self.shape
         return np.array(values, dtype=object).reshape((rows, cols))
 
-
 CellValue: TypeAlias = float | int | str | bool | XlError | ExcelRange | np.ndarray | None
-
 
 def coerce_inputs_dict(values: Mapping[str, object]) -> dict[str, CellValue]:
     """Widen inferred default-input dicts to ``dict[str, CellValue]`` for :class:`EvalContext`."""
     return cast(dict[str, CellValue], dict(values))
-
 
 def to_number(value: CellValue) -> float | XlError:
     if value is None:
@@ -212,7 +199,6 @@ def to_number(value: CellValue) -> float | XlError:
         return XlError.VALUE
     return XlError.VALUE
 
-
 def xl_add(left: CellValue, right: CellValue) -> float | XlError:
     if isinstance(left, XlError):
         return left
@@ -226,7 +212,6 @@ def xl_add(left: CellValue, right: CellValue) -> float | XlError:
         return rn
     return ln + rn
 
-
 def xl_circular_reference() -> CellValue:
     """Excel default behavior for circular references (non-iterative calculation)."""
     warnings.warn(
@@ -235,7 +220,6 @@ def xl_circular_reference() -> CellValue:
         stacklevel=2,
     )
     return 0
-
 
 def xl_cell(ctx: EvalContext, address: str) -> CellValue:
     """Evaluate a single cell address under the given context.
@@ -282,7 +266,6 @@ def xl_cell(ctx: EvalContext, address: str) -> CellValue:
         if ctx.stack and ctx.stack[-1] == address:
             ctx.stack.pop()
 
-
 def xl_eval(
     ctx: EvalContext,
     address: str,
@@ -318,7 +301,6 @@ def xl_eval(
         if ctx.stack and ctx.stack[-1] == address:
             ctx.stack.pop()
 
-
 def xl_range(ctx: EvalContext, address: str) -> CellValue:
     """Evaluate a sheet-qualified range and return a 2D numpy array of values."""
     parsed = _parse_range_address(address)
@@ -341,25 +323,21 @@ def xl_range(ctx: EvalContext, address: str) -> CellValue:
     rng = ExcelRange(sheet, start_row, start_col_idx, end_row, end_col_idx)
     return rng.resolve(lambda addr: xl_cell(ctx, addr))
 
-
 # --- Default inputs (leaf cells) ---
 DEFAULT_INPUTS = {
-    "Sheet1!B2": 2,
+    'Sheet1!B2': 2,
 }
 
 
 # --- Formula cell functions ---
 
-
 def cell_sheet1_c2(ctx):
-    """Formula: =B2+1"""
-    return xl_add(xl_cell(ctx, "Sheet1!B2"), 1.0)
+    '''Formula: =B2+1'''
+    return xl_add(xl_cell(ctx, 'Sheet1!B2'), 1.0)
 
 
 # --- Formula resolver ---
 _RESOLVED_FORMULAS = {}
-
-
 def _address_to_func_name(address):
     name = []
     prev_underscore = False
@@ -376,7 +354,6 @@ def _address_to_func_name(address):
     base = "".join(name).strip("_")
     return f"cell_{base}"
 
-
 def _resolve_formula(address):
     fn = _RESOLVED_FORMULAS.get(address)
     if fn is not None:
@@ -387,23 +364,16 @@ def _resolve_formula(address):
         _RESOLVED_FORMULAS[address] = fn
     return fn
 
-
 def make_context(inputs=None):
     """Create an EvalContext with merged inputs."""
     merged = dict(DEFAULT_INPUTS)
     if inputs is not None:
         merged.update(inputs)
-    return EvalContext(
-        inputs=coerce_inputs_dict(merged),
-        resolver=_resolve_formula,
-        iterative_enabled=False,
-        iterate_count=100,
-        iterate_delta=0.001,
-    )
+    return EvalContext(inputs=coerce_inputs_dict(merged), resolver=_resolve_formula, iterative_enabled=False, iterate_count=100, iterate_delta=0.001)
 
 
 TARGETS = {
-    "Sheet1!C2": xl_cell,
+    'Sheet1!C2': xl_cell,
 }
 
 

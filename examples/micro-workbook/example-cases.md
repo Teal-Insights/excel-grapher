@@ -352,7 +352,7 @@ with FormulaEvaluator(graph) as evaluator:
 2.0
 ```
 
-    C:\Users\chris\Software\excel-grapher\excel_grapher\evaluator\evaluator.py:218: CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).
+    C:\Users\chris\Software\excel-grapher\excel_grapher\evaluator\evaluator.py:226: CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).
       return xl_circular_reference()
 
 Similarly, if we generate and run standalone Python code with
@@ -390,9 +390,9 @@ print_text(pformat(report, indent=4, width=100))
 ``` text
 CycleReport(has_must_cycles=True,
             has_may_cycles=False,
-            must_cycles=[{'Sheet1!B6', 'Sheet1!C6'}],
+            must_cycles=[{'Sheet1!C6', 'Sheet1!B6'}],
             may_cycles=[],
-            example_must_cycle_path=['Sheet1!B6', 'Sheet1!C6', 'Sheet1!B6'],
+            example_must_cycle_path=['Sheet1!C6', 'Sheet1!B6', 'Sheet1!C6'],
             example_may_cycle_path=None)
 ```
 
@@ -463,9 +463,9 @@ flowchart TD
 CycleReport(has_must_cycles=False,
             has_may_cycles=True,
             must_cycles=[],
-            may_cycles=[{'Sheet1!D8', 'Sheet1!C8'}],
+            may_cycles=[{'Sheet1!C8', 'Sheet1!D8'}],
             example_must_cycle_path=None,
-            example_may_cycle_path=['Sheet1!D8', 'Sheet1!C8', 'Sheet1!D8'])
+            example_may_cycle_path=['Sheet1!C8', 'Sheet1!D8', 'Sheet1!C8'])
 ```
 
 If we know from the workbook’s domain that Sheet1!B8 can only ever be
@@ -500,9 +500,9 @@ print_text(pformat(report, indent=4, width=100))
 CycleReport(has_must_cycles=False,
             has_may_cycles=True,
             must_cycles=[],
-            may_cycles=[{'Sheet1!D8', 'Sheet1!C8'}],
+            may_cycles=[{'Sheet1!C8', 'Sheet1!D8'}],
             example_must_cycle_path=None,
-            example_may_cycle_path=['Sheet1!D8', 'Sheet1!C8', 'Sheet1!D8'])
+            example_may_cycle_path=['Sheet1!C8', 'Sheet1!D8', 'Sheet1!C8'])
 ```
 
 In theory, this constraint should render the cycle infeasible: the
@@ -550,7 +550,6 @@ constrain(MayCycleConstraints, "Sheet1!B8", Literal[0, 1])
 is equivalent to (if Python syntax allowed it):
 
 ``` python
-
 class MayCycleConstraints(TypedDict, total=False):
     "Sheet1!B8": Literal[0, 1]   # not legal — `!` is not a valid identifier char
 ```
@@ -570,3 +569,38 @@ the workbook. Once you express domains as type hints, mypy and
 `TypeAdapter` can also see them.
 
 However, there is likely a better API shape. I’m open to suggestions.
+
+## 09. OFFSET/INDIRECT reference resolution with scalar arguments
+
+Functions like `OFFSET` and `INDIRECT` construct the address(es) of
+their dependencies at runtime, so constructing their dependency graph
+via static analysis requires provisionally evaluating the function calls
+at extraction time.
+
+A dynamic reference with scalar arguments is easy to resolve. In this
+case, we have a starting cell address and a column offset of `1`, so we
+can easily identify the dependency cell it will resolve to by
+incrementing the column index by `1`.
+
+``` python
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!D9"], load_values=False, use_cached_dynamic_refs=True)
+
+print_mermaid(graph)
+```
+
+``` mermaid
+flowchart TD
+  Sheet1_C9["Sheet1!C9"]
+  Sheet1_D9("Sheet1!D9<br>=OFFSET(B9,0,1)")
+  Sheet1_D9 --> Sheet1_C9
+```
+
+## 10. OFFSET/INDIRECT reference resolution with dynamic arguments
+
+A much harder case is when the arguments of `OFFSET` or `INDIRECT`
+involve computation and references to other cells. In this case, we must
+either have scalar values for the arguments or know the range of
+possible values the arguments might resolve to.
+
+In theory, we should be able to use constraints to help with this, but
+in practice it’s very hard.
