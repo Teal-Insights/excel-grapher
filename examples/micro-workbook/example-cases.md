@@ -12,7 +12,7 @@ from pathlib import Path
 from pprint import pformat
 
 from excel_grapher.grapher import (
-    create_dependency_graph, DependencyGraph, to_mermaid
+    create_dependency_graph, to_mermaid, DependencyGraph
 )
 from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter import CodeGenerator
@@ -390,9 +390,9 @@ print_text(pformat(report, indent=4, width=100))
 ``` text
 CycleReport(has_must_cycles=True,
             has_may_cycles=False,
-            must_cycles=[{'Sheet1!C6', 'Sheet1!B6'}],
+            must_cycles=[{'Sheet1!B6', 'Sheet1!C6'}],
             may_cycles=[],
-            example_must_cycle_path=['Sheet1!C6', 'Sheet1!B6', 'Sheet1!C6'],
+            example_must_cycle_path=['Sheet1!B6', 'Sheet1!C6', 'Sheet1!B6'],
             example_may_cycle_path=None)
 ```
 
@@ -578,9 +578,9 @@ via static analysis requires provisionally evaluating the function calls
 at extraction time.
 
 A dynamic reference with scalar arguments is easy to resolve. In this
-case, we have a starting cell address and a column offset of `1`, so we
-can easily identify the dependency cell it will resolve to by
-incrementing the column index by `1`.
+case, we have a starting cell address (“Sheet1!B9”) and a column offset
+of `1`, so we can easily identify the dependency cell it will resolve to
+(“Sheet1!C9”) by incrementing the column index by `1`.
 
 ``` python
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!D9"], load_values=False, use_cached_dynamic_refs=True)
@@ -598,9 +598,126 @@ flowchart TD
 ## 10. OFFSET/INDIRECT reference resolution with dynamic arguments
 
 A much harder case is when the arguments of `OFFSET` or `INDIRECT`
-involve computation and references to other cells. In this case, we must
-either have scalar values for the arguments or know the range of
-possible values the arguments might resolve to.
+involve computation and references to other cells. For example,
+“Sheet1!E10” contains the formula `=OFFSET(C10,0,B10)`, which depends on
+the value of “Sheet1!B10”. In this case, we must either:
 
-In theory, we should be able to use constraints to help with this, but
-in practice it’s very hard.
+1.  Treat “Sheet1!B10” as a constant that the user won’t modify, or
+2.  Know the range of possible values that “Sheet1!B10” might resolve
+    to, and/or
+3.  Extract every cell in the workbook into our `DependencyGraph`,
+    whether we detected it as a dependency of the targets or not, so
+    that it’s available at runtime for `FormulaEvaluator` or generated
+    Python code to resolve the dynamic reference.
+
+### Option 1: use cached dynamic refs (currently implemented)
+
+Option 1 is implemented by passing `use_cached_dynamic_refs=True` to
+`create_dependency_graph`. This tells grapher to treat all dependencies
+of the `OFFSET` function’s row/column arguments as constants, so that
+the arguments can be resolved to scalar values by computing the formula
+chain.
+
+``` python
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!E10"], load_values=False, use_cached_dynamic_refs=True)
+```
+
+    C:\Users\chris\Software\excel-grapher\excel_grapher\grapher\parser.py:885: UserWarning: Resolved OFFSET/INDIRECT arguments using cached workbook values. Results may differ if cached values are stale.
+      _warn_cached_dynamic_once()
+
+The risk with this approach is that the user may modify “Sheet1!B10”
+after the graph is built, which will break the graph. For instance, if
+the user changes “Sheet1!B10” from `0` (the default/cached value) to `1`
+and then tries to evaluate “Sheet1!E10” using the `FormulaEvaluator`,
+the graph will break because the dependency cell “Sheet1!D10” will not
+be found in the extracted graph:
+
+``` python
+graph.set_node_value("Sheet1!B10", 1)
+with FormulaEvaluator(graph) as evaluator:
+    try:
+        value = evaluator.evaluate("Sheet1!E10")
+    except KeyError as e:
+        print_text("KeyError: " + str(e))
+```
+
+``` text
+KeyError: 'Cell Sheet1!D10 not found in graph'
+```
+
+### Option 2: use constraints to resolve dynamic refs (not yet fully implemented)
+
+Option 2 is, in theory, another use case for constraints. The idea is
+that if we know that input cells will be within particular number ranges
+or will take one of a set of string values, we should be able to compute
+all combinations of possible values and build a `DependencyGraph` that
+covers all of them.
+
+In practice, this gets very hard as the complexity of the formula chain
+increases, because the number of possible combinations of values grows
+exponentially and very quickly becomes computationally intractable.
+
+However, I believe the combinatorial blowup problem can be solved in 95%
+of cases with some combination of clever heuristics, logical solving,
+and/or AI. For the other 5%, we can perhaps short-circuit the problem by
+setting constraints directly on the dynamic ref cell rather than on the
+input cells, and then accepting that an exception might be raised if the
+constraint is not satisfied at runtime.
+
+As in the “may cycle” example above, the expected user behavior would be
+to `constrain` the cells that inform the `row` and `column` arguments of
+`OFFSET` or `INDIRECT`, then pass a `DynamicRefConfig` with these
+constraints to `create_dependency_graph`. This tells grapher to use the
+constraints to resolve the dynamic references.
+
+Currently, this works for easy cases like the one in Row 10, but runs
+into combinatorial explosion for more complex cases.
+
+``` python
+class DynamicRefConstraints(TypedDict, total=False):
+    pass
+
+
+constrain(DynamicRefConstraints, "Sheet1!B10", Literal[0, 1])
+config = DynamicRefConfig.from_constraints(DynamicRefConstraints, {})
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!E10"], load_values=False, dynamic_refs=config)
+
+print_mermaid(graph)
+```
+
+``` mermaid
+flowchart TD
+  Sheet1_B10["Sheet1!B10"]
+  Sheet1_C10["Sheet1!C10"]
+  Sheet1_D10["Sheet1!D10"]
+  Sheet1_E10("Sheet1!E10<br>=OFFSET(C10,0,B10)")
+  Sheet1_E10 --> Sheet1_B10
+  Sheet1_E10 --> Sheet1_C10
+  Sheet1_E10 --> Sheet1_D10
+```
+
+### Option 3: extract every cell in the workbook into our `DependencyGraph` (feasible but not implemented or currently planned)
+
+Option 3 is safer than Option 1, but it’s not as surefire a solution as
+it sounds:
+
+1.  Suppose we extract every *populated* cell in the workbook into our
+    `DependencyGraph`. That leaves *blank* cells out of the graph, and
+    it might be the case that the user is intended to set a value for
+    those blanks, and that a dynamic reference will resolve to one.
+2.  Or suppose we extract *all* cells, whether populated or not. The
+    graph quickly gets huge, especially if we don’t apply some
+    commonsense boundaries on the sheet area to extract. Any given
+    worksheet can have 16,384 columns and 1,048,576 rows, so the
+    extracted cell/node count would be the product of those. But because
+    of item 1 above, it’s hard to know what the bounds should be. This
+    would have to be user-configurable, maybe with some sensible
+    defaults.
+
+We might also need to do some testing to make sure behaviors don’t
+change in unexpected ways if we’re including cells in the
+DependencyGraph that are not connected to the rest of the graph.
+
+Until and unless we’ve ruled out Option 2, I don’t think the blowup of
+graph size is worth the extra speed/safety we get from implementing
+Option 3.
