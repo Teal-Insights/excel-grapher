@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, overload
 
 import fastpyxl.utils.cell
 
@@ -115,11 +115,19 @@ class FormulaEvaluator:
 
         return handler
 
-    def evaluate(
-        self, targets: str | list[str]
-    ) -> CellValue | dict[str, CellValue]:
-        single = isinstance(targets, str)
-        target_list: list[str] = [targets] if single else list(targets)
+    @overload
+    def evaluate(self, targets: str) -> CellValue: ...
+
+    @overload
+    def evaluate(self, targets: Sequence[str]) -> dict[str, CellValue]: ...
+
+    def evaluate(self, targets: str | Sequence[str]) -> CellValue | dict[str, CellValue]:
+        if isinstance(targets, str):
+            single = True
+            target_list: list[str] = [targets]
+        else:
+            single = False
+            target_list = list(targets)
         # Auto-detect changes in leaf values if enabled
         if self.auto_detect_changes and self.eager_invalidation:
             self._detect_and_invalidate_changed_leaves()
