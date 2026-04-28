@@ -207,9 +207,6 @@ def test_must_cycle_is_reported_as_unconditional_cycle(
     assert report.example_may_cycle_path is None
 
 
-@pytest.mark.xfail(
-    reason="Mutually exclusive edge guards do not currently break the cycle in the cycle report"
-)
 def test_wont_cycle_is_not_reported_when_guards_are_mutually_exclusive(
     workbook_path_factory: Callable[[tuple[int | float | str, ...]], Path],
 ) -> None:

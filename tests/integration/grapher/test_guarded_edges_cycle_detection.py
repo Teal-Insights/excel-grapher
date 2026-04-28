@@ -34,6 +34,25 @@ def _make_may_cycle_if_workbook(path: Path) -> None:
     wb.close()
 
 
+def _make_infeasible_may_cycle_logical_shape_variant_workbook(path: Path) -> None:
+    """
+    Create a workbook with an infeasible guarded SCC where opposite edges use
+    logically equivalent guard forms with different syntax.
+
+    A1 = IF($C$1=0, B1, 1)
+    B1 = IF(NOT(NOT(NOT($C$1=0))), A1, 2)
+    C1 = 0
+    """
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+
+    ws.write_number(0, 2, 0)  # C1
+    ws.write_formula(0, 0, "=IF($C$1=0,B1,1)", None, 1)  # A1 cached
+    ws.write_formula(0, 1, "=IF(NOT(NOT(NOT($C$1=0))),A1,2)", None, 2)  # B1 cached
+
+    wb.close()
+
+
 def _make_feasible_may_cycle_if_workbook(path: Path) -> None:
     """
     Create a workbook with a *feasible may-cycle* (guarded edges only):
@@ -114,6 +133,16 @@ def test_infeasible_may_cycle_is_not_reported(tmp_path: Path) -> None:
     """
     excel_path = tmp_path / "if_may_cycle.xlsx"
     _make_may_cycle_if_workbook(excel_path)
+
+    graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
+    report = graph.cycle_report()
+    assert report.has_must_cycles is False
+    assert report.has_may_cycles is False
+
+
+def test_infeasible_may_cycle_with_equivalent_guard_shape_is_not_reported(tmp_path: Path) -> None:
+    excel_path = tmp_path / "if_may_cycle_logical_shape_variant.xlsx"
+    _make_infeasible_may_cycle_logical_shape_variant_workbook(excel_path)
 
     graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
     report = graph.cycle_report()
