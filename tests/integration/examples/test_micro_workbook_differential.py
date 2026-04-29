@@ -8,7 +8,7 @@ import tempfile
 from dataclasses import dataclass
 from itertools import product
 from pathlib import Path
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, Protocol, TypedDict
 
 import pytest
 
@@ -172,12 +172,19 @@ class GoldenDriver:
                 shutil.rmtree(self._tmpdir, ignore_errors=True)
 
 
+class _GoldenForRunCase(Protocol):
+    def set_inputs(self, inputs: dict[str, Any]) -> None: ...
+    def read(self, target: str) -> Any: ...
+
+
 class OracleDriver:
     def __init__(
         self, workbook_path: Path, target: str, graph_kwargs: dict[str, Any] | None = None
     ) -> None:
         graph_kwargs = graph_kwargs or {}
-        self._graph = create_dependency_graph(workbook_path, [target], load_values=True, **graph_kwargs)
+        self._graph = create_dependency_graph(
+            workbook_path, [target], load_values=True, **graph_kwargs
+        )
         self._evaluator = FormulaEvaluator(self._graph)
         self._target = target
 
@@ -189,7 +196,7 @@ class OracleDriver:
         return self._evaluator.evaluate(self._target)
 
 
-def run_case(case: Case, golden: GoldenDriver) -> list[Trial]:
+def run_case(case: Case, golden: _GoldenForRunCase) -> list[Trial]:
     oracle = OracleDriver(WORKBOOK_PATH, case.target, graph_kwargs=case.oracle_graph_kwargs)
     trials: list[Trial] = []
     leaf_domains = case.leaf_domains or {}
@@ -248,7 +255,9 @@ def test_case_factory_supports_graph_kwargs_and_leaf_domains() -> None:
     assert case.leaf_domains == {"Sheet1!B10": (0, 1), "Sheet1!C10": (5,)}
 
 
-def test_oracle_driver_forwards_graph_kwargs_to_graph_builder(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_oracle_driver_forwards_graph_kwargs_to_graph_builder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: dict[str, Any] = {}
 
     class _DummyGraph:
@@ -286,7 +295,9 @@ def test_oracle_driver_forwards_graph_kwargs_to_graph_builder(monkeypatch: pytes
     assert captured["kwargs"] == {"use_cached_dynamic_refs": True}
 
 
-def test_run_case_uses_per_leaf_domains_for_cartesian_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_case_uses_per_leaf_domains_for_cartesian_sweep(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     seen: list[dict[str, Any]] = []
 
     class _FakeGolden:
@@ -296,7 +307,7 @@ def test_run_case_uses_per_leaf_domains_for_cartesian_sweep(monkeypatch: pytest.
         def set_inputs(self, inputs: dict[str, Any]) -> None:
             self._last_inputs = dict(inputs)
 
-        def read(self, _target: str) -> int:
+        def read(self, target: str) -> int:
             return 7
 
     class _FakeOracle:
@@ -328,7 +339,7 @@ def test_run_case_uses_per_leaf_domains_for_cartesian_sweep(monkeypatch: pytest.
         "C10",
         leaf_domains={"B10": (0, 1), "C10": (5,)},
     )
-    trials = run_case(case, golden)  # type: ignore[arg-type]
+    trials = run_case(case, golden)
     assert len(trials) == 2
     assert seen == [
         {"Sheet1!B10": 0, "Sheet1!C10": 5},
