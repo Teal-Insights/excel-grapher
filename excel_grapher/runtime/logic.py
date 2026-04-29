@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from excel_grapher.core import CellValue, XlError, get_error, to_bool, to_number
 
-__all__ = ["xl_and", "xl_choose", "xl_ifna", "xl_or"]
+__all__ = ["xl_and", "xl_choose", "xl_ifna", "xl_not", "xl_or"]
 
 
 def xl_and(*args: CellValue) -> bool | XlError:
@@ -29,6 +29,13 @@ def xl_or(*args: CellValue) -> bool | XlError:
         if b:
             return True
     return False
+
+
+def xl_not(arg: CellValue) -> bool | XlError:
+    b = to_bool(arg)
+    if isinstance(b, XlError):
+        return b
+    return not b
 
 
 def xl_choose(index_num: CellValue, *values: CellValue) -> CellValue:

@@ -101,6 +101,22 @@ def test_and_or() -> None:
         assert result["S!A4"] is False
 
 
+def test_not() -> None:
+    """Test NOT function."""
+    graph = _make_graph(
+        _make_node("S!A1", "=NOT(TRUE)", None),
+        _make_node("S!A2", "=NOT(FALSE)", None),
+        _make_node("S!A3", "=NOT(0)", None),
+        _make_node("S!A4", "=NOT(1)", None),
+    )
+    with FormulaEvaluator(graph) as ev:
+        result = ev.evaluate(["S!A1", "S!A2", "S!A3", "S!A4"])
+        assert result["S!A1"] is False
+        assert result["S!A2"] is True
+        assert result["S!A3"] is True
+        assert result["S!A4"] is False
+
+
 # --- Aggregation function tests ---
 
 
