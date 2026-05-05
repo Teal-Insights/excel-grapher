@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 GITHUB_API_VERSION = "2026-03-10"
-DEFAULT_REPOS = ["excel-grapher", "lic-dsf-programmatic-extraction"]
+DEFAULT_REPOS = ["excel-grapher", "lic-dsf-extraction-pipeline", "tiny-dsa-extraction-pipeline", "qcraft-extraction-pipeline"]
 ISSUE_LABEL_WIDTH = 200
 GRAPH_FONT_NAME = "Arial"
 GRAPH_FONT_SIZE = 10

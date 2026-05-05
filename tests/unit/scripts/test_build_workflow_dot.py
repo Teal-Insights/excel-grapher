@@ -86,7 +86,7 @@ def test_build_dot_renders_repo_pre_post_hierarchy_and_blocks_edges() -> None:
             post_group_label="Audit configuration API and storage data model",
         ),
         WorkflowIssue(
-            repo="lic-dsf-programmatic-extraction",
+            repo="lic-dsf-extraction-pipeline",
             number=19,
             title="Update extraction script",
             pre_group_key="api_audit",
@@ -96,7 +96,7 @@ def test_build_dot_renders_repo_pre_post_hierarchy_and_blocks_edges() -> None:
         ),
     ]
     blocks_edges = [
-        ("excel-grapher", 135, "lic-dsf-programmatic-extraction", 19),
+        ("excel-grapher", 135, "lic-dsf-extraction-pipeline", 19),
     ]
 
     dot = build_dot(issues, blocks_edges)

@@ -3,11 +3,13 @@
     "owner": "Teal-Insights",
     "repos": [
       "excel-grapher",
-      "lic-dsf-programmatic-extraction"
+      "lic-dsf-extraction-pipeline",
+      "qcraft-extraction-pipeline",
+      "tiny-dsa-extraction-pipeline"
     ],
-    "issue_count": 43,
-    "cluster_count": 15,
-    "edge_count": 30
+    "issue_count": 50,
+    "cluster_count": 17,
+    "edge_count": 37
   },
   "elements": {
     "nodes": [
@@ -138,28 +140,26 @@
       },
       {
         "data": {
-          "id": "cluster::cluster_repo_lic_dsf_programmatic_extraction",
-          "label": "lic-dsf-programmatic-extraction GitHub issues",
+          "id": "cluster::cluster_repo_lic_dsf_extraction_pipeline",
+          "label": "lic-dsf-extraction-pipeline GitHub issues",
           "type": "cluster",
-          "cluster_name": "cluster_repo_lic_dsf_programmatic_extraction"
+          "cluster_name": "cluster_repo_lic_dsf_extraction_pipeline"
         }
       },
       {
         "data": {
-          "id": "excel_grapher_141",
-          "label": "#141 \u00b7 Create a process diagram that analyzes which gh issues have to be completed in sequence and which can be worked in parallel",
-          "type": "issue",
-          "repo": "excel-grapher",
-          "number": 141,
-          "title": "Create a process diagram that analyzes which gh issues have to be completed in sequence and which can be worked in parallel",
-          "url": "https://github.com/Teal-Insights/excel-grapher/issues/141",
-          "gv_width": 612.0,
-          "gv_height": 36.0,
-          "parent": "cluster::cluster_repo_excel_grapher"
-        },
-        "position": {
-          "x": 322.0,
-          "y": 59.0
+          "id": "cluster::cluster_repo_qcraft_extraction_pipeline",
+          "label": "qcraft-extraction-pipeline GitHub issues",
+          "type": "cluster",
+          "cluster_name": "cluster_repo_qcraft_extraction_pipeline"
+        }
+      },
+      {
+        "data": {
+          "id": "cluster::cluster_repo_tiny_dsa_extraction_pipeline",
+          "label": "tiny-dsa-extraction-pipeline GitHub issues",
+          "type": "cluster",
+          "cluster_name": "cluster_repo_tiny_dsa_extraction_pipeline"
         }
       },
       {
@@ -176,8 +176,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_dependency_graph_api_enhancements"
         },
         "position": {
-          "x": 1598.6,
-          "y": 1342.05
+          "x": 1489.4,
+          "y": 1722.02
         }
       },
       {
@@ -194,8 +194,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_dependency_graph_api_enhancements"
         },
         "position": {
-          "x": 1598.6,
-          "y": 1270.05
+          "x": 1489.4,
+          "y": 1650.02
         }
       },
       {
@@ -212,8 +212,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_dependency_graph_api_enhancements"
         },
         "position": {
-          "x": 1598.6,
-          "y": 1198.05
+          "x": 1489.4,
+          "y": 1578.02
         }
       },
       {
@@ -230,8 +230,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_dependency_graph_api_enhancements"
         },
         "position": {
-          "x": 1598.6,
-          "y": 1126.05
+          "x": 1489.4,
+          "y": 1506.02
         }
       },
       {
@@ -248,8 +248,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_dependency_graph_api_enhancements_minor"
         },
         "position": {
-          "x": 960.5,
-          "y": 1342.05
+          "x": 851.25,
+          "y": 1722.02
         }
       },
       {
@@ -266,8 +266,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_dependency_graph_api_enhancements_minor"
         },
         "position": {
-          "x": 960.5,
-          "y": 1270.05
+          "x": 851.25,
+          "y": 1650.02
         }
       },
       {
@@ -284,8 +284,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_dependency_graph_api_enhancements_minor"
         },
         "position": {
-          "x": 960.5,
-          "y": 1198.05
+          "x": 851.25,
+          "y": 1578.02
         }
       },
       {
@@ -302,8 +302,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_doc_system_audit"
         },
         "position": {
-          "x": 2297.5,
-          "y": 1031.05
+          "x": 2188.2,
+          "y": 1411.02
         }
       },
       {
@@ -320,8 +320,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_leaf_config_api_audit"
         },
         "position": {
-          "x": 960.5,
-          "y": 1041.05
+          "x": 851.25,
+          "y": 1493.02
         }
       },
       {
@@ -338,8 +338,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_leaf_config_api_audit"
         },
         "position": {
-          "x": 960.5,
-          "y": 1113.05
+          "x": 851.25,
+          "y": 1421.02
         }
       },
       {
@@ -356,8 +356,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_leaf_config_api_audit"
         },
         "position": {
-          "x": 960.5,
-          "y": 969.05
+          "x": 851.25,
+          "y": 1349.02
         }
       },
       {
@@ -374,8 +374,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_visualization_api_enhancements"
         },
         "position": {
-          "x": 960.5,
-          "y": 884.05
+          "x": 851.25,
+          "y": 1120.02
         }
       },
       {
@@ -392,8 +392,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_visualization_api_enhancements"
         },
         "position": {
-          "x": 960.5,
-          "y": 812.05
+          "x": 851.25,
+          "y": 1192.02
         }
       },
       {
@@ -410,8 +410,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_visualization_api_enhancements"
         },
         "position": {
-          "x": 1598.6,
-          "y": 763.05
+          "x": 1489.4,
+          "y": 1120.02
         }
       },
       {
@@ -428,8 +428,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_visualization_api_enhancements"
         },
         "position": {
-          "x": 960.5,
-          "y": 740.05
+          "x": 851.25,
+          "y": 1264.02
         }
       },
       {
@@ -446,8 +446,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_guards_implementation"
         },
         "position": {
-          "x": 1598.6,
-          "y": 241.0
+          "x": 1489.4,
+          "y": 621.0
         }
       },
       {
@@ -464,8 +464,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_guards_implementation"
         },
         "position": {
-          "x": 1598.6,
-          "y": 313.0
+          "x": 1489.4,
+          "y": 693.0
         }
       },
       {
@@ -482,8 +482,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_guards_implementation"
         },
         "position": {
-          "x": 1598.6,
-          "y": 169.0
+          "x": 1489.4,
+          "y": 549.0
         }
       },
       {
@@ -500,8 +500,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_guards_implementation"
         },
         "position": {
-          "x": 1598.6,
-          "y": 385.0
+          "x": 1489.4,
+          "y": 765.0
         }
       },
       {
@@ -518,8 +518,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_guards_implementation"
         },
         "position": {
-          "x": 2297.5,
-          "y": 313.0
+          "x": 2188.2,
+          "y": 765.0
         }
       },
       {
@@ -536,8 +536,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_guards_implementation"
         },
         "position": {
-          "x": 2297.5,
-          "y": 385.0
+          "x": 2188.2,
+          "y": 693.0
         }
       },
       {
@@ -554,8 +554,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_guards_problem_space_mapping"
         },
         "position": {
-          "x": 322.0,
-          "y": 318.0
+          "x": 275.38,
+          "y": 701.0
         }
       },
       {
@@ -572,8 +572,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_guards_problem_space_mapping"
         },
         "position": {
-          "x": 322.0,
-          "y": 246.0
+          "x": 275.38,
+          "y": 629.0
         }
       },
       {
@@ -590,8 +590,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_guards_problem_space_mapping"
         },
         "position": {
-          "x": 322.0,
-          "y": 174.0
+          "x": 275.38,
+          "y": 557.0
         }
       },
       {
@@ -608,8 +608,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_guards_strategy_planning"
         },
         "position": {
-          "x": 960.5,
-          "y": 333.0
+          "x": 851.25,
+          "y": 713.0
         }
       },
       {
@@ -626,8 +626,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_guards_strategy_planning"
         },
         "position": {
-          "x": 960.5,
-          "y": 261.0
+          "x": 851.25,
+          "y": 641.0
         }
       },
       {
@@ -644,8 +644,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_guards_strategy_planning"
         },
         "position": {
-          "x": 960.5,
-          "y": 189.0
+          "x": 851.25,
+          "y": 569.0
         }
       },
       {
@@ -662,8 +662,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_major"
         },
         "position": {
-          "x": 2297.5,
-          "y": 622.0
+          "x": 2188.2,
+          "y": 1002.0200000000001
         }
       },
       {
@@ -680,8 +680,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_major"
         },
         "position": {
-          "x": 2297.5,
-          "y": 550.0
+          "x": 2188.2,
+          "y": 930.0
         }
       },
       {
@@ -698,8 +698,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_major"
         },
         "position": {
-          "x": 2297.5,
-          "y": 478.0
+          "x": 2188.2,
+          "y": 858.0
         }
       },
       {
@@ -716,8 +716,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_tests"
         },
         "position": {
-          "x": 1598.6,
-          "y": 1435.05
+          "x": 1489.4,
+          "y": 1887.022
         }
       },
       {
@@ -734,8 +734,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_tests"
         },
         "position": {
-          "x": 1598.6,
-          "y": 1507.05
+          "x": 1489.4,
+          "y": 1815.02
         }
       },
       {
@@ -752,8 +752,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_tests"
         },
         "position": {
-          "x": 960.5,
-          "y": 1475.05
+          "x": 851.25,
+          "y": 1815.02
         }
       },
       {
@@ -770,8 +770,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_tests"
         },
         "position": {
-          "x": 322.0,
-          "y": 1507.05
+          "x": 275.38,
+          "y": 1887.022
         }
       },
       {
@@ -788,8 +788,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_tests"
         },
         "position": {
-          "x": 322.0,
-          "y": 1435.05
+          "x": 275.38,
+          "y": 1815.02
         }
       },
       {
@@ -806,8 +806,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_viz"
         },
         "position": {
-          "x": 1598.6,
-          "y": 602.0
+          "x": 1489.4,
+          "y": 982.0200000000001
         }
       },
       {
@@ -824,98 +824,242 @@
           "parent": "cluster::cluster_repo_excel_grapher_viz"
         },
         "position": {
-          "x": 1598.6,
-          "y": 530.0
+          "x": 1489.4,
+          "y": 910.0
         }
       },
       {
         "data": {
-          "id": "lic_dsf_programmatic_extraction_5",
+          "id": "lic_dsf_extraction_pipeline_5",
           "label": "#5 \u00b7 Generate some documentation as to which specific inputs are required for which specific output rows",
           "type": "issue",
-          "repo": "lic-dsf-programmatic-extraction",
+          "repo": "lic-dsf-extraction-pipeline",
           "number": 5,
           "title": "Generate some documentation as to which specific inputs are required for which specific output rows",
-          "url": "https://github.com/Teal-Insights/lic-dsf-programmatic-extraction/issues/5",
+          "url": "https://github.com/Teal-Insights/lic-dsf-extraction-pipeline/issues/5",
           "gv_width": 483.7536,
           "gv_height": 36.0,
-          "parent": "cluster::cluster_repo_lic_dsf_programmatic_extraction"
+          "parent": "cluster::cluster_repo_lic_dsf_extraction_pipeline"
         },
         "position": {
-          "x": 2970.1,
-          "y": 1663.049
+          "x": 2860.9,
+          "y": 1625.02
         }
       },
       {
         "data": {
-          "id": "lic_dsf_programmatic_extraction_10",
+          "id": "lic_dsf_extraction_pipeline_10",
           "label": "#10 \u00b7 Adjust grouping and label detection for Ext_Debt_Data sheet",
           "type": "issue",
-          "repo": "lic-dsf-programmatic-extraction",
+          "repo": "lic-dsf-extraction-pipeline",
           "number": 10,
           "title": "Adjust grouping and label detection for Ext_Debt_Data sheet",
-          "url": "https://github.com/Teal-Insights/lic-dsf-programmatic-extraction/issues/10",
+          "url": "https://github.com/Teal-Insights/lic-dsf-extraction-pipeline/issues/10",
           "gv_width": 311.99760000000003,
           "gv_height": 36.0,
-          "parent": "cluster::cluster_repo_lic_dsf_programmatic_extraction"
+          "parent": "cluster::cluster_repo_lic_dsf_extraction_pipeline"
         },
         "position": {
-          "x": 2970.1,
-          "y": 1591.05
+          "x": 2860.9,
+          "y": 1553.02
         }
       },
       {
         "data": {
-          "id": "lic_dsf_programmatic_extraction_15",
+          "id": "lic_dsf_extraction_pipeline_15",
           "label": "#15 \u00b7 Create a step-by-step workflow with helpers that can tell you what inputs to set next",
           "type": "issue",
-          "repo": "lic-dsf-programmatic-extraction",
+          "repo": "lic-dsf-extraction-pipeline",
           "number": 15,
           "title": "Create a step-by-step workflow with helpers that can tell you what inputs to set next",
-          "url": "https://github.com/Teal-Insights/lic-dsf-programmatic-extraction/issues/15",
+          "url": "https://github.com/Teal-Insights/lic-dsf-extraction-pipeline/issues/15",
           "gv_width": 416.2464,
           "gv_height": 36.0,
-          "parent": "cluster::cluster_repo_lic_dsf_programmatic_extraction"
+          "parent": "cluster::cluster_repo_lic_dsf_extraction_pipeline"
         },
         "position": {
-          "x": 2970.1,
-          "y": 1519.05
+          "x": 2860.9,
+          "y": 1481.02
         }
       },
       {
         "data": {
-          "id": "lic_dsf_programmatic_extraction_16",
+          "id": "lic_dsf_extraction_pipeline_16",
           "label": "#16 \u00b7 Export golden master tests with the output libraries",
           "type": "issue",
-          "repo": "lic-dsf-programmatic-extraction",
+          "repo": "lic-dsf-extraction-pipeline",
           "number": 16,
           "title": "Export golden master tests with the output libraries",
-          "url": "https://github.com/Teal-Insights/lic-dsf-programmatic-extraction/issues/16",
+          "url": "https://github.com/Teal-Insights/lic-dsf-extraction-pipeline/issues/16",
           "gv_width": 270.7488,
           "gv_height": 36.0,
-          "parent": "cluster::cluster_repo_lic_dsf_programmatic_extraction"
+          "parent": "cluster::cluster_repo_lic_dsf_extraction_pipeline"
         },
         "position": {
-          "x": 2970.1,
-          "y": 1447.05
+          "x": 2860.9,
+          "y": 1409.02
         }
       },
       {
         "data": {
-          "id": "lic_dsf_programmatic_extraction_19",
+          "id": "lic_dsf_extraction_pipeline_19",
           "label": "#19 \u00b7 Once excel-grapher API is fully updated, update excel-grapher here and edit the extraction script to use the new API",
           "type": "issue",
-          "repo": "lic-dsf-programmatic-extraction",
+          "repo": "lic-dsf-extraction-pipeline",
           "number": 19,
           "title": "Once excel-grapher API is fully updated, update excel-grapher here and edit the extraction script to use the new API",
-          "url": "https://github.com/Teal-Insights/lic-dsf-programmatic-extraction/issues/19",
+          "url": "https://github.com/Teal-Insights/lic-dsf-extraction-pipeline/issues/19",
           "gv_width": 552.7512,
           "gv_height": 36.0,
-          "parent": "cluster::cluster_repo_lic_dsf_programmatic_extraction"
+          "parent": "cluster::cluster_repo_lic_dsf_extraction_pipeline"
         },
         "position": {
-          "x": 2970.1,
-          "y": 1375.05
+          "x": 2860.9,
+          "y": 1337.02
+        }
+      },
+      {
+        "data": {
+          "id": "qcraft_extraction_pipeline_1",
+          "label": "#1 \u00b7 Audit the Q-CRAFT template to assess complexity, VBA macros, etc.",
+          "type": "issue",
+          "repo": "qcraft-extraction-pipeline",
+          "number": 1,
+          "title": "Audit the Q-CRAFT template to assess complexity, VBA macros, etc.",
+          "url": "https://github.com/Teal-Insights/qcraft-extraction-pipeline/issues/1",
+          "gv_width": 347.99760000000003,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_qcraft_extraction_pipeline"
+        },
+        "position": {
+          "x": 2860.9,
+          "y": 203.0
+        }
+      },
+      {
+        "data": {
+          "id": "qcraft_extraction_pipeline_2",
+          "label": "#2 \u00b7 Extract the Q-CRAFT graph",
+          "type": "issue",
+          "repo": "qcraft-extraction-pipeline",
+          "number": 2,
+          "title": "Extract the Q-CRAFT graph",
+          "url": "https://github.com/Teal-Insights/qcraft-extraction-pipeline/issues/2",
+          "gv_width": 216.0,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_qcraft_extraction_pipeline"
+        },
+        "position": {
+          "x": 2860.9,
+          "y": 59.0
+        }
+      },
+      {
+        "data": {
+          "id": "qcraft_extraction_pipeline_3",
+          "label": "#3 \u00b7 Export standalone Python library",
+          "type": "issue",
+          "repo": "qcraft-extraction-pipeline",
+          "number": 3,
+          "title": "Export standalone Python library",
+          "url": "https://github.com/Teal-Insights/qcraft-extraction-pipeline/issues/3",
+          "gv_width": 216.0,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_qcraft_extraction_pipeline"
+        },
+        "position": {
+          "x": 2860.9,
+          "y": 131.0
+        }
+      },
+      {
+        "data": {
+          "id": "tiny_dsa_extraction_pipeline_1",
+          "label": "#1 \u00b7 Scaffold the configure-extract-refactor workflow for `tiny-dsa`",
+          "type": "issue",
+          "repo": "tiny-dsa-extraction-pipeline",
+          "number": 1,
+          "title": "Scaffold the configure-extract-refactor workflow for `tiny-dsa`",
+          "url": "https://github.com/Teal-Insights/tiny-dsa-extraction-pipeline/issues/1",
+          "gv_width": 306.74879999999996,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_tiny_dsa_extraction_pipeline"
+        },
+        "position": {
+          "x": 851.25,
+          "y": 212.0
+        }
+      },
+      {
+        "data": {
+          "id": "tiny_dsa_extraction_pipeline_2",
+          "label": "#2 \u00b7 Define production polish/branding",
+          "type": "issue",
+          "repo": "tiny-dsa-extraction-pipeline",
+          "number": 2,
+          "title": "Define production polish/branding",
+          "url": "https://github.com/Teal-Insights/tiny-dsa-extraction-pipeline/issues/2",
+          "gv_width": 216.0,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_tiny_dsa_extraction_pipeline"
+        },
+        "position": {
+          "x": 851.25,
+          "y": 140.0
+        }
+      },
+      {
+        "data": {
+          "id": "tiny_dsa_extraction_pipeline_4",
+          "label": "#4 \u00b7 Write a script to extract the `tiny-dsa` graph",
+          "type": "issue",
+          "repo": "tiny-dsa-extraction-pipeline",
+          "number": 4,
+          "title": "Write a script to extract the `tiny-dsa` graph",
+          "url": "https://github.com/Teal-Insights/tiny-dsa-extraction-pipeline/issues/4",
+          "gv_width": 232.5024,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_tiny_dsa_extraction_pipeline"
+        },
+        "position": {
+          "x": 1489.4,
+          "y": 187.0
+        }
+      },
+      {
+        "data": {
+          "id": "tiny_dsa_extraction_pipeline_5",
+          "label": "#5 \u00b7 Do some visualization and analysis on the extracted graph to try to identify modularization opportunities",
+          "type": "issue",
+          "repo": "tiny-dsa-extraction-pipeline",
+          "number": 5,
+          "title": "Do some visualization and analysis on the extracted graph to try to identify modularization opportunities",
+          "url": "https://github.com/Teal-Insights/tiny-dsa-extraction-pipeline/issues/5",
+          "gv_width": 494.25120000000004,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_tiny_dsa_extraction_pipeline"
+        },
+        "position": {
+          "x": 2188.2,
+          "y": 212.0
+        }
+      },
+      {
+        "data": {
+          "id": "tiny_dsa_extraction_pipeline_6",
+          "label": "#6 \u00b7 Export standalone Python library",
+          "type": "issue",
+          "repo": "tiny-dsa-extraction-pipeline",
+          "number": 6,
+          "title": "Export standalone Python library",
+          "url": "https://github.com/Teal-Insights/tiny-dsa-extraction-pipeline/issues/6",
+          "gv_width": 216.0,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_tiny_dsa_extraction_pipeline"
+        },
+        "position": {
+          "x": 2188.2,
+          "y": 140.0
         }
       }
     ],
@@ -931,18 +1075,27 @@
       },
       {
         "data": {
-          "id": "edge::excel_grapher_17->lic_dsf_programmatic_extraction_16",
-          "source": "excel_grapher_17",
-          "target": "lic_dsf_programmatic_extraction_16",
+          "id": "edge::excel_grapher_9->tiny_dsa_extraction_pipeline_5",
+          "source": "excel_grapher_9",
+          "target": "tiny_dsa_extraction_pipeline_5",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::excel_grapher_18->lic_dsf_programmatic_extraction_16",
+          "id": "edge::excel_grapher_17->lic_dsf_extraction_pipeline_16",
+          "source": "excel_grapher_17",
+          "target": "lic_dsf_extraction_pipeline_16",
+          "type": "blocks",
+          "label": "blocks"
+        }
+      },
+      {
+        "data": {
+          "id": "edge::excel_grapher_18->lic_dsf_extraction_pipeline_16",
           "source": "excel_grapher_18",
-          "target": "lic_dsf_programmatic_extraction_16",
+          "target": "lic_dsf_extraction_pipeline_16",
           "type": "blocks",
           "label": "blocks"
         }
@@ -967,9 +1120,9 @@
       },
       {
         "data": {
-          "id": "edge::excel_grapher_25->lic_dsf_programmatic_extraction_16",
+          "id": "edge::excel_grapher_25->lic_dsf_extraction_pipeline_16",
           "source": "excel_grapher_25",
-          "target": "lic_dsf_programmatic_extraction_16",
+          "target": "lic_dsf_extraction_pipeline_16",
           "type": "blocks",
           "label": "blocks"
         }
@@ -1012,9 +1165,9 @@
       },
       {
         "data": {
-          "id": "edge::excel_grapher_97->lic_dsf_programmatic_extraction_19",
+          "id": "edge::excel_grapher_97->lic_dsf_extraction_pipeline_19",
           "source": "excel_grapher_97",
-          "target": "lic_dsf_programmatic_extraction_19",
+          "target": "lic_dsf_extraction_pipeline_19",
           "type": "blocks",
           "label": "blocks"
         }
@@ -1039,9 +1192,9 @@
       },
       {
         "data": {
-          "id": "edge::excel_grapher_111->lic_dsf_programmatic_extraction_19",
+          "id": "edge::excel_grapher_111->lic_dsf_extraction_pipeline_19",
           "source": "excel_grapher_111",
-          "target": "lic_dsf_programmatic_extraction_19",
+          "target": "lic_dsf_extraction_pipeline_19",
           "type": "blocks",
           "label": "blocks"
         }
@@ -1093,9 +1246,9 @@
       },
       {
         "data": {
-          "id": "edge::excel_grapher_123->lic_dsf_programmatic_extraction_19",
+          "id": "edge::excel_grapher_123->lic_dsf_extraction_pipeline_19",
           "source": "excel_grapher_123",
-          "target": "lic_dsf_programmatic_extraction_19",
+          "target": "lic_dsf_extraction_pipeline_19",
           "type": "blocks",
           "label": "blocks"
         }
@@ -1147,9 +1300,18 @@
       },
       {
         "data": {
-          "id": "edge::excel_grapher_135->lic_dsf_programmatic_extraction_19",
+          "id": "edge::excel_grapher_135->lic_dsf_extraction_pipeline_19",
           "source": "excel_grapher_135",
-          "target": "lic_dsf_programmatic_extraction_19",
+          "target": "lic_dsf_extraction_pipeline_19",
+          "type": "blocks",
+          "label": "blocks"
+        }
+      },
+      {
+        "data": {
+          "id": "edge::excel_grapher_135->tiny_dsa_extraction_pipeline_4",
+          "source": "excel_grapher_135",
+          "target": "tiny_dsa_extraction_pipeline_4",
           "type": "blocks",
           "label": "blocks"
         }
@@ -1165,9 +1327,9 @@
       },
       {
         "data": {
-          "id": "edge::excel_grapher_139->lic_dsf_programmatic_extraction_16",
+          "id": "edge::excel_grapher_139->lic_dsf_extraction_pipeline_16",
           "source": "excel_grapher_139",
-          "target": "lic_dsf_programmatic_extraction_16",
+          "target": "lic_dsf_extraction_pipeline_16",
           "type": "blocks",
           "label": "blocks"
         }
@@ -1186,6 +1348,51 @@
           "id": "edge::excel_grapher_143->excel_grapher_133",
           "source": "excel_grapher_143",
           "target": "excel_grapher_133",
+          "type": "blocks",
+          "label": "blocks"
+        }
+      },
+      {
+        "data": {
+          "id": "edge::tiny_dsa_extraction_pipeline_1->tiny_dsa_extraction_pipeline_4",
+          "source": "tiny_dsa_extraction_pipeline_1",
+          "target": "tiny_dsa_extraction_pipeline_4",
+          "type": "blocks",
+          "label": "blocks"
+        }
+      },
+      {
+        "data": {
+          "id": "edge::tiny_dsa_extraction_pipeline_4->qcraft_extraction_pipeline_2",
+          "source": "tiny_dsa_extraction_pipeline_4",
+          "target": "qcraft_extraction_pipeline_2",
+          "type": "blocks",
+          "label": "blocks"
+        }
+      },
+      {
+        "data": {
+          "id": "edge::tiny_dsa_extraction_pipeline_4->tiny_dsa_extraction_pipeline_5",
+          "source": "tiny_dsa_extraction_pipeline_4",
+          "target": "tiny_dsa_extraction_pipeline_5",
+          "type": "blocks",
+          "label": "blocks"
+        }
+      },
+      {
+        "data": {
+          "id": "edge::tiny_dsa_extraction_pipeline_4->tiny_dsa_extraction_pipeline_6",
+          "source": "tiny_dsa_extraction_pipeline_4",
+          "target": "tiny_dsa_extraction_pipeline_6",
+          "type": "blocks",
+          "label": "blocks"
+        }
+      },
+      {
+        "data": {
+          "id": "edge::tiny_dsa_extraction_pipeline_6->qcraft_extraction_pipeline_3",
+          "source": "tiny_dsa_extraction_pipeline_6",
+          "target": "qcraft_extraction_pipeline_3",
           "type": "blocks",
           "label": "blocks"
         }
