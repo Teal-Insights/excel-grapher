@@ -14,3 +14,6 @@ wheels/
 .codex
 *.prof.txt
 *.prof
+
+# Secrets
+.env
