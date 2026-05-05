@@ -20,6 +20,7 @@ DEFAULT_REPOS = [
     "lic-dsf-extraction-pipeline",
     "tiny-dsa-extraction-pipeline",
     "qcraft-extraction-pipeline",
+    "qcraft-v2-planning",
 ]
 ISSUE_LABEL_WIDTH = 200
 GRAPH_FONT_NAME = "Arial"
