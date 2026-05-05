@@ -102,12 +102,34 @@ def test_build_dot_renders_repo_pre_post_hierarchy_and_blocks_edges() -> None:
     dot = build_dot(issues, blocks_edges)
 
     assert "rankdir=TB" in dot
+    assert "nodesep=0.5" in dot
+    assert "ranksep=0.8" in dot
     assert 'subgraph "cluster_repo_excel_grapher"' in dot
     assert 'subgraph "cluster_repo_lic_dsf_programmatic_extraction"' in dot
-    assert '#135 · Redesign constraints API' in dot
-    assert '#19 · Update extraction script' in dot
+    assert "Redesign constraints API" in dot
+    assert "Update extraction script" in dot
+    assert 'WIDTH="200"' in dot
+    assert "<TABLE" in dot
     assert '[label="blocks"]' in dot
     assert "cluster_repo_excel_grapher_unlabeled" not in dot
+
+
+def test_build_dot_adds_clickable_issue_urls_when_owner_provided() -> None:
+    issues = [
+        WorkflowIssue(
+            repo="excel-grapher",
+            number=135,
+            title="Redesign constraints API",
+            pre_group_key=None,
+            pre_group_label=None,
+            post_group_key=None,
+            post_group_label=None,
+        ),
+    ]
+    dot = build_dot(issues, [], owner="Teal-Insights")
+
+    assert 'URL="https://github.com/Teal-Insights/excel-grapher/issues/135"' in dot
+    assert 'target="_blank"' in dot
 
 
 def test_build_dot_supports_left_right_layout() -> None:

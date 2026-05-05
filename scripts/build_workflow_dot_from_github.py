@@ -16,6 +16,11 @@ from typing import Any
 
 GITHUB_API_VERSION = "2026-03-10"
 DEFAULT_REPOS = ["excel-grapher", "lic-dsf-programmatic-extraction"]
+ISSUE_LABEL_WIDTH = 200
+GRAPH_FONT_NAME = "Arial"
+GRAPH_FONT_SIZE = 10
+GRAPH_NODE_SEP = 0.5
+GRAPH_RANK_SEP = 0.8
 
 
 @dataclass(frozen=True)
@@ -37,6 +42,15 @@ class WorkflowIssue:
 def _quote(value: str) -> str:
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'
+
+
+def _escape_html(value: str) -> str:
+    return (
+        value.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
 
 
 def _normalize_repo_key(repo: str) -> str:
@@ -255,6 +269,7 @@ def build_dot(
     issues: list[WorkflowIssue],
     blocks_edges: list[tuple[str, int, str, int]],
     *,
+    owner: str | None = None,
     rankdir: str = "TB",
 ) -> str:
     by_repo_direct: dict[str, list[WorkflowIssue]] = {}
@@ -288,9 +303,36 @@ def build_dot(
 
     lines: list[str] = []
     lines.append("digraph workflow {")
-    lines.append(f"  graph [compound=true, rankdir={rankdir}];")
-    lines.append('  node [shape=box, style="rounded"];')
+    lines.append(
+        f"  graph [compound=true, rankdir={rankdir}, nodesep={GRAPH_NODE_SEP}, ranksep={GRAPH_RANK_SEP}];"
+    )
+    lines.append(
+        f'  node [shape=box, style="rounded", fontname={_quote(GRAPH_FONT_NAME)}, fontsize={GRAPH_FONT_SIZE}];'
+    )
+    lines.append(f"  edge [fontname={_quote(GRAPH_FONT_NAME)}, fontsize=9];")
     lines.append("")
+
+    def append_issue_node(indent: str, issue: WorkflowIssue) -> None:
+        number_html = _escape_html(f"#{issue.number}")
+        title_html = _escape_html(issue.title)
+        label_html = (
+            "<<TABLE BORDER=\"0\" CELLBORDER=\"0\" CELLPADDING=\"4\" CELLSPACING=\"0\">"
+            f"<TR><TD WIDTH=\"{ISSUE_LABEL_WIDTH}\" ALIGN=\"LEFT\"><B>{number_html}</B> &#183; {title_html}</TD></TR>"
+            "</TABLE>>"
+        )
+        node_label = f"#{issue.number} · {issue.title}"
+        attrs = [f"label={label_html}"]
+        if owner is not None:
+            issue_url = f"https://github.com/{owner}/{issue.repo}/issues/{issue.number}"
+            attrs.extend(
+                [
+                    f"URL={_quote(issue_url)}",
+                    f"href={_quote(issue_url)}",
+                    f"tooltip={_quote(node_label)}",
+                    'target="_blank"',
+                ]
+            )
+        lines.append(f"{indent}{issue.node_id} [{', '.join(attrs)}];")
 
     for repo in all_repos:
         repo_key = _normalize_repo_key(repo)
@@ -299,8 +341,7 @@ def build_dot(
         lines.append("")
 
         for issue in sorted(by_repo_direct.get(repo, []), key=lambda item: item.number):
-            node_label = f"#{issue.number} · {issue.title}"
-            lines.append(f"    {issue.node_id} [label={_quote(node_label)}];")
+            append_issue_node("    ", issue)
         if by_repo_direct.get(repo):
             lines.append("")
 
@@ -310,8 +351,7 @@ def build_dot(
             lines.append(f'    subgraph "cluster_repo_{repo_key}_{pre_key_safe}" {{')
             lines.append(f"      label={_quote(pre_label)};")
             for issue in sorted(by_repo_pre_only[repo][pre_key], key=lambda item: item.number):
-                node_label = f"#{issue.number} · {issue.title}"
-                lines.append(f"      {issue.node_id} [label={_quote(node_label)}];")
+                append_issue_node("      ", issue)
             lines.append("    }")
             lines.append("")
 
@@ -332,8 +372,7 @@ def build_dot(
                 for issue in sorted(
                     by_repo_grouped[repo][pre_key][post_key], key=lambda item: item.number
                 ):
-                    node_label = f"#{issue.number} · {issue.title}"
-                    lines.append(f"        {issue.node_id} [label={_quote(node_label)}];")
+                    append_issue_node("        ", issue)
                 lines.append("      }")
                 lines.append("")
 
@@ -354,8 +393,9 @@ def build_dot(
 
 
 def render_dot_to_svg(*, dot_path: Path, svg_path: Path) -> None:
+    dot_binary = os.environ.get("DOT_BIN", "dot")
     result = subprocess.run(
-        ["dot", "-Tsvg", str(dot_path), "-o", str(svg_path)],
+        [dot_binary, "-Tsvg", str(dot_path), "-o", str(svg_path)],
         capture_output=True,
         text=True,
         check=False,
@@ -410,7 +450,7 @@ def main() -> None:
 
     workflow_issues = build_workflow_issues(issues_by_repo, label_descriptions_by_repo)
     blocks_edges = fetch_blocks_edges(args.owner, token, workflow_issues)
-    dot = build_dot(workflow_issues, blocks_edges, rankdir=args.layout)
+    dot = build_dot(workflow_issues, blocks_edges, owner=args.owner, rankdir=args.layout)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(dot, encoding="utf-8")

@@ -6,940 +6,1186 @@
       "lic-dsf-programmatic-extraction"
     ],
     "issue_count": 43,
+    "cluster_count": 15,
     "edge_count": 30
   },
   "elements": {
     "nodes": [
       {
         "data": {
-          "id": "repo::excel-grapher",
+          "id": "cluster::cluster_repo_excel_grapher",
           "label": "excel-grapher GitHub issues",
-          "type": "repo",
-          "repo": "excel-grapher"
+          "type": "cluster",
+          "cluster_name": "cluster_repo_excel_grapher"
         }
       },
       {
         "data": {
-          "id": "repo::lic-dsf-programmatic-extraction",
+          "id": "cluster::cluster_repo_excel_grapher_major",
+          "label": "Major/ambitious new features",
+          "type": "cluster",
+          "cluster_name": "cluster_repo_excel_grapher_major",
+          "parent": "cluster::cluster_repo_excel_grapher"
+        }
+      },
+      {
+        "data": {
+          "id": "cluster::cluster_repo_excel_grapher_tests",
+          "label": "Test suite improvements",
+          "type": "cluster",
+          "cluster_name": "cluster_repo_excel_grapher_tests",
+          "parent": "cluster::cluster_repo_excel_grapher"
+        }
+      },
+      {
+        "data": {
+          "id": "cluster::cluster_repo_excel_grapher_viz",
+          "label": "Visualization improvements",
+          "type": "cluster",
+          "cluster_name": "cluster_repo_excel_grapher_viz",
+          "parent": "cluster::cluster_repo_excel_grapher"
+        }
+      },
+      {
+        "data": {
+          "id": "cluster::cluster_repo_excel_grapher_api_audit",
+          "label": "High-level API design audits and improvements",
+          "type": "cluster",
+          "cluster_name": "cluster_repo_excel_grapher_api_audit",
+          "parent": "cluster::cluster_repo_excel_grapher"
+        }
+      },
+      {
+        "data": {
+          "id": "cluster::cluster_repo_excel_grapher_api_audit_dependency_graph_api_enhancements",
+          "label": "Add setters for transient input overrides in FormulaEvaluator",
+          "type": "cluster",
+          "cluster_name": "cluster_repo_excel_grapher_api_audit_dependency_graph_api_enhancements",
+          "parent": "cluster::cluster_repo_excel_grapher_api_audit"
+        }
+      },
+      {
+        "data": {
+          "id": "cluster::cluster_repo_excel_grapher_api_audit_dependency_graph_api_enhancements_minor",
+          "label": "Minor bug fixes and improvements",
+          "type": "cluster",
+          "cluster_name": "cluster_repo_excel_grapher_api_audit_dependency_graph_api_enhancements_minor",
+          "parent": "cluster::cluster_repo_excel_grapher_api_audit"
+        }
+      },
+      {
+        "data": {
+          "id": "cluster::cluster_repo_excel_grapher_api_audit_doc_system_audit",
+          "label": "Migrate from single README.md to Sphinx documentation system",
+          "type": "cluster",
+          "cluster_name": "cluster_repo_excel_grapher_api_audit_doc_system_audit",
+          "parent": "cluster::cluster_repo_excel_grapher_api_audit"
+        }
+      },
+      {
+        "data": {
+          "id": "cluster::cluster_repo_excel_grapher_api_audit_leaf_config_api_audit",
+          "label": "Audit configuration API and storage data model for leaf classifications and constraints",
+          "type": "cluster",
+          "cluster_name": "cluster_repo_excel_grapher_api_audit_leaf_config_api_audit",
+          "parent": "cluster::cluster_repo_excel_grapher_api_audit"
+        }
+      },
+      {
+        "data": {
+          "id": "cluster::cluster_repo_excel_grapher_api_audit_visualization_api_enhancements",
+          "label": "Audit and enhance the visualization API",
+          "type": "cluster",
+          "cluster_name": "cluster_repo_excel_grapher_api_audit_visualization_api_enhancements",
+          "parent": "cluster::cluster_repo_excel_grapher_api_audit"
+        }
+      },
+      {
+        "data": {
+          "id": "cluster::cluster_repo_excel_grapher_guards",
+          "label": "Guards/constraints system and cycle/dynamic ref solving",
+          "type": "cluster",
+          "cluster_name": "cluster_repo_excel_grapher_guards",
+          "parent": "cluster::cluster_repo_excel_grapher"
+        }
+      },
+      {
+        "data": {
+          "id": "cluster::cluster_repo_excel_grapher_guards_implementation",
+          "label": "Implement the high-level strategy for cycle/dynamic ref solving",
+          "type": "cluster",
+          "cluster_name": "cluster_repo_excel_grapher_guards_implementation",
+          "parent": "cluster::cluster_repo_excel_grapher_guards"
+        }
+      },
+      {
+        "data": {
+          "id": "cluster::cluster_repo_excel_grapher_guards_problem_space_mapping",
+          "label": "Understand the problem space for cycle/dynamic ref solving",
+          "type": "cluster",
+          "cluster_name": "cluster_repo_excel_grapher_guards_problem_space_mapping",
+          "parent": "cluster::cluster_repo_excel_grapher_guards"
+        }
+      },
+      {
+        "data": {
+          "id": "cluster::cluster_repo_excel_grapher_guards_strategy_planning",
+          "label": "Plan the high-level strategy for cycle/dynamic ref solving",
+          "type": "cluster",
+          "cluster_name": "cluster_repo_excel_grapher_guards_strategy_planning",
+          "parent": "cluster::cluster_repo_excel_grapher_guards"
+        }
+      },
+      {
+        "data": {
+          "id": "cluster::cluster_repo_lic_dsf_programmatic_extraction",
           "label": "lic-dsf-programmatic-extraction GitHub issues",
-          "type": "repo",
-          "repo": "lic-dsf-programmatic-extraction"
+          "type": "cluster",
+          "cluster_name": "cluster_repo_lic_dsf_programmatic_extraction"
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#141",
+          "id": "excel_grapher_141",
           "label": "#141 \u00b7 Create a process diagram that analyzes which gh issues have to be completed in sequence and which can be worked in parallel",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 141,
           "title": "Create a process diagram that analyzes which gh issues have to be completed in sequence and which can be worked in parallel",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/141",
-          "parent": "repo::excel-grapher"
+          "gv_width": 612.0,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher"
+        },
+        "position": {
+          "x": 322.0,
+          "y": 59.0
         }
       },
       {
         "data": {
-          "id": "group::excel-grapher::api_audit",
-          "label": "High-level API design audits and improvements",
-          "type": "pre_group",
-          "repo": "excel-grapher",
-          "group_key": "api_audit",
-          "parent": "repo::excel-grapher"
-        }
-      },
-      {
-        "data": {
-          "id": "group::excel-grapher::api_audit/dependency_graph_api_enhancements",
-          "label": "Add setters for transient input overrides in FormulaEvaluator",
-          "type": "post_group",
-          "repo": "excel-grapher",
-          "group_key": "api_audit/dependency_graph_api_enhancements",
-          "parent": "group::excel-grapher::api_audit"
-        }
-      },
-      {
-        "data": {
-          "id": "issue::excel-grapher#121",
+          "id": "excel_grapher_121",
           "label": "#121 \u00b7 Phase 3: set_node_formula with dependency re-extraction and workbook fallback",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 121,
           "title": "Phase 3: set_node_formula with dependency re-extraction and workbook fallback",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/121",
-          "parent": "group::excel-grapher::api_audit/dependency_graph_api_enhancements"
+          "gv_width": 407.2464,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_api_audit_dependency_graph_api_enhancements"
+        },
+        "position": {
+          "x": 1598.6,
+          "y": 1342.05
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#122",
+          "id": "excel_grapher_122",
           "label": "#122 \u00b7 Phase 2: FormulaEvaluator transient input overrides for single-run evaluation",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 122,
           "title": "Phase 2: FormulaEvaluator transient input overrides for single-run evaluation",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/122",
-          "parent": "group::excel-grapher::api_audit/dependency_graph_api_enhancements"
+          "gv_width": 386.25120000000004,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_api_audit_dependency_graph_api_enhancements"
+        },
+        "position": {
+          "x": 1598.6,
+          "y": 1270.05
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#123",
+          "id": "excel_grapher_123",
           "label": "#123 \u00b7 DependencyGraph API consistency and mutation model",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 123,
           "title": "DependencyGraph API consistency and mutation model",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/123",
-          "parent": "group::excel-grapher::api_audit/dependency_graph_api_enhancements"
+          "gv_width": 297.74879999999996,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_api_audit_dependency_graph_api_enhancements"
+        },
+        "position": {
+          "x": 1598.6,
+          "y": 1198.05
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#124",
+          "id": "excel_grapher_124",
           "label": "#124 \u00b7 Follow-on: Audit edge/guard storage model and typed edge design",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 124,
           "title": "Follow-on: Audit edge/guard storage model and typed edge design",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/124",
-          "parent": "group::excel-grapher::api_audit/dependency_graph_api_enhancements"
+          "gv_width": 340.50239999999997,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_api_audit_dependency_graph_api_enhancements"
+        },
+        "position": {
+          "x": 1598.6,
+          "y": 1126.05
         }
       },
       {
         "data": {
-          "id": "group::excel-grapher::api_audit/dependency_graph_api_enhancements/minor",
-          "label": "Minor bug fixes and improvements",
-          "type": "post_group",
-          "repo": "excel-grapher",
-          "group_key": "api_audit/dependency_graph_api_enhancements/minor",
-          "parent": "group::excel-grapher::api_audit"
-        }
-      },
-      {
-        "data": {
-          "id": "issue::excel-grapher#130",
+          "id": "excel_grapher_130",
           "label": "#130 \u00b7 FormulaEvaluator: circular-reference warning emitted only once when cell is memoized",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 130,
           "title": "FormulaEvaluator: circular-reference warning emitted only once when cell is memoized",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/130",
-          "parent": "group::excel-grapher::api_audit/dependency_graph_api_enhancements/minor"
+          "gv_width": 431.25120000000004,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_api_audit_dependency_graph_api_enhancements_minor"
+        },
+        "position": {
+          "x": 960.5,
+          "y": 1342.05
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#136",
+          "id": "excel_grapher_136",
           "label": "#136 \u00b7 Dynamic ref resolution with scalar argument values shouldn't require use_cached_dynamic_refs=True",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 136,
           "title": "Dynamic ref resolution with scalar argument values shouldn't require use_cached_dynamic_refs=True",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/136",
-          "parent": "group::excel-grapher::api_audit/dependency_graph_api_enhancements/minor"
+          "gv_width": 496.49760000000003,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_api_audit_dependency_graph_api_enhancements_minor"
+        },
+        "position": {
+          "x": 960.5,
+          "y": 1270.05
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#138",
+          "id": "excel_grapher_138",
           "label": "#138 \u00b7 Revise the UserWarning to better reflect risks of use_cached_dynamic_refs",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 138,
           "title": "Revise the UserWarning to better reflect risks of use_cached_dynamic_refs",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/138",
-          "parent": "group::excel-grapher::api_audit/dependency_graph_api_enhancements/minor"
+          "gv_width": 383.99760000000003,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_api_audit_dependency_graph_api_enhancements_minor"
+        },
+        "position": {
+          "x": 960.5,
+          "y": 1198.05
         }
       },
       {
         "data": {
-          "id": "group::excel-grapher::api_audit/doc_system_audit",
-          "label": "Migrate from single README.md to Sphinx documentation system",
-          "type": "post_group",
-          "repo": "excel-grapher",
-          "group_key": "api_audit/doc_system_audit",
-          "parent": "group::excel-grapher::api_audit"
-        }
-      },
-      {
-        "data": {
-          "id": "issue::excel-grapher#102",
+          "id": "excel_grapher_102",
           "label": "#102 \u00b7 Create Sphinx documentation, audit consistency of reST usage in docstrings",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 102,
           "title": "Create Sphinx documentation, audit consistency of reST usage in docstrings",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/102",
-          "parent": "group::excel-grapher::api_audit/doc_system_audit"
+          "gv_width": 388.49760000000003,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_api_audit_doc_system_audit"
+        },
+        "position": {
+          "x": 2297.5,
+          "y": 1031.05
         }
       },
       {
         "data": {
-          "id": "group::excel-grapher::api_audit/leaf_config_api_audit",
-          "label": "Audit configuration API and storage data model for leaf classifications and constraints",
-          "type": "post_group",
-          "repo": "excel-grapher",
-          "group_key": "api_audit/leaf_config_api_audit",
-          "parent": "group::excel-grapher::api_audit"
-        }
-      },
-      {
-        "data": {
-          "id": "issue::excel-grapher#125",
+          "id": "excel_grapher_125",
           "label": "#125 \u00b7 Review design of leaf classification/config placement",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 125,
           "title": "Review design of leaf classification/config placement",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/125",
-          "parent": "group::excel-grapher::api_audit/leaf_config_api_audit"
+          "gv_width": 285.7536,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_api_audit_leaf_config_api_audit"
+        },
+        "position": {
+          "x": 960.5,
+          "y": 1041.05
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#135",
+          "id": "excel_grapher_135",
           "label": "#135 \u00b7 Redesign constraints API",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 135,
           "title": "Redesign constraints API",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/135",
-          "parent": "group::excel-grapher::api_audit/leaf_config_api_audit"
+          "gv_width": 216.0,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_api_audit_leaf_config_api_audit"
+        },
+        "position": {
+          "x": 960.5,
+          "y": 1113.05
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#144",
+          "id": "excel_grapher_144",
           "label": "#144 \u00b7 For cells constrained to a single Literal value, set them as constants rather than inputs automatically",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 144,
           "title": "For cells constrained to a single Literal value, set them as constants rather than inputs automatically",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/144",
-          "parent": "group::excel-grapher::api_audit/leaf_config_api_audit"
+          "gv_width": 491.24879999999996,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_api_audit_leaf_config_api_audit"
+        },
+        "position": {
+          "x": 960.5,
+          "y": 969.05
         }
       },
       {
         "data": {
-          "id": "group::excel-grapher::api_audit/visualization_api_enhancements",
-          "label": "Audit and enhance the visualization API",
-          "type": "post_group",
-          "repo": "excel-grapher",
-          "group_key": "api_audit/visualization_api_enhancements",
-          "parent": "group::excel-grapher::api_audit"
-        }
-      },
-      {
-        "data": {
-          "id": "issue::excel-grapher#9",
+          "id": "excel_grapher_9",
           "label": "#9 \u00b7 Perhaps move smart label detection into this repo",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 9,
           "title": "Perhaps move smart label detection into this repo",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/9",
-          "parent": "group::excel-grapher::api_audit/visualization_api_enhancements"
+          "gv_width": 259.5024,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_api_audit_visualization_api_enhancements"
+        },
+        "position": {
+          "x": 960.5,
+          "y": 884.05
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#96",
+          "id": "excel_grapher_96",
           "label": "#96 \u00b7 Add a helper for visualizing induced subgraphs that show the paths between two (sets of) nodes",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 96,
           "title": "Add a helper for visualizing induced subgraphs that show the paths between two (sets of) nodes",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/96",
-          "parent": "group::excel-grapher::api_audit/visualization_api_enhancements"
+          "gv_width": 466.50239999999997,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_api_audit_visualization_api_enhancements"
+        },
+        "position": {
+          "x": 960.5,
+          "y": 812.05
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#105",
+          "id": "excel_grapher_105",
           "label": "#105 \u00b7 Allow customization of what info is displayed on nodes in the visualization methods",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 105,
           "title": "Allow customization of what info is displayed on nodes in the visualization methods",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/105",
-          "parent": "group::excel-grapher::api_audit/visualization_api_enhancements"
+          "gv_width": 417.00239999999997,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_api_audit_visualization_api_enhancements"
+        },
+        "position": {
+          "x": 1598.6,
+          "y": 763.05
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#117",
+          "id": "excel_grapher_117",
           "label": "#117 \u00b7 By default, enforce behavioral parity across visualization engines",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 117,
           "title": "By default, enforce behavioral parity across visualization engines",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/117",
-          "parent": "group::excel-grapher::api_audit/visualization_api_enhancements"
+          "gv_width": 336.75120000000004,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_api_audit_visualization_api_enhancements"
+        },
+        "position": {
+          "x": 960.5,
+          "y": 740.05
         }
       },
       {
         "data": {
-          "id": "group::excel-grapher::guards",
-          "label": "Guards/constraints system and cycle/dynamic ref solving",
-          "type": "pre_group",
-          "repo": "excel-grapher",
-          "group_key": "guards",
-          "parent": "repo::excel-grapher"
-        }
-      },
-      {
-        "data": {
-          "id": "group::excel-grapher::guards/implementation",
-          "label": "Implement the high-level strategy for cycle/dynamic ref solving",
-          "type": "post_group",
-          "repo": "excel-grapher",
-          "group_key": "guards/implementation",
-          "parent": "group::excel-grapher::guards"
-        }
-      },
-      {
-        "data": {
-          "id": "issue::excel-grapher#29",
+          "id": "excel_grapher_29",
           "label": "#29 \u00b7 Dependency graph: model IFERROR with guarded edges",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 29,
           "title": "Dependency graph: model IFERROR with guarded edges",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/29",
-          "parent": "group::excel-grapher::guards/implementation"
+          "gv_width": 299.2464,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_guards_implementation"
+        },
+        "position": {
+          "x": 1598.6,
+          "y": 241.0
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#30",
+          "id": "excel_grapher_30",
           "label": "#30 \u00b7 Dependency graph: value-based guard pruning",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 30,
           "title": "Dependency graph: value-based guard pruning",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/30",
-          "parent": "group::excel-grapher::guards/implementation"
+          "gv_width": 250.5024,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_guards_implementation"
+        },
+        "position": {
+          "x": 1598.6,
+          "y": 313.0
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#31",
+          "id": "excel_grapher_31",
           "label": "#31 \u00b7 Dependency graph: deeper formula evaluation for cycle/branch analysis",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 31,
           "title": "Dependency graph: deeper formula evaluation for cycle/branch analysis",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/31",
-          "parent": "group::excel-grapher::guards/implementation"
+          "gv_width": 360.0,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_guards_implementation"
+        },
+        "position": {
+          "x": 1598.6,
+          "y": 169.0
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#35",
+          "id": "excel_grapher_35",
           "label": "#35 \u00b7 Docs: may-cycle feasibility performance (Or disjunct cap, DFS)",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 35,
           "title": "Docs: may-cycle feasibility performance (Or disjunct cap, DFS)",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/35",
-          "parent": "group::excel-grapher::guards/implementation"
+          "gv_width": 325.49760000000003,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_guards_implementation"
+        },
+        "position": {
+          "x": 1598.6,
+          "y": 385.0
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#97",
+          "id": "excel_grapher_97",
           "label": "#97 \u00b7 Bug: `list_missing_dynamic_ref_leaves` missed some",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 97,
           "title": "Bug: `list_missing_dynamic_ref_leaves` missed some",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/97",
-          "parent": "group::excel-grapher::guards/implementation"
+          "gv_width": 283.5,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_guards_implementation"
+        },
+        "position": {
+          "x": 2297.5,
+          "y": 313.0
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#111",
+          "id": "excel_grapher_111",
           "label": "#111 \u00b7 Debug dynamic ref tracing on multiply nested dynamic ref functions to determine why we're not getting a good stream of progress",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 111,
           "title": "Debug dynamic ref tracing on multiply nested dynamic ref functions to determine why we're not getting a good stream of progress",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/111",
-          "parent": "group::excel-grapher::guards/implementation"
+          "gv_width": 617.9975999999999,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_guards_implementation"
+        },
+        "position": {
+          "x": 2297.5,
+          "y": 385.0
         }
       },
       {
         "data": {
-          "id": "group::excel-grapher::guards/problem_space_mapping",
-          "label": "Understand the problem space for cycle/dynamic ref solving",
-          "type": "post_group",
-          "repo": "excel-grapher",
-          "group_key": "guards/problem_space_mapping",
-          "parent": "group::excel-grapher::guards"
-        }
-      },
-      {
-        "data": {
-          "id": "issue::excel-grapher#33",
+          "id": "excel_grapher_33",
           "label": "#33 \u00b7 Research: false-positive may-cycles on real workbooks",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 33,
           "title": "Research: false-positive may-cycles on real workbooks",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/33",
-          "parent": "group::excel-grapher::guards/problem_space_mapping"
+          "gv_width": 290.2464,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_guards_problem_space_mapping"
+        },
+        "position": {
+          "x": 322.0,
+          "y": 318.0
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#142",
+          "id": "excel_grapher_142",
           "label": "#142 \u00b7 Verify that INDEX isn't treated as a dynamic ref, and use it to short-circuit dynamic ref solving",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 142,
           "title": "Verify that INDEX isn't treated as a dynamic ref, and use it to short-circuit dynamic ref solving",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/142",
-          "parent": "group::excel-grapher::guards/problem_space_mapping"
+          "gv_width": 464.24879999999996,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_guards_problem_space_mapping"
+        },
+        "position": {
+          "x": 322.0,
+          "y": 246.0
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#143",
+          "id": "excel_grapher_143",
           "label": "#143 \u00b7 Create micro-examples and test cases for scoped but difficult production-like dynamic ref scenarios",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 143,
           "title": "Create micro-examples and test cases for scoped but difficult production-like dynamic ref scenarios",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/143",
-          "parent": "group::excel-grapher::guards/problem_space_mapping"
+          "gv_width": 486.74879999999996,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_guards_problem_space_mapping"
+        },
+        "position": {
+          "x": 322.0,
+          "y": 174.0
         }
       },
       {
         "data": {
-          "id": "group::excel-grapher::guards/strategy_planning",
-          "label": "Plan the high-level strategy for cycle/dynamic ref solving",
-          "type": "post_group",
-          "repo": "excel-grapher",
-          "group_key": "guards/strategy_planning",
-          "parent": "group::excel-grapher::guards"
-        }
-      },
-      {
-        "data": {
-          "id": "issue::excel-grapher#34",
+          "id": "excel_grapher_34",
           "label": "#34 \u00b7 Dependency graph: prototype multi-edge guarded arcs",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 34,
           "title": "Dependency graph: prototype multi-edge guarded arcs",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/34",
-          "parent": "group::excel-grapher::guards/strategy_planning"
+          "gv_width": 284.2488,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_guards_strategy_planning"
+        },
+        "position": {
+          "x": 960.5,
+          "y": 333.0
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#115",
+          "id": "excel_grapher_115",
           "label": "#115 \u00b7 Extract nested conditions as edge guards",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 115,
           "title": "Extract nested conditions as edge guards",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/115",
-          "parent": "group::excel-grapher::guards/strategy_planning"
+          "gv_width": 234.74880000000002,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_guards_strategy_planning"
+        },
+        "position": {
+          "x": 960.5,
+          "y": 261.0
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#133",
+          "id": "excel_grapher_133",
           "label": "#133 \u00b7 Redesign formula/guard semantics around a solver-native IR with Z3 backend",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 133,
           "title": "Redesign formula/guard semantics around a solver-native IR with Z3 backend",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/133",
-          "parent": "group::excel-grapher::guards/strategy_planning"
+          "gv_width": 392.99760000000003,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_guards_strategy_planning"
+        },
+        "position": {
+          "x": 960.5,
+          "y": 189.0
         }
       },
       {
         "data": {
-          "id": "group::excel-grapher::major",
-          "label": "Major/ambitious new features",
-          "type": "pre_group",
-          "repo": "excel-grapher",
-          "group_key": "major",
-          "parent": "repo::excel-grapher"
-        }
-      },
-      {
-        "data": {
-          "id": "issue::excel-grapher#6",
+          "id": "excel_grapher_6",
           "label": "#6 \u00b7 Potentially support VBA transpilation/translation?",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 6,
           "title": "Potentially support VBA transpilation/translation?",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/6",
-          "parent": "group::excel-grapher::major"
+          "gv_width": 255.75119999999998,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_major"
+        },
+        "position": {
+          "x": 2297.5,
+          "y": 622.0
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#19",
+          "id": "excel_grapher_19",
           "label": "#19 \u00b7 Support more more modular and interpretable code export",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 19,
           "title": "Support more more modular and interpretable code export",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/19",
-          "parent": "group::excel-grapher::major"
+          "gv_width": 298.49760000000003,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_major"
+        },
+        "position": {
+          "x": 2297.5,
+          "y": 550.0
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#51",
+          "id": "excel_grapher_51",
           "label": "#51 \u00b7 Support type-annotated code export from CodeGenerator",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 51,
           "title": "Support type-annotated code export from CodeGenerator",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/51",
-          "parent": "group::excel-grapher::major"
+          "gv_width": 295.50239999999997,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_major"
+        },
+        "position": {
+          "x": 2297.5,
+          "y": 478.0
         }
       },
       {
         "data": {
-          "id": "group::excel-grapher::tests",
-          "label": "Test suite improvements",
-          "type": "pre_group",
-          "repo": "excel-grapher",
-          "group_key": "tests",
-          "parent": "repo::excel-grapher"
-        }
-      },
-      {
-        "data": {
-          "id": "issue::excel-grapher#17",
+          "id": "excel_grapher_17",
           "label": "#17 \u00b7 Either prevent offset values from being perturbed, or add carveouts to perturb them only strategically",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 17,
           "title": "Either prevent offset values from being perturbed, or add carveouts to perturb them only strategically",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/17",
-          "parent": "group::excel-grapher::tests"
+          "gv_width": 484.50239999999997,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_tests"
+        },
+        "position": {
+          "x": 1598.6,
+          "y": 1435.05
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#18",
+          "id": "excel_grapher_18",
           "label": "#18 \u00b7 Do smarter input perturbation in the golden master test",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 18,
           "title": "Do smarter input perturbation in the golden master test",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/18",
-          "parent": "group::excel-grapher::tests"
+          "gv_width": 286.5024,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_tests"
+        },
+        "position": {
+          "x": 1598.6,
+          "y": 1507.05
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#25",
+          "id": "excel_grapher_25",
           "label": "#25 \u00b7 Optimize/speed up graph extraction and Excel workbook operations for golden master testing",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 25,
           "title": "Optimize/speed up graph extraction and Excel workbook operations for golden master testing",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/25",
-          "parent": "group::excel-grapher::tests"
+          "gv_width": 453.75120000000004,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_tests"
+        },
+        "position": {
+          "x": 960.5,
+          "y": 1475.05
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#103",
+          "id": "excel_grapher_103",
           "label": "#103 \u00b7 xlwings parity unit tests for runtime functions",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 103,
           "title": "xlwings parity unit tests for runtime functions",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/103",
-          "parent": "group::excel-grapher::tests"
+          "gv_width": 249.7536,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_tests"
+        },
+        "position": {
+          "x": 322.0,
+          "y": 1507.05
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#139",
+          "id": "excel_grapher_139",
           "label": "#139 \u00b7 Refactor/reorganize the integration test suite",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 139,
           "title": "Refactor/reorganize the integration test suite",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/139",
-          "parent": "group::excel-grapher::tests"
+          "gv_width": 247.5,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_tests"
+        },
+        "position": {
+          "x": 322.0,
+          "y": 1435.05
         }
       },
       {
         "data": {
-          "id": "group::excel-grapher::viz",
-          "label": "Visualization improvements",
-          "type": "pre_group",
-          "repo": "excel-grapher",
-          "group_key": "viz",
-          "parent": "repo::excel-grapher"
-        }
-      },
-      {
-        "data": {
-          "id": "issue::excel-grapher#110",
+          "id": "excel_grapher_110",
           "label": "#110 \u00b7 Visually enhance lightweight visualization styling",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 110,
           "title": "Visually enhance lightweight visualization styling",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/110",
-          "parent": "group::excel-grapher::viz"
+          "gv_width": 266.2488,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_viz"
+        },
+        "position": {
+          "x": 1598.6,
+          "y": 602.0
         }
       },
       {
         "data": {
-          "id": "issue::excel-grapher#112",
+          "id": "excel_grapher_112",
           "label": "#112 \u00b7 Force layout on the full graph in the lightweight visualizer takes a very long time (hours); see if we can optimize to speed this up",
           "type": "issue",
           "repo": "excel-grapher",
           "number": 112,
           "title": "Force layout on the full graph in the lightweight visualizer takes a very long time (hours); see if we can optimize to speed this up",
           "url": "https://github.com/Teal-Insights/excel-grapher/issues/112",
-          "parent": "group::excel-grapher::viz"
+          "gv_width": 611.2511999999999,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_viz"
+        },
+        "position": {
+          "x": 1598.6,
+          "y": 530.0
         }
       },
       {
         "data": {
-          "id": "issue::lic-dsf-programmatic-extraction#5",
+          "id": "lic_dsf_programmatic_extraction_5",
           "label": "#5 \u00b7 Generate some documentation as to which specific inputs are required for which specific output rows",
           "type": "issue",
           "repo": "lic-dsf-programmatic-extraction",
           "number": 5,
           "title": "Generate some documentation as to which specific inputs are required for which specific output rows",
           "url": "https://github.com/Teal-Insights/lic-dsf-programmatic-extraction/issues/5",
-          "parent": "repo::lic-dsf-programmatic-extraction"
+          "gv_width": 483.7536,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_lic_dsf_programmatic_extraction"
+        },
+        "position": {
+          "x": 2970.1,
+          "y": 1663.049
         }
       },
       {
         "data": {
-          "id": "issue::lic-dsf-programmatic-extraction#10",
+          "id": "lic_dsf_programmatic_extraction_10",
           "label": "#10 \u00b7 Adjust grouping and label detection for Ext_Debt_Data sheet",
           "type": "issue",
           "repo": "lic-dsf-programmatic-extraction",
           "number": 10,
           "title": "Adjust grouping and label detection for Ext_Debt_Data sheet",
           "url": "https://github.com/Teal-Insights/lic-dsf-programmatic-extraction/issues/10",
-          "parent": "repo::lic-dsf-programmatic-extraction"
+          "gv_width": 311.99760000000003,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_lic_dsf_programmatic_extraction"
+        },
+        "position": {
+          "x": 2970.1,
+          "y": 1591.05
         }
       },
       {
         "data": {
-          "id": "issue::lic-dsf-programmatic-extraction#15",
+          "id": "lic_dsf_programmatic_extraction_15",
           "label": "#15 \u00b7 Create a step-by-step workflow with helpers that can tell you what inputs to set next",
           "type": "issue",
           "repo": "lic-dsf-programmatic-extraction",
           "number": 15,
           "title": "Create a step-by-step workflow with helpers that can tell you what inputs to set next",
           "url": "https://github.com/Teal-Insights/lic-dsf-programmatic-extraction/issues/15",
-          "parent": "repo::lic-dsf-programmatic-extraction"
+          "gv_width": 416.2464,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_lic_dsf_programmatic_extraction"
+        },
+        "position": {
+          "x": 2970.1,
+          "y": 1519.05
         }
       },
       {
         "data": {
-          "id": "issue::lic-dsf-programmatic-extraction#16",
+          "id": "lic_dsf_programmatic_extraction_16",
           "label": "#16 \u00b7 Export golden master tests with the output libraries",
           "type": "issue",
           "repo": "lic-dsf-programmatic-extraction",
           "number": 16,
           "title": "Export golden master tests with the output libraries",
           "url": "https://github.com/Teal-Insights/lic-dsf-programmatic-extraction/issues/16",
-          "parent": "repo::lic-dsf-programmatic-extraction"
+          "gv_width": 270.7488,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_lic_dsf_programmatic_extraction"
+        },
+        "position": {
+          "x": 2970.1,
+          "y": 1447.05
         }
       },
       {
         "data": {
-          "id": "issue::lic-dsf-programmatic-extraction#19",
+          "id": "lic_dsf_programmatic_extraction_19",
           "label": "#19 \u00b7 Once excel-grapher API is fully updated, update excel-grapher here and edit the extraction script to use the new API",
           "type": "issue",
           "repo": "lic-dsf-programmatic-extraction",
           "number": 19,
           "title": "Once excel-grapher API is fully updated, update excel-grapher here and edit the extraction script to use the new API",
           "url": "https://github.com/Teal-Insights/lic-dsf-programmatic-extraction/issues/19",
-          "parent": "repo::lic-dsf-programmatic-extraction"
+          "gv_width": 552.7512,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_lic_dsf_programmatic_extraction"
+        },
+        "position": {
+          "x": 2970.1,
+          "y": 1375.05
         }
       }
     ],
     "edges": [
       {
         "data": {
-          "id": "edge::issue::excel-grapher#9->issue::excel-grapher#105",
-          "source": "issue::excel-grapher#9",
-          "target": "issue::excel-grapher#105",
+          "id": "edge::excel_grapher_9->excel_grapher_105",
+          "source": "excel_grapher_9",
+          "target": "excel_grapher_105",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#17->issue::lic-dsf-programmatic-extraction#16",
-          "source": "issue::excel-grapher#17",
-          "target": "issue::lic-dsf-programmatic-extraction#16",
+          "id": "edge::excel_grapher_17->lic_dsf_programmatic_extraction_16",
+          "source": "excel_grapher_17",
+          "target": "lic_dsf_programmatic_extraction_16",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#18->issue::lic-dsf-programmatic-extraction#16",
-          "source": "issue::excel-grapher#18",
-          "target": "issue::lic-dsf-programmatic-extraction#16",
+          "id": "edge::excel_grapher_18->lic_dsf_programmatic_extraction_16",
+          "source": "excel_grapher_18",
+          "target": "lic_dsf_programmatic_extraction_16",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#25->issue::excel-grapher#17",
-          "source": "issue::excel-grapher#25",
-          "target": "issue::excel-grapher#17",
+          "id": "edge::excel_grapher_25->excel_grapher_17",
+          "source": "excel_grapher_25",
+          "target": "excel_grapher_17",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#25->issue::excel-grapher#18",
-          "source": "issue::excel-grapher#25",
-          "target": "issue::excel-grapher#18",
+          "id": "edge::excel_grapher_25->excel_grapher_18",
+          "source": "excel_grapher_25",
+          "target": "excel_grapher_18",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#25->issue::lic-dsf-programmatic-extraction#16",
-          "source": "issue::excel-grapher#25",
-          "target": "issue::lic-dsf-programmatic-extraction#16",
+          "id": "edge::excel_grapher_25->lic_dsf_programmatic_extraction_16",
+          "source": "excel_grapher_25",
+          "target": "lic_dsf_programmatic_extraction_16",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#31->issue::excel-grapher#51",
-          "source": "issue::excel-grapher#31",
-          "target": "issue::excel-grapher#51",
+          "id": "edge::excel_grapher_31->excel_grapher_51",
+          "source": "excel_grapher_31",
+          "target": "excel_grapher_51",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#34->issue::excel-grapher#35",
-          "source": "issue::excel-grapher#34",
-          "target": "issue::excel-grapher#35",
+          "id": "edge::excel_grapher_34->excel_grapher_35",
+          "source": "excel_grapher_34",
+          "target": "excel_grapher_35",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#35->issue::excel-grapher#97",
-          "source": "issue::excel-grapher#35",
-          "target": "issue::excel-grapher#97",
+          "id": "edge::excel_grapher_35->excel_grapher_97",
+          "source": "excel_grapher_35",
+          "target": "excel_grapher_97",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#35->issue::excel-grapher#111",
-          "source": "issue::excel-grapher#35",
-          "target": "issue::excel-grapher#111",
+          "id": "edge::excel_grapher_35->excel_grapher_111",
+          "source": "excel_grapher_35",
+          "target": "excel_grapher_111",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#97->issue::lic-dsf-programmatic-extraction#19",
-          "source": "issue::excel-grapher#97",
-          "target": "issue::lic-dsf-programmatic-extraction#19",
+          "id": "edge::excel_grapher_97->lic_dsf_programmatic_extraction_19",
+          "source": "excel_grapher_97",
+          "target": "lic_dsf_programmatic_extraction_19",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#105->issue::excel-grapher#19",
-          "source": "issue::excel-grapher#105",
-          "target": "issue::excel-grapher#19",
+          "id": "edge::excel_grapher_105->excel_grapher_19",
+          "source": "excel_grapher_105",
+          "target": "excel_grapher_19",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#110->issue::excel-grapher#19",
-          "source": "issue::excel-grapher#110",
-          "target": "issue::excel-grapher#19",
+          "id": "edge::excel_grapher_110->excel_grapher_19",
+          "source": "excel_grapher_110",
+          "target": "excel_grapher_19",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#111->issue::lic-dsf-programmatic-extraction#19",
-          "source": "issue::excel-grapher#111",
-          "target": "issue::lic-dsf-programmatic-extraction#19",
+          "id": "edge::excel_grapher_111->lic_dsf_programmatic_extraction_19",
+          "source": "excel_grapher_111",
+          "target": "lic_dsf_programmatic_extraction_19",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#115->issue::excel-grapher#29",
-          "source": "issue::excel-grapher#115",
-          "target": "issue::excel-grapher#29",
+          "id": "edge::excel_grapher_115->excel_grapher_29",
+          "source": "excel_grapher_115",
+          "target": "excel_grapher_29",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#115->issue::excel-grapher#30",
-          "source": "issue::excel-grapher#115",
-          "target": "issue::excel-grapher#30",
+          "id": "edge::excel_grapher_115->excel_grapher_30",
+          "source": "excel_grapher_115",
+          "target": "excel_grapher_30",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#115->issue::excel-grapher#31",
-          "source": "issue::excel-grapher#115",
-          "target": "issue::excel-grapher#31",
+          "id": "edge::excel_grapher_115->excel_grapher_31",
+          "source": "excel_grapher_115",
+          "target": "excel_grapher_31",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#117->issue::excel-grapher#110",
-          "source": "issue::excel-grapher#117",
-          "target": "issue::excel-grapher#110",
+          "id": "edge::excel_grapher_117->excel_grapher_110",
+          "source": "excel_grapher_117",
+          "target": "excel_grapher_110",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#123->issue::excel-grapher#102",
-          "source": "issue::excel-grapher#123",
-          "target": "issue::excel-grapher#102",
+          "id": "edge::excel_grapher_123->excel_grapher_102",
+          "source": "excel_grapher_123",
+          "target": "excel_grapher_102",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#123->issue::lic-dsf-programmatic-extraction#19",
-          "source": "issue::excel-grapher#123",
-          "target": "issue::lic-dsf-programmatic-extraction#19",
+          "id": "edge::excel_grapher_123->lic_dsf_programmatic_extraction_19",
+          "source": "excel_grapher_123",
+          "target": "lic_dsf_programmatic_extraction_19",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#125->issue::excel-grapher#102",
-          "source": "issue::excel-grapher#125",
-          "target": "issue::excel-grapher#102",
+          "id": "edge::excel_grapher_125->excel_grapher_102",
+          "source": "excel_grapher_125",
+          "target": "excel_grapher_102",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#125->issue::excel-grapher#124",
-          "source": "issue::excel-grapher#125",
-          "target": "issue::excel-grapher#124",
+          "id": "edge::excel_grapher_125->excel_grapher_124",
+          "source": "excel_grapher_125",
+          "target": "excel_grapher_124",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#133->issue::excel-grapher#31",
-          "source": "issue::excel-grapher#133",
-          "target": "issue::excel-grapher#31",
+          "id": "edge::excel_grapher_133->excel_grapher_31",
+          "source": "excel_grapher_133",
+          "target": "excel_grapher_31",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#135->issue::excel-grapher#102",
-          "source": "issue::excel-grapher#135",
-          "target": "issue::excel-grapher#102",
+          "id": "edge::excel_grapher_135->excel_grapher_102",
+          "source": "excel_grapher_135",
+          "target": "excel_grapher_102",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#135->issue::excel-grapher#124",
-          "source": "issue::excel-grapher#135",
-          "target": "issue::excel-grapher#124",
+          "id": "edge::excel_grapher_135->excel_grapher_124",
+          "source": "excel_grapher_135",
+          "target": "excel_grapher_124",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#135->issue::lic-dsf-programmatic-extraction#19",
-          "source": "issue::excel-grapher#135",
-          "target": "issue::lic-dsf-programmatic-extraction#19",
+          "id": "edge::excel_grapher_135->lic_dsf_programmatic_extraction_19",
+          "source": "excel_grapher_135",
+          "target": "lic_dsf_programmatic_extraction_19",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#139->issue::excel-grapher#25",
-          "source": "issue::excel-grapher#139",
-          "target": "issue::excel-grapher#25",
+          "id": "edge::excel_grapher_139->excel_grapher_25",
+          "source": "excel_grapher_139",
+          "target": "excel_grapher_25",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#139->issue::lic-dsf-programmatic-extraction#16",
-          "source": "issue::excel-grapher#139",
-          "target": "issue::lic-dsf-programmatic-extraction#16",
+          "id": "edge::excel_grapher_139->lic_dsf_programmatic_extraction_16",
+          "source": "excel_grapher_139",
+          "target": "lic_dsf_programmatic_extraction_16",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#142->issue::excel-grapher#133",
-          "source": "issue::excel-grapher#142",
-          "target": "issue::excel-grapher#133",
+          "id": "edge::excel_grapher_142->excel_grapher_133",
+          "source": "excel_grapher_142",
+          "target": "excel_grapher_133",
           "type": "blocks",
           "label": "blocks"
         }
       },
       {
         "data": {
-          "id": "edge::issue::excel-grapher#143->issue::excel-grapher#133",
-          "source": "issue::excel-grapher#143",
-          "target": "issue::excel-grapher#133",
+          "id": "edge::excel_grapher_143->excel_grapher_133",
+          "source": "excel_grapher_143",
+          "target": "excel_grapher_133",
           "type": "blocks",
           "label": "blocks"
         }
