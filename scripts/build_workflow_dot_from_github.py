@@ -15,7 +15,12 @@ from pathlib import Path
 from typing import Any
 
 GITHUB_API_VERSION = "2026-03-10"
-DEFAULT_REPOS = ["excel-grapher", "lic-dsf-extraction-pipeline", "tiny-dsa-extraction-pipeline", "qcraft-extraction-pipeline"]
+DEFAULT_REPOS = [
+    "excel-grapher",
+    "lic-dsf-extraction-pipeline",
+    "tiny-dsa-extraction-pipeline",
+    "qcraft-extraction-pipeline",
+]
 ISSUE_LABEL_WIDTH = 200
 GRAPH_FONT_NAME = "Arial"
 GRAPH_FONT_SIZE = 10
@@ -46,10 +51,7 @@ def _quote(value: str) -> str:
 
 def _escape_html(value: str) -> str:
     return (
-        value.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
+        value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
     )
 
 
@@ -114,9 +116,7 @@ def _resolve_token(token: str | None) -> str:
         check=False,
     )
     if result.returncode != 0 or not result.stdout.strip():
-        raise RuntimeError(
-            "No GitHub token provided. Set GITHUB_TOKEN or pass --github-token."
-        )
+        raise RuntimeError("No GitHub token provided. Set GITHUB_TOKEN or pass --github-token.")
     return result.stdout.strip()
 
 
@@ -316,8 +316,8 @@ def build_dot(
         number_html = _escape_html(f"#{issue.number}")
         title_html = _escape_html(issue.title)
         label_html = (
-            "<<TABLE BORDER=\"0\" CELLBORDER=\"0\" CELLPADDING=\"4\" CELLSPACING=\"0\">"
-            f"<TR><TD WIDTH=\"{ISSUE_LABEL_WIDTH}\" ALIGN=\"LEFT\"><B>{number_html}</B> &#183; {title_html}</TD></TR>"
+            '<<TABLE BORDER="0" CELLBORDER="0" CELLPADDING="4" CELLSPACING="0">'
+            f'<TR><TD WIDTH="{ISSUE_LABEL_WIDTH}" ALIGN="LEFT"><B>{number_html}</B> &#183; {title_html}</TD></TR>'
             "</TABLE>>"
         )
         node_label = f"#{issue.number} · {issue.title}"
@@ -385,7 +385,7 @@ def build_dot(
     for blocker_repo, blocker_number, blocked_repo, blocked_number in blocks_edges:
         blocker_id = f"{_normalize_repo_key(blocker_repo)}_{blocker_number}"
         blocked_id = f"{_normalize_repo_key(blocked_repo)}_{blocked_number}"
-        lines.append(f"  {blocker_id} -> {blocked_id} [label=\"blocks\"];")
+        lines.append(f'  {blocker_id} -> {blocked_id} [label="blocks"];')
 
     lines.append("}")
     lines.append("")
@@ -459,7 +459,9 @@ def main() -> None:
     print(f"Blocks edges included: {len(blocks_edges)}")
 
     if args.render_svg:
-        svg_output = args.svg_output if args.svg_output is not None else args.output.with_suffix(".svg")
+        svg_output = (
+            args.svg_output if args.svg_output is not None else args.output.with_suffix(".svg")
+        )
         svg_output.parent.mkdir(parents=True, exist_ok=True)
         render_dot_to_svg(dot_path=args.output, svg_path=svg_output)
         print(f"Rendered SVG graph to {svg_output}")

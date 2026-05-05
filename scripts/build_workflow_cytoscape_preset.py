@@ -110,7 +110,9 @@ def build_cytoscape_preset_payload(
 
     # Fallback parent inference when Graphviz JSON lacks explicit `subgraphs`.
     cluster_nodes: dict[int, set[int]] = {
-        cluster_id: {n for n in (objects_by_gvid[cluster_id].get("nodes", []) or []) if isinstance(n, int)}
+        cluster_id: {
+            n for n in (objects_by_gvid[cluster_id].get("nodes", []) or []) if isinstance(n, int)
+        }
         for cluster_id in cluster_gvids
     }
     for cluster_id in cluster_gvids:
@@ -145,7 +147,9 @@ def build_cytoscape_preset_payload(
     elements_edges: list[dict[str, Any]] = []
     max_y = _graphviz_max_y(graphviz_json)
 
-    cluster_node_id_by_gvid = {gvid: f"cluster::{objects_by_gvid[gvid]['name']}" for gvid in cluster_gvids}
+    cluster_node_id_by_gvid = {
+        gvid: f"cluster::{objects_by_gvid[gvid]['name']}" for gvid in cluster_gvids
+    }
     for cluster_id in sorted(cluster_gvids):
         cluster_obj = objects_by_gvid[cluster_id]
         label = cluster_obj.get("label") or cluster_obj.get("name")
@@ -223,8 +227,12 @@ def build_cytoscape_preset_payload(
         "meta": {
             "owner": owner,
             "repos": sorted({issue.repo for issue in workflow_issues}),
-            "issue_count": len([node for node in elements_nodes if node["data"]["type"] == "issue"]),
-            "cluster_count": len([node for node in elements_nodes if node["data"]["type"] == "cluster"]),
+            "issue_count": len(
+                [node for node in elements_nodes if node["data"]["type"] == "issue"]
+            ),
+            "cluster_count": len(
+                [node for node in elements_nodes if node["data"]["type"] == "cluster"]
+            ),
             "edge_count": len(elements_edges),
         },
         "elements": {
@@ -457,7 +465,9 @@ def build_index_html(*, json_filename: str = "workflow.json") -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate dot-driven Cytoscape docs workflow page.")
+    parser = argparse.ArgumentParser(
+        description="Generate dot-driven Cytoscape docs workflow page."
+    )
     parser.add_argument("--owner", default="Teal-Insights")
     parser.add_argument("--repos", nargs="+", default=DEFAULT_REPOS)
     parser.add_argument("--layout", choices=["TB", "LR"], default="TB")

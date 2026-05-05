@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from scripts.build_workflow_dot_from_github import WorkflowIssue
 from scripts.build_workflow_cytoscape_preset import (
     build_cytoscape_preset_payload,
     build_index_html,
 )
+from scripts.build_workflow_dot_from_github import WorkflowIssue
 
 
 def test_build_cytoscape_preset_payload_maps_clusters_positions_and_edges() -> None:
@@ -73,7 +73,10 @@ def test_build_cytoscape_preset_payload_maps_clusters_positions_and_edges() -> N
 
     assert "cluster::cluster_repo_excel_grapher" in node_by_id
     assert "cluster::cluster_repo_excel_grapher_major" in node_by_id
-    assert node_by_id["excel_grapher_1"]["data"]["parent"] == "cluster::cluster_repo_excel_grapher_major"
+    assert (
+        node_by_id["excel_grapher_1"]["data"]["parent"]
+        == "cluster::cluster_repo_excel_grapher_major"
+    )
     assert node_by_id["excel_grapher_2"]["data"]["parent"] == "cluster::cluster_repo_excel_grapher"
     assert node_by_id["excel_grapher_1"]["data"]["gv_width"] == 54.0  # 0.75 in × 72 pt/in
     assert node_by_id["excel_grapher_1"]["data"]["gv_height"] == 36.0
