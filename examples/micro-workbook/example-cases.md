@@ -390,9 +390,9 @@ print_text(pformat(report, indent=4, width=100))
 ``` text
 CycleReport(has_must_cycles=True,
             has_may_cycles=False,
-            must_cycles=[{'Sheet1!B6', 'Sheet1!C6'}],
+            must_cycles=[{'Sheet1!C6', 'Sheet1!B6'}],
             may_cycles=[],
-            example_must_cycle_path=['Sheet1!B6', 'Sheet1!C6', 'Sheet1!B6'],
+            example_must_cycle_path=['Sheet1!C6', 'Sheet1!B6', 'Sheet1!C6'],
             example_may_cycle_path=None)
 ```
 
@@ -463,30 +463,27 @@ flowchart TD
 CycleReport(has_must_cycles=False,
             has_may_cycles=True,
             must_cycles=[],
-            may_cycles=[{'Sheet1!C8', 'Sheet1!D8'}],
+            may_cycles=[{'Sheet1!D8', 'Sheet1!C8'}],
             example_must_cycle_path=None,
-            example_may_cycle_path=['Sheet1!C8', 'Sheet1!D8', 'Sheet1!C8'])
+            example_may_cycle_path=['Sheet1!D8', 'Sheet1!C8', 'Sheet1!D8'])
 ```
 
 If we know from the workbook’s domain that Sheet1!B8 can only ever be
 `0` or `1`, the cycle becomes infeasible and should not be reported. The
-constraint API expresses this by attaching a `Literal[...]` (or
-`Annotated[..., Between(...)]`, etc.) annotation to the leaf cell on a
-`TypedDict`, then building a `DynamicRefConfig` from it and passing it
-to `create_dependency_graph` via the `dynamic_refs` parameter:
+constraint API expresses this with a `dict[str, type]` mapping
+sheet-qualified addresses to typing annotations (e.g. `Literal[...]` or
+`Annotated[..., Between(...)]`), then building a `DynamicRefConfig` from
+it and passing it to `create_dependency_graph` via the `dynamic_refs`
+parameter:
 
 ``` python
-from typing import Literal, TypedDict
+from typing import Literal
 
-from excel_grapher import DynamicRefConfig, constrain
-
-
-class MayCycleConstraints(TypedDict, total=False):
-    pass
+from excel_grapher import DynamicRefConfig
 
 
-constrain(MayCycleConstraints, "Sheet1!B8", Literal[0, 1])
-config = DynamicRefConfig.from_constraints(MayCycleConstraints, {})
+constraints_schema: dict[str, type] = {"Sheet1!B8": Literal[0, 1]}
+config = DynamicRefConfig.from_constraints(constraints_schema, {})
 
 graph: DependencyGraph = create_dependency_graph(
     workbook_path, ["Sheet1!C8"], load_values=False, dynamic_refs=config
@@ -500,9 +497,9 @@ print_text(pformat(report, indent=4, width=100))
 CycleReport(has_must_cycles=False,
             has_may_cycles=True,
             must_cycles=[],
-            may_cycles=[{'Sheet1!C8', 'Sheet1!D8'}],
+            may_cycles=[{'Sheet1!D8', 'Sheet1!C8'}],
             example_must_cycle_path=None,
-            example_may_cycle_path=['Sheet1!C8', 'Sheet1!D8', 'Sheet1!C8'])
+            example_may_cycle_path=['Sheet1!D8', 'Sheet1!C8', 'Sheet1!D8'])
 ```
 
 In theory, this constraint should render the cycle infeasible: the
@@ -517,58 +514,12 @@ surface.
 
 ### A note on domain constraints
 
-I don’t love the current constraints API shape. The problem it’s trying
-to solve is that cell addresses aren’t valid Python identifiers. A
-normal TypedDict declares fields at class-definition time:
-
-``` python
-class MyDict(TypedDict):
-    field_one: int
-    field_two: str
-```
-
-But cell addresses like “Sheet1!B8” contain `!` and `'` characters, so
-you can’t write them as class attributes. The `constrain` helper
-sidesteps this by writing directly to `__annotations__`:
-
-``` python
-def constrain(constraints: type[Any], address: str, annotation: Any) -> None:
-    ...
-    for key in cells:
-        constraints.__annotations__[key] = annotation
-```
-
-So this:
-
-``` python
-class MayCycleConstraints(TypedDict, total=False):
-    pass
-
-constrain(MayCycleConstraints, "Sheet1!B8", Literal[0, 1])
-```
-
-is equivalent to (if Python syntax allowed it):
-
-``` python
-class MayCycleConstraints(TypedDict, total=False):
-    "Sheet1!B8": Literal[0, 1]   # not legal — `!` is not a valid identifier char
-```
-
-After the `constrain` call,
-`MayCycleConstraints.__annotations__ == {"Sheet1!B8": Literal[0, 1]}`.
-
-Why a `TypedDict` rather than a plain `dict`?
-
-Two reasons: 1. The annotation system already exists.
-`TypedDict.__annotations__ + get_type_hints` gives you `Annotated[...]`
-and `Literal[...]` for free, so domains can be expressed using standard
-Python typing instead of a bespoke DSL. 2. Reusability across the
-codebase. The same constraints type is consumed elsewhere
-(e.g. `verify_lic_dsf_constraints_target_leaves`) for validation against
-the workbook. Once you express domains as type hints, mypy and
-`TypeAdapter` can also see them.
-
-However, there is likely a better API shape. I’m open to suggestions.
+Cell addresses are natural dict keys: use a `dict[str, type]` whose keys
+are sheet-qualified A1 addresses (e.g. `"Sheet1!B8"`) and whose values
+are typing objects describing the domain (`Literal[...]`,
+`Annotated[..., Between(...)]`, etc.). The same mapping can be passed to
+tooling that validates leaf cells against a workbook (for example
+`verify_lic_dsf_constraints_target_leaves` in the LIC-DSF scripts).
 
 ## 09. OFFSET/INDIRECT reference resolution with scalar arguments
 
@@ -665,21 +616,22 @@ input cells, and then accepting that an exception might be raised if the
 constraint is not satisfied at runtime.
 
 As in the “may cycle” example above, the expected user behavior would be
-to `constrain` the cells that inform the `row` and `column` arguments of
-`OFFSET` or `INDIRECT`, then pass a `DynamicRefConfig` with these
-constraints to `create_dependency_graph`. This tells grapher to use the
-constraints to resolve the dynamic references.
+to declare constraints for the cells that inform the `row` and `column`
+arguments of `OFFSET` or `INDIRECT` in a `dict[str, type]`, then pass a
+`DynamicRefConfig` built with `DynamicRefConfig.from_constraints` to
+`create_dependency_graph`. This tells grapher to use the constraints to
+resolve the dynamic references.
 
 Currently, this works for easy cases like the one in Row 10, but runs
 into combinatorial explosion for more complex cases.
 
 ``` python
-class DynamicRefConstraints(TypedDict, total=False):
-    pass
+from typing import Literal
 
+from excel_grapher import DynamicRefConfig
 
-constrain(DynamicRefConstraints, "Sheet1!B10", Literal[0, 1])
-config = DynamicRefConfig.from_constraints(DynamicRefConstraints, {})
+constraints_schema = {"Sheet1!B10": Literal[0, 1]}
+config = DynamicRefConfig.from_constraints(constraints_schema, {})
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!E10"], load_values=False, dynamic_refs=config)
 
 print_mermaid(graph)

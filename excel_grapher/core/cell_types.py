@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, TypeAlias, get_args, get_origin, get_type_hints
+from typing import Any, TypeAlias, get_args, get_origin
 
 from fastpyxl.utils.cell import coordinate_from_string
 
@@ -91,63 +91,64 @@ class RealBetween:
     max: float | int | None = None
 
 
-def constraints_to_cell_type_env(
-    constraints_type: type[Any], constraints: Mapping[str, Any]
-) -> dict[str, CellType]:
-    """Derive a CellTypeEnv from a validated constraints object.
-
-    The constraints_type is expected to be a TypedDict- or pydantic-style model
-    whose annotations use Annotated / Literal to describe domains, and
-    constraints is a validated instance (e.g. from TypeAdapter). The current
-    implementation only inspects type metadata; it assumes the instance has
-    already been validated elsewhere.
-
-    Dict keys are :func:`normalize_cell_type_env_key` of each hint key so they
-    align with ``format_key`` addresses from the grapher after normalization.
-    """
+def _cell_type_from_annotation(annotated_type: Any) -> CellType:
+    """Build a :class:`CellType` from a constraint annotation (Annotated / Literal / plain type)."""
 
     # Import here to avoid forcing Annotated / Literal into __all__ of core.
     from typing import Annotated, Literal
 
-    hints = get_type_hints(constraints_type, include_extras=True)
-    env: dict[str, CellType] = {}
+    base_type = annotated_type
+    metadata: list[object] = []
 
-    for key, annotated_type in hints.items():
-        base_type = annotated_type
-        metadata: list[object] = []
-
-        if get_origin(annotated_type) is Annotated:
-            args = get_args(annotated_type)
-            if not args:
-                base_type = Any
-            else:
-                base_type = args[0]
-                metadata = list(args[1:])
-
-        int_domain, real_domain = _interval_domains_from_metadata(metadata)
-        relations = _relations_from_metadata(metadata)
-
-        origin = get_origin(base_type)
-        enum_domain: EnumDomain | None = None
-        if origin is Literal:
-            literal_values = get_args(base_type)
-            kind = _infer_kind_from_literal_values(literal_values)
-            if int_domain is None and real_domain is None:
-                enum_domain = EnumDomain(values=frozenset(literal_values))
+    if get_origin(annotated_type) is Annotated:
+        args = get_args(annotated_type)
+        if not args:
+            base_type = Any
         else:
-            kind = _infer_kind_from_python_type(base_type)
+            base_type = args[0]
+            metadata = list(args[1:])
 
-        env[normalize_cell_type_env_key(key)] = CellType(
-            kind=kind,
-            interval=int_domain,
-            real_interval=real_domain,
-            enum=enum_domain,
-            relations=relations,
-        )
+    int_domain, real_domain = _interval_domains_from_metadata(metadata)
+    relations = _relations_from_metadata(metadata)
 
-    # We currently ignore the concrete values in `constraints` and rely solely
-    # on type metadata; this leaves room to validate presence/shape later.
-    _ = constraints
+    origin = get_origin(base_type)
+    enum_domain: EnumDomain | None = None
+    if origin is Literal:
+        literal_values = get_args(base_type)
+        kind = _infer_kind_from_literal_values(literal_values)
+        if int_domain is None and real_domain is None:
+            enum_domain = EnumDomain(values=frozenset(literal_values))
+    else:
+        kind = _infer_kind_from_python_type(base_type)
+
+    return CellType(
+        kind=kind,
+        interval=int_domain,
+        real_interval=real_domain,
+        enum=enum_domain,
+        relations=relations,
+    )
+
+
+def constraints_to_cell_type_env(
+    constraints_schema: Mapping[str, Any], constraints_data: Mapping[str, Any]
+) -> dict[str, CellType]:
+    """Derive a :class:`CellTypeEnv` from a constraints schema and optional instance data.
+
+    *constraints_schema* maps sheet-qualified addresses (e.g. ``\"Sheet1!B1\"``) to
+    type objects describing domains (``Annotated``, ``Literal``, plain ``int`` / ``str``, etc.).
+    *constraints_data* may hold runtime values for validation elsewhere; this function
+    only inspects type metadata.
+
+    Env dict keys are :func:`normalize_cell_type_env_key` of each schema key so they
+    align with ``format_key`` addresses from the grapher after normalization.
+    """
+
+    env: dict[str, CellType] = {}
+    for key, annotated_type in constraints_schema.items():
+        env[normalize_cell_type_env_key(key)] = _cell_type_from_annotation(annotated_type)
+
+    _ = constraints_data
 
     return env
 
@@ -217,8 +218,8 @@ def normalize_cell_type_env_key(address: str) -> str:
     """Return the canonical key for :class:`CellTypeEnv` / dynamic-ref constraint maps.
 
     Graph code uses :func:`excel_grapher.grapher.parser.format_key`, which wraps
-    sheet names in single quotes when Excel requires it. TypedDict and
-    :func:`constraints_to_cell_type_env` may use the same spelling. This
+    sheet names in single quotes when Excel requires it. Constraint schema keys
+    may use the same spelling. This
     function strips those delimiters and normalizes the cell coordinate (column
     letters uppercased) so env lookups match regardless of quoting or case.
 
