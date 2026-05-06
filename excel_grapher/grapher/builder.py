@@ -4,6 +4,7 @@ import hashlib
 import logging
 import re
 import time
+import warnings
 from collections import deque
 from collections.abc import Iterable
 from pathlib import Path
@@ -37,6 +38,7 @@ from .graph import DependencyGraph, NodeHook
 from .guard import And, Compare, GuardExpr, Literal, Not
 from .node import Node
 from .parser import (
+    CellRef,
     FormulaNormalizer,
     _find_function_calls_with_spans,
     _split_function_args,
@@ -57,6 +59,12 @@ from .resolver import build_named_range_map
 from .type_analysis_cache import TypeAnalysisCache
 
 _logger = logging.getLogger(__name__)
+_VOLATILE_DYNAMIC_REF_FUNCS = frozenset(
+    {"NOW", "TODAY", "RAND", "RANDBETWEEN", "RANDARRAY", "INFO"}
+)
+_VOLATILE_DYNAMIC_REF_PATTERN = re.compile(
+    r"(?<![A-Z0-9_])(?:_XLFN\.)?(?:NOW|TODAY|RANDBETWEEN|RANDARRAY|RAND|INFO)\s*\("
+)
 
 
 def _parse_address_to_sheet_a1(addr: str) -> tuple[str, str]:
@@ -321,6 +329,82 @@ def create_dependency_graph(
             raise ValueError(f"Sheet not found: {sheet}")
         return sheet, a1
 
+    def _contains_volatile_function(formula_or_expr: str) -> bool:
+        formula_text = formula_or_expr if formula_or_expr.startswith("=") else "=" + formula_or_expr
+        upper_formula = formula_text.upper()
+        if "RANDARRAY(" in upper_formula:
+            return True
+        return bool(_VOLATILE_DYNAMIC_REF_PATTERN.search(upper_formula))
+
+    def _collect_refs_for_volatile_scan(formula_text: str, sheet_of_cell: str) -> set[str]:
+        normalized = normalizer.normalize(
+            formula_text if formula_text.startswith("=") else "=" + formula_text,
+            sheet_of_cell,
+        )
+        out: set[str] = set()
+        for ref in parse_cell_refs(normalized):
+            sh = ref.sheet if ref.sheet is not None else sheet_of_cell
+            out.add(format_key(sh, f"{ref.column}{ref.row}"))
+        for start, end, _span in parse_range_refs_with_spans(normalized):
+            sh = start.sheet if start.sheet is not None else sheet_of_cell
+            for dep_sheet, dep_a1 in expand_range(
+                sheet=sh,
+                start_col=start.column,
+                start_row=start.row,
+                end_col=end.column,
+                end_row=end.row,
+                max_cells=max_range_cells,
+            ):
+                out.add(format_key(dep_sheet, dep_a1))
+        return out
+
+    def _call_has_volatile_dependency_chain(
+        fn_name: str,
+        inner_args: str,
+        *,
+        current_sheet: str,
+    ) -> bool:
+        args = _split_function_args(inner_args)
+        if args is None:
+            return False
+        if fn_name == "OFFSET":
+            relevant_args = args[1:]
+        elif fn_name == "INDIRECT":
+            relevant_args = args[:1]
+        else:
+            relevant_args = []
+
+        to_visit: set[str] = set()
+        visited: set[str] = set()
+        for arg in relevant_args:
+            expr = "=" + arg
+            if _contains_volatile_function(expr):
+                return True
+            normalized = normalizer.normalize(expr, current_sheet)
+            for ref in parse_cell_refs(normalized):
+                sh = ref.sheet if ref.sheet is not None else current_sheet
+                to_visit.add(format_key(sh, f"{ref.column}{ref.row}"))
+
+        while to_visit:
+            addr = to_visit.pop()
+            if addr in visited:
+                continue
+            visited.add(addr)
+            sh, a1 = _parse_address_to_sheet_a1(addr)
+            if sh not in wb_formulas.sheetnames:
+                continue
+            cell_val = _get_ws_f(sh)[a1].value
+            if isinstance(cell_val, ArrayFormula):
+                cell_val = cell_val.text or ""
+                if cell_val and not cell_val.startswith("="):
+                    cell_val = f"={cell_val}"
+            if not isinstance(cell_val, str) or not cell_val.startswith("="):
+                continue
+            if _contains_volatile_function(cell_val):
+                return True
+            to_visit.update(_collect_refs_for_volatile_scan(cell_val, sh))
+        return False
+
     def extract_deps_with_guards(
         formula: str, current_sheet: str, current_a1: str
     ) -> list[tuple[str, str, GuardExpr | None]]:
@@ -377,9 +461,38 @@ def create_dependency_graph(
                     f, frozenset({"OFFSET", "INDIRECT", "INDEX"})
                 )
                 if dynamic_refs is None:
+                    static_dynamic_calls_by_span: dict[
+                        tuple[int, int], tuple[CellRef, CellRef, list[CellRef]]
+                    ] = {}
+                    try:
+                        static_calls = parse_dynamic_range_refs_with_spans(
+                            f,
+                            current_sheet=current_sheet,
+                            current_cell_a1=current_a1,
+                            named_ranges=named_ranges,
+                            named_range_ranges=named_range_ranges,
+                            normalizer=normalizer,
+                            value_resolver=None,
+                        )
+                        static_dynamic_calls_by_span = {
+                            span: (start, end, arg_refs)
+                            for start, end, span, arg_refs in static_calls
+                        }
+                    except ValueError:
+                        static_dynamic_calls_by_span = {}
                     # Filter out INDEX calls that only have literal args (no dynamic resolution needed).
                     dynamic_calls = []
+                    saw_volatile_in_dynamic_ref_chain = False
                     for fn_name_check, inner_check, span_check in calls:
+                        is_volatile_dynamic_call = False
+                        if fn_name_check in {"OFFSET", "INDIRECT"}:
+                            is_volatile_dynamic_call = _call_has_volatile_dependency_chain(
+                                fn_name_check,
+                                inner_check,
+                                current_sheet=current_sheet,
+                            )
+                            if is_volatile_dynamic_call:
+                                saw_volatile_in_dynamic_ref_chain = True
                         if fn_name_check == "INDEX":
                             # INDEX only needs dynamic resolution when row/col args are non-literal
                             idx_args = _split_function_args(inner_check)
@@ -395,9 +508,47 @@ def create_dependency_graph(
                                         break
                                 if not has_non_literal:
                                     continue
+                        if fn_name_check in {"OFFSET", "INDIRECT"}:
+                            static_call = static_dynamic_calls_by_span.get(span_check)
+                            if static_call is not None:
+                                if is_volatile_dynamic_call:
+                                    dynamic_calls.append((fn_name_check, inner_check, span_check))
+                                    continue
+                                start_ref, end_ref, arg_refs = static_call
+                                dyn_spans.append(span_check)
+                                call_sheet = (
+                                    start_ref.sheet
+                                    if start_ref.sheet is not None
+                                    else current_sheet
+                                )
+                                deps.extend(
+                                    expand_range(
+                                        sheet=call_sheet,
+                                        start_col=start_ref.column,
+                                        start_row=start_ref.row,
+                                        end_col=end_ref.column,
+                                        end_row=end_ref.row,
+                                        max_cells=max_range_cells,
+                                    )
+                                )
+                                for ref in arg_refs:
+                                    arg_sheet = (
+                                        ref.sheet if ref.sheet is not None else current_sheet
+                                    )
+                                    deps.append((arg_sheet, f"{ref.column}{ref.row}"))
+                                continue
                         dynamic_calls.append((fn_name_check, inner_check, span_check))
                     calls = dynamic_calls
                     if calls:
+                        if saw_volatile_in_dynamic_ref_chain:
+                            warnings.warn(
+                                "Detected volatile function in OFFSET/INDIRECT dependency chain. "
+                                "use_cached_dynamic_refs=True is still required for resolution, and "
+                                "FormulaEvaluator.evaluate or CodeGenerator output may hit runtime errors "
+                                "until volatile dynamic-ref support is fully implemented.",
+                                UserWarning,
+                                stacklevel=2,
+                            )
                         cell_key = format_key(current_sheet, current_a1)
                         fn_names = sorted({fn for fn, _, _ in calls})
                         raise DynamicRefError(
