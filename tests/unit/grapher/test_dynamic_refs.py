@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import warnings
 from pathlib import Path
 
@@ -82,6 +83,23 @@ def _build_offset_with_arg_ref_workbook(path: Path) -> None:
     start.write_number(9, 12, 1)  # M10 -> column offset of 1
 
     ws.write_formula(0, 0, "=OFFSET(B1,0,START!M10)", None, 99)
+    wb.close()
+
+
+def _build_static_offset_workbook(path: Path, *, row_expr: str, col_expr: str) -> None:
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(8, 1, 5)  # B9 base
+    ws.write_number(8, 2, 42)  # C9 resolved target
+    ws.write_formula(8, 3, f"=OFFSET(B9,{row_expr},{col_expr})", None, 42)  # D9
+    wb.close()
+
+
+def _build_static_indirect_literal_workbook(path: Path, *, target_addr: str) -> None:
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(8, 2, 99)  # C9
+    ws.write_formula(8, 3, f'=INDIRECT("{target_addr}")', None, 99)  # D9
     wb.close()
 
 
@@ -412,6 +430,187 @@ def test_create_dependency_graph_raises_on_dynamic_refs_by_default(tmp_path: Pat
     with pytest.raises(DynamicRefError):
         # Default behavior should not silently fall back to cached values.
         create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
+
+
+def test_static_offset_default_path_does_not_raise(tmp_path: Path) -> None:
+    excel_path = tmp_path / "static_offset_default.xlsx"
+    _build_static_offset_workbook(excel_path, row_expr="0", col_expr="1")
+
+    graph = create_dependency_graph(excel_path, ["Sheet1!D9"], load_values=False)
+    deps = graph.get_dependencies("Sheet1!D9")
+    assert deps == {"Sheet1!C9"}
+
+
+def test_static_indirect_literal_default_path_does_not_raise(tmp_path: Path) -> None:
+    excel_path = tmp_path / "static_indirect_default.xlsx"
+    _build_static_indirect_literal_workbook(excel_path, target_addr="Sheet1!C9")
+
+    graph = create_dependency_graph(excel_path, ["Sheet1!D9"], load_values=False)
+    deps = graph.get_dependencies("Sheet1!D9")
+    assert deps == {"Sheet1!C9"}
+
+
+def test_randomized_static_offset_arithmetic_args_default_path(tmp_path: Path) -> None:
+    rng = random.Random(1337)
+    for i in range(12):
+        a = rng.randint(0, 2)
+        b = rng.randint(0, 2)
+        row_expr = f"{a}+{b}-{a}"
+        col_expr = "1+0"
+        excel_path = tmp_path / f"randomized_static_offset_{i}.xlsx"
+        _build_static_offset_workbook(excel_path, row_expr=row_expr, col_expr=col_expr)
+
+        graph = create_dependency_graph(excel_path, ["Sheet1!D9"], load_values=False)
+        deps = graph.get_dependencies("Sheet1!D9")
+        assert deps == {f"Sheet1!C{9 + b}"}
+
+
+def test_randomized_static_indirect_literals_default_path(tmp_path: Path) -> None:
+    rng = random.Random(7331)
+    for i in range(8):
+        row = rng.randint(7, 12)
+        col = rng.choice(["B", "C", "D"])
+        target_addr = f"Sheet1!{col}{row}"
+
+        excel_path = tmp_path / f"randomized_static_indirect_{i}.xlsx"
+        wb = xlsxwriter.Workbook(excel_path)
+        ws = wb.add_worksheet("Sheet1")
+        col_idx = ord(col) - ord("A")
+        ws.write_number(row - 1, col_idx, 1)
+        ws.write_formula(8, 3, f'=INDIRECT("{target_addr}")', None, 1)  # D9
+        wb.close()
+
+        graph = create_dependency_graph(excel_path, ["Sheet1!D9"], load_values=False)
+        deps = graph.get_dependencies("Sheet1!D9")
+        assert deps == {target_addr}
+
+
+def test_create_dependency_graph_raises_on_non_literal_offset_arg_by_default(
+    tmp_path: Path,
+) -> None:
+    excel_path = tmp_path / "offset_non_literal_arg.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(8, 1, 5)  # B9
+    ws.write_number(8, 2, 1)  # C9
+    ws.write_formula(8, 3, "=OFFSET(B9,0,C9)", None, 42)  # D9
+    wb.close()
+
+    with pytest.raises(DynamicRefError):
+        create_dependency_graph(excel_path, ["Sheet1!D9"], load_values=False)
+
+
+def test_create_dependency_graph_raises_on_indirect_ref_arg_by_default(tmp_path: Path) -> None:
+    excel_path = tmp_path / "indirect_ref_arg.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_string(8, 1, "Sheet1!C9")  # B9
+    ws.write_number(8, 2, 10)  # C9
+    ws.write_formula(8, 3, "=INDIRECT(B9)", None, 10)  # D9
+    wb.close()
+
+    with pytest.raises(DynamicRefError):
+        create_dependency_graph(excel_path, ["Sheet1!D9"], load_values=False)
+
+
+@pytest.mark.parametrize(
+    "volatile_formula",
+    [
+        "=NOW()",
+        "=TODAY()",
+        "=RAND()",
+        "=RANDBETWEEN(0,1)",
+        "=RANDARRAY(1,1)",
+        '=INFO("osversion")',
+    ],
+)
+def test_volatile_offset_dependency_chain_warns_and_requires_cached_resolution(
+    tmp_path: Path, volatile_formula: str
+) -> None:
+    excel_path = tmp_path / f"volatile_offset_{abs(hash(volatile_formula))}.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(8, 1, 5)  # B9 base
+    ws.write_formula(8, 2, volatile_formula, None, 0)  # C9
+    ws.write_formula(8, 3, "=OFFSET(B9,C9,0)", None, 5)  # D9
+    wb.close()
+
+    with (
+        pytest.warns(
+            UserWarning,
+            match="volatile function in OFFSET/INDIRECT dependency chain",
+        ),
+        pytest.raises(DynamicRefError),
+    ):
+        create_dependency_graph(excel_path, ["Sheet1!D9"], load_values=False)
+
+
+@pytest.mark.parametrize(
+    "volatile_formula",
+    [
+        "=NOW()",
+        "=TODAY()",
+        "=RAND()",
+        "=RANDBETWEEN(0,1)",
+        "=RANDARRAY(1,1)",
+        '=INFO("osversion")',
+    ],
+)
+def test_volatile_indirect_dependency_chain_warns_and_requires_cached_resolution(
+    tmp_path: Path, volatile_formula: str
+) -> None:
+    excel_path = tmp_path / f"volatile_indirect_{abs(hash(volatile_formula))}.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_formula(8, 1, volatile_formula, None, "Sheet1!C9")  # B9
+    ws.write_number(8, 2, 10)  # C9
+    ws.write_formula(8, 3, "=INDIRECT(B9)", None, 10)  # D9
+    wb.close()
+
+    with (
+        pytest.warns(
+            UserWarning,
+            match="volatile function in OFFSET/INDIRECT dependency chain",
+        ),
+        pytest.raises(DynamicRefError),
+    ):
+        create_dependency_graph(excel_path, ["Sheet1!D9"], load_values=False)
+
+
+def test_cell_in_offset_chain_does_not_emit_volatile_warning(tmp_path: Path) -> None:
+    excel_path = tmp_path / "cell_offset_no_volatile_warning.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(8, 1, 5)  # B9 base
+    ws.write_formula(8, 2, '=CELL("row")', None, 9)  # C9
+    ws.write_formula(8, 3, "=OFFSET(B9,C9,0)", None, 5)  # D9
+    wb.close()
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(DynamicRefError):
+            create_dependency_graph(excel_path, ["Sheet1!D9"], load_values=False)
+    assert not any(
+        "volatile function in OFFSET/INDIRECT dependency chain" in str(w.message) for w in caught
+    )
+
+
+def test_cell_in_indirect_chain_does_not_emit_volatile_warning(tmp_path: Path) -> None:
+    excel_path = tmp_path / "cell_indirect_no_volatile_warning.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_formula(8, 1, '=CELL("filename")', None, "Sheet1!C9")  # B9
+    ws.write_number(8, 2, 10)  # C9
+    ws.write_formula(8, 3, "=INDIRECT(B9)", None, 10)  # D9
+    wb.close()
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(DynamicRefError):
+            create_dependency_graph(excel_path, ["Sheet1!D9"], load_values=False)
+    assert not any(
+        "volatile function in OFFSET/INDIRECT dependency chain" in str(w.message) for w in caught
+    )
 
 
 def test_create_dependency_graph_with_dynamic_ref_config(tmp_path: Path) -> None:
