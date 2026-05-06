@@ -129,6 +129,21 @@ print(len(g))          # number of visited nodes
 print(to_graphviz(g))  # GraphViz DOT
 ```
 
+### Target forms
+
+`targets` accepts any mix of:
+
+- sheet-qualified single cells: `"Sheet1!A1"`, `"'My Sheet'!B2"`
+- sheet-qualified ranges: `"Sheet1!B12:F12"`, `"Sheet1!A1:Sheet1!B2"`,
+  `"'My Sheet'!A1:B2"`
+- defined names that resolve to a single cell or rectangular range:
+  `"MyInput"`, `"DataRange"`
+
+Range and named-range targets expand to one root per cell (subject to
+`max_range_cells`) and the BFS proceeds from the deduplicated union of roots.
+Targets that are neither sheet-qualified nor a known defined name raise
+`ValueError`.
+
 ### Dynamic OFFSET/INDIRECT configuration
 
 Dynamic references (e.g. `OFFSET`, `INDIRECT`) can be handled in three ways via the `create_dependency_graph` API:

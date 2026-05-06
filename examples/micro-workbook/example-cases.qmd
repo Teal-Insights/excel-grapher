@@ -336,3 +336,16 @@ Option 3 is safer than Option 1, but it's not as surefire a solution as it sound
 We might also need to do some testing to make sure behaviors don't change in unexpected ways if we're including cells in the DependencyGraph that are not connected to the rest of the graph.
 
 Until and unless we've ruled out Option 2, I don't think the blowup of graph size is worth the extra speed/safety we get from implementing Option 3.
+
+## 11. Multiple targets
+
+Multiple targets can be passed to `create_dependency_graph`. In this case, the graph will be a union of the graphs for each target. Note that targets may be passed as sheet-qualified cells, ranges, or defined names. In the example micro-workbook, we have defined the named range "MyNamedRange" as the range "Sheet1!C11:D11".
+
+```{python}
+# Assert graph is identical whether we pass two cell addresses, a sheet-qualified range, or a defined name
+assert create_dependency_graph(workbook_path, ["Sheet1!C11", "Sheet1!D11"], load_values=True) == create_dependency_graph(workbook_path, ["Sheet1!C11:D11"], load_values=True) == create_dependency_graph(workbook_path, ["MyNamedRange"], load_values=True)
+
+# Print the mermaid diagram for the graph
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C11", "Sheet1!D11"], load_values=True)
+print_mermaid(graph)
+```

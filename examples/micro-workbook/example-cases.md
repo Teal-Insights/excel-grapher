@@ -390,9 +390,9 @@ print_text(pformat(report, indent=4, width=100))
 ``` text
 CycleReport(has_must_cycles=True,
             has_may_cycles=False,
-            must_cycles=[{'Sheet1!C6', 'Sheet1!B6'}],
+            must_cycles=[{'Sheet1!B6', 'Sheet1!C6'}],
             may_cycles=[],
-            example_must_cycle_path=['Sheet1!C6', 'Sheet1!B6', 'Sheet1!C6'],
+            example_must_cycle_path=['Sheet1!B6', 'Sheet1!C6', 'Sheet1!B6'],
             example_may_cycle_path=None)
 ```
 
@@ -463,9 +463,9 @@ flowchart TD
 CycleReport(has_must_cycles=False,
             has_may_cycles=True,
             must_cycles=[],
-            may_cycles=[{'Sheet1!D8', 'Sheet1!C8'}],
+            may_cycles=[{'Sheet1!C8', 'Sheet1!D8'}],
             example_must_cycle_path=None,
-            example_may_cycle_path=['Sheet1!D8', 'Sheet1!C8', 'Sheet1!D8'])
+            example_may_cycle_path=['Sheet1!C8', 'Sheet1!D8', 'Sheet1!C8'])
 ```
 
 If we know from the workbook’s domain that Sheet1!B8 can only ever be
@@ -497,9 +497,9 @@ print_text(pformat(report, indent=4, width=100))
 CycleReport(has_must_cycles=False,
             has_may_cycles=True,
             must_cycles=[],
-            may_cycles=[{'Sheet1!D8', 'Sheet1!C8'}],
+            may_cycles=[{'Sheet1!C8', 'Sheet1!D8'}],
             example_must_cycle_path=None,
-            example_may_cycle_path=['Sheet1!D8', 'Sheet1!C8', 'Sheet1!D8'])
+            example_may_cycle_path=['Sheet1!C8', 'Sheet1!D8', 'Sheet1!C8'])
 ```
 
 In theory, this constraint should render the cycle infeasible: the
@@ -673,3 +673,29 @@ DependencyGraph that are not connected to the rest of the graph.
 Until and unless we’ve ruled out Option 2, I don’t think the blowup of
 graph size is worth the extra speed/safety we get from implementing
 Option 3.
+
+## 11. Multiple targets
+
+Multiple targets can be passed to `create_dependency_graph`. In this
+case, the graph will be a union of the graphs for each target. Note that
+targets may be passed as sheet-qualified cells, ranges, or defined
+names. In the example micro-workbook, we have defined the named range
+“MyNamedRange” as the range “Sheet1!C11:D11”.
+
+``` python
+# Assert graph is identical whether we pass two cell addresses, a sheet-qualified range, or a defined name
+assert create_dependency_graph(workbook_path, ["Sheet1!C11", "Sheet1!D11"], load_values=True) == create_dependency_graph(workbook_path, ["Sheet1!C11:D11"], load_values=True) == create_dependency_graph(workbook_path, ["MyNamedRange"], load_values=True)
+
+# Print the mermaid diagram for the graph
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C11", "Sheet1!D11"], load_values=True)
+print_mermaid(graph)
+```
+
+``` mermaid
+flowchart TD
+  Sheet1_B11["Sheet1!B11"]
+  Sheet1_C11("Sheet1!C11<br>=B11+1")
+  Sheet1_D11("Sheet1!D11<br>=B11+2")
+  Sheet1_C11 --> Sheet1_B11
+  Sheet1_D11 --> Sheet1_B11
+```
