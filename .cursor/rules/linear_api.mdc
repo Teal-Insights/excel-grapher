@@ -1,0 +1,27 @@
+---
+description: Use this skill to connect to the Linear API
+alwaysApply: false
+---
+A LINEAR_API_KEY is required to use this skill. It is stored in the .env file.
+
+### Verify authentication
+
+```bash
+set -a && source .env && set +a
+uv run python -c "import json, os, urllib.request; q='query { viewer { id name } }'; req=urllib.request.Request('https://api.linear.app/graphql', data=json.dumps({'query': q}).encode(), headers={'Content-Type':'application/json','Authorization':os.environ['LINEAR_API_KEY']}); print(urllib.request.urlopen(req, timeout=20).read().decode())"
+```
+
+### Manage a single blocking relation
+
+- **Add (`A` blocks `B`)**: run `issueRelationCreate` with `type: blocks`, `issueId` = `A`, `relatedIssueId` = `B`.
+- **Remove**: run `issueRelationDelete` with the relation `id`.
+
+```bash
+set -a && source .env && set +a
+uv run python -c "import json, os, urllib.request; q='mutation{ issueRelationCreate(input:{type:blocks, issueId:\"ISSUE_A_ID\", relatedIssueId:\"ISSUE_B_ID\"}){ success issueRelation{ id } } }'; req=urllib.request.Request('https://api.linear.app/graphql', data=json.dumps({'query': q}).encode(), headers={'Content-Type':'application/json','Authorization':os.environ['LINEAR_API_KEY']}); print(urllib.request.urlopen(req, timeout=20).read().decode())"
+```
+
+```bash
+set -a && source .env && set +a
+uv run python -c "import json, os, urllib.request; q='mutation{ issueRelationDelete(id:\"RELATION_ID\"){ success } }'; req=urllib.request.Request('https://api.linear.app/graphql', data=json.dumps({'query': q}).encode(), headers={'Content-Type':'application/json','Authorization':os.environ['LINEAR_API_KEY']}); print(urllib.request.urlopen(req, timeout=20).read().decode())"
+```
