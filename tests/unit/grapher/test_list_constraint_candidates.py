@@ -310,3 +310,57 @@ def test_missing_sheet_raises_value_error(tmp_path: Path) -> None:
     wb.close()
     with pytest.raises(ValueError, match="Sheet not found"):
         list_dynamic_ref_constraint_candidates(path, ["NoSuchSheet!A1"])
+
+
+def _build_named_range_offset_workbook(path: Path) -> None:
+    """Workbook with a defined-name range over a column that drives an OFFSET.
+
+    - ``OFFSET_TARGETS`` -> ``Sheet1!$A$1:$A$2``
+    - A1 = OFFSET(B1, 0, C1)  (C1 is unconstrained leaf)
+    - A2 = OFFSET(B1, 0, D1)  (D1 is unconstrained leaf)
+    """
+    import fastpyxl
+    from fastpyxl.workbook.defined_name import DefinedName
+
+    wb = fastpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws["A1"].value = "=OFFSET(Sheet1!B1,0,Sheet1!C1)"
+    ws["A2"].value = "=OFFSET(Sheet1!B1,0,Sheet1!D1)"
+    ws["B1"].value = 10
+    ws["C1"].value = 1
+    ws["D1"].value = 1
+    wb.defined_names.add(DefinedName("OFFSET_TARGETS", attr_text="Sheet1!$A$1:$A$2"))
+    wb.save(path)
+    wb.close()
+
+
+def test_candidates_accept_sheet_qualified_range_target(tmp_path: Path) -> None:
+    """Sheet-qualified range targets seed the same union of leaves as expanded cells."""
+    path = tmp_path / "candidates_range.xlsx"
+    _build_named_range_offset_workbook(path)
+
+    via_range = list_dynamic_ref_constraint_candidates(path, ["Sheet1!A1:A2"])
+    via_cells = list_dynamic_ref_constraint_candidates(path, ["Sheet1!A1", "Sheet1!A2"])
+
+    assert via_range == via_cells
+    assert via_range == ["Sheet1!C1", "Sheet1!D1"]
+
+
+def test_candidates_accept_named_range_target(tmp_path: Path) -> None:
+    """A defined name pointing to a range expands to the same candidates."""
+    path = tmp_path / "candidates_named_range.xlsx"
+    _build_named_range_offset_workbook(path)
+
+    via_name = list_dynamic_ref_constraint_candidates(path, ["OFFSET_TARGETS"])
+    assert via_name == ["Sheet1!C1", "Sheet1!D1"]
+
+
+def test_candidates_unknown_name_raises_clear_error(tmp_path: Path) -> None:
+    """An unrecognized bare target token raises a ValueError mentioning the token."""
+    path = tmp_path / "candidates_unknown.xlsx"
+    _build_named_range_offset_workbook(path)
+
+    with pytest.raises(ValueError) as exc:
+        list_dynamic_ref_constraint_candidates(path, ["MysteryName"])
+    assert "MysteryName" in str(exc.value)
