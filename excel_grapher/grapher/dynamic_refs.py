@@ -11,7 +11,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from itertools import product
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast, get_args, get_origin, get_type_hints
+from typing import TYPE_CHECKING, Any, cast, get_args, get_origin
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.type_analysis_cache import TypeAnalysisCache
@@ -124,18 +124,12 @@ class DynamicRefError(ValueError):
     """
 
 
-def constrain(constraints: type[Any], address: str, annotation: Any) -> None:
-    """Assign an annotation to a sheet-qualified single cell or range.
-
-    Examples:
-        constrain(C, "Sheet1!B2", Literal["English"])
-        constrain(C, "'Chart Data'!I21:I22", Literal[1])
-        constrain(C, "lookup!BB4:BC7", Literal["English", "French"])
-    """
+def _apply_constraint_to_schema(schema: dict[str, Any], address: str, annotation: Any) -> None:
+    """Assign *annotation* to every sheet-qualified cell implied by *address* in *schema*."""
     sheet_name, range_a1 = _split_addr_sheet_coord(address)
     cells = _expand_sheet_qualified_range(sheet_name, range_a1)
     for key in cells:
-        constraints.__annotations__[key] = annotation
+        schema[key] = annotation
 
 
 @dataclass(frozen=True)
@@ -143,9 +137,8 @@ class DynamicRefLimits:
     """Tuneable safety limits for dynamic-reference inference.
 
     Pass a custom instance via the ``limits`` parameter of
-    :meth:`DynamicRefConfig.from_constraints`,
-    :meth:`DynamicRefConfig.from_constraints_and_workbook`, or
-    :meth:`DynamicRefConfig.from_workbook` to override any of these defaults.
+    :meth:`DynamicRefConfig.from_constraints` or
+    :meth:`DynamicRefConfig.from_constraints_and_workbook` to override any of these defaults.
 
     Attributes:
         max_branches: Maximum number of discrete value assignments explored
@@ -187,30 +180,43 @@ class DynamicRefConfig:
     @classmethod
     def from_constraints(
         cls,
-        constraints_type: type[Any],
+        constraints_schema: Mapping[str, Any],
         constraints_data: Mapping[str, Any],
         *,
         limits: DynamicRefLimits | None = None,
     ) -> DynamicRefConfig:
-        """Build a config from a TypedDict (or type with type hints) and a validated instance.
+        """Build a config from a constraints schema (address keys → type annotations) and instance data.
 
-        Keys of constraints_type (from get_type_hints(..., include_extras=True)) should be
-        address-style cell addresses (e.g. \"Sheet1!B1\"). constraints_data must have the
-        same keys. No validation of constraints_data is performed; use TypeAdapter etc. if needed.
+        *constraints_schema* must be a mapping (typically ``dict[str, type]``) whose keys are
+        sheet-qualified addresses (e.g. ``\"Sheet1!B1\"``). Values are typing objects describing
+        domains (``Annotated``, ``Literal``, etc.). *constraints_data* may mirror keys for runtime
+        validation elsewhere; it is not validated here.
+
+        Raises:
+            TypeError: If *constraints_schema* is not a mapping (e.g. a legacy ``TypedDict`` class passed instead of a dict).
         """
-        env = constraints_to_cell_type_env(constraints_type, constraints_data)
+        if isinstance(constraints_schema, type):
+            raise TypeError(
+                "constraints_schema must be a dict[str, type] mapping addresses to annotations, "
+                "not a TypedDict/class object."
+            )
+        if not isinstance(constraints_schema, Mapping):
+            raise TypeError(
+                f"constraints_schema must be a mapping, got {type(constraints_schema).__name__!r}"
+            )
+        env = constraints_to_cell_type_env(constraints_schema, constraints_data)
         return cls(cell_type_env=env, limits=limits or DynamicRefLimits())
 
     @classmethod
     def from_constraints_and_workbook(
         cls,
-        constraints_type: type[Any],
+        constraints_schema: Mapping[str, Any],
         workbook_path: str | Path,
         *,
         limits: DynamicRefLimits | None = None,
         data_only: bool = True,
     ) -> DynamicRefConfig:
-        """Build config from constraints type plus workbook values for constant cells.
+        """Build config from constraints schema plus workbook values for constant cells.
 
         Constraints whose annotations carry a :class:`FromWorkbook` marker are
         treated as singleton domains derived from the current cached value in the
@@ -227,9 +233,19 @@ class DynamicRefConfig:
         eliminates the maintenance burden of hardcoded ``Literal`` values at
         the cost of a longer config-build step.
         """
-        hints = get_type_hints(constraints_type, include_extras=True)
+        if isinstance(constraints_schema, type):
+            raise TypeError(
+                "constraints_schema must be a dict[str, type] mapping addresses to annotations, "
+                "not a TypedDict/class object."
+            )
+        if not isinstance(constraints_schema, Mapping):
+            raise TypeError(
+                f"constraints_schema must be a mapping, got {type(constraints_schema).__name__!r}"
+            )
+
+        hints = dict(constraints_schema)
         dummy_data: dict[str, Any] = {k: None for k in hints}
-        env = constraints_to_cell_type_env(constraints_type, dummy_data)
+        env = constraints_to_cell_type_env(hints, dummy_data)
 
         from_wb_items: list[tuple[str, str, str]] = []
         for addr, annotated_type in hints.items():
@@ -252,7 +268,8 @@ class DynamicRefConfig:
                 if value is None:
                     continue
                 kind = _infer_kind_from_value(value)
-                env[addr] = CellType(
+                norm = normalize_cell_type_env_key(addr)
+                env[norm] = CellType(
                     kind=kind,
                     enum=EnumDomain(values=frozenset({value})),
                 )
@@ -266,7 +283,7 @@ class DynamicRefConfig:
 class FromWorkbook:
     """Metadata marker: resolve domain from the current cached workbook value.
 
-    Use ``Annotated[T, FromWorkbook()]`` in a constraints TypedDict to derive a
+    Use ``Annotated[T, FromWorkbook()]`` in the constraints schema to derive a
     singleton domain at config-build time instead of hardcoding a ``Literal``.
     This eliminates maintenance when the workbook template changes, at the cost
     of a slower :meth:`DynamicRefConfig.from_constraints_and_workbook` call (the

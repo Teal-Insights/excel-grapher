@@ -12,7 +12,7 @@ from pathlib import Path
 from pprint import pformat
 
 from excel_grapher.grapher import (
-    create_dependency_graph, DependencyGraph, to_mermaid
+    create_dependency_graph, to_mermaid, DependencyGraph
 )
 from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter import CodeGenerator
@@ -352,7 +352,7 @@ with FormulaEvaluator(graph) as evaluator:
 2.0
 ```
 
-    C:\Users\chris\Software\excel-grapher\excel_grapher\evaluator\evaluator.py:218: CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).
+    C:\Users\chris\Software\excel-grapher\excel_grapher\evaluator\evaluator.py:226: CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).
       return xl_circular_reference()
 
 Similarly, if we generate and run standalone Python code with
@@ -390,9 +390,9 @@ print_text(pformat(report, indent=4, width=100))
 ``` text
 CycleReport(has_must_cycles=True,
             has_may_cycles=False,
-            must_cycles=[{'Sheet1!B6', 'Sheet1!C6'}],
+            must_cycles=[{'Sheet1!C6', 'Sheet1!B6'}],
             may_cycles=[],
-            example_must_cycle_path=['Sheet1!B6', 'Sheet1!C6', 'Sheet1!B6'],
+            example_must_cycle_path=['Sheet1!C6', 'Sheet1!B6', 'Sheet1!C6'],
             example_may_cycle_path=None)
 ```
 
@@ -470,23 +470,20 @@ CycleReport(has_must_cycles=False,
 
 If we know from the workbook’s domain that Sheet1!B8 can only ever be
 `0` or `1`, the cycle becomes infeasible and should not be reported. The
-constraint API expresses this by attaching a `Literal[...]` (or
-`Annotated[..., Between(...)]`, etc.) annotation to the leaf cell on a
-`TypedDict`, then building a `DynamicRefConfig` from it and passing it
-to `create_dependency_graph` via the `dynamic_refs` parameter:
+constraint API expresses this with a `dict[str, type]` mapping
+sheet-qualified addresses to typing annotations (e.g. `Literal[...]` or
+`Annotated[..., Between(...)]`), then building a `DynamicRefConfig` from
+it and passing it to `create_dependency_graph` via the `dynamic_refs`
+parameter:
 
 ``` python
-from typing import Literal, TypedDict
+from typing import Literal
 
-from excel_grapher import DynamicRefConfig, constrain
-
-
-class MayCycleConstraints(TypedDict, total=False):
-    pass
+from excel_grapher import DynamicRefConfig
 
 
-constrain(MayCycleConstraints, "Sheet1!B8", Literal[0, 1])
-config = DynamicRefConfig.from_constraints(MayCycleConstraints, {})
+constraints_schema: dict[str, type] = {"Sheet1!B8": Literal[0, 1]}
+config = DynamicRefConfig.from_constraints(constraints_schema, {})
 
 graph: DependencyGraph = create_dependency_graph(
     workbook_path, ["Sheet1!C8"], load_values=False, dynamic_refs=config
@@ -517,56 +514,162 @@ surface.
 
 ### A note on domain constraints
 
-I don’t love the current constraints API shape. The problem it’s trying
-to solve is that cell addresses aren’t valid Python identifiers. A
-normal TypedDict declares fields at class-definition time:
+Cell addresses are natural dict keys: use a `dict[str, type]` whose keys
+are sheet-qualified A1 addresses (e.g. `"Sheet1!B8"`) and whose values
+are typing objects describing the domain (`Literal[...]`,
+`Annotated[..., Between(...)]`, etc.). The same mapping can be passed to
+tooling that validates leaf cells against a workbook (for example
+`verify_lic_dsf_constraints_target_leaves` in the LIC-DSF scripts).
+
+## 09. OFFSET/INDIRECT reference resolution with scalar arguments
+
+Functions like `OFFSET` and `INDIRECT` construct the address(es) of
+their dependencies at runtime, so constructing their dependency graph
+via static analysis requires provisionally evaluating the function calls
+at extraction time.
+
+A dynamic reference with scalar arguments is easy to resolve. In this
+case, we have a starting cell address (“Sheet1!B9”) and a column offset
+of `1`, so we can easily identify the dependency cell it will resolve to
+(“Sheet1!C9”) by incrementing the column index by `1`.
 
 ``` python
-class MyDict(TypedDict):
-    field_one: int
-    field_two: str
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!D9"], load_values=False)
+
+print_mermaid(graph)
 ```
 
-But cell addresses like “Sheet1!B8” contain `!` and `'` characters, so
-you can’t write them as class attributes. The `constrain` helper
-sidesteps this by writing directly to `__annotations__`:
+``` mermaid
+flowchart TD
+  Sheet1_C9["Sheet1!C9"]
+  Sheet1_D9("Sheet1!D9<br>=OFFSET(B9,0,1)")
+  Sheet1_D9 --> Sheet1_C9
+```
+
+## 10. OFFSET/INDIRECT reference resolution with dynamic arguments
+
+A much harder case is when the arguments of `OFFSET` or `INDIRECT`
+involve computation and references to other cells. For example,
+“Sheet1!E10” contains the formula `=OFFSET(C10,0,B10)`, which depends on
+the value of “Sheet1!B10”. In this case, we must either:
+
+1.  Treat “Sheet1!B10” as a constant that the user won’t modify, or
+2.  Know the range of possible values that “Sheet1!B10” might resolve
+    to, and/or
+3.  Extract every cell in the workbook into our `DependencyGraph`,
+    whether we detected it as a dependency of the targets or not, so
+    that it’s available at runtime for `FormulaEvaluator` or generated
+    Python code to resolve the dynamic reference.
+
+### Option 1: use cached dynamic refs (currently implemented)
+
+Option 1 is implemented by passing `use_cached_dynamic_refs=True` to
+`create_dependency_graph`. This tells grapher to treat all dependencies
+of the `OFFSET` function’s row/column arguments as constants, so that
+the arguments can be resolved to scalar values by computing the formula
+chain.
 
 ``` python
-def constrain(constraints: type[Any], address: str, annotation: Any) -> None:
-    ...
-    for key in cells:
-        constraints.__annotations__[key] = annotation
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!E10"], load_values=False, use_cached_dynamic_refs=True)
 ```
 
-So this:
+    C:\Users\chris\Software\excel-grapher\excel_grapher\grapher\parser.py:885: UserWarning: Resolved OFFSET/INDIRECT arguments using cached workbook values. Results may differ if cached values are stale.
+      _warn_cached_dynamic_once()
+
+The risk with this approach is that the user may modify “Sheet1!B10”
+after the graph is built, which will break the graph. For instance, if
+the user changes “Sheet1!B10” from `0` (the default/cached value) to `1`
+and then tries to evaluate “Sheet1!E10” using the `FormulaEvaluator`,
+the graph will break because the dependency cell “Sheet1!D10” will not
+be found in the extracted graph:
 
 ``` python
-class MayCycleConstraints(TypedDict, total=False):
-    pass
-
-constrain(MayCycleConstraints, "Sheet1!B8", Literal[0, 1])
+graph.set_node_value("Sheet1!B10", 1)
+with FormulaEvaluator(graph) as evaluator:
+    try:
+        value = evaluator.evaluate("Sheet1!E10")
+    except KeyError as e:
+        print_text("KeyError: " + str(e))
 ```
 
-is equivalent to (if Python syntax allowed it):
+``` text
+KeyError: 'Cell Sheet1!D10 not found in graph'
+```
+
+### Option 2: use constraints to resolve dynamic refs (not yet fully implemented)
+
+Option 2 is, in theory, another use case for constraints. The idea is
+that if we know that input cells will be within particular number ranges
+or will take one of a set of string values, we should be able to compute
+all combinations of possible values and build a `DependencyGraph` that
+covers all of them.
+
+In practice, this gets very hard as the complexity of the formula chain
+increases, because the number of possible combinations of values grows
+exponentially and very quickly becomes computationally intractable.
+
+However, I believe the combinatorial blowup problem can be solved in 95%
+of cases with some combination of clever heuristics, logical solving,
+and/or AI. For the other 5%, we can perhaps short-circuit the problem by
+setting constraints directly on the dynamic ref cell rather than on the
+input cells, and then accepting that an exception might be raised if the
+constraint is not satisfied at runtime.
+
+As in the “may cycle” example above, the expected user behavior would be
+to declare constraints for the cells that inform the `row` and `column`
+arguments of `OFFSET` or `INDIRECT` in a `dict[str, type]`, then pass a
+`DynamicRefConfig` built with `DynamicRefConfig.from_constraints` to
+`create_dependency_graph`. This tells grapher to use the constraints to
+resolve the dynamic references.
+
+Currently, this works for easy cases like the one in Row 10, but runs
+into combinatorial explosion for more complex cases.
 
 ``` python
+from typing import Literal
 
-class MayCycleConstraints(TypedDict, total=False):
-    "Sheet1!B8": Literal[0, 1]   # not legal — `!` is not a valid identifier char
+from excel_grapher import DynamicRefConfig
+
+constraints_schema = {"Sheet1!B10": Literal[0, 1]}
+config = DynamicRefConfig.from_constraints(constraints_schema, {})
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!E10"], load_values=False, dynamic_refs=config)
+
+print_mermaid(graph)
 ```
 
-After the `constrain` call,
-`MayCycleConstraints.__annotations__ == {"Sheet1!B8": Literal[0, 1]}`.
+``` mermaid
+flowchart TD
+  Sheet1_B10["Sheet1!B10"]
+  Sheet1_C10["Sheet1!C10"]
+  Sheet1_D10["Sheet1!D10"]
+  Sheet1_E10("Sheet1!E10<br>=OFFSET(C10,0,B10)")
+  Sheet1_E10 --> Sheet1_B10
+  Sheet1_E10 --> Sheet1_C10
+  Sheet1_E10 --> Sheet1_D10
+```
 
-Why a `TypedDict` rather than a plain `dict`?
+### Option 3: extract every cell in the workbook into our `DependencyGraph` (feasible but not implemented or currently planned)
 
-Two reasons: 1. The annotation system already exists.
-`TypedDict.__annotations__ + get_type_hints` gives you `Annotated[...]`
-and `Literal[...]` for free, so domains can be expressed using standard
-Python typing instead of a bespoke DSL. 2. Reusability across the
-codebase. The same constraints type is consumed elsewhere
-(e.g. `verify_lic_dsf_constraints_target_leaves`) for validation against
-the workbook. Once you express domains as type hints, mypy and
-`TypeAdapter` can also see them.
+Option 3 is safer than Option 1, but it’s not as surefire a solution as
+it sounds:
 
-However, there is likely a better API shape. I’m open to suggestions.
+1.  Suppose we extract every *populated* cell in the workbook into our
+    `DependencyGraph`. That leaves *blank* cells out of the graph, and
+    it might be the case that the user is intended to set a value for
+    those blanks, and that a dynamic reference will resolve to one.
+2.  Or suppose we extract *all* cells, whether populated or not. The
+    graph quickly gets huge, especially if we don’t apply some
+    commonsense boundaries on the sheet area to extract. Any given
+    worksheet can have 16,384 columns and 1,048,576 rows, so the
+    extracted cell/node count would be the product of those. But because
+    of item 1 above, it’s hard to know what the bounds should be. This
+    would have to be user-configurable, maybe with some sensible
+    defaults.
+
+We might also need to do some testing to make sure behaviors don’t
+change in unexpected ways if we’re including cells in the
+DependencyGraph that are not connected to the rest of the graph.
+
+Until and unless we’ve ruled out Option 2, I don’t think the blowup of
+graph size is worth the extra speed/safety we get from implementing
+Option 3.

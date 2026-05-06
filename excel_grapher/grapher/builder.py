@@ -196,7 +196,7 @@ def create_dependency_graph(
       the config's ``cell_type_env`` and ``limits``; missing or invalid domains raise
       :exc:`DynamicRefError`.
 
-    To build a config from a TypedDict of constraints, use
+    To build a config from a ``dict[str, type]`` constraints schema, use
     :meth:`DynamicRefConfig.from_constraints`.
 
     When ``capture_dependency_provenance`` is True, each edge stores merged

@@ -8,11 +8,11 @@ import tempfile
 from dataclasses import dataclass
 from itertools import product
 from pathlib import Path
-from typing import Any, Literal, Protocol, TypedDict
+from typing import Any, Literal, Protocol
 
 import pytest
 
-from excel_grapher import DynamicRefConfig, XlError, constrain, create_dependency_graph
+from excel_grapher import DynamicRefConfig, XlError, create_dependency_graph
 from excel_grapher.evaluator import FormulaEvaluator
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -74,12 +74,8 @@ def _case(
 _CYCLE_SKIP = "circular reference; iterative calculation required on both sides"
 
 
-class _Row10DynamicRefConstraints(TypedDict, total=False):
-    pass
-
-
-constrain(_Row10DynamicRefConstraints, f"{SHEET}!B10", Literal[0, 1])
-_ROW10_DYNAMIC_REFS = DynamicRefConfig.from_constraints(_Row10DynamicRefConstraints, {})
+_ROW10_CONSTRAINT_SCHEMA: dict[str, Any] = {f"{SHEET}!B10": Literal[0, 1]}
+_ROW10_DYNAMIC_REFS = DynamicRefConfig.from_constraints(_ROW10_CONSTRAINT_SCHEMA, {})
 
 CASES: tuple[Case, ...] = (
     _case("Formula with no dependencies", "B1", skip="no input leaves to vary"),
@@ -94,7 +90,6 @@ CASES: tuple[Case, ...] = (
         "OFFSET/INDIRECT reference resolution with scalar arguments",
         "D9",
         "C9",
-        oracle_graph_kwargs={"use_cached_dynamic_refs": True},
     ),
     _case(
         "OFFSET/INDIRECT reference resolution with dynamic arguments",

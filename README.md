@@ -156,24 +156,22 @@ from excel_grapher.grapher import create_dependency_graph, DynamicRefConfig, Dyn
 - **`use_cached_dynamic_refs=False` and `dynamic_refs is a DynamicRefConfig`**  
   Resolve dynamic refs using static constraints (cell types and limits). Missing or invalid domains still raise `DynamicRefError`.
 
-You typically build a `DynamicRefConfig` from a TypedDict of constraints:
+You typically build a `DynamicRefConfig` from a `dict[str, type]` constraints schema (sheet-qualified addresses mapped to typing annotations):
 
 ```python
-from typing import TypedDict
+from typing import Annotated, Literal
 
 from excel_grapher.grapher import DynamicRefConfig, create_dependency_graph
+from excel_grapher.core.cell_types import Between
 
-class DynamicConstraints(TypedDict):
-    # Keys are address-style cell addresses, e.g. "Sheet1!B1"
-    Sheet1_B1: str
-    Sheet1_C1: float
+constraints_schema = {
+    "Sheet1!B1": Literal["ROW_INDEX"],
+    "Sheet1!C1": Annotated[float, Between(0, 10)],
+}
 
-constraints = DynamicConstraints(
-    Sheet1_B1="ROW_INDEX",
-    Sheet1_C1=1.0,
-)
+constraints_data: dict[str, object] = {}
 
-config = DynamicRefConfig.from_constraints(DynamicConstraints, constraints)
+config = DynamicRefConfig.from_constraints(constraints_schema, constraints_data)
 
 graph = create_dependency_graph(
     "model_with_dynamic_refs.xlsx",
@@ -701,4 +699,4 @@ print(generated_results)
 ## 7. Roadmap
 
 - Continue expanding **three-way parity** coverage: evaluator ↔ export runtime, evaluator ↔ Excel (cache and live automation where available), especially for representation-sensitive areas such as `OFFSET`, `INDIRECT`, `LOOKUP`, `MATCH`, and `INDEX`.
-- Refine the dynamic-reference configuration API and constraints tooling (e.g., better TypedDict ergonomics, validation helpers) as more real-world models and templates are integrated.
+- Refine the dynamic-reference configuration API and constraints tooling (e.g., validation helpers) as more real-world models and templates are integrated.

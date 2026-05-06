@@ -5,6 +5,7 @@ from __future__ import annotations
 import random
 import warnings
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 import xlsxwriter
@@ -30,7 +31,7 @@ from excel_grapher.grapher.dynamic_refs import (
     DynamicRefError,
     DynamicRefLimits,
     FromWorkbook,
-    constrain,
+    _apply_constraint_to_schema,
     expand_leaf_env_to_argument_env,
     infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
@@ -992,18 +993,17 @@ def _build_simple_constant_workbook(path: Path) -> None:
 
 
 def test_from_constraints_and_workbook_uses_workbook_values_for_constants(tmp_path: Path) -> None:
-    from typing import Annotated, TypedDict
+    from typing import Annotated
 
     excel_path = tmp_path / "constants.xlsx"
     _build_simple_constant_workbook(excel_path)
 
-    class ConstConstraints(TypedDict, total=False):
-        pass
+    schema = {
+        "Sheet1!B1": Annotated[int, FromWorkbook()],
+        "Sheet1!B2": Annotated[str, FromWorkbook()],
+    }
 
-    ConstConstraints.__annotations__["Sheet1!B1"] = Annotated[int, FromWorkbook()]
-    ConstConstraints.__annotations__["Sheet1!B2"] = Annotated[str, FromWorkbook()]
-
-    config = DynamicRefConfig.from_constraints_and_workbook(ConstConstraints, excel_path)
+    config = DynamicRefConfig.from_constraints_and_workbook(schema, excel_path)
     env = config.cell_type_env
 
     assert env["Sheet1!B1"].kind is CellKind.NUMBER
@@ -1013,51 +1013,53 @@ def test_from_constraints_and_workbook_uses_workbook_values_for_constants(tmp_pa
     assert env["Sheet1!B2"].enum == EnumDomain(values=frozenset({"Afghanistan"}))
 
 
-def test_constrain_sets_single_cell_annotation() -> None:
-    from typing import Literal, TypedDict
+def test_apply_constraint_to_schema_sets_single_cell_annotation() -> None:
+    from typing import Literal
 
-    class Constraints(TypedDict, total=False):
-        pass
+    schema: dict[str, Any] = {}
+    _apply_constraint_to_schema(schema, "Sheet1!B2", Literal["English"])
 
-    constrain(Constraints, "Sheet1!B2", Literal["English"])
-
-    assert Constraints.__annotations__["Sheet1!B2"] == Literal["English"]
+    assert schema["Sheet1!B2"] == Literal["English"]
 
 
-def test_constrain_sets_all_cells_in_range() -> None:
-    from typing import Literal, TypedDict
+def test_apply_constraint_to_schema_sets_all_cells_in_range() -> None:
+    from typing import Literal
 
-    class Constraints(TypedDict, total=False):
-        pass
-
-    constrain(Constraints, "lookup!BB4:BC5", Literal["English", "French"])
+    schema: dict[str, Any] = {}
+    _apply_constraint_to_schema(schema, "lookup!BB4:BC5", Literal["English", "French"])
 
     expected_keys = {"lookup!BB4", "lookup!BC4", "lookup!BB5", "lookup!BC5"}
-    assert expected_keys <= set(Constraints.__annotations__.keys())
+    assert expected_keys <= set(schema.keys())
     for key in expected_keys:
-        assert Constraints.__annotations__[key] == Literal["English", "French"]
+        assert schema[key] == Literal["English", "French"]
 
 
-def test_constrain_accepts_quoted_sheet_range() -> None:
-    from typing import Literal, TypedDict
+def test_apply_constraint_to_schema_accepts_quoted_sheet_range() -> None:
+    from typing import Literal
 
-    class Constraints(TypedDict, total=False):
-        pass
+    schema: dict[str, Any] = {}
+    _apply_constraint_to_schema(schema, "'Chart Data'!I21:I22", Literal[1])
 
-    constrain(Constraints, "'Chart Data'!I21:I22", Literal[1])
-
-    assert Constraints.__annotations__["'Chart Data'!I21"] == Literal[1]
-    assert Constraints.__annotations__["'Chart Data'!I22"] == Literal[1]
+    assert schema["'Chart Data'!I21"] == Literal[1]
+    assert schema["'Chart Data'!I22"] == Literal[1]
 
 
-def test_constrain_requires_sheet_qualified_address() -> None:
-    from typing import Literal, TypedDict
+def test_apply_constraint_to_schema_requires_sheet_qualified_address() -> None:
+    from typing import Literal
 
-    class Constraints(TypedDict, total=False):
-        pass
-
+    schema: dict[str, Any] = {}
     with pytest.raises(DynamicRefError):
-        constrain(Constraints, "B2", Literal["English"])
+        _apply_constraint_to_schema(schema, "B2", Literal["English"])
+
+
+def test_from_constraints_rejects_legacy_typeddict_schema() -> None:
+    from typing import TypedDict
+
+    class Legacy(TypedDict, total=False):
+        pass
+
+    with pytest.raises(TypeError, match="dict\\[str, type\\]"):
+        DynamicRefConfig.from_constraints(cast(Any, Legacy), {})
 
 
 # ── Standalone INDEX inference ──────────────────────────────────────────

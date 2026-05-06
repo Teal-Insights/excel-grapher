@@ -17,6 +17,7 @@ builds.
 import logging
 import re
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import (  # noqa: F401 - Annotated/Literal used when adding constraints
     Annotated,
@@ -24,7 +25,6 @@ from typing import (  # noqa: F401 - Annotated/Literal used when adding constrai
     Literal,
     TypedDict,
     cast,
-    get_type_hints,
 )
 
 import fastpyxl
@@ -36,7 +36,6 @@ from excel_grapher import (
     CycleError,
     DynamicRefConfig,
     DynamicRefError,
-    constrain,
     create_dependency_graph,
     format_cell_key,
     format_key,
@@ -48,6 +47,7 @@ from excel_grapher.core.cell_types import (  # noqa: F401 - used when adding con
     Between,
     RealBetween,
 )
+from excel_grapher.grapher.dynamic_refs import _apply_constraint_to_schema
 
 logging.basicConfig(
     level=logging.INFO,
@@ -286,7 +286,7 @@ EXPORT_RANGES: list[ExportRangeConfig] = _export_chart_data_ranges()
 # ---------------------------------------------------------------------------
 
 """
-Dynamic refs (OFFSET/INDIRECT/INDEX) are resolved via a constraint-based config. Iterative workflow: run the script; if DynamicRefError is raised, the message includes the formula cell whose inputs need constraints. Inspect that cell and the row/column headers in the workbook to decide plausible input domains, use `constrain` to set a constraint (e.g., `constrain(LicDsfConstraints, "'Sheet Name'!A965", Literal["value"])` for a constant or `Annotated[float, RealBetween(min=0)]` for a real-valued numeric range; use `Annotated[int, Between(lo, hi)]` for discrete integer bounds).
+Dynamic refs (OFFSET/INDIRECT/INDEX) are resolved via a constraint-based config. Iterative workflow: run the script; if DynamicRefError is raised, the message includes the formula cell whose inputs need constraints. Inspect that cell and the row/column headers in the workbook to decide plausible input domains, then set the corresponding key on ``LicDsfConstraints`` (e.g. ``LicDsfConstraints["'Sheet Name'!A965"] = Literal["value"]`` for a constant, ``Annotated[float, RealBetween(min=0)]`` for a non-negative real, or ``Annotated[int, Between(lo, hi)]`` for discrete integer bounds).
 
 Then re-run until the graph builds. To list **all** missing leaf addresses in one pass (sorted), use ``uv run -m src.lic_dsf_export --template <date> --list-dynamic-ref-gaps``; that runs excel-grapher's collect-and-continue scan without building the full graph.
 
@@ -304,57 +304,56 @@ LiteralType = cast(Any, Literal)
 
 # Constraint types for cells that feed OFFSET/INDIRECT. Keys must be address-style (e.g. "Sheet1!B1").
 # Add entries when the script raises DynamicRefError: the message lists leaf cells that need
-# constraints. Add each to __annotations__ (with Annotated[int, Between(lo, hi)],
-# Annotated[float, RealBetween(...)], Annotated[..., FromWorkbook()], or Literal[...])
-# then re-run. Repeat until the graph builds.
-class LicDsfConstraints(TypedDict, total=False):
-    pass
-
+# constraints. Assign each key to Annotated[int, Between(lo, hi)], Annotated[float, RealBetween(...)],
+# Annotated[..., FromWorkbook()], or Literal[...], then re-run. Repeat until the graph builds.
+LicDsfConstraints: dict[str, Any] = {}
 
 # Lookup switches; treat as constants
-constrain(LicDsfConstraints, "lookup!AF4", Literal["New"])
-constrain(LicDsfConstraints, "lookup!AF5", Literal["Old"])
+_apply_constraint_to_schema(LicDsfConstraints, "lookup!AF4", Literal["New"])
+_apply_constraint_to_schema(LicDsfConstraints, "lookup!AF5", Literal["Old"])
 # On/Off column beside New/Old (AH3 label); template AH4=On, AH5=Off.
 _lookup_on_off_switch = Literal["On", "Off"]
-constrain(LicDsfConstraints, "lookup!AH4", _lookup_on_off_switch)
-constrain(LicDsfConstraints, "lookup!AH5", _lookup_on_off_switch)
+_apply_constraint_to_schema(LicDsfConstraints, "lookup!AH4", _lookup_on_off_switch)
+_apply_constraint_to_schema(LicDsfConstraints, "lookup!AH5", _lookup_on_off_switch)
 
 # Marker to use for applicable tailored stress test; we can treat as a constant
-constrain(LicDsfConstraints, "'Chart Data'!I21", Literal[1])
+_apply_constraint_to_schema(LicDsfConstraints, "'Chart Data'!I21", Literal[1])
 
 # Year header slot on row 35 (empty in template; W35/X35 are 2043/2044); feeds Chart Data dynamic refs.
-constrain(LicDsfConstraints, "'Chart Data'!Y35", Annotated[int | None, Between(1990, 2100)])
+_apply_constraint_to_schema(
+    LicDsfConstraints, "'Chart Data'!Y35", Annotated[int | None, Between(1990, 2100)]
+)
 # Blank leaves right of the D:X export band; referenced by chart dynamic OFFSET paths.
-constrain(LicDsfConstraints, "'Chart Data'!AC46", Literal[None])
+_apply_constraint_to_schema(LicDsfConstraints, "'Chart Data'!AC46", Literal[None])
 
 # PV_Base!B9xx = CONCAT("$", A9xx, "$", $A$<row>) → INDIRECT($B9xx). Row-index cells A917, A941, A965 (fixed).
 # Treat these as constants derived from the current workbook values.
-constrain(LicDsfConstraints, "PV_Base!A917", Literal[64])
-constrain(LicDsfConstraints, "PV_Base!A941", Literal[90])
-constrain(LicDsfConstraints, "PV_Base!A965", Literal[115])
+_apply_constraint_to_schema(LicDsfConstraints, "PV_Base!A917", Literal[64])
+_apply_constraint_to_schema(LicDsfConstraints, "PV_Base!A941", Literal[90])
+_apply_constraint_to_schema(LicDsfConstraints, "PV_Base!A965", Literal[115])
 
-constrain(LicDsfConstraints, "PV_Base!A965", Annotated[float, RealBetween(min=0)])
+_apply_constraint_to_schema(LicDsfConstraints, "PV_Base!A965", Annotated[float, RealBetween(min=0)])
 
 # A918:A938, A942:A962, A966:A986 each has a single cached letter D, E, …, X.
 for _start, _end in [(918, 939), (942, 963), (966, 987)]:
     for _row in range(_start, _end):
         _letter = chr(ord("D") + _row - _start)
-        LicDsfConstraints.__annotations__[f"PV_Base!A{_row}"] = LiteralType[_letter]
+        LicDsfConstraints[f"PV_Base!A{_row}"] = LiteralType[_letter]
 
 # Language selector and lookup table (feed INDIRECT/VLOOKUP for language-dependent refs).
 # START!L10 = VLOOKUP(K10, lookup!BB4:BC7, 2) — formula cell; only K10 is a leaf input.
 # Each lookup row must be Literal[...] for that cell only: a shared 7-value union on the whole
 # BB4:BC7 range makes the engine enumerate 7^8 combinations for INDIRECT fallbacks.
 _LANG = Literal["English", "French", "Portuguese", "Spanish"]
-constrain(LicDsfConstraints, "START!K10", _LANG)
-constrain(LicDsfConstraints, "lookup!BB4", Literal["English"])
-constrain(LicDsfConstraints, "lookup!BC4", Literal["English"])
-constrain(LicDsfConstraints, "lookup!BB5", Literal["Français"])
-constrain(LicDsfConstraints, "lookup!BC5", Literal["French"])
-constrain(LicDsfConstraints, "lookup!BB6", Literal["Portugues"])
-constrain(LicDsfConstraints, "lookup!BC6", Literal["Portuguese"])
-constrain(LicDsfConstraints, "lookup!BB7", Literal["Español"])
-constrain(LicDsfConstraints, "lookup!BC7", Literal["Spanish"])
+_apply_constraint_to_schema(LicDsfConstraints, "START!K10", _LANG)
+_apply_constraint_to_schema(LicDsfConstraints, "lookup!BB4", Literal["English"])
+_apply_constraint_to_schema(LicDsfConstraints, "lookup!BC4", Literal["English"])
+_apply_constraint_to_schema(LicDsfConstraints, "lookup!BB5", Literal["Français"])
+_apply_constraint_to_schema(LicDsfConstraints, "lookup!BC5", Literal["French"])
+_apply_constraint_to_schema(LicDsfConstraints, "lookup!BB6", Literal["Portugues"])
+_apply_constraint_to_schema(LicDsfConstraints, "lookup!BC6", Literal["Portuguese"])
+_apply_constraint_to_schema(LicDsfConstraints, "lookup!BB7", Literal["Español"])
+_apply_constraint_to_schema(LicDsfConstraints, "lookup!BC7", Literal["Spanish"])
 
 
 # ---------------------------------------------------------------------------
@@ -440,10 +439,10 @@ _countries: list[tuple[int, str]] = [
     (73, "Zimbabwe"),
 ]
 for _row, _name in _countries:
-    constrain(LicDsfConstraints, f"lookup!C{_row}", LiteralType[_name])
+    _apply_constraint_to_schema(LicDsfConstraints, f"lookup!C{_row}", LiteralType[_name])
 
 
-def _constrain_pv_baseline_com(constraints: type[Any]) -> None:
+def _constrain_pv_baseline_com(constraints: dict[str, Any]) -> None:
     # Non-negative financial flows / values (or None for empty cells)
     financial_type = Annotated[float | None, RealBetween(0, 1e15)]
 
@@ -451,22 +450,22 @@ def _constrain_pv_baseline_com(constraints: type[Any]) -> None:
 
     # D column: mixed constants and financial values
     # D7: total commercial (financial)
-    constrain(constraints, "PV_baseline_com!D7", financial_type)
+    _apply_constraint_to_schema(constraints, "PV_baseline_com!D7", financial_type)
     # D19, D45, D71, D97, D123: "Base" normalization = 100
     for r in (19, 45, 71, 97, 123):
-        constrain(constraints, f"PV_baseline_com!D{r}", Literal[100])
+        _apply_constraint_to_schema(constraints, f"PV_baseline_com!D{r}", Literal[100])
     # D32, D58, D84, D110, D136: "New forex borrowing (gross, USD)"
     for r in (32, 58, 84, 110, 136):
-        constrain(constraints, f"PV_baseline_com!D{r}", financial_type)
+        _apply_constraint_to_schema(constraints, f"PV_baseline_com!D{r}", financial_type)
 
     # AF33, AF59, AF85, AF111, AF137: "cumulative" in Output sections (Eurobond thru COM5)
     for r in (33, 59, 85, 111, 137):
-        constrain(constraints, f"PV_baseline_com!AF{r}", financial_type)
+        _apply_constraint_to_schema(constraints, f"PV_baseline_com!AF{r}", financial_type)
 
     # BD23, BD49, BD75, BD101, BD127: "Total debt service"
     for r in (23, 49, 75, 101, 127):
-        constrain(constraints, f"PV_baseline_com!BD{r}", financial_type)
-        constrain(constraints, f"PV_baseline_com!AR{r}:BP{r}", financial_type)
+        _apply_constraint_to_schema(constraints, f"PV_baseline_com!BD{r}", financial_type)
+        _apply_constraint_to_schema(constraints, f"PV_baseline_com!AR{r}:BP{r}", financial_type)
 
     # H:AE ranges for "New forex borrowing (gross, USD)" rows
     cols = (
@@ -497,14 +496,14 @@ def _constrain_pv_baseline_com(constraints: type[Any]) -> None:
     )
     for r in (32, 58, 84, 110, 136):
         for col in cols:
-            constrain(constraints, f"PV_baseline_com!{col}{r}", financial_type)
-        constrain(constraints, f"PV_baseline_com!AR{r}:BP{r}", financial_type)
+            _apply_constraint_to_schema(constraints, f"PV_baseline_com!{col}{r}", financial_type)
+        _apply_constraint_to_schema(constraints, f"PV_baseline_com!AR{r}:BP{r}", financial_type)
 
 
 _constrain_pv_baseline_com(LicDsfConstraints)
 
 
-def _constrain_pv_stress_and_pv_base_index_cells(constraints: type[Any]) -> None:
+def _constrain_pv_stress_and_pv_base_index_cells(constraints: dict[str, Any]) -> None:
     """INDEX/OFFSET inputs on PV Stress and PV_Base (labels from enrichment_audit.json).
 
     PV Stress: interest and USD discount columns → unit rates; borrowing and cumulative → flows.
@@ -526,10 +525,10 @@ def _constrain_pv_stress_and_pv_base_index_cells(constraints: type[Any]) -> None
         (43, "IDA NEW Blend (also enter) -->"),
         (44, "IDA NEW 60-year credits"),
     ):
-        constrain(constraints, f"PV_Base!B{_br}", LiteralType[_bv])
-    constrain(constraints, "PV_Base!B40", Literal[None])
+        _apply_constraint_to_schema(constraints, f"PV_Base!B{_br}", LiteralType[_bv])
+    _apply_constraint_to_schema(constraints, "PV_Base!B40", Literal[None])
     for _br_blank in range(45, 50):
-        constrain(constraints, f"PV_Base!B{_br_blank}", Literal[None])
+        _apply_constraint_to_schema(constraints, f"PV_Base!B{_br_blank}", Literal[None])
     for _cr, _cv in (
         (35, "Small economy"),
         (36, "Regular"),
@@ -537,18 +536,18 @@ def _constrain_pv_stress_and_pv_base_index_cells(constraints: type[Any]) -> None
         (38, "SML"),
         (39, "50Y loans"),
     ):
-        constrain(constraints, f"PV_Base!C{_cr}", LiteralType[_cv])
+        _apply_constraint_to_schema(constraints, f"PV_Base!C{_cr}", LiteralType[_cv])
     for _cr_blank in range(40, 50):
-        constrain(constraints, f"PV_Base!C{_cr_blank}", Literal[None])
+        _apply_constraint_to_schema(constraints, f"PV_Base!C{_cr_blank}", Literal[None])
 
-    constrain(constraints, "'PV Stress'!D147", unit_rate)
-    constrain(constraints, "'PV Stress'!D161", financial_type)
-    constrain(constraints, "'PV Stress'!D4", financial_type)
-    constrain(constraints, "'PV Stress'!E161:G161", financial_type)
-    constrain(constraints, "'PV Stress'!H147:X147", unit_rate)
-    constrain(constraints, "'PV Stress'!Y148:AF148", unit_rate)
-    constrain(constraints, "'PV Stress'!Y162:AF162", financial_type)
-    constrain(constraints, "'PV Stress'!Y30:AF30", financial_type)
+    _apply_constraint_to_schema(constraints, "'PV Stress'!D147", unit_rate)
+    _apply_constraint_to_schema(constraints, "'PV Stress'!D161", financial_type)
+    _apply_constraint_to_schema(constraints, "'PV Stress'!D4", financial_type)
+    _apply_constraint_to_schema(constraints, "'PV Stress'!E161:G161", financial_type)
+    _apply_constraint_to_schema(constraints, "'PV Stress'!H147:X147", unit_rate)
+    _apply_constraint_to_schema(constraints, "'PV Stress'!Y148:AF148", unit_rate)
+    _apply_constraint_to_schema(constraints, "'PV Stress'!Y162:AF162", financial_type)
+    _apply_constraint_to_schema(constraints, "'PV Stress'!Y30:AF30", financial_type)
 
     for _r in (
         23,
@@ -580,10 +579,10 @@ def _constrain_pv_stress_and_pv_base_index_cells(constraints: type[Any]) -> None
         870,
         896,
     ):
-        constrain(constraints, f"PV_Base!AF{_r}", financial_type)
+        _apply_constraint_to_schema(constraints, f"PV_Base!AF{_r}", financial_type)
 
     for _r in (366, 470, 496, 600, 626, 730, 756, 808, 834, 886):
-        constrain(constraints, f"PV_Base!BD{_r}", financial_type)
+        _apply_constraint_to_schema(constraints, f"PV_Base!BD{_r}", financial_type)
 
     for _r in (
         27,
@@ -613,7 +612,7 @@ def _constrain_pv_stress_and_pv_base_index_cells(constraints: type[Any]) -> None
         874,
         900,
     ):
-        constrain(constraints, f"PV_Base!D{_r}", unit_rate)
+        _apply_constraint_to_schema(constraints, f"PV_Base!D{_r}", unit_rate)
 
     for _r in (
         9,
@@ -651,10 +650,10 @@ def _constrain_pv_stress_and_pv_base_index_cells(constraints: type[Any]) -> None
         856,
         882,
     ):
-        constrain(constraints, f"PV_Base!D{_r}", Literal[100])
+        _apply_constraint_to_schema(constraints, f"PV_Base!D{_r}", Literal[100])
 
-    constrain(constraints, "PV_Base!D40", Literal[3])
-    constrain(constraints, "PV_Base!D49", financial_type)
+    _apply_constraint_to_schema(constraints, "PV_Base!D40", Literal[3])
+    _apply_constraint_to_schema(constraints, "PV_Base!D49", financial_type)
     for _dr in (
         69,
         71,
@@ -671,15 +670,15 @@ def _constrain_pv_stress_and_pv_base_index_cells(constraints: type[Any]) -> None
         250,
         252,
     ):
-        constrain(constraints, f"PV_Base!D{_dr}", financial_type)
+        _apply_constraint_to_schema(constraints, f"PV_Base!D{_dr}", financial_type)
     # AM:BP bands mix blank leaves with formula rows (e.g. AM172); add domains per DynamicRefError.
-    constrain(constraints, "PV_Base!BE158:BE176", financial_type)
-    constrain(constraints, "PV_Base!AD188:BX188", financial_type)
-    constrain(constraints, "PV_Base!BM212:CC212", financial_type)
-    constrain(constraints, "PV_Base!AQ65:BD65", financial_type)
-    constrain(constraints, "PV_Base!BC85:BP99", financial_type)
+    _apply_constraint_to_schema(constraints, "PV_Base!BE158:BE176", financial_type)
+    _apply_constraint_to_schema(constraints, "PV_Base!AD188:BX188", financial_type)
+    _apply_constraint_to_schema(constraints, "PV_Base!BM212:CC212", financial_type)
+    _apply_constraint_to_schema(constraints, "PV_Base!AQ65:BD65", financial_type)
+    _apply_constraint_to_schema(constraints, "PV_Base!BC85:BP99", financial_type)
     for _r in (80, 88, 95, 97, 98, 99, 105):
-        constrain(constraints, f"PV_Base!D{_r}", unit_rate)
+        _apply_constraint_to_schema(constraints, f"PV_Base!D{_r}", unit_rate)
 
     # B column = formulas from Input 4; constrain Input 4 G/H instead.
 
@@ -692,48 +691,56 @@ _constrain_pv_stress_and_pv_base_index_cells(LicDsfConstraints)
 # ---------------------------------------------------------------------------
 
 
-def _constrain_pv_lc_nr(constraints: type[Any], sheet: str) -> None:
+def _constrain_pv_lc_nr(constraints: dict[str, Any], sheet: str) -> None:
     financial_type = Annotated[float | None, RealBetween(0, 1e15)]
 
     # C28: text label "Stock of debt (in LC)"
-    constrain(constraints, f"{sheet}!C28", Literal["Stock of debt (in LC)"])
+    _apply_constraint_to_schema(constraints, f"{sheet}!C28", Literal["Stock of debt (in LC)"])
 
     # Y7:BG7: interest rate (local currency) — unit rate; tail past F:U through AX/BD (OFFSET targets)
     _interest_lc_unit = Annotated[float | None, RealBetween(0, 1)]
     _lc7_min_col, _, _lc7_max_col, _ = range_boundaries("Y7:BG7")
     for _ci in range(_lc7_min_col, _lc7_max_col + 1):
-        constrain(constraints, f"{sheet}!{get_column_letter(_ci)}7", _interest_lc_unit)
+        _apply_constraint_to_schema(
+            constraints, f"{sheet}!{get_column_letter(_ci)}7", _interest_lc_unit
+        )
 
     # BC3:BD3 / BC5:BD5 are leaves only on PV_LC_NR1; NR2/NR3 use formulas in those cells.
     if sheet == "PV_LC_NR1":
-        constrain(constraints, f"{sheet}!BC3:BD3", Literal[None])
+        _apply_constraint_to_schema(constraints, f"{sheet}!BC3:BD3", Literal[None])
         _bc5_col, _, _bd5_col, _ = range_boundaries("BC5:BD5")
         for _ci in range(_bc5_col, _bd5_col + 1):
-            constrain(constraints, f"{sheet}!{get_column_letter(_ci)}5", financial_type)
+            _apply_constraint_to_schema(
+                constraints, f"{sheet}!{get_column_letter(_ci)}5", financial_type
+            )
     _y6_min_col, _, _y6_max_col, _ = range_boundaries("Y6:BD6")
     for _ci in range(_y6_min_col, _y6_max_col + 1):
-        constrain(constraints, f"{sheet}!{get_column_letter(_ci)}6", financial_type)
+        _apply_constraint_to_schema(
+            constraints, f"{sheet}!{get_column_letter(_ci)}6", financial_type
+        )
 
     if sheet == "PV_LC_NR1":
         _r4_min_col, _, _r4_max_col, _ = range_boundaries("BC4:BD4")
         for _ci in range(_r4_min_col, _r4_max_col + 1):
-            constrain(constraints, f"{sheet}!{get_column_letter(_ci)}4", financial_type)
+            _apply_constraint_to_schema(
+                constraints, f"{sheet}!{get_column_letter(_ci)}4", financial_type
+            )
 
     # AF column: "cumulative" rows in each 19-row loan output block
     for _r in range(26, 407, 19):
-        constrain(constraints, f"{sheet}!AF{_r}", financial_type)
+        _apply_constraint_to_schema(constraints, f"{sheet}!AF{_r}", financial_type)
 
     # BB column: "Total debt service (in USD)" rows in each 19-row block
     for _r in range(30, 411, 19):
-        constrain(constraints, f"{sheet}!BB{_r}", financial_type)
+        _apply_constraint_to_schema(constraints, f"{sheet}!BB{_r}", financial_type)
 
     # D column: three sub-types per 19-row block starting at row 23
     for _block_start in range(23, 404, 19):
         # offset 0: counter/start year (literal 0)
-        constrain(constraints, f"{sheet}!D{_block_start}", Literal[0])
+        _apply_constraint_to_schema(constraints, f"{sheet}!D{_block_start}", Literal[0])
         # offset 5: stock row is a formula in the template (not a leaf).
         # offset 8: interest in USD (empty in D column)
-        constrain(constraints, f"{sheet}!D{_block_start + 8}", financial_type)
+        _apply_constraint_to_schema(constraints, f"{sheet}!D{_block_start + 8}", financial_type)
 
 
 _constrain_pv_lc_nr(LicDsfConstraints, "PV_LC_NR1")
@@ -820,15 +827,21 @@ _input1_c7_countries = LiteralType[
         "Zimbabwe",
     )
 ]
-constrain(LicDsfConstraints, "'Input 1 - Basics'!C7", _input1_c7_countries)
-constrain(LicDsfConstraints, "'Input 1 - Basics'!C8", Annotated[int, Between(1, 9999)])
-constrain(LicDsfConstraints, "'Input 1 - Basics'!C9", Literal[None])
-constrain(LicDsfConstraints, "'Input 1 - Basics'!C10", Literal["Yes", "No"])
-constrain(LicDsfConstraints, "'Input 1 - Basics'!C11", Literal["Yes", "No"])
-constrain(LicDsfConstraints, "'Input 1 - Basics'!C18", Annotated[int, Between(1990, 2100)])
-constrain(LicDsfConstraints, "'Input 1 - Basics'!C25", Annotated[float, RealBetween(0, 1)])
-constrain(LicDsfConstraints, "'Input 1 - Basics'!C31", Literal[20])
-constrain(
+_apply_constraint_to_schema(LicDsfConstraints, "'Input 1 - Basics'!C7", _input1_c7_countries)
+_apply_constraint_to_schema(
+    LicDsfConstraints, "'Input 1 - Basics'!C8", Annotated[int, Between(1, 9999)]
+)
+_apply_constraint_to_schema(LicDsfConstraints, "'Input 1 - Basics'!C9", Literal[None])
+_apply_constraint_to_schema(LicDsfConstraints, "'Input 1 - Basics'!C10", Literal["Yes", "No"])
+_apply_constraint_to_schema(LicDsfConstraints, "'Input 1 - Basics'!C11", Literal["Yes", "No"])
+_apply_constraint_to_schema(
+    LicDsfConstraints, "'Input 1 - Basics'!C18", Annotated[int, Between(1990, 2100)]
+)
+_apply_constraint_to_schema(
+    LicDsfConstraints, "'Input 1 - Basics'!C25", Annotated[float, RealBetween(0, 1)]
+)
+_apply_constraint_to_schema(LicDsfConstraints, "'Input 1 - Basics'!C31", Literal[20])
+_apply_constraint_to_schema(
     LicDsfConstraints,
     "'Input 1 - Basics'!C33",
     Literal["Residency-based", "Currency-based"],
@@ -1167,12 +1180,12 @@ _INPUT3_DMX_A1_RANGES: tuple[str, ...] = (
 )
 
 
-def _constrain_input3_dmx(constraints: type[Any]) -> None:
+def _constrain_input3_dmx(constraints: dict[str, Any]) -> None:
     """Input 3 DMX macro series feeding INDEX (enrichment_audit: flows/GDP; may be negative)."""
     dmx_macro = Annotated[float | None, RealBetween(-1e15, 1e15)]
     q = "'Input 3 - Macro-Debt data(DMX)'"
     for a1 in _INPUT3_DMX_A1_RANGES:
-        constrain(constraints, f"{q}!{a1}", dmx_macro)
+        _apply_constraint_to_schema(constraints, f"{q}!{a1}", dmx_macro)
     # Columns O:BZ: DMX grid outside AB:AQ audit ranges—see `_apply_lic_dsf_workbook_leaf_overlays`.
 
 
@@ -1183,12 +1196,12 @@ _constrain_input3_dmx(LicDsfConstraints)
 # ---------------------------------------------------------------------------
 
 
-def _constrain_input4_external_financing(constraints: type[Any]) -> None:
+def _constrain_input4_external_financing(constraints: dict[str, Any]) -> None:
     """External financing (enrichment_audit: AG–AN and L–N flows; F interest; G grace; H maturity)."""
     financial_type = Annotated[float | None, RealBetween(0, 1e15)]
     unit_rate = Annotated[float | None, RealBetween(0, 1)]
     q = "'Input 4 - External Financing'"
-    constrain(constraints, f"{q}!L10:N10", financial_type)
+    _apply_constraint_to_schema(constraints, f"{q}!L10:N10", financial_type)
     # L–AT ladder mixes blanks with formula cells (e.g. R18); add ranges when DynamicRefError lists them.
     for a1 in (
         "AG10:AM10",
@@ -1207,55 +1220,55 @@ def _constrain_input4_external_financing(constraints: type[Any]) -> None:
         "AG36:AM36",
         "AG38:AM42",
     ):
-        constrain(constraints, f"{q}!{a1}", financial_type)
+        _apply_constraint_to_schema(constraints, f"{q}!{a1}", financial_type)
     # Columns AN:BP — projection years after AM (row 66 +1 ladder through BP; same 67/69–75 pattern per column).
     _an_col, _, _bp_col, _ = range_boundaries("AN1:BP1")
     for _ci in range(_an_col, _bp_col + 1):
         _pcol = get_column_letter(_ci)
-        constrain(constraints, f"{q}!{_pcol}10:{_pcol}65", financial_type)
-        constrain(constraints, f"{q}!{_pcol}67", unit_rate)
-        constrain(constraints, f"{q}!{_pcol}69:{_pcol}70", financial_type)
-        constrain(constraints, f"{q}!{_pcol}73:{_pcol}74", financial_type)
-        constrain(constraints, f"{q}!{_pcol}75", unit_rate)
+        _apply_constraint_to_schema(constraints, f"{q}!{_pcol}10:{_pcol}65", financial_type)
+        _apply_constraint_to_schema(constraints, f"{q}!{_pcol}67", unit_rate)
+        _apply_constraint_to_schema(constraints, f"{q}!{_pcol}69:{_pcol}70", financial_type)
+        _apply_constraint_to_schema(constraints, f"{q}!{_pcol}73:{_pcol}74", financial_type)
+        _apply_constraint_to_schema(constraints, f"{q}!{_pcol}75", unit_rate)
 
     for cell in ("F10", "F19", "F21", "F22", "F23", "F45"):
-        constrain(constraints, f"{q}!{cell}", unit_rate)
-    constrain(constraints, f"{q}!F18:F36", unit_rate)
-    constrain(constraints, f"{q}!F38:F42", unit_rate)
+        _apply_constraint_to_schema(constraints, f"{q}!{cell}", unit_rate)
+    _apply_constraint_to_schema(constraints, f"{q}!F18:F36", unit_rate)
+    _apply_constraint_to_schema(constraints, f"{q}!F38:F42", unit_rate)
     # "As of April 2018" creditor block: F holds maturity-style integers (not the same as F10 unit rates).
-    constrain(constraints, f"{q}!F67:F75", Annotated[int | None, Between(1, 100)])
-    constrain(
+    _apply_constraint_to_schema(constraints, f"{q}!F67:F75", Annotated[int | None, Between(1, 100)])
+    _apply_constraint_to_schema(
         constraints,
         f"{q}!E67:E75",
         Annotated[int | None, Between(0, 50)],
     )
-    constrain(constraints, f"{q}!D10", financial_type)
-    constrain(constraints, f"{q}!D12:D64", financial_type)
-    constrain(constraints, f"{q}!D16", Literal["IDA NEW Blend floating"])
-    constrain(constraints, f"{q}!D66:D73", financial_type)
-    constrain(constraints, f"{q}!D75", financial_type)
-    constrain(constraints, f"{q}!D76:D87", financial_type)
-    constrain(constraints, f"{q}!C65:C73", financial_type)
-    constrain(constraints, f"{q}!C74", Literal["IDA NEW Blend fixed"])
-    constrain(constraints, f"{q}!C75", financial_type)
-    constrain(constraints, f"{q}!C76:C90", financial_type)
-    constrain(constraints, f"{q}!B11", Literal["IDA - regular"])
-    constrain(constraints, f"{q}!B12", Literal["IDA - 50Y loans"])
-    constrain(constraints, f"{q}!B13", Literal["IDA - SML"])
-    constrain(constraints, f"{q}!B14", Literal["IDA NEW 40-year credits"])
-    constrain(constraints, f"{q}!B15", Literal["IDA NEW Regular"])
-    constrain(constraints, f"{q}!B16", Literal["IDA NEW Blend (also enter) -->"])
-    constrain(constraints, f"{q}!B17", Literal["IDA NEW 60-year credits"])
-    constrain(constraints, f"{q}!B67", Literal["IDA - small economy"])
-    constrain(constraints, f"{q}!B68", Literal["IDA - regular"])
-    constrain(constraints, f"{q}!B69", Literal["IDA - blend"])
-    constrain(constraints, f"{q}!B70", Literal["IDA - SML"])
-    constrain(constraints, f"{q}!B71", Literal["IDA - 50Y loans"])
-    constrain(constraints, f"{q}!B72", Literal["IDA NEW 40-year credits"])
-    constrain(constraints, f"{q}!B73", Literal["IDA NEW Regular"])
-    constrain(constraints, f"{q}!B74", Literal["IDA NEW Blend (also enter) -->"])
-    constrain(constraints, f"{q}!B75", Literal["IDA NEW 60-year credits"])
-    constrain(constraints, f"{q}!B76:B95", financial_type)
+    _apply_constraint_to_schema(constraints, f"{q}!D10", financial_type)
+    _apply_constraint_to_schema(constraints, f"{q}!D12:D64", financial_type)
+    _apply_constraint_to_schema(constraints, f"{q}!D16", Literal["IDA NEW Blend floating"])
+    _apply_constraint_to_schema(constraints, f"{q}!D66:D73", financial_type)
+    _apply_constraint_to_schema(constraints, f"{q}!D75", financial_type)
+    _apply_constraint_to_schema(constraints, f"{q}!D76:D87", financial_type)
+    _apply_constraint_to_schema(constraints, f"{q}!C65:C73", financial_type)
+    _apply_constraint_to_schema(constraints, f"{q}!C74", Literal["IDA NEW Blend fixed"])
+    _apply_constraint_to_schema(constraints, f"{q}!C75", financial_type)
+    _apply_constraint_to_schema(constraints, f"{q}!C76:C90", financial_type)
+    _apply_constraint_to_schema(constraints, f"{q}!B11", Literal["IDA - regular"])
+    _apply_constraint_to_schema(constraints, f"{q}!B12", Literal["IDA - 50Y loans"])
+    _apply_constraint_to_schema(constraints, f"{q}!B13", Literal["IDA - SML"])
+    _apply_constraint_to_schema(constraints, f"{q}!B14", Literal["IDA NEW 40-year credits"])
+    _apply_constraint_to_schema(constraints, f"{q}!B15", Literal["IDA NEW Regular"])
+    _apply_constraint_to_schema(constraints, f"{q}!B16", Literal["IDA NEW Blend (also enter) -->"])
+    _apply_constraint_to_schema(constraints, f"{q}!B17", Literal["IDA NEW 60-year credits"])
+    _apply_constraint_to_schema(constraints, f"{q}!B67", Literal["IDA - small economy"])
+    _apply_constraint_to_schema(constraints, f"{q}!B68", Literal["IDA - regular"])
+    _apply_constraint_to_schema(constraints, f"{q}!B69", Literal["IDA - blend"])
+    _apply_constraint_to_schema(constraints, f"{q}!B70", Literal["IDA - SML"])
+    _apply_constraint_to_schema(constraints, f"{q}!B71", Literal["IDA - 50Y loans"])
+    _apply_constraint_to_schema(constraints, f"{q}!B72", Literal["IDA NEW 40-year credits"])
+    _apply_constraint_to_schema(constraints, f"{q}!B73", Literal["IDA NEW Regular"])
+    _apply_constraint_to_schema(constraints, f"{q}!B74", Literal["IDA NEW Blend (also enter) -->"])
+    _apply_constraint_to_schema(constraints, f"{q}!B75", Literal["IDA NEW 60-year credits"])
+    _apply_constraint_to_schema(constraints, f"{q}!B76:B95", financial_type)
 
     # G/H: PV_Base B2n/B2n+1 pairs reference the same Input 4 row for G/H; denominators use (H−G).
     # Literals match the template data_only snapshot; structurally blank grace/maturity rows use small
@@ -1299,8 +1312,8 @@ def _constrain_input4_external_financing(constraints: type[Any]) -> None:
         (29, 1, 2),
         (57, 0, 2),
     ):
-        constrain(constraints, f"{q}!G{_gr}", LiteralType[_gv])
-        constrain(constraints, f"{q}!H{_gr}", LiteralType[_hv])
+        _apply_constraint_to_schema(constraints, f"{q}!G{_gr}", LiteralType[_gv])
+        _apply_constraint_to_schema(constraints, f"{q}!H{_gr}", LiteralType[_hv])
 
 
 _constrain_input4_external_financing(LicDsfConstraints)
@@ -1310,7 +1323,7 @@ _constrain_input4_external_financing(LicDsfConstraints)
 # ---------------------------------------------------------------------------
 
 
-def _constrain_input5_local_debt(constraints: type[Any]) -> None:
+def _constrain_input5_local_debt(constraints: dict[str, Any]) -> None:
     """Domestic debt instruments: grace/maturity (C/D), interest by year (I–AA on assumption rows),
     issuance and adjustment flows (enrichment_audit + template row 5–7 headers)."""
 
@@ -1321,57 +1334,59 @@ def _constrain_input5_local_debt(constraints: type[Any]) -> None:
     grace = Annotated[int | None, Between(0, 50)]
     maturity = Annotated[int | None, Between(1, 100)]
 
-    constrain(constraints, f"{q}!C16:C22", grace)
-    constrain(constraints, f"{q}!C10", grace)
+    _apply_constraint_to_schema(constraints, f"{q}!C16:C22", grace)
+    _apply_constraint_to_schema(constraints, f"{q}!C10", grace)
     # Instrument block C values: template is mostly 0; literals keep OFFSET fallback enumeration small.
     for row in (83, 86, 93, 94, 95, 100, 101, 104, 105, 106, 108, 109, 110):
-        constrain(constraints, f"{q}!C{row}", Literal[0])
-    constrain(constraints, f"{q}!C89", LiteralType[0.2])
-    constrain(constraints, f"{q}!C90", LiteralType[0.1])
-    constrain(constraints, f"{q}!C91", LiteralType[0.05])
+        _apply_constraint_to_schema(constraints, f"{q}!C{row}", Literal[0])
+    _apply_constraint_to_schema(constraints, f"{q}!C89", LiteralType[0.2])
+    _apply_constraint_to_schema(constraints, f"{q}!C90", LiteralType[0.1])
+    _apply_constraint_to_schema(constraints, f"{q}!C91", LiteralType[0.05])
 
-    constrain(constraints, f"{q}!C78", Annotated[int | None, Between(0, 1)])
+    _apply_constraint_to_schema(constraints, f"{q}!C78", Annotated[int | None, Between(0, 1)])
 
-    constrain(constraints, f"{q}!D16:D22", maturity)
+    _apply_constraint_to_schema(constraints, f"{q}!D16:D22", maturity)
     # D10 and the instrument block: template uses 1, 0, small decimals, or blank—same enumeration
     # issue as column C if each cell keeps Between(1, 100) maturity (100^N branches).
-    constrain(constraints, f"{q}!D10", Literal[1])
+    _apply_constraint_to_schema(constraints, f"{q}!D10", Literal[1])
     for row in (83, 86, 93, 94, 95, 100, 101, 104, 105, 106, 108, 109, 110):
-        constrain(constraints, f"{q}!D{row}", Literal[0])
-    constrain(constraints, f"{q}!D89", LiteralType[0.2])
-    constrain(constraints, f"{q}!D90", LiteralType[0.1])
-    constrain(constraints, f"{q}!D91", LiteralType[0.05])
-    constrain(constraints, f"{q}!D92", Literal[None])
+        _apply_constraint_to_schema(constraints, f"{q}!D{row}", Literal[0])
+    _apply_constraint_to_schema(constraints, f"{q}!D89", LiteralType[0.2])
+    _apply_constraint_to_schema(constraints, f"{q}!D90", LiteralType[0.1])
+    _apply_constraint_to_schema(constraints, f"{q}!D91", LiteralType[0.05])
+    _apply_constraint_to_schema(constraints, f"{q}!D92", Literal[None])
 
     # Main instrument ladder E/F: template is all zeros; literals avoid 11^N small-int enumeration.
     for row in (93, 94, 95, 100, 101, 104, 105, 106, 108, 109, 110):
-        constrain(constraints, f"{q}!E{row}", Literal[0])
-        constrain(constraints, f"{q}!F{row}", Literal[0])
-    constrain(constraints, f"{q}!E84", Literal[None])
-    constrain(constraints, f"{q}!F84", Literal[None])
-    constrain(constraints, f"{q}!F87", Literal[None])
-    constrain(constraints, f"{q}!F88", Literal[None])
+        _apply_constraint_to_schema(constraints, f"{q}!E{row}", Literal[0])
+        _apply_constraint_to_schema(constraints, f"{q}!F{row}", Literal[0])
+    _apply_constraint_to_schema(constraints, f"{q}!E84", Literal[None])
+    _apply_constraint_to_schema(constraints, f"{q}!F84", Literal[None])
+    _apply_constraint_to_schema(constraints, f"{q}!F87", Literal[None])
+    _apply_constraint_to_schema(constraints, f"{q}!F88", Literal[None])
     # Rows 83–92 instrument band: E/F are template-filled shares or zeros; literals match the empty
     # template and keep OFFSET subgraphs from multiplying wide numeric domains.
-    constrain(constraints, f"{q}!E83", Literal[0])
-    constrain(constraints, f"{q}!F83", Literal[0])
-    constrain(constraints, f"{q}!E86", Literal[0])
-    constrain(constraints, f"{q}!F86", Literal[0])
-    constrain(constraints, f"{q}!E89", LiteralType[0.19])
-    constrain(constraints, f"{q}!F89", LiteralType[0.18])
-    constrain(constraints, f"{q}!E90", LiteralType[0.15])
-    constrain(constraints, f"{q}!F90", LiteralType[0.2])
-    constrain(constraints, f"{q}!E91", LiteralType[0.1])
-    constrain(constraints, f"{q}!F91", LiteralType[0.2])
-    constrain(constraints, f"{q}!E92", Literal[None])
-    constrain(constraints, f"{q}!F92", Literal[None])
+    _apply_constraint_to_schema(constraints, f"{q}!E83", Literal[0])
+    _apply_constraint_to_schema(constraints, f"{q}!F83", Literal[0])
+    _apply_constraint_to_schema(constraints, f"{q}!E86", Literal[0])
+    _apply_constraint_to_schema(constraints, f"{q}!F86", Literal[0])
+    _apply_constraint_to_schema(constraints, f"{q}!E89", LiteralType[0.19])
+    _apply_constraint_to_schema(constraints, f"{q}!F89", LiteralType[0.18])
+    _apply_constraint_to_schema(constraints, f"{q}!E90", LiteralType[0.15])
+    _apply_constraint_to_schema(constraints, f"{q}!F90", LiteralType[0.2])
+    _apply_constraint_to_schema(constraints, f"{q}!E91", LiteralType[0.1])
+    _apply_constraint_to_schema(constraints, f"{q}!F91", LiteralType[0.2])
+    _apply_constraint_to_schema(constraints, f"{q}!E92", Literal[None])
+    _apply_constraint_to_schema(constraints, f"{q}!F92", Literal[None])
 
-    constrain(constraints, f"{q}!I16:N22", unit_rate)
-    constrain(constraints, f"{q}!J10", unit_rate)
-    constrain(constraints, f"{q}!K10", unit_rate)
+    _apply_constraint_to_schema(constraints, f"{q}!I16:N22", unit_rate)
+    _apply_constraint_to_schema(constraints, f"{q}!J10", unit_rate)
+    _apply_constraint_to_schema(constraints, f"{q}!K10", unit_rate)
 
     for col_idx in range(9, 30):  # I:AC — adjustment row (signed flows including SoE removal)
-        constrain(constraints, f"{q}!{get_column_letter(col_idx)}63", financial_signed)
+        _apply_constraint_to_schema(
+            constraints, f"{q}!{get_column_letter(col_idx)}63", financial_signed
+        )
 
     for addr in (
         "AD93",
@@ -1384,7 +1399,7 @@ def _constrain_input5_local_debt(constraints: type[Any]) -> None:
         "AD191",
         "AD193",
     ):
-        constrain(constraints, f"{q}!{addr}", financial)
+        _apply_constraint_to_schema(constraints, f"{q}!{addr}", financial)
 
     for row in (
         93,
@@ -1408,7 +1423,7 @@ def _constrain_input5_local_debt(constraints: type[Any]) -> None:
         392,
         461,
     ):
-        constrain(constraints, f"{q}!AE{row}", financial)
+        _apply_constraint_to_schema(constraints, f"{q}!AE{row}", financial)
 
     for row in (
         93,
@@ -1431,7 +1446,7 @@ def _constrain_input5_local_debt(constraints: type[Any]) -> None:
         488,
         512,
     ):
-        constrain(constraints, f"{q}!AF{row}", financial)
+        _apply_constraint_to_schema(constraints, f"{q}!AF{row}", financial)
 
     # AG:BT projection grids are mostly formulas in the template; constrain true OFFSET leaves via DynamicRefError.
 
@@ -1447,7 +1462,7 @@ def _constrain_input5_local_debt(constraints: type[Any]) -> None:
         (614, 630),
         (636, 651),
     ):
-        constrain(constraints, f"{q}!M{_m_lo}:M{_m_hi}", financial)
+        _apply_constraint_to_schema(constraints, f"{q}!M{_m_lo}:M{_m_hi}", financial)
 
     for _af_lo, _af_hi in (
         (227, 229),
@@ -1471,25 +1486,27 @@ def _constrain_input5_local_debt(constraints: type[Any]) -> None:
         (611, 630),
         (633, 651),
     ):
-        constrain(constraints, f"{q}!AF{_af_lo}:AF{_af_hi}", financial)
+        _apply_constraint_to_schema(constraints, f"{q}!AF{_af_lo}:AF{_af_hi}", financial)
         # AE: projection column left of AF; same row bands (e.g. AE272 OFFSET leaves).
-        constrain(constraints, f"{q}!AE{_af_lo}:AE{_af_hi}", financial)
+        _apply_constraint_to_schema(constraints, f"{q}!AE{_af_lo}:AE{_af_hi}", financial)
 
     # AE blank cells in single-row gaps between AF ladder bands (AF is formula; AE not in AE:AF range).
     for _ae_gap in (231, 328, 350, 372, 398, 420, 442, 518, 540, 562, 588, 610, 632):
-        constrain(constraints, f"{q}!AE{_ae_gap}", financial)
+        _apply_constraint_to_schema(constraints, f"{q}!AE{_ae_gap}", financial)
 
     # AY:BT bands mix formulas with blanks; BU blanks are filled in `_apply_lic_dsf_workbook_leaf_overlays`.
 
     for row in (230, 254, 278, 302, 327, 397):
-        constrain(constraints, f"{q}!H{row}", financial)
+        _apply_constraint_to_schema(constraints, f"{q}!H{row}", financial)
 
     for row in (488, 581):
         for col_idx in range(9, 28):  # I:AA — issuance / projection inputs (leaf rows only here)
-            constrain(constraints, f"{q}!{get_column_letter(col_idx)}{row}", financial)
+            _apply_constraint_to_schema(
+                constraints, f"{q}!{get_column_letter(col_idx)}{row}", financial
+            )
 
     for row in (250, 274, 298, 322, 439, 440, 488, 512, 581):
-        constrain(constraints, f"{q}!AB{row}", financial)
+        _apply_constraint_to_schema(constraints, f"{q}!AB{row}", financial)
 
     # BU: hundreds of structural blanks between formula rows—see `_apply_lic_dsf_workbook_leaf_overlays`.
 
@@ -1501,7 +1518,7 @@ _constrain_input5_local_debt(LicDsfConstraints)
 # ---------------------------------------------------------------------------
 
 
-def _constrain_input6_input8(constraints: type[Any]) -> None:
+def _constrain_input6_input8(constraints: dict[str, Any]) -> None:
     """Tailored and standardized stress options; SDR sheet (enrichment_audit + template dropdowns)."""
     _threshold = Literal[
         "Historical average only", "Baseline projection only", "Whichever is lower"
@@ -1514,120 +1531,120 @@ def _constrain_input6_input8(constraints: type[Any]) -> None:
     q6o = "'Input 6(optional)-Standard Test'"
     q8 = "'Input 8 - SDR'"
 
-    constrain(constraints, f"{q6t}!C6", Literal["On", "Off"])
-    constrain(constraints, f"{q6t}!E38", Literal["No"])
-    constrain(constraints, f"{q6t}!E39", Literal["Yes"])
-    constrain(constraints, f"{q6t}!E40", Literal["No"])
-    constrain(constraints, f"{q6t}!E41", Literal["Yes"])
+    _apply_constraint_to_schema(constraints, f"{q6t}!C6", Literal["On", "Off"])
+    _apply_constraint_to_schema(constraints, f"{q6t}!E38", Literal["No"])
+    _apply_constraint_to_schema(constraints, f"{q6t}!E39", Literal["Yes"])
+    _apply_constraint_to_schema(constraints, f"{q6t}!E40", Literal["No"])
+    _apply_constraint_to_schema(constraints, f"{q6t}!E41", Literal["Yes"])
 
-    constrain(constraints, f"{q6o}!C4", Literal["New", "Old"])
-    constrain(constraints, f"{q6o}!C5", _threshold)
-    constrain(constraints, f"{q6o}!C7", _threshold)
-    constrain(constraints, f"{q6o}!C8", Literal["On", "Off"])
+    _apply_constraint_to_schema(constraints, f"{q6o}!C4", Literal["New", "Old"])
+    _apply_constraint_to_schema(constraints, f"{q6o}!C5", _threshold)
+    _apply_constraint_to_schema(constraints, f"{q6o}!C7", _threshold)
+    _apply_constraint_to_schema(constraints, f"{q6o}!C8", Literal["On", "Off"])
     # Standardized stress block: # of std devs (C) paired with threshold rule (next row).
     _std_cnt = Annotated[int, Between(0, 50)]
-    constrain(constraints, f"{q6o}!C17", _std_cnt)
-    constrain(constraints, f"{q6o}!C18", _threshold)
-    constrain(constraints, f"{q6o}!C21", _std_cnt)
-    constrain(constraints, f"{q6o}!C22", _threshold)
-    constrain(constraints, f"{q6o}!C25", _std_cnt)
-    constrain(constraints, f"{q6o}!C26", _threshold)
-    constrain(constraints, f"{q6o}!C29", _std_cnt)
-    constrain(constraints, f"{q6o}!C30", _threshold)
-    constrain(constraints, f"{q6o}!C32", _std_cnt)
-    constrain(constraints, f"{q6o}!C33", _threshold)
-    constrain(constraints, f"{q6o}!C36", Annotated[float, RealBetween(0, 100)])
-    constrain(constraints, f"{q6o}!C37", Annotated[float, RealBetween(0, 500)])
-    constrain(constraints, f"{q6o}!D8", Literal[None])
-    constrain(constraints, f"{q6o}!D9", Literal[None])
-    constrain(constraints, f"{q6o}!D18", _threshold)
-    constrain(constraints, f"{q6o}!D26", _threshold)
-    constrain(constraints, f"{q6o}!D30", _threshold)
-    constrain(constraints, f"{q6o}!D33", _threshold)
-    constrain(constraints, f"{q6o}!D14", Literal["User defined"])
-    constrain(constraints, f"{q6o}!D17", _std_cnt)
-    constrain(constraints, f"{q6o}!D18", _threshold)
-    constrain(constraints, f"{q6o}!D21", _std_cnt)
-    constrain(constraints, f"{q6o}!D22", _threshold)
-    constrain(constraints, f"{q6o}!D25", _std_cnt)
-    constrain(constraints, f"{q6o}!D29", _std_cnt)
-    constrain(constraints, f"{q6o}!D32", _std_cnt)
-    constrain(constraints, f"{q6o}!D37", Annotated[float, RealBetween(0, 500)])
-    constrain(constraints, f"{q6o}!D38", Annotated[float, RealBetween(0, 500)])
+    _apply_constraint_to_schema(constraints, f"{q6o}!C17", _std_cnt)
+    _apply_constraint_to_schema(constraints, f"{q6o}!C18", _threshold)
+    _apply_constraint_to_schema(constraints, f"{q6o}!C21", _std_cnt)
+    _apply_constraint_to_schema(constraints, f"{q6o}!C22", _threshold)
+    _apply_constraint_to_schema(constraints, f"{q6o}!C25", _std_cnt)
+    _apply_constraint_to_schema(constraints, f"{q6o}!C26", _threshold)
+    _apply_constraint_to_schema(constraints, f"{q6o}!C29", _std_cnt)
+    _apply_constraint_to_schema(constraints, f"{q6o}!C30", _threshold)
+    _apply_constraint_to_schema(constraints, f"{q6o}!C32", _std_cnt)
+    _apply_constraint_to_schema(constraints, f"{q6o}!C33", _threshold)
+    _apply_constraint_to_schema(constraints, f"{q6o}!C36", Annotated[float, RealBetween(0, 100)])
+    _apply_constraint_to_schema(constraints, f"{q6o}!C37", Annotated[float, RealBetween(0, 500)])
+    _apply_constraint_to_schema(constraints, f"{q6o}!D8", Literal[None])
+    _apply_constraint_to_schema(constraints, f"{q6o}!D9", Literal[None])
+    _apply_constraint_to_schema(constraints, f"{q6o}!D18", _threshold)
+    _apply_constraint_to_schema(constraints, f"{q6o}!D26", _threshold)
+    _apply_constraint_to_schema(constraints, f"{q6o}!D30", _threshold)
+    _apply_constraint_to_schema(constraints, f"{q6o}!D33", _threshold)
+    _apply_constraint_to_schema(constraints, f"{q6o}!D14", Literal["User defined"])
+    _apply_constraint_to_schema(constraints, f"{q6o}!D17", _std_cnt)
+    _apply_constraint_to_schema(constraints, f"{q6o}!D18", _threshold)
+    _apply_constraint_to_schema(constraints, f"{q6o}!D21", _std_cnt)
+    _apply_constraint_to_schema(constraints, f"{q6o}!D22", _threshold)
+    _apply_constraint_to_schema(constraints, f"{q6o}!D25", _std_cnt)
+    _apply_constraint_to_schema(constraints, f"{q6o}!D29", _std_cnt)
+    _apply_constraint_to_schema(constraints, f"{q6o}!D32", _std_cnt)
+    _apply_constraint_to_schema(constraints, f"{q6o}!D37", Annotated[float, RealBetween(0, 500)])
+    _apply_constraint_to_schema(constraints, f"{q6o}!D38", Annotated[float, RealBetween(0, 500)])
     _half = Annotated[float, RealBetween(0, 1)]
-    constrain(constraints, f"{q6o}!D41", _half)
-    constrain(constraints, f"{q6o}!D42", _threshold)
-    constrain(constraints, f"{q6o}!D44", _half)
-    constrain(constraints, f"{q6o}!D45", _threshold)
-    constrain(constraints, f"{q6o}!D47", _half)
-    constrain(constraints, f"{q6o}!D48", _threshold)
-    constrain(constraints, f"{q6o}!D50", _half)
-    constrain(constraints, f"{q6o}!D51", _threshold)
-    constrain(constraints, f"{q6o}!D53", _half)
-    constrain(constraints, f"{q6o}!D54", _threshold)
-    constrain(constraints, f"{q6o}!I3", Literal["OLD:"])
-    constrain(constraints, f"{q6o}!I4", Literal["NEW:"])
-    constrain(constraints, f"{q6o}!H14", Literal["User defined"])
-    constrain(constraints, f"{q6o}!H22", _threshold)
-    constrain(constraints, f"{q6o}!H48", _threshold)
-    constrain(constraints, f"{q6o}!I22", _threshold)
+    _apply_constraint_to_schema(constraints, f"{q6o}!D41", _half)
+    _apply_constraint_to_schema(constraints, f"{q6o}!D42", _threshold)
+    _apply_constraint_to_schema(constraints, f"{q6o}!D44", _half)
+    _apply_constraint_to_schema(constraints, f"{q6o}!D45", _threshold)
+    _apply_constraint_to_schema(constraints, f"{q6o}!D47", _half)
+    _apply_constraint_to_schema(constraints, f"{q6o}!D48", _threshold)
+    _apply_constraint_to_schema(constraints, f"{q6o}!D50", _half)
+    _apply_constraint_to_schema(constraints, f"{q6o}!D51", _threshold)
+    _apply_constraint_to_schema(constraints, f"{q6o}!D53", _half)
+    _apply_constraint_to_schema(constraints, f"{q6o}!D54", _threshold)
+    _apply_constraint_to_schema(constraints, f"{q6o}!I3", Literal["OLD:"])
+    _apply_constraint_to_schema(constraints, f"{q6o}!I4", Literal["NEW:"])
+    _apply_constraint_to_schema(constraints, f"{q6o}!H14", Literal["User defined"])
+    _apply_constraint_to_schema(constraints, f"{q6o}!H22", _threshold)
+    _apply_constraint_to_schema(constraints, f"{q6o}!H48", _threshold)
+    _apply_constraint_to_schema(constraints, f"{q6o}!I22", _threshold)
     _h_br = Annotated[float, RealBetween(0, 1_000)]
-    constrain(constraints, f"{q6o}!H17", _h_br)
-    constrain(constraints, f"{q6o}!H21", _h_br)
-    constrain(constraints, f"{q6o}!H25", _h_br)
-    constrain(constraints, f"{q6o}!H36", _h_br)
-    constrain(constraints, f"{q6o}!H37", _h_br)
-    constrain(constraints, f"{q6o}!H38", _h_br)
-    constrain(constraints, f"{q6o}!H41", _h_br)
-    constrain(constraints, f"{q6o}!H44", _h_br)
-    constrain(constraints, f"{q6o}!H47", _h_br)
-    constrain(constraints, f"{q6o}!H56", _h_br)
-    constrain(constraints, f"{q6o}!H57", _h_br)
-    constrain(constraints, f"{q6o}!I20", _h_br)
-    constrain(constraints, f"{q6o}!I21", _h_br)
+    _apply_constraint_to_schema(constraints, f"{q6o}!H17", _h_br)
+    _apply_constraint_to_schema(constraints, f"{q6o}!H21", _h_br)
+    _apply_constraint_to_schema(constraints, f"{q6o}!H25", _h_br)
+    _apply_constraint_to_schema(constraints, f"{q6o}!H36", _h_br)
+    _apply_constraint_to_schema(constraints, f"{q6o}!H37", _h_br)
+    _apply_constraint_to_schema(constraints, f"{q6o}!H38", _h_br)
+    _apply_constraint_to_schema(constraints, f"{q6o}!H41", _h_br)
+    _apply_constraint_to_schema(constraints, f"{q6o}!H44", _h_br)
+    _apply_constraint_to_schema(constraints, f"{q6o}!H47", _h_br)
+    _apply_constraint_to_schema(constraints, f"{q6o}!H56", _h_br)
+    _apply_constraint_to_schema(constraints, f"{q6o}!H57", _h_br)
+    _apply_constraint_to_schema(constraints, f"{q6o}!I20", _h_br)
+    _apply_constraint_to_schema(constraints, f"{q6o}!I21", _h_br)
 
-    constrain(constraints, f"{q8}!B6:B7", financial)
-    constrain(constraints, f"{q8}!C11:C12", financial_signed)
-    constrain(constraints, f"{q8}!C14", financial_signed)
-    constrain(constraints, f"{q8}!D11:V12", financial_signed)
-    constrain(constraints, f"{q8}!D14:V14", financial_signed)
-    constrain(constraints, f"{q8}!W14", unit_rate)
-    constrain(constraints, f"{q8}!AG37", financial)
-    constrain(constraints, f"{q8}!J27", Literal[None])
-    constrain(constraints, f"{q8}!S37", Literal[None])
-    constrain(constraints, f"{q8}!X27", financial)
-    constrain(constraints, f"{q8}!Y28", financial)
+    _apply_constraint_to_schema(constraints, f"{q8}!B6:B7", financial)
+    _apply_constraint_to_schema(constraints, f"{q8}!C11:C12", financial_signed)
+    _apply_constraint_to_schema(constraints, f"{q8}!C14", financial_signed)
+    _apply_constraint_to_schema(constraints, f"{q8}!D11:V12", financial_signed)
+    _apply_constraint_to_schema(constraints, f"{q8}!D14:V14", financial_signed)
+    _apply_constraint_to_schema(constraints, f"{q8}!W14", unit_rate)
+    _apply_constraint_to_schema(constraints, f"{q8}!AG37", financial)
+    _apply_constraint_to_schema(constraints, f"{q8}!J27", Literal[None])
+    _apply_constraint_to_schema(constraints, f"{q8}!S37", Literal[None])
+    _apply_constraint_to_schema(constraints, f"{q8}!X27", financial)
+    _apply_constraint_to_schema(constraints, f"{q8}!Y28", financial)
 
     # Blend fixed/floating scenario labels (referenced by OFFSET/INDIRECT argument subgraph).
     q_blend = "'BLEND floating calculations WB'"
     _blend_fin = Annotated[float | None, RealBetween(0, 1e15)]
     _blend_unit = Annotated[float | None, RealBetween(0, 1)]
-    constrain(constraints, f"{q_blend}!B5", Literal["IDA NEW Blend fixed"])
-    constrain(constraints, f"{q_blend}!C5", Literal[None])
-    constrain(constraints, f"{q_blend}!D5", _blend_unit)
-    constrain(constraints, f"{q_blend}!E5", _blend_fin)
-    constrain(constraints, f"{q_blend}!F5", _blend_fin)
-    constrain(constraints, f"{q_blend}!B6", Literal["IDA NEW Blend floating"])
-    constrain(constraints, f"{q_blend}!C6", Literal["USD"])
-    constrain(constraints, f"{q_blend}!E6", _blend_fin)
-    constrain(constraints, f"{q_blend}!F6", _blend_fin)
-    constrain(constraints, f"{q_blend}!L6", _blend_unit)
-    constrain(constraints, f"{q_blend}!M6", Literal[None])
-    constrain(constraints, f"{q_blend}!M7", Literal[None])
-    constrain(
+    _apply_constraint_to_schema(constraints, f"{q_blend}!B5", Literal["IDA NEW Blend fixed"])
+    _apply_constraint_to_schema(constraints, f"{q_blend}!C5", Literal[None])
+    _apply_constraint_to_schema(constraints, f"{q_blend}!D5", _blend_unit)
+    _apply_constraint_to_schema(constraints, f"{q_blend}!E5", _blend_fin)
+    _apply_constraint_to_schema(constraints, f"{q_blend}!F5", _blend_fin)
+    _apply_constraint_to_schema(constraints, f"{q_blend}!B6", Literal["IDA NEW Blend floating"])
+    _apply_constraint_to_schema(constraints, f"{q_blend}!C6", Literal["USD"])
+    _apply_constraint_to_schema(constraints, f"{q_blend}!E6", _blend_fin)
+    _apply_constraint_to_schema(constraints, f"{q_blend}!F6", _blend_fin)
+    _apply_constraint_to_schema(constraints, f"{q_blend}!L6", _blend_unit)
+    _apply_constraint_to_schema(constraints, f"{q_blend}!M6", Literal[None])
+    _apply_constraint_to_schema(constraints, f"{q_blend}!M7", Literal[None])
+    _apply_constraint_to_schema(
         constraints,
         f"{q_blend}!M8",
         Literal["Linear interpolation swap curve"],
     )
-    constrain(constraints, f"{q_blend}!M9", Literal["Year"])
+    _apply_constraint_to_schema(constraints, f"{q_blend}!M9", Literal["Year"])
     for _blend_m_r, _blend_m_v in zip(range(10, 15), range(1, 6), strict=True):
-        constrain(constraints, f"{q_blend}!M{_blend_m_r}", Literal[_blend_m_v])  # ty: ignore[invalid-type-form]
+        _apply_constraint_to_schema(constraints, f"{q_blend}!M{_blend_m_r}", Literal[_blend_m_v])  # ty: ignore[invalid-type-form]
     for _blend_m_r, _blend_m_v in zip(range(15, 40), range(6, 31), strict=True):
-        constrain(constraints, f"{q_blend}!M{_blend_m_r}", Literal[_blend_m_v])  # ty: ignore[invalid-type-form]
-    constrain(constraints, f"{q_blend}!O6", Literal[None])
-    constrain(constraints, f"{q_blend}!O7", Literal[None])
-    constrain(constraints, f"{q_blend}!O8", Literal[None])
-    constrain(constraints, f"{q_blend}!O9", Literal["Linear interpolation"])
+        _apply_constraint_to_schema(constraints, f"{q_blend}!M{_blend_m_r}", Literal[_blend_m_v])  # ty: ignore[invalid-type-form]
+    _apply_constraint_to_schema(constraints, f"{q_blend}!O6", Literal[None])
+    _apply_constraint_to_schema(constraints, f"{q_blend}!O7", Literal[None])
+    _apply_constraint_to_schema(constraints, f"{q_blend}!O8", Literal[None])
+    _apply_constraint_to_schema(constraints, f"{q_blend}!O9", Literal["Linear interpolation"])
     # O10:O39: interpolated swap rates (array formulas); domains are applied in
     # `_apply_lic_dsf_workbook_leaf_overlays` for dynamic ref resolution.
 
@@ -1646,16 +1663,16 @@ _constrain_input6_input8(LicDsfConstraints)
 
 # AA403:AG403 — "Exchange rate (pa)" projection columns (years); may also map to
 # creditor-row financial data depending on workbook layout.
-constrain(
+_apply_constraint_to_schema(
     LicDsfConstraints, "Ext_Debt_Data!AA403:AG403", Annotated[float | None, RealBetween(0, 1e15)]
 )
 
 # F383:F384 — short-term debt principal / interest (or exchange rate in some layouts)
-constrain(
+_apply_constraint_to_schema(
     LicDsfConstraints, "Ext_Debt_Data!F383:F384", Annotated[float | None, RealBetween(0, 1e15)]
 )
 
-constrain(
+_apply_constraint_to_schema(
     LicDsfConstraints, "Ext_Debt_Data!BO79:CF79", Annotated[float | None, RealBetween(0, 1e15)]
 )
 
@@ -1663,22 +1680,26 @@ constrain(
 # Translation table constraints
 # ---------------------------------------------------------------------------
 
-constrain(LicDsfConstraints, "translation!C90", Literal["Residency-based"])
-constrain(LicDsfConstraints, "translation!C451", Literal["Grace period"])
-constrain(LicDsfConstraints, "translation!C452", Literal["Loan Maturity"])
-constrain(LicDsfConstraints, "translation!C898", Literal["Projections"])
+_apply_constraint_to_schema(LicDsfConstraints, "translation!C90", Literal["Residency-based"])
+_apply_constraint_to_schema(LicDsfConstraints, "translation!C451", Literal["Grace period"])
+_apply_constraint_to_schema(LicDsfConstraints, "translation!C452", Literal["Loan Maturity"])
+_apply_constraint_to_schema(LicDsfConstraints, "translation!C898", Literal["Projections"])
 
-constrain(LicDsfConstraints, "translation!D451", Literal["Período de gracia"])
-constrain(LicDsfConstraints, "translation!E451", Literal["Prazo de carência"])
-constrain(LicDsfConstraints, "translation!F451", Literal["Différé d'amortissement "])
+_apply_constraint_to_schema(LicDsfConstraints, "translation!D451", Literal["Período de gracia"])
+_apply_constraint_to_schema(LicDsfConstraints, "translation!E451", Literal["Prazo de carência"])
+_apply_constraint_to_schema(
+    LicDsfConstraints, "translation!F451", Literal["Différé d'amortissement "]
+)
 
-constrain(LicDsfConstraints, "translation!D452", Literal["Vencimiento del préstamo"])
-constrain(LicDsfConstraints, "translation!E452", Literal["Vencimento do empr."])
-constrain(LicDsfConstraints, "translation!F452", Literal["Échéance  crédit "])
+_apply_constraint_to_schema(
+    LicDsfConstraints, "translation!D452", Literal["Vencimiento del préstamo"]
+)
+_apply_constraint_to_schema(LicDsfConstraints, "translation!E452", Literal["Vencimento do empr."])
+_apply_constraint_to_schema(LicDsfConstraints, "translation!F452", Literal["Échéance  crédit "])
 
-constrain(LicDsfConstraints, "translation!D898", Literal["Projections"])
-constrain(LicDsfConstraints, "translation!E898", Literal["Projecções"])
-constrain(LicDsfConstraints, "translation!F898", Literal["Proyecciones"])
+_apply_constraint_to_schema(LicDsfConstraints, "translation!D898", Literal["Projections"])
+_apply_constraint_to_schema(LicDsfConstraints, "translation!E898", Literal["Projecções"])
+_apply_constraint_to_schema(LicDsfConstraints, "translation!F898", Literal["Proyecciones"])
 
 
 def _workbook_cell_raw_is_formula(raw: object) -> bool:
@@ -1693,11 +1714,10 @@ def _workbook_cell_raw_is_formula(raw: object) -> bool:
 
 def collect_lic_dsf_constraint_leaf_violations(
     workbook_path: Path,
-    constraints_type: type[Any],
+    constraints_schema: Mapping[str, Any],
 ) -> tuple[list[str], list[str]]:
     """Return ``(formula_cell_keys, missing_sheet_keys)`` for constrained addresses."""
-    hints = get_type_hints(constraints_type, include_extras=True)
-    if not hints:
+    if not constraints_schema:
         return [], []
 
     _blend_o_domain = re.compile(r"^'BLEND floating calculations WB'!O(10|[1-3][0-9])$")
@@ -1707,7 +1727,7 @@ def collect_lic_dsf_constraint_leaf_violations(
     try:
         formula_cells: list[str] = []
         missing: list[str] = []
-        for spec_key in hints:
+        for spec_key in constraints_schema:
             sheet_name, range_a1 = parse_range_spec(spec_key)
             for cell_key in cells_in_range(sheet_name, range_a1):
                 sh, coord = parse_range_spec(cell_key)
@@ -1748,14 +1768,14 @@ def _raise_constraint_leaf_violation(
 
 def verify_lic_dsf_constraints_target_leaves(
     workbook_path: Path,
-    constraints_type: type[Any],
+    constraints_schema: Mapping[str, Any],
 ) -> None:
     """Raise :exc:`ValueError` if any constrained address is a formula or missing sheet."""
-    fc, ms = collect_lic_dsf_constraint_leaf_violations(workbook_path, constraints_type)
+    fc, ms = collect_lic_dsf_constraint_leaf_violations(workbook_path, constraints_schema)
     _raise_constraint_leaf_violation(fc, ms)
 
 
-def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
+def _apply_lic_dsf_workbook_leaf_overlays(constraints: dict[str, Any]) -> None:
     """Add domains for OFFSET/INDIRECT leaves only (skip template formula cells).
 
     Ranges mirror where the workbook leaves empty or numeric inputs next to dynamic formulas.
@@ -1777,7 +1797,7 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
             for key in cells_in_range(sheet, range_a1):
                 _, coord = parse_range_spec(key)
                 if not _workbook_cell_raw_is_formula(ws[coord].value):
-                    constrain(constraints, key, ann)
+                    _apply_constraint_to_schema(constraints, key, ann)
 
         def add_cell(sheet: str, coord: str, ann: Any) -> None:
             if sheet not in wb.sheetnames:
@@ -1785,7 +1805,7 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
             raw = wb[sheet][coord].value
             if _workbook_cell_raw_is_formula(raw):
                 return
-            constrain(constraints, format_key(sheet, coord), ann)
+            _apply_constraint_to_schema(constraints, format_key(sheet, coord), ann)
 
         def add_range_with_formula_alias(
             sheet: str, formula_alias: str, range_a1: str, ann: Any
@@ -1797,8 +1817,8 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
                 _, coord = parse_range_spec(key)
                 if _workbook_cell_raw_is_formula(ws[coord].value):
                     continue
-                constrain(constraints, key, ann)
-                constrain(constraints, format_key(formula_alias, coord), ann)
+                _apply_constraint_to_schema(constraints, key, ann)
+                _apply_constraint_to_schema(constraints, format_key(formula_alias, coord), ann)
 
         def add_cell_with_formula_alias(
             sheet: str, formula_alias: str, coord: str, ann: Any
@@ -1808,8 +1828,8 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
             raw = wb[sheet][coord].value
             if _workbook_cell_raw_is_formula(raw):
                 return
-            constrain(constraints, format_key(sheet, coord), ann)
-            constrain(constraints, format_key(formula_alias, coord), ann)
+            _apply_constraint_to_schema(constraints, format_key(sheet, coord), ann)
+            _apply_constraint_to_schema(constraints, format_key(formula_alias, coord), ann)
 
         # C4 sheet: stress-test layout. Most C–G cells are blank or fixed labels; literals match
         # template text so INDIRECT/OFFSET resolution does not treat them as unconstrained strings.
@@ -1856,7 +1876,7 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
         # expansion still requests domains for the legacy codename `Market_financing!…`.
         for _c4_efg_col in ("E", "F", "G"):
             for _c4_g_row in range(48, 54):
-                constrain(
+                _apply_constraint_to_schema(
                     constraints,
                     format_key(_c4_formula_alias, f"{_c4_efg_col}{_c4_g_row}"),
                     financial,
@@ -1880,7 +1900,7 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
                         _an_cd = LiteralType[tuple([_rvo])]
                     else:
                         _an_cd = financial
-                    constrain(constraints, format_key(_cd_ov, _acdo), _an_cd)
+                    _apply_constraint_to_schema(constraints, format_key(_cd_ov, _acdo), _an_cd)
             # Row 46: template has structural blanks from AH–BZ for dynamic refs (single-row sweep).
             _ah0 = column_index_from_string("AH")
             _bz0 = column_index_from_string("BZ")
@@ -1888,7 +1908,9 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
                 _a46 = f"{get_column_letter(_c46)}46"
                 _v46 = ws_cd[_a46].value
                 if not _workbook_cell_raw_is_formula(_v46):
-                    constrain(constraints, format_key(_cd_ov, _a46), Literal[None])
+                    _apply_constraint_to_schema(
+                        constraints, format_key(_cd_ov, _a46), Literal[None]
+                    )
 
         # BLEND floating sheet: column O is the swap curve used in blend calculations; stored as array
         # formulas but the grapher still needs a rate domain (decimal 0–1) per tenor row.
@@ -1896,7 +1918,7 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
         _swap_rate = Annotated[float | None, RealBetween(0, 1)]
         if _blend in wb.sheetnames:
             for _br in range(10, 40):
-                constrain(constraints, format_key(_blend, f"O{_br}"), _swap_rate)
+                _apply_constraint_to_schema(constraints, format_key(_blend, f"O{_br}"), _swap_rate)
 
         # Input 8 - SDR: columns I–AG include OFFSET-adjacent blanks outside the main D:V entry bands.
         _q8_ov = "Input 8 - SDR"
@@ -1910,7 +1932,7 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
                     _rv8 = ws8[_a8].value
                     if not _workbook_cell_raw_is_formula(_rv8):
                         _ann8: Any = Literal[None] if _rv8 is None else financial
-                        constrain(constraints, format_key(_q8_ov, _a8), _ann8)
+                        _apply_constraint_to_schema(constraints, format_key(_q8_ov, _a8), _ann8)
 
         # Input 3 DMX: columns N–BZ include macro inputs not listed in enrichment_audit AB:AQ ranges.
         _q3 = "Input 3 - Macro-Debt data(DMX)"
@@ -1930,7 +1952,7 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
                             _ann3 = LiteralType[tuple([_rv3])]
                         else:
                             _ann3 = _dmx_wide
-                        constrain(constraints, format_key(_q3, _dmx_a1), _ann3)
+                        _apply_constraint_to_schema(constraints, format_key(_q3, _dmx_a1), _ann3)
 
         # Input 4: L–AT ladder and related cells are user entry points for external financing
         # projections; constrain as non-negative flows where the cell is a leaf.
@@ -1972,7 +1994,7 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
                 _rv4x = ws_i4[_a4x].value
                 if not _workbook_cell_raw_is_formula(_rv4x):
                     _ann4x: Any = Literal[None] if _rv4x is None else financial
-                    constrain(constraints, format_key(_q4, _a4x), _ann4x)
+                    _apply_constraint_to_schema(constraints, format_key(_q4, _a4x), _ann4x)
 
         # Input 5: wide domestic-debt projection grids (AG:BT and single-column ladders). Cells are
         # issuance, stock, or year-by-year debt-service inputs depending on row block headers.
@@ -2021,7 +2043,7 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
         for _bur in range(1, 700):
             _bu_a1 = f"BU{_bur}"
             if not _workbook_cell_raw_is_formula(ws_i5[_bu_a1].value):
-                constrain(constraints, format_key(_q5, _bu_a1), Literal[None])
+                _apply_constraint_to_schema(constraints, format_key(_q5, _bu_a1), Literal[None])
         # AA:AZ (rows 220–659): ladder blanks to the left of AK:BT grids; OFFSET still references them.
         _aa_i = column_index_from_string("AA")
         _az_i = column_index_from_string("AZ")
@@ -2032,7 +2054,7 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
                 _raw = ws_i5[_aa_az].value
                 if not _workbook_cell_raw_is_formula(_raw):
                     _ann_aa: Any = Literal[None] if _raw is None else financial
-                    constrain(constraints, format_key(_q5, _aa_az), _ann_aa)
+                    _apply_constraint_to_schema(constraints, format_key(_q5, _aa_az), _ann_aa)
         # Lower block: residual financing ladder (I461:AA520 mixes blanks and inputs).
         add_cell(_q5, "I461", financial)
         add_range(_q5, "I461:AA520", financial)
@@ -2054,7 +2076,7 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
                     ann = Literal[100]
                 else:
                     ann = financial
-                constrain(constraints, format_key(sheet, addr), ann)
+                _apply_constraint_to_schema(constraints, format_key(sheet, addr), ann)
             _cols_ps = (
                 "H",
                 "I",
@@ -2085,22 +2107,24 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
                 for r in range(36, 141):
                     addr = f"{col}{r}"
                     if not _workbook_cell_raw_is_formula(ws_ps[addr].value):
-                        constrain(constraints, format_key(sheet, addr), financial)
+                        _apply_constraint_to_schema(constraints, format_key(sheet, addr), financial)
             for r in range(37, 142):
                 addr = f"AF{r}"
                 if not _workbook_cell_raw_is_formula(ws_ps[addr].value):
-                    constrain(constraints, format_key(sheet, addr), financial)
+                    _apply_constraint_to_schema(constraints, format_key(sheet, addr), financial)
             for r in range(27, 132):
                 addr = f"BD{r}"
                 if not _workbook_cell_raw_is_formula(ws_ps[addr].value):
-                    constrain(constraints, format_key(sheet, addr), financial)
+                    _apply_constraint_to_schema(constraints, format_key(sheet, addr), financial)
             _ar_i = column_index_from_string("AR")
             _bp_ps = column_index_from_string("BP")
             for _r in range(27, 142):
                 for _ci in range(_ar_i, _bp_ps + 1):
                     _addr_ar = f"{get_column_letter(_ci)}{_r}"
                     if not _workbook_cell_raw_is_formula(ws_ps[_addr_ar].value):
-                        constrain(constraints, format_key(sheet, _addr_ar), financial)
+                        _apply_constraint_to_schema(
+                            constraints, format_key(sheet, _addr_ar), financial
+                        )
             add_range(sheet, "AF36:BG140", financial)
 
         _apply_pv_stress_style_leaf_overlay("PV_stress_com")
@@ -2118,7 +2142,9 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
                     _rpbv = ws_pb[_apb].value
                     if not _workbook_cell_raw_is_formula(_rpbv):
                         _ann_pb: Any = Literal[None] if _rpbv is None else financial
-                        constrain(constraints, format_key("PV_Base", _apb), _ann_pb)
+                        _apply_constraint_to_schema(
+                            constraints, format_key("PV_Base", _apb), _ann_pb
+                        )
 
         # PV_Base-add.cost.mkt: additional market financing cost PV (narrower sheet; C:BP leaves).
         _pb_mkt = "PV_Base-add.cost.mkt"
@@ -2139,7 +2165,7 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
                         _ann_x = LiteralType[tuple([_vx])]
                     else:
                         _ann_x = financial
-                    constrain(constraints, format_key(_pb_mkt, _ax), _ann_x)
+                    _apply_constraint_to_schema(constraints, format_key(_pb_mkt, _ax), _ann_x)
 
         # PV_ResFin_pub: C:BP through row 900 (template year ladder D7:G7, label column C, projection block).
         if "PV_ResFin_pub" in wb.sheetnames:
@@ -2158,7 +2184,9 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
                         _ann_rf = LiteralType[tuple([_vrf])]
                     else:
                         _ann_rf = financial
-                    constrain(constraints, format_key("PV_ResFin_pub", _arf), _ann_rf)
+                    _apply_constraint_to_schema(
+                        constraints, format_key("PV_ResFin_pub", _arf), _ann_rf
+                    )
 
         # PV_ResFin-add.int.cost - mkt: header literals A2/A5–A7, scalars B6:B7, C5:C7 labels, then H:BP band.
         _rf_mkt = "PV_ResFin-add.int.cost - mkt"
@@ -2199,7 +2227,7 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
                             continue
                         else:
                             _ann_m = financial
-                        constrain(constraints, format_key(_rf_mkt, _am), _ann_m)
+                        _apply_constraint_to_schema(constraints, format_key(_rf_mkt, _am), _ann_m)
             _d_mkt = column_index_from_string("D")
             _e_mkt = column_index_from_string("E")
             for _rm in range(1, _mkt_hi):
@@ -2213,7 +2241,7 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
                             _ann_de = LiteralType[tuple([_vm])]
                         else:
                             _ann_de = financial
-                        constrain(constraints, format_key(_rf_mkt, _am), _ann_de)
+                        _apply_constraint_to_schema(constraints, format_key(_rf_mkt, _am), _ann_de)
 
         # lookup: country/risk tables (through row ~119); row 6 includes blanks (F6) beside IDA metadata.
         _lk = "lookup"
@@ -2233,7 +2261,7 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
                         _an_lk = LiteralType[tuple([_lv])]
                     else:
                         _an_lk = financial
-                    constrain(constraints, format_key(_lk, _la), _an_lk)
+                    _apply_constraint_to_schema(constraints, format_key(_lk, _la), _an_lk)
 
         # Imported data: reference tables (to col ~48, row ~270); B251 etc. feed chart/OFFSET paths.
         _imp = "Imported data"
@@ -2253,7 +2281,7 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
                         _an_im = LiteralType[tuple([_iv])]
                     else:
                         _an_im = financial
-                    constrain(constraints, format_key(_imp, _ia), _an_im)
+                    _apply_constraint_to_schema(constraints, format_key(_imp, _ia), _an_im)
 
         # Input 2 - Debt Coverage: small indicator sheet (dynamic refs into column D etc.).
         _i2 = "Input 2 - Debt Coverage"
@@ -2273,7 +2301,7 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
                         _anni2 = LiteralType[tuple([_i2v])]
                     else:
                         _anni2 = financial
-                    constrain(constraints, format_key(_i2, _i2a), _anni2)
+                    _apply_constraint_to_schema(constraints, format_key(_i2, _i2a), _anni2)
 
         # Trigger: compact macro/switch sheet (template to col 40, row ~84); OFFSET leaves are sparse.
         _trg = "Trigger"
@@ -2293,7 +2321,7 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
                         _antt = LiteralType[tuple([_vt])]
                     else:
                         _antt = financial
-                    constrain(constraints, format_key(_trg, _at), _antt)
+                    _apply_constraint_to_schema(constraints, format_key(_trg, _at), _antt)
 
         # Local-currency new loan sheets: D (block +5) stock input; AF:BG for OFFSET blanks (excludes
         # Y:AE where year-index ladders compare to column C—broad domains there explode IF fallbacks).
@@ -2306,14 +2334,14 @@ def _apply_lic_dsf_workbook_leaf_overlays(constraints: type[Any]) -> None:
             for _block_start in range(23, 404, 19):
                 addr = f"D{_block_start + 5}"
                 if not _workbook_cell_raw_is_formula(ws_lc[addr].value):
-                    constrain(constraints, format_key(_sheet, addr), financial)
+                    _apply_constraint_to_schema(constraints, format_key(_sheet, addr), financial)
             for _r in range(1, 411):
                 for _ci in range(_af_lc, _bg_lc + 1):
                     _afb = f"{get_column_letter(_ci)}{_r}"
                     _rvb = ws_lc[_afb].value
                     if not _workbook_cell_raw_is_formula(_rvb):
                         _ann_lc: Any = Literal[None] if _rvb is None else financial
-                        constrain(constraints, format_key(_sheet, _afb), _ann_lc)
+                        _apply_constraint_to_schema(constraints, format_key(_sheet, _afb), _ann_lc)
     finally:
         wb.close()
 
