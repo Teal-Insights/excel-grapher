@@ -583,7 +583,7 @@ of `1`, so we can easily identify the dependency cell it will resolve to
 (“Sheet1!C9”) by incrementing the column index by `1`.
 
 ``` python
-graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!D9"], load_values=False, use_cached_dynamic_refs=True)
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!D9"], load_values=False)
 
 print_mermaid(graph)
 ```
