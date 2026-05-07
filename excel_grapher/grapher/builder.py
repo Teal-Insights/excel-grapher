@@ -1435,6 +1435,19 @@ def list_dynamic_ref_constraint_candidates(
                             for ref in parse_cell_refs(normalized_arg):
                                 sh = ref.sheet if ref.sheet is not None else current_sheet
                                 argument_addrs.add(format_key(sh, f"{ref.column}{ref.row}"))
+                            for start, end, _span in parse_range_refs_with_spans(normalized_arg):
+                                range_sheet = (
+                                    start.sheet if start.sheet is not None else current_sheet
+                                )
+                                for dep_sheet, dep_a1 in expand_range(
+                                    sheet=range_sheet,
+                                    start_col=start.column,
+                                    start_row=start.row,
+                                    end_col=end.column,
+                                    end_row=end.row,
+                                    max_cells=max_range_cells,
+                                ):
+                                    argument_addrs.add(format_key(dep_sheet, dep_a1))
 
                 # Walk argument_addrs to statically-reachable leaves.
                 all_refs: set[str] = set()

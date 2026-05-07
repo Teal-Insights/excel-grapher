@@ -100,6 +100,24 @@ def _build_static_index_only(path: Path) -> None:
     wb.close()
 
 
+def _build_index_match_range_arg(path: Path) -> None:
+    """D5 = INDEX(A10:C12, MATCH(B5, A10:A12, 0), 2)."""
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(4, 1, 20)  # B5 lookup value
+    ws.write_number(9, 0, 10)  # A10
+    ws.write_number(10, 0, 20)  # A11
+    ws.write_number(11, 0, 30)  # A12
+    ws.write_number(9, 1, 100)  # B10
+    ws.write_number(10, 1, 200)  # B11
+    ws.write_number(11, 1, 300)  # B12
+    ws.write_number(9, 2, 1000)  # C10
+    ws.write_number(10, 2, 2000)  # C11
+    ws.write_number(11, 2, 3000)  # C12
+    ws.write_formula(4, 3, "=INDEX($A$10:$C$12,MATCH($B$5,$A$10:$A$12,0),2)", None, 200)  # D5
+    wb.close()
+
+
 def _build_infer_raises_branch_limit(path: Path) -> None:
     """
     A1 = OFFSET(Sheet1!B1, 0, Sheet1!C1).
@@ -219,6 +237,16 @@ def test_static_index_only_no_candidates(tmp_path: Path) -> None:
     _build_static_index_only(path)
     result = list_dynamic_ref_constraint_candidates(path, ["Sheet1!A1"])
     assert result == []
+
+
+def test_index_match_range_argument_expands_all_cells(tmp_path: Path) -> None:
+    """MATCH lookup range contributes every cell in A10:A12 as candidates."""
+    path = tmp_path / "index_match_range_arg.xlsx"
+    _build_index_match_range_arg(path)
+
+    result = list_dynamic_ref_constraint_candidates(path, ["Sheet1!D5"], dynamic_refs=None)
+
+    assert result == ["Sheet1!A10", "Sheet1!A11", "Sheet1!A12", "Sheet1!B5"]
 
 
 def test_collect_and_continue_through_static_deps(tmp_path: Path) -> None:
