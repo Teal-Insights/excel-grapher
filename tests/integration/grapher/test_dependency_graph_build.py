@@ -266,3 +266,36 @@ def test_offset_invalid_base_error_includes_cell_address(tmp_path: Path) -> None
             excel_path, ["Sheet1!A1"], load_values=False, use_cached_dynamic_refs=True
         )
     assert "A1" in str(exc_info.value)
+
+
+def test_absolute_cross_sheet_refs_no_spurious_same_sheet_edge_issue_154(
+    tmp_path: Path,
+) -> None:
+    """Regression for gh #154: Sheet!$Col$Row must not add CurrentSheet!ColRow."""
+    cases: list[tuple[str, set[str], str]] = [
+        ("=Inputs!$B$5", {"Inputs!B5"}, "Inputs"),
+        ("=A1+Inputs!$B$5", {"Engine!A1", "Inputs!B5"}, "Inputs"),
+        ("=IF(A1>=Inputs!$B$5,1,0)", {"Engine!A1", "Inputs!B5"}, "Inputs"),
+        ("=A1+Inputs!B5", {"Engine!A1", "Inputs!B5"}, "Inputs"),
+        ("='Input Sheet'!$B$5", {"'Input Sheet'!B5"}, "Input Sheet"),
+        ("=A1+'Input Sheet'!$B$5", {"Engine!A1", "'Input Sheet'!B5"}, "Input Sheet"),
+    ]
+    for idx, (formula, expected, dep_sheet) in enumerate(cases):
+        excel_path = tmp_path / f"issue_154_case_{idx}.xlsx"
+        wb = fastpyxl.Workbook()
+        default = wb.active
+        if default is not None:
+            wb.remove(default)
+        engine = wb.create_sheet("Engine")
+        dep_ws = wb.create_sheet(dep_sheet)
+        engine["A1"] = 1
+        engine["A2"] = formula
+        dep_ws["B5"] = 7
+        wb.save(excel_path)
+        wb.close()
+
+        graph = create_dependency_graph(excel_path, ["Engine!A2"], load_values=False)
+        assert graph.get_dependencies("Engine!A2") == expected, (
+            f"formula={formula!r} expected={sorted(expected)!r} "
+            f"actual={sorted(graph.get_dependencies('Engine!A2'))!r}"
+        )

@@ -37,8 +37,9 @@ class CellRef:
 _SHEET_CELL_RE = re.compile(
     r"(?:'(?P<qs>[^']+)'|(?P<us>[A-Za-z][A-Za-z0-9_]*))!\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)"
 )
+# Do not treat ``Col`` in ``Sheet!$Col$Row`` as a local ref: the column letter can follow ``!$``.
 _LOCAL_CELL_RE = re.compile(
-    r"(?<![!A-Za-z0-9_])\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)(?![A-Za-z0-9_])"
+    r"(?<![!A-Za-z0-9_])(?<!\$)\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)(?![A-Za-z0-9_])"
 )
 _FUNC_LIKE = {"IF", "OR", "AND", "NOT", "SUM", "MAX", "MIN", "AVG"}
 
@@ -55,7 +56,7 @@ _RANGE_UNQUOTED_BOTH_ENDPOINTS_RE = re.compile(
     r"(?<![A-Za-z_])(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*(?P=sheet)!\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)"
 )
 _RANGE_LOCAL_RE = re.compile(
-    r"(?<![!A-Za-z0-9_])\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)(?![A-Za-z0-9_])"
+    r"(?<![!A-Za-z0-9_])(?<!\$)\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)(?![A-Za-z0-9_])"
 )
 
 
@@ -344,7 +345,7 @@ def normalize_formula(
         return f"{ref1}:{ref2}"
 
     result = re.sub(
-        r"(?<![!A-Za-z0-9_])\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)(?![A-Za-z0-9_])",
+        r"(?<![!A-Za-z0-9_])(?<!\$)\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)(?![A-Za-z0-9_])",
         replace_local_range,
         result,
     )
@@ -386,7 +387,7 @@ def normalize_formula(
         return _format_ref(current_sheet, col, int(row))
 
     result = re.sub(
-        r"(?<![!A-Za-z0-9_])\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)(?![A-Za-z0-9_])",
+        r"(?<![!A-Za-z0-9_])(?<!\$)\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)(?![A-Za-z0-9_])",
         replace_local_cell,
         result,
     )
@@ -535,7 +536,7 @@ class FormulaNormalizer:
             return f"{ref1}:{ref2}"
 
         result = re.sub(
-            r"(?<![!A-Za-z0-9_])\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)(?![A-Za-z0-9_])",
+            r"(?<![!A-Za-z0-9_])(?<!\$)\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)(?![A-Za-z0-9_])",
             replace_local_range,
             result,
         )
@@ -569,7 +570,7 @@ class FormulaNormalizer:
             return _format_ref(current_sheet, col, int(row))
 
         result = re.sub(
-            r"(?<![!A-Za-z0-9_])\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)(?![A-Za-z0-9_])",
+            r"(?<![!A-Za-z0-9_])(?<!\$)\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)(?![A-Za-z0-9_])",
             replace_local_cell,
             result,
         )
