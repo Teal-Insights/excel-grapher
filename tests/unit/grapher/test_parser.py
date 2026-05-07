@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from excel_grapher.grapher.parser import (
+    parse_range_refs_with_spans,
     split_top_level_choose,
     split_top_level_if,
     split_top_level_ifs,
@@ -110,3 +111,19 @@ class TestSplitTopLevelSwitch:
         """SWITCH with _xlfn. prefix should parse correctly."""
         result = split_top_level_switch("=_xlfn.SWITCH(A1, 1, B1)")
         assert result == ["A1", "1", "B1"]
+
+
+class TestParseRangeRefsWithSpans:
+    """Tests for parse_range_refs_with_spans function."""
+
+    def test_parses_fully_qualified_normalized_range(self) -> None:
+        """Normalized range with sheet on both endpoints should be parsed."""
+        refs = parse_range_refs_with_spans("=MATCH(Sheet1!B5,Sheet1!A10:Sheet1!A12,0)")
+        assert len(refs) == 1
+        start, end, _span = refs[0]
+        assert start.sheet == "Sheet1"
+        assert start.column == "A"
+        assert start.row == 10
+        assert end.sheet == "Sheet1"
+        assert end.column == "A"
+        assert end.row == 12

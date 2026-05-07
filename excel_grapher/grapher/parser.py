@@ -48,6 +48,12 @@ _RANGE_QUOTED_RE = re.compile(
 _RANGE_UNQUOTED_RE = re.compile(
     r"(?<![A-Za-z_])(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)"
 )
+_RANGE_QUOTED_BOTH_ENDPOINTS_RE = re.compile(
+    r"'(?P<sheet>[^']+)'!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*'(?P=sheet)'!\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)"
+)
+_RANGE_UNQUOTED_BOTH_ENDPOINTS_RE = re.compile(
+    r"(?<![A-Za-z_])(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*(?P=sheet)!\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)"
+)
 _RANGE_LOCAL_RE = re.compile(
     r"(?<![!A-Za-z0-9_])\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)(?![A-Za-z0-9_])"
 )
@@ -110,6 +116,24 @@ def parse_range_refs(formula: str) -> list[tuple[CellRef, CellRef]]:
 
     out: list[tuple[CellRef, CellRef]] = []
 
+    for m in _RANGE_QUOTED_BOTH_ENDPOINTS_RE.finditer(formula):
+        sheet = m.group("sheet")
+        out.append(
+            (
+                CellRef(sheet=sheet, column=m.group("c1"), row=int(m.group("r1"))),
+                CellRef(sheet=sheet, column=m.group("c2"), row=int(m.group("r2"))),
+            )
+        )
+
+    for m in _RANGE_UNQUOTED_BOTH_ENDPOINTS_RE.finditer(formula):
+        sheet = m.group("sheet")
+        out.append(
+            (
+                CellRef(sheet=sheet, column=m.group("c1"), row=int(m.group("r1"))),
+                CellRef(sheet=sheet, column=m.group("c2"), row=int(m.group("r2"))),
+            )
+        )
+
     for m in _RANGE_QUOTED_RE.finditer(formula):
         sheet = m.group("sheet")
         out.append(
@@ -150,6 +174,26 @@ def parse_range_refs_with_spans(formula: str) -> list[tuple[CellRef, CellRef, tu
         return []
 
     out: list[tuple[CellRef, CellRef, tuple[int, int]]] = []
+
+    for m in _RANGE_QUOTED_BOTH_ENDPOINTS_RE.finditer(formula):
+        sheet = m.group("sheet")
+        out.append(
+            (
+                CellRef(sheet=sheet, column=m.group("c1"), row=int(m.group("r1"))),
+                CellRef(sheet=sheet, column=m.group("c2"), row=int(m.group("r2"))),
+                m.span(),
+            )
+        )
+
+    for m in _RANGE_UNQUOTED_BOTH_ENDPOINTS_RE.finditer(formula):
+        sheet = m.group("sheet")
+        out.append(
+            (
+                CellRef(sheet=sheet, column=m.group("c1"), row=int(m.group("r1"))),
+                CellRef(sheet=sheet, column=m.group("c2"), row=int(m.group("r2"))),
+                m.span(),
+            )
+        )
 
     for m in _RANGE_QUOTED_RE.finditer(formula):
         sheet = m.group("sheet")
