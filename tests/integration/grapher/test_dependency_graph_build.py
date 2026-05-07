@@ -307,10 +307,20 @@ def test_absolute_cross_sheet_refs_no_spurious_same_sheet_edge_issue_154(
         ("S1", "S2", "=S2!B5", {"S2!B5"}),
         ("S1", "S2", "=1+S2!B5", {"S2!B5"}),
         ("S1", "S2", "='S2'!B5", {"S2!B5"}),
+        ("S1", "S2", "='S2'!$B$5", {"S2!B5"}),
         ("Sheet1", "AA1", "=AA1!B5", {"AA1!B5"}),
+        ("Sheet1", "AA1", "=AA1!$B$5", {"AA1!B5"}),
         ("Sheet1", "Inputs", "=Inputs!B5", {"Inputs!B5"}),
     ],
-    ids=["s2-ref", "s2-ref-with-prefix", "quoted-s2-ref", "aa1-ref", "inputs-control"],
+    ids=[
+        "s2-ref",
+        "s2-ref-with-prefix",
+        "quoted-s2-ref",
+        "quoted-s2-absolute-ref",
+        "aa1-ref",
+        "aa1-absolute-ref",
+        "inputs-control",
+    ],
 )
 def test_address_like_sheet_names_do_not_add_same_sheet_alias_edges_issue_155(
     tmp_path: Path,

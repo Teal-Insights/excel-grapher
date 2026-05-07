@@ -179,3 +179,10 @@ class TestParseCellRefsAbsoluteCrossSheet:
     def test_sheet_name_resembling_cell_ref_quoted_issue_155(self) -> None:
         refs = parse_cell_refs("='S2'!B5")
         assert refs == [CellRef(sheet="S2", column="B", row=5)]
+
+    def test_sheet_name_resembling_cell_ref_with_spans_issue_155(self) -> None:
+        pairs = parse_cell_refs_with_spans("='S2'!B5")
+        assert len(pairs) == 1
+        ref, span = pairs[0]
+        assert ref == CellRef(sheet="S2", column="B", row=5)
+        assert span == (1, len("='S2'!B5"))
