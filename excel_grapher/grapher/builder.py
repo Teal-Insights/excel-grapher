@@ -721,6 +721,25 @@ def create_dependency_graph(
                                     deps.append((sh, a1))
                                     if is_variable:
                                         argument_addrs.add(format_key(sh, a1))
+                                if is_variable:
+                                    for start, end, _span in parse_range_refs_with_spans(
+                                        normalized
+                                    ):
+                                        range_sheet = (
+                                            start.sheet
+                                            if start.sheet is not None
+                                            else current_sheet
+                                        )
+                                        for dep_sheet, dep_a1 in expand_range(
+                                            sheet=range_sheet,
+                                            start_col=start.column,
+                                            start_row=start.row,
+                                            end_col=end.column,
+                                            end_row=end.row,
+                                            max_cells=max_range_cells,
+                                        ):
+                                            deps.append((dep_sheet, dep_a1))
+                                            argument_addrs.add(format_key(dep_sheet, dep_a1))
                     if calls:
 
                         def _refs_in_formula_without_dynamic(

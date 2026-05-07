@@ -1168,6 +1168,23 @@ def _build_standalone_index_workbook(path: Path) -> None:
     wb.close()
 
 
+def _build_index_match_workbook(path: Path) -> None:
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(4, 1, 20)  # B5 lookup value
+    ws.write_number(9, 0, 10)  # A10
+    ws.write_number(10, 0, 20)  # A11
+    ws.write_number(11, 0, 30)  # A12
+    ws.write_number(9, 1, 100)  # B10
+    ws.write_number(10, 1, 200)  # B11
+    ws.write_number(11, 1, 300)  # B12
+    ws.write_number(9, 2, 1000)  # C10
+    ws.write_number(10, 2, 2000)  # C11
+    ws.write_number(11, 2, 3000)  # C12
+    ws.write_formula(4, 3, "=INDEX($A$10:$C$12,MATCH($B$5,$A$10:$A$12,0),2)", None, 200)  # D5
+    wb.close()
+
+
 def test_create_dependency_graph_with_standalone_index(tmp_path: Path) -> None:
     """Graph built with DynamicRefConfig resolves standalone INDEX and yields expected edges."""
     excel_path = tmp_path / "standalone_index.xlsx"
@@ -1219,6 +1236,42 @@ def test_create_dependency_graph_standalone_index_missing_leaf(tmp_path: Path) -
         )
     assert "Sheet1!B1" in str(exc_info.value)
     assert "leaf" in str(exc_info.value).lower()
+
+
+def test_create_dependency_graph_index_match_includes_full_lookup_range(tmp_path: Path) -> None:
+    excel_path = tmp_path / "index_match_range_graph.xlsx"
+    _build_index_match_workbook(excel_path)
+
+    env = _make_env(
+        {
+            "Sheet1!B5": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({20})),
+            ),
+            "Sheet1!A10": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({10})),
+            ),
+            "Sheet1!A11": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({20})),
+            ),
+            "Sheet1!A12": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({30})),
+            ),
+        }
+    )
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+
+    graph = create_dependency_graph(
+        excel_path,
+        ["Sheet1!D5"],
+        load_values=False,
+        dynamic_refs=config,
+    )
+    deps = graph.get_dependencies("Sheet1!D5")
+    assert {"Sheet1!B5", "Sheet1!A10", "Sheet1!A11", "Sheet1!A12"} <= deps
 
 
 def test_index_match_huge_lookup_array_only_needs_lookup_value_constraint() -> None:
