@@ -12,7 +12,7 @@ from fastpyxl.utils.cell import (
     get_column_letter,
 )
 
-from excel_grapher.core.addressing import offset_range
+from excel_grapher.core.addressing import offset_range, split_sheet_qualified_address
 from excel_grapher.core.coercions import to_number
 from excel_grapher.core.formula_ast import (
     AstNode,
@@ -229,22 +229,48 @@ def _eval_indirect_formula_to_range(
     if not isinstance(node.args[0], StringNode):
         return None
     text = node.args[0].value.strip()
-    if "!" in text:
-        sheet_part, addr_part = text.split("!", 1)
-        sheet = sheet_part.strip("'")
-    else:
-        sheet = next(iter(bounds.keys()), "Sheet1")
-        addr_part = text
-    if ":" in addr_part:
-        start_ref, end_ref = addr_part.split(":", 1)
+    default_sheet = next(iter(bounds.keys()), "Sheet1")
+
+    if ":" in text:
+        start_text, end_text = text.split(":", 1)
+        parsed_start = split_sheet_qualified_address(start_text)
+        if parsed_start is None:
+            sheet = default_sheet
+            start_ref = start_text
+        else:
+            sheet, start_ref = parsed_start
+
+        parsed_end = split_sheet_qualified_address(end_text)
+        if parsed_end is None:
+            end_ref = end_text
+        else:
+            end_sheet, end_ref = parsed_end
+            if end_sheet != sheet:
+                return None
+
         try:
-            c1, r1 = coordinate_from_string(start_ref)
-            c2, r2 = coordinate_from_string(end_ref)
-            start_a1 = f"{c1}{r1}"
-            end_a1 = f"{c2}{r2}"
-            return (sheet, start_a1, end_a1)
+            c1s, r1 = coordinate_from_string(start_ref)
+            c2s, r2 = coordinate_from_string(end_ref)
+            c1 = column_index_from_string(c1s)
+            c2 = column_index_from_string(c2s)
         except Exception:
             return None
+
+        if r1 > r2:
+            r1, r2 = r2, r1
+        if c1 > c2:
+            c1, c2 = c2, c1
+
+        start_a1 = f"{get_column_letter(c1)}{r1}"
+        end_a1 = f"{get_column_letter(c2)}{r2}"
+        return (sheet, start_a1, end_a1)
+
+    parsed = split_sheet_qualified_address(text)
+    if parsed is None:
+        sheet = default_sheet
+        addr_part = text
+    else:
+        sheet, addr_part = parsed
     try:
         c, r = coordinate_from_string(addr_part)
         a1 = f"{c}{r}"
