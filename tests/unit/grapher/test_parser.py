@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from excel_grapher.grapher.parser import (
+    CellRef,
+    parse_cell_refs,
+    parse_cell_refs_with_spans,
     parse_range_refs_with_spans,
     split_top_level_choose,
     split_top_level_if,
@@ -127,3 +130,59 @@ class TestParseRangeRefsWithSpans:
         assert end.sheet == "Sheet1"
         assert end.column == "A"
         assert end.row == 12
+
+
+class TestParseCellRefsAbsoluteCrossSheet:
+    """Absolute cross-sheet refs must not yield a duplicate local cell (issue #154)."""
+
+    def test_absolute_cross_sheet_single_cell(self) -> None:
+        refs = parse_cell_refs("=Inputs!$B$5")
+        assert refs == [CellRef(sheet="Inputs", column="B", row=5)]
+
+    def test_absolute_cross_sheet_with_spans(self) -> None:
+        pairs = parse_cell_refs_with_spans("=Inputs!$B$5")
+        assert len(pairs) == 1
+        ref, span = pairs[0]
+        assert ref == CellRef(sheet="Inputs", column="B", row=5)
+        assert span == (1, len("=Inputs!$B$5"))
+
+    def test_relative_cross_sheet_control(self) -> None:
+        refs = parse_cell_refs("=Inputs!B5")
+        assert refs == [CellRef(sheet="Inputs", column="B", row=5)]
+
+    def test_local_absolute_still_parsed(self) -> None:
+        refs = parse_cell_refs("=$B$5")
+        assert refs == [CellRef(sheet=None, column="B", row=5)]
+
+    def test_absolute_cross_sheet_plus_local(self) -> None:
+        refs = parse_cell_refs("=Inputs!$B$5+A1")
+        assert set((r.sheet, r.column, r.row) for r in refs) == {
+            ("Inputs", "B", 5),
+            (None, "A", 1),
+        }
+
+    def test_absolute_cross_sheet_quoted_sheet_with_spaces(self) -> None:
+        refs = parse_cell_refs("='Input Sheet'!$B$5")
+        assert refs == [CellRef(sheet="Input Sheet", column="B", row=5)]
+
+    def test_absolute_cross_sheet_quoted_sheet_with_spaces_plus_local(self) -> None:
+        refs = parse_cell_refs("=A1+'Input Sheet'!$B$5")
+        assert set((r.sheet, r.column, r.row) for r in refs) == {
+            (None, "A", 1),
+            ("Input Sheet", "B", 5),
+        }
+
+    def test_sheet_name_resembling_cell_ref_unquoted_issue_155(self) -> None:
+        refs = parse_cell_refs("=S2!B5")
+        assert refs == [CellRef(sheet="S2", column="B", row=5)]
+
+    def test_sheet_name_resembling_cell_ref_quoted_issue_155(self) -> None:
+        refs = parse_cell_refs("='S2'!B5")
+        assert refs == [CellRef(sheet="S2", column="B", row=5)]
+
+    def test_sheet_name_resembling_cell_ref_with_spans_issue_155(self) -> None:
+        pairs = parse_cell_refs_with_spans("='S2'!B5")
+        assert len(pairs) == 1
+        ref, span = pairs[0]
+        assert ref == CellRef(sheet="S2", column="B", row=5)
+        assert span == (1, len("='S2'!B5"))
