@@ -1358,6 +1358,123 @@ def _static_match_lookup_extent(node: AstNode) -> int | None:
     return None
 
 
+def _ordered_match_lookup_cells(arg: AstNode, *, current_sheet: str) -> list[str] | None:
+    """Return sheet-qualified addresses for a one-dimensional MATCH lookup_array (in scan order)."""
+    from fastpyxl.utils.cell import get_column_letter
+
+    if isinstance(arg, CellRefNode):
+        addr = arg.address
+        if "!" in addr:
+            return [addr]
+        return [format_key(current_sheet, addr)]
+
+    if isinstance(arg, RangeNode):
+        try:
+            s1, coord_start = arg.start.split("!", 1)
+            s2, coord_end = arg.end.split("!", 1)
+        except ValueError:
+            return None
+        if s1 != s2:
+            return None
+        sheet = s1
+        row1, col1 = coordinate_to_tuple(coord_start)
+        row2, col2 = coordinate_to_tuple(coord_end)
+        rlo, rhi = sorted((row1, row2))
+        clo, chi = sorted((col1, col2))
+        nrows = rhi - rlo + 1
+        ncols = chi - clo + 1
+        if nrows != 1 and ncols != 1:
+            return None
+        out: list[str] = []
+        if ncols == 1:
+            for r in range(rlo, rhi + 1):
+                out.append(format_key(sheet, f"{get_column_letter(clo)}{r}"))
+        else:
+            for c in range(clo, chi + 1):
+                out.append(format_key(sheet, f"{get_column_letter(c)}{rlo}"))
+        return out
+    return None
+
+
+def _domains_may_equal_exact_match(
+    a: _FiniteInts | _IntBounds | None,
+    b: _FiniteInts | _IntBounds | None,
+) -> bool:
+    if a is None or b is None:
+        return False
+    if isinstance(a, _FiniteInts) and isinstance(b, _FiniteInts):
+        return bool(a.values & b.values)
+    if isinstance(a, _FiniteInts) and isinstance(b, _IntBounds):
+        return any(b.lo <= x <= b.hi for x in a.values)
+    if isinstance(b, _FiniteInts) and isinstance(a, _IntBounds):
+        return any(a.lo <= x <= a.hi for x in b.values)
+    if isinstance(a, _IntBounds) and isinstance(b, _IntBounds):
+        lo = max(a.lo, b.lo)
+        hi = min(a.hi, b.hi)
+        return lo <= hi
+    return False
+
+
+def _infer_exact_match_position_domain(
+    node: FunctionCallNode,
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    *,
+    context: dict[str, int],
+    current_sheet: str,
+    depth: int,
+) -> _FiniteInts | None:
+    """If MATCH(...,...,0) has exactly one feasible row/column index, return it."""
+    if len(node.args) < 2:
+        return None
+    ordered = _ordered_match_lookup_cells(node.args[1], current_sheet=current_sheet)
+    if not ordered or len(ordered) > limits.max_cells:
+        return None
+
+    lookup_res = _infer_numeric_domain_result(
+        node.args[0],
+        env,
+        limits,
+        context=context,
+        current_sheet=current_sheet,
+        depth=depth + 1,
+    )
+    if lookup_res.diagnostic is not None:
+        return None
+    lookup_dom = lookup_res.domain
+    if lookup_dom is None:
+        return None
+
+    candidates: list[int] = []
+    for idx, cell_addr in enumerate(ordered, start=1):
+        cell_dom = _infer_numeric_domain_result(
+            CellRefNode(address=cell_addr),
+            env,
+            limits,
+            context=context,
+            current_sheet=current_sheet,
+            depth=depth + 1,
+        ).domain
+        if _domains_may_equal_exact_match(lookup_dom, cell_dom):
+            candidates.append(idx)
+
+    if len(candidates) == 1:
+        return _FiniteInts(frozenset({candidates[0]}))
+    return None
+
+
+def _match_is_exact_match_type(node: FunctionCallNode) -> bool:
+    if len(node.args) < 3:
+        return False
+    mt = node.args[2]
+    if isinstance(mt, NumberNode):
+        v = mt.value
+        if isinstance(v, bool):
+            return False
+        return float(v) == 0.0
+    return False
+
+
 def _normalize_to_bounds(d: _FiniteInts | _IntBounds) -> _IntBounds:
     if isinstance(d, _IntBounds):
         return d
@@ -2411,6 +2528,17 @@ def _infer_numeric_domain_result(
         if name == "MATCH":
             if len(node.args) < 2:
                 return _domain_result(None)
+            if _match_is_exact_match_type(node):
+                refined = _infer_exact_match_position_domain(
+                    node,
+                    env,
+                    limits,
+                    context=ctx,
+                    current_sheet=current_sheet,
+                    depth=depth,
+                )
+                if refined is not None:
+                    return _domain_result(refined)
             n = _static_match_lookup_extent(node.args[1])
             if n is None or n < 1:
                 return _domain_result(None)

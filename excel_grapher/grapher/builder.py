@@ -715,6 +715,11 @@ def create_dependency_graph(
                                     or fn_name == "INDIRECT"
                                     or (fn_name == "INDEX" and i >= 1)
                                 )
+                                # INDEX array arg: do not add refs/ranges here — nested parens mean the
+                                # array is an expression (OFFSET/INDEX/...) and still needs traversal.
+                                # Static ranges are handled by infer_dynamic_index_targets (GH-156).
+                                if fn_name == "INDEX" and i == 0 and "(" not in normalized:
+                                    continue
                                 for ref in parse_cell_refs(normalized):
                                     sh = ref.sheet if ref.sheet is not None else current_sheet
                                     a1 = f"{ref.column}{ref.row}"

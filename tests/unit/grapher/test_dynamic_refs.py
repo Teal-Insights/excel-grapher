@@ -1185,6 +1185,17 @@ def _build_index_match_workbook(path: Path) -> None:
     wb.close()
 
 
+def _build_index_literal_2d_workbook(path: Path) -> None:
+    """INDEX(range, literal row, literal col); array range is static (GH-156)."""
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Inputs")
+    for r in range(10, 13):
+        for col_idx, col_letter in enumerate(("A", "B", "C")):
+            ws.write_string(r - 1, col_idx, f"{col_letter}{r}")
+    ws.write_formula(0, 0, "=INDEX($A$10:$C$12,2,2)", None, 0)  # A1
+    wb.close()
+
+
 def test_create_dependency_graph_with_standalone_index(tmp_path: Path) -> None:
     """Graph built with DynamicRefConfig resolves standalone INDEX and yields expected edges."""
     excel_path = tmp_path / "standalone_index.xlsx"
@@ -1271,7 +1282,65 @@ def test_create_dependency_graph_index_match_includes_full_lookup_range(tmp_path
         dynamic_refs=config,
     )
     deps = graph.get_dependencies("Sheet1!D5")
-    assert {"Sheet1!B5", "Sheet1!A10", "Sheet1!A11", "Sheet1!A12"} <= deps
+    assert deps == {
+        "Sheet1!A10",
+        "Sheet1!A11",
+        "Sheet1!A12",
+        "Sheet1!B5",
+        "Sheet1!B11",
+    }
+
+
+def test_create_dependency_graph_index_literal_row_col_no_array_corner_edges_issue_156(
+    tmp_path: Path,
+) -> None:
+    """INDEX(..., literal row/col) must not register range corners from the array arg (GH-156)."""
+    excel_path = tmp_path / "index_literal_2d_issue_156.xlsx"
+    _build_index_literal_2d_workbook(excel_path)
+
+    config = DynamicRefConfig.from_constraints({}, {})
+    graph = create_dependency_graph(
+        excel_path,
+        ["Inputs!A1"],
+        load_values=False,
+        dynamic_refs=config,
+    )
+    deps = graph.get_dependencies("Inputs!A1")
+    assert deps == {"Inputs!B11"}
+
+
+def test_index_match_row_dep_guard_issue_156(tmp_path: Path) -> None:
+    """MATCH in INDEX row position must keep the lookup value cell (GH-156 guardrail)."""
+    excel_path = tmp_path / "index_match_guard_issue_156.xlsx"
+    _build_index_match_workbook(excel_path)
+    env = _make_env(
+        {
+            "Sheet1!B5": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({20})),
+            ),
+            "Sheet1!A10": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({10})),
+            ),
+            "Sheet1!A11": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({20})),
+            ),
+            "Sheet1!A12": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({30})),
+            ),
+        }
+    )
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+    graph = create_dependency_graph(
+        excel_path,
+        ["Sheet1!D5"],
+        load_values=False,
+        dynamic_refs=config,
+    )
+    assert "Sheet1!B5" in graph.get_dependencies("Sheet1!D5")
 
 
 def test_index_match_huge_lookup_array_only_needs_lookup_value_constraint() -> None:
