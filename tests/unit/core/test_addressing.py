@@ -140,16 +140,23 @@ def _indirect_text_to_range(text: str, a1: bool, *, bounds: WorkbookBounds):
 
 
 @pytest.mark.parametrize(
-    "text, expected",
+    "text, bounds_sheet, expected",
     [
-        ("Sheet1!A1", (1, 1, 1, 1)),
-        ("Sheet1!A1:B2", (1, 1, 2, 2)),
-        ("A1", (1, 1, 1, 1)),
-        ("A1:B2", (1, 1, 2, 2)),
+        ("Sheet1!A1", "Sheet1", (1, 1, 1, 1)),
+        ("Sheet1!A1:B2", "Sheet1", (1, 1, 2, 2)),
+        ("A1", "Sheet1", (1, 1, 1, 1)),
+        ("A1:B2", "Sheet1", (1, 1, 2, 2)),
+        ("A1:A3", "Sheet1", (1, 1, 3, 1)),
+        ("Sheet1!A1:A3", "Sheet1", (1, 1, 3, 1)),
+        ("Sheet1!A1:Sheet1!A3", "Sheet1", (1, 1, 3, 1)),
+        ("'My Sheet'!A1:'My Sheet'!A3", "My Sheet", (1, 1, 3, 1)),
+        ("'O''Neil'!A1:'O''Neil'!A2", "O'Neil", (1, 1, 2, 1)),
     ],
 )
-def test_indirect_text_to_range_a1_basic(text: str, expected: tuple[int, int, int, int]) -> None:
-    bounds = _make_bounds()
+def test_indirect_text_to_range_a1_basic(
+    text: str, bounds_sheet: str, expected: tuple[int, int, int, int]
+) -> None:
+    bounds = _make_bounds(bounds_sheet)
     result = _indirect_text_to_range(text, a1=True, bounds=bounds)
     assert isinstance(result, ExcelRange)
     assert (result.start_row, result.start_col, result.end_row, result.end_col) == expected
@@ -180,6 +187,12 @@ def test_indirect_text_to_range_respects_a1_flag_for_unsupported_r1c1() -> None:
     # When a1 is False (R1C1 mode), we currently treat all text as unsupported.
     result = _indirect_text_to_range("R1C1", a1=False, bounds=bounds)
     assert result == XlError.NAME
+
+
+def test_split_sheet_qualified_address_unescapes_apostrophe_in_sheet_name() -> None:
+    from excel_grapher.core.addressing import split_sheet_qualified_address
+
+    assert split_sheet_qualified_address("'O''Neil'!B2") == ("O'Neil", "B2")
 
 
 def test_index_excel_range_single_column_matches_lookup_style_index() -> None:

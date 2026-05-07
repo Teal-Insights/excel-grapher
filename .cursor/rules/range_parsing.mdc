@@ -1,0 +1,52 @@
+---
+description: When writing code or tests that must parse Excel addresses that might include ranges
+alwaysApply: false
+---
+## Safe Range Parsing Rules
+
+- **Normalize first, parse second.**  
+  Always run formulas through `FormulaNormalizer.normalize(...)` before extracting refs, so `A1:A3`, `Sheet1!A1:A3`, and `Sheet1!A1:Sheet1!A3` converge to one canonical form.
+
+- **Use parser utilities, never ad-hoc colon splitting for formulas.**  
+  For formula text:
+  - `parse_range_refs_with_spans(...)` returns (`start_ref`, `end_ref`, `span`), where `span` is the matched range's character offsets in the original formula as (`start`, `end`) (end-exclusive).
+  - Use spans when combining range parsing with single-cell parsing from raw formula text (mask spans first so range endpoints are not double-counted).
+  - `parse_range_refs(...)` returns (`start_ref`, `end_ref`) when spans are unnecessary.
+  - `expand_range(...)` enumerates cells within a range.
+
+- **Keep expansion limits consistent across call paths.**  
+  If one path uses `max_range_cells`, all related paths (builder, provenance, dynamic-ref arg env) must use the same cap to avoid mismatched dependency/candidate sets.
+
+- **Treat sheet-qualified endpoints as first-class.**  
+  Accept all equivalent forms, including quoted sheets:  
+  `A1:A3`, `Sheet1!A1:A3`, `Sheet1!A1:Sheet1!A3`, `'My Sheet'!A1:'My Sheet'!A3`.
+
+- **For `INDIRECT`/text-to-range parsing, use shared address parsing helpers.**  
+  Don’t hand-roll tuple ordering or endpoint-sheet checks in each module; route through standardized helpers so row/col orientation and same-sheet validation stay consistent.
+
+## Anti-Patterns (Do Not Do)
+
+- `split(":")`, `partition(":")`, `if ":" in ...` for **formula range semantics**
+- custom regex-only range extraction in business logic when parser utilities already exist
+- separate “mini parsers” that drift from normalizer/parser behavior
+
+## Minimum Regression Test Matrix
+
+For each consumer that handles ranges (dependency extraction, dynamic refs, INDIRECT/text parsing), include tests for:
+
+- `A1:A3`
+- `Sheet1!A1:A3`
+- `Sheet1!A1:Sheet1!A3`
+- `'My Sheet'!A1:'My Sheet'!A3`
+- interior-cell inclusion after expansion (not just endpoints)
+
+## Issue #151 audit (manual `:` split inventory)
+
+Not every colon split belongs in `parse_range_refs*`—some paths parse **address strings**, not formula text.
+
+- **Formula dependency extraction:** `parse_range_refs*` + `expand_range` + normalizer (builder, provenance).
+- **`INDIRECT` text / sheet-qualified address strings:** `split_sheet_qualified_address` or `indirect_text_to_range` (`excel_grapher.core.addressing`); named-range resolver INDIRECT shares this.
+- **Exported `xl_range(...)` runtime addresses:** `runtime/cache.py` uses `split_sheet_qualified_address` so quoted-sheet escaping matches other paths.
+- **Config / CLI specs (non-formula):** `blank_ranges.py`, codegen constant-range parsing — sheet+`cell_part` split after `!`; acceptable when input is not normalized formula text.
+- **Dynamic-ref constraint addresses:** `dynamic_refs._expand_sheet_qualified_range` — splits local `A1:A3` after sheet is fixed; cell expansion uses `expand_range`.
+- **Examples / one-off scripts:** ad-hoc splits OK if outside evaluator/export parity surface.

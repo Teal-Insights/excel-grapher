@@ -9,6 +9,7 @@ from typing import cast
 import fastpyxl.utils.cell
 
 from excel_grapher.core import CellValue, ExcelRange, XlError
+from excel_grapher.core.addressing import split_sheet_qualified_address
 
 __all__ = [
     "CircularReferenceWarning",
@@ -207,26 +208,7 @@ def xl_eval(
 
 
 def _parse_sheet_address(address: str) -> tuple[str, str] | None:
-    if address.startswith("'"):
-        i = 1
-        while i < len(address):
-            if address[i] == "'":
-                if i + 1 < len(address) and address[i + 1] == "'":
-                    i += 2
-                    continue
-                break
-            i += 1
-        sheet = address[: i + 1]
-        rest = address[i + 1 :]
-        if rest.startswith("!"):
-            return sheet, rest[1:]
-        return None
-
-    if "!" in address:
-        sheet, cell = address.rsplit("!", 1)
-        return sheet, cell
-
-    return None
+    return split_sheet_qualified_address(address)
 
 
 def _parse_range_address(address: str) -> tuple[str, str, str] | XlError:

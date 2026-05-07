@@ -96,6 +96,40 @@ class WorkbookBoundsProtocol(Protocol):
     max_col: int
 
 
+def split_sheet_qualified_address(address: str) -> tuple[str, str] | None:
+    """Split ``sheet!coord`` into ``(sheet_name, coord)``.
+
+    Handles quoted sheet names, including Excel's doubled-single-quote escape
+    (``'O''Neil'!A1`` → sheet ``O'Neil``).
+
+    Returns ``None`` when *address* has no sheet qualifier (plain ``A1``).
+    """
+    if address.startswith("'"):
+        i = 1
+        while i < len(address):
+            if address[i] == "'":
+                if i + 1 < len(address) and address[i + 1] == "'":
+                    i += 2
+                    continue
+                break
+            i += 1
+        if i >= len(address):
+            return None
+        sheet = address[1:i].replace("''", "'")
+        rest = address[i + 1 :]
+        if not rest.startswith("!"):
+            return None
+        return sheet, rest[1:]
+
+    if "!" not in address:
+        return None
+    sheet, cell = address.rsplit("!", 1)
+    return sheet, cell
+
+
+_split_sheet_qualified_address = split_sheet_qualified_address
+
+
 def _in_bounds(rng: ExcelRange, bounds: WorkbookBoundsProtocol) -> bool:
     if rng.sheet != bounds.sheet:
         return False
@@ -189,25 +223,46 @@ def indirect_text_to_range(
     if not raw:
         return XlError.NAME
 
-    # Optional sheet qualifier.
-    if "!" in raw:
-        sheet_text, addr_text = raw.split("!", 1)
-        sheet = sheet_text or bounds.sheet
-    else:
-        sheet = bounds.sheet
-        addr_text = raw
-
     try:
-        if ":" in addr_text:
-            start_ref, end_ref = addr_text.split(":", 1)
-            start_col, start_row = fastpyxl.utils.cell.coordinate_to_tuple(start_ref)
-            end_col, end_row = fastpyxl.utils.cell.coordinate_to_tuple(end_ref)
+        if ":" in raw:
+            start_text, end_text = raw.split(":", 1)
+            parsed_start = split_sheet_qualified_address(start_text)
+            if parsed_start is None:
+                sheet = bounds.sheet
+                start_ref = start_text
+            else:
+                sheet, start_ref = parsed_start
+
+            parsed_end = split_sheet_qualified_address(end_text)
+            if parsed_end is None:
+                end_ref = end_text
+            else:
+                end_sheet, end_ref = parsed_end
+                if end_sheet != sheet:
+                    return XlError.NAME
+
+            start_col_s, start_row = fastpyxl.utils.cell.coordinate_from_string(start_ref)
+            end_col_s, end_row = fastpyxl.utils.cell.coordinate_from_string(end_ref)
+            start_col = fastpyxl.utils.cell.column_index_from_string(start_col_s)
+            end_col = fastpyxl.utils.cell.column_index_from_string(end_col_s)
         else:
-            col, row = fastpyxl.utils.cell.coordinate_to_tuple(addr_text)
+            parsed = split_sheet_qualified_address(raw)
+            if parsed is None:
+                sheet = bounds.sheet
+                ref_text = raw
+            else:
+                sheet, ref_text = parsed
+            col_s, row = fastpyxl.utils.cell.coordinate_from_string(ref_text)
+            col = fastpyxl.utils.cell.column_index_from_string(col_s)
             start_col = end_col = col
             start_row = end_row = row
     except Exception:
         return XlError.NAME
+
+    if start_row > end_row:
+        start_row, end_row = end_row, start_row
+    if start_col > end_col:
+        start_col, end_col = end_col, start_col
 
     rng = ExcelRange(
         sheet=sheet,
