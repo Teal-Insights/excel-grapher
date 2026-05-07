@@ -299,3 +299,43 @@ def test_absolute_cross_sheet_refs_no_spurious_same_sheet_edge_issue_154(
             f"formula={formula!r} expected={sorted(expected)!r} "
             f"actual={sorted(graph.get_dependencies('Engine!A2'))!r}"
         )
+
+
+@pytest.mark.parametrize(
+    ("current_sheet", "dep_sheet", "formula", "expected"),
+    [
+        ("S1", "S2", "=S2!B5", {"S2!B5"}),
+        ("S1", "S2", "=1+S2!B5", {"S2!B5"}),
+        ("S1", "S2", "='S2'!B5", {"S2!B5"}),
+        ("Sheet1", "AA1", "=AA1!B5", {"AA1!B5"}),
+        ("Sheet1", "Inputs", "=Inputs!B5", {"Inputs!B5"}),
+    ],
+    ids=["s2-ref", "s2-ref-with-prefix", "quoted-s2-ref", "aa1-ref", "inputs-control"],
+)
+def test_address_like_sheet_names_do_not_add_same_sheet_alias_edges_issue_155(
+    tmp_path: Path,
+    current_sheet: str,
+    dep_sheet: str,
+    formula: str,
+    expected: set[str],
+) -> None:
+    excel_path = tmp_path / "issue_155_case.xlsx"
+    wb = fastpyxl.Workbook()
+    default = wb.active
+    if default is not None:
+        wb.remove(default)
+
+    current = wb.create_sheet(current_sheet)
+    dep = wb.create_sheet(dep_sheet)
+    current["A2"] = formula
+    dep["B5"] = 7
+
+    wb.save(excel_path)
+    wb.close()
+
+    target = f"{current_sheet}!A2"
+    graph = create_dependency_graph(excel_path, [target], load_values=False)
+    assert graph.get_dependencies(target) == expected, (
+        f"formula={formula!r} expected={sorted(expected)!r} "
+        f"actual={sorted(graph.get_dependencies(target))!r}"
+    )

@@ -38,8 +38,9 @@ _SHEET_CELL_RE = re.compile(
     r"(?:'(?P<qs>[^']+)'|(?P<us>[A-Za-z][A-Za-z0-9_]*))!\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)"
 )
 # Do not treat ``Col`` in ``Sheet!$Col$Row`` as a local ref: the column letter can follow ``!$``.
+# Sheet tokens may look like A1 (e.g. ``S2`` / ``'S2'``); do not match those as local refs.
 _LOCAL_CELL_RE = re.compile(
-    r"(?<![!A-Za-z0-9_])(?<!\$)\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)(?![A-Za-z0-9_])"
+    r"(?<![!A-Za-z0-9_])(?<!\$)\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)(?![A-Za-z0-9_!'])"
 )
 _FUNC_LIKE = {"IF", "OR", "AND", "NOT", "SUM", "MAX", "MIN", "AVG"}
 
@@ -387,7 +388,7 @@ def normalize_formula(
         return _format_ref(current_sheet, col, int(row))
 
     result = re.sub(
-        r"(?<![!A-Za-z0-9_])(?<!\$)\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)(?![A-Za-z0-9_])",
+        r"(?<![!A-Za-z0-9_])(?<!\$)\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)(?![A-Za-z0-9_!'])",
         replace_local_cell,
         result,
     )
@@ -570,7 +571,7 @@ class FormulaNormalizer:
             return _format_ref(current_sheet, col, int(row))
 
         result = re.sub(
-            r"(?<![!A-Za-z0-9_])(?<!\$)\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)(?![A-Za-z0-9_])",
+            r"(?<![!A-Za-z0-9_])(?<!\$)\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)(?![A-Za-z0-9_!'])",
             replace_local_cell,
             result,
         )

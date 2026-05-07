@@ -171,3 +171,11 @@ class TestParseCellRefsAbsoluteCrossSheet:
             (None, "A", 1),
             ("Input Sheet", "B", 5),
         }
+
+    def test_sheet_name_resembling_cell_ref_unquoted_issue_155(self) -> None:
+        refs = parse_cell_refs("=S2!B5")
+        assert refs == [CellRef(sheet="S2", column="B", row=5)]
+
+    def test_sheet_name_resembling_cell_ref_quoted_issue_155(self) -> None:
+        refs = parse_cell_refs("='S2'!B5")
+        assert refs == [CellRef(sheet="S2", column="B", row=5)]
