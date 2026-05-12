@@ -371,6 +371,22 @@ class GlobalWorkbookBounds(WorkbookBoundsProtocol):
     max_col: int = 16_384  # Excel column limit
 
 
+def _bounds_for_sheet(
+    bounds: WorkbookBoundsProtocol | None,
+    *,
+    sheet: str,
+) -> WorkbookBoundsProtocol:
+    if bounds is None:
+        return GlobalWorkbookBounds(sheet=sheet)
+    return GlobalWorkbookBounds(
+        sheet=sheet,
+        min_row=bounds.min_row,
+        max_row=bounds.max_row,
+        min_col=bounds.min_col,
+        max_col=bounds.max_col,
+    )
+
+
 def _sheet_from_addr(addr: str) -> str:
     """Return sheet part of address (e.g. 'Sheet1!A1' -> 'Sheet1')."""
     if "!" not in addr:
@@ -1068,7 +1084,7 @@ def _infer_single_offset_call(
         assert rows_list is not None
         assert cols_list is not None
         for base_range in base_ranges:
-            base_bounds = GlobalWorkbookBounds(sheet=base_range.sheet) if bounds is None else bounds
+            base_bounds = _bounds_for_sheet(bounds, sheet=base_range.sheet)
             for rv in rows_list:
                 for cv in cols_list:
                     for hv in height_vals:
@@ -1101,7 +1117,7 @@ def _infer_single_offset_call(
     domains = _build_domains(leaf_addrs, cell_type_env, limits)
 
     for base_range in base_ranges:
-        base_bounds = GlobalWorkbookBounds(sheet=base_range.sheet) if bounds is None else bounds
+        base_bounds = _bounds_for_sheet(bounds, sheet=base_range.sheet)
 
         for assignment in _enumerate_assignments(domains.values(), limits):
             addr_to_value = dict(zip(domains.keys(), assignment, strict=False))
