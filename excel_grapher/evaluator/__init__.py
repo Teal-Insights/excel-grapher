@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .errors import ParseError
+from .errors import MissingNormalizedFormulaError, ParseError
 from .types import CellValue, ExcelRange, XlError
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -20,6 +20,7 @@ __all__ = [
     "ExcelRange",
     "XlError",
     "ParseError",
+    "MissingNormalizedFormulaError",
 ]
 
 

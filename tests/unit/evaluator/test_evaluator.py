@@ -2,6 +2,7 @@ import pytest
 
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
+from excel_grapher.evaluator.errors import MissingNormalizedFormulaError
 from excel_grapher.evaluator.evaluator import FormulaEvaluator
 from excel_grapher.evaluator.types import XlError
 from excel_grapher.runtime.cache import CircularReferenceWarning
@@ -29,6 +30,22 @@ def _make_graph(*nodes: Node) -> DependencyGraph:
     for node in nodes:
         graph.add_node(node)
     return graph
+
+
+def test_evaluator_raises_when_normalized_formula_missing() -> None:
+    graph = _make_graph(
+        Node(
+            sheet="S",
+            column="A",
+            row=1,
+            formula="=1+1",
+            normalized_formula=None,
+            value=None,
+            is_leaf=False,
+        )
+    )
+    with FormulaEvaluator(graph) as ev, pytest.raises(MissingNormalizedFormulaError):
+        ev.evaluate("S!A1")
 
 
 def test_evaluator_returns_values_for_non_formula_cells() -> None:
