@@ -7,13 +7,15 @@ and target selection produce the graph topology library users depend on.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Annotated, Literal
 
 import fastpyxl
 import pytest
 import xlsxwriter
 from fastpyxl.worksheet.formula import ArrayFormula
 
-from excel_grapher import create_dependency_graph
+from excel_grapher import DynamicRefConfig, create_dependency_graph
+from excel_grapher.core.cell_types import RealBetween
 
 
 def _fixture_path(name: str) -> Path:
@@ -349,3 +351,45 @@ def test_address_like_sheet_names_do_not_add_same_sheet_alias_edges_issue_155(
         f"formula={formula!r} expected={sorted(expected)!r} "
         f"actual={sorted(graph.get_dependencies(target))!r}"
     )
+
+
+def test_cross_sheet_offset_dynamic_dependencies_include_possible_columns_issue_162(
+    tmp_path: Path,
+) -> None:
+    """Regression for gh #162: cross-sheet OFFSET should include all constrained targets."""
+    excel_path = tmp_path / "issue_162_cross_sheet_offset.xlsx"
+    wb = fastpyxl.Workbook()
+    inputs = wb.active
+    assert inputs is not None
+    inputs.title = "Inputs"
+    engine = wb.create_sheet("Engine")
+
+    inputs["B22"] = 1
+    inputs["B26"] = 10
+    inputs["C26"] = 20
+    inputs["D26"] = 30
+    engine["B9"] = "=OFFSET(Inputs!$B$26,0,Inputs!$B$22-1)"
+
+    wb.save(excel_path)
+    wb.close()
+
+    constraints = {
+        "Inputs!B22": Literal[1, 2, 3],
+        "Inputs!B26": Annotated[float, RealBetween(-30.0, 30.0)],
+        "Inputs!C26": Annotated[float, RealBetween(-30.0, 30.0)],
+        "Inputs!D26": Annotated[float, RealBetween(-30.0, 30.0)],
+    }
+
+    graph = create_dependency_graph(
+        excel_path,
+        ["Engine!B9"],
+        load_values=True,
+        dynamic_refs=DynamicRefConfig.from_constraints(constraints, {}),
+    )
+
+    assert set(graph.leaf_keys()) >= {
+        "Inputs!B22",
+        "Inputs!B26",
+        "Inputs!C26",
+        "Inputs!D26",
+    }
