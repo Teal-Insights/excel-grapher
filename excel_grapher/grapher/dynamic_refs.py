@@ -3541,16 +3541,7 @@ def _infer_single_indirect_call(
 
         # Derive per-call bounds so sheet-qualified references are not rejected.
         sheet_for_bounds = _sheet_from_indirect_text(text_value, current_sheet=current_sheet)
-        if bounds is None:
-            local_bounds = GlobalWorkbookBounds(sheet=sheet_for_bounds)
-        else:
-            local_bounds = GlobalWorkbookBounds(
-                sheet=sheet_for_bounds,
-                min_row=bounds.min_row,
-                max_row=bounds.max_row,
-                min_col=bounds.min_col,
-                max_col=bounds.max_col,
-            )
+        local_bounds = _bounds_for_sheet(bounds, sheet=sheet_for_bounds)
 
         result = indirect_text_to_range(text_value, a1_flag, bounds=local_bounds)
         if isinstance(result, ExcelRange):
