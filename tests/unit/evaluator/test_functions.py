@@ -216,6 +216,38 @@ def test_index() -> None:
         assert result["S!C2"] == "b"  # Row 2 of single column
 
 
+def test_index_match_does_not_require_unselected_index_columns() -> None:
+    """INDEX(..., MATCH(...), 2) should not force reads from unselected columns."""
+    graph = _make_graph(
+        _make_node("Inputs!B5", None, "Borvelia"),
+        _make_node("Inputs!A10", None, "Borvelia"),
+        _make_node("Inputs!A11", None, "Litellia"),
+        _make_node("Inputs!A12", None, "Aurelium"),
+        _make_node("Inputs!B10", None, 60),
+        _make_node("Inputs!B11", None, 80),
+        _make_node("Inputs!B12", None, 40),
+        _make_node(
+            "Inputs!B6",
+            "=INDEX(Inputs!A10:Inputs!C12,MATCH(Inputs!B5,Inputs!A10:Inputs!A12,0),2)",
+            None,
+        ),
+    )
+    for dep in [
+        "Inputs!B5",
+        "Inputs!A10",
+        "Inputs!A11",
+        "Inputs!A12",
+        "Inputs!B10",
+        "Inputs!B11",
+        "Inputs!B12",
+    ]:
+        graph.add_edge("Inputs!B6", dep)
+
+    with FormulaEvaluator(graph) as ev:
+        result = ev.evaluate(["Inputs!B6"])
+        assert result["Inputs!B6"] == 60
+
+
 def test_match() -> None:
     """Test MATCH function."""
     graph = _make_graph(

@@ -302,6 +302,8 @@ class FormulaEvaluator:
                 return self._eval_column(node.args)
             if name == "COLUMNS":
                 return self._eval_columns(node.args)
+            if name == "INDEX":
+                return self._eval_index(node.args)
             if name in {"TRUE", "_XLFN.TRUE"}:
                 return True
             if name in {"FALSE", "_XLFN.FALSE"}:
@@ -532,6 +534,13 @@ class FormulaEvaluator:
         if isinstance(ref, XlError):
             return ref
         return xl_columns(ref)
+
+    def _eval_index(self, args: list[AstNode]) -> CellValue:
+        node = FunctionCallNode(name="INDEX", args=args)
+        ref = self._index_call_to_range(node)
+        if isinstance(ref, XlError):
+            return ref
+        return ref
 
     def _index_call_to_range(self, node: FunctionCallNode) -> ExcelRange | XlError:
         if len(node.args) < 1:
