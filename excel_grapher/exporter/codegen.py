@@ -15,6 +15,7 @@ from excel_grapher.core.address_keys import (
     parse_address,
     quote_sheet_if_needed,
 )
+from excel_grapher.evaluator.errors import MissingNormalizedFormulaError
 from excel_grapher.evaluator.name_utils import (
     address_to_python_name,
     excel_func_to_python,
@@ -179,8 +180,10 @@ class CodeGenerator:
         if node is None or node.formula is None:
             return None
 
-        formula = node.normalized_formula or node.formula
-        ast = parse(formula)
+        nf = node.normalized_formula
+        if nf is None or not isinstance(nf, str) or not nf.strip():
+            raise MissingNormalizedFormulaError(normalized)
+        ast = parse(nf.strip())
         self._ast_cache[normalized] = ast
         return ast
 

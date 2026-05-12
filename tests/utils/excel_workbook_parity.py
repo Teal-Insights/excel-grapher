@@ -79,9 +79,12 @@ def compare_evaluator_to_excel_cache(
 
     def _formula_for(addr: str) -> str | None:
         node = graph.get_node(addr)
-        if node is None:
+        if node is None or node.formula is None:
             return None
-        return node.normalized_formula or node.formula
+        nf = node.normalized_formula
+        if isinstance(nf, str) and nf.strip():
+            return nf.strip()
+        return node.formula
 
     with FormulaEvaluator(graph) as ev:
         for addr in addresses:

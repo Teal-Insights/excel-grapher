@@ -19,7 +19,7 @@ from excel_grapher.grapher.blank_ranges import (
 )
 from excel_grapher.runtime.cache import EvalContext, xl_circular_reference, xl_iterative_compute
 
-from .errors import ParseError
+from .errors import MissingNormalizedFormulaError, ParseError
 from .functions import FUNCTIONS
 from .functions.info import xl_isblank
 from .helpers import (
@@ -242,9 +242,10 @@ class FormulaEvaluator:
                 self.on_cell_evaluated(norm, node.value)
             return node.value
 
-        formula = node.normalized_formula or node.formula
-        if not isinstance(formula, str):
-            raise ParseError(str(formula), "Formula is missing or not a string")
+        nf = node.normalized_formula
+        if nf is None or not isinstance(nf, str) or not nf.strip():
+            raise MissingNormalizedFormulaError(norm)
+        formula = nf.strip()
 
         self._call_stack.append(norm)
         try:

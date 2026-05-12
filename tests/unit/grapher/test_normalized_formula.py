@@ -1,5 +1,8 @@
 """
 Tests for Node.normalized_formula — the transpiler-friendly form of the formula.
+
+Includes dependency extraction and evaluator parity for mixed-sheet formulas
+(GitHub issue #160: bare refs must bind to the formula cell's sheet).
 """
 
 from pathlib import Path
@@ -7,7 +10,7 @@ from pathlib import Path
 import fastpyxl
 from fastpyxl.workbook.defined_name import DefinedName
 
-from excel_grapher import create_dependency_graph
+from excel_grapher import FormulaEvaluator, create_dependency_graph
 
 
 def test_normalized_formula_prefixes_same_sheet_refs(tmp_path: Path) -> None:
@@ -122,3 +125,27 @@ def test_normalized_formula_is_none_for_leaves(tmp_path: Path) -> None:
     assert leaf.is_leaf
     assert leaf.formula is None
     assert leaf.normalized_formula is None
+
+
+def test_mixed_sheet_formula_bare_ref_binds_to_formula_sheet_issue_160(tmp_path: Path) -> None:
+    """Bare ``C10`` after cross-sheet refs + CHOOSE must be Engine!C10, not Inputs!C10."""
+    excel_path = tmp_path / "mixed_sheet_choose.xlsx"
+    wb = fastpyxl.Workbook()
+    engine = wb.active
+    engine.title = "Engine"
+    inputs = wb.create_sheet("Inputs")
+    inputs["C16"].value = 100
+    inputs["B22"].value = 1
+    engine["B9"].value = 2
+    engine["C10"].value = 50
+    engine["C14"].value = "=Inputs!C16+CHOOSE(Inputs!$B$22,$B$9,0,0)*C10"
+    wb.save(excel_path)
+    wb.close()
+
+    graph = create_dependency_graph(excel_path, ["Engine!C14"], load_values=True)
+    deps = sorted(graph.get_dependencies("Engine!C14"))
+    assert "Engine!C10" in deps
+    assert "Inputs!C10" not in deps
+
+    with FormulaEvaluator(graph) as ev:
+        assert ev.evaluate("Engine!C14") == 200.0
