@@ -1,4 +1,4 @@
-"""Integration checks for micro-workbook Excel-vs-evaluator differential parity."""
+"""Integration checks for micro_workbook Excel-vs-evaluator differential parity."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from excel_grapher import DynamicRefConfig, XlError, create_dependency_graph
 from excel_grapher.evaluator import FormulaEvaluator
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-WORKBOOK_PATH = REPO_ROOT / "examples" / "micro-workbook" / "example-cases.xlsx"
+WORKBOOK_PATH = REPO_ROOT / "examples" / "micro_workbook" / "example_cases.xlsx"
 SHEET = "Sheet1"
 INPUT_VALUES: tuple[int, ...] = (-1, 0, 1, 2, 10)
 ATOL = 1e-9
