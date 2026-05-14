@@ -409,6 +409,35 @@ class TestEmitCell:
 class TestGenerate:
     """Tests for generate() method."""
 
+    def test_generate_defaults_to_graph_targets(self):
+        """generate() should use graph target metadata when targets are omitted."""
+        graph = _make_graph(
+            _make_node("Sheet1!A1", None, 10.0),
+            _make_node("Sheet1!B1", "=Sheet1!A1*2", None),
+            _make_node("Sheet1!C1", "=Sheet1!A1+1", None),
+        )
+        b1 = graph._get_internal_node("Sheet1!B1")
+        c1 = graph._get_internal_node("Sheet1!C1")
+        assert b1 is not None
+        assert c1 is not None
+        b1.is_target = True
+        c1.is_target = False
+        graph.add_edge("Sheet1!B1", "Sheet1!A1")
+        graph.add_edge("Sheet1!C1", "Sheet1!A1")
+
+        code = CodeGenerator(graph).generate()
+
+        assert "TARGETS = {" in code
+        assert "    'Sheet1!B1': xl_cell," in code
+        assert "    'Sheet1!C1': xl_cell," not in code
+
+    def test_generate_without_targets_raises_when_graph_has_no_targets(self):
+        """generate() without explicit targets should fail on targetless graphs."""
+        graph = _make_graph(_make_node("Sheet1!A1", None, 100.0))
+
+        with pytest.raises(ValueError, match="No export targets were provided"):
+            _ = CodeGenerator(graph).generate()
+
     def test_generate_caches_parsed_asts(self, monkeypatch):
         """generate() should not repeatedly parse the same cell formulas."""
         graph = _make_graph(
@@ -435,6 +464,26 @@ class TestGenerate:
 
         # Only formula cells should be parsed, and each should be parsed once.
         assert len(calls) == 2
+
+
+class TestCodeGeneratorContextManager:
+    def test_context_manager_clears_transient_codegen_state(self):
+        graph = _make_graph(
+            _make_node("Sheet1!A1", None, 10.0),
+            _make_node("Sheet1!B1", "=Sheet1!A1*2", None),
+        )
+        graph.add_edge("Sheet1!B1", "Sheet1!A1")
+        gen = CodeGenerator(graph)
+
+        with gen as scoped:
+            _ = scoped.generate(["Sheet1!B1"])
+            assert scoped._ast_cache
+            assert scoped._emitted
+
+        assert gen._ast_cache == {}
+        assert gen._emitted == set()
+        assert gen._formula_cell_address is None
+        assert gen._temp_var_counter == 0
 
     def test_generate_includes_imports(self):
         """Generated code should include necessary imports."""

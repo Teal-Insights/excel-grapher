@@ -1149,6 +1149,7 @@ def create_dependency_graph(
         named_range_ranges=named_range_ranges,
         max_range_cells=max_range_cells,
     )
+    target_root_keys = {format_key(sh, a1) for sh, a1 in target_roots}
     for sh, a1 in target_roots:
         q.append((sh, a1, 0))
 
@@ -1224,6 +1225,7 @@ def create_dependency_graph(
                 normalized_formula=normalized,
                 value=value,
                 is_leaf=is_leaf,
+                is_target=key in target_root_keys,
             )
             graph.add_node(node)
 

@@ -250,6 +250,10 @@ class DependencyGraph:
         """Return sorted list of keys for nodes with no dependency edges (leaves)."""
         return sorted(k for k, node in self._nodes.items() if node.is_leaf)
 
+    def target_keys(self) -> list[NodeKey]:
+        """Return sorted list of keys marked as original build targets."""
+        return sorted(k for k, node in self._nodes.items() if node.is_target)
+
     def roots(self) -> Iterator[NodeKey]:
         for key in self._nodes:
             if not self._reverse_edges.get(key):
