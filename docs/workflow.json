@@ -7,9 +7,9 @@
       "qcraft-extraction-pipeline",
       "tiny-dsa-extraction-pipeline"
     ],
-    "issue_count": 47,
-    "cluster_count": 17,
-    "edge_count": 25
+    "issue_count": 62,
+    "cluster_count": 18,
+    "edge_count": 26
   },
   "elements": {
     "nodes": [
@@ -55,6 +55,15 @@
           "type": "cluster",
           "cluster_name": "cluster_repo_excel_grapher_api_audit",
           "parent": "cluster::cluster_repo_excel_grapher"
+        }
+      },
+      {
+        "data": {
+          "id": "cluster::cluster_repo_excel_grapher_api_audit_codegen_api_enhancements",
+          "label": "Audit and enhance the CodeGenerator API",
+          "type": "cluster",
+          "cluster_name": "cluster_repo_excel_grapher_api_audit_codegen_api_enhancements",
+          "parent": "cluster::cluster_repo_excel_grapher_api_audit"
         }
       },
       {
@@ -176,8 +185,44 @@
           "parent": "cluster::cluster_repo_excel_grapher"
         },
         "position": {
-          "x": 310.75,
-          "y": 445.0
+          "x": 7576.0,
+          "y": 123.5
+        }
+      },
+      {
+        "data": {
+          "id": "excel_grapher_164",
+          "label": "#164 \u00b7 excel-grapher should use named-range labels to inform generated-library API",
+          "type": "issue",
+          "repo": "excel-grapher",
+          "number": 164,
+          "title": "excel-grapher should use named-range labels to inform generated-library API",
+          "url": "https://github.com/Teal-Insights/excel-grapher/issues/164",
+          "gv_width": 385.50239999999997,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_api_audit_codegen_api_enhancements"
+        },
+        "position": {
+          "x": 225.0,
+          "y": 388.0
+        }
+      },
+      {
+        "data": {
+          "id": "excel_grapher_168",
+          "label": "#168 \u00b7 Add target-aware Node metadata and stateful CodeGenerator defaults",
+          "type": "issue",
+          "repo": "excel-grapher",
+          "number": 168,
+          "title": "Add target-aware Node metadata and stateful CodeGenerator defaults",
+          "url": "https://github.com/Teal-Insights/excel-grapher/issues/168",
+          "gv_width": 357.7536,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_api_audit_codegen_api_enhancements"
+        },
+        "position": {
+          "x": 225.0,
+          "y": 272.0
         }
       },
       {
@@ -194,8 +239,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_dependency_graph_api_enhancements"
         },
         "position": {
-          "x": 1570.9,
-          "y": 1728.0
+          "x": 1256.0,
+          "y": 388.0
         }
       },
       {
@@ -212,8 +257,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_dependency_graph_api_enhancements"
         },
         "position": {
-          "x": 1570.9,
-          "y": 1656.0
+          "x": 1689.0,
+          "y": 388.0
         }
       },
       {
@@ -230,8 +275,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_dependency_graph_api_enhancements"
         },
         "position": {
-          "x": 1570.9,
-          "y": 1584.0
+          "x": 2067.0,
+          "y": 388.0
         }
       },
       {
@@ -248,8 +293,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_dependency_graph_api_enhancements"
         },
         "position": {
-          "x": 1570.9,
-          "y": 1512.0
+          "x": 2422.0,
+          "y": 388.0
         }
       },
       {
@@ -266,8 +311,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_dependency_graph_api_enhancements_minor"
         },
         "position": {
-          "x": 935.38,
-          "y": 1728.0
+          "x": 658.0,
+          "y": 272.0
         }
       },
       {
@@ -284,8 +329,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_dependency_graph_api_enhancements_minor"
         },
         "position": {
-          "x": 935.38,
-          "y": 1656.0
+          "x": 1102.0,
+          "y": 272.0
         }
       },
       {
@@ -302,8 +347,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_doc_system_audit"
         },
         "position": {
-          "x": 2269.8,
-          "y": 1463.0
+          "x": 1270.0,
+          "y": 504.0
         }
       },
       {
@@ -320,8 +365,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_leaf_config_api_audit"
         },
         "position": {
-          "x": 935.38,
-          "y": 1571.0
+          "x": 1473.0,
+          "y": 272.0
         }
       },
       {
@@ -338,8 +383,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_leaf_config_api_audit"
         },
         "position": {
-          "x": 935.38,
-          "y": 1499.0
+          "x": 1898.0,
+          "y": 272.0
         }
       },
       {
@@ -356,8 +401,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_leaf_config_api_audit"
         },
         "position": {
-          "x": 935.38,
-          "y": 1427.0
+          "x": 2380.0,
+          "y": 272.0
         }
       },
       {
@@ -374,26 +419,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_visualization_api_enhancements"
         },
         "position": {
-          "x": 935.38,
-          "y": 1342.0
-        }
-      },
-      {
-        "data": {
-          "id": "excel_grapher_96",
-          "label": "#96 \u00b7 Add a helper for visualizing induced subgraphs that show the paths between two (sets of) nodes",
-          "type": "issue",
-          "repo": "excel-grapher",
-          "number": 96,
-          "title": "Add a helper for visualizing induced subgraphs that show the paths between two (sets of) nodes",
-          "url": "https://github.com/Teal-Insights/excel-grapher/issues/96",
-          "gv_width": 466.50239999999997,
-          "gv_height": 36.0,
-          "parent": "cluster::cluster_repo_excel_grapher_api_audit_visualization_api_enhancements"
-        },
-        "position": {
-          "x": 935.38,
-          "y": 1270.0
+          "x": 2746.0,
+          "y": 272.0
         }
       },
       {
@@ -410,8 +437,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_visualization_api_enhancements"
         },
         "position": {
-          "x": 1570.9,
-          "y": 1243.0
+          "x": 3259.0,
+          "y": 388.0
         }
       },
       {
@@ -428,8 +455,26 @@
           "parent": "cluster::cluster_repo_excel_grapher_api_audit_visualization_api_enhancements"
         },
         "position": {
-          "x": 935.38,
-          "y": 1198.0
+          "x": 3080.0,
+          "y": 272.0
+        }
+      },
+      {
+        "data": {
+          "id": "excel_grapher_166",
+          "label": "#166 \u00b7 User-test select_local_force_subgraph behavior and UX",
+          "type": "issue",
+          "repo": "excel-grapher",
+          "number": 166,
+          "title": "User-test select_local_force_subgraph behavior and UX",
+          "url": "https://github.com/Teal-Insights/excel-grapher/issues/166",
+          "gv_width": 297.0,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_excel_grapher_api_audit_visualization_api_enhancements"
+        },
+        "position": {
+          "x": 3433.0,
+          "y": 272.0
         }
       },
       {
@@ -446,8 +491,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_guards_implementation"
         },
         "position": {
-          "x": 1570.9,
-          "y": 699.0
+          "x": 5079.0,
+          "y": 388.0
         }
       },
       {
@@ -464,8 +509,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_guards_implementation"
         },
         "position": {
-          "x": 1570.9,
-          "y": 771.0
+          "x": 5390.0,
+          "y": 388.0
         }
       },
       {
@@ -482,8 +527,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_guards_implementation"
         },
         "position": {
-          "x": 1570.9,
-          "y": 627.0
+          "x": 5731.0,
+          "y": 388.0
         }
       },
       {
@@ -500,8 +545,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_guards_implementation"
         },
         "position": {
-          "x": 1570.9,
-          "y": 843.0
+          "x": 4731.0,
+          "y": 388.0
         }
       },
       {
@@ -518,8 +563,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_guards_implementation"
         },
         "position": {
-          "x": 2269.8,
-          "y": 834.0
+          "x": 5559.0,
+          "y": 504.0
         }
       },
       {
@@ -536,8 +581,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_guards_implementation"
         },
         "position": {
-          "x": 1570.9,
-          "y": 555.0
+          "x": 6247.0,
+          "y": 388.0
         }
       },
       {
@@ -554,8 +599,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_guards_problem_space_mapping"
         },
         "position": {
-          "x": 310.75,
-          "y": 755.0
+          "x": 5173.0,
+          "y": 123.5
         }
       },
       {
@@ -572,8 +617,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_guards_problem_space_mapping"
         },
         "position": {
-          "x": 310.75,
-          "y": 683.0
+          "x": 5586.0,
+          "y": 123.5
         }
       },
       {
@@ -590,8 +635,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_guards_problem_space_mapping"
         },
         "position": {
-          "x": 310.75,
-          "y": 611.0
+          "x": 6098.0,
+          "y": 123.5
         }
       },
       {
@@ -608,8 +653,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_guards_strategy_planning"
         },
         "position": {
-          "x": 935.38,
-          "y": 791.0
+          "x": 5085.0,
+          "y": 272.0
         }
       },
       {
@@ -626,8 +671,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_guards_strategy_planning"
         },
         "position": {
-          "x": 935.38,
-          "y": 719.0
+          "x": 5381.0,
+          "y": 272.0
         }
       },
       {
@@ -644,8 +689,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_guards_strategy_planning"
         },
         "position": {
-          "x": 935.38,
-          "y": 647.0
+          "x": 5731.0,
+          "y": 272.0
         }
       },
       {
@@ -662,8 +707,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_major"
         },
         "position": {
-          "x": 2269.8,
-          "y": 1080.0
+          "x": 3742.0,
+          "y": 504.0
         }
       },
       {
@@ -680,8 +725,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_major"
         },
         "position": {
-          "x": 2269.8,
-          "y": 1008.0
+          "x": 4055.0,
+          "y": 504.0
         }
       },
       {
@@ -698,8 +743,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_major"
         },
         "position": {
-          "x": 2269.8,
-          "y": 936.0
+          "x": 4388.0,
+          "y": 504.0
         }
       },
       {
@@ -716,8 +761,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_tests"
         },
         "position": {
-          "x": 1570.9,
-          "y": 1893.0
+          "x": 6825.0,
+          "y": 388.0
         }
       },
       {
@@ -734,8 +779,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_tests"
         },
         "position": {
-          "x": 1570.9,
-          "y": 1821.0
+          "x": 7247.0,
+          "y": 388.0
         }
       },
       {
@@ -752,8 +797,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_tests"
         },
         "position": {
-          "x": 935.38,
-          "y": 1848.0
+          "x": 7163.0,
+          "y": 272.0
         }
       },
       {
@@ -770,8 +815,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_tests"
         },
         "position": {
-          "x": 310.75,
-          "y": 1893.0
+          "x": 6794.0,
+          "y": 123.5
         }
       },
       {
@@ -788,8 +833,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_tests"
         },
         "position": {
-          "x": 310.75,
-          "y": 1821.0
+          "x": 7205.0,
+          "y": 123.5
         }
       },
       {
@@ -806,8 +851,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_viz"
         },
         "position": {
-          "x": 1570.9,
-          "y": 1060.0
+          "x": 3749.0,
+          "y": 388.0
         }
       },
       {
@@ -824,8 +869,8 @@
           "parent": "cluster::cluster_repo_excel_grapher_viz"
         },
         "position": {
-          "x": 1570.9,
-          "y": 988.0
+          "x": 4224.0,
+          "y": 388.0
         }
       },
       {
@@ -842,8 +887,8 @@
           "parent": "cluster::cluster_repo_lic_dsf_extraction_pipeline"
         },
         "position": {
-          "x": 2942.4,
-          "y": 2049.0
+          "x": 5394.0,
+          "y": 623.0
         }
       },
       {
@@ -860,8 +905,8 @@
           "parent": "cluster::cluster_repo_lic_dsf_extraction_pipeline"
         },
         "position": {
-          "x": 2942.4,
-          "y": 1977.0
+          "x": 5828.0,
+          "y": 623.0
         }
       },
       {
@@ -878,8 +923,8 @@
           "parent": "cluster::cluster_repo_lic_dsf_extraction_pipeline"
         },
         "position": {
-          "x": 2942.4,
-          "y": 1905.0
+          "x": 6228.0,
+          "y": 623.0
         }
       },
       {
@@ -896,8 +941,8 @@
           "parent": "cluster::cluster_repo_lic_dsf_extraction_pipeline"
         },
         "position": {
-          "x": 2942.4,
-          "y": 1833.0
+          "x": 7197.0,
+          "y": 623.0
         }
       },
       {
@@ -914,8 +959,8 @@
           "parent": "cluster::cluster_repo_lic_dsf_extraction_pipeline"
         },
         "position": {
-          "x": 2942.4,
-          "y": 1761.0
+          "x": 6749.0,
+          "y": 623.0
         }
       },
       {
@@ -932,8 +977,8 @@
           "parent": "cluster::cluster_repo_qcraft_extraction_pipeline"
         },
         "position": {
-          "x": 310.75,
-          "y": 360.0
+          "x": 7956.0,
+          "y": 123.5
         }
       },
       {
@@ -950,8 +995,8 @@
           "parent": "cluster::cluster_repo_qcraft_extraction_pipeline"
         },
         "position": {
-          "x": 310.75,
-          "y": 288.0
+          "x": 8274.0,
+          "y": 123.5
         }
       },
       {
@@ -968,8 +1013,8 @@
           "parent": "cluster::cluster_repo_qcraft_extraction_pipeline"
         },
         "position": {
-          "x": 310.75,
-          "y": 216.0
+          "x": 8526.0,
+          "y": 123.5
         }
       },
       {
@@ -986,26 +1031,260 @@
           "parent": "cluster::cluster_repo_qcraft_extraction_pipeline"
         },
         "position": {
-          "x": 310.75,
-          "y": 144.0
+          "x": 8778.0,
+          "y": 123.5
         }
       },
       {
         "data": {
-          "id": "tiny_dsa_extraction_pipeline_7",
-          "label": "#7 \u00b7 Inspect the extracted Tiny DSA dependency graph, both manually and with LLM assistance, to check for missing/extra edges",
+          "id": "tiny_dsa_extraction_pipeline_13",
+          "label": "#13 \u00b7 D6: excel-grapher uses named-range labels to inform generated-library API",
           "type": "issue",
           "repo": "tiny-dsa-extraction-pipeline",
-          "number": 7,
-          "title": "Inspect the extracted Tiny DSA dependency graph, both manually and with LLM assistance, to check for missing/extra edges",
-          "url": "https://github.com/Teal-Insights/tiny-dsa-extraction-pipeline/issues/7",
-          "gv_width": 589.5,
+          "number": 13,
+          "title": "D6: excel-grapher uses named-range labels to inform generated-library API",
+          "url": "https://github.com/Teal-Insights/tiny-dsa-extraction-pipeline/issues/13",
+          "gv_width": 372.75120000000004,
           "gv_height": 36.0,
           "parent": "cluster::cluster_repo_tiny_dsa_extraction_pipeline"
         },
         "position": {
-          "x": 310.75,
-          "y": 59.0
+          "x": 9108.0,
+          "y": 123.5
+        }
+      },
+      {
+        "data": {
+          "id": "tiny_dsa_extraction_pipeline_14",
+          "label": "#14 \u00b7 D7: Pipeline configures input/output groups and classifies leaf nodes",
+          "type": "issue",
+          "repo": "tiny-dsa-extraction-pipeline",
+          "number": 14,
+          "title": "D7: Pipeline configures input/output groups and classifies leaf nodes",
+          "url": "https://github.com/Teal-Insights/tiny-dsa-extraction-pipeline/issues/14",
+          "gv_width": 347.24879999999996,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_tiny_dsa_extraction_pipeline"
+        },
+        "position": {
+          "x": 9504.0,
+          "y": 123.5
+        }
+      },
+      {
+        "data": {
+          "id": "tiny_dsa_extraction_pipeline_15",
+          "label": "#15 \u00b7 D8: Exported standalone Python library",
+          "type": "issue",
+          "repo": "tiny-dsa-extraction-pipeline",
+          "number": 15,
+          "title": "D8: Exported standalone Python library",
+          "url": "https://github.com/Teal-Insights/tiny-dsa-extraction-pipeline/issues/15",
+          "gv_width": 219.75119999999998,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_tiny_dsa_extraction_pipeline"
+        },
+        "position": {
+          "x": 9824.0,
+          "y": 123.5
+        }
+      },
+      {
+        "data": {
+          "id": "tiny_dsa_extraction_pipeline_16",
+          "label": "#16 \u00b7 D9: excel-grapher bugs triaged, fixed, or filed upstream",
+          "type": "issue",
+          "repo": "tiny-dsa-extraction-pipeline",
+          "number": 16,
+          "title": "D9: excel-grapher bugs triaged, fixed, or filed upstream",
+          "url": "https://github.com/Teal-Insights/tiny-dsa-extraction-pipeline/issues/16",
+          "gv_width": 288.0,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_tiny_dsa_extraction_pipeline"
+        },
+        "position": {
+          "x": 10114.0,
+          "y": 123.5
+        }
+      },
+      {
+        "data": {
+          "id": "tiny_dsa_extraction_pipeline_17",
+          "label": "#17 \u00b7 D10: Label detection logic incorporated into excel-grapher",
+          "type": "issue",
+          "repo": "tiny-dsa-extraction-pipeline",
+          "number": 17,
+          "title": "D10: Label detection logic incorporated into excel-grapher",
+          "url": "https://github.com/Teal-Insights/tiny-dsa-extraction-pipeline/issues/17",
+          "gv_width": 298.49760000000003,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_tiny_dsa_extraction_pipeline"
+        },
+        "position": {
+          "x": 10443.0,
+          "y": 123.5
+        }
+      },
+      {
+        "data": {
+          "id": "tiny_dsa_extraction_pipeline_18",
+          "label": "#18 \u00b7 D11: AI docstring post-processing pipeline for generated library",
+          "type": "issue",
+          "repo": "tiny-dsa-extraction-pipeline",
+          "number": 18,
+          "title": "D11: AI docstring post-processing pipeline for generated library",
+          "url": "https://github.com/Teal-Insights/tiny-dsa-extraction-pipeline/issues/18",
+          "gv_width": 320.99760000000003,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_tiny_dsa_extraction_pipeline"
+        },
+        "position": {
+          "x": 10789.0,
+          "y": 123.5
+        }
+      },
+      {
+        "data": {
+          "id": "tiny_dsa_extraction_pipeline_19",
+          "label": "#19 \u00b7 D12: Companion guide post-processing pipeline",
+          "type": "issue",
+          "repo": "tiny-dsa-extraction-pipeline",
+          "number": 19,
+          "title": "D12: Companion guide post-processing pipeline",
+          "url": "https://github.com/Teal-Insights/tiny-dsa-extraction-pipeline/issues/19",
+          "gv_width": 256.5,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_tiny_dsa_extraction_pipeline"
+        },
+        "position": {
+          "x": 11114.0,
+          "y": 123.5
+        }
+      },
+      {
+        "data": {
+          "id": "tiny_dsa_extraction_pipeline_20",
+          "label": "#20 \u00b7 D13: Technical standard for good extraction documented",
+          "type": "issue",
+          "repo": "tiny-dsa-extraction-pipeline",
+          "number": 20,
+          "title": "D13: Technical standard for good extraction documented",
+          "url": "https://github.com/Teal-Insights/tiny-dsa-extraction-pipeline/issues/20",
+          "gv_width": 293.99760000000003,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_tiny_dsa_extraction_pipeline"
+        },
+        "position": {
+          "x": 11425.0,
+          "y": 123.5
+        }
+      },
+      {
+        "data": {
+          "id": "tiny_dsa_extraction_pipeline_21",
+          "label": "#21 \u00b7 D14: Technical standard for golden-master validation documented",
+          "type": "issue",
+          "repo": "tiny-dsa-extraction-pipeline",
+          "number": 21,
+          "title": "D14: Technical standard for golden-master validation documented",
+          "url": "https://github.com/Teal-Insights/tiny-dsa-extraction-pipeline/issues/21",
+          "gv_width": 333.0,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_tiny_dsa_extraction_pipeline"
+        },
+        "position": {
+          "x": 11775.0,
+          "y": 123.5
+        }
+      },
+      {
+        "data": {
+          "id": "tiny_dsa_extraction_pipeline_22",
+          "label": "#22 \u00b7 D15: Provenance / attribution log captured",
+          "type": "issue",
+          "repo": "tiny-dsa-extraction-pipeline",
+          "number": 22,
+          "title": "D15: Provenance / attribution log captured",
+          "url": "https://github.com/Teal-Insights/tiny-dsa-extraction-pipeline/issues/22",
+          "gv_width": 232.5024,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_tiny_dsa_extraction_pipeline"
+        },
+        "position": {
+          "x": 12094.0,
+          "y": 123.5
+        }
+      },
+      {
+        "data": {
+          "id": "tiny_dsa_extraction_pipeline_23",
+          "label": "#23 \u00b7 D16: LESSONS_LEARNED documented",
+          "type": "issue",
+          "repo": "tiny-dsa-extraction-pipeline",
+          "number": 23,
+          "title": "D16: LESSONS_LEARNED documented",
+          "url": "https://github.com/Teal-Insights/tiny-dsa-extraction-pipeline/issues/23",
+          "gv_width": 229.5,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_tiny_dsa_extraction_pipeline"
+        },
+        "position": {
+          "x": 12361.0,
+          "y": 123.5
+        }
+      },
+      {
+        "data": {
+          "id": "tiny_dsa_extraction_pipeline_24",
+          "label": "#24 \u00b7 D17: Cookie-cutter v0.0 artifact list with paths",
+          "type": "issue",
+          "repo": "tiny-dsa-extraction-pipeline",
+          "number": 24,
+          "title": "D17: Cookie-cutter v0.0 artifact list with paths",
+          "url": "https://github.com/Teal-Insights/tiny-dsa-extraction-pipeline/issues/24",
+          "gv_width": 249.7536,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_tiny_dsa_extraction_pipeline"
+        },
+        "position": {
+          "x": 12637.0,
+          "y": 123.5
+        }
+      },
+      {
+        "data": {
+          "id": "tiny_dsa_extraction_pipeline_25",
+          "label": "#25 \u00b7 D18: Concrete assessment of methodological question",
+          "type": "issue",
+          "repo": "tiny-dsa-extraction-pipeline",
+          "number": 25,
+          "title": "D18: Concrete assessment of methodological question",
+          "url": "https://github.com/Teal-Insights/tiny-dsa-extraction-pipeline/issues/25",
+          "gv_width": 288.0,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_tiny_dsa_extraction_pipeline"
+        },
+        "position": {
+          "x": 12942.0,
+          "y": 123.5
+        }
+      },
+      {
+        "data": {
+          "id": "tiny_dsa_extraction_pipeline_26",
+          "label": "#26 \u00b7 D19: Working clarity on lanes for Q-CRAFT v2",
+          "type": "issue",
+          "repo": "tiny-dsa-extraction-pipeline",
+          "number": 26,
+          "title": "D19: Working clarity on lanes for Q-CRAFT v2",
+          "url": "https://github.com/Teal-Insights/tiny-dsa-extraction-pipeline/issues/26",
+          "gv_width": 252.0,
+          "gv_height": 36.0,
+          "parent": "cluster::cluster_repo_tiny_dsa_extraction_pipeline"
+        },
+        "position": {
+          "x": 13248.0,
+          "y": 123.5
         }
       }
     ],
@@ -1231,6 +1510,15 @@
           "id": "edge::excel_grapher_143->excel_grapher_133",
           "source": "excel_grapher_143",
           "target": "excel_grapher_133",
+          "type": "blocks",
+          "label": "blocks"
+        }
+      },
+      {
+        "data": {
+          "id": "edge::excel_grapher_168->excel_grapher_164",
+          "source": "excel_grapher_168",
+          "target": "excel_grapher_164",
           "type": "blocks",
           "label": "blocks"
         }
