@@ -89,8 +89,9 @@ Under the hood, `FormulaEvaluator` parses the graph's Excel formulas and transla
 Instead of running the graph using the `FormulaEvaluator` Excel emulator, we can transpile the graph to standalone Python code using the `CodeGenerator` class. We'll write the code to a file called `linear_dependency.py` in the current folder.
 
 ```{python}
-code = CodeGenerator(graph).generate(["Sheet1!C2"])
-with open("linear_dependency.py", "w") as f:
+with CodeGenerator(graph) as gen:
+    code = gen.generate()
+with open("linear_dependency.py", "w", encoding="utf-8") as f:
     f.write(code)
 ```
 
@@ -195,8 +196,9 @@ Similarly, if we generate and run standalone Python code with `CodeGenerator`, w
 ```{python}
 import sys
 
-code = CodeGenerator(graph).generate(["Sheet1!C6"])
-with open("must_cycle.py", "w") as f:
+with CodeGenerator(graph) as gen:
+    code = gen.generate()
+with open("must_cycle.py", "w", encoding="utf-8") as f:
     f.write(code)
 
 sys.path.append(".")

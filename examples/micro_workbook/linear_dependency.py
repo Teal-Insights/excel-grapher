@@ -99,49 +99,6 @@ def _escape_sheet_for_formula(sheet: str) -> str:
     return sheet.replace("'", "''")
 
 
-def _parse_sheet_address(address: str) -> tuple[str, str] | None:
-    if address.startswith("'"):
-        i = 1
-        while i < len(address):
-            if address[i] == "'":
-                if i + 1 < len(address) and address[i + 1] == "'":
-                    i += 2
-                    continue
-                break
-            i += 1
-        sheet = address[: i + 1]
-        rest = address[i + 1 :]
-        if rest.startswith("!"):
-            return sheet, rest[1:]
-        return None
-
-    if "!" in address:
-        sheet, cell = address.rsplit("!", 1)
-        return sheet, cell
-
-    return None
-
-
-def _parse_range_address(address: str) -> tuple[str, str, str] | XlError:
-    if ":" not in address:
-        return XlError.VALUE
-    start_text, end_text = address.split(":", 1)
-    start = _parse_sheet_address(start_text)
-    if start is None:
-        return XlError.VALUE
-    sheet, start_cell = start
-    if "!" in end_text:
-        end = _parse_sheet_address(end_text)
-        if end is None:
-            return XlError.VALUE
-        end_sheet, end_cell = end
-        if end_sheet != sheet:
-            return XlError.VALUE
-    else:
-        end_cell = end_text
-    return sheet, start_cell, end_cell
-
-
 def needs_quoting(sheet: str) -> bool:
     """Return True if a sheet name must be wrapped in single quotes in a formula."""
     return " " in sheet or "-" in sheet or "'" in sheet
@@ -189,6 +146,61 @@ CellValue: TypeAlias = float | int | str | bool | XlError | ExcelRange | np.ndar
 def coerce_inputs_dict(values: Mapping[str, object]) -> dict[str, CellValue]:
     """Widen inferred default-input dicts to ``dict[str, CellValue]`` for :class:`EvalContext`."""
     return cast(dict[str, CellValue], dict(values))
+
+
+def split_sheet_qualified_address(address: str) -> tuple[str, str] | None:
+    """Split ``sheet!coord`` into ``(sheet_name, coord)``.
+
+    Handles quoted sheet names, including Excel's doubled-single-quote escape
+    (``'O''Neil'!A1`` → sheet ``O'Neil``).
+
+    Returns ``None`` when *address* has no sheet qualifier (plain ``A1``).
+    """
+    if address.startswith("'"):
+        i = 1
+        while i < len(address):
+            if address[i] == "'":
+                if i + 1 < len(address) and address[i + 1] == "'":
+                    i += 2
+                    continue
+                break
+            i += 1
+        if i >= len(address):
+            return None
+        sheet = address[1:i].replace("''", "'")
+        rest = address[i + 1 :]
+        if not rest.startswith("!"):
+            return None
+        return sheet, rest[1:]
+
+    if "!" not in address:
+        return None
+    sheet, cell = address.rsplit("!", 1)
+    return sheet, cell
+
+
+def _parse_sheet_address(address: str) -> tuple[str, str] | None:
+    return split_sheet_qualified_address(address)
+
+
+def _parse_range_address(address: str) -> tuple[str, str, str] | XlError:
+    if ":" not in address:
+        return XlError.VALUE
+    start_text, end_text = address.split(":", 1)
+    start = _parse_sheet_address(start_text)
+    if start is None:
+        return XlError.VALUE
+    sheet, start_cell = start
+    if "!" in end_text:
+        end = _parse_sheet_address(end_text)
+        if end is None:
+            return XlError.VALUE
+        end_sheet, end_cell = end
+        if end_sheet != sheet:
+            return XlError.VALUE
+    else:
+        end_cell = end_text
+    return sheet, start_cell, end_cell
 
 
 def to_number(value: CellValue) -> float | XlError:
