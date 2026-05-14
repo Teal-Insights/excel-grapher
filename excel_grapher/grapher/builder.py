@@ -6,7 +6,7 @@ import re
 import time
 import warnings
 from collections import deque
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 import fastpyxl
@@ -37,6 +37,13 @@ from .dynamic_refs import (
 )
 from .graph import DependencyGraph, NodeHook
 from .guard import And, Compare, GuardExpr, Literal, Not
+from .label_detection import (
+    LabelDetectionBehavior,
+    LabelDetectionConfig,
+    LabelDetectionState,
+    build_label_behavior_registry,
+    collect_labels_for_node,
+)
 from .node import Node
 from .parser import (
     CellRef,
@@ -318,6 +325,8 @@ def create_dependency_graph(
     capture_dependency_provenance: bool = False,
     blank_ranges: Iterable[str] | None = None,
     type_analysis_cache: TypeAnalysisCache | None = None,
+    label_detection: LabelDetectionConfig | None = None,
+    label_behaviors: Sequence[LabelDetectionBehavior] | None = None,
 ) -> DependencyGraph:
     """
     Build a dependency graph starting from target cells.
@@ -362,6 +371,11 @@ def create_dependency_graph(
     same declarations on :class:`~excel_grapher.FormulaEvaluator` and
     :meth:`~excel_grapher.exporter.codegen.CodeGenerator.generate` for **evaluator
     ↔ export** parity (consistent behavior between evaluation and generated code).
+
+    When ``label_detection`` is set with ``enabled=True``, each node receives
+    ``row_labels`` and ``column_labels`` entries in :attr:`~excel_grapher.grapher.node.Node.metadata`.
+    Pass the same settings under ``extraction_params`` when using the graph cache
+    (see :func:`~excel_grapher.grapher.label_detection.label_detection_config_to_jsonable`).
 
     **Cost model**: constraint-based dynamic-ref expansion (``dynamic_refs`` set,
     ``use_cached_dynamic_refs=False``) runs :func:`expand_leaf_env_to_argument_env`
@@ -418,6 +432,14 @@ def create_dependency_graph(
     graph = DependencyGraph()
     for h in hooks or []:
         graph.register_hook(h)
+
+    ld_enabled_cfg: LabelDetectionConfig | None = None
+    ld_registry: dict[str, LabelDetectionBehavior] | None = None
+    ld_state: LabelDetectionState | None = None
+    if label_detection is not None and label_detection.enabled:
+        ld_enabled_cfg = label_detection
+        ld_state = LabelDetectionState()
+        ld_registry = build_label_behavior_registry(label_behaviors)
 
     named_range_maps = build_named_range_map(wb_formulas)
     named_ranges = named_range_maps.cell_map
@@ -1216,6 +1238,7 @@ def create_dependency_graph(
                 is_leaf = True
 
             col, row = fastpyxl.utils.cell.coordinate_from_string(a1)
+            col_idx = fastpyxl.utils.cell.column_index_from_string(col)
             node = Node(
                 sheet=sheet,
                 column=col,
@@ -1225,6 +1248,21 @@ def create_dependency_graph(
                 value=value,
                 is_leaf=is_leaf,
             )
+            if ld_registry is not None and ld_state is not None and ld_enabled_cfg is not None:
+                ws_v = _get_ws_v(sheet) if wb_values is not None else None
+                r_labels, c_labels = collect_labels_for_node(
+                    key=key,
+                    sheet=sheet,
+                    row=int(row),
+                    col=col_idx,
+                    cfg=ld_enabled_cfg,
+                    registry=ld_registry,
+                    state=ld_state,
+                    ws_values=ws_v,
+                    ws_formulas=ws_f,
+                )
+                node.metadata["row_labels"] = r_labels
+                node.metadata["column_labels"] = c_labels
             graph.add_node(node)
 
             if not is_formula:

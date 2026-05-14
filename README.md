@@ -109,7 +109,7 @@ The sections below go into more detail.
 - **Edge direction**: an edge `A -> B` means **A depends on B** (dependency-first evaluation).
 - **Leaf definition**: a leaf is any node with no cell dependencies (`Node.is_leaf=True`), including non-formula cells and literal-only formulas (e.g. `=1+1`).
 - **Values are optional**: `load_values=True` loads cached Excel results (second workbook load); otherwise formula nodes have `value=None`.
-- **Extensible metadata**: each `Node` has a `metadata: dict[str, Any]` that hooks can mutate.
+- **Extensible metadata**: each `Node` has a `metadata: dict[str, Any]` that hooks can mutate; optional `label_detection` can populate `row_labels` / `column_labels` at build time.
 - **Range expansion**: ranges like `A1:A10` are expanded to individual cell dependencies (bounded by `max_range_cells`).
 - **Normalized formulas**: each formula node has a `normalized_formula` field with sheet-qualified refs, resolved named ranges, and stripped `$` markers — ready for transpilation.
 
@@ -127,6 +127,29 @@ targets = ["Sheet1!A10"]
 g = create_dependency_graph(wb_path, targets, load_values=False)
 print(len(g))          # number of visited nodes
 print(to_graphviz(g))  # GraphViz DOT
+```
+
+### Optional row/column label detection
+
+When ``label_detection`` is a ``LabelDetectionConfig`` with ``enabled=True``, each node gets
+``metadata["row_labels"]`` and ``metadata["column_labels"]`` (lists of strings) at graph build time.
+Built-in behaviors include left/up heuristic scans and region-scoped rules
+(``region_left_label_columns``, ``region_header_rows``, ``year_offset_headers``); pass custom
+implementations via ``label_behaviors``.
+
+Include the same settings in graph cache ``extraction_params`` using
+``label_detection_config_to_jsonable(...)`` so cached graphs invalidate when rules change.
+
+```python
+from excel_grapher import LabelDetectionConfig, create_dependency_graph
+
+graph = create_dependency_graph(
+    wb_path,
+    targets,
+    load_values=True,
+    label_detection=LabelDetectionConfig(enabled=True),
+)
+row_labels = graph.get_node(targets[0]).metadata.get("row_labels", [])
 ```
 
 ### Target forms
