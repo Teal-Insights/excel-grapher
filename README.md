@@ -295,6 +295,25 @@ from excel_grapher.grapher import to_mermaid
 mm = to_mermaid(g, max_nodes=100)
 ```
 
+### Path-induced subgraphs for focused visualization
+
+Use `select_path_induced_subgraph(...)` to isolate only nodes on directed dependency paths between source and target node sets, then pass the smaller graph to any exporter.
+
+```python
+from excel_grapher.grapher import select_path_induced_subgraph, to_graphviz
+
+focused = select_path_induced_subgraph(
+    g,
+    source_keys=["Sheet1!F1"],
+    target_keys=["Sheet1!A1"],
+    max_path_length=10,  # optional safety cutoff
+    max_paths=1000,      # optional safety cutoff
+)
+dot = to_graphviz(focused, rankdir="LR")
+```
+
+The path search follows graph edge direction (`A -> B` means `A` depends on `B`), validates that all requested keys exist in the graph, and preserves edge guards/provenance in the returned induced subgraph.
+
 ### NetworkX (optional dependency)
 
 ```python

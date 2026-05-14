@@ -1,8 +1,8 @@
-# Consolidated Micro-Workbook Graph Examples
+# Consolidated micro_workbook Graph Examples
 
 
 Each row of
-[examples/micro-workbook/example-cases.xlsx](example-cases.xlsx)
+[examples/micro_workbook/example_cases.xlsx](example_cases.xlsx)
 contains a self-contained example that can be extracted as a graph. This
 workbook demonstrates the workflow and application behavior for
 different Excel dependency scenarios.
@@ -18,7 +18,7 @@ from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter import CodeGenerator
 
 # Load the example workbook
-workbook_path = Path("example-cases.xlsx")
+workbook_path = Path("example_cases.xlsx")
 
 # Define helper functions to print the graph object and Mermaid diagram
 def print_text(text: str):
@@ -376,7 +376,7 @@ print_text(str(result["Sheet1!C6"]))
 2.0
 ```
 
-    C:\Users\chris\Software\excel-grapher\examples\micro-workbook\must_cycle.py:284: CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).
+    C:\Users\chris\Software\excel-grapher\examples\micro_workbook\must_cycle.py:284: CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).
       return xl_circular_reference()
 
 For a detailed report on cycles in the graph, we can use the
