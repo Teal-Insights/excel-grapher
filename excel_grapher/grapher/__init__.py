@@ -54,13 +54,41 @@ from .export import (
 from .graph import CycleError, CycleReport, DependencyGraph, NodeHook
 from .guard import And, Compare, GuardExpr, Literal, Not, Or
 from .guard import CellRef as GuardCellRef
+from .label_detection import (
+    BehaviorRule,
+    LabelDetectionBehavior,
+    LabelDetectionConfig,
+    LabelDetectionContext,
+    LabelDetectionState,
+    LabelResult,
+    RegionLabelParams,
+    RegionSelector,
+    RegionSpec,
+    build_label_behavior_registry,
+    default_label_behaviors,
+    label_detection_config_to_jsonable,
+    region_specs_from_ranges,
+)
 from .node import Node, NodeKey
 from .parser import format_cell_key, format_key, needs_quoting
 from .validation import ValidationResult, WorkbookCalcSettings, get_calc_settings, validate_graph
 
 __all__ = [
+    "BehaviorRule",
+    "LabelDetectionBehavior",
+    "LabelDetectionConfig",
+    "LabelDetectionContext",
+    "LabelDetectionState",
+    "LabelResult",
+    "RegionLabelParams",
+    "RegionSelector",
+    "RegionSpec",
+    "build_label_behavior_registry",
     "create_dependency_graph",
+    "default_label_behaviors",
+    "label_detection_config_to_jsonable",
     "normalize_blank_range_specs",
+    "region_specs_from_ranges",
     "list_dynamic_ref_constraint_candidates",
     "GRAPH_CACHE_SCHEMA_VERSION",
     "build_graph_cache_meta",
