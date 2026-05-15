@@ -2,7 +2,7 @@
 
 
 Each row of
-[examples/micro_workbook/extraction_basics.xlsx](extraction_basics.xlsx)
+[examples/micro_workbooks/extraction_basics.xlsx](extraction_basics.xlsx)
 contains a self-contained example that can be extracted as a graph. This
 workbook demonstrates the workflow and application behavior for
 different Excel dependency scenarios.
