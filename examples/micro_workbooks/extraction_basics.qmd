@@ -4,7 +4,7 @@ format: gfm
 output: asis
 ---
 
-Each row of [examples/micro_workbook/example_cases.xlsx](example_cases.xlsx) contains a self-contained example that can be extracted as a graph. This workbook demonstrates the workflow and application behavior for different Excel dependency scenarios.
+Each row of [examples/micro_workbook/extraction_basics.xlsx](extraction_basics.xlsx) contains a self-contained example that can be extracted as a graph. This workbook demonstrates the workflow and application behavior for different Excel dependency scenarios.
 
 ```{python}
 #| warning: false
@@ -18,7 +18,7 @@ from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter import CodeGenerator
 
 # Load the example workbook
-workbook_path = Path("example_cases.xlsx")
+workbook_path = Path("extraction_basics.xlsx")
 
 # Define helper functions to print the graph object and Mermaid diagram
 def print_text(text: str):
