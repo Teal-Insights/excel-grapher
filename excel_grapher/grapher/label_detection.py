@@ -388,7 +388,7 @@ def _heuristic_row_labels(ws: Worksheet, row: int, col: int) -> list[str]:
         elif isinstance(cell_value, (int, float)) and not isinstance(cell_value, bool):
             if is_year_like(cell_value):
                 labels.append(str(cell_value))
-            else:
+            elif labels:
                 break
         elif not isinstance(cell_value, bool):
             text = str(cell_value)
@@ -412,7 +412,7 @@ def _heuristic_column_labels(ws: Worksheet, row: int, col: int) -> list[str]:
         elif isinstance(cell_value, (int, float)) and not isinstance(cell_value, bool):
             if is_year_like(cell_value):
                 labels.append(str(cell_value))
-            else:
+            elif labels:
                 break
         elif not isinstance(cell_value, bool):
             text = str(cell_value)

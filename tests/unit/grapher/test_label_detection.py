@@ -149,3 +149,82 @@ def test_collect_labels_region_label_columns(tmp_path) -> None:
         assert col == []
     finally:
         wv.close()
+
+
+def test_heuristic_row_scan_skips_leading_non_year_numbers(tmp_path) -> None:
+    """Non-year numbers break only after at least one label was collected to the right."""
+    pytest.importorskip("xlsxwriter")
+    import xlsxwriter
+
+    path = tmp_path / "skip_num.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    ws.write_string(0, 0, "A-label")
+    ws.write_number(0, 1, 999)
+    ws.write_string(0, 2, "C-label")
+    ws.write_number(0, 3, 888)
+    ws.write_number(0, 4, 1)
+    wb.close()
+
+    import fastpyxl
+
+    wv = fastpyxl.load_workbook(path, data_only=True)
+    try:
+        wsv = wv["S"]
+        cfg = LabelDetectionConfig(enabled=True)
+        reg = build_label_behavior_registry(None)
+        st = LabelDetectionState()
+        row, col = collect_labels_for_node(
+            key="S!E1",
+            sheet="S",
+            row=1,
+            col=5,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=wsv,
+            ws_formulas=wsv,
+        )
+        assert row == ["C-label"]
+        assert col == []
+    finally:
+        wv.close()
+
+
+def test_heuristic_column_scan_skips_leading_non_year_numbers(tmp_path) -> None:
+    pytest.importorskip("xlsxwriter")
+    import xlsxwriter
+
+    path = tmp_path / "skip_num_col.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    ws.write_string(0, 0, "top")
+    ws.write_number(1, 0, 999)
+    ws.write_string(2, 0, "mid")
+    ws.write_number(3, 0, 888)
+    ws.write_number(4, 0, 1)
+    wb.close()
+
+    import fastpyxl
+
+    wv = fastpyxl.load_workbook(path, data_only=True)
+    try:
+        wsv = wv["S"]
+        cfg = LabelDetectionConfig(enabled=True)
+        reg = build_label_behavior_registry(None)
+        st = LabelDetectionState()
+        row, col = collect_labels_for_node(
+            key="S!A5",
+            sheet="S",
+            row=5,
+            col=1,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=wsv,
+            ws_formulas=wsv,
+        )
+        assert row == []
+        assert col == ["mid"]
+    finally:
+        wv.close()
