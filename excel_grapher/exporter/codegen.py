@@ -133,6 +133,23 @@ class CodeGenerator:
         self._used_graph_closure: bool = False
         self._formula_cell_address: str | None = None
 
+    def __enter__(self) -> CodeGenerator:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self._reset_transient_state()
+        return None
+
+    def _reset_transient_state(self) -> None:
+        self._emitted.clear()
+        self._needs_offset_runtime = False
+        self._needs_index_ref_runtime = False
+        self._offset_runtime_sheets.clear()
+        self._temp_var_counter = 0
+        self._ast_cache.clear()
+        self._used_graph_closure = False
+        self._formula_cell_address = None
+
     @staticmethod
     def _normalize_entrypoint_name(name: str) -> str:
         return CodeGenerator._normalize_package_name(name)
@@ -1505,7 +1522,7 @@ class CodeGenerator:
 
     def generate(
         self,
-        targets: list[str],
+        targets: Sequence[str] | None = None,
         *,
         entrypoints: Mapping[str, Sequence[str]] | None = None,
         constant_types: set[str] | None = None,
@@ -1528,7 +1545,7 @@ class CodeGenerator:
             Standalone Python source code as a string.
         """
         normalized_entrypoints = self._normalize_entrypoints(entrypoints)
-        normalized_targets = [normalize_address(t) for t in targets]
+        normalized_targets = self._resolve_targets(targets)
         entrypoint_targets: list[str] = []
         seen_targets: set[str] = set()
         for entrypoint_list in normalized_entrypoints.values():
@@ -1665,7 +1682,7 @@ class CodeGenerator:
 
     def generate_modules(
         self,
-        targets: list[str],
+        targets: Sequence[str] | None = None,
         *,
         entrypoints: Mapping[str, Sequence[str]] | None = None,
         package_name: str = "exported",
@@ -1690,7 +1707,7 @@ class CodeGenerator:
         """
         pkg = self._normalize_package_name(package_name)
         normalized_entrypoints = self._normalize_entrypoints(entrypoints)
-        normalized_targets = [normalize_address(t) for t in targets]
+        normalized_targets = self._resolve_targets(targets)
         entrypoint_targets: list[str] = []
         seen_targets: set[str] = set()
         for entrypoint_list in normalized_entrypoints.values():
@@ -1915,11 +1932,7 @@ class CodeGenerator:
         blank_ranges: Sequence[str] | None = None,
     ) -> GenerationParts:
         """Generate shared intermediate artifacts for single-file and modular exports."""
-        # Reset state for this generation
-        self._needs_offset_runtime = False
-        self._offset_runtime_sheets.clear()
-        self._ast_cache.clear()
-        self._used_graph_closure = False
+        self._reset_transient_state()
 
         blank_rects = normalize_blank_range_specs(blank_ranges)
 
@@ -2041,6 +2054,19 @@ class CodeGenerator:
             "used_xl_functions": frozenset(used_xl_functions),
             "blank_rects": blank_rects,
         }
+
+    def _resolve_targets(self, targets: Sequence[str] | None) -> list[str]:
+        if targets is not None:
+            return [normalize_address(t) for t in targets]
+        target_keys = getattr(self.graph, "target_keys", None)
+        inferred_targets: list[str] = []
+        if callable(target_keys):
+            inferred_targets = list(target_keys())
+        if not inferred_targets:
+            raise ValueError(
+                "No export targets were provided and the graph has no target-marked nodes."
+            )
+        return [normalize_address(t) for t in inferred_targets]
 
     def _collect_all_cells(self, targets: list[str]) -> list[str]:
         """Collect an ordered list of addresses to emit for the given targets.

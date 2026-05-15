@@ -27,6 +27,7 @@ class Node:
     normalized_formula: str | None
     value: Any
     is_leaf: bool
+    is_target: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -59,6 +60,7 @@ class NodeView:
     normalized_formula: str | None
     value: Any
     is_leaf: bool
+    is_target: bool
     metadata: Mapping[str, Any]
 
     @property
@@ -84,5 +86,6 @@ def node_to_view(node: Node) -> NodeView:
         normalized_formula=node.normalized_formula,
         value=node.value,
         is_leaf=node.is_leaf,
+        is_target=node.is_target,
         metadata=MappingProxyType(dict(node.metadata)),
     )

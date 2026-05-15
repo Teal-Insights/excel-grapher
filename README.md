@@ -224,6 +224,7 @@ node = graph.get_node("Sheet1!A10")
 print(node.formula)             # Original formula
 print(node.normalized_formula)  # Sheet-qualified for transpilation
 print(node.value)               # Cached value from Excel
+print(node.is_target)           # True if this node came from original targets
 
 # Iterate over formula cells
 for key, node in graph.formula_nodes():
@@ -236,17 +237,19 @@ for key, node in graph.leaf_node_items():
 # Get sorted keys
 formula_keys = graph.formula_keys()
 leaf_keys = graph.leaf_keys()
+target_keys = graph.target_keys()
 ```
 
 #### `DependencyGraph` filter methods
 
-| Method              | Returns                               | Description                           |
-|---------------------|----------------------------------------|---------------------------------------|
-| `get_node(key)`     | `Node \| None`                       | O(1) lookup by cell address           |
-| `formula_nodes()`   | `Iterator[tuple[NodeKey, Node]]`     | Cells with formulas                   |
-| `leaf_node_items()` | `Iterator[tuple[NodeKey, Node]]`     | Leaf cells (no cell dependencies)     |
-| `formula_keys()`    | `list[NodeKey]`                      | Sorted keys for formula cells         |
-| `leaf_keys()`       | `list[NodeKey]`                      | Sorted keys for leaf cells            |
+| Method              | Returns                                 | Description                           |
+|---------------------|------------------------------------------|---------------------------------------|
+| `get_node(key)`     | `NodeView \| None`                       | O(1) immutable lookup by cell address |
+| `formula_nodes()`   | `Iterator[tuple[NodeKey, Node]]`         | Cells with formulas                   |
+| `leaf_node_items()` | `Iterator[tuple[NodeKey, Node]]`         | Leaf cells (no cell dependencies)     |
+| `formula_keys()`    | `list[NodeKey]`                          | Sorted keys for formula cells         |
+| `leaf_keys()`       | `list[NodeKey]`                          | Sorted keys for leaf cells            |
+| `target_keys()`     | `list[NodeKey]`                          | Sorted keys marked as original targets |
 
 #### `Node` fields
 
@@ -256,6 +259,7 @@ leaf_keys = graph.leaf_keys()
 | `normalized_formula` | `str \| None` | Sheet-qualified formula for transpilation |
 | `value`              | `Any`         | Cached or hardcoded value               |
 | `is_leaf`            | `bool`        | True if the node has no cell dependencies  |
+| `is_target`          | `bool`        | True if the node was one of the original graph targets |
 | `sheet`              | `str`         | Sheet name                              |
 | `column`             | `str`         | Column letter                           |
 | `row`                | `int`         | Row number                              |
@@ -633,6 +637,15 @@ from excel_grapher.exporter import CodeGenerator
 code = CodeGenerator(graph).generate(targets)
 print("\n".join(code.splitlines()[:120]))
 ```
+
+When graph nodes are target-marked (`Node.is_target=True`), `generate()` and `generate_modules()` can infer export targets directly from the graph:
+
+```python
+with CodeGenerator(graph) as gen:
+    code = gen.generate()  # defaults to graph.target_keys()
+```
+
+If neither explicit targets nor target-marked nodes are available, code generation raises a `ValueError`.
 
 You can also emit named entrypoints by passing a mapping of names to target lists:
 

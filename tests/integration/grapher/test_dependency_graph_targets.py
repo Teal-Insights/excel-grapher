@@ -136,6 +136,21 @@ def test_targets_accept_mixed_cells_ranges_and_named_ranges(
         assert key in graph, f"expected expanded root {key!r} in graph"
 
 
+def test_target_nodes_are_marked_with_is_target_metadata(tmp_path: Path) -> None:
+    """Expanded target roots should be marked target-aware on graph nodes."""
+    excel_path = tmp_path / "target_metadata.xlsx"
+    _build_grid_workbook(excel_path)
+
+    graph = create_dependency_graph(excel_path, ["Sheet1!C2"], load_values=False)
+    target_node = graph.get_node("Sheet1!C2")
+    assert target_node is not None
+    assert target_node.is_target is True
+
+    dependency_only = graph.get_node("Sheet1!B2")
+    assert dependency_only is not None
+    assert dependency_only.is_target is False
+
+
 def test_targets_deduplicate_overlaps(tmp_path: Path) -> None:
     """Overlapping target inputs do not duplicate nodes."""
     excel_path = tmp_path / "overlap_targets.xlsx"

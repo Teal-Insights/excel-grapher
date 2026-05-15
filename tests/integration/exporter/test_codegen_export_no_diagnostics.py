@@ -9,6 +9,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.exporter.codegen import CodeGenerator
@@ -74,5 +76,54 @@ def test_codegen_export_has_no_ty_or_ruff_diagnostics(tmp_path: Path) -> None:
         ruff = _run(["uv", "run", "ruff", "check", str(export_file)], cwd=repo_root)
         assert ruff.returncode == 0, f"ruff failed after --fix:\n{ruff.stdout}\n{ruff.stderr}"
         assert ruff.stderr.strip() == ""
+    finally:
+        export_file.unlink(missing_ok=True)
+
+
+@pytest.mark.xfail(
+    reason="CodeGenerator import ordering is not Ruff-clean without --fix (I001).",
+    strict=False,
+)
+def test_codegen_export_is_ruff_clean_without_fix(tmp_path: Path) -> None:
+    """Track raw generated-file Ruff hygiene without auto-fixes."""
+    repo_root = Path(__file__).resolve().parents[3]
+
+    graph = _make_graph(_make_node("S!A1", None, 1.0))
+    code = CodeGenerator(graph).generate(["S!A1"])
+
+    export_file = tmp_path / "exported_codegen.py"
+    export_file.write_text(code, encoding="utf-8")
+
+    try:
+        ruff = _run(["uv", "run", "ruff", "check", str(export_file)], cwd=repo_root)
+        assert ruff.returncode == 0, f"ruff failed:\n{ruff.stdout}\n{ruff.stderr}"
+        assert ruff.stderr.strip() == ""
+    finally:
+        export_file.unlink(missing_ok=True)
+
+
+@pytest.mark.xfail(
+    reason="CodeGenerator output is not Ruff-format-clean without rewriting imports.",
+    strict=False,
+)
+def test_codegen_export_is_ruff_format_clean_without_fix(tmp_path: Path) -> None:
+    """Track whether raw generated code is already `ruff format --check` clean."""
+    repo_root = Path(__file__).resolve().parents[3]
+
+    graph = _make_graph(_make_node("S!A1", None, 1.0))
+    code = CodeGenerator(graph).generate(["S!A1"])
+
+    export_file = tmp_path / "exported_codegen.py"
+    export_file.write_text(code, encoding="utf-8")
+
+    try:
+        ruff_format = _run(
+            ["uv", "run", "ruff", "format", "--check", str(export_file)],
+            cwd=repo_root,
+        )
+        assert ruff_format.returncode == 0, (
+            f"ruff format --check failed:\n{ruff_format.stdout}\n{ruff_format.stderr}"
+        )
+        assert ruff_format.stderr.strip() == ""
     finally:
         export_file.unlink(missing_ok=True)

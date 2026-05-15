@@ -55,6 +55,7 @@ DependencyGraph(_nodes={   'Sheet1!B1': Node(sheet='Sheet1',
                                              normalized_formula='=1+1',
                                              value=None,
                                              is_leaf=True,
+                                             is_target=True,
                                              metadata={})},
                 _edges={'Sheet1!B1': set()},
                 _reverse_edges={'Sheet1!B1': set()},
@@ -146,8 +147,9 @@ emulator, we can transpile the graph to standalone Python code using the
 `linear_dependency.py` in the current folder.
 
 ``` python
-code = CodeGenerator(graph).generate(["Sheet1!C2"])
-with open("linear_dependency.py", "w") as f:
+with CodeGenerator(graph) as gen:
+    code = gen.generate()
+with open("linear_dependency.py", "w", encoding="utf-8") as f:
     f.write(code)
 ```
 
@@ -361,8 +363,9 @@ Similarly, if we generate and run standalone Python code with
 ``` python
 import sys
 
-code = CodeGenerator(graph).generate(["Sheet1!C6"])
-with open("must_cycle.py", "w") as f:
+with CodeGenerator(graph) as gen:
+    code = gen.generate()
+with open("must_cycle.py", "w", encoding="utf-8") as f:
     f.write(code)
 
 sys.path.append(".")
@@ -376,9 +379,6 @@ print_text(str(result["Sheet1!C6"]))
 2.0
 ```
 
-    C:\Users\chris\Software\excel-grapher\examples\micro_workbook\must_cycle.py:284: CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).
-      return xl_circular_reference()
-
 For a detailed report on cycles in the graph, we can use the
 `cycle_report` method:
 
@@ -390,9 +390,9 @@ print_text(pformat(report, indent=4, width=100))
 ``` text
 CycleReport(has_must_cycles=True,
             has_may_cycles=False,
-            must_cycles=[{'Sheet1!B6', 'Sheet1!C6'}],
+            must_cycles=[{'Sheet1!C6', 'Sheet1!B6'}],
             may_cycles=[],
-            example_must_cycle_path=['Sheet1!B6', 'Sheet1!C6', 'Sheet1!B6'],
+            example_must_cycle_path=['Sheet1!C6', 'Sheet1!B6', 'Sheet1!C6'],
             example_may_cycle_path=None)
 ```
 
