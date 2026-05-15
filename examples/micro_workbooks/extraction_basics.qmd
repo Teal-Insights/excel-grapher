@@ -1,5 +1,5 @@
 ---
-title: "Consolidated micro_workbook Graph Examples"
+title: "Consolidated Micro-Workbook Basic Graph Extraction Examples"
 format: gfm
 output: asis
 ---
