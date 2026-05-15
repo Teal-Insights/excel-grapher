@@ -13,10 +13,11 @@ address to LicDsfConstraints (with Annotated[int, Between(lo, hi)], Annotated[fl
 Literal[...]), then re-run until the graph
 builds.
 
-The dependency graph is written to a pickle under ``.cache/`` (by default) when
-inputs match; use ``--no-cache`` to force a full rebuild. If you change
-``EXPORT_RANGES``/target logic without changing the workbook file, use
-``--no-cache`` or bump ``GRAPH_CACHE_SCHEMA``.
+The dependency graph is written as gzipped JSON under ``.cache/`` (same on-disk format as
+``excel_grapher.grapher.cache.save_graph_cache``) when inputs match; use
+``--no-cache`` to force a full rebuild. If you change ``EXPORT_RANGES``/target
+logic without changing the workbook file, use ``--no-cache`` or bump
+``GRAPH_CACHE_SCHEMA`` (stored in ``extraction_params`` for invalidation).
 
 With ``GRAPH_LOAD_VALUES=True``, each node’s ``value`` includes Excel’s cached
 calculated result for formula cells (from a data-only workbook read at build
@@ -25,12 +26,10 @@ time), which ``main.py`` uses for an instant Figure 1 preview before
 """
 
 import argparse
-import hashlib
-import importlib.metadata
-import pickle
 import time
 from pathlib import Path
 from typing import (
+    Any,
     Literal,
     TypedDict,
 )
@@ -47,6 +46,11 @@ from excel_grapher import (
     get_calc_settings,
     to_graphviz,
     validate_graph,
+)
+from excel_grapher.grapher.cache import (
+    build_graph_cache_meta,
+    save_graph_cache,
+    try_load_graph_cache,
 )
 
 
@@ -74,7 +78,7 @@ class ExportRangeConfig(TypedDict):
 WORKBOOK_PATH = Path("examples/lic_dsf/data/lic-dsf-template-2025-08-12.xlsm")
 WORKBOOK_TEMPLATE_URL = "https://thedocs.worldbank.org/en/doc/f0ade6bcf85b6f98dbeb2c39a2b7770c-0360012025/original/LIC-DSF-IDA21-Template-08-12-2025-vf.xlsm"
 
-GRAPH_CACHE_SCHEMA = 2
+GRAPH_CACHE_SCHEMA = 3
 GRAPH_MAX_DEPTH = 50
 GRAPH_LOAD_VALUES = True
 GRAPH_USE_CACHED_DYNAMIC_REFS = True
@@ -267,114 +271,16 @@ def cells_in_range(sheet: str, range_a1: str) -> list[str]:
 
 def _default_graph_cache_path(workbook: Path) -> Path:
     stem = workbook.resolve().stem
-    return _GRAPH_SCRIPT_DIR / ".cache" / f"{stem}-dependency-graph.pkl"
+    return _GRAPH_SCRIPT_DIR / ".cache" / f"{stem}-dependency-graph.json.gz"
 
 
-def _targets_fingerprint(targets: list[str]) -> str:
-    h = hashlib.sha256()
-    for key in targets:
-        h.update(key.encode("utf-8"))
-        h.update(b"\n")
-    return h.hexdigest()
-
-
-def _excel_grapher_version() -> str:
-    try:
-        return importlib.metadata.version("excel-grapher")
-    except importlib.metadata.PackageNotFoundError:
-        return "unknown"
-
-
-def _graph_cache_meta(
-    workbook: Path,
-    targets: list[str],
-    *,
-    max_depth: int,
-) -> dict[str, object]:
-    resolved = workbook.resolve()
-    st = resolved.stat()
+def _extraction_params(*, max_depth: int) -> dict[str, Any]:
     return {
-        "schema": GRAPH_CACHE_SCHEMA,
-        "workbook": str(resolved),
-        "workbook_mtime_ns": st.st_mtime_ns,
-        "workbook_size": st.st_size,
-        "targets_fingerprint": _targets_fingerprint(targets),
-        "use_cached_dynamic_refs": GRAPH_USE_CACHED_DYNAMIC_REFS,
+        "lic_example_cache_schema": GRAPH_CACHE_SCHEMA,
         "max_depth": max_depth,
         "load_values": GRAPH_LOAD_VALUES,
-        "excel_grapher_version": _excel_grapher_version(),
+        "use_cached_dynamic_refs": GRAPH_USE_CACHED_DYNAMIC_REFS,
     }
-
-
-def _cache_meta_matches(
-    stored: dict[str, object],
-    workbook: Path,
-    targets: list[str],
-    *,
-    max_depth: int,
-) -> bool:
-    if stored.get("schema") != GRAPH_CACHE_SCHEMA:
-        return False
-    resolved = workbook.resolve()
-    try:
-        st = resolved.stat()
-    except OSError:
-        return False
-    if stored.get("workbook") != str(resolved):
-        return False
-    if stored.get("workbook_mtime_ns") != st.st_mtime_ns:
-        return False
-    if stored.get("workbook_size") != st.st_size:
-        return False
-    if stored.get("targets_fingerprint") != _targets_fingerprint(targets):
-        return False
-    if stored.get("use_cached_dynamic_refs") != GRAPH_USE_CACHED_DYNAMIC_REFS:
-        return False
-    if stored.get("max_depth") != max_depth:
-        return False
-    if stored.get("load_values") != GRAPH_LOAD_VALUES:
-        return False
-    return stored.get("excel_grapher_version") == _excel_grapher_version()
-
-
-def try_load_graph_cache(
-    cache_path: Path,
-    workbook: Path,
-    targets: list[str],
-    *,
-    max_depth: int,
-) -> DependencyGraph | None:
-    if not cache_path.is_file():
-        return None
-    try:
-        with cache_path.open("rb") as f:
-            payload = pickle.load(f)
-    except (OSError, pickle.UnpicklingError, EOFError, AttributeError, TypeError):
-        return None
-    if not isinstance(payload, tuple) or len(payload) != 2:
-        return None
-    meta, graph = payload
-    if not isinstance(meta, dict) or not isinstance(graph, DependencyGraph):
-        return None
-    if not _cache_meta_matches(meta, workbook, targets, max_depth=max_depth):
-        return None
-    return graph
-
-
-def save_graph_cache(
-    cache_path: Path,
-    graph: DependencyGraph,
-    workbook: Path,
-    targets: list[str],
-    *,
-    max_depth: int,
-) -> None:
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    meta = _graph_cache_meta(workbook, targets, max_depth=max_depth)
-    tmp = cache_path.with_suffix(cache_path.suffix + ".tmp")
-    with tmp.open("wb") as f:
-        pickle.dump((meta, graph), f, protocol=pickle.HIGHEST_PROTOCOL)
-    tmp.replace(cache_path)
 
 
 def main() -> None:
@@ -388,7 +294,7 @@ def main() -> None:
         "--cache-path",
         type=Path,
         default=None,
-        help="Pickle path for the graph cache (default: .cache/<workbook-stem>-dependency-graph.pkl).",
+        help="Graph cache path (.json or .json.gz; default: .cache/<workbook-stem>-dependency-graph.json.gz; same format as excel_grapher.grapher.cache).",
     )
     args = parser.parse_args()
 
@@ -420,16 +326,17 @@ def main() -> None:
 
     cache_path = args.cache_path or _default_graph_cache_path(WORKBOOK_PATH)
 
+    expected_meta = build_graph_cache_meta(
+        WORKBOOK_PATH,
+        all_targets,
+        extraction_params=_extraction_params(max_depth=GRAPH_MAX_DEPTH),
+    )
+
     print("\n2. Loading / building dependency graph...", flush=True)
     t_graph = time.perf_counter()
     graph: DependencyGraph | None = None
     if not args.no_cache:
-        graph = try_load_graph_cache(
-            cache_path,
-            WORKBOOK_PATH,
-            all_targets,
-            max_depth=GRAPH_MAX_DEPTH,
-        )
+        graph = try_load_graph_cache(cache_path, expected_meta=expected_meta)
         if graph is not None:
             print(f"   Loaded graph from cache: {cache_path}", flush=True)
             print(f"   Cache load time: {time.perf_counter() - t_graph:.2f}s", flush=True)
@@ -456,13 +363,7 @@ def main() -> None:
         print(f"   Graph build time: {time.perf_counter() - t_graph:.2f}s", flush=True)
         if not args.no_cache:
             try:
-                save_graph_cache(
-                    cache_path,
-                    graph,
-                    WORKBOOK_PATH,
-                    all_targets,
-                    max_depth=GRAPH_MAX_DEPTH,
-                )
+                save_graph_cache(cache_path, graph, expected_meta)
                 print(f"   Saved graph cache: {cache_path}", flush=True)
             except OSError as e:
                 print(f"   Warning: could not write graph cache ({e})", flush=True)
