@@ -438,6 +438,7 @@ from excel_grapher.grapher import (
     LabelDetectionBehavior,
     LabelDetectionContext,
     LabelResult,
+    RegionLabelParams,
     RegionSelector,
     region_specs_from_ranges,
 )
@@ -503,8 +504,318 @@ to collect year offset labels from, and we still apply
 “heuristic_column_scan” to collect the column labels. We can apply any
 combination of behaviors we want to different parts of the workbook.
 
-## 11. Rightward or downward scans
+## 11. Transforming years to offsets
 
-## 12. Left, then up scans
+`year_offset_headers` is currently in the default registry, but this
+behavior is domain-specific. A cleaner long-term direction is to
+register year-to-offset logic only when needed.
 
-## 13. Year offset labels
+The next snippet shows one way to implement that as a custom behavior
+for a **tall-format** block (`Sheet1!A38:B40`), where years are in
+column **A** and values are in column **B**. For **B40**, this converts
+year **2000** to `offset:1` relative to the first year in the block
+(**1999**), while still collecting the top column label (`"Revenue"`).
+
+``` python
+from dataclasses import dataclass
+
+from excel_grapher.grapher import (
+    BehaviorRule,
+    LabelDetectionBehavior,
+    LabelDetectionContext,
+    LabelResult,
+    RegionSelector,
+    region_specs_from_ranges,
+)
+
+
+@dataclass
+class YearOffsetRowLabel(LabelDetectionBehavior):
+    name: str = "year_offset_row_label"
+
+    def detect(self, ctx: LabelDetectionContext) -> LabelResult:
+        rp = ctx.region_params
+        if rp is None or ctx.ws_values is None or rp.min_row is None or rp.max_row is None:
+            return LabelResult()
+
+        # We use the first numeric year in column A of the configured region as the baseline.
+        base_year: int | None = None
+        for row in range(rp.min_row, rp.max_row + 1):
+            v = ctx.ws_values.cell(row=row, column=1).value
+            if isinstance(v, int) and 1900 <= v <= 2100:
+                base_year = v
+                break
+        if base_year is None:
+            return LabelResult()
+
+        current = ctx.ws_values.cell(row=ctx.row, column=1).value
+        if not isinstance(current, int) or not (1900 <= current <= 2100):
+            return LabelResult()
+
+        return LabelResult(row_labels=(f"offset:{current - base_year}",))
+
+
+cfg = LabelDetectionConfig(
+    enabled=True,
+    rules=(
+        BehaviorRule(
+            name="tallYearOffsets",
+            selector=RegionSelector(
+                include=region_specs_from_ranges(["Sheet1!A38:B40"]),
+            ),
+            behaviors=("year_offset_row_label", "heuristic_column_scan"),
+            stop_after_match=True,
+            # Region bounds are consumed by the custom behavior.
+            region_params=RegionLabelParams(min_row=39, max_row=40),
+        ),
+    ),
+    fallback_behaviors=(),
+)
+
+graph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!B40"],
+    load_values=True,
+    label_detection=cfg,
+    label_behaviors=[YearOffsetRowLabel()],
+)
+
+md = dict(graph.get_node("Sheet1!B40").metadata)
+print_text(
+    f"Row labels: {md.get('row_labels', [])}\n"
+    f"Column labels: {md.get('column_labels', [])}"
+)
+```
+
+``` text
+Row labels: ['offset:1']
+Column labels: ['Revenue']
+```
+
+This keeps the year-offset behavior explicit and local to the region and
+model that need it, without relying on a globally registered default.
+
+## 12. Rightward or downward scans
+
+We plan to include rightward and downward scans in the default registry,
+but this is not yet implemented.
+
+In rows 46-49 is a table with units to the right of a numeric column,
+and with a source field at the bottom of the column. If we wanted to
+collect these labels for the cell **A48** (while still collecting the
+column label), we could use `right_edge_scan` and `bottom_edge_scan` in
+combination with `top_edge_scan`. Here’s what it will look like when it
+is implemented:
+
+``` python
+try:
+    from excel_grapher.grapher import (
+        BehaviorRule,
+        RegionSelector,
+        region_specs_from_ranges,
+    )
+
+    cfg = LabelDetectionConfig(
+        enabled=True,
+        rules=(
+            BehaviorRule(
+                name="unitsAndSourceBlock",
+                selector=RegionSelector(
+                    include=region_specs_from_ranges(["Sheet1!A46:C49"]),
+                ),
+                behaviors=("right_edge_scan", "bottom_edge_scan", "top_edge_scan"),
+                stop_after_match=True,
+            ),
+        ),
+        fallback_behaviors=(),
+    )
+
+    graph = create_dependency_graph(
+        workbook_path,
+        ["Sheet1!A48"],
+        load_values=True,
+        label_detection=cfg,
+    )
+
+    md = dict(graph.get_node("Sheet1!A48").metadata)
+    print_text(
+        f"Row labels: {md.get('row_labels', [])}\n"
+        f"Column labels: {md.get('column_labels', [])}"
+    )
+except ValueError as exc:
+    if "Unknown label detection behavior" in str(exc):
+        print_text(
+            "(right_edge_scan / bottom_edge_scan / top_edge_scan not registered yet)\n"
+            "When they are, A48 should be able to collect row labels from text to the right "
+            "(for example units) and below (for example source), while still collecting "
+            "the column label from above."
+        )
+    else:
+        raise
+```
+
+``` text
+(right_edge_scan / bottom_edge_scan / top_edge_scan not registered yet)
+When they are, A48 should be able to collect row labels from text to the right (for example units) and below (for example source), while still collecting the column label from above.
+```
+
+## 13. Left, then up scans
+
+Rows 51-56 show a small wide-format time series with grouped rows and
+hierarchical row labels. A simple heuristic left-scan from **B56** would
+only collect “Real” from **A56**, but this label alone isn’t very
+informative. The double-indentation of **A56** indicates that it is a
+child of the single-indented **A54** label, “GDP”, and the unindented
+**A53** label, “United States”. To understand what **B56** represents,
+we need to scan left to collected the row label, then up to collect the
+parent labels, using indentation to infer hierarchy. In fact, this is
+already implemented in the built-in `region_left_label_columns` behavior
+(though this behavior badly needs a name change).
+
+``` python
+graph: DependencyGraph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!B56"],
+    load_values=True,
+    label_detection=LabelDetectionConfig(
+        enabled=True,
+        rules=(
+            BehaviorRule(
+                name="indentHierarchy",
+                selector=RegionSelector(
+                    include=region_specs_from_ranges(["Sheet1!A51:B56"]),
+                ),
+                behaviors=("region_left_label_columns", "heuristic_column_scan"),
+            ),
+        ),
+    )
+)
+
+md = dict(graph.get_node("Sheet1!B56").metadata)
+print_text(
+    f"Row labels: {md.get('row_labels', [])}\n"
+    f"Column labels: {md.get('column_labels', [])}"
+)
+```
+
+``` text
+Row labels: []
+Column labels: []
+```
+
+Currently, this behavior does *not* use font weight to infer hierarchy,
+but it probably should. For instance, applying
+`region_left_label_columns` to **A38:A40** should collect “Year” as a
+parent of “1999” and “2000” because it is bold, while “1999” and “2000”
+are not.
+
+What if we wanted to implement a custom behavior that uses font weight
+to infer hierarchy? The `ws_values` and `ws_formulas` attributes of
+`LabelDetectionContext` expose a `cell` selector method that can be used
+to get a
+[`fastpyxl.cell.cell.Cell`](https://fastpyxl.readthedocs.io/en/latest/api/fastpyxl.cell.cell.html#fastpyxl.cell.cell.Cell)
+object, and this `Cell` object (a subclass of
+[`StylableObject`](https://fastpyxl.readthedocs.io/en/latest/api/fastpyxl.styles.styleable.html#fastpyxl.styles.styleable.StyleableObject))
+exposes style fields such as `alignment` and `font` that can be used in
+label detection logic. Here’s an example of how to implement such logic:
+
+``` python
+from dataclasses import dataclass
+from fastpyxl.utils.cell import column_index_from_string
+
+from excel_grapher.grapher import (
+    BehaviorRule,
+    LabelDetectionBehavior,
+    LabelDetectionContext,
+    LabelDetectionConfig,
+    LabelResult,
+    RegionLabelParams,
+    RegionSelector,
+    create_dependency_graph,
+    region_specs_from_ranges,
+)
+
+
+@dataclass
+class FontWeightHierarchyRowLabels(LabelDetectionBehavior):
+    name: str = "font_weight_hierarchy_row_labels"
+
+    def detect(self, ctx: LabelDetectionContext) -> LabelResult:
+        rp = ctx.region_params
+        if (
+            ctx.ws_values is None
+            or rp is None
+            or not rp.label_columns
+            or rp.min_row is None
+            or rp.max_row is None
+        ):
+            return LabelResult()
+
+        # Demo assumption: one label column with hierarchy based on bold vs non-bold text.
+        col_letter = rp.label_columns[0]
+        col_idx = column_index_from_string(col_letter)
+
+        current_parent: str | None = None
+        row_labels: list[str] = []
+        for row in range(rp.min_row, min(ctx.row, rp.max_row) + 1):
+            cell = ctx.ws_values.cell(row=row, column=col_idx)
+            if not isinstance(cell.value, str):
+                continue
+            text = cell.value.strip()
+            if not text:
+                continue
+
+            is_bold = bool(cell.font and cell.font.bold)
+            if is_bold:
+                current_parent = text
+
+            if row == ctx.row:
+                if is_bold:
+                    row_labels = [text]
+                elif current_parent is not None:
+                    row_labels = [current_parent, text]
+                else:
+                    row_labels = [text]
+
+        return LabelResult(row_labels=tuple(row_labels))
+
+
+cfg = LabelDetectionConfig(
+    enabled=True,
+    rules=(
+        BehaviorRule(
+            name="fontWeightHierarchyDemo",
+            selector=RegionSelector(
+                include=region_specs_from_ranges(["Sheet1!A51:B56"]),
+            ),
+            behaviors=("font_weight_hierarchy_row_labels", "heuristic_column_scan"),
+            stop_after_match=True,
+            region_params=RegionLabelParams(
+                label_columns=("A",),
+                min_row=51,
+                max_row=56,
+            ),
+        ),
+    ),
+    fallback_behaviors=(),
+)
+
+graph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!B56"],
+    load_values=True,
+    label_detection=cfg,
+    label_behaviors=[FontWeightHierarchyRowLabels()],
+)
+
+md = dict(graph.get_node("Sheet1!B56").metadata)
+print_text(
+    f"Row labels: {md.get('row_labels', [])}\n"
+    f"Column labels: {md.get('column_labels', [])}"
+)
+```
+
+``` text
+Row labels: ['United States', 'Real']
+Column labels: []
+```
