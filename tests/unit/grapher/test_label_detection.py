@@ -228,3 +228,79 @@ def test_top_edge_scan_skips_leading_non_year_numbers(tmp_path) -> None:
         assert col == ["mid"]
     finally:
         wv.close()
+
+
+def test_full_row_scan_collects_text_across_intervening_numbers(tmp_path) -> None:
+    pytest.importorskip("xlsxwriter")
+    import xlsxwriter
+
+    path = tmp_path / "full_row_scan.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    ws.write_string(0, 0, "A-label")
+    ws.write_number(0, 1, 999)
+    ws.write_string(0, 2, "C-label")
+    ws.write_number(0, 3, 1)
+    wb.close()
+
+    import fastpyxl
+
+    wv = fastpyxl.load_workbook(path, data_only=True)
+    try:
+        wsv = wv["S"]
+        cfg = LabelDetectionConfig(enabled=True, fallback_behaviors=("full_row_scan",))
+        reg = build_label_behavior_registry(None)
+        st = LabelDetectionState()
+        row, col = collect_labels_for_node(
+            key="S!D1",
+            sheet="S",
+            row=1,
+            col=4,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=wsv,
+            ws_formulas=wsv,
+        )
+        assert row == ["C-label", "A-label"]
+        assert col == []
+    finally:
+        wv.close()
+
+
+def test_full_column_scan_collects_text_across_intervening_numbers(tmp_path) -> None:
+    pytest.importorskip("xlsxwriter")
+    import xlsxwriter
+
+    path = tmp_path / "full_column_scan.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    ws.write_string(0, 0, "top")
+    ws.write_number(1, 0, 999)
+    ws.write_string(2, 0, "mid")
+    ws.write_number(3, 0, 1)
+    wb.close()
+
+    import fastpyxl
+
+    wv = fastpyxl.load_workbook(path, data_only=True)
+    try:
+        wsv = wv["S"]
+        cfg = LabelDetectionConfig(enabled=True, fallback_behaviors=("full_column_scan",))
+        reg = build_label_behavior_registry(None)
+        st = LabelDetectionState()
+        row, col = collect_labels_for_node(
+            key="S!A4",
+            sheet="S",
+            row=4,
+            col=1,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=wsv,
+            ws_formulas=wsv,
+        )
+        assert row == []
+        assert col == ["mid", "top"]
+    finally:
+        wv.close()

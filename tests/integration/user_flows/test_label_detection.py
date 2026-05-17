@@ -274,10 +274,6 @@ def test_wide_format_gdp_column_label_is_year_only(
     assert "USA" not in _column_labels(metadata)
 
 
-@pytest.mark.xfail(
-    reason="full_row_scan / full_column_scan are not registered on the default registry",
-    strict=True,
-)
 def test_wide_format_gdp_collects_identifier_and_year_with_full_scans(
     label_workbook_factory: WorkbookFactory,
 ) -> None:

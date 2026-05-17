@@ -271,15 +271,15 @@ the row, so we probably want to collect it.
 
 The default `LabelDetectionBehavior`s used by `LabelDetectionConfig` are
 `left_edge_scan` and `top_edge_scan`, but there are also others
-registered on the default registry: `year_offset_headers`,
-`region_header_rows`, and `region_left_label_columns`. I intend to add
-`full_row_scan` and `full_column_scan` to the default registry, and
-these will collect all text cells in the path, which is the behavior we
-want in this case.
+registered on the default registry: `full_row_scan`, `full_column_scan`,
+`year_offset_headers`, `region_header_rows`, and
+`region_left_label_columns`. `full_row_scan` and `full_column_scan`
+collect all text cells in the path, which is the behavior we want in
+this case.
 
-Then you will be able to configure a `BehaviorRule` with a
-`RegionSelector` to use these behaviors for a specified spreadsheet
-region, and pass this rule to `LabelDetectionConfig`:
+You can configure a `BehaviorRule` with a `RegionSelector` to use these
+behaviors for a specified spreadsheet region, and pass this rule to
+`LabelDetectionConfig`:
 
 ``` python
 from excel_grapher.grapher import (
@@ -326,8 +326,8 @@ except ValueError as exc:
 ```
 
 ``` text
-(full_row_scan / full_column_scan not registered yet)
-When they are, B32 should pick up row label 'GDP' and column labels such as 'USA' and 'Year 1' from the cells above it in column B.
+Row labels: ['GDP']
+Column labels: ['USA', 'Year 1']
 ```
 
 ## 08. Duplicate labels

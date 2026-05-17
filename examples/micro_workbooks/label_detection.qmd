@@ -189,9 +189,9 @@ print_text(
 
 While the default behavior will be to take only left- or top-edge text cells as labels, there may be times when we want all text cells in the path to be considered as labels. For example, "USA" in this wide-format time series acts like a secondary label because it is an identifier for the row, so we probably want to collect it.
 
-The default `LabelDetectionBehavior`s used by `LabelDetectionConfig` are `left_edge_scan` and `top_edge_scan`, but there are also others registered on the default registry: `year_offset_headers`, `region_header_rows`, and `region_left_label_columns`. I intend to add `full_row_scan` and `full_column_scan` to the default registry, and these will collect all text cells in the path, which is the behavior we want in this case.
+The default `LabelDetectionBehavior`s used by `LabelDetectionConfig` are `left_edge_scan` and `top_edge_scan`, but there are also others registered on the default registry: `full_row_scan`, `full_column_scan`, `year_offset_headers`, `region_header_rows`, and `region_left_label_columns`. `full_row_scan` and `full_column_scan` collect all text cells in the path, which is the behavior we want in this case.
 
-Then you will be able to configure a `BehaviorRule` with a `RegionSelector` to use these behaviors for a specified spreadsheet region, and pass this rule to `LabelDetectionConfig`:
+You can configure a `BehaviorRule` with a `RegionSelector` to use these behaviors for a specified spreadsheet region, and pass this rule to `LabelDetectionConfig`:
 
 ```{python}
 from excel_grapher.grapher import (
