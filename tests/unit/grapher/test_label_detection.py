@@ -304,3 +304,76 @@ def test_full_column_scan_collects_text_across_intervening_numbers(tmp_path) -> 
         assert col == ["mid", "top"]
     finally:
         wv.close()
+
+
+def test_right_edge_scan_collects_text_to_the_right(tmp_path) -> None:
+    pytest.importorskip("xlsxwriter")
+    import xlsxwriter
+
+    path = tmp_path / "right_edge_scan.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    ws.write_number("A1", 200)
+    ws.write_string("B1", "million")
+    ws.write_string("C1", "dollars")
+    wb.close()
+
+    import fastpyxl
+
+    wv = fastpyxl.load_workbook(path, data_only=True)
+    try:
+        wsv = wv["S"]
+        cfg = LabelDetectionConfig(enabled=True, fallback_behaviors=("right_edge_scan",))
+        reg = build_label_behavior_registry(None)
+        st = LabelDetectionState()
+        row, col = collect_labels_for_node(
+            key="S!A1",
+            sheet="S",
+            row=1,
+            col=1,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=wsv,
+            ws_formulas=wsv,
+        )
+        assert row == ["million", "dollars"]
+        assert col == []
+    finally:
+        wv.close()
+
+
+def test_bottom_edge_scan_collects_text_below(tmp_path) -> None:
+    pytest.importorskip("xlsxwriter")
+    import xlsxwriter
+
+    path = tmp_path / "bottom_edge_scan.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    ws.write_number("A1", 200)
+    ws.write_string("A2", "Source: CIA Factbook, 2012")
+    wb.close()
+
+    import fastpyxl
+
+    wv = fastpyxl.load_workbook(path, data_only=True)
+    try:
+        wsv = wv["S"]
+        cfg = LabelDetectionConfig(enabled=True, fallback_behaviors=("bottom_edge_scan",))
+        reg = build_label_behavior_registry(None)
+        st = LabelDetectionState()
+        row, col = collect_labels_for_node(
+            key="S!A1",
+            sheet="S",
+            row=1,
+            col=1,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=wsv,
+            ws_formulas=wsv,
+        )
+        assert row == ["Source: CIA Factbook, 2012"]
+        assert col == []
+    finally:
+        wv.close()

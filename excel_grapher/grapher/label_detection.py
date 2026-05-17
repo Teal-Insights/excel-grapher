@@ -478,6 +478,46 @@ def _full_column_labels(ws: Worksheet, row: int, col: int) -> list[str]:
     return dedupe_preserve_order(labels)
 
 
+def _right_edge_row_labels(ws: Worksheet, row: int, col: int) -> list[str]:
+    labels: list[str] = []
+    max_col = ws.max_column or col
+    current_col = col + 1
+    while current_col <= max_col:
+        cell_value = _scan_cell_value(ws, row, current_col)
+        if cell_value is None or (isinstance(cell_value, str) and cell_value.strip() == ""):
+            break
+        if isinstance(cell_value, str):
+            text = cell_value.strip()
+            if is_valid_label(text):
+                labels.append(text)
+        elif not isinstance(cell_value, (int, float, bool)):
+            text = str(cell_value)
+            if is_valid_label(text):
+                labels.append(text)
+        current_col += 1
+    return dedupe_preserve_order(labels)
+
+
+def _bottom_edge_column_labels(ws: Worksheet, row: int, col: int) -> list[str]:
+    labels: list[str] = []
+    max_row = ws.max_row or row
+    current_row = row + 1
+    while current_row <= max_row:
+        cell_value = _scan_cell_value(ws, current_row, col)
+        if cell_value is None or (isinstance(cell_value, str) and cell_value.strip() == ""):
+            break
+        if isinstance(cell_value, str):
+            text = cell_value.strip()
+            if is_valid_label(text):
+                labels.append(text)
+        elif not isinstance(cell_value, (int, float, bool)):
+            text = str(cell_value)
+            if is_valid_label(text):
+                labels.append(text)
+        current_row += 1
+    return dedupe_preserve_order(labels)
+
+
 # ---------------------------------------------------------------------------
 # Built-in behaviors
 # ---------------------------------------------------------------------------
@@ -521,6 +561,26 @@ class _FullColumnScan:
             return LabelResult()
         cols = _full_column_labels(ctx.ws_values, ctx.row, ctx.col)
         return LabelResult(column_labels=tuple(cols))
+
+
+class _RightEdgeScan:
+    name = "right_edge_scan"
+
+    def detect(self, ctx: LabelDetectionContext) -> LabelResult:
+        if ctx.ws_values is None:
+            return LabelResult()
+        rows = _right_edge_row_labels(ctx.ws_values, ctx.row, ctx.col)
+        return LabelResult(row_labels=tuple(rows))
+
+
+class _BottomEdgeScan:
+    name = "bottom_edge_scan"
+
+    def detect(self, ctx: LabelDetectionContext) -> LabelResult:
+        if ctx.ws_values is None:
+            return LabelResult()
+        rows = _bottom_edge_column_labels(ctx.ws_values, ctx.row, ctx.col)
+        return LabelResult(row_labels=tuple(rows))
 
 
 class _YearOffsetHeaders:
@@ -608,6 +668,8 @@ def default_label_behaviors() -> tuple[LabelDetectionBehavior, ...]:
         _HeuristicColumnScan(),
         _FullRowScan(),
         _FullColumnScan(),
+        _RightEdgeScan(),
+        _BottomEdgeScan(),
         _YearOffsetHeaders(),
         _RegionHeaderRows(),
         _RegionLeftLabelColumns(),

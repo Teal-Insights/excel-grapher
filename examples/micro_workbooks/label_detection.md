@@ -596,66 +596,53 @@ model that need it, without relying on a globally registered default.
 
 ## 12. Rightward or downward scans
 
-We plan to include rightward and downward scans in the default registry,
-but this is not yet implemented.
+Rightward and downward scans are available in the default registry.
 
 In rows 46-49 is a table with units to the right of a numeric column,
-and with a source field at the bottom of the column. If we wanted to
-collect these labels for the cell **A48** (while still collecting the
-column label), we could use `right_edge_scan` and `bottom_edge_scan` in
-combination with `top_edge_scan`. Here’s what it will look like when it
-is implemented:
+and with a source field at the bottom of the column. To collect these
+labels for the cell **A48** (while still collecting the column label),
+we can use `right_edge_scan` and `bottom_edge_scan` in combination with
+`top_edge_scan`:
 
 ``` python
-try:
-    from excel_grapher.grapher import (
-        BehaviorRule,
-        RegionSelector,
-        region_specs_from_ranges,
-    )
+from excel_grapher.grapher import (
+    BehaviorRule,
+    RegionSelector,
+    region_specs_from_ranges,
+)
 
-    cfg = LabelDetectionConfig(
-        enabled=True,
-        rules=(
-            BehaviorRule(
-                name="unitsAndSourceBlock",
-                selector=RegionSelector(
-                    include=region_specs_from_ranges(["Sheet1!A46:C49"]),
-                ),
-                behaviors=("right_edge_scan", "bottom_edge_scan", "top_edge_scan"),
-                stop_after_match=True,
+cfg = LabelDetectionConfig(
+    enabled=True,
+    rules=(
+        BehaviorRule(
+            name="unitsAndSourceBlock",
+            selector=RegionSelector(
+                include=region_specs_from_ranges(["Sheet1!A46:C49"]),
             ),
+            behaviors=("right_edge_scan", "bottom_edge_scan", "top_edge_scan"),
+            stop_after_match=True,
         ),
-        fallback_behaviors=(),
-    )
+    ),
+    fallback_behaviors=(),
+)
 
-    graph = create_dependency_graph(
-        workbook_path,
-        ["Sheet1!A48"],
-        load_values=True,
-        label_detection=cfg,
-    )
+graph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!A48"],
+    load_values=True,
+    label_detection=cfg,
+)
 
-    md = dict(graph.get_node("Sheet1!A48").metadata)
-    print_text(
-        f"Row labels: {md.get('row_labels', [])}\n"
-        f"Column labels: {md.get('column_labels', [])}"
-    )
-except ValueError as exc:
-    if "Unknown label detection behavior" in str(exc):
-        print_text(
-            "(right_edge_scan / bottom_edge_scan / top_edge_scan not registered yet)\n"
-            "When they are, A48 should be able to collect row labels from text to the right "
-            "(for example units) and below (for example source), while still collecting "
-            "the column label from above."
-        )
-    else:
-        raise
+md = dict(graph.get_node("Sheet1!A48").metadata)
+print_text(
+    f"Row labels: {md.get('row_labels', [])}\n"
+    f"Column labels: {md.get('column_labels', [])}"
+)
 ```
 
 ``` text
-(right_edge_scan / bottom_edge_scan / top_edge_scan not registered yet)
-When they are, A48 should be able to collect row labels from text to the right (for example units) and below (for example source), while still collecting the column label from above.
+Row labels: ['million', 'dollars', 'Source: CIA Factbook, 2012']
+Column labels: ['Value']
 ```
 
 ## 13. Left, then up scans

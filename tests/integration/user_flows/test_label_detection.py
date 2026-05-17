@@ -497,10 +497,6 @@ def test_custom_year_offset_row_label(
 # --- Rightward/downward scans ---
 
 
-@pytest.mark.xfail(
-    reason="right_edge_scan / bottom_edge_scan / top_edge_scan are not registered yet",
-    strict=True,
-)
 def test_right_and_bottom_scans_collect_units_and_source(
     label_workbook_factory: WorkbookFactory,
 ) -> None:
