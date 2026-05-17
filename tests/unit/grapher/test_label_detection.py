@@ -74,6 +74,24 @@ def test_collect_labels_unknown_behavior_raises() -> None:
         )
 
 
+def test_collect_labels_rejects_year_offset_headers_behavior_name() -> None:
+    cfg = LabelDetectionConfig(enabled=True, fallback_behaviors=("year_offset_headers",))
+    reg = build_label_behavior_registry(None)
+    st = LabelDetectionState()
+    with pytest.raises(ValueError, match="Unknown label detection behavior"):
+        collect_labels_for_node(
+            key="S!A1",
+            sheet="S",
+            row=1,
+            col=1,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=None,
+            ws_formulas=None,
+        )
+
+
 def test_collect_labels_rule_stop_skips_fallback() -> None:
     cfg = LabelDetectionConfig(
         enabled=True,
@@ -233,8 +251,8 @@ def test_left_then_up_scan_stops_on_same_indent_lower_style(tmp_path) -> None:
         wv.close()
 
 
-def test_left_edge_scan_skips_leading_non_year_numbers(tmp_path) -> None:
-    """Non-year numbers break only after at least one label was collected to the right."""
+def test_left_edge_scan_resets_labels_when_crossing_non_year_numbers(tmp_path) -> None:
+    """Crossing a non-year number resets collected labels and keeps scanning."""
     pytest.importorskip("xlsxwriter")
     import xlsxwriter
 
@@ -267,13 +285,13 @@ def test_left_edge_scan_skips_leading_non_year_numbers(tmp_path) -> None:
             ws_values=wsv,
             ws_formulas=wsv,
         )
-        assert row == ["C-label"]
+        assert row == ["A-label"]
         assert col == []
     finally:
         wv.close()
 
 
-def test_top_edge_scan_skips_leading_non_year_numbers(tmp_path) -> None:
+def test_top_edge_scan_resets_labels_when_crossing_non_year_numbers(tmp_path) -> None:
     pytest.importorskip("xlsxwriter")
     import xlsxwriter
 
@@ -307,7 +325,7 @@ def test_top_edge_scan_skips_leading_non_year_numbers(tmp_path) -> None:
             ws_formulas=wsv,
         )
         assert row == []
-        assert col == ["mid"]
+        assert col == ["top"]
     finally:
         wv.close()
 

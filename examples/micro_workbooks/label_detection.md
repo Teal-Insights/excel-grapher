@@ -257,8 +257,8 @@ print_text(
 ```
 
 ``` text
-Row labels for D27: ['USA']
-Column labels for B32: ['USA']
+Row labels for D27: ['Year 1']
+Column labels for B32: ['Year 1']
 ```
 
 While the default behavior will be to take only left- or top-edge text
@@ -271,10 +271,10 @@ it.
 The default `LabelDetectionBehavior`s used by `LabelDetectionConfig` are
 `left_edge_scan` and `top_edge_scan`, but there are also others
 registered on the default registry: `full_row_scan`, `full_column_scan`,
-`year_offset_headers`, `region_header_rows`, and `left_then_up_scan`.
-`full_row_scan` and `full_column_scan` are bidirectional from the
-reference cell (scan both directions until blanks), with default output
-ordering of right-to-left for rows and bottom-to-top for columns.
+`region_header_rows`, and `left_then_up_scan`. `full_row_scan` and
+`full_column_scan` are bidirectional from the reference cell (scan both
+directions until blanks), with default output ordering of right-to-left
+for rows and bottom-to-top for columns.
 
 You can configure a `BehaviorRule` with a `RegionSelector` to use these
 behaviors for a specified spreadsheet region, and pass this rule to
@@ -494,9 +494,9 @@ we want to different parts of the workbook.
 
 ## 11. Transforming years to offsets
 
-`year_offset_headers` is currently in the default registry, but this
-behavior is domain-specific. A cleaner long-term direction is to
-register year-to-offset logic only when needed.
+`year_offset_headers` is not in the default registry because this
+behavior is domain-specific. Register it explicitly (or implement a
+custom equivalent) when needed.
 
 The next snippet shows one way to implement that as a custom behavior
 for a **tall-format** block (`Sheet1!A38:B40`), where years are in

@@ -715,11 +715,7 @@ def test_custom_font_weight_hierarchy_row_labels(
     assert _column_labels(metadata) == []
 
 
-@pytest.mark.xfail(
-    reason="Font-weight hierarchy should treat bold header rows as parents of year rows",
-    strict=True,
-)
-def test_font_weight_hierarchy_on_year_table(
+def test_left_then_up_scan_parents_year_leaf_when_header_is_bold(
     label_workbook_factory: WorkbookFactory,
 ) -> None:
     def _populate(ws, wb) -> None:
@@ -740,7 +736,7 @@ def test_font_weight_hierarchy_on_year_table(
                 selector=RegionSelector(
                     include=region_specs_from_ranges(["Sheet1!A1:B3"]),
                 ),
-                behaviors=("font_weight_hierarchy_row_labels", "top_edge_scan"),
+                behaviors=("left_then_up_scan",),
                 stop_after_match=True,
                 region_params=RegionLabelParams(
                     label_columns=("A",),
@@ -755,6 +751,6 @@ def test_font_weight_hierarchy_on_year_table(
         path,
         "Sheet1!B3",
         label_detection=cfg,
-        label_behaviors=[_FontWeightHierarchyRowLabels()],
     )
     assert _row_labels(metadata) == ["Year", "2000"]
+    assert _column_labels(metadata) == []

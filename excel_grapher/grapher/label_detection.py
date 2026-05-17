@@ -12,7 +12,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Any, Literal, Protocol, runtime_checkable
 
-import fastpyxl.utils.cell
 from fastpyxl.worksheet.worksheet import Worksheet
 
 from .blank_ranges import normalize_blank_range_specs
@@ -267,118 +266,6 @@ def _build_label_hierarchy(
     return hierarchy
 
 
-# Year-offset header detection (formula patterns + cached values)
-_ANCHOR_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r"^=\+?ProjectionYear$", re.IGNORECASE),
-    re.compile(r"^=\+?'?Macro-Debt_Data'?!U[45]$"),
-    re.compile(r"^=\+?U4$"),
-]
-_PLUS_ONE_RE = re.compile(r"^=\+?([A-Z]{1,3})(\d+)\+1$")
-_MINUS_ONE_RE = re.compile(r"^=\+?([A-Z]{1,3})(\d+)-1$")
-_ROW_COPY_RE = re.compile(r"^=\+?([A-Z]{1,3})(\d+)$")
-
-
-def _is_anchor_formula(formula: str) -> bool:
-    return any(p.match(formula) for p in _ANCHOR_PATTERNS)
-
-
-def detect_year_offset_headers(
-    ws_formulas: Worksheet,
-    ws_values: Worksheet,
-    header_row: int,
-) -> dict[int, int]:
-    """Map column index to integer year offset for a header row (see LIC-DSF templates)."""
-
-    if hasattr(ws_formulas, "_cells") or hasattr(ws_values, "_cells"):
-        relevant_cols: set[int] = set()
-        if hasattr(ws_formulas, "_cells"):
-            relevant_cols.update(c for r, c in ws_formulas._cells if r == header_row)
-        if hasattr(ws_values, "_cells"):
-            relevant_cols.update(c for r, c in ws_values._cells if r == header_row)
-        if not relevant_cols:
-            max_col = max(ws_formulas.max_column or 1, ws_values.max_column or 1)
-            relevant_cols = set(range(1, max_col + 1))
-    else:
-        max_col = ws_formulas.max_column or 1
-        relevant_cols = set(range(1, max_col + 1))
-
-    formulas: dict[int, str] = {}
-    values: dict[int, int] = {}
-    for col in sorted(relevant_cols):
-        f = ws_formulas.cell(row=header_row, column=col).value
-        v = ws_values.cell(row=header_row, column=col).value
-        if isinstance(f, str) and f.startswith("="):
-            formulas[col] = f
-        if isinstance(v, (int, float)) and not isinstance(v, bool):
-            values[col] = int(v)
-
-    offsets: dict[int, int] = {}
-
-    for col, f in formulas.items():
-        if _is_anchor_formula(f):
-            offsets[col] = values.get(col, 0)
-
-    changed = True
-    while changed:
-        changed = False
-        for col, f in formulas.items():
-            if col in offsets:
-                continue
-            m = _PLUS_ONE_RE.match(f)
-            if m:
-                ref_col_letter, ref_row_str = m.group(1), m.group(2)
-                if int(ref_row_str) == header_row:
-                    ref_col = fastpyxl.utils.cell.column_index_from_string(ref_col_letter)
-                    if ref_col in offsets:
-                        offsets[col] = offsets[ref_col] + 1
-                        changed = True
-                        continue
-            m = _MINUS_ONE_RE.match(f)
-            if m:
-                ref_col_letter, ref_row_str = m.group(1), m.group(2)
-                if int(ref_row_str) == header_row:
-                    ref_col = fastpyxl.utils.cell.column_index_from_string(ref_col_letter)
-                    if ref_col in offsets:
-                        offsets[col] = offsets[ref_col] - 1
-                        changed = True
-                        continue
-
-    if offsets:
-        changed = True
-        while changed:
-            changed = False
-            for col in sorted(formulas.keys()):
-                if col in offsets or col not in values:
-                    continue
-                v = values[col]
-                left = offsets.get(col - 1)
-                right = offsets.get(col + 1)
-                if left is not None and v == left + 1 or right is not None and v == right - 1:
-                    offsets[col] = v
-                    changed = True
-    else:
-        row_copy_candidates: dict[int, int] = {}
-        all_row_copy = True
-        for col, f in formulas.items():
-            m = _ROW_COPY_RE.match(f)
-            if m:
-                ref_col_letter, ref_row_str = m.group(1), m.group(2)
-                ref_col = fastpyxl.utils.cell.column_index_from_string(ref_col_letter)
-                ref_row = int(ref_row_str)
-                if ref_row != header_row and ref_col == col and col in values:
-                    row_copy_candidates[col] = values[col]
-                    continue
-            all_row_copy = False
-
-        if all_row_copy and row_copy_candidates:
-            sorted_cols = sorted(row_copy_candidates.keys())
-            vals = [row_copy_candidates[c] for c in sorted_cols]
-            if all(vals[i + 1] - vals[i] == 1 for i in range(len(vals) - 1)):
-                offsets = row_copy_candidates
-
-    return offsets
-
-
 _OFFSET_PREFIX = "offset:"
 
 
@@ -507,8 +394,22 @@ def _find_leftmost_label_column(ws: Worksheet, row: int, col: int) -> int | None
             text = cell_value.strip()
             if text and is_valid_label(text):
                 leftmost = current_col
+        elif isinstance(cell_value, (int, float)) and not isinstance(cell_value, bool):
+            if is_year_like(cell_value):
+                leftmost = current_col
         current_col -= 1
     return leftmost
+
+
+def _left_then_up_label_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        text = _normalize_label_text(value.strip())
+        if text and is_valid_label(text):
+            return text
+        return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and is_year_like(value):
+        return str(int(value))
+    return None
 
 
 def _left_then_up_row_labels(
@@ -519,11 +420,8 @@ def _left_then_up_row_labels(
         return []
 
     current_cell = ws.cell(row=row, column=label_col_idx)
-    current_value = current_cell.value
-    if not isinstance(current_value, str):
-        return []
-    current_text = _normalize_label_text(current_value.strip())
-    if not current_text or not is_valid_label(current_text):
+    current_text = _left_then_up_label_text(current_cell.value)
+    if current_text is None:
         return []
 
     collected: list[str] = [current_text]
@@ -534,11 +432,8 @@ def _left_then_up_row_labels(
     current_row = row - 1
     while current_row >= min_row:
         cell = ws.cell(row=current_row, column=label_col_idx)
-        value = cell.value
-        if not isinstance(value, str):
-            break
-        text = _normalize_label_text(value.strip())
-        if not text or not is_valid_label(text):
+        text = _left_then_up_label_text(cell.value)
+        if text is None:
             break
 
         indent = _get_effective_indent(cell)
@@ -710,26 +605,6 @@ class _BottomEdgeScan:
         return LabelResult(row_labels=tuple(rows))
 
 
-class _YearOffsetHeaders:
-    """Populate offset maps in :class:`LabelDetectionState` for header rows (no labels by itself)."""
-
-    name = "year_offset_headers"
-
-    def detect(self, ctx: LabelDetectionContext) -> LabelResult:
-        rp = ctx.region_params
-        if rp is None or not rp.header_rows:
-            return LabelResult()
-        if ctx.ws_formulas is None or ctx.ws_values is None:
-            return LabelResult()
-        for hr in rp.header_rows:
-            key = (ctx.sheet, hr)
-            if key not in ctx.state.offset_maps:
-                ctx.state.offset_maps[key] = detect_year_offset_headers(
-                    ctx.ws_formulas, ctx.ws_values, hr
-                )
-        return LabelResult()
-
-
 class _RegionHeaderRows:
     name = "region_header_rows"
 
@@ -774,7 +649,6 @@ def default_label_behaviors() -> tuple[LabelDetectionBehavior, ...]:
         _FullColumnScan(),
         _RightEdgeScan(),
         _BottomEdgeScan(),
-        _YearOffsetHeaders(),
         _RegionHeaderRows(),
         _LeftThenUpScan(),
     )
