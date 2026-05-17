@@ -170,9 +170,13 @@ Column labels: ['Column 2.2', 'Column 2.1']
 
 Scanning left from **D18**, we find a “Row 2.2” label in **B18**.
 Immediately left of that, we encounter a merged cell **A17** created
-from **A17:A18**. The merged cell **A17** is labeled “Row 1.1”.
-Heuristic row scan should correctly collect this label, but it currently
-fails because merged cell handling is not yet implemented.
+from **A17:A18**. The merged cell **A17** is labeled “Row 1.1”. In
+Excel, a merged cell like A17:A18 is visually one big cell, but
+internally only the top-left cell (A17) actually stores the text. The
+other covered cells (like A18) are basically placeholders with no value.
+When `left_edge_scan` lands on one of those placeholder cells, it looks
+up the merged block’s real cell (A17) and uses that text. So this label
+is included in the detected row labels.
 
 ``` python
 graph: DependencyGraph = create_dependency_graph(
@@ -197,7 +201,7 @@ Column labels: ['Column 2.2', 'Column 1.1']
 ## 06. Intervening blank cells
 
 Suppose we have two tables side-by-side, or one above the other. We
-don’t want heuristic left-scan or up-scan to accidentally collect assign
+don’t want `left_edge_scan` or `top_edge_scan` to accidentally collect
 labels from the other table. As long as there are blank cells between
 the tables, the scan will stop at the edge of the current table.
 
@@ -227,15 +231,16 @@ Column labels: ['Column_2']
 
 ## 07. Intervening text cells
 
-Currently, leftward or upward scans will collect all text cells in the
-path. This is incorrect; we only want labels at the left or upper edge
-of the current table.
+`left_edge_scan` and `top_edge_scan` are designed to return edge labels
+for a table rather than all intervening text in a path.
 
-If a scan encounters a numeric cell after having collected a text cell,
-it will currently stop. This is also incorrect. The correct expected
-behavior is that encountering a numeric cell should invalidate all
-labels already collected and continue the scan with an empty labels
-list.
+When either scan encounters a non-year numeric cell after collecting
+text labels, it clears the collected labels and continues scanning. This
+allows intervening text fields (for example, country identifiers) to be
+skipped so only edge labels remain. (This heuristic could still
+sometimes result in false positives, such as when a text column or year
+column we don’t intend to treat as a label sits adjacent to the row
+label column.)
 
 For this example, we have the same table in tall format and wide format,
 with a numeric field for population, a text field for country, and a
@@ -259,8 +264,8 @@ print_text(
 ```
 
 ``` text
-Row labels for D27: ['USA']
-Column labels for B32: ['USA']
+Row labels for D27: ['Year 1']
+Column labels for B32: ['Year 1']
 ```
 
 While the default behavior will be to take only left- or top-edge text

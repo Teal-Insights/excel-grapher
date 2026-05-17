@@ -216,10 +216,6 @@ def test_blank_gap_prevents_labels_from_other_tables(
 # --- Intervening text cells ---
 
 
-@pytest.mark.xfail(
-    reason="Left-edge scan should skip non-edge text fields (e.g. country) for GDP cells",
-    strict=True,
-)
 def test_tall_format_gdp_row_label_is_year_only(
     label_workbook_factory: WorkbookFactory,
 ) -> None:
@@ -245,10 +241,6 @@ def test_tall_format_gdp_row_label_is_year_only(
     assert "USA" not in _row_labels(metadata)
 
 
-@pytest.mark.xfail(
-    reason="Top-edge scan should skip non-edge text fields (e.g. country) for GDP cells",
-    strict=True,
-)
 def test_wide_format_gdp_column_label_is_year_only(
     label_workbook_factory: WorkbookFactory,
 ) -> None:

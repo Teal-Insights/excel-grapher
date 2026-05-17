@@ -151,8 +151,8 @@ def test_collect_labels_region_label_columns(tmp_path) -> None:
         wv.close()
 
 
-def test_left_edge_scan_skips_leading_non_year_numbers(tmp_path) -> None:
-    """Non-year numbers break only after at least one label was collected to the right."""
+def test_left_edge_scan_resets_labels_when_crossing_non_year_numbers(tmp_path) -> None:
+    """Crossing a non-year number resets collected labels and keeps scanning."""
     pytest.importorskip("xlsxwriter")
     import xlsxwriter
 
@@ -185,13 +185,13 @@ def test_left_edge_scan_skips_leading_non_year_numbers(tmp_path) -> None:
             ws_values=wsv,
             ws_formulas=wsv,
         )
-        assert row == ["C-label"]
+        assert row == ["A-label"]
         assert col == []
     finally:
         wv.close()
 
 
-def test_top_edge_scan_skips_leading_non_year_numbers(tmp_path) -> None:
+def test_top_edge_scan_resets_labels_when_crossing_non_year_numbers(tmp_path) -> None:
     pytest.importorskip("xlsxwriter")
     import xlsxwriter
 
@@ -225,6 +225,96 @@ def test_top_edge_scan_skips_leading_non_year_numbers(tmp_path) -> None:
             ws_formulas=wsv,
         )
         assert row == []
-        assert col == ["mid"]
+        assert col == ["top"]
     finally:
         wv.close()
+
+
+def test_left_edge_scan_reads_merged_anchor_value(tmp_path) -> None:
+    pytest.importorskip("xlsxwriter")
+    import xlsxwriter
+
+    path = tmp_path / "merged_row_scan.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    ws.merge_range("A1:B1", "Merged Row Label")
+    ws.write_number("C1", 1)
+    wb.close()
+
+    import fastpyxl
+
+    wv = fastpyxl.load_workbook(path, data_only=True)
+    try:
+        wsv = wv["S"]
+        cfg = LabelDetectionConfig(enabled=True)
+        reg = build_label_behavior_registry(None)
+        st = LabelDetectionState()
+        row, col = collect_labels_for_node(
+            key="S!C1",
+            sheet="S",
+            row=1,
+            col=3,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=wsv,
+            ws_formulas=wsv,
+        )
+        assert row == ["Merged Row Label"]
+        assert col == []
+    finally:
+        wv.close()
+
+
+def test_top_edge_scan_reads_merged_anchor_value(tmp_path) -> None:
+    pytest.importorskip("xlsxwriter")
+    import xlsxwriter
+
+    path = tmp_path / "merged_column_scan.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    ws.merge_range("A1:A2", "Merged Column Label")
+    ws.write_number("A3", 1)
+    wb.close()
+
+    import fastpyxl
+
+    wv = fastpyxl.load_workbook(path, data_only=True)
+    try:
+        wsv = wv["S"]
+        cfg = LabelDetectionConfig(enabled=True)
+        reg = build_label_behavior_registry(None)
+        st = LabelDetectionState()
+        row, col = collect_labels_for_node(
+            key="S!A3",
+            sheet="S",
+            row=3,
+            col=1,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=wsv,
+            ws_formulas=wsv,
+        )
+        assert row == []
+        assert col == ["Merged Column Label"]
+    finally:
+        wv.close()
+
+
+def test_collect_labels_rejects_legacy_heuristic_behavior_names() -> None:
+    cfg = LabelDetectionConfig(enabled=True, fallback_behaviors=("heuristic_row_scan",))
+    reg = build_label_behavior_registry(None)
+    st = LabelDetectionState()
+    with pytest.raises(ValueError, match="Unknown label detection behavior"):
+        collect_labels_for_node(
+            key="S!A1",
+            sheet="S",
+            row=1,
+            col=1,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=None,
+            ws_formulas=None,
+        )
