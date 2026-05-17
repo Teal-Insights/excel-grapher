@@ -1,0 +1,422 @@
+---
+title: "Micro-Workbook Label Detection Examples"
+format: gfm
+output: asis
+---
+
+[examples/micro_workbooks/label_detection.xlsx](label_detection.xlsx) holds five small layouts for optional graph **label detection** (`create_dependency_graph(..., label_detection=...)`). Labels are heuristics over cached cell **values** (not formulas), so `load_values=True` is required for meaningful results. Detected text is stored on each node as `metadata["row_labels"]` and `metadata["column_labels"]` (lists of strings).
+
+```{python}
+#| warning: false
+from pathlib import Path
+from pprint import pformat
+
+from excel_grapher.grapher import (
+    LabelDetectionConfig,
+    create_dependency_graph,
+    DependencyGraph,
+)
+
+workbook_path = Path("label_detection.xlsx")
+
+
+def print_text(text: str):
+    print("```text")
+    print(text)
+    print("```\n")
+```
+
+## 01. Simple row and column labels in neighboring cells
+
+On `Sheet1`, the first layout is a 2×2 block: **B1** names the column, **A2** names the row, and **B2** holds a constant (`0`). For **B2**, the default heuristics scan **left** along the row and **up** along the column, stopping at the first gap. Here the immediate neighbors are non-empty strings, so they are the only labels collected.
+
+With label detection **disabled** (the default), node metadata stays empty:
+
+```{python}
+graph_off: DependencyGraph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!B2"],
+    load_values=True,
+)
+
+node_metadata = graph_off.get_node("Sheet1!B2").metadata
+print_text(
+    f"Row labels: {node_metadata.get('row_labels', [])}\n"
+    f"Column labels: {node_metadata.get('column_labels', [])}"
+)
+```
+
+Pass `LabelDetectionConfig(enabled=True)` to opt in. The same graph now annotates **B2** with one row label and one column label:
+
+```{python}
+graph_on: DependencyGraph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!B2"],
+    load_values=True,
+    label_detection=LabelDetectionConfig(enabled=True),
+)
+
+node = graph_on.get_node("Sheet1!B2")
+node_metadata = node.metadata
+print_text(
+    f"Row labels: {node_metadata.get('row_labels', [])}\n"
+    f"Column labels: {node_metadata.get('column_labels', [])}"
+)
+```
+
+So **B2** is described as belonging to row **"Row 1"** and column **"Column 1"** in graph metadata, which downstream tools (for example HTML exports) can use for display names.
+
+## 02. Simple row and column labels in non-neighboring cells
+
+The next block puts numeric entries in the 2×2 block **B5:C6**, with row labels in **A5:A6** and column labels in **B4:C4**. For target **C6**, the default left and up scans **skip** the intervening numeric cells until a string label is found; empty cells end the run.
+
+```{python}
+graph: DependencyGraph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!C6"],
+    load_values=True,
+    label_detection=LabelDetectionConfig(enabled=True),
+)
+
+md = dict(graph.get_node("Sheet1!C6").metadata)
+print_text(
+    f"Row labels: {md.get('row_labels', [])}\n"
+    f"Column labels: {md.get('column_labels', [])}"
+)
+```
+
+## 03. No labels
+
+Since blank cells end the scan, and B8 has blank cells in both directions, no labels are collected.
+
+```{python}
+graph: DependencyGraph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!B8"],
+    load_values=True,
+    label_detection=LabelDetectionConfig(enabled=True),
+)
+
+md = dict(graph.get_node("Sheet1!B8").metadata)
+print_text(
+    f"Row labels: {md.get('row_labels', [])}\n"
+    f"Column labels: {md.get('column_labels', [])}"
+)
+```
+
+## 04. Nested row and column labels
+
+We allow an arbitrary nested row and column labels, such as when a single table has two header rows. Scanning left from **D13**, we find two label columns. Scanning up from the cell, we find two label rows. The heuristic scan collects the row labels in both A13 and B13, and the column labels in both D10 and D11.
+
+```{python}
+graph: DependencyGraph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!D13"],
+    load_values=True,
+    label_detection=LabelDetectionConfig(enabled=True),
+)
+
+md = dict(graph.get_node("Sheet1!D13").metadata)
+print_text(
+    f"Row labels: {md.get('row_labels', [])}\n"
+    f"Column labels: {md.get('column_labels', [])}"
+)
+```
+
+## 05. Merged cells
+
+Scanning left from **D18**, we find a "Row 2.2" label in **B18**. Immediately left of that, we encounter a merged cell **A17** created from **A17:A18**. The merged cell **A17** is labeled "Row 1.1". Heuristic row scan should correctly collect this label, but it currently fails because merged cell handling is not yet implemented.
+
+```{python}
+graph: DependencyGraph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!D18"],
+    load_values=True,
+    label_detection=LabelDetectionConfig(enabled=True),
+)
+
+md = dict(graph.get_node("Sheet1!D18").metadata)
+print_text(
+    f"Row labels: {md.get('row_labels', [])}\n"
+    f"Column labels: {md.get('column_labels', [])}"
+)
+```
+
+## 06. Intervening blank cells
+
+Suppose we have two tables side-by-side, or one above the other. We don't want heuristic left-scan or up-scan to accidentally collect assign labels from the other table. As long as there are blank cells between the tables, the scan will stop at the edge of the current table.
+
+The example in rows 20-24 illustrates this. We've arranged lists above and left of our table, separated from the table by blank cells. The text cells comprising the lists are not detected as labels for the table.
+
+```{python}
+graph: DependencyGraph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!E24"],
+    load_values=True,
+    label_detection=LabelDetectionConfig(enabled=True),
+)
+
+md = dict(graph.get_node("Sheet1!E24").metadata)
+print_text(
+    f"Row labels: {md.get('row_labels', [])}\n"
+    f"Column labels: {md.get('column_labels', [])}"
+)
+```
+
+## 07. Intervening text cells
+
+Currently, leftward or upward scans will collect all text cells in the path. This is incorrect; we only want labels at the left or upper edge of the current table.
+
+If a scan encounters a numeric cell after having collected a text cell, it will currently stop. This is also incorrect. The correct expected behavior is that encountering a numeric cell should invalidate all labels already collected and continue the scan with an empty labels list.
+
+For this example, we have the same table in tall format and wide format, with a numeric field for population, a text field for country, and a numeric field for GDP. When we extract the labels for GDP, we want to skip the country field and only collect the "Year 1" label.
+
+```{python}
+graph: DependencyGraph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!D27", "Sheet1!B32"],
+    load_values=True,
+    label_detection=LabelDetectionConfig(enabled=True),
+)
+
+md_d27 = dict(graph.get_node("Sheet1!D27").metadata)
+md_b32 = dict(graph.get_node("Sheet1!B32").metadata)
+print_text(
+    f"Row labels for D27: {md_d27.get('row_labels', [])}\n"
+    f"Column labels for B32: {md_b32.get('column_labels', [])}"
+)
+```
+
+While the default behavior will be to take only left- or top-edge text cells as labels, there may be times when we want all text cells in the path to be considered as labels. For example, "USA" in this wide-format time series acts like a secondary label because it is an identifier for the row, so we probably want to collect it.
+
+The default `LabelDetectionBehavior`s used by `LabelDetectionConfig` are `heuristic_row_scan` and `heuristic_column_scan` (which we should probably rename to `left_edge_scan` and `top_edge_scan`), but there are also others registered on the default registry: `year_offset_headers`, `region_header_rows`, and `region_left_label_columns`. I intend to add `full_row_scan` and `full_column_scan` to the default registry, and these will collect all text cells in the path, which is the behavior we want in this case.
+
+Then you will be able to configure a `BehaviorRule` with a `RegionSelector` to use these behaviors for a specified spreadsheet region, and pass this rule to `LabelDetectionConfig`:
+
+```{python}
+from excel_grapher.grapher import (
+    BehaviorRule,
+    RegionSelector,
+    region_specs_from_ranges,
+)
+
+try:
+    cfg = LabelDetectionConfig(
+        enabled=True,
+        rules=(
+            BehaviorRule(
+                name="wideGdpBlock",
+                selector=RegionSelector(
+                    include=region_specs_from_ranges(["Sheet1!A29:B32"]),
+                ),
+                behaviors=("full_row_scan", "full_column_scan"),
+                stop_after_match=True,
+            ),
+        ),
+        fallback_behaviors=(),
+    )
+    graph = create_dependency_graph(
+        workbook_path,
+        ["Sheet1!B32"],
+        load_values=True,
+        label_detection=cfg,
+    )
+    md = dict(graph.get_node("Sheet1!B32").metadata)
+    print_text(
+        f"Row labels: {md.get('row_labels', [])}\n"
+        f"Column labels: {md.get('column_labels', [])}"
+    )
+except ValueError as exc:
+    if "Unknown label detection behavior" in str(exc):
+        print_text(
+            "(full_row_scan / full_column_scan not registered yet)\n"
+            "When they are, B32 should pick up row label 'GDP' and column labels "
+            "such as 'USA' and 'Year 1' from the cells above it in column B."
+        )
+    else:
+        raise
+```
+
+## 08. Duplicate labels
+
+Labels are deduplicated by default, so in the next example, "Dupe Label" is only collected once each for row and column:
+
+```{python}
+graph: DependencyGraph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!C36"],
+    load_values=True,
+    label_detection=LabelDetectionConfig(enabled=True),
+)
+
+md = dict(graph.get_node("Sheet1!C36").metadata)
+print_text(
+    f"Row labels: {md.get('row_labels', [])}\n"
+    f"Column labels: {md.get('column_labels', [])}"
+)
+```
+
+One reason for deduplicating results is that the user might run multiple `LabelDetectionBehavior`s (for instance, `left_edge_scan` and `full_row_scan`) that discover the same label cell. So without deduplication, we might collect not only multiple cells with the same label, but also multiple copies of the same label from a single cell. Note that first-seen order is preserved after deduplication.
+
+## 09. Year labels
+
+Rows 38–40 are a small table: text headers in **A38:B38**, year row ids **1999** and **2000** in **A39:A40**, and values in **B39:B40**. The default heuristic scan behaviors only keep numeric cells that look like calendar years (1900–2100) For **B40**, the default left scan sees **2000** and adds it to the row labels list.
+
+```{python}
+graph: DependencyGraph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!B40"],
+    load_values=True,
+    label_detection=LabelDetectionConfig(enabled=True),
+)
+
+md = dict(graph.get_node("Sheet1!B40").metadata)
+print_text(
+    f"Row labels: {md.get('row_labels', [])}\n"
+    f"Column labels: {md.get('column_labels', [])}"
+)
+```
+
+## 10. Numeric labels
+
+Rows 40–42 show the same table with single-digit year offset ids, **1** and **2**, rather than year-like numbers in **A41:A42**. For **B42**, the default left scan sees **2** in **A42** and does not keep it because it is not a calendar year, so the row label list stays empty.
+
+```{python}
+graph: DependencyGraph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!B42"],
+    load_values=True,
+    label_detection=LabelDetectionConfig(enabled=True),
+)
+
+md = dict(graph.get_node("Sheet1!B42").metadata)
+print_text(
+    f"Row labels: {md.get('row_labels', [])}\n"
+    f"Column labels: {md.get('column_labels', [])}"
+)
+```
+
+If we wanted to collect the year offset labels, we could register a custom behavior: read column **A** on the target row and coerce the cached value to a string (any non-empty result counts as a row label).
+
+Here we define a custom behavior class that implements the `LabelDetectionBehavior` protocol (with a `str` attribute `name` and a `detect` method that takes a `LabelDetectionContext` and returns a `LabelResult`). The `LabelDetectionContext` contains the location of the cell whose labels are being detected, and values and formulas for the `fastpyxl` worksheet on which the cell resides. `detect` can implement any detection logic we want that makes use of these values.
+
+```{python}
+from dataclasses import dataclass
+
+from excel_grapher.grapher import (
+    BehaviorRule,
+    LabelDetectionBehavior,
+    LabelDetectionContext,
+    LabelResult,
+    RegionSelector,
+    region_specs_from_ranges,
+)
+
+
+# custom class that implements `LabelDetectionBehavior` protocol
+@dataclass
+class ColumnARowLabel(LabelDetectionBehavior):
+    name: str = "column_a_row_label"
+
+    def detect(self, ctx: LabelDetectionContext) -> LabelResult:
+        if ctx.ws_values is None:
+            return LabelResult()
+        value = ctx.ws_values.cell(row=ctx.row, column=1).value
+        if value is None:
+            return LabelResult()
+        text = str(value).strip()
+        if not text:
+            return LabelResult()
+        return LabelResult(row_labels=(text,))
+
+
+cfg = LabelDetectionConfig(
+    enabled=True,
+    rules=(
+        BehaviorRule(
+            name="numericRowIds",
+            selector=RegionSelector(
+                include=region_specs_from_ranges(["Sheet1!A42:B44"]),
+            ),
+            # reference the custom behavior by name
+            behaviors=("column_a_row_label", "heuristic_column_scan"),
+            stop_after_match=True,
+        ),
+    ),
+    fallback_behaviors=(),
+)
+
+graph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!B44"],
+    load_values=True,
+    label_detection=cfg,
+    # register the custom behavior
+    label_behaviors=[ColumnARowLabel()],
+)
+
+md = dict(graph.get_node("Sheet1!B44").metadata)
+print_text(
+    f"Row labels: {md.get('row_labels', [])}\n"
+    f"Column labels: {md.get('column_labels', [])}"
+)
+```
+
+Note that when we define a BehaviorRule that uses our custom behavior, we apply it only to the worksheet region ("Sheet1!A42:B44") that we want to collect year offset labels from, and we still apply "heuristic_column_scan" to collect the column labels. We can apply any combination of behaviors we want to different parts of the workbook.
+
+## 11. Rightward or downward scans
+
+We plan to include rightward and downward scans in the default registry, but this is not yet implemented.
+
+In rows 46-49 is a table with units to the right of a numeric column, and with a source field at the bottom of the column. If we wanted to collect these labels for the cell **A48** (while still collecting the column label), we could use `right_edge_scan` and `bottom_edge_scan` in combination with `top_edge_scan`. Here's what it will look like when it is implemented:
+
+```{python}
+try:
+    from excel_grapher.grapher import (
+        BehaviorRule,
+        RegionSelector,
+        region_specs_from_ranges,
+    )
+
+    cfg = LabelDetectionConfig(
+        enabled=True,
+        rules=(
+            BehaviorRule(
+                name="unitsAndSourceBlock",
+                selector=RegionSelector(
+                    include=region_specs_from_ranges(["Sheet1!A46:C49"]),
+                ),
+                behaviors=("right_edge_scan", "bottom_edge_scan", "top_edge_scan"),
+                stop_after_match=True,
+            ),
+        ),
+        fallback_behaviors=(),
+    )
+
+    graph = create_dependency_graph(
+        workbook_path,
+        ["Sheet1!A48"],
+        load_values=True,
+        label_detection=cfg,
+    )
+
+    md = dict(graph.get_node("Sheet1!A48").metadata)
+    print_text(
+        f"Row labels: {md.get('row_labels', [])}\n"
+        f"Column labels: {md.get('column_labels', [])}"
+    )
+except ValueError as exc:
+    if "Unknown label detection behavior" in str(exc):
+        print_text(
+            "(right_edge_scan / bottom_edge_scan / top_edge_scan not registered yet)\n"
+            "When they are, A48 should be able to collect row labels from text to the right "
+            "(for example units) and below (for example source), while still collecting "
+            "the column label from above."
+        )
+    else:
+        raise
+```
+
+## 12. Left, then up scans
+
+## 13. Year offset labels
