@@ -9,7 +9,6 @@ from excel_grapher.grapher.label_detection import (
     BehaviorRule,
     LabelDetectionConfig,
     LabelDetectionState,
-    RegionLabelParams,
     RegionSelector,
     RegionSpec,
     build_label_behavior_registry,
@@ -104,7 +103,7 @@ def test_collect_labels_rule_stop_skips_fallback() -> None:
     assert row == [] and col == []
 
 
-def test_collect_labels_region_label_columns(tmp_path) -> None:
+def test_collect_labels_left_then_up_scan(tmp_path) -> None:
     pytest.importorskip("xlsxwriter")
     import xlsxwriter
 
@@ -112,6 +111,7 @@ def test_collect_labels_region_label_columns(tmp_path) -> None:
     wb = xlsxwriter.Workbook(path)
     ws = wb.add_worksheet("S")
     ws.write_string(0, 0, "RowTitle")
+    ws.write_string(0, 1, "RowLeaf")
     ws.write_number(0, 2, 42)
     wb.close()
 
@@ -126,8 +126,7 @@ def test_collect_labels_region_label_columns(tmp_path) -> None:
                 BehaviorRule(
                     name="r",
                     selector=RegionSelector(include=(RegionSpec("S", 1, 3, 1, 5),)),
-                    behaviors=("region_left_label_columns",),
-                    region_params=RegionLabelParams(label_columns=("A",)),
+                    behaviors=("left_then_up_scan",),
                 ),
             ),
             fallback_behaviors=(),
@@ -146,6 +145,89 @@ def test_collect_labels_region_label_columns(tmp_path) -> None:
             ws_formulas=wsv,
         )
         assert row == ["RowTitle"]
+        assert col == []
+    finally:
+        wv.close()
+
+
+def test_left_then_up_scan_same_indent_same_style_is_skipped(tmp_path) -> None:
+    pytest.importorskip("xlsxwriter")
+    import xlsxwriter
+
+    path = tmp_path / "left_then_up_skip_same_style.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    i2 = wb.add_format({"indent": 2})
+    i1 = wb.add_format({"indent": 1})
+    ws.write_string(0, 0, "Country")
+    ws.write_string(1, 0, "Category", i1)
+    ws.write_string(2, 0, "Current", i2)
+    ws.write_string(3, 0, "Target", i2)
+    ws.write_number(3, 1, 1)
+    wb.close()
+
+    import fastpyxl
+
+    wv = fastpyxl.load_workbook(path, data_only=True)
+    try:
+        wsv = wv["S"]
+        cfg = LabelDetectionConfig(enabled=True, fallback_behaviors=("left_then_up_scan",))
+        reg = build_label_behavior_registry(None)
+        st = LabelDetectionState()
+        row, col = collect_labels_for_node(
+            key="S!B4",
+            sheet="S",
+            row=4,
+            col=2,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=wsv,
+            ws_formulas=wsv,
+        )
+        assert row == ["Country", "Category", "Target"]
+        assert col == []
+    finally:
+        wv.close()
+
+
+def test_left_then_up_scan_stops_on_same_indent_lower_style(tmp_path) -> None:
+    pytest.importorskip("xlsxwriter")
+    import xlsxwriter
+
+    path = tmp_path / "left_then_up_stop_lower_style.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    bold_i2 = wb.add_format({"bold": True, "indent": 2})
+    italic_i2 = wb.add_format({"italic": True, "indent": 2})
+    i1 = wb.add_format({"indent": 1})
+    ws.write_string(0, 0, "Country")
+    ws.write_string(1, 0, "Category", i1)
+    ws.write_string(2, 0, "Upper Italic", italic_i2)
+    ws.write_string(3, 0, "Target Bold", bold_i2)
+    ws.write_number(3, 1, 1)
+    wb.close()
+
+    import fastpyxl
+
+    wv = fastpyxl.load_workbook(path, data_only=True)
+    try:
+        wsv = wv["S"]
+        cfg = LabelDetectionConfig(enabled=True, fallback_behaviors=("left_then_up_scan",))
+        reg = build_label_behavior_registry(None)
+        st = LabelDetectionState()
+        row, col = collect_labels_for_node(
+            key="S!B4",
+            sheet="S",
+            row=4,
+            col=2,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=wsv,
+            ws_formulas=wsv,
+        )
+        assert row == ["Target Bold"]
         assert col == []
     finally:
         wv.close()

@@ -272,10 +272,9 @@ the row, so we probably want to collect it.
 The default `LabelDetectionBehavior`s used by `LabelDetectionConfig` are
 `left_edge_scan` and `top_edge_scan`, but there are also others
 registered on the default registry: `full_row_scan`, `full_column_scan`,
-`year_offset_headers`, `region_header_rows`, and
-`region_left_label_columns`. `full_row_scan` and `full_column_scan`
-collect all text cells in the path, which is the behavior we want in
-this case.
+`year_offset_headers`, `region_header_rows`, and `left_then_up_scan`.
+`full_row_scan` and `full_column_scan` collect all text cells in the
+path, which is the behavior we want in this case.
 
 You can configure a `BehaviorRule` with a `RegionSelector` to use these
 behaviors for a specified spreadsheet region, and pass this rule to
@@ -653,10 +652,9 @@ only collect “Real” from **A56**, but this label alone isn’t very
 informative. The double-indentation of **A56** indicates that it is a
 child of the single-indented **A54** label, “GDP”, and the unindented
 **A53** label, “United States”. To understand what **B56** represents,
-we need to scan left to collected the row label, then up to collect the
-parent labels, using indentation to infer hierarchy. In fact, this is
-already implemented in the built-in `region_left_label_columns` behavior
-(though this behavior badly needs a name change).
+we need to scan left to collect the row label, then up to collect parent
+labels. This is implemented by the built-in `left_then_up_scan`
+behavior.
 
 ``` python
 graph: DependencyGraph = create_dependency_graph(
@@ -671,7 +669,7 @@ graph: DependencyGraph = create_dependency_graph(
                 selector=RegionSelector(
                     include=region_specs_from_ranges(["Sheet1!A51:B56"]),
                 ),
-                behaviors=("region_left_label_columns", "top_edge_scan"),
+                behaviors=("left_then_up_scan", "top_edge_scan"),
             ),
         ),
     )
@@ -685,15 +683,12 @@ print_text(
 ```
 
 ``` text
-Row labels: []
+Row labels: ['United States', 'GDP', 'Real']
 Column labels: []
 ```
 
-Currently, this behavior does *not* use font weight to infer hierarchy,
-but it probably should. For instance, applying
-`region_left_label_columns` to **A38:A40** should collect “Year” as a
-parent of “1999” and “2000” because it is bold, while “1999” and “2000”
-are not.
+This behavior uses indentation as the primary hierarchy signal and text
+style rank (`bold > italic > normal`) as a secondary signal.
 
 What if we wanted to implement a custom behavior that uses font weight
 to infer hierarchy? The `ws_values` and `ws_formulas` attributes of
