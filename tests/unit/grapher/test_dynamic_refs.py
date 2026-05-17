@@ -104,9 +104,12 @@ def _build_static_indirect_literal_workbook(path: Path, *, target_addr: str) -> 
     wb.close()
 
 
-def test_offset_with_cached_named_range_warns_once(tmp_path: Path) -> None:
+def test_offset_with_cached_named_range_warns_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     excel_path = tmp_path / "offset_named_range.xlsx"
     _build_offset_named_range_workbook(excel_path)
+    monkeypatch.setattr(parser_mod, "_WARNED_CACHED_DYNAMIC", False)
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
