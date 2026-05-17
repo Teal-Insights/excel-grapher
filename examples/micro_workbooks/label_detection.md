@@ -171,8 +171,8 @@ Column labels: ['Column 2.2', 'Column 2.1']
 Scanning left from **D18**, we find a “Row 2.2” label in **B18**.
 Immediately left of that, we encounter a merged cell **A17** created
 from **A17:A18**. The merged cell **A17** is labeled “Row 1.1”.
-Heuristic row scan should correctly collect this label, but it currently
-fails because merged cell handling is not yet implemented.
+`left_edge_scan` resolves merged cells through their anchor value, so
+this label is included in the detected row labels.
 
 ``` python
 graph: DependencyGraph = create_dependency_graph(
@@ -227,15 +227,13 @@ Column labels: ['Column_2']
 
 ## 07. Intervening text cells
 
-Currently, leftward or upward scans will collect all text cells in the
-path. This is incorrect; we only want labels at the left or upper edge
-of the current table.
+`left_edge_scan` and `top_edge_scan` prioritize edge labels rather than
+all intervening text in a scan path.
 
-If a scan encounters a numeric cell after having collected a text cell,
-it will currently stop. This is also incorrect. The correct expected
-behavior is that encountering a numeric cell should invalidate all
-labels already collected and continue the scan with an empty labels
-list.
+If a scan encounters a non-year numeric cell after collecting text
+labels, it clears the collected labels and continues scanning. This
+filters out intervening text fields while preserving edge labels such as
+“Year 1”.
 
 For this example, we have the same table in tall format and wide format,
 with a numeric field for population, a text field for country, and a
@@ -287,41 +285,31 @@ from excel_grapher.grapher import (
     region_specs_from_ranges,
 )
 
-try:
-    cfg = LabelDetectionConfig(
-        enabled=True,
-        rules=(
-            BehaviorRule(
-                name="wideGdpBlock",
-                selector=RegionSelector(
-                    include=region_specs_from_ranges(["Sheet1!A29:B32"]),
-                ),
-                behaviors=("full_row_scan", "full_column_scan"),
-                stop_after_match=True,
+cfg = LabelDetectionConfig(
+    enabled=True,
+    rules=(
+        BehaviorRule(
+            name="wideGdpBlock",
+            selector=RegionSelector(
+                include=region_specs_from_ranges(["Sheet1!A29:B32"]),
             ),
+            behaviors=("full_row_scan", "full_column_scan"),
+            stop_after_match=True,
         ),
-        fallback_behaviors=(),
-    )
-    graph = create_dependency_graph(
-        workbook_path,
-        ["Sheet1!B32"],
-        load_values=True,
-        label_detection=cfg,
-    )
-    md = dict(graph.get_node("Sheet1!B32").metadata)
-    print_text(
-        f"Row labels: {md.get('row_labels', [])}\n"
-        f"Column labels: {md.get('column_labels', [])}"
-    )
-except ValueError as exc:
-    if "Unknown label detection behavior" in str(exc):
-        print_text(
-            "(full_row_scan / full_column_scan not registered yet)\n"
-            "When they are, B32 should pick up row label 'GDP' and column labels "
-            "such as 'USA' and 'Year 1' from the cells above it in column B."
-        )
-    else:
-        raise
+    ),
+    fallback_behaviors=(),
+)
+graph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!B32"],
+    load_values=True,
+    label_detection=cfg,
+)
+md = dict(graph.get_node("Sheet1!B32").metadata)
+print_text(
+    f"Row labels: {md.get('row_labels', [])}\n"
+    f"Column labels: {md.get('column_labels', [])}"
+)
 ```
 
 ``` text
