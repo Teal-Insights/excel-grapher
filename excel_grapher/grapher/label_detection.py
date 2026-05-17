@@ -64,7 +64,7 @@ class BehaviorRule:
 @dataclass(frozen=True)
 class LabelDetectionConfig:
     enabled: bool = False
-    merge_policy: Literal["append_dedupe", "replace"] = "append_dedupe"
+    merge_policy: Literal["append_dedupe", "append_dedupe_reverse", "replace"] = "append_dedupe"
     fallback_behaviors: tuple[str, ...] = ("left_edge_scan", "top_edge_scan")
     rules: tuple[BehaviorRule, ...] = ()
 
@@ -458,7 +458,24 @@ def _heuristic_column_labels(ws: Worksheet, row: int, col: int) -> list[str]:
 
 
 def _full_row_labels(ws: Worksheet, row: int, col: int) -> list[str]:
-    labels: list[str] = []
+    labels_with_col: list[tuple[int, str]] = []
+    max_col = ws.max_column or col
+
+    current_col = col + 1
+    while current_col <= max_col:
+        cell_value = _scan_cell_value(ws, row, current_col)
+        if cell_value is None or (isinstance(cell_value, str) and cell_value.strip() == ""):
+            break
+        if isinstance(cell_value, str):
+            text = cell_value.strip()
+            if is_valid_label(text):
+                labels_with_col.append((current_col, text))
+        elif not isinstance(cell_value, (int, float, bool)):
+            text = str(cell_value)
+            if is_valid_label(text):
+                labels_with_col.append((current_col, text))
+        current_col += 1
+
     current_col = col - 1
     while current_col >= 1:
         cell_value = _scan_cell_value(ws, row, current_col)
@@ -467,13 +484,15 @@ def _full_row_labels(ws: Worksheet, row: int, col: int) -> list[str]:
         if isinstance(cell_value, str):
             text = cell_value.strip()
             if is_valid_label(text):
-                labels.append(text)
+                labels_with_col.append((current_col, text))
         elif not isinstance(cell_value, (int, float, bool)):
             text = str(cell_value)
             if is_valid_label(text):
-                labels.append(text)
+                labels_with_col.append((current_col, text))
         current_col -= 1
-    return dedupe_preserve_order(labels)
+
+    ordered = [label for _, label in sorted(labels_with_col, key=lambda x: x[0], reverse=True)]
+    return dedupe_preserve_order(ordered)
 
 
 def _find_leftmost_label_column(ws: Worksheet, row: int, col: int) -> int | None:
@@ -549,7 +568,24 @@ def _left_then_up_row_labels(
 
 
 def _full_column_labels(ws: Worksheet, row: int, col: int) -> list[str]:
-    labels: list[str] = []
+    labels_with_row: list[tuple[int, str]] = []
+    max_row = ws.max_row or row
+
+    current_row = row + 1
+    while current_row <= max_row:
+        cell_value = _scan_cell_value(ws, current_row, col)
+        if cell_value is None or (isinstance(cell_value, str) and cell_value.strip() == ""):
+            break
+        if isinstance(cell_value, str):
+            text = cell_value.strip()
+            if is_valid_label(text):
+                labels_with_row.append((current_row, text))
+        elif not isinstance(cell_value, (int, float, bool)):
+            text = str(cell_value)
+            if is_valid_label(text):
+                labels_with_row.append((current_row, text))
+        current_row += 1
+
     current_row = row - 1
     while current_row >= 1:
         cell_value = _scan_cell_value(ws, current_row, col)
@@ -558,13 +594,15 @@ def _full_column_labels(ws: Worksheet, row: int, col: int) -> list[str]:
         if isinstance(cell_value, str):
             text = cell_value.strip()
             if is_valid_label(text):
-                labels.append(text)
+                labels_with_row.append((current_row, text))
         elif not isinstance(cell_value, (int, float, bool)):
             text = str(cell_value)
             if is_valid_label(text):
-                labels.append(text)
+                labels_with_row.append((current_row, text))
         current_row -= 1
-    return dedupe_preserve_order(labels)
+
+    ordered = [label for _, label in sorted(labels_with_row, key=lambda x: x[0], reverse=True)]
+    return dedupe_preserve_order(ordered)
 
 
 def _right_edge_row_labels(ws: Worksheet, row: int, col: int) -> list[str]:
@@ -759,7 +797,7 @@ def build_label_behavior_registry(
 
 
 def _merge_results(
-    policy: Literal["append_dedupe", "replace"],
+    policy: Literal["append_dedupe", "append_dedupe_reverse", "replace"],
     current_row: list[str],
     current_col: list[str],
     new: LabelResult,
@@ -836,6 +874,9 @@ def collect_labels_for_node(
             res = beh.detect(ctx_fb)
             row_out, col_out = _merge_results(cfg.merge_policy, row_out, col_out, res)
 
+    if cfg.merge_policy == "append_dedupe_reverse":
+        row_out = list(reversed(row_out))
+        col_out = list(reversed(col_out))
     return row_out, col_out
 
 

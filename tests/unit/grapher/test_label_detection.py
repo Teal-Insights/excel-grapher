@@ -323,6 +323,7 @@ def test_full_row_scan_collects_text_across_intervening_numbers(tmp_path) -> Non
     ws.write_number(0, 1, 999)
     ws.write_string(0, 2, "C-label")
     ws.write_number(0, 3, 1)
+    ws.write_string(0, 4, "E-label")
     wb.close()
 
     import fastpyxl
@@ -344,7 +345,7 @@ def test_full_row_scan_collects_text_across_intervening_numbers(tmp_path) -> Non
             ws_values=wsv,
             ws_formulas=wsv,
         )
-        assert row == ["C-label", "A-label"]
+        assert row == ["E-label", "C-label", "A-label"]
         assert col == []
     finally:
         wv.close()
@@ -361,6 +362,7 @@ def test_full_column_scan_collects_text_across_intervening_numbers(tmp_path) -> 
     ws.write_number(1, 0, 999)
     ws.write_string(2, 0, "mid")
     ws.write_number(3, 0, 1)
+    ws.write_string(4, 0, "bottom")
     wb.close()
 
     import fastpyxl
@@ -383,7 +385,91 @@ def test_full_column_scan_collects_text_across_intervening_numbers(tmp_path) -> 
             ws_formulas=wsv,
         )
         assert row == []
-        assert col == ["mid", "top"]
+        assert col == ["bottom", "mid", "top"]
+    finally:
+        wv.close()
+
+
+def test_merge_policy_append_dedupe_reverse_reverses_row_labels(tmp_path) -> None:
+    pytest.importorskip("xlsxwriter")
+    import xlsxwriter
+
+    path = tmp_path / "merge_policy_reverse_row.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    ws.write_string(0, 0, "A-label")
+    ws.write_number(0, 1, 999)
+    ws.write_string(0, 2, "C-label")
+    ws.write_number(0, 3, 1)
+    wb.close()
+
+    import fastpyxl
+
+    wv = fastpyxl.load_workbook(path, data_only=True)
+    try:
+        wsv = wv["S"]
+        cfg = LabelDetectionConfig(
+            enabled=True,
+            merge_policy="append_dedupe_reverse",
+            fallback_behaviors=("full_row_scan", "left_edge_scan"),
+        )
+        reg = build_label_behavior_registry(None)
+        st = LabelDetectionState()
+        row, col = collect_labels_for_node(
+            key="S!D1",
+            sheet="S",
+            row=1,
+            col=4,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=wsv,
+            ws_formulas=wsv,
+        )
+        assert row == ["A-label", "C-label"]
+        assert col == []
+    finally:
+        wv.close()
+
+
+def test_merge_policy_append_dedupe_reverse_reverses_column_labels(tmp_path) -> None:
+    pytest.importorskip("xlsxwriter")
+    import xlsxwriter
+
+    path = tmp_path / "merge_policy_reverse_col.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    ws.write_string(0, 0, "top")
+    ws.write_number(1, 0, 999)
+    ws.write_string(2, 0, "mid")
+    ws.write_number(3, 0, 1)
+    wb.close()
+
+    import fastpyxl
+
+    wv = fastpyxl.load_workbook(path, data_only=True)
+    try:
+        wsv = wv["S"]
+        cfg = LabelDetectionConfig(
+            enabled=True,
+            merge_policy="append_dedupe_reverse",
+            fallback_behaviors=("full_column_scan", "top_edge_scan"),
+        )
+        reg = build_label_behavior_registry(None)
+        st = LabelDetectionState()
+        row, col = collect_labels_for_node(
+            key="S!A4",
+            sheet="S",
+            row=4,
+            col=1,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=wsv,
+            ws_formulas=wsv,
+        )
+        assert row == []
+        assert col == ["top", "mid"]
     finally:
         wv.close()
 

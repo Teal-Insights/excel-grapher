@@ -187,9 +187,9 @@ print_text(
 )
 ```
 
-While the default behavior will be to take only left- or top-edge text cells as labels, there may be times when we want all text cells in the path to be considered as labels. For example, "USA" in this wide-format time series acts like a secondary label because it is an identifier for the row, so we probably want to collect it.
+While the default behavior will be to take only left- or top-edge text cells as labels, there may be times when we want all text cells connected to the target cell to be considered as labels. For example, "USA" in this wide-format time series acts like a secondary label because it is an identifier for the row, so we probably want to collect it.
 
-The default `LabelDetectionBehavior`s used by `LabelDetectionConfig` are `left_edge_scan` and `top_edge_scan`, but there are also others registered on the default registry: `full_row_scan`, `full_column_scan`, `year_offset_headers`, `region_header_rows`, and `left_then_up_scan`. `full_row_scan` and `full_column_scan` collect all text cells in the path, which is the behavior we want in this case.
+The default `LabelDetectionBehavior`s used by `LabelDetectionConfig` are `left_edge_scan` and `top_edge_scan`, but there are also others registered on the default registry: `full_row_scan`, `full_column_scan`, `year_offset_headers`, `region_header_rows`, and `left_then_up_scan`. `full_row_scan` and `full_column_scan` are bidirectional from the reference cell (scan both directions until blanks), with default output ordering of right-to-left for rows and bottom-to-top for columns.
 
 You can configure a `BehaviorRule` with a `RegionSelector` to use these behaviors for a specified spreadsheet region, and pass this rule to `LabelDetectionConfig`:
 
@@ -508,7 +508,7 @@ print_text(
 
 This behavior uses indentation as the primary hierarchy signal and text style rank (`bold > italic > normal`) as a secondary signal.
 
-What if we wanted to implement a custom behavior that uses font weight to infer hierarchy? The `ws_values` and `ws_formulas` attributes of `LabelDetectionContext` expose a `cell` selector method that can be used to get a [`fastpyxl.cell.cell.Cell`](https://fastpyxl.readthedocs.io/en/latest/api/fastpyxl.cell.cell.html#fastpyxl.cell.cell.Cell) object, and this `Cell` object (a subclass of [`StylableObject`](https://fastpyxl.readthedocs.io/en/latest/api/fastpyxl.styles.styleable.html#fastpyxl.styles.styleable.StyleableObject)) exposes style fields such as `alignment` and `font` that can be used in label detection logic. Here's an example of how to implement such logic:
+What if we wanted to implement a custom behavior that uses font weight to infer hierarchy while ignoring indentation? The `ws_values` and `ws_formulas` attributes of `LabelDetectionContext` expose a `cell` selector method that can be used to get a [`fastpyxl.cell.cell.Cell`](https://fastpyxl.readthedocs.io/en/latest/api/fastpyxl.cell.cell.html#fastpyxl.cell.cell.Cell) object, and this `Cell` object (a subclass of [`StylableObject`](https://fastpyxl.readthedocs.io/en/latest/api/fastpyxl.styles.styleable.html#fastpyxl.styles.styleable.StyleableObject)) exposes style fields such as `alignment` and `font` that can be used in label detection logic. Here's an example of how to implement such logic:
 
 ```{python}
 from dataclasses import dataclass
@@ -603,5 +603,129 @@ md = dict(graph.get_node("Sheet1!B56").metadata)
 print_text(
     f"Row labels: {md.get('row_labels', [])}\n"
     f"Column labels: {md.get('column_labels', [])}"
+)
+```
+
+## 14. Merge policy: replace for canonicalization
+
+Sometimes table labels are technically correct but too verbose for display. In this example, row labels include units/qualifiers (for example, `"GDP ($, current prices)"`), and we want a canonical display label (for example, `"GDP"`, stripping the parenthetical trailing text).
+
+We run two behaviors in order on the same region:
+
+1. `left_edge_scan` collects the raw row label from the table.
+2. `canonicalize_col_a_label` rewrites that label to a canonical form.
+
+With `merge_policy="replace"`, the canonical behavior overwrites the earlier raw label when it returns a non-empty result.
+
+```{python}
+import re
+from dataclasses import dataclass
+
+from excel_grapher.grapher import (
+    BehaviorRule,
+    LabelDetectionBehavior,
+    LabelDetectionConfig,
+    LabelDetectionContext,
+    LabelResult,
+    RegionSelector,
+    region_specs_from_ranges,
+)
+
+_TRAILING_PARENS_RE = re.compile(r"\s*\([^)]*\)\s*$")
+
+
+@dataclass
+class CanonicalizeColALabel(LabelDetectionBehavior):
+    name: str = "canonicalize_col_a_label"
+
+    def detect(self, ctx: LabelDetectionContext) -> LabelResult:
+        if ctx.ws_values is None:
+            return LabelResult()
+        value = ctx.ws_values.cell(row=ctx.row, column=1).value
+        if not isinstance(value, str):
+            return LabelResult()
+        text = value.strip()
+        if not text:
+            return LabelResult()
+        canonical = _TRAILING_PARENS_RE.sub("", text).strip()
+        if not canonical:
+            return LabelResult()
+        return LabelResult(row_labels=(canonical,))
+
+cfg = LabelDetectionConfig(
+    enabled=True,
+    merge_policy="replace",
+    rules=(
+        BehaviorRule(
+            name="rawLabels",
+            selector=RegionSelector(
+                include=region_specs_from_ranges(["Sheet1!A58:B60"]),
+            ),
+            behaviors=("left_edge_scan",),
+        ),
+        BehaviorRule(
+            name="canonicalLabels",
+            selector=RegionSelector(
+                include=region_specs_from_ranges(["Sheet1!A58:B60"]),
+            ),
+            behaviors=("canonicalize_col_a_label",),
+            stop_after_match=True,
+        ),
+    ),
+    fallback_behaviors=(),
+)
+
+graph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!B59", "Sheet1!B60"],
+    load_values=True,
+    label_detection=cfg,
+    label_behaviors=[CanonicalizeColALabel()],
+)
+
+md_b59 = dict(graph.get_node("Sheet1!B59").metadata)
+md_b60 = dict(graph.get_node("Sheet1!B60").metadata)
+print_text(
+    f"B59 row labels: {md_b59.get('row_labels', [])}\n"
+    f"B60 row labels: {md_b60.get('row_labels', [])}"
+)
+```
+
+Another use case for `merge_policy="replace"` is when you want to apply one behavior to a large spreadsheet region, but then replace it with a custom behavior override for a subregion.
+
+## 15. Merge policy: append_dedupe_reverse
+
+`append_dedupe` keeps first-seen labels first. If you want parent or higher-priority labels to appear first after all behaviors run, you can use `append_dedupe_reverse`.
+
+```{python}
+cfg_append = LabelDetectionConfig(
+    enabled=True,
+    merge_policy="append_dedupe",
+    fallback_behaviors=("full_row_scan", "left_edge_scan"),
+)
+cfg_reverse = LabelDetectionConfig(
+    enabled=True,
+    merge_policy="append_dedupe_reverse",
+    fallback_behaviors=("full_row_scan", "left_edge_scan"),
+)
+
+graph_append = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!D63"],
+    load_values=True,
+    label_detection=cfg_append,
+)
+graph_reverse = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!D63"],
+    load_values=True,
+    label_detection=cfg_reverse,
+)
+
+md_append = dict(graph_append.get_node("Sheet1!D63").metadata)
+md_reverse = dict(graph_reverse.get_node("Sheet1!D63").metadata)
+print_text(
+    f"append_dedupe row labels: {md_append.get('row_labels', [])}\n"
+    f"append_dedupe_reverse row labels: {md_reverse.get('row_labels', [])}"
 )
 ```
