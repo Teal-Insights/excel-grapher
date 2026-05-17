@@ -4,6 +4,8 @@ Always run Python code with `uv run`. Use `uv add` to add dependencies or `uvx` 
 
 We use `fastpyxl` as a drop-in replacement for `openpyxl`.
 
+`.qmd` files can be rendered to markdown with `uv run quarto render path/to/file.qmd`.
+
 Always practice test-driven development. Write a stub (if necessary), write a test, watch it fail for the right reason (RED), write the code to make it pass (GREEN), and then refactor to clean up the code.
 
 This is a greenfield project with no users, so we are free to make design decisions that unconstrained by the legacy codebase.
