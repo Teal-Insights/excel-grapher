@@ -216,10 +216,6 @@ def test_blank_gap_prevents_labels_from_other_tables(
 # --- Intervening text cells ---
 
 
-@pytest.mark.xfail(
-    reason="Left-edge scan should skip non-edge text fields (e.g. country) for GDP cells",
-    strict=True,
-)
 def test_tall_format_gdp_row_label_is_year_only(
     label_workbook_factory: WorkbookFactory,
 ) -> None:
@@ -245,10 +241,6 @@ def test_tall_format_gdp_row_label_is_year_only(
     assert "USA" not in _row_labels(metadata)
 
 
-@pytest.mark.xfail(
-    reason="Top-edge scan should skip non-edge text fields (e.g. country) for GDP cells",
-    strict=True,
-)
 def test_wide_format_gdp_column_label_is_year_only(
     label_workbook_factory: WorkbookFactory,
 ) -> None:
@@ -274,10 +266,6 @@ def test_wide_format_gdp_column_label_is_year_only(
     assert "USA" not in _column_labels(metadata)
 
 
-@pytest.mark.xfail(
-    reason="full_row_scan / full_column_scan are not registered on the default registry",
-    strict=True,
-)
 def test_wide_format_gdp_collects_identifier_and_year_with_full_scans(
     label_workbook_factory: WorkbookFactory,
 ) -> None:
@@ -501,10 +489,6 @@ def test_custom_year_offset_row_label(
 # --- Rightward/downward scans ---
 
 
-@pytest.mark.xfail(
-    reason="right_edge_scan / bottom_edge_scan / top_edge_scan are not registered yet",
-    strict=True,
-)
 def test_right_and_bottom_scans_collect_units_and_source(
     label_workbook_factory: WorkbookFactory,
 ) -> None:
@@ -544,11 +528,7 @@ def test_right_and_bottom_scans_collect_units_and_source(
 # --- Left-then-up scans ---
 
 
-@pytest.mark.xfail(
-    reason="region_left_label_columns should infer hierarchical row labels from indentation",
-    strict=True,
-)
-def test_region_left_label_columns_collects_indent_hierarchy(
+def test_left_then_up_scan_collects_indent_hierarchy(
     label_workbook_factory: WorkbookFactory,
 ) -> None:
     def _populate(ws, wb) -> None:
@@ -573,12 +553,79 @@ def test_region_left_label_columns_collects_indent_hierarchy(
                 selector=RegionSelector(
                     include=region_specs_from_ranges(["Sheet1!A1:B6"]),
                 ),
-                behaviors=("region_left_label_columns", "top_edge_scan"),
+                behaviors=("left_then_up_scan", "top_edge_scan"),
             ),
         ),
     )
     metadata = _labels(path, "Sheet1!B6", label_detection=cfg)
     assert _row_labels(metadata) == ["United States", "GDP", "Real"]
+
+
+def test_left_then_up_scan_prioritizes_indent_then_style_rank(
+    label_workbook_factory: WorkbookFactory,
+) -> None:
+    def _populate(ws, wb) -> None:
+        bold = wb.add_format({"bold": True, "indent": 2})
+        italic = wb.add_format({"italic": True, "indent": 2})
+        normal_indent_2 = wb.add_format({"indent": 2})
+        indent_1 = wb.add_format({"indent": 1})
+        ws.write("A2", "United States")
+        ws.write("A3", "GDP", indent_1)
+        ws.write("A4", "Tier Bold", bold)
+        ws.write("A5", "Tier Italic", italic)
+        ws.write("A6", "Tier Normal", normal_indent_2)
+        ws.write_number("B6", 15.31)
+
+    path = label_workbook_factory(_populate)
+    cfg = LabelDetectionConfig(
+        enabled=True,
+        rules=(
+            BehaviorRule(
+                name="leftThenUpHierarchy",
+                selector=RegionSelector(
+                    include=region_specs_from_ranges(["Sheet1!A2:B6"]),
+                ),
+                behaviors=("left_then_up_scan", "top_edge_scan"),
+            ),
+        ),
+        fallback_behaviors=(),
+    )
+    metadata = _labels(path, "Sheet1!B6", label_detection=cfg)
+    assert _row_labels(metadata) == [
+        "United States",
+        "GDP",
+        "Tier Bold",
+        "Tier Italic",
+        "Tier Normal",
+    ]
+
+
+def test_left_then_up_scan_stops_when_no_left_label_column(
+    label_workbook_factory: WorkbookFactory,
+) -> None:
+    def _populate(ws, _wb) -> None:
+        ws.write_number("B1", 100)
+        ws.write_number("C1", 200)
+        ws.write_number("D1", 300)
+
+    path = label_workbook_factory(_populate)
+    cfg = LabelDetectionConfig(
+        enabled=True,
+        rules=(
+            BehaviorRule(
+                name="leftThenUpNoLeftLabelColumn",
+                selector=RegionSelector(
+                    include=region_specs_from_ranges(["Sheet1!B1:D1"]),
+                ),
+                behaviors=("left_then_up_scan",),
+                stop_after_match=True,
+            ),
+        ),
+        fallback_behaviors=(),
+    )
+    metadata = _labels(path, "Sheet1!D1", label_detection=cfg)
+    assert _row_labels(metadata) == []
+    assert _column_labels(metadata) == []
 
 
 @dataclass
@@ -668,11 +715,7 @@ def test_custom_font_weight_hierarchy_row_labels(
     assert _column_labels(metadata) == []
 
 
-@pytest.mark.xfail(
-    reason="Font-weight hierarchy should treat bold header rows as parents of year rows",
-    strict=True,
-)
-def test_font_weight_hierarchy_on_year_table(
+def test_left_then_up_scan_parents_year_leaf_when_header_is_bold(
     label_workbook_factory: WorkbookFactory,
 ) -> None:
     def _populate(ws, wb) -> None:
@@ -693,7 +736,7 @@ def test_font_weight_hierarchy_on_year_table(
                 selector=RegionSelector(
                     include=region_specs_from_ranges(["Sheet1!A1:B3"]),
                 ),
-                behaviors=("font_weight_hierarchy_row_labels", "top_edge_scan"),
+                behaviors=("left_then_up_scan",),
                 stop_after_match=True,
                 region_params=RegionLabelParams(
                     label_columns=("A",),
@@ -708,6 +751,6 @@ def test_font_weight_hierarchy_on_year_table(
         path,
         "Sheet1!B3",
         label_detection=cfg,
-        label_behaviors=[_FontWeightHierarchyRowLabels()],
     )
     assert _row_labels(metadata) == ["Year", "2000"]
+    assert _column_labels(metadata) == []

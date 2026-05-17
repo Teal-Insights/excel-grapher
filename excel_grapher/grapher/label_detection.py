@@ -12,7 +12,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Any, Literal, Protocol, runtime_checkable
 
-import fastpyxl.utils.cell
 from fastpyxl.worksheet.worksheet import Worksheet
 
 from .blank_ranges import normalize_blank_range_specs
@@ -64,7 +63,7 @@ class BehaviorRule:
 @dataclass(frozen=True)
 class LabelDetectionConfig:
     enabled: bool = False
-    merge_policy: Literal["append_dedupe", "replace"] = "append_dedupe"
+    merge_policy: Literal["append_dedupe", "append_dedupe_reverse", "replace"] = "append_dedupe"
     fallback_behaviors: tuple[str, ...] = ("left_edge_scan", "top_edge_scan")
     rules: tuple[BehaviorRule, ...] = ()
 
@@ -220,6 +219,23 @@ def _get_effective_indent(cell: Any) -> int:
     return alignment_indent + text_indent
 
 
+def _style_rank(cell: Any) -> int:
+    """Return style priority rank: normal < italic < bold."""
+    if cell.font and cell.font.bold:
+        return 2
+    if cell.font and cell.font.italic:
+        return 1
+    return 0
+
+
+_TRAILING_PARENS_RE = re.compile(r"\s*\([^)]*\)\s*$")
+
+
+def _normalize_label_text(text: str) -> str:
+    cleaned = _TRAILING_PARENS_RE.sub("", text).strip()
+    return cleaned if cleaned else text.strip()
+
+
 def _build_label_hierarchy(
     ws: Worksheet,
     label_col_idx: int,
@@ -248,118 +264,6 @@ def _build_label_hierarchy(
         stack.append((indent, text))
 
     return hierarchy
-
-
-# Year-offset header detection (formula patterns + cached values)
-_ANCHOR_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r"^=\+?ProjectionYear$", re.IGNORECASE),
-    re.compile(r"^=\+?'?Macro-Debt_Data'?!U[45]$"),
-    re.compile(r"^=\+?U4$"),
-]
-_PLUS_ONE_RE = re.compile(r"^=\+?([A-Z]{1,3})(\d+)\+1$")
-_MINUS_ONE_RE = re.compile(r"^=\+?([A-Z]{1,3})(\d+)-1$")
-_ROW_COPY_RE = re.compile(r"^=\+?([A-Z]{1,3})(\d+)$")
-
-
-def _is_anchor_formula(formula: str) -> bool:
-    return any(p.match(formula) for p in _ANCHOR_PATTERNS)
-
-
-def detect_year_offset_headers(
-    ws_formulas: Worksheet,
-    ws_values: Worksheet,
-    header_row: int,
-) -> dict[int, int]:
-    """Map column index to integer year offset for a header row (see LIC-DSF templates)."""
-
-    if hasattr(ws_formulas, "_cells") or hasattr(ws_values, "_cells"):
-        relevant_cols: set[int] = set()
-        if hasattr(ws_formulas, "_cells"):
-            relevant_cols.update(c for r, c in ws_formulas._cells if r == header_row)
-        if hasattr(ws_values, "_cells"):
-            relevant_cols.update(c for r, c in ws_values._cells if r == header_row)
-        if not relevant_cols:
-            max_col = max(ws_formulas.max_column or 1, ws_values.max_column or 1)
-            relevant_cols = set(range(1, max_col + 1))
-    else:
-        max_col = ws_formulas.max_column or 1
-        relevant_cols = set(range(1, max_col + 1))
-
-    formulas: dict[int, str] = {}
-    values: dict[int, int] = {}
-    for col in sorted(relevant_cols):
-        f = ws_formulas.cell(row=header_row, column=col).value
-        v = ws_values.cell(row=header_row, column=col).value
-        if isinstance(f, str) and f.startswith("="):
-            formulas[col] = f
-        if isinstance(v, (int, float)) and not isinstance(v, bool):
-            values[col] = int(v)
-
-    offsets: dict[int, int] = {}
-
-    for col, f in formulas.items():
-        if _is_anchor_formula(f):
-            offsets[col] = values.get(col, 0)
-
-    changed = True
-    while changed:
-        changed = False
-        for col, f in formulas.items():
-            if col in offsets:
-                continue
-            m = _PLUS_ONE_RE.match(f)
-            if m:
-                ref_col_letter, ref_row_str = m.group(1), m.group(2)
-                if int(ref_row_str) == header_row:
-                    ref_col = fastpyxl.utils.cell.column_index_from_string(ref_col_letter)
-                    if ref_col in offsets:
-                        offsets[col] = offsets[ref_col] + 1
-                        changed = True
-                        continue
-            m = _MINUS_ONE_RE.match(f)
-            if m:
-                ref_col_letter, ref_row_str = m.group(1), m.group(2)
-                if int(ref_row_str) == header_row:
-                    ref_col = fastpyxl.utils.cell.column_index_from_string(ref_col_letter)
-                    if ref_col in offsets:
-                        offsets[col] = offsets[ref_col] - 1
-                        changed = True
-                        continue
-
-    if offsets:
-        changed = True
-        while changed:
-            changed = False
-            for col in sorted(formulas.keys()):
-                if col in offsets or col not in values:
-                    continue
-                v = values[col]
-                left = offsets.get(col - 1)
-                right = offsets.get(col + 1)
-                if left is not None and v == left + 1 or right is not None and v == right - 1:
-                    offsets[col] = v
-                    changed = True
-    else:
-        row_copy_candidates: dict[int, int] = {}
-        all_row_copy = True
-        for col, f in formulas.items():
-            m = _ROW_COPY_RE.match(f)
-            if m:
-                ref_col_letter, ref_row_str = m.group(1), m.group(2)
-                ref_col = fastpyxl.utils.cell.column_index_from_string(ref_col_letter)
-                ref_row = int(ref_row_str)
-                if ref_row != header_row and ref_col == col and col in values:
-                    row_copy_candidates[col] = values[col]
-                    continue
-            all_row_copy = False
-
-        if all_row_copy and row_copy_candidates:
-            sorted_cols = sorted(row_copy_candidates.keys())
-            vals = [row_copy_candidates[c] for c in sorted_cols]
-            if all(vals[i + 1] - vals[i] == 1 for i in range(len(vals) - 1)):
-                offsets = row_copy_candidates
-
-    return offsets
 
 
 _OFFSET_PREFIX = "offset:"
@@ -407,7 +311,7 @@ def _heuristic_row_labels(ws: Worksheet, row: int, col: int) -> list[str]:
             if is_year_like(cell_value):
                 labels.append(str(cell_value))
             elif labels:
-                break
+                labels = []
         elif not isinstance(cell_value, bool):
             text = str(cell_value)
             if is_valid_label(text):
@@ -431,12 +335,208 @@ def _heuristic_column_labels(ws: Worksheet, row: int, col: int) -> list[str]:
             if is_year_like(cell_value):
                 labels.append(str(cell_value))
             elif labels:
-                break
+                labels = []
         elif not isinstance(cell_value, bool):
             text = str(cell_value)
             if is_valid_label(text):
                 labels.append(text)
         current_row -= 1
+    return dedupe_preserve_order(labels)
+
+
+def _full_row_labels(ws: Worksheet, row: int, col: int) -> list[str]:
+    labels_with_col: list[tuple[int, str]] = []
+    max_col = ws.max_column or col
+
+    current_col = col + 1
+    while current_col <= max_col:
+        cell_value = _scan_cell_value(ws, row, current_col)
+        if cell_value is None or (isinstance(cell_value, str) and cell_value.strip() == ""):
+            break
+        if isinstance(cell_value, str):
+            text = cell_value.strip()
+            if is_valid_label(text):
+                labels_with_col.append((current_col, text))
+        elif not isinstance(cell_value, (int, float, bool)):
+            text = str(cell_value)
+            if is_valid_label(text):
+                labels_with_col.append((current_col, text))
+        current_col += 1
+
+    current_col = col - 1
+    while current_col >= 1:
+        cell_value = _scan_cell_value(ws, row, current_col)
+        if cell_value is None or (isinstance(cell_value, str) and cell_value.strip() == ""):
+            break
+        if isinstance(cell_value, str):
+            text = cell_value.strip()
+            if is_valid_label(text):
+                labels_with_col.append((current_col, text))
+        elif not isinstance(cell_value, (int, float, bool)):
+            text = str(cell_value)
+            if is_valid_label(text):
+                labels_with_col.append((current_col, text))
+        current_col -= 1
+
+    ordered = [label for _, label in sorted(labels_with_col, key=lambda x: x[0], reverse=True)]
+    return dedupe_preserve_order(ordered)
+
+
+def _find_leftmost_label_column(ws: Worksheet, row: int, col: int) -> int | None:
+    """Return the leftmost text-label column before ``col`` on ``row``; stops at blanks."""
+    leftmost: int | None = None
+    current_col = col - 1
+    while current_col >= 1:
+        cell_value = _scan_cell_value(ws, row, current_col)
+        if cell_value is None or (isinstance(cell_value, str) and cell_value.strip() == ""):
+            break
+        if isinstance(cell_value, str):
+            text = cell_value.strip()
+            if text and is_valid_label(text):
+                leftmost = current_col
+        elif isinstance(cell_value, (int, float)) and not isinstance(cell_value, bool):
+            if is_year_like(cell_value):
+                leftmost = current_col
+        current_col -= 1
+    return leftmost
+
+
+def _left_then_up_label_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        text = _normalize_label_text(value.strip())
+        if text and is_valid_label(text):
+            return text
+        return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and is_year_like(value):
+        return str(int(value))
+    return None
+
+
+def _left_then_up_row_labels(
+    ws: Worksheet, row: int, col: int, rp: RegionLabelParams | None
+) -> list[str]:
+    label_col_idx = _find_leftmost_label_column(ws, row, col)
+    if label_col_idx is None:
+        return []
+
+    current_cell = ws.cell(row=row, column=label_col_idx)
+    current_text = _left_then_up_label_text(current_cell.value)
+    if current_text is None:
+        return []
+
+    collected: list[str] = [current_text]
+    last_indent = _get_effective_indent(current_cell)
+    last_style = _style_rank(current_cell)
+
+    min_row = (rp.min_row if rp is not None and rp.min_row is not None else 1) or 1
+    current_row = row - 1
+    while current_row >= min_row:
+        cell = ws.cell(row=current_row, column=label_col_idx)
+        text = _left_then_up_label_text(cell.value)
+        if text is None:
+            break
+
+        indent = _get_effective_indent(cell)
+        style = _style_rank(cell)
+
+        if indent == last_indent:
+            if style == last_style:
+                current_row -= 1
+                continue
+            if style > last_style:
+                collected.append(text)
+                last_style = style
+                current_row -= 1
+                continue
+            break
+
+        if indent < last_indent:
+            collected.append(text)
+            last_indent = indent
+            last_style = style
+            current_row -= 1
+            continue
+
+        break
+
+    return dedupe_preserve_order(list(reversed(collected)))
+
+
+def _full_column_labels(ws: Worksheet, row: int, col: int) -> list[str]:
+    labels_with_row: list[tuple[int, str]] = []
+    max_row = ws.max_row or row
+
+    current_row = row + 1
+    while current_row <= max_row:
+        cell_value = _scan_cell_value(ws, current_row, col)
+        if cell_value is None or (isinstance(cell_value, str) and cell_value.strip() == ""):
+            break
+        if isinstance(cell_value, str):
+            text = cell_value.strip()
+            if is_valid_label(text):
+                labels_with_row.append((current_row, text))
+        elif not isinstance(cell_value, (int, float, bool)):
+            text = str(cell_value)
+            if is_valid_label(text):
+                labels_with_row.append((current_row, text))
+        current_row += 1
+
+    current_row = row - 1
+    while current_row >= 1:
+        cell_value = _scan_cell_value(ws, current_row, col)
+        if cell_value is None or (isinstance(cell_value, str) and cell_value.strip() == ""):
+            break
+        if isinstance(cell_value, str):
+            text = cell_value.strip()
+            if is_valid_label(text):
+                labels_with_row.append((current_row, text))
+        elif not isinstance(cell_value, (int, float, bool)):
+            text = str(cell_value)
+            if is_valid_label(text):
+                labels_with_row.append((current_row, text))
+        current_row -= 1
+
+    ordered = [label for _, label in sorted(labels_with_row, key=lambda x: x[0], reverse=True)]
+    return dedupe_preserve_order(ordered)
+
+
+def _right_edge_row_labels(ws: Worksheet, row: int, col: int) -> list[str]:
+    labels: list[str] = []
+    max_col = ws.max_column or col
+    current_col = col + 1
+    while current_col <= max_col:
+        cell_value = _scan_cell_value(ws, row, current_col)
+        if cell_value is None or (isinstance(cell_value, str) and cell_value.strip() == ""):
+            break
+        if isinstance(cell_value, str):
+            text = cell_value.strip()
+            if is_valid_label(text):
+                labels.append(text)
+        elif not isinstance(cell_value, (int, float, bool)):
+            text = str(cell_value)
+            if is_valid_label(text):
+                labels.append(text)
+        current_col += 1
+    return dedupe_preserve_order(labels)
+
+
+def _bottom_edge_column_labels(ws: Worksheet, row: int, col: int) -> list[str]:
+    labels: list[str] = []
+    max_row = ws.max_row or row
+    current_row = row + 1
+    while current_row <= max_row:
+        cell_value = _scan_cell_value(ws, current_row, col)
+        if cell_value is None or (isinstance(cell_value, str) and cell_value.strip() == ""):
+            break
+        if isinstance(cell_value, str):
+            text = cell_value.strip()
+            if is_valid_label(text):
+                labels.append(text)
+        elif not isinstance(cell_value, (int, float, bool)):
+            text = str(cell_value)
+            if is_valid_label(text):
+                labels.append(text)
+        current_row += 1
     return dedupe_preserve_order(labels)
 
 
@@ -465,24 +565,44 @@ class _HeuristicColumnScan:
         return LabelResult(column_labels=tuple(cols))
 
 
-class _YearOffsetHeaders:
-    """Populate offset maps in :class:`LabelDetectionState` for header rows (no labels by itself)."""
-
-    name = "year_offset_headers"
+class _FullRowScan:
+    name = "full_row_scan"
 
     def detect(self, ctx: LabelDetectionContext) -> LabelResult:
-        rp = ctx.region_params
-        if rp is None or not rp.header_rows:
+        if ctx.ws_values is None:
             return LabelResult()
-        if ctx.ws_formulas is None or ctx.ws_values is None:
+        rows = _full_row_labels(ctx.ws_values, ctx.row, ctx.col)
+        return LabelResult(row_labels=tuple(rows))
+
+
+class _FullColumnScan:
+    name = "full_column_scan"
+
+    def detect(self, ctx: LabelDetectionContext) -> LabelResult:
+        if ctx.ws_values is None:
             return LabelResult()
-        for hr in rp.header_rows:
-            key = (ctx.sheet, hr)
-            if key not in ctx.state.offset_maps:
-                ctx.state.offset_maps[key] = detect_year_offset_headers(
-                    ctx.ws_formulas, ctx.ws_values, hr
-                )
-        return LabelResult()
+        cols = _full_column_labels(ctx.ws_values, ctx.row, ctx.col)
+        return LabelResult(column_labels=tuple(cols))
+
+
+class _RightEdgeScan:
+    name = "right_edge_scan"
+
+    def detect(self, ctx: LabelDetectionContext) -> LabelResult:
+        if ctx.ws_values is None:
+            return LabelResult()
+        rows = _right_edge_row_labels(ctx.ws_values, ctx.row, ctx.col)
+        return LabelResult(row_labels=tuple(rows))
+
+
+class _BottomEdgeScan:
+    name = "bottom_edge_scan"
+
+    def detect(self, ctx: LabelDetectionContext) -> LabelResult:
+        if ctx.ws_values is None:
+            return LabelResult()
+        rows = _bottom_edge_column_labels(ctx.ws_values, ctx.row, ctx.col)
+        return LabelResult(row_labels=tuple(rows))
 
 
 class _RegionHeaderRows:
@@ -511,46 +631,26 @@ class _RegionHeaderRows:
         return LabelResult(column_labels=tuple(dedupe_preserve_order(col_labels)))
 
 
-class _RegionLeftLabelColumns:
-    name = "region_left_label_columns"
+class _LeftThenUpScan:
+    name = "left_then_up_scan"
 
     def detect(self, ctx: LabelDetectionContext) -> LabelResult:
-        rp = ctx.region_params
-        if rp is None or not rp.label_columns or ctx.ws_values is None:
+        if ctx.ws_values is None:
             return LabelResult()
-        row_labels: list[str] = []
-        no_hierarchy = set(rp.no_hierarchy_columns)
-        min_r, max_r = rp.min_row, rp.max_row
-
-        for col_letter in rp.label_columns:
-            col_idx = fastpyxl.utils.cell.column_index_from_string(col_letter)
-            hier_key = (ctx.sheet, col_letter)
-            if col_letter not in no_hierarchy:
-                if hier_key not in ctx.state.hierarchies:
-                    hmap = _build_label_hierarchy(ctx.ws_values, col_idx, min_r, max_r)
-                    ctx.state.hierarchies[hier_key] = {r: tuple(anc) for r, anc in hmap.items()}
-                ancestors = ctx.state.hierarchies[hier_key].get(ctx.row, ())
-                row_labels.extend(ancestors)
-
-            cell_value = ctx.ws_values.cell(row=ctx.row, column=col_idx).value
-            if cell_value is not None:
-                if isinstance(cell_value, str):
-                    text = cell_value.strip()
-                    if text and is_valid_label(text):
-                        row_labels.append(text)
-                elif is_year_like(cell_value):
-                    row_labels.append(str(cell_value))
-
-        return LabelResult(row_labels=tuple(dedupe_preserve_order(row_labels)))
+        rows = _left_then_up_row_labels(ctx.ws_values, ctx.row, ctx.col, ctx.region_params)
+        return LabelResult(row_labels=tuple(rows))
 
 
 def default_label_behaviors() -> tuple[LabelDetectionBehavior, ...]:
     return (
         _HeuristicRowScan(),
         _HeuristicColumnScan(),
-        _YearOffsetHeaders(),
+        _FullRowScan(),
+        _FullColumnScan(),
+        _RightEdgeScan(),
+        _BottomEdgeScan(),
         _RegionHeaderRows(),
-        _RegionLeftLabelColumns(),
+        _LeftThenUpScan(),
     )
 
 
@@ -571,7 +671,7 @@ def build_label_behavior_registry(
 
 
 def _merge_results(
-    policy: Literal["append_dedupe", "replace"],
+    policy: Literal["append_dedupe", "append_dedupe_reverse", "replace"],
     current_row: list[str],
     current_col: list[str],
     new: LabelResult,
@@ -648,6 +748,9 @@ def collect_labels_for_node(
             res = beh.detect(ctx_fb)
             row_out, col_out = _merge_results(cfg.merge_policy, row_out, col_out, res)
 
+    if cfg.merge_policy == "append_dedupe_reverse":
+        row_out = list(reversed(row_out))
+        col_out = list(reversed(col_out))
     return row_out, col_out
 
 

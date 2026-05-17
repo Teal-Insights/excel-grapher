@@ -9,7 +9,6 @@ from excel_grapher.grapher.label_detection import (
     BehaviorRule,
     LabelDetectionConfig,
     LabelDetectionState,
-    RegionLabelParams,
     RegionSelector,
     RegionSpec,
     build_label_behavior_registry,
@@ -75,6 +74,24 @@ def test_collect_labels_unknown_behavior_raises() -> None:
         )
 
 
+def test_collect_labels_rejects_year_offset_headers_behavior_name() -> None:
+    cfg = LabelDetectionConfig(enabled=True, fallback_behaviors=("year_offset_headers",))
+    reg = build_label_behavior_registry(None)
+    st = LabelDetectionState()
+    with pytest.raises(ValueError, match="Unknown label detection behavior"):
+        collect_labels_for_node(
+            key="S!A1",
+            sheet="S",
+            row=1,
+            col=1,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=None,
+            ws_formulas=None,
+        )
+
+
 def test_collect_labels_rule_stop_skips_fallback() -> None:
     cfg = LabelDetectionConfig(
         enabled=True,
@@ -104,7 +121,7 @@ def test_collect_labels_rule_stop_skips_fallback() -> None:
     assert row == [] and col == []
 
 
-def test_collect_labels_region_label_columns(tmp_path) -> None:
+def test_collect_labels_left_then_up_scan(tmp_path) -> None:
     pytest.importorskip("xlsxwriter")
     import xlsxwriter
 
@@ -112,6 +129,7 @@ def test_collect_labels_region_label_columns(tmp_path) -> None:
     wb = xlsxwriter.Workbook(path)
     ws = wb.add_worksheet("S")
     ws.write_string(0, 0, "RowTitle")
+    ws.write_string(0, 1, "RowLeaf")
     ws.write_number(0, 2, 42)
     wb.close()
 
@@ -126,8 +144,7 @@ def test_collect_labels_region_label_columns(tmp_path) -> None:
                 BehaviorRule(
                     name="r",
                     selector=RegionSelector(include=(RegionSpec("S", 1, 3, 1, 5),)),
-                    behaviors=("region_left_label_columns",),
-                    region_params=RegionLabelParams(label_columns=("A",)),
+                    behaviors=("left_then_up_scan",),
                 ),
             ),
             fallback_behaviors=(),
@@ -151,8 +168,91 @@ def test_collect_labels_region_label_columns(tmp_path) -> None:
         wv.close()
 
 
-def test_left_edge_scan_skips_leading_non_year_numbers(tmp_path) -> None:
-    """Non-year numbers break only after at least one label was collected to the right."""
+def test_left_then_up_scan_same_indent_same_style_is_skipped(tmp_path) -> None:
+    pytest.importorskip("xlsxwriter")
+    import xlsxwriter
+
+    path = tmp_path / "left_then_up_skip_same_style.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    i2 = wb.add_format({"indent": 2})
+    i1 = wb.add_format({"indent": 1})
+    ws.write_string(0, 0, "Country")
+    ws.write_string(1, 0, "Category", i1)
+    ws.write_string(2, 0, "Current", i2)
+    ws.write_string(3, 0, "Target", i2)
+    ws.write_number(3, 1, 1)
+    wb.close()
+
+    import fastpyxl
+
+    wv = fastpyxl.load_workbook(path, data_only=True)
+    try:
+        wsv = wv["S"]
+        cfg = LabelDetectionConfig(enabled=True, fallback_behaviors=("left_then_up_scan",))
+        reg = build_label_behavior_registry(None)
+        st = LabelDetectionState()
+        row, col = collect_labels_for_node(
+            key="S!B4",
+            sheet="S",
+            row=4,
+            col=2,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=wsv,
+            ws_formulas=wsv,
+        )
+        assert row == ["Country", "Category", "Target"]
+        assert col == []
+    finally:
+        wv.close()
+
+
+def test_left_then_up_scan_stops_on_same_indent_lower_style(tmp_path) -> None:
+    pytest.importorskip("xlsxwriter")
+    import xlsxwriter
+
+    path = tmp_path / "left_then_up_stop_lower_style.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    bold_i2 = wb.add_format({"bold": True, "indent": 2})
+    italic_i2 = wb.add_format({"italic": True, "indent": 2})
+    i1 = wb.add_format({"indent": 1})
+    ws.write_string(0, 0, "Country")
+    ws.write_string(1, 0, "Category", i1)
+    ws.write_string(2, 0, "Upper Italic", italic_i2)
+    ws.write_string(3, 0, "Target Bold", bold_i2)
+    ws.write_number(3, 1, 1)
+    wb.close()
+
+    import fastpyxl
+
+    wv = fastpyxl.load_workbook(path, data_only=True)
+    try:
+        wsv = wv["S"]
+        cfg = LabelDetectionConfig(enabled=True, fallback_behaviors=("left_then_up_scan",))
+        reg = build_label_behavior_registry(None)
+        st = LabelDetectionState()
+        row, col = collect_labels_for_node(
+            key="S!B4",
+            sheet="S",
+            row=4,
+            col=2,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=wsv,
+            ws_formulas=wsv,
+        )
+        assert row == ["Target Bold"]
+        assert col == []
+    finally:
+        wv.close()
+
+
+def test_left_edge_scan_resets_labels_when_crossing_non_year_numbers(tmp_path) -> None:
+    """Crossing a non-year number resets collected labels and keeps scanning."""
     pytest.importorskip("xlsxwriter")
     import xlsxwriter
 
@@ -185,13 +285,13 @@ def test_left_edge_scan_skips_leading_non_year_numbers(tmp_path) -> None:
             ws_values=wsv,
             ws_formulas=wsv,
         )
-        assert row == ["C-label"]
+        assert row == ["A-label"]
         assert col == []
     finally:
         wv.close()
 
 
-def test_top_edge_scan_skips_leading_non_year_numbers(tmp_path) -> None:
+def test_top_edge_scan_resets_labels_when_crossing_non_year_numbers(tmp_path) -> None:
     pytest.importorskip("xlsxwriter")
     import xlsxwriter
 
@@ -225,6 +325,241 @@ def test_top_edge_scan_skips_leading_non_year_numbers(tmp_path) -> None:
             ws_formulas=wsv,
         )
         assert row == []
-        assert col == ["mid"]
+        assert col == ["top"]
+    finally:
+        wv.close()
+
+
+def test_full_row_scan_collects_text_across_intervening_numbers(tmp_path) -> None:
+    pytest.importorskip("xlsxwriter")
+    import xlsxwriter
+
+    path = tmp_path / "full_row_scan.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    ws.write_string(0, 0, "A-label")
+    ws.write_number(0, 1, 999)
+    ws.write_string(0, 2, "C-label")
+    ws.write_number(0, 3, 1)
+    ws.write_string(0, 4, "E-label")
+    wb.close()
+
+    import fastpyxl
+
+    wv = fastpyxl.load_workbook(path, data_only=True)
+    try:
+        wsv = wv["S"]
+        cfg = LabelDetectionConfig(enabled=True, fallback_behaviors=("full_row_scan",))
+        reg = build_label_behavior_registry(None)
+        st = LabelDetectionState()
+        row, col = collect_labels_for_node(
+            key="S!D1",
+            sheet="S",
+            row=1,
+            col=4,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=wsv,
+            ws_formulas=wsv,
+        )
+        assert row == ["E-label", "C-label", "A-label"]
+        assert col == []
+    finally:
+        wv.close()
+
+
+def test_full_column_scan_collects_text_across_intervening_numbers(tmp_path) -> None:
+    pytest.importorskip("xlsxwriter")
+    import xlsxwriter
+
+    path = tmp_path / "full_column_scan.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    ws.write_string(0, 0, "top")
+    ws.write_number(1, 0, 999)
+    ws.write_string(2, 0, "mid")
+    ws.write_number(3, 0, 1)
+    ws.write_string(4, 0, "bottom")
+    wb.close()
+
+    import fastpyxl
+
+    wv = fastpyxl.load_workbook(path, data_only=True)
+    try:
+        wsv = wv["S"]
+        cfg = LabelDetectionConfig(enabled=True, fallback_behaviors=("full_column_scan",))
+        reg = build_label_behavior_registry(None)
+        st = LabelDetectionState()
+        row, col = collect_labels_for_node(
+            key="S!A4",
+            sheet="S",
+            row=4,
+            col=1,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=wsv,
+            ws_formulas=wsv,
+        )
+        assert row == []
+        assert col == ["bottom", "mid", "top"]
+    finally:
+        wv.close()
+
+
+def test_merge_policy_append_dedupe_reverse_reverses_row_labels(tmp_path) -> None:
+    pytest.importorskip("xlsxwriter")
+    import xlsxwriter
+
+    path = tmp_path / "merge_policy_reverse_row.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    ws.write_string(0, 0, "A-label")
+    ws.write_number(0, 1, 999)
+    ws.write_string(0, 2, "C-label")
+    ws.write_number(0, 3, 1)
+    wb.close()
+
+    import fastpyxl
+
+    wv = fastpyxl.load_workbook(path, data_only=True)
+    try:
+        wsv = wv["S"]
+        cfg = LabelDetectionConfig(
+            enabled=True,
+            merge_policy="append_dedupe_reverse",
+            fallback_behaviors=("full_row_scan", "left_edge_scan"),
+        )
+        reg = build_label_behavior_registry(None)
+        st = LabelDetectionState()
+        row, col = collect_labels_for_node(
+            key="S!D1",
+            sheet="S",
+            row=1,
+            col=4,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=wsv,
+            ws_formulas=wsv,
+        )
+        assert row == ["A-label", "C-label"]
+        assert col == []
+    finally:
+        wv.close()
+
+
+def test_merge_policy_append_dedupe_reverse_reverses_column_labels(tmp_path) -> None:
+    pytest.importorskip("xlsxwriter")
+    import xlsxwriter
+
+    path = tmp_path / "merge_policy_reverse_col.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    ws.write_string(0, 0, "top")
+    ws.write_number(1, 0, 999)
+    ws.write_string(2, 0, "mid")
+    ws.write_number(3, 0, 1)
+    wb.close()
+
+    import fastpyxl
+
+    wv = fastpyxl.load_workbook(path, data_only=True)
+    try:
+        wsv = wv["S"]
+        cfg = LabelDetectionConfig(
+            enabled=True,
+            merge_policy="append_dedupe_reverse",
+            fallback_behaviors=("full_column_scan", "top_edge_scan"),
+        )
+        reg = build_label_behavior_registry(None)
+        st = LabelDetectionState()
+        row, col = collect_labels_for_node(
+            key="S!A4",
+            sheet="S",
+            row=4,
+            col=1,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=wsv,
+            ws_formulas=wsv,
+        )
+        assert row == []
+        assert col == ["top", "mid"]
+    finally:
+        wv.close()
+
+
+def test_right_edge_scan_collects_text_to_the_right(tmp_path) -> None:
+    pytest.importorskip("xlsxwriter")
+    import xlsxwriter
+
+    path = tmp_path / "right_edge_scan.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    ws.write_number("A1", 200)
+    ws.write_string("B1", "million")
+    ws.write_string("C1", "dollars")
+    wb.close()
+
+    import fastpyxl
+
+    wv = fastpyxl.load_workbook(path, data_only=True)
+    try:
+        wsv = wv["S"]
+        cfg = LabelDetectionConfig(enabled=True, fallback_behaviors=("right_edge_scan",))
+        reg = build_label_behavior_registry(None)
+        st = LabelDetectionState()
+        row, col = collect_labels_for_node(
+            key="S!A1",
+            sheet="S",
+            row=1,
+            col=1,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=wsv,
+            ws_formulas=wsv,
+        )
+        assert row == ["million", "dollars"]
+        assert col == []
+    finally:
+        wv.close()
+
+
+def test_bottom_edge_scan_collects_text_below(tmp_path) -> None:
+    pytest.importorskip("xlsxwriter")
+    import xlsxwriter
+
+    path = tmp_path / "bottom_edge_scan.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    ws.write_number("A1", 200)
+    ws.write_string("A2", "Source: CIA Factbook, 2012")
+    wb.close()
+
+    import fastpyxl
+
+    wv = fastpyxl.load_workbook(path, data_only=True)
+    try:
+        wsv = wv["S"]
+        cfg = LabelDetectionConfig(enabled=True, fallback_behaviors=("bottom_edge_scan",))
+        reg = build_label_behavior_registry(None)
+        st = LabelDetectionState()
+        row, col = collect_labels_for_node(
+            key="S!A1",
+            sheet="S",
+            row=1,
+            col=1,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=wsv,
+            ws_formulas=wsv,
+        )
+        assert row == ["Source: CIA Factbook, 2012"]
+        assert col == []
     finally:
         wv.close()
