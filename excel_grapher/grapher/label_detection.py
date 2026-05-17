@@ -65,7 +65,7 @@ class BehaviorRule:
 class LabelDetectionConfig:
     enabled: bool = False
     merge_policy: Literal["append_dedupe", "replace"] = "append_dedupe"
-    fallback_behaviors: tuple[str, ...] = ("heuristic_row_scan", "heuristic_column_scan")
+    fallback_behaviors: tuple[str, ...] = ("left_edge_scan", "top_edge_scan")
     rules: tuple[BehaviorRule, ...] = ()
 
 
@@ -189,6 +189,24 @@ def dedupe_preserve_order(labels: Sequence[str]) -> list[str]:
         seen.add(label)
         out.append(label)
     return out
+
+
+def _merged_anchor_value(ws: Worksheet, row: int, col: int) -> Any | None:
+    merged_ranges = getattr(getattr(ws, "merged_cells", None), "ranges", ())
+    for merged_range in merged_ranges:
+        if (
+            merged_range.min_row <= row <= merged_range.max_row
+            and merged_range.min_col <= col <= merged_range.max_col
+        ):
+            return ws.cell(row=merged_range.min_row, column=merged_range.min_col).value
+    return None
+
+
+def _scan_cell_value(ws: Worksheet, row: int, col: int) -> Any | None:
+    value = ws.cell(row=row, column=col).value
+    if value is not None:
+        return value
+    return _merged_anchor_value(ws, row, col)
 
 
 def _get_effective_indent(cell: Any) -> int:
@@ -378,7 +396,7 @@ def _heuristic_row_labels(ws: Worksheet, row: int, col: int) -> list[str]:
     labels: list[str] = []
     current_col = col - 1
     while current_col >= 1:
-        cell_value = ws.cell(row=row, column=current_col).value
+        cell_value = _scan_cell_value(ws, row, current_col)
         if cell_value is None or (isinstance(cell_value, str) and cell_value.strip() == ""):
             break
         if isinstance(cell_value, str):
@@ -402,7 +420,7 @@ def _heuristic_column_labels(ws: Worksheet, row: int, col: int) -> list[str]:
     labels: list[str] = []
     current_row = row - 1
     while current_row >= 1:
-        cell_value = ws.cell(row=current_row, column=col).value
+        cell_value = _scan_cell_value(ws, current_row, col)
         if cell_value is None or (isinstance(cell_value, str) and cell_value.strip() == ""):
             break
         if isinstance(cell_value, str):
@@ -428,7 +446,7 @@ def _heuristic_column_labels(ws: Worksheet, row: int, col: int) -> list[str]:
 
 
 class _HeuristicRowScan:
-    name = "heuristic_row_scan"
+    name = "left_edge_scan"
 
     def detect(self, ctx: LabelDetectionContext) -> LabelResult:
         if ctx.ws_values is None:
@@ -438,7 +456,7 @@ class _HeuristicRowScan:
 
 
 class _HeuristicColumnScan:
-    name = "heuristic_column_scan"
+    name = "top_edge_scan"
 
     def detect(self, ctx: LabelDetectionContext) -> LabelResult:
         if ctx.ws_values is None:

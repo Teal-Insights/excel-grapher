@@ -165,10 +165,6 @@ def test_nested_header_rows_and_columns_are_collected(
 # --- Merged cells ---
 
 
-@pytest.mark.xfail(
-    reason="Merged-cell values should be visible to leftward row scans (roadmap)",
-    strict=True,
-)
 def test_merged_cell_label_is_included_in_row_labels(
     label_workbook_factory: WorkbookFactory,
 ) -> None:
@@ -416,7 +412,7 @@ def test_custom_behavior_collects_column_a_numeric_row_id(
                 selector=RegionSelector(
                     include=region_specs_from_ranges(["Sheet1!A1:B3"]),
                 ),
-                behaviors=("column_a_row_label", "heuristic_column_scan"),
+                behaviors=("column_a_row_label", "top_edge_scan"),
                 stop_after_match=True,
             ),
         ),
@@ -485,7 +481,7 @@ def test_custom_year_offset_row_label(
                 selector=RegionSelector(
                     include=region_specs_from_ranges(["Sheet1!A1:B3"]),
                 ),
-                behaviors=("year_offset_row_label", "heuristic_column_scan"),
+                behaviors=("year_offset_row_label", "top_edge_scan"),
                 stop_after_match=True,
                 region_params=RegionLabelParams(min_row=2, max_row=3),
             ),
@@ -577,7 +573,7 @@ def test_region_left_label_columns_collects_indent_hierarchy(
                 selector=RegionSelector(
                     include=region_specs_from_ranges(["Sheet1!A1:B6"]),
                 ),
-                behaviors=("region_left_label_columns", "heuristic_column_scan"),
+                behaviors=("region_left_label_columns", "top_edge_scan"),
             ),
         ),
     )
@@ -651,7 +647,7 @@ def test_custom_font_weight_hierarchy_row_labels(
                 selector=RegionSelector(
                     include=region_specs_from_ranges(["Sheet1!A1:B6"]),
                 ),
-                behaviors=("font_weight_hierarchy_row_labels", "heuristic_column_scan"),
+                behaviors=("font_weight_hierarchy_row_labels", "top_edge_scan"),
                 stop_after_match=True,
                 region_params=RegionLabelParams(
                     label_columns=("A",),
@@ -697,7 +693,7 @@ def test_font_weight_hierarchy_on_year_table(
                 selector=RegionSelector(
                     include=region_specs_from_ranges(["Sheet1!A1:B3"]),
                 ),
-                behaviors=("font_weight_hierarchy_row_labels", "heuristic_column_scan"),
+                behaviors=("font_weight_hierarchy_row_labels", "top_edge_scan"),
                 stop_after_match=True,
                 region_params=RegionLabelParams(
                     label_columns=("A",),

@@ -86,7 +86,7 @@ def test_collect_labels_rule_stop_skips_fallback() -> None:
                 stop_after_match=True,
             ),
         ),
-        fallback_behaviors=("heuristic_row_scan",),
+        fallback_behaviors=("left_edge_scan",),
     )
     reg = build_label_behavior_registry(None)
     st = LabelDetectionState()
@@ -151,7 +151,7 @@ def test_collect_labels_region_label_columns(tmp_path) -> None:
         wv.close()
 
 
-def test_heuristic_row_scan_skips_leading_non_year_numbers(tmp_path) -> None:
+def test_left_edge_scan_skips_leading_non_year_numbers(tmp_path) -> None:
     """Non-year numbers break only after at least one label was collected to the right."""
     pytest.importorskip("xlsxwriter")
     import xlsxwriter
@@ -191,7 +191,7 @@ def test_heuristic_row_scan_skips_leading_non_year_numbers(tmp_path) -> None:
         wv.close()
 
 
-def test_heuristic_column_scan_skips_leading_non_year_numbers(tmp_path) -> None:
+def test_top_edge_scan_skips_leading_non_year_numbers(tmp_path) -> None:
     pytest.importorskip("xlsxwriter")
     import xlsxwriter
 

@@ -190,8 +190,8 @@ print_text(
 ```
 
 ``` text
-Row labels: ['Row  2.2']
-Column labels: ['Column 2.2']
+Row labels: ['Row  2.2', 'Row 1.1']
+Column labels: ['Column 2.2', 'Column 1.1']
 ```
 
 ## 06. Intervening blank cells
@@ -270,9 +270,8 @@ time series acts like a secondary label because it is an identifier for
 the row, so we probably want to collect it.
 
 The default `LabelDetectionBehavior`s used by `LabelDetectionConfig` are
-`heuristic_row_scan` and `heuristic_column_scan` (which we should
-probably rename to `left_edge_scan` and `top_edge_scan`), but there are
-also others registered on the default registry: `year_offset_headers`,
+`left_edge_scan` and `top_edge_scan`, but there are also others
+registered on the default registry: `year_offset_headers`,
 `region_header_rows`, and `region_left_label_columns`. I intend to add
 `full_row_scan` and `full_column_scan` to the default registry, and
 these will collect all text cells in the path, which is the behavior we
@@ -470,7 +469,7 @@ cfg = LabelDetectionConfig(
                 include=region_specs_from_ranges(["Sheet1!A42:B44"]),
             ),
             # reference the custom behavior by name
-            behaviors=("column_a_row_label", "heuristic_column_scan"),
+            behaviors=("column_a_row_label", "top_edge_scan"),
             stop_after_match=True,
         ),
     ),
@@ -500,9 +499,9 @@ Column labels: ['Revenue']
 
 Note that when we define a BehaviorRule that uses our custom behavior,
 we apply it only to the worksheet region (“Sheet1!A42:B44”) that we want
-to collect year offset labels from, and we still apply
-“heuristic_column_scan” to collect the column labels. We can apply any
-combination of behaviors we want to different parts of the workbook.
+to collect year offset labels from, and we still apply “top_edge_scan”
+to collect the column labels. We can apply any combination of behaviors
+we want to different parts of the workbook.
 
 ## 11. Transforming years to offsets
 
@@ -563,7 +562,7 @@ cfg = LabelDetectionConfig(
             selector=RegionSelector(
                 include=region_specs_from_ranges(["Sheet1!A38:B40"]),
             ),
-            behaviors=("year_offset_row_label", "heuristic_column_scan"),
+            behaviors=("year_offset_row_label", "top_edge_scan"),
             stop_after_match=True,
             # Region bounds are consumed by the custom behavior.
             region_params=RegionLabelParams(min_row=39, max_row=40),
@@ -685,7 +684,7 @@ graph: DependencyGraph = create_dependency_graph(
                 selector=RegionSelector(
                     include=region_specs_from_ranges(["Sheet1!A51:B56"]),
                 ),
-                behaviors=("region_left_label_columns", "heuristic_column_scan"),
+                behaviors=("region_left_label_columns", "top_edge_scan"),
             ),
         ),
     )
@@ -788,7 +787,7 @@ cfg = LabelDetectionConfig(
             selector=RegionSelector(
                 include=region_specs_from_ranges(["Sheet1!A51:B56"]),
             ),
-            behaviors=("font_weight_hierarchy_row_labels", "heuristic_column_scan"),
+            behaviors=("font_weight_hierarchy_row_labels", "top_edge_scan"),
             stop_after_match=True,
             region_params=RegionLabelParams(
                 label_columns=("A",),

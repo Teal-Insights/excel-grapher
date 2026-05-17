@@ -6,6 +6,8 @@ We use `fastpyxl` as a drop-in replacement for `openpyxl`.
 
 Always practice test-driven development. Write a stub (if necessary), write a test, watch it fail for the right reason (RED), write the code to make it pass (GREEN), and then refactor to clean up the code.
 
+This is a greenfield project with no users, so we are free to make design decisions that unconstrained by the legacy codebase.
+
 ## Parity
 
 The project aims for **behavioral parity** across **Excel** (reference), **`FormulaEvaluator`**, and **exported standalone code**. Semantics are centralized in `excel_grapher/exporter/export_runtime/`; the evaluator and codegen must both use that runtime so **evaluator ↔ export** stays aligned.
