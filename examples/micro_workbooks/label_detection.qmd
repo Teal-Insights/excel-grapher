@@ -125,7 +125,7 @@ print_text(
 
 ## 05. Merged cells
 
-Scanning left from **D18**, we find a "Row 2.2" label in **B18**. Immediately left of that, we encounter a merged cell **A17** created from **A17:A18**. The merged cell **A17** is labeled "Row 1.1". `left_edge_scan` resolves merged cells through their anchor value, so this label is included in the detected row labels.
+Scanning left from **D18**, we find a "Row 2.2" label in **B18**. Immediately left of that, we encounter a merged cell **A17** created from **A17:A18**. The merged cell **A17** is labeled "Row 1.1". In Excel, a merged cell like A17:A18 is visually one big cell, but internally only the top-left cell (A17) stores the value. The covered cells (like A18) are placeholders with no value. When `left_edge_scan` lands on one of those placeholder cells, it resolves the merged range's anchor cell (A17) and uses that text, so this label is included in the detected row labels.
 
 ```{python}
 graph: DependencyGraph = create_dependency_graph(
@@ -144,7 +144,7 @@ print_text(
 
 ## 06. Intervening blank cells
 
-Suppose we have two tables side-by-side, or one above the other. We don't want heuristic left-scan or up-scan to accidentally collect assign labels from the other table. As long as there are blank cells between the tables, the scan will stop at the edge of the current table.
+Suppose we have two tables side-by-side, or one above the other. We don't want heuristic left-scan or up-scan to accidentally collect labels from the other table. As long as there are blank cells between the tables, the scan will stop at the edge of the current table.
 
 The example in rows 20-24 illustrates this. We've arranged lists above and left of our table, separated from the table by blank cells. The text cells comprising the lists are not detected as labels for the table.
 
