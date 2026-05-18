@@ -785,3 +785,66 @@ def test_top_edge_then_left_scan_collects_column_hierarchy(
     metadata = _labels(path, "Sheet1!C2", label_detection=cfg)
     assert _row_labels(metadata) == []
     assert _column_labels(metadata) == ["Country", "GDP", "Real"]
+
+
+def test_top_edge_then_left_scan_respects_region_min_row(
+    label_workbook_factory: WorkbookFactory,
+) -> None:
+    def _populate(ws, _wb) -> None:
+        ws.write("A4", "Country")
+        ws.write("B4", "GDP")
+        ws.write("C4", "Real")
+        ws.write("C5", "Q1")
+        ws.write_number("C6", 15.31)
+
+    path = label_workbook_factory(_populate)
+    cfg = LabelDetectionConfig(
+        enabled=True,
+        rules=(
+            BehaviorRule(
+                name="topEdgeThenLeftMinRow",
+                selector=RegionSelector(
+                    include=region_specs_from_ranges(["Sheet1!A5:C6"]),
+                ),
+                behaviors=("top_edge_then_left_scan",),
+                stop_after_match=True,
+                region_params=RegionLabelParams(
+                    label_columns=("A", "B", "C"),
+                    min_row=5,
+                    max_row=6,
+                ),
+            ),
+        ),
+        fallback_behaviors=(),
+    )
+    metadata = _labels(path, "Sheet1!C6", label_detection=cfg)
+    assert _row_labels(metadata) == []
+    assert _column_labels(metadata) == ["Q1"]
+
+
+def test_top_edge_then_left_scan_reads_merged_header_anchors(
+    label_workbook_factory: WorkbookFactory,
+) -> None:
+    def _populate(ws, _wb) -> None:
+        ws.merge_range("A1:B1", "Country")
+        ws.write("C1", "Real")
+        ws.write_number("C2", 15.31)
+
+    path = label_workbook_factory(_populate)
+    cfg = LabelDetectionConfig(
+        enabled=True,
+        rules=(
+            BehaviorRule(
+                name="topEdgeThenLeftMerged",
+                selector=RegionSelector(
+                    include=region_specs_from_ranges(["Sheet1!A1:C2"]),
+                ),
+                behaviors=("top_edge_then_left_scan",),
+                stop_after_match=True,
+            ),
+        ),
+        fallback_behaviors=(),
+    )
+    metadata = _labels(path, "Sheet1!C2", label_detection=cfg)
+    assert _row_labels(metadata) == []
+    assert _column_labels(metadata) == ["Country", "Real"]
