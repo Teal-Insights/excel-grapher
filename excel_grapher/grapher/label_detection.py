@@ -463,11 +463,11 @@ def _left_edge_then_up_row_labels(
     return dedupe_preserve_order(list(reversed(collected)))
 
 
-def _find_topmost_label_row(ws: Worksheet, row: int, col: int) -> int | None:
+def _find_topmost_label_row(ws: Worksheet, row: int, col: int, min_row: int = 1) -> int | None:
     """Return the topmost text/year label row above ``row`` on ``col``; stops at blanks."""
     topmost: int | None = None
     current_row = row - 1
-    while current_row >= 1:
+    while current_row >= min_row:
         cell_value = _scan_cell_value(ws, current_row, col)
         if cell_value is None or (isinstance(cell_value, str) and cell_value.strip() == ""):
             break
@@ -481,12 +481,13 @@ def _find_topmost_label_row(ws: Worksheet, row: int, col: int) -> int | None:
 def _top_edge_then_left_column_labels(
     ws: Worksheet, row: int, col: int, rp: RegionLabelParams | None
 ) -> list[str]:
-    label_row_idx = _find_topmost_label_row(ws, row, col)
+    min_row = (rp.min_row if rp is not None and rp.min_row is not None else 1) or 1
+    label_row_idx = _find_topmost_label_row(ws, row, col, min_row=min_row)
     if label_row_idx is None:
         return []
 
-    current_cell = ws.cell(row=label_row_idx, column=col)
-    current_text = _left_then_up_label_text(current_cell.value)
+    current_cell_value = _scan_cell_value(ws, label_row_idx, col)
+    current_text = _left_then_up_label_text(current_cell_value)
     if current_text is None:
         return []
 
@@ -498,8 +499,8 @@ def _top_edge_then_left_column_labels(
 
     current_col = col - 1
     while current_col >= min_col:
-        cell = ws.cell(row=label_row_idx, column=current_col)
-        text = _left_then_up_label_text(cell.value)
+        cell_value = _scan_cell_value(ws, label_row_idx, current_col)
+        text = _left_then_up_label_text(cell_value)
         if text is None:
             break
         collected.append(text)

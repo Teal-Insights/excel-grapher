@@ -9,6 +9,7 @@ from excel_grapher.grapher.label_detection import (
     BehaviorRule,
     LabelDetectionConfig,
     LabelDetectionState,
+    RegionLabelParams,
     RegionSelector,
     RegionSpec,
     build_label_behavior_registry,
@@ -601,5 +602,97 @@ def test_top_edge_then_left_scan_collects_column_hierarchy(tmp_path) -> None:
         )
         assert row == []
         assert col == ["Country", "GDP", "Real"]
+    finally:
+        wv.close()
+
+
+def test_top_edge_then_left_scan_respects_region_min_row(tmp_path) -> None:
+    pytest.importorskip("xlsxwriter")
+    import xlsxwriter
+
+    path = tmp_path / "top_edge_then_left_scan_min_row.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    ws.write_string(3, 0, "Country")
+    ws.write_string(3, 1, "GDP")
+    ws.write_string(3, 2, "Real")
+    ws.write_string(4, 2, "Q1")
+    ws.write_number(5, 2, 1)
+    wb.close()
+
+    import fastpyxl
+
+    wv = fastpyxl.load_workbook(path, data_only=True)
+    try:
+        wsv = wv["S"]
+        cfg = LabelDetectionConfig(
+            enabled=True,
+            rules=(
+                BehaviorRule(
+                    name="r",
+                    selector=RegionSelector(include=(RegionSpec("S", 5, 6, 1, 3),)),
+                    behaviors=("top_edge_then_left_scan",),
+                    stop_after_match=True,
+                    region_params=RegionLabelParams(
+                        label_columns=("A", "B", "C"),
+                        min_row=5,
+                        max_row=6,
+                    ),
+                ),
+            ),
+            fallback_behaviors=(),
+        )
+        reg = build_label_behavior_registry(None)
+        st = LabelDetectionState()
+        row, col = collect_labels_for_node(
+            key="S!C6",
+            sheet="S",
+            row=6,
+            col=3,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=wsv,
+            ws_formulas=wsv,
+        )
+        assert row == []
+        assert col == ["Q1"]
+    finally:
+        wv.close()
+
+
+def test_top_edge_then_left_scan_reads_merged_header_anchors(tmp_path) -> None:
+    pytest.importorskip("xlsxwriter")
+    import xlsxwriter
+
+    path = tmp_path / "top_edge_then_left_scan_merged.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    ws.merge_range("A1:B1", "Country")
+    ws.write_string(0, 2, "Real")
+    ws.write_number(1, 2, 1)
+    wb.close()
+
+    import fastpyxl
+
+    wv = fastpyxl.load_workbook(path, data_only=True)
+    try:
+        wsv = wv["S"]
+        cfg = LabelDetectionConfig(enabled=True, fallback_behaviors=("top_edge_then_left_scan",))
+        reg = build_label_behavior_registry(None)
+        st = LabelDetectionState()
+        row, col = collect_labels_for_node(
+            key="S!C2",
+            sheet="S",
+            row=2,
+            col=3,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=wsv,
+            ws_formulas=wsv,
+        )
+        assert row == []
+        assert col == ["Country", "Real"]
     finally:
         wv.close()
