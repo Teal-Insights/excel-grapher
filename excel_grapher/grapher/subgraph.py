@@ -63,7 +63,7 @@ def _normalize_existing_keys(
     if missing:
         names = ", ".join(sorted(missing))
         raise ValueError(f"{arg_name} contains keys not present in graph: {names}")
-    return sorted(keys)
+    return graph.sorted_keys(keys)
 
 
 def _validate_limits(*, max_path_length: int | None, max_paths: int | None) -> None:
@@ -104,7 +104,7 @@ def _collect_path_nodes(
         if current in target_set:
             add_path_nodes(path)
 
-        for dep in sorted(graph.get_dependencies(current)):
+        for dep in graph.sorted_keys(graph.get_dependencies(current)):
             if dep in visited:
                 continue
 
@@ -145,10 +145,12 @@ def _induced_dependency_subgraph(
     graph: DependencyGraph, keep_keys: set[NodeKey]
 ) -> DependencyGraph:
     sub = DependencyGraph()
+    if graph.sheet_order is not None:
+        sub.sheet_order = list(graph.sheet_order)
     if graph.leaf_classification is not None:
         sub.leaf_classification = dict(graph.leaf_classification)
 
-    for key in sorted(keep_keys):
+    for key in graph.sorted_keys(keep_keys):
         node = graph._get_internal_node(key)
         if node is None:
             continue
@@ -165,8 +167,8 @@ def _induced_dependency_subgraph(
             )
         )
 
-    for from_key in sorted(keep_keys):
-        for to_key in sorted(graph.get_dependencies(from_key)):
+    for from_key in graph.sorted_keys(keep_keys):
+        for to_key in graph.sorted_keys(graph.get_dependencies(from_key)):
             if to_key not in keep_keys:
                 continue
             attrs = graph.get_edge_attrs(from_key, to_key)

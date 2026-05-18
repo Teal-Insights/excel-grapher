@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import heapq
 import warnings
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from excel_grapher.core.address_keys import normalize_key
+from excel_grapher.core.address_keys import normalize_key, sort_node_keys
 
 from .dependency_provenance import EdgeProvenance, merge_edge_provenance
 from .guard import And, CellRef, Compare, GuardConstraints, GuardExpr, Not, Or, or_guard
@@ -61,6 +61,7 @@ class DependencyGraph:
     _edge_extra: dict[EdgeKey, dict[str, Any]] = field(default_factory=dict)
     _hooks: list[NodeHook] = field(default_factory=list)
     leaf_classification: dict[str, str] | None = None
+    sheet_order: list[str] | None = None
 
     # ---- node insertion and iteration ---------------------------------------
 
@@ -80,6 +81,13 @@ class DependencyGraph:
 
     def __len__(self) -> int:
         return len(self._nodes)
+
+    def sorted_keys(self, keys: Iterable[NodeKey] | None = None) -> list[NodeKey]:
+        """Return keys in workbook order when available, else lexical order."""
+        key_source: Iterable[NodeKey] = self._nodes if keys is None else keys
+        if self.sheet_order:
+            return sort_node_keys(key_source, sheet_order=self.sheet_order)
+        return sorted(key_source)
 
     # ---- edge insertion -----------------------------------------------------
 
@@ -244,15 +252,15 @@ class DependencyGraph:
 
     def formula_keys(self) -> list[NodeKey]:
         """Return sorted list of keys for nodes that contain formulas."""
-        return sorted(k for k, node in self._nodes.items() if node.formula is not None)
+        return self.sorted_keys(k for k, node in self._nodes.items() if node.formula is not None)
 
     def leaf_keys(self) -> list[NodeKey]:
         """Return sorted list of keys for nodes with no dependency edges (leaves)."""
-        return sorted(k for k, node in self._nodes.items() if node.is_leaf)
+        return self.sorted_keys(k for k, node in self._nodes.items() if node.is_leaf)
 
     def target_keys(self) -> list[NodeKey]:
         """Return sorted list of keys marked as original build targets."""
-        return sorted(k for k, node in self._nodes.items() if node.is_target)
+        return self.sorted_keys(k for k, node in self._nodes.items() if node.is_target)
 
     def roots(self) -> Iterator[NodeKey]:
         for key in self._nodes:
@@ -463,6 +471,7 @@ class DependencyGraph:
             "_edge_extra": [(idx[a], idx[b], dict(e)) for (a, b), e in self._edge_extra.items()],
             "_hooks": self._hooks,
             "leaf_classification": self.leaf_classification,
+            "sheet_order": list(self.sheet_order) if self.sheet_order is not None else None,
         }
 
     def __setstate__(self, state: dict[str, Any]) -> None:
@@ -492,6 +501,11 @@ class DependencyGraph:
             self.leaf_classification = {keys[key_index[k]]: v for k, v in lc.items()}
         else:
             self.leaf_classification = None
+        sheet_order = state.get("sheet_order")
+        if sheet_order:
+            self.sheet_order = list(sheet_order)
+        else:
+            self.sheet_order = None
 
     # ---- internal edge mutation --------------------------------------------
 

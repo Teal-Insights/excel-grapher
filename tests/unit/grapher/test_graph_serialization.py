@@ -139,6 +139,14 @@ def test_pickle_round_trip_preserves_leaf_classification() -> None:
     assert restored.leaf_classification == {"Sheet1!A1": "input", "Sheet1!B1": "constant"}
 
 
+def test_pickle_round_trip_preserves_sheet_order() -> None:
+    g = _make_test_graph()
+    g.sheet_order = ["Sheet2", "Sheet1"]
+
+    restored: DependencyGraph = pickle.loads(pickle.dumps(g))
+    assert restored.sheet_order == ["Sheet2", "Sheet1"]
+
+
 # -------------------------------------------------------------------
 # Compact storage: no per-edge wrapper dicts in pickle stream
 # -------------------------------------------------------------------
