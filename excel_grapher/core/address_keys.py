@@ -11,6 +11,10 @@ evaluator/exporter can import them without violating layering rules.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable, Sequence
+
+from fastpyxl.utils.cell import column_index_from_string, coordinate_from_string
+
 
 def needs_quoting(sheet: str) -> bool:
     """Return True if a sheet name must be wrapped in single quotes in a formula."""
@@ -89,3 +93,33 @@ def normalize_key(key: str) -> str:
     """
     sheet, cell = parse_address(key)
     return format_key(sheet, cell)
+
+
+def make_node_key_sort_key(
+    sheet_order: Sequence[str],
+) -> Callable[[str], tuple[int, str, int, int]]:
+    """Build a key function for workbook-aligned ``NodeKey`` sorting.
+
+    Keys are ordered by:
+    1) workbook sheet order (from ``sheet_order``),
+    2) row number,
+    3) column number.
+
+    Sheets not present in ``sheet_order`` are placed after known sheets and
+    sorted by sheet name.
+    """
+    sheet_rank = {name: idx for idx, name in enumerate(sheet_order)}
+    fallback_rank = len(sheet_rank)
+
+    def _sort_key(node_key: str) -> tuple[int, str, int, int]:
+        sheet, cell = parse_address(node_key)
+        col_letters, row = coordinate_from_string(cell.replace("$", ""))
+        col = int(column_index_from_string(col_letters))
+        return (sheet_rank.get(sheet, fallback_rank), sheet, int(row), col)
+
+    return _sort_key
+
+
+def sort_node_keys(node_keys: Iterable[str], *, sheet_order: Sequence[str]) -> list[str]:
+    """Return ``node_keys`` sorted by workbook sheet order, then row, then column."""
+    return sorted(node_keys, key=make_node_key_sort_key(sheet_order))
