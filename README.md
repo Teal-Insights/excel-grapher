@@ -134,8 +134,8 @@ print(to_graphviz(g))  # GraphViz DOT
 When ``label_detection`` is a ``LabelDetectionConfig`` with ``enabled=True``, each node gets
 ``metadata["row_labels"]`` and ``metadata["column_labels"]`` (lists of strings) at graph build time.
 Built-in behaviors include left/up heuristic scans and region-scoped rules
-(``left_then_up_scan``, ``region_header_rows``); pass custom implementations via
-``label_behaviors``.
+(``left_edge_then_up_scan``, ``top_edge_then_left_scan``, ``region_header_rows``);
+pass custom implementations via ``label_behaviors``.
 
 Include the same settings in graph cache ``extraction_params`` using
 ``label_detection_config_to_jsonable(...)`` so cached graphs invalidate when rules change.

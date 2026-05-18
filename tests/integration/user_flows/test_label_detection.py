@@ -525,10 +525,10 @@ def test_right_and_bottom_scans_collect_units_and_source(
     assert any("Source" in label for label in _row_labels(metadata))
 
 
-# --- Left-then-up scans ---
+# --- Left-edge-then-up scans ---
 
 
-def test_left_then_up_scan_collects_indent_hierarchy(
+def test_left_edge_then_up_scan_collects_indent_hierarchy(
     label_workbook_factory: WorkbookFactory,
 ) -> None:
     def _populate(ws, wb) -> None:
@@ -553,7 +553,7 @@ def test_left_then_up_scan_collects_indent_hierarchy(
                 selector=RegionSelector(
                     include=region_specs_from_ranges(["Sheet1!A1:B6"]),
                 ),
-                behaviors=("left_then_up_scan", "top_edge_scan"),
+                behaviors=("left_edge_then_up_scan", "top_edge_scan"),
             ),
         ),
     )
@@ -561,7 +561,7 @@ def test_left_then_up_scan_collects_indent_hierarchy(
     assert _row_labels(metadata) == ["United States", "GDP", "Real"]
 
 
-def test_left_then_up_scan_prioritizes_indent_then_style_rank(
+def test_left_edge_then_up_scan_prioritizes_indent_then_style_rank(
     label_workbook_factory: WorkbookFactory,
 ) -> None:
     def _populate(ws, wb) -> None:
@@ -585,7 +585,7 @@ def test_left_then_up_scan_prioritizes_indent_then_style_rank(
                 selector=RegionSelector(
                     include=region_specs_from_ranges(["Sheet1!A2:B6"]),
                 ),
-                behaviors=("left_then_up_scan", "top_edge_scan"),
+                behaviors=("left_edge_then_up_scan", "top_edge_scan"),
             ),
         ),
         fallback_behaviors=(),
@@ -600,7 +600,7 @@ def test_left_then_up_scan_prioritizes_indent_then_style_rank(
     ]
 
 
-def test_left_then_up_scan_stops_when_no_left_label_column(
+def test_left_edge_then_up_scan_stops_when_no_left_label_column(
     label_workbook_factory: WorkbookFactory,
 ) -> None:
     def _populate(ws, _wb) -> None:
@@ -617,7 +617,7 @@ def test_left_then_up_scan_stops_when_no_left_label_column(
                 selector=RegionSelector(
                     include=region_specs_from_ranges(["Sheet1!B1:D1"]),
                 ),
-                behaviors=("left_then_up_scan",),
+                behaviors=("left_edge_then_up_scan",),
                 stop_after_match=True,
             ),
         ),
@@ -715,7 +715,7 @@ def test_custom_font_weight_hierarchy_row_labels(
     assert _column_labels(metadata) == []
 
 
-def test_left_then_up_scan_parents_year_leaf_when_header_is_bold(
+def test_left_edge_then_up_scan_parents_year_leaf_when_header_is_bold(
     label_workbook_factory: WorkbookFactory,
 ) -> None:
     def _populate(ws, wb) -> None:
@@ -736,7 +736,7 @@ def test_left_then_up_scan_parents_year_leaf_when_header_is_bold(
                 selector=RegionSelector(
                     include=region_specs_from_ranges(["Sheet1!A1:B3"]),
                 ),
-                behaviors=("left_then_up_scan",),
+                behaviors=("left_edge_then_up_scan",),
                 stop_after_match=True,
                 region_params=RegionLabelParams(
                     label_columns=("A",),
@@ -754,3 +754,34 @@ def test_left_then_up_scan_parents_year_leaf_when_header_is_bold(
     )
     assert _row_labels(metadata) == ["Year", "2000"]
     assert _column_labels(metadata) == []
+
+
+def test_top_edge_then_left_scan_collects_column_hierarchy(
+    label_workbook_factory: WorkbookFactory,
+) -> None:
+    def _populate(ws, wb) -> None:
+        indent_1 = wb.add_format({"indent": 1})
+        indent_2 = wb.add_format({"indent": 2})
+        ws.write("A1", "Country")
+        ws.write("B1", "GDP", indent_2)
+        ws.write("C1", "Real", indent_1)
+        ws.write_number("C2", 15.31)
+
+    path = label_workbook_factory(_populate)
+    cfg = LabelDetectionConfig(
+        enabled=True,
+        rules=(
+            BehaviorRule(
+                name="topEdgeThenLeftHierarchy",
+                selector=RegionSelector(
+                    include=region_specs_from_ranges(["Sheet1!A1:C2"]),
+                ),
+                behaviors=("top_edge_then_left_scan",),
+                stop_after_match=True,
+            ),
+        ),
+        fallback_behaviors=(),
+    )
+    metadata = _labels(path, "Sheet1!C2", label_detection=cfg)
+    assert _row_labels(metadata) == []
+    assert _column_labels(metadata) == ["Country", "GDP", "Real"]

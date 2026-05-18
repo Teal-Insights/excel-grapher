@@ -121,7 +121,7 @@ def test_collect_labels_rule_stop_skips_fallback() -> None:
     assert row == [] and col == []
 
 
-def test_collect_labels_left_then_up_scan(tmp_path) -> None:
+def test_collect_labels_left_edge_then_up_scan(tmp_path) -> None:
     pytest.importorskip("xlsxwriter")
     import xlsxwriter
 
@@ -144,7 +144,7 @@ def test_collect_labels_left_then_up_scan(tmp_path) -> None:
                 BehaviorRule(
                     name="r",
                     selector=RegionSelector(include=(RegionSpec("S", 1, 3, 1, 5),)),
-                    behaviors=("left_then_up_scan",),
+                    behaviors=("left_edge_then_up_scan",),
                 ),
             ),
             fallback_behaviors=(),
@@ -168,7 +168,7 @@ def test_collect_labels_left_then_up_scan(tmp_path) -> None:
         wv.close()
 
 
-def test_left_then_up_scan_same_indent_same_style_is_skipped(tmp_path) -> None:
+def test_left_edge_then_up_scan_same_indent_same_style_is_skipped(tmp_path) -> None:
     pytest.importorskip("xlsxwriter")
     import xlsxwriter
 
@@ -189,7 +189,7 @@ def test_left_then_up_scan_same_indent_same_style_is_skipped(tmp_path) -> None:
     wv = fastpyxl.load_workbook(path, data_only=True)
     try:
         wsv = wv["S"]
-        cfg = LabelDetectionConfig(enabled=True, fallback_behaviors=("left_then_up_scan",))
+        cfg = LabelDetectionConfig(enabled=True, fallback_behaviors=("left_edge_then_up_scan",))
         reg = build_label_behavior_registry(None)
         st = LabelDetectionState()
         row, col = collect_labels_for_node(
@@ -209,7 +209,7 @@ def test_left_then_up_scan_same_indent_same_style_is_skipped(tmp_path) -> None:
         wv.close()
 
 
-def test_left_then_up_scan_stops_on_same_indent_lower_style(tmp_path) -> None:
+def test_left_edge_then_up_scan_stops_on_same_indent_lower_style(tmp_path) -> None:
     pytest.importorskip("xlsxwriter")
     import xlsxwriter
 
@@ -231,7 +231,7 @@ def test_left_then_up_scan_stops_on_same_indent_lower_style(tmp_path) -> None:
     wv = fastpyxl.load_workbook(path, data_only=True)
     try:
         wsv = wv["S"]
-        cfg = LabelDetectionConfig(enabled=True, fallback_behaviors=("left_then_up_scan",))
+        cfg = LabelDetectionConfig(enabled=True, fallback_behaviors=("left_edge_then_up_scan",))
         reg = build_label_behavior_registry(None)
         st = LabelDetectionState()
         row, col = collect_labels_for_node(
@@ -561,5 +561,45 @@ def test_bottom_edge_scan_collects_text_below(tmp_path) -> None:
         )
         assert row == ["Source: CIA Factbook, 2012"]
         assert col == []
+    finally:
+        wv.close()
+
+
+def test_top_edge_then_left_scan_collects_column_hierarchy(tmp_path) -> None:
+    pytest.importorskip("xlsxwriter")
+    import xlsxwriter
+
+    path = tmp_path / "top_edge_then_left_scan.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    i1 = wb.add_format({"indent": 1})
+    i2 = wb.add_format({"indent": 2})
+    ws.write_string(0, 0, "Country")
+    ws.write_string(0, 1, "GDP", i2)
+    ws.write_string(0, 2, "Real", i1)
+    ws.write_number(1, 2, 1)
+    wb.close()
+
+    import fastpyxl
+
+    wv = fastpyxl.load_workbook(path, data_only=True)
+    try:
+        wsv = wv["S"]
+        cfg = LabelDetectionConfig(enabled=True, fallback_behaviors=("top_edge_then_left_scan",))
+        reg = build_label_behavior_registry(None)
+        st = LabelDetectionState()
+        row, col = collect_labels_for_node(
+            key="S!C2",
+            sheet="S",
+            row=2,
+            col=3,
+            cfg=cfg,
+            registry=reg,
+            state=st,
+            ws_values=wsv,
+            ws_formulas=wsv,
+        )
+        assert row == []
+        assert col == ["Country", "GDP", "Real"]
     finally:
         wv.close()

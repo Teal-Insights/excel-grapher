@@ -275,10 +275,11 @@ it.
 The default `LabelDetectionBehavior`s used by `LabelDetectionConfig` are
 `left_edge_scan` and `top_edge_scan`, but there are also others
 registered on the default registry: `full_row_scan`, `full_column_scan`,
-`region_header_rows`, and `left_then_up_scan`. `full_row_scan` and
-`full_column_scan` are bidirectional from the reference cell (scan both
-directions until blanks), with default output ordering of right-to-left
-for rows and bottom-to-top for columns.
+`region_header_rows`, `left_edge_then_up_scan`, and
+`top_edge_then_left_scan`. `full_row_scan` and `full_column_scan` are
+bidirectional from the reference cell (scan both directions until
+blanks), with default output ordering of right-to-left for rows and
+bottom-to-top for columns.
 
 You can configure a `BehaviorRule` with a `RegionSelector` to use these
 behaviors for a specified spreadsheet region, and pass this rule to
@@ -647,7 +648,7 @@ informative. The double-indentation of **A56** indicates that it is a
 child of the single-indented **A54** label, “GDP”, and the unindented
 **A53** label, “United States”. To understand what **B56** represents,
 we need to scan left to collect the row label, then up to collect parent
-labels. This is implemented by the built-in `left_then_up_scan`
+labels. This is implemented by the built-in `left_edge_then_up_scan`
 behavior.
 
 ``` python
@@ -663,7 +664,7 @@ graph: DependencyGraph = create_dependency_graph(
                 selector=RegionSelector(
                     include=region_specs_from_ranges(["Sheet1!A51:B56"]),
                 ),
-                behaviors=("left_then_up_scan", "top_edge_scan"),
+                behaviors=("left_edge_then_up_scan", "top_edge_scan"),
             ),
         ),
     )

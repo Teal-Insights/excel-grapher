@@ -189,7 +189,7 @@ print_text(
 
 While the default behavior will be to take only left- or top-edge text cells as labels, there may be times when we want all text cells connected to the target cell to be considered as labels. For example, "USA" in this wide-format time series acts like a secondary label because it is an identifier for the row, so we probably want to collect it.
 
-The default `LabelDetectionBehavior`s used by `LabelDetectionConfig` are `left_edge_scan` and `top_edge_scan`, but there are also others registered on the default registry: `full_row_scan`, `full_column_scan`, `region_header_rows`, and `left_then_up_scan`. `full_row_scan` and `full_column_scan` are bidirectional from the reference cell (scan both directions until blanks), with default output ordering of right-to-left for rows and bottom-to-top for columns.
+The default `LabelDetectionBehavior`s used by `LabelDetectionConfig` are `left_edge_scan` and `top_edge_scan`, but there are also others registered on the default registry: `full_row_scan`, `full_column_scan`, `region_header_rows`, `left_edge_then_up_scan`, and `top_edge_then_left_scan`. `full_row_scan` and `full_column_scan` are bidirectional from the reference cell (scan both directions until blanks), with default output ordering of right-to-left for rows and bottom-to-top for columns.
 
 You can configure a `BehaviorRule` with a `RegionSelector` to use these behaviors for a specified spreadsheet region, and pass this rule to `LabelDetectionConfig`:
 
@@ -478,7 +478,7 @@ print_text(
 
 ## 13. Left, then up scans
 
-Rows 51-56 show a small wide-format time series with grouped rows and hierarchical row labels. A simple heuristic left-scan from **B56** would only collect "Real" from **A56**, but this label alone isn't very informative. The double-indentation of **A56** indicates that it is a child of the single-indented **A54** label, "GDP", and the unindented **A53** label, "United States". To understand what **B56** represents, we need to scan left to collect the row label, then up to collect parent labels. This is implemented by the built-in `left_then_up_scan` behavior.
+Rows 51-56 show a small wide-format time series with grouped rows and hierarchical row labels. A simple heuristic left-scan from **B56** would only collect "Real" from **A56**, but this label alone isn't very informative. The double-indentation of **A56** indicates that it is a child of the single-indented **A54** label, "GDP", and the unindented **A53** label, "United States". To understand what **B56** represents, we need to scan left to collect the row label, then up to collect parent labels. This is implemented by the built-in `left_edge_then_up_scan` behavior.
 
 ```{python}
 graph: DependencyGraph = create_dependency_graph(
@@ -493,7 +493,7 @@ graph: DependencyGraph = create_dependency_graph(
                 selector=RegionSelector(
                     include=region_specs_from_ranges(["Sheet1!A51:B56"]),
                 ),
-                behaviors=("left_then_up_scan", "top_edge_scan"),
+                behaviors=("left_edge_then_up_scan", "top_edge_scan"),
             ),
         ),
     )
