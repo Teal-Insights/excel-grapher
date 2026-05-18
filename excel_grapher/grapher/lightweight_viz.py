@@ -37,7 +37,7 @@ def _build_int_adjacencies(
     uncond: list[list[int]] = [[] for _ in range(n)]
     all_e: list[list[int]] = [[] for _ in range(n)]
     for i, fk in enumerate(keys):
-        for tk in graph.sorted_keys(graph.get_dependencies(fk)):
+        for tk in graph.keys(order="workbook", source=graph.get_dependencies(fk)):
             tid = key_id.get(tk)
             if tid is None:
                 continue
@@ -67,7 +67,7 @@ def _edge_list_filtered(
     out: list[tuple[int, int, bool]] = []
     for fk in keys:
         fi = key_id[fk]
-        for tk in graph.sorted_keys(graph.get_dependencies(fk)):
+        for tk in graph.keys(order="workbook", source=graph.get_dependencies(fk)):
             ti = key_id.get(tk)
             if ti is None:
                 continue
@@ -212,7 +212,7 @@ def _build_out_adj_guarded(
     out: list[list[tuple[int, bool]]] = [[] for _ in range(n)]
     for fk in keys:
         fi = key_id[fk]
-        for tk in graph.sorted_keys(graph.get_dependencies(fk)):
+        for tk in graph.keys(order="workbook", source=graph.get_dependencies(fk)):
             ti = key_id.get(tk)
             if ti is None:
                 continue
@@ -730,13 +730,13 @@ def _induced_dependency_subgraph(
     if graph.sheet_order is not None:
         sub.sheet_order = list(graph.sheet_order)
     sub.leaf_classification = graph.leaf_classification
-    for k in graph.sorted_keys(keep_keys):
+    for k in graph.keys(order="workbook", source=keep_keys):
         node = graph._get_internal_node(k)
         if node is None:
             continue
         sub.add_node(node)
-    for fk in graph.sorted_keys(keep_keys):
-        for tk in graph.sorted_keys(graph.get_dependencies(fk)):
+    for fk in graph.keys(order="workbook", source=keep_keys):
+        for tk in graph.keys(order="workbook", source=graph.get_dependencies(fk)):
             if tk not in keep_keys:
                 continue
             edge = graph.get_edge_attrs(fk, tk)
@@ -762,7 +762,7 @@ def build_lightweight_viz_core(
     validate_max_formula_length(max_formula_length)
 
     lim = limits or VizLimits()
-    keys = graph.sorted_keys()
+    keys = graph.keys(order="workbook")
     n = len(keys)
     if n == 0:
         return LightweightVizCore(

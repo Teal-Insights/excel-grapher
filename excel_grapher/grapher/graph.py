@@ -4,7 +4,7 @@ import heapq
 import warnings
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from excel_grapher.core.address_keys import normalize_key, sort_node_keys
 
@@ -82,12 +82,23 @@ class DependencyGraph:
     def __len__(self) -> int:
         return len(self._nodes)
 
-    def sorted_keys(self, keys: Iterable[NodeKey] | None = None) -> list[NodeKey]:
-        """Return keys in workbook order when available, else lexical order."""
-        key_source: Iterable[NodeKey] = self._nodes if keys is None else keys
-        if self.sheet_order:
-            return sort_node_keys(key_source, sheet_order=self.sheet_order)
-        return sorted(key_source)
+    def keys(
+        self,
+        *,
+        order: Literal["insertion", "lexical", "workbook"] = "insertion",
+        source: Iterable[NodeKey] | None = None,
+    ) -> list[NodeKey]:
+        """Return node keys from ``source`` (or the graph) using the selected order."""
+        key_source: Iterable[NodeKey] = self._nodes if source is None else source
+        if order == "insertion":
+            return list(key_source)
+        if order == "lexical":
+            return sorted(key_source)
+        if order == "workbook":
+            if self.sheet_order:
+                return sort_node_keys(key_source, sheet_order=self.sheet_order)
+            return sorted(key_source)
+        raise ValueError(f"Unsupported key order: {order}")
 
     # ---- edge insertion -----------------------------------------------------
 
@@ -252,15 +263,22 @@ class DependencyGraph:
 
     def formula_keys(self) -> list[NodeKey]:
         """Return sorted list of keys for nodes that contain formulas."""
-        return self.sorted_keys(k for k, node in self._nodes.items() if node.formula is not None)
+        return self.keys(
+            order="workbook",
+            source=(k for k, node in self._nodes.items() if node.formula is not None),
+        )
 
     def leaf_keys(self) -> list[NodeKey]:
         """Return sorted list of keys for nodes with no dependency edges (leaves)."""
-        return self.sorted_keys(k for k, node in self._nodes.items() if node.is_leaf)
+        return self.keys(
+            order="workbook", source=(k for k, node in self._nodes.items() if node.is_leaf)
+        )
 
     def target_keys(self) -> list[NodeKey]:
         """Return sorted list of keys marked as original build targets."""
-        return self.sorted_keys(k for k, node in self._nodes.items() if node.is_target)
+        return self.keys(
+            order="workbook", source=(k for k, node in self._nodes.items() if node.is_target)
+        )
 
     def roots(self) -> Iterator[NodeKey]:
         for key in self._nodes:
