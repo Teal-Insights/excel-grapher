@@ -183,6 +183,15 @@ def test_get_dependencies_normalizes_key() -> None:
     assert g.get_dependencies("'My Sheet'!B1") == frozenset({"'My Sheet'!A1"})
 
 
+def test_keys_order_workbook_uses_sheet_order_then_row_then_column() -> None:
+    g = DependencyGraph(sheet_order=["Later", "Earlier"])
+    g.add_node(_leaf("Earlier", "B", 2))
+    g.add_node(_leaf("Earlier", "A", 1))
+    g.add_node(_leaf("Later", "A", 2))
+
+    assert g.keys(order="workbook") == ["Later!A2", "Earlier!A1", "Earlier!B2"]
+
+
 # -------------------------------------------------------------------
 # get_edge_attrs / get_edge_guard: typed container + normalization
 # -------------------------------------------------------------------

@@ -429,7 +429,7 @@ def create_dependency_graph(
         with open(workbook, "rb") as _f:
             _wb_sha256 = hashlib.file_digest(_f, "sha256").hexdigest()
 
-    graph = DependencyGraph()
+    graph = DependencyGraph(sheet_order=list(wb_formulas.sheetnames))
     for h in hooks or []:
         graph.register_hook(h)
 

@@ -75,6 +75,15 @@ def test_write_html_core_only_no_overlays(tmp_path: Path) -> None:
     assert "Core only" in text
 
 
+def test_build_core_uses_graph_sheet_order_for_sheet_indices() -> None:
+    g = DependencyGraph(sheet_order=["Z", "A"])
+    g.add_node(_n("A", "A", 1, leaf=True, formula=None))
+    g.add_node(_n("Z", "A", 1, leaf=True, formula=None))
+
+    core = build_lightweight_viz_core(g, limits=VizLimits(), layout_input=None)
+    assert core.sheets == ("Z", "A")
+
+
 def test_write_html_creates_file(tmp_path: Path) -> None:
     p = _payload()
     out = tmp_path / "v.html"

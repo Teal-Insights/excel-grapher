@@ -12,6 +12,8 @@ import fastpyxl
 import pytest
 
 from excel_grapher import create_dependency_graph, to_graphviz
+from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.grapher.node import Node
 
 
 def _make_chain_xlsx(path: Path) -> None:
@@ -84,3 +86,14 @@ def test_to_graphviz_invalid_max_formula_length() -> None:
     )
     with pytest.raises(ValueError, match="max_formula_length"):
         to_graphviz(g, max_formula_length=0)
+
+
+def test_to_graphviz_uses_graph_sheet_order_for_node_listing() -> None:
+    g = DependencyGraph(sheet_order=["Later", "Earlier"])
+    g.add_node(Node("Earlier", "A", 1, None, None, 1, True))
+    g.add_node(Node("Later", "A", 1, None, None, 1, True))
+
+    dot = to_graphviz(g)
+    later_idx = dot.index('"Later!A1" [')
+    earlier_idx = dot.index('"Earlier!A1" [')
+    assert later_idx < earlier_idx

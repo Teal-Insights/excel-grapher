@@ -133,7 +133,7 @@ def to_graphviz(
 
     lines: list[str] = ["digraph dependencies {", f"  rankdir={_dot_escape(rankdir)};"]
 
-    for key in sorted(graph):
+    for key in graph.keys(order="workbook"):
         node = graph.get_node(key)
         if node is None:
             continue
@@ -151,8 +151,8 @@ def to_graphviz(
             style = " style=filled fillcolor=yellow"
         lines.append(f'  "{_dot_escape(key)}" [label="{label}" shape={shape}{style}];')
 
-    for key in sorted(graph):
-        for dep in sorted(graph.get_dependencies(key)):
+    for key in graph.keys(order="workbook"):
+        for dep in graph.keys(order="workbook", source=graph.get_dependencies(key)):
             guard = graph.get_edge_guard(key, dep)
             if guard is None:
                 lines.append(f'  "{_dot_escape(key)}" -> "{_dot_escape(dep)}";')
@@ -192,7 +192,7 @@ def to_mermaid(
 
     lines: list[str] = ["flowchart TD"]
 
-    keys = sorted(list(graph))
+    keys = graph.keys(order="workbook")
     node_keys = keys[: max_nodes if max_nodes > 0 else 0]
 
     for key in node_keys:
@@ -217,7 +217,7 @@ def to_mermaid(
 
     node_set = set(node_keys)
     for key in node_keys:
-        for dep in sorted(graph.get_dependencies(key)):
+        for dep in graph.keys(order="workbook", source=graph.get_dependencies(key)):
             if dep not in node_set:
                 continue
             guard = graph.get_edge_guard(key, dep)
