@@ -12,6 +12,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Any, Literal, Protocol, runtime_checkable
 
+import fastpyxl.utils.cell
 from fastpyxl.worksheet.worksheet import Worksheet
 
 from .blank_ranges import normalize_blank_range_specs
@@ -412,7 +413,7 @@ def _left_then_up_label_text(value: Any) -> str | None:
     return None
 
 
-def _left_then_up_row_labels(
+def _left_edge_then_up_row_labels(
     ws: Worksheet, row: int, col: int, rp: RegionLabelParams | None
 ) -> list[str]:
     label_col_idx = _find_leftmost_label_column(ws, row, col)
@@ -458,6 +459,51 @@ def _left_then_up_row_labels(
             continue
 
         break
+
+    return dedupe_preserve_order(list(reversed(collected)))
+
+
+def _find_topmost_label_row(ws: Worksheet, row: int, col: int) -> int | None:
+    """Return the topmost text/year label row above ``row`` on ``col``; stops at blanks."""
+    topmost: int | None = None
+    current_row = row - 1
+    while current_row >= 1:
+        cell_value = _scan_cell_value(ws, current_row, col)
+        if cell_value is None or (isinstance(cell_value, str) and cell_value.strip() == ""):
+            break
+        text = _left_then_up_label_text(cell_value)
+        if text is not None:
+            topmost = current_row
+        current_row -= 1
+    return topmost
+
+
+def _top_edge_then_left_column_labels(
+    ws: Worksheet, row: int, col: int, rp: RegionLabelParams | None
+) -> list[str]:
+    label_row_idx = _find_topmost_label_row(ws, row, col)
+    if label_row_idx is None:
+        return []
+
+    current_cell = ws.cell(row=label_row_idx, column=col)
+    current_text = _left_then_up_label_text(current_cell.value)
+    if current_text is None:
+        return []
+
+    collected: list[str] = [current_text]
+
+    min_col = 1
+    if rp is not None and rp.label_columns:
+        min_col = min(fastpyxl.utils.cell.column_index_from_string(c) for c in rp.label_columns)
+
+    current_col = col - 1
+    while current_col >= min_col:
+        cell = ws.cell(row=label_row_idx, column=current_col)
+        text = _left_then_up_label_text(cell.value)
+        if text is None:
+            break
+        collected.append(text)
+        current_col -= 1
 
     return dedupe_preserve_order(list(reversed(collected)))
 
@@ -631,14 +677,24 @@ class _RegionHeaderRows:
         return LabelResult(column_labels=tuple(dedupe_preserve_order(col_labels)))
 
 
-class _LeftThenUpScan:
-    name = "left_then_up_scan"
+class _LeftEdgeThenUpScan:
+    name = "left_edge_then_up_scan"
 
     def detect(self, ctx: LabelDetectionContext) -> LabelResult:
         if ctx.ws_values is None:
             return LabelResult()
-        rows = _left_then_up_row_labels(ctx.ws_values, ctx.row, ctx.col, ctx.region_params)
+        rows = _left_edge_then_up_row_labels(ctx.ws_values, ctx.row, ctx.col, ctx.region_params)
         return LabelResult(row_labels=tuple(rows))
+
+
+class _TopEdgeThenLeftScan:
+    name = "top_edge_then_left_scan"
+
+    def detect(self, ctx: LabelDetectionContext) -> LabelResult:
+        if ctx.ws_values is None:
+            return LabelResult()
+        cols = _top_edge_then_left_column_labels(ctx.ws_values, ctx.row, ctx.col, ctx.region_params)
+        return LabelResult(column_labels=tuple(cols))
 
 
 def default_label_behaviors() -> tuple[LabelDetectionBehavior, ...]:
@@ -650,7 +706,8 @@ def default_label_behaviors() -> tuple[LabelDetectionBehavior, ...]:
         _RightEdgeScan(),
         _BottomEdgeScan(),
         _RegionHeaderRows(),
-        _LeftThenUpScan(),
+        _LeftEdgeThenUpScan(),
+        _TopEdgeThenLeftScan(),
     )
 
 
