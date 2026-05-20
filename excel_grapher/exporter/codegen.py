@@ -38,6 +38,8 @@ from excel_grapher.evaluator.types import XlError
 from excel_grapher.exporter.embed import emit_runtime
 from excel_grapher.grapher.blank_ranges import BlankRangeRect, normalize_blank_range_specs
 from excel_grapher.grapher.graph import CycleError
+from excel_grapher.grapher.parser import format_key
+from excel_grapher.grapher.target_expansion import expand_targets_to_roots
 
 __all__ = ["CodeGenerator", "GenerationParts", "GraphLike", "GraphNode"]
 
@@ -154,6 +156,39 @@ class CodeGenerator:
     def _normalize_entrypoint_name(name: str) -> str:
         return CodeGenerator._normalize_package_name(name)
 
+    def _graph_sheetnames(self) -> list[str]:
+        sheet_order = getattr(self.graph, "sheet_order", None)
+        if sheet_order:
+            return list(sheet_order)
+        sheets: list[str] = []
+        seen: set[str] = set()
+        keys_fn = getattr(self.graph, "keys", None)
+        if not callable(keys_fn):
+            return sheets
+        for key in keys_fn():
+            sheet, _ = parse_address(normalize_address(key))
+            if sheet not in seen:
+                seen.add(sheet)
+                sheets.append(sheet)
+        return sheets
+
+    def _named_range_maps(
+        self,
+    ) -> tuple[dict[str, tuple[str, str]], dict[str, tuple[str, str, str]]]:
+        named_ranges = getattr(self.graph, "named_ranges", None) or {}
+        named_range_ranges = getattr(self.graph, "named_range_ranges", None) or {}
+        return named_ranges, named_range_ranges
+
+    def _expand_target_tokens(self, targets: Sequence[str]) -> list[str]:
+        named_ranges, named_range_ranges = self._named_range_maps()
+        roots = expand_targets_to_roots(
+            targets,
+            sheetnames=self._graph_sheetnames(),
+            named_ranges=named_ranges,
+            named_range_ranges=named_range_ranges,
+        )
+        return [normalize_address(format_key(sheet, a1)) for sheet, a1 in roots]
+
     def _normalize_entrypoints(
         self, entrypoints: Mapping[str, Sequence[str]] | None
     ) -> dict[str, list[str]]:
@@ -178,7 +213,7 @@ class CodeGenerator:
                 raise ValueError(
                     f"Entrypoint names normalize to the same identifier: {original!r} and {name!r}"
                 )
-            normalized_targets = [normalize_address(t) for t in targets]
+            normalized_targets = self._expand_target_tokens(targets)
             normalized[normalized_name] = normalized_targets
             seen_names[normalized_name] = name
         return normalized

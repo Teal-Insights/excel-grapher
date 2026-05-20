@@ -147,6 +147,16 @@ def test_pickle_round_trip_preserves_sheet_order() -> None:
     assert restored.sheet_order == ["Sheet2", "Sheet1"]
 
 
+def test_pickle_round_trip_preserves_named_range_maps() -> None:
+    g = _make_test_graph()
+    g.named_ranges = {"OneCell": ("Sheet1", "A1")}
+    g.named_range_ranges = {"BeeCol": ("Sheet1", "B1", "B3")}
+
+    restored: DependencyGraph = pickle.loads(pickle.dumps(g))
+    assert restored.named_ranges == {"OneCell": ("Sheet1", "A1")}
+    assert restored.named_range_ranges == {"BeeCol": ("Sheet1", "B1", "B3")}
+
+
 # -------------------------------------------------------------------
 # Compact storage: no per-edge wrapper dicts in pickle stream
 # -------------------------------------------------------------------

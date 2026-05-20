@@ -166,6 +166,19 @@ def test_targets_deduplicate_overlaps(tmp_path: Path) -> None:
     assert sorted(graph_overlap) == sorted(graph_single)
 
 
+def test_create_dependency_graph_stores_named_range_maps(tmp_path: Path) -> None:
+    """Graph metadata should expose workbook defined names for codegen entrypoints."""
+    excel_path = tmp_path / "named_maps.xlsx"
+    _build_grid_workbook(excel_path)
+
+    graph = create_dependency_graph(excel_path, ["OneCell"], load_values=False)
+
+    assert graph.named_ranges is not None
+    assert graph.named_range_ranges is not None
+    assert graph.named_ranges.get("OneCell") == ("Sheet1", "C1")
+    assert graph.named_range_ranges.get("BeeCol") == ("Sheet1", "B1", "B3")
+
+
 def test_targets_unknown_name_raises_clear_error(tmp_path: Path) -> None:
     """A bare token that is neither sheet-qualified nor a defined name errors."""
     excel_path = tmp_path / "unknown_name.xlsx"
