@@ -62,6 +62,8 @@ class DependencyGraph:
     _hooks: list[NodeHook] = field(default_factory=list)
     leaf_classification: dict[str, str] | None = None
     sheet_order: list[str] | None = None
+    named_ranges: dict[str, tuple[str, str]] | None = None
+    named_range_ranges: dict[str, tuple[str, str, str]] | None = None
 
     # ---- node insertion and iteration ---------------------------------------
 
@@ -490,6 +492,10 @@ class DependencyGraph:
             "_hooks": self._hooks,
             "leaf_classification": self.leaf_classification,
             "sheet_order": list(self.sheet_order) if self.sheet_order is not None else None,
+            "named_ranges": dict(self.named_ranges) if self.named_ranges else None,
+            "named_range_ranges": (
+                dict(self.named_range_ranges) if self.named_range_ranges else None
+            ),
         }
 
     def __setstate__(self, state: dict[str, Any]) -> None:
@@ -524,6 +530,10 @@ class DependencyGraph:
             self.sheet_order = list(sheet_order)
         else:
             self.sheet_order = None
+        nr = state.get("named_ranges")
+        self.named_ranges = dict(nr) if nr else None
+        nrr = state.get("named_range_ranges")
+        self.named_range_ranges = dict(nrr) if nrr else None
 
     # ---- internal edge mutation --------------------------------------------
 

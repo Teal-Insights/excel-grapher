@@ -1,0 +1,120 @@
+# Consolidated Micro-Workbook Basic Code Generation Examples
+
+
+Each row of
+[examples/micro_workbooks/codegen_basics.xlsx](codegen_basics.xlsx)
+contains a self-contained example that can be extracted as a graph and
+then exported to standalone Python code. This workbook demonstrates the
+workflow and application behavior for different Excel dependency
+scenarios.
+
+``` python
+from pathlib import Path
+
+from excel_grapher.grapher import (
+    create_dependency_graph, DependencyGraph
+)
+from excel_grapher.exporter import CodeGenerator
+
+# Load the example workbook
+workbook_path = Path("codegen_basics.xlsx")
+```
+
+## 01. Linear dependency
+
+The first example consists of two cells: one hardcoded and one a formula
+that depends on the hardcoded cell. First, we extract the graph (see
+[Extraction Basics](examples/micro_workbooks/extraction_basics.qmd) for
+more details).
+
+``` python
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C1"], load_values=True)
+```
+
+Instead of running the graph using the `FormulaEvaluator` Excel
+emulator, we can transpile the graph to standalone Python code using the
+`CodeGenerator` class. We’ll write the code to a file called
+`linear_dependency.py` in the `codegen_outputs` folder.
+
+``` python
+with CodeGenerator(graph) as gen:
+    code = gen.generate()
+with open("codegen_outputs/linear_dependency.py", "w", encoding="utf-8") as f:
+    f.write(code)
+```
+
+We can then append the file as a module to our current session and run
+the code:
+
+``` python
+import sys
+sys.path.append("codegen_outputs")
+from linear_dependency import compute_all
+
+result = compute_all()
+print(f"```text\n{str(result['Sheet1!C1'])}\n```")
+```
+
+``` text
+2.0
+```
+
+To recompute the value of “Sheet1!C1” with a different input value for
+“Sheet1!B1”, we can create a `context` object with our desired inputs
+and call `compute_all` with it:
+
+``` python
+from linear_dependency import make_context
+
+context = make_context(inputs={"Sheet1!B1": 2})
+result = compute_all(ctx=context)
+print(f"```text\n{str(result['Sheet1!C1'])}\n```")
+```
+
+``` text
+3.0
+```
+
+Note that `CodeGenerator`’s `generate` method exports a miniature Excel
+runtime, with error handling and formula/operator implementations for
+the Excel functions used in the graph. So while the implementation of
+our two-cell linear dependency is brief (lines 326-336), the full export
+runs to a rather more verbose 387 lines of code. Also note that the
+exported code is object-oriented rather than functional, with inputs and
+computation caching stored in a mutable `Context` object, so you must
+take care not to share the same `Context` instance if running multiple
+scenarios in parallel in the same session.
+
+## 02. Must cycle
+
+In the second example, formula cells make a cycle. Excel’s internal
+behavior with respect to cycles is different depending on workbook
+settings. If `iterate` is enabled in the workbook, Excel will iterate
+over the cycle until it converges on a value or hits a maximum number of
+iterations. Otherwise, it will stop and return 0 from any cell already
+seen before in a formula chain. Like `FormulaEvaluator`, standalone
+Python code generated and exported from `CodeGenerator` replicates this
+behavior with a `CircularReferenceWarning` unless the workbook is
+configured to allow cycles:
+
+``` python
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C2"], load_values=False)
+
+with CodeGenerator(graph) as gen:
+    code = gen.generate()
+with open("codegen_outputs/must_cycle.py", "w", encoding="utf-8") as f:
+    f.write(code)
+
+sys.path.append(".")
+from must_cycle import compute_all
+
+result = compute_all()
+print(f"```text\n{str(result['Sheet1!C2'])}\n```")
+```
+
+``` text
+2.0
+```
+
+    C:\Users\chris\Software\excel-grapher\examples\micro_workbooks\codegen_outputs\must_cycle.py:295: CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).
+      return xl_circular_reference()
