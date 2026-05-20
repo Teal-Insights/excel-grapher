@@ -361,14 +361,14 @@ DEFAULT_INPUTS = {}
 # --- Formula cell functions ---
 
 
-def cell_sheet1_b2(ctx):
-    """Formula: =C2+1"""
-    return xl_add(xl_eval(ctx, "Sheet1!C2", cell_sheet1_c2), 1.0)
+def cell_sheet1_b4(ctx):
+    """Formula: =C4+1"""
+    return xl_add(xl_eval(ctx, "Sheet1!C4", cell_sheet1_c4), 1.0)
 
 
-def cell_sheet1_c2(ctx):
-    """Formula: =B2+1"""
-    return xl_add(xl_eval(ctx, "Sheet1!B2", cell_sheet1_b2), 1.0)
+def cell_sheet1_c4(ctx):
+    """Formula: =B4+1"""
+    return xl_add(xl_eval(ctx, "Sheet1!B4", cell_sheet1_b4), 1.0)
 
 
 # --- Formula resolver ---
@@ -418,7 +418,7 @@ def make_context(inputs=None):
 
 
 TARGETS = {
-    "Sheet1!C2": xl_cell,
+    "Sheet1!B4:Sheet1!C4": xl_range,
 }
 
 
