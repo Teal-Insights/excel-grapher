@@ -356,16 +356,16 @@ def xl_range(ctx: EvalContext, address: str) -> CellValue:
 
 # --- Default inputs (leaf cells) ---
 DEFAULT_INPUTS = {
-    "Sheet1!B2": 2,
+    "Sheet1!B1": 1,
 }
 
 
 # --- Formula cell functions ---
 
 
-def cell_sheet1_c2(ctx):
-    """Formula: =B2+1"""
-    return xl_add(xl_cell(ctx, "Sheet1!B2"), 1.0)
+def cell_sheet1_c1(ctx):
+    """Formula: =B1+1"""
+    return xl_add(xl_cell(ctx, "Sheet1!B1"), 1.0)
 
 
 # --- Formula resolver ---
@@ -415,7 +415,7 @@ def make_context(inputs=None):
 
 
 TARGETS = {
-    "Sheet1!C2": xl_cell,
+    "Sheet1!C1": xl_cell,
 }
 
 

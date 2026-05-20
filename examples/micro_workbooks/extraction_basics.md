@@ -1,4 +1,4 @@
-# Consolidated micro_workbook Graph Examples
+# Consolidated Micro-Workbook Basic Graph Extraction Examples
 
 
 Each row of
@@ -62,7 +62,10 @@ DependencyGraph(_nodes={   'Sheet1!B1': Node(sheet='Sheet1',
                 _guards={},
                 _edge_extra={},
                 _hooks=[],
-                leaf_classification=None)
+                leaf_classification=None,
+                sheet_order=['Sheet1'],
+                named_ranges={},
+                named_range_ranges={'MyNamedRange': ('Sheet1', 'C11', 'D11')})
 ```
 
 If we render this to Mermaid, we can see that it is a single-node graph
@@ -139,77 +142,12 @@ with FormulaEvaluator(graph) as evaluator:
 
 Under the hood, `FormulaEvaluator` parses the graph’s Excel formulas and
 translates them to Python, then evaluates them in the context of the
-graph.
-
-Instead of running the graph using the `FormulaEvaluator` Excel
-emulator, we can transpile the graph to standalone Python code using the
-`CodeGenerator` class. We’ll write the code to a file called
-`linear_dependency.py` in the current folder.
-
-``` python
-with CodeGenerator(graph) as gen:
-    code = gen.generate()
-with open("linear_dependency.py", "w", encoding="utf-8") as f:
-    f.write(code)
-```
-
-We can then append the file as a module to our current session and run
-the code:
-
-``` python
-import sys
-sys.path.append(".")
-from linear_dependency import compute_all
-
-result = compute_all()
-print_text(str(result["Sheet1!C2"]))
-```
-
-``` text
-3.0
-```
+graph. The computed value of “Sheet1!C2” is `3`.
 
 Since `set_node_value` permanently changed the value of “Sheet1!B2” in
-the graph to `2`, it is still `2` in our generated code, and the
-computed value of “Sheet1!C2” is `3`.
-
-To compute with the original value of “Sheet1!B2” (which was `1`), we
-can call `compute_all` with an `inputs` override that restores that
-value:
-
-``` python
-result = compute_all(inputs={"Sheet1!B2": 1})
-print_text(str(result["Sheet1!C2"]))
-```
-
-``` text
-2.0
-```
-
-Or we can create a `context` object with our desired inputs and call
-`compute_all` with it:
-
-``` python
-from linear_dependency import make_context
-
-context = make_context(inputs={"Sheet1!B2": 1})
-result = compute_all(ctx=context)
-print_text(str(result["Sheet1!C2"]))
-```
-
-``` text
-2.0
-```
-
-Note that `CodeGenerator`’s `generate` method exports a miniature Excel
-runtime, with error handling and formula/operator implementations for
-the Excel functions used in the graph. So while the implementation of
-our two-cell linear dependency is brief (lines 326-336), the full export
-runs to a rather more verbose 387 lines of code. Also note that the
-exported code is object-oriented rather than functional, with inputs and
-computation caching stored in a mutable `Context` object, so you must
-take care not to share the same `Context` instance if running multiple
-scenarios in parallel in the same session.
+the graph to `2`, it will still be `2` subsequent computations using the
+graph, and also in any generated code (see [Code Generation
+Basics](examples/micro_workbooks/codegen_basics.qmd) for more details).
 
 ## 03. Conditional branches
 
@@ -357,28 +295,6 @@ with FormulaEvaluator(graph) as evaluator:
     C:\Users\chris\Software\excel-grapher\excel_grapher\evaluator\evaluator.py:226: CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).
       return xl_circular_reference()
 
-Similarly, if we generate and run standalone Python code with
-`CodeGenerator`, we will see the same behavior:
-
-``` python
-import sys
-
-with CodeGenerator(graph) as gen:
-    code = gen.generate()
-with open("must_cycle.py", "w", encoding="utf-8") as f:
-    f.write(code)
-
-sys.path.append(".")
-from must_cycle import compute_all
-
-result = compute_all()
-print_text(str(result["Sheet1!C6"]))
-```
-
-``` text
-2.0
-```
-
 For a detailed report on cycles in the graph, we can use the
 `cycle_report` method:
 
@@ -463,9 +379,9 @@ flowchart TD
 CycleReport(has_must_cycles=False,
             has_may_cycles=True,
             must_cycles=[],
-            may_cycles=[{'Sheet1!C8', 'Sheet1!D8'}],
+            may_cycles=[{'Sheet1!D8', 'Sheet1!C8'}],
             example_must_cycle_path=None,
-            example_may_cycle_path=['Sheet1!C8', 'Sheet1!D8', 'Sheet1!C8'])
+            example_may_cycle_path=['Sheet1!D8', 'Sheet1!C8', 'Sheet1!D8'])
 ```
 
 If we know from the workbook’s domain that Sheet1!B8 can only ever be
@@ -497,9 +413,9 @@ print_text(pformat(report, indent=4, width=100))
 CycleReport(has_must_cycles=False,
             has_may_cycles=True,
             must_cycles=[],
-            may_cycles=[{'Sheet1!C8', 'Sheet1!D8'}],
+            may_cycles=[{'Sheet1!D8', 'Sheet1!C8'}],
             example_must_cycle_path=None,
-            example_may_cycle_path=['Sheet1!C8', 'Sheet1!D8', 'Sheet1!C8'])
+            example_may_cycle_path=['Sheet1!D8', 'Sheet1!C8', 'Sheet1!D8'])
 ```
 
 In theory, this constraint should render the cycle infeasible: the
@@ -573,7 +489,7 @@ chain.
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!E10"], load_values=False, use_cached_dynamic_refs=True)
 ```
 
-    C:\Users\chris\Software\excel-grapher\excel_grapher\grapher\parser.py:885: UserWarning: Resolved OFFSET/INDIRECT arguments using cached workbook values. Results may differ if cached values are stale.
+    C:\Users\chris\Software\excel-grapher\excel_grapher\grapher\parser.py:704: UserWarning: Resolved OFFSET/INDIRECT arguments using cached workbook values. Results may differ if cached values are stale.
       _warn_cached_dynamic_once()
 
 The risk with this approach is that the user may modify “Sheet1!B10”
