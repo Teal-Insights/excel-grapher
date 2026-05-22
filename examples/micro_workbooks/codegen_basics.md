@@ -176,10 +176,35 @@ from multiple_non_adjacent_targets_with_entrypoints import (
     compute_e3_cell
 )
 
+import re
+
+compute_c3_cell_match = re.search(
+    r"def compute_c3_cell\([\s\S]*?(?=^def |\Z)",
+    code,
+    re.MULTILINE,
+)
+
+print(f"```python\n{compute_c3_cell_match.group(0).strip()}\n```")
+
 c3_result = compute_c3_cell()
 e3_result = compute_e3_cell()
 print(f"```text\n{str(c3_result)}\n```")
 print(f"```text\n{str(e3_result)}\n```")
+```
+
+``` python
+def compute_c3_cell(inputs=None, *, ctx=None):
+    """Compute c3_cell target cells and return results."""
+    if ctx is None:
+        ctx = make_context(inputs)
+    elif inputs is not None:
+        warnings.warn("inputs will be ignored because ctx was provided", UserWarning, stacklevel=2)
+    return {target: handler(ctx, target) for target, handler in TARGETS_C3_CELL.items()}
+
+
+TARGETS_E3_CELL = {
+    'Sheet1!E3': xl_cell,
+}
 ```
 
 ``` text
@@ -285,11 +310,54 @@ While I think it’s fine that `compute_all` returns a `dict` keyed by
 cell address, I am skeptical of that return value shape for the
 entrypoint functions. Here we are only returning a single value or
 series, so we shouldn’t need keyed access. Instead, maybe we return a
-scalar value or tuple? The one downside of this is that it makes it
+scalar value or tuple. The one downside of this is that it makes it
 harder to associate, for example, values in a time series with years. A
 dict is not the right shape for a time series, because a dict is
 unordered, but neither does it seem quite right to have a tuple with no
-labels. Perhaps a namedtuple would make mthe most sense.
+labels. A tuple of tuples, tuple/list of dicts, or array may be clearer
+options.
+
+Here are a few minimal sketch options for entrypoint signatures and
+output shapes for an economic time series:
+
+``` python
+# Option A: tuple[tuple[int, float], ...] for immutable (year, value) pairs
+def compute_gdp_series(...) -> tuple[tuple[int, float], ...]:
+    return ((2021, 23115.0), (2022, 25440.0), (2023, 27361.0))
+
+# Option B: tuple[dict[str, float], ...] for per-point labels
+def compute_gdp_series(...) -> tuple[dict[str, float], ...]:
+    return (
+        {"year": 2021.0, "gdp": 23115.0},
+        {"year": 2022.0, "gdp": 25440.0},
+        {"year": 2023.0, "gdp": 27361.0},
+    )
+
+# Option C: list[dict[str, float]] for JSON-friendly downstream use
+def compute_gdp_series(...) -> list[dict[str, float]]:
+    return [
+        {"year": 2021.0, "gdp": 23115.0},
+        {"year": 2022.0, "gdp": 25440.0},
+        {"year": 2023.0, "gdp": 27361.0},
+    ]
+
+# Option D: tuple[float, ...] for strictly positional values
+def compute_gdp_values_tuple(...) -> tuple[float, ...]:
+    # index 0 -> 2021, index 1 -> 2022, index 2 -> 2023
+    return (23115.0, 25440.0, 27361.0)
+
+# Option E: list[float] for strictly positional values
+def compute_gdp_values_list(...) -> list[float]:
+    # index position implies year based on documented ordering
+    return [23115.0, 25440.0, 27361.0]
+
+# Option F: NumPy array for contiguous/range-like outputs
+import numpy as np
+
+def compute_gdp_series_array(...) -> np.ndarray:
+    # shape: (n, 2), each row is [year, gdp]
+    return np.asarray([[2021.0, 23115.0], [2022.0, 25440.0], [2023.0, 27361.0]])
+```
 
 ## 05. Must cycle
 
@@ -323,6 +391,3 @@ print(f"```text\n{str(result)}\n```")
 ``` text
 {'Sheet1!B5:Sheet1!C5': array([[2.0, 1.0]], dtype=object)}
 ```
-
-    C:\Users\chris\Software\excel-grapher\examples\micro_workbooks\codegen_outputs\must_cycle.py:295: CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).
-      return xl_circular_reference()
