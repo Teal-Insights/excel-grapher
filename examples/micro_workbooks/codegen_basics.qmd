@@ -216,19 +216,19 @@ def compute_gdp_series(...) -> tuple[tuple[int, float], ...]:
     return ((2021, 23115.0), (2022, 25440.0), (2023, 27361.0))
 
 # Option B: tuple[dict[str, float], ...] for per-point labels
-def compute_gdp_series(...) -> tuple[dict[str, float], ...]:
+def compute_gdp_series(...) -> tuple[dict[str, int | float], ...]:
     return (
-        {"year": 2021.0, "gdp": 23115.0},
-        {"year": 2022.0, "gdp": 25440.0},
-        {"year": 2023.0, "gdp": 27361.0},
+        {"year": 2021, "gdp": 23115.0},
+        {"year": 2022, "gdp": 25440.0},
+        {"year": 2023, "gdp": 27361.0},
     )
 
 # Option C: list[dict[str, float]] for JSON-friendly downstream use
-def compute_gdp_series(...) -> list[dict[str, float]]:
+def compute_gdp_series(...) -> list[dict[str, int | float]]:
     return [
-        {"year": 2021.0, "gdp": 23115.0},
-        {"year": 2022.0, "gdp": 25440.0},
-        {"year": 2023.0, "gdp": 27361.0},
+        {"year": 2021, "gdp": 23115.0},
+        {"year": 2022, "gdp": 25440.0},
+        {"year": 2023, "gdp": 27361.0},
     ]
 
 # Option D: tuple[float, ...] for strictly positional values
