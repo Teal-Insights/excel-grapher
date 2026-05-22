@@ -32,7 +32,10 @@ emulator, we can transpile the graph to standalone Python code using the
 `formula_with_no_dependencies.py` in the `codegen_outputs` folder.
 
 ``` python
-graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!B1"], load_values=False)
+graph: DependencyGraph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!B1"]
+)
 
 with CodeGenerator(graph) as gen:
     code = gen.generate()
@@ -76,7 +79,9 @@ input:
 
 ``` python
 graph: DependencyGraph = create_dependency_graph(
-    workbook_path, ["Sheet1!C2"], load_values=True)
+    workbook_path,
+    ["Sheet1!C2"]
+)
 
 with CodeGenerator(graph) as gen:
     code = gen.generate()
@@ -116,45 +121,179 @@ computation caching stored in a mutable `Context` object, so you must
 take care not to share the same `Context` instance if running multiple
 scenarios in parallel in the same session.
 
-## 03. Multiple targets
+## 03. Multiple non-adjacent targets
 
-The third example demonstrates what happens when we export the code with
-multiple targets.
+If there are multiple target cells that are not adjacent to each other,
+`compute_all` simply returns a dictionary keyed by cell address for each
+target cell.
 
 ``` python
-graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C3", "Sheet1!D3"], load_values=False)
+graph: DependencyGraph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!C3", "Sheet1!E3"]
+)
 
 with CodeGenerator(graph) as gen:
     code = gen.generate()
-with open("codegen_outputs/multiple_targets.py", "w", encoding="utf-8") as f:
+with open("codegen_outputs/multiple_non_adjacent_targets.py", "w", encoding="utf-8") as f:
     f.write(code)
 
-from multiple_targets import compute_all
+from multiple_non_adjacent_targets import compute_all
 
 result = compute_all()
 print(f"```text\n{str(result)}\n```")
 ```
 
 ``` text
-{'Sheet1!C3:Sheet1!D3': array([[2.0, 3.0]], dtype=object)}
+{'Sheet1!C3': 2.0, 'Sheet1!E3': 3.0}
 ```
 
-Here, the output is a dictionary keyed by the Excel range address of the
-target cells, and the value is a NumPy array of the computed values for
-each cell in the range.
+An unordered dictionary does seem like the right output shape for
+`compute_all` outputs representing non-adjacent target cells, though I’d
+like to be able to override/customize the naming of the keys.
 
-This is pretty unergonomic. At minimum, I think we should return a
-dictionary keyed by cells, not by the aggregated range. But I don’t love
-that dictionaries are unordered, so maybe we should return a list or
-namedtuple or something ordered instead. We also need to think about how
-we want to transform the code in postprocessing, and/or what output
-options to support. (E.g., what if we want to key by labels instead of
-addresses? But if we use a namedtuple, we can’t use numeric labels
-because property names can’t start with numbers.)
+`excel-grapher` currently supports a `entrypoints` argument to
+`CodeGenerator.generate` that allows you to define explicit entrypoints
+for the target cells, which causes `compute_*` functions to be generated
+for each entrypoint name:
 
-## 04. Must cycle
+``` python
+from typing import Mapping, Sequence
 
-In the fourth example, The B4 and C4 formula cells make a cycle. Excel’s
+entrypoints: Mapping[str, Sequence[str]] | None = {
+    "c3_cell": ["Sheet1!C3"],
+    "e3_cell": ["Sheet1!E3"]
+}
+
+with CodeGenerator(graph) as gen:
+    code = gen.generate(entrypoints=entrypoints)
+with open("codegen_outputs/multiple_non_adjacent_targets_with_entrypoints.py", "w", encoding="utf-8") as f:
+    f.write(code)
+
+from multiple_non_adjacent_targets_with_entrypoints import (
+    compute_all,
+    compute_c3_cell,
+    compute_e3_cell
+)
+
+c3_result = compute_c3_cell()
+e3_result = compute_e3_cell()
+print(f"```text\n{str(c3_result)}\n```")
+print(f"```text\n{str(e3_result)}\n```")
+```
+
+``` text
+{'Sheet1!C3': 2.0}
+```
+
+``` text
+{'Sheet1!E3': 3.0}
+```
+
+But this doesn’t currently affect the shape of the dictionary returned
+by `compute_all`, and maybe it should:
+
+``` python
+result = compute_all()
+print(f"```text\n{str(result)}\n```")
+```
+
+``` text
+{'Sheet1!C3': 2.0, 'Sheet1!E3': 3.0}
+```
+
+## 04. Multiple adjacent targets
+
+The next example demonstrates what happens when we export the code with
+multiple adjacent targets.
+
+``` python
+graph: DependencyGraph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!C4", "Sheet1!D4"]
+)
+
+with CodeGenerator(graph) as gen:
+    code = gen.generate()
+with open("codegen_outputs/multiple_adjacent_targets.py", "w", encoding="utf-8") as f:
+    f.write(code)
+
+from multiple_adjacent_targets import compute_all
+
+result = compute_all()
+print(f"```text\n{str(result)}\n```")
+```
+
+``` text
+{'Sheet1!C4:Sheet1!D4': array([[2.0, 3.0]], dtype=object)}
+```
+
+Here, the adjacent cell addresses are automatically aggregated into a
+single Excel *range address*, which is used as the key in the returned
+dictionary. The value for that key is a NumPy array of the computed
+values for each cell in the range.
+
+This is probably a good default in *most* cases, because contiguous
+cells will often comprise a logical unit. However, I would like to be
+able to override this behavior by defining explicit entrypoints for the
+target cells, which currently has no effect on the shape of the
+dictionary returned by `compute_all`:
+
+``` python
+from typing import Mapping, Sequence
+
+entrypoints: Mapping[str, Sequence[str]] | None = {
+    "c4_d4_range": ["Sheet1!C4", "Sheet1!D4"],
+    "c4_cell": ["Sheet1!C4"]
+}
+
+with CodeGenerator(graph) as gen:
+    code = gen.generate(entrypoints=entrypoints)
+with open("codegen_outputs/multiple_adjacent_targets_with_entrypoints.py", "w", encoding="utf-8") as f:
+    f.write(code)
+
+from multiple_adjacent_targets_with_entrypoints import (
+    compute_all,
+    compute_c4_cell,
+    compute_c4_d4_range
+)
+
+result = compute_all()
+print(f"```text\n{str(result)}\n```")
+```
+
+``` text
+{'Sheet1!C4:Sheet1!D4': array([[2.0, 3.0]], dtype=object)}
+```
+
+Note that there is no obstacle to defining entrypoints with overlapping
+cell addresses. Here we define an entrypoint for one of the individual
+cells as well as one for the range that contains it.
+
+``` python
+c4_result = compute_c4_cell()
+c4_d4_result = compute_c4_d4_range()
+print(f"```text\nCell result: {str(c4_result)}\nRange result: {str(c4_d4_result)}\n```")
+```
+
+``` text
+Cell result: {'Sheet1!C4': 2.0}
+Range result: {'Sheet1!C4:Sheet1!D4': array([[2.0, 3.0]], dtype=object)}
+```
+
+While I think it’s fine that `compute_all` returns a `dict` keyed by
+cell address, I am skeptical of that return value shape for the
+entrypoint functions. Here we are only returning a single value or
+series, so we shouldn’t need keyed access. Instead, maybe we return a
+scalar value or tuple? The one downside of this is that it makes it
+harder to associate, for example, values in a time series with years. A
+dict is not the right shape for a time series, because a dict is
+unordered, but neither does it seem quite right to have a tuple with no
+labels. Perhaps a namedtuple would make mthe most sense.
+
+## 05. Must cycle
+
+In the fourth example, The B5 and C5 formula cells make a cycle. Excel’s
 internal behavior with respect to cycles is different depending on
 workbook settings. If `iterate` is enabled in the workbook, Excel will
 iterate over the cycle until it converges on a value or hits a maximum
@@ -165,7 +304,10 @@ replicates this behavior with a `CircularReferenceWarning` unless the
 workbook is configured to allow cycles:
 
 ``` python
-graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!B4", "Sheet1!C4"], load_values=False)
+graph: DependencyGraph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!B5", "Sheet1!C5"]
+)
 
 with CodeGenerator(graph) as gen:
     code = gen.generate()
@@ -179,7 +321,7 @@ print(f"```text\n{str(result)}\n```")
 ```
 
 ``` text
-{'Sheet1!B4:Sheet1!C4': array([[2.0, 1.0]], dtype=object)}
+{'Sheet1!B5:Sheet1!C5': array([[2.0, 1.0]], dtype=object)}
 ```
 
     C:\Users\chris\Software\excel-grapher\examples\micro_workbooks\codegen_outputs\must_cycle.py:295: CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).

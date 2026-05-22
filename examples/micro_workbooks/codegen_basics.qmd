@@ -24,7 +24,10 @@ workbook_path = Path("codegen_basics.xlsx")
 The first example is a single-cell formula with no dependencies. We can extract the graph with the `create_dependency_graph` function (see [Extraction Basics](examples/micro_workbooks/extraction_basics.qmd for more details)); then, instead of running the graph using the `FormulaEvaluator` Excel emulator, we can transpile the graph to standalone Python code using the `CodeGenerator` class. We'll write the code to a file called `formula_with_no_dependencies.py` in the `codegen_outputs` folder.
 
 ```{python}
-graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!B1"], load_values=False)
+graph: DependencyGraph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!B1"]
+)
 
 with CodeGenerator(graph) as gen:
     code = gen.generate()
@@ -53,7 +56,9 @@ The second example consists of two cells: one hardcoded ("Sheet1!B2") and one a 
 
 ```{python}
 graph: DependencyGraph = create_dependency_graph(
-    workbook_path, ["Sheet1!C2"], load_values=True)
+    workbook_path,
+    ["Sheet1!C2"]
+)
 
 with CodeGenerator(graph) as gen:
     code = gen.generate()
@@ -78,35 +83,131 @@ print(f"```text\n{str(result['Sheet1!C2'])}\n```")
 
 The implementation of the C2 function is defined on lines 345-347. The hardcoded input value for B2 is set in lines 338-340. Note that the exported code is object-oriented rather than functional, with inputs and computation caching stored in a mutable `Context` object, so you must take care not to share the same `Context` instance if running multiple scenarios in parallel in the same session.
 
-## 03. Multiple targets
+## 03. Multiple non-adjacent targets
 
-The third example demonstrates what happens when we export the code with multiple targets.
+If there are multiple target cells that are not adjacent to each other, `compute_all` simply returns a dictionary keyed by cell address for each target cell.
 
 ```{python}
-graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C3", "Sheet1!D3"], load_values=False)
+graph: DependencyGraph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!C3", "Sheet1!E3"]
+)
 
 with CodeGenerator(graph) as gen:
     code = gen.generate()
-with open("codegen_outputs/multiple_targets.py", "w", encoding="utf-8") as f:
+with open("codegen_outputs/multiple_non_adjacent_targets.py", "w", encoding="utf-8") as f:
     f.write(code)
 
-from multiple_targets import compute_all
+from multiple_non_adjacent_targets import compute_all
 
 result = compute_all()
 print(f"```text\n{str(result)}\n```")
 ```
 
-Here, the output is a dictionary keyed by the Excel range address of the target cells, and the value is a NumPy array of the computed values for each cell in the range.
+An unordered dictionary does seem like the right output shape for `compute_all` outputs representing non-adjacent target cells, though I'd like to be able to override/customize the naming of the keys.
 
-This is pretty unergonomic. At minimum, I think we should return a dictionary keyed by cells, not by the aggregated range. But I don't love that dictionaries are unordered, so maybe we should return a list or namedtuple or something ordered instead. We also need to think about how we want to transform the code in postprocessing, and/or what output options to support. (E.g., what if we want to key by labels instead of addresses? But if we use a namedtuple, we can't use numeric labels because property names can't start with numbers.)
+`excel-grapher` currently supports a `entrypoints` argument to `CodeGenerator.generate` that allows you to define explicit entrypoints for the target cells, which causes `compute_*` functions to be generated for each entrypoint name:
 
-## 04. Must cycle
+```{python}
+from typing import Mapping, Sequence
 
-In the fourth example, The B4 and C4 formula cells make a cycle. Excel's internal behavior with respect to cycles is different depending on workbook settings. If `iterate` is enabled in the workbook, Excel will iterate over the cycle until it converges on a value or hits a maximum number of iterations. Otherwise, it will stop and return 0 from any cell already seen before in a formula chain. Like `FormulaEvaluator`, standalone Python code generated and exported from `CodeGenerator` replicates this behavior with a `CircularReferenceWarning` unless the workbook is configured to allow cycles:
+entrypoints: Mapping[str, Sequence[str]] | None = {
+    "c3_cell": ["Sheet1!C3"],
+    "e3_cell": ["Sheet1!E3"]
+}
+
+with CodeGenerator(graph) as gen:
+    code = gen.generate(entrypoints=entrypoints)
+with open("codegen_outputs/multiple_non_adjacent_targets_with_entrypoints.py", "w", encoding="utf-8") as f:
+    f.write(code)
+
+from multiple_non_adjacent_targets_with_entrypoints import (
+    compute_all,
+    compute_c3_cell,
+    compute_e3_cell
+)
+
+c3_result = compute_c3_cell()
+e3_result = compute_e3_cell()
+print(f"```text\n{str(c3_result)}\n```")
+print(f"```text\n{str(e3_result)}\n```")
+```
+
+But this doesn't currently affect the shape of the dictionary returned by `compute_all`, and maybe it should:
+
+```{python}
+result = compute_all()
+print(f"```text\n{str(result)}\n```")
+```
+
+## 04. Multiple adjacent targets
+
+The next example demonstrates what happens when we export the code with multiple adjacent targets.
+
+```{python}
+graph: DependencyGraph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!C4", "Sheet1!D4"]
+)
+
+with CodeGenerator(graph) as gen:
+    code = gen.generate()
+with open("codegen_outputs/multiple_adjacent_targets.py", "w", encoding="utf-8") as f:
+    f.write(code)
+
+from multiple_adjacent_targets import compute_all
+
+result = compute_all()
+print(f"```text\n{str(result)}\n```")
+```
+
+Here, the adjacent cell addresses are automatically aggregated into a single Excel *range address*, which is used as the key in the returned dictionary. The value for that key is a NumPy array of the computed values for each cell in the range.
+
+This is probably a good default in *most* cases, because contiguous cells will often comprise a logical unit. However, I would like to be able to override this behavior by defining explicit entrypoints for the target cells, which currently has no effect on the shape of the dictionary returned by `compute_all`:
+
+```{python}
+from typing import Mapping, Sequence
+
+entrypoints: Mapping[str, Sequence[str]] | None = {
+    "c4_d4_range": ["Sheet1!C4", "Sheet1!D4"],
+    "c4_cell": ["Sheet1!C4"]
+}
+
+with CodeGenerator(graph) as gen:
+    code = gen.generate(entrypoints=entrypoints)
+with open("codegen_outputs/multiple_adjacent_targets_with_entrypoints.py", "w", encoding="utf-8") as f:
+    f.write(code)
+
+from multiple_adjacent_targets_with_entrypoints import (
+    compute_all,
+    compute_c4_cell,
+    compute_c4_d4_range
+)
+
+result = compute_all()
+print(f"```text\n{str(result)}\n```")
+```
+
+Note that there is no obstacle to defining entrypoints with overlapping cell addresses. Here we define an entrypoint for one of the individual cells as well as one for the range that contains it.
+
+```{python}
+c4_result = compute_c4_cell()
+c4_d4_result = compute_c4_d4_range()
+print(f"```text\nCell result: {str(c4_result)}\nRange result: {str(c4_d4_result)}\n```")
+```
+
+While I think it's fine that `compute_all` returns a `dict` keyed by cell address, I am skeptical of that return value shape for the entrypoint functions. Here we are only returning a single value or series, so we shouldn't need keyed access. Instead, maybe we return a scalar value or tuple? The one downside of this is that it makes it harder to associate, for example, values in a time series with years. A dict is not the right shape for a time series, because a dict is unordered, but neither does it seem quite right to have a tuple with no labels. Perhaps a namedtuple would make mthe most sense.
+
+## 05. Must cycle
+
+In the fourth example, The B5 and C5 formula cells make a cycle. Excel's internal behavior with respect to cycles is different depending on workbook settings. If `iterate` is enabled in the workbook, Excel will iterate over the cycle until it converges on a value or hits a maximum number of iterations. Otherwise, it will stop and return 0 from any cell already seen before in a formula chain. Like `FormulaEvaluator`, standalone Python code generated and exported from `CodeGenerator` replicates this behavior with a `CircularReferenceWarning` unless the workbook is configured to allow cycles:
 
 ```{python}
 #| warning: true
-graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!B4", "Sheet1!C4"], load_values=False)
+graph: DependencyGraph = create_dependency_graph(
+    workbook_path,
+    ["Sheet1!B5", "Sheet1!C5"]
+)
 
 with CodeGenerator(graph) as gen:
     code = gen.generate()

@@ -356,21 +356,21 @@ def xl_range(ctx: EvalContext, address: str) -> CellValue:
 
 # --- Default inputs (leaf cells) ---
 DEFAULT_INPUTS = {
-    "Sheet1!B3": 1,
+    "Sheet1!B4": 1,
 }
 
 
 # --- Formula cell functions ---
 
 
-def cell_sheet1_c3(ctx):
-    """Formula: =B3+1"""
-    return xl_add(xl_cell(ctx, "Sheet1!B3"), 1.0)
+def cell_sheet1_c4(ctx):
+    """Formula: =B4+1"""
+    return xl_add(xl_cell(ctx, "Sheet1!B4"), 1.0)
 
 
-def cell_sheet1_d3(ctx):
-    """Formula: =C3+1"""
-    return xl_add(xl_eval(ctx, "Sheet1!C3", cell_sheet1_c3), 1.0)
+def cell_sheet1_d4(ctx):
+    """Formula: =C4+1"""
+    return xl_add(xl_eval(ctx, "Sheet1!C4", cell_sheet1_c4), 1.0)
 
 
 # --- Formula resolver ---
@@ -419,8 +419,36 @@ def make_context(inputs=None):
     )
 
 
+TARGETS_C4_D4_RANGE = {
+    "Sheet1!C4:Sheet1!D4": xl_range,
+}
+
+
+def compute_c4_d4_range(inputs=None, *, ctx=None):
+    """Compute c4_d4_range target cells and return results."""
+    if ctx is None:
+        ctx = make_context(inputs)
+    elif inputs is not None:
+        warnings.warn("inputs will be ignored because ctx was provided", UserWarning, stacklevel=2)
+    return {target: handler(ctx, target) for target, handler in TARGETS_C4_D4_RANGE.items()}
+
+
+TARGETS_C4_CELL = {
+    "Sheet1!C4": xl_cell,
+}
+
+
+def compute_c4_cell(inputs=None, *, ctx=None):
+    """Compute c4_cell target cells and return results."""
+    if ctx is None:
+        ctx = make_context(inputs)
+    elif inputs is not None:
+        warnings.warn("inputs will be ignored because ctx was provided", UserWarning, stacklevel=2)
+    return {target: handler(ctx, target) for target, handler in TARGETS_C4_CELL.items()}
+
+
 TARGETS = {
-    "Sheet1!C3:Sheet1!D3": xl_range,
+    "Sheet1!C4:Sheet1!D4": xl_range,
 }
 
 
