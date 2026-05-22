@@ -359,6 +359,13 @@ def compute_gdp_series_array(...) -> np.ndarray:
     return np.asarray([[2021.0, 23115.0], [2022.0, 25440.0], [2023.0, 27361.0]])
 ```
 
+These examples assume we have labels that we can use for keying the output values. However, if we don't have labels, we would just use the Excel cell address in place of the year for the positional values. E.g.,
+
+```python
+def compute_gdp_series(...) -> tuple[tuple[int, float], ...]:
+    return (("Sheet1!A1", 23115.0), ("Sheet1!A2", 25440.0), ("Sheet1!A3", 27361.0))
+```
+
 ## 05. Must cycle
 
 In the fourth example, The B5 and C5 formula cells make a cycle. Excel’s
