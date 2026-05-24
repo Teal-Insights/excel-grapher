@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 from typing import cast
 
-from excel_grapher.core.address_keys import format_cell_key
+from excel_grapher.core.address_keys import format_cell_key, normalize_range_key
 
 _FUNC_LIKE = frozenset({"IF", "OR", "AND", "NOT", "SUM", "MAX", "MIN", "AVG"})
 
@@ -67,11 +67,7 @@ def _normalize_excel_formula_base(formula: str, current_sheet: str) -> str:
     result = formula
 
     def replace_quoted_range(m: re.Match[str]) -> str:
-        sheet = m.group("sheet")
-        c1, r1, c2, r2 = m.group("c1"), m.group("r1"), m.group("c2"), m.group("r2")
-        a = format_cell_key(sheet, c1, int(r1))
-        b = format_cell_key(sheet, c2, int(r2))
-        return f"{a}:{b}"
+        return normalize_range_key(m.group(0), current_sheet=current_sheet)
 
     result = re.sub(
         r"'(?P<sheet>[^']+)'!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)",
@@ -80,9 +76,7 @@ def _normalize_excel_formula_base(formula: str, current_sheet: str) -> str:
     )
 
     def replace_unquoted_range(m: re.Match[str]) -> str:
-        sheet = m.group("sheet")
-        c1, r1, c2, r2 = m.group("c1"), m.group("r1"), m.group("c2"), m.group("r2")
-        return f"{sheet}!{c1}{r1}:{sheet}!{c2}{r2}"
+        return normalize_range_key(m.group(0), current_sheet=current_sheet)
 
     result = re.sub(
         r"(?<![A-Za-z_'])(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)",
@@ -91,10 +85,7 @@ def _normalize_excel_formula_base(formula: str, current_sheet: str) -> str:
     )
 
     def replace_local_range(m: re.Match[str]) -> str:
-        c1, r1, c2, r2 = m.group("c1"), m.group("r1"), m.group("c2"), m.group("r2")
-        ref1 = format_cell_key(current_sheet, c1, int(r1))
-        ref2 = format_cell_key(current_sheet, c2, int(r2))
-        return f"{ref1}:{ref2}"
+        return normalize_range_key(m.group(0), current_sheet=current_sheet)
 
     result = re.sub(
         r"(?<![!A-Za-z0-9_])(?<!\$)\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)(?![A-Za-z0-9_])",

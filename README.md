@@ -730,22 +730,65 @@ def cell_s_b1():
     return xl_mul(cell_s_a1(), 2.0)
 
 
-def compute_all():
-    """Compute all target cells and return results."""
-    return {
-        "S!B1": cell_s_b1(),
-    }
+def compute_all(inputs=None, *, ctx=None):
+    """Compute all target cells and return Records."""
+    ...
+    return _targets_to_records(ctx, TARGETS, TARGET_RECORD_LAYOUT)
 ```
 
-### Exported code results
+Generated `compute_all(...)` and `compute_{name}(...)` entrypoints return **`Records`**: a `list[dict]` where each record includes a required `"value"` field and, by default, an `"address"` field with the sheet-qualified cell address. Rectangular targets emit one record per cell in deterministic row-major order.
 
 ```python
 namespace: dict = {}
 exec(code, namespace)
 generated_results = namespace["compute_all"]()
 print(generated_results)
-# {'S!B1': 20.0}
+# [{'address': 'S!B1', 'value': 20.0}]
 ```
+
+Convert records to an address-keyed dict when needed:
+
+```python
+by_address = {rec["address"]: rec["value"] for rec in generated_results if "address" in rec}
+```
+
+### Input groups and optional setters
+
+Discover semantic input groups from graph leaf inputs, inspect or edit the payload, then optionally generate setter functions:
+
+```python
+from excel_grapher.exporter import (
+    CodeGenerator,
+    GroupingOptions,
+    GroupingOverride,
+    SetterGenerationOptions,
+)
+
+gen = CodeGenerator(graph)
+
+# 1. Discover groups (label-free by default)
+payload = gen.discover_input_groups(
+    targets,
+    grouping=GroupingOptions(
+        include_labels=False,
+        overrides=(GroupingOverride(range_spec="S!A1:B3", orientation="columnwise"),),
+    ),
+)
+
+# 2. Inspect/edit: serialize, edit JSON, or pass explicit groups
+edited_groups = payload.groups
+
+# 3. Generate modular package with optional setters.py
+files = gen.generate_modules(
+    targets,
+    setters=SetterGenerationOptions(),
+    input_groups=edited_groups,  # skips rediscovery when provided
+)
+```
+
+When `setters` is omitted, modular export behavior is unchanged (no `setters.py`). When provided, generated `set_*` functions accept `Records` with required `"value"` and apply inputs via `ctx.set_inputs(...)`.
+
+**Migration:** prior exports returned `dict[str, value]` from `compute_*`. New exports return `Records`; use the comprehension above or `tests/integration/utils/parity_harness.records_to_address_dict` during migration.
 
 **Tradeoffs for the exported-code approach:**
 

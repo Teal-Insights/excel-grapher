@@ -9,6 +9,11 @@ from fastpyxl.workbook.defined_name import DefinedName
 from excel_grapher import DependencyGraph, Node, create_dependency_graph
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.exporter.codegen import CodeGenerator
+from tests.unit.exporter.records_test_utils import records_to_address_dict
+
+
+def _compute_results(namespace: dict) -> dict[str, object]:
+    return records_to_address_dict(namespace["compute_all"]())
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -112,7 +117,7 @@ class TestCircularReferences:
         namespace: dict = {}
         exec(code, namespace)
 
-        result = namespace["compute_all"]()
+        result = _compute_results(namespace)
         assert result["S!D1"] == 10  # A1 is True, so B1 is returned
 
 
@@ -193,7 +198,7 @@ class TestSpecialCharactersInSheetNames:
 
         namespace: dict = {}
         exec(code, namespace)
-        result = namespace["compute_all"]()
+        result = _compute_results(namespace)
         assert result["'My Sheet'!B1"] == 200.0
 
     def test_sheet_name_with_numbers(self):
@@ -208,7 +213,7 @@ class TestSpecialCharactersInSheetNames:
 
         namespace: dict = {}
         exec(code, namespace)
-        result = namespace["compute_all"]()
+        result = _compute_results(namespace)
         # Note: Address is normalized - quotes removed when not needed
         assert result["2024!A1"] == 50.0
 
@@ -224,7 +229,7 @@ class TestSpecialCharactersInSheetNames:
 
         namespace: dict = {}
         exec(code, namespace)
-        result = namespace["compute_all"]()
+        result = _compute_results(namespace)
         # Sheet name has space, so quotes are preserved
         assert result["'Data (v2)'!A1"] == 25.0
 
@@ -243,7 +248,7 @@ class TestComplexFormulas:
 
         namespace: dict = {}
         exec(code, namespace)
-        result = namespace["compute_all"]()
+        result = _compute_results(namespace)
         # 10 + (10 + (10 + 10)) = 10 + (10 + 20) = 10 + 30 = 40
         assert result["S!B1"] == 40.0
 
@@ -258,7 +263,7 @@ class TestComplexFormulas:
 
         namespace: dict = {}
         exec(code, namespace)
-        result = namespace["compute_all"]()
+        result = _compute_results(namespace)
         # 2 + 2*2 - 2/2 = 2 + 4 - 1 = 5
         assert result["S!B1"] == 5.0
 
@@ -274,7 +279,7 @@ class TestComplexFormulas:
 
         namespace: dict = {}
         exec(code, namespace)
-        result = namespace["compute_all"]()
+        result = _compute_results(namespace)
         assert result["S!C1"] == "Hello World"
 
     def test_comparison_operators(self):
@@ -289,7 +294,7 @@ class TestComplexFormulas:
 
         namespace: dict = {}
         exec(code, namespace)
-        result = namespace["compute_all"]()
+        result = _compute_results(namespace)
         assert result["S!C1"] == 10.0
 
 
@@ -309,7 +314,7 @@ class TestErrorHandling:
         namespace: dict = {}
         exec(code, namespace)
         # xl_div returns XlError.DIV for division by zero (Excel semantics)
-        result = namespace["compute_all"]()
+        result = _compute_results(namespace)
         assert result["S!C1"] == namespace["XlError"].DIV
 
     def test_error_literal_in_formula(self):
@@ -324,7 +329,7 @@ class TestErrorHandling:
 
         namespace: dict = {}
         exec(code, namespace)
-        result = namespace["compute_all"]()
+        result = _compute_results(namespace)
         assert result["S!A1"] == namespace["XlError"].NA
 
 
@@ -348,7 +353,7 @@ class TestOffsetFunction:
 
         namespace: dict = {}
         exec(code, namespace)
-        result = namespace["compute_all"]()
+        result = _compute_results(namespace)
         assert result["S!D1"] == 20.0
 
     def test_offset_static_range(self):
@@ -369,7 +374,7 @@ class TestOffsetFunction:
 
         namespace: dict = {}
         exec(code, namespace)
-        result = namespace["compute_all"]()
+        result = _compute_results(namespace)
         assert result["S!C1"] == 10.0  # 1+2+3+4
 
     def test_offset_dynamic_single_cell(self):
@@ -391,7 +396,7 @@ class TestOffsetFunction:
 
         namespace: dict = {}
         exec(code, namespace)
-        result = namespace["compute_all"]()
+        result = _compute_results(namespace)
         assert result["S!C1"] == 20.0  # A2
 
     def test_offset_dynamic_range(self):
@@ -412,7 +417,7 @@ class TestOffsetFunction:
 
         namespace: dict = {}
         exec(code, namespace)
-        result = namespace["compute_all"]()
+        result = _compute_results(namespace)
         assert result["S!C1"] == 3.0  # 1+2
 
     def test_offset_negative_offset(self):
@@ -429,7 +434,7 @@ class TestOffsetFunction:
 
         namespace: dict = {}
         exec(code, namespace)
-        result = namespace["compute_all"]()
+        result = _compute_results(namespace)
         assert result["S!B1"] == 10.0
 
     def test_offset_invalid_reference(self):
@@ -444,7 +449,7 @@ class TestOffsetFunction:
 
         namespace: dict = {}
         exec(code, namespace)
-        result = namespace["compute_all"]()
+        result = _compute_results(namespace)
         assert result["S!B1"] == namespace["XlError"].REF
 
     def test_offset_with_formulas(self):
@@ -461,7 +466,7 @@ class TestOffsetFunction:
 
         namespace: dict = {}
         exec(code, namespace)
-        result = namespace["compute_all"]()
+        result = _compute_results(namespace)
         assert result["S!B1"] == 20.0
 
     def test_offset_dynamic_base_range(self):
@@ -479,7 +484,7 @@ class TestOffsetFunction:
         code = gen.generate(["S!C1"])
         namespace: dict = {}
         exec(code, namespace)
-        result = namespace["compute_all"]()
+        result = _compute_results(namespace)
         assert result["S!C1"] == 5.0
 
 

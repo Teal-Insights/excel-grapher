@@ -15,6 +15,26 @@ from excel_grapher import CycleError, DependencyGraph, FormulaEvaluator
 from excel_grapher.exporter.codegen import CodeGenerator
 
 
+def records_to_address_dict(records: object) -> dict[str, object]:
+    if not isinstance(records, list):
+        raise TypeError("Expected generated compute_* to return a list of records")
+    out: dict[str, object] = {}
+    for item in records:
+        if not isinstance(item, dict):
+            continue
+        record = cast(dict[str, object], item)
+        address = record.get("address")
+        if isinstance(address, str):
+            out[address] = record.get("value")
+    return out
+
+
+def _expanded_target_cells(graph: DependencyGraph, targets: list[str]) -> list[str]:
+    gen = CodeGenerator(graph)
+    raw = [gen._validate_target_token(t) for t in targets]
+    return gen._expanded_dependency_targets(raw)
+
+
 @dataclass(frozen=True, slots=True)
 class ParityResult:
     evaluator_results: dict[str, object]
@@ -85,9 +105,9 @@ def exec_generated_code(
     exec(code, ns)
     compute_all = ns["compute_all"]
     assert callable(compute_all)
-    compute_all_typed = cast(Callable[[], dict[str, object]], compute_all)
-    generated_results = compute_all_typed()
-    assert isinstance(generated_results, dict)
+    compute_all_typed = cast(Callable[[], object], compute_all)
+    generated_records = compute_all_typed()
+    generated_results = records_to_address_dict(generated_records)
     return generated_results, code, ns
 
 
@@ -106,7 +126,7 @@ def exec_generated_code_with_cache(
     resolver = cast(Callable[[str], object], ns["_resolve_formula"])
     ctx = cast(Callable[..., object], ns["EvalContext"])(inputs=merged, resolver=resolver)
     xl_cell = cast(Callable[..., object], ns["xl_cell"])
-    for target in targets:
+    for target in _expanded_target_cells(graph, targets):
         xl_cell(ctx, target)
     ctx_any = cast(Any, ctx)
     cache = cast(dict[str, object], ctx_any.cache)
@@ -124,7 +144,8 @@ def assert_codegen_matches_evaluator(
     blank_ranges: tuple[str, ...] | None = None,
 ) -> ParityResult:
     """Assert evaluator results match generated code for the given targets."""
-    compare_targets = _dependency_order(graph, targets) if dependency_order else list(targets)
+    compare_cells = _expanded_target_cells(graph, targets)
+    compare_targets = _dependency_order(graph, compare_cells) if dependency_order else compare_cells
     eval_computed: dict[str, object] = {}
 
     def _record(address: str, value: object) -> None:
@@ -136,9 +157,9 @@ def assert_codegen_matches_evaluator(
     generated_cache, code, _ns = exec_generated_code_with_cache(
         graph, targets, blank_ranges=blank_ranges
     )
-    generated_results = {t: generated_cache[t] for t in targets}
+    generated_results = {t: generated_cache[t] for t in compare_cells if t in generated_cache}
 
-    missing = [t for t in targets if t not in evaluator_results or t not in generated_results]
+    missing = [t for t in compare_cells if t not in eval_computed or t not in generated_cache]
     if missing:
         raise AssertionError(f"Missing targets in results: {missing}")
 

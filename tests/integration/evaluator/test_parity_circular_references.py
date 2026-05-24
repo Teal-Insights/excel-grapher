@@ -16,10 +16,10 @@ from excel_grapher.core.address_keys import parse_address
 from excel_grapher.evaluator.evaluator import FormulaEvaluator
 from excel_grapher.exporter.codegen import CodeGenerator
 from excel_grapher.runtime.cache import CircularReferenceWarning
-from tests.integration.utils.parity_harness import exec_generated_code
+from tests.integration.utils.parity_harness import exec_generated_code, records_to_address_dict
 
 if TYPE_CHECKING:
-    import numpy as np
+    pass
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -73,11 +73,7 @@ def test_parity_indirect_cycle_returns_zero() -> None:
     assert any(wi.category.__name__ == "CircularReferenceWarning" for wi in w)
 
     assert evaluator_result == {"S!A1": 0, "S!B1": 0}
-    if "S!A1:S!B1" in generated_result:
-        result = cast("np.ndarray", generated_result["S!A1:S!B1"])
-        assert result.tolist() == [[0, 0]]
-    else:
-        assert generated_result == {"S!A1": 0, "S!B1": 0}
+    assert generated_result == {"S!A1": 0, "S!B1": 0}
 
 
 def test_iterative_self_cycle_converges_with_parity() -> None:
@@ -92,12 +88,15 @@ def test_iterative_self_cycle_converges_with_parity() -> None:
     ).generate(targets)
     ns: dict[str, Any] = {}
     exec(generated_code, ns)
-    compute_all = cast(Callable[[], dict[str, float]], ns["compute_all"])
-    generated_result = compute_all()
+    compute_all = cast(Callable[[], object], ns["compute_all"])
+    generated_result = records_to_address_dict(compute_all())
 
     assert abs(float(cast(Any, evaluator_result["S!A1"])) - 1.0) <= 1e-4
-    assert abs(float(generated_result["S!A1"]) - 1.0) <= 1e-4
-    assert abs(float(cast(Any, evaluator_result["S!A1"])) - float(generated_result["S!A1"])) <= 1e-9
+    assert abs(float(cast(Any, generated_result["S!A1"])) - 1.0) <= 1e-4
+    assert (
+        abs(float(cast(Any, evaluator_result["S!A1"])) - float(cast(Any, generated_result["S!A1"])))
+        <= 1e-9
+    )
 
 
 def test_iterative_mutual_cycle_converges_with_parity() -> None:
@@ -115,18 +114,16 @@ def test_iterative_mutual_cycle_converges_with_parity() -> None:
     ).generate(targets)
     ns: dict[str, Any] = {}
     exec(generated_code, ns)
-    compute_all = cast(Callable[[], dict[str, Any]], ns["compute_all"])
-    generated_raw = compute_all()
-    if "S!A1:S!B1" in generated_raw:
-        result = cast("np.ndarray", generated_raw["S!A1:S!B1"])
-        generated_result = {"S!A1": result.tolist()[0][0], "S!B1": result.tolist()[0][1]}
-    else:
-        generated_result = cast("dict[str, float]", generated_raw)
+    compute_all = cast(Callable[[], object], ns["compute_all"])
+    generated_result = records_to_address_dict(compute_all())
 
     for key in targets:
         assert abs(float(cast(Any, evaluator_result[key])) - 1.0) <= 1e-4
-        assert abs(float(generated_result[key]) - 1.0) <= 1e-4
-        assert abs(float(cast(Any, evaluator_result[key])) - float(generated_result[key])) <= 1e-6
+        assert abs(float(cast(Any, generated_result[key])) - 1.0) <= 1e-4
+        assert (
+            abs(float(cast(Any, evaluator_result[key])) - float(cast(Any, generated_result[key])))
+            <= 1e-6
+        )
 
 
 def test_iterative_max_iterations_respected_for_oscillation() -> None:
@@ -141,8 +138,8 @@ def test_iterative_max_iterations_respected_for_oscillation() -> None:
     ).generate(targets)
     ns: dict[str, Any] = {}
     exec(generated_code, ns)
-    compute_all = cast(Callable[[], dict[str, float]], ns["compute_all"])
-    generated_result = compute_all()
+    compute_all = cast(Callable[[], object], ns["compute_all"])
+    generated_result = records_to_address_dict(compute_all())
 
     assert evaluator_result["S!A1"] == generated_result["S!A1"]
 
@@ -163,8 +160,8 @@ def test_iterative_lazy_if_avoids_cycle_when_branch_not_taken() -> None:
     ).generate(targets)
     ns: dict[str, Any] = {}
     exec(generated_code, ns)
-    compute_all = cast(Callable[[], dict[str, float]], ns["compute_all"])
-    generated_result = compute_all()
+    compute_all = cast(Callable[[], object], ns["compute_all"])
+    generated_result = records_to_address_dict(compute_all())
 
     assert evaluator_result["S!A1"] == 5
     assert generated_result["S!A1"] == 5

@@ -16,6 +16,7 @@ import xlsxwriter
 from excel_grapher import FormulaEvaluator, create_dependency_graph, get_calc_settings
 from excel_grapher.exporter.codegen import CodeGenerator
 from excel_grapher.runtime.cache import CircularReferenceWarning
+from tests.integration.utils.parity_harness import records_to_address_dict
 from tests.utils.workbook_xml import patch_workbook_calcpr
 
 
@@ -71,8 +72,8 @@ def test_workbook_iterate_disabled_keeps_default_circular_behavior(tmp_path: Pat
     ns: dict[str, Any] = {}
     exec(generated_code, ns)
     with pytest.warns(RuntimeWarning, match=r"Circular reference detected; returning 0") as w:
-        compute_all = cast(Callable[[], dict[str, Any]], ns["compute_all"])
-        generated_result = compute_all()
+        compute_all = cast(Callable[[], object], ns["compute_all"])
+        generated_result = records_to_address_dict(compute_all())
     assert any(wi.category.__name__ == "CircularReferenceWarning" for wi in w)
     assert generated_result["Sheet1!A1"] == 0
 
@@ -103,11 +104,11 @@ def test_workbook_iterate_enabled_drives_iterative_convergence(tmp_path: Path) -
     assert "iterate_count=75" in generated_code
     ns: dict[str, Any] = {}
     exec(generated_code, ns)
-    compute_all = cast(Callable[[], dict[str, Any]], ns["compute_all"])
-    generated_result = compute_all()
+    compute_all = cast(Callable[[], object], ns["compute_all"])
+    generated_result = records_to_address_dict(compute_all())
 
     assert abs(float(cast(Any, evaluator_result["Sheet1!A1"])) - 1.0) <= 1e-4
-    assert abs(float(generated_result["Sheet1!A1"]) - 1.0) <= 1e-4
+    assert abs(float(cast(Any, generated_result["Sheet1!A1"])) - 1.0) <= 1e-4
 
 
 def test_workbook_iterate_max_iterations_without_convergence_parity(tmp_path: Path) -> None:
@@ -142,7 +143,7 @@ def test_workbook_iterate_max_iterations_without_convergence_parity(tmp_path: Pa
 
     ns: dict[str, Any] = {}
     exec(generated_code, ns)
-    compute_all = cast(Callable[[], dict[str, Any]], ns["compute_all"])
-    generated_result = compute_all()
+    compute_all = cast(Callable[[], object], ns["compute_all"])
+    generated_result = records_to_address_dict(compute_all())
 
     assert evaluator_result["Sheet1!A1"] == generated_result["Sheet1!A1"]

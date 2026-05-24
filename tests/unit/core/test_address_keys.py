@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from excel_grapher.core.address_keys import make_node_key_sort_key, sort_node_keys
+import pytest
+
+from excel_grapher.core.address_keys import (
+    make_node_key_sort_key,
+    normalize_range_key,
+    sort_node_keys,
+)
 
 
 def test_sort_node_keys_respects_workbook_sheet_order_then_row_then_column() -> None:
@@ -44,3 +50,21 @@ def test_make_node_key_sort_key_places_unknown_sheets_after_known() -> None:
     keys = ["Known!A1", "Other!A1", "Another!A1"]
 
     assert sorted(keys, key=key_fn) == ["Known!A1", "Another!A1", "Other!A1"]
+
+
+def test_normalize_range_key_local_range_uses_current_sheet() -> None:
+    assert normalize_range_key("$A$1:B3", current_sheet="Sheet1") == "Sheet1!A1:Sheet1!B3"
+
+
+def test_normalize_range_key_accepts_sheet_once_form() -> None:
+    assert normalize_range_key("Sheet1!A1:B3") == "Sheet1!A1:Sheet1!B3"
+
+
+def test_normalize_range_key_preserves_quoted_sheet_names() -> None:
+    normalized = normalize_range_key("'My Sheet'!$A$1:'My Sheet'!B3")
+    assert normalized == "'My Sheet'!A1:'My Sheet'!B3"
+
+
+def test_normalize_range_key_rejects_cross_sheet_ranges() -> None:
+    with pytest.raises(ValueError):
+        normalize_range_key("Sheet1!A1:Sheet2!B3")

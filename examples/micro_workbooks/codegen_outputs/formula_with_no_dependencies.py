@@ -398,6 +398,42 @@ def _resolve_formula(address):
     return fn
 
 
+def _value_to_records(layout, target, value, *, include_address=True):
+    import numpy as np
+
+    kind, addresses = layout[target]
+    if kind == "cell":
+        rec = {"value": value}
+        if include_address:
+            rec["address"] = addresses[0]
+        return [rec]
+    if not isinstance(value, np.ndarray):
+        raise TypeError(f"Expected ndarray for range target {target!r}")
+    flat = value.reshape(-1)
+    if flat.size != len(addresses):
+        raise ValueError("Range size mismatch when building records")
+    records = []
+    for addr, item in zip(addresses, flat.tolist(), strict=True):
+        rec = {"value": item}
+        if include_address:
+            rec["address"] = addr
+        records.append(rec)
+    return records
+
+
+def _targets_to_records(ctx, targets, layout, *, include_address=True):
+    records = []
+    for target, handler in targets.items():
+        value = handler(ctx, target)
+        records.extend(_value_to_records(layout, target, value, include_address=include_address))
+    return records
+
+
+TARGET_RECORD_LAYOUT = {
+    "Sheet1!B1": ("cell", ["Sheet1!B1"]),
+}
+
+
 def make_context(inputs=None):
     """Create an EvalContext with merged inputs."""
     merged = dict(DEFAULT_INPUTS)
@@ -418,9 +454,9 @@ TARGETS = {
 
 
 def compute_all(inputs=None, *, ctx=None):
-    """Compute all target cells and return results."""
+    """Compute all target cells and return Records."""
     if ctx is None:
         ctx = make_context(inputs)
     elif inputs is not None:
         warnings.warn("inputs will be ignored because ctx was provided", UserWarning, stacklevel=2)
-    return {target: handler(ctx, target) for target, handler in TARGETS.items()}
+    return _targets_to_records(ctx, TARGETS, TARGET_RECORD_LAYOUT)

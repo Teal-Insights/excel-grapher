@@ -6,6 +6,18 @@ The shared runtime embedded in generated code lives at :mod:`excel_grapher.runti
 """
 
 from .codegen import CodeGenerator
+from .input_groups import (
+    GroupingOptions,
+    GroupingOverride,
+    InputCell,
+    InputGroup,
+    InputGroupsPayload,
+    LabelMode,
+    Orientation,
+    Record,
+    Records,
+    SetterGenerationOptions,
+)
 from .lightweight_viz import (
     WebVizPayload,
     to_web_viz_payload,
@@ -23,6 +35,16 @@ from .web_viz_layout import (
 
 __all__ = [
     "CodeGenerator",
+    "GroupingOptions",
+    "GroupingOverride",
+    "InputCell",
+    "InputGroup",
+    "InputGroupsPayload",
+    "LabelMode",
+    "Orientation",
+    "Record",
+    "Records",
+    "SetterGenerationOptions",
     "WebVizPayload",
     "to_web_viz_payload",
     "LAYOUT_STRATIFIED_MULTIPARTITE",

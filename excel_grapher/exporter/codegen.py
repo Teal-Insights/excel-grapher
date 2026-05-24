@@ -12,6 +12,7 @@ from excel_grapher.core.address_keys import (
     normalize_key as normalize_address,
 )
 from excel_grapher.core.address_keys import (
+    normalize_range_key,
     parse_address,
     quote_sheet_if_needed,
 )
@@ -36,6 +37,12 @@ from excel_grapher.evaluator.parser import (
 )
 from excel_grapher.evaluator.types import XlError
 from excel_grapher.exporter.embed import emit_runtime
+from excel_grapher.exporter.input_groups import (
+    GroupingOptions,
+    InputGroup,
+    InputGroupsPayload,
+    SetterGenerationOptions,
+)
 from excel_grapher.grapher.blank_ranges import BlankRangeRect, normalize_blank_range_specs
 from excel_grapher.grapher.graph import CycleError
 from excel_grapher.grapher.parser import format_key
@@ -213,7 +220,7 @@ class CodeGenerator:
                 raise ValueError(
                     f"Entrypoint names normalize to the same identifier: {original!r} and {name!r}"
                 )
-            normalized_targets = self._expand_target_tokens(targets)
+            normalized_targets = [self._validate_target_token(str(t)) for t in targets]
             normalized[normalized_name] = normalized_targets
             seen_names[normalized_name] = name
         return normalized
@@ -433,6 +440,81 @@ class CodeGenerator:
         entries.sort(key=lambda item: item[0])
         return entries
 
+    def _validate_target_token(self, target: str) -> str:
+        from excel_grapher.exporter.records_codegen import normalize_target_spec
+
+        try:
+            normalize_target_spec(target)
+            return target
+        except (ValueError, TypeError):
+            return self._export_token_from_defined_name(target)
+
+    def _export_token_from_defined_name(self, target: str) -> str:
+        roots = self._expand_target_tokens([target])
+        if not roots:
+            raise ValueError(f"Target must be sheet-qualified or a known defined name: {target}")
+        if len(roots) == 1:
+            return normalize_address(roots[0])
+        from excel_grapher.core.address_keys import parse_address
+
+        sheets: set[str] = set()
+        rows: list[int] = []
+        cols: list[int] = []
+        for addr in roots:
+            sheet, cell = parse_address(addr)
+            sheets.add(sheet)
+            col_str, row = fastpyxl.utils.cell.coordinate_from_string(cell)
+            rows.append(int(row))
+            cols.append(fastpyxl.utils.cell.column_index_from_string(col_str))
+        if len(sheets) != 1:
+            raise ValueError(f"Defined name {target!r} spans multiple sheets")
+        sheet = next(iter(sheets))
+        start_col = fastpyxl.utils.cell.get_column_letter(min(cols))
+        end_col = fastpyxl.utils.cell.get_column_letter(max(cols))
+        start_row = min(rows)
+        end_row = max(rows)
+        sheet_q = quote_sheet_if_needed(sheet)
+        if start_row == end_row and min(cols) == max(cols):
+            return f"{sheet_q}!{start_col}{start_row}"
+        return normalize_range_key(f"{sheet_q}!{start_col}{start_row}:{end_col}{end_row}")
+
+    def _handler_entries_preserve_ranges(self, targets: Sequence[str]) -> list[tuple[str, str]]:
+        from excel_grapher.exporter.records_codegen import normalize_target_spec
+
+        entries: list[tuple[str, str]] = []
+        for target in targets:
+            spec = normalize_target_spec(target)
+            handler = "xl_cell" if spec.shape == "cell" else "xl_range"
+            entries.append((spec.address_or_range, handler))
+        entries.sort(key=lambda item: item[0])
+        return entries
+
+    def _record_layout_lines(self, targets: Sequence[str]) -> list[str]:
+        from excel_grapher.exporter.records_codegen import (
+            emit_record_layout_literal,
+            record_layout_for_targets,
+        )
+
+        layout = record_layout_for_targets(targets)
+        return emit_record_layout_literal(layout)
+
+    def _records_helper_lines(self) -> list[str]:
+        from excel_grapher.exporter.records_codegen import emit_records_runtime_helpers
+
+        return emit_records_runtime_helpers()
+
+    def _compute_records_return_lines(self, targets_name: str) -> list[str]:
+        if self._iterate_enabled:
+            return [
+                f"    results = xl_iterative_compute(ctx, {targets_name})",
+                "    records = []",
+                f"    for target, handler in {targets_name}.items():",
+                "        value = results[target]",
+                "        records.extend(_value_to_records(TARGET_RECORD_LAYOUT, target, value))",
+                "    return records",
+            ]
+        return [f"    return _targets_to_records(ctx, {targets_name}, TARGET_RECORD_LAYOUT)"]
+
     @staticmethod
     def _emit_blank_range_lines(rects: tuple[BlankRangeRect, ...]) -> list[str]:
         """Emit compact structural-blank handling for declared blank rectangles."""
@@ -624,16 +706,18 @@ class CodeGenerator:
     def _parse_constant_range(range_str: str) -> tuple[str, int, int, int, int]:
         if not isinstance(range_str, str):
             raise TypeError("constant_ranges entries must be strings")
-        if "!" not in range_str:
-            raise ValueError(f"Range must be sheet-qualified: {range_str}")
-        sheet_part, cell_part = range_str.rsplit("!", 1)
-        if ":" in cell_part:
-            start_cell, end_cell = cell_part.split(":", 1)
+        normalized = normalize_range_key(range_str)
+        if ":" in normalized:
+            start_address, end_address = normalized.split(":", 1)
         else:
-            start_cell = end_cell = cell_part
+            start_address = end_address = normalized
 
-        sheet, start = parse_address(f"{sheet_part}!{start_cell}")
-        _, end = parse_address(f"{sheet_part}!{end_cell}")
+        sheet, start = parse_address(start_address)
+        end_sheet, end = parse_address(end_address)
+        if end_sheet != sheet:
+            raise ValueError(
+                f"Range endpoints must be on the same sheet: {sheet!r} vs {end_sheet!r}"
+            )
 
         start_col, start_row = fastpyxl.utils.cell.coordinate_from_string(start)
         end_col, end_row = fastpyxl.utils.cell.coordinate_from_string(end)
@@ -756,6 +840,45 @@ class CodeGenerator:
             self.graph.leaf_classification = classification
 
         return inputs, constants
+
+    def discover_input_groups(
+        self,
+        targets: Sequence[str],
+        *,
+        grouping: GroupingOptions | None = None,
+        constant_types: set[str] | None = None,
+        constant_ranges: Sequence[str] | None = None,
+        constant_blanks: bool = False,
+        input_ranges: Sequence[str] | None = None,
+        workbook_name: str | None = None,
+    ) -> InputGroupsPayload:
+        """Discover semantic input groups from classified leaf inputs."""
+        from excel_grapher.exporter.input_group_discovery import discover_input_groups_from_graph
+
+        return discover_input_groups_from_graph(
+            self,
+            targets,
+            grouping=grouping,
+            constant_types=constant_types,
+            constant_ranges=constant_ranges,
+            constant_blanks=constant_blanks,
+            input_ranges=input_ranges,
+            workbook_name=workbook_name,
+        )
+
+    def generate_setters_module(
+        self,
+        groups: Sequence[InputGroup],
+        *,
+        options: SetterGenerationOptions | None = None,
+    ) -> str:
+        """Generate setters.py source for the given input groups."""
+        from excel_grapher.exporter.input_group_discovery import validate_input_groups
+        from excel_grapher.exporter.setter_codegen import emit_setters_module
+
+        opts = options or SetterGenerationOptions()
+        validate_input_groups(groups)
+        return emit_setters_module(groups, opts)
 
     def _classify_leaf_nodes(
         self,
@@ -1580,31 +1703,37 @@ class CodeGenerator:
             Standalone Python source code as a string.
         """
         normalized_entrypoints = self._normalize_entrypoints(entrypoints)
-        normalized_targets = self._resolve_targets(targets)
-        entrypoint_targets: list[str] = []
-        seen_targets: set[str] = set()
+        raw_export_targets = self._resolve_export_targets(targets)
+        expanded_targets = self._resolve_targets(targets)
+
+        entrypoint_raw_targets: list[str] = []
+        seen_raw: set[str] = set()
         for entrypoint_list in normalized_entrypoints.values():
             for target in entrypoint_list:
-                if target not in seen_targets:
-                    seen_targets.add(target)
-                    entrypoint_targets.append(target)
+                if target not in seen_raw:
+                    seen_raw.add(target)
+                    entrypoint_raw_targets.append(target)
 
-        compute_all_targets = normalized_targets or (
-            entrypoint_targets if normalized_entrypoints else normalized_targets
+        compute_all_raw = raw_export_targets or (
+            entrypoint_raw_targets if normalized_entrypoints else raw_export_targets
         )
+        compute_all_expanded = (
+            self._expanded_dependency_targets(compute_all_raw) or expanded_targets
+        )
+
         dependency_targets: list[str] = []
         seen_dependency: set[str] = set()
-        for target in compute_all_targets:
+        for target in compute_all_expanded:
             if target not in seen_dependency:
                 seen_dependency.add(target)
                 dependency_targets.append(target)
-        for target in entrypoint_targets:
+        for target in self._expanded_dependency_targets(entrypoint_raw_targets):
             if target not in seen_dependency:
                 seen_dependency.add(target)
                 dependency_targets.append(target)
 
         parts = self._generate_parts(
-            compute_all_targets,
+            compute_all_expanded,
             dependency_targets=dependency_targets,
             constant_types=constant_types,
             constant_ranges=constant_ranges,
@@ -1616,13 +1745,15 @@ class CodeGenerator:
         cell_code_lines = parts["cell_code_lines"]
         _formula_cells = parts["formula_cells"]
         _all_cells = parts["all_cells"]
-        normalized_targets = parts["targets"]
 
         entrypoint_entries = {
-            name: self._targets_to_entries(entrypoint_list)
+            name: self._handler_entries_preserve_ranges(entrypoint_list)
             for name, entrypoint_list in normalized_entrypoints.items()
         }
-        targets_entries = self._targets_to_entries(normalized_targets)
+        targets_entries = self._handler_entries_preserve_ranges(compute_all_raw)
+        record_layout_tokens: list[str] = list(compute_all_raw)
+        for entrypoint_list in normalized_entrypoints.values():
+            record_layout_tokens.extend(entrypoint_list)
         _needs_range_helper = any(
             handler == "xl_range"
             for entries in entrypoint_entries.values()
@@ -1646,6 +1777,9 @@ class CodeGenerator:
             self._emit_resolver_lines(parts["blank_rects"] if parts["blank_rects"] else None)
         )
 
+        lines.extend(self._records_helper_lines())
+        lines.extend(self._record_layout_lines(record_layout_tokens))
+
         # Generate entry point helpers
         lines.append("def make_context(inputs=None):")
         lines.append('    """Create an EvalContext with merged inputs."""')
@@ -1663,16 +1797,16 @@ class CodeGenerator:
         )
         lines.append("")
         lines.append("")
-        for name, entrypoint_list in normalized_entrypoints.items():
+        for name, _entrypoint_list in normalized_entrypoints.items():
             targets_name = f"TARGETS_{name.upper()}"
             lines.append(f"{targets_name} = {{")
-            for target, handler in self._targets_to_entries(entrypoint_list):
+            for target, handler in entrypoint_entries[name]:
                 lines.append(f"    {repr(target)}: {handler},")
             lines.append("}")
             lines.append("")
             lines.append("")
             lines.append(f"def compute_{name}(inputs=None, *, ctx=None):")
-            lines.append(f'    """Compute {name} target cells and return results."""')
+            lines.append(f'    """Compute {name} target cells and return Records."""')
             lines.append("    if ctx is None:")
             lines.append("        ctx = make_context(inputs)")
             lines.append("    elif inputs is not None:")
@@ -1681,22 +1815,17 @@ class CodeGenerator:
                 '"inputs will be ignored because ctx was provided", '
                 "UserWarning, stacklevel=2)"
             )
-            if self._iterate_enabled:
-                lines.append(f"    return xl_iterative_compute(ctx, {targets_name})")
-            else:
-                lines.append(
-                    f"    return {{target: handler(ctx, target) for target, handler in {targets_name}.items()}}"
-                )
+            lines.extend(self._compute_records_return_lines(targets_name))
             lines.append("")
             lines.append("")
         lines.append("TARGETS = {")
-        for target, handler in self._targets_to_entries(normalized_targets):
+        for target, handler in targets_entries:
             lines.append(f"    {repr(target)}: {handler},")
         lines.append("}")
         lines.append("")
         lines.append("")
         lines.append("def compute_all(inputs=None, *, ctx=None):")
-        lines.append('    """Compute all target cells and return results."""')
+        lines.append('    """Compute all target cells and return Records."""')
         lines.append("    if ctx is None:")
         lines.append("        ctx = make_context(inputs)")
         lines.append("    elif inputs is not None:")
@@ -1705,12 +1834,7 @@ class CodeGenerator:
             '"inputs will be ignored because ctx was provided", '
             "UserWarning, stacklevel=2)"
         )
-        if self._iterate_enabled:
-            lines.append("    return xl_iterative_compute(ctx, TARGETS)")
-        else:
-            lines.append(
-                "    return {target: handler(ctx, target) for target, handler in TARGETS.items()}"
-            )
+        lines.extend(self._compute_records_return_lines("TARGETS"))
         lines.append("")
 
         return "\n".join(lines)
@@ -1726,46 +1850,51 @@ class CodeGenerator:
         constant_blanks: bool = False,
         input_ranges: Sequence[str] | None = None,
         blank_ranges: Sequence[str] | None = None,
+        setters: SetterGenerationOptions | None = None,
+        input_groups: Sequence[InputGroup] | None = None,
     ) -> dict[str, str]:
         """Generate a multi-module Python package for target cells.
 
         Returns a mapping of file paths (including a normalized package directory) to file
         contents. The package name is normalized to an importable directory name.
 
-        The generated package has six flat files:
-        - __init__.py: exports compute_all and DEFAULT_INPUTS
-        - entrypoint.py: compute_all implementation
-        - inputs.py: DEFAULT_INPUTS
-        - constants.py: CONSTANTS (may be empty)
-        - runtime.py: embedded Excel runtime (emit_runtime)
-        - internals.py: formula cell functions + resolver dispatch
+        When ``setters`` is provided, also emits ``setters.py`` with generated setter APIs.
         """
+        from excel_grapher.exporter.input_group_discovery import validate_input_groups
+
         pkg = self._normalize_package_name(package_name)
         normalized_entrypoints = self._normalize_entrypoints(entrypoints)
-        normalized_targets = self._resolve_targets(targets)
-        entrypoint_targets: list[str] = []
-        seen_targets: set[str] = set()
+        raw_export_targets = self._resolve_export_targets(targets)
+        expanded_targets = self._resolve_targets(targets)
+
+        entrypoint_raw_targets: list[str] = []
+        seen_raw: set[str] = set()
         for entrypoint_list in normalized_entrypoints.values():
             for target in entrypoint_list:
-                if target not in seen_targets:
-                    seen_targets.add(target)
-                    entrypoint_targets.append(target)
-        compute_all_targets = normalized_targets or (
-            entrypoint_targets if normalized_entrypoints else normalized_targets
+                if target not in seen_raw:
+                    seen_raw.add(target)
+                    entrypoint_raw_targets.append(target)
+
+        compute_all_raw = raw_export_targets or (
+            entrypoint_raw_targets if normalized_entrypoints else raw_export_targets
         )
+        compute_all_expanded = (
+            self._expanded_dependency_targets(compute_all_raw) or expanded_targets
+        )
+
         dependency_targets: list[str] = []
         seen_dependency: set[str] = set()
-        for target in compute_all_targets:
+        for target in compute_all_expanded:
             if target not in seen_dependency:
                 seen_dependency.add(target)
                 dependency_targets.append(target)
-        for target in entrypoint_targets:
+        for target in self._expanded_dependency_targets(entrypoint_raw_targets):
             if target not in seen_dependency:
                 seen_dependency.add(target)
                 dependency_targets.append(target)
 
         parts = self._generate_parts(
-            compute_all_targets,
+            compute_all_expanded,
             dependency_targets=dependency_targets,
             constant_types=constant_types,
             constant_ranges=constant_ranges,
@@ -1777,13 +1906,15 @@ class CodeGenerator:
         cell_code_lines = parts["cell_code_lines"]
         _formula_cells = parts["formula_cells"]
         _all_cells = parts["all_cells"]
-        normalized_targets = parts["targets"]
 
         entrypoint_entries = {
-            name: self._targets_to_entries(entrypoint_list)
+            name: self._handler_entries_preserve_ranges(entrypoint_list)
             for name, entrypoint_list in normalized_entrypoints.items()
         }
-        targets_entries = self._targets_to_entries(normalized_targets)
+        targets_entries = self._handler_entries_preserve_ranges(compute_all_raw)
+        record_layout_tokens: list[str] = list(compute_all_raw)
+        for entrypoint_list in normalized_entrypoints.values():
+            record_layout_tokens.extend(entrypoint_list)
         needs_range_helper = any(
             handler == "xl_range"
             for entries in entrypoint_entries.values()
@@ -1846,22 +1977,28 @@ class CodeGenerator:
             "import warnings",
             "",
             "",
-            "def make_context(inputs=None):",
-            '    """Create an EvalContext with merged inputs."""',
-            "    merged = dict(DEFAULT_INPUTS)",
-            "    merged.update(CONSTANTS)",
-            "    if inputs is not None:",
-            "        merged.update(inputs)",
-            (
-                "    return EvalContext("
-                "inputs=coerce_inputs_dict(merged), resolver=_resolve_formula, "
-                f"iterative_enabled={bool(self._iterate_enabled)}, "
-                f"iterate_count={int(self._iterate_count)}, "
-                f"iterate_delta={float(self._iterate_delta)!r})"
-            ),
-            "",
-            "",
         ]
+        entrypoint_lines.extend(self._records_helper_lines())
+        entrypoint_lines.extend(self._record_layout_lines(record_layout_tokens))
+        entrypoint_lines.extend(
+            [
+                "def make_context(inputs=None):",
+                '    """Create an EvalContext with merged inputs."""',
+                "    merged = dict(DEFAULT_INPUTS)",
+                "    merged.update(CONSTANTS)",
+                "    if inputs is not None:",
+                "        merged.update(inputs)",
+                (
+                    "    return EvalContext("
+                    "inputs=coerce_inputs_dict(merged), resolver=_resolve_formula, "
+                    f"iterative_enabled={bool(self._iterate_enabled)}, "
+                    f"iterate_count={int(self._iterate_count)}, "
+                    f"iterate_delta={float(self._iterate_delta)!r})"
+                ),
+                "",
+                "",
+            ]
+        )
         for name in normalized_entrypoints:
             targets_name = f"TARGETS_{name.upper()}"
             entrypoint_lines.append(f"{targets_name} = {{")
@@ -1873,7 +2010,7 @@ class CodeGenerator:
                     "",
                     "",
                     f"def compute_{name}(inputs=None, *, ctx=None):",
-                    f'    """Compute {name} target cells and return results."""',
+                    f'    """Compute {name} target cells and return Records."""',
                     "    if ctx is None:",
                     "        ctx = make_context(inputs)",
                     "    elif inputs is not None:",
@@ -1882,15 +2019,10 @@ class CodeGenerator:
                     "            UserWarning,",
                     "            stacklevel=2,",
                     "        )",
-                    (
-                        f"    return xl_iterative_compute(ctx, {targets_name})"
-                        if self._iterate_enabled
-                        else f"    return {{target: handler(ctx, target) for target, handler in {targets_name}.items()}}"
-                    ),
-                    "",
-                    "",
                 ]
             )
+            entrypoint_lines.extend(self._compute_records_return_lines(targets_name))
+            entrypoint_lines.extend(["", ""])
         entrypoint_lines.append("TARGETS = {")
         for target, handler in targets_entries:
             entrypoint_lines.append(f"    {repr(target)}: {handler},")
@@ -1900,7 +2032,7 @@ class CodeGenerator:
                 "",
                 "",
                 "def compute_all(inputs=None, *, ctx=None):",
-                '    """Compute all target cells and return results."""',
+                '    """Compute all target cells and return Records."""',
                 "    if ctx is None:",
                 "        ctx = make_context(inputs)",
                 "    elif inputs is not None:",
@@ -1909,40 +2041,57 @@ class CodeGenerator:
                 "            UserWarning,",
                 "            stacklevel=2,",
                 "        )",
-                (
-                    "    return xl_iterative_compute(ctx, TARGETS)"
-                    if self._iterate_enabled
-                    else "    return {target: handler(ctx, target) for target, handler in TARGETS.items()}"
-                ),
-                "",
             ]
         )
+        entrypoint_lines.extend(self._compute_records_return_lines("TARGETS"))
+        entrypoint_lines.append("")
         entrypoint_py = "\n".join(entrypoint_lines)
 
         entrypoint_exports = ["compute_all", "make_context"]
         entrypoint_exports.extend(f"compute_{name}" for name in normalized_entrypoints)
         entrypoint_imports = ", ".join(entrypoint_exports)
-        all_exports = entrypoint_exports + ["DEFAULT_INPUTS"]
-        init_py = "\n".join(
-            [
-                "from __future__ import annotations",
-                "",
-                f"from .entrypoint import {entrypoint_imports}  # noqa: F401",
-                "from .inputs import DEFAULT_INPUTS  # noqa: F401",
-                "",
-                f"__all__ = {all_exports!r}",
-                "",
-            ]
-        )
+        all_exports = list(entrypoint_exports) + ["DEFAULT_INPUTS"]
 
-        return {
-            f"{pkg}/__init__.py": init_py,
+        init_import_lines = [
+            "from __future__ import annotations",
+            "",
+            f"from .entrypoint import {entrypoint_imports}  # noqa: F401",
+            "from .inputs import DEFAULT_INPUTS  # noqa: F401",
+        ]
+
+        result: dict[str, str] = {
+            f"{pkg}/__init__.py": "",
             f"{pkg}/entrypoint.py": entrypoint_py,
             f"{pkg}/inputs.py": inputs_py,
             f"{pkg}/constants.py": constants_py,
             f"{pkg}/runtime.py": runtime_py,
             f"{pkg}/internals.py": internals_py,
         }
+
+        if setters is not None:
+            if input_groups is not None:
+                groups = tuple(input_groups)
+                validate_input_groups(groups)
+            else:
+                opts = setters.resolved_grouping()
+                payload = self.discover_input_groups(
+                    list(compute_all_raw),
+                    grouping=opts,
+                    constant_types=constant_types,
+                    constant_ranges=constant_ranges,
+                    constant_blanks=constant_blanks,
+                    input_ranges=input_ranges,
+                )
+                groups = payload.groups
+            setters_py = self.generate_setters_module(groups, options=setters)
+            result[f"{pkg}/setters.py"] = setters_py
+            init_import_lines.append("from . import setters  # noqa: F401")
+            all_exports.append("setters")
+
+        init_import_lines.extend(["", f"__all__ = {all_exports!r}", ""])
+        result[f"{pkg}/__init__.py"] = "\n".join(init_import_lines)
+
+        return result
 
     @staticmethod
     def _normalize_package_name(name: str) -> str:
@@ -2090,9 +2239,9 @@ class CodeGenerator:
             "blank_rects": blank_rects,
         }
 
-    def _resolve_targets(self, targets: Sequence[str] | None) -> list[str]:
+    def _resolve_export_targets(self, targets: Sequence[str] | None) -> list[str]:
         if targets is not None:
-            return [normalize_address(t) for t in targets]
+            return [self._validate_target_token(t) for t in targets]
         target_keys = getattr(self.graph, "target_keys", None)
         inferred_targets: list[str] = []
         if callable(target_keys):
@@ -2101,7 +2250,25 @@ class CodeGenerator:
             raise ValueError(
                 "No export targets were provided and the graph has no target-marked nodes."
             )
-        return [normalize_address(t) for t in inferred_targets]
+        return [self._validate_target_token(t) for t in inferred_targets]
+
+    def _expanded_dependency_targets(self, raw_tokens: Sequence[str]) -> list[str]:
+        if not raw_tokens:
+            return []
+        sheetnames = self._graph_sheetnames()
+        if not sheetnames:
+            from excel_grapher.exporter.records_codegen import normalize_target_spec
+
+            out: list[str] = []
+            for token in raw_tokens:
+                spec = normalize_target_spec(token)
+                out.extend(spec.cell_addresses_row_major())
+            return [normalize_address(a) for a in out]
+        expanded = self._expand_target_tokens(raw_tokens)
+        return [normalize_address(t) for t in expanded]
+
+    def _resolve_targets(self, targets: Sequence[str] | None) -> list[str]:
+        return self._expanded_dependency_targets(self._resolve_export_targets(targets))
 
     def _collect_all_cells(self, targets: list[str]) -> list[str]:
         """Collect an ordered list of addresses to emit for the given targets.

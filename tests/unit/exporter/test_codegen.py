@@ -18,6 +18,7 @@ from excel_grapher.evaluator.parser import (
 )
 from excel_grapher.evaluator.types import XlError
 from excel_grapher.exporter.codegen import CodeGenerator
+from tests.unit.exporter.records_test_utils import records_to_address_dict
 
 
 def _set_leaf_classification(graph: DependencyGraph, value: dict[str, str]) -> None:
@@ -697,10 +698,7 @@ class TestCodeGeneratorContextManager:
         gen = CodeGenerator(graph)
         code = gen.generate(["Sheet1!A1"])
         assert "TARGETS = {" in code
-        assert (
-            "    return {target: handler(ctx, target) for target, handler in TARGETS.items()}"
-            in code
-        )
+        assert "    return _targets_to_records(ctx, TARGETS, TARGET_RECORD_LAYOUT)" in code
 
     def test_generate_entrypoint_emits_ranges_for_contiguous_row(self):
         graph = _make_graph(
@@ -709,7 +707,7 @@ class TestCodeGeneratorContextManager:
             _make_node("Sheet1!E1", None, 3.0),
         )
         gen = CodeGenerator(graph)
-        code = gen.generate(["Sheet1!C1", "Sheet1!D1", "Sheet1!E1"])
+        code = gen.generate(["Sheet1!C1:Sheet1!E1"])
         assert "Sheet1!C1:Sheet1!E1" in code
         assert "'Sheet1!C1:Sheet1!E1': xl_range" in code
 
@@ -893,7 +891,7 @@ class TestGeneratedCodeExecution:
         # Execute the generated code
         namespace: dict = {}
         exec(code, namespace)
-        result = namespace["compute_all"]()
+        result = records_to_address_dict(namespace["compute_all"]())
 
         assert result["Sheet1!C1"] == 30.0  # 10 + 20
 
@@ -909,8 +907,8 @@ class TestGeneratedCodeExecution:
         exec(code, namespace)
         compute_all = namespace["compute_all"]
 
-        assert compute_all()["Sheet1!B1"] == 20.0
-        assert compute_all({"Sheet1!A1": 7.0})["Sheet1!B1"] == 14.0
+        assert records_to_address_dict(compute_all())["Sheet1!B1"] == 20.0
+        assert records_to_address_dict(compute_all({"Sheet1!A1": 7.0}))["Sheet1!B1"] == 14.0
 
     def test_generated_code_caches_formula_results_per_run(self):
         """Generated code should compute formula cells only once per ctx."""
@@ -1028,7 +1026,7 @@ class TestGeneratedCodeExecution:
         namespace["cell_sheet1_e1"] = wrapped_e1
 
         ctx = make_context()
-        result = compute_all(ctx=ctx)
+        result = records_to_address_dict(compute_all(ctx=ctx))
         assert result["Sheet1!C1"] == 21.0
         assert result["Sheet1!E1"] == 4.0
         assert call_count == {"C1": 1, "E1": 1}
@@ -1040,7 +1038,7 @@ class TestGeneratedCodeExecution:
         assert "Sheet1!D1" in ctx.cache
         assert "Sheet1!E1" in ctx.cache
 
-        result = compute_all(ctx=ctx)
+        result = records_to_address_dict(compute_all(ctx=ctx))
         assert result["Sheet1!C1"] == 15.0
         assert result["Sheet1!E1"] == 4.0
         assert call_count == {"C1": 2, "E1": 1}
@@ -1058,7 +1056,7 @@ class TestGeneratedCodeExecution:
 
         namespace: dict = {}
         exec(code, namespace)
-        result = namespace["compute_all"]()
+        result = records_to_address_dict(namespace["compute_all"]())
 
         assert result["Sheet1!B1"] == 6.0
 
@@ -1074,6 +1072,7 @@ class TestGeneratedCodeExecution:
 
         namespace: dict = {}
         exec(code, namespace)
-        result = namespace["compute_all"]()
+        result = records_to_address_dict(namespace["compute_all"]())
 
-        assert result["Sheet1!B1:Sheet1!C1"].tolist() == [[20.0, 30.0]]
+        assert result["Sheet1!B1"] == 20.0
+        assert result["Sheet1!C1"] == 30.0

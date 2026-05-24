@@ -95,6 +95,51 @@ def normalize_key(key: str) -> str:
     return format_key(sheet, cell)
 
 
+def _normalize_cell_coord(cell: str) -> str:
+    """Return an A1 coordinate without absolute markers."""
+    col, row = coordinate_from_string(cell.replace("$", ""))
+    return f"{col}{int(row)}"
+
+
+def normalize_range_key(range_key: str, *, current_sheet: str | None = None) -> str:
+    """Normalize a single-sheet A1 range to canonical ``Sheet!A1:Sheet!B2`` form.
+
+    Accepted forms include local ranges (when ``current_sheet`` is provided),
+    sheet-qualified ranges with one or both endpoints qualified, and optional ``$``
+    absolute markers.
+    """
+
+    def _resolve_endpoint(endpoint: str, *, default_sheet: str | None) -> tuple[str, str]:
+        token = endpoint.strip()
+        if not token:
+            raise ValueError(f"Invalid range endpoint: {endpoint!r}")
+
+        if "!" in token or token.startswith("'"):
+            sheet, cell = parse_address(token)
+        else:
+            if default_sheet is None:
+                raise ValueError(f"Range endpoint must be sheet-qualified: {endpoint!r}")
+            sheet, cell = default_sheet, token
+        return sheet, _normalize_cell_coord(cell)
+
+    token = range_key.strip()
+    if not token:
+        raise ValueError("Range key must not be empty")
+
+    if ":" not in token:
+        sheet, cell = _resolve_endpoint(token, default_sheet=current_sheet)
+        return format_key(sheet, cell)
+
+    start_raw, end_raw = token.split(":", 1)
+    start_sheet, start_cell = _resolve_endpoint(start_raw, default_sheet=current_sheet)
+    end_sheet, end_cell = _resolve_endpoint(end_raw, default_sheet=start_sheet)
+    if end_sheet != start_sheet:
+        raise ValueError(
+            f"Range endpoints must be on the same sheet: {start_sheet!r} vs {end_sheet!r}"
+        )
+    return f"{format_key(start_sheet, start_cell)}:{format_key(end_sheet, end_cell)}"
+
+
 def make_node_key_sort_key(
     sheet_order: Sequence[str],
 ) -> Callable[[str], tuple[int, str, int, int]]:

@@ -6,6 +6,7 @@ from typing import cast
 
 from excel_grapher.evaluator.types import XlError
 from excel_grapher.exporter.codegen import CodeGenerator, GraphLike
+from tests.unit.exporter.records_test_utils import records_to_address_dict
 
 
 class _WeirdRepr:
@@ -64,6 +65,6 @@ def test_codegen_serializes_xlerror_leaf_values() -> None:
 
     namespace: dict[str, object] = {}
     exec(code, namespace)
-    compute_all = cast(Callable[[], dict[str, object]], namespace["compute_all"])
-    results = compute_all()
+    compute_all = cast(Callable[[], object], namespace["compute_all"])
+    results = records_to_address_dict(compute_all())
     assert results["S!A1"] == XlError.DIV

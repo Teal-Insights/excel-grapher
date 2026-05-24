@@ -64,11 +64,21 @@ print(f"```text\n{result}\n```")
 ```
 
 ``` text
-{'Sheet1!B1': 2.0}
+[{'value': 2.0, 'address': 'Sheet1!B1'}]
 ```
 
-The return value of the `compute_all` function is a dictionary of the
-target cell address and its computed value.
+The return value of `compute_all` is a **Records** list: each element is
+a dict with a required `"value"` and, by default, an `"address"` for the
+target cell. Convert to an address-keyed dict when needed:
+
+``` python
+by_address = {rec["address"]: rec["value"] for rec in result if "address" in rec}
+print(f"```text\n{by_address['Sheet1!B1']}\n```")
+```
+
+``` text
+2.0
+```
 
 ## 02. Linear dependency
 
@@ -88,10 +98,11 @@ with CodeGenerator(graph) as gen:
 with open("codegen_outputs/linear_dependency.py", "w", encoding="utf-8") as f:
     f.write(code)
 
-from linear_dependency import compute_all
+from linear_dependency import compute_all, make_context
 
-result = compute_all()
-print(f"```text\n{str(result['Sheet1!C2'])}\n```")
+records = compute_all()
+by_address = {rec["address"]: rec["value"] for rec in records if "address" in rec}
+print(f"```text\n{str(by_address['Sheet1!C2'])}\n```")
 ```
 
 ``` text
@@ -106,8 +117,9 @@ and call `compute_all` with it:
 from linear_dependency import make_context
 
 context = make_context(inputs={"Sheet1!B2": 2})
-result = compute_all(ctx=context)
-print(f"```text\n{str(result['Sheet1!C2'])}\n```")
+records = compute_all(ctx=context)
+by_address = {rec["address"]: rec["value"] for rec in records if "address" in rec}
+print(f"```text\n{str(by_address['Sheet1!C2'])}\n```")
 ```
 
 ``` text
@@ -124,8 +136,8 @@ scenarios in parallel in the same session.
 ## 03. Multiple non-adjacent targets
 
 If there are multiple target cells that are not adjacent to each other,
-`compute_all` simply returns a dictionary keyed by cell address for each
-target cell.
+`compute_all` returns a Records list with one record per target cell
+(each record includes `"address"` and `"value"` by default).
 
 ``` python
 graph: DependencyGraph = create_dependency_graph(
@@ -140,17 +152,17 @@ with open("codegen_outputs/multiple_non_adjacent_targets.py", "w", encoding="utf
 
 from multiple_non_adjacent_targets import compute_all
 
-result = compute_all()
-print(f"```text\n{str(result)}\n```")
+records = compute_all()
+by_address = {rec["address"]: rec["value"] for rec in records if "address" in rec}
+print(f"```text\n{str(by_address)}\n```")
 ```
 
 ``` text
 {'Sheet1!C3': 2.0, 'Sheet1!E3': 3.0}
 ```
 
-An unordered dictionary does seem like the right output shape for
-`compute_all` outputs representing non-adjacent target cells, though I’d
-like to be able to override/customize the naming of the keys.
+Records preserve deterministic ordering and are JSON-friendly; convert
+to a dict when keyed lookup is more convenient.
 
 `excel-grapher` currently supports a `entrypoints` argument to
 `CodeGenerator.generate` that allows you to define explicit entrypoints
@@ -194,12 +206,12 @@ print(f"```text\n{str(e3_result)}\n```")
 
 ``` python
 def compute_c3_cell(inputs=None, *, ctx=None):
-    """Compute c3_cell target cells and return results."""
+    """Compute c3_cell target cells and return Records."""
     if ctx is None:
         ctx = make_context(inputs)
     elif inputs is not None:
         warnings.warn("inputs will be ignored because ctx was provided", UserWarning, stacklevel=2)
-    return {target: handler(ctx, target) for target, handler in TARGETS_C3_CELL.items()}
+    return _targets_to_records(ctx, TARGETS_C3_CELL, TARGET_RECORD_LAYOUT)
 
 
 TARGETS_E3_CELL = {
@@ -208,11 +220,11 @@ TARGETS_E3_CELL = {
 ```
 
 ``` text
-{'Sheet1!C3': 2.0}
+[{'value': 2.0, 'address': 'Sheet1!C3'}]
 ```
 
 ``` text
-{'Sheet1!E3': 3.0}
+[{'value': 3.0, 'address': 'Sheet1!E3'}]
 ```
 
 But this doesn’t currently affect the shape of the dictionary returned
@@ -224,13 +236,14 @@ print(f"```text\n{str(result)}\n```")
 ```
 
 ``` text
-{'Sheet1!C3': 2.0, 'Sheet1!E3': 3.0}
+[{'value': 2.0, 'address': 'Sheet1!C3'}, {'value': 3.0, 'address': 'Sheet1!E3'}]
 ```
 
 ## 04. Multiple adjacent targets
 
-The next example demonstrates what happens when we export the code with
-multiple adjacent targets.
+Adjacent targets are emitted as **Records** with one record per cell in
+row-major order (each record includes `"address"` and `"value"` by
+default).
 
 ``` python
 graph: DependencyGraph = create_dependency_graph(
@@ -245,24 +258,15 @@ with open("codegen_outputs/multiple_adjacent_targets.py", "w", encoding="utf-8")
 
 from multiple_adjacent_targets import compute_all
 
-result = compute_all()
-print(f"```text\n{str(result)}\n```")
+records = compute_all()
+print(f"```text\n{str(records)}\n```")
 ```
 
 ``` text
-{'Sheet1!C4:Sheet1!D4': array([[2.0, 3.0]], dtype=object)}
+[{'value': 2.0, 'address': 'Sheet1!C4'}, {'value': 3.0, 'address': 'Sheet1!D4'}]
 ```
 
-Here, the adjacent cell addresses are automatically aggregated into a
-single Excel *range address*, which is used as the key in the returned
-dictionary. The value for that key is a NumPy array of the computed
-values for each cell in the range.
-
-This is probably a good default in *most* cases, because contiguous
-cells will often comprise a logical unit. However, I would like to be
-able to override this behavior by defining explicit entrypoints for the
-target cells, which currently has no effect on the shape of the
-dictionary returned by `compute_all`:
+Named entrypoints preserve the requested target shape:
 
 ``` python
 from typing import Mapping, Sequence
@@ -283,92 +287,32 @@ from multiple_adjacent_targets_with_entrypoints import (
     compute_c4_d4_range
 )
 
-result = compute_all()
-print(f"```text\n{str(result)}\n```")
+records = compute_all()
+print(f"```text\n{str(records)}\n```")
 ```
 
 ``` text
-{'Sheet1!C4:Sheet1!D4': array([[2.0, 3.0]], dtype=object)}
+[{'value': 2.0, 'address': 'Sheet1!C4'}, {'value': 3.0, 'address': 'Sheet1!D4'}]
 ```
 
-Note that there is no obstacle to defining entrypoints with overlapping
-cell addresses. Here we define an entrypoint for one of the individual
-cells as well as one for the range that contains it.
-
 ``` python
-c4_result = compute_c4_cell()
-c4_d4_result = compute_c4_d4_range()
-print(f"```text\nCell result: {str(c4_result)}\nRange result: {str(c4_d4_result)}\n```")
+c4_records = compute_c4_cell()
+c4_d4_records = compute_c4_d4_range()
+print(f"```text\nCell result: {str(c4_records)}\nRange result: {str(c4_d4_records)}\n```")
 ```
 
 ``` text
-Cell result: {'Sheet1!C4': 2.0}
-Range result: {'Sheet1!C4:Sheet1!D4': array([[2.0, 3.0]], dtype=object)}
+Cell result: [{'value': 2.0, 'address': 'Sheet1!C4'}]
+Range result: [{'value': 2.0, 'address': 'Sheet1!C4'}, {'value': 3.0, 'address': 'Sheet1!D4'}]
 ```
 
-While I think it’s fine that `compute_all` returns a `dict` keyed by
-cell address, I am skeptical of that return value shape for the
-entrypoint functions. Here we are only returning a single value or
-series, so we shouldn’t need keyed access. Instead, maybe we return a
-scalar value or tuple. The one downside of this is that it makes it
-harder to associate, for example, values in a time series with years. A
-dict is not the right shape for a time series, because a dict is
-unordered, but neither does it seem quite right to have a tuple with no
-labels. A tuple of tuples, tuple/list of dicts, or array may be clearer
-options.
-
-Here are a few minimal sketch options for entrypoint signatures and
-output shapes for an economic time series:
-
-``` python
-# Option A: tuple[tuple[int, float], ...] for immutable (year, value) pairs
-def compute_gdp_series(...) -> tuple[tuple[int, float], ...]:
-    return ((2021, 23115.0), (2022, 25440.0), (2023, 27361.0))
-
-# Option B: tuple[dict[str, float], ...] for per-point labels
-def compute_gdp_series(...) -> tuple[dict[str, int | float], ...]:
-    return (
-        {"year": 2021, "gdp": 23115.0},
-        {"year": 2022, "gdp": 25440.0},
-        {"year": 2023, "gdp": 27361.0},
-    )
-
-# Option C: list[dict[str, float]] for JSON-friendly downstream use
-def compute_gdp_series(...) -> list[dict[str, int | float]]:
-    return [
-        {"year": 2021, "gdp": 23115.0},
-        {"year": 2022, "gdp": 25440.0},
-        {"year": 2023, "gdp": 27361.0},
-    ]
-
-# Option D: tuple[float, ...] for strictly positional values
-def compute_gdp_values_tuple(...) -> tuple[float, ...]:
-    # index 0 -> 2021, index 1 -> 2022, index 2 -> 2023
-    return (23115.0, 25440.0, 27361.0)
-
-# Option E: list[float] for strictly positional values
-def compute_gdp_values_list(...) -> list[float]:
-    # index position implies year based on documented ordering
-    return [23115.0, 25440.0, 27361.0]
-
-# Option F: NumPy array for contiguous/range-like outputs
-import numpy as np
-
-def compute_gdp_series_array(...) -> np.ndarray:
-    # shape: (n, 2), each row is [year, gdp]
-    return np.asarray([[2021.0, 23115.0], [2022.0, 25440.0], [2023.0, 27361.0]])
-```
-
-These examples assume we have labels that we can use for keying the output values. However, if we don't have labels, we would just use the Excel cell address in place of the year for the positional values. E.g.,
-
-```python
-def compute_gdp_series(...) -> tuple[tuple[int, float], ...]:
-    return (("Sheet1!A1", 23115.0), ("Sheet1!A2", 25440.0), ("Sheet1!A3", 27361.0))
-```
+Records are JSON-friendly and work well with pandas/polars via
+`DataFrame(records)`. Opt-in label fields can be included when using
+`GroupingOptions(include_labels=True)` during input-group discovery.
 
 ## 05. Must cycle
 
-In the fourth example, The B5 and C5 formula cells make a cycle. Excel’s
+In the fifth example, the B5 and C5 formula cells make a cycle. Excel’s
 internal behavior with respect to cycles is different depending on
 workbook settings. If `iterate` is enabled in the workbook, Excel will
 iterate over the cycle until it converges on a value or hits a maximum
@@ -391,10 +335,13 @@ with open("codegen_outputs/must_cycle.py", "w", encoding="utf-8") as f:
 
 from must_cycle import compute_all
 
-result = compute_all()
-print(f"```text\n{str(result)}\n```")
+records = compute_all()
+print(f"```text\n{str(records)}\n```")
 ```
 
 ``` text
-{'Sheet1!B5:Sheet1!C5': array([[2.0, 1.0]], dtype=object)}
+[{'value': 2.0, 'address': 'Sheet1!B5'}, {'value': 1.0, 'address': 'Sheet1!C5'}]
 ```
+
+    C:\Users\chris\Software\excel-grapher\examples\micro_workbooks\codegen_outputs\must_cycle.py:295: CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).
+      return xl_circular_reference()

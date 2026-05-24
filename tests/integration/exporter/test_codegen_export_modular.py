@@ -79,9 +79,13 @@ def test_codegen_generate_modules_executes_and_matches_evaluator(tmp_path: Path)
         assert isinstance(pkg.DEFAULT_INPUTS, dict)
 
         generated_results = compute_all()
+        assert isinstance(generated_results, list)
+        from tests.integration.utils.parity_harness import records_to_address_dict
+
+        generated_by_addr = records_to_address_dict(generated_results)
         with FormulaEvaluator(graph) as ev:
             evaluator_results = ev.evaluate(targets)
-        assert generated_results == evaluator_results
+        assert generated_by_addr == evaluator_results
     finally:
         sys.path.remove(str(tmp_path))
         sys.modules.pop("exported", None)
@@ -92,10 +96,7 @@ def test_codegen_generate_modules_entrypoint_uses_target_map(tmp_path: Path) -> 
     files = CodeGenerator(graph).generate_modules(["S!A1"])
     entrypoint = files["exported/entrypoint.py"]
     assert "TARGETS = {" in entrypoint
-    assert (
-        "    return {target: handler(ctx, target) for target, handler in TARGETS.items()}"
-        in entrypoint
-    )
+    assert "    return _targets_to_records(ctx, TARGETS, TARGET_RECORD_LAYOUT)" in entrypoint
 
 
 def test_codegen_generate_modules_entrypoints_exported(tmp_path: Path) -> None:
