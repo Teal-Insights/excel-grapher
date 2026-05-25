@@ -2,7 +2,7 @@
 
 These helpers are the single source of truth for translating between the
 external address strings that Excel users write (e.g. ``'Sheet1!A1'``,
-``"'My Sheet'!B2"``) and the canonical ``NodeKey`` form stored in the
+``"'My Sheet'!B2"``) and the canonical :data:`NormalizedAddress` form stored in the
 ``DependencyGraph`` and emitted by generated code.
 
 They live in :mod:`excel_grapher.core` so that both the grapher and the
@@ -12,8 +12,12 @@ evaluator/exporter can import them without violating layering rules.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
+from typing import TypeAlias
 
 from fastpyxl.utils.cell import column_index_from_string, coordinate_from_string
+
+# Canonical sheet-qualified cell (``Sheet1!B1``) or range (``Sheet1!C4:Sheet1!D4``).
+NormalizedAddress: TypeAlias = str
 
 
 def needs_quoting(sheet: str) -> bool:
@@ -69,21 +73,21 @@ def parse_address(address: str) -> tuple[str, str]:
     raise ValueError(f"Address must be sheet-qualified: {address}")
 
 
-def format_key(sheet: str, cell: str) -> str:
+def format_key(sheet: str, cell: str) -> NormalizedAddress:
     """Format a sheet and A1 cell coordinate into a canonical address string."""
     return f"{quote_sheet_if_needed(sheet)}!{cell}"
 
 
-def format_cell_key(sheet: str, column: str, row: int) -> str:
+def format_cell_key(sheet: str, column: str, row: int) -> NormalizedAddress:
     """Format a (sheet, column_letters, row) triple into a canonical address."""
     return f"{quote_sheet_if_needed(sheet)}!{column}{row}"
 
 
-def normalize_key(key: str) -> str:
-    """Normalize an address to the canonical ``NodeKey`` form.
+def normalize_key(key: str) -> NormalizedAddress:
+    """Normalize an address to canonical :data:`NormalizedAddress` form.
 
     Unnecessary quoting is stripped; sheet names with spaces, hyphens, or
-    apostrophes are quoted. The result matches ``Node.key`` exactly.
+    apostrophes are quoted. For single cells, the result matches ``Node.key``.
 
     Examples:
         >>> normalize_key("'Sheet1'!A1")
@@ -97,7 +101,7 @@ def normalize_key(key: str) -> str:
 
 def make_node_key_sort_key(
     sheet_order: Sequence[str],
-) -> Callable[[str], tuple[int, str, int, int]]:
+) -> Callable[[NormalizedAddress], tuple[int, str, int, int]]:
     """Build a key function for workbook-aligned ``NodeKey`` sorting.
 
     Keys are ordered by:
@@ -111,7 +115,7 @@ def make_node_key_sort_key(
     sheet_rank = {name: idx for idx, name in enumerate(sheet_order)}
     fallback_rank = len(sheet_rank)
 
-    def _sort_key(node_key: str) -> tuple[int, str, int, int]:
+    def _sort_key(node_key: NormalizedAddress) -> tuple[int, str, int, int]:
         sheet, cell = parse_address(node_key)
         col_letters, row = coordinate_from_string(cell.replace("$", ""))
         col = int(column_index_from_string(col_letters))
@@ -120,6 +124,8 @@ def make_node_key_sort_key(
     return _sort_key
 
 
-def sort_node_keys(node_keys: Iterable[str], *, sheet_order: Sequence[str]) -> list[str]:
+def sort_node_keys(
+    node_keys: Iterable[NormalizedAddress], *, sheet_order: Sequence[str]
+) -> list[NormalizedAddress]:
     """Return ``node_keys`` sorted by workbook sheet order, then row, then column."""
     return sorted(node_keys, key=make_node_key_sort_key(sheet_order))

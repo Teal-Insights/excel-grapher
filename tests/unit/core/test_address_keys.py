@@ -1,6 +1,36 @@
 from __future__ import annotations
 
-from excel_grapher.core.address_keys import make_node_key_sort_key, sort_node_keys
+import typing
+
+from excel_grapher.core.address_keys import (
+    NormalizedAddress,
+    format_cell_key,
+    format_key,
+    make_node_key_sort_key,
+    normalize_key,
+    sort_node_keys,
+)
+from excel_grapher.grapher.node import NodeKey
+
+
+def test_normalized_address_is_str_type_alias() -> None:
+    assert NormalizedAddress is str
+
+
+def test_normalize_key_returns_normalized_address() -> None:
+    hints = typing.get_type_hints(normalize_key)
+    assert hints["return"] is NormalizedAddress
+    result: NormalizedAddress = normalize_key("'Sheet1'!A1")
+    assert result == "Sheet1!A1"
+
+
+def test_format_helpers_return_normalized_address() -> None:
+    assert typing.get_type_hints(format_key)["return"] is NormalizedAddress
+    assert typing.get_type_hints(format_cell_key)["return"] is NormalizedAddress
+
+
+def test_node_key_aliases_normalized_address() -> None:
+    assert NodeKey is NormalizedAddress
 
 
 def test_sort_node_keys_respects_workbook_sheet_order_then_row_then_column() -> None:

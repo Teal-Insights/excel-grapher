@@ -5,6 +5,7 @@ Representation-agnostic types and logic used by both the evaluator runtime
 and the standalone export runtime.
 """
 
+from .address_keys import NormalizedAddress
 from .coercions import (
     excel_casefold,
     flatten,
@@ -38,6 +39,7 @@ from .operators import (
 from .types import CellValue, ExcelRange, XlError
 
 __all__ = [
+    "NormalizedAddress",
     "CellValue",
     "ExcelRange",
     "XlError",
