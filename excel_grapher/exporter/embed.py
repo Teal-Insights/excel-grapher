@@ -347,7 +347,12 @@ def emit_runtime(required_symbols: set[str], *, include_offset_table: bool) -> s
         refs = _referenced_names(node)
         symbol_deps[name] = {r for r in refs if r in symbol_to_node and r != name}
 
-    seed = set(required_symbols) | {"XlError", "ExcelRange", "CellValue"}
+    seed = set(required_symbols) | {
+        "XlError",
+        "ExcelRange",
+        "CellValue",
+        "NormalizedAddress",
+    }
 
     # Close over symbol dependencies.
     needed: set[str] = set()
