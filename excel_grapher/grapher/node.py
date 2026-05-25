@@ -3,13 +3,15 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any
+from typing import Any, TypeAlias
 
 import fastpyxl.utils.cell
 
+from excel_grapher.core.address_keys import NormalizedAddress
 from excel_grapher.core.address_keys import format_cell_key as _format_node_key
 
-NodeKey = str  # Always in the form "SheetName!A1" or "'Sheet Name'!A1" for quoted sheets
+# Single-cell graph node identity; same canonical form as NormalizedAddress.
+NodeKey: TypeAlias = NormalizedAddress
 
 
 @dataclass

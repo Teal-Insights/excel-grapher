@@ -35,9 +35,11 @@ from .operators import (
     xl_pow,
     xl_sub,
 )
+from .address_keys import NormalizedAddress
 from .types import CellValue, ExcelRange, XlError
 
 __all__ = [
+    "NormalizedAddress",
     "CellValue",
     "ExcelRange",
     "XlError",
