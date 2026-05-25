@@ -47,8 +47,16 @@ Repository = "https://github.com/Teal-Insights/excel-grapher"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build]
+exclude = [
+    "/examples",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["excel_grapher"]
+exclude = [
+    "/examples",
+]
 
 [tool.hatch.build.targets.wheel.force-include]
 "excel_grapher/grapher/lightweight_viz_template.html" = "excel_grapher/grapher/lightweight_viz_template.html"
@@ -59,6 +67,9 @@ include = [
     "tests/",
     "README.md",
     "LICENSE",
+]
+exclude = [
+    "/examples",
 ]
 
 # uv's dependency groups for development (separate from optional-dependencies)
