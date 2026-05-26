@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from excel_grapher.series_bindings.canonical import bindings_canonical_sha256
+from excel_grapher.series_bindings.input_series import derive_input_series
 from excel_grapher.series_bindings.load import (
     SeriesBindingsLoadError,
     load_series_bindings,
@@ -23,6 +24,8 @@ from excel_grapher.series_bindings.setter_codegen import (
     generate_setters_module,
 )
 from excel_grapher.series_bindings.types import (
+    InputSeries,
+    InputSeriesCell,
     LeafResolution,
     ResolutionIssue,
     ResolutionReport,
@@ -45,6 +48,8 @@ from excel_grapher.series_bindings.versions import (
 )
 
 __all__ = [
+    "InputSeries",
+    "InputSeriesCell",
     "IMPLEMENTED_BIND_KINDS",
     "IMPLEMENTED_LAYOUTS",
     "PLANNED_BIND_KINDS",
@@ -63,6 +68,7 @@ __all__ = [
     "ValidationReport",
     "WorkbookSeriesBindings",
     "bindings_canonical_sha256",
+    "derive_input_series",
     "emit_setter_function",
     "emit_setters_block",
     "expand_data_range",

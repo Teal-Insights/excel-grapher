@@ -46,7 +46,7 @@ __all__ = ["CodeGenerator", "GenerationParts", "GraphLike", "GraphNode"]
 
 if TYPE_CHECKING:
     from excel_grapher.grapher import DependencyGraph  # noqa: F401
-    from excel_grapher.series_bindings.types import WorkbookSeriesBindings
+    from excel_grapher.series_bindings.types import InputSeries, WorkbookSeriesBindings
 
 
 class GraphNode(Protocol):
@@ -338,6 +338,28 @@ class CodeGenerator:
         from excel_grapher.series_bindings.setter_codegen import emit_setters_block
 
         return emit_setters_block(cast("DependencyGraph", self.graph), workbook, bindings)
+
+    def derive_input_series(
+        self,
+        bindings: WorkbookSeriesBindings,
+        *,
+        workbook: Path | str,
+    ) -> list[InputSeries]:
+        """Derive input-series metadata from explicit series bindings."""
+        from excel_grapher.series_bindings import derive_input_series
+
+        return derive_input_series(cast("DependencyGraph", self.graph), bindings, workbook=workbook)
+
+    @staticmethod
+    def _emitted_function_names(lines: Sequence[str]) -> list[str]:
+        names: list[str] = []
+        for line in lines:
+            if not line.startswith("def "):
+                continue
+            name, _open_paren, _rest = line[4:].partition("(")
+            if name:
+                names.append(name)
+        return names
 
     def _range_addresses_2d(self, start: str, end: str) -> list[list[str]]:
         """Generate all cell addresses in a range as a 2D list (rows x cols)."""
@@ -1885,12 +1907,13 @@ class CodeGenerator:
             "",
             "",
         ]
+        series_setter_names: list[str] = []
         if series_bindings is not None:
             if bindings_workbook is None:
                 raise ValueError("bindings_workbook is required when series_bindings is set")
-            entrypoint_lines.extend(
-                self._emit_series_binding_setters(series_bindings, bindings_workbook)
-            )
+            setter_lines = self._emit_series_binding_setters(series_bindings, bindings_workbook)
+            entrypoint_lines.extend(setter_lines)
+            series_setter_names = self._emitted_function_names(setter_lines)
             entrypoint_lines.append("")
         for name in normalized_entrypoints:
             targets_name = f"TARGETS_{name.upper()}"
@@ -1951,6 +1974,7 @@ class CodeGenerator:
 
         entrypoint_exports = ["compute_all", "make_context"]
         entrypoint_exports.extend(f"compute_{name}" for name in normalized_entrypoints)
+        entrypoint_exports.extend(series_setter_names)
         entrypoint_imports = ", ".join(entrypoint_exports)
         all_exports = entrypoint_exports + ["DEFAULT_INPUTS"]
         init_py = "\n".join(

@@ -155,6 +155,7 @@ from pathlib import Path
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings import (
     bindings_canonical_sha256,
+    derive_input_series,
     expand_data_range,
     load_series_bindings,
     validate_series_bindings,
@@ -175,6 +176,7 @@ report = validate_series_bindings(graph, bindings, workbook=workbook)
 assert report["ok"]
 
 bindings_canonical_sha256(bindings)
+input_series = derive_input_series(graph, bindings, workbook=workbook)
 
 with CodeGenerator(graph) as gen:
     code = gen.generate(
@@ -192,10 +194,12 @@ set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 3, "value": -0.5}])
 results = compute_all(ctx=ctx)
 ```
 
+For modular package exports, generated series setters are emitted from the package entrypoint and re-exported from the package root, alongside `make_context` and `compute_all`.
+
 ---
 
 ## Relation to issue #185
 
-Input groups and `Records`-based setters should consume **series bindings** (`SeriesBinding` / workbook manifest), not axis-local `row_labels` arrays. One binding id corresponds to one generated setter and one slice of `data_range` leaves.
+Issue #185 is now framed around **input series** derived from series bindings, not independently discovered input groups. One binding id corresponds to one generated setter and one input-series view over the participating graph leaves in `data_range`.
 
 Design history: [GitHub issue #192](https://github.com/Teal-Insights/excel-grapher/issues/192).

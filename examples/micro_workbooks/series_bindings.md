@@ -15,6 +15,7 @@ from textwrap import dedent
 import yaml
 from excel_grapher.grapher import create_dependency_graph, DependencyGraph
 from excel_grapher.series_bindings import (
+    derive_input_series,
     expand_data_range,
     resolve_series_binding,
     validate_bindings_document,
@@ -240,6 +241,26 @@ For period 3 the matched cell is `Sheet1!H5` with value `0.0` from the
 workbook. The record carries `TIME_PERIOD` for matching plus
 documentation fields from `series_context`.
 
+### Input series
+
+For inspection and generated input APIs, bindings can be projected into
+**input series**: one item per binding series with graph-leaf overlap.
+This is the series-binding-derived replacement for earlier input-group
+discovery ideas.
+
+``` python
+input_series = derive_input_series(graph, bindings, workbook=workbook_path)
+print(
+    f"```text\n{pformat({'id': input_series[0]['id'], 'key_fields': input_series[0]['key_fields'], 'cell_count': len(input_series[0]['cells'])}, indent=2)}\n```\n"
+)
+```
+
+``` text
+{ 'cell_count': 5,
+  'id': 'borvelia_primary_balance',
+  'key_fields': ['TIME_PERIOD']}
+```
+
 ### Generated setter (Records API)
 
 Passing the same binding into `CodeGenerator` appends a
@@ -275,29 +296,46 @@ def set_borvelia_primary_balance(
 
 ### Calling the setter
 
-The generated setter is a normal Python function that can be called with
-a list of records. Each record must include a `value` key and each key
-field (`TIME_PERIOD` here). The setter writes into the graph’s input map
-via `EvalContext.set_inputs`.
+In an exported model, the generated setter is imported and called like
+any other package function. Each record must include a `value` key and
+each key field (`TIME_PERIOD` here):
 
 ``` python
-namespace: dict = {}
-exec(code, namespace)
-ctx = namespace["make_context"]()
-# Deferred design review: decide whether generated setters should remain standalone
-# functions, attach to EvalContext, or expose a higher-level wrapper API.
-namespace["set_borvelia_primary_balance"](
-    ctx,
-    [{"TIME_PERIOD": 4, "value": 7.5}],
-)
-print(f"```text\nSheet1!I5 after setter: {ctx.inputs['Sheet1!I5']}\n```\n")
+from exported_model import make_context, set_borvelia_primary_balance
+
+ctx = make_context()
+records = [
+    {"TIME_PERIOD": 4, "value": 7.5},
+    {"TIME_PERIOD": 5, "value": 8.0},
+]
+
+set_borvelia_primary_balance(ctx, records)
 ```
+
+The setter writes into the graph’s input map via
+`EvalContext.set_inputs`. In this notebook, the generated code is
+executed dynamically so the example can verify the same effect:
 
 ``` text
 Sheet1!I5 after setter: 7.5
+Sheet1!J5 after setter: 8.0
 ```
 
-Period **4** corresponds to column I; the setter updates that leaf
-without requiring a sheet address in the record. Downstream
-`compute_all(ctx=ctx)` would see the new input when recomputing any
-formulas that depend on it (this workbook has none on that row).
+Periods **4** and **5** correspond to columns I and J; the setter
+updates those leaves without requiring sheet addresses in the records.
+Downstream `compute_all(ctx=ctx)` would see the new inputs when
+recomputing any formulas that depend on them (this workbook has none on
+that row).
+
+### Modular exports
+
+For package-style exports, generated series setters are emitted from the
+package entrypoint and re-exported from the package root. This keeps the
+callable surface next to `make_context` and `compute_all`:
+
+``` python
+from exported_series import make_context, set_borvelia_primary_balance
+
+ctx = make_context()
+set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 4, "value": 7.5}])
+```
