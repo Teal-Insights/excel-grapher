@@ -51,3 +51,19 @@ class ResolutionReport(TypedDict):
     ok: bool
     series: list[SeriesResolution]
     issues: list[ResolutionIssue]
+
+
+class InputSeriesCell(TypedDict):
+    address: str
+    coordinates: dict[str, Scalar]
+    key: dict[str, Scalar]
+    record: dict[str, Scalar]
+
+
+class InputSeries(TypedDict):
+    id: str
+    setter_name: str
+    key_fields: list[str]
+    requires_address: bool
+    cells: list[InputSeriesCell]
+    issues: list[ResolutionIssue]

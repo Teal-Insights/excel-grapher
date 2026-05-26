@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib
+import sys
 from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
@@ -95,3 +97,37 @@ def test_codegen_includes_setters_and_updates_inputs() -> None:
     ctx = make_context()
     set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 4, "value": 7.5}])
     assert ctx.inputs["Sheet1!I5"] == 7.5
+
+
+def test_generate_modules_exports_series_binding_setters(tmp_path: Path) -> None:
+    bindings = validate_bindings_document(deepcopy(BINDINGS_DOCUMENT))
+    targets: list[str] = []
+    for series in bindings["series"]:
+        targets.extend(expand_data_range(series["data_range"], workbook=WORKBOOK))
+    graph = create_dependency_graph(WORKBOOK, targets, load_values=True)
+
+    files = CodeGenerator(graph).generate_modules(
+        targets,
+        package_name="exported_series",
+        series_bindings=bindings,
+        bindings_workbook=WORKBOOK,
+    )
+    assert "def set_borvelia_primary_balance(" in files["exported_series/entrypoint.py"]
+    assert "set_borvelia_primary_balance" in files["exported_series/__init__.py"]
+
+    for relpath, content in files.items():
+        out_path = tmp_path / relpath
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(content, encoding="utf-8")
+
+    sys.path.insert(0, str(tmp_path))
+    try:
+        pkg = importlib.import_module("exported_series")
+        ctx = pkg.make_context()
+        pkg.set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 4, "value": 7.5}])
+        assert ctx.inputs["Sheet1!I5"] == 7.5
+    finally:
+        sys.path.remove(str(tmp_path))
+        for name in list(sys.modules):
+            if name == "exported_series" or name.startswith("exported_series."):
+                sys.modules.pop(name, None)
