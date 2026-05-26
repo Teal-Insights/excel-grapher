@@ -24,7 +24,9 @@ classifiers = [
 ]
 dependencies = [
     "fastpyxl",
+    "jsonschema>=4.26.0",
     "numpy>=1.24",
+    "pyyaml>=6.0.3",
 ]
 
 [project.optional-dependencies]
@@ -52,6 +54,7 @@ packages = ["excel_grapher"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "excel_grapher/grapher/lightweight_viz_template.html" = "excel_grapher/grapher/lightweight_viz_template.html"
+"excel_grapher/series_bindings/series_binding.schema.json" = "excel_grapher/series_bindings/series_binding.schema.json"
 
 [tool.hatch.build.targets.sdist]
 include = [
