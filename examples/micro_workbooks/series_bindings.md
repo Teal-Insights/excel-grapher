@@ -296,30 +296,36 @@ def set_borvelia_primary_balance(
 
 ### Calling the setter
 
-The generated setter is a normal Python function that can be called with
-a list of records. Each record must include a `value` key and each key
-field (`TIME_PERIOD` here). The setter writes into the graph’s input map
-via `EvalContext.set_inputs`.
+In an exported model, the generated setter is imported and called like
+any other package function. Each record must include a `value` key and
+each key field (`TIME_PERIOD` here):
 
 ``` python
-namespace: dict = {}
-exec(code, namespace)
-ctx = namespace["make_context"]()
-namespace["set_borvelia_primary_balance"](
-    ctx,
-    [{"TIME_PERIOD": 4, "value": 7.5}],
-)
-print(f"```text\nSheet1!I5 after setter: {ctx.inputs['Sheet1!I5']}\n```\n")
+from exported_model import make_context, set_borvelia_primary_balance
+
+ctx = make_context()
+records = [
+    {"TIME_PERIOD": 4, "value": 7.5},
+    {"TIME_PERIOD": 5, "value": 8.0},
+]
+
+set_borvelia_primary_balance(ctx, records)
 ```
+
+The setter writes into the graph’s input map via
+`EvalContext.set_inputs`. In this notebook, the generated code is
+executed dynamically so the example can verify the same effect:
 
 ``` text
 Sheet1!I5 after setter: 7.5
+Sheet1!J5 after setter: 8.0
 ```
 
-Period **4** corresponds to column I; the setter updates that leaf
-without requiring a sheet address in the record. Downstream
-`compute_all(ctx=ctx)` would see the new input when recomputing any
-formulas that depend on it (this workbook has none on that row).
+Periods **4** and **5** correspond to columns I and J; the setter
+updates those leaves without requiring sheet addresses in the records.
+Downstream `compute_all(ctx=ctx)` would see the new inputs when
+recomputing any formulas that depend on them (this workbook has none on
+that row).
 
 ### Modular exports
 
