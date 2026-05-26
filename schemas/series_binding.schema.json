@@ -1,0 +1,582 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://teal-insights.github.io/excel-grapher/schemas/series_binding.schema.json",
+  "title": "Workbook series bindings",
+  "description": "Declarative structure and spreadsheet bindings for generated input setters. MVP assumes one SeriesBinding per indicator row (layout row_series): a single data row intersected with graph leaves, with TIME_PERIOD (or similar) as the record key.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "series"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0.0", "1.1.0"],
+      "description": "Schema version for tooling and migrations. 1.0.0: row_series and scalar (fully supported). 1.1.0: adds matrix layout and row_hierarchy bind (schema-valid; resolver/codegen may lag)."
+    },
+    "workbook": {
+      "type": "string",
+      "description": "Optional workbook filename or path used when validating bindings against a graph extract."
+    },
+    "concept_scheme": {
+      "$ref": "#/$defs/ConceptScheme",
+      "description": "Optional shared concept definitions referenced by series bindings in this file."
+    },
+    "series": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/SeriesBinding" },
+      "description": "One binding per generated setter (MVP: typically one indicator row each)."
+    }
+  },
+  "$defs": {
+    "A1Range": {
+      "type": "string",
+      "description": "Sheet-qualified range using project target conventions: Inputs!F5:J5, Inputs!F5:Inputs!J5, 'My Sheet'!A1:'My Sheet'!B2. Parsed via expand_targets_to_roots (not a single regex)."
+    },
+    "DefinedName": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_.]*$",
+      "description": "Workbook defined name resolving to a single cell or rectangular range (requires workbook or graph named-range maps at expand time)."
+    },
+    "DataRange": {
+      "description": "Leaf cells for this binding: sheet-qualified range and/or defined name.",
+      "oneOf": [{ "$ref": "#/$defs/A1Range" }, { "$ref": "#/$defs/DefinedName" }]
+    },
+    "A1Cell": {
+      "type": "string",
+      "pattern": "^[^!]+![A-Z]{1,3}[1-9][0-9]*$",
+      "description": "Sheet-qualified A1 cell, e.g. Inputs!A2."
+    },
+    "ColumnLetter": {
+      "type": "string",
+      "pattern": "^[A-Z]{1,3}$",
+      "description": "Excel column letters without row, e.g. A or AA."
+    },
+    "ConceptId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+      "description": "Stable concept identifier (SDMX-style ids such as REF_AREA or local ids such as DESCRIPTION)."
+    },
+    "ScalarValue": {
+      "description": "Constant attribute or context value stored in records when include_in_record is true.",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "integer" },
+        { "type": "number" },
+        { "type": "boolean" },
+        { "type": "null" }
+      ]
+    },
+    "ReadAs": {
+      "type": "string",
+      "enum": ["string", "int", "float", "number", "bool", "auto"],
+      "default": "auto",
+      "description": "How to coerce a cell or header value into a record field."
+    },
+    "Normalize": {
+      "type": "string",
+      "enum": ["none", "strip", "strip_trailing_unit"],
+      "default": "strip",
+      "description": "Label normalization applied after reading strings from the sheet."
+    },
+    "ConceptScheme": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["concepts"],
+      "properties": {
+        "id": { "type": "string" },
+        "concepts": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/ConceptDefinition" }
+        }
+      }
+    },
+    "ConceptDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": { "$ref": "#/$defs/ConceptId" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "dtype": {
+          "type": "string",
+          "enum": ["string", "int", "float", "number", "bool"]
+        },
+        "sdmx_concept": {
+          "type": "string",
+          "description": "Optional mapping to an external SDMX concept id for documentation."
+        }
+      }
+    },
+    "Bind": {
+      "description": "How to obtain a concept value from the workbook for each leaf cell in data_range.",
+      "oneOf": [
+        { "$ref": "#/$defs/BindDataCell" },
+        { "$ref": "#/$defs/BindCell" },
+        { "$ref": "#/$defs/BindColumnHeader" },
+        { "$ref": "#/$defs/BindRowLabel" },
+        { "$ref": "#/$defs/BindRowHierarchy" },
+        { "$ref": "#/$defs/BindConstant" }
+      ]
+    },
+    "BindDataCell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "data_cell" },
+        "read": { "$ref": "#/$defs/ReadAs" }
+      }
+    },
+    "BindCell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "address"],
+      "properties": {
+        "kind": { "const": "cell" },
+        "address": { "$ref": "#/$defs/A1Cell" },
+        "read": { "$ref": "#/$defs/ReadAs" },
+        "normalize": { "$ref": "#/$defs/Normalize" }
+      }
+    },
+    "BindColumnHeader": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "header_row"],
+      "properties": {
+        "kind": { "const": "column_header" },
+        "header_row": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "1-based row index containing column headers for the data columns."
+        },
+        "read": { "$ref": "#/$defs/ReadAs" },
+        "normalize": { "$ref": "#/$defs/Normalize" }
+      }
+    },
+    "BindRowLabel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "label_column"],
+      "description": "Read the label on the same row as the data cell from label_column (typical for indicator text in column A).",
+      "properties": {
+        "kind": { "const": "row_label" },
+        "label_column": { "$ref": "#/$defs/ColumnLetter" },
+        "read": { "$ref": "#/$defs/ReadAs" },
+        "normalize": { "$ref": "#/$defs/Normalize" }
+      }
+    },
+    "BindRowHierarchy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "label_column"],
+      "description": "Walk upward in label_column from the data row, collecting indented labels into a hierarchy path (schema 1.1.0). Replaces left_edge_then_up_scan heuristics.",
+      "properties": {
+        "kind": { "const": "row_hierarchy" },
+        "label_column": { "$ref": "#/$defs/ColumnLetter" },
+        "max_depth": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32,
+          "default": 10,
+          "description": "Maximum number of ancestor rows to visit when building the hierarchy path."
+        },
+        "read": { "$ref": "#/$defs/ReadAs" },
+        "normalize": { "$ref": "#/$defs/Normalize" }
+      }
+    },
+    "BindConstant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": { "const": "constant" },
+        "value": { "$ref": "#/$defs/ScalarValue" }
+      }
+    },
+    "DimensionScope": {
+      "type": "string",
+      "enum": ["series", "cell"],
+      "description": "series: one value for the entire binding (e.g. country in A2). cell: varies per leaf (e.g. TIME_PERIOD from column header)."
+    },
+    "DimensionRole": {
+      "type": "string",
+      "enum": ["key", "attribute"],
+      "description": "key: participates in record matching. attribute: metadata only unless listed in key."
+    },
+    "Dimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["concept", "role", "scope", "bind"],
+      "properties": {
+        "concept": { "$ref": "#/$defs/ConceptId" },
+        "role": { "const": "key" },
+        "scope": { "$ref": "#/$defs/DimensionScope" },
+        "bind": { "$ref": "#/$defs/Bind" },
+        "include_in_record": {
+          "type": "boolean",
+          "default": true,
+          "description": "When false and scope is series, value is used for validation only and omitted from emitted Records unless listed in series_context."
+        }
+      }
+    },
+    "Attribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["concept", "role"],
+      "properties": {
+        "concept": { "$ref": "#/$defs/ConceptId" },
+        "role": { "const": "attribute" },
+        "bind": { "$ref": "#/$defs/Bind" },
+        "value": {
+          "$ref": "#/$defs/ScalarValue",
+          "description": "Shorthand for bind.kind constant when the attribute is fixed for the series."
+        },
+        "include_in_record": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "oneOf": [
+        { "required": ["bind"] },
+        { "required": ["value"] }
+      ]
+    },
+    "Measure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["concept", "bind"],
+      "properties": {
+        "concept": {
+          "type": "string",
+          "const": "OBS_VALUE",
+          "description": "Observation value concept (required field name value in Records)."
+        },
+        "dtype": {
+          "type": "string",
+          "enum": ["int", "float", "number", "string", "bool"],
+          "default": "float"
+        },
+        "bind": {
+          "allOf": [{ "$ref": "#/$defs/BindDataCell" }]
+        }
+      }
+    },
+    "Setter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^set_[a-z][a-z0-9_]*$",
+          "description": "Generated Python function name, e.g. set_borvelia_primary_balance."
+        },
+        "record_contract": {
+          "type": "string",
+          "const": "records",
+          "default": "records",
+          "description": "MVP: list[dict] Records with required value key."
+        },
+        "allow_address": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, records may include address/cell_address for disambiguation."
+        },
+        "strict": {
+          "type": "boolean",
+          "default": true,
+          "description": "When true, reject records with unknown keys and missing required key fields."
+        }
+      }
+    },
+    "Layout": {
+      "type": "string",
+      "enum": ["row_series", "scalar", "matrix"],
+      "description": "row_series: one indicator row x column periods. scalar: single leaf. matrix (1.1.0): country/indicator block over a rectangular data_range (multi-row); resolver/codegen may lag schema."
+    },
+    "SeriesBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "sheet",
+        "data_range",
+        "layout",
+        "setter",
+        "structure",
+        "key"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Stable binding id, e.g. borvelia_primary_balance."
+        },
+        "sheet": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Worksheet name (must match data_range sheet)."
+        },
+        "data_range": {
+          "$ref": "#/$defs/DataRange",
+          "description": "Numeric input cells for this setter; codegen intersects with graph leaves."
+        },
+        "layout": { "$ref": "#/$defs/Layout" },
+        "editable": {
+          "type": "boolean",
+          "default": true
+        },
+        "setter": { "$ref": "#/$defs/Setter" },
+        "structure": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["measure", "dimensions"],
+          "properties": {
+            "measure": { "$ref": "#/$defs/Measure" },
+            "dimensions": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/Dimension" }
+            },
+            "attributes": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/Attribute" },
+              "default": []
+            }
+          }
+        },
+        "key": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/ConceptId" },
+          "uniqueItems": true,
+          "description": "Concept ids required on each incoming record for matching (MVP row_series: typically [TIME_PERIOD] when country and indicator are series-scoped)."
+        },
+        "series_context": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/ScalarValue" },
+          "description": "Fixed key-values attached to every record and setter docs; not used for matching unless also listed in key."
+        },
+        "validation": {
+          "$ref": "#/$defs/Validation"
+        },
+        "sdmx_notes": {
+          "type": "string",
+          "description": "Human-readable SDMX fit commentary; not consumed by codegen."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Free-form analyst notes."
+        }
+      },
+      "allOf": [
+        { "$ref": "#/$defs/SeriesBindingMvpRules" },
+        { "$ref": "#/$defs/SeriesBindingMatrixRules" }
+      ]
+    },
+    "SeriesBindingMatrixRules": {
+      "description": "Constraints for layout matrix (1.1.0).",
+      "if": {
+        "properties": { "layout": { "const": "matrix" } },
+        "required": ["layout"]
+      },
+      "then": {
+        "properties": {
+          "structure": {
+            "properties": {
+              "dimensions": {
+                "type": "array",
+                "minItems": 2,
+                "contains": {
+                  "type": "object",
+                  "properties": { "scope": { "const": "cell" } },
+                  "required": ["scope"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "SeriesBindingMvpRules": {
+      "description": "MVP constraints for one-setter-per-indicator-row.",
+      "allOf": [
+        {
+          "if": {
+            "properties": { "layout": { "const": "row_series" } },
+            "required": ["layout"]
+          },
+          "then": {
+            "properties": {
+              "structure": {
+                "properties": {
+                  "dimensions": {
+                    "type": "array",
+                    "contains": {
+                      "type": "object",
+                      "properties": {
+                        "scope": { "const": "cell" }
+                      },
+                      "required": ["scope"]
+                    },
+                    "minItems": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "intersect_graph_leaves": {
+          "type": "boolean",
+          "default": true,
+          "description": "When true, every cell in data_range must be a leaf in the extracted dependency graph."
+        },
+        "require_unique_key": {
+          "type": "boolean",
+          "default": true,
+          "description": "When true, resolved key tuples must be unique across leaves in data_range."
+        },
+        "fail_on_empty_leaf": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "schema_version": "1.0.0",
+      "workbook": "lic_inputs.xlsx",
+      "series": [
+        {
+          "id": "borvelia_primary_balance",
+          "sheet": "Inputs",
+          "data_range": "Inputs!F5:J5",
+          "layout": "row_series",
+          "editable": true,
+          "setter": {
+            "name": "set_borvelia_primary_balance",
+            "record_contract": "records",
+            "allow_address": false,
+            "strict": true
+          },
+          "structure": {
+            "measure": {
+              "concept": "OBS_VALUE",
+              "dtype": "float",
+              "bind": { "kind": "data_cell", "read": "float" }
+            },
+            "dimensions": [
+              {
+                "concept": "REF_AREA",
+                "role": "key",
+                "scope": "series",
+                "bind": {
+                  "kind": "cell",
+                  "address": "Inputs!A2",
+                  "read": "string",
+                  "normalize": "strip"
+                },
+                "include_in_record": false
+              },
+              {
+                "concept": "INDICATOR",
+                "role": "key",
+                "scope": "series",
+                "bind": {
+                  "kind": "row_label",
+                  "label_column": "A",
+                  "read": "string",
+                  "normalize": "strip_trailing_unit"
+                },
+                "include_in_record": false
+              },
+              {
+                "concept": "TIME_PERIOD",
+                "role": "key",
+                "scope": "cell",
+                "bind": {
+                  "kind": "column_header",
+                  "header_row": 1,
+                  "read": "int"
+                }
+              }
+            ],
+            "attributes": [
+              {
+                "concept": "UNIT_MEASURE",
+                "role": "attribute",
+                "value": "PC_GDP",
+                "include_in_record": true
+              }
+            ]
+          },
+          "key": ["TIME_PERIOD"],
+          "series_context": {
+            "REF_AREA": "Borvelia",
+            "INDICATOR": "Primary balance (% of GDP)"
+          },
+          "validation": {
+            "intersect_graph_leaves": true,
+            "require_unique_key": true
+          },
+          "sdmx_notes": "Wide row: TIME_PERIOD from row 1 offsets 1-5; REF_AREA from A2; indicator from A5."
+        }
+      ]
+    },
+    {
+      "schema_version": "1.1.0",
+      "workbook": "lic_inputs.xlsx",
+      "series": [
+        {
+          "id": "country_block_primary_balance",
+          "sheet": "Inputs",
+          "data_range": "Inputs!F3:J8",
+          "layout": "matrix",
+          "setter": { "name": "set_country_block_primary_balance" },
+          "structure": {
+            "measure": {
+              "concept": "OBS_VALUE",
+              "bind": { "kind": "data_cell", "read": "float" }
+            },
+            "dimensions": [
+              {
+                "concept": "REF_AREA",
+                "role": "key",
+                "scope": "cell",
+                "bind": {
+                  "kind": "row_hierarchy",
+                  "label_column": "A",
+                  "max_depth": 4
+                }
+              },
+              {
+                "concept": "INDICATOR",
+                "role": "key",
+                "scope": "cell",
+                "bind": { "kind": "row_label", "label_column": "A" }
+              },
+              {
+                "concept": "TIME_PERIOD",
+                "role": "key",
+                "scope": "cell",
+                "bind": { "kind": "column_header", "header_row": 1, "read": "int" }
+              }
+            ]
+          },
+          "key": ["REF_AREA", "INDICATOR", "TIME_PERIOD"],
+          "notes": "Illustrative 1.1.0 matrix binding; row_hierarchy resolver not yet implemented."
+        }
+      ]
+    }
+  ]
+}

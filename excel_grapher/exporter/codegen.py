@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence, Set
-from typing import TYPE_CHECKING, Any, Protocol, TypedDict
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
 
 import fastpyxl.utils.cell
 
@@ -45,6 +46,7 @@ __all__ = ["CodeGenerator", "GenerationParts", "GraphLike", "GraphNode"]
 
 if TYPE_CHECKING:
     from excel_grapher.grapher import DependencyGraph  # noqa: F401
+    from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 
 
 class GraphNode(Protocol):
@@ -327,6 +329,15 @@ class CodeGenerator:
             except Exception:
                 return "0"
         return "0"
+
+    def _emit_series_binding_setters(
+        self,
+        bindings: WorkbookSeriesBindings,
+        workbook: Path | str,
+    ) -> list[str]:
+        from excel_grapher.series_bindings.setter_codegen import emit_setters_block
+
+        return emit_setters_block(cast("DependencyGraph", self.graph), workbook, bindings)
 
     def _range_addresses_2d(self, start: str, end: str) -> list[list[str]]:
         """Generate all cell addresses in a range as a 2D list (rows x cols)."""
@@ -1565,6 +1576,8 @@ class CodeGenerator:
         constant_blanks: bool = False,
         input_ranges: Sequence[str] | None = None,
         blank_ranges: Sequence[str] | None = None,
+        series_bindings: WorkbookSeriesBindings | None = None,
+        bindings_workbook: Path | str | None = None,
     ) -> str:
         """Generate standalone Python code for target cells.
 
@@ -1575,6 +1588,9 @@ class CodeGenerator:
                 When a cell would otherwise be a constant, ``input_ranges`` take precedence.
             blank_ranges: Sheet-qualified rectangles whose cells are omitted from the graph
                 but resolve as empty (``None``) at runtime; must match builder/evaluator.
+            series_bindings: Optional workbook binding manifest; when set with
+                ``bindings_workbook``, emits ``set_*`` functions that accept Records.
+            bindings_workbook: Path to the ``.xlsx`` file used to resolve binds.
 
         Returns:
             Standalone Python source code as a string.
@@ -1663,6 +1679,11 @@ class CodeGenerator:
         )
         lines.append("")
         lines.append("")
+        if series_bindings is not None:
+            if bindings_workbook is None:
+                raise ValueError("bindings_workbook is required when series_bindings is set")
+            lines.extend(self._emit_series_binding_setters(series_bindings, bindings_workbook))
+            lines.append("")
         for name, entrypoint_list in normalized_entrypoints.items():
             targets_name = f"TARGETS_{name.upper()}"
             lines.append(f"{targets_name} = {{")
@@ -1726,6 +1747,8 @@ class CodeGenerator:
         constant_blanks: bool = False,
         input_ranges: Sequence[str] | None = None,
         blank_ranges: Sequence[str] | None = None,
+        series_bindings: WorkbookSeriesBindings | None = None,
+        bindings_workbook: Path | str | None = None,
     ) -> dict[str, str]:
         """Generate a multi-module Python package for target cells.
 
@@ -1862,6 +1885,13 @@ class CodeGenerator:
             "",
             "",
         ]
+        if series_bindings is not None:
+            if bindings_workbook is None:
+                raise ValueError("bindings_workbook is required when series_bindings is set")
+            entrypoint_lines.extend(
+                self._emit_series_binding_setters(series_bindings, bindings_workbook)
+            )
+            entrypoint_lines.append("")
         for name in normalized_entrypoints:
             targets_name = f"TARGETS_{name.upper()}"
             entrypoint_lines.append(f"{targets_name} = {{")

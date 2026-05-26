@@ -1,0 +1,24 @@
+schema_version: "1.0.0"
+workbook: big_model.xlsx
+series:
+  - id: row_a
+    sheet: Inputs
+    data_range: Inputs!B2:C2
+    layout: row_series
+    setter:
+      name: set_row_a
+    structure:
+      measure:
+        concept: OBS_VALUE
+        bind:
+          kind: data_cell
+      dimensions:
+        - concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 1
+            read: int
+    key:
+      - TIME_PERIOD

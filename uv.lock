@@ -626,7 +626,9 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastpyxl" },
+    { name = "jsonschema" },
     { name = "numpy" },
+    { name = "pyyaml" },
 ]
 
 [package.optional-dependencies]
@@ -663,9 +665,11 @@ requires-dist = [
     { name = "fastpyxl", git = "https://github.com/Promptly-Technologies-LLC/fastpyxl" },
     { name = "graphviz", marker = "extra == 'all'", specifier = ">=0.20" },
     { name = "graphviz", marker = "extra == 'viz'", specifier = ">=0.20" },
+    { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "networkx", marker = "extra == 'all'", specifier = ">=3.0" },
     { name = "networkx", marker = "extra == 'networkx'", specifier = ">=3.0" },
     { name = "numpy", specifier = ">=1.24" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
 ]
 provides-extras = ["networkx", "viz", "all"]
 

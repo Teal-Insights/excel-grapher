@@ -1,0 +1,24 @@
+schema_version: "1.0.0"
+workbook: big_model.xlsx
+series:
+  - id: row_b
+    sheet: Assumptions
+    data_range: Assumptions!B3:D3
+    layout: row_series
+    setter:
+      name: set_row_b
+    structure:
+      measure:
+        concept: OBS_VALUE
+        bind:
+          kind: data_cell
+      dimensions:
+        - concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 1
+            read: int
+    key:
+      - TIME_PERIOD

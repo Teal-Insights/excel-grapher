@@ -1,0 +1,59 @@
+schema_version: "1.0.0"
+workbook: lic_inputs.xlsx
+series:
+  - id: borvelia_primary_balance
+    sheet: Inputs
+    data_range: Inputs!F5:J5
+    layout: row_series
+    editable: true
+    setter:
+      name: set_borvelia_primary_balance
+      record_contract: records
+      allow_address: false
+      strict: true
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - concept: REF_AREA
+          role: key
+          scope: series
+          bind:
+            kind: cell
+            address: Inputs!A2
+            read: string
+            normalize: strip
+          include_in_record: false
+        - concept: INDICATOR
+          role: key
+          scope: series
+          bind:
+            kind: row_label
+            label_column: A
+            read: string
+            normalize: strip_trailing_unit
+          include_in_record: false
+        - concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 1
+            read: int
+      attributes:
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: PC_GDP
+          include_in_record: true
+    key:
+      - TIME_PERIOD
+    series_context:
+      REF_AREA: Borvelia
+      INDICATOR: Primary balance (% of GDP)
+    validation:
+      intersect_graph_leaves: true
+      require_unique_key: true
