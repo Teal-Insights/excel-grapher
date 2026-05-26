@@ -50,7 +50,7 @@ def test_resolve_borvelia_row_series_coordinates(tmp_path: Path) -> None:
     assert leaf["coordinates"]["INDICATOR"] == "Primary balance"
     assert leaf["coordinates"]["TIME_PERIOD"] == 3
     assert leaf["coordinates"]["OBS_VALUE"] == 0.0
-    assert leaf["record"]["value"] == 0.0
+    assert leaf["record"]["OBS_VALUE"] == 0.0
     assert leaf["record"]["TIME_PERIOD"] == 3
     assert leaf["record"]["REF_AREA"] == "Borvelia"
     assert leaf["record"]["UNIT_MEASURE"] == "PC_GDP"
@@ -122,7 +122,7 @@ def test_resolve_scalar_binding(tmp_path: Path) -> None:
     assert len(resolved["leaves"]) == 1
     leaf = resolved["leaves"][0]
     assert leaf["key"] == {"INPUT_NAME": "threshold_p_value"}
-    assert leaf["record"]["value"] == pytest.approx(0.05)
+    assert leaf["record"]["OBS_VALUE"] == pytest.approx(0.05)
 
 
 def test_resolve_duplicate_key_sets_requires_address(tmp_path: Path) -> None:

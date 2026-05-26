@@ -95,7 +95,7 @@ def test_codegen_includes_setters_and_updates_inputs() -> None:
         ns["set_borvelia_primary_balance"],
     )
     ctx = make_context()
-    set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 4, "value": 7.5}])
+    set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 4, "OBS_VALUE": 7.5}])
     assert ctx.inputs["Sheet1!I5"] == 7.5
 
 
@@ -124,7 +124,7 @@ def test_generate_modules_exports_series_binding_setters(tmp_path: Path) -> None
     try:
         pkg = importlib.import_module("exported_series")
         ctx = pkg.make_context()
-        pkg.set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 4, "value": 7.5}])
+        pkg.set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 4, "OBS_VALUE": 7.5}])
         assert ctx.inputs["Sheet1!I5"] == 7.5
     finally:
         sys.path.remove(str(tmp_path))

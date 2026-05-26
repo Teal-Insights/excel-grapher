@@ -35,13 +35,18 @@ def _key_tuple_literal(key_fields: list[str], key: Mapping[str, object]) -> str:
     return f"({pairs},)" if len(key_fields) == 1 else f"({pairs})"
 
 
+def _measure_concept(series: dict[str, Any]) -> str:
+    measure = (series.get("structure") or {}).get("measure") or {}
+    return str(measure.get("concept") or "OBS_VALUE")
+
+
 def _allowed_record_fields(
     series: dict[str, Any],
     *,
     allow_address: bool,
     requires_address: bool,
 ) -> set[str]:
-    fields = {"value"}
+    fields = {_measure_concept(series)}
     fields.update(str(c) for c in (series.get("key") or []))
     for dim in (series.get("structure") or {}).get("dimensions") or []:
         if isinstance(dim, dict) and dim.get("include_in_record", True):
@@ -71,6 +76,7 @@ def emit_setter_function(
     allow_address = bool(setter.get("allow_address", False))
     requires_address = bool(resolved["requires_address"])
     key_fields = [str(c) for c in (series.get("key") or [])]
+    measure_concept = _measure_concept(series)
     allowed = sorted(
         _allowed_record_fields(
             series,
@@ -103,6 +109,7 @@ def emit_setter_function(
     lines.append(f"    key_fields = {tuple(key_fields)!r}")
     lines.append(f"    allow_address = {allow_address!r}")
     lines.append(f"    requires_address = {requires_address!r}")
+    lines.append(f"    measure_field = {measure_concept!r}")
     lines.append(f"    allowed_fields = {set(allowed)!r}")
     lines.append("    updates: dict[str, object] = {}")
     lines.append("    for index, record in enumerate(records):")
@@ -112,9 +119,9 @@ def emit_setter_function(
     lines.append(
         '                raise ValueError(f"record[{index}]: unknown fields {sorted(unknown)!r}")'
     )
-    lines.append('        if "value" not in record:')
+    lines.append("        if measure_field not in record:")
     lines.append(
-        "            raise ValueError(f\"record[{index}]: missing required field 'value'\")"
+        '            raise ValueError(f"record[{index}]: missing required field {measure_field!r}")'
     )
     lines.append("        address = None")
     lines.append("        if allow_address or requires_address:")
@@ -142,7 +149,7 @@ def emit_setter_function(
         lines.append(
             '                raise ValueError(f"record[{index}]: no leaf matches key {dict(key_tuple)!r}")'
         )
-    lines.append('        updates[address] = record["value"]')
+    lines.append("        updates[address] = record[measure_field]")
     lines.append("    if updates:")
     lines.append("        ctx.set_inputs(coerce_inputs_dict(updates))")
     lines.append("")

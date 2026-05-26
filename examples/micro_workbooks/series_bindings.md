@@ -209,7 +209,7 @@ distinct.
 evaluates the bind executors (`column_header` for `TIME_PERIOD`,
 `data_cell` for `OBS_VALUE`, and so on). The result is a **key** tuple
 used to match records and a **record** dict shaped for the generated
-setter (including `value` and optional attributes such as
+setter (including `OBS_VALUE` and optional attributes such as
 `UNIT_MEASURE`).
 
 ``` python
@@ -231,10 +231,10 @@ print(
 { 'address': 'Sheet1!H5',
   'key': {'TIME_PERIOD': 3},
   'record': { 'INDICATOR': 'Primary balance (% of GDP)',
+              'OBS_VALUE': 0.0,
               'REF_AREA': 'Borvelia',
               'TIME_PERIOD': 3,
-              'UNIT_MEASURE': 'PC_GDP',
-              'value': 0.0}}
+              'UNIT_MEASURE': 'PC_GDP'}}
 ```
 
 For period 3 the matched cell is `Sheet1!H5` with value `0.0` from the
@@ -265,7 +265,7 @@ print(
 
 Passing the same binding into `CodeGenerator` appends a
 `set_borvelia_primary_balance` function. Callers pass `list[dict]`
-**records** with at least `value` and each key field (`TIME_PERIOD`
+**records** with at least `OBS_VALUE` and each key field (`TIME_PERIOD`
 here); the setter writes into the graph’s input map via
 `EvalContext.set_inputs`.
 
@@ -297,16 +297,16 @@ def set_borvelia_primary_balance(
 ### Calling the setter
 
 In an exported model, the generated setter is imported and called like
-any other package function. Each record must include a `value` key and
-each key field (`TIME_PERIOD` here):
+any other package function. Each record must include an `OBS_VALUE` key
+and each key field (`TIME_PERIOD` here):
 
 ``` python
 from exported_model import make_context, set_borvelia_primary_balance
 
 ctx = make_context()
 records = [
-    {"TIME_PERIOD": 4, "value": 7.5},
-    {"TIME_PERIOD": 5, "value": 8.0},
+    {"TIME_PERIOD": 4, "OBS_VALUE": 7.5},
+    {"TIME_PERIOD": 5, "OBS_VALUE": 8.0},
 ]
 
 set_borvelia_primary_balance(ctx, records)
@@ -337,5 +337,5 @@ callable surface next to `make_context` and `compute_all`:
 from exported_series import make_context, set_borvelia_primary_balance
 
 ctx = make_context()
-set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 4, "value": 7.5}])
+set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 4, "OBS_VALUE": 7.5}])
 ```

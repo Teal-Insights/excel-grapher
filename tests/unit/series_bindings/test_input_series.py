@@ -50,7 +50,7 @@ def test_derive_input_series_from_series_bindings(tmp_path: Path) -> None:
         "Inputs!J5",
     ]
     assert series["cells"][2]["key"] == {"TIME_PERIOD": 3}
-    assert series["cells"][2]["record"]["value"] == 0.0
+    assert series["cells"][2]["record"]["OBS_VALUE"] == 0.0
 
 
 def test_derive_input_series_filters_to_graph_leaf_overlap(tmp_path: Path) -> None:

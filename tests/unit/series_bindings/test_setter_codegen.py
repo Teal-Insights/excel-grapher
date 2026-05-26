@@ -66,7 +66,7 @@ def test_emit_setter_updates_context_by_key(tmp_path: Path) -> None:
     )
 
     ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
-    setter(ctx, [{"TIME_PERIOD": 3, "value": 42.0}])
+    setter(ctx, [{"TIME_PERIOD": 3, "OBS_VALUE": 42.0}])
     assert ctx.inputs["Inputs!H5"] == 42.0
 
 
@@ -85,7 +85,25 @@ def test_emit_setter_missing_key_raises(tmp_path: Path) -> None:
 
     ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
     with pytest.raises(ValueError, match="missing key fields"):
-        setter(ctx, [{"value": 1.0}])
+        setter(ctx, [{"OBS_VALUE": 1.0}])
+
+
+def test_emit_setter_missing_measure_raises(tmp_path: Path) -> None:
+    wb_path = tmp_path / "lic_inputs.xlsx"
+    _write_borvelia_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, expand_data_range("Inputs!F5:J5"), load_values=True)
+    bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
+    series = bindings["series"][0]
+    resolved = resolve_series_binding(graph, wb_path, series)
+    ns = _exec_setters(emit_setter_function(series, resolved))
+    setter = cast(
+        Callable[[EvalContext, list[dict[str, object]]], None],
+        ns["set_borvelia_primary_balance"],
+    )
+
+    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
+    with pytest.raises(ValueError, match="missing required field 'OBS_VALUE'"):
+        setter(ctx, [{"TIME_PERIOD": 3}])
 
 
 def test_emit_setter_allow_address(tmp_path: Path) -> None:
@@ -128,7 +146,7 @@ def test_emit_setter_allow_address(tmp_path: Path) -> None:
     ns = _exec_setters(lines)
     setter = cast(Callable[[EvalContext, list[dict[str, object]]], None], ns["set_dup_headers"])
     ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
-    setter(ctx, [{"address": "Sheet1!D2", "value": 99.0}])
+    setter(ctx, [{"address": "Sheet1!D2", "OBS_VALUE": 99.0}])
     assert ctx.inputs["Sheet1!D2"] == 99.0
 
 

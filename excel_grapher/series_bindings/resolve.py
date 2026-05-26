@@ -186,7 +186,7 @@ def _build_record(
 
     obs_value = coordinates.get(measure_concept)
     if obs_value is not None or measure_concept in coordinates:
-        record["value"] = obs_value
+        record[measure_concept] = obs_value
 
     for concept, value in (series.get("series_context") or {}).items():
         record[str(concept)] = value

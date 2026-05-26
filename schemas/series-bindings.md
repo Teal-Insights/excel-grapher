@@ -1,6 +1,6 @@
 # Series bindings
 
-Declarative **series bindings** describe how spreadsheet input cells map to named dimensions (SDMX-style concepts) and how generated Python **setters** accept `Records` — `list[dict]` with a required `value` field plus key columns.
+Declarative **series bindings** describe how spreadsheet input cells map to named dimensions (SDMX-style concepts) and how generated Python **setters** accept `Records` — `list[dict]` with a required measure field (`OBS_VALUE` by default) plus key columns.
 
 They replace the retired label-detection heuristics (`row_labels` / `column_labels` on graph nodes). The machine source of truth is a **sidecar manifest** next to the workbook, not inferred geometry.
 
@@ -101,7 +101,7 @@ records: list[dict[str, object]]
 
 Each record must include:
 
-- **`value`** — observation (`OBS_VALUE`) written to the matched leaf cell.
+- **Measure field** — observation written to the matched leaf cell, named by `structure.measure.concept` (`OBS_VALUE` by default).
 - **Key fields** — every concept listed in `key` (e.g. `TIME_PERIOD: 3`).
 
 Optional:
@@ -190,7 +190,7 @@ After export:
 
 ```python
 ctx = make_context()
-set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 3, "value": -0.5}])
+set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 3, "OBS_VALUE": -0.5}])
 results = compute_all(ctx=ctx)
 ```
 
