@@ -40,7 +40,10 @@ from excel_grapher.exporter.embed import emit_runtime
 from excel_grapher.grapher.blank_ranges import BlankRangeRect, normalize_blank_range_specs
 from excel_grapher.grapher.graph import CycleError
 from excel_grapher.grapher.parser import format_key
-from excel_grapher.grapher.target_expansion import expand_targets_to_roots
+from excel_grapher.grapher.target_expansion import (
+    expand_targets_to_roots,
+    split_range_target_on_colon,
+)
 
 __all__ = ["CodeGenerator", "GenerationParts", "GraphLike", "GraphNode"]
 
@@ -158,20 +161,49 @@ class CodeGenerator:
     def _normalize_entrypoint_name(name: str) -> str:
         return CodeGenerator._normalize_package_name(name)
 
-    def _graph_sheetnames(self) -> list[str]:
+    def _graph_sheetnames(self, *, targets: Sequence[str] | None = None) -> list[str]:
         sheet_order = getattr(self.graph, "sheet_order", None)
         if sheet_order:
             return list(sheet_order)
+
         sheets: list[str] = []
         seen: set[str] = set()
-        keys_fn = getattr(self.graph, "keys", None)
-        if not callable(keys_fn):
-            return sheets
-        for key in keys_fn():
-            sheet, _ = parse_address(normalize_address(key))
+
+        def _add_sheet(sheet: str) -> None:
             if sheet not in seen:
                 seen.add(sheet)
                 sheets.append(sheet)
+
+        def _add_from_keys(keys: Sequence[str]) -> None:
+            for key in keys:
+                try:
+                    sheet, _ = parse_address(normalize_address(key))
+                except ValueError:
+                    continue
+                _add_sheet(sheet)
+
+        keys_fn = getattr(self.graph, "keys", None)
+        if callable(keys_fn):
+            _add_from_keys(list(keys_fn()))
+        else:
+            for attr in ("leaf_keys", "formula_keys"):
+                fn = getattr(self.graph, attr, None)
+                if callable(fn):
+                    _add_from_keys(list(fn()))
+
+        if targets:
+            for raw in targets:
+                token = str(raw)
+                if "!" not in token:
+                    continue
+                split = split_range_target_on_colon(token)
+                start = split[0] if split is not None else token
+                try:
+                    sheet, _ = parse_address(start)
+                except ValueError:
+                    continue
+                _add_sheet(sheet)
+
         return sheets
 
     def _named_range_maps(
@@ -185,7 +217,7 @@ class CodeGenerator:
         named_ranges, named_range_ranges = self._named_range_maps()
         roots = expand_targets_to_roots(
             targets,
-            sheetnames=self._graph_sheetnames(),
+            sheetnames=self._graph_sheetnames(targets=targets),
             named_ranges=named_ranges,
             named_range_ranges=named_range_ranges,
         )
