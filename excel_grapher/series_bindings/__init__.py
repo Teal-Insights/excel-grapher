@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+from excel_grapher.series_bindings.bindings_codegen import emit_series_bindings_block
 from excel_grapher.series_bindings.canonical import bindings_canonical_sha256
+from excel_grapher.series_bindings.compute_codegen import (
+    emit_compute_function,
+    emit_computes_block,
+    generate_computes_module,
+)
 from excel_grapher.series_bindings.input_series import derive_input_series
 from excel_grapher.series_bindings.load import (
     SeriesBindingsLoadError,
@@ -10,7 +16,16 @@ from excel_grapher.series_bindings.load import (
     merge_series_binding_documents,
     parse_bindings_file,
 )
+from excel_grapher.series_bindings.normalize import (
+    has_input_direction,
+    has_output_direction,
+    merge_series_entries,
+    normalize_bindings_document,
+    normalize_series_entry,
+)
+from excel_grapher.series_bindings.output_series import derive_output_series
 from excel_grapher.series_bindings.ranges import expand_data_range, expand_data_range_for_graph
+from excel_grapher.series_bindings.records_types import Record, Records
 from excel_grapher.series_bindings.resolve import resolve_series_binding, resolve_series_bindings
 from excel_grapher.series_bindings.schema import (
     SeriesBindingsSchemaError,
@@ -18,7 +33,6 @@ from excel_grapher.series_bindings.schema import (
     validate_bindings_document,
 )
 from excel_grapher.series_bindings.setter_codegen import (
-    Records,
     emit_setter_function,
     emit_setters_block,
     generate_setters_module,
@@ -27,6 +41,8 @@ from excel_grapher.series_bindings.types import (
     InputSeries,
     InputSeriesCell,
     LeafResolution,
+    OutputSeries,
+    OutputSeriesCell,
     ResolutionIssue,
     ResolutionReport,
     Scalar,
@@ -50,13 +66,16 @@ from excel_grapher.series_bindings.versions import (
 __all__ = [
     "InputSeries",
     "InputSeriesCell",
+    "OutputSeries",
+    "OutputSeriesCell",
+    "Record",
+    "Records",
     "IMPLEMENTED_BIND_KINDS",
     "IMPLEMENTED_LAYOUTS",
     "PLANNED_BIND_KINDS",
     "PLANNED_LAYOUTS",
     "SUPPORTED_SCHEMA_VERSIONS",
     "LeafResolution",
-    "Records",
     "ResolutionIssue",
     "ResolutionReport",
     "Scalar",
@@ -69,8 +88,18 @@ __all__ = [
     "WorkbookSeriesBindings",
     "bindings_canonical_sha256",
     "derive_input_series",
+    "derive_output_series",
+    "emit_compute_function",
+    "emit_computes_block",
+    "emit_series_bindings_block",
     "emit_setter_function",
     "emit_setters_block",
+    "generate_computes_module",
+    "has_input_direction",
+    "has_output_direction",
+    "merge_series_entries",
+    "normalize_bindings_document",
+    "normalize_series_entry",
     "expand_data_range",
     "expand_data_range_for_graph",
     "format_schema_errors",

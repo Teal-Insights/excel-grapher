@@ -2,15 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://teal-insights.github.io/excel-grapher/schemas/series_binding.schema.json",
   "title": "Workbook series bindings",
-  "description": "Declarative structure and spreadsheet bindings for generated input setters. MVP assumes one SeriesBinding per indicator row (layout row_series): a single data row intersected with graph leaves, with TIME_PERIOD (or similar) as the record key.",
+  "description": "Declarative structure and spreadsheet bindings for generated input setters and output compute functions. Shared series structure describes dimensions and data_range; optional input and output blocks declare generated APIs.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "series"],
   "properties": {
     "schema_version": {
       "type": "string",
-      "enum": ["1.0.0", "1.1.0"],
-      "description": "Schema version for tooling and migrations. 1.0.0: row_series and scalar (fully supported). 1.1.0: adds matrix layout and row_hierarchy bind (schema-valid; resolver/codegen may lag)."
+      "enum": ["1.0.0", "1.1.0", "1.2.0"],
+      "description": "Schema version for tooling and migrations. 1.0.0: row_series and scalar (fully supported). 1.1.0: adds matrix layout and row_hierarchy bind (schema-valid; resolver/codegen may lag). 1.2.0: optional input/output direction blocks and output compute functions."
     },
     "workbook": {
       "type": "string",
@@ -264,6 +264,45 @@
         }
       }
     },
+    "Compute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^compute_[a-z][a-z0-9_]*$",
+          "description": "Generated Python function name, e.g. compute_borvelia_primary_balance."
+        },
+        "record_contract": {
+          "type": "string",
+          "const": "records",
+          "default": "records",
+          "description": "list[Record] with OBS_VALUE and all declared dimensions."
+        },
+        "include_address": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, each output record includes address or cell_address."
+        }
+      }
+    },
+    "InputDirection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["setter"],
+      "properties": {
+        "setter": { "$ref": "#/$defs/Setter" }
+      }
+    },
+    "OutputDirection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compute"],
+      "properties": {
+        "compute": { "$ref": "#/$defs/Compute" }
+      }
+    },
     "Setter": {
       "type": "object",
       "additionalProperties": false,
@@ -278,7 +317,7 @@
           "type": "string",
           "const": "records",
           "default": "records",
-          "description": "MVP: list[dict] Records with required value key."
+          "description": "list[Record] with required OBS_VALUE and key fields."
         },
         "allow_address": {
           "type": "boolean",
@@ -305,7 +344,6 @@
         "sheet",
         "data_range",
         "layout",
-        "setter",
         "structure",
         "key"
       ],
@@ -329,7 +367,12 @@
           "type": "boolean",
           "default": true
         },
-        "setter": { "$ref": "#/$defs/Setter" },
+        "input": { "$ref": "#/$defs/InputDirection" },
+        "output": { "$ref": "#/$defs/OutputDirection" },
+        "setter": {
+          "$ref": "#/$defs/Setter",
+          "description": "Deprecated: use input.setter. Accepted for backward compatibility and normalized at load time."
+        },
         "structure": {
           "type": "object",
           "additionalProperties": false,
@@ -373,8 +416,17 @@
         }
       },
       "allOf": [
+        { "$ref": "#/$defs/SeriesBindingDirectionRules" },
         { "$ref": "#/$defs/SeriesBindingMvpRules" },
         { "$ref": "#/$defs/SeriesBindingMatrixRules" }
+      ]
+    },
+    "SeriesBindingDirectionRules": {
+      "description": "Each series must declare at least one of input or output (legacy top-level setter counts as input).",
+      "anyOf": [
+        { "required": ["input"] },
+        { "required": ["output"] },
+        { "required": ["setter"] }
       ]
     },
     "SeriesBindingMatrixRules": {
@@ -448,6 +500,16 @@
         "fail_on_empty_leaf": {
           "type": "boolean",
           "default": true
+        },
+        "warn_on_partial_overlap": {
+          "type": "boolean",
+          "default": true,
+          "description": "When true, emit a warning when data_range cells are skipped because they are absent from the graph."
+        },
+        "intersect_graph_nodes": {
+          "type": "boolean",
+          "default": true,
+          "description": "When true for output bindings, only cells present in the extracted graph are included."
         }
       }
     }

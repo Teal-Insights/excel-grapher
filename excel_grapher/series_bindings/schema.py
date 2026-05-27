@@ -7,6 +7,7 @@ from typing import Any, cast
 
 from jsonschema import Draft202012Validator
 
+from excel_grapher.series_bindings.normalize import normalize_bindings_document
 from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 
 
@@ -53,6 +54,7 @@ def validate_bindings_document(document: dict[str, Any]) -> WorkbookSeriesBindin
     Raises :class:`SeriesBindingsSchemaError` on failure.
     """
     _infer_series_sheets(document)
+    document = normalize_bindings_document(document)
     validator = _schema_validator()
     errors = sorted(validator.iter_errors(document), key=lambda e: list(e.absolute_path))
     if errors:
@@ -65,6 +67,7 @@ def validate_bindings_document(document: dict[str, Any]) -> WorkbookSeriesBindin
 def format_schema_errors(document: dict[str, Any]) -> list[str]:
     """Return human-readable schema error strings (for tests and CLI)."""
     _infer_series_sheets(document)
+    document = normalize_bindings_document(document)
     validator = _schema_validator()
     messages: list[str] = []
     for error in sorted(validator.iter_errors(document), key=lambda e: list(e.absolute_path)):

@@ -67,3 +67,18 @@ class InputSeries(TypedDict):
     requires_address: bool
     cells: list[InputSeriesCell]
     issues: list[ResolutionIssue]
+
+
+class OutputSeriesCell(TypedDict):
+    address: str
+    coordinates: dict[str, Scalar]
+    key: dict[str, Scalar]
+    record: dict[str, Scalar]
+
+
+class OutputSeries(TypedDict):
+    id: str
+    compute_name: str
+    key_fields: list[str]
+    cells: list[OutputSeriesCell]
+    issues: list[ResolutionIssue]

@@ -6,6 +6,7 @@ from typing import Any, cast
 
 import yaml
 
+from excel_grapher.series_bindings.normalize import merge_series_entries, normalize_series_entry
 from excel_grapher.series_bindings.schema import validate_bindings_document
 from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 
@@ -64,8 +65,7 @@ def merge_series_binding_documents(documents: list[dict[str, Any]]) -> dict[str,
     schema_version: str | None = None
     workbook: str | None = None
     concept_scheme: dict[str, Any] | None = None
-    merged_series: list[dict[str, Any]] = []
-    seen_ids: set[str] = set()
+    series_by_id: dict[str, dict[str, Any]] = {}
 
     for index, doc in enumerate(documents):
         if not isinstance(doc, dict):
@@ -113,12 +113,20 @@ def merge_series_binding_documents(documents: list[dict[str, Any]]) -> dict[str,
                 raise SeriesBindingsLoadError(
                     f"Each series entry requires string id (shard {index})"
                 )
-            if series_id in seen_ids:
-                raise SeriesBindingsLoadError(
-                    f"Duplicate series id {series_id!r} across binding shards"
-                )
-            seen_ids.add(series_id)
-            merged_series.append(entry)
+            normalized = normalize_series_entry(entry)
+            if series_id in series_by_id:
+                try:
+                    series_by_id[series_id] = merge_series_entries(
+                        series_by_id[series_id],
+                        normalized,
+                        shard_index=index,
+                    )
+                except ValueError as exc:
+                    raise SeriesBindingsLoadError(str(exc)) from exc
+            else:
+                series_by_id[series_id] = normalized
+
+    merged_series = list(series_by_id.values())
 
     if schema_version is None:
         raise SeriesBindingsLoadError("Merged document missing schema_version")

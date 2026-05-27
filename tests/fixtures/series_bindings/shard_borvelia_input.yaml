@@ -1,0 +1,40 @@
+schema_version: "1.2.0"
+workbook: lic_inputs.xlsx
+series:
+  - id: borvelia_primary_balance
+    sheet: Inputs
+    data_range: Inputs!F5:J5
+    layout: row_series
+    input:
+      setter:
+        name: set_borvelia_primary_balance
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - concept: REF_AREA
+          role: key
+          scope: series
+          bind:
+            kind: cell
+            address: Inputs!A2
+            read: string
+        - concept: FREQUENCY
+          role: key
+          scope: series
+          bind:
+            kind: constant
+            value: A
+        - concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 1
+            read: int
+    key:
+      - TIME_PERIOD

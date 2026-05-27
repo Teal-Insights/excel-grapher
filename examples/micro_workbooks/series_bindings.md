@@ -16,6 +16,7 @@ import yaml
 from excel_grapher.grapher import create_dependency_graph, DependencyGraph
 from excel_grapher.series_bindings import (
     derive_input_series,
+    derive_output_series,
     expand_data_range,
     resolve_series_binding,
     validate_bindings_document,
@@ -57,24 +58,28 @@ graph: DependencyGraph = create_dependency_graph(
 ```
 
 The manifest has a top-level `series` array with one entry per series.
-Each entry has an `id`, a `data_range`, a `layout`, a `setter`, a
-`structure`, and a `key`. The structure uses SDMX concepts for the
-dimensions and measure. Each dimension has a `bind` object that
-describes how to read the value from the spreadsheet. Here is the entry
-for the primary balance series:
+Each entry has an `id`, a `data_range`, a `layout`, optional `input` and
+`output` blocks, a `structure`, and a `key`. The structure uses SDMX
+concepts for the dimensions and measure. Each dimension has a `bind`
+object that describes how to read the value from the spreadsheet. Here
+is the entry for the primary balance series:
 
 ``` python
 bindings_yaml = dedent(
     """
-    schema_version: "1.0.0"
+    schema_version: "1.2.0"
     workbook: series_bindings.xlsx
     series:
       - id: borvelia_primary_balance
         data_range: Sheet1!F5:J5
         layout: row_series
         editable: true
-        setter:
-          name: set_borvelia_primary_balance
+        input:
+          setter:
+            name: set_borvelia_primary_balance
+        output:
+          compute:
+            name: compute_borvelia_primary_balance
         structure:
           measure:
             concept: OBS_VALUE
@@ -141,11 +146,12 @@ print(
 { 'data_range': 'Sheet1!F5:J5',
   'editable': True,
   'id': 'borvelia_primary_balance',
+  'input': {'setter': {'name': 'set_borvelia_primary_balance'}},
   'key': ['TIME_PERIOD'],
   'layout': 'row_series',
+  'output': {'compute': {'name': 'compute_borvelia_primary_balance'}},
   'sdmx_notes': 'Wide row series with offset-style column headers 1-5.',
   'series_context': {'INDICATOR': 'Primary balance (% of GDP)', 'REF_AREA': 'Borvelia'},
-  'setter': {'name': 'set_borvelia_primary_balance'},
   'sheet': 'Sheet1',
   'structure': { 'attributes': [ { 'concept': 'UNIT_MEASURE',
                                    'include_in_record': True,
@@ -288,7 +294,7 @@ print(f"```text\n{code[signature_start:signature_end]}\n```\n")
 ``` text
 def set_borvelia_primary_balance(
     ctx: EvalContext,
-    records: list[dict[str, object]],
+    records: Records,
     *,
     strict: bool = True,
 ) -> None:
@@ -323,19 +329,132 @@ Sheet1!J5 after setter: 8.0
 
 Periods **4** and **5** correspond to columns I and J; the setter
 updates those leaves without requiring sheet addresses in the records.
-Downstream `compute_all(ctx=ctx)` would see the new inputs when
-recomputing any formulas that depend on them (this workbook has none on
-that row).
+
+### Output series
+
+Bindings with an `output.compute` block can be projected into **output
+series**: one item per binding with graph overlap on cells in
+`data_range` (any graph node, not only leaves). Each cell carries a
+static dimension map; `OBS_VALUE` is filled at runtime when the
+generated `compute_*` function runs.
+
+``` python
+output_series = derive_output_series(graph, bindings, workbook=workbook_path)
+print(
+    f"```text\n{pformat({'id': output_series[0]['id'], 'compute_name': output_series[0]['compute_name'], 'cell_count': len(output_series[0]['cells'])}, indent=2)}\n```\n"
+)
+resolved_output = resolve_series_binding(
+    graph, workbook_path, series, direction="output"
+)
+leaf_out = next(
+    leaf for leaf in resolved_output["leaves"] if leaf["key"]["TIME_PERIOD"] == 3
+)
+print(
+    f"```text\n{pformat({'address': leaf_out['address'], 'record': leaf_out['record']}, indent=2)}\n```\n"
+)
+```
+
+``` text
+{ 'cell_count': 5,
+  'compute_name': 'compute_borvelia_primary_balance',
+  'id': 'borvelia_primary_balance'}
+```
+
+``` text
+{ 'address': 'Sheet1!H5',
+  'record': { 'INDICATOR': 'Primary balance',
+              'OBS_VALUE': None,
+              'REF_AREA': 'Borvelia',
+              'TIME_PERIOD': 3,
+              'UNIT_MEASURE': 'PC_GDP'}}
+```
+
+Output records include **all declared dimensions** (and attributes such
+as `UNIT_MEASURE`), not only the `key` fields required by the setter.
+Here `OBS_VALUE` in the resolved record is a placeholder until
+evaluation; the generated function overwrites it with `xl_cell`.
+
+### Generated compute function (Records API)
+
+The same `CodeGenerator.generate` call that emitted the setter also
+appends `compute_borvelia_primary_balance` when `output.compute` is
+present. It returns **`Records`** (`list[Record]`) with one dict per
+graph cell in the series, each including `OBS_VALUE` and the bound
+dimensions.
+
+``` python
+compute_sig_start = code.index("def compute_borvelia_primary_balance(")
+compute_sig_end = code.index(") -> Records:", compute_sig_start) + len(") -> Records:")
+print(f"```text\n{code[compute_sig_start:compute_sig_end]}\n```\n")
+assert "Record = dict[str, object]" in code
+assert "Records = list[Record]" in code
+```
+
+``` text
+def compute_borvelia_primary_balance(inputs=None, *, ctx=None) -> Records:
+```
+
+### Calling the compute function
+
+In an exported model, import the compute function alongside the setter.
+Pass an optional shared `ctx` (for example after applying inputs with
+the setter):
+
+``` python
+from tabulate import tabulate
+
+from exported_model import (
+    make_context,
+    set_borvelia_primary_balance,
+    compute_borvelia_primary_balance,
+)
+
+ctx = make_context()
+set_borvelia_primary_balance(
+    ctx,
+    [
+        {"TIME_PERIOD": 4, "OBS_VALUE": 7.5},
+        {"TIME_PERIOD": 5, "OBS_VALUE": 8.0},
+    ],
+)
+records = compute_borvelia_primary_balance(ctx=ctx)
+print(tabulate(records, headers='keys', tablefmt='pipe'))
+```
+
+The compute function evaluates each bound cell via `xl_cell` and does
+not require callers to pass sheet addresses unless
+`include_address: true` is set on `output.compute`.
+
+| INDICATOR       | REF_AREA | TIME_PERIOD | UNIT_MEASURE | OBS_VALUE |
+|-----------------|----------|-------------|--------------|-----------|
+| Primary balance | Borvelia | 1           | PC_GDP       | -1        |
+| Primary balance | Borvelia | 2           | PC_GDP       | -0.5      |
+| Primary balance | Borvelia | 3           | PC_GDP       | 0         |
+| Primary balance | Borvelia | 4           | PC_GDP       | 7.5       |
+| Primary balance | Borvelia | 5           | PC_GDP       | 8.0       |
+
+After the setter runs, period **4** and **5** records reflect the
+updated input values (`7.5` and `8.0`) while still carrying dimensions
+such as `REF_AREA` and `UNIT_MEASURE` from the binding. Address-keyed
+`compute_all(ctx=ctx)` remains available for the full target map;
+`compute_borvelia_primary_balance` is the tabular, dimension-keyed view
+of this series only.
 
 ### Modular exports
 
-For package-style exports, generated series setters are emitted from the
-package entrypoint and re-exported from the package root. This keeps the
-callable surface next to `make_context` and `compute_all`:
+For package-style exports, generated series setters and output compute
+functions are emitted from the package entrypoint and re-exported from
+the package root. This keeps the callable surface next to `make_context`
+and `compute_all`:
 
 ``` python
-from exported_series import make_context, set_borvelia_primary_balance
+from exported_series import (
+    make_context,
+    set_borvelia_primary_balance,
+    compute_borvelia_primary_balance,
+)
 
 ctx = make_context()
 set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 4, "OBS_VALUE": 7.5}])
+records = compute_borvelia_primary_balance(ctx=ctx)
 ```

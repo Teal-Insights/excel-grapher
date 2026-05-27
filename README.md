@@ -99,9 +99,27 @@ code = CodeGenerator(graph).generate(targets)
 
 The sections below go into more detail.
 
-### Series bindings (input setters)
+### Series bindings (input setters and output compute)
 
-For **declarative input surfaces** — mapping spreadsheet cells to named dimensions and generating `set_*` functions that accept `Records` — colocate a **bindings sidecar** with the workbook (e.g. `lic_inputs.bindings.yaml` validated against [`schemas/series_binding.schema.json`](schemas/series_binding.schema.json)).
+For **declarative input and output surfaces** — mapping spreadsheet cells to named dimensions and generating `set_*` / `compute_*` functions that use `Record` and `Records` (`dict[str, object]` and `list[Record]`) — colocate a **bindings sidecar** with the workbook (e.g. `lic_inputs.bindings.yaml` validated against [`schemas/series_binding.schema.json`](schemas/series_binding.schema.json)).
+
+Each `series[]` entry shares structure (`data_range`, `layout`, `structure`, `key`) and declares optional direction blocks:
+
+- **`input.setter`** — generated setter requires key dimensions plus `OBS_VALUE` on each incoming record.
+- **`output.compute`** — generated compute returns all declared dimensions plus computed `OBS_VALUE` per graph cell in `data_range`.
+
+At least one of `input` or `output` is required per series (legacy top-level `setter` is normalized to `input.setter`). Merge multiple `*.bindings.yaml` / `*.bindings.json` shards in one directory to split by sheet or to keep input and output declarations in separate files.
+
+**Output binding authoring workflow**
+
+1. Extract a dependency graph whose targets include the cells you need (targets seed extraction; output bindings may also cover intermediate formula cells present in the graph).
+2. Declare `data_range`, `layout`, `structure.measure`, `structure.dimensions`, and `key` (input matching uses `key` only).
+3. Add dimension binds (`column_header`, `row_label`, `cell`, `constant`, …). Use `bind.kind: constant` for fixed dimensions such as `FREQUENCY: A`.
+4. Add `output.compute.name` (e.g. `compute_borvelia_primary_balance`) to emit a records-shaped `compute_*` function.
+5. Optionally add `input.setter` in the same series or a mergeable shard for symmetric input APIs.
+6. Pass `series_bindings` and `bindings_workbook` to `CodeGenerator.generate()`; call the generated `compute_*` function to obtain `Records` with `OBS_VALUE` and dimensions.
+
+Codegen intersects each binding with the graph: input uses **leaves**; output uses **any graph node** in `data_range`. Cells outside the graph are skipped; `validation.warn_on_partial_overlap` (default `true`) emits a warning when that happens.
 
 The full authoring guide lives next to the schema: **[schemas/series-bindings.md](schemas/series-bindings.md)** (conventions, LIC manifest → sidecar workflow, `data_range` / named-range rules, Python API). The README does not duplicate that document.
 

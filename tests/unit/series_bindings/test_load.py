@@ -33,7 +33,8 @@ def test_load_json_binding_file(tmp_path: Path) -> None:
 
     path.write_text(json.dumps(doc), encoding="utf-8")
     loaded = load_series_bindings(path)
-    assert loaded["series"][0]["setter"]["name"] == "set_borvelia_primary_balance"
+    series = loaded["series"][0]
+    assert series["input"]["setter"]["name"] == "set_borvelia_primary_balance"
 
 
 def test_merge_directory_shards(tmp_path: Path) -> None:
@@ -53,10 +54,18 @@ def test_merge_directory_shards(tmp_path: Path) -> None:
     assert ids == ["row_b", "row_a"]
 
 
-def test_merge_rejects_duplicate_series_id() -> None:
+def test_merge_composes_identical_series_id() -> None:
     doc = parse_bindings_file(FIXTURES / "shard_inputs.yaml")
-    with pytest.raises(SeriesBindingsLoadError, match="Duplicate series id"):
-        merge_series_binding_documents([doc, doc])
+    merged = merge_series_binding_documents([doc, doc])
+    assert len(merged["series"]) == 1
+
+
+def test_merge_rejects_conflicting_series_id() -> None:
+    doc = parse_bindings_file(FIXTURES / "shard_inputs.yaml")
+    conflicting = parse_bindings_file(FIXTURES / "shard_inputs.yaml")
+    conflicting["series"][0]["data_range"] = "Inputs!B3:C3"
+    with pytest.raises(SeriesBindingsLoadError, match="structural fields differ"):
+        merge_series_binding_documents([doc, conflicting])
 
 
 def test_merge_rejects_workbook_mismatch() -> None:
