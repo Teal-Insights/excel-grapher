@@ -304,7 +304,7 @@ def validate_series_bindings(
             elif workbook is not None:
                 from excel_grapher.series_bindings.resolve import resolve_series_binding
 
-                resolved = resolve_series_binding(graph, workbook, series)
+                resolved = resolve_series_binding(graph, workbook, series, direction="input")
                 issues.extend(resolved["issues"])
                 if resolved["requires_address"]:
                     issues.append(

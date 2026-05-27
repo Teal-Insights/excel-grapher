@@ -7,13 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.series_bindings.normalize import has_input_direction
 from excel_grapher.series_bindings.resolve import resolve_series_bindings
 from excel_grapher.series_bindings.types import (
     SeriesResolution,
     WorkbookSeriesBindings,
 )
-
-Records = list[dict[str, Any]]
 
 
 def _py_literal(value: object) -> str:
@@ -70,7 +69,8 @@ def emit_setter_function(
     if not resolved["ok"] and not resolved["requires_address"]:
         raise ValueError(f"Cannot codegen setter for {resolved['series_id']!r}: resolution failed")
 
-    setter = series.get("setter") or {}
+    input_block = series.get("input") or {}
+    setter = input_block.get("setter") or series.get("setter") or {}
     fn_name = str(setter.get("name", f"set_{resolved['series_id']}"))
     strict = bool(setter.get("strict", True))
     allow_address = bool(setter.get("allow_address", False))
@@ -96,7 +96,7 @@ def emit_setter_function(
         lines.append("")
     lines.append(f"def {fn_name}(")
     lines.append("    ctx: EvalContext,")
-    lines.append("    records: list[dict[str, object]],")
+    lines.append("    records: Records,")
     lines.append("    *,")
     lines.append(f"    strict: bool = {strict!r},")
     lines.append(") -> None:")
@@ -160,11 +160,25 @@ def emit_setters_block(
     graph: DependencyGraph,
     workbook: Path | str,
     bindings: WorkbookSeriesBindings,
+    *,
+    include_type_aliases: bool = True,
 ) -> list[str]:
     """Emit all series setter functions for a validated binding manifest."""
-    report = resolve_series_bindings(graph, bindings, workbook=workbook)
+    report = resolve_series_bindings(graph, bindings, workbook=workbook, direction="input")
     lines: list[str] = ["# --- Series binding setters (Records API) ---", ""]
-    by_id = {s["id"]: s for s in bindings.get("series", []) if isinstance(s, dict)}
+    if include_type_aliases:
+        lines.extend(
+            [
+                "Record = dict[str, object]",
+                "Records = list[Record]",
+                "",
+            ]
+        )
+    by_id = {
+        s["id"]: s
+        for s in bindings.get("series", [])
+        if isinstance(s, dict) and has_input_direction(s)
+    }
     failed: list[str] = []
     for resolved in report["series"]:
         if not resolved["leaves"]:

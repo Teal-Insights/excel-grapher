@@ -1,10 +1,10 @@
-"""Resolve series binding leaves to coordinate maps for setter codegen."""
+"""Resolve series binding cells to coordinate maps for setter and compute codegen."""
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import fastpyxl
 import fastpyxl.utils.cell
@@ -12,6 +12,7 @@ import fastpyxl.utils.cell
 from excel_grapher.core.address_keys import format_key, parse_address, quote_sheet_if_needed
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings.issues import make_issue
+from excel_grapher.series_bindings.normalize import has_input_direction, has_output_direction
 from excel_grapher.series_bindings.ranges import expand_data_range_for_graph
 from excel_grapher.series_bindings.types import (
     LeafResolution,
@@ -21,6 +22,8 @@ from excel_grapher.series_bindings.types import (
     SeriesResolution,
     WorkbookSeriesBindings,
 )
+
+BindingDirection = Literal["input", "output"]
 
 _TRAILING_UNIT_RE = re.compile(r"\s*\([^)]*\)\s*$")
 
@@ -171,7 +174,7 @@ def _include_in_record(field: dict[str, Any], default: bool) -> bool:
     return default
 
 
-def _build_record(
+def _build_input_record(
     *,
     coordinates: dict[str, Scalar],
     series: dict[str, Any],
@@ -213,6 +216,41 @@ def _build_record(
     return record
 
 
+def _build_output_record(
+    *,
+    coordinates: dict[str, Scalar],
+    series: dict[str, Any],
+    measure_concept: str,
+) -> dict[str, Scalar]:
+    """Build a record with all declared dimensions and attributes (OBS_VALUE filled at runtime)."""
+    record: dict[str, Scalar] = {}
+
+    for concept, value in (series.get("series_context") or {}).items():
+        record[str(concept)] = value
+
+    structure = series.get("structure") or {}
+    for dim in structure.get("dimensions") or []:
+        if not isinstance(dim, dict):
+            continue
+        concept = str(dim.get("concept", ""))
+        if concept in coordinates:
+            record[concept] = coordinates[concept]
+
+    for attr in structure.get("attributes") or []:
+        if not isinstance(attr, dict):
+            continue
+        concept = str(attr.get("concept", ""))
+        if "value" in attr:
+            record[concept] = attr["value"]
+        elif concept in coordinates:
+            record[concept] = coordinates[concept]
+
+    if measure_concept not in record:
+        record[measure_concept] = coordinates.get(measure_concept)
+
+    return record
+
+
 def _extract_key(coordinates: dict[str, Scalar], key_concepts: list[str]) -> dict[str, Scalar]:
     return {concept: coordinates[concept] for concept in key_concepts if concept in coordinates}
 
@@ -222,12 +260,51 @@ def _is_graph_leaf(graph: DependencyGraph, address: str) -> bool:
     return bool(node is not None and node.is_leaf)
 
 
+def _is_graph_node(graph: DependencyGraph, address: str) -> bool:
+    return address in graph
+
+
+def _select_addresses(
+    graph: DependencyGraph,
+    expanded_addresses: list[str],
+    *,
+    direction: BindingDirection,
+    validation: dict[str, Any],
+    series_id: str,
+) -> tuple[list[str], list[ResolutionIssue]]:
+    issues: list[ResolutionIssue] = []
+    if direction == "input":
+        intersect = bool(validation.get("intersect_graph_leaves", True))
+        if not intersect:
+            return expanded_addresses, issues
+        selected = [address for address in expanded_addresses if _is_graph_leaf(graph, address)]
+    else:
+        intersect = bool(validation.get("intersect_graph_nodes", True))
+        if not intersect:
+            return expanded_addresses, issues
+        selected = [address for address in expanded_addresses if _is_graph_node(graph, address)]
+
+    skipped = len(expanded_addresses) - len(selected)
+    if skipped > 0 and bool(validation.get("warn_on_partial_overlap", True)):
+        issues.append(
+            make_issue(
+                "warning",
+                "partial_graph_overlap",
+                f"Skipped {skipped} cell(s) in data_range not present in graph for {direction} binding",
+                series_id=series_id,
+            )
+        )
+    return selected, issues
+
+
 def resolve_series_binding(
     graph: DependencyGraph,
     workbook: Path | str,
     series: dict[str, Any],
+    *,
+    direction: BindingDirection = "input",
 ) -> SeriesResolution:
-    """Resolve each leaf in a series binding to coordinates and record fields."""
+    """Resolve each participating cell in a series binding to coordinates and record fields."""
     series_id = str(series.get("id", ""))
     issues: list[ResolutionIssue] = []
     leaves: list[LeafResolution] = []
@@ -258,28 +335,39 @@ def resolve_series_binding(
             "issues": [make_issue("error", "invalid_data_range", str(exc), series_id=series_id)],
         }
 
-    addresses = [address for address in expanded_addresses if _is_graph_leaf(graph, address)]
+    validation = series.get("validation") or {}
+    addresses, overlap_issues = _select_addresses(
+        graph,
+        expanded_addresses,
+        direction=direction,
+        validation=validation,
+        series_id=series_id,
+    )
+    issues.extend(overlap_issues)
+
     structure = series.get("structure") or {}
     measure = structure.get("measure") or {}
     measure_concept = str(measure.get("concept", "OBS_VALUE"))
     measure_bind = measure.get("bind") or {"kind": "data_cell"}
     key_concepts = [str(c) for c in (series.get("key") or [])]
-    validation = series.get("validation") or {}
     require_unique_key = bool(validation.get("require_unique_key", True))
 
     reader = _WorkbookValues(workbook)
     series_coordinates: dict[str, Scalar] = {}
     seen_keys: dict[tuple[tuple[str, Scalar], ...], str] = {}
 
+    build_record = _build_input_record if direction == "input" else _build_output_record
+
     for address in addresses:
         coordinates: dict[str, Scalar] = {}
         try:
-            coordinates[measure_concept] = _execute_bind(
-                measure_bind if isinstance(measure_bind, dict) else {"kind": "data_cell"},
-                graph=graph,
-                reader=reader,
-                data_address=address,
-            )
+            if direction == "input":
+                coordinates[measure_concept] = _execute_bind(
+                    measure_bind if isinstance(measure_bind, dict) else {"kind": "data_cell"},
+                    graph=graph,
+                    reader=reader,
+                    data_address=address,
+                )
 
             for dim in structure.get("dimensions") or []:
                 if not isinstance(dim, dict):
@@ -328,7 +416,7 @@ def resolve_series_binding(
             continue
 
         key = _extract_key(coordinates, key_concepts)
-        record = _build_record(
+        record = build_record(
             coordinates=coordinates,
             series=series,
             measure_concept=measure_concept,
@@ -369,13 +457,20 @@ def resolve_series_binding(
     }
 
 
+def _series_supports_direction(series: dict[str, Any], direction: BindingDirection) -> bool:
+    if direction == "input":
+        return has_input_direction(series)
+    return has_output_direction(series)
+
+
 def resolve_series_bindings(
     graph: DependencyGraph,
     bindings: WorkbookSeriesBindings,
     *,
     workbook: Path | str | None = None,
+    direction: BindingDirection = "input",
 ) -> ResolutionReport:
-    """Resolve all series in a binding manifest."""
+    """Resolve all series in a binding manifest for the given direction."""
     if workbook is None:
         return {
             "ok": False,
@@ -394,7 +489,9 @@ def resolve_series_bindings(
     for series in bindings.get("series", []):
         if not isinstance(series, dict):
             continue
-        result = resolve_series_binding(graph, workbook, series)
+        if not _series_supports_direction(series, direction):
+            continue
+        result = resolve_series_binding(graph, workbook, series, direction=direction)
         series_results.append(result)
         all_issues.extend(result["issues"])
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-SUPPORTED_SCHEMA_VERSIONS: frozenset[str] = frozenset({"1.0.0", "1.1.0"})
+SUPPORTED_SCHEMA_VERSIONS: frozenset[str] = frozenset({"1.0.0", "1.1.0", "1.2.0"})
 
 IMPLEMENTED_BIND_KINDS: frozenset[str] = frozenset(
     {

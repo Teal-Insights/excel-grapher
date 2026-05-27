@@ -335,9 +335,9 @@ class CodeGenerator:
         bindings: WorkbookSeriesBindings,
         workbook: Path | str,
     ) -> list[str]:
-        from excel_grapher.series_bindings.setter_codegen import emit_setters_block
+        from excel_grapher.series_bindings.bindings_codegen import emit_series_bindings_block
 
-        return emit_setters_block(cast("DependencyGraph", self.graph), workbook, bindings)
+        return emit_series_bindings_block(cast("DependencyGraph", self.graph), workbook, bindings)
 
     def derive_input_series(
         self,
