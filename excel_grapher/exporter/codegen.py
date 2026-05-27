@@ -2146,7 +2146,7 @@ class CodeGenerator:
 
     def _resolve_targets(self, targets: Sequence[str] | None) -> list[str]:
         if targets is not None:
-            return [normalize_address(t) for t in targets]
+            return self._expand_target_tokens(targets)
         target_keys = getattr(self.graph, "target_keys", None)
         inferred_targets: list[str] = []
         if callable(target_keys):

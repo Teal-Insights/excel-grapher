@@ -879,6 +879,52 @@ class TestEntrypointsNamedRanges:
             _ = gen.generate([], entrypoints={"outputs": ["NoSuchName"]})
 
 
+class TestGenerateNamedRanges:
+    """Direct ``targets`` accept the same forms as graph build targets and entrypoints."""
+
+    @staticmethod
+    def _graph_with_named_ranges(*nodes: Node) -> DependencyGraph:
+        graph = _make_graph(*nodes)
+        graph.sheet_order = ["Sheet1"]
+        graph.named_ranges = {"OneCell": ("Sheet1", "C1")}
+        graph.named_range_ranges = {"BeeCol": ("Sheet1", "B1", "B3")}
+        return graph
+
+    def test_generate_expands_defined_name_single_cell(self):
+        graph = self._graph_with_named_ranges(
+            _make_node("Sheet1!B1", None, 1.0),
+            _make_node("Sheet1!C1", "=Sheet1!B1+1", None),
+        )
+        code = CodeGenerator(graph).generate(["OneCell"])
+        assert "def compute_all(inputs=None, *, ctx=None):" in code
+        assert "'Sheet1!C1': xl_cell" in code
+
+    def test_generate_expands_defined_name_range(self):
+        graph = self._graph_with_named_ranges(
+            _make_node("Sheet1!B1", None, 1.0),
+            _make_node("Sheet1!B2", None, 2.0),
+            _make_node("Sheet1!B3", None, 3.0),
+        )
+        code = CodeGenerator(graph).generate(["BeeCol"])
+        assert "'Sheet1!B1:Sheet1!B3': xl_range" in code
+
+    def test_generate_modules_expands_defined_name(self):
+        graph = self._graph_with_named_ranges(
+            _make_node("Sheet1!B1", None, 1.0),
+            _make_node("Sheet1!B2", None, 2.0),
+            _make_node("Sheet1!B3", None, 3.0),
+        )
+        files = CodeGenerator(graph).generate_modules(["BeeCol"])
+        entrypoint = files["exported/entrypoint.py"]
+        assert "'Sheet1!B1:Sheet1!B3': xl_range" in entrypoint
+
+    def test_generate_unknown_defined_name_raises(self):
+        graph = self._graph_with_named_ranges(_make_node("Sheet1!A1", None, 1.0))
+        gen = CodeGenerator(graph)
+        with pytest.raises(ValueError, match="NoSuchName"):
+            _ = gen.generate(["NoSuchName"])
+
+
 class TestGeneratedCodeExecution:
     def test_generated_code_executes(self):
         """Generated code should be executable and produce correct results."""
