@@ -99,7 +99,7 @@ def xl_index_ref(
 
 def xl_offset(
     ctx: EvalContext,
-    ref_info: tuple[str, int, int] | tuple[str, int, int, int, int],
+    ref_info: tuple[str, int, int] | tuple[str, int, int, int, int] | XlError,
     rows: CellValue,
     cols: CellValue,
     height: CellValue | None = None,
@@ -112,11 +112,16 @@ def xl_offset(
     if isinstance(cc, XlError):
         return cc
 
+    if isinstance(ref_info, XlError):
+        return ref_info
+
     match ref_info:
         case (sheet, base_row, base_col):
             base_end_row, base_end_col = base_row, base_col
         case (sheet, base_row, base_col, base_end_row, base_end_col):
             pass
+        case _:
+            return XlError.VALUE
 
     base_h = int(base_end_row - base_row + 1)
     base_w = int(base_end_col - base_col + 1)

@@ -902,6 +902,15 @@ class CodeGenerator:
         if upper_name == "OFFSET":
             return self._emit_offset(node)
 
+        # INDEX over a literal range: use reference indexing when the result is a single cell
+        if (
+            upper_name == "INDEX"
+            and node.args
+            and isinstance(node.args[0], RangeNode)
+            and self._index_range_result_is_scalar(node.args[0], node)
+        ):
+            return self._emit_index_scalar_range(node)
+
         # ROW needs special handling - references should not be evaluated
         if upper_name == "ROW":
             return self._emit_row(node)
@@ -1213,6 +1222,50 @@ class CodeGenerator:
             _, r1, c1, r2, c2 = self._range_coords(ref_node.start, ref_node.end)
             return (r2 - r1 + 1, c2 - c1 + 1)
         return (1, 1)
+
+    def _index_range_result_is_scalar(self, range_node: RangeNode, node: FunctionCallNode) -> bool:
+        """True when INDEX(range, ...) resolves to a single cell (not a row/column slice)."""
+        _, r1, c1, r2, c2 = self._range_coords(range_node.start, range_node.end)
+        nrows = r2 - r1 + 1
+        ncols = c2 - c1 + 1
+
+        row_arg = node.args[1] if len(node.args) > 1 else None
+        col_arg = node.args[2] if len(node.args) > 2 else None
+        row_omitted = row_arg is None or isinstance(row_arg, EmptyArgNode)
+        col_omitted = col_arg is None or isinstance(col_arg, EmptyArgNode)
+
+        if row_omitted and col_omitted:
+            return nrows == 1 and ncols == 1
+        if row_omitted:
+            return nrows == 1
+        if col_omitted:
+            return ncols == 1
+        return True
+
+    def _emit_range_ref_tuple(self, range_node: RangeNode) -> str:
+        """Emit a range as an (sheet, r1, c1, r2, c2) tuple for xl_index_ref / xl_offset."""
+        base_sheet, r1, c1, r2, c2 = self._range_coords(range_node.start, range_node.end)
+        self._offset_runtime_sheets.add(base_sheet)
+        return f"({repr(base_sheet)}, {r1}, {c1}, {r2}, {c2})"
+
+    def _emit_index_scalar_range(self, node: FunctionCallNode) -> str:
+        """Emit INDEX over a literal range when the result is a single cell."""
+        base = node.args[0]
+        assert isinstance(base, RangeNode)
+        base_ref_info = self._emit_range_ref_tuple(base)
+        row_expr = (
+            "None"
+            if len(node.args) < 2 or isinstance(node.args[1], EmptyArgNode)
+            else self._emit_ast(node.args[1])
+        )
+        col_expr = (
+            "None"
+            if len(node.args) < 3 or isinstance(node.args[2], EmptyArgNode)
+            else self._emit_ast(node.args[2])
+        )
+        self._needs_offset_runtime = True
+        self._needs_index_ref_runtime = True
+        return f"xl_offset(ctx, xl_index_ref({base_ref_info}, {row_expr}, {col_expr}), 0.0, 0.0)"
 
     def _range_coords(self, start: str, end: str) -> tuple[str, int, int, int, int]:
         """Parse a range into (sheet, start_row, start_col, end_row, end_col).
@@ -1585,6 +1638,14 @@ class CodeGenerator:
             elif upper_name == "OFFSET":
                 if not self._can_offset_be_static(node):
                     funcs.add("xl_offset")
+            elif (
+                upper_name == "INDEX"
+                and node.args
+                and isinstance(node.args[0], RangeNode)
+                and self._index_range_result_is_scalar(node.args[0], node)
+            ):
+                funcs.add("xl_offset")
+                funcs.add("xl_index_ref")
             else:
                 funcs.add(excel_func_to_python(node.name))
 
@@ -1598,7 +1659,15 @@ class CodeGenerator:
                 "SUMPRODUCT": set(range(10)),
             }
             if upper_name in numpy_array_args:
+                skip_index_array = (
+                    upper_name == "INDEX"
+                    and node.args
+                    and isinstance(node.args[0], RangeNode)
+                    and self._index_range_result_is_scalar(node.args[0], node)
+                )
                 for i, arg in enumerate(node.args):
+                    if skip_index_array and upper_name == "INDEX":
+                        break
                     if i in numpy_array_args[upper_name] and isinstance(arg, RangeNode):
                         funcs.add("numpy")
                         break

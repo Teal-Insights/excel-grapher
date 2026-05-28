@@ -8,10 +8,19 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import Literal
 
+import fastpyxl
 import pytest
 
-from excel_grapher import CycleError, DependencyGraph, Node, create_dependency_graph
+from excel_grapher import (
+    CycleError,
+    DependencyGraph,
+    DynamicRefConfig,
+    Node,
+    create_dependency_graph,
+)
 from excel_grapher.core.address_keys import (
     normalize_key as normalize_address,
 )
@@ -222,6 +231,41 @@ class TestGeneratedCodeExecution:
         result = assert_codegen_matches_evaluator(graph, targets)
         assert result.generated_results["S!B1"] is True
         assert result.generated_results["S!B2"] is False
+
+    def test_index_match_with_pruned_description_column_matches_evaluator(self) -> None:
+        """INDEX range codegen must not require pruned lookup-description cells (issue #201)."""
+        with TemporaryDirectory() as tmp:
+            workbook = Path(tmp) / "lookup_codegen_gap.xlsx"
+            wb = fastpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Inputs"
+            ws["A1"] = "country"
+            ws["B1"] = "debt"
+            ws["C1"] = "description"
+            ws["A2"] = "Borvelia"
+            ws["B2"] = 60
+            ws["C2"] = "stylized emerging market"
+            ws["E1"] = "Borvelia"
+            ws["F1"] = "=INDEX(A2:C2, MATCH(E1, A2:A2, 0), 2)"
+            wb.save(workbook)
+
+            dynamic_refs = DynamicRefConfig.from_constraints(
+                {
+                    "Inputs!E1": Literal["Borvelia"],
+                    "Inputs!A2": Literal["Borvelia"],
+                },
+                {},
+            )
+            graph = create_dependency_graph(
+                workbook,
+                ["Inputs!F1"],
+                load_values=True,
+                dynamic_refs=dynamic_refs,
+            )
+            assert "Inputs!C2" not in graph
+
+            result = assert_codegen_matches_evaluator(graph, ["Inputs!F1"])
+            assert "xl_cell(ctx, 'Inputs!C2')" not in result.generated_code
 
 
 class TestGeneratedCodeWithRealWorkbook:

@@ -85,3 +85,17 @@ def test_index_omit_col_returns_row_for_match() -> None:
     result = assert_codegen_matches_evaluator(graph, ["S!E1"])
     assert result.evaluator_results["S!E1"] == 2
     assert result.generated_results["S!E1"] == 2
+
+
+def test_index_scalar_out_of_bounds_returns_ref_error() -> None:
+    """Out-of-bounds scalar INDEX should return #REF! instead of raising."""
+    graph = _make_graph(
+        _make_node("S!A1", "1", None),
+        _make_node("S!B1", "2", None),
+        _make_node("S!A2", "3", None),
+        _make_node("S!B2", "4", None),
+        _make_node("S!C1", "=INDEX(S!A1:S!B2,3,1)", None),
+    )
+    result = assert_codegen_matches_evaluator(graph, ["S!C1"])
+    assert result.evaluator_results["S!C1"] == XlError.REF
+    assert result.generated_results["S!C1"] == XlError.REF

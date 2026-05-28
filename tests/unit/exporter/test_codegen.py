@@ -1123,3 +1123,33 @@ class TestGeneratedCodeExecution:
         result = namespace["compute_all"]()
 
         assert result["Sheet1!B1:Sheet1!C1"].tolist() == [[20.0, 30.0]]
+
+
+class TestIndexPrunedRangeCodegen:
+    """INDEX over a range must not read graph-pruned cells (issue #201)."""
+
+    def test_index_range_codegen_skips_pruned_cells_and_runs(self) -> None:
+        graph = _make_graph(
+            _make_node("Inputs!A2", None, "Borvelia"),
+            _make_node("Inputs!B2", None, 60),
+            _make_node("Inputs!C2", None, "stylized emerging market"),
+            _make_node("Inputs!E1", None, "Borvelia"),
+            _make_node(
+                "Inputs!F1",
+                "=INDEX(Inputs!A2:Inputs!C2, MATCH(Inputs!E1, Inputs!A2:Inputs!A2, 0), 2)",
+                None,
+            ),
+        )
+        graph.add_edge("Inputs!F1", "Inputs!A2")
+        graph.add_edge("Inputs!F1", "Inputs!B2")
+        graph.add_edge("Inputs!F1", "Inputs!E1")
+
+        gen = CodeGenerator(graph)
+        code = gen.generate(["Inputs!F1"])
+
+        assert "xl_cell(ctx, 'Inputs!C2')" not in code
+
+        namespace: dict = {}
+        exec(code, namespace)
+        result = namespace["compute_all"]()
+        assert "Inputs!F1" in result
