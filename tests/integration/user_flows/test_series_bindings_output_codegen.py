@@ -130,18 +130,17 @@ def test_generate_modules_exports_output_compute(tmp_path: Path) -> None:
 
     files = CodeGenerator(graph).generate_modules(
         targets,
-        package_name="exported_series_output",
         series_bindings=bindings,
         bindings_workbook=workbook,
     )
-    assert "def compute_borvelia_primary_balance(" in files["exported_series_output/entrypoint.py"]
-    assert "compute_borvelia_primary_balance" in files["exported_series_output/__init__.py"]
-    assert "Record" in files["exported_series_output/entrypoint.py"]
+    assert "def compute_borvelia_primary_balance(" in files["api.py"]
+    assert "compute_borvelia_primary_balance" in files["__init__.py"]
+    assert "Record" in files["api.py"]
 
-    for relpath, content in files.items():
-        out_path = tmp_path / relpath
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(content, encoding="utf-8")
+    pkg_dir = tmp_path / "exported_series_output"
+    for filename, content in files.items():
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_dir / filename).write_text(content, encoding="utf-8")
 
     sys.path.insert(0, str(tmp_path))
     try:
