@@ -728,6 +728,14 @@ code = CodeGenerator(graph).generate(
 Callbacks return `SeriesFunctionDoc` prose; the exporter renders deterministic sections such as
 accepted fields, source binding metadata, and example calls. Return `None` to omit a docstring.
 
+Callback contract highlights:
+
+- The callback is invoked once per generated series API function (`set_*` and series output `compute_*`).
+- Use `ctx.function_kind` (`"setter"` or `"compute"`) and `ctx.function_name` to branch wording per function.
+- `ctx.contract` contains deterministic binding facts for that specific function (required fields, field dtypes, examples, layout, and data range).
+- Docstring callbacks are selected by name (`series_docstring_callback="..."`), not passed as direct callables to `generate`.
+- If callback rendering is requested, codegen requires full series context (`series_bindings` + `bindings_workbook`).
+
 A (truncated) sketch of the exported code:
 
 ```python

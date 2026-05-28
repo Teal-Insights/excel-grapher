@@ -337,6 +337,12 @@ named callback and pass `series_docstring_callback` to `generate`. The
 callback receives deterministic binding metadata through `ctx.contract`
 and returns prose fields via `SeriesFunctionDoc`.
 
+The callback runs once for each generated series API function. In this
+workbook that means `set_borvelia_primary_balance` (setter) and
+`compute_borvelia_primary_balance` (output compute). Use
+`ctx.function_kind` and `ctx.function_name` to branch wording if you
+want different prose for setters vs computes.
+
 ``` python
 from excel_grapher.exporter import (
     CodeGenerator,
