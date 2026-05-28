@@ -7,6 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.series_bindings.docstrings import (
+    emit_docstring_literal,
+    resolve_series_function_docstring,
+)
 from excel_grapher.series_bindings.normalize import has_output_direction
 from excel_grapher.series_bindings.resolve import resolve_series_bindings
 from excel_grapher.series_bindings.types import (
@@ -42,6 +46,11 @@ def _measure_concept(series: dict[str, Any]) -> str:
 def emit_compute_function(
     series: dict[str, Any],
     resolved: SeriesResolution,
+    *,
+    graph: DependencyGraph | None = None,
+    workbook: Path | str | None = None,
+    bindings: WorkbookSeriesBindings | None = None,
+    series_docstring_callback: str | None = None,
 ) -> list[str]:
     """Emit Python source lines for one series binding output compute function."""
     if not resolved["leaves"]:
@@ -68,12 +77,29 @@ def emit_compute_function(
     lines.append("]")
     lines.append("")
     lines.append(f"def {fn_name}(inputs=None, *, ctx=None) -> Records:")
-    doc = (
-        series.get("notes")
-        or series.get("sdmx_notes")
-        or f"Compute records for {resolved['series_id']}."
-    )
-    lines.append(f'    """{doc}"""')
+    if series_docstring_callback is not None and (
+        graph is None or workbook is None or bindings is None
+    ):
+        raise ValueError("series_docstring_callback requires graph, workbook, and bindings context")
+    if graph is not None and workbook is not None and bindings is not None:
+        doc = resolve_series_function_docstring(
+            graph=graph,
+            workbook=workbook,
+            bindings=bindings,
+            series=series,
+            resolution=resolved,
+            function_kind="compute",
+            function_name=fn_name,
+            callback_name=series_docstring_callback,
+        )
+    else:
+        doc = (
+            series.get("notes")
+            or series.get("sdmx_notes")
+            or f"Compute records for {resolved['series_id']}."
+        )
+    if doc is not None:
+        lines.extend(emit_docstring_literal(doc))
     lines.append("    if ctx is None:")
     lines.append("        ctx = make_context(inputs)")
     lines.append("    elif inputs is not None:")
@@ -102,6 +128,7 @@ def emit_computes_block(
     bindings: WorkbookSeriesBindings,
     *,
     include_type_aliases: bool = True,
+    series_docstring_callback: str | None = None,
 ) -> list[str]:
     """Emit all series output compute functions for a validated binding manifest."""
     report = resolve_series_bindings(graph, bindings, workbook=workbook, direction="output")
@@ -134,7 +161,16 @@ def emit_computes_block(
         series = by_id.get(resolved["series_id"])
         if series is None:
             continue
-        lines.extend(emit_compute_function(series, resolved))
+        lines.extend(
+            emit_compute_function(
+                series,
+                resolved,
+                graph=graph,
+                workbook=workbook,
+                bindings=bindings,
+                series_docstring_callback=series_docstring_callback,
+            )
+        )
     if failed:
         raise ValueError(
             f"Cannot codegen output compute functions: resolution failed for {failed!r}"

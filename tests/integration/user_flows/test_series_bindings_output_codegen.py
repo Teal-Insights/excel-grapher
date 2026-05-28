@@ -11,7 +11,12 @@ from typing import Any, cast
 
 import xlsxwriter
 
-from excel_grapher.exporter import CodeGenerator
+from excel_grapher.exporter import (
+    CodeGenerator,
+    FieldDoc,
+    SeriesFunctionDoc,
+    register_series_docstring_callback,
+)
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings import expand_data_range, validate_bindings_document
 
@@ -119,6 +124,44 @@ def test_codegen_includes_output_compute_and_setter(tmp_path: Path) -> None:
     by_period = {cast(int, r["TIME_PERIOD"]): r for r in records}
     assert by_period[4]["OBS_VALUE"] == 7.5
     assert by_period[5]["OBS_VALUE"] == 5.0
+
+
+def test_generate_applies_series_docstring_callback_to_output_compute(
+    tmp_path: Path,
+) -> None:
+    callback_name = "_test_integration_compute_docstring"
+    register_series_docstring_callback(
+        callback_name,
+        lambda ctx: SeriesFunctionDoc(
+            summary=f"Compute {ctx.contract.series_id}.",
+            purpose="Integration test purpose.",
+            record_matching="One record per output cell.",
+            field_descriptions={
+                "TIME_PERIOD": FieldDoc(description="Reporting year."),
+                "OBS_VALUE": FieldDoc(description="Computed value."),
+            },
+        ),
+    )
+    workbook = tmp_path / "series_bindings_output.xlsx"
+    _write_output_workbook(workbook)
+    bindings = validate_bindings_document(deepcopy(BINDINGS_DOCUMENT))
+    targets = expand_data_range("Sheet1!F5:J5", workbook=workbook) + ["Sheet1!G5"]
+    graph = create_dependency_graph(workbook, targets, load_values=True)
+
+    with CodeGenerator(graph) as gen:
+        code = gen.generate(
+            targets,
+            series_bindings=bindings,
+            bindings_workbook=workbook,
+            series_docstring_callback=callback_name,
+        )
+
+    ns: dict[str, object] = {}
+    exec(code, ns)
+    compute = cast(Callable[..., list[dict[str, object]]], ns["compute_borvelia_primary_balance"])
+    assert compute.__doc__ is not None
+    assert "Compute borvelia_primary_balance." in compute.__doc__
+    assert "Example:" in compute.__doc__
 
 
 def test_generate_modules_exports_output_compute(tmp_path: Path) -> None:

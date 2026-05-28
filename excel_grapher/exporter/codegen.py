@@ -366,10 +366,17 @@ class CodeGenerator:
         self,
         bindings: WorkbookSeriesBindings,
         workbook: Path | str,
+        *,
+        series_docstring_callback: str | None = None,
     ) -> list[str]:
         from excel_grapher.series_bindings.bindings_codegen import emit_series_bindings_block
 
-        return emit_series_bindings_block(cast("DependencyGraph", self.graph), workbook, bindings)
+        return emit_series_bindings_block(
+            cast("DependencyGraph", self.graph),
+            workbook,
+            bindings,
+            series_docstring_callback=series_docstring_callback,
+        )
 
     def derive_input_series(
         self,
@@ -1701,6 +1708,7 @@ class CodeGenerator:
         blank_ranges: Sequence[str] | None = None,
         series_bindings: WorkbookSeriesBindings | None = None,
         bindings_workbook: Path | str | None = None,
+        series_docstring_callback: str | None = None,
     ) -> str:
         """Generate standalone Python code for target cells.
 
@@ -1714,6 +1722,8 @@ class CodeGenerator:
             series_bindings: Optional workbook binding manifest; when set with
                 ``bindings_workbook``, emits ``set_*`` functions that accept Records.
             bindings_workbook: Path to the ``.xlsx`` file used to resolve binds.
+            series_docstring_callback: Optional registered callback name for structured
+                docstrings on generated ``set_*`` and series output ``compute_*`` functions.
 
         Returns:
             Standalone Python source code as a string.
@@ -1805,7 +1815,13 @@ class CodeGenerator:
         if series_bindings is not None:
             if bindings_workbook is None:
                 raise ValueError("bindings_workbook is required when series_bindings is set")
-            lines.extend(self._emit_series_binding_setters(series_bindings, bindings_workbook))
+            lines.extend(
+                self._emit_series_binding_setters(
+                    series_bindings,
+                    bindings_workbook,
+                    series_docstring_callback=series_docstring_callback,
+                )
+            )
             lines.append("")
         for name, entrypoint_list in normalized_entrypoints.items():
             targets_name = f"TARGETS_{name.upper()}"
@@ -1871,6 +1887,7 @@ class CodeGenerator:
         blank_ranges: Sequence[str] | None = None,
         series_bindings: WorkbookSeriesBindings | None = None,
         bindings_workbook: Path | str | None = None,
+        series_docstring_callback: str | None = None,
     ) -> dict[str, str]:
         """Generate a multi-module Python package for target cells.
 
@@ -2001,7 +2018,11 @@ class CodeGenerator:
         if series_bindings is not None:
             if bindings_workbook is None:
                 raise ValueError("bindings_workbook is required when series_bindings is set")
-            setter_lines = self._emit_series_binding_setters(series_bindings, bindings_workbook)
+            setter_lines = self._emit_series_binding_setters(
+                series_bindings,
+                bindings_workbook,
+                series_docstring_callback=series_docstring_callback,
+            )
             api_lines.extend(setter_lines)
             series_setter_names = self._emitted_function_names(setter_lines)
             api_lines.append("")

@@ -15,6 +15,8 @@ def emit_series_bindings_block(
     graph: DependencyGraph,
     workbook: Path | str,
     bindings: WorkbookSeriesBindings,
+    *,
+    series_docstring_callback: str | None = None,
 ) -> list[str]:
     """Emit setter and/or output compute functions for a binding manifest."""
     series_list = [s for s in bindings.get("series", []) if isinstance(s, dict)]
@@ -32,6 +34,7 @@ def emit_series_bindings_block(
                 workbook,
                 bindings,
                 include_type_aliases=include_aliases,
+                series_docstring_callback=series_docstring_callback,
             )
         )
         include_aliases = False
@@ -42,6 +45,7 @@ def emit_series_bindings_block(
                 workbook,
                 bindings,
                 include_type_aliases=include_aliases,
+                series_docstring_callback=series_docstring_callback,
             )
         )
     return lines
