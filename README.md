@@ -691,6 +691,43 @@ For a multi-file package, `generate_modules()` returns a `dict[str, str]` keyed 
 (`__init__.py`, `api.py`, `data.py`, `runtime.py`, `internals.py`). Write those files into a package
 directory of your choice, then import the package as usual.
 
+When exporting series bindings, you can attach structured docstrings to generated `set_*` and
+series output `compute_*` functions by registering a callback and passing its name to
+`generate(..., series_docstring_callback=...)` or `generate_modules(..., series_docstring_callback=...)`:
+
+```python
+from excel_grapher.exporter import (
+    CodeGenerator,
+    FieldDoc,
+    SeriesFunctionDoc,
+    register_series_docstring_callback,
+)
+
+def my_series_docstring(ctx):
+    # ctx.contract contains deterministic binding facts (fields, examples, layout, etc.)
+    return SeriesFunctionDoc(
+        summary=f"Set {ctx.contract.series_id}.",
+        purpose="Updates workbook inputs from Records.",
+        record_matching="Records match by key fields.",
+        field_descriptions={
+            field: FieldDoc(description=f"Describe {field}.")
+            for field in ctx.contract.required_fields
+        },
+    )
+
+register_series_docstring_callback("my_docs", my_series_docstring, replace=True)
+
+code = CodeGenerator(graph).generate(
+    targets,
+    series_bindings=bindings,
+    bindings_workbook=workbook_path,
+    series_docstring_callback="my_docs",
+)
+```
+
+Callbacks return `SeriesFunctionDoc` prose; the exporter renders deterministic sections such as
+accepted fields, source binding metadata, and example calls. Return `None` to omit a docstring.
+
 A (truncated) sketch of the exported code:
 
 ```python

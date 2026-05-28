@@ -9,7 +9,12 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, cast
 
-from excel_grapher.exporter import CodeGenerator
+from excel_grapher.exporter import (
+    CodeGenerator,
+    FieldDoc,
+    SeriesFunctionDoc,
+    register_series_docstring_callback,
+)
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings import expand_data_range, validate_bindings_document
 
@@ -97,6 +102,45 @@ def test_codegen_includes_setters_and_updates_inputs() -> None:
     ctx = make_context()
     set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 4, "OBS_VALUE": 7.5}])
     assert ctx.inputs["Sheet1!I5"] == 7.5
+
+
+def test_generate_applies_series_docstring_callback() -> None:
+    callback_name = "_test_integration_setter_docstring"
+    register_series_docstring_callback(
+        callback_name,
+        lambda ctx: SeriesFunctionDoc(
+            summary=f"Set {ctx.contract.series_id}.",
+            purpose="Integration test purpose.",
+            record_matching="Match by TIME_PERIOD.",
+            field_descriptions={
+                "TIME_PERIOD": FieldDoc(description="Reporting year."),
+                "OBS_VALUE": FieldDoc(description="Observed value."),
+            },
+        ),
+    )
+    bindings = validate_bindings_document(deepcopy(BINDINGS_DOCUMENT))
+    targets: list[str] = []
+    for series in bindings["series"]:
+        targets.extend(expand_data_range(series["data_range"], workbook=WORKBOOK))
+    graph = create_dependency_graph(WORKBOOK, targets, load_values=True)
+
+    with CodeGenerator(graph) as gen:
+        code = gen.generate(
+            targets,
+            series_bindings=bindings,
+            bindings_workbook=WORKBOOK,
+            series_docstring_callback=callback_name,
+        )
+
+    ns: dict[str, object] = {}
+    exec(code, ns)
+    setter = cast(
+        Callable[[Any, list[dict[str, object]]], None],
+        ns["set_borvelia_primary_balance"],
+    )
+    assert setter.__doc__ is not None
+    assert "Set borvelia_primary_balance." in setter.__doc__
+    assert "Required record fields:" in setter.__doc__
 
 
 def test_generate_modules_exports_series_binding_setters(tmp_path: Path) -> None:

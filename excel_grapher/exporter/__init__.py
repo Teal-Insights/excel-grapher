@@ -5,6 +5,15 @@ Canonical implementation: :class:`~excel_grapher.exporter.codegen.CodeGenerator`
 The shared runtime embedded in generated code lives at :mod:`excel_grapher.runtime`.
 """
 
+from excel_grapher.series_bindings.docstrings import (
+    FieldDoc,
+    SeriesBindingDocstringContext,
+    SeriesBindingDocstringContract,
+    SeriesFunctionDoc,
+    list_series_docstring_callbacks,
+    register_series_docstring_callback,
+)
+
 from .codegen import CodeGenerator
 from .lightweight_viz import (
     WebVizPayload,
@@ -25,6 +34,10 @@ __all__ = [
     "CodeGenerator",
     "WebVizPayload",
     "to_web_viz_payload",
+    "FieldDoc",
+    "SeriesBindingDocstringContext",
+    "SeriesBindingDocstringContract",
+    "SeriesFunctionDoc",
     "LAYOUT_STRATIFIED_MULTIPARTITE",
     "LAYOUT_SPRING",
     "LAYOUT_FORCEATLAS2",
@@ -33,4 +46,6 @@ __all__ = [
     "LAYOUT_GRAPHVIZ_SFDP",
     "list_web_viz_layouts",
     "register_web_viz_layout",
+    "list_series_docstring_callbacks",
+    "register_series_docstring_callback",
 ]

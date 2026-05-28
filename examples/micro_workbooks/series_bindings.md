@@ -318,6 +318,78 @@ records = [
 set_borvelia_primary_balance(ctx, records)
 ```
 
+### Structured docstring callback
+
+If you want richer generated docstrings for series APIs, register a
+named callback and pass `series_docstring_callback` to `generate`. The
+callback receives deterministic binding metadata through `ctx.contract`
+and returns prose fields via `SeriesFunctionDoc`.
+
+``` python
+from excel_grapher.exporter import (
+    CodeGenerator,
+    FieldDoc,
+    SeriesFunctionDoc,
+    register_series_docstring_callback,
+)
+
+callback_name = "micro_workbook_series_docs"
+
+register_series_docstring_callback(
+    callback_name,
+    lambda ctx: SeriesFunctionDoc(
+        summary=f"Set {ctx.contract.series_id}.",
+        purpose="Updates workbook inputs from Records.",
+        record_matching="Records match cells by key fields.",
+        field_descriptions={
+            field: FieldDoc(description=f"Value for {field}.")
+            for field in ctx.contract.required_fields
+        },
+    ),
+    replace=True,
+)
+
+with CodeGenerator(graph) as gen:
+    code_with_docs = gen.generate(
+        targets,
+        series_bindings=bindings,
+        bindings_workbook=workbook_path,
+        series_docstring_callback=callback_name,
+    )
+
+namespace_with_docs: dict = {}
+exec(code_with_docs, namespace_with_docs)
+doc = namespace_with_docs["set_borvelia_primary_balance"].__doc__
+print(f"```text\n{doc}\n```\n")
+```
+
+``` text
+Set borvelia_primary_balance.
+
+Updates workbook inputs from Records.
+Records match cells by key fields.
+
+Required record fields:
+    TIME_PERIOD: Value for TIME_PERIOD.
+    OBS_VALUE: Value for OBS_VALUE.
+
+Optional record fields:
+    REF_AREA: REF_AREA If supplied, expected value: "Borvelia".
+    INDICATOR: INDICATOR If supplied, expected value: "Primary balance (% of GDP)".
+    UNIT_MEASURE: UNIT_MEASURE If supplied, expected value: "PC_GDP".
+
+Source binding:
+    Workbook range: Sheet1!F5:J5
+    Layout: row_series
+    Value type: float
+
+Example:
+    set_borvelia_primary_balance(ctx, [
+        {'TIME_PERIOD': 1, 'OBS_VALUE': -1.0},
+        {'TIME_PERIOD': 2, 'OBS_VALUE': -0.5},
+    ])
+```
+
 The setter writes into the graph’s input map via
 `EvalContext.set_inputs`. In this notebook, the generated code is
 executed dynamically so the example can verify the same effect:

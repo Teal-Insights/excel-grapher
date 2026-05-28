@@ -9,6 +9,14 @@ from excel_grapher.series_bindings.compute_codegen import (
     emit_computes_block,
     generate_computes_module,
 )
+from excel_grapher.series_bindings.docstrings import (
+    FieldDoc,
+    SeriesBindingDocstringContext,
+    SeriesBindingDocstringContract,
+    SeriesFunctionDoc,
+    list_series_docstring_callbacks,
+    register_series_docstring_callback,
+)
 from excel_grapher.series_bindings.input_series import derive_input_series
 from excel_grapher.series_bindings.load import (
     SeriesBindingsLoadError,
@@ -75,6 +83,10 @@ __all__ = [
     "PLANNED_BIND_KINDS",
     "PLANNED_LAYOUTS",
     "SUPPORTED_SCHEMA_VERSIONS",
+    "FieldDoc",
+    "SeriesBindingDocstringContext",
+    "SeriesBindingDocstringContract",
+    "SeriesFunctionDoc",
     "LeafResolution",
     "ResolutionIssue",
     "ResolutionReport",
@@ -104,9 +116,11 @@ __all__ = [
     "expand_data_range_for_graph",
     "format_schema_errors",
     "generate_setters_module",
+    "list_series_docstring_callbacks",
     "load_series_bindings",
     "merge_series_binding_documents",
     "parse_bindings_file",
+    "register_series_docstring_callback",
     "resolve_series_binding",
     "resolve_series_bindings",
     "validate_bindings_document",

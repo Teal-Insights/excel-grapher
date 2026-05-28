@@ -16,6 +16,11 @@ from excel_grapher.series_bindings import (
     load_series_bindings,
     resolve_series_binding,
 )
+from excel_grapher.series_bindings.docstrings import (
+    FieldDoc,
+    SeriesFunctionDoc,
+    register_series_docstring_callback,
+)
 from excel_grapher.series_bindings.setter_codegen import emit_setter_function, emit_setters_block
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
@@ -169,3 +174,91 @@ def test_emit_setters_block_skips_series_without_graph_leaf_overlap(tmp_path: Pa
         lines = emit_setters_block(graph, wb_path, bindings)
 
     assert "def set_borvelia_primary_balance(" not in "\n".join(lines)
+
+
+def test_emit_setter_structured_docstring_callback(tmp_path: Path) -> None:
+    callback_name = "_test_setter_structured_docstring"
+    register_series_docstring_callback(
+        callback_name,
+        lambda ctx: SeriesFunctionDoc(
+            summary="Set borvelia values.",
+            purpose="Updates borvelia primary balance inputs.",
+            record_matching="Match records by TIME_PERIOD.",
+            field_descriptions={
+                "TIME_PERIOD": FieldDoc(description="Reporting year."),
+                "OBS_VALUE": FieldDoc(description='Value with "quotes".'),
+            },
+        ),
+    )
+    wb_path = tmp_path / "lic_inputs.xlsx"
+    _write_borvelia_workbook(wb_path)
+    graph = create_dependency_graph(
+        wb_path,
+        expand_data_range("Inputs!F5:J5"),
+        load_values=True,
+    )
+    bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
+    series = bindings["series"][0]
+    resolved = resolve_series_binding(graph, wb_path, series)
+    lines = emit_setter_function(
+        series,
+        resolved,
+        graph=graph,
+        workbook=wb_path,
+        bindings=bindings,
+        series_docstring_callback=callback_name,
+    )
+    code = "\n".join(lines)
+    ns = _exec_setters(lines)
+    setter = cast(
+        Callable[[EvalContext, list[dict[str, object]]], None],
+        ns["set_borvelia_primary_balance"],
+    )
+    assert setter.__doc__ is not None
+    assert "Set borvelia values." in setter.__doc__
+    assert 'Value with "quotes".' in setter.__doc__
+    exec(code, {"EvalContext": EvalContext, "coerce_inputs_dict": coerce_inputs_dict})
+
+
+def test_emit_setter_docstring_callback_none_omits_docstring(tmp_path: Path) -> None:
+    callback_name = "_test_setter_none_docstring"
+    register_series_docstring_callback(callback_name, lambda ctx: None)
+    wb_path = tmp_path / "lic_inputs.xlsx"
+    _write_borvelia_workbook(wb_path)
+    graph = create_dependency_graph(
+        wb_path,
+        expand_data_range("Inputs!F5:J5"),
+        load_values=True,
+    )
+    bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
+    series = bindings["series"][0]
+    resolved = resolve_series_binding(graph, wb_path, series)
+    lines = emit_setter_function(
+        series,
+        resolved,
+        graph=graph,
+        workbook=wb_path,
+        bindings=bindings,
+        series_docstring_callback=callback_name,
+    )
+    ns = _exec_setters(lines)
+    setter = cast(
+        Callable[[EvalContext, list[dict[str, object]]], None],
+        ns["set_borvelia_primary_balance"],
+    )
+    assert setter.__doc__ is None
+
+
+def test_emit_setter_callback_requires_codegen_context(tmp_path: Path) -> None:
+    wb_path = tmp_path / "lic_inputs.xlsx"
+    _write_borvelia_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, expand_data_range("Inputs!F5:J5"), load_values=True)
+    bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
+    series = bindings["series"][0]
+    resolved = resolve_series_binding(graph, wb_path, series)
+    with pytest.raises(ValueError, match="requires graph, workbook, and bindings"):
+        _ = emit_setter_function(
+            series,
+            resolved,
+            series_docstring_callback="series_notes",
+        )

@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.series_bindings.docstrings import (
+    emit_docstring_literal,
+    resolve_series_function_docstring,
+)
 from excel_grapher.series_bindings.normalize import has_input_direction
 from excel_grapher.series_bindings.resolve import resolve_series_bindings
 from excel_grapher.series_bindings.types import (
@@ -63,6 +67,11 @@ def _allowed_record_fields(
 def emit_setter_function(
     series: dict[str, Any],
     resolved: SeriesResolution,
+    *,
+    graph: DependencyGraph | None = None,
+    workbook: Path | str | None = None,
+    bindings: WorkbookSeriesBindings | None = None,
+    series_docstring_callback: str | None = None,
 ) -> list[str]:
     """Emit Python source lines for one series binding setter."""
     if not resolved["leaves"]:
@@ -101,12 +110,29 @@ def emit_setter_function(
     lines.append("    *,")
     lines.append(f"    strict: bool = {strict!r},")
     lines.append(") -> None:")
-    doc = (
-        series.get("notes")
-        or series.get("sdmx_notes")
-        or f"Apply records for {resolved['series_id']}."
-    )
-    lines.append(f'    """{doc}"""')
+    if series_docstring_callback is not None and (
+        graph is None or workbook is None or bindings is None
+    ):
+        raise ValueError("series_docstring_callback requires graph, workbook, and bindings context")
+    if graph is not None and workbook is not None and bindings is not None:
+        doc = resolve_series_function_docstring(
+            graph=graph,
+            workbook=workbook,
+            bindings=bindings,
+            series=series,
+            resolution=resolved,
+            function_kind="setter",
+            function_name=fn_name,
+            callback_name=series_docstring_callback,
+        )
+    else:
+        doc = (
+            series.get("notes")
+            or series.get("sdmx_notes")
+            or f"Apply records for {resolved['series_id']}."
+        )
+    if doc is not None:
+        lines.extend(emit_docstring_literal(doc))
     lines.append(f"    key_fields = {tuple(key_fields)!r}")
     lines.append(f"    allow_address = {allow_address!r}")
     lines.append(f"    requires_address = {requires_address!r}")
@@ -163,6 +189,7 @@ def emit_setters_block(
     bindings: WorkbookSeriesBindings,
     *,
     include_type_aliases: bool = True,
+    series_docstring_callback: str | None = None,
 ) -> list[str]:
     """Emit all series setter functions for a validated binding manifest."""
     report = resolve_series_bindings(graph, bindings, workbook=workbook, direction="input")
@@ -195,7 +222,16 @@ def emit_setters_block(
         series = by_id.get(resolved["series_id"])
         if series is None:
             continue
-        lines.extend(emit_setter_function(series, resolved))
+        lines.extend(
+            emit_setter_function(
+                series,
+                resolved,
+                graph=graph,
+                workbook=workbook,
+                bindings=bindings,
+                series_docstring_callback=series_docstring_callback,
+            )
+        )
     if failed:
         raise ValueError(f"Cannot codegen setters: resolution failed for {failed!r}")
     return lines
