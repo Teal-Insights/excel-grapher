@@ -71,7 +71,7 @@ def normalize_bindings_document(document: dict[str, Any]) -> dict[str, Any]:
     series_list = out.get("series")
     if not isinstance(series_list, list):
         return out
-    out["series"] = [normalize_series_entry(s) for s in series_list if isinstance(s, dict)]
+    out["series"] = [normalize_series_entry(s) if isinstance(s, dict) else s for s in series_list]
     return out
 
 

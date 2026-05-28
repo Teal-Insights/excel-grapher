@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -120,10 +121,15 @@ def emit_computes_block(
     }
     failed: list[str] = []
     for resolved in report["series"]:
-        if not resolved["leaves"]:
-            continue
         if not resolved["ok"]:
             failed.append(resolved["series_id"])
+            continue
+        if not resolved["leaves"]:
+            warnings.warn(
+                f"No resolved output cells for series {resolved['series_id']!r}; skipping compute emission",
+                UserWarning,
+                stacklevel=2,
+            )
             continue
         series = by_id.get(resolved["series_id"])
         if series is None:

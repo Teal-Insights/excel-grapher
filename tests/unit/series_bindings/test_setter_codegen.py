@@ -165,6 +165,7 @@ def test_emit_setters_block_skips_series_without_graph_leaf_overlap(tmp_path: Pa
     graph = create_dependency_graph(wb_path, ["Inputs!A2"], load_values=True)
     bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
 
-    lines = emit_setters_block(graph, wb_path, bindings)
+    with pytest.warns(UserWarning, match="No resolved input cells"):
+        lines = emit_setters_block(graph, wb_path, bindings)
 
     assert "def set_borvelia_primary_balance(" not in "\n".join(lines)

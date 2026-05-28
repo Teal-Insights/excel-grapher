@@ -6,17 +6,19 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
 import xlsxwriter
 
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.runtime.cache import EvalContext, coerce_inputs_dict, xl_cell
 from excel_grapher.series_bindings import (
     Records,
+    WorkbookSeriesBindings,
     expand_data_range,
     load_series_bindings,
     resolve_series_binding,
 )
-from excel_grapher.series_bindings.compute_codegen import emit_compute_function
+from excel_grapher.series_bindings.compute_codegen import emit_compute_function, emit_computes_block
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
 
@@ -127,3 +129,40 @@ def test_emit_compute_borvelia_includes_frequency(tmp_path: Path) -> None:
     assert len(records) == 5
     assert all(r["FREQUENCY"] == "A" for r in records)
     assert {r["TIME_PERIOD"] for r in records} == {1, 2, 3, 4, 5}
+
+
+def test_emit_computes_block_warns_when_output_has_no_graph_overlap(tmp_path: Path) -> None:
+    wb_path = tmp_path / "formula.xlsx"
+    _write_formula_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, ["Sheet1!B2"], load_values=True)
+    bindings = cast(
+        WorkbookSeriesBindings,
+        {
+            "schema_version": "1.2.0",
+            "series": [
+                {
+                    "id": "scaled_output",
+                    "sheet": "Sheet1",
+                    "data_range": "Sheet1!C2",
+                    "layout": "scalar",
+                    "output": {"compute": {"name": "compute_scaled_output"}},
+                    "structure": {
+                        "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
+                        "dimensions": [
+                            {
+                                "concept": "LABEL",
+                                "role": "key",
+                                "scope": "series",
+                                "bind": {"kind": "constant", "value": "scaled"},
+                            }
+                        ],
+                    },
+                    "key": ["LABEL"],
+                }
+            ],
+        },
+    )
+    with pytest.warns(UserWarning, match="No resolved output cells"):
+        lines = emit_computes_block(graph, wb_path, bindings)
+
+    assert "def compute_scaled_output(" not in "\n".join(lines)

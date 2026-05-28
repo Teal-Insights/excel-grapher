@@ -72,6 +72,38 @@ def test_schema_requires_at_least_one_direction() -> None:
         validate_bindings_document(doc)
 
 
+def test_schema_rejects_non_mapping_series_entry() -> None:
+    from excel_grapher.series_bindings import SeriesBindingsSchemaError, validate_bindings_document
+
+    doc = {
+        "schema_version": "1.2.0",
+        "series": [
+            {
+                "id": "ok",
+                "sheet": "S",
+                "data_range": "S!A1",
+                "layout": "scalar",
+                "input": {"setter": {"name": "set_ok"}},
+                "structure": {
+                    "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
+                    "dimensions": [
+                        {
+                            "concept": "X",
+                            "role": "key",
+                            "scope": "cell",
+                            "bind": {"kind": "data_cell"},
+                        }
+                    ],
+                },
+                "key": ["X"],
+            },
+            123,
+        ],
+    }
+    with pytest.raises(SeriesBindingsSchemaError):
+        validate_bindings_document(doc)
+
+
 def test_load_merged_input_output_directory(tmp_path: Path) -> None:
     shard_dir = tmp_path / "shards"
     shard_dir.mkdir()

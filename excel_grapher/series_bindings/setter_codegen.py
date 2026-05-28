@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -181,10 +182,15 @@ def emit_setters_block(
     }
     failed: list[str] = []
     for resolved in report["series"]:
-        if not resolved["leaves"]:
-            continue
         if not resolved["ok"] and not resolved["requires_address"]:
             failed.append(resolved["series_id"])
+            continue
+        if not resolved["leaves"]:
+            warnings.warn(
+                f"No resolved input cells for series {resolved['series_id']!r}; skipping setter emission",
+                UserWarning,
+                stacklevel=2,
+            )
             continue
         series = by_id.get(resolved["series_id"])
         if series is None:

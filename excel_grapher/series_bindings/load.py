@@ -104,6 +104,7 @@ def merge_series_binding_documents(documents: list[dict[str, Any]]) -> dict[str,
         series = doc.get("series")
         if not isinstance(series, list) or not series:
             raise SeriesBindingsLoadError(f"Document {index} must contain a non-empty series list")
+        seen_ids_in_document: set[str] = set()
 
         for entry in series:
             if not isinstance(entry, dict):
@@ -113,6 +114,11 @@ def merge_series_binding_documents(documents: list[dict[str, Any]]) -> dict[str,
                 raise SeriesBindingsLoadError(
                     f"Each series entry requires string id (shard {index})"
                 )
+            if series_id in seen_ids_in_document:
+                raise SeriesBindingsLoadError(
+                    f"Duplicate series id {series_id!r} within shard {index}"
+                )
+            seen_ids_in_document.add(series_id)
             normalized = normalize_series_entry(entry)
             if series_id in series_by_id:
                 try:
