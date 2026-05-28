@@ -108,17 +108,16 @@ def test_generate_modules_exports_series_binding_setters(tmp_path: Path) -> None
 
     files = CodeGenerator(graph).generate_modules(
         targets,
-        package_name="exported_series",
         series_bindings=bindings,
         bindings_workbook=WORKBOOK,
     )
-    assert "def set_borvelia_primary_balance(" in files["exported_series/entrypoint.py"]
-    assert "set_borvelia_primary_balance" in files["exported_series/__init__.py"]
+    assert "def set_borvelia_primary_balance(" in files["api.py"]
+    assert "set_borvelia_primary_balance" in files["__init__.py"]
 
-    for relpath, content in files.items():
-        out_path = tmp_path / relpath
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(content, encoding="utf-8")
+    pkg_dir = tmp_path / "exported_series"
+    for filename, content in files.items():
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_dir / filename).write_text(content, encoding="utf-8")
 
     sys.path.insert(0, str(tmp_path))
     try:

@@ -915,8 +915,8 @@ class TestGenerateNamedRanges:
             _make_node("Sheet1!B3", None, 3.0),
         )
         files = CodeGenerator(graph).generate_modules(["BeeCol"])
-        entrypoint = files["exported/entrypoint.py"]
-        assert "'Sheet1!B1:Sheet1!B3': xl_range" in entrypoint
+        api_py = files["api.py"]
+        assert "'Sheet1!B1:Sheet1!B3': xl_range" in api_py
 
     def test_generate_unknown_defined_name_raises(self):
         graph = self._graph_with_named_ranges(_make_node("Sheet1!A1", None, 1.0))

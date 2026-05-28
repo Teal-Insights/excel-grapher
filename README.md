@@ -687,6 +687,10 @@ code = CodeGenerator(graph).generate(
 
 This generates `compute_outputs(...)` and `compute_checks(...)` alongside `compute_all(...)`.
 
+For a multi-file package, `generate_modules()` returns a `dict[str, str]` keyed by module filename
+(`__init__.py`, `api.py`, `data.py`, `runtime.py`, `internals.py`). Write those files into a package
+directory of your choice, then import the package as usual.
+
 A (truncated) sketch of the exported code:
 
 ```python

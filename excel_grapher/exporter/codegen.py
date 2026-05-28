@@ -159,7 +159,7 @@ class CodeGenerator:
 
     @staticmethod
     def _normalize_entrypoint_name(name: str) -> str:
-        return CodeGenerator._normalize_package_name(name)
+        return CodeGenerator._normalize_identifier(name)
 
     def _graph_sheetnames(self, *, targets: Sequence[str] | None = None) -> list[str]:
         sheet_order = getattr(self.graph, "sheet_order", None)
@@ -1864,7 +1864,6 @@ class CodeGenerator:
         targets: Sequence[str] | None = None,
         *,
         entrypoints: Mapping[str, Sequence[str]] | None = None,
-        package_name: str = "exported",
         constant_types: set[str] | None = None,
         constant_ranges: Sequence[str] | None = None,
         constant_blanks: bool = False,
@@ -1875,18 +1874,16 @@ class CodeGenerator:
     ) -> dict[str, str]:
         """Generate a multi-module Python package for target cells.
 
-        Returns a mapping of file paths (including a normalized package directory) to file
-        contents. The package name is normalized to an importable directory name.
+        Returns a mapping of module filenames to file contents. Callers choose how to
+        lay out files on disk (e.g. a package directory).
 
-        The generated package has six flat files:
+        The generated package has five flat files:
         - __init__.py: exports compute_all and DEFAULT_INPUTS
-        - entrypoint.py: compute_all implementation
-        - inputs.py: DEFAULT_INPUTS
-        - constants.py: CONSTANTS (may be empty)
+        - api.py: compute_all, make_context, and named entrypoint functions
+        - data.py: DEFAULT_INPUTS and CONSTANTS
         - runtime.py: embedded Excel runtime (emit_runtime)
         - internals.py: formula cell functions + resolver dispatch
         """
-        pkg = self._normalize_package_name(package_name)
         normalized_entrypoints = self._normalize_entrypoints(entrypoints)
         normalized_targets = self._resolve_targets(targets)
         entrypoint_targets: list[str] = []
@@ -1936,28 +1933,21 @@ class CodeGenerator:
             for _, handler in entries
         ) or any(handler == "xl_range" for _, handler in targets_entries)
 
-        inputs_py = "\n".join(
-            [
-                "from __future__ import annotations",
-                "",
-                "# --- Default inputs (leaf cells) ---",
-                *parts["inputs_block_lines"][1:],  # drop the comment already included above
-                "",
-            ]
-        )
-
-        runtime_py = runtime_code.rstrip() + "\n"
-
-        constants_lines_out: list[str] = [
+        data_lines_out: list[str] = [
             "from __future__ import annotations",
+            "",
+            "# --- Default inputs (leaf cells) ---",
+            *parts["inputs_block_lines"][1:],  # drop the comment already included above
             "",
         ]
         if parts["constants_block_lines"]:
-            constants_lines_out.extend(parts["constants_block_lines"])
+            data_lines_out.extend(parts["constants_block_lines"])
         else:
-            constants_lines_out.append("CONSTANTS = {}")
-        constants_lines_out.append("")
-        constants_py = "\n".join(constants_lines_out).rstrip() + "\n"
+            data_lines_out.append("CONSTANTS = {}")
+        data_lines_out.append("")
+        data_py = "\n".join(data_lines_out).rstrip() + "\n"
+
+        runtime_py = runtime_code.rstrip() + "\n"
 
         internals_import_names = self._internals_runtime_import_names(
             parts["used_xl_functions"], cell_code_lines
@@ -1982,11 +1972,10 @@ class CodeGenerator:
         runtime_entry_names.sort()
         runtime_imports = self._format_from_runtime_import(runtime_entry_names)
 
-        entrypoint_lines: list[str] = [
+        api_lines: list[str] = [
             "from __future__ import annotations",
             "",
-            "from .constants import CONSTANTS",
-            "from .inputs import DEFAULT_INPUTS",
+            "from .data import CONSTANTS, DEFAULT_INPUTS",
             "from .internals import _resolve_formula",
             runtime_imports,
             "import warnings",
@@ -2013,16 +2002,16 @@ class CodeGenerator:
             if bindings_workbook is None:
                 raise ValueError("bindings_workbook is required when series_bindings is set")
             setter_lines = self._emit_series_binding_setters(series_bindings, bindings_workbook)
-            entrypoint_lines.extend(setter_lines)
+            api_lines.extend(setter_lines)
             series_setter_names = self._emitted_function_names(setter_lines)
-            entrypoint_lines.append("")
+            api_lines.append("")
         for name in normalized_entrypoints:
             targets_name = f"TARGETS_{name.upper()}"
-            entrypoint_lines.append(f"{targets_name} = {{")
+            api_lines.append(f"{targets_name} = {{")
             for target, handler in entrypoint_entries[name]:
-                entrypoint_lines.append(f"    {repr(target)}: {handler},")
-            entrypoint_lines.append("}")
-            entrypoint_lines.extend(
+                api_lines.append(f"    {repr(target)}: {handler},")
+            api_lines.append("}")
+            api_lines.extend(
                 [
                     "",
                     "",
@@ -2045,10 +2034,10 @@ class CodeGenerator:
                     "",
                 ]
             )
-        entrypoint_lines.append("TARGETS = {")
+        api_lines.append("TARGETS = {")
         for target, handler in targets_entries:
-            entrypoint_lines.append(f"    {repr(target)}: {handler},")
-        entrypoint_lines.extend(
+            api_lines.append(f"    {repr(target)}: {handler},")
+        api_lines.extend(
             [
                 "}",
                 "",
@@ -2071,19 +2060,19 @@ class CodeGenerator:
                 "",
             ]
         )
-        entrypoint_py = "\n".join(entrypoint_lines)
+        api_py = "\n".join(api_lines)
 
-        entrypoint_exports = ["compute_all", "make_context"]
-        entrypoint_exports.extend(f"compute_{name}" for name in normalized_entrypoints)
-        entrypoint_exports.extend(series_setter_names)
-        entrypoint_imports = ", ".join(entrypoint_exports)
-        all_exports = entrypoint_exports + ["DEFAULT_INPUTS"]
+        api_exports = ["compute_all", "make_context"]
+        api_exports.extend(f"compute_{name}" for name in normalized_entrypoints)
+        api_exports.extend(series_setter_names)
+        api_imports = ", ".join(api_exports)
+        all_exports = api_exports + ["DEFAULT_INPUTS"]
         init_py = "\n".join(
             [
                 "from __future__ import annotations",
                 "",
-                f"from .entrypoint import {entrypoint_imports}  # noqa: F401",
-                "from .inputs import DEFAULT_INPUTS  # noqa: F401",
+                f"from .api import {api_imports}  # noqa: F401",
+                "from .data import DEFAULT_INPUTS  # noqa: F401",
                 "",
                 f"__all__ = {all_exports!r}",
                 "",
@@ -2091,21 +2080,19 @@ class CodeGenerator:
         )
 
         return {
-            f"{pkg}/__init__.py": init_py,
-            f"{pkg}/entrypoint.py": entrypoint_py,
-            f"{pkg}/inputs.py": inputs_py,
-            f"{pkg}/constants.py": constants_py,
-            f"{pkg}/runtime.py": runtime_py,
-            f"{pkg}/internals.py": internals_py,
+            "__init__.py": init_py,
+            "api.py": api_py,
+            "data.py": data_py,
+            "runtime.py": runtime_py,
+            "internals.py": internals_py,
         }
 
     @staticmethod
-    def _normalize_package_name(name: str) -> str:
-        # Keep the name importable as a Python package (identifier-ish).
+    def _normalize_identifier(name: str) -> str:
         out = re.sub(r"[^A-Za-z0-9_]+", "_", name.strip())
         out = re.sub(r"_+", "_", out).strip("_")
         if not out:
-            out = "exported"
+            out = "entrypoint"
         if out[0].isdigit():
             out = "_" + out
         return out.lower()

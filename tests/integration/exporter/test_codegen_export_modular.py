@@ -57,19 +57,18 @@ def test_codegen_generate_modules_executes_and_matches_evaluator(tmp_path: Path)
 
     files = CodeGenerator(graph).generate_modules(targets)
     assert set(files.keys()) == {
-        "exported/__init__.py",
-        "exported/constants.py",
-        "exported/entrypoint.py",
-        "exported/inputs.py",
-        "exported/internals.py",
-        "exported/runtime.py",
+        "__init__.py",
+        "api.py",
+        "data.py",
+        "internals.py",
+        "runtime.py",
     }
 
-    for relpath, content in files.items():
+    pkg_dir = tmp_path / "exported"
+    for filename, content in files.items():
         assert "excel_evaluator" not in content
-        out_path = tmp_path / relpath
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(content, encoding="utf-8")
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_dir / filename).write_text(content, encoding="utf-8")
 
     sys.path.insert(0, str(tmp_path))
     try:
@@ -87,14 +86,13 @@ def test_codegen_generate_modules_executes_and_matches_evaluator(tmp_path: Path)
         sys.modules.pop("exported", None)
 
 
-def test_codegen_generate_modules_entrypoint_uses_target_map(tmp_path: Path) -> None:
+def test_codegen_generate_modules_api_uses_target_map(tmp_path: Path) -> None:
     graph = _make_graph(_make_node("S!A1", None, 1.0))
     files = CodeGenerator(graph).generate_modules(["S!A1"])
-    entrypoint = files["exported/entrypoint.py"]
-    assert "TARGETS = {" in entrypoint
+    api_py = files["api.py"]
+    assert "TARGETS = {" in api_py
     assert (
-        "    return {target: handler(ctx, target) for target, handler in TARGETS.items()}"
-        in entrypoint
+        "    return {target: handler(ctx, target) for target, handler in TARGETS.items()}" in api_py
     )
 
 
@@ -104,9 +102,9 @@ def test_codegen_generate_modules_entrypoints_exported(tmp_path: Path) -> None:
         _make_node("S!B1", "=S!A1*2", None),
     )
     files = CodeGenerator(graph).generate_modules(["S!B1"], entrypoints={"outputs-a": ["S!B1"]})
-    entrypoint = files["exported/entrypoint.py"]
-    init_py = files["exported/__init__.py"]
-    assert "def compute_outputs_a(inputs=None, *, ctx=None):" in entrypoint
+    api_py = files["api.py"]
+    init_py = files["__init__.py"]
+    assert "def compute_outputs_a(inputs=None, *, ctx=None):" in api_py
     assert "compute_outputs_a" in init_py
 
 
@@ -120,12 +118,12 @@ def test_codegen_generate_modules_entrypoints_emit_named_functions(tmp_path: Pat
         ["S!B1"],
         entrypoints={"outputs": ["S!B1", "S!C1"], "inputs-1": ["S!A1"]},
     )
-    entrypoint = files["exported/entrypoint.py"]
-    init_py = files["exported/__init__.py"]
-    assert "TARGETS_OUTPUTS" in entrypoint
-    assert "TARGETS_INPUTS_1" in entrypoint
-    assert "def compute_outputs(inputs=None, *, ctx=None):" in entrypoint
-    assert "def compute_inputs_1(inputs=None, *, ctx=None):" in entrypoint
+    api_py = files["api.py"]
+    init_py = files["__init__.py"]
+    assert "TARGETS_OUTPUTS" in api_py
+    assert "TARGETS_INPUTS_1" in api_py
+    assert "def compute_outputs(inputs=None, *, ctx=None):" in api_py
+    assert "def compute_inputs_1(inputs=None, *, ctx=None):" in api_py
     assert "compute_outputs" in init_py
     assert "compute_inputs_1" in init_py
 
@@ -140,17 +138,17 @@ def test_codegen_generate_modules_splits_constants(tmp_path: Path) -> None:
         ["Sheet1!A1", "Sheet1!A2", "Sheet1!A3"],
         constant_types={"number"},
     )
-    inputs_py = files["exported/inputs.py"]
-    constants_py = files["exported/constants.py"]
-    entrypoint_py = files["exported/entrypoint.py"]
+    data_py = files["data.py"]
+    api_py = files["api.py"]
 
-    assert "DEFAULT_INPUTS = {" in inputs_py
-    assert "Sheet1!A2" in inputs_py
-    assert "Sheet1!A1" not in inputs_py
-    assert "CONSTANTS = {" in constants_py
-    assert "Sheet1!A1" in constants_py
-    assert "Sheet1!A3" in constants_py
-    assert "merged.update(CONSTANTS)" in entrypoint_py
+    assert "CONSTANTS = {" in data_py
+    inputs_section, _, constants_section = data_py.partition("CONSTANTS = {")
+    assert "DEFAULT_INPUTS = {" in inputs_section
+    assert "Sheet1!A2" in inputs_section
+    assert "Sheet1!A1" not in inputs_section
+    assert "Sheet1!A1" in constants_section
+    assert "Sheet1!A3" in constants_section
+    assert "merged.update(CONSTANTS)" in api_py
 
 
 def test_codegen_generate_modules_constant_blanks(tmp_path: Path) -> None:
@@ -162,15 +160,15 @@ def test_codegen_generate_modules_constant_blanks(tmp_path: Path) -> None:
         ["Sheet1!A1", "Sheet1!A2"],
         constant_blanks=True,
     )
-    inputs_py = files["exported/inputs.py"]
-    constants_py = files["exported/constants.py"]
-    entrypoint_py = files["exported/entrypoint.py"]
+    data_py = files["data.py"]
+    api_py = files["api.py"]
 
-    assert "Sheet1!A2" in inputs_py
-    assert "Sheet1!A1" not in inputs_py
-    assert "CONSTANTS = {" in constants_py
-    assert "Sheet1!A1" in constants_py
-    assert "merged.update(CONSTANTS)" in entrypoint_py
+    assert "CONSTANTS = {" in data_py
+    inputs_section, _, constants_section = data_py.partition("CONSTANTS = {")
+    assert "Sheet1!A2" in inputs_section
+    assert "Sheet1!A1" not in inputs_section
+    assert "Sheet1!A1" in constants_section
+    assert "merged.update(CONSTANTS)" in api_py
 
 
 def test_codegen_generate_modules_has_no_ty_or_ruff_diagnostics(tmp_path: Path) -> None:
@@ -179,11 +177,10 @@ def test_codegen_generate_modules_has_no_ty_or_ruff_diagnostics(tmp_path: Path) 
     graph = _make_graph(_make_node("S!A1", None, 1.0))
     files = CodeGenerator(graph).generate_modules(["S!A1"])
 
-    for relpath, content in files.items():
-        out_path = tmp_path / relpath
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(content, encoding="utf-8")
     pkg_root = tmp_path / "exported"
+    for filename, content in files.items():
+        pkg_root.mkdir(parents=True, exist_ok=True)
+        (pkg_root / filename).write_text(content, encoding="utf-8")
 
     ruff_fix = _run(
         ["uv", "run", "ruff", "check", "--fix", str(pkg_root)],
@@ -213,39 +210,6 @@ def test_codegen_generate_modules_has_no_ty_or_ruff_diagnostics(tmp_path: Path) 
     assert ruff.stderr.strip() == ""
 
 
-def test_codegen_generate_modules_has_no_ty_diagnostics_with_hyphenated_dir(
-    tmp_path: Path,
-) -> None:
-    """Package names should be normalized to importable folder names."""
-    repo_root = Path(__file__).resolve().parents[3]
-
-    graph = _make_graph(_make_node("S!A1", None, 1.0))
-    files = CodeGenerator(graph).generate_modules(["S!A1"], package_name="lic-dsf-template")
-
-    for relpath, content in files.items():
-        out_path = tmp_path / relpath
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(content, encoding="utf-8")
-    pkg_root = tmp_path / "lic_dsf_template"
-
-    ty = _run(
-        [
-            "uv",
-            "run",
-            "ty",
-            "check",
-            "--project",
-            str(repo_root),
-            "--extra-search-path",
-            str(tmp_path),
-            str(pkg_root),
-        ],
-        cwd=repo_root,
-    )
-    assert ty.returncode == 0, f"ty failed:\n{ty.stdout}\n{ty.stderr}"
-    assert ty.stderr.strip() == ""
-
-
 def test_codegen_generate_modules_has_no_ty_diagnostics_for_xlookup(tmp_path: Path) -> None:
     """XLOOKUP should not introduce undefined runtime symbols in generated modules."""
     repo_root = Path(__file__).resolve().parents[3]
@@ -261,11 +225,10 @@ def test_codegen_generate_modules_has_no_ty_diagnostics_for_xlookup(tmp_path: Pa
     )
     files = CodeGenerator(graph).generate_modules(["S!C1"])
 
-    for relpath, content in files.items():
-        out_path = tmp_path / relpath
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(content, encoding="utf-8")
     pkg_root = tmp_path / "exported"
+    for filename, content in files.items():
+        pkg_root.mkdir(parents=True, exist_ok=True)
+        (pkg_root / filename).write_text(content, encoding="utf-8")
 
     ty = _run(
         [
