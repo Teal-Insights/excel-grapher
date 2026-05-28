@@ -197,6 +197,29 @@ records = [
 
 set_borvelia_primary_balance(ctx, records)
 ```
+The setter writes into the graph's input map via `EvalContext.set_inputs`. In this notebook, the generated code is executed dynamically so the example can verify the same effect:
+
+```{python}
+#| echo: false
+namespace: dict = {}
+exec(code, namespace)
+ctx = namespace["make_context"]()
+namespace["set_borvelia_primary_balance"](
+    ctx,
+    [
+        {"TIME_PERIOD": 4, "OBS_VALUE": 7.5},
+        {"TIME_PERIOD": 5, "OBS_VALUE": 8.0},
+    ],
+)
+print(
+    "```text\n"
+    f"Sheet1!I5 after setter: {ctx.inputs['Sheet1!I5']}\n"
+    f"Sheet1!J5 after setter: {ctx.inputs['Sheet1!J5']}\n"
+    "```\n"
+)
+```
+
+Periods **4** and **5** correspond to columns I and J; the setter updates those leaves without requiring sheet addresses in the records.
 
 ### Structured docstring callback
 
@@ -241,30 +264,6 @@ exec(code_with_docs, namespace_with_docs)
 doc = namespace_with_docs["set_borvelia_primary_balance"].__doc__
 print(f"```text\n{doc}\n```\n")
 ```
-
-The setter writes into the graph's input map via `EvalContext.set_inputs`. In this notebook, the generated code is executed dynamically so the example can verify the same effect:
-
-```{python}
-#| echo: false
-namespace: dict = {}
-exec(code, namespace)
-ctx = namespace["make_context"]()
-namespace["set_borvelia_primary_balance"](
-    ctx,
-    [
-        {"TIME_PERIOD": 4, "OBS_VALUE": 7.5},
-        {"TIME_PERIOD": 5, "OBS_VALUE": 8.0},
-    ],
-)
-print(
-    "```text\n"
-    f"Sheet1!I5 after setter: {ctx.inputs['Sheet1!I5']}\n"
-    f"Sheet1!J5 after setter: {ctx.inputs['Sheet1!J5']}\n"
-    "```\n"
-)
-```
-
-Periods **4** and **5** correspond to columns I and J; the setter updates those leaves without requiring sheet addresses in the records.
 
 ### Output series
 

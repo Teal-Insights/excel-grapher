@@ -318,6 +318,18 @@ records = [
 set_borvelia_primary_balance(ctx, records)
 ```
 
+The setter writes into the graph’s input map via
+`EvalContext.set_inputs`. In this notebook, the generated code is
+executed dynamically so the example can verify the same effect:
+
+``` text
+Sheet1!I5 after setter: 7.5
+Sheet1!J5 after setter: 8.0
+```
+
+Periods **4** and **5** correspond to columns I and J; the setter
+updates those leaves without requiring sheet addresses in the records.
+
 ### Structured docstring callback
 
 If you want richer generated docstrings for series APIs, register a
@@ -389,18 +401,6 @@ Example:
         {'TIME_PERIOD': 2, 'OBS_VALUE': -0.5},
     ])
 ```
-
-The setter writes into the graph’s input map via
-`EvalContext.set_inputs`. In this notebook, the generated code is
-executed dynamically so the example can verify the same effect:
-
-``` text
-Sheet1!I5 after setter: 7.5
-Sheet1!J5 after setter: 8.0
-```
-
-Periods **4** and **5** correspond to columns I and J; the setter
-updates those leaves without requiring sheet addresses in the records.
 
 ### Output series
 
