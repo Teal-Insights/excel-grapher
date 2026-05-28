@@ -344,6 +344,15 @@ def resolve_series_binding(
         series_id=series_id,
     )
     issues.extend(overlap_issues)
+    if not addresses:
+        issues.append(
+            make_issue(
+                "warning",
+                "no_resolved_cells",
+                f"No resolved {direction} cells in data_range after graph intersection",
+                series_id=series_id,
+            )
+        )
 
     structure = series.get("structure") or {}
     measure = structure.get("measure") or {}

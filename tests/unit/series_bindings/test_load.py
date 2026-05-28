@@ -54,10 +54,17 @@ def test_merge_directory_shards(tmp_path: Path) -> None:
     assert ids == ["row_b", "row_a"]
 
 
-def test_merge_composes_identical_series_id() -> None:
+def test_merge_composes_identical_series_id_across_shards() -> None:
     doc = parse_bindings_file(FIXTURES / "shard_inputs.yaml")
     merged = merge_series_binding_documents([doc, doc])
     assert len(merged["series"]) == 1
+
+
+def test_merge_rejects_duplicate_series_id_within_single_document() -> None:
+    doc = parse_bindings_file(FIXTURES / "shard_inputs.yaml")
+    doc["series"].append(dict(doc["series"][0]))
+    with pytest.raises(SeriesBindingsLoadError, match="Duplicate series id"):
+        merge_series_binding_documents([doc])
 
 
 def test_merge_rejects_conflicting_series_id() -> None:
