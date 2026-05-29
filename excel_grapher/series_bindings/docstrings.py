@@ -6,10 +6,13 @@ import textwrap
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings.types import SeriesResolution, WorkbookSeriesBindings
+
+if TYPE_CHECKING:
+    from excel_grapher.series_bindings.docstring_renderers import SeriesDocstringRendererSpec
 
 SeriesFunctionKind = Literal["setter", "compute"]
 
@@ -215,81 +218,6 @@ def derive_doc_contract(
     )
 
 
-def _field_description_line(
-    doc: SeriesFunctionDoc,
-    field_name: str,
-    field_contract: FieldContract,
-) -> str:
-    field_doc = doc.field_descriptions.get(field_name)
-    description = field_doc.description if field_doc is not None else field_contract.concept_name
-    expected_value = field_contract.expected_value
-    if expected_value is None:
-        return f"{field_name}: {description}"
-    return f'{field_name}: {description} If supplied, expected value: "{expected_value}".'
-
-
-def _render_record(record: Mapping[str, object]) -> str:
-    fields = ", ".join(f"{field_name!r}: {value!r}" for field_name, value in record.items())
-    return f"{{{fields}}}"
-
-
-def _render_example_call(
-    contract: SeriesBindingDocstringContract,
-) -> list[str]:
-    if contract.function_kind == "setter":
-        lines = [f"{contract.function_name}(ctx, ["]
-        for record in contract.example_records:
-            lines.append(f"    {_render_record(record)},")
-        lines.append("])")
-        return lines
-    return [f"{contract.function_name}(ctx=ctx)"]
-
-
-def render_series_function_doc(
-    doc: SeriesFunctionDoc,
-    *,
-    contract: SeriesBindingDocstringContract,
-    series: Mapping[str, Any],
-) -> str:
-    required = [name for name, field in contract.fields.items() if field.required]
-    optional = [name for name, field in contract.fields.items() if not field.required]
-    example_lines = _render_example_call(contract)
-
-    lines = [
-        doc.summary,
-        "",
-        doc.purpose,
-        doc.record_matching,
-        "",
-        "Required record fields:",
-        *[f"    {_field_description_line(doc, name, contract.fields[name])}" for name in required],
-    ]
-    if optional:
-        lines.extend(
-            [
-                "",
-                "Optional record fields:",
-                *[
-                    f"    {_field_description_line(doc, name, contract.fields[name])}"
-                    for name in optional
-                ],
-            ]
-        )
-    lines.extend(
-        [
-            "",
-            "Source binding:",
-            f"    Workbook range: {series.get('data_range', contract.data_range)}",
-            f"    Layout: {series.get('layout', contract.layout)}",
-            f"    Value type: {contract.value_type if contract.value_type is not None else 'unspecified'}",
-            "",
-            "Example:",
-            *[f"    {line}" for line in example_lines],
-        ]
-    )
-    return "\n".join(lines)
-
-
 def emit_docstring_literal(doc: str) -> list[str]:
     escaped = doc.replace('"""', '\\"""')
     if "\n" not in escaped:
@@ -334,6 +262,7 @@ def resolve_series_function_docstring(
     function_kind: SeriesFunctionKind,
     function_name: str,
     callback_name: str | None,
+    docstring_renderer: SeriesDocstringRendererSpec = "plain",
 ) -> str | None:
     if callback_name is None:
         return _default_docstring(
@@ -341,6 +270,10 @@ def resolve_series_function_docstring(
             function_kind=function_kind,
             series_id=str(resolution["series_id"]),
         )
+
+    from excel_grapher.series_bindings.docstring_renderers import (
+        resolve_series_docstring_renderer,
+    )
 
     contract = derive_doc_contract(
         series,
@@ -362,7 +295,8 @@ def resolve_series_function_docstring(
     structured = run_series_docstring_callback(callback_name, ctx)
     if structured is None:
         return None
-    return render_series_function_doc(structured, contract=contract, series=series)
+    renderer = resolve_series_docstring_renderer(docstring_renderer)
+    return renderer.render(contract, structured, series=series)
 
 
 def _register_builtin_callbacks() -> None:
@@ -383,7 +317,6 @@ __all__ = [
     "emit_docstring_literal",
     "list_series_docstring_callbacks",
     "register_series_docstring_callback",
-    "render_series_function_doc",
     "resolve_series_function_docstring",
     "run_series_docstring_callback",
 ]

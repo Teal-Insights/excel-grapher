@@ -5,7 +5,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings.docstrings import (
@@ -18,6 +18,9 @@ from excel_grapher.series_bindings.types import (
     SeriesResolution,
     WorkbookSeriesBindings,
 )
+
+if TYPE_CHECKING:
+    from excel_grapher.series_bindings.docstring_renderers import SeriesDocstringRendererSpec
 
 
 def _py_literal(value: object) -> str:
@@ -72,6 +75,7 @@ def emit_setter_function(
     workbook: Path | str | None = None,
     bindings: WorkbookSeriesBindings | None = None,
     series_docstring_callback: str | None = None,
+    docstring_renderer: SeriesDocstringRendererSpec = "plain",
 ) -> list[str]:
     """Emit Python source lines for one series binding setter."""
     if not resolved["leaves"]:
@@ -124,6 +128,7 @@ def emit_setter_function(
             function_kind="setter",
             function_name=fn_name,
             callback_name=series_docstring_callback,
+            docstring_renderer=docstring_renderer,
         )
     else:
         doc = (
@@ -190,6 +195,7 @@ def emit_setters_block(
     *,
     include_type_aliases: bool = True,
     series_docstring_callback: str | None = None,
+    docstring_renderer: SeriesDocstringRendererSpec = "plain",
 ) -> list[str]:
     """Emit all series setter functions for a validated binding manifest."""
     report = resolve_series_bindings(graph, bindings, workbook=workbook, direction="input")
@@ -230,6 +236,7 @@ def emit_setters_block(
                 workbook=workbook,
                 bindings=bindings,
                 series_docstring_callback=series_docstring_callback,
+                docstring_renderer=docstring_renderer,
             )
         )
     if failed:

@@ -143,6 +143,47 @@ def test_generate_applies_series_docstring_callback() -> None:
     assert "Required record fields:" in setter.__doc__
 
 
+def test_generate_applies_google_docstring_renderer() -> None:
+    callback_name = "_test_integration_setter_google_docstring"
+    register_series_docstring_callback(
+        callback_name,
+        lambda ctx: SeriesFunctionDoc(
+            summary=f"Set {ctx.contract.series_id}.",
+            purpose="Integration test purpose.",
+            record_matching="Match by TIME_PERIOD.",
+            field_descriptions={
+                "TIME_PERIOD": FieldDoc(description="Reporting year."),
+                "OBS_VALUE": FieldDoc(description="Observed value."),
+            },
+        ),
+    )
+    bindings = validate_bindings_document(deepcopy(BINDINGS_DOCUMENT))
+    targets: list[str] = []
+    for series in bindings["series"]:
+        targets.extend(expand_data_range(series["data_range"], workbook=WORKBOOK))
+    graph = create_dependency_graph(WORKBOOK, targets, load_values=True)
+
+    with CodeGenerator(graph) as gen:
+        code = gen.generate(
+            targets,
+            series_bindings=bindings,
+            bindings_workbook=WORKBOOK,
+            series_docstring_callback=callback_name,
+            docstring_renderer="google",
+        )
+
+    ns: dict[str, object] = {}
+    exec(code, ns)
+    setter = cast(
+        Callable[[Any, list[dict[str, object]]], None],
+        ns["set_borvelia_primary_balance"],
+    )
+    assert setter.__doc__ is not None
+    assert "Args:" in setter.__doc__
+    assert "Returns:" in setter.__doc__
+    assert "Required record fields:" in setter.__doc__
+
+
 def test_generate_modules_exports_series_binding_setters(tmp_path: Path) -> None:
     bindings = validate_bindings_document(deepcopy(BINDINGS_DOCUMENT))
     targets: list[str] = []
@@ -174,3 +215,35 @@ def test_generate_modules_exports_series_binding_setters(tmp_path: Path) -> None
         for name in list(sys.modules):
             if name == "exported_series" or name.startswith("exported_series."):
                 sys.modules.pop(name, None)
+
+
+def test_generate_modules_applies_google_docstring_renderer(tmp_path: Path) -> None:
+    callback_name = "_test_integration_modules_google_docstring"
+    register_series_docstring_callback(
+        callback_name,
+        lambda ctx: SeriesFunctionDoc(
+            summary=f"Set {ctx.contract.series_id}.",
+            purpose="Integration test purpose.",
+            record_matching="Match by TIME_PERIOD.",
+            field_descriptions={
+                "TIME_PERIOD": FieldDoc(description="Reporting year."),
+                "OBS_VALUE": FieldDoc(description="Observed value."),
+            },
+        ),
+    )
+    bindings = validate_bindings_document(deepcopy(BINDINGS_DOCUMENT))
+    targets: list[str] = []
+    for series in bindings["series"]:
+        targets.extend(expand_data_range(series["data_range"], workbook=WORKBOOK))
+    graph = create_dependency_graph(WORKBOOK, targets, load_values=True)
+
+    files = CodeGenerator(graph).generate_modules(
+        targets,
+        series_bindings=bindings,
+        bindings_workbook=WORKBOOK,
+        series_docstring_callback=callback_name,
+        docstring_renderer="google",
+    )
+    assert "Args:" in files["api.py"]
+    assert "Returns:" in files["api.py"]
+    assert "Required record fields:" in files["api.py"]

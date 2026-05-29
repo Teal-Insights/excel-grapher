@@ -220,6 +220,51 @@ def test_emit_setter_structured_docstring_callback(tmp_path: Path) -> None:
     exec(code, {"EvalContext": EvalContext, "coerce_inputs_dict": coerce_inputs_dict})
 
 
+def test_emit_setter_google_docstring_renderer(tmp_path: Path) -> None:
+    callback_name = "_test_setter_google_docstring"
+    register_series_docstring_callback(
+        callback_name,
+        lambda ctx: SeriesFunctionDoc(
+            summary="Set borvelia values.",
+            purpose="Updates borvelia primary balance inputs.",
+            record_matching="Match records by TIME_PERIOD.",
+            field_descriptions={
+                "TIME_PERIOD": FieldDoc(description="Reporting year."),
+                "OBS_VALUE": FieldDoc(description="Observed value."),
+            },
+        ),
+    )
+    wb_path = tmp_path / "lic_inputs.xlsx"
+    _write_borvelia_workbook(wb_path)
+    graph = create_dependency_graph(
+        wb_path,
+        expand_data_range("Inputs!F5:J5"),
+        load_values=True,
+    )
+    bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
+    series = bindings["series"][0]
+    resolved = resolve_series_binding(graph, wb_path, series)
+    lines = emit_setter_function(
+        series,
+        resolved,
+        graph=graph,
+        workbook=wb_path,
+        bindings=bindings,
+        series_docstring_callback=callback_name,
+        docstring_renderer="google",
+    )
+    ns = _exec_setters(lines)
+    setter = cast(
+        Callable[[EvalContext, list[dict[str, object]]], None],
+        ns["set_borvelia_primary_balance"],
+    )
+    assert setter.__doc__ is not None
+    assert "Args:" in setter.__doc__
+    assert "Returns:" in setter.__doc__
+    assert "Examples:" in setter.__doc__
+    assert "Required record fields:" in setter.__doc__
+
+
 def test_emit_setter_docstring_callback_none_omits_docstring(tmp_path: Path) -> None:
     callback_name = "_test_setter_none_docstring"
     register_series_docstring_callback(callback_name, lambda ctx: None)

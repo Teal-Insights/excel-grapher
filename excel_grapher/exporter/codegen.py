@@ -49,6 +49,7 @@ __all__ = ["CodeGenerator", "GenerationParts", "GraphLike", "GraphNode"]
 
 if TYPE_CHECKING:
     from excel_grapher.grapher import DependencyGraph  # noqa: F401
+    from excel_grapher.series_bindings.docstring_renderers import SeriesDocstringRendererSpec
     from excel_grapher.series_bindings.types import InputSeries, WorkbookSeriesBindings
 
 
@@ -368,6 +369,7 @@ class CodeGenerator:
         workbook: Path | str,
         *,
         series_docstring_callback: str | None = None,
+        docstring_renderer: SeriesDocstringRendererSpec = "plain",
     ) -> list[str]:
         from excel_grapher.series_bindings.bindings_codegen import emit_series_bindings_block
 
@@ -376,6 +378,7 @@ class CodeGenerator:
             workbook,
             bindings,
             series_docstring_callback=series_docstring_callback,
+            docstring_renderer=docstring_renderer,
         )
 
     def derive_input_series(
@@ -1709,6 +1712,7 @@ class CodeGenerator:
         series_bindings: WorkbookSeriesBindings | None = None,
         bindings_workbook: Path | str | None = None,
         series_docstring_callback: str | None = None,
+        docstring_renderer: SeriesDocstringRendererSpec = "plain",
     ) -> str:
         """Generate standalone Python code for target cells.
 
@@ -1724,6 +1728,9 @@ class CodeGenerator:
             bindings_workbook: Path to the ``.xlsx`` file used to resolve binds.
             series_docstring_callback: Optional registered callback name for structured
                 docstrings on generated ``set_*`` and series output ``compute_*`` functions.
+            docstring_renderer: Built-in renderer name or custom renderer object/callable
+                for structured series-binding docstrings (``plain``, ``rst``,
+                ``google``, ``numpy``).
 
         Returns:
             Standalone Python source code as a string.
@@ -1820,6 +1827,7 @@ class CodeGenerator:
                     series_bindings,
                     bindings_workbook,
                     series_docstring_callback=series_docstring_callback,
+                    docstring_renderer=docstring_renderer,
                 )
             )
             lines.append("")
@@ -1888,6 +1896,7 @@ class CodeGenerator:
         series_bindings: WorkbookSeriesBindings | None = None,
         bindings_workbook: Path | str | None = None,
         series_docstring_callback: str | None = None,
+        docstring_renderer: SeriesDocstringRendererSpec = "plain",
     ) -> dict[str, str]:
         """Generate a multi-module Python package for target cells.
 
@@ -2022,6 +2031,7 @@ class CodeGenerator:
                 series_bindings,
                 bindings_workbook,
                 series_docstring_callback=series_docstring_callback,
+                docstring_renderer=docstring_renderer,
             )
             api_lines.extend(setter_lines)
             series_setter_names = self._emitted_function_names(setter_lines)

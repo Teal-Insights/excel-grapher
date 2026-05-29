@@ -341,7 +341,10 @@ The callback runs once for each generated series API function. In this
 workbook that means `set_borvelia_primary_balance` (setter) and
 `compute_borvelia_primary_balance` (output compute). Use
 `ctx.function_kind` and `ctx.function_name` to branch wording if you
-want different prose for setters vs computes.
+want different prose for setters vs computes. Renderer selection is
+independent from callback content and can be controlled with
+`docstring_renderer` (`"plain"`, `"rst"`, `"google"`, `"numpy"`, or a
+custom renderer object/callable).
 
 ``` python
 from excel_grapher.exporter import (
@@ -373,6 +376,7 @@ with CodeGenerator(graph) as gen:
         series_bindings=bindings,
         bindings_workbook=workbook_path,
         series_docstring_callback=callback_name,
+        docstring_renderer="google",
     )
 
 namespace_with_docs: dict = {}
