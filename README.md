@@ -699,6 +699,7 @@ series output `compute_*` functions by registering a callback and passing its na
 from excel_grapher.exporter import (
     CodeGenerator,
     FieldDoc,
+    GoogleSeriesDocstringRenderer,
     SeriesFunctionDoc,
     register_series_docstring_callback,
 )
@@ -717,11 +718,17 @@ def my_series_docstring(ctx):
 
 register_series_docstring_callback("my_docs", my_series_docstring, replace=True)
 
+
+def compact_google_renderer(contract, doc, *, series=None):
+    # Simple callables are valid custom renderers.
+    return GoogleSeriesDocstringRenderer().render(contract, doc, series=series)
+
 code = CodeGenerator(graph).generate(
     targets,
     series_bindings=bindings,
     bindings_workbook=workbook_path,
     series_docstring_callback="my_docs",
+    docstring_renderer=compact_google_renderer,  # or "plain" | "rst" | "google" | "numpy"
 )
 ```
 
@@ -734,6 +741,7 @@ Callback contract highlights:
 - Use `ctx.function_kind` (`"setter"` or `"compute"`) and `ctx.function_name` to branch wording per function.
 - `ctx.contract` contains deterministic binding facts for that specific function (required fields, field dtypes, examples, layout, and data range).
 - Docstring callbacks are selected by name (`series_docstring_callback="..."`), not passed as direct callables to `generate`.
+- Docstring renderers can be built-in names (`"plain"`, `"rst"`, `"google"`, `"numpy"`), renderer objects implementing `SeriesDocstringRenderer`, or simple callables `(contract, doc, *, series=None) -> str`.
 - If callback rendering is requested, codegen requires full series context (`series_bindings` + `bindings_workbook`).
 
 A (truncated) sketch of the exported code:

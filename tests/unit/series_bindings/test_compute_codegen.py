@@ -241,6 +241,77 @@ def test_emit_compute_structured_docstring_callback(tmp_path: Path) -> None:
     assert "Example:" in compute.__doc__
 
 
+def test_emit_compute_google_docstring_renderer(tmp_path: Path) -> None:
+    callback_name = "_test_compute_google_docstring"
+    register_series_docstring_callback(
+        callback_name,
+        lambda ctx: SeriesFunctionDoc(
+            summary="Compute scaled output.",
+            purpose="Returns scaled output records.",
+            record_matching="One record per output cell.",
+            field_descriptions={
+                "LABEL": FieldDoc(description="Series label."),
+                "OBS_VALUE": FieldDoc(description="Computed value."),
+            },
+        ),
+    )
+    wb_path = tmp_path / "formula.xlsx"
+    _write_formula_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, ["Sheet1!C2"], load_values=True)
+    series = {
+        "id": "scaled_output",
+        "sheet": "Sheet1",
+        "data_range": "Sheet1!C2",
+        "layout": "scalar",
+        "output": {"compute": {"name": "compute_scaled_output"}},
+        "structure": {
+            "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
+            "dimensions": [
+                {
+                    "concept": "LABEL",
+                    "role": "key",
+                    "scope": "series",
+                    "bind": {"kind": "constant", "value": "scaled"},
+                }
+            ],
+        },
+        "key": ["LABEL"],
+    }
+    resolved = resolve_series_binding(graph, wb_path, series, direction="output")
+    lines = [
+        "Record = dict[str, object]",
+        "Records = list[Record]",
+        "",
+        *emit_compute_function(
+            series,
+            resolved,
+            graph=graph,
+            workbook=wb_path,
+            bindings={
+                "schema_version": "1.2.0",
+                "workbook": "formula.xlsx",
+                "series": [series],
+                "concept_scheme": {},
+            },
+            series_docstring_callback=callback_name,
+            docstring_renderer="google",
+        ),
+    ]
+
+    def resolver(address: str):
+        if address == "Sheet1!C2":
+            return lambda ctx: 10.0
+        return None
+
+    ns = _exec_compute(lines, resolver=resolver)
+    compute = cast(Callable[..., Records], ns["compute_scaled_output"])
+    assert compute.__doc__ is not None
+    assert "Examples:" in compute.__doc__
+    assert "Returns:" in compute.__doc__
+    assert "\n    Returns:" not in compute.__doc__
+    assert "Example:" not in compute.__doc__
+
+
 def test_emit_compute_callback_requires_codegen_context(tmp_path: Path) -> None:
     wb_path = tmp_path / "formula.xlsx"
     _write_formula_workbook(wb_path)

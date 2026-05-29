@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings.compute_codegen import emit_computes_block
 from excel_grapher.series_bindings.normalize import has_input_direction, has_output_direction
 from excel_grapher.series_bindings.setter_codegen import emit_setters_block
 from excel_grapher.series_bindings.types import WorkbookSeriesBindings
+
+if TYPE_CHECKING:
+    from excel_grapher.series_bindings.docstring_renderers import SeriesDocstringRendererSpec
 
 
 def emit_series_bindings_block(
@@ -17,6 +21,7 @@ def emit_series_bindings_block(
     bindings: WorkbookSeriesBindings,
     *,
     series_docstring_callback: str | None = None,
+    docstring_renderer: SeriesDocstringRendererSpec = "plain",
 ) -> list[str]:
     """Emit setter and/or output compute functions for a binding manifest."""
     series_list = [s for s in bindings.get("series", []) if isinstance(s, dict)]
@@ -35,6 +40,7 @@ def emit_series_bindings_block(
                 bindings,
                 include_type_aliases=include_aliases,
                 series_docstring_callback=series_docstring_callback,
+                docstring_renderer=docstring_renderer,
             )
         )
         include_aliases = False
@@ -46,6 +52,7 @@ def emit_series_bindings_block(
                 bindings,
                 include_type_aliases=include_aliases,
                 series_docstring_callback=series_docstring_callback,
+                docstring_renderer=docstring_renderer,
             )
         )
     return lines

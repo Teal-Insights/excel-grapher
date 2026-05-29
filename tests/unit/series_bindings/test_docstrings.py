@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -15,15 +16,22 @@ from excel_grapher.series_bindings import (
     load_series_bindings,
     resolve_series_binding,
 )
+from excel_grapher.series_bindings.docstring_renderers import (
+    GoogleSeriesDocstringRenderer,
+    NumpySeriesDocstringRenderer,
+    PlainSeriesDocstringRenderer,
+    RstSeriesDocstringRenderer,
+    resolve_series_docstring_renderer,
+)
 from excel_grapher.series_bindings.docstrings import (
     FieldDoc,
     SeriesBindingDocstringContext,
+    SeriesBindingDocstringContract,
     SeriesFunctionDoc,
     derive_doc_contract,
     emit_docstring_literal,
     list_series_docstring_callbacks,
     register_series_docstring_callback,
-    render_series_function_doc,
     resolve_series_function_docstring,
     run_series_docstring_callback,
 )
@@ -231,7 +239,7 @@ def test_derive_doc_contract_uses_none_for_unknown_dtype() -> None:
     assert contract.fields["TIME_PERIOD"].dtype is None
 
 
-def test_render_series_function_doc_includes_sections() -> None:
+def _demo_contract_and_doc() -> tuple[SeriesBindingDocstringContract, SeriesFunctionDoc]:
     contract = derive_doc_contract(
         {
             "id": "demo",
@@ -280,7 +288,85 @@ def test_render_series_function_doc_includes_sections() -> None:
             "OBS_VALUE": FieldDoc(description="Observed value."),
         },
     )
-    rendered = render_series_function_doc(doc, contract=contract, series={"id": "demo"})
+    return contract, doc
+
+
+def test_resolve_series_docstring_renderer_builtin_names() -> None:
+    for name in ("plain", "rst", "google", "numpy"):
+        renderer = resolve_series_docstring_renderer(name)
+        assert hasattr(renderer, "render")
+
+
+def test_resolve_series_docstring_renderer_unknown_raises() -> None:
+    with pytest.raises(ValueError, match="Unknown series docstring renderer"):
+        resolve_series_docstring_renderer(cast(Any, "sphinx"))
+
+
+def test_resolve_series_docstring_renderer_custom_object() -> None:
+    class _CustomRenderer:
+        def render(
+            self,
+            contract: SeriesBindingDocstringContract,
+            doc: SeriesFunctionDoc,
+            *,
+            series: Mapping[str, Any] | None = None,
+        ) -> str:
+            del contract, series
+            return f"CUSTOM:{doc.summary}"
+
+    renderer = resolve_series_docstring_renderer(_CustomRenderer())
+    contract, doc = _demo_contract_and_doc()
+    assert renderer.render(contract, doc) == "CUSTOM:Set demo values."
+
+
+def test_resolve_series_docstring_renderer_custom_callable() -> None:
+    def _custom_callable(
+        contract: SeriesBindingDocstringContract,
+        doc: SeriesFunctionDoc,
+        *,
+        series: Any = None,
+    ) -> str:
+        del contract, series
+        return f"CALLABLE:{doc.summary}"
+
+    renderer = resolve_series_docstring_renderer(_custom_callable)
+    contract, doc = _demo_contract_and_doc()
+    assert renderer.render(contract, doc) == "CALLABLE:Set demo values."
+
+
+def test_resolve_series_docstring_renderer_invalid_custom_raises() -> None:
+    with pytest.raises(TypeError, match="Custom renderer must be"):
+        resolve_series_docstring_renderer(cast(Any, 42))
+
+
+@pytest.mark.parametrize(
+    ("renderer_cls", "markers"),
+    [
+        (PlainSeriesDocstringRenderer, ("Required record fields:", "Source binding:", "Example:")),
+        (RstSeriesDocstringRenderer, (":TIME_PERIOD:", "Source binding", "Example")),
+        (GoogleSeriesDocstringRenderer, ("Args:", "Returns:", "Examples:")),
+        (
+            NumpySeriesDocstringRenderer,
+            ("Parameters\n----------", "Returns\n-------", "Examples\n--------"),
+        ),
+    ],
+)
+def test_builtin_renderer_includes_sections(
+    renderer_cls: type,
+    markers: tuple[str, ...],
+) -> None:
+    contract, doc = _demo_contract_and_doc()
+    rendered = renderer_cls().render(contract, doc, series={"id": "demo"})
+    assert "Set demo values." in rendered
+    assert "TIME_PERIOD" in rendered
+    assert "set_demo(ctx, [" in rendered
+    for marker in markers:
+        assert marker in rendered
+
+
+def test_plain_renderer_includes_sections() -> None:
+    contract, doc = _demo_contract_and_doc()
+    rendered = PlainSeriesDocstringRenderer().render(contract, doc, series={"id": "demo"})
     assert "Set demo values." in rendered
     assert "Required record fields:" in rendered
     assert "TIME_PERIOD:" in rendered
@@ -363,4 +449,46 @@ def test_resolve_series_function_docstring_registered_callback(tmp_path: Path) -
     )
     assert doc is not None
     assert "Set borvelia_primary_balance." in doc
+    assert "Required record fields:" in doc
+
+
+def test_resolve_series_function_docstring_applies_renderer(tmp_path: Path) -> None:
+    callback_name = "_test_renderer_selection_callback"
+    register_series_docstring_callback(
+        callback_name,
+        lambda ctx: SeriesFunctionDoc(
+            summary=f"Set {ctx.contract.series_id}.",
+            purpose="Purpose text.",
+            record_matching="Match by key.",
+            field_descriptions={
+                field: FieldDoc(description=f"Describe {field}.")
+                for field in ctx.contract.required_fields
+            },
+        ),
+    )
+    wb_path = tmp_path / "lic_inputs.xlsx"
+    _write_borvelia_workbook(wb_path)
+    graph = create_dependency_graph(
+        wb_path,
+        expand_data_range("Inputs!F5:J5"),
+        load_values=True,
+    )
+    bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
+    series = bindings["series"][0]
+    resolved = resolve_series_binding(graph, wb_path, series)
+
+    doc = resolve_series_function_docstring(
+        graph=graph,
+        workbook=wb_path,
+        bindings=bindings,
+        series=series,
+        resolution=resolved,
+        function_kind="setter",
+        function_name="set_borvelia_primary_balance",
+        callback_name=callback_name,
+        docstring_renderer="google",
+    )
+    assert doc is not None
+    assert "Set borvelia_primary_balance." in doc
+    assert "Args:" in doc
     assert "Required record fields:" in doc
