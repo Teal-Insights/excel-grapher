@@ -15,7 +15,11 @@ from excel_grapher.series_bindings import (
     resolve_series_binding,
     validate_bindings_document,
 )
-from excel_grapher.series_bindings.setter_codegen import emit_setter_function, emit_setters_block
+from excel_grapher.series_bindings.setter_codegen import (
+    emit_setter_function,
+    emit_setter_helpers,
+    emit_setters_block,
+)
 
 KEYLESS_SCALAR_BINDING: dict[str, Any] = {
     "schema_version": "1.2.0",
@@ -60,7 +64,7 @@ def _exec_setters(lines: list[str]) -> dict[str, object]:
         "EvalContext": EvalContext,
         "coerce_inputs_dict": coerce_inputs_dict,
     }
-    exec("\n".join(lines), namespace)
+    exec("\n".join(emit_setter_helpers() + lines), namespace)
     return namespace
 
 

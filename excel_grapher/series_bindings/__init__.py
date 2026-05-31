@@ -53,6 +53,7 @@ from excel_grapher.series_bindings.schema import (
 )
 from excel_grapher.series_bindings.setter_codegen import (
     emit_setter_function,
+    emit_setter_helpers,
     emit_setters_block,
     generate_setters_module,
 )
@@ -123,6 +124,7 @@ __all__ = [
     "emit_computes_block",
     "emit_series_bindings_block",
     "emit_setter_function",
+    "emit_setter_helpers",
     "emit_setters_block",
     "generate_computes_module",
     "has_input_direction",
