@@ -44,7 +44,7 @@ from excel_grapher.series_bindings.normalize import (
 )
 from excel_grapher.series_bindings.output_series import derive_output_series
 from excel_grapher.series_bindings.ranges import expand_data_range, expand_data_range_for_graph
-from excel_grapher.series_bindings.records_types import Record, Records
+from excel_grapher.series_bindings.records_types import Record, Records, Scalar
 from excel_grapher.series_bindings.resolve import resolve_series_binding, resolve_series_bindings
 from excel_grapher.series_bindings.schema import (
     SeriesBindingsSchemaError,
@@ -64,7 +64,6 @@ from excel_grapher.series_bindings.types import (
     OutputSeriesCell,
     ResolutionIssue,
     ResolutionReport,
-    Scalar,
     SeriesResolution,
     ValidationIssue,
     ValidationLevel,

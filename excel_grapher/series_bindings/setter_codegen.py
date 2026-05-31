@@ -124,7 +124,7 @@ def emit_setter_function(
     lines.append(f"def {fn_name}(")
     lines.append("    ctx: EvalContext,")
     if scalar_shorthand:
-        lines.append("    records: Records | Record | object,")
+        lines.append("    records: Records | Record | Scalar,")
     else:
         lines.append("    records: Records,")
     lines.append("    *,")
@@ -225,6 +225,7 @@ def emit_setters_block(
     if include_type_aliases:
         lines.extend(
             [
+                "Scalar = str | int | float | bool | None",
                 "Record = dict[str, object]",
                 "Records = list[Record]",
                 "",
