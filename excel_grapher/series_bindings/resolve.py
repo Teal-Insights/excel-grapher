@@ -456,6 +456,18 @@ def resolve_series_binding(
             else:
                 seen_keys[key_tuple] = address
 
+    layout = series.get("layout")
+    if layout == "scalar" and not key_concepts and len(leaves) > 1:
+        issues.append(
+            make_issue(
+                "error",
+                "keyless_scalar_ambiguous",
+                "Keyless scalar binding must resolve to exactly one leaf; "
+                f"got {len(leaves)} leaves in data_range",
+                series_id=series_id,
+            )
+        )
+
     ok = not any(i["level"] == "error" for i in issues)
     return {
         "series_id": series_id,

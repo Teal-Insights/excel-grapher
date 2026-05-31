@@ -92,6 +92,35 @@ def test_schema_accepts_1_1_0_matrix_fixture() -> None:
     assert bindings["series"][0]["structure"]["dimensions"][0]["bind"]["kind"] == "row_hierarchy"
 
 
+def test_row_series_rejects_empty_key() -> None:
+    doc = {
+        "schema_version": "1.0.0",
+        "series": [
+            {
+                "id": "empty_key_row",
+                "sheet": "S",
+                "data_range": "S!B2:C2",
+                "layout": "row_series",
+                "setter": {"name": "set_empty_key_row"},
+                "structure": {
+                    "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
+                    "dimensions": [
+                        {
+                            "concept": "TIME_PERIOD",
+                            "role": "key",
+                            "scope": "cell",
+                            "bind": {"kind": "column_header", "header_row": 1},
+                        }
+                    ],
+                },
+                "key": [],
+            }
+        ],
+    }
+    with pytest.raises(SeriesBindingsSchemaError):
+        validate_bindings_document(doc)
+
+
 def test_row_series_requires_cell_scoped_dimension() -> None:
     doc = {
         "schema_version": "1.0.0",
