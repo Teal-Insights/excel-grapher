@@ -15,7 +15,7 @@ from excel_grapher.series_bindings import (
     resolve_series_binding,
     validate_bindings_document,
 )
-from excel_grapher.series_bindings.setter_codegen import emit_setter_function
+from excel_grapher.series_bindings.setter_codegen import emit_setter_function, emit_setters_block
 
 KEYLESS_SCALAR_BINDING: dict[str, Any] = {
     "schema_version": "1.2.0",
@@ -153,3 +153,19 @@ def test_keyless_scalar_setter_accepts_record_without_keys(tmp_path: Path) -> No
     ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
     setter(ctx, [{"OBS_VALUE": "Newland"}])
     assert ctx.inputs["Inputs!B5"] == "Newland"
+
+
+def test_keyless_scalar_codegen_signature_uses_scalar_alias(tmp_path: Path) -> None:
+    wb_path = tmp_path / "inputs.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Inputs")
+    ws.write("B5", "Litellia")
+    wb.close()
+
+    graph = create_dependency_graph(wb_path, ["Inputs!B5"], load_values=True)
+    bindings = validate_bindings_document(KEYLESS_SCALAR_BINDING)
+    lines = emit_setters_block(graph, wb_path, bindings)
+    code = "\n".join(lines)
+
+    assert "Scalar = str | int | float | bool | None" in code
+    assert "records: Records | Record | Scalar," in code
