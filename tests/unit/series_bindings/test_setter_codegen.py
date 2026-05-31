@@ -21,7 +21,11 @@ from excel_grapher.series_bindings.docstrings import (
     SeriesFunctionDoc,
     register_series_docstring_callback,
 )
-from excel_grapher.series_bindings.setter_codegen import emit_setter_function, emit_setters_block
+from excel_grapher.series_bindings.setter_codegen import (
+    emit_setter_function,
+    emit_setter_helpers,
+    emit_setters_block,
+)
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
 
@@ -48,7 +52,7 @@ def _exec_setters(
     }
     if extra:
         namespace.update(extra)
-    exec("\n".join(lines), namespace)
+    exec("\n".join(emit_setter_helpers() + lines), namespace)
     return namespace
 
 
@@ -155,6 +159,19 @@ def test_emit_setter_allow_address(tmp_path: Path) -> None:
     assert ctx.inputs["Sheet1!D2"] == 99.0
 
 
+def test_emit_setters_block_emits_helpers_once(tmp_path: Path) -> None:
+    wb_path = tmp_path / "lic_inputs.xlsx"
+    _write_borvelia_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, expand_data_range("Inputs!F5:J5"), load_values=True)
+    bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
+    code = "\n".join(emit_setters_block(graph, wb_path, bindings))
+
+    assert code.count("def _apply_series_records(") == 1
+    assert code.count("def _coerce_records(") == 1
+    assert "_apply_series_records(" in code
+    assert "def set_borvelia_primary_balance(" in code
+
+
 def test_emit_setters_block_all_series(tmp_path: Path) -> None:
     wb_path = tmp_path / "lic_inputs.xlsx"
     _write_borvelia_workbook(wb_path)
@@ -208,7 +225,6 @@ def test_emit_setter_structured_docstring_callback(tmp_path: Path) -> None:
         bindings=bindings,
         series_docstring_callback=callback_name,
     )
-    code = "\n".join(lines)
     ns = _exec_setters(lines)
     setter = cast(
         Callable[[EvalContext, list[dict[str, object]]], None],
@@ -217,7 +233,10 @@ def test_emit_setter_structured_docstring_callback(tmp_path: Path) -> None:
     assert setter.__doc__ is not None
     assert "Set borvelia values." in setter.__doc__
     assert 'Value with "quotes".' in setter.__doc__
-    exec(code, {"EvalContext": EvalContext, "coerce_inputs_dict": coerce_inputs_dict})
+    exec(
+        "\n".join(emit_setter_helpers() + lines),
+        {"EvalContext": EvalContext, "coerce_inputs_dict": coerce_inputs_dict},
+    )
 
 
 def test_emit_setter_google_docstring_renderer(tmp_path: Path) -> None:

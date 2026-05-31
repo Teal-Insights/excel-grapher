@@ -79,6 +79,64 @@ def _allowed_record_fields(
     return {f for f in fields if f}
 
 
+def emit_setter_helpers() -> list[str]:
+    """Emit shared private helpers used by generated ``set_*`` functions."""
+    return [
+        "def _coerce_records(records, measure_field, *, allow_scalar=False) -> Records:",
+        "    if not allow_scalar:",
+        "        return records",
+        "    if not isinstance(records, list):",
+        "        if isinstance(records, dict):",
+        "            return [records]",
+        "        return [{measure_field: records}]",
+        "    return records",
+        "",
+        "def _apply_series_records(",
+        "    ctx,",
+        "    records,",
+        "    *,",
+        "    key_fields,",
+        "    allowed_fields,",
+        "    measure_field,",
+        "    leaf_index,",
+        "    strict,",
+        "    fn_name,",
+        "    allow_address=False,",
+        "    requires_address=False,",
+        ") -> None:",
+        "    updates: dict[str, object] = {}",
+        "    for index, record in enumerate(records):",
+        "        if strict:",
+        "            unknown = set(record) - allowed_fields",
+        "            if unknown:",
+        '                raise ValueError(f"record[{index}]: unknown fields {sorted(unknown)!r}")',
+        "        if measure_field not in record:",
+        '            raise ValueError(f"record[{index}]: missing required field {measure_field!r}")',
+        "        address = None",
+        "        if allow_address or requires_address:",
+        '            address = record.get("address") or record.get("cell_address")',
+        "        if requires_address and address is None:",
+        "            raise ValueError(",
+        '                f"record[{index}]: address required for {fn_name} (duplicate keys in binding)"',
+        "            )",
+        "        if address is None:",
+        "            if not requires_address:",
+        "                missing = [field for field in key_fields if field not in record]",
+        "                if missing:",
+        '                    raise ValueError(f"record[{index}]: missing key fields {missing!r}")',
+        "                key_tuple = tuple((field, record[field]) for field in key_fields)",
+        "                address = leaf_index.get(key_tuple)",
+        "                if address is None:",
+        "                    raise ValueError(",
+        '                        f"record[{index}]: no leaf matches key {dict(key_tuple)!r}"',
+        "                    )",
+        "        updates[address] = record[measure_field]",
+        "    if updates:",
+        "        ctx.set_inputs(coerce_inputs_dict(updates))",
+        "",
+    ]
+
+
 def emit_setter_function(
     series: dict[str, Any],
     resolved: SeriesResolution,
@@ -154,58 +212,24 @@ def emit_setter_function(
         )
     if doc is not None:
         lines.extend(emit_docstring_literal(doc))
-    lines.append(f"    key_fields = {tuple(key_fields)!r}")
-    lines.append(f"    allow_address = {allow_address!r}")
-    lines.append(f"    requires_address = {requires_address!r}")
-    lines.append(f"    measure_field = {measure_concept!r}")
-    lines.append(f"    allowed_fields = {set(allowed)!r}")
+    leaf_index_arg = "{}" if requires_address else index_name
     if scalar_shorthand:
-        lines.append("    if not isinstance(records, list):")
-        lines.append("        if isinstance(records, dict):")
-        lines.append("            records = [records]")
-        lines.append("        else:")
-        lines.append("            records = [{measure_field: records}]")
-    lines.append("    updates: dict[str, object] = {}")
-    lines.append("    for index, record in enumerate(records):")
-    lines.append("        if strict:")
-    lines.append("            unknown = set(record) - allowed_fields")
-    lines.append("            if unknown:")
-    lines.append(
-        '                raise ValueError(f"record[{index}]: unknown fields {sorted(unknown)!r}")'
-    )
-    lines.append("        if measure_field not in record:")
-    lines.append(
-        '            raise ValueError(f"record[{index}]: missing required field {measure_field!r}")'
-    )
-    lines.append("        address = None")
-    lines.append("        if allow_address or requires_address:")
-    lines.append('            address = record.get("address") or record.get("cell_address")')
-    lines.append("        if requires_address and address is None:")
-    lines.append(
-        "            raise ValueError("
-        f'f"record[{{index}}]: address required for {fn_name} (duplicate keys in binding)"'
-        ")"
-    )
-    lines.append("        if address is None:")
-    if requires_address:
-        lines.append("            pass  # address required; key lookup disabled")
+        lines.append("    _apply_series_records(")
+        lines.append("        ctx,")
+        lines.append(f"        _coerce_records(records, {measure_concept!r}, allow_scalar=True),")
     else:
-        lines.append("            missing = [field for field in key_fields if field not in record]")
-        lines.append("            if missing:")
-        lines.append(
-            '                raise ValueError(f"record[{index}]: missing key fields {missing!r}")'
-        )
-        lines.append(
-            "            key_tuple = tuple((field, record[field]) for field in key_fields)"
-        )
-        lines.append(f"            address = {index_name}.get(key_tuple)")
-        lines.append("            if address is None:")
-        lines.append(
-            '                raise ValueError(f"record[{index}]: no leaf matches key {dict(key_tuple)!r}")'
-        )
-    lines.append("        updates[address] = record[measure_field]")
-    lines.append("    if updates:")
-    lines.append("        ctx.set_inputs(coerce_inputs_dict(updates))")
+        lines.append("    _apply_series_records(")
+        lines.append("        ctx,")
+        lines.append("        records,")
+    lines.append(f"        key_fields={tuple(key_fields)!r},")
+    lines.append(f"        allowed_fields={set(allowed)!r},")
+    lines.append(f"        measure_field={measure_concept!r},")
+    lines.append(f"        leaf_index={leaf_index_arg},")
+    lines.append("        strict=strict,")
+    lines.append(f"        fn_name={fn_name!r},")
+    lines.append(f"        allow_address={allow_address!r},")
+    lines.append(f"        requires_address={requires_address!r},")
+    lines.append("    )")
     lines.append("")
     return lines
 
@@ -231,6 +255,7 @@ def emit_setters_block(
                 "",
             ]
         )
+    lines.extend(emit_setter_helpers())
     by_id = {
         s["id"]: s
         for s in bindings.get("series", [])
