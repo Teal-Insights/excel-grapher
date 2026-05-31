@@ -47,6 +47,18 @@ def _measure_concept(series: dict[str, Any]) -> str:
     return str(measure.get("concept") or "OBS_VALUE")
 
 
+def _accepts_scalar_shorthand(
+    series: dict[str, Any],
+    resolved: SeriesResolution,
+) -> bool:
+    """True when the setter may accept a bare measure value instead of record(s)."""
+    if series.get("layout") != "scalar":
+        return False
+    if series.get("key"):
+        return False
+    return len(resolved["leaves"]) == 1
+
+
 def _allowed_record_fields(
     series: dict[str, Any],
     *,
@@ -108,9 +120,13 @@ def emit_setter_function(
             lines.append(f"    {key_tuple_src}: {repr(leaf['address'])},")
         lines.append("}")
         lines.append("")
+    scalar_shorthand = _accepts_scalar_shorthand(series, resolved)
     lines.append(f"def {fn_name}(")
     lines.append("    ctx: EvalContext,")
-    lines.append("    records: Records,")
+    if scalar_shorthand:
+        lines.append("    records: Records | Record | object,")
+    else:
+        lines.append("    records: Records,")
     lines.append("    *,")
     lines.append(f"    strict: bool = {strict!r},")
     lines.append(") -> None:")
@@ -143,6 +159,12 @@ def emit_setter_function(
     lines.append(f"    requires_address = {requires_address!r}")
     lines.append(f"    measure_field = {measure_concept!r}")
     lines.append(f"    allowed_fields = {set(allowed)!r}")
+    if scalar_shorthand:
+        lines.append("    if not isinstance(records, list):")
+        lines.append("        if isinstance(records, dict):")
+        lines.append("            records = [records]")
+        lines.append("        else:")
+        lines.append("            records = [{measure_field: records}]")
     lines.append("    updates: dict[str, object] = {}")
     lines.append("    for index, record in enumerate(records):")
     lines.append("        if strict:")

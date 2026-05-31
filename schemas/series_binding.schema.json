@@ -381,7 +381,6 @@
             "measure": { "$ref": "#/$defs/Measure" },
             "dimensions": {
               "type": "array",
-              "minItems": 1,
               "items": { "$ref": "#/$defs/Dimension" }
             },
             "attributes": {
@@ -393,10 +392,9 @@
         },
         "key": {
           "type": "array",
-          "minItems": 1,
           "items": { "$ref": "#/$defs/ConceptId" },
           "uniqueItems": true,
-          "description": "Concept ids required on each incoming record for matching (MVP row_series: typically [TIME_PERIOD] when country and indicator are series-scoped)."
+          "description": "Concept ids required on each incoming record for matching (MVP row_series: typically [TIME_PERIOD] when country and indicator are series-scoped). Scalar layout may use an empty key when the binding resolves to a single cell."
         },
         "series_context": {
           "type": "object",
@@ -417,9 +415,37 @@
       },
       "allOf": [
         { "$ref": "#/$defs/SeriesBindingDirectionRules" },
+        { "$ref": "#/$defs/SeriesBindingLayoutKeyRules" },
         { "$ref": "#/$defs/SeriesBindingMvpRules" },
         { "$ref": "#/$defs/SeriesBindingMatrixRules" }
       ]
+    },
+    "SeriesBindingLayoutKeyRules": {
+      "description": "Non-scalar layouts require at least one key and dimension; scalar may use empty key and dimensions.",
+      "if": {
+        "properties": { "layout": { "const": "scalar" } },
+        "required": ["layout"]
+      },
+      "then": {
+        "properties": {
+          "key": { "minItems": 0 },
+          "structure": {
+            "properties": {
+              "dimensions": { "minItems": 0 }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "key": { "minItems": 1 },
+          "structure": {
+            "properties": {
+              "dimensions": { "minItems": 1 }
+            }
+          }
+        }
+      }
     },
     "SeriesBindingDirectionRules": {
       "description": "Each series must declare at least one of input or output (legacy top-level setter counts as input).",
