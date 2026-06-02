@@ -336,6 +336,45 @@ def _make_graph(*nodes: Node) -> DependencyGraph:
     return graph
 
 
+def _build_codegen_diamond_graph(*, reverse_insertion: bool) -> DependencyGraph:
+    nodes = [
+        _make_node("Sheet1!A1", None, 1.0),
+        _make_node("Sheet1!B1", "=Sheet1!A1+1", None),
+        _make_node("Sheet1!C1", "=Sheet1!A1*2", None),
+        _make_node("Sheet1!D1", "=Sheet1!B1+Sheet1!C1", None),
+    ]
+    if reverse_insertion:
+        nodes = list(reversed(nodes))
+
+    graph = DependencyGraph(sheet_order=["Sheet1"])
+    for node in nodes:
+        graph.add_node(node)
+    graph.add_edge("Sheet1!B1", "Sheet1!A1")
+    graph.add_edge("Sheet1!C1", "Sheet1!A1")
+    graph.add_edge("Sheet1!D1", "Sheet1!B1")
+    graph.add_edge("Sheet1!D1", "Sheet1!C1")
+    return graph
+
+
+class TestDeterministicCodegenOrdering:
+    def test_generate_modules_emits_formula_functions_in_workbook_order(self) -> None:
+        graph = _build_codegen_diamond_graph(reverse_insertion=True)
+        files = CodeGenerator(graph).generate_modules(["Sheet1!D1"])
+        internals = files["internals.py"]
+
+        positions = [internals.index(f"def cell_sheet1_{col}1(") for col in ("b", "c", "d")]
+        assert positions == sorted(positions)
+
+    def test_generate_modules_formula_order_is_independent_of_node_insertion_order(self) -> None:
+        forward = CodeGenerator(
+            _build_codegen_diamond_graph(reverse_insertion=False)
+        ).generate_modules(["Sheet1!D1"])
+        reverse = CodeGenerator(
+            _build_codegen_diamond_graph(reverse_insertion=True)
+        ).generate_modules(["Sheet1!D1"])
+        assert forward["internals.py"] == reverse["internals.py"]
+
+
 class TestEmitCell:
     """Tests for _emit_cell method."""
 

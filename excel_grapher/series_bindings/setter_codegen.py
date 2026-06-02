@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -77,6 +77,12 @@ def _allowed_record_fields(
     if allow_address or requires_address:
         fields.update({"address", "cell_address"})
     return {f for f in fields if f}
+
+
+def _allowed_fields_literal(allowed: Sequence[str]) -> str:
+    """Emit a deterministic frozenset literal for generated setter calls."""
+    inner = ", ".join(repr(field) for field in allowed)
+    return f"frozenset({{{inner}}})"
 
 
 def emit_setter_helpers() -> list[str]:
@@ -222,7 +228,7 @@ def emit_setter_function(
         lines.append("        ctx,")
         lines.append("        records,")
     lines.append(f"        key_fields={tuple(key_fields)!r},")
-    lines.append(f"        allowed_fields={set(allowed)!r},")
+    lines.append(f"        allowed_fields={_allowed_fields_literal(allowed)},")
     lines.append(f"        measure_field={measure_concept!r},")
     lines.append(f"        leaf_index={leaf_index_arg},")
     lines.append("        strict=strict,")

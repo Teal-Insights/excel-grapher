@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence, Set
+from collections.abc import Iterable, Mapping, Sequence, Set
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
 
@@ -15,6 +15,7 @@ from excel_grapher.core.address_keys import (
 from excel_grapher.core.address_keys import (
     parse_address,
     quote_sheet_if_needed,
+    sort_node_keys,
 )
 from excel_grapher.evaluator.errors import MissingNormalizedFormulaError
 from excel_grapher.evaluator.name_utils import (
@@ -2128,6 +2129,16 @@ class CodeGenerator:
             out = "_" + out
         return out.lower()
 
+    def _workbook_sort_addresses(self, addresses: Iterable[str]) -> list[str]:
+        """Return addresses sorted by workbook sheet order, then row, then column."""
+        materialized = [normalize_address(addr) for addr in addresses]
+        if not materialized:
+            return []
+        sheet_order = getattr(self.graph, "sheet_order", None)
+        if sheet_order:
+            return sort_node_keys(materialized, sheet_order=sheet_order)
+        return sorted(materialized)
+
     def _generate_parts(
         self,
         targets: list[str],
@@ -2164,21 +2175,28 @@ class CodeGenerator:
         cell_code_lines: list[str] = []
         used_xl_functions: set[str] = set()
         formula_cells: set[str] = set()
+        formula_emit_order: list[str] = []
 
-        for address in all_cells:
+        def _track_cell(address: str) -> None:
             if address in self._emitted:
-                continue
+                return
             self._emitted.add(address)
             node = self.graph.get_node(address)
             if node is not None and node.formula is not None:
-                formula_cells.add(normalize_address(address))
-                cell_code_lines.append(self._emit_cell(address))
-                cell_code_lines.append("")
-                cell_code_lines.append("")
-
+                normalized = normalize_address(address)
+                formula_emit_order.append(normalized)
+                self._temp_var_counter = 0
                 ast = self._get_or_parse_ast(address)
                 assert ast is not None
-                used_xl_functions.update(self._extract_xl_functions(ast))
+                prev_cell = self._formula_cell_address
+                self._formula_cell_address = normalized
+                try:
+                    self._emit_ast(ast)
+                finally:
+                    self._formula_cell_address = prev_cell
+
+        for address in all_cells:
+            _track_cell(address)
 
         # If dynamic OFFSET was used, ensure the runtime implementation is embedded.
         #
@@ -2199,20 +2217,18 @@ class CodeGenerator:
                         if parse_address(normalize_address(addr))[0] in self._offset_runtime_sheets
                     ]
                 for address in all_graph_cells:
-                    if address in self._emitted:
-                        continue
-                    self._emitted.add(address)
+                    _track_cell(address)
                     all_cells.append(address)
-                    node = self.graph.get_node(address)
-                    if node is not None and node.formula is not None:
-                        formula_cells.add(normalize_address(address))
-                        cell_code_lines.append(self._emit_cell(address))
-                        cell_code_lines.append("")
-                        cell_code_lines.append("")
 
-                        ast = self._get_or_parse_ast(address)
-                        assert ast is not None
-                        used_xl_functions.update(self._extract_xl_functions(ast))
+        for address in self._workbook_sort_addresses(formula_emit_order):
+            formula_cells.add(address)
+            cell_code_lines.append(self._emit_cell(address))
+            cell_code_lines.append("")
+            cell_code_lines.append("")
+
+            ast = self._get_or_parse_ast(address)
+            assert ast is not None
+            used_xl_functions.update(self._extract_xl_functions(ast))
 
         # Always include per-call evaluation scaffolding.
         # XlError is commonly referenced by generated code (error literals, IF/IFERROR, and
@@ -2254,7 +2270,7 @@ class CodeGenerator:
             "inputs_block_lines": inputs_block_lines,
             "constants_block_lines": constants_block_lines,
             "cell_code_lines": cell_code_lines,
-            "formula_cells": sorted(formula_cells),
+            "formula_cells": self._workbook_sort_addresses(formula_cells),
             "all_cells": all_cells,
             "needs_offset_table": self._needs_offset_runtime,
             "targets": normalized_targets,
@@ -2329,7 +2345,7 @@ class CodeGenerator:
                     continue
                 seen.add(a)
                 out.append(a)
-            for addr in sorted(closure):
+            for addr in self._workbook_sort_addresses(closure):
                 if addr not in seen:
                     out.append(addr)
             return out

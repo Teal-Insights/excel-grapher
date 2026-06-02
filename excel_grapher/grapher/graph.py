@@ -340,6 +340,15 @@ class DependencyGraph:
             example_may_cycle_path=example_may,
         )
 
+    def _workbook_sorted_keys(self, keys: Iterable[NodeKey]) -> list[NodeKey]:
+        """Return ``keys`` sorted by workbook sheet order, then row, then column."""
+        materialized = list(keys)
+        if not materialized:
+            return []
+        if self.sheet_order:
+            return sort_node_keys(materialized, sheet_order=self.sheet_order)
+        return sorted(materialized)
+
     def evaluation_order(
         self, *, strict: bool = True, iterate_enabled: bool | None = None
     ) -> list[NodeKey]:
@@ -405,7 +414,7 @@ class DependencyGraph:
             if n in temp:
                 raise CycleError(f"Cycle detected involving {n}", [n], is_must_cycle=True)
             temp.add(n)
-            for dep in adjacency.get(n, set()):
+            for dep in self._workbook_sorted_keys(adjacency.get(n, set())):
                 if dep in exclude:
                     continue
                 if dep in self._nodes and dep not in exclude:
@@ -414,7 +423,7 @@ class DependencyGraph:
             perm.add(n)
             order.append(n)
 
-        for key in list(self._nodes.keys()):
+        for key in self._workbook_sorted_keys(self._nodes.keys()):
             if key in exclude:
                 continue
             if key not in perm:

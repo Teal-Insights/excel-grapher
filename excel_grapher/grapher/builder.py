@@ -6,7 +6,7 @@ import re
 import time
 import warnings
 from collections import deque
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 import fastpyxl
@@ -14,6 +14,7 @@ import fastpyxl.utils.cell
 from fastpyxl.worksheet.formula import ArrayFormula
 from fastpyxl.worksheet.worksheet import Worksheet
 
+from excel_grapher.core.address_keys import sort_node_keys
 from excel_grapher.core.cell_types import CellType, leaves_missing_cell_type_constraints
 
 from .blank_ranges import (
@@ -79,6 +80,29 @@ def _parse_address_to_sheet_a1(addr: str) -> tuple[str, str]:
         return sheet, a1
     sheet, a1 = addr.split("!", 1)
     return sheet, a1
+
+
+def _workbook_sorted_sheet_a1_pairs(
+    pairs: Iterable[tuple[str, str]], *, sheet_order: list[str]
+) -> list[tuple[str, str]]:
+    """Return ``(sheet, a1)`` pairs in workbook sheet/row/column order."""
+    materialized = list(pairs)
+    if not materialized:
+        return []
+    sorted_keys = sort_node_keys(
+        [format_key(sh, a1) for sh, a1 in materialized],
+        sheet_order=sheet_order,
+    )
+    return [_parse_address_to_sheet_a1(key) for key in sorted_keys]
+
+
+def _sorted_guard_deps(
+    dep_map: Mapping[tuple[str, str], GuardExpr | None], *, sheet_order: list[str]
+) -> list[tuple[str, str, GuardExpr | None]]:
+    return [
+        (sh, a1, dep_map[(sh, a1)])
+        for sh, a1 in _workbook_sorted_sheet_a1_pairs(dep_map.keys(), sheet_order=sheet_order)
+    ]
 
 
 def _expand_targets_to_roots(
@@ -436,6 +460,8 @@ def create_dependency_graph(
     def _extract_deps_with_guards_inner(
         formula: str, current_sheet: str, current_a1: str
     ) -> list[tuple[str, str, GuardExpr | None]]:
+        sheet_order = list(wb_formulas.sheetnames)
+
         def extract_expr_deps(expr: str) -> list[tuple[str, str]]:
             """
             Extract dependencies from an expression fragment (no leading '=').
@@ -775,7 +801,10 @@ def create_dependency_graph(
                                 indirect_targets,
                                 index_targets,
                             )
-                        for addr in offset_targets | indirect_targets | index_targets:
+                        for addr in sort_node_keys(
+                            offset_targets | indirect_targets | index_targets,
+                            sheet_order=sheet_order,
+                        ):
                             sh, a1 = _parse_address_to_sheet_a1(addr)
                             deps.append((sh, a1))
             masked = mask_spans(masked, dyn_spans)
@@ -838,7 +867,7 @@ def create_dependency_graph(
                     continue
                 seen.add(d)
                 out.append(d)
-            return out
+            return _workbook_sorted_sheet_a1_pairs(out, sheet_order=sheet_order)
 
         # 1) IF(cond, then, else)
         if_parts = split_top_level_if(formula)
@@ -848,7 +877,7 @@ def create_dependency_graph(
                 cond_s, current_sheet=current_sheet, named_ranges=named_ranges
             )
 
-            unconditional = set(extract_expr_deps(cond_s))
+            unconditional = extract_expr_deps(cond_s)
             out: dict[tuple[str, str], GuardExpr | None] = {
                 (sh, a1): None for (sh, a1) in unconditional
             }
@@ -870,7 +899,7 @@ def create_dependency_graph(
                         continue
                     out[key] = else_guard
 
-            return [(sh, a1, g) for (sh, a1), g in out.items()]
+            return _sorted_guard_deps(out, sheet_order=sheet_order)
 
         # 2) IFS(cond1, value1, cond2, value2, ..., [default])
         ifs_args = split_top_level_ifs(formula)
@@ -889,12 +918,20 @@ def create_dependency_graph(
                     conditions.append(pairs[i])
                     values.append(pairs[i + 1])
 
-            unconditional: set[tuple[str, str]] = set()
+            unconditional_pairs: list[tuple[str, str]] = []
+            seen_unconditional: set[tuple[str, str]] = set()
             for c in conditions:
-                unconditional |= set(extract_expr_deps(c))
+                for sh, a1 in extract_expr_deps(c):
+                    if (sh, a1) in seen_unconditional:
+                        continue
+                    seen_unconditional.add((sh, a1))
+                    unconditional_pairs.append((sh, a1))
 
             out: dict[tuple[str, str], GuardExpr | None] = {
-                (sh, a1): None for (sh, a1) in unconditional
+                (sh, a1): None
+                for sh, a1 in _workbook_sorted_sheet_a1_pairs(
+                    unconditional_pairs, sheet_order=sheet_order
+                )
             }
 
             prev_negations: list[GuardExpr] = []
@@ -932,7 +969,7 @@ def create_dependency_graph(
                         continue
                     out[key] = default_guard
 
-            return [(sh, a1, g) for (sh, a1), g in out.items()]
+            return _sorted_guard_deps(out, sheet_order=sheet_order)
 
         # 3) CHOOSE(index, value1, value2, ...)
         choose_args = split_top_level_choose(formula)
@@ -943,7 +980,7 @@ def create_dependency_graph(
             index_expr = parse_guard_expr(
                 index_s, current_sheet=current_sheet, named_ranges=named_ranges
             )
-            unconditional = set(extract_expr_deps(index_s))
+            unconditional = extract_expr_deps(index_s)
             out: dict[tuple[str, str], GuardExpr | None] = {
                 (sh, a1): None for (sh, a1) in unconditional
             }
@@ -958,7 +995,7 @@ def create_dependency_graph(
                         continue
                     out[key] = guard
 
-            return [(sh, a1, g) for (sh, a1), g in out.items()]
+            return _sorted_guard_deps(out, sheet_order=sheet_order)
 
         # 4) SWITCH(expr, value1, result1, ..., [default])
         switch_args = split_top_level_switch(formula)
@@ -967,7 +1004,7 @@ def create_dependency_graph(
             expr_ge = parse_guard_expr(
                 expr_s, current_sheet=current_sheet, named_ranges=named_ranges
             )
-            unconditional = set(extract_expr_deps(expr_s))
+            unconditional = extract_expr_deps(expr_s)
             out: dict[tuple[str, str], GuardExpr | None] = {
                 (sh, a1): None for (sh, a1) in unconditional
             }
@@ -1016,7 +1053,7 @@ def create_dependency_graph(
                         continue
                     out[key] = default_guard2
 
-            return [(sh, a1, g) for (sh, a1), g in out.items()]
+            return _sorted_guard_deps(out, sheet_order=sheet_order)
 
         return [(sh, a1, None) for (sh, a1) in extract_expr_deps(formula)]
 
@@ -1448,7 +1485,10 @@ def list_dynamic_ref_constraint_candidates(
                             current_row=_current_row,
                             current_col=_current_col,
                         )
-                        for addr in offset_targets | indirect_targets | index_targets:
+                        for addr in sort_node_keys(
+                            offset_targets | indirect_targets | index_targets,
+                            sheet_order=list(wb_formulas.sheetnames),
+                        ):
                             sh, a1 = _parse_address_to_sheet_a1(addr)
                             queue.append((sh, a1, depth + 1))
                     except DynamicRefError:
