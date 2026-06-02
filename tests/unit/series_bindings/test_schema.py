@@ -85,6 +85,29 @@ def test_schema_rejects_bad_setter_name() -> None:
         validate_bindings_document(doc)
 
 
+def test_schema_accepts_bare_defined_name_data_range() -> None:
+    doc = {
+        "schema_version": "1.0.0",
+        "series": [
+            {
+                "id": "defined_name_target",
+                "sheet": "Inputs",
+                "data_range": "growth_baseline",
+                "layout": "scalar",
+                "setter": {"name": "set_defined_name_target"},
+                "structure": {
+                    "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
+                    "dimensions": [],
+                },
+                "key": [],
+            }
+        ],
+    }
+
+    bindings = validate_bindings_document(doc)
+    assert bindings["series"][0]["data_range"] == "growth_baseline"
+
+
 def test_schema_accepts_1_1_0_matrix_fixture() -> None:
     bindings = load_series_bindings(FIXTURES / "matrix_country_block_1_1_0.yaml")
     assert bindings["schema_version"] == "1.1.0"
