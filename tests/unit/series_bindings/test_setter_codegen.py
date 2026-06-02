@@ -115,6 +115,65 @@ def test_emit_setter_missing_measure_raises(tmp_path: Path) -> None:
         setter(ctx, [{"TIME_PERIOD": 3}])
 
 
+def test_emit_setter_allowed_fields_literal_is_alphabetically_sorted(tmp_path: Path) -> None:
+    wb_path = tmp_path / "lic_inputs.xlsx"
+    _write_borvelia_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, expand_data_range("Inputs!F5:J5"), load_values=True)
+    bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
+    series = bindings["series"][0]
+    resolved = resolve_series_binding(graph, wb_path, series)
+    lines = emit_setter_function(series, resolved)
+    allowed_line = next(line for line in lines if line.strip().startswith("allowed_fields="))
+    assert (
+        allowed_line == "        allowed_fields=frozenset("
+        "{'INDICATOR', 'OBS_VALUE', 'REF_AREA', 'TIME_PERIOD', 'UNIT_MEASURE'}),"
+    )
+
+
+def test_emit_setter_allowed_fields_literal_includes_address_fields_in_order(
+    tmp_path: Path,
+) -> None:
+    wb_path = tmp_path / "dup.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number("C1", 1)
+    ws.write_number("D1", 1)
+    ws.write_number("C2", 10)
+    ws.write_number("D2", 20)
+    wb.close()
+
+    graph = create_dependency_graph(wb_path, ["Sheet1!C2", "Sheet1!D2"], load_values=True)
+    series = {
+        "id": "dup_headers",
+        "sheet": "Sheet1",
+        "data_range": "Sheet1!C2:D2",
+        "layout": "row_series",
+        "setter": {"name": "set_dup_headers", "allow_address": True, "strict": False},
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "bind": {"kind": "data_cell", "read": "float"},
+            },
+            "dimensions": [
+                {
+                    "concept": "TIME_PERIOD",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "column_header", "header_row": 1, "read": "int"},
+                }
+            ],
+        },
+        "key": ["TIME_PERIOD"],
+        "validation": {"require_unique_key": True},
+    }
+    resolved = resolve_series_binding(graph, wb_path, series)
+    lines = emit_setter_function(series, resolved)
+    allowed_line = next(line for line in lines if line.strip().startswith("allowed_fields="))
+    assert allowed_line == (
+        "        allowed_fields=frozenset({'OBS_VALUE', 'TIME_PERIOD', 'address', 'cell_address'}),"
+    )
+
+
 def test_emit_setter_allow_address(tmp_path: Path) -> None:
     wb_path = tmp_path / "dup.xlsx"
     wb = xlsxwriter.Workbook(wb_path)
