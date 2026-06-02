@@ -192,6 +192,45 @@ def test_keys_order_workbook_uses_sheet_order_then_row_then_column() -> None:
     assert g.keys(order="workbook") == ["Later!A2", "Earlier!A1", "Earlier!B2"]
 
 
+def _build_diamond_graph(*, reverse_insertion: bool) -> DependencyGraph:
+    """Diamond: A1 leaf; B1 and C1 depend on A1; D1 depends on B1 and C1."""
+    nodes = [
+        _leaf("Sheet1", "A", 1, value=1),
+        _formula("Sheet1", "B", 1, "=Sheet1!A1+1"),
+        _formula("Sheet1", "C", 1, "=Sheet1!A1*2"),
+        _formula("Sheet1", "D", 1, "=Sheet1!B1+Sheet1!C1"),
+    ]
+    if reverse_insertion:
+        nodes = list(reversed(nodes))
+
+    graph = DependencyGraph(sheet_order=["Sheet1"])
+    for node in nodes:
+        graph.add_node(node)
+    graph.add_edge("Sheet1!B1", "Sheet1!A1")
+    graph.add_edge("Sheet1!C1", "Sheet1!A1")
+    graph.add_edge("Sheet1!D1", "Sheet1!B1")
+    graph.add_edge("Sheet1!D1", "Sheet1!C1")
+    return graph
+
+
+def test_evaluation_order_breaks_ties_by_workbook_order() -> None:
+    graph = _build_diamond_graph(reverse_insertion=True)
+
+    order = graph.evaluation_order()
+
+    assert order.index("Sheet1!A1") < order.index("Sheet1!B1")
+    assert order.index("Sheet1!A1") < order.index("Sheet1!C1")
+    assert order.index("Sheet1!B1") < order.index("Sheet1!C1")
+    assert order.index("Sheet1!C1") < order.index("Sheet1!D1")
+
+
+def test_evaluation_order_is_independent_of_node_insertion_order() -> None:
+    graph_forward = _build_diamond_graph(reverse_insertion=False)
+    graph_reverse = _build_diamond_graph(reverse_insertion=True)
+
+    assert graph_forward.evaluation_order() == graph_reverse.evaluation_order()
+
+
 # -------------------------------------------------------------------
 # get_edge_attrs / get_edge_guard: typed container + normalization
 # -------------------------------------------------------------------
