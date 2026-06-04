@@ -76,6 +76,9 @@ class EvalContext:
             self.invalidate(changed)
 
 
+NormalizedAddress: TypeAlias = str
+
+
 class XlError(StrEnum):
     VALUE = "#VALUE!"
     REF = "#REF!"
@@ -111,7 +114,7 @@ def quote_sheet_if_needed(sheet: str) -> str:
     return "'" + _escape_sheet_for_formula(sheet) + "'"
 
 
-def format_key(sheet: str, cell: str) -> str:
+def format_key(sheet: str, cell: str) -> NormalizedAddress:
     """Format a sheet and A1 cell coordinate into a canonical address string."""
     return f"{quote_sheet_if_needed(sheet)}!{cell}"
 

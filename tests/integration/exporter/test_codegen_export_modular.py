@@ -96,38 +96,6 @@ def test_codegen_generate_modules_api_uses_target_map(tmp_path: Path) -> None:
     )
 
 
-def test_codegen_generate_modules_entrypoints_exported(tmp_path: Path) -> None:
-    graph = _make_graph(
-        _make_node("S!A1", None, 1.0),
-        _make_node("S!B1", "=S!A1*2", None),
-    )
-    files = CodeGenerator(graph).generate_modules(["S!B1"], entrypoints={"outputs-a": ["S!B1"]})
-    api_py = files["api.py"]
-    init_py = files["__init__.py"]
-    assert "def compute_outputs_a(inputs=None, *, ctx=None):" in api_py
-    assert "compute_outputs_a" in init_py
-
-
-def test_codegen_generate_modules_entrypoints_emit_named_functions(tmp_path: Path) -> None:
-    graph = _make_graph(
-        _make_node("S!A1", None, 1.0),
-        _make_node("S!B1", "=S!A1*2", None),
-        _make_node("S!C1", "=S!A1*3", None),
-    )
-    files = CodeGenerator(graph).generate_modules(
-        ["S!B1"],
-        entrypoints={"outputs": ["S!B1", "S!C1"], "inputs-1": ["S!A1"]},
-    )
-    api_py = files["api.py"]
-    init_py = files["__init__.py"]
-    assert "TARGETS_OUTPUTS" in api_py
-    assert "TARGETS_INPUTS_1" in api_py
-    assert "def compute_outputs(inputs=None, *, ctx=None):" in api_py
-    assert "def compute_inputs_1(inputs=None, *, ctx=None):" in api_py
-    assert "compute_outputs" in init_py
-    assert "compute_inputs_1" in init_py
-
-
 def test_codegen_generate_modules_splits_constants(tmp_path: Path) -> None:
     graph = _make_graph(
         _make_node("Sheet1!A1", None, 10.0),

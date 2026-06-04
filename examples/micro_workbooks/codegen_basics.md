@@ -149,83 +149,9 @@ print(f"```text\n{str(result)}\n```")
 ```
 
 An unordered dictionary does seem like the right output shape for
-`compute_all` outputs representing non-adjacent target cells, though I’d
-like to be able to override/customize the naming of the keys.
-
-`excel-grapher` currently supports a `entrypoints` argument to
-`CodeGenerator.generate` that allows you to define explicit entrypoints
-for the target cells, which causes `compute_*` functions to be generated
-for each entrypoint name:
-
-``` python
-from typing import Mapping, Sequence
-
-entrypoints: Mapping[str, Sequence[str]] | None = {
-    "c3_cell": ["Sheet1!C3"],
-    "e3_cell": ["Sheet1!E3"]
-}
-
-with CodeGenerator(graph) as gen:
-    code = gen.generate(entrypoints=entrypoints)
-with open("codegen_outputs/multiple_non_adjacent_targets_with_entrypoints.py", "w", encoding="utf-8") as f:
-    f.write(code)
-
-from multiple_non_adjacent_targets_with_entrypoints import (
-    compute_all,
-    compute_c3_cell,
-    compute_e3_cell
-)
-
-import re
-
-compute_c3_cell_match = re.search(
-    r"def compute_c3_cell\([\s\S]*?(?=^def |\Z)",
-    code,
-    re.MULTILINE,
-)
-
-print(f"```python\n{compute_c3_cell_match.group(0).strip()}\n```")
-
-c3_result = compute_c3_cell()
-e3_result = compute_e3_cell()
-print(f"```text\n{str(c3_result)}\n```")
-print(f"```text\n{str(e3_result)}\n```")
-```
-
-``` python
-def compute_c3_cell(inputs=None, *, ctx=None):
-    """Compute c3_cell target cells and return results."""
-    if ctx is None:
-        ctx = make_context(inputs)
-    elif inputs is not None:
-        warnings.warn("inputs will be ignored because ctx was provided", UserWarning, stacklevel=2)
-    return {target: handler(ctx, target) for target, handler in TARGETS_C3_CELL.items()}
-
-
-TARGETS_E3_CELL = {
-    'Sheet1!E3': xl_cell,
-}
-```
-
-``` text
-{'Sheet1!C3': 2.0}
-```
-
-``` text
-{'Sheet1!E3': 3.0}
-```
-
-But this doesn’t currently affect the shape of the dictionary returned
-by `compute_all`, and maybe it should:
-
-``` python
-result = compute_all()
-print(f"```text\n{str(result)}\n```")
-```
-
-``` text
-{'Sheet1!C3': 2.0, 'Sheet1!E3': 3.0}
-```
+`compute_all` outputs representing non-adjacent target cells. For named,
+records-shaped output APIs (dimensions plus `OBS_VALUE`), use **series
+bindings** instead — see [Series bindings](series_bindings.qmd).
 
 ## 04. Multiple adjacent targets
 
@@ -259,112 +185,9 @@ dictionary. The value for that key is a NumPy array of the computed
 values for each cell in the range.
 
 This is probably a good default in *most* cases, because contiguous
-cells will often comprise a logical unit. However, I would like to be
-able to override this behavior by defining explicit entrypoints for the
-target cells, which currently has no effect on the shape of the
-dictionary returned by `compute_all`:
-
-``` python
-from typing import Mapping, Sequence
-
-entrypoints: Mapping[str, Sequence[str]] | None = {
-    "c4_d4_range": ["Sheet1!C4", "Sheet1!D4"],
-    "c4_cell": ["Sheet1!C4"]
-}
-
-with CodeGenerator(graph) as gen:
-    code = gen.generate(entrypoints=entrypoints)
-with open("codegen_outputs/multiple_adjacent_targets_with_entrypoints.py", "w", encoding="utf-8") as f:
-    f.write(code)
-
-from multiple_adjacent_targets_with_entrypoints import (
-    compute_all,
-    compute_c4_cell,
-    compute_c4_d4_range
-)
-
-result = compute_all()
-print(f"```text\n{str(result)}\n```")
-```
-
-``` text
-{'Sheet1!C4:Sheet1!D4': array([[2.0, 3.0]], dtype=object)}
-```
-
-Note that there is no obstacle to defining entrypoints with overlapping
-cell addresses. Here we define an entrypoint for one of the individual
-cells as well as one for the range that contains it.
-
-``` python
-c4_result = compute_c4_cell()
-c4_d4_result = compute_c4_d4_range()
-print(f"```text\nCell result: {str(c4_result)}\nRange result: {str(c4_d4_result)}\n```")
-```
-
-``` text
-Cell result: {'Sheet1!C4': 2.0}
-Range result: {'Sheet1!C4:Sheet1!D4': array([[2.0, 3.0]], dtype=object)}
-```
-
-While I think it’s fine that `compute_all` returns a `dict` keyed by
-cell address, I am skeptical of that return value shape for the
-entrypoint functions. Here we are only returning a single value or
-series, so we shouldn’t need keyed access. Instead, maybe we return a
-scalar value or tuple. The one downside of this is that it makes it
-harder to associate, for example, values in a time series with years. A
-dict is not the right shape for a time series, because a dict is
-unordered, but neither does it seem quite right to have a tuple with no
-labels. A tuple of tuples, tuple/list of dicts, or array may be clearer
-options.
-
-Here are a few minimal sketch options for entrypoint signatures and
-output shapes for an economic time series:
-
-``` python
-# Option A: tuple[tuple[int, float], ...] for immutable (year, value) pairs
-def compute_gdp_series(...) -> tuple[tuple[int, float], ...]:
-    return ((2021, 23115.0), (2022, 25440.0), (2023, 27361.0))
-
-# Option B: tuple[dict[str, float], ...] for per-point labels
-def compute_gdp_series(...) -> tuple[dict[str, int | float], ...]:
-    return (
-        {"year": 2021, "gdp": 23115.0},
-        {"year": 2022, "gdp": 25440.0},
-        {"year": 2023, "gdp": 27361.0},
-    )
-
-# Option C: list[dict[str, float]] for JSON-friendly downstream use
-def compute_gdp_series(...) -> list[dict[str, int | float]]:
-    return [
-        {"year": 2021, "gdp": 23115.0},
-        {"year": 2022, "gdp": 25440.0},
-        {"year": 2023, "gdp": 27361.0},
-    ]
-
-# Option D: tuple[float, ...] for strictly positional values
-def compute_gdp_values_tuple(...) -> tuple[float, ...]:
-    # index 0 -> 2021, index 1 -> 2022, index 2 -> 2023
-    return (23115.0, 25440.0, 27361.0)
-
-# Option E: list[float] for strictly positional values
-def compute_gdp_values_list(...) -> list[float]:
-    # index position implies year based on documented ordering
-    return [23115.0, 25440.0, 27361.0]
-
-# Option F: NumPy array for contiguous/range-like outputs
-import numpy as np
-
-def compute_gdp_series_array(...) -> np.ndarray:
-    # shape: (n, 2), each row is [year, gdp]
-    return np.asarray([[2021.0, 23115.0], [2022.0, 25440.0], [2023.0, 27361.0]])
-```
-
-These examples assume we have labels that we can use for keying the output values. However, if we don't have labels, we would just use the Excel cell address in place of the year for the positional values. E.g.,
-
-```python
-def compute_gdp_series(...) -> tuple[tuple[int, float], ...]:
-    return (("Sheet1!A1", 23115.0), ("Sheet1!A2", 25440.0), ("Sheet1!A3", 27361.0))
-```
+cells will often comprise a logical unit. For stable tabular contracts
+with named `compute_*` functions that return `Records`, use **series
+bindings** — see [Series bindings](series_bindings.qmd).
 
 ## 05. Must cycle
 
@@ -398,3 +221,6 @@ print(f"```text\n{str(result)}\n```")
 ``` text
 {'Sheet1!B5:Sheet1!C5': array([[2.0, 1.0]], dtype=object)}
 ```
+
+    C:\Users\chris\Software\excel-grapher\examples\micro_workbooks\codegen_outputs\must_cycle.py:297: CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).
+      return xl_circular_reference()

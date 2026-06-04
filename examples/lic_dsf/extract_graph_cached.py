@@ -30,7 +30,6 @@ import time
 from pathlib import Path
 from typing import (
     Any,
-    Literal,
     TypedDict,
 )
 
@@ -61,14 +60,10 @@ class ExportRangeConfig(TypedDict):
     Attributes:
         label: Human-readable label for the range (used for reporting only).
         range_spec: Sheet-qualified A1 range, e.g. "'Chart Data'!D10:D17".
-        entrypoint_mode: Controls how export entrypoints are grouped for this
-            range: "row_group" (one entrypoint per row) or "per_cell" (one
-            entrypoint per cell, no row grouping).
     """
 
     label: str
     range_spec: str
-    entrypoint_mode: Literal["row_group", "per_cell"]
 
 
 # ---------------------------------------------------------------------------
@@ -164,27 +159,22 @@ EXPORT_FIXED_RANGES: list[ExportRangeConfig] = [
     {
         "label": "External DSA risk rating signals",
         "range_spec": "'Chart Data'!D10:D17",
-        "entrypoint_mode": "per_cell",
     },
     {
         "label": "Fiscal (Total Public Debt) risk rating signals",
         "range_spec": "'Chart Data'!I10:I14",
-        "entrypoint_mode": "per_cell",
     },
     {
         "label": "Applicable tailored stress test signals",
         "range_spec": "'Chart Data'!I17:I19",
-        "entrypoint_mode": "row_group",
     },
     {
         "label": "Fiscal space for moderate risk category",
         "range_spec": "'Chart Data'!E25:E27",
-        "entrypoint_mode": "row_group",
     },
     {
         "label": "Overall rating",
         "range_spec": "'Chart Data'!L10:L11",
-        "entrypoint_mode": "row_group",
     },
 ]
 
@@ -201,7 +191,6 @@ def _export_chart_data_ranges() -> list[ExportRangeConfig]:
             {
                 "label": label,
                 "range_spec": range_spec,
-                "entrypoint_mode": "row_group",
             }
         )
         seen_row_specs.add(range_spec)

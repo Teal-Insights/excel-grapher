@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -20,6 +21,7 @@ def emit_series_bindings_block(
     workbook: Path | str,
     bindings: WorkbookSeriesBindings,
     *,
+    export_addresses: Iterable[str] | None = None,
     series_docstring_callback: str | None = None,
     docstring_renderer: SeriesDocstringRendererSpec = "plain",
 ) -> list[str]:
@@ -38,6 +40,7 @@ def emit_series_bindings_block(
                 graph,
                 workbook,
                 bindings,
+                export_addresses=export_addresses,
                 include_type_aliases=include_aliases,
                 series_docstring_callback=series_docstring_callback,
                 docstring_renderer=docstring_renderer,
@@ -50,6 +53,7 @@ def emit_series_bindings_block(
                 graph,
                 workbook,
                 bindings,
+                export_addresses=export_addresses,
                 include_type_aliases=include_aliases,
                 series_docstring_callback=series_docstring_callback,
                 docstring_renderer=docstring_renderer,
