@@ -119,7 +119,7 @@ At least one of `input` or `output` is required per series (legacy top-level `se
 5. Optionally add `input.setter` in the same series or a mergeable shard for symmetric input APIs.
 6. Pass `series_bindings` and `bindings_workbook` to `CodeGenerator.generate()`; call the generated `compute_*` function to obtain `Records` with `OBS_VALUE` and dimensions.
 
-Codegen intersects each binding with the graph: input uses **leaves**; output uses **any graph node** in `data_range`. Cells outside the graph are skipped; `validation.warn_on_partial_overlap` (default `true`) emits a warning when that happens.
+Validation and `derive_*_series` intersect bindings with the extracted graph (input: **leaves**; output: **any graph node**). **Codegen** intersects with the export closure from the current `CodeGenerator` targets (formula cells, inputs, and dependencies actually emitted). Cells outside that closure are skipped; `validation.warn_on_partial_overlap` (default `true`) emits a warning when that happens.
 
 The full authoring guide lives next to the schema: **[schemas/series-bindings.md](schemas/series-bindings.md)** (conventions, LIC manifest → sidecar workflow, `data_range` / named-range rules, Python API). The README does not duplicate that document.
 
@@ -672,20 +672,6 @@ with CodeGenerator(graph) as gen:
 ```
 
 If neither explicit targets nor target-marked nodes are available, code generation raises a `ValueError`.
-
-You can also emit named entrypoints by passing a mapping of names to target lists:
-
-```python
-code = CodeGenerator(graph).generate(
-    targets,
-    entrypoints={
-        "outputs": ["S!B1", "S!C1"],
-        "checks": ["S!D1"],
-    },
-)
-```
-
-This generates `compute_outputs(...)` and `compute_checks(...)` alongside `compute_all(...)`.
 
 For a multi-file package, `generate_modules()` returns a `dict[str, str]` keyed by module filename
 (`__init__.py`, `api.py`, `data.py`, `runtime.py`, `internals.py`). Write those files into a package

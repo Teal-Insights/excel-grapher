@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -13,7 +13,10 @@ from excel_grapher.series_bindings.docstrings import (
     resolve_series_function_docstring,
 )
 from excel_grapher.series_bindings.normalize import has_input_direction
-from excel_grapher.series_bindings.resolve import resolve_series_bindings
+from excel_grapher.series_bindings.resolve import (
+    resolve_series_bindings,
+    warn_series_resolution_issues,
+)
 from excel_grapher.series_bindings.types import (
     SeriesResolution,
     WorkbookSeriesBindings,
@@ -245,12 +248,19 @@ def emit_setters_block(
     workbook: Path | str,
     bindings: WorkbookSeriesBindings,
     *,
+    export_addresses: Iterable[str] | None = None,
     include_type_aliases: bool = True,
     series_docstring_callback: str | None = None,
     docstring_renderer: SeriesDocstringRendererSpec = "plain",
 ) -> list[str]:
     """Emit all series setter functions for a validated binding manifest."""
-    report = resolve_series_bindings(graph, bindings, workbook=workbook, direction="input")
+    report = resolve_series_bindings(
+        graph,
+        bindings,
+        workbook=workbook,
+        direction="input",
+        export_addresses=export_addresses,
+    )
     lines: list[str] = ["# --- Series binding setters (Records API) ---", ""]
     if include_type_aliases:
         lines.extend(
@@ -279,6 +289,7 @@ def emit_setters_block(
                 stacklevel=2,
             )
             continue
+        warn_series_resolution_issues(resolved)
         series = by_id.get(resolved["series_id"])
         if series is None:
             continue

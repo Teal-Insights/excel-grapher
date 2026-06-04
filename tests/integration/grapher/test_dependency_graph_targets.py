@@ -167,7 +167,7 @@ def test_targets_deduplicate_overlaps(tmp_path: Path) -> None:
 
 
 def test_create_dependency_graph_stores_named_range_maps(tmp_path: Path) -> None:
-    """Graph metadata should expose workbook defined names for codegen entrypoints."""
+    """Graph metadata should expose workbook defined names for codegen targets."""
     excel_path = tmp_path / "named_maps.xlsx"
     _build_grid_workbook(excel_path)
 

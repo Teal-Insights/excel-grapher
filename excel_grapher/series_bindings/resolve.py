@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import warnings
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Literal
 
@@ -10,6 +12,7 @@ import fastpyxl
 import fastpyxl.utils.cell
 
 from excel_grapher.core.address_keys import format_key, parse_address, quote_sheet_if_needed
+from excel_grapher.core.address_keys import normalize_key as normalize_address
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings.issues import make_issue
 from excel_grapher.series_bindings.normalize import has_input_direction, has_output_direction
@@ -264,6 +267,21 @@ def _is_graph_node(graph: DependencyGraph, address: str) -> bool:
     return address in graph
 
 
+def warn_series_resolution_issues(resolved: SeriesResolution, *, stacklevel: int = 3) -> None:
+    """Emit Python warnings for partial-overlap issues on a binding resolution."""
+    for issue in resolved["issues"]:
+        if issue["level"] != "warning":
+            continue
+        if issue["code"] in {"partial_graph_overlap", "partial_export_overlap"}:
+            warnings.warn(issue["message"], UserWarning, stacklevel=stacklevel)
+
+
+def _normalize_export_addresses(export_addresses: Iterable[str] | None) -> frozenset[str] | None:
+    if export_addresses is None:
+        return None
+    return frozenset(normalize_address(addr) for addr in export_addresses)
+
+
 def _select_addresses(
     graph: DependencyGraph,
     expanded_addresses: list[str],
@@ -271,8 +289,46 @@ def _select_addresses(
     direction: BindingDirection,
     validation: dict[str, Any],
     series_id: str,
+    export_addresses: frozenset[str] | None = None,
 ) -> tuple[list[str], list[ResolutionIssue]]:
     issues: list[ResolutionIssue] = []
+    if export_addresses is not None:
+        if direction == "input":
+            intersect_leaves = bool(validation.get("intersect_graph_leaves", True))
+            exported_addresses = [
+                address for address in expanded_addresses if address in export_addresses
+            ]
+            selected = [
+                address
+                for address in exported_addresses
+                if not intersect_leaves or _is_graph_leaf(graph, address)
+            ]
+            skipped_export = len(expanded_addresses) - len(exported_addresses)
+            skipped_non_leaf = len(exported_addresses) - len(selected)
+        else:
+            selected = [address for address in expanded_addresses if address in export_addresses]
+            skipped_export = len(expanded_addresses) - len(selected)
+            skipped_non_leaf = 0
+        if skipped_export > 0 and bool(validation.get("warn_on_partial_overlap", True)):
+            issues.append(
+                make_issue(
+                    "warning",
+                    "partial_export_overlap",
+                    f"Skipped {skipped_export} cell(s) in data_range not included in codegen export closure",
+                    series_id=series_id,
+                )
+            )
+        if skipped_non_leaf > 0 and bool(validation.get("warn_on_partial_overlap", True)):
+            issues.append(
+                make_issue(
+                    "warning",
+                    "partial_graph_overlap",
+                    f"Skipped {skipped_non_leaf} cell(s) in data_range not graph input leaf cells",
+                    series_id=series_id,
+                )
+            )
+        return selected, issues
+
     if direction == "input":
         intersect = bool(validation.get("intersect_graph_leaves", True))
         if not intersect:
@@ -286,11 +342,15 @@ def _select_addresses(
 
     skipped = len(expanded_addresses) - len(selected)
     if skipped > 0 and bool(validation.get("warn_on_partial_overlap", True)):
+        if direction == "input":
+            message = f"Skipped {skipped} cell(s) in data_range not graph input leaf cells"
+        else:
+            message = f"Skipped {skipped} cell(s) in data_range not present in graph for {direction} binding"
         issues.append(
             make_issue(
                 "warning",
                 "partial_graph_overlap",
-                f"Skipped {skipped} cell(s) in data_range not present in graph for {direction} binding",
+                message,
                 series_id=series_id,
             )
         )
@@ -303,6 +363,7 @@ def resolve_series_binding(
     series: dict[str, Any],
     *,
     direction: BindingDirection = "input",
+    export_addresses: Iterable[str] | None = None,
 ) -> SeriesResolution:
     """Resolve each participating cell in a series binding to coordinates and record fields."""
     series_id = str(series.get("id", ""))
@@ -336,20 +397,25 @@ def resolve_series_binding(
         }
 
     validation = series.get("validation") or {}
+    export_set = _normalize_export_addresses(export_addresses)
     addresses, overlap_issues = _select_addresses(
         graph,
         expanded_addresses,
         direction=direction,
         validation=validation,
         series_id=series_id,
+        export_addresses=export_set,
     )
     issues.extend(overlap_issues)
     if not addresses:
+        intersection_label = (
+            "codegen export intersection" if export_set is not None else "graph intersection"
+        )
         issues.append(
             make_issue(
                 "warning",
                 "no_resolved_cells",
-                f"No resolved {direction} cells in data_range after graph intersection",
+                f"No resolved {direction} cells in data_range after {intersection_label}",
                 series_id=series_id,
             )
         )
@@ -490,6 +556,7 @@ def resolve_series_bindings(
     *,
     workbook: Path | str | None = None,
     direction: BindingDirection = "input",
+    export_addresses: Iterable[str] | None = None,
 ) -> ResolutionReport:
     """Resolve all series in a binding manifest for the given direction."""
     if workbook is None:
@@ -512,7 +579,13 @@ def resolve_series_bindings(
             continue
         if not _series_supports_direction(series, direction):
             continue
-        result = resolve_series_binding(graph, workbook, series, direction=direction)
+        result = resolve_series_binding(
+            graph,
+            workbook,
+            series,
+            direction=direction,
+            export_addresses=export_addresses,
+        )
         series_results.append(result)
         all_issues.extend(result["issues"])
 
