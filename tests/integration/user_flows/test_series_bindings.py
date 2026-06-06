@@ -17,9 +17,7 @@ from excel_grapher.series_bindings import (
     validate_series_bindings,
 )
 from excel_grapher.series_bindings.types import WorkbookSeriesBindings
-
-MICRO_WORKBOOKS = Path(__file__).resolve().parents[3] / "examples" / "micro_workbooks"
-WORKBOOK = MICRO_WORKBOOKS / "series_bindings.xlsx"
+from tests.integration.user_flows.utils import write_series_bindings_workbook
 
 BINDINGS_DOCUMENT: dict[str, Any] = {
     "schema_version": "1.0.0",
@@ -85,30 +83,42 @@ BINDINGS_DOCUMENT: dict[str, Any] = {
 
 
 @pytest.fixture
+def workbook(tmp_path: Path) -> Path:
+    path = tmp_path / "series_bindings.xlsx"
+    write_series_bindings_workbook(path)
+    return path
+
+
+@pytest.fixture
 def bindings() -> WorkbookSeriesBindings:
     return validate_bindings_document(deepcopy(BINDINGS_DOCUMENT))
 
 
 @pytest.fixture
-def graph(bindings: WorkbookSeriesBindings):
+def graph(bindings: WorkbookSeriesBindings, workbook: Path):
     targets: list[str] = []
     for series in bindings["series"]:
-        targets.extend(expand_data_range(series["data_range"], workbook=WORKBOOK))
-    return create_dependency_graph(WORKBOOK, targets, load_values=True)
+        targets.extend(expand_data_range(series["data_range"], workbook=workbook))
+    return create_dependency_graph(workbook, targets, load_values=True)
 
 
 def test_micro_workbook_bindings_validate_against_graph(
     bindings: WorkbookSeriesBindings,
     graph,
+    workbook: Path,
 ) -> None:
-    report = validate_series_bindings(graph, bindings, workbook=WORKBOOK)
+    report = validate_series_bindings(graph, bindings, workbook=workbook)
     assert report["ok"] is True
     assert not any(issue["level"] == "error" for issue in report["issues"])
     assert not any(issue["code"] == "unique_key_deferred" for issue in report["issues"])
 
 
-def test_micro_workbook_resolves_unique_keys(bindings: WorkbookSeriesBindings, graph) -> None:
-    report = resolve_series_bindings(graph, bindings, workbook=WORKBOOK)
+def test_micro_workbook_resolves_unique_keys(
+    bindings: WorkbookSeriesBindings,
+    graph,
+    workbook: Path,
+) -> None:
+    report = resolve_series_bindings(graph, bindings, workbook=workbook)
     assert report["ok"] is True
     borvelia = next(s for s in report["series"] if s["series_id"] == "borvelia_primary_balance")
     assert borvelia["requires_address"] is False

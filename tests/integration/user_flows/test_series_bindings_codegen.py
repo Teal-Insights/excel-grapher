@@ -9,6 +9,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
+
 from excel_grapher.exporter import (
     CodeGenerator,
     FieldDoc,
@@ -17,9 +19,7 @@ from excel_grapher.exporter import (
 )
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings import expand_data_range, validate_bindings_document
-
-MICRO = Path(__file__).resolve().parents[3] / "examples" / "micro_workbooks"
-WORKBOOK = MICRO / "series_bindings.xlsx"
+from tests.integration.user_flows.utils import write_series_bindings_workbook
 
 BINDINGS_DOCUMENT: dict[str, Any] = {
     "schema_version": "1.0.0",
@@ -76,18 +76,25 @@ BINDINGS_DOCUMENT: dict[str, Any] = {
 }
 
 
-def test_codegen_includes_setters_and_updates_inputs() -> None:
+@pytest.fixture
+def workbook(tmp_path: Path) -> Path:
+    path = tmp_path / "series_bindings.xlsx"
+    write_series_bindings_workbook(path)
+    return path
+
+
+def test_codegen_includes_setters_and_updates_inputs(workbook: Path) -> None:
     bindings = validate_bindings_document(deepcopy(BINDINGS_DOCUMENT))
     targets: list[str] = []
     for series in bindings["series"]:
-        targets.extend(expand_data_range(series["data_range"], workbook=WORKBOOK))
-    graph = create_dependency_graph(WORKBOOK, targets, load_values=True)
+        targets.extend(expand_data_range(series["data_range"], workbook=workbook))
+    graph = create_dependency_graph(workbook, targets, load_values=True)
 
     with CodeGenerator(graph) as gen:
         code = gen.generate(
             targets,
             series_bindings=bindings,
-            bindings_workbook=WORKBOOK,
+            bindings_workbook=workbook,
         )
 
     assert "def set_borvelia_primary_balance(" in code
@@ -104,7 +111,7 @@ def test_codegen_includes_setters_and_updates_inputs() -> None:
     assert ctx.inputs["Sheet1!I5"] == 7.5
 
 
-def test_generate_applies_series_docstring_callback() -> None:
+def test_generate_applies_series_docstring_callback(workbook: Path) -> None:
     callback_name = "_test_integration_setter_docstring"
     register_series_docstring_callback(
         callback_name,
@@ -121,14 +128,14 @@ def test_generate_applies_series_docstring_callback() -> None:
     bindings = validate_bindings_document(deepcopy(BINDINGS_DOCUMENT))
     targets: list[str] = []
     for series in bindings["series"]:
-        targets.extend(expand_data_range(series["data_range"], workbook=WORKBOOK))
-    graph = create_dependency_graph(WORKBOOK, targets, load_values=True)
+        targets.extend(expand_data_range(series["data_range"], workbook=workbook))
+    graph = create_dependency_graph(workbook, targets, load_values=True)
 
     with CodeGenerator(graph) as gen:
         code = gen.generate(
             targets,
             series_bindings=bindings,
-            bindings_workbook=WORKBOOK,
+            bindings_workbook=workbook,
             series_docstring_callback=callback_name,
         )
 
@@ -145,12 +152,12 @@ def test_generate_applies_series_docstring_callback() -> None:
     assert "Required record fields:" in setter.__doc__
 
 
-def test_generate_accepts_direct_series_docstring_callback() -> None:
+def test_generate_accepts_direct_series_docstring_callback(workbook: Path) -> None:
     bindings = validate_bindings_document(deepcopy(BINDINGS_DOCUMENT))
     targets: list[str] = []
     for series in bindings["series"]:
-        targets.extend(expand_data_range(series["data_range"], workbook=WORKBOOK))
-    graph = create_dependency_graph(WORKBOOK, targets, load_values=True)
+        targets.extend(expand_data_range(series["data_range"], workbook=workbook))
+    graph = create_dependency_graph(workbook, targets, load_values=True)
 
     def callback(ctx: Any) -> SeriesFunctionDoc:
         return SeriesFunctionDoc(
@@ -167,7 +174,7 @@ def test_generate_accepts_direct_series_docstring_callback() -> None:
         code = gen.generate(
             targets,
             series_bindings=bindings,
-            bindings_workbook=WORKBOOK,
+            bindings_workbook=workbook,
             series_docstring_callback=callback,
         )
 
@@ -181,7 +188,7 @@ def test_generate_accepts_direct_series_docstring_callback() -> None:
     assert "Set borvelia_primary_balance directly." in setter.__doc__
 
 
-def test_generate_applies_google_docstring_renderer() -> None:
+def test_generate_applies_google_docstring_renderer(workbook: Path) -> None:
     callback_name = "_test_integration_setter_google_docstring"
     register_series_docstring_callback(
         callback_name,
@@ -198,14 +205,14 @@ def test_generate_applies_google_docstring_renderer() -> None:
     bindings = validate_bindings_document(deepcopy(BINDINGS_DOCUMENT))
     targets: list[str] = []
     for series in bindings["series"]:
-        targets.extend(expand_data_range(series["data_range"], workbook=WORKBOOK))
-    graph = create_dependency_graph(WORKBOOK, targets, load_values=True)
+        targets.extend(expand_data_range(series["data_range"], workbook=workbook))
+    graph = create_dependency_graph(workbook, targets, load_values=True)
 
     with CodeGenerator(graph) as gen:
         code = gen.generate(
             targets,
             series_bindings=bindings,
-            bindings_workbook=WORKBOOK,
+            bindings_workbook=workbook,
             series_docstring_callback=callback_name,
             docstring_renderer="google",
         )
@@ -222,17 +229,20 @@ def test_generate_applies_google_docstring_renderer() -> None:
     assert "Required record fields:" in setter.__doc__
 
 
-def test_generate_modules_exports_series_binding_setters(tmp_path: Path) -> None:
+def test_generate_modules_exports_series_binding_setters(
+    tmp_path: Path,
+    workbook: Path,
+) -> None:
     bindings = validate_bindings_document(deepcopy(BINDINGS_DOCUMENT))
     targets: list[str] = []
     for series in bindings["series"]:
-        targets.extend(expand_data_range(series["data_range"], workbook=WORKBOOK))
-    graph = create_dependency_graph(WORKBOOK, targets, load_values=True)
+        targets.extend(expand_data_range(series["data_range"], workbook=workbook))
+    graph = create_dependency_graph(workbook, targets, load_values=True)
 
     files = CodeGenerator(graph).generate_modules(
         targets,
         series_bindings=bindings,
-        bindings_workbook=WORKBOOK,
+        bindings_workbook=workbook,
     )
     assert "def set_borvelia_primary_balance(" in files["api.py"]
     assert "set_borvelia_primary_balance" in files["__init__.py"]
@@ -255,7 +265,10 @@ def test_generate_modules_exports_series_binding_setters(tmp_path: Path) -> None
                 sys.modules.pop(name, None)
 
 
-def test_generate_modules_applies_google_docstring_renderer(tmp_path: Path) -> None:
+def test_generate_modules_applies_google_docstring_renderer(
+    tmp_path: Path,
+    workbook: Path,
+) -> None:
     callback_name = "_test_integration_modules_google_docstring"
     register_series_docstring_callback(
         callback_name,
@@ -272,13 +285,13 @@ def test_generate_modules_applies_google_docstring_renderer(tmp_path: Path) -> N
     bindings = validate_bindings_document(deepcopy(BINDINGS_DOCUMENT))
     targets: list[str] = []
     for series in bindings["series"]:
-        targets.extend(expand_data_range(series["data_range"], workbook=WORKBOOK))
-    graph = create_dependency_graph(WORKBOOK, targets, load_values=True)
+        targets.extend(expand_data_range(series["data_range"], workbook=workbook))
+    graph = create_dependency_graph(workbook, targets, load_values=True)
 
     files = CodeGenerator(graph).generate_modules(
         targets,
         series_bindings=bindings,
-        bindings_workbook=WORKBOOK,
+        bindings_workbook=workbook,
         series_docstring_callback=callback_name,
         docstring_renderer="google",
     )

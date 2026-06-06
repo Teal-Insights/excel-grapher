@@ -9,6 +9,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
 import xlsxwriter
 
 from excel_grapher.exporter import (
@@ -19,9 +20,6 @@ from excel_grapher.exporter import (
 )
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings import expand_data_range, validate_bindings_document
-
-MICRO = Path(__file__).resolve().parents[3] / "examples" / "micro_workbooks"
-FIXTURES = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "series_bindings"
 
 
 def _write_output_workbook(path: Path) -> None:
@@ -91,9 +89,14 @@ BINDINGS_DOCUMENT: dict[str, Any] = {
 }
 
 
-def test_codegen_includes_output_compute_and_setter(tmp_path: Path) -> None:
-    workbook = tmp_path / "series_bindings_output.xlsx"
-    _write_output_workbook(workbook)
+@pytest.fixture
+def workbook(tmp_path: Path) -> Path:
+    path = tmp_path / "series_bindings_output.xlsx"
+    _write_output_workbook(path)
+    return path
+
+
+def test_codegen_includes_output_compute_and_setter(workbook: Path) -> None:
     bindings = validate_bindings_document(deepcopy(BINDINGS_DOCUMENT))
     targets = expand_data_range("Sheet1!F5:J5", workbook=workbook) + ["Sheet1!G5"]
     graph = create_dependency_graph(workbook, targets, load_values=True)
@@ -127,7 +130,7 @@ def test_codegen_includes_output_compute_and_setter(tmp_path: Path) -> None:
 
 
 def test_generate_applies_series_docstring_callback_to_output_compute(
-    tmp_path: Path,
+    workbook: Path,
 ) -> None:
     callback_name = "_test_integration_compute_docstring"
     register_series_docstring_callback(
@@ -142,8 +145,6 @@ def test_generate_applies_series_docstring_callback_to_output_compute(
             },
         ),
     )
-    workbook = tmp_path / "series_bindings_output.xlsx"
-    _write_output_workbook(workbook)
     bindings = validate_bindings_document(deepcopy(BINDINGS_DOCUMENT))
     targets = expand_data_range("Sheet1!F5:J5", workbook=workbook) + ["Sheet1!G5"]
     graph = create_dependency_graph(workbook, targets, load_values=True)
@@ -164,9 +165,10 @@ def test_generate_applies_series_docstring_callback_to_output_compute(
     assert "Examples:" in compute.__doc__
 
 
-def test_generate_modules_exports_output_compute(tmp_path: Path) -> None:
-    workbook = tmp_path / "series_bindings_output.xlsx"
-    _write_output_workbook(workbook)
+def test_generate_modules_exports_output_compute(
+    tmp_path: Path,
+    workbook: Path,
+) -> None:
     bindings = validate_bindings_document(deepcopy(BINDINGS_DOCUMENT))
     targets = expand_data_range("Sheet1!F5:J5", workbook=workbook)
     graph = create_dependency_graph(workbook, targets, load_values=True)
