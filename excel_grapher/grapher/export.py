@@ -69,8 +69,7 @@ def to_networkx(
     include_formula_on_nodes: bool = True,
     max_formula_length: int | None = 120,
 ):
-    """
-    Convert DependencyGraph to a NetworkX DiGraph.
+    """Convert DependencyGraph to a NetworkX DiGraph.
 
     NetworkX is an optional dependency. If not installed, raises ImportError with a
     helpful message.

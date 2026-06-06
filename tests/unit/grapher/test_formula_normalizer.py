@@ -128,9 +128,10 @@ class TestFormulaNormalizerOutlierFormula:
     """Regression test for the ~380ms outlier on a short formula (issue #60)."""
 
     def test_short_formula_with_quoted_sheet_fast(self) -> None:
-        """
-        Formula from PV_ResFin sheet with quoted cross-ref must normalize quickly
-        even with a large set of named ranges present.
+        """Normalize quoted cross-sheet formulas quickly with many named ranges.
+
+        Regression for a short PV_ResFin formula that must stay fast even when
+        dozens of defined names are present.
         """
         # Simulate 56 cell names + 39 range names (95 total, like the LIC-DSF workbook)
         named_ranges = {f"CellName{i}": ("DataSheet", f"B{i + 1}") for i in range(56)}

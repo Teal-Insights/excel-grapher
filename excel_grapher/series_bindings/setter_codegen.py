@@ -1,4 +1,4 @@
-"""Generate ``set_*`` functions that apply Records to graph input leaves."""
+"""Generate `set_*` functions that apply Records to graph input leaves."""
 
 from __future__ import annotations
 
@@ -89,7 +89,7 @@ def _allowed_fields_literal(allowed: Sequence[str]) -> str:
 
 
 def emit_setter_helpers() -> list[str]:
-    """Emit shared private helpers used by generated ``set_*`` functions."""
+    """Emit shared private helpers used by generated `set_*` functions."""
     return [
         "def _coerce_records(records, measure_field, *, allow_scalar=False) -> Records:",
         "    if not allow_scalar:",
@@ -154,7 +154,7 @@ def emit_setter_function(
     workbook: Path | str | None = None,
     bindings: WorkbookSeriesBindings | None = None,
     series_docstring_callback: str | None = None,
-    docstring_renderer: SeriesDocstringRendererSpec = "plain",
+    docstring_renderer: SeriesDocstringRendererSpec = "google",
 ) -> list[str]:
     """Emit Python source lines for one series binding setter."""
     if not resolved["leaves"]:
@@ -251,7 +251,7 @@ def emit_setters_block(
     export_addresses: Iterable[str] | None = None,
     include_type_aliases: bool = True,
     series_docstring_callback: str | None = None,
-    docstring_renderer: SeriesDocstringRendererSpec = "plain",
+    docstring_renderer: SeriesDocstringRendererSpec = "google",
 ) -> list[str]:
     """Emit all series setter functions for a validated binding manifest."""
     report = resolve_series_bindings(

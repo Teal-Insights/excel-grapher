@@ -1,0 +1,233 @@
+# Great Docs Configuration
+# See https://posit-dev.github.io/great-docs/user-guide/configuration.html
+
+# Module Name (optional)
+# ----------------------
+# Set this if your importable module name differs from the project name.
+# Example: project 'py-yaml12' with module name 'yaml12'
+# module: yaml12
+
+# Docstring Parser
+# ----------------
+# The docstring format used in your package (numpy, google, or sphinx)
+parser: google
+
+# Dynamic Introspection
+# ---------------------
+# Use runtime introspection for more accurate documentation (default: true)
+# Set to false if your package has cyclic alias issues (e.g., PyO3/Rust bindings)
+dynamic: false
+
+# API Discovery Settings
+# ----------------------
+# Exclude items from auto-documentation
+# exclude:
+#   - InternalClass
+#   - helper_function
+
+# Logo & Favicon
+# ---------------
+# Point to a single logo file (replaces the text title in the navbar):
+# logo: assets/logo.svg
+#
+# For light/dark variants:
+# logo:
+#   light: assets/logo-light.svg
+#   dark: assets/logo-dark.svg
+#
+# To show the text title alongside the logo, add: show_title: true
+
+# Author Information
+# ------------------
+# Author metadata for display in the landing page sidebar
+# You can add additional fields: github, orcid, affiliation, homepage
+authors:
+  - name: Teal Insights
+    role: Author
+    # affiliation: 
+    email: info@tealinsights.com
+    # github: 
+    # orcid: 
+    # homepage: 
+
+# Funding / Copyright Holder
+# --------------------------
+# Credit the organization that funds or holds copyright for this package.
+# Displays in sidebar and footer. Homepage and ROR provide links.
+# funding:
+#   name: "Posit Software, PBC"
+#   roles:
+#     - Copyright holder
+#     - funder
+#   homepage: https://posit.co
+#   ror: https://ror.org/03wc8by49
+
+# API Reference Structure
+# -----------------------
+# Customize the sections below to organize your API documentation.
+# - Reorder items within a section to change their display order
+# - Move items between sections or create new sections
+# - Use 'members: false' to exclude methods from documentation
+# - Add 'desc:' to sections for descriptions
+
+reference:
+  - title: Classes
+    desc: Main classes provided by the package
+    contents:
+      - ParseError
+
+  - title: Dataclasses
+    desc: Dataclass definitions
+    contents:
+      - And  # 1 method(s)
+      - Compare  # 1 method(s)
+      - CycleReport
+      - name: DependencyGraph
+        members: false  # 26 methods listed below
+      - DynamicRefConfig  # 2 method(s)
+      - DynamicRefLimits
+      - DynamicRefTraceEvent
+      - ExcelRange  # 2 method(s)
+      - FormulaEvaluator  # 4 method(s)
+      - FromWorkbook
+      - GreaterThanCell
+      - GuardCellRef  # 1 method(s)
+      - GuardExpr
+      - LightweightVizPayload
+      - Literal  # 1 method(s)
+      - LocalForceSubgraph
+      - Node
+      - Not  # 1 method(s)
+      - NotEqualCell
+      - Or  # 1 method(s)
+      - RealBetween
+      - RealIntervalDomain
+      - WorkbookCalcSettings
+
+  - title: DependencyGraph Methods
+    desc: Methods for the DependencyGraph class
+    contents:
+      - DependencyGraph.add_node
+      - DependencyGraph.__contains__
+      - DependencyGraph.__iter__
+      - DependencyGraph.__len__
+      - DependencyGraph.keys
+      - DependencyGraph.add_edge
+      - DependencyGraph.get_node
+      - DependencyGraph.get_dependencies
+      - DependencyGraph.get_dependents
+      - DependencyGraph.get_edge_attrs
+      - DependencyGraph.get_edge_guard
+      - DependencyGraph.set_node_value
+      - DependencyGraph.set_node_metadata
+      - DependencyGraph.register_hook
+      - DependencyGraph.leaves
+      - DependencyGraph.formula_nodes
+      - DependencyGraph.leaf_node_items
+      - DependencyGraph.formula_keys
+      - DependencyGraph.leaf_keys
+      - DependencyGraph.target_keys
+      - DependencyGraph.roots
+      - DependencyGraph.cycle_report
+      - DependencyGraph.evaluation_order
+      - DependencyGraph.compress_identity_transits
+      - DependencyGraph.__getstate__
+      - DependencyGraph.__setstate__
+
+  - title: Enumerations
+    desc: Enumeration types
+    contents:
+      - CacheValidationPolicy
+      - XlError
+
+  - title: Exceptions
+    desc: Exception classes
+    contents:
+      - CycleError
+      - DynamicRefError
+      - SeriesBindingsLoadError
+      - SeriesBindingsSchemaError
+
+  - title: Named Tuples
+    desc: Named tuple definitions
+    contents:
+      - ValidationResult
+
+  - title: Typed Dicts
+    desc: TypedDict definitions
+    contents:
+      - ValidationReport
+
+  - title: Functions
+    desc: Utility functions
+    contents:
+      - bindings_canonical_sha256
+      - build_graph_cache_meta
+      - build_graph_cache_meta_portable
+      - create_dependency_graph
+      - format_cell_key
+      - get_calc_settings
+      - list_dynamic_ref_constraint_candidates
+      - load_series_bindings
+      - needs_quoting
+      - normalize_blank_range_specs
+      - resolve_series_bindings
+      - save_graph_cache
+      - select_local_force_subgraph
+      - select_path_induced_subgraph
+      - to_graphviz
+      - to_mermaid
+      - to_networkx
+      - to_web_viz_payload
+      - trace_dynamic_refs
+      - try_load_graph_cache
+      - validate_graph
+      - validate_series_bindings
+      - write_lightweight_viz_data
+      - write_lightweight_viz_html
+      - write_web_viz_html
+
+  - title: Constants
+    desc: Module-level constants and data
+    contents:
+      - format_key
+
+# Site URL
+# --------
+# Canonical address of the deployed documentation site.
+# Required for subdirectory deployments, skills page install commands,
+# .well-known/ discovery, and sitemaps.
+# site_url: "https://your-org.github.io/your-package/"
+
+# Site Settings
+# -------------
+# site:
+#   theme: flatly              # Quarto theme (default: flatly)
+#   toc: true                  # Show table of contents (default: true)
+#   toc-depth: 2               # TOC heading depth (default: 2)
+#   toc-title: On this page    # TOC title (default: "On this page")
+
+# Pre-render Hooks
+# ----------------
+# Run before Quarto render (from the great-docs/ build directory).
+# Patches post-render.py for UTF-8 stdout when Quarto invokes it on Windows.
+pre_render: scripts/patch_great_docs_post_render.py
+#
+# On Windows, also use UTF-8 for the great-docs CLI itself:
+#   uv run python scripts/great_docs_build.py
+# or: PYTHONUTF8=1 uv run great-docs build
+
+# Jupyter Kernel
+# --------------
+# Jupyter kernel to use for executing code cells in .qmd files.
+# This is set at the project level so it applies to all pages, including
+# auto-generated API reference pages. Can be overridden in individual .qmd
+# file frontmatter if needed for special cases.
+jupyter: python3
+
+# CLI Documentation
+# -----------------
+# cli:
+#   enabled: true              # Enable CLI documentation
+#   module: my_package.cli     # Module containing Click commands
+#   name: cli                  # Name of the Click command object

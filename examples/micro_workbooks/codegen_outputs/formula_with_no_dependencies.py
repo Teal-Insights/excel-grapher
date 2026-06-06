@@ -147,17 +147,17 @@ CellValue: TypeAlias = float | int | str | bool | XlError | ExcelRange | np.ndar
 
 
 def coerce_inputs_dict(values: Mapping[str, object]) -> dict[str, CellValue]:
-    """Widen inferred default-input dicts to ``dict[str, CellValue]`` for :class:`EvalContext`."""
+    """Widen inferred default-input dicts to `dict[str, CellValue]` for :class:`EvalContext`."""
     return cast(dict[str, CellValue], dict(values))
 
 
 def split_sheet_qualified_address(address: str) -> tuple[str, str] | None:
-    """Split ``sheet!coord`` into ``(sheet_name, coord)``.
+    """Split `sheet!coord` into `(sheet_name, coord)`.
 
     Handles quoted sheet names, including Excel's doubled-single-quote escape
-    (``'O''Neil'!A1`` → sheet ``O'Neil``).
+    (`'O''Neil'!A1` → sheet `O'Neil`).
 
-    Returns ``None`` when *address* has no sheet qualifier (plain ``A1``).
+    Returns `None` when *address* has no sheet qualifier (plain `A1`).
     """
     if address.startswith("'"):
         i = 1
@@ -365,7 +365,7 @@ DEFAULT_INPUTS = {}
 
 
 def cell_sheet1_b1(ctx):
-    """Formula: =1+1"""
+    """Formula: =1+1."""
     return xl_add(1.0, 1.0)
 
 

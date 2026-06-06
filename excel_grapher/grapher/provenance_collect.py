@@ -487,9 +487,9 @@ def collect_provenance_for_formula(
     type_analysis_cache: TypeAnalysisCache | None = None,
     workbook_sha256: str | None = None,
 ) -> dict[str, EdgeProvenance]:
-    """
-    Build a map from dependency cell key (``format_key``) to merged :class:`EdgeProvenance`
-    for one cell's formula, including IF/IFS/CHOOSE/SWITCH branch union semantics.
+    """Build a dependency-key to `EdgeProvenance` map for one formula.
+
+    Includes IF/IFS/CHOOSE/SWITCH branch union semantics.
     """
     if normalizer is None:
         normalizer = FormulaNormalizer(named_ranges, named_range_ranges)

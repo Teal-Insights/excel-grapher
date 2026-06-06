@@ -185,8 +185,10 @@ def test_pickle_does_not_contain_per_edge_wrapper_dicts() -> None:
 
 
 def test_deserialized_nodekeys_share_identity() -> None:
-    """After deserialization, the same NodeKey string should be the same object
-    (identity, not just equality) across _nodes, _edges, and _guards.
+    """Intern deserialized NodeKey strings across graph structures.
+
+    After deserialization, the same NodeKey string should share object identity
+    (not just equality) across `_nodes`, `_edges`, and `_guards`.
 
     This reduces memory and speeds up dict operations.
     """

@@ -1,5 +1,4 @@
-"""
-LIC-DSF Chart Data export targets (aligned with examples/lic_dsf/map_lic_dsf_indicators.py).
+"""LIC-DSF Chart Data export targets (aligned with examples/lic_dsf/map_lic_dsf_indicators.py).
 
 Used by slow integration tests to build the same dependency closure as the
 indicator-mapping script: fixed signal ranges plus stress-test and figure rows.

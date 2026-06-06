@@ -326,7 +326,9 @@ def test_emit_compute_structured_docstring_callback(tmp_path: Path) -> None:
     compute = cast(Callable[..., Records], ns["compute_scaled_output"])
     assert compute.__doc__ is not None
     assert "Compute scaled output." in compute.__doc__
-    assert "Example:" in compute.__doc__
+    assert "Args:" in compute.__doc__
+    assert "Returns:" in compute.__doc__
+    assert "Examples:" in compute.__doc__
 
 
 def test_emit_compute_google_docstring_renderer(tmp_path: Path) -> None:

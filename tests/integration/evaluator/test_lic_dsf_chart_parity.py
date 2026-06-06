@@ -1,10 +1,9 @@
-"""
-LIC-DSF Chart Data: evaluator matches Excel **cached** values on chart strips (integration, slow).
+"""LIC-DSF Chart Data: evaluator matches Excel **cached** values on chart strips (integration, slow).
 
-Builds graphs with ``use_cached_dynamic_refs=True`` and asserts ``FormulaEvaluator``
+Builds graphs with `use_cached_dynamic_refs=True` and asserts `FormulaEvaluator`
 matches last-saved workbook numbers for figure and stress ranges (evaluator ↔ Excel).
 Live recalculation is covered elsewhere; strict dynamic-ref resolution without cache
-remains tracked separately via ``xfail`` until ``DynamicRefConfig`` is complete.
+remains tracked separately via `xfail` until `DynamicRefConfig` is complete.
 """
 
 from __future__ import annotations
@@ -115,8 +114,7 @@ def test_lic_dsf_full_chart_export_graph_builds(lic_dsf_full_chart_graph) -> Non
 
 @pytest.mark.slow
 def test_lic_dsf_full_chart_export_evaluator_matches_excel_cache(lic_dsf_full_chart_graph) -> None:
-    """
-    Cached path: formula cells in the export set with numeric Excel cache must match evaluator.
+    """Cached path: formula cells in the export set with numeric Excel cache must match evaluator.
 
     Scope: intersection of export keys with formula nodes in the built graph.
     """

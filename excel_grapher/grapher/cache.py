@@ -90,9 +90,7 @@ def build_graph_cache_meta_portable(
     schema_version: int = GRAPH_CACHE_SCHEMA_VERSION,
     excel_grapher_version: str | None = None,
 ) -> GraphCacheMeta:
-    """
-    Build an expected-meta object for validating a cached graph without requiring
-    access to the originating workbook file.
+    """Build expected cache metadata without access to the workbook file.
 
     Portable validation enforces only:
     - schema_version

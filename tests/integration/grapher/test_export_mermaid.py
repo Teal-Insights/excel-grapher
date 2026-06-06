@@ -1,6 +1,6 @@
 """Mermaid export reflects workbook-backed dependency graphs (integration).
 
-Builds small ``.xlsx`` files, runs ``create_dependency_graph`` and ``to_mermaid``,
+Builds small `.xlsx` files, runs `create_dependency_graph` and `to_mermaid`,
 and asserts diagram text includes expected nodes and edges for documentation flows.
 """
 

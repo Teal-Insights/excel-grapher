@@ -1,6 +1,6 @@
-"""``get_calc_settings`` reads iterative calculation flags from workbook XML (integration).
+"""`get_calc_settings` reads iterative calculation flags from workbook XML (integration).
 
-Uses ``xlsxwriter`` baselines plus patched ``calcPr`` so iterate count, delta, and
+Uses `xlsxwriter` baselines plus patched `calcPr` so iterate count, delta, and
 enablement surface correctly for evaluators and parity tooling.
 """
 

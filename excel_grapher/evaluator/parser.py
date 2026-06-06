@@ -39,7 +39,6 @@ __all__ = [
 
 def parse(formula: str) -> AstNode:
     """Wrapper around the core formula parser that preserves evaluator.ParseError."""
-
     try:
         return _core_parse(formula)
     except FormulaParseError as exc:

@@ -1,6 +1,6 @@
 """Excel recalculation helper: platform guards and automation entry points (integration).
 
-Asserts ``modify_and_recalculate_workbook`` fails clearly when Excel backends are
+Asserts `modify_and_recalculate_workbook` fails clearly when Excel backends are
 unavailable (e.g. Linux CI); full COM/xlwings runs remain opt-in outside this file.
 """
 

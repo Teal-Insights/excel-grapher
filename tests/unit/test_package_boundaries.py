@@ -2,13 +2,13 @@
 
 Dependency rules (strictest first):
 
-- ``excel_grapher.runtime`` must not import from ``evaluator``, ``exporter``,
-  or ``grapher``. It may use ``core``.
-- ``excel_grapher.grapher`` must not import from ``evaluator``, ``exporter``,
-  or ``runtime``. It may use ``core``.
-- ``excel_grapher.evaluator`` must not import from ``exporter``. It may use
-  ``core``, ``runtime``, and ``grapher`` (for blank-range / cycle primitives).
-- ``excel_grapher.exporter`` is the top of the stack and may depend on any
+- `excel_grapher.runtime` must not import from `evaluator`, `exporter`,
+  or `grapher`. It may use `core`.
+- `excel_grapher.grapher` must not import from `evaluator`, `exporter`,
+  or `runtime`. It may use `core`.
+- `excel_grapher.evaluator` must not import from `exporter`. It may use
+  `core`, `runtime`, and `grapher` (for blank-range / cycle primitives).
+- `excel_grapher.exporter` is the top of the stack and may depend on any
   lower layer.
 """
 
@@ -64,7 +64,7 @@ def test_evaluator_does_not_import_exporter() -> None:
 
 
 def test_grapher_package_init_does_not_import_exporter() -> None:
-    """The package ``__init__`` is not traversed by walk_packages; assert it stays layer-clean."""
+    """The package `__init__` is not traversed by walk_packages; assert it stays layer-clean."""
     repo_root = Path(__file__).resolve().parents[2]
     init_path = repo_root / "excel_grapher" / "grapher" / "__init__.py"
     tree = ast.parse(init_path.read_text(encoding="utf-8"))

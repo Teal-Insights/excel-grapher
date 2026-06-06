@@ -162,7 +162,6 @@ def _consolidate_import_lines(import_lines: list[str]) -> list[str]:
     can be merged into one statement. This keeps the generated output cleaner
     and prevents redefinition lint errors (e.g. ruff F811).
     """
-
     # Keep any unparsable/unsupported lines in their original order.
     passthrough: list[str] = []
 

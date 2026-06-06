@@ -15,7 +15,7 @@ class ParseError(FormulaExpanderError):
 
 
 class MissingNormalizedFormulaError(FormulaExpanderError):
-    """Raised when a formula cell lacks ``normalized_formula`` (graph invariant)."""
+    """Raised when a formula cell lacks `normalized_formula` (graph invariant)."""
 
     def __init__(self, cell_key: str) -> None:
         super().__init__(

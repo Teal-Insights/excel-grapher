@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Recalculate a workbook and verify Chart Data sensitivity to an input shock.
+r"""Recalculate a workbook and verify Chart Data sensitivity to an input shock.
 
 Relates to `https://github.com/Teal-Insights/excel-grapher/issues/79` (GDP / macro
 shock via Excel recalc). This script formalizes a check that a small change
@@ -7,13 +7,13 @@ on a configured input row (default: **Input 3** row **12**, columns **X:AR**)
 moves **Chart Data** row **63** across **D:X** by roughly the expected magnitude
 (default band: ~5% vs baseline), after full recalculation.
 
-Default shock on each input cell is **multiplicative**: ``new_value = cell_value * (1 + sign * bps)``,
-where ``bps`` is ``--bps / 10000`` (e.g. ``--bps 10`` → factor ``1.001`` / ``0.999``).
+Default shock on each input cell is **multiplicative**: `new_value = cell_value * (1 + sign * bps)`,
+where `bps` is `--bps / 10000` (e.g. `--bps 10` → factor `1.001` / `0.999`).
 
 Backends:
-  * ``auto`` — same selection as ``tests.utils.modify_and_recalculate`` (xlwings on
+  * `auto` — same selection as `tests.utils.modify_and_recalculate` (xlwings on
     Windows/macOS, PowerShell/COM on WSL).
-  * ``excel`` — force xlwings (Windows/macOS) or PowerShell/COM (WSL).
+  * `excel` — force xlwings (Windows/macOS) or PowerShell/COM (WSL).
 
 Examples::
 
@@ -25,7 +25,7 @@ Examples::
         --input-sheet \"Input 6(optional)-Standard Test\" --input-row 12 \\
         --input-start-col X --input-end-col AR --bps-mode absolute --bps 10
 
-Requires a local ``.xlsm`` (not committed in all clones). Install xlwings on
+Requires a local `.xlsm` (not committed in all clones). Install xlwings on
 Windows/macOS, or run from WSL with Excel via PowerShell/COM.
 """
 
@@ -42,7 +42,7 @@ from pathlib import Path
 import fastpyxl
 from fastpyxl.utils.cell import column_index_from_string, get_column_letter
 
-# Repo root on path for ``tests`` imports
+# Repo root on path for `tests` imports
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
@@ -79,7 +79,7 @@ def _read_numeric_row_slice(
     row: int,
     col_letters: Iterable[str],
 ) -> dict[str, float | None]:
-    """Load cached values for ``Sheet!{Col}{row}``; skip non-numeric."""
+    """Load cached values for `Sheet!{Col}{row}`; skip non-numeric."""
     out: dict[str, float | None] = {}
     wb = fastpyxl.load_workbook(str(path), data_only=True, read_only=True, keep_vba=True)
     try:

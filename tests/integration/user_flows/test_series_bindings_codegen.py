@@ -140,6 +140,8 @@ def test_generate_applies_series_docstring_callback() -> None:
     )
     assert setter.__doc__ is not None
     assert "Set borvelia_primary_balance." in setter.__doc__
+    assert "Args:" in setter.__doc__
+    assert "Returns:" in setter.__doc__
     assert "Required record fields:" in setter.__doc__
 
 

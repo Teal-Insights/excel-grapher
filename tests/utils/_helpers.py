@@ -17,7 +17,7 @@ def is_wsl() -> bool:
 
 
 def wsl_path_to_windows_unc(path: Path) -> str:
-    """Convert a WSL path to a Windows UNC path for Excel COM automation.
+    r"""Convert a WSL path to a Windows UNC path for Excel COM automation.
 
     This is needed when using Windows Excel from WSL via PowerShell/COM.
 

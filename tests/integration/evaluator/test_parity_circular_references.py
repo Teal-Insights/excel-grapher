@@ -1,7 +1,7 @@
 """Circular references: evaluator, runtime cache, and generated code stay coherent (integration).
 
-Builds small graphs with circular formulas and exercises ``FormulaEvaluator``,
-``CodeGenerator``, and runtime cache warnings so three-way behavior remains aligned.
+Builds small graphs with circular formulas and exercises `FormulaEvaluator`,
+`CodeGenerator`, and runtime cache warnings so three-way behavior remains aligned.
 """
 
 from __future__ import annotations

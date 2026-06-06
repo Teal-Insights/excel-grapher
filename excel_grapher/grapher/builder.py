@@ -85,7 +85,7 @@ def _parse_address_to_sheet_a1(addr: str) -> tuple[str, str]:
 def _workbook_sorted_sheet_a1_pairs(
     pairs: Iterable[tuple[str, str]], *, sheet_order: list[str]
 ) -> list[tuple[str, str]]:
-    """Return ``(sheet, a1)`` pairs in workbook sheet/row/column order."""
+    """Return `(sheet, a1)` pairs in workbook sheet/row/column order."""
     materialized = list(pairs)
     if not materialized:
         return []
@@ -223,59 +223,57 @@ def create_dependency_graph(
     blank_ranges: Iterable[str] | None = None,
     type_analysis_cache: TypeAnalysisCache | None = None,
 ) -> DependencyGraph:
-    """
-    Build a dependency graph starting from target cells.
+    r"""Build a dependency graph starting from target cells.
 
-    ``targets`` accepts any mix of:
+    `targets` accepts any mix of:
 
-    - sheet-qualified single cells (``"Sheet1!A1"``, ``"'My Sheet'!B2"``);
-    - sheet-qualified rectangular ranges (``"Sheet1!B12:F12"``,
-      ``"Sheet1!A1:Sheet1!B2"``, ``"'My Sheet'!A1:B2"``); and
+    - sheet-qualified single cells (`"Sheet1!A1"`, `"'My Sheet'!B2"`);
+    - sheet-qualified rectangular ranges (`"Sheet1!B12:F12"`,
+      `"Sheet1!A1:Sheet1!B2"`, `"'My Sheet'!A1:B2"`); and
     - defined names that resolve to a single cell or a rectangular range
-      (``"MyInput"``, ``"DataRange"``).
+      (`"MyInput"`, `"DataRange"`).
 
     Range and named-range targets are expanded to one BFS root per cell
-    (subject to ``max_range_cells``); the deduplicated union seeds traversal.
+    (subject to `max_range_cells`); the deduplicated union seeds traversal.
     Targets that are neither sheet-qualified nor a known defined name raise
-    :class:`ValueError`.
+    `ValueError`.
 
     Supports basic A1 references, sheet-qualified references, and dynamic references
     (OFFSET/INDIRECT). For OFFSET/INDIRECT:
 
     - **use_cached_dynamic_refs=True**: Resolve using cached workbook values (existing path).
-      ``dynamic_refs`` is ignored.
+      `dynamic_refs` is ignored.
     - **use_cached_dynamic_refs=False** (default), **dynamic_refs=None**: On any formula
-      that contains OFFSET or INDIRECT requiring resolution, raise :exc:`DynamicRefError`.
-      Callers can pass a ``DynamicRefConfig`` or set ``use_cached_dynamic_refs=True`` to avoid.
+      that contains OFFSET or INDIRECT requiring resolution, raise `DynamicRefError`.
+      Callers can pass a `DynamicRefConfig` or set `use_cached_dynamic_refs=True` to avoid.
     - **use_cached_dynamic_refs=False**, **dynamic_refs** set: Resolve OFFSET/INDIRECT via
-      the config's ``cell_type_env`` and ``limits``; missing or invalid domains raise
-      :exc:`DynamicRefError`.
+      the config's `cell_type_env` and `limits`; missing or invalid domains raise
+      `DynamicRefError`.
 
-    To build a config from a ``dict[str, type]`` constraints schema, use
-    :meth:`DynamicRefConfig.from_constraints`.
+    To build a config from a `dict[str, type]` constraints schema, use
+    `DynamicRefConfig.from_constraints`.
 
-    When ``capture_dependency_provenance`` is True, each edge stores merged
-    :class:`~excel_grapher.grapher.dependency_provenance.EdgeProvenance` under the
-    ``\"provenance\"`` key in :meth:`DependencyGraph.edge_attrs` (how the dependency
+    When `capture_dependency_provenance` is True, each edge stores merged
+    `excel_grapher.grapher.dependency_provenance.EdgeProvenance` under the
+    `\"provenance\"` key in `DependencyGraph.edge_attrs` (how the dependency
     arises: direct reference, static range, dynamic OFFSET/INDIRECT).
 
-    ``blank_ranges`` is an optional iterable of sheet-qualified A1 rectangles
-    (e.g. ``\"Sheet1!B2:D10\"``) treated as structurally empty: no nodes are
+    `blank_ranges` is an optional iterable of sheet-qualified A1 rectangles
+    (e.g. `\"Sheet1!B2:D10\"`) treated as structurally empty: no nodes are
     created for those cells (edges into them are kept), and dynamic-ref leaf
     constraints are not required for addresses inside these ranges. Pair with the
-    same declarations on :class:`~excel_grapher.FormulaEvaluator` and
-    :meth:`~excel_grapher.exporter.codegen.CodeGenerator.generate` for **evaluator
-    ↔ export** parity (consistent behavior between evaluation and generated code).
+    same declarations on `excel_grapher.FormulaEvaluator` and
+    `excel_grapher.exporter.codegen.CodeGenerator.generate` for **evaluator
+    <-> export** parity (consistent behavior between evaluation and generated code).
 
-    **Cost model**: constraint-based dynamic-ref expansion (``dynamic_refs`` set,
-    ``use_cached_dynamic_refs=False``) runs :func:`expand_leaf_env_to_argument_env`
-    once per formula regardless of ``capture_dependency_provenance``.  A shared
+    **Cost model**: constraint-based dynamic-ref expansion (`dynamic_refs` set,
+    `use_cached_dynamic_refs=False`) runs `expand_leaf_env_to_argument_env`
+    once per formula regardless of `capture_dependency_provenance`.  A shared
     per-graph cache ensures provenance collection reuses the already-computed
     expansion instead of repeating it.  Callers doing iterative constraint-tuning
-    workflows can still set ``capture_dependency_provenance=False`` to avoid any
+    workflows can still set `capture_dependency_provenance=False` to avoid any
     provenance overhead (formula-string span collection, branch-union merging, etc.).
     """
-
     if not isinstance(workbook, (str, Path)):
         raise TypeError(
             "create_dependency_graph requires a path or path-like string for "
@@ -331,7 +329,7 @@ def create_dependency_graph(
     # Clear per-graph-build caches from previous invocations.
     clear_index_target_cache()
 
-    # Per-graph cache: (normalized_formula, current_sheet, current_a1) → (offset_targets, indirect_targets, index_targets).
+    # Per-graph cache: (normalized_formula, current_sheet, current_a1) -> (offset_targets, indirect_targets, index_targets).
     # Populated by extract_expr_deps (constraint path); consumed by collect_provenance_for_formula
     # to avoid re-running the expensive expand_leaf_env_to_argument_env call.
     _dyn_cache: dict[tuple[str, str, str], tuple[set[str], set[str], set[str]]] = {}
@@ -463,9 +461,7 @@ def create_dependency_graph(
         sheet_order = list(wb_formulas.sheetnames)
 
         def extract_expr_deps(expr: str) -> list[tuple[str, str]]:
-            """
-            Extract dependencies from an expression fragment (no leading '=').
-            """
+            """Extract dependencies from an expression fragment (no leading '=')."""
             f = "=" + expr if not expr.startswith("=") else expr
             deps: list[tuple[str, str]] = []
 
@@ -1226,14 +1222,16 @@ def list_dynamic_ref_constraint_candidates(
     max_range_cells: int = 5000,
     type_analysis_cache: TypeAnalysisCache | None = None,
 ) -> list[str]:
-    """Return a sorted list of leaf cell addresses that feed dynamic-ref arguments
-    (OFFSET/INDIRECT/INDEX) but have no entry in ``dynamic_refs.cell_type_env``.
+    """Return sorted leaf cells missing dynamic-ref constraint entries.
 
-    Unlike :func:`create_dependency_graph`, this function does **not** raise
-    :exc:`DynamicRefError` when constraints are missing.  Instead it collects all
+    These are leaf cell addresses that feed dynamic-ref arguments
+    (OFFSET/INDIRECT/INDEX) but have no entry in `dynamic_refs.cell_type_env`.
+
+    Unlike `create_dependency_graph`, this function does **not** raise
+    `DynamicRefError` when constraints are missing.  Instead it collects all
     missing leaf addresses in a single pass and returns them sorted.
 
-    When ``dynamic_refs`` is ``None`` the function treats it as an empty constraint
+    When `dynamic_refs` is `None` the function treats it as an empty constraint
     environment: all leaf cells that feed dynamic-ref arguments are returned as
     candidates.
 

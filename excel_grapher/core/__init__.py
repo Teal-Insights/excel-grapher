@@ -1,5 +1,4 @@
-"""
-Shared Excel semantics (types, coercions, operators).
+"""Shared Excel semantics (types, coercions, operators).
 
 Representation-agnostic types and logic used by both the evaluator runtime
 and the standalone export runtime.

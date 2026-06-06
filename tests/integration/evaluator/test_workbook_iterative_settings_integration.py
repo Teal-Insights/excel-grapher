@@ -1,6 +1,6 @@
 """Iterative calculation settings in workbooks flow into codegen and evaluators (integration).
 
-Builds patched ``calcPr`` workbooks and asserts generated Python and evaluators honor
+Builds patched `calcPr` workbooks and asserts generated Python and evaluators honor
 iterate flags when converging circular guarded formulas.
 """
 

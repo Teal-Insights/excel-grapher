@@ -23,7 +23,7 @@ def emit_series_bindings_block(
     *,
     export_addresses: Iterable[str] | None = None,
     series_docstring_callback: str | None = None,
-    docstring_renderer: SeriesDocstringRendererSpec = "plain",
+    docstring_renderer: SeriesDocstringRendererSpec = "google",
 ) -> list[str]:
     """Emit setter and/or output compute functions for a binding manifest."""
     series_list = [s for s in bindings.get("series", []) if isinstance(s, dict)]

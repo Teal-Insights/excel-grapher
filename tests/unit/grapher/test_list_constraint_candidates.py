@@ -42,10 +42,11 @@ def _build_single_offset_missing_leaf(path: Path) -> None:
 
 
 def _build_two_offsets_missing_leaves(path: Path) -> None:
-    """
+    """Build a workbook with two OFFSET formulas and missing leaf constraints.
+
     A1 = B1 + C1  (static formula)
     B1 = OFFSET(Sheet1!D1, 0, Sheet1!E1)   E1 missing
-    C1 = OFFSET(Sheet1!F1, 0, Sheet1!G1)   G1 missing
+    C1 = OFFSET(Sheet1!F1, 0, Sheet1!G1)   G1 missing.
     """
     wb = xlsxwriter.Workbook(path)
     ws = wb.add_worksheet("Sheet1")
@@ -70,7 +71,8 @@ def _build_all_leaves_constrained(path: Path) -> None:
 
 
 def _build_partial_constraint(path: Path) -> None:
-    """
+    """Build a workbook with one constrained and one missing OFFSET leaf.
+
     A1 = OFFSET(Sheet1!B1, 0, Sheet1!C1) + OFFSET(Sheet1!B1, 0, Sheet1!D1)
     C1 is constrained, D1 is missing.
     """
@@ -119,7 +121,8 @@ def _build_index_match_range_arg(path: Path) -> None:
 
 
 def _build_infer_raises_branch_limit(path: Path) -> None:
-    """
+    """Build a workbook whose infer step hits the branch limit.
+
     A1 = OFFSET(Sheet1!B1, 0, Sheet1!C1).
     C1 is constrained with a domain that causes branch explosion in infer.
     """
@@ -132,7 +135,8 @@ def _build_infer_raises_branch_limit(path: Path) -> None:
 
 
 def _build_blocked_downstream_blank_leaf(path: Path) -> None:
-    """
+    """Build a workbook with a downstream blank INDIRECT leaf.
+
     A1 -> B1 statically.
     B1 = OFFSET(F1, C1, 0), so candidate discovery must infer F1/F2 targets.
     F2 = INDIRECT(G1), and G1 is blank.
@@ -177,7 +181,8 @@ def test_single_offset_missing_leaf(tmp_path: Path) -> None:
 
 
 def test_two_offsets_missing_leaves_collected_in_one_call(tmp_path: Path) -> None:
-    """
+    """Collect missing leaves from multiple OFFSET formulas in one call.
+
     Two separate OFFSET formulas each with missing leaves are both collected
     in a single call — the core regression vs. the current raise-on-first behavior.
     """
@@ -250,7 +255,8 @@ def test_index_match_range_argument_expands_all_cells(tmp_path: Path) -> None:
 
 
 def test_collect_and_continue_through_static_deps(tmp_path: Path) -> None:
-    """
+    """Continue BFS after collecting missing leaves from one formula.
+
     One formula reports missing leaves while BFS still reaches a second
     statically-reachable dynamic-ref formula and reports its leaves too.
     """
@@ -282,10 +288,11 @@ def test_no_offset_indirect_index_returns_empty(tmp_path: Path) -> None:
 
 
 def test_infer_raises_dynamic_ref_error_is_caught(tmp_path: Path) -> None:
-    """
-    When all leaves are constrained but infer itself raises DynamicRefError
-    (e.g. branch limit exceeded), the function catches it and returns [] rather
-    than propagating.
+    """Return an empty list when infer raises DynamicRefError.
+
+    When all leaves are constrained but infer itself raises `DynamicRefError`
+    (e.g. branch limit exceeded), the function catches it and returns `[]`
+    rather than propagating.
     """
     path = tmp_path / "infer_raises.xlsx"
     _build_infer_raises_branch_limit(path)
@@ -309,7 +316,8 @@ def test_infer_raises_dynamic_ref_error_is_caught(tmp_path: Path) -> None:
 def test_candidate_scan_surfaces_downstream_blank_leaf_despite_blocking_infer_issue_97(
     tmp_path: Path,
 ) -> None:
-    """
+    """Surface downstream blank leaves after upstream infer failures.
+
     A failed upstream dynamic-ref inference should not hide a downstream blank leaf
     that later causes graph extraction to fail.
     """
@@ -343,7 +351,7 @@ def test_missing_sheet_raises_value_error(tmp_path: Path) -> None:
 def _build_named_range_offset_workbook(path: Path) -> None:
     """Workbook with a defined-name range over a column that drives an OFFSET.
 
-    - ``OFFSET_TARGETS`` -> ``Sheet1!$A$1:$A$2``
+    - `OFFSET_TARGETS` -> `Sheet1!$A$1:$A$2`
     - A1 = OFFSET(B1, 0, C1)  (C1 is unconstrained leaf)
     - A2 = OFFSET(B1, 0, D1)  (D1 is unconstrained leaf)
     """

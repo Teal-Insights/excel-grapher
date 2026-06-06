@@ -1,5 +1,4 @@
-"""
-Formula Expander: evaluate Excel formulas from an `excel_grapher.DependencyGraph`.
+"""Formula Expander: evaluate Excel formulas from an `excel_grapher.DependencyGraph`.
 
 The public API is intentionally small and stable; internal modules may change.
 """

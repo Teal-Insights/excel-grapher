@@ -30,7 +30,7 @@ def derive_input_series(
     """Return one input series per binding series with graph-leaf overlap.
 
     Series bindings are the semantic source of truth: each input series
-    corresponds to one manifest ``series[]`` entry, and each cell corresponds to
+    corresponds to one manifest `series[]` entry, and each cell corresponds to
     a resolved graph leaf participating in that series.
     """
     report = resolve_series_bindings(graph, bindings, workbook=workbook, direction="input")

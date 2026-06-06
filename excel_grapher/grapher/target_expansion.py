@@ -14,8 +14,8 @@ from .parser import expand_range, format_key
 def split_range_target_on_colon(t: str) -> tuple[str, str] | None:
     """Split a sheet-qualified range target into (start_addr, end_addr).
 
-    Handles colons embedded within quoted sheet names (``'It''s Data'!A1:B2``).
-    Returns ``None`` if the target contains no top-level colon.
+    Handles colons embedded within quoted sheet names (`'It''s Data'!A1:B2`).
+    Returns `None` if the target contains no top-level colon.
     """
     in_quote = False
     i = 0
@@ -40,22 +40,21 @@ def expand_targets_to_roots(
     named_range_ranges: dict[str, tuple[str, str, str]],
     max_range_cells: int = 5000,
 ) -> list[tuple[str, str]]:
-    """Expand mixed target inputs into concrete ``(sheet, single_cell_a1)`` roots.
+    """Expand mixed target inputs into concrete `(sheet, single_cell_a1)` roots.
 
     Accepted target forms:
 
-    - Sheet-qualified single cells (``Sheet1!A1``, ``'My Sheet'!A1``).
-    - Sheet-qualified rectangular ranges (``Sheet1!A1:B2``,
-      ``Sheet1!A1:Sheet1!B2``, ``'My Sheet'!A1:B2``). Expansion follows
-      :func:`expand_range` and ``max_range_cells``.
-    - Defined names (``MyCell``, ``MyRange``) resolved against
-      ``named_ranges`` (single cell) and ``named_range_ranges`` (rectangle).
+    - Sheet-qualified single cells (`Sheet1!A1`, `'My Sheet'!A1`).
+    - Sheet-qualified rectangular ranges (`Sheet1!A1:B2`,
+      `Sheet1!A1:Sheet1!B2`, `'My Sheet'!A1:B2`). Expansion follows
+      `expand_range` and `max_range_cells`.
+    - Defined names (`MyCell`, `MyRange`) resolved against
+      `named_ranges` (single cell) and `named_range_ranges` (rectangle).
 
     Returns roots in first-occurrence order with duplicates removed. Raises
-    :class:`ValueError` for unknown defined names, missing sheets, malformed
+    `ValueError` for unknown defined names, missing sheets, malformed
     sheet-qualified targets, and ranges that span multiple sheets.
     """
-
     seen: set[str] = set()
     roots: list[tuple[str, str]] = []
 

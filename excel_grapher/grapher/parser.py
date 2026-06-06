@@ -23,7 +23,7 @@ from .guard import And, Compare, GuardExpr, Literal, Not, Or
 from .guard import CellRef as GuardCellRef
 from .node import NodeKey
 
-# Re-exported for ``from excel_grapher.grapher.parser import format_key, ...``
+# Re-exported for `from excel_grapher.grapher.parser import format_key, ...`
 format_key = _address_keys.format_key
 normalize_key = _address_keys.normalize_key
 parse_address = _address_keys.parse_address
@@ -41,8 +41,8 @@ class CellRef:
 _SHEET_CELL_RE = re.compile(
     r"(?:'(?P<qs>[^']+)'|(?P<us>[A-Za-z][A-Za-z0-9_]*))!\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)"
 )
-# Do not treat ``Col`` in ``Sheet!$Col$Row`` as a local ref: the column letter can follow ``!$``.
-# Sheet tokens may look like A1 (e.g. ``S2`` / ``'S2'``); do not match those as local refs.
+# Do not treat `Col` in `Sheet!$Col$Row` as a local ref: the column letter can follow `!$`.
+# Sheet tokens may look like A1 (e.g. `S2` / `'S2'`); do not match those as local refs.
 _LOCAL_CELL_RE = re.compile(
     r"(?<![!A-Za-z0-9_])(?<!\$)\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)(?![A-Za-z0-9_!'])"
 )
@@ -66,8 +66,7 @@ _RANGE_LOCAL_RE = re.compile(
 
 
 def parse_cell_refs(formula: str) -> list[CellRef]:
-    """
-    Extract single-cell references from a formula.
+    """Extract single-cell references from a formula.
 
     This function does not expand ranges. Use parse_range_refs + expand_range.
     """
@@ -90,9 +89,7 @@ def parse_cell_refs(formula: str) -> list[CellRef]:
 
 
 def parse_cell_refs_with_spans(formula: str) -> list[tuple[CellRef, tuple[int, int]]]:
-    """
-    Like parse_cell_refs, but returns (CellRef, (start, end)) span positions in ``formula``.
-    """
+    """Like parse_cell_refs, but returns (CellRef, (start, end)) span positions in `formula`."""
     if not isinstance(formula, str) or not formula.startswith("="):
         return []
 
@@ -114,9 +111,7 @@ def parse_cell_refs_with_spans(formula: str) -> list[tuple[CellRef, tuple[int, i
 
 
 def parse_range_refs(formula: str) -> list[tuple[CellRef, CellRef]]:
-    """
-    Extract range references from a formula as (start, end) CellRef pairs.
-    """
+    """Extract range references from a formula as (start, end) CellRef pairs."""
     if not isinstance(formula, str) or not formula.startswith("="):
         return []
 
@@ -170,8 +165,7 @@ def parse_range_refs(formula: str) -> list[tuple[CellRef, CellRef]]:
 
 
 def parse_range_refs_with_spans(formula: str) -> list[tuple[CellRef, CellRef, tuple[int, int]]]:
-    """
-    Extract range references from a formula as (start, end, (span_start, span_end)).
+    """Extract range references from a formula as (start, end, (span_start, span_end)).
 
     The span corresponds to the exact matched substring in the original formula and is
     intended for masking to prevent endpoint tokens from being re-parsed as separate refs.
@@ -242,9 +236,7 @@ def expand_range(
     end_row: int,
     max_cells: int,
 ) -> list[tuple[str, str]]:
-    """
-    Expand an A1 range into individual (sheet, A1) dependencies.
-    """
+    """Expand an A1 range into individual (sheet, A1) dependencies."""
     c1i = fastpyxl.utils.cell.column_index_from_string(start_col)
     c2i = fastpyxl.utils.cell.column_index_from_string(end_col)
     rlo, rhi = (start_row, end_row) if start_row <= end_row else (end_row, start_row)
@@ -261,8 +253,7 @@ def expand_range(
 
 
 def mask_spans(s: str, spans: list[tuple[int, int]]) -> str:
-    """
-    Replace characters in the specified spans with spaces.
+    """Replace characters in the specified spans with spaces.
 
     Useful to prevent endpoint tokens from being re-parsed as separate refs.
     """
@@ -286,15 +277,15 @@ def normalize_formula(
     named_ranges: dict[str, tuple[str, str]] | None = None,
     named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
 ) -> str:
-    """
-    Normalize a formula for transpilation:
+    """Normalize a formula for transpilation.
 
     - Replace same-sheet refs (A1) with sheet-qualified refs (Sheet1!A1)
     - Resolve named ranges to their targets
     - Strip absolute markers ($)
     - Qualify range endpoints
 
-    Returns the normalized formula string.
+    Returns:
+        The normalized formula string.
     """
     return normalize_excel_formula(
         formula,
@@ -305,16 +296,15 @@ def normalize_formula(
 
 
 class FormulaNormalizer:
-    """
-    Normalizes formulas efficiently across a graph build session.
+    """Normalizes formulas efficiently across a graph build session.
 
-    Compared to calling ``normalize_formula`` repeatedly:
+    Compared to calling `normalize_formula` repeatedly:
 
     - Named-range substitution is done in a **single regex pass** over the
       formula string (one compiled alternation pattern for all names), rather
-      than one ``re.sub`` call per name.  This reduces per-call cost from
+      than one `re.sub` call per name.  This reduces per-call cost from
       O(names) to O(formula_length).
-    - Results are **cached** by ``(formula, current_sheet)`` for the lifetime
+    - Results are **cached** by `(formula, current_sheet)` for the lifetime
       of the normalizer, so repeated calls (common during graph traversal) are
       O(1) dictionary lookups.
 
@@ -363,9 +353,7 @@ class FormulaNormalizer:
 
 @functools.lru_cache(maxsize=4096)
 def split_top_level_if(formula: str) -> tuple[str, str, str] | None:
-    """
-    If formula is a top-level IF(...), return (cond, then_expr, else_expr) strings.
-    """
+    """If formula is a top-level IF(...), return (cond, then_expr, else_expr) strings."""
     if not isinstance(formula, str) or not formula.startswith("="):
         return None
     s = formula[1:].lstrip()
@@ -433,8 +421,7 @@ def split_top_level_if(formula: str) -> tuple[str, str, str] | None:
 
 
 def split_top_level_function(formula: str, fn: str) -> list[str] | None:
-    """
-    If formula is a top-level FN(...), return the top-level argument strings.
+    """If formula is a top-level FN(...), return the top-level argument strings.
 
     This is a lightweight splitter that is aware of nested parentheses and quoted
     string literals (") so commas inside those don't split arguments.
@@ -504,25 +491,19 @@ def split_top_level_function(formula: str, fn: str) -> list[str] | None:
 
 @functools.lru_cache(maxsize=4096)
 def split_top_level_ifs(formula: str) -> list[str] | None:
-    """
-    If formula is a top-level IFS(...), return argument strings.
-    """
+    """If formula is a top-level IFS(...), return argument strings."""
     return split_top_level_function(formula, "IFS")
 
 
 @functools.lru_cache(maxsize=4096)
 def split_top_level_choose(formula: str) -> list[str] | None:
-    """
-    If formula is a top-level CHOOSE(...), return argument strings.
-    """
+    """If formula is a top-level CHOOSE(...), return argument strings."""
     return split_top_level_function(formula, "CHOOSE")
 
 
 @functools.lru_cache(maxsize=4096)
 def split_top_level_switch(formula: str) -> list[str] | None:
-    """
-    If formula is a top-level SWITCH(...), return argument strings.
-    """
+    """If formula is a top-level SWITCH(...), return argument strings."""
     return split_top_level_function(formula, "SWITCH")
 
 
@@ -1105,12 +1086,13 @@ def parse_dynamic_range_refs_with_spans(
     normalizer: FormulaNormalizer | None = None,
     value_resolver: Callable[[str, str], object] | None = None,
 ) -> list[tuple[CellRef, CellRef, tuple[int, int], list[CellRef]]]:
-    """
-    Extract dynamic range references (OFFSET/INDIRECT) as
-    (start, end, span, arg_refs).
+    """Extract dynamic range references (OFFSET/INDIRECT).
 
-    Only supports static arguments. Raises ValueError for non-literal offsets or
-    non-literal INDIRECT references.
+    Returns:
+        Tuples of (start, end, span, arg_refs).
+
+    Raises:
+        ValueError: Non-literal offsets or non-literal INDIRECT references.
     """
     if not isinstance(formula, str) or not formula.startswith("="):
         return []
@@ -1167,8 +1149,7 @@ def parse_guard_expr(
     current_sheet: str,
     named_ranges: dict[str, tuple[str, str]] | None = None,
 ) -> GuardExpr | None:
-    """
-    Parse a minimal boolean expression suitable for IF(...) conditions.
+    """Parse a minimal boolean expression suitable for IF(...) conditions.
 
     If parsing fails (unsupported syntax), returns None.
     """

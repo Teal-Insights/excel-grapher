@@ -1,4 +1,4 @@
-"""Single-file CodeGenerator export passes ``ty``/ruff when written to disk (integration).
+"""Single-file CodeGenerator export passes `ty`/ruff when written to disk (integration).
 
 Materializes generated Python to a temp tree and subprocesses diagnostics so export
 hygiene stays enforced in CI-like environments.

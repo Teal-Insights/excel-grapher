@@ -1,6 +1,6 @@
 """NetworkX export reflects workbook-backed dependency graphs (integration).
 
-Builds small ``.xlsx`` files, runs ``create_dependency_graph`` and ``to_networkx``,
+Builds small `.xlsx` files, runs `create_dependency_graph` and `to_networkx`,
 and asserts node/edge structure matches what downstream tooling should see.
 """
 

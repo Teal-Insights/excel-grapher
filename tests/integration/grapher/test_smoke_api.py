@@ -1,4 +1,4 @@
-"""Public ``excel_grapher`` package exports remain importable and discoverable (integration).
+"""Public `excel_grapher` package exports remain importable and discoverable (integration).
 
 Smoke-checks the advertised API surface so packaging, re-exports, and optional
 extras do not silently drop symbols users rely on in notebooks and apps.
@@ -8,9 +8,7 @@ from __future__ import annotations
 
 
 def test_public_api_imports() -> None:
-    """
-    Basic smoke test that the library imports and exposes the expected public API.
-    """
+    """Basic smoke test that the library imports and exposes the expected public API."""
     import excel_grapher as eg
 
     assert eg.create_dependency_graph is not None

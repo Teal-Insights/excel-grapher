@@ -1,7 +1,7 @@
-"""Generated export: ``ty`` accepts range arguments into ``xl_sum``-style APIs (integration).
+"""Generated export: `ty` accepts range arguments into `xl_sum`-style APIs (integration).
 
-Subprocesses ``ty`` on emitted exports so list-of-lists range shapes stay compatible
-with static ``CellValue`` typing in generated modules.
+Subprocesses `ty` on emitted exports so list-of-lists range shapes stay compatible
+with static `CellValue` typing in generated modules.
 """
 
 from __future__ import annotations

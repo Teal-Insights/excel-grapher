@@ -1,6 +1,6 @@
 """Graphviz export reflects workbook-backed dependency graphs (integration).
 
-Builds small ``.xlsx`` files, runs ``create_dependency_graph`` and ``to_graphviz``,
+Builds small `.xlsx` files, runs `create_dependency_graph` and `to_graphviz`,
 and asserts DOT output includes expected nodes, edges, and shape hints.
 """
 

@@ -16,16 +16,17 @@ _singleton_ref_negative: set[str] = set()
 
 
 def clear_identity_singleton_ref_cache() -> None:
-    """Drop parse cache used by :func:`is_identity_transit` (call around compression passes)."""
+    """Drop parse cache used by `is_identity_transit` (call around compression passes)."""
     _singleton_ref_address.clear()
     _singleton_ref_negative.clear()
 
 
 def _singleton_cell_ref_address(normalized_formula: str) -> str | None:
-    """
-    If ``normalized_formula`` is a single unary-plus-stripped cell reference, return its
-    normalized address; otherwise return None. Results are memoized for the current process
-    until :func:`clear_identity_singleton_ref_cache`.
+    """Return the normalized address for a singleton cell-reference formula.
+
+    When `normalized_formula` is a single unary-plus-stripped cell reference,
+    return its normalized address; otherwise return None. Results are memoized
+    for the current process until `clear_identity_singleton_ref_cache`.
     """
     if normalized_formula in _singleton_ref_negative:
         return None
@@ -47,9 +48,10 @@ def _singleton_cell_ref_address(normalized_formula: str) -> str | None:
 
 
 def is_identity_transit(graph: DependencyGraph, transit_key: NodeKey) -> NodeKey | None:
-    """
-    If ``transit_key`` is a pure identity reference to exactly one dependency, return that
-    dependency's key; otherwise return None.
+    """Return the sole dependency key for an identity transit node.
+
+    When `transit_key` is a pure identity reference to exactly one dependency,
+    return that dependency's key; otherwise return None.
     """
     node = graph.get_node(transit_key)
     if node is None or node.is_leaf or not node.normalized_formula:
@@ -74,7 +76,7 @@ def is_identity_transit(graph: DependencyGraph, transit_key: NodeKey) -> NodeKey
 def replace_substrings_at_spans(
     formula: str, spans: tuple[tuple[int, int], ...], replacement: str
 ) -> str:
-    """Replace each ``[a,b)`` span in ``formula`` with ``replacement`` (right-to-left)."""
+    """Replace each `[a,b)` span in `formula` with `replacement` (right-to-left)."""
     out = formula
     for a, b in sorted(spans, reverse=True):
         if 0 <= a <= b <= len(out):
@@ -87,7 +89,7 @@ def direct_provenance_for_key_in_strings(
     normalized: str | None,
     dep_key: str,
 ) -> EdgeProvenance:
-    """Build minimal direct-ref provenance by locating ``dep_key`` substrings."""
+    """Build minimal direct-ref provenance by locating `dep_key` substrings."""
     sites_f: list[tuple[int, int]] = []
     sites_n: list[tuple[int, int]] = []
     if formula:

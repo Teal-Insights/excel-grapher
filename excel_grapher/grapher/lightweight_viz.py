@@ -207,7 +207,7 @@ def _build_out_adj_guarded(
     *,
     include_guarded: bool,
 ) -> list[list[tuple[int, bool]]]:
-    """Outgoing adjacency with guarded flags, aligned with ``selected_adj`` edge filtering."""
+    """Outgoing adjacency with guarded flags, aligned with `selected_adj` edge filtering."""
     n = len(keys)
     out: list[list[tuple[int, bool]]] = [[] for _ in range(n)]
     for fk in keys:
@@ -270,7 +270,7 @@ def _bfs_horizontal_iteration_order(
     adj_flagged: list[list[tuple[int, bool]]],
     rev_flagged: list[list[tuple[int, bool]]],
 ) -> list[int]:
-    """Deterministic permutation for ``_rank_band_xy``: within each (rank, module) bucket, order by weighted barycentric sweeps."""
+    """Deterministic permutation for `_rank_band_xy`: within each (rank, module) bucket, order by weighted barycentric sweeps."""
     if n == 0:
         return []
     bucket_order: dict[tuple[int, int], list[int]] = {}

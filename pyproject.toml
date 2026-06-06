@@ -68,6 +68,7 @@ include = [
 [dependency-groups]
 dev = [
     "graphviz>=0.21",
+    "great-docs>=0.13.0",
     "jupyter>=1.1.1",
     "matplotlib>=3.10.8",
     "nbformat>=5.10.4",
@@ -87,8 +88,22 @@ line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
-ignore = ["E501"]
+select = ["E", "F", "I", "UP", "B", "SIM", "D"]
+ignore = [
+    "E501",
+    # Require Google formatting on existing docstrings; add docs incrementally.
+    "D100",
+    "D101",
+    "D102",
+    "D103",
+    "D104",
+    "D105",
+    "D106",
+    "D107",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

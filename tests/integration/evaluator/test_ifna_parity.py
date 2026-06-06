@@ -1,6 +1,6 @@
-"""IFNA: ``FormulaEvaluator`` and generated export runtime agree on synthetic graphs (integration).
+"""IFNA: `FormulaEvaluator` and generated export runtime agree on synthetic graphs (integration).
 
-Uses ``assert_codegen_matches_evaluator`` so IFNA semantics stay aligned on the
+Uses `assert_codegen_matches_evaluator` so IFNA semantics stay aligned on the
 evaluator↔codegen path independent of Excel file I/O.
 """
 

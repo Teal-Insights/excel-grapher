@@ -1,4 +1,4 @@
-"""Generate ``compute_*`` functions that return Records from graph output cells."""
+"""Generate `compute_*` functions that return Records from graph output cells."""
 
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ def emit_compute_function(
     workbook: Path | str | None = None,
     bindings: WorkbookSeriesBindings | None = None,
     series_docstring_callback: str | None = None,
-    docstring_renderer: SeriesDocstringRendererSpec = "plain",
+    docstring_renderer: SeriesDocstringRendererSpec = "google",
 ) -> list[str]:
     """Emit Python source lines for one series binding output compute function."""
     if not resolved["leaves"]:
@@ -139,7 +139,7 @@ def emit_computes_block(
     export_addresses: Iterable[str] | None = None,
     include_type_aliases: bool = True,
     series_docstring_callback: str | None = None,
-    docstring_renderer: SeriesDocstringRendererSpec = "plain",
+    docstring_renderer: SeriesDocstringRendererSpec = "google",
 ) -> list[str]:
     """Emit all series output compute functions for a validated binding manifest."""
     report = resolve_series_bindings(

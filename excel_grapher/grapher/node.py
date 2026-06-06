@@ -18,8 +18,8 @@ NodeKey: TypeAlias = NormalizedAddress
 class Node:
     """Workbook cell in a dependency graph.
 
-    ``is_leaf`` is true when the node has no outgoing dependency edges (value-only
-    cells and literal-only formulas such as ``=1+1``).
+    `is_leaf` is true when the node has no outgoing dependency edges (value-only
+    cells and literal-only formulas such as `=1+1`).
     """
 
     sheet: str
@@ -49,10 +49,10 @@ class Node:
 class NodeView:
     """Read-only snapshot of a graph node.
 
-    Instances are returned by ``DependencyGraph.get_node(...)`` and reflect the
+    Instances are returned by `DependencyGraph.get_node(...)` and reflect the
     node's state at the time of the lookup. To observe subsequent mutations,
     re-fetch the view. Durable mutation is done via
-    ``DependencyGraph.set_node_value(...)`` and ``set_node_metadata(...)``.
+    `DependencyGraph.set_node_value(...)` and `set_node_metadata(...)`.
     """
 
     sheet: str
@@ -79,7 +79,7 @@ class NodeView:
 
 
 def node_to_view(node: Node) -> NodeView:
-    """Build an immutable ``NodeView`` snapshot from a stored ``Node``."""
+    """Build an immutable `NodeView` snapshot from a stored `Node`."""
     return NodeView(
         sheet=node.sheet,
         column=node.column,

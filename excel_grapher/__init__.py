@@ -1,5 +1,4 @@
-"""
-excel_grapher: Build and analyze dependency graphs from Excel workbooks; evaluate formulas; export standalone Python.
+"""excel_grapher: Build and analyze dependency graphs from Excel workbooks; evaluate formulas; export standalone Python.
 
 Public API is namespaced by role: excel_grapher.grapher, excel_grapher.evaluator, excel_grapher.exporter.
 Convenience re-exports below keep existing call patterns working.

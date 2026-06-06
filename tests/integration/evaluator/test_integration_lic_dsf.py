@@ -1,9 +1,8 @@
-"""
-LIC-DSF workbook: evaluator matches Excel cached values on indicator strips (integration).
+"""LIC-DSF workbook: evaluator matches Excel cached values on indicator strips (integration).
 
-Loads the real ``.xlsm`` template, discovers formula cells, and compares
-``FormulaEvaluator`` output to last-saved Excel results. Chart Data slices and export
-targets live in ``test_lic_dsf_chart_parity.py`` and ``lic_dsf_chart_targets.py``.
+Loads the real `.xlsm` template, discovers formula cells, and compares
+`FormulaEvaluator` output to last-saved Excel results. Chart Data slices and export
+targets live in `test_lic_dsf_chart_parity.py` and `lic_dsf_chart_targets.py`.
 """
 
 import re

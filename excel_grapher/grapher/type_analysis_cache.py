@@ -1,6 +1,6 @@
 """Persistent memoization cache for dynamic-ref type analysis.
 
-Stores inferred ``CellType`` results for intermediate formula cells in a
+Stores inferred `CellType` results for intermediate formula cells in a
 SQLite database so that repeated runs can reuse expensive analysis work.
 """
 
@@ -71,7 +71,7 @@ def _value_from_json(d: dict[str, Any]) -> Any:
 
 
 def _cell_type_to_json(ct: CellType) -> str:
-    """Serialize a ``CellType`` to a stable JSON string."""
+    """Serialize a `CellType` to a stable JSON string."""
     payload: dict[str, Any] = {"kind": ct.kind.value}
     if ct.interval is not None:
         payload["interval"] = {"min": ct.interval.min, "max": ct.interval.max}
@@ -90,7 +90,7 @@ def _cell_type_to_json(ct: CellType) -> str:
 
 
 def _cell_type_from_json(s: str) -> CellType:
-    """Deserialize a ``CellType`` from a JSON string."""
+    """Deserialize a `CellType` from a JSON string."""
     d = json.loads(s)
     kind = CellKind(d["kind"])
     interval = None
@@ -122,7 +122,7 @@ def _cell_type_from_json(s: str) -> CellType:
 
 
 def _compute_limits_fingerprint(limits: DynamicRefLimits) -> str:
-    """Produce a deterministic fingerprint for ``DynamicRefLimits``."""
+    """Produce a deterministic fingerprint for `DynamicRefLimits`."""
     payload = json.dumps(
         {
             "max_branches": limits.max_branches,
@@ -316,10 +316,10 @@ class TypeAnalysisCache:
         """Look up a cached formula-cell type, revalidating the leaf-env fingerprint.
 
         Queries by partial key (all fields except leaf-env fingerprint), then
-        recomputes the leaf-env subset fingerprint from ``current_leaf_env``
+        recomputes the leaf-env subset fingerprint from `current_leaf_env`
         using the stored consumed-leaf keys and compares.
 
-        Returns ``(cell_type, consumed_leaf_keys)`` on hit, or ``None`` on miss.
+        Returns `(cell_type, consumed_leaf_keys)` on hit, or `None` on miss.
         """
         if self._conn is None:
             self.stats.misses += 1
@@ -423,7 +423,7 @@ class TypeAnalysisCache:
             self._pending.clear()
 
     def _evict_if_needed(self) -> None:
-        """Remove oldest rows if count exceeds ``max_rows``."""
+        """Remove oldest rows if count exceeds `max_rows`."""
         if self._conn is None:
             return
         try:

@@ -513,16 +513,15 @@ def to_web_viz_payload(
     weight_attr: str | None = None,
     include_module_overlay: bool = True,
 ) -> WebVizPayload:
-    """
-    Build a web-visualization payload from a NetworkX DiGraph.
+    """Build a web-visualization payload from a NetworkX DiGraph.
 
-    Layout is selected by ``layout`` (registered web layout plugin id). The default
-    ``stratified_multipartite`` uses SCC-condensation longest-path rank on the vertical axis and
-    Louvain community ordering on the horizontal axis when ``include_module_overlay`` is true.
-    Other built-in ids include ``spring``, ``forceatlas2``, ``multipartite`` (NetworkX
-    ``multipartite_layout``), ``graphviz_dot``, and ``graphviz_sfdp``.
+    Layout is selected by `layout` (registered web layout plugin id). The default
+    `stratified_multipartite` uses SCC-condensation longest-path rank on the vertical axis and
+    Louvain community ordering on the horizontal axis when `include_module_overlay` is true.
+    Other built-in ids include `spring`, `forceatlas2`, `multipartite` (NetworkX
+    `multipartite_layout`), `graphviz_dot`, and `graphviz_sfdp`.
 
-    Set ``include_module_overlay=False`` to skip the partition overlay (single module color;
+    Set `include_module_overlay=False` to skip the partition overlay (single module color;
     overview still draws local graph edges in the viewer).
     """
     from excel_grapher.exporter.web_viz_layout import (

@@ -1,5 +1,4 @@
-"""
-Tests for Node.normalized_formula — the transpiler-friendly form of the formula.
+"""Tests for Node.normalized_formula — the transpiler-friendly form of the formula.
 
 Includes dependency extraction and evaluator parity for mixed-sheet formulas
 (GitHub issue #160: bare refs must bind to the formula cell's sheet).
@@ -128,7 +127,7 @@ def test_normalized_formula_is_none_for_leaves(tmp_path: Path) -> None:
 
 
 def test_mixed_sheet_formula_bare_ref_binds_to_formula_sheet_issue_160(tmp_path: Path) -> None:
-    """Bare ``C10`` after cross-sheet refs + CHOOSE must be Engine!C10, not Inputs!C10."""
+    """Bare `C10` after cross-sheet refs + CHOOSE must be Engine!C10, not Inputs!C10."""
     excel_path = tmp_path / "mixed_sheet_choose.xlsx"
     wb = fastpyxl.Workbook()
     engine = wb.active

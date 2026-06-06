@@ -1,6 +1,6 @@
 """Declared structural blank ranges interact with graph build, evaluator, and codegen (integration).
 
-Parses blank-range specs and uses ``assert_codegen_matches_evaluator`` so graphs that
+Parses blank-range specs and uses `assert_codegen_matches_evaluator` so graphs that
 respect declared blanks stay aligned with transpiled runtime behavior (issue #39).
 """
 

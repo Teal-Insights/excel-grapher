@@ -1,6 +1,4 @@
-"""
-Web layout plugins for to_web_viz_payload: single entry point per layout id, optional annotations/hints.
-"""
+"""Web layout plugins for to_web_viz_payload: single entry point per layout id, optional annotations/hints."""
 
 from __future__ import annotations
 

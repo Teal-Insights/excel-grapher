@@ -1,6 +1,6 @@
 """OFFSET: evaluator and generated export runtime agree on synthetic graphs (integration).
 
-Guards volatile offset expansion through ``assert_codegen_matches_evaluator`` so
+Guards volatile offset expansion through `assert_codegen_matches_evaluator` so
 dynamic reference behavior matches embedded runtime helpers.
 """
 
