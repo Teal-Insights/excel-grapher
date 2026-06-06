@@ -28,13 +28,13 @@ guides, CLI docs, theming, and more.
 ## Quick start
 
 ```bash
-pip install great-docs
+uv add great-docs --dev
 # Quarto must also be installed: https://quarto.org/docs/get-started/
 
 cd my-package/        # directory with pyproject.toml
-great-docs init       # create great-docs.yml, discover API
-great-docs build      # full build -> great-docs/_site/
-great-docs preview    # local server on port 3000
+uv run great-docs init       # create great-docs.yml, discover API
+uv run great-docs build      # full build -> great-docs/_site/
+uv run great-docs preview    # local server on port 3000
 ```
 
 ## Skill directory structure
@@ -57,20 +57,22 @@ skills/great-docs/
 
 ## When to use what
 
+Note: Always run commands with `uv run` and set `PYTHONUTF8=1` on Windows.
+
 | Need                      | Use                                     |
 | ------------------------- | --------------------------------------- |
-| Start a new docs site     | `great-docs init`                       |
-| Full build from scratch   | `great-docs build`                      |
-| Rebuild after edits       | `great-docs build --no-refresh`         |
-| Live preview              | `great-docs preview`                    |
-| See discoverable API      | `great-docs scan --verbose`             |
+| Start a new docs site     | `uv run great-docs init`                |
+| Full build from scratch   | `uv run great-docs build`               |
+| Rebuild after edits       | `uv run great-docs build --no-refresh`  |
+| Live preview              | `uv run great-docs preview`             |
+| See discoverable API      | `uv run great-docs scan --verbose`      |
 | Change docstring parser   | `parser: google` in great-docs.yml      |
 | Add CLI reference         | `cli: {enabled: true, module: pkg.cli}` |
 | Add a gradient navbar     | `navbar_style: sky`                     |
 | Exclude internal symbols  | `exclude: [_InternalClass]`             |
 | Add user guide pages      | Create `user_guide/05-topic.qmd`        |
 | Add recipes               | Create `recipes/07-topic.qmd`           |
-| Set up GitHub Pages CI    | `great-docs setup-github-pages`         |
+| Set up GitHub Pages CI    | `uv run great-docs setup-github-pages`  |
 | Use static analysis       | `dynamic: false` (for tricky imports)   |
 | Generate agent skill file | `skill: {enabled: true}`                |
 
@@ -134,33 +136,6 @@ def my_function():
 
 ## Workflows
 
-### New documentation site
-
-```
-Task Progress:
-- [ ] Step 1: Install prerequisites
-- [ ] Step 2: Initialize configuration
-- [ ] Step 3: Customize config
-- [ ] Step 4: Build and preview
-- [ ] Step 5: Verify output
-```
-
-**Step 1**: Ensure `great-docs` and `quarto` are installed. The
-target package must be importable (`pip install -e .`).
-
-**Step 2**: Run `great-docs init` from the project root (where
-`pyproject.toml` lives). This creates `great-docs.yml`.
-
-**Step 3**: Edit `great-docs.yml` to customize. See
-[references/config-reference.md](references/config-reference.md) or
-[assets/config-template.yaml](assets/config-template.yaml) for all
-options.
-
-**Step 4**: Run `great-docs build` then `great-docs preview`.
-
-**Step 5**: Check the site at `http://localhost:3000`. If errors
-occur, see [references/common-errors.md](references/common-errors.md).
-
 ### Adding content
 
 **User guide page**: Create `user_guide/NN-title.qmd` with a
@@ -192,16 +167,6 @@ announcement:
   dismissable: true
 ```
 
-### Troubleshooting a build
-
-1. Run `great-docs build` and read the error output
-2. Check [references/common-errors.md](references/common-errors.md) for
-   the error pattern
-3. Fix the config or source file
-4. Rebuild with `great-docs build --no-refresh` (faster, skips API
-   rediscovery)
-5. If the error persists, try `great-docs build` with full refresh
-
 ## Reference files
 
 ### Config reference (`references/config-reference.md`)
@@ -230,39 +195,6 @@ Error patterns, causes, and fixes for the most frequent build
 failures — import errors, missing exports, config mismatches,
 Quarto issues, and more.
 
-## Scripts
-
-### `scripts/setup-env.sh`
-
-Bootstrap a development environment:
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-pip install great-docs
-quarto --version || echo "ERROR: Quarto not installed"
-```
-
-### `scripts/run-build.sh`
-
-Build with validation:
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-great-docs build
-echo "Build complete. Site at great-docs/_site/"
-ls great-docs/_site/index.html && echo "OK: index.html exists"
-```
-
-## Configuration template
-
-The `assets/config-template.yaml` provides a starter config with
-annotated options. Copy it as `great-docs.yml` and customize.
-
 ## Gotchas
 
 1. **Run from project root.** All commands must run from the
@@ -278,8 +210,6 @@ annotated options. Copy it as `great-docs.yml` and customize.
    build. Edit source files instead.
 6. **Quarto required.** If `quarto` is not on `PATH`, the build
    fails at step 13.
-7. **Package must be importable.** In dynamic mode, run
-   `pip install -e .` before building.
 
 ## Capabilities and boundaries
 
@@ -292,26 +222,6 @@ annotated options. Copy it as `great-docs.yml` and customize.
 - Logo, favicon, and other assets
 - Custom CSS/SCSS overrides
 - Docstring directives (`%seealso`, `%nodoc`)
-
-**Requires human setup:**
-
-- `pip install great-docs` and Quarto installation
-- `pip install -e .` for the target package
-- GitHub Pages or hosting deployment
-- Custom domain DNS
-- GitHub access tokens (for changelog)
-
-## Related skills
-
-This is the general-purpose skill for Great Docs. For deeper
-guidance on specific tasks, use these companion skills:
-
-| Task                        | Skill               | When to use                                                   |
-| --------------------------- | ------------------- | ------------------------------------------------------------- |
-| Write user guide pages      | `write-user-guide`  | Creating or editing `.qmd` pages in `user_guide/`             |
-| Improve docstrings          | `revise-docstrings` | Auditing or rewriting Python docstrings for the API reference |
-| Configure the site          | `configure-site`    | Customizing `great-docs.yml` theming, features, and layout    |
-| Create or distribute skills | `author-skills`     | Writing SKILL.md files, setting up multi-skill distribution   |
 
 ## Resources
 
