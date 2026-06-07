@@ -1,14 +1,41 @@
-# Series bindings
-
-Declarative **series bindings** describe how spreadsheet input cells map to named dimensions (SDMX-style concepts) and how generated Python **setters** accept `Records` — `list[dict]` with a required measure field (`OBS_VALUE` by default) plus key columns.
-
-They replace the retired label-detection heuristics (`row_labels` / `column_labels` on graph nodes). The machine source of truth is a **sidecar manifest** next to the workbook, not inferred geometry.
-
-**Schema:** [`series_binding.schema.json`](series_binding.schema.json)  
-**Example workbook:** [`../examples/micro_workbooks/series_bindings.xlsx`](../examples/micro_workbooks/series_bindings.xlsx) with [`series_bindings.bindings.yaml`](../examples/micro_workbooks/series_bindings.bindings.yaml)  
-**Walkthrough:** [`../examples/micro_workbooks/series_bindings.qmd`](../examples/micro_workbooks/series_bindings.qmd)
-
 ---
+title: "Series bindings"
+format: gfm
+output: asis
+---
+
+Declarative **series bindings** describe how spreadsheet input cells map to named dimensions
+(SDMX-style concepts) and how generated Python **setters** and **compute** functions accept
+`Records` — `list[dict]` with a required measure field (`OBS_VALUE` by default) plus key columns.
+
+They replace the retired label-detection heuristics (`row_labels` / `column_labels` on graph nodes).
+The machine source of truth is a **sidecar manifest** next to the workbook, not inferred geometry.
+Validation uses the JSON Schema shipped with the package at
+`excel_grapher/series_bindings/series_binding.schema.json`.
+
+**Example workbook:** [series_bindings.xlsx](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/series_bindings.xlsx)
+with [series_bindings.bindings.yaml](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/series_bindings.bindings.yaml)
+
+**Hands-on walkthrough:** [Series bindings example](https://teal-insights.github.io/excel-grapher/examples/micro-workbooks/series-bindings.html)
+([source](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/series_bindings.qmd))
+
+## JSON Schema
+
+The schema below is read from the installed package (same file used by
+`validate_bindings_document()`):
+
+```{python}
+#| echo: false
+#| warning: false
+from importlib.resources import files
+
+schema_text = (
+    files("excel_grapher.series_bindings")
+    .joinpath("series_binding.schema.json")
+    .read_text(encoding="utf-8")
+)
+print(f"```json\n{schema_text}\n```")
+```
 
 ## Authoring conventions
 
@@ -48,7 +75,17 @@ Rules:
 
 **Non-goals:** bindings embedded inside the xlsx; one file per series; repo-wide manifest without a `workbook` field.
 
-### `data_range` addressing
+## Input and output direction blocks
+
+Each `series[]` entry shares structure (`data_range`, `layout`, `structure`, `key`) and declares
+optional direction blocks:
+
+- **`input.setter`** — generated setter requires key dimensions plus `OBS_VALUE` on each incoming record.
+- **`output.compute`** — generated compute returns all declared dimensions plus computed `OBS_VALUE` per graph cell in `data_range`.
+
+At least one of `input` or `output` is required per series (legacy top-level `setter` is normalized to `input.setter`).
+
+## `data_range` addressing
 
 Expansion uses the same path as graph **targets** (`expand_targets_to_roots`), including:
 
@@ -57,12 +94,12 @@ Expansion uses the same path as graph **targets** (`expand_targets_to_roots`), i
 - **Defined names**: `PrimaryRow` (requires `workbook=` or a graph built from that workbook so named-range maps are available)
 
 ```python
+from excel_grapher.series_bindings import expand_data_range, expand_data_range_for_graph
+
 expand_data_range("Inputs!F5:Inputs!J5")
 expand_data_range("PrimaryRow", workbook=path_to_xlsx)
 expand_data_range_for_graph(graph, "PrimaryRow", workbook=path_to_xlsx)
 ```
-
----
 
 ## LIC manifest table → sidecar workflow
 
@@ -85,11 +122,18 @@ Suggested workflow:
 | Setter name | `setter.name` |
 
 4. **Validate** against the dependency graph (see [Python API](#python-api)).
-5. **Export** with `CodeGenerator(..., series_bindings=..., bindings_workbook=...)` to emit `set_*` functions.
+5. **Export** with `CodeGenerator(..., series_bindings=..., bindings_workbook=...)` to emit `set_*` / `compute_*` functions (see [Code export](06-export.qmd)).
 
 Offset projection years (1..5) vs calendar years (1999..2000) are distinguished only by what you bind in `column_header` — declare the intended semantics in `sdmx_notes`.
 
----
+### Export authoring checklist
+
+1. Extract a dependency graph whose targets include the cells you need (targets seed extraction; output bindings may also cover intermediate formula cells present in the graph).
+2. Declare `data_range`, `layout`, `structure.measure`, `structure.dimensions`, and `key` (input matching uses `key` only).
+3. Add dimension binds (`column_header`, `row_label`, `cell`, `constant`, …). Use `bind.kind: constant` for fixed dimensions such as `FREQUENCY: A`.
+4. Add `output.compute.name` (e.g. `compute_borvelia_primary_balance`) to emit a records-shaped `compute_*` function.
+5. Optionally add `input.setter` in the same series or a mergeable shard for symmetric input APIs.
+6. Pass `series_bindings` and `bindings_workbook` to `CodeGenerator.generate()`; call the generated `compute_*` function to obtain `Records` with `OBS_VALUE` and dimensions.
 
 ## Records contract
 
@@ -111,8 +155,6 @@ Optional:
 
 `series_context` values are attached to emitted records for documentation; they are not used for matching unless also listed in `key`.
 
----
-
 ## Bind kinds
 
 | `bind.kind` | Scope | Status | Purpose |
@@ -125,8 +167,6 @@ Optional:
 
 Normalization: `strip`, `strip_trailing_unit` (removes trailing `(…)` unit clauses from indicator text).
 
----
-
 ## Layouts
 
 | `layout` | Status | Description |
@@ -136,18 +176,23 @@ Normalization: `strip`, `strip_trailing_unit` (removes trailing `(…)` unit cla
 | `matrix` | **schema only** | Multi-row blocks — not implemented yet |
 | `column_series` | **planned** | Not in schema yet; track via follow-up issues |
 
----
-
 ## Schema versions
 
 | Version | Contents |
 |---------|----------|
 | **1.0.0** | `row_series`, `scalar`; supported bind kinds above. Use for production workbooks. |
 | **1.1.0** | Draft extensions (e.g. `matrix` in schema). Not fully implemented in tooling. |
+| **1.2.0** | Optional `input` / `output` direction blocks and output `compute_*` functions. |
 
----
+## Validation and codegen closure
 
-## Python API
+`validate_series_bindings()` and `derive_*_series` intersect bindings with the extracted graph (input:
+**leaves**; output: **any graph node**). **Codegen** intersects with the export closure from the current
+`CodeGenerator` targets (formula cells, inputs, and dependencies actually emitted). Cells outside that
+closure are skipped; `validation.warn_on_partial_overlap` (default `true`) emits a warning when that
+happens.
+
+## Python API {#python-api}
 
 ```python
 from pathlib import Path
@@ -196,10 +241,11 @@ results = compute_all(ctx=ctx)
 
 For modular package exports, generated series setters are emitted from the package entrypoint and re-exported from the package root, alongside `make_context` and `compute_all`.
 
----
+## Design note
 
-## Relation to issue #185
-
-Issue #185 is now framed around **input series** derived from series bindings, not independently discovered input groups. One binding id corresponds to one generated setter and one input-series view over the participating graph leaves in `data_range`.
+Series bindings are framed around **input series** derived from binding manifests, not independently
+discovered input groups. One binding id corresponds to one generated setter (when `input.setter` is
+declared), one optional output `compute_*` function (when `output.compute` is declared), and matching
+input-series views over the participating graph cells in `data_range`.
 
 Design history: [GitHub issue #192](https://github.com/Teal-Insights/excel-grapher/issues/192).

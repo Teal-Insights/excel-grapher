@@ -1,0 +1,178 @@
+---
+title: "Exporting standalone Python"
+---
+
+The exporter turns a `DependencyGraph` into a standalone Python module:
+
+```python
+from excel_grapher.exporter import CodeGenerator
+
+code = CodeGenerator(graph).generate(targets)
+print("\n".join(code.splitlines()[:120]))
+```
+
+When graph nodes are target-marked (`Node.is_target=True`), `generate()` and `generate_modules()` can infer export targets directly from the graph:
+
+```python
+with CodeGenerator(graph) as gen:
+    code = gen.generate()  # defaults to graph.target_keys()
+```
+
+If neither explicit targets nor target-marked nodes are available, code generation raises a `ValueError`.
+
+For a multi-file package, `generate_modules()` returns a `dict[str, str]` keyed by module filename
+(`__init__.py`, `api.py`, `data.py`, `runtime.py`, `internals.py`). Write those files into a package
+directory of your choice, then import the package as usual.
+
+## Series bindings
+
+Optional sidecar manifests (`.bindings.yaml`) declare structured input/output APIs on exported code.
+See the dedicated [Series bindings](05-series-bindings.qmd) guide for the JSON Schema, authoring
+conventions, validation rules, and Python API. Minimal codegen hook:
+
+```python
+from pathlib import Path
+
+from excel_grapher.exporter import CodeGenerator
+from excel_grapher.series_bindings import load_series_bindings
+
+workbook_path = Path("lic_inputs.xlsx")
+bindings = load_series_bindings(workbook_path.with_suffix(".bindings.yaml"))
+
+code = CodeGenerator(graph).generate(
+    targets,
+    series_bindings=bindings,
+    bindings_workbook=workbook_path,
+)
+```
+
+## Series docstring callbacks
+
+When exporting series bindings, you can attach structured docstrings to generated `set_*` and
+series output `compute_*` functions by registering a callback and passing its name to
+`generate(..., series_docstring_callback=...)` or `generate_modules(..., series_docstring_callback=...)`:
+
+```python
+from excel_grapher.exporter import (
+    CodeGenerator,
+    FieldDoc,
+    GoogleSeriesDocstringRenderer,
+    SeriesFunctionDoc,
+    register_series_docstring_callback,
+)
+
+def my_series_docstring(ctx):
+    # ctx.contract contains deterministic binding facts (fields, examples, layout, etc.)
+    return SeriesFunctionDoc(
+        summary=f"Set {ctx.contract.series_id}.",
+        purpose="Updates workbook inputs from Records.",
+        record_matching="Records match by key fields.",
+        field_descriptions={
+            field: FieldDoc(description=f"Describe {field}.")
+            for field in ctx.contract.required_fields
+        },
+    )
+
+register_series_docstring_callback("my_docs", my_series_docstring, replace=True)
+
+
+def compact_google_renderer(contract, doc, *, series=None):
+    # Simple callables are valid custom renderers.
+    return GoogleSeriesDocstringRenderer().render(contract, doc, series=series)
+
+code = CodeGenerator(graph).generate(
+    targets,
+    series_bindings=bindings,
+    bindings_workbook=workbook_path,
+    series_docstring_callback="my_docs",
+    docstring_renderer=compact_google_renderer,  # or "plain" | "rst" | "google" | "numpy"
+)
+```
+
+Callbacks return `SeriesFunctionDoc` prose; the exporter renders deterministic sections such as
+accepted fields, source binding metadata, and example calls. Return `None` to omit a docstring.
+
+Callback contract highlights:
+
+- The callback is invoked once per generated series API function (`set_*` and series output `compute_*`).
+- Use `ctx.function_kind` (`"setter"` or `"compute"`) and `ctx.function_name` to branch wording per function.
+- `ctx.contract` contains deterministic binding facts for that specific function (required fields, field dtypes, examples, layout, and data range).
+- Docstring callbacks are selected by name (`series_docstring_callback="..."`), not passed as direct callables to `generate`.
+- Docstring renderers can be built-in names (`"plain"`, `"rst"`, `"google"`, `"numpy"`), renderer objects implementing `SeriesDocstringRenderer`, or simple callables `(contract, doc, *, series=None) -> str`.
+- If callback rendering is requested, codegen requires full series context (`series_bindings` + `bindings_workbook`).
+
+## Exported code sketch
+
+A (truncated) sketch of the exported code:
+
+```python
+"""Standalone runtime for generated Excel formula code."""
+
+from __future__ import annotations
+
+from enum import Enum
+
+
+class XlError(str, Enum):
+    """Excel error values."""
+    VALUE = "#VALUE!"
+    REF = "#REF!"
+    DIV = "#DIV/0!"
+    NA = "#N/A"
+    NAME = "#NAME?"
+    NUM = "#NUM!"
+    NULL = "#NULL!"
+
+
+def to_number(value) -> float | XlError:
+    ...
+
+
+def xl_mul(left, right) -> float | XlError:
+    ...
+
+
+from functools import lru_cache
+
+
+# --- Cell functions ---
+
+@lru_cache(maxsize=None)
+def cell_s_a1():
+    """Leaf cell: S!A1"""
+    return 10
+
+
+@lru_cache(maxsize=None)
+def cell_s_b1():
+    """Formula: =A1*2"""
+    return xl_mul(cell_s_a1(), 2.0)
+
+
+def compute_all():
+    """Compute all target cells and return results."""
+    return {
+        "S!B1": cell_s_b1(),
+    }
+```
+
+### Exported code results
+
+```python
+namespace: dict = {}
+exec(code, namespace)
+generated_results = namespace["compute_all"]()
+print(generated_results)
+# {'S!B1': 20.0}
+```
+
+**Tradeoffs for the exported-code approach:**
+
+- **Advantages**
+  - **Standalone artifact**: output is plain Python; no need to distribute `excel_grapher` or the evaluator with it.
+  - **Partial obfuscation**: does not expose the extraction engine directly.
+  - **Minimal runtime surface**: embeds only the Excel-equivalent `xl_*` helpers actually needed by the exported graph.
+  - **Repeatable execution**: freezes workbook logic at a point in time; downstream runs are deterministic and Excel-free.
+- **Disadvantages**
+  - **Still Excel-shaped**: the structure is still cell-centric and Excel-like; interpretability gains are incremental.
+  - **Regeneration required**: changes to the workbook require re-extracting and re-exporting.

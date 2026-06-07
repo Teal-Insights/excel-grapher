@@ -1,0 +1,178 @@
+---
+title: "End-to-end demo"
+---
+
+This example builds a **synthetic two-cell workbook** and runs it through the full pipeline.
+
+- `S!A1` is a leaf value (`10`).
+- `S!B1` is a formula (`=A1*2`) that references `S!A1`.
+
+### Setup: create the workbook
+
+```python
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import fastpyxl
+
+
+def _find_repo_root(start: Path) -> Path:
+    for p in [start, *start.parents]:
+        if (p / "pyproject.toml").exists():
+            return p
+    raise RuntimeError("Could not find repo root (missing pyproject.toml)")
+
+
+def create_synthetic_workbook(path: Path, *, sheet_name: str = "S") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    wb = fastpyxl.Workbook()
+    ws = wb.active
+    ws.title = sheet_name
+
+    ws["A1"].value = 10
+    ws["B1"].value = "=A1*2"
+
+    wb.save(path)
+
+
+ROOT = _find_repo_root(Path.cwd())
+sys.path.insert(0, str(ROOT))
+
+workbook_path = ROOT / "demo" / "_artifacts" / "two_cell_demo.xlsx"
+create_synthetic_workbook(workbook_path, sheet_name="S")
+```
+
+### Build the `DependencyGraph` (dict representation)
+
+```python
+import json
+from dataclasses import asdict
+
+from excel_grapher.grapher import create_dependency_graph, DependencyGraph
+from excel_grapher.evaluator import FormulaEvaluator
+from excel_grapher.exporter import CodeGenerator
+
+targets = ["S!B1"]
+graph: DependencyGraph = create_dependency_graph(
+    workbook_path,
+    targets,
+    load_values=True,
+    max_depth=10,
+)
+
+def serialize_graph(graph: DependencyGraph) -> dict:
+    return {
+        "nodes": {k: asdict(v) for k, v in graph._nodes.items()},
+        # Adjacency list: node -> dependencies (edges point from node to its deps)
+        "edges": {k: sorted(v) for k, v in graph._edges.items()},
+    }
+
+print(json.dumps(serialize_graph(graph), indent=2, sort_keys=True))
+```
+
+Example output:
+
+```json
+{
+  "edges": {
+    "S!A1": [],
+    "S!B1": [
+      "S!A1"
+    ]
+  },
+  "nodes": {
+    "S!A1": {
+      "column": "A",
+      "formula": null,
+      "is_leaf": true,
+      "metadata": {},
+      "normalized_formula": null,
+      "row": 1,
+      "sheet": "S",
+      "value": 10
+    },
+    "S!B1": {
+      "column": "B",
+      "formula": "=A1*2",
+      "is_leaf": false,
+      "metadata": {},
+      "normalized_formula": "=S!A1*2",
+      "row": 1,
+      "sheet": "S",
+      "value": null
+    }
+  }
+}
+```
+
+### Evaluator results
+
+```python
+with FormulaEvaluator(graph) as ev:
+    evaluator_results = ev.evaluate(targets)
+
+print(evaluator_results)
+## {'S!B1': 20.0}
+```
+
+### Caching an extracted graph (optional)
+
+If graph extraction is expensive and you expect to re-use the same workbook + targets + extraction settings,
+you can cache the `DependencyGraph` to disk as JSON.
+
+Strict caching (requires access to the workbook file to validate fingerprints):
+
+```python
+from pathlib import Path
+
+from excel_grapher import (
+    CacheValidationPolicy,
+    build_graph_cache_meta,
+    create_dependency_graph,
+    save_graph_cache,
+    try_load_graph_cache,
+)
+
+workbook_path = Path("workbook.xlsx")
+targets = ["S!B1"]
+extraction_params = {"load_values": True, "max_depth": 50}
+
+expected = build_graph_cache_meta(workbook_path, targets, extraction_params=extraction_params)
+graph = try_load_graph_cache(Path("graph-cache.json"), expected_meta=expected)
+if graph is None:
+    graph = create_dependency_graph(workbook_path, targets, **extraction_params)
+    save_graph_cache(Path("graph-cache.json"), graph, expected)
+```
+
+Portable caching (for `FormulaEvaluator` on machines without the workbook file):
+
+```python
+from excel_grapher import (
+    CacheValidationPolicy,
+    build_graph_cache_meta_portable,
+    try_load_graph_cache,
+)
+
+targets = ["S!B1"]
+expected = build_graph_cache_meta_portable(targets, extraction_params={"load_values": True, "max_depth": 50})
+
+graph = try_load_graph_cache(
+    Path("graph-cache.json"),
+    expected_meta=expected,
+    policy=CacheValidationPolicy.PORTABLE,
+)
+if graph is None:
+    raise FileNotFoundError("No valid cached graph found for the requested targets/settings.")
+```
+
+**Tradeoffs for the evaluator approach:**
+
+- **Advantages**
+  - **Native interface for extraction**: easy to re-extract and re-run if the workbook changes.
+  - **Template flexibility**: users can alter workbook structure; re-extraction will follow the new formula graph.
+- **Disadvantages**
+  - **Runtime translation**: Excel → Python translation happens at runtime for each evaluation.
+  - **Coupled to Excel**: still conceptually “driven by Excel” rather than a fully normalized Python model.

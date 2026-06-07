@@ -197,7 +197,31 @@ reference:
 # Canonical address of the deployed documentation site.
 # Required for subdirectory deployments, skills page install commands,
 # .well-known/ discovery, and sitemaps.
-# site_url: "https://your-org.github.io/your-package/"
+site_url: "https://teal-insights.github.io/excel-grapher/"
+
+# User Guide
+# ----------
+user_guide:
+  - section: "Core workflow"
+    contents:
+      - 01-dependency-graphs.qmd
+      - 02-visualization.qmd
+      - 03-evaluator.qmd
+  - section: "Export & quality"
+    contents:
+      - 04-end-to-end-demo.qmd
+      - 05-series-bindings.qmd
+      - 06-export.qmd
+      - 07-parity-testing.qmd
+      - 08-roadmap.qmd
+
+# Custom Sections
+# ---------------
+sections:
+  - title: Examples
+    dir: examples
+    index: true
+    navbar_after: User Guide
 
 # Site Settings
 # -------------
@@ -211,7 +235,9 @@ reference:
 # ----------------
 # Run before Quarto render (from the great-docs/ build directory).
 # Patches post-render.py for UTF-8 stdout when Quarto invokes it on Windows.
-pre_render: scripts/patch_great_docs_post_render.py
+pre_render:
+  - scripts/patch_great_docs_post_render.py
+  - scripts/copy_examples_assets.py
 #
 # On Windows, also use UTF-8 for the great-docs CLI itself:
 #   uv run python scripts/great_docs_build.py
