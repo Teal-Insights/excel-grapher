@@ -28,7 +28,12 @@ jobs:
       - name: Set up Quarto
         uses: quarto-dev/quarto-actions/setup@v2
 
+      - name: Install Graphviz
+        run: sudo apt-get update && sudo apt-get install -y graphviz
+
       - name: Build docs
+        env:
+          GITHUB_TOKEN: ${{ secrets.ISSUE_READ_PAT }}
         run: uv run great-docs build
 
       - name: Save docs artifact

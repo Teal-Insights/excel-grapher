@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scripts.build_workflow_dot_from_github import (
+from scripts.build_workflow import (
     WorkflowIssue,
     build_dot,
     build_workflow_issues,

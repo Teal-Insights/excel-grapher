@@ -234,10 +234,13 @@ sections:
 # Pre-render Hooks
 # ----------------
 # Run before Quarto render (from the great-docs/ build directory).
-# Patches post-render.py for UTF-8 stdout when Quarto invokes it on Windows.
+# - patch_great_docs_post_render.py: UTF-8 stdout on Windows
+# - copy_examples_assets.py: sync example workbooks into the build tree
+# - build_workflow.py: live workflow graph (ISSUE_READ_PAT in CI)
 pre_render:
   - scripts/patch_great_docs_post_render.py
   - scripts/copy_examples_assets.py
+  - scripts/build_workflow.py
 #
 # On Windows, also use UTF-8 for the great-docs CLI itself:
 #   uv run python scripts/great_docs_build.py

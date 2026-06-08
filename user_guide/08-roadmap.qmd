@@ -4,3 +4,4 @@ title: "Roadmap"
 
 - Continue expanding **three-way parity** coverage: evaluator ↔ export runtime, evaluator ↔ Excel (cache and live automation where available), especially for representation-sensitive areas such as `OFFSET`, `INDIRECT`, `LOOKUP`, `MATCH`, and `INDEX`.
 - Refine the dynamic-reference configuration API and constraints tooling (e.g., validation helpers) as more real-world models and templates are integrated.
+- [Live workflow graph](/workflow/)
