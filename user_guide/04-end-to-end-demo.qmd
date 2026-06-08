@@ -1,5 +1,6 @@
 ---
 title: "End-to-end demo"
+guide-section: "Export & quality"
 ---
 
 This example builds a **synthetic two-cell workbook** and runs it through the full pipeline.

@@ -1,5 +1,6 @@
 ---
 title: "Exporting standalone Python"
+guide-section: "Export & quality"
 ---
 
 The exporter turns a `DependencyGraph` into a standalone Python module:
@@ -27,7 +28,7 @@ directory of your choice, then import the package as usual.
 ## Series bindings
 
 Optional sidecar manifests (`.bindings.yaml`) declare structured input/output APIs on exported code.
-See the dedicated [Series bindings](05-series-bindings.qmd) guide for the JSON Schema, authoring
+See the dedicated [Series bindings](series-bindings.qmd) guide for the JSON Schema, authoring
 conventions, validation rules, and Python API. Minimal codegen hook:
 
 ```python

@@ -1,5 +1,6 @@
 ---
 title: "Evaluating formulas"
+guide-section: "Core workflow"
 ---
 
 The evaluator implements Excel’s semantics in Python and runs over a `DependencyGraph`.

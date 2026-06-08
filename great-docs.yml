@@ -201,19 +201,8 @@ site_url: "https://teal-insights.github.io/excel-grapher/"
 
 # User Guide
 # ----------
-user_guide:
-  - section: "Core workflow"
-    contents:
-      - 01-dependency-graphs.qmd
-      - 02-visualization.qmd
-      - 03-evaluator.qmd
-  - section: "Export & quality"
-    contents:
-      - 04-end-to-end-demo.qmd
-      - 05-series-bindings.qmd
-      - 06-export.qmd
-      - 07-parity-testing.qmd
-      - 08-roadmap.qmd
+# Auto-discovered from user_guide/ (numeric prefixes stripped for URLs).
+# Sidebar sections: set guide-section in each page's frontmatter.
 
 # Custom Sections
 # ---------------

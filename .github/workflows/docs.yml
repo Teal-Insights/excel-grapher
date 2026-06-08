@@ -90,19 +90,16 @@ jobs:
           name: docs-html
           path: great-docs/_site
 
-      # Start deployment
-      - name: Configure pull release name
-        if: ${{ github.event_name == 'pull_request' }}
+      - name: Set release name
+        id: release-name
         run: |
-          echo "RELEASE_NAME=pr-${{ github.event.number }}" >> $GITHUB_ENV
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "name=pr-${{ github.event.number }}" >> "$GITHUB_OUTPUT"
+          else
+            # use branch name, but replace slashes. E.g. feat/a -> feat-a
+            echo "name=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Configure branch release name
-        if: ${{ github.event_name != 'pull_request' }}
-        run: |
-          # use branch name, but replace slashes. E.g. feat/a -> feat-a
-          echo "RELEASE_NAME=${GITHUB_REF_NAME//\//-}" >> $GITHUB_ENV
-
-      # Deploy
       - name: Create Github Deployment
         uses: bobheadxi/deployments@v1
         id: deployment
@@ -110,6 +107,6 @@ jobs:
         with:
           step: start
           token: ${{ secrets.GITHUB_TOKEN }}
-          env: ${{ env.RELEASE_NAME }}
+          env: ${{ steps.release-name.outputs.name }}
           ref: ${{ github.head_ref }}
           logs: "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"

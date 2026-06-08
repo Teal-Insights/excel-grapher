@@ -1,5 +1,6 @@
 ---
 title: "Roadmap"
+guide-section: "Export & quality"
 ---
 
 - Continue expanding **three-way parity** coverage: evaluator ↔ export runtime, evaluator ↔ Excel (cache and live automation where available), especially for representation-sensitive areas such as `OFFSET`, `INDIRECT`, `LOOKUP`, `MATCH`, and `INDEX`.

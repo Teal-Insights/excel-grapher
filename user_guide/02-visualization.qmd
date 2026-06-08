@@ -1,5 +1,6 @@
 ---
 title: "Visualizing and exporting graphs"
+guide-section: "Core workflow"
 ---
 
 ### GraphViz DOT
