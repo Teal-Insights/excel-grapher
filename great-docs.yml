@@ -206,11 +206,8 @@ site_url: "https://teal-insights.github.io/excel-grapher/"
 
 # Custom Sections
 # ---------------
-sections:
-  - title: Examples
-    dir: examples
-    index: true
-    navbar_after: User Guide
+# Examples live in examples/ on GitHub (not built into the docs site).
+# Link them from README.md instead.
 
 # Site Settings
 # -------------
@@ -224,11 +221,9 @@ sections:
 # ----------------
 # Run before Quarto render (from the great-docs/ build directory).
 # - patch_great_docs_post_render.py: UTF-8 stdout on Windows
-# - copy_examples_assets.py: sync example workbooks into the build tree
 # - build_workflow.py: live workflow graph (ISSUE_READ_PAT in CI)
 pre_render:
   - scripts/patch_great_docs_post_render.py
-  - scripts/copy_examples_assets.py
   - scripts/build_workflow.py
 #
 # On Windows, also use UTF-8 for the great-docs CLI itself:

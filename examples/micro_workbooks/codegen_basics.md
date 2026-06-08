@@ -24,8 +24,7 @@ workbook_path = Path("codegen_basics.xlsx")
 
 The first example is a single-cell formula with no dependencies. We can
 extract the graph with the `create_dependency_graph` function (see
-[Extraction
-Basics](examples/micro_workbooks/extraction_basics.qmd%20for%20more%20details));
+[Extraction Basics](extraction_basics.md) for more details);
 then, instead of running the graph using the `FormulaEvaluator` Excel
 emulator, we can transpile the graph to standalone Python code using the
 `CodeGenerator` class. We’ll write the code to a file called

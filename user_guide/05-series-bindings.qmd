@@ -1,7 +1,5 @@
 ---
 title: "Series bindings"
-format: gfm
-output: asis
 guide-section: "Export & quality"
 ---
 
@@ -17,8 +15,8 @@ Validation uses the JSON Schema shipped with the package at
 **Example workbook:** [series_bindings.xlsx](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/series_bindings.xlsx)
 with [series_bindings.bindings.yaml](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/series_bindings.bindings.yaml)
 
-**Hands-on walkthrough:** [Series bindings example](https://teal-insights.github.io/excel-grapher/examples/micro-workbooks/series-bindings.html)
-([source](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/series_bindings.qmd))
+**Hands-on walkthrough:** [Series bindings example](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/series_bindings.md)
+([Quarto source](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/series_bindings.qmd))
 
 ## JSON Schema
 
@@ -30,12 +28,19 @@ The schema below is read from the installed package (same file used by
 #| warning: false
 from importlib.resources import files
 
+from IPython.display import Markdown, display
+
 schema_text = (
     files("excel_grapher.series_bindings")
     .joinpath("series_binding.schema.json")
     .read_text(encoding="utf-8")
 )
-print(f"```json\n{schema_text}\n```")
+display(
+    Markdown(
+        "<details><summary>JSON Schema</summary>\n\n"
+        f"```json\n{schema_text}\n```\n</details>"
+    )
+)
 ```
 
 ## Authoring conventions

@@ -119,4 +119,13 @@ Detailed documentation lives in the [User Guide](https://teal-insights.github.io
 | Parity testing | [Read guide](https://teal-insights.github.io/excel-grapher/user-guide/parity-testing.html) |
 | Roadmap | [Read guide](https://teal-insights.github.io/excel-grapher/user-guide/roadmap.html) |
 
-Hands-on walkthroughs: [Examples](https://teal-insights.github.io/excel-grapher/examples/).
+### Examples
+
+Hands-on walkthroughs (Markdown on GitHub):
+
+| Topic | Walkthrough |
+| --- | --- |
+| Graph extraction | [extraction_basics.md](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/extraction_basics.md) |
+| Code generation | [codegen_basics.md](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/codegen_basics.md) |
+| Series bindings | [series_bindings.md](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/series_bindings.md) |
+| Induced graph | [induced_graph.md](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/induced_graph/induced_graph.md) |
