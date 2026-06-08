@@ -1,6 +1,6 @@
 """INDEX edge cases: evaluator and generated export runtime stay aligned (integration).
 
-Uses ``assert_codegen_matches_evaluator`` for INDEX variants that commonly diverge
+Uses `assert_codegen_matches_evaluator` for INDEX variants that commonly diverge
 between hand-rolled evaluators and transpiled code.
 """
 

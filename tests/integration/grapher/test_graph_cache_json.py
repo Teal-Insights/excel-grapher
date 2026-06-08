@@ -1,6 +1,6 @@
 """Graph cache JSON round-trips stay aligned with freshly built graphs (integration).
 
-Covers ``build_graph_cache_meta``, ``save_graph_cache``, and ``try_load_graph_cache``
+Covers `build_graph_cache_meta`, `save_graph_cache`, and `try_load_graph_cache`
 on disk-backed workbooks so cache hits, invalidation, and validation policy behave
 predictably across releases.
 """
@@ -109,10 +109,10 @@ def test_cache_schema_version_mismatch(tmp_path: Path) -> None:
 
 
 def test_portable_load_skips_workbook_checks_but_enforces_others(tmp_path: Path) -> None:
-    """
-    This specifies the portability behavior needed by FormulaEvaluator:
-    graph load must not require access to the workbook file, but it must still
-    enforce schema + excel-grapher version + targets + extraction params.
+    """Enforce portable graph-cache validation without the workbook file.
+
+    Graph load must not require access to the workbook file, but it must still
+    enforce schema, excel-grapher version, targets, and extraction params.
     """
     workbook = tmp_path / "book.xlsx"
     _make_simple_workbook(workbook)

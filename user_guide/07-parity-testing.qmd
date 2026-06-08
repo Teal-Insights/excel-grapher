@@ -1,0 +1,6 @@
+---
+title: "Parity testing"
+guide-section: "Export & quality"
+---
+
+**Behavioral parity** is defined across three layers: **Excel** (reference), **`FormulaEvaluator`**, and **standalone exported code**. Shared semantics live in `excel_grapher/exporter/export_runtime/` so the evaluator and generated code stay aligned (**evaluator ↔ export** checks use `tests/integration/utils/parity_harness.py`). **Evaluator ↔ Excel** checks use values saved in the workbook and, when automation is available, **live recalculation** via xlwings that require Excel should **run when automation works** and **`pytest.skip`** otherwise (see `tests/integration/evaluator/test_golden_master.py`).

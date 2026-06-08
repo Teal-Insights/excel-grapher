@@ -151,7 +151,7 @@ def merge_series_binding_documents(documents: list[dict[str, Any]]) -> dict[str,
 def load_series_bindings(path: Path | str, *, validate: bool = True) -> WorkbookSeriesBindings:
     """Load a binding sidecar file or directory of shards.
 
-    When ``path`` is a directory, all ``*.bindings.yaml`` / ``*.bindings.json`` files
+    When `path` is a directory, all `*.bindings.yaml` / `*.bindings.json` files
     are merged in sorted filename order before schema validation.
     """
     p = Path(path)

@@ -20,10 +20,9 @@ def select_path_induced_subgraph(
 ) -> DependencyGraph:
     """Return the induced subgraph over nodes lying on directed source->target paths.
 
-    Edge direction follows ``DependencyGraph`` semantics: ``A -> B`` means
-    ``A`` depends on ``B``.
+    Edge direction follows `DependencyGraph` semantics: `A -> B` means
+    `A` depends on `B`.
     """
-
     sources = _normalize_existing_keys(graph, source_keys, arg_name="source_keys")
     targets = _normalize_existing_keys(graph, target_keys, arg_name="target_keys")
     _validate_limits(max_path_length=max_path_length, max_paths=max_paths)

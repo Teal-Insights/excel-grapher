@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from scripts.build_workflow_cytoscape_preset import (
+from scripts.build_workflow import (
+    WorkflowIssue,
     build_cytoscape_preset_payload,
     build_index_html,
 )
-from scripts.build_workflow_dot_from_github import WorkflowIssue
 
 
 def test_build_cytoscape_preset_payload_maps_clusters_positions_and_edges() -> None:

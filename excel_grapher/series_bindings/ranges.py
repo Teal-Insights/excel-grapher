@@ -1,4 +1,4 @@
-"""Range expansion for series binding ``data_range`` fields."""
+"""Range expansion for series binding `data_range` fields."""
 
 from __future__ import annotations
 
@@ -72,10 +72,10 @@ def expand_data_range(
     named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
     max_range_cells: int = 5000,
 ) -> list[str]:
-    """Expand a binding ``data_range`` to canonical sheet-qualified cell addresses.
+    """Expand a binding `data_range` to canonical sheet-qualified cell addresses.
 
-    Uses the same target expansion as :func:`create_dependency_graph` (including
-    both-end sheet-qualified ranges like ``Sheet1!A1:Sheet1!B2`` and defined names).
+    Uses the same target expansion as `create_dependency_graph` (including
+    both-end sheet-qualified ranges like `Sheet1!A1:Sheet1!B2` and defined names).
     """
     nr, nrr, wb_sheets = _resolve_named_range_maps(
         workbook=workbook,
@@ -110,7 +110,7 @@ def expand_data_range_for_graph(
     workbook: Path | str | None = None,
     max_range_cells: int = 5000,
 ) -> list[str]:
-    """Expand ``data_range`` using named-range maps (and optional workbook) from a graph."""
+    """Expand `data_range` using named-range maps (and optional workbook) from a graph."""
     return expand_data_range(
         data_range,
         workbook=workbook,

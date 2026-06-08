@@ -1,5 +1,4 @@
-"""
-excel_grapher: Build and analyze dependency graphs from Excel workbooks.
+"""excel_grapher: Build and analyze dependency graphs from Excel workbooks.
 
 This package intentionally keeps the public API small and stable.
 """

@@ -1,4 +1,4 @@
-"""Integration tests: ``create_dependency_graph`` accepts mixed target forms.
+"""Integration tests: `create_dependency_graph` accepts mixed target forms.
 
 Targets may be sheet-qualified single cells, sheet-qualified ranges, or named
 ranges (single-cell or rectangular). Each form must seed BFS with the union of
@@ -23,7 +23,7 @@ def _build_grid_workbook(path: Path) -> None:
     - Sheet1!B1..B3 are integer leaves.
     - Sheet1!C1..C3 are formulas referencing the corresponding B cell.
     - 'My Sheet'!A1..B2 form a quoted-sheet rectangle of integer leaves.
-    - Defined names: ``OneCell`` -> Sheet1!$C$1, ``BeeCol`` -> Sheet1!$B$1:$B$3.
+    - Defined names: `OneCell` -> Sheet1!$C$1, `BeeCol` -> Sheet1!$B$1:$B$3.
     """
     wb = fastpyxl.Workbook()
     s1 = wb.active
@@ -200,7 +200,7 @@ def test_targets_reject_invalid_sheet_in_range(tmp_path: Path) -> None:
 
 
 def test_targets_accept_sheet_qualified_endpoint_range(tmp_path: Path) -> None:
-    """``Sheet!A1:Sheet!B2`` form (normalized Excel range) is accepted."""
+    """`Sheet!A1:Sheet!B2` form (normalized Excel range) is accepted."""
     excel_path = tmp_path / "qualified_endpoint.xlsx"
     _build_grid_workbook(excel_path)
 

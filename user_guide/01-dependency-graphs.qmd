@@ -1,0 +1,182 @@
+---
+title: "Dependency graphs"
+guide-section: "Core workflow"
+---
+
+### Key design decisions
+
+- **Node identity**: nodes are keyed by sheet-qualified A1 strings like `Sheet1!A1` (`NodeKey`).
+- **Edge direction**: an edge `A -> B` means **A depends on B** (dependency-first evaluation).
+- **Leaf definition**: a leaf is any node with no cell dependencies (`Node.is_leaf=True`), including non-formula cells and literal-only formulas (e.g. `=1+1`).
+- **Values are optional**: `load_values=True` loads cached Excel results (second workbook load); otherwise formula nodes have `value=None`.
+- **Extensible metadata**: each `Node` has a `metadata: dict[str, Any]` that hooks can mutate.
+- **Range expansion**: ranges like `A1:A10` are expanded to individual cell dependencies (bounded by `max_range_cells`).
+- **Normalized formulas**: each formula node has a `normalized_formula` field with sheet-qualified refs, resolved named ranges, and stripped `$` markers — ready for transpilation.
+
+### Quick start: building a graph
+
+```python
+from pathlib import Path
+
+from excel_grapher.grapher import create_dependency_graph
+from excel_grapher.grapher import to_graphviz, to_mermaid, to_networkx  # optional
+
+wb_path = Path("model.xlsx")
+targets = ["Sheet1!A10"]
+
+g = create_dependency_graph(wb_path, targets, load_values=False)
+print(len(g))          # number of visited nodes
+print(to_graphviz(g))  # GraphViz DOT
+```
+
+### Target forms
+
+`targets` accepts any mix of:
+
+- sheet-qualified single cells: `"Sheet1!A1"`, `"'My Sheet'!B2"`
+- sheet-qualified ranges: `"Sheet1!B12:F12"`, `"Sheet1!A1:Sheet1!B2"`,
+  `"'My Sheet'!A1:B2"`
+- defined names that resolve to a single cell or rectangular range:
+  `"MyInput"`, `"DataRange"`
+
+Range and named-range targets expand to one root per cell (subject to
+`max_range_cells`) and the BFS proceeds from the deduplicated union of roots.
+Targets that are neither sheet-qualified nor a known defined name raise
+`ValueError`.
+
+### Dynamic OFFSET/INDIRECT configuration
+
+Dynamic references (e.g. `OFFSET`, `INDIRECT`) can be handled in three ways via the `create_dependency_graph` API:
+
+```python
+from excel_grapher.grapher import create_dependency_graph, DynamicRefConfig, DynamicRefLimits
+
+## Signature (simplified):
+## create_dependency_graph(
+##     workbook_path,
+##     targets,
+##     *,
+##     dynamic_refs: DynamicRefConfig | None = None,
+##     use_cached_dynamic_refs: bool = False,
+##     ...
+## )
+```
+
+- **`use_cached_dynamic_refs=True`**  
+  Use the existing cached-workbook path for `OFFSET`/`INDIRECT`. This preserves the legacy behavior and **ignores** `dynamic_refs`.
+
+- **`use_cached_dynamic_refs=False` (default) and `dynamic_refs is None`**  
+  When the builder encounters dynamic refs that require resolution, it raises **`DynamicRefError`**. This is the safe “no silent fallback” default.
+
+- **`use_cached_dynamic_refs=False` and `dynamic_refs is a DynamicRefConfig`**  
+  Resolve dynamic refs using static constraints (cell types and limits). Missing or invalid domains still raise `DynamicRefError`.
+
+You typically build a `DynamicRefConfig` from a `dict[str, type]` constraints schema (sheet-qualified addresses mapped to typing annotations):
+
+```python
+from typing import Annotated, Literal
+
+from excel_grapher.grapher import DynamicRefConfig, create_dependency_graph
+from excel_grapher.core.cell_types import Between
+
+constraints_schema = {
+    "Sheet1!B1": Literal["ROW_INDEX"],
+    "Sheet1!C1": Annotated[float, Between(0, 10)],
+}
+
+constraints_data: dict[str, object] = {}
+
+config = DynamicRefConfig.from_constraints(constraints_schema, constraints_data)
+
+graph = create_dependency_graph(
+    "model_with_dynamic_refs.xlsx",
+    ["Sheet1!D10"],
+    load_values=False,
+    dynamic_refs=config,
+    # use_cached_dynamic_refs=False is the default
+)
+```
+
+Key points:
+
+- Constraint keys use **address-style** strings (e.g. `"Sheet1!B1"`).
+- `DynamicRefConfig` is immutable and carries both the `cell_type_env` and `DynamicRefLimits`.
+- From the top-level package, you can import `DynamicRefConfig`, `DynamicRefLimits`, and `DynamicRefError`.
+
+### Working with cell data (for transpilation)
+
+The `DependencyGraph` provides direct O(1) access to cell data via `get_node()`, plus filter methods for iterating over formula vs. leaf cells.
+
+```python
+from pathlib import Path
+
+from excel_grapher.grapher import create_dependency_graph, discover_formula_cells_in_rows
+from excel_grapher.grapher import DependencyGraph
+
+## Discover formula cells in specific rows
+targets = discover_formula_cells_in_rows(Path("model.xlsx"), "Sheet1", [10, 11, 12])
+
+## Build the dependency graph
+graph: DependencyGraph = create_dependency_graph(Path("model.xlsx"), targets, load_values=True)
+
+## Access cells by normalized address (O(1) lookup)
+node = graph.get_node("Sheet1!A10")
+print(node.formula)             # Original formula
+print(node.normalized_formula)  # Sheet-qualified for transpilation
+print(node.value)               # Cached value from Excel
+print(node.is_target)           # True if this node came from original targets
+
+## Iterate over formula cells
+for key, node in graph.formula_nodes():
+    print(key, node.normalized_formula)
+
+## Iterate over leaf (value) cells
+for key, node in graph.leaf_node_items():
+    print(key, node.value)
+
+## Get sorted keys
+formula_keys = graph.formula_keys()
+leaf_keys = graph.leaf_keys()
+target_keys = graph.target_keys()
+```
+
+#### `DependencyGraph` filter methods
+
+| Method              | Returns                                 | Description                           |
+|---------------------|------------------------------------------|---------------------------------------|
+| `get_node(key)`     | `NodeView \| None`                       | O(1) immutable lookup by cell address |
+| `formula_nodes()`   | `Iterator[tuple[NodeKey, Node]]`         | Cells with formulas                   |
+| `leaf_node_items()` | `Iterator[tuple[NodeKey, Node]]`         | Leaf cells (no cell dependencies)     |
+| `formula_keys()`    | `list[NodeKey]`                          | Sorted keys for formula cells         |
+| `leaf_keys()`       | `list[NodeKey]`                          | Sorted keys for leaf cells            |
+| `target_keys()`     | `list[NodeKey]`                          | Sorted keys marked as original targets |
+
+#### `Node` fields
+
+| Field                | Type         | Description                               |
+|----------------------|--------------|-------------------------------------------|
+| `formula`            | `str \| None` | Original formula (``None`` for value-only cells)  |
+| `normalized_formula` | `str \| None` | Sheet-qualified formula for transpilation |
+| `value`              | `Any`         | Cached or hardcoded value               |
+| `is_leaf`            | `bool`        | True if the node has no cell dependencies  |
+| `is_target`          | `bool`        | True if the node was one of the original graph targets |
+| `sheet`              | `str`         | Sheet name                              |
+| `column`             | `str`         | Column letter                           |
+| `row`                | `int`         | Row number                              |
+
+#### `discover_formula_cells_in_rows()`
+
+Utility for scanning rows to find formula cells with numeric cached values:
+
+```python
+def discover_formula_cells_in_rows(
+    wb_path: Path,
+    sheet_name: str,
+    rows: list[int],
+) -> list[str]:
+    ...
+```
+
+Returns sheet-qualified cell addresses (e.g., `"'Sheet Name'!A1"`) for formula cells.
+
+---

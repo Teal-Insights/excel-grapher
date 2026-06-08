@@ -1,0 +1,48 @@
+---
+description: Google-style docstrings for Python source in excel_grapher
+globs: excel_grapher/**/*.py
+alwaysApply: false
+---
+
+# Docstrings (Google style)
+
+Follow the [Google Python Style Guide — Docstrings](https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings).
+
+## Format
+
+- Use `"""` triple-double-quotes (PEP 257).
+- One-line summary (≤80 chars when practical), ending with `.`, `?`, or `!`.
+- For longer docstrings: blank line after the summary, then body at the same indent as the opening `"""`.
+- Prefer **imperative mood** for functions and methods (`Fetch rows.`, not `Fetches rows.`).
+- `@property` docstrings describe the attribute (`The workbook path.`), not `Returns the …`.
+
+## Sections
+
+Use these headings (each ends with `:`). Omit sections that add no information beyond the signature and type hints.
+
+| Section | When |
+|---------|------|
+| `Args:` | Non-obvious parameters (types come from annotations when clear) |
+| `Returns:` | Non-`None` return semantics not obvious from the summary |
+| `Yields:` | Generators |
+| `Raises:` | Interface-relevant exceptions |
+| `Attributes:` | Public class attributes (not `@property`) |
+| `Examples:` | Non-obvious usage |
+
+Hang section content with **4 spaces** (match surrounding file).
+
+## References
+
+- Mark inline code and symbol names with **single backticks**: `DependencyGraph`,
+  `excel_grapher.runtime.lookup.xl_index`, `Sheet1!A1`.
+- Use ASCII `->` instead of Unicode arrows (`→`) so doc extraction works on all platforms.
+
+## Scope
+
+- **Public API** (`__all__`, exported names): docstrings required for non-trivial functions, classes, and modules.
+- **Test modules**: module docstrings only when they document unusual setup, env deps, or run instructions — not `"""Tests for foo."""`.
+- **`@override` methods**: omit docstrings unless behavior materially differs from the base; then document only the delta.
+
+## Generated code
+
+Series-binding codegen defaults to the `google` docstring renderer (`GoogleSeriesDocstringRenderer`).

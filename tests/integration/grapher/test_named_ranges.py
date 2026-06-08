@@ -1,6 +1,6 @@
 """Named ranges resolve to coordinates and participate correctly in dependency graphs (integration).
 
-Covers ``build_named_range_map`` and ``create_dependency_graph`` with defined names
+Covers `build_named_range_map` and `create_dependency_graph` with defined names
 so common authoring patterns (simple names, multi-cell ranges, formulas through names)
 remain stable for users importing real workbooks.
 """

@@ -1,9 +1,8 @@
-"""
-Compare FormulaEvaluator output to **Excel workbook cached values** on a DependencyGraph.
+"""Compare FormulaEvaluator output to **Excel workbook cached values** on a DependencyGraph.
 
 This is one **evaluator ↔ Excel** path: last-saved results in the file (no live
 recalc). For parity against **live Excel**, use xlwings / COM automation when
-available (see ``modify_and_recalculate_workbook`` and ``test_golden_master``).
+available (see `modify_and_recalculate_workbook` and `test_golden_master`).
 
 Used by slow LIC-DSF tests for triage reporting and assertions.
 """
@@ -70,8 +69,7 @@ def compare_evaluator_to_excel_cache(
     atol: float = 1e-9,
     fail_fast: bool = False,
 ) -> list[WorkbookParityMismatch]:
-    """
-    Evaluate each address and compare to the node's cached workbook value.
+    """Evaluate each address and compare to the node's cached workbook value.
 
     Only compares when the cached value is a finite float/int (non-bool).
     """

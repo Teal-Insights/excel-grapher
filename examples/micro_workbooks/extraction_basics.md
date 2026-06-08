@@ -147,7 +147,7 @@ graph. The computed value of “Sheet1!C2” is `3`.
 Since `set_node_value` permanently changed the value of “Sheet1!B2” in
 the graph to `2`, it will still be `2` subsequent computations using the
 graph, and also in any generated code (see [Code Generation
-Basics](examples/micro_workbooks/codegen_basics.qmd) for more details).
+Basics](codegen_basics.md) for more details).
 
 ## 03. Conditional branches
 

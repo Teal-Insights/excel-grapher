@@ -54,7 +54,7 @@ class TestCellTypeSerialization:
         assert _cell_type_from_json(_cell_type_to_json(ct)) == ct
 
     def test_round_trip_mixed_numeric_enum(self) -> None:
-        """int vs float distinction must be preserved."""
+        """Int vs float distinction must be preserved."""
         ct = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({1, 2.5})))
         result = _cell_type_from_json(_cell_type_to_json(ct))
         assert result == ct
@@ -232,8 +232,11 @@ class TestCacheLookup:
             cache.close()
 
     def test_hit_on_second_variant_for_same_partial_key(self, tmp_path: Path) -> None:
-        """When multiple rows share a partial key but differ in leaf-env
-        fingerprint, a lookup with the second variant's env must still hit."""
+        """Hit cache lookups for alternate leaf-env fingerprints.
+
+        When multiple rows share a partial key but differ in leaf-env
+        fingerprint, a lookup with the second variant's env must still hit.
+        """
         ct1 = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({1})))
         ct2 = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({99})))
         env1 = {"Sheet1!B1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=0, max=5))}

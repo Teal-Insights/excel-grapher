@@ -32,9 +32,7 @@ from .parser import CellRef
 
 class NameResolver(Protocol):
     def resolve(self, name: str) -> tuple[str, str] | None:
-        """
-        Return (sheet, A1) for a defined name, or None if unknown/unsupported.
-        """
+        """Return (sheet, A1) for a defined name, or None if unknown/unsupported."""
 
 
 class DictNameResolver:
@@ -335,8 +333,7 @@ def _try_resolve_formula_defined_name(
 
 
 def build_named_range_map(wb: fastpyxl.Workbook) -> NamedRangeMaps:
-    """
-    Map defined names to single-cell and range references.
+    """Map defined names to single-cell and range references.
 
     Only includes simple definitions like Sheet1!$A$1 or Sheet1!$A$1:$B$10
     (optionally quoted sheet name). Skips multi-area and complex formulas.

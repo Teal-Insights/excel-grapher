@@ -19,9 +19,7 @@ class ValidationResult(NamedTuple):
 
 
 def _parse_workbook_sheetid_map(excel_path: Path) -> dict[str, str]:
-    """
-    Return mapping {sheetId -> sheet_name} from xl/workbook.xml.
-    """
+    """Return mapping {sheetId -> sheet_name} from xl/workbook.xml."""
     with zipfile.ZipFile(excel_path, "r") as zf:
         xml_bytes = zf.read("xl/workbook.xml")
 
@@ -40,8 +38,7 @@ def _parse_workbook_sheetid_map(excel_path: Path) -> dict[str, str]:
 def _parse_calcchain_formula_cells(
     excel_path: Path, sheet_id_to_name: dict[str, str]
 ) -> set[str] | None:
-    """
-    Return set of formula-cell keys like "SheetName!D35" as enumerated by calcChain.xml.
+    """Return set of formula-cell keys like "SheetName!D35" as enumerated by calcChain.xml.
 
     Returns None if the workbook does not contain xl/calcChain.xml.
     """
@@ -71,8 +68,7 @@ def _parse_calcchain_formula_cells(
 
 
 def _sheet_name_from_key(key: str) -> str:
-    """
-    Extract the unquoted sheet name from a sheet-qualified key.
+    """Extract the unquoted sheet name from a sheet-qualified key.
 
     Supports the library's quoting convention: "'Sheet Name'!A1".
     """
@@ -92,8 +88,7 @@ class WorkbookCalcSettings:
 
 
 def get_calc_settings(workbook_path: Path) -> WorkbookCalcSettings:
-    """
-    Extract calculation settings from xl/workbook.xml.
+    """Extract calculation settings from xl/workbook.xml.
 
     Defaults follow Excel's typical defaults when attributes are missing.
     """

@@ -1,6 +1,6 @@
-"""CodeGenerator: generated Python matches ``FormulaEvaluator`` on workbook-backed graphs (integration).
+"""CodeGenerator: generated Python matches `FormulaEvaluator` on workbook-backed graphs (integration).
 
-Builds graphs from ``.xlsx``/rows, runs ``assert_codegen_matches_evaluator``, and covers
+Builds graphs from `.xlsx`/rows, runs `assert_codegen_matches_evaluator`, and covers
 cycle handling and real-world-ish targets so the export path cannot drift from evaluation.
 """
 

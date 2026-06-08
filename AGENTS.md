@@ -10,6 +10,25 @@ Always practice test-driven development. Write a stub (if necessary), write a te
 
 This is a greenfield project with no users, so we are free to make design decisions that unconstrained by the legacy codebase.
 
+## Docstrings
+
+Use **Google-style** docstrings in `excel_grapher/` (see `.cursor/rules/docstrings.mdc`).
+Use single backticks for inline code in docstrings (not reST double-backtick literals).
+Series-binding codegen defaults to the `google` renderer.
+
+## Documentation site (great-docs)
+
+On Windows, set UTF-8 mode before building or previewing (great-docs prints Unicode in its
+build log and post-render script):
+
+```bash
+uv run python scripts/great_docs_build.py
+uv run python scripts/great_docs_preview.py
+```
+
+Equivalent: `PYTHONUTF8=1 uv run great-docs build`. The `pre_render` hook in `great-docs.yml`
+also patches `post-render.py` for Quarto's subprocess.
+
 ## Parity
 
 The project aims for **behavioral parity** across **Excel** (reference), **`FormulaEvaluator`**, and **exported standalone code**. Semantics are centralized in `excel_grapher/exporter/export_runtime/`; the evaluator and codegen must both use that runtime so **evaluator ↔ export** stays aligned.

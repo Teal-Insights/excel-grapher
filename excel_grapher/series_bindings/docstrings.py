@@ -262,7 +262,7 @@ def resolve_series_function_docstring(
     function_kind: SeriesFunctionKind,
     function_name: str,
     callback_name: str | None,
-    docstring_renderer: SeriesDocstringRendererSpec = "plain",
+    docstring_renderer: SeriesDocstringRendererSpec = "google",
 ) -> str | None:
     if callback_name is None:
         return _default_docstring(

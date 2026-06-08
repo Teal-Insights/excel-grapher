@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://teal-insights.github.io/excel-grapher/schemas/series_binding.schema.json",
+  "$id": "https://teal-insights.github.io/excel-grapher/series_binding.schema.json",
   "title": "Workbook series bindings",
   "description": "Declarative structure and spreadsheet bindings for generated input setters and output compute functions. Shared series structure describes dimensions and data_range; optional input and output blocks declare generated APIs.",
   "type": "object",

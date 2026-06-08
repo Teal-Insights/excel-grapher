@@ -1,4 +1,4 @@
-"""``validate_graph`` respects ``xl/calcChain.xml`` when present in the package (integration).
+"""`validate_graph` respects `xl/calcChain.xml` when present in the package (integration).
 
 Builds minimal xlsx zip layouts with controlled calc chains so validation matches
 spreadsheet expectations for formula ordering and sheet linkage.
@@ -17,9 +17,7 @@ from excel_grapher import create_dependency_graph, validate_graph
 
 
 def _make_simple_chain_xlsx(path: Path) -> None:
-    """
-    Use XlsxWriter for deterministic xlsx output.
-    """
+    """Use XlsxWriter for deterministic xlsx output."""
     wb = xlsxwriter.Workbook(path)
     ws = wb.add_worksheet("Sheet1")
     ws.write_number(0, 0, 2)  # A1
@@ -48,9 +46,7 @@ def _sheet_id_for_sheet1(xlsx_path: Path) -> str:
 
 
 def _with_calcchain(src_xlsx: Path, dst_xlsx: Path, *, sheet_id: str, cell_refs: list[str]) -> None:
-    """
-    Copy xlsx zip entries and add xl/calcChain.xml with the provided formula cell refs.
-    """
+    """Copy xlsx zip entries and add xl/calcChain.xml with the provided formula cell refs."""
     calc = [
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
         '<calcChain xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">',
@@ -70,9 +66,7 @@ def _with_calcchain(src_xlsx: Path, dst_xlsx: Path, *, sheet_id: str, cell_refs:
 
 
 def test_validate_graph_gracefully_handles_missing_calcchain(tmp_path: Path) -> None:
-    """
-    Many generated workbooks won't have calcChain.xml. Validation should not crash.
-    """
+    """Many generated workbooks won't have calcChain.xml. Validation should not crash."""
     excel_path = tmp_path / "no_calcchain.xlsx"
     wb = fastpyxl.Workbook()
     ws = wb.active
@@ -111,9 +105,10 @@ def test_validate_graph_compares_formula_cells_to_calcchain(tmp_path: Path) -> N
 def test_validate_graph_includes_literal_only_formula_in_calcchain_comparison(
     tmp_path: Path,
 ) -> None:
-    """
+    """Count literal-only formula cells in calcChain validation.
+
     No-dependency formulas are graph leaves but must still count as formula cells
-    when compared to ``calcChain.xml`` (see issue #127).
+    when compared to `calcChain.xml` (see issue #127).
     """
     src = tmp_path / "no_dep.xlsx"
     _make_no_dependency_formula_xlsx(src)

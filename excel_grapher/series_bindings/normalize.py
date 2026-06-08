@@ -43,7 +43,7 @@ def has_output_direction(series: dict[str, Any]) -> bool:
 
 
 def normalize_series_entry(series: dict[str, Any]) -> dict[str, Any]:
-    """Return a copy with legacy ``setter`` folded into ``input.setter`` when needed."""
+    """Return a copy with legacy `setter` folded into `input.setter` when needed."""
     out = dict(series)
     legacy_setter = out.pop("setter", None)
     input_block = out.get("input")

@@ -141,7 +141,7 @@ def test_evaluator_raises_for_unimplemented_function() -> None:
 
 
 def test_evaluator_arithmetic_operators() -> None:
-    """Test arithmetic operators: +, -, *, /, ^"""
+    """Test arithmetic operators: +, -, *, /, ^."""
     graph = _make_graph(
         _make_node("S!A1", "=1+2", None),
         _make_node("S!A2", "=5-3", None),
@@ -159,7 +159,7 @@ def test_evaluator_arithmetic_operators() -> None:
 
 
 def test_evaluator_comparison_operators() -> None:
-    """Test comparison operators: <, >, =, <=, >=, <>"""
+    """Test comparison operators: <, >, =, <=, >=, <>."""
     graph = _make_graph(
         _make_node("S!A1", "=1<2", None),
         _make_node("S!A2", "=2>1", None),
@@ -181,7 +181,7 @@ def test_evaluator_comparison_operators() -> None:
 
 
 def test_evaluator_string_concat() -> None:
-    """Test string concatenation operator: &"""
+    """Test string concatenation operator: &."""
     graph = _make_graph(
         _make_node("S!A1", '="hello"&" world"', None),
         _make_node("S!A2", '="a"&1', None),
@@ -193,7 +193,7 @@ def test_evaluator_string_concat() -> None:
 
 
 def test_evaluator_unary_negation() -> None:
-    """Test unary minus operator"""
+    """Test unary minus operator."""
     graph = _make_graph(
         _make_node("S!A1", "=-5", None),
         _make_node("S!A2", "=--5", None),
@@ -205,7 +205,7 @@ def test_evaluator_unary_negation() -> None:
 
 
 def test_evaluator_division_by_zero() -> None:
-    """Test division by zero returns #DIV/0! error"""
+    """Test division by zero returns #DIV/0! error."""
     graph = _make_graph(_make_node("S!A1", "=1/0", None))
     with FormulaEvaluator(graph) as ev:
         result = ev.evaluate(["S!A1"])
@@ -213,7 +213,7 @@ def test_evaluator_division_by_zero() -> None:
 
 
 def test_evaluator_operators_with_cell_refs() -> None:
-    """Test operators with cell references"""
+    """Test operators with cell references."""
     graph = _make_graph(
         _make_node("S!A1", None, 10),
         _make_node("S!B1", None, 3),
@@ -225,7 +225,7 @@ def test_evaluator_operators_with_cell_refs() -> None:
 
 
 def test_evaluator_operator_precedence() -> None:
-    """Test operator precedence: 1+2*3 = 7, not 9"""
+    """Test operator precedence: 1+2*3 = 7, not 9."""
     graph = _make_graph(_make_node("S!A1", "=1+2*3", None))
     with FormulaEvaluator(graph) as ev:
         result = ev.evaluate(["S!A1"])

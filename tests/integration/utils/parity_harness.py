@@ -1,7 +1,7 @@
-"""Evaluator ↔ export parity: ``FormulaEvaluator`` vs generated standalone code.
+"""Evaluator ↔ export parity: `FormulaEvaluator` vs generated standalone code.
 
-Excel reference checks live elsewhere (e.g. ``excel_workbook_parity`` for cached
-workbook values; live Excel via automation when available). See ``.cursor/rules/parity.mdc``.
+Excel reference checks live elsewhere (e.g. `excel_workbook_parity` for cached
+workbook values; live Excel via automation when available). See `.cursor/rules/parity.mdc`.
 """
 
 from __future__ import annotations

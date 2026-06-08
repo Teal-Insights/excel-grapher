@@ -1,6 +1,6 @@
 """MATCH: evaluator and generated export runtime agree on synthetic graphs (integration).
 
-Covers lookup-style MATCH behavior via ``assert_codegen_matches_evaluator`` so
+Covers lookup-style MATCH behavior via `assert_codegen_matches_evaluator` so
 evaluator↔codegen semantics do not drift.
 """
 

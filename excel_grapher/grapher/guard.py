@@ -81,8 +81,7 @@ class Or(GuardExpr):
 
 
 def canonicalize_guard(expr: GuardExpr) -> GuardExpr:
-    """
-    Return a canonicalized guard expression for conservative symbolic reasoning.
+    """Return a canonicalized guard expression for conservative symbolic reasoning.
 
     Canonicalization is intentionally minimal:
     - recurse through And / Or / Compare / Not
@@ -111,9 +110,7 @@ def canonicalize_guard(expr: GuardExpr) -> GuardExpr:
 
 
 def or_guard(a: GuardExpr, b: GuardExpr) -> GuardExpr:
-    """
-    Combine two guards with OR, flattening nested ORs.
-    """
+    """Combine two guards with OR, flattening nested ORs."""
     ops: list[GuardExpr] = []
     if isinstance(a, Or):
         ops.extend(a.operands)
@@ -128,8 +125,7 @@ def or_guard(a: GuardExpr, b: GuardExpr) -> GuardExpr:
 
 @dataclass(frozen=True)
 class GuardConstraints:
-    """
-    A minimal, conservative constraint set derived from a conjunction of guards.
+    """A minimal, conservative constraint set derived from a conjunction of guards.
 
     This is used to check whether a set of guard expressions is internally consistent
     (e.g., it can't contain both X=0 and X=1 at the same time).
@@ -140,8 +136,7 @@ class GuardConstraints:
     opaque: tuple[str, ...] = ()
 
     def add(self, g: GuardExpr) -> GuardConstraints | None:
-        """
-        Return a new GuardConstraints with g conjoined, or None if inconsistent.
+        """Return a new GuardConstraints with g conjoined, or None if inconsistent.
 
         Only a small subset of GuardExpr forms participate in consistency checking:
         - Compare(CellRef(key), "=", Literal(v))

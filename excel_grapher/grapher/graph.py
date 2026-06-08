@@ -23,8 +23,8 @@ _PICKLE_VERSION = 2
 class EdgeAttrs:
     """Typed read-only container for dependency-edge attributes.
 
-    Returned by :meth:`DependencyGraph.get_edge_attrs`. A missing edge yields an
-    ``EdgeAttrs`` with all fields set to ``None``.
+    Returned by `DependencyGraph.get_edge_attrs`. A missing edge yields an
+    `EdgeAttrs` with all fields set to `None`.
     """
 
     guard: GuardExpr | None = None
@@ -90,7 +90,7 @@ class DependencyGraph:
         order: Literal["insertion", "lexical", "workbook"] = "insertion",
         source: Iterable[NodeKey] | None = None,
     ) -> list[NodeKey]:
-        """Return node keys from ``source`` (or the graph) using the selected order."""
+        """Return node keys from `source` (or the graph) using the selected order."""
         key_source: Iterable[NodeKey] = self._nodes if source is None else source
         if order == "insertion":
             return list(key_source)
@@ -161,31 +161,31 @@ class DependencyGraph:
     # ---- public read API ----------------------------------------------------
 
     def get_node(self, key: NodeKey) -> NodeView | None:
-        """Return an immutable ``NodeView`` snapshot, or ``None`` if missing."""
+        """Return an immutable `NodeView` snapshot, or `None` if missing."""
         node = self._nodes.get(normalize_key(key))
         if node is None:
             return None
         return node_to_view(node)
 
     def get_dependencies(self, key: NodeKey) -> frozenset[NodeKey]:
-        """Return an immutable snapshot of ``key``'s dependencies (cells it reads)."""
+        """Return an immutable snapshot of `key`'s dependencies (cells it reads)."""
         deps = self._edges.get(normalize_key(key))
         if not deps:
             return frozenset()
         return frozenset(deps)
 
     def get_dependents(self, key: NodeKey) -> frozenset[NodeKey]:
-        """Return an immutable snapshot of cells that depend on ``key``."""
+        """Return an immutable snapshot of cells that depend on `key`."""
         deps = self._reverse_edges.get(normalize_key(key))
         if not deps:
             return frozenset()
         return frozenset(deps)
 
     def get_edge_attrs(self, from_key: NodeKey, to_key: NodeKey) -> EdgeAttrs:
-        """Return a typed snapshot of the attributes on edge ``from_key -> to_key``.
+        """Return a typed snapshot of the attributes on edge `from_key -> to_key`.
 
-        When the edge does not exist, returns an ``EdgeAttrs`` with all fields
-        set to ``None``.
+        When the edge does not exist, returns an `EdgeAttrs` with all fields
+        set to `None`.
         """
         fk = normalize_key(from_key)
         tk = normalize_key(to_key)
@@ -199,7 +199,7 @@ class DependencyGraph:
         )
 
     def get_edge_guard(self, from_key: NodeKey, to_key: NodeKey) -> GuardExpr | None:
-        """Return the guard on edge ``from_key -> to_key``, or ``None`` if none."""
+        """Return the guard on edge `from_key -> to_key`, or `None` if none."""
         fk = normalize_key(from_key)
         tk = normalize_key(to_key)
         v = self._guards.get((fk, tk))
@@ -208,7 +208,7 @@ class DependencyGraph:
     # ---- durable node mutation ---------------------------------------------
 
     def set_node_value(self, key: NodeKey, value: Any) -> None:
-        """Set a node's ``value`` field durably. Raises ``KeyError`` if missing."""
+        """Set a node's `value` field durably. Raises `KeyError` if missing."""
         nk = normalize_key(key)
         node = self._nodes.get(nk)
         if node is None:
@@ -219,7 +219,7 @@ class DependencyGraph:
         """Replace a node's metadata mapping durably.
 
         The provided mapping is copied; subsequent mutations to the caller's
-        object do not affect graph state. Raises ``KeyError`` if the node is
+        object do not affect graph state. Raises `KeyError` if the node is
         missing.
         """
         nk = normalize_key(key)
@@ -231,10 +231,10 @@ class DependencyGraph:
     # ---- internal accessors -------------------------------------------------
 
     def _get_internal_node(self, key: NodeKey) -> Node | None:
-        """Internal accessor for the live stored ``Node`` (normalizes key).
+        """Internal accessor for the live stored `Node` (normalizes key).
 
-        Internal-only: external callers must use ``get_node`` which returns an
-        immutable ``NodeView``.
+        Internal-only: external callers must use `get_node` which returns an
+        immutable `NodeView`.
         """
         return self._nodes.get(normalize_key(key))
 
@@ -341,7 +341,7 @@ class DependencyGraph:
         )
 
     def _workbook_sorted_keys(self, keys: Iterable[NodeKey]) -> list[NodeKey]:
-        """Return ``keys`` sorted by workbook sheet order, then row, then column."""
+        """Return `keys` sorted by workbook sheet order, then row, then column."""
         materialized = list(keys)
         if not materialized:
             return []
@@ -352,15 +352,14 @@ class DependencyGraph:
     def evaluation_order(
         self, *, strict: bool = True, iterate_enabled: bool | None = None
     ) -> list[NodeKey]:
-        """
-        Return nodes in dependency-first order (leaves before formulas that use them).
+        """Return nodes in dependency-first order (leaves before formulas that use them).
 
         Edge direction is A -> B meaning A depends on B. This method returns an
         ordering suitable for sequential evaluation (dependencies first).
 
-        If ``iterate_enabled`` is True (workbook has iterative calculation on), any
+        If `iterate_enabled` is True (workbook has iterative calculation on), any
         must-cycle or may-cycle is rejected: generated Python does not emulate Excel's
-        iterative convergence. Pass ``False`` or ``None`` to apply the usual strict /
+        iterative convergence. Pass `False` or `None` to apply the usual strict /
         non-strict rules without this check.
         """
         report = self.cycle_report()
@@ -432,10 +431,12 @@ class DependencyGraph:
         return order
 
     def compress_identity_transits(self) -> list[NodeKey]:
-        """
-        Remove identity transit nodes (formula is a single cell reference to one dependency),
-        rewrite dependents' formulas, and rewire edges. Requires dependency provenance from
-        graph construction with ``capture_dependency_provenance=True`` for safe edges.
+        """Remove identity transit nodes and rewire dependents.
+
+        Transit nodes whose formula is a single cell reference to one dependency
+        are removed, dependents' formulas are rewritten, and edges are rewired.
+        Requires dependency provenance from graph construction with
+        `capture_dependency_provenance=True` for safe edges.
 
         Node hooks are not invoked for removed or updated nodes.
 
@@ -669,9 +670,7 @@ def _intern_guard_cell_refs(
 
 
 def _scc_cycles(adj: dict[NodeKey, set[NodeKey]]) -> list[set[NodeKey]]:
-    """
-    Return SCCs that are cyclic (size>1 or self-loop).
-    """
+    """Return SCCs that are cyclic (size>1 or self-loop)."""
     sccs = _tarjan_scc(adj)
     out: list[set[NodeKey]] = []
     for scc in sccs:
@@ -730,9 +729,7 @@ def _subgraph_has_cycle(adj: dict[NodeKey, set[NodeKey]], nodes: set[NodeKey]) -
 
 
 def _find_cycle_path(adj: dict[NodeKey, set[NodeKey]], nodes: set[NodeKey]) -> list[NodeKey] | None:
-    """
-    Find one cycle path within the given node subset (best-effort).
-    """
+    """Find one cycle path within the given node subset (best-effort)."""
     visited: set[NodeKey] = set()
     stack: list[NodeKey] = []
     in_stack: set[NodeKey] = set()
@@ -767,9 +764,7 @@ def _find_cycle_path(adj: dict[NodeKey, set[NodeKey]], nodes: set[NodeKey]) -> l
 def _apply_guard_constraints(
     constraints: GuardConstraints, guard: GuardExpr | None
 ) -> list[GuardConstraints]:
-    """
-    Conjoin an edge guard onto the current constraints, returning the resulting
-    constraint sets.
+    """Conjoin an edge guard onto the current constraints.
 
     For disjunctive guards (OR), this returns multiple possible constraint sets,
     one per feasible disjunct (best-effort). This keeps cycle feasibility checks
@@ -794,9 +789,10 @@ def _apply_guard_constraints(
 
 
 def _subgraph_has_feasible_cycle(graph: DependencyGraph, nodes: set[NodeKey]) -> bool:
-    """
-    Return True if there exists at least one cycle within `nodes` whose accumulated
-    edge guards are jointly consistent (symbolic, no evaluation).
+    """Return whether `nodes` contains a guard-feasible cycle.
+
+    True when at least one cycle within `nodes` has jointly consistent
+    accumulated edge guards (symbolic, no evaluation).
     """
     visited: set[tuple[NodeKey, GuardConstraints]] = set()
     on_stack: set[NodeKey] = set()
@@ -826,9 +822,7 @@ def _subgraph_has_feasible_cycle(graph: DependencyGraph, nodes: set[NodeKey]) ->
 
 
 def _find_feasible_cycle_path(graph: DependencyGraph, nodes: set[NodeKey]) -> list[NodeKey] | None:
-    """
-    Best-effort: find one feasible cycle path within `nodes` (symbolic constraints).
-    """
+    """Best-effort: find one feasible cycle path within `nodes` (symbolic constraints)."""
     visited: set[tuple[NodeKey, GuardConstraints]] = set()
     stack: list[NodeKey] = []
     on_stack: set[NodeKey] = set()

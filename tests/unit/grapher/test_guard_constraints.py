@@ -21,9 +21,7 @@ def _nest_not(expr: Compare, count: int) -> Compare | Not:
 
 
 def test_guard_constraints_detects_contradiction_with_double_negation_equivalent() -> None:
-    """
-    Equivalent logical forms should lead to the same contradiction outcome.
-    """
+    """Equivalent logical forms should lead to the same contradiction outcome."""
     key = "Sheet1!A1"
     neq_one = Not(Compare(left=CellRef(key=key), op="=", right=Literal(value=1)))
     eq_one_via_double_neg = Not(Not(Compare(left=CellRef(key=key), op="=", right=Literal(value=1))))
@@ -36,9 +34,7 @@ def test_guard_constraints_detects_contradiction_with_double_negation_equivalent
 
 
 def test_guard_constraints_normalizes_nested_and_or_variants() -> None:
-    """
-    Recursive normalization through AND/OR should preserve feasibility semantics.
-    """
+    """Recursive normalization through AND/OR should preserve feasibility semantics."""
     key = "Sheet1!A1"
     eq_one = Compare(left=CellRef(key=key), op="=", right=Literal(value=1))
     neq_one_via_nested_not = Not(Not(Not(eq_one)))

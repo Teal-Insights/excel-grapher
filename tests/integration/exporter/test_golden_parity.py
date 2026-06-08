@@ -1,6 +1,6 @@
 """Golden-style graphs: codegen matches evaluator for curated synthetic cells (integration).
 
-Uses ``assert_codegen_matches_evaluator`` and symbol-pruning checks on hand-built
+Uses `assert_codegen_matches_evaluator` and symbol-pruning checks on hand-built
 graphs so embedded runtime stays aligned with evaluation semantics.
 """
 

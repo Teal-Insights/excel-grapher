@@ -14,14 +14,13 @@ def discover_formula_cells_in_rows(
     wb_formulas: fastpyxl.Workbook | None = None,
     wb_values: fastpyxl.Workbook | None = None,
 ) -> list[str]:
-    """
-    Scan specified rows and return sheet-qualified addresses for formula cells.
+    """Scan specified rows and return sheet-qualified addresses for formula cells.
 
     Only includes cells that contain formulas (start with '=') and whose cached
     calculated value is numeric.
 
     Pass pre-opened *wb_formulas* and *wb_values* to avoid repeated
-    ``load_workbook`` calls when scanning multiple sheets from the same file.
+    `load_workbook` calls when scanning multiple sheets from the same file.
     """
     owned = wb_formulas is None
     if wb_formulas is None:

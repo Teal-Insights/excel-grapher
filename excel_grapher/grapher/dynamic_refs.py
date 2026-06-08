@@ -70,13 +70,13 @@ class DynamicRefTraceEvent:
     """A single trace event emitted during dynamic-ref inference.
 
     Attributes:
-        kind: Event type (``"infer"``, ``"expand-env"``, ``"build-domains"``,
-            ``"build-value-domains"``, ``"offset-scalar-fallback"``,
-            ``"offset-scalar-wide"``, plus ``"-error"`` variants).
+        kind: Event type (`"infer"`, `"expand-env"`, `"build-domains"`,
+            `"build-value-domains"`, `"offset-scalar-fallback"`,
+            `"offset-scalar-wide"`, plus `"-error"` variants).
         name: Function that emitted the event.
         elapsed_s: Wall-clock seconds spent in the traced operation.  Defaults
-            to ``0.0`` for structural events (e.g. ``"index-abstract"``,
-            ``"index-enumerated"``) that report *what* happened rather than
+            to `0.0` for structural events (e.g. `"index-abstract"`,
+            `"index-enumerated"`) that report *what* happened rather than
             how long it took.
         detail: Flexible per-event payload (target counts, branch estimates,
             expressions, etc.).
@@ -98,7 +98,7 @@ _active_tracer: ContextVar[DynamicRefTraceFn | None] = ContextVar("_active_trace
 def trace_dynamic_refs(callback: DynamicRefTraceFn) -> Iterator[None]:
     """Activate *callback* as the dynamic-ref tracer for the enclosed block.
 
-    Nestable: an inner ``trace_dynamic_refs`` overrides the outer one; the
+    Nestable: an inner `trace_dynamic_refs` overrides the outer one; the
     outer tracer is restored when the inner block exits.
     """
     token = _active_tracer.set(callback)
@@ -118,8 +118,8 @@ def _emit_trace(event: DynamicRefTraceEvent) -> None:
 class DynamicRefError(ValueError):
     """Raised when dynamic reference analysis cannot proceed.
 
-    When building a dependency graph, pass a :class:`DynamicRefConfig` (e.g. via
-    :meth:`DynamicRefConfig.from_constraints`) or set ``use_cached_dynamic_refs=True``
+    When building a dependency graph, pass a `DynamicRefConfig` (e.g. via
+    `DynamicRefConfig.from_constraints`) or set `use_cached_dynamic_refs=True`
     to resolve OFFSET/INDIRECT instead of raising.
     """
 
@@ -136,30 +136,30 @@ def _apply_constraint_to_schema(schema: dict[str, Any], address: str, annotation
 class DynamicRefLimits:
     """Tuneable safety limits for dynamic-reference inference.
 
-    Pass a custom instance via the ``limits`` parameter of
-    :meth:`DynamicRefConfig.from_constraints` or
-    :meth:`DynamicRefConfig.from_constraints_and_workbook` to override any of these defaults.
+    Pass a custom instance via the `limits` parameter of
+    `DynamicRefConfig.from_constraints` or
+    `DynamicRefConfig.from_constraints_and_workbook` to override any of these defaults.
 
     Attributes:
         max_branches: Maximum number of discrete value assignments explored
             during constraint enumeration.  This cap is applied in two places:
 
-            * **Per-dependency domain size** – a single cell constrained to an
+            * **Per-dependency domain size** - a single cell constrained to an
               integer interval wider than *max_branches* values cannot be
               enumerated; the caller must either tighten the constraint or rely
               on the symbolic (abstract) analysis path.
-            * **Cartesian-product size** – when a formula cell falls back to
+            * **Cartesian-product size** - when a formula cell falls back to
               brute-force evaluation over all combinations of its dependencies'
               domains, the product of those domain sizes must not exceed
-              *max_branches*.  If it does, a :class:`DynamicRefError` is raised
+              *max_branches*.  If it does, a `DynamicRefError` is raised
               immediately (rather than hanging) with a breakdown of which
               dependencies contributed to the explosion.  Raise this limit or
               tighten the offending constraints to resolve the error.
 
-            Default: ``1024``.
+            Default: `1024`.
         max_cells: Maximum number of cells collected when expanding a range
-            reference.  Default: ``10_000``.
-        max_depth: Maximum AST-evaluation recursion depth.  Default: ``10``.
+            reference.  Default: `10_000`.
+        max_depth: Maximum AST-evaluation recursion depth.  Default: `10`.
     """
 
     max_branches: int = 1024
@@ -171,7 +171,7 @@ class DynamicRefLimits:
 class DynamicRefConfig:
     """Configuration for resolving OFFSET/INDIRECT via constraint-based inference.
 
-    Prefer building via :meth:`from_constraints`; the constructor is for internal use.
+    Prefer building via `from_constraints`; the constructor is for internal use.
     """
 
     cell_type_env: CellTypeEnv
@@ -185,15 +185,15 @@ class DynamicRefConfig:
         *,
         limits: DynamicRefLimits | None = None,
     ) -> DynamicRefConfig:
-        """Build a config from a constraints schema (address keys → type annotations) and instance data.
+        r"""Build a config from a constraints schema (address keys -> type annotations) and instance data.
 
-        *constraints_schema* must be a mapping (typically ``dict[str, type]``) whose keys are
-        sheet-qualified addresses (e.g. ``\"Sheet1!B1\"``). Values are typing objects describing
-        domains (``Annotated``, ``Literal``, etc.). *constraints_data* may mirror keys for runtime
+        *constraints_schema* must be a mapping (typically `dict[str, type]`) whose keys are
+        sheet-qualified addresses (e.g. `\"Sheet1!B1\"`). Values are typing objects describing
+        domains (`Annotated`, `Literal`, etc.). *constraints_data* may mirror keys for runtime
         validation elsewhere; it is not validated here.
 
         Raises:
-            TypeError: If *constraints_schema* is not a mapping (e.g. a legacy ``TypedDict`` class passed instead of a dict).
+            TypeError: If *constraints_schema* is not a mapping (e.g. a legacy `TypedDict` class passed instead of a dict).
         """
         if isinstance(constraints_schema, type):
             raise TypeError(
@@ -218,19 +218,19 @@ class DynamicRefConfig:
     ) -> DynamicRefConfig:
         """Build config from constraints schema plus workbook values for constant cells.
 
-        Constraints whose annotations carry a :class:`FromWorkbook` marker are
+        Constraints whose annotations carry a `FromWorkbook` marker are
         treated as singleton domains derived from the current cached value in the
         workbook.  Other constraints are interpreted via
-        :func:`constraints_to_cell_type_env` as usual.
+        `constraints_to_cell_type_env` as usual.
 
-        **Performance note:** The workbook is opened once in ``read_only`` mode
-        and values are read via fastpyxl's streaming parser.  ``FromWorkbook``
+        **Performance note:** The workbook is opened once in `read_only` mode
+        and values are read via fastpyxl's streaming parser.  `FromWorkbook`
         addresses are sorted by (sheet, row, column) before iteration so that
         each sheet's XML is parsed in a single forward pass.  For large sheets
         whose constrained cells sit far down (e.g. row 900+), the initial parse
         to that row can take tens of seconds; subsequent sequential reads on the
-        same sheet are fast.  This is a deliberate tradeoff: ``FromWorkbook``
-        eliminates the maintenance burden of hardcoded ``Literal`` values at
+        same sheet are fast.  This is a deliberate tradeoff: `FromWorkbook`
+        eliminates the maintenance burden of hardcoded `Literal` values at
         the cost of a longer config-build step.
         """
         if isinstance(constraints_schema, type):
@@ -283,10 +283,10 @@ class DynamicRefConfig:
 class FromWorkbook:
     """Metadata marker: resolve domain from the current cached workbook value.
 
-    Use ``Annotated[T, FromWorkbook()]`` in the constraints schema to derive a
-    singleton domain at config-build time instead of hardcoding a ``Literal``.
+    Use `Annotated[T, FromWorkbook()]` in the constraints schema to derive a
+    singleton domain at config-build time instead of hardcoding a `Literal`.
     This eliminates maintenance when the workbook template changes, at the cost
-    of a slower :meth:`DynamicRefConfig.from_constraints_and_workbook` call (the
+    of a slower `DynamicRefConfig.from_constraints_and_workbook` call (the
     workbook must be opened and each marked cell read via a streaming parser).
     """
 
@@ -416,21 +416,21 @@ def expand_leaf_env_to_argument_env(
     The cell env targets leaves: only leaf (non-formula) addresses need to be in
     leaf_env. Intermediate (formula) cells are inferred by evaluating their formulas
     over their dependencies' domains; they do not need to be constrained. If an
-    intermediate matches a leaf_env entry under :func:`~excel_grapher.core.cell_types.normalize_cell_type_env_key`,
+    intermediate matches a leaf_env entry under `excel_grapher.core.cell_types.normalize_cell_type_env_key`,
     that type is used and we do not traverse that branch.
     When an intermediate cannot be inferred (e.g. its formula is OFFSET/INDIRECT and
     refs are empty after masking), it is assigned CellType(ANY); enumeration may then
     require a constraint for that cell.
 
-    ``max_range_cells`` must match the graph builder's range expansion limit so static
+    `max_range_cells` must match the graph builder's range expansion limit so static
     ranges collected from the AST align with
-    :func:`~excel_grapher.grapher.builder.create_dependency_graph` argument-subgraph BFS.
+    `excel_grapher.grapher.builder.create_dependency_graph` argument-subgraph BFS.
 
-    When ``shared_cell_type_cache`` is provided, intermediate cell type inferences
+    When `shared_cell_type_cache` is provided, intermediate cell type inferences
     are persisted across multiple calls.  This avoids redundant work when many
     BFS nodes share intermediate formula cells in their argument subgraphs.
 
-    When ``type_analysis_cache`` and ``workbook_sha256`` are provided, successful
+    When `type_analysis_cache` and `workbook_sha256` are provided, successful
     intermediate formula-cell type results are persisted to SQLite across runs.
     """
     cache: dict[str, CellType] = (
@@ -498,7 +498,7 @@ def expand_leaf_env_to_argument_env(
     def _try_persistent_lookup(addr: str, formula: str) -> tuple[CellType, list[str]] | None:
         """Try to load a cached type from the persistent SQLite cache.
 
-        Returns ``(cell_type, consumed_leaf_keys)`` on hit, or ``None``.
+        Returns `(cell_type, consumed_leaf_keys)` on hit, or `None`.
         """
         if _tac is None or workbook_sha256 is None:
             return None
@@ -534,9 +534,9 @@ def expand_leaf_env_to_argument_env(
     def _propagate_consumed_leaves_to_ancestors(addr: str) -> None:
         """Propagate a cell's consumed leaves to all ancestors on the stack.
 
-        Called when ``addr`` is served from the in-memory cache so that
+        Called when `addr` is served from the in-memory cache so that
         ancestors still record its transitive leaf dependencies even though
-        ``_record_consumed_leaf`` won't fire for the cached cell's refs.
+        `_record_consumed_leaf` won't fire for the cached cell's refs.
         """
         child_leaves = _consumed_leaves.get(addr)
         if child_leaves:
@@ -792,13 +792,12 @@ def infer_dynamic_offset_targets(
     This helper is intentionally focused and conservative:
     - Only OFFSET calls are analysed (INDIRECT is currently ignored).
     - Arguments may use a small Excel expression subset supported by
-      ``core.expr_eval.evaluate_expr``.
+      `core.expr_eval.evaluate_expr`.
     - Leaf cells referenced by OFFSET/INDEX arguments must have a numeric
-      domain in ``cell_type_env`` unless they appear only in ref_only
-      argument positions (see :mod:`excel_grapher.core.excel_function_meta`).
+      domain in `cell_type_env` unless they appear only in ref_only
+      argument positions (see `excel_grapher.core.excel_function_meta`).
     - Integer interval domains must be finite and small enough to enumerate.
     """
-
     if not isinstance(formula, str) or not formula.startswith("="):
         return set()
 
@@ -850,10 +849,9 @@ def infer_dynamic_index_targets(
 ) -> set[str]:
     """Infer the union of all possible standalone INDEX targets for a formula.
 
-    INDEX calls that appear as the first argument of OFFSET are skipped — those
-    are already handled by :func:`infer_dynamic_offset_targets`.
+    INDEX calls that appear as the first argument of OFFSET are skipped - those
+    are already handled by `infer_dynamic_offset_targets`.
     """
-
     if not isinstance(formula, str) or not formula.startswith("="):
         return set()
 
@@ -1001,7 +999,6 @@ def _infer_single_offset_call(
     current_col: int | None = None,
 ) -> set[str]:
     """Infer targets for a single OFFSET(...) call body."""
-
     args = _split_top_level_args(inner_args)
     if args is None or len(args) < 3 or len(args) > 5:
         raise DynamicRefError("OFFSET expects 3 to 5 arguments")
@@ -1586,7 +1583,7 @@ def _domain_without_zero(
 
 
 def _lookup_cell_type(env: CellTypeEnv, address: str) -> CellType | None:
-    """Resolve env entry; keys match :func:`~excel_grapher.core.cell_types.normalize_cell_type_env_key`."""
+    """Resolve env entry; keys match `excel_grapher.core.cell_types.normalize_cell_type_env_key`."""
     return env.get(normalize_cell_type_env_key(address))
 
 
@@ -1971,7 +1968,7 @@ def _narrow_domain(
     op: str,
     bound: int,
 ) -> _FiniteInts | _IntBounds | None:
-    """Narrow domain d by applying ``d op bound`` (e.g. d > 3, d <= 5)."""
+    """Narrow domain d by applying `d op bound` (e.g. d > 3, d <= 5)."""
     if isinstance(d, _FiniteInts):
         predicates = _NARROW_PREDICATES
         pred = predicates.get(op)
@@ -2017,10 +2014,10 @@ def _refine_env_for_condition(
     """Return a copy of env narrowed by the condition, or None if unsupported.
 
     Supports:
-    - ``CellRefNode op NumberNode`` and ``NumberNode op CellRefNode``
-    - ``AND(pred1, pred2, ...)`` (intersects each predicate)
+    - `CellRefNode op NumberNode` and `NumberNode op CellRefNode`
+    - `AND(pred1, pred2, ...)` (intersects each predicate)
 
-    The ``negate`` flag applies the opposite constraint (for the else-branch).
+    The `negate` flag applies the opposite constraint (for the else-branch).
     """
     if isinstance(cond_node, FunctionCallNode) and cond_node.name.upper() == "AND":
         refined: dict[str, CellType] = dict(env)
@@ -2433,7 +2430,7 @@ def _infer_numeric_domain_result(
 ) -> _NumericDomainInferenceResult:
     """Analysis-only numeric abstract interpretation for selector expressions.
 
-    Returns ``None`` when the expression is unsupported or cannot be summarized
+    Returns `None` when the expression is unsupported or cannot be summarized
     soundly as integers. Must never raise for well-formed AST nodes.
     """
     if depth > limits.max_depth:
@@ -3097,7 +3094,7 @@ def _collect_addresses_needing_domain(
     Refs that appear only as ref_only arguments (e.g. ROW(ref), COLUMN(ref)) are
     excluded; their implementations use only the reference, not the cell value.
 
-    When ``env`` and ``limits`` are provided, IF and CHOOSE branches that are
+    When `env` and `limits` are provided, IF and CHOOSE branches that are
     provably dead are skipped, reducing the set of required domains.
     """
     addrs: set[str] = set()
@@ -3282,9 +3279,9 @@ def _ast_address_to_ref_key(address: str) -> str:
 def _collect_static_addresses_from_ast(node: AstNode, *, max_range_cells: int) -> set[str]:
     """Collect static cell/range addresses while skipping dynamic-ref call subtrees.
 
-    Range expansion uses the same ``max_range_cells`` policy as
-    :func:`~excel_grapher.grapher.parser.expand_range` in the graph builder so the
-    argument subgraph matches :func:`expand_leaf_env_to_argument_env` traversal.
+    Range expansion uses the same `max_range_cells` policy as
+    `excel_grapher.grapher.parser.expand_range` in the graph builder so the
+    argument subgraph matches `expand_leaf_env_to_argument_env` traversal.
     """
     addrs: set[str] = set()
 
@@ -3426,7 +3423,6 @@ def infer_dynamic_indirect_targets(
     named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
 ) -> set[str]:
     """Infer the union of all possible INDIRECT targets for a formula."""
-
     if not isinstance(formula, str) or not formula.startswith("="):
         return set()
 
@@ -3627,7 +3623,6 @@ def _enumerate_value_assignments(
 
 def _split_top_level_args(s: str) -> list[str] | None:
     """Minimal top-level argument splitter mirroring parser._split_top_level_args."""
-
     buf: list[str] = []
     args: list[str] = []
     depth = 0

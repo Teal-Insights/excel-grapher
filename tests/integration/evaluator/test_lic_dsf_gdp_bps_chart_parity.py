@@ -1,8 +1,7 @@
-"""
-LIC-DSF GDP shocks: recalculated workbook vs evaluator on chart strips (integration, slow).
+"""LIC-DSF GDP shocks: recalculated workbook vs evaluator on chart strips (integration, slow).
 
 Applies bps shocks to Input 3 row 12, recalculates through Excel automation when
-available, and asserts ``FormulaEvaluator`` matches refreshed Chart Data cells within
+available, and asserts `FormulaEvaluator` matches refreshed Chart Data cells within
 tight tolerances (evaluator ↔ live Excel path).
 """
 

@@ -123,10 +123,12 @@ class CodeGenerator:
 
         Args:
             graph: Dependency graph from excel_grapher containing cell formulas.
-            iterate_enabled: If True, :meth:`DependencyGraph.evaluation_order` rejects
+            iterate_enabled: If True, `DependencyGraph.evaluation_order` rejects
                 any must- or may-cycle (workbook iterative calc is unsupported in codegen).
-                Typically set from :func:`excel_grapher.get_calc_settings`. ``None`` skips
+                Typically set from `excel_grapher.get_calc_settings`. `None` skips
                 this check (default).
+            iterate_count: Maximum iterations when iterative calculation is enabled.
+            iterate_delta: Convergence threshold when iterative calculation is enabled.
         """
         self.graph = graph
         self._iterate_enabled = iterate_enabled
@@ -337,7 +339,7 @@ class CodeGenerator:
         *,
         export_addresses: Iterable[str],
         series_docstring_callback: str | None = None,
-        docstring_renderer: SeriesDocstringRendererSpec = "plain",
+        docstring_renderer: SeriesDocstringRendererSpec = "google",
     ) -> list[str]:
         from excel_grapher.series_bindings.bindings_codegen import emit_series_bindings_block
 
@@ -1680,24 +1682,27 @@ class CodeGenerator:
         series_bindings: WorkbookSeriesBindings | None = None,
         bindings_workbook: Path | str | None = None,
         series_docstring_callback: str | None = None,
-        docstring_renderer: SeriesDocstringRendererSpec = "plain",
+        docstring_renderer: SeriesDocstringRendererSpec = "google",
     ) -> str:
         """Generate standalone Python code for target cells.
 
         Args:
             targets: List of target cell addresses to compute.
+            constant_types: Cell value kinds emitted as typed constants in generated code.
+            constant_ranges: Sheet-qualified ranges whose cells are emitted as constants.
+            constant_blanks: When True, blank cells in constant ranges become `None`.
             input_ranges: Sheet-qualified ranges whose leaf cells are treated as inputs.
-                When a cell would otherwise be a constant, ``input_ranges`` take precedence.
+                When a cell would otherwise be a constant, `input_ranges` take precedence.
             blank_ranges: Sheet-qualified rectangles whose cells are omitted from the graph
-                but resolve as empty (``None``) at runtime; must match builder/evaluator.
+                but resolve as empty (`None`) at runtime; must match builder/evaluator.
             series_bindings: Optional workbook binding manifest; when set with
-                ``bindings_workbook``, emits ``set_*`` functions that accept Records.
-            bindings_workbook: Path to the ``.xlsx`` file used to resolve binds.
+                `bindings_workbook`, emits `set_*` functions that accept Records.
+            bindings_workbook: Path to the `.xlsx` file used to resolve binds.
             series_docstring_callback: Optional registered callback name for structured
-                docstrings on generated ``set_*`` and series output ``compute_*`` functions.
+                docstrings on generated `set_*` and series output `compute_*` functions.
             docstring_renderer: Built-in renderer name or custom renderer object/callable
-                for structured series-binding docstrings (``plain``, ``rst``,
-                ``google``, ``numpy``).
+                for structured series-binding docstrings (`plain`, `rst`,
+                `google`, `numpy`).
 
         Returns:
             Standalone Python source code as a string.
@@ -1804,7 +1809,7 @@ class CodeGenerator:
         series_bindings: WorkbookSeriesBindings | None = None,
         bindings_workbook: Path | str | None = None,
         series_docstring_callback: str | None = None,
-        docstring_renderer: SeriesDocstringRendererSpec = "plain",
+        docstring_renderer: SeriesDocstringRendererSpec = "google",
     ) -> dict[str, str]:
         """Generate a multi-module Python package for target cells.
 

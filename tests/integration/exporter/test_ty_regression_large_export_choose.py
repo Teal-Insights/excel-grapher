@@ -1,7 +1,7 @@
-"""Generated export: ``ty`` accepts CHOOSE-heavy codegen (integration regression).
+"""Generated export: `ty` accepts CHOOSE-heavy codegen (integration regression).
 
-Runs ``ty`` on emitted Python from ``CodeGenerator`` for a large-style graph so
-static typing of ``CellValue`` unions cannot regress silently on CHOOSE paths.
+Runs `ty` on emitted Python from `CodeGenerator` for a large-style graph so
+static typing of `CellValue` unions cannot regress silently on CHOOSE paths.
 """
 
 from __future__ import annotations

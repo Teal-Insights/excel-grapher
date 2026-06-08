@@ -768,7 +768,7 @@ def test_dynamic_ref_arg_subgraph_aligns_ast_range_cap_with_builder_bfs_issue_56
 ) -> None:
     """Interior cells of oversized static ranges must not be required only by AST collection.
 
-    The builder BFS uses ``expand_range(..., max_cells=...)`` (corners only when over the
+    The builder BFS uses `expand_range(..., max_cells=...)` (corners only when over the
     cap). Argument-env expansion must use the same cap when collecting range addresses
     from the parsed AST (GitHub issue #56).
     """
@@ -838,7 +838,7 @@ def test_expand_leaf_env_mutual_formula_refs_in_argument_subgraph_issue_54() -> 
     """Issue #54: mutual formula refs in the argument chain must not abort type expansion.
 
     Mirrors LIC-style patterns (e.g. aggregate cell referenced by scaled rows that also
-    feed formulas pointing back). The cycle edge is approximated as ``ANY`` so graph build
+    feed formulas pointing back). The cycle edge is approximated as `ANY` so graph build
     can continue.
     """
     leaf_env = _make_env({})
@@ -2028,8 +2028,10 @@ def test_expand_leaf_env_percent_expression_stays_in_abstract_path() -> None:
 
 
 def test_expand_leaf_env_cartesian_product_branch_limit_error() -> None:
-    """Fallback product-enumeration raises DynamicRefError when the Cartesian
-    product of dependency domains exceeds max_branches, instead of hanging."""
+    """Raise DynamicRefError when Cartesian product exceeds max_branches.
+
+    Fallback product-enumeration must fail fast instead of hanging.
+    """
     # 5 * 5 = 25 combinations, which exceeds max_branches=8.
     leaf_env = _make_env(
         {
@@ -2181,8 +2183,11 @@ def test_index_respects_max_cells_limit() -> None:
 
 
 def test_offset_per_call_max_cells_limit() -> None:
-    """A single OFFSET call that fans out to more cells than max_cells must raise
-    DynamicRefError immediately, not accumulate an unbounded result set."""
+    """Raise DynamicRefError when OFFSET exceeds max_cells.
+
+    A single OFFSET call that fans out beyond the limit must fail immediately,
+    not accumulate an unbounded result set.
+    """
     # OFFSET(Sheet1!A1, 0, Sheet1!B1, 1, 1) where B1 ∈ {0,1,2,3,4} → 5 distinct
     # target cells.  With max_cells=3 the check should fire.
     formula = "=OFFSET(Sheet1!A1,0,Sheet1!B1,1,1)"
@@ -2365,15 +2370,15 @@ def _build_wide_index_sweep_workbook(path: Path, n_rows: int = 50) -> None:
 
     Layout on 'Data' sheet:
       - A1:K22 is a static data array (11 rows × 22 cols) with numeric values.
-      - For each row ``r`` in ``[2, 2+n_rows)``, column L contains
-        ``=INDEX(Data!$A$1:$K$22, Data!M<r>, Data!N<r>)``
+      - For each row `r` in `[2, 2+n_rows)`, column L contains
+        `=INDEX(Data!$A$1:$K$22, Data!M<r>, Data!N<r>)`
         where M<r> is a row-selector leaf and N<r> is a col-selector leaf.
       - M and N columns hold small integer constants (leaves requiring constraints).
 
     When all M/N leaves are constrained with a wide numeric domain, inference
     is triggered for every L-column INDEX cell.  Without caching, this means
-    ``n_rows`` separate calls to ``expand_leaf_env_to_argument_env`` and
-    ``n_rows`` separate ``_emit_index_targets_from_domains`` invocations that
+    `n_rows` separate calls to `expand_leaf_env_to_argument_env` and
+    `n_rows` separate `_emit_index_targets_from_domains` invocations that
     produce the *same* target set.
     """
     import xlsxwriter
@@ -2406,19 +2411,19 @@ def _build_wide_index_sweep_workbook(path: Path, n_rows: int = 50) -> None:
 def test_wide_index_sweep_shared_env_cache(tmp_path: Path) -> None:
     """Benchmark: many INDEX formulas should share env expansion work.
 
-    With ``n_rows`` INDEX formulas each referencing a different (M<r>, N<r>) leaf
+    With `n_rows` INDEX formulas each referencing a different (M<r>, N<r>) leaf
     pair, every formula triggers a separate expand_leaf_env_to_argument_env call
-    (since each has a unique ``all_refs`` set).  However, since the leaf constraints
+    (since each has a unique `all_refs` set).  However, since the leaf constraints
     and intermediate cells don't overlap, we can't directly share the top-level call.
 
-    What we *can* optimise is ``_emit_index_targets_from_domains``: when every
-    formula's INDEX resolves to the same ``(array_range, row_dom, col_dom)``
+    What we *can* optimise is `_emit_index_targets_from_domains`: when every
+    formula's INDEX resolves to the same `(array_range, row_dom, col_dom)`
     triple (because the leaf constraints produce the same abstract bounds), the
     target-set generation should be cached and reused.
 
     This test asserts:
     1. The graph is correct (all INDEX formula cells and their leaves are present).
-    2. ``_emit_index_targets_from_domains`` is called far fewer than ``n_rows`` times
+    2. `_emit_index_targets_from_domains` is called far fewer than `n_rows` times
        after caching is in place.
     """
     n_rows = 50
@@ -2487,13 +2492,13 @@ def _build_shared_intermediate_index_workbook(path: Path, n_rows: int = 30) -> N
 
     Layout on 'Sheet1':
       - A1:E10 is the data array (10 rows × 5 cols).
-      - B1 is a shared intermediate: ``=C1+1`` (formula cell, not a leaf).
+      - B1 is a shared intermediate: `=C1+1` (formula cell, not a leaf).
       - C1 is a leaf (numeric constant = 2).
-      - For each row ``r`` in ``[2, 2+n_rows)``:
-        - F<r> = ``=INDEX($A$1:$E$10, Sheet1!B1, Sheet1!D<r>)``
+      - For each row `r` in `[2, 2+n_rows)`:
+        - F<r> = `=INDEX($A$1:$E$10, Sheet1!B1, Sheet1!D<r>)`
         - D<r> is a leaf (col selector constant).
 
-    All ``n_rows`` INDEX formulas share the intermediate cell B1 in their
+    All `n_rows` INDEX formulas share the intermediate cell B1 in their
     argument subgraph.  With a shared env expansion cache, B1's type is
     inferred once and reused across all formula cells.
     """
@@ -2530,7 +2535,7 @@ def test_shared_intermediate_env_expansion_cache(tmp_path: Path) -> None:
     """Many INDEX formulas sharing an intermediate cell should reuse env expansion.
 
     All formulas reference B1 (intermediate) which depends on C1 (leaf).
-    With a shared env expansion cache, ``cell_type_for(B1)`` is computed once
+    With a shared env expansion cache, `cell_type_for(B1)` is computed once
     and reused across all 30 formula cells' expand_leaf_env_to_argument_env calls.
 
     We verify this by wrapping expand_leaf_env_to_argument_env and inspecting
@@ -2603,12 +2608,14 @@ def test_shared_intermediate_env_expansion_cache(tmp_path: Path) -> None:
 
 
 class TestDeterministicTraversalOrder:
-    """expand_leaf_env_to_argument_env must visit cells in a deterministic
-    (sorted) order so that partial-progress persistence and error messages
-    are reproducible regardless of Python's randomized set iteration.
+    """Visit cells in deterministic sorted order during env expansion.
+
+    `expand_leaf_env_to_argument_env` must visit cells in sorted order so
+    partial-progress persistence and error messages stay reproducible regardless
+    of Python's randomized set iteration.
 
     The test instruments the function to record the order in which
-    ``cell_type_for`` is first called for each address, then asserts that
+    `cell_type_for` is first called for each address, then asserts that
     order is lexicographic across 50 repeated invocations.
     """
 
@@ -2655,8 +2662,7 @@ class TestDeterministicTraversalOrder:
         return env, visit_order
 
     def test_traversal_order_is_sorted(self) -> None:
-        """Formula cells should be visited in sorted (lexicographic) order
-        at each level of the recursive traversal.
+        """Visit formula cells in sorted order at each traversal level.
 
         This ensures deterministic behaviour across Python processes with
         different hash seeds, which is essential for reproducible error
@@ -3054,8 +3060,11 @@ class TestAbstractMinMaxAbsTransferRules:
 
 
 class TestBranchLocalIfRefinement:
-    """IF analysis should narrow branch-local domains when the condition is in the
-    supported predicate fragment (cell op literal, AND of such comparisons)."""
+    """Narrow branch-local domains for supported IF predicates.
+
+    IF analysis should refine domains when the condition is in the supported
+    predicate fragment (cell op literal, AND of such comparisons).
+    """
 
     def _limits(self) -> DynamicRefLimits:
         return DynamicRefLimits()

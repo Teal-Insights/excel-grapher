@@ -1,4 +1,5 @@
-"""
+"""Patch workbook calculation settings in test fixture .xlsx files.
+
 We have .xlsx files that we use as fixtures in our tests. In some cases, we want to patch
 these with different calculation settings to see how those settings change test results.
 

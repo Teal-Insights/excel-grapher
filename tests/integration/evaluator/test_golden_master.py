@@ -1,7 +1,7 @@
 """Golden workbook cells: evaluator vs live or cached Excel for LIC-DSF indicators (integration, slow).
 
 Mutates a copy of the template workbook, optionally recalculates through Excel
-automation when available, and compares ``FormulaEvaluator`` to reference values for
+automation when available, and compares `FormulaEvaluator` to reference values for
 regression-sensitive indicator rows.
 """
 

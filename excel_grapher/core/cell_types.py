@@ -92,8 +92,7 @@ class RealBetween:
 
 
 def _cell_type_from_annotation(annotated_type: Any) -> CellType:
-    """Build a :class:`CellType` from a constraint annotation (Annotated / Literal / plain type)."""
-
+    """Build a `CellType` from a constraint annotation (Annotated / Literal / plain type)."""
     # Import here to avoid forcing Annotated / Literal into __all__ of core.
     from typing import Annotated, Literal
 
@@ -133,17 +132,16 @@ def _cell_type_from_annotation(annotated_type: Any) -> CellType:
 def constraints_to_cell_type_env(
     constraints_schema: Mapping[str, Any], constraints_data: Mapping[str, Any]
 ) -> dict[str, CellType]:
-    """Derive a :class:`CellTypeEnv` from a constraints schema and optional instance data.
+    r"""Derive a `CellTypeEnv` from a constraints schema and optional instance data.
 
-    *constraints_schema* maps sheet-qualified addresses (e.g. ``\"Sheet1!B1\"``) to
-    type objects describing domains (``Annotated``, ``Literal``, plain ``int`` / ``str``, etc.).
+    *constraints_schema* maps sheet-qualified addresses (e.g. `\"Sheet1!B1\"`) to
+    type objects describing domains (`Annotated`, `Literal`, plain `int` / `str`, etc.).
     *constraints_data* may hold runtime values for validation elsewhere; this function
     only inspects type metadata.
 
-    Env dict keys are :func:`normalize_cell_type_env_key` of each schema key so they
-    align with ``format_key`` addresses from the grapher after normalization.
+    Env dict keys are `normalize_cell_type_env_key` of each schema key so they
+    align with `format_key` addresses from the grapher after normalization.
     """
-
     env: dict[str, CellType] = {}
     for key, annotated_type in constraints_schema.items():
         env[normalize_cell_type_env_key(key)] = _cell_type_from_annotation(annotated_type)
@@ -215,15 +213,15 @@ def _infer_kind_from_python_type(tp: Any) -> CellKind:
 
 
 def normalize_cell_type_env_key(address: str) -> str:
-    """Return the canonical key for :class:`CellTypeEnv` / dynamic-ref constraint maps.
+    """Return the canonical key for `CellTypeEnv` / dynamic-ref constraint maps.
 
-    Graph code uses :func:`excel_grapher.grapher.parser.format_key`, which wraps
+    Graph code uses `excel_grapher.grapher.parser.format_key`, which wraps
     sheet names in single quotes when Excel requires it. Constraint schema keys
     may use the same spelling. This
     function strips those delimiters and normalizes the cell coordinate (column
     letters uppercased) so env lookups match regardless of quoting or case.
 
-    Not to be confused with :func:`excel_grapher.core.address_keys.normalize_key`,
+    Not to be confused with `excel_grapher.core.address_keys.normalize_key`,
     which follows evaluator node-key quoting rules and can differ for sheets
     that contain spaces.
     """
@@ -239,7 +237,7 @@ def normalize_cell_type_env_key(address: str) -> str:
 def leaves_missing_cell_type_constraints(
     leaves: Iterable[str], cell_type_env: Mapping[str, CellType]
 ) -> set[str]:
-    """Leaves whose normalized address has no entry in ``cell_type_env``."""
+    """Leaves whose normalized address has no entry in `cell_type_env`."""
     env_keys = frozenset(cell_type_env.keys())
     return {addr for addr in leaves if normalize_cell_type_env_key(addr) not in env_keys}
 

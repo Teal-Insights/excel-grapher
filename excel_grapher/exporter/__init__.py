@@ -1,8 +1,7 @@
-"""
-Export dependency graphs to standalone Python packages.
+"""Export dependency graphs to standalone Python packages.
 
-Canonical implementation: :class:`~excel_grapher.exporter.codegen.CodeGenerator`.
-The shared runtime embedded in generated code lives at :mod:`excel_grapher.runtime`.
+Canonical implementation: `excel_grapher.exporter.codegen.CodeGenerator`.
+The shared runtime embedded in generated code lives at `excel_grapher.runtime`.
 """
 
 from excel_grapher.series_bindings.docstring_renderers import (

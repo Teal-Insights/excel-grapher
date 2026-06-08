@@ -1,4 +1,4 @@
-"""Persistent type-analysis cache inside ``expand_leaf_env_to_argument_env`` (Phase C & D, integration).
+"""Persistent type-analysis cache inside `expand_leaf_env_to_argument_env` (Phase C & D, integration).
 
 Exercises cache hits, invalidation, and fingerprints across workbook-driven expansion
 so dynamic-ref argument typing stays stable under repeated analysis passes.
@@ -369,10 +369,11 @@ class TestPersistentCacheIntegration:
 
 
 class TestConsumedLeafRestorationOnCacheHit:
-    """Fix 2: When a persistent cache hit occurs for a middle cell, its
-    consumed-leaf keys must be restored so that ancestors record the
-    transitive leaf dependencies.  Otherwise, changing the bottom leaf
-    won't invalidate the top cell on a subsequent run.
+    """Restore consumed-leaf keys on persistent cache hits.
+
+    When a cache hit occurs for a middle cell, its consumed-leaf keys must be
+    restored so ancestors record transitive leaf dependencies. Otherwise,
+    changing the bottom leaf won't invalidate the top cell on a subsequent run.
     """
 
     # Three-level chain:
@@ -585,8 +586,10 @@ class TestPartialProgress:
 
 
 class TestTransitiveConsumedLeaves:
-    """Verify that changing a leaf constraint invalidates cached results for
-    *all* ancestor formula cells, not just the immediate parent.
+    """Invalidate cached results for all ancestor formula cells.
+
+    Changing a leaf constraint must invalidate cached results for every ancestor,
+    not just the immediate parent.
 
     Diamond graph:
         D1 = B1 + C1   (grandparent)

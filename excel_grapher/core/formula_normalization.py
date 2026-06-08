@@ -2,7 +2,7 @@
 
 Graph extraction, evaluation, and codegen share these rules so bare cell
 references resolve against the formula cell's sheet and named ranges expand
-consistently before :mod:`excel_grapher.core.formula_ast` parsing.
+consistently before `excel_grapher.core.formula_ast` parsing.
 """
 
 from __future__ import annotations
@@ -158,11 +158,11 @@ def normalize_excel_formula(
     named_ranges: dict[str, tuple[str, str]] | None = None,
     named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
 ) -> str:
-    """Normalize a formula string (``=...``) for transpilation and parsing.
+    """Normalize a formula string (`=...`) for transpilation and parsing.
 
-    - Same-sheet refs (``A1``) become ``Sheet!A1`` using *current_sheet*.
+    - Same-sheet refs (`A1`) become `Sheet!A1` using *current_sheet*.
     - Resolves defined names when maps are provided.
-    - Strips ``$`` markers and qualifies range endpoints.
+    - Strips `$` markers and qualifies range endpoints.
     """
     if not formula or not formula.startswith("="):
         return formula

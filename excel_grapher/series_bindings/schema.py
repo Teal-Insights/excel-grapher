@@ -16,7 +16,7 @@ class SeriesBindingsSchemaError(ValueError):
 
 
 def _infer_series_sheets(document: dict[str, Any]) -> None:
-    """Fill ``sheet`` on each series when omitted and ``data_range`` is sheet-qualified."""
+    """Fill `sheet` on each series when omitted and `data_range` is sheet-qualified."""
     from excel_grapher.core.address_keys import parse_address
     from excel_grapher.grapher.target_expansion import split_range_target_on_colon
 
@@ -48,10 +48,10 @@ def _schema_validator() -> Any:
 
 
 def validate_bindings_document(document: dict[str, Any]) -> WorkbookSeriesBindings:
-    """Validate ``document`` against the series binding JSON Schema.
+    """Validate `document` against the series binding JSON Schema.
 
     Returns the document unchanged on success (typed for callers).
-    Raises :class:`SeriesBindingsSchemaError` on failure.
+    Raises `SeriesBindingsSchemaError` on failure.
     """
     _infer_series_sheets(document)
     document = normalize_bindings_document(document)

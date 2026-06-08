@@ -1,6 +1,6 @@
 """NUMBERVALUE: evaluator and generated export runtime agree on synthetic graphs (integration).
 
-Guards numeric parsing parity through ``assert_codegen_matches_evaluator`` for small
+Guards numeric parsing parity through `assert_codegen_matches_evaluator` for small
 dependency graphs.
 """
 

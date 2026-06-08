@@ -1,6 +1,6 @@
 """May-cycles with IF guards interact with codegen and iterative calc settings (integration).
 
-Uses patched workbooks and ``CodeGenerator`` where applicable so cycle detection
+Uses patched workbooks and `CodeGenerator` where applicable so cycle detection
 matches Excel-style iteration and guarded-edge semantics end-to-end.
 """
 
@@ -17,8 +17,7 @@ from tests.utils.workbook_xml import patch_workbook_calcpr
 
 
 def _make_may_cycle_if_workbook(path: Path) -> None:
-    """
-    Create a workbook with a *may-cycle* that is broken by mutually exclusive IF guards:
+    """Create a workbook with a may-cycle broken by mutually exclusive IF guards.
 
     A1 = IF($C$1=0, B1, 1)
     B1 = IF($C$1=1, A1, 2)
@@ -35,9 +34,9 @@ def _make_may_cycle_if_workbook(path: Path) -> None:
 
 
 def _make_infeasible_may_cycle_logical_shape_variant_workbook(path: Path) -> None:
-    """
-    Create a workbook with an infeasible guarded SCC where opposite edges use
-    logically equivalent guard forms with different syntax.
+    """Create a workbook with an infeasible guarded SCC.
+
+    Opposite edges use logically equivalent guard forms with different syntax:
 
     A1 = IF($C$1=0, B1, 1)
     B1 = IF(NOT(NOT(NOT($C$1=0))), A1, 2)
@@ -54,8 +53,7 @@ def _make_infeasible_may_cycle_logical_shape_variant_workbook(path: Path) -> Non
 
 
 def _make_feasible_may_cycle_if_workbook(path: Path) -> None:
-    """
-    Create a workbook with a *feasible may-cycle* (guarded edges only):
+    """Create a workbook with a feasible may-cycle using guarded edges only.
 
     A1 = IF($C$1=0, B1, 1)
     B1 = IF($C$1=0, A1, 2)
@@ -72,8 +70,7 @@ def _make_feasible_may_cycle_if_workbook(path: Path) -> None:
 
 
 def _make_must_cycle_workbook(path: Path) -> None:
-    """
-    Create a workbook with a *must-cycle* (unconditional):
+    """Create a workbook with an unconditional must-cycle.
 
     A1 = B1
     B1 = A1
@@ -121,8 +118,9 @@ def test_cycle_report_distinguishes_must_vs_may_cycles(tmp_path: Path) -> None:
 
 
 def test_infeasible_may_cycle_is_not_reported(tmp_path: Path) -> None:
-    """
-    This workbook contains a syntactic SCC {A1, B1} only when guarded edges are
+    """Do not report infeasible guarded cycles as may-cycles.
+
+    This workbook contains a syntactic SCC `{A1, B1}` only when guarded edges are
     included, but the only cycle requires mutually contradictory guards:
 
       A1 -> B1 requires C1=0

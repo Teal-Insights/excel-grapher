@@ -100,7 +100,6 @@ def evaluate_expr(
     When context is provided with 'row' and 'column' (1-based), ROW() and
     COLUMN() with no arguments return that cell's row/column.
     """
-
     funcs: _FunctionsMapping = functions or {}
     return _eval(node, get_cell_value, funcs, max_depth, context=context or {}, depth=0)
 
@@ -278,7 +277,6 @@ def _eval(
 
 def _range_node_to_excel_range(node: RangeNode) -> ExcelRange | None:
     """Convert a RangeNode into an ExcelRange, if it refers to a single sheet."""
-
     try:
         sheet_start, coord_start = parse_address(node.start)
         if "!" in node.end:
@@ -359,7 +357,7 @@ def _fn_if(args: list[CellValue]) -> CellValue:
 
 
 def _fn_concat(args: list[CellValue]) -> str | XlError:
-    """CONCAT(text1, [text2], ...) – concatenate all arguments as strings."""
+    """CONCAT(text1, [text2], ...) - concatenate all arguments as strings."""
     flat = flatten(*args)
     for v in flat:
         if isinstance(v, XlError):

@@ -1,6 +1,6 @@
-"""``create_dependency_graph`` traces dependencies from real-style workbooks (integration).
+"""`create_dependency_graph` traces dependencies from real-style workbooks (integration).
 
-Uses generated and fixture ``.xlsx`` files to assert formula chains, array formulas,
+Uses generated and fixture `.xlsx` files to assert formula chains, array formulas,
 and target selection produce the graph topology library users depend on.
 """
 
@@ -23,8 +23,7 @@ def _fixture_path(name: str) -> Path:
 
 
 def _create_fixture_workbook(path: Path) -> None:
-    """
-    Create a small workbook with a simple dependency chain:
+    """Create a small workbook with a simple dependency chain.
 
     - Sheet1!A1 = 2           (leaf)
     - Sheet1!A2 = 3           (leaf)
@@ -75,9 +74,9 @@ def test_evaluation_order_is_dependency_first(tmp_path: Path) -> None:
 
 
 def test_range_dependencies_are_expanded(tmp_path: Path) -> None:
-    """
-    Excel range references should expand to individual cell dependencies so we
-    don't miss intermediate inputs inside SUM/MIN/MAX/etc.
+    """Expand Excel range references to individual cell dependencies.
+
+    Ensures we don't miss intermediate inputs inside SUM/MIN/MAX/etc.
     """
     excel_path = tmp_path / "range_chain.xlsx"
     wb = fastpyxl.Workbook()
@@ -146,8 +145,7 @@ def test_named_range_is_resolved(tmp_path: Path) -> None:
 
 
 def test_load_values_reads_cached_formula_results(tmp_path: Path) -> None:
-    """
-    When load_values=True, formula nodes should include cached computed values.
+    """When load_values=True, formula nodes should include cached computed values.
 
     We generate the workbook with XlsxWriter so cached results are embedded.
     """
@@ -211,9 +209,9 @@ def test_array_formula_cells_surface_formula_text(tmp_path: Path) -> None:
 
 
 def test_parse_target_handles_quoted_sheet_name(tmp_path: Path) -> None:
-    """
-    Target strings with quoted sheet names (e.g., 'Sheet Name'!A1) should be
-    parsed correctly. Keys in the graph use quoted format to match Excel syntax.
+    """Parse target strings with quoted sheet names.
+
+    Keys in the graph use quoted format (e.g. `'Sheet Name'!A1`) to match Excel syntax.
     """
     excel_path = tmp_path / "quoted_sheet.xlsx"
     wb = fastpyxl.Workbook()
@@ -238,10 +236,10 @@ def test_parse_target_handles_quoted_sheet_name(tmp_path: Path) -> None:
 
 
 def test_rejects_workbook_instance_input(tmp_path: Path) -> None:
-    """
-    Pre-loaded ``fastpyxl.Workbook`` instances cannot supply both formulas and
-    cached values, so the builder must reject them up-front with a TypeError
-    rather than silently producing nodes with ``value=None``.
+    """Reject pre-loaded `fastpyxl.Workbook` instances.
+
+    They cannot supply both formulas and cached values, so the builder must raise
+    `TypeError` rather than silently producing nodes with `value=None`.
     """
     excel_path = tmp_path / "instance_input.xlsx"
     _create_fixture_workbook(excel_path)
@@ -252,9 +250,10 @@ def test_rejects_workbook_instance_input(tmp_path: Path) -> None:
 
 
 def test_offset_invalid_base_error_includes_cell_address(tmp_path: Path) -> None:
-    """
-    When OFFSET's base argument is not a cell/range reference, the ValueError
-    should include the cell address (sheet + A1) for easy diagnosis.
+    """Include the cell address in OFFSET base-reference errors.
+
+    When OFFSET's base argument is not a cell/range reference, the `ValueError`
+    should name the sheet-qualified address for easy diagnosis.
     """
     excel_path = tmp_path / "offset_bad_base.xlsx"
     wb = xlsxwriter.Workbook(excel_path)

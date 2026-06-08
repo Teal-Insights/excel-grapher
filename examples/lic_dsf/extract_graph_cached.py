@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Map dependencies for LIC-DSF indicator rows using excel-grapher.
+"""Map dependencies for LIC-DSF indicator rows using excel-grapher.
 
 This script traces the dependency closure for key indicators across sheets
 and validates against calcChain.xml.
@@ -13,16 +12,16 @@ address to LicDsfConstraints (with Annotated[int, Between(lo, hi)], Annotated[fl
 Literal[...]), then re-run until the graph
 builds.
 
-The dependency graph is written as gzipped JSON under ``.cache/`` (same on-disk format as
-``excel_grapher.grapher.cache.save_graph_cache``) when inputs match; use
-``--no-cache`` to force a full rebuild. If you change ``EXPORT_RANGES``/target
-logic without changing the workbook file, use ``--no-cache`` or bump
-``GRAPH_CACHE_SCHEMA`` (stored in ``extraction_params`` for invalidation).
+The dependency graph is written as gzipped JSON under `.cache/` (same on-disk format as
+`excel_grapher.grapher.cache.save_graph_cache`) when inputs match; use
+`--no-cache` to force a full rebuild. If you change `EXPORT_RANGES`/target
+logic without changing the workbook file, use `--no-cache` or bump
+`GRAPH_CACHE_SCHEMA` (stored in `extraction_params` for invalidation).
 
-With ``GRAPH_LOAD_VALUES=True``, each node’s ``value`` includes Excel’s cached
+With `GRAPH_LOAD_VALUES=True`, each node’s `value` includes Excel’s cached
 calculated result for formula cells (from a data-only workbook read at build
-time), which ``main.py`` uses for an instant Figure 1 preview before
-``FormulaEvaluator`` finishes.
+time), which `main.py` uses for an instant Figure 1 preview before
+`FormulaEvaluator` finishes.
 """
 
 import argparse
@@ -54,8 +53,7 @@ from excel_grapher.grapher.cache import (
 
 
 class ExportRangeConfig(TypedDict):
-    """
-    Explicit range specification for export/annotation targets.
+    """Explicit range specification for export/annotation targets.
 
     Attributes:
         label: Human-readable label for the range (used for reporting only).
@@ -212,8 +210,7 @@ EXPORT_RANGES: list[ExportRangeConfig] = _export_chart_data_ranges()
 
 
 def parse_range_spec(spec: str) -> tuple[str, str]:
-    """
-    Parse a sheet-qualified range spec into (sheet_name, range_a1).
+    """Parse a sheet-qualified range spec into (sheet_name, range_a1).
 
     Accepts specs like "'Chart Data'!D10:D17" or "Sheet1!A1:B2".
     """
@@ -227,8 +224,7 @@ def parse_range_spec(spec: str) -> tuple[str, str]:
 
 
 def cells_in_range(sheet: str, range_a1: str) -> list[str]:
-    """
-    Expand an A1 range to a list of sheet-qualified cell keys.
+    """Expand an A1 range to a list of sheet-qualified cell keys.
 
     range_a1 may be a single cell ("D10") or a range ("D10:D17", "D239:X252").
     """

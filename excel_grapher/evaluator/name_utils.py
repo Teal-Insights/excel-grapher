@@ -1,7 +1,7 @@
 """Utilities for converting Excel names to Python identifiers.
 
 Address parsing/formatting/normalization live in
-:mod:`excel_grapher.core.address_keys` as the canonical implementation.
+`excel_grapher.core.address_keys` as the canonical implementation.
 """
 
 import re

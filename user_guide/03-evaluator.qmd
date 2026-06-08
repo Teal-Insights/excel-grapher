@@ -1,0 +1,41 @@
+---
+title: "Evaluating formulas"
+guide-section: "Core workflow"
+---
+
+The evaluator implements Excel’s semantics in Python and runs over a `DependencyGraph`.
+
+### Conceptually
+
+- `FormulaEvaluator` is a wrapper around `DependencyGraph` that:
+  - Translates Excel formulas to Python at runtime.
+  - Provides Python equivalents for Excel functions, operators, and error types.
+  - Handles circular references in a way compatible with Excel’s defaults (warn + return `0`, etc.).
+  - Caches results to ensure each cell is computed at most once in a given evaluation.
+
+This gives **fast, accurate, repeatable** execution for any given workbook, but keeps the logic in an Excel-shaped representation. It’s the easiest path when you want to:
+
+- Re-extract and re-run a computation whenever the workbook changes.
+- Keep a tight coupling to Excel while still running logic in Python.
+
+### Minimal evaluator example
+
+```python
+from excel_grapher.grapher import create_dependency_graph
+from excel_grapher.evaluator import FormulaEvaluator
+
+targets = ["Sheet1!B10"]
+
+graph = create_dependency_graph(
+    "model.xlsx",
+    targets,
+    load_values=True,
+    max_depth=10,
+)
+
+with FormulaEvaluator(graph) as ev:
+    evaluator_results = ev.evaluate(targets)
+
+print(evaluator_results)
+## {'Sheet1!B10': ...}
+```

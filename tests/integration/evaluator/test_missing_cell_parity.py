@@ -1,6 +1,6 @@
 """Missing cell references: evaluator matches executed generated code (integration).
 
-Uses ``exec_generated_code`` paths to ensure blank/missing operand handling stays
+Uses `exec_generated_code` paths to ensure blank/missing operand handling stays
 consistent when formulas reference empty cells.
 """
 

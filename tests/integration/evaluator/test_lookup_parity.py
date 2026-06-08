@@ -1,6 +1,6 @@
 """LOOKUP: evaluator and generated export runtime agree on synthetic graphs (integration).
 
-Exercises vector lookup parity with ``assert_codegen_matches_evaluator`` across
+Exercises vector lookup parity with `assert_codegen_matches_evaluator` across
 representative formulas and error paths.
 """
 

@@ -61,7 +61,7 @@ def circular_safe_cache(func: Callable[[], CellValue]) -> Callable[[], CellValue
 
 
 def coerce_inputs_dict(values: Mapping[str, object]) -> dict[str, CellValue]:
-    """Widen inferred default-input dicts to ``dict[str, CellValue]`` for :class:`EvalContext`."""
+    """Widen inferred default-input dicts to `dict[str, CellValue]` for `EvalContext`."""
     return cast(dict[str, CellValue], dict(values))
 
 

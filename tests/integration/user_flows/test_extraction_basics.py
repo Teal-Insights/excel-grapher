@@ -1,11 +1,12 @@
-"""
-Tests that ``grapher`` correctly and reliably extracts cells, dependencies,
+"""Integration tests for grapher cell, dependency, and guard extraction.
+
+Tests that `grapher` correctly and reliably extracts cells, dependencies,
 and guards for different cases, including nested conditionals and cycles.
 
 These tests are intended to map to the micro-workbook examples in
 examples/micro_workbooks/extraction_basics.qmd, but without dependency on
 or logical/semantic coupling to the xlsx file. Unimplemented roadmap
-behaviors are marked ``xfail``.
+behaviors are marked `xfail`.
 """
 
 from __future__ import annotations

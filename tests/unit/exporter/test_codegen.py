@@ -766,7 +766,7 @@ class TestCodeGeneratorContextManager:
 
 
 class TestGenerateNamedRanges:
-    """Direct ``targets`` accept the same forms as graph build targets."""
+    """Direct `targets` accept the same forms as graph build targets."""
 
     @staticmethod
     def _graph_with_named_ranges(*nodes: Node) -> DependencyGraph:
