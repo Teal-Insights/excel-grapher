@@ -161,7 +161,7 @@ def test_generate_applies_series_docstring_callback_to_output_compute(
     compute = cast(Callable[..., list[dict[str, object]]], ns["compute_borvelia_primary_balance"])
     assert compute.__doc__ is not None
     assert "Compute borvelia_primary_balance." in compute.__doc__
-    assert "Example:" in compute.__doc__
+    assert "Examples:" in compute.__doc__
 
 
 def test_generate_modules_exports_output_compute(tmp_path: Path) -> None:
