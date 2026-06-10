@@ -50,6 +50,7 @@ __all__ = ["CodeGenerator", "GenerationParts", "GraphLike", "GraphNode"]
 if TYPE_CHECKING:
     from excel_grapher.grapher import DependencyGraph  # noqa: F401
     from excel_grapher.series_bindings.docstring_renderers import SeriesDocstringRendererSpec
+    from excel_grapher.series_bindings.docstrings import SeriesBindingDocstringCallbackSpec
     from excel_grapher.series_bindings.types import InputSeries, WorkbookSeriesBindings
 
 
@@ -338,7 +339,7 @@ class CodeGenerator:
         workbook: Path | str,
         *,
         export_addresses: Iterable[str],
-        series_docstring_callback: str | None = None,
+        series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
         docstring_renderer: SeriesDocstringRendererSpec = "google",
     ) -> list[str]:
         from excel_grapher.series_bindings.bindings_codegen import emit_series_bindings_block
@@ -1681,7 +1682,7 @@ class CodeGenerator:
         blank_ranges: Sequence[str] | None = None,
         series_bindings: WorkbookSeriesBindings | None = None,
         bindings_workbook: Path | str | None = None,
-        series_docstring_callback: str | None = None,
+        series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
         docstring_renderer: SeriesDocstringRendererSpec = "google",
     ) -> str:
         """Generate standalone Python code for target cells.
@@ -1808,7 +1809,7 @@ class CodeGenerator:
         blank_ranges: Sequence[str] | None = None,
         series_bindings: WorkbookSeriesBindings | None = None,
         bindings_workbook: Path | str | None = None,
-        series_docstring_callback: str | None = None,
+        series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
         docstring_renderer: SeriesDocstringRendererSpec = "google",
     ) -> dict[str, str]:
         """Generate a multi-module Python package for target cells.

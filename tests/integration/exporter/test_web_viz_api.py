@@ -14,7 +14,11 @@ from excel_grapher import write_web_viz_html
 from excel_grapher.exporter import to_web_viz_payload
 from excel_grapher.exporter.web_viz_layout import (
     LAYOUT_STRATIFIED_MULTIPARTITE,
+    WebVizLayoutContext,
+    WebVizLayoutResult,
     list_web_viz_layouts,
+    register_web_viz_layout,
+    unregister_web_viz_layout,
 )
 from excel_grapher.grapher.lightweight_viz import lightweight_viz_flat
 
@@ -58,6 +62,57 @@ def test_to_web_viz_layout_registry_includes_builtins() -> None:
     assert "stratified_multipartite" in ids
     assert "spring" in ids
     assert "multipartite" in ids
+
+
+def test_register_web_viz_layout_allows_replace() -> None:
+    layout_id = "_test_replace_layout"
+
+    def first(ctx: WebVizLayoutContext, layout_config: dict[str, object]) -> WebVizLayoutResult:
+        del layout_config
+        return WebVizLayoutResult(
+            positions={key: (0.0, 0.0) for key in ctx.keys},
+            module_analysis=None,
+            annotations={"custom_layout": "first"},
+            viewer_hints={},
+        )
+
+    def second(ctx: WebVizLayoutContext, layout_config: dict[str, object]) -> WebVizLayoutResult:
+        del layout_config
+        return WebVizLayoutResult(
+            positions={key: (1.0, 1.0) for key in ctx.keys},
+            module_analysis=None,
+            annotations={"custom_layout": "second"},
+            viewer_hints={},
+        )
+
+    try:
+        register_web_viz_layout(layout_id, first)
+        with pytest.raises(ValueError, match="duplicate"):
+            register_web_viz_layout(layout_id, first)
+        register_web_viz_layout(layout_id, second, replace=True)
+
+        payload = to_web_viz_payload(_build_two_component_digraph(), layout=layout_id)
+        assert payload.annotations is not None
+        assert payload.annotations["custom_layout"] == "second"
+    finally:
+        unregister_web_viz_layout(layout_id)
+
+
+def test_to_web_viz_payload_accepts_direct_layout_plugin() -> None:
+    def custom_layout(
+        ctx: WebVizLayoutContext, layout_config: dict[str, object]
+    ) -> WebVizLayoutResult:
+        del layout_config
+        return WebVizLayoutResult(
+            positions={key: (0.5, 0.5) for key in ctx.keys},
+            module_analysis=None,
+            annotations={"custom_layout": "direct"},
+            viewer_hints={},
+        )
+
+    payload = to_web_viz_payload(_build_two_component_digraph(), layout=custom_layout)
+    assert payload.annotations is not None
+    assert payload.annotations["custom_layout"] == "direct"
 
 
 def test_to_web_viz_payload_unknown_layout_raises() -> None:

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import heapq
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from excel_grapher.exporter.web_viz_layout import WebVizLayoutSpec
 
 import fastpyxl.utils.cell
 
@@ -505,7 +508,7 @@ def to_web_viz_payload(
     max_local_edges: int | None = None,
     include_guarded_edges: bool = True,
     include_guarded_edges_for_partition: bool = False,
-    layout: str = "stratified_multipartite",
+    layout: WebVizLayoutSpec = "stratified_multipartite",
     layout_config: dict[str, Any] | None = None,
     include_formula_on_nodes: bool = True,
     max_formula_length: int | None = 120,
@@ -515,8 +518,8 @@ def to_web_viz_payload(
 ) -> WebVizPayload:
     """Build a web-visualization payload from a NetworkX DiGraph.
 
-    Layout is selected by `layout` (registered web layout plugin id). The default
-    `stratified_multipartite` uses SCC-condensation longest-path rank on the vertical axis and
+    Layout is selected by `layout` (registered web layout plugin id or a direct
+    `WebVizLayoutPlugin` callable). The default `stratified_multipartite` uses SCC-condensation longest-path rank on the vertical axis and
     Louvain community ordering on the horizontal axis when `include_module_overlay` is true.
     Other built-in ids include `spring`, `forceatlas2`, `multipartite` (NetworkX
     `multipartite_layout`), `graphviz_dot`, and `graphviz_sfdp`.

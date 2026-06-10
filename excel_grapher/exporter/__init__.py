@@ -17,11 +17,15 @@ from excel_grapher.series_bindings.docstring_renderers import (
 )
 from excel_grapher.series_bindings.docstrings import (
     FieldDoc,
+    SeriesBindingDocstringCallback,
+    SeriesBindingDocstringCallbackSpec,
     SeriesBindingDocstringContext,
     SeriesBindingDocstringContract,
     SeriesFunctionDoc,
     list_series_docstring_callbacks,
     register_series_docstring_callback,
+    resolve_series_docstring_callback,
+    unregister_series_docstring_callback,
 )
 
 from .codegen import CodeGenerator
@@ -36,8 +40,12 @@ from .web_viz_layout import (
     LAYOUT_MULTIPARTITE,
     LAYOUT_SPRING,
     LAYOUT_STRATIFIED_MULTIPARTITE,
+    WebVizLayoutPlugin,
+    WebVizLayoutSpec,
     list_web_viz_layouts,
     register_web_viz_layout,
+    resolve_web_viz_layout,
+    unregister_web_viz_layout,
 )
 
 __all__ = [
@@ -53,6 +61,8 @@ __all__ = [
     "SeriesDocstringRenderer",
     "SeriesDocstringRendererName",
     "SeriesDocstringRendererSpec",
+    "SeriesBindingDocstringCallback",
+    "SeriesBindingDocstringCallbackSpec",
     "SeriesBindingDocstringContext",
     "SeriesBindingDocstringContract",
     "SeriesFunctionDoc",
@@ -62,9 +72,15 @@ __all__ = [
     "LAYOUT_MULTIPARTITE",
     "LAYOUT_GRAPHVIZ_DOT",
     "LAYOUT_GRAPHVIZ_SFDP",
+    "WebVizLayoutPlugin",
+    "WebVizLayoutSpec",
     "list_web_viz_layouts",
     "register_web_viz_layout",
+    "resolve_web_viz_layout",
+    "unregister_web_viz_layout",
     "list_series_docstring_callbacks",
     "register_series_docstring_callback",
+    "resolve_series_docstring_callback",
+    "unregister_series_docstring_callback",
     "resolve_series_docstring_renderer",
 ]

@@ -14,6 +14,7 @@ from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 
 if TYPE_CHECKING:
     from excel_grapher.series_bindings.docstring_renderers import SeriesDocstringRendererSpec
+    from excel_grapher.series_bindings.docstrings import SeriesBindingDocstringCallbackSpec
 
 
 def emit_series_bindings_block(
@@ -22,7 +23,7 @@ def emit_series_bindings_block(
     bindings: WorkbookSeriesBindings,
     *,
     export_addresses: Iterable[str] | None = None,
-    series_docstring_callback: str | None = None,
+    series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
     docstring_renderer: SeriesDocstringRendererSpec = "google",
 ) -> list[str]:
     """Emit setter and/or output compute functions for a binding manifest."""

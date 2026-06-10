@@ -50,8 +50,8 @@ code = CodeGenerator(graph).generate(
 ## Series docstring callbacks
 
 When exporting series bindings, you can attach structured docstrings to generated `set_*` and
-series output `compute_*` functions by registering a callback and passing its name to
-`generate(..., series_docstring_callback=...)` or `generate_modules(..., series_docstring_callback=...)`:
+series output `compute_*` functions by passing a callback directly or by registering a reusable
+callback name for project-wide use:
 
 ```python
 from excel_grapher.exporter import (
@@ -74,7 +74,7 @@ def my_series_docstring(ctx):
         },
     )
 
-register_series_docstring_callback("my_docs", my_series_docstring, replace=True)
+register_series_docstring_callback("my_docs", my_series_docstring)
 
 
 def compact_google_renderer(contract, doc, *, series=None):
@@ -85,7 +85,7 @@ code = CodeGenerator(graph).generate(
     targets,
     series_bindings=bindings,
     bindings_workbook=workbook_path,
-    series_docstring_callback="my_docs",
+    series_docstring_callback="my_docs",  # or my_series_docstring
     docstring_renderer=compact_google_renderer,  # or "plain" | "rst" | "google" | "numpy"
 )
 ```
@@ -98,7 +98,7 @@ Callback contract highlights:
 - The callback is invoked once per generated series API function (`set_*` and series output `compute_*`).
 - Use `ctx.function_kind` (`"setter"` or `"compute"`) and `ctx.function_name` to branch wording per function.
 - `ctx.contract` contains deterministic binding facts for that specific function (required fields, field dtypes, examples, layout, and data range).
-- Docstring callbacks are selected by name (`series_docstring_callback="..."`), not passed as direct callables to `generate`.
+- Docstring callbacks may be direct callables or registered names (`series_docstring_callback="..."`).
 - Docstring renderers can be built-in names (`"plain"`, `"rst"`, `"google"`, `"numpy"`), renderer objects implementing `SeriesDocstringRenderer`, or simple callables `(contract, doc, *, series=None) -> str`.
 - If callback rendering is requested, codegen requires full series context (`series_bindings` + `bindings_workbook`).
 

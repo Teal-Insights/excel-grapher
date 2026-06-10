@@ -24,6 +24,7 @@ from excel_grapher.series_bindings.types import (
 
 if TYPE_CHECKING:
     from excel_grapher.series_bindings.docstring_renderers import SeriesDocstringRendererSpec
+    from excel_grapher.series_bindings.docstrings import SeriesBindingDocstringCallbackSpec
 
 
 def _py_literal(value: object) -> str:
@@ -57,7 +58,7 @@ def emit_compute_function(
     graph: DependencyGraph | None = None,
     workbook: Path | str | None = None,
     bindings: WorkbookSeriesBindings | None = None,
-    series_docstring_callback: str | None = None,
+    series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
     docstring_renderer: SeriesDocstringRendererSpec = "google",
 ) -> list[str]:
     """Emit Python source lines for one series binding output compute function."""
@@ -98,7 +99,7 @@ def emit_compute_function(
             resolution=resolved,
             function_kind="compute",
             function_name=fn_name,
-            callback_name=series_docstring_callback,
+            callback_spec=series_docstring_callback,
             docstring_renderer=docstring_renderer,
         )
     else:
@@ -138,7 +139,7 @@ def emit_computes_block(
     *,
     export_addresses: Iterable[str] | None = None,
     include_type_aliases: bool = True,
-    series_docstring_callback: str | None = None,
+    series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
     docstring_renderer: SeriesDocstringRendererSpec = "google",
 ) -> list[str]:
     """Emit all series output compute functions for a validated binding manifest."""
