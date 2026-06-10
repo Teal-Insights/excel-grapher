@@ -42,6 +42,15 @@ A key goal of `excel-grapher` is to make it easy to extend the library with new 
 
 Prefer explicit, typed extension points over ad hoc keyword flags when users need to customize behavior. The core API should make simple Python usage direct, while still supporting named plugins when a choice needs to be stored in configuration, selected from a CLI, or reused across a project.
 
+### Current patterns in the codebase
+
+| Extension point | Customization forms | Registry helpers | Notes |
+| --- | --- | --- | --- |
+| Graph build hooks (`NodeHook`) | Direct callables only | None | Passed to `create_dependency_graph(..., hooks=...)` or `DependencyGraph.register_hook`. Local instrumentation only. |
+| Series docstring callbacks | `SeriesBindingDocstringCallbackSpec` | `register_*`, `list_*`, `resolve_*`, `run_*`, `unregister_*` | Direct callback or registered name for codegen. |
+| Series docstring renderers | `SeriesDocstringRendererSpec` | `resolve_*` only | Built-in names plus renderer objects or callables. |
+| Web visualization layouts | `WebVizLayoutSpec` | `register_*`, `list_*`, `resolve_*`, `run_*`, `unregister_*` | Layout ID string or direct `WebVizLayoutPlugin` callable. |
+
 ### Direct customization first
 
 For local Python usage, accept direct objects or callables when they are easy to type and configure:
@@ -53,6 +62,8 @@ code = CodeGenerator(graph).generate(
     bindings_workbook=workbook_path,
     series_docstring_callback=my_callback,
 )
+
+payload = to_web_viz_payload(graph, layout=my_layout_plugin)
 ```
 
 Use a `Protocol` for non-trivial callables so contributors know the expected context and return type.
@@ -65,11 +76,12 @@ Use registries when an extension should be selectable by a stable string name. R
 - `list_*`
 - `resolve_*` for lookup without execution
 - `run_*` only when the helper executes the plugin immediately
+- `unregister_*` for test and notebook cleanup (optional but recommended)
 
-Duplicate registration should fail by default and support `replace=False` as an explicit opt-in parameter when replacement is useful in tests, notebooks, or project bootstrap code.
+Duplicate registration should fail by default. Support `replace=True` as an explicit opt-in when replacement is useful in tests, notebooks, or project bootstrap code:
 
 ```python
-register_series_docstring_callback("project_docs", my_callback, replace=True)
+register_series_docstring_callback("project_docs", my_callback)
 
 code = CodeGenerator(graph).generate(
     targets,
@@ -77,6 +89,10 @@ code = CodeGenerator(graph).generate(
     bindings_workbook=workbook_path,
     series_docstring_callback="project_docs",
 )
+
+# In tests or notebooks, re-register or clean up:
+register_series_docstring_callback("project_docs", updated_callback, replace=True)
+unregister_series_docstring_callback("project_docs")
 ```
 
 ### Built-ins and specs
@@ -87,14 +103,37 @@ Examples in the current API:
 
 - `SeriesDocstringRendererSpec`: built-in renderer name, renderer object, or callable.
 - `SeriesBindingDocstringCallbackSpec`: registered callback name or direct callback.
-- Web visualization layouts: registered layout IDs resolved by the layout registry.
+- `WebVizLayoutSpec`: registered layout ID or direct `WebVizLayoutPlugin`.
 
 ### Scope guidelines
 
-Use direct callables only for local instrumentation hooks that are not reusable plugin choices, such as graph build hooks. Use named registries for behavior that users may want to list, document, select from config, or share across workflows.
+Use direct callables only for local instrumentation hooks that are not reusable plugin choices, such as `NodeHook` graph build hooks. Use named registries for behavior that users may want to list, document, select from config, or share across workflows.
 
-Upcoming export projection transforms should follow the same pattern: direct transform objects/callables for normal Python usage, plus optional registered names for built-ins and reusable project transforms.
+### Export projection transforms (planned)
+
+The upcoming `ExportTransform` / projection-transform API should follow the same pattern:
+
+- Define an `ExportTransform` protocol and an `ExportTransformSpec` alias (`str | ExportTransform`).
+- Accept direct transform objects/callables in Python APIs (`CodeGenerator.generate(..., transform=...)`).
+- Expose built-in transforms (e.g. `IdentityTransitReducer`) as importable classes and stable string IDs.
+- Provide `register_export_transform`, `list_export_transforms`, `resolve_export_transform`, and `run_export_transform` when config/CLI selection is needed.
+- Use `replace=True` and `unregister_export_transform` for the same test/bootstrap semantics as other registries.
+
+### Alignment status
+
+Changes aligned in this release:
+
+- Series docstring callbacks accept direct callables or registered names via `SeriesBindingDocstringCallbackSpec`.
+- Web viz layouts accept direct plugins via `WebVizLayoutSpec`; `register_web_viz_layout` supports `replace=True`.
+- Registry cleanup helpers (`unregister_*`) for docstring callbacks and web viz layouts.
+
+Deferred (no change needed yet):
+
+- Graph build hooks remain direct-only; a registry would add no value for one-off instrumentation.
+- Series docstring renderers stay lookup-only (no global registration); built-ins are fixed and custom renderers are passed inline.
 
 ## Roadmap
 
+- Continue expanding **three-way parity** coverage: evaluator ↔ export runtime, evaluator ↔ Excel (cache and live automation where available), especially for representation-sensitive areas such as `OFFSET`, `INDIRECT`, `LOOKUP`, `MATCH`, and `INDEX`.
+- Refine the dynamic-reference configuration API and constraints tooling (e.g., validation helpers) as more real-world models and templates are integrated.
 - [Live workflow graph](/workflow/)

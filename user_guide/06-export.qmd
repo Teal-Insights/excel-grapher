@@ -74,7 +74,7 @@ def my_series_docstring(ctx):
         },
     )
 
-register_series_docstring_callback("my_docs", my_series_docstring, replace=True)
+register_series_docstring_callback("my_docs", my_series_docstring)
 
 
 def compact_google_renderer(contract, doc, *, series=None):

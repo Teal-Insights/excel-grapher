@@ -117,7 +117,7 @@ Detailed documentation lives in the [User Guide](https://teal-insights.github.io
 | Series bindings | [Read guide](https://teal-insights.github.io/excel-grapher/user-guide/series-bindings.html) |
 | Code export | [Read guide](https://teal-insights.github.io/excel-grapher/user-guide/export.html) |
 | Parity testing | [Read guide](https://teal-insights.github.io/excel-grapher/user-guide/parity-testing.html) |
-| Roadmap | [Read guide](https://teal-insights.github.io/excel-grapher/user-guide/roadmap.html) |
+| Contributing | [Read guide](https://teal-insights.github.io/excel-grapher/user-guide/contributing.html) |
 
 ### Examples
 

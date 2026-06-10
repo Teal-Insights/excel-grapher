@@ -99,7 +99,7 @@ def emit_compute_function(
             resolution=resolved,
             function_kind="compute",
             function_name=fn_name,
-            callback_name=series_docstring_callback,
+            callback_spec=series_docstring_callback,
             docstring_renderer=docstring_renderer,
         )
     else:

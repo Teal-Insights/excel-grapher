@@ -211,7 +211,7 @@ def emit_setter_function(
             resolution=resolved,
             function_kind="setter",
             function_name=fn_name,
-            callback_name=series_docstring_callback,
+            callback_spec=series_docstring_callback,
             docstring_renderer=docstring_renderer,
         )
     else:

@@ -89,26 +89,29 @@ def list_series_docstring_callbacks() -> tuple[str, ...]:
     return tuple(sorted(_callbacks))
 
 
+def resolve_series_docstring_callback(
+    callback: SeriesBindingDocstringCallbackSpec,
+) -> SeriesBindingDocstringCallback:
+    """Look up a registered callback name or return a direct callback object."""
+    if isinstance(callback, str):
+        if callback not in _callbacks:
+            known = ", ".join(sorted(_callbacks))
+            raise ValueError(f"Unknown series docstring callback: {callback!r}. Known: {known}")
+        return _callbacks[callback]
+    return callback
+
+
 def run_series_docstring_callback(
     name: str,
     ctx: SeriesBindingDocstringContext,
 ) -> SeriesFunctionDoc | None:
-    if name not in _callbacks:
-        known = ", ".join(sorted(_callbacks))
-        raise ValueError(f"Unknown series docstring callback: {name!r}. Known: {known}")
-    return _callbacks[name](ctx)
+    """Execute a registered series docstring callback by name."""
+    return resolve_series_docstring_callback(name)(ctx)
 
 
-def resolve_series_docstring_callback(
-    callback: SeriesBindingDocstringCallbackSpec,
-    ctx: SeriesBindingDocstringContext,
-) -> SeriesFunctionDoc | None:
-    """Run a registered callback name or direct callback object."""
-    if isinstance(callback, str):
-        return run_series_docstring_callback(callback, ctx)
-    if not callable(callback):
-        raise TypeError("series docstring callback must be a registered name or callable")
-    return callback(ctx)
+def unregister_series_docstring_callback(name: str) -> None:
+    """Remove a registered callback (for tests and notebook cleanup)."""
+    _callbacks.pop(name, None)
 
 
 def _unique(values: list[str]) -> list[str]:
@@ -275,10 +278,10 @@ def resolve_series_function_docstring(
     resolution: SeriesResolution,
     function_kind: SeriesFunctionKind,
     function_name: str,
-    callback_name: SeriesBindingDocstringCallbackSpec | None,
+    callback_spec: SeriesBindingDocstringCallbackSpec | None,
     docstring_renderer: SeriesDocstringRendererSpec = "google",
 ) -> str | None:
-    if callback_name is None:
+    if callback_spec is None:
         return _default_docstring(
             series,
             function_kind=function_kind,
@@ -306,7 +309,7 @@ def resolve_series_function_docstring(
         function_kind=function_kind,
         function_name=function_name,
     )
-    structured = resolve_series_docstring_callback(callback_name, ctx)
+    structured = resolve_series_docstring_callback(callback_spec)(ctx)
     if structured is None:
         return None
     renderer = resolve_series_docstring_renderer(docstring_renderer)
@@ -335,4 +338,5 @@ __all__ = [
     "resolve_series_docstring_callback",
     "resolve_series_function_docstring",
     "run_series_docstring_callback",
+    "unregister_series_docstring_callback",
 ]

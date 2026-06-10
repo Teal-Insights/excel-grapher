@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, TypeAlias, runtime_checkable
 
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.lightweight_viz import VizLimits
@@ -58,6 +58,8 @@ class WebVizLayoutPlugin(Protocol):
     ) -> WebVizLayoutResult: ...
 
 
+WebVizLayoutSpec: TypeAlias = str | WebVizLayoutPlugin
+
 _plugins: dict[str, WebVizLayoutPlugin] = {}
 
 
@@ -73,15 +75,28 @@ def list_web_viz_layouts() -> tuple[str, ...]:
     return tuple(sorted(_plugins))
 
 
+def resolve_web_viz_layout(layout: WebVizLayoutSpec) -> WebVizLayoutPlugin:
+    """Look up a registered layout ID or return a direct layout plugin."""
+    if isinstance(layout, str):
+        if layout not in _plugins:
+            raise ValueError(
+                f"Unknown web viz layout: {layout!r}. Known: {', '.join(sorted(_plugins))}"
+            )
+        return _plugins[layout]
+    return layout
+
+
 def run_web_viz_layout(
-    ctx: WebVizLayoutContext, layout_id: str, layout_config: dict[str, Any] | None
+    ctx: WebVizLayoutContext, layout: WebVizLayoutSpec, layout_config: dict[str, Any] | None
 ) -> WebVizLayoutResult:
-    if layout_id not in _plugins:
-        raise ValueError(
-            f"Unknown web viz layout: {layout_id!r}. Known: {', '.join(sorted(_plugins))}"
-        )
+    """Execute a registered layout ID or direct layout plugin."""
     cfg = dict(layout_config or {})
-    return _plugins[layout_id](ctx, cfg)
+    return resolve_web_viz_layout(layout)(ctx, cfg)
+
+
+def unregister_web_viz_layout(layout_id: str) -> None:
+    """Remove a registered layout plugin (for tests and notebook cleanup)."""
+    _plugins.pop(layout_id, None)
 
 
 def _positions_stratified_scc_louvain(
@@ -250,8 +265,12 @@ __all__ = [
     "LAYOUT_GRAPHVIZ_DOT",
     "LAYOUT_GRAPHVIZ_SFDP",
     "WebVizLayoutContext",
+    "WebVizLayoutPlugin",
     "WebVizLayoutResult",
+    "WebVizLayoutSpec",
     "list_web_viz_layouts",
     "register_web_viz_layout",
+    "resolve_web_viz_layout",
     "run_web_viz_layout",
+    "unregister_web_viz_layout",
 ]

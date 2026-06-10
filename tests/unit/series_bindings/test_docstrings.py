@@ -32,8 +32,10 @@ from excel_grapher.series_bindings.docstrings import (
     emit_docstring_literal,
     list_series_docstring_callbacks,
     register_series_docstring_callback,
+    resolve_series_docstring_callback,
     resolve_series_function_docstring,
     run_series_docstring_callback,
+    unregister_series_docstring_callback,
 )
 from excel_grapher.series_bindings.types import SeriesResolution, WorkbookSeriesBindings
 
@@ -122,10 +124,41 @@ def test_register_series_docstring_callback_allows_replace() -> None:
         },
         function_kind="setter",
         function_name="set_demo",
-        callback_name=name,
+        callback_spec=name,
     )
     assert rendered is not None
     assert rendered.startswith("second")
+
+
+def test_resolve_series_docstring_callback_returns_direct_callable() -> None:
+    def direct(ctx: SeriesBindingDocstringContext) -> SeriesFunctionDoc:
+        del ctx
+        return SeriesFunctionDoc(
+            summary="direct",
+            purpose="direct",
+            record_matching="direct",
+        )
+
+    resolved = resolve_series_docstring_callback(direct)
+    assert resolved is direct
+
+
+def test_resolve_series_docstring_callback_unknown_name_raises() -> None:
+    with pytest.raises(ValueError, match="Unknown series docstring callback"):
+        resolve_series_docstring_callback("not.registered.callback")
+
+
+def test_unregister_series_docstring_callback_removes_registration() -> None:
+    name = "_test_unregister_docstring_callback"
+
+    def _noop(ctx: SeriesBindingDocstringContext) -> None:
+        del ctx
+        return None
+
+    register_series_docstring_callback(name, _noop)
+    assert name in list_series_docstring_callbacks()
+    unregister_series_docstring_callback(name)
+    assert name not in list_series_docstring_callbacks()
 
 
 def test_run_series_docstring_callback_unknown_name_raises() -> None:
@@ -407,7 +440,7 @@ def test_resolve_series_function_docstring_default_uses_series_notes() -> None:
         resolution=resolved,
         function_kind="setter",
         function_name="set_demo",
-        callback_name=None,
+        callback_spec=None,
     )
     assert doc == "Custom notes for demo."
 
@@ -445,7 +478,7 @@ def test_resolve_series_function_docstring_registered_callback(tmp_path: Path) -
         resolution=resolved,
         function_kind="setter",
         function_name="set_borvelia_primary_balance",
-        callback_name=callback_name,
+        callback_spec=callback_name,
     )
     assert doc is not None
     assert "Set borvelia_primary_balance." in doc
@@ -485,7 +518,7 @@ def test_resolve_series_function_docstring_applies_renderer(tmp_path: Path) -> N
         resolution=resolved,
         function_kind="setter",
         function_name="set_borvelia_primary_balance",
-        callback_name=callback_name,
+        callback_spec=callback_name,
         docstring_renderer="google",
     )
     assert doc is not None
