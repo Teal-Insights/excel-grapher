@@ -6,7 +6,7 @@ import textwrap
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, runtime_checkable
 
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings.types import SeriesResolution, WorkbookSeriesBindings
@@ -69,6 +69,8 @@ class SeriesBindingDocstringCallback(Protocol):
     def __call__(self, ctx: SeriesBindingDocstringContext) -> SeriesFunctionDoc | None: ...
 
 
+SeriesBindingDocstringCallbackSpec: TypeAlias = str | SeriesBindingDocstringCallback
+
 _callbacks: dict[str, SeriesBindingDocstringCallback] = {}
 
 
@@ -95,6 +97,18 @@ def run_series_docstring_callback(
         known = ", ".join(sorted(_callbacks))
         raise ValueError(f"Unknown series docstring callback: {name!r}. Known: {known}")
     return _callbacks[name](ctx)
+
+
+def resolve_series_docstring_callback(
+    callback: SeriesBindingDocstringCallbackSpec,
+    ctx: SeriesBindingDocstringContext,
+) -> SeriesFunctionDoc | None:
+    """Run a registered callback name or direct callback object."""
+    if isinstance(callback, str):
+        return run_series_docstring_callback(callback, ctx)
+    if not callable(callback):
+        raise TypeError("series docstring callback must be a registered name or callable")
+    return callback(ctx)
 
 
 def _unique(values: list[str]) -> list[str]:
@@ -261,7 +275,7 @@ def resolve_series_function_docstring(
     resolution: SeriesResolution,
     function_kind: SeriesFunctionKind,
     function_name: str,
-    callback_name: str | None,
+    callback_name: SeriesBindingDocstringCallbackSpec | None,
     docstring_renderer: SeriesDocstringRendererSpec = "google",
 ) -> str | None:
     if callback_name is None:
@@ -292,7 +306,7 @@ def resolve_series_function_docstring(
         function_kind=function_kind,
         function_name=function_name,
     )
-    structured = run_series_docstring_callback(callback_name, ctx)
+    structured = resolve_series_docstring_callback(callback_name, ctx)
     if structured is None:
         return None
     renderer = resolve_series_docstring_renderer(docstring_renderer)
@@ -309,6 +323,7 @@ __all__ = [
     "FieldContract",
     "FieldDoc",
     "SeriesBindingDocstringCallback",
+    "SeriesBindingDocstringCallbackSpec",
     "SeriesBindingDocstringContext",
     "SeriesBindingDocstringContract",
     "SeriesFunctionDoc",
@@ -317,6 +332,7 @@ __all__ = [
     "emit_docstring_literal",
     "list_series_docstring_callbacks",
     "register_series_docstring_callback",
+    "resolve_series_docstring_callback",
     "resolve_series_function_docstring",
     "run_series_docstring_callback",
 ]

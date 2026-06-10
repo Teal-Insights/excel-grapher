@@ -1,0 +1,100 @@
+---
+title: "Contributing"
+guide-section: "Development"
+---
+
+## Development environment setup
+
+Clone the repository:
+
+```bash
+git clone https://github.com/Teal-Insights/excel-grapher.git
+cd excel-grapher
+```
+
+Install `uv` if you don't have it already:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Install the dependencies:
+
+```bash
+uv sync
+```
+
+Install pre-commit hooks:
+
+```bash
+uv run pre-commit install
+```
+
+To render the documentation, install Quarto if you don't have it already:
+
+```bash
+curl -LsSf https://quarto.org/install.sh | sh
+```
+
+## Extension-point conventions
+
+A key goal of `excel-grapher` is to make it easy to extend the library with new functionality. We achieve this by exposing a rich set of extension points that allow users to customize library behaviors, especially during graph extraction, visualization, and code generation.
+
+Prefer explicit, typed extension points over ad hoc keyword flags when users need to customize behavior. The core API should make simple Python usage direct, while still supporting named plugins when a choice needs to be stored in configuration, selected from a CLI, or reused across a project.
+
+### Direct customization first
+
+For local Python usage, accept direct objects or callables when they are easy to type and configure:
+
+```python
+code = CodeGenerator(graph).generate(
+    targets,
+    series_bindings=bindings,
+    bindings_workbook=workbook_path,
+    series_docstring_callback=my_callback,
+)
+```
+
+Use a `Protocol` for non-trivial callables so contributors know the expected context and return type.
+
+### Named plugins for reusable choices
+
+Use registries when an extension should be selectable by a stable string name. Registry-backed APIs should expose:
+
+- `register_*`
+- `list_*`
+- `resolve_*` for lookup without execution
+- `run_*` only when the helper executes the plugin immediately
+
+Duplicate registration should fail by default and support `replace=False` as an explicit opt-in parameter when replacement is useful in tests, notebooks, or project bootstrap code.
+
+```python
+register_series_docstring_callback("project_docs", my_callback, replace=True)
+
+code = CodeGenerator(graph).generate(
+    targets,
+    series_bindings=bindings,
+    bindings_workbook=workbook_path,
+    series_docstring_callback="project_docs",
+)
+```
+
+### Built-ins and specs
+
+When an API accepts more than one customization form, define a `*Spec` type alias. Built-ins should usually be available both as importable Python objects/classes and as stable string IDs if they are useful in config-driven workflows.
+
+Examples in the current API:
+
+- `SeriesDocstringRendererSpec`: built-in renderer name, renderer object, or callable.
+- `SeriesBindingDocstringCallbackSpec`: registered callback name or direct callback.
+- Web visualization layouts: registered layout IDs resolved by the layout registry.
+
+### Scope guidelines
+
+Use direct callables only for local instrumentation hooks that are not reusable plugin choices, such as graph build hooks. Use named registries for behavior that users may want to list, document, select from config, or share across workflows.
+
+Upcoming export projection transforms should follow the same pattern: direct transform objects/callables for normal Python usage, plus optional registered names for built-ins and reusable project transforms.
+
+## Roadmap
+
+- [Live workflow graph](/workflow/)

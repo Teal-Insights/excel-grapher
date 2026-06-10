@@ -22,11 +22,14 @@ from excel_grapher.series_bindings.docstring_renderers import (
 )
 from excel_grapher.series_bindings.docstrings import (
     FieldDoc,
+    SeriesBindingDocstringCallback,
+    SeriesBindingDocstringCallbackSpec,
     SeriesBindingDocstringContext,
     SeriesBindingDocstringContract,
     SeriesFunctionDoc,
     list_series_docstring_callbacks,
     register_series_docstring_callback,
+    resolve_series_docstring_callback,
 )
 from excel_grapher.series_bindings.input_series import derive_input_series
 from excel_grapher.series_bindings.load import (
@@ -103,6 +106,8 @@ __all__ = [
     "SeriesDocstringRenderer",
     "SeriesDocstringRendererName",
     "SeriesDocstringRendererSpec",
+    "SeriesBindingDocstringCallback",
+    "SeriesBindingDocstringCallbackSpec",
     "SeriesBindingDocstringContext",
     "SeriesBindingDocstringContract",
     "SeriesFunctionDoc",
@@ -141,6 +146,7 @@ __all__ = [
     "merge_series_binding_documents",
     "parse_bindings_file",
     "register_series_docstring_callback",
+    "resolve_series_docstring_callback",
     "resolve_series_binding",
     "resolve_series_bindings",
     "resolve_series_docstring_renderer",

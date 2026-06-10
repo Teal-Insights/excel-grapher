@@ -145,6 +145,42 @@ def test_generate_applies_series_docstring_callback() -> None:
     assert "Required record fields:" in setter.__doc__
 
 
+def test_generate_accepts_direct_series_docstring_callback() -> None:
+    bindings = validate_bindings_document(deepcopy(BINDINGS_DOCUMENT))
+    targets: list[str] = []
+    for series in bindings["series"]:
+        targets.extend(expand_data_range(series["data_range"], workbook=WORKBOOK))
+    graph = create_dependency_graph(WORKBOOK, targets, load_values=True)
+
+    def callback(ctx: Any) -> SeriesFunctionDoc:
+        return SeriesFunctionDoc(
+            summary=f"Set {ctx.contract.series_id} directly.",
+            purpose="Integration test direct callback purpose.",
+            record_matching="Match by TIME_PERIOD.",
+            field_descriptions={
+                "TIME_PERIOD": FieldDoc(description="Reporting year."),
+                "OBS_VALUE": FieldDoc(description="Observed value."),
+            },
+        )
+
+    with CodeGenerator(graph) as gen:
+        code = gen.generate(
+            targets,
+            series_bindings=bindings,
+            bindings_workbook=WORKBOOK,
+            series_docstring_callback=callback,
+        )
+
+    ns: dict[str, object] = {}
+    exec(code, ns)
+    setter = cast(
+        Callable[[Any, list[dict[str, object]]], None],
+        ns["set_borvelia_primary_balance"],
+    )
+    assert setter.__doc__ is not None
+    assert "Set borvelia_primary_balance directly." in setter.__doc__
+
+
 def test_generate_applies_google_docstring_renderer() -> None:
     callback_name = "_test_integration_setter_google_docstring"
     register_series_docstring_callback(

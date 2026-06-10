@@ -61,8 +61,10 @@ class WebVizLayoutPlugin(Protocol):
 _plugins: dict[str, WebVizLayoutPlugin] = {}
 
 
-def register_web_viz_layout(layout_id: str, plugin: WebVizLayoutPlugin) -> None:
-    if layout_id in _plugins:
+def register_web_viz_layout(
+    layout_id: str, plugin: WebVizLayoutPlugin, *, replace: bool = False
+) -> None:
+    if layout_id in _plugins and not replace:
         raise ValueError(f"duplicate web viz layout_id: {layout_id!r}")
     _plugins[layout_id] = plugin
 
