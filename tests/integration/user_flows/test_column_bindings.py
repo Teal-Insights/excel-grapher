@@ -51,9 +51,10 @@ BINDINGS_DOCUMENT: dict[str, Any] = {
                         "bind": {
                             "kind": "row_label",
                             "label_column": "A",
-                            "read": "string",                        },
+                            "read": "string",
+                        },
                         "include_in_record": False,
-                    }
+                    },
                 ],
                 "attributes": [
                     {
@@ -117,7 +118,11 @@ def test_micro_workbook_resolves_unique_keys(
     assert len(borvelia["leaves"]) == 3
     periods = {leaf["key"]["INDICATOR"] for leaf in borvelia["leaves"]}
     print("periods", periods)
-    assert periods == {'Real interest rate (% per annum)', 'Primary balance (% of GDP)', 'Real GDP growth (% per annum)'}
+    assert periods == {
+        "Real interest rate (% per annum)",
+        "Primary balance (% of GDP)",
+        "Real GDP growth (% per annum)",
+    }
 
 
 def test_micro_workbook_covers_mvp_series_layouts(bindings: WorkbookSeriesBindings) -> None:
