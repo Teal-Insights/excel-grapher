@@ -4,6 +4,7 @@ Public API is namespaced by role: excel_grapher.grapher, excel_grapher.evaluator
 Convenience re-exports below keep existing call patterns working.
 """
 
+from . import exporter, grapher, series_bindings
 from .evaluator import (
     CellValue,
     ExcelRange,
@@ -11,7 +12,7 @@ from .evaluator import (
     ParseError,
     XlError,
 )
-from .exporter import to_web_viz_payload
+from .exporter import CodeGenerator, to_web_viz_payload
 from .grapher import (
     GRAPH_CACHE_SCHEMA_VERSION,
     And,
@@ -75,6 +76,9 @@ from .series_bindings import (
 )
 
 __all__ = [
+    "exporter",
+    "grapher",
+    "series_bindings",
     "GreaterThanCell",
     "NotEqualCell",
     "RealBetween",
@@ -84,6 +88,7 @@ __all__ = [
     "Compare",
     "CycleError",
     "CycleReport",
+    "CodeGenerator",
     "DependencyGraph",
     "GRAPH_CACHE_SCHEMA_VERSION",
     "CacheValidationPolicy",

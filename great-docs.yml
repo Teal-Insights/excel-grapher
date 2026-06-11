@@ -71,10 +71,156 @@ authors:
 # - Add 'desc:' to sections for descriptions
 
 reference:
+  - title: Public Modules
+    desc: Namespaced public API surfaces
+    contents:
+      - exporter
+      - grapher
+      - series_bindings
+
+  - title: Exporter API
+    desc: Export and extension APIs under excel_grapher.exporter
+    contents:
+      - exporter.CodeGenerator
+      - exporter.WebVizPayload
+      - exporter.to_web_viz_payload
+      - exporter.LAYOUT_FORCEATLAS2
+      - exporter.LAYOUT_GRAPHVIZ_DOT
+      - exporter.LAYOUT_GRAPHVIZ_SFDP
+      - exporter.LAYOUT_MULTIPARTITE
+      - exporter.LAYOUT_SPRING
+      - exporter.LAYOUT_STRATIFIED_MULTIPARTITE
+      - exporter.WebVizLayoutPlugin
+      - exporter.WebVizLayoutSpec
+      - exporter.list_web_viz_layouts
+      - exporter.register_web_viz_layout
+      - exporter.resolve_web_viz_layout
+      - exporter.unregister_web_viz_layout
+      - exporter.FieldDoc
+      - exporter.GoogleSeriesDocstringRenderer
+      - exporter.NumpySeriesDocstringRenderer
+      - exporter.PlainSeriesDocstringRenderer
+      - exporter.RstSeriesDocstringRenderer
+      - exporter.SeriesDocstringRenderCallable
+      - exporter.SeriesDocstringRenderer
+      - exporter.SeriesDocstringRendererName
+      - exporter.SeriesDocstringRendererSpec
+      - exporter.SeriesBindingDocstringCallback
+      - exporter.SeriesBindingDocstringCallbackSpec
+      - exporter.SeriesBindingDocstringContext
+      - exporter.SeriesBindingDocstringContract
+      - exporter.SeriesFunctionDoc
+      - exporter.list_series_docstring_callbacks
+      - exporter.register_series_docstring_callback
+      - exporter.resolve_series_docstring_callback
+      - exporter.unregister_series_docstring_callback
+      - exporter.resolve_series_docstring_renderer
+
+  - title: Grapher Namespaced API
+    desc: Public grapher APIs available under excel_grapher.grapher
+    contents:
+      - grapher.DependencyCause
+      - grapher.EdgeProvenance
+      - grapher.LightweightVizLocalEdges
+      - grapher.LightweightVizModule
+      - grapher.LightweightVizModuleEdge
+      - grapher.LightweightVizNodeColumns
+      - grapher.LightweightVizStats
+      - grapher.GRAPH_CACHE_SCHEMA_VERSION
+      - grapher.DynamicRefTraceFn
+      - grapher.NodeHook
+      - grapher.NodeKey
+      - grapher.infer_dynamic_index_targets
+      - grapher.infer_dynamic_indirect_targets
+      - grapher.infer_dynamic_offset_targets
+
+  - title: Series Bindings API
+    desc: Series binding manifest and codegen APIs
+    contents:
+      - series_bindings.InputSeries
+      - series_bindings.InputSeriesCell
+      - series_bindings.OutputSeries
+      - series_bindings.OutputSeriesCell
+      - series_bindings.Record
+      - series_bindings.Records
+      - series_bindings.Scalar
+      - series_bindings.FieldDoc
+      - series_bindings.GoogleSeriesDocstringRenderer
+      - series_bindings.NumpySeriesDocstringRenderer
+      - series_bindings.PlainSeriesDocstringRenderer
+      - series_bindings.RstSeriesDocstringRenderer
+      - series_bindings.SeriesDocstringRenderCallable
+      - series_bindings.SeriesDocstringRenderer
+      - series_bindings.SeriesDocstringRendererName
+      - series_bindings.SeriesDocstringRendererSpec
+      - series_bindings.SeriesBindingDocstringCallback
+      - series_bindings.SeriesBindingDocstringCallbackSpec
+      - series_bindings.SeriesBindingDocstringContext
+      - series_bindings.SeriesBindingDocstringContract
+      - series_bindings.SeriesFunctionDoc
+      - series_bindings.LeafResolution
+      - series_bindings.ResolutionIssue
+      - series_bindings.ResolutionReport
+      - series_bindings.SeriesResolution
+      - series_bindings.ValidationIssue
+      - series_bindings.ValidationLevel
+      - series_bindings.ValidationReport
+      - series_bindings.WorkbookSeriesBindings
+      - series_bindings.IMPLEMENTED_BIND_KINDS
+      - series_bindings.IMPLEMENTED_LAYOUTS
+      - series_bindings.PLANNED_BIND_KINDS
+      - series_bindings.PLANNED_LAYOUTS
+      - series_bindings.SUPPORTED_SCHEMA_VERSIONS
+      - series_bindings.bindings_canonical_sha256
+      - series_bindings.derive_input_series
+      - series_bindings.derive_output_series
+      - series_bindings.emit_compute_function
+      - series_bindings.emit_computes_block
+      - series_bindings.emit_series_bindings_block
+      - series_bindings.emit_setter_function
+      - series_bindings.emit_setter_helpers
+      - series_bindings.emit_setters_block
+      - series_bindings.generate_computes_module
+      - series_bindings.generate_setters_module
+      - series_bindings.has_input_direction
+      - series_bindings.has_output_direction
+      - series_bindings.merge_series_entries
+      - series_bindings.normalize_bindings_document
+      - series_bindings.normalize_series_entry
+      - series_bindings.expand_data_range
+      - series_bindings.expand_data_range_for_graph
+      - series_bindings.format_schema_errors
+      - series_bindings.list_series_docstring_callbacks
+      - series_bindings.load_series_bindings
+      - series_bindings.merge_series_binding_documents
+      - series_bindings.parse_bindings_file
+      - series_bindings.register_series_docstring_callback
+      - series_bindings.resolve_series_docstring_callback
+      - series_bindings.unregister_series_docstring_callback
+      - series_bindings.resolve_series_binding
+      - series_bindings.resolve_series_bindings
+      - series_bindings.resolve_series_docstring_renderer
+      - series_bindings.validate_bindings_document
+      - series_bindings.validate_series_bindings
+      - series_bindings.is_bind_implemented
+      - series_bindings.is_layout_implemented
+
   - title: Classes
     desc: Main classes provided by the package
     contents:
+      - name: CodeGenerator
+        members: false  # 6 methods listed below
       - ParseError
+
+  - title: CodeGenerator Methods
+    desc: Methods for the CodeGenerator class
+    contents:
+      - CodeGenerator.__enter__
+      - CodeGenerator.__exit__
+      - CodeGenerator.derive_input_series
+      - CodeGenerator.classify_leaf_nodes
+      - CodeGenerator.generate
+      - CodeGenerator.generate_modules
 
   - title: Dataclasses
     desc: Dataclass definitions
