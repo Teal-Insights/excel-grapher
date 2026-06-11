@@ -4,7 +4,7 @@ series:
   - id: borvelia_primary_balance
     sheet: Inputs
     data_range: Inputs!F5:J5
-    layout: row_series
+    layout: series
     input:
       setter:
         name: set_borvelia_primary_balance

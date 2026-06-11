@@ -72,7 +72,7 @@ bindings_yaml = dedent(
     series:
       - id: borvelia_primary_balance
         data_range: Sheet1!F5:J5
-        layout: row_series
+        layout: series
         editable: true
         input:
           setter:
@@ -148,7 +148,7 @@ print(
   'id': 'borvelia_primary_balance',
   'input': {'setter': {'name': 'set_borvelia_primary_balance'}},
   'key': ['TIME_PERIOD'],
-  'layout': 'row_series',
+  'layout': 'series',
   'output': {'compute': {'name': 'compute_borvelia_primary_balance'}},
   'sdmx_notes': 'Wide row series with offset-style column headers 1-5.',
   'series_context': {'INDICATOR': 'Primary balance (% of GDP)', 'REF_AREA': 'Borvelia'},
@@ -402,7 +402,7 @@ Optional record fields:
 
 Source binding:
     Workbook range: Sheet1!F5:J5
-    Layout: row_series
+    Layout: series
     Value type: float
 
 Example:

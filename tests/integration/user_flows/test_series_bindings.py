@@ -27,7 +27,7 @@ BINDINGS_DOCUMENT: dict[str, Any] = {
             "id": "borvelia_primary_balance",
             "sheet": "Sheet1",
             "data_range": "Sheet1!F5:J5",
-            "layout": "row_series",
+            "layout": "series",
             "editable": True,
             "setter": {"name": "set_borvelia_primary_balance"},
             "structure": {
@@ -130,7 +130,7 @@ def test_micro_workbook_resolves_unique_keys(
 def test_micro_workbook_covers_mvp_series_layouts(bindings: WorkbookSeriesBindings) -> None:
     by_id = {series["id"]: series for series in bindings["series"]}
     assert set(by_id) == {"borvelia_primary_balance"}
-    assert by_id["borvelia_primary_balance"]["layout"] == "row_series"
+    assert by_id["borvelia_primary_balance"]["layout"] == "series"
 
 
 def test_bindings_canonical_hash_is_stable(bindings: WorkbookSeriesBindings) -> None:

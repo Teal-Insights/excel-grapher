@@ -334,8 +334,8 @@
     },
     "Layout": {
       "type": "string",
-      "enum": ["row_series", "scalar", "matrix"],
-      "description": "row_series: one indicator row x column periods. scalar: single leaf. matrix (1.1.0): country/indicator block over a rectangular data_range (multi-row); resolver/codegen may lag schema."
+      "enum": ["series", "scalar", "matrix"],
+      "description": "series: one indicator row x column periods. scalar: single leaf. matrix (1.1.0): country/indicator block over a rectangular data_range (multi-row); resolver/codegen may lag schema."
     },
     "SeriesBinding": {
       "type": "object",
@@ -395,7 +395,7 @@
           "type": "array",
           "items": { "$ref": "#/$defs/ConceptId" },
           "uniqueItems": true,
-          "description": "Concept ids required on each incoming record for matching (MVP row_series: typically [TIME_PERIOD] when country and indicator are series-scoped). Scalar layout may use an empty key when the binding resolves to a single cell."
+          "description": "Concept ids required on each incoming record for matching (MVP series: typically [TIME_PERIOD] when country and indicator are series-scoped). Scalar layout may use an empty key when the binding resolves to a single cell."
         },
         "series_context": {
           "type": "object",
@@ -485,7 +485,7 @@
       "allOf": [
         {
           "if": {
-            "properties": { "layout": { "const": "row_series" } },
+            "properties": { "layout": { "const": "series" } },
             "required": ["layout"]
           },
           "then": {
@@ -550,7 +550,7 @@
           "id": "borvelia_primary_balance",
           "sheet": "Inputs",
           "data_range": "Inputs!F5:J5",
-          "layout": "row_series",
+          "layout": "series",
           "editable": true,
           "setter": {
             "name": "set_borvelia_primary_balance",

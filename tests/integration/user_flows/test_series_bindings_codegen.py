@@ -29,7 +29,7 @@ BINDINGS_DOCUMENT: dict[str, Any] = {
             "id": "borvelia_primary_balance",
             "sheet": "Sheet1",
             "data_range": "Sheet1!F5:J5",
-            "layout": "row_series",
+            "layout": "series",
             "editable": True,
             "setter": {"name": "set_borvelia_primary_balance"},
             "structure": {
@@ -298,3 +298,4 @@ def test_generate_modules_applies_google_docstring_renderer(
     assert "Args:" in files["api.py"]
     assert "Returns:" in files["api.py"]
     assert "Required record fields:" in files["api.py"]
+

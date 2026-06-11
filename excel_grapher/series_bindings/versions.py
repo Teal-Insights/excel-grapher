@@ -16,7 +16,7 @@ IMPLEMENTED_BIND_KINDS: frozenset[str] = frozenset(
 
 PLANNED_BIND_KINDS: frozenset[str] = frozenset({"row_hierarchy"})
 
-IMPLEMENTED_LAYOUTS: frozenset[str] = frozenset({"row_series", "scalar"})
+IMPLEMENTED_LAYOUTS: frozenset[str] = frozenset({"series", "scalar"})
 
 PLANNED_LAYOUTS: frozenset[str] = frozenset({"matrix"})
 
