@@ -67,7 +67,7 @@ is the entry for the primary balance series:
 ``` python
 bindings_yaml = dedent(
     """
-    schema_version: "1.2.0"
+    schema_version: "1.2.1"
     workbook: series_bindings.xlsx
     series:
       - id: borvelia_primary_balance

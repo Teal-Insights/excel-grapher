@@ -22,7 +22,7 @@ from excel_grapher.series_bindings.setter_codegen import (
 )
 
 KEYLESS_SCALAR_BINDING: dict[str, Any] = {
-    "schema_version": "1.2.0",
+    "schema_version": "1.2.1",
     "series": [
         {
             "id": "country_name",

@@ -1,4 +1,4 @@
-schema_version: "1.2.0"
+schema_version: "1.2.1"
 workbook: lic_inputs.xlsx
 series:
   - id: borvelia_primary_balance

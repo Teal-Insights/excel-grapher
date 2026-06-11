@@ -46,7 +46,7 @@ def test_schema_requires_at_least_one_direction() -> None:
     from excel_grapher.series_bindings import SeriesBindingsSchemaError, validate_bindings_document
 
     doc = {
-        "schema_version": "1.2.0",
+        "schema_version": "1.2.1",
         "series": [
             {
                 "id": "no_direction",
@@ -76,7 +76,7 @@ def test_schema_rejects_non_mapping_series_entry() -> None:
     from excel_grapher.series_bindings import SeriesBindingsSchemaError, validate_bindings_document
 
     doc = {
-        "schema_version": "1.2.0",
+        "schema_version": "1.2.1",
         "series": [
             {
                 "id": "ok",

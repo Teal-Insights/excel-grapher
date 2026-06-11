@@ -180,7 +180,6 @@ Normalization: `strip`, `strip_trailing_unit` (removes trailing `(…)` unit cla
 | `series` | **supported** | One indicator row × many columns (MVP) |
 | `scalar` | **supported** | Single editable cell |
 | `matrix` | **schema only** | Multi-row blocks — not implemented yet |
-| `column_series` | **planned** | Not in schema yet; track via follow-up issues |
 
 ## Schema versions
 
@@ -189,6 +188,7 @@ Normalization: `strip`, `strip_trailing_unit` (removes trailing `(…)` unit cla
 | **1.0.0** | `series`, `scalar`; supported bind kinds above. Use for production workbooks. |
 | **1.1.0** | Draft extensions (e.g. `matrix` in schema). Not fully implemented in tooling. |
 | **1.2.0** | Optional `input` / `output` direction blocks and output `compute_*` functions. |
+| **1.2.1** | Rename "row_series" to "series" to reflect that it also works with columns. no functional change
 
 ## Validation and codegen closure
 
