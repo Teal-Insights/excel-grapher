@@ -298,4 +298,3 @@ def test_generate_modules_applies_google_docstring_renderer(
     assert "Args:" in files["api.py"]
     assert "Returns:" in files["api.py"]
     assert "Required record fields:" in files["api.py"]
-
