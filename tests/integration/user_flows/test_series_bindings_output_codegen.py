@@ -35,7 +35,7 @@ def _write_output_workbook(path: Path) -> None:
 
 
 BINDINGS_DOCUMENT: dict[str, Any] = {
-    "schema_version": "1.2.1",
+    "schema_version": "1.3.0",
     "workbook": "series_bindings_output.xlsx",
     "series": [
         {

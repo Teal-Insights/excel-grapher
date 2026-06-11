@@ -9,8 +9,8 @@
   "properties": {
     "schema_version": {
       "type": "string",
-      "enum": ["1.0.0", "1.1.0", "1.2.0", "1.2.1"],
-      "description": "Schema version for tooling and migrations. 1.0.0: row_series and scalar (fully supported). 1.1.0: adds matrix layout and row_hierarchy bind (schema-valid; resolver/codegen may lag). 1.2.0: optional input/output direction blocks and output compute functions.1.2.1: rename row_series to series layout; no functional change."
+      "enum": ["1.0.0", "1.1.0", "1.2.0", "1.3.0"],
+      "description": "Schema version for tooling and migrations. 1.0.0: series and scalar (fully supported). 1.1.0: adds matrix layout and row_hierarchy bind (schema-valid; resolver/codegen may lag). 1.2.0: optional input/output direction blocks and output compute functions.1.3.0: rename row_series to series layout; no functional change."
     },
     "workbook": {
       "type": "string",
@@ -481,7 +481,7 @@
       }
     },
     "SeriesBindingMvpRules": {
-      "description": "MVP constraints for one-setter-per-indicator-row.",
+      "description": "MVP constraints for one-setter-per-series.",
       "allOf": [
         {
           "if": {

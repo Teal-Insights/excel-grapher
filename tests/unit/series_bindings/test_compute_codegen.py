@@ -144,7 +144,7 @@ def test_emit_computes_block_warns_when_output_has_no_graph_overlap(tmp_path: Pa
     bindings = cast(
         WorkbookSeriesBindings,
         {
-            "schema_version": "1.2.1",
+            "schema_version": "1.3.0",
             "series": [
                 {
                     "id": "scaled_output",
@@ -308,7 +308,7 @@ def test_emit_compute_structured_docstring_callback(tmp_path: Path) -> None:
             graph=graph,
             workbook=wb_path,
             bindings={
-                "schema_version": "1.2.1",
+                "schema_version": "1.3.0",
                 "workbook": "formula.xlsx",
                 "series": [series],
                 "concept_scheme": {},
@@ -378,7 +378,7 @@ def test_emit_compute_google_docstring_renderer(tmp_path: Path) -> None:
             graph=graph,
             workbook=wb_path,
             bindings={
-                "schema_version": "1.2.1",
+                "schema_version": "1.3.0",
                 "workbook": "formula.xlsx",
                 "series": [series],
                 "concept_scheme": {},
