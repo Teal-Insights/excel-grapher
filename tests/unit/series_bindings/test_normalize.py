@@ -22,7 +22,7 @@ FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
 def test_normalize_renames_legacy_row_series_layout() -> None:
     series = {
         "id": "x",
-        "layout": "row_series",
+        "layout": "series",
         "setter": {"name": "set_x"},
     }
     normalized = normalize_series_entry(series)
