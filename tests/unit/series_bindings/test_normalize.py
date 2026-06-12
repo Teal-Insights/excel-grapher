@@ -19,6 +19,16 @@ from excel_grapher.series_bindings import (
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
 
 
+def test_normalize_renames_legacy_row_series_layout() -> None:
+    series = {
+        "id": "x",
+        "layout": "row_series",
+        "setter": {"name": "set_x"},
+    }
+    normalized = normalize_series_entry(series)
+    assert normalized["layout"] == "series"
+
+
 def test_normalize_moves_legacy_setter_to_input() -> None:
     series = {
         "id": "x",

@@ -20,7 +20,7 @@ from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 from tests.integration.user_flows.utils import write_series_bindings_workbook
 
 BINDINGS_DOCUMENT: dict[str, Any] = {
-    "schema_version": "1.0.0",
+    "schema_version": "1.3.0",
     "workbook": "series_bindings.xlsx",
     "series": [
         {

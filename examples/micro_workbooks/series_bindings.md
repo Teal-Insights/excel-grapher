@@ -341,10 +341,7 @@ The callback runs once for each generated series API function. In this
 workbook that means `set_borvelia_primary_balance` (setter) and
 `compute_borvelia_primary_balance` (output compute). Use
 `ctx.function_kind` and `ctx.function_name` to branch wording if you
-want different prose for setters vs computes. Renderer selection is
-independent from callback content and can be controlled with
-`docstring_renderer` (`"plain"`, `"rst"`, `"google"`, `"numpy"`, or a
-custom renderer object/callable).
+want different prose for setters vs computes.
 
 ``` python
 from excel_grapher.exporter import (
@@ -376,7 +373,6 @@ with CodeGenerator(graph) as gen:
         series_bindings=bindings,
         bindings_workbook=workbook_path,
         series_docstring_callback=callback_name,
-        docstring_renderer="google",
     )
 
 namespace_with_docs: dict = {}
@@ -391,21 +387,25 @@ Set borvelia_primary_balance.
 Updates workbook inputs from Records.
 Records match cells by key fields.
 
-Required record fields:
-    TIME_PERIOD: Value for TIME_PERIOD.
-    OBS_VALUE: Value for OBS_VALUE.
+Args:
+    records (Records): Records to apply to the workbook inputs.
+        Required record fields:
+            - TIME_PERIOD: Value for TIME_PERIOD.
+            - OBS_VALUE: Value for OBS_VALUE.
+        Optional record fields:
+            - REF_AREA: REF_AREA If supplied, expected value: "Borvelia".
+            - INDICATOR: INDICATOR If supplied, expected value: "Primary balance (% of GDP)".
+            - UNIT_MEASURE: UNIT_MEASURE If supplied, expected value: "PC_GDP".
 
-Optional record fields:
-    REF_AREA: REF_AREA If supplied, expected value: "Borvelia".
-    INDICATOR: INDICATOR If supplied, expected value: "Primary balance (% of GDP)".
-    UNIT_MEASURE: UNIT_MEASURE If supplied, expected value: "PC_GDP".
+Returns:
+    None: Applies the input updates to ctx.
 
 Source binding:
     Workbook range: Sheet1!F5:J5
     Layout: series
     Value type: float
 
-Example:
+Examples:
     set_borvelia_primary_balance(ctx, [
         {'TIME_PERIOD': 1, 'OBS_VALUE': -1.0},
         {'TIME_PERIOD': 2, 'OBS_VALUE': -0.5},

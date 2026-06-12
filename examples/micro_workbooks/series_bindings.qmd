@@ -51,7 +51,7 @@ The manifest has a top-level `series` array with one entry per series. Each entr
 ```{python}
 bindings_yaml = dedent(
     """
-    schema_version: "1.2.0"
+    schema_version: "1.3.0"
     workbook: series_bindings.xlsx
     series:
       - id: borvelia_primary_balance

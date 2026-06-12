@@ -20,7 +20,7 @@ from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 from tests.integration.user_flows.utils import write_series_bindings_workbook
 
 BINDINGS_DOCUMENT: dict[str, Any] = {
-    "schema_version": "1.0.0",
+    "schema_version": "1.3.0",
     "workbook": "series_bindings.xlsx",
     "series": [
         {
@@ -112,12 +112,10 @@ def test_micro_workbook_resolves_unique_keys(
 ) -> None:
     report = resolve_series_bindings(graph, bindings, workbook=workbook)
     assert report["ok"] is True
-    print("report[series]", report["series"])
     borvelia = next(s for s in report["series"] if s["series_id"] == "borvelia_statistics_year_1")
     assert borvelia["requires_address"] is False
     assert len(borvelia["leaves"]) == 3
     periods = {leaf["key"]["INDICATOR"] for leaf in borvelia["leaves"]}
-    print("periods", periods)
     assert periods == {
         "Real interest rate (% per annum)",
         "Primary balance (% of GDP)",

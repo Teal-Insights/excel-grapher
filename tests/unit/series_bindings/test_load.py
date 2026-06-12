@@ -19,7 +19,7 @@ FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
 
 def test_load_yaml_binding_file() -> None:
     bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
-    assert bindings["schema_version"] == "1.0.0"
+    assert bindings["schema_version"] == "1.3.0"
     assert bindings["workbook"] == "lic_inputs.xlsx"
     assert len(bindings["series"]) == 1
     assert bindings["series"][0]["id"] == "borvelia_primary_balance"

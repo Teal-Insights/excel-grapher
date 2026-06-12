@@ -23,7 +23,7 @@ def test_example_fixture_passes_schema() -> None:
 
 def test_schema_infers_sheet_from_sheet_qualified_data_range() -> None:
     doc = {
-        "schema_version": "1.0.0",
+        "schema_version": "1.3.0",
         "series": [
             {
                 "id": "borvelia_primary_balance",
@@ -115,9 +115,38 @@ def test_schema_accepts_1_1_0_matrix_fixture() -> None:
     assert bindings["series"][0]["structure"]["dimensions"][0]["bind"]["kind"] == "row_hierarchy"
 
 
-def test_series_rejects_empty_key() -> None:
+def test_schema_accepts_legacy_row_series_layout() -> None:
     doc = {
         "schema_version": "1.0.0",
+        "series": [
+            {
+                "id": "legacy_row",
+                "sheet": "S",
+                "data_range": "S!B2:C2",
+                "layout": "row_series",
+                "setter": {"name": "set_legacy_row"},
+                "structure": {
+                    "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
+                    "dimensions": [
+                        {
+                            "concept": "TIME_PERIOD",
+                            "role": "key",
+                            "scope": "cell",
+                            "bind": {"kind": "column_header", "header_row": 1},
+                        }
+                    ],
+                },
+                "key": ["TIME_PERIOD"],
+            }
+        ],
+    }
+    bindings = validate_bindings_document(doc)
+    assert bindings["series"][0]["layout"] == "series"
+
+
+def test_series_rejects_empty_key() -> None:
+    doc = {
+        "schema_version": "1.3.0",
         "series": [
             {
                 "id": "empty_key_row",
@@ -146,7 +175,7 @@ def test_series_rejects_empty_key() -> None:
 
 def test_series_requires_cell_scoped_dimension() -> None:
     doc = {
-        "schema_version": "1.0.0",
+        "schema_version": "1.3.0",
         "series": [
             {
                 "id": "only_series_scope",
