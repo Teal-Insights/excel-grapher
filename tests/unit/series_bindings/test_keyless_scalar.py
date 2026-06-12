@@ -171,5 +171,6 @@ def test_keyless_scalar_codegen_signature_uses_scalar_alias(tmp_path: Path) -> N
     lines = emit_setters_block(graph, wb_path, bindings)
     code = "\n".join(lines)
 
-    assert "Scalar = str | int | float | bool | None" in code
+    assert "Scalar = str | int | float | bool | datetime | None" in code
+    assert "from datetime import datetime" in code
     assert "records: Records | Record | Scalar," in code

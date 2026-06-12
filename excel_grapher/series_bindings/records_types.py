@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 Record = dict[str, object]
 Records = list[Record]
-Scalar = str | int | float | bool | None
+Scalar = str | int | float | bool | datetime | None
 
 __all__ = ["Record", "Records", "Scalar"]

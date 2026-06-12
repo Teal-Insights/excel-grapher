@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -179,3 +180,285 @@ def test_resolve_series_bindings_workbook(tmp_path: Path) -> None:
     assert report["ok"] is True
     assert len(report["series"]) == 1
     assert report["series"][0]["requires_address"] is False
+
+
+def _write_bool_workbook(path: Path) -> None:
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Flags")
+    ws.write_boolean("A1", True)
+    ws.write_boolean("B1", False)
+    ws.write("A2", "TRUE")
+    ws.write_number("B2", 1)
+    ws.write_number("C2", 0)
+    wb.close()
+
+
+def test_resolve_bool_data_cell_read_auto(tmp_path: Path) -> None:
+    wb_path = tmp_path / "flags.xlsx"
+    _write_bool_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, ["Flags!A2", "Flags!B2"], load_values=True)
+    series = {
+        "id": "bool_cells",
+        "sheet": "Flags",
+        "data_range": "Flags!A2:B2",
+        "layout": "series",
+        "setter": {"name": "set_bool_cells"},
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "bool",
+                "bind": {"kind": "data_cell", "read": "auto"},
+            },
+            "dimensions": [
+                {
+                    "concept": "SLOT",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "column_header", "header_row": 1, "read": "bool"},
+                }
+            ],
+        },
+        "key": ["SLOT"],
+    }
+
+    resolved = resolve_series_binding(graph, wb_path, series)
+    assert resolved["ok"] is True
+    by_slot = {leaf["key"]["SLOT"]: leaf for leaf in resolved["leaves"]}
+    assert by_slot[True]["coordinates"]["OBS_VALUE"] == "TRUE"
+    assert by_slot[False]["coordinates"]["OBS_VALUE"] == 1
+
+
+def test_resolve_bool_data_cell_read_bool_from_numeric(tmp_path: Path) -> None:
+    wb_path = tmp_path / "flags.xlsx"
+    _write_bool_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, ["Flags!B2"], load_values=True)
+    series = {
+        "id": "bool_numeric",
+        "sheet": "Flags",
+        "data_range": "Flags!B2",
+        "layout": "scalar",
+        "setter": {"name": "set_bool_numeric"},
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "bool",
+                "bind": {"kind": "data_cell", "read": "bool"},
+            },
+            "dimensions": [],
+        },
+        "key": [],
+    }
+
+    resolved = resolve_series_binding(graph, wb_path, series)
+    assert resolved["ok"] is True
+    assert resolved["leaves"][0]["coordinates"]["OBS_VALUE"] is True
+
+
+def test_resolve_bool_constant_native_and_inferred(tmp_path: Path) -> None:
+    wb_path = tmp_path / "flags.xlsx"
+    _write_bool_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, ["Flags!A2"], load_values=True)
+    concept_scheme = {
+        "id": "flags",
+        "concepts": [{"id": "IS_ACTIVE", "dtype": "bool"}],
+    }
+    series = {
+        "id": "bool_constant",
+        "sheet": "Flags",
+        "data_range": "Flags!A2",
+        "layout": "scalar",
+        "setter": {"name": "set_bool_constant"},
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "bool",
+                "bind": {"kind": "data_cell", "read": "bool"},
+            },
+            "dimensions": [
+                {
+                    "concept": "IS_ACTIVE",
+                    "role": "key",
+                    "scope": "series",
+                    "bind": {"kind": "constant", "value": True},
+                }
+            ],
+        },
+        "key": ["IS_ACTIVE"],
+    }
+
+    resolved = resolve_series_binding(
+        graph,
+        wb_path,
+        series,
+        concept_scheme=concept_scheme,
+    )
+    assert resolved["leaves"][0]["key"]["IS_ACTIVE"] is True
+
+    series["structure"]["dimensions"][0]["bind"]["value"] = "FALSE"
+    resolved = resolve_series_binding(
+        graph,
+        wb_path,
+        series,
+        concept_scheme=concept_scheme,
+    )
+    assert resolved["leaves"][0]["key"]["IS_ACTIVE"] is False
+
+
+def _write_datetime_header_workbook(path: Path) -> None:
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Inputs")
+    date_format = wb.add_format({"num_format": "yyyy-mm-dd"})
+    periods = [datetime(2024, 1, 1), datetime(2024, 2, 1)]
+    for col_index, period in enumerate(periods, start=1):
+        ws.write_datetime(0, col_index, period, date_format)
+        ws.write_number(1, col_index, float(col_index))
+    wb.close()
+
+
+def test_resolve_datetime_column_header_read_auto(tmp_path: Path) -> None:
+    wb_path = tmp_path / "calendar.xlsx"
+    _write_datetime_header_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, ["Inputs!B2:C2"], load_values=True)
+    series = {
+        "id": "calendar_auto",
+        "sheet": "Inputs",
+        "data_range": "Inputs!B2:C2",
+        "layout": "series",
+        "setter": {"name": "set_calendar_auto"},
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "float",
+                "bind": {"kind": "data_cell", "read": "float"},
+            },
+            "dimensions": [
+                {
+                    "concept": "TIME_PERIOD",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "column_header", "header_row": 1, "read": "auto"},
+                }
+            ],
+        },
+        "key": ["TIME_PERIOD"],
+    }
+
+    resolved = resolve_series_binding(graph, wb_path, series)
+    assert resolved["ok"] is True
+    periods = {leaf["key"]["TIME_PERIOD"] for leaf in resolved["leaves"]}
+    assert periods == {datetime(2024, 1, 1), datetime(2024, 2, 1)}
+
+
+def test_resolve_datetime_column_header_read_datetime(tmp_path: Path) -> None:
+    wb_path = tmp_path / "calendar.xlsx"
+    _write_datetime_header_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, ["Inputs!B2"], load_values=True)
+    series = {
+        "id": "calendar_explicit",
+        "sheet": "Inputs",
+        "data_range": "Inputs!B2",
+        "layout": "scalar",
+        "setter": {"name": "set_calendar_explicit"},
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "float",
+                "bind": {"kind": "data_cell", "read": "float"},
+            },
+            "dimensions": [
+                {
+                    "concept": "TIME_PERIOD",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "column_header", "header_row": 1, "read": "datetime"},
+                }
+            ],
+        },
+        "key": ["TIME_PERIOD"],
+    }
+
+    resolved = resolve_series_binding(graph, wb_path, series)
+    assert resolved["leaves"][0]["key"]["TIME_PERIOD"] == datetime(2024, 1, 1)
+
+
+def test_resolve_datetime_constant_from_iso_string(tmp_path: Path) -> None:
+    wb_path = tmp_path / "calendar.xlsx"
+    _write_datetime_header_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, ["Inputs!B2"], load_values=True)
+    concept_scheme = {
+        "id": "calendar",
+        "concepts": [{"id": "TIME_PERIOD", "dtype": "datetime"}],
+    }
+    series = {
+        "id": "calendar_constant",
+        "sheet": "Inputs",
+        "data_range": "Inputs!B2",
+        "layout": "scalar",
+        "setter": {"name": "set_calendar_constant"},
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "float",
+                "bind": {"kind": "data_cell", "read": "float"},
+            },
+            "dimensions": [
+                {
+                    "concept": "TIME_PERIOD",
+                    "role": "key",
+                    "scope": "series",
+                    "bind": {"kind": "constant", "value": "2024-03-15"},
+                }
+            ],
+        },
+        "key": ["TIME_PERIOD"],
+    }
+
+    resolved = resolve_series_binding(
+        graph,
+        wb_path,
+        series,
+        concept_scheme=concept_scheme,
+    )
+    assert resolved["leaves"][0]["key"]["TIME_PERIOD"] == datetime(2024, 3, 15)
+
+
+def test_resolve_datetime_bind_failure_is_reported(tmp_path: Path) -> None:
+    wb_path = tmp_path / "calendar.xlsx"
+    _write_datetime_header_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, ["Inputs!B2"], load_values=True)
+    series = {
+        "id": "calendar_invalid",
+        "sheet": "Inputs",
+        "data_range": "Inputs!B2",
+        "layout": "scalar",
+        "setter": {"name": "set_calendar_invalid"},
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "float",
+                "bind": {"kind": "data_cell", "read": "float"},
+            },
+            "dimensions": [
+                {
+                    "concept": "TIME_PERIOD",
+                    "role": "key",
+                    "scope": "series",
+                    "bind": {"kind": "constant", "value": "not-a-date"},
+                }
+            ],
+        },
+        "key": ["TIME_PERIOD"],
+    }
+    concept_scheme = {
+        "id": "calendar",
+        "concepts": [{"id": "TIME_PERIOD", "dtype": "datetime"}],
+    }
+
+    resolved = resolve_series_binding(
+        graph,
+        wb_path,
+        series,
+        concept_scheme=concept_scheme,
+    )
+    assert resolved["ok"] is False
+    assert any(i["code"] == "bind_resolution_failed" for i in resolved["issues"])

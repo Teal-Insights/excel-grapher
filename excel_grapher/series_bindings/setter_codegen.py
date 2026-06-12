@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.series_bindings.coerce import py_scalar_literal
 from excel_grapher.series_bindings.docstrings import (
     emit_docstring_literal,
     resolve_series_function_docstring,
@@ -28,17 +29,7 @@ if TYPE_CHECKING:
 
 
 def _py_literal(value: object) -> str:
-    if value is None:
-        return "None"
-    if isinstance(value, bool):
-        return "True" if value else "False"
-    if isinstance(value, str):
-        return repr(value)
-    if isinstance(value, int) and not isinstance(value, bool):
-        return repr(value)
-    if isinstance(value, float):
-        return repr(value)
-    return repr(value)
+    return py_scalar_literal(value)
 
 
 def _key_tuple_literal(key_fields: list[str], key: Mapping[str, object]) -> str:
@@ -266,7 +257,9 @@ def emit_setters_block(
     if include_type_aliases:
         lines.extend(
             [
-                "Scalar = str | int | float | bool | None",
+                "from datetime import datetime",
+                "",
+                "Scalar = str | int | float | bool | datetime | None",
                 "Record = dict[str, object]",
                 "Records = list[Record]",
                 "",

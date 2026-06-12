@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal, TypedDict
 
 ValidationLevel = Literal["error", "warning"]
-Scalar = str | int | float | bool | None
+Scalar = str | int | float | bool | datetime | None
 
 
 class WorkbookSeriesBindings(TypedDict):
