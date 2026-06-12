@@ -435,6 +435,46 @@ def test_schema_rejects_non_enum_bool_tokens(
         validate_bindings_document(doc)
 
 
+def test_schema_accepts_read_datetime_on_data_cell_bind() -> None:
+    doc = _scalar_series_doc(
+        schema_version="1.4.0",
+        structure={
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "datetime",
+                "bind": {"kind": "data_cell", "read": "datetime"},
+            },
+            "dimensions": [],
+        },
+        key=[],
+    )
+
+    bindings = validate_bindings_document(doc)
+    measure = bindings["series"][0]["structure"]["measure"]
+    assert measure["dtype"] == "datetime"
+    assert measure["bind"]["read"] == "datetime"
+
+
+def test_schema_accepts_read_datetime_on_schema_1_0_0() -> None:
+    """Additive ReadAs enum: datetime is valid on pre-1.4.0 schema_version labels."""
+    doc = _scalar_series_doc(
+        schema_version="1.0.0",
+        structure={
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "datetime",
+                "bind": {"kind": "data_cell", "read": "datetime"},
+            },
+            "dimensions": [],
+        },
+        key=[],
+    )
+
+    bindings = validate_bindings_document(doc)
+    assert bindings["schema_version"] == "1.0.0"
+    assert bindings["series"][0]["structure"]["measure"]["bind"]["read"] == "datetime"
+
+
 def test_schema_accepts_read_datetime_on_column_header_bind() -> None:
     doc = {
         "schema_version": "1.4.0",
@@ -443,7 +483,7 @@ def test_schema_accepts_read_datetime_on_column_header_bind() -> None:
                 "id": "calendar_periods",
                 "sheet": "Inputs",
                 "data_range": "Inputs!B2:C2",
-                "layout": "row_series",
+                "layout": "series",
                 "setter": {"name": "set_calendar_periods"},
                 "structure": {
                     "measure": {
@@ -527,6 +567,33 @@ def test_schema_accepts_iso_datetime_series_context_value() -> None:
 
     bindings = validate_bindings_document(doc)
     assert bindings["series"][0]["series_context"]["TIME_PERIOD"] == "2024-01-15T00:00:00"
+
+
+def test_schema_accepts_iso_datetime_attribute_value() -> None:
+    doc = _scalar_series_doc(
+        schema_version="1.4.0",
+        structure={
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "float",
+                "bind": {"kind": "data_cell", "read": "float"},
+            },
+            "dimensions": [],
+            "attributes": [
+                {
+                    "concept": "REFERENCE_DATE",
+                    "role": "attribute",
+                    "value": "2024-06-30",
+                    "include_in_record": True,
+                }
+            ],
+        },
+        key=[],
+    )
+
+    bindings = validate_bindings_document(doc)
+    attribute = bindings["series"][0]["structure"]["attributes"][0]
+    assert attribute["value"] == "2024-06-30"
 
 
 def test_schema_accepts_concept_scheme_datetime_dtype() -> None:
