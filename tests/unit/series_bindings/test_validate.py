@@ -12,6 +12,7 @@ from excel_grapher.series_bindings import (
     load_series_bindings,
     validate_series_bindings,
 )
+from excel_grapher.series_bindings.schema import validate_bindings_document
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
 
@@ -91,3 +92,97 @@ def test_validate_reports_non_leaf_formula_cell(tmp_path: Path) -> None:
     report = validate_series_bindings(graph, bindings, workbook=wb_path)
     assert report["ok"] is True
     assert not any(i["code"] == "not_a_leaf" for i in report["issues"])
+
+
+def test_validate_warns_when_measure_dtype_and_read_disagree(tmp_path: Path) -> None:
+    wb_path = tmp_path / "flags.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Flags")
+    ws.write_boolean("B2", True)
+    wb.close()
+
+    graph = create_dependency_graph(wb_path, ["Flags!B2"], load_values=True)
+    bindings = validate_bindings_document(
+        {
+            "schema_version": "1.4.0",
+            "workbook": "flags.xlsx",
+            "series": [
+                {
+                    "id": "bool_mismatch",
+                    "sheet": "Flags",
+                    "data_range": "Flags!B2",
+                    "layout": "scalar",
+                    "setter": {"name": "set_bool_mismatch"},
+                    "structure": {
+                        "measure": {
+                            "concept": "OBS_VALUE",
+                            "dtype": "bool",
+                            "bind": {"kind": "data_cell", "read": "int"},
+                        },
+                        "dimensions": [],
+                    },
+                    "key": [],
+                }
+            ],
+        }
+    )
+    report = validate_series_bindings(graph, bindings, workbook=wb_path)
+    assert report["ok"] is True
+    warnings = [issue for issue in report["issues"] if issue["code"] == "dtype_read_mismatch"]
+    assert len(warnings) == 1
+    assert "measure dtype 'bool'" in warnings[0]["message"]
+
+
+def test_validate_warns_when_dimension_dtype_and_read_disagree(tmp_path: Path) -> None:
+    wb_path = tmp_path / "flags.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Flags")
+    ws.write_boolean("B1", True)
+    ws.write_boolean("B2", False)
+    wb.close()
+
+    graph = create_dependency_graph(wb_path, ["Flags!B2"], load_values=True)
+    bindings = validate_bindings_document(
+        {
+            "schema_version": "1.4.0",
+            "workbook": "flags.xlsx",
+            "concept_scheme": {
+                "id": "flags",
+                "concepts": [{"id": "IS_ACTIVE", "dtype": "bool"}],
+            },
+            "series": [
+                {
+                    "id": "bool_mismatch",
+                    "sheet": "Flags",
+                    "data_range": "Flags!B2",
+                    "layout": "scalar",
+                    "setter": {"name": "set_bool_mismatch"},
+                    "structure": {
+                        "measure": {
+                            "concept": "OBS_VALUE",
+                            "dtype": "bool",
+                            "bind": {"kind": "data_cell", "read": "bool"},
+                        },
+                        "dimensions": [
+                            {
+                                "concept": "IS_ACTIVE",
+                                "role": "key",
+                                "scope": "cell",
+                                "bind": {
+                                    "kind": "column_header",
+                                    "header_row": 1,
+                                    "read": "int",
+                                },
+                            }
+                        ],
+                    },
+                    "key": ["IS_ACTIVE"],
+                }
+            ],
+        }
+    )
+    report = validate_series_bindings(graph, bindings, workbook=wb_path)
+    assert report["ok"] is True
+    warnings = [issue for issue in report["issues"] if issue["code"] == "dtype_read_mismatch"]
+    assert len(warnings) == 1
+    assert "dimension 'IS_ACTIVE'" in warnings[0]["message"]

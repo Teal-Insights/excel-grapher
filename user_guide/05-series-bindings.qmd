@@ -123,14 +123,17 @@ Suggested workflow:
 | Cell range (e.g. `F5:J5`) | `data_range` |
 | Country / REF_AREA | `series_context.REF_AREA` or `bind.kind: cell` |
 | Indicator label | `bind.kind: row_label` + `series_context.INDICATOR` |
-| Year / period axis | `bind.kind: column_header` + `key: [TIME_PERIOD]` |
+| Year / period axis | `bind.kind: column_header` + `key: [TIME_PERIOD]`; use `read: int` for projection offsets (1–5) or `read: datetime` for calendar headers |
+| Active / flag column | `bind.kind: row_label` or `column_header` + `read: bool`; or `bind.kind: constant` with YAML `true` / `false` |
 | Unit | `structure.attributes[]` with `value:` |
 | Setter name | `setter.name` |
 
 4. **Validate** against the dependency graph (see [Python API](#python-api)).
 5. **Export** with `CodeGenerator(..., series_bindings=..., bindings_workbook=...)` to emit `set_*` / `compute_*` functions (see [Code export](export.qmd)).
 
-Offset projection years (1..5) vs calendar years (1999..2000) are distinguished only by what you bind in `column_header` — declare the intended semantics in `sdmx_notes`.
+Offset projection years (1..5) vs calendar years (1999..2000) are distinguished only by what you bind in `column_header` — declare the intended semantics in `sdmx_notes`. Use `read: int` for offset-style headers and `read: datetime` (or `read: auto` when Excel stores native date cells) for calendar `TIME_PERIOD` keys.
+
+**Example:** [calendar_flags.yaml](https://github.com/Teal-Insights/excel-grapher/blob/main/tests/fixtures/series_bindings/calendar_flags.yaml) — bool flag column (`IS_ACTIVE`) plus datetime column headers (`TIME_PERIOD`). The workbook is built in integration tests via `write_calendar_flags_workbook()`.
 
 ### Export authoring checklist
 
@@ -152,7 +155,17 @@ records: list[dict[str, object]]
 Each record must include:
 
 - **Measure field** — observation written to the matched leaf cell, named by `structure.measure.concept` (`OBS_VALUE` by default).
-- **Key fields** — every concept listed in `key` (e.g. `TIME_PERIOD: 3`).
+- **Key fields** — every concept listed in `key` (e.g. `TIME_PERIOD: 3` for offset-style int keys).
+
+**Key types must match resolved Python types.** Resolution coerces workbook and manifest values according to each bind’s `read` mode (and `concept_scheme` dtypes for constants). Generated setters index records by the same types — callers must not pass strings when resolution produced `datetime` or `bool` objects:
+
+| Binding | Resolved key type | Correct record value | Incorrect (will not match) |
+|---------|-------------------|----------------------|----------------------------|
+| `read: int` on `TIME_PERIOD` | `int` | `3` | `"3"` |
+| `read: datetime` on `TIME_PERIOD` | `datetime.datetime` | `datetime(2024, 1, 1)` | `"2024-01-01"` |
+| `read: bool` on `IS_ACTIVE` | `bool` | `True` | `1` or `"true"` |
+
+Inspect `resolve_series_binding()` output or generated setter index literals to confirm the types for a given manifest. Output `compute_*` functions return the same types in each record’s key fields.
 
 Optional:
 
@@ -183,6 +196,80 @@ Normalization: `strip`, `strip_trailing_unit` (removes trailing `(…)` unit cla
 | `scalar` | **supported** | Single editable cell |
 | `matrix` | **schema only** | Multi-row blocks — not implemented yet |
 
+## Boolean and datetime types (1.4.0)
+
+Schema **1.4.0** adds `bool` and `datetime` to `bind.read`, `measure.dtype`, and `concept_scheme` concept dtypes. Use them for flag dimensions, calendar `TIME_PERIOD` axes, and typed manifest constants.
+
+### `read: bool`
+
+Bind Excel **TRUE/FALSE** cells and bool-typed keys:
+
+- **`data_cell`** — scalar or series measure cells stored as boolean (or coerced with explicit `read: bool` from numeric 0/1).
+- **`column_header` / `row_label`** — flag columns or row labels used as key dimensions (e.g. an `IS_ACTIVE` column distinguishing scenario rows).
+- **`constant`** — fixed bool keys on `layout: scalar` or series-scoped dimensions.
+
+YAML manifest constants accept native booleans or strings such as `true`, `false`, `yes`, `no`, `1`, and `0`. When the concept dtype is `bool` (via `concept_scheme` or inferred from a native YAML boolean), resolution coerces string constants to Python `bool`.
+
+```yaml
+concept_scheme:
+  concepts:
+    - id: IS_ACTIVE
+      dtype: bool
+structure:
+  dimensions:
+    - concept: IS_ACTIVE
+      role: key
+      scope: series
+      bind:
+        kind: constant
+        value: true          # or "FALSE" — coerced to bool
+    - concept: IS_ACTIVE
+      role: key
+      scope: cell
+      bind:
+        kind: row_label
+        label_column: A
+        read: bool           # Excel TRUE/FALSE in column A
+```
+
+With `read: auto` on a bool Excel cell, resolution preserves the native `bool`. Use `read: bool` when the cell may be numeric (0/1) but the key should be boolean.
+
+### `read: datetime`
+
+Bind calendar **`TIME_PERIOD`** column headers and date constants:
+
+- **`column_header` + `read: datetime`** — calendar month/quarter/year headers formatted as Excel dates; serial numbers are converted to naive `datetime` values.
+- **`constant`** — ISO 8601 strings in YAML (`"2024-01-01"`, `"2024-03-15T00:00:00"`); requires `dtype: datetime` on the concept (via `concept_scheme` or dimension metadata).
+- **`read: auto`** — when Excel already exposes a native `datetime` cell, resolution keeps it without serial conversion.
+
+```yaml
+concept_scheme:
+  concepts:
+    - id: TIME_PERIOD
+      dtype: datetime
+structure:
+  dimensions:
+    - concept: TIME_PERIOD
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 1
+        read: datetime       # calendar headers; not projection offsets
+    - concept: TIME_PERIOD
+      role: key
+      scope: series
+      bind:
+        kind: constant
+        value: "2024-01-01"  # ISO date string in the manifest
+```
+
+**`read: auto` vs explicit `read: datetime`:** `auto` passes through native datetimes from the workbook reader and is appropriate when headers are stored as Excel date cells. Explicit `datetime` coerces Excel serial numbers and ISO strings and is required when you need deterministic date parsing regardless of how the reader classified the cell. Timezone-aware datetimes are rejected; only naive datetimes are supported.
+
+Contrast with Borvelia’s offset-style headers (`read: int`, values 1–5): calendar and offset period axes differ only in the declared `read` mode and analyst notes — not in layout name.
+
+Generated code imports `datetime` and emits `datetime.datetime(...)` literals only when resolutions include datetime scalars.
+
 ## Schema versions
 
 | Version | Contents |
@@ -191,6 +278,7 @@ Normalization: `strip`, `strip_trailing_unit` (removes trailing `(…)` unit cla
 | **1.1.0** | Draft extensions (e.g. `matrix` in schema). Not fully implemented in tooling. |
 | **1.2.0** | Optional `input` / `output` direction blocks and output `compute_*` functions. |
 | **1.3.0** | `row_series` renamed to `series` (no resolver/codegen change). Legacy `row_series` accepted at load time. |
+| **1.4.0** | `bool` and `datetime` read modes and dtypes; ISO date strings in manifest constants. |
 
 ## Validation and codegen closure
 

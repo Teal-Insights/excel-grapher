@@ -432,3 +432,164 @@ def test_emit_compute_callback_requires_codegen_context(tmp_path: Path) -> None:
             resolved,
             series_docstring_callback="series_notes",
         )
+
+
+def _write_datetime_output_workbook(path: Path) -> None:
+    from datetime import datetime
+
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Inputs")
+    date_format = wb.add_format({"num_format": "yyyy-mm-dd"})
+    ws.write_datetime(0, 1, datetime(2024, 1, 1), date_format)
+    ws.write_number(1, 1, 5.0)
+    wb.close()
+
+
+def test_emit_compute_datetime_literal_in_static_record(tmp_path: Path) -> None:
+    from datetime import datetime
+
+    wb_path = tmp_path / "calendar.xlsx"
+    _write_datetime_output_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, ["Inputs!B2"], load_values=True)
+    series = {
+        "id": "calendar_output",
+        "sheet": "Inputs",
+        "data_range": "Inputs!B2",
+        "layout": "scalar",
+        "output": {"compute": {"name": "compute_calendar_output"}},
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "float",
+                "bind": {"kind": "data_cell", "read": "float"},
+            },
+            "dimensions": [
+                {
+                    "concept": "TIME_PERIOD",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "column_header", "header_row": 1, "read": "datetime"},
+                }
+            ],
+        },
+        "key": ["TIME_PERIOD"],
+    }
+    resolved = resolve_series_binding(graph, wb_path, series, direction="output")
+    lines = emit_compute_function(series, resolved)
+    code = "\n".join(lines)
+    assert "import datetime" in code
+    assert "datetime.datetime(2024, 1, 1, 0, 0)" in code
+
+    def resolver(address: str):
+        if address == "Inputs!B2":
+            return lambda ctx: 7.0
+        return None
+
+    ns = _exec_compute(lines, resolver=resolver)
+    compute = cast(Callable[[], Records], ns["compute_calendar_output"])
+    records = compute()
+    assert records[0]["TIME_PERIOD"] == datetime(2024, 1, 1)
+    assert records[0]["OBS_VALUE"] == 7.0
+
+
+def test_emit_compute_calendar_year_columns_round_trips(tmp_path: Path) -> None:
+    from datetime import datetime
+
+    wb_path = tmp_path / "calendar.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Inputs")
+    date_format = wb.add_format({"num_format": "yyyy-mm-dd"})
+    periods = [datetime(2024, 1, 1), datetime(2024, 2, 1)]
+    for col_index, period in enumerate(periods, start=1):
+        ws.write_datetime(0, col_index, period, date_format)
+        ws.write_number(1, col_index, float(col_index * 10))
+    wb.close()
+
+    graph = create_dependency_graph(wb_path, ["Inputs!B2", "Inputs!C2"], load_values=True)
+    series = {
+        "id": "calendar_output",
+        "sheet": "Inputs",
+        "data_range": "Inputs!B2:C2",
+        "layout": "series",
+        "output": {"compute": {"name": "compute_calendar_output"}},
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "float",
+                "bind": {"kind": "data_cell", "read": "float"},
+            },
+            "dimensions": [
+                {
+                    "concept": "TIME_PERIOD",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "column_header", "header_row": 1, "read": "datetime"},
+                }
+            ],
+        },
+        "key": ["TIME_PERIOD"],
+    }
+    resolved = resolve_series_binding(graph, wb_path, series, direction="output")
+    lines = [
+        "import datetime",
+        "",
+        "Record = dict[str, object]",
+        "Records = list[Record]",
+        "",
+        *emit_compute_function(series, resolved),
+    ]
+
+    values = {"Inputs!B2": 10.0, "Inputs!C2": 20.0}
+
+    def resolver(address: str):
+        if address in values:
+            return lambda ctx: values[address]
+        return None
+
+    ns = _exec_compute(lines, resolver=resolver)
+    compute = cast(Callable[[], Records], ns["compute_calendar_output"])
+    records = {record["TIME_PERIOD"]: record for record in compute()}
+    assert records[datetime(2024, 1, 1)]["OBS_VALUE"] == 10.0
+    assert records[datetime(2024, 2, 1)]["OBS_VALUE"] == 20.0
+
+
+def test_emit_computes_block_includes_datetime_import_when_needed(tmp_path: Path) -> None:
+    wb_path = tmp_path / "calendar.xlsx"
+    _write_datetime_output_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, ["Inputs!B2"], load_values=True)
+    bindings: WorkbookSeriesBindings = {
+        "schema_version": "1.4.0",
+        "workbook": "calendar.xlsx",
+        "series": [
+            {
+                "id": "calendar_output",
+                "sheet": "Inputs",
+                "data_range": "Inputs!B2",
+                "layout": "scalar",
+                "output": {"compute": {"name": "compute_calendar_output"}},
+                "structure": {
+                    "measure": {
+                        "concept": "OBS_VALUE",
+                        "dtype": "float",
+                        "bind": {"kind": "data_cell", "read": "float"},
+                    },
+                    "dimensions": [
+                        {
+                            "concept": "TIME_PERIOD",
+                            "role": "key",
+                            "scope": "cell",
+                            "bind": {
+                                "kind": "column_header",
+                                "header_row": 1,
+                                "read": "datetime",
+                            },
+                        }
+                    ],
+                },
+                "key": ["TIME_PERIOD"],
+            }
+        ],
+    }
+    code = "\n".join(emit_computes_block(graph, wb_path, bindings))
+    assert "import datetime" in code
+    assert "datetime.datetime(2024, 1, 1, 0, 0)" in code

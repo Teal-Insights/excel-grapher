@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -270,6 +271,160 @@ def test_derive_doc_contract_uses_none_for_unknown_dtype() -> None:
     assert contract.value_type is None
     assert contract.fields["OBS_VALUE"].dtype is None
     assert contract.fields["TIME_PERIOD"].dtype is None
+
+
+def test_derive_doc_contract_reports_bool_dtype() -> None:
+    contract = derive_doc_contract(
+        {
+            "id": "bool_flag",
+            "data_range": "Flags!A2",
+            "layout": "scalar",
+            "structure": {
+                "measure": {
+                    "concept": "OBS_VALUE",
+                    "dtype": "bool",
+                    "bind": {"kind": "data_cell", "read": "bool"},
+                },
+                "dimensions": [
+                    {
+                        "concept": "IS_ACTIVE",
+                        "role": "key",
+                        "scope": "series",
+                        "bind": {"kind": "constant", "value": True},
+                    }
+                ],
+            },
+            "key": ["IS_ACTIVE"],
+        },
+        function_kind="setter",
+        function_name="set_bool_flag",
+        resolution={
+            "series_id": "bool_flag",
+            "ok": True,
+            "requires_address": False,
+            "leaves": [
+                {
+                    "address": "Flags!A2",
+                    "coordinates": {"IS_ACTIVE": True, "OBS_VALUE": False},
+                    "key": {"IS_ACTIVE": True},
+                    "record": {"IS_ACTIVE": True, "OBS_VALUE": False},
+                }
+            ],
+            "issues": [],
+        },
+        bindings={
+            "schema_version": "1.4.0",
+            "workbook": "flags.xlsx",
+            "series": [],
+            "concept_scheme": {
+                "id": "flags",
+                "concepts": [{"id": "IS_ACTIVE", "dtype": "bool"}],
+            },
+        },
+    )
+
+    assert contract.value_type == "bool"
+    assert contract.fields["OBS_VALUE"].dtype == "bool"
+    assert contract.fields["IS_ACTIVE"].dtype == "bool"
+    assert contract.example_records[0]["IS_ACTIVE"] is True
+    assert contract.example_records[0]["OBS_VALUE"] is False
+
+
+def test_derive_doc_contract_reports_datetime_dtype() -> None:
+    period = datetime(2024, 1, 1)
+    contract = derive_doc_contract(
+        {
+            "id": "calendar_series",
+            "data_range": "Inputs!B2",
+            "layout": "scalar",
+            "structure": {
+                "measure": {
+                    "concept": "OBS_VALUE",
+                    "dtype": "float",
+                    "bind": {"kind": "data_cell", "read": "float"},
+                },
+                "dimensions": [
+                    {
+                        "concept": "TIME_PERIOD",
+                        "role": "key",
+                        "scope": "cell",
+                        "bind": {
+                            "kind": "column_header",
+                            "header_row": 1,
+                            "read": "datetime",
+                        },
+                    }
+                ],
+            },
+            "key": ["TIME_PERIOD"],
+        },
+        function_kind="compute",
+        function_name="compute_calendar_series",
+        resolution={
+            "series_id": "calendar_series",
+            "ok": True,
+            "requires_address": False,
+            "leaves": [
+                {
+                    "address": "Inputs!B2",
+                    "coordinates": {"TIME_PERIOD": period, "OBS_VALUE": 1.5},
+                    "key": {"TIME_PERIOD": period},
+                    "record": {"TIME_PERIOD": period, "OBS_VALUE": 1.5},
+                }
+            ],
+            "issues": [],
+        },
+        bindings={
+            "schema_version": "1.4.0",
+            "workbook": "calendar.xlsx",
+            "series": [],
+            "concept_scheme": {
+                "id": "calendar",
+                "concepts": [{"id": "TIME_PERIOD", "dtype": "datetime"}],
+            },
+        },
+    )
+
+    assert contract.value_type == "float"
+    assert contract.fields["TIME_PERIOD"].dtype == "datetime"
+    assert contract.example_records[0]["TIME_PERIOD"] == period
+    assert isinstance(contract.example_records[0]["OBS_VALUE"], float)
+
+
+def test_derive_doc_contract_infers_dtype_from_dimension_bind_read() -> None:
+    contract = derive_doc_contract(
+        {
+            "id": "calendar_series",
+            "data_range": "Inputs!B2",
+            "layout": "scalar",
+            "structure": {
+                "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
+                "dimensions": [
+                    {
+                        "concept": "TIME_PERIOD",
+                        "bind": {
+                            "kind": "column_header",
+                            "header_row": 1,
+                            "read": "datetime",
+                        },
+                    }
+                ],
+            },
+            "key": ["TIME_PERIOD"],
+        },
+        function_kind="setter",
+        function_name="set_calendar_series",
+        resolution={
+            "series_id": "calendar_series",
+            "ok": True,
+            "requires_address": False,
+            "leaves": [],
+            "issues": [],
+        },
+        bindings=_bindings_stub(),
+    )
+
+    assert contract.fields["TIME_PERIOD"].dtype == "datetime"
 
 
 def _demo_contract_and_doc() -> tuple[SeriesBindingDocstringContract, SeriesFunctionDoc]:

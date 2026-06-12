@@ -1,0 +1,56 @@
+schema_version: "1.4.0"
+workbook: calendar_flags.xlsx
+concept_scheme:
+  id: calendar_flags
+  concepts:
+    - id: IS_ACTIVE
+      dtype: bool
+      description: Row flag — active vs inactive scenario.
+    - id: TIME_PERIOD
+      dtype: datetime
+      description: Calendar month start from column headers.
+series:
+  - id: calendar_flags
+    sheet: Inputs
+    data_range: Inputs!B2:D3
+    layout: series
+    editable: true
+    input:
+      setter:
+        name: set_calendar_flags
+    output:
+      compute:
+        name: compute_calendar_flags
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - concept: IS_ACTIVE
+          role: key
+          scope: cell
+          bind:
+            kind: row_label
+            label_column: A
+            read: bool
+        - concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 1
+            read: datetime
+    key:
+      - IS_ACTIVE
+      - TIME_PERIOD
+    sdmx_notes: >-
+      Calendar-year column headers (datetime keys) with a bool flag column (A)
+      distinguishing active vs inactive rows. Manifest constants for bool/datetime
+      concepts use native YAML booleans or ISO 8601 date strings; resolution coerces
+      them to Python bool and datetime objects.
+    validation:
+      intersect_graph_leaves: true
+      require_unique_key: true

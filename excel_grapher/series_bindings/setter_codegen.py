@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from excel_grapher.grapher.graph import DependencyGraph
-from excel_grapher.series_bindings.coerce import py_scalar_literal
+from excel_grapher.series_bindings.codegen_literals import (
+    emit_setter_type_alias_lines,
+    py_scalar_literal,
+    resolution_includes_datetime,
+    resolutions_include_datetime,
+)
 from excel_grapher.series_bindings.docstrings import (
     emit_docstring_literal,
     resolve_series_function_docstring,
@@ -28,12 +33,8 @@ if TYPE_CHECKING:
     from excel_grapher.series_bindings.docstrings import SeriesBindingDocstringCallbackSpec
 
 
-def _py_literal(value: object) -> str:
-    return py_scalar_literal(value)
-
-
 def _key_tuple_literal(key_fields: list[str], key: Mapping[str, object]) -> str:
-    pairs = ", ".join(f"({repr(f)}, {_py_literal(key[f])})" for f in key_fields)
+    pairs = ", ".join(f"({repr(f)}, {py_scalar_literal(key[f])})" for f in key_fields)
     return f"({pairs},)" if len(key_fields) == 1 else f"({pairs})"
 
 
@@ -172,6 +173,8 @@ def emit_setter_function(
     index_name = f"_LEAF_INDEX_{resolved['series_id'].upper()}"
 
     lines: list[str] = []
+    if resolution_includes_datetime(resolved):
+        lines.extend(["import datetime", ""])
     if not requires_address:
         lines.append(f"{index_name} = {{")
         for leaf in resolved["leaves"]:
@@ -255,16 +258,8 @@ def emit_setters_block(
     )
     lines: list[str] = ["# --- Series binding setters (Records API) ---", ""]
     if include_type_aliases:
-        lines.extend(
-            [
-                "from datetime import datetime",
-                "",
-                "Scalar = str | int | float | bool | datetime | None",
-                "Record = dict[str, object]",
-                "Records = list[Record]",
-                "",
-            ]
-        )
+        include_datetime = resolutions_include_datetime(report["series"])
+        lines.extend(emit_setter_type_alias_lines(include_datetime=include_datetime))
     lines.extend(emit_setter_helpers())
     by_id = {
         s["id"]: s

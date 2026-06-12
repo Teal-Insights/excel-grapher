@@ -1,0 +1,249 @@
+schema_version: "1.4.0"
+workbook: ffv2.xlsx
+concept_scheme:
+  id: puka_game_log
+  concepts:
+    - id: TIME_PERIOD
+      dtype: datetime
+      description: Game date from column headers (row 1).
+series:
+  - id: puka_receptions
+    sheet: Sheet1
+    data_range: Sheet1!B3:Q3
+    layout: series
+    editable: true
+    input:
+      setter:
+        name: set_puka_receptions
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 1
+            read: datetime
+      attributes:
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: COUNT
+          include_in_record: true
+    key:
+      - TIME_PERIOD
+    series_context:
+      INDICATOR: Rec
+    sdmx_notes: Number of receptions per game, keyed by game date.
+
+  - id: puka_targets
+    sheet: Sheet1
+    data_range: Sheet1!B4:Q4
+    layout: series
+    editable: true
+    input:
+      setter:
+        name: set_puka_targets
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 1
+            read: datetime
+      attributes:
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: COUNT
+          include_in_record: true
+    key:
+      - TIME_PERIOD
+    series_context:
+      INDICATOR: Targets
+    sdmx_notes: Number of targets per game, keyed by game date.
+
+  - id: puka_yards
+    sheet: Sheet1
+    data_range: Sheet1!B5:Q5
+    layout: series
+    editable: true
+    input:
+      setter:
+        name: set_puka_yards
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 1
+            read: datetime
+      attributes:
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: YARDS
+          include_in_record: true
+    key:
+      - TIME_PERIOD
+    series_context:
+      INDICATOR: Yards
+    sdmx_notes: Receiving yards per game, keyed by game date.
+
+  - id: puka_avg_yards_per_reception
+    sheet: Sheet1
+    data_range: Sheet1!B6:Q6
+    layout: series
+    editable: false
+    output:
+      compute:
+        name: compute_puka_avg_yards_per_reception
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 1
+            read: datetime
+      attributes:
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: YARDS_PER_REC
+          include_in_record: true
+    key:
+      - TIME_PERIOD
+    series_context:
+      INDICATOR: Avg
+    sdmx_notes: Average yards per reception per game, keyed by game date.
+
+  - id: puka_touchdowns
+    sheet: Sheet1
+    data_range: Sheet1!B7:Q7
+    layout: series
+    editable: true
+    input:
+      setter:
+        name: set_puka_touchdowns
+    output:
+      compute:
+        name: compute_touchdowns
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 1
+            read: datetime
+      attributes:
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: COUNT
+          include_in_record: true
+    key:
+      - TIME_PERIOD
+    series_context:
+      INDICATOR: Tds
+    sdmx_notes: Receiving touchdowns per game, keyed by game date.
+
+  - id: puka_longest_reception
+    sheet: Sheet1
+    data_range: Sheet1!B8:Q8
+    layout: series
+    editable: false
+    input:
+      setter:
+        name: set_puka_longest_reception
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 1
+            read: datetime
+      attributes:
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: YARDS
+          include_in_record: true
+    key:
+      - TIME_PERIOD
+    series_context:
+      INDICATOR: Longest Rec
+    sdmx_notes: Longest single reception in yards per game, keyed by game date.
+
+  - id: puka_fantasy_score
+    sheet: Sheet1
+    data_range: Sheet1!B18:Q18
+    layout: series
+    editable: false
+    output:
+      compute:
+        name: compute_puka_fantasy_score
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 1
+            read: datetime
+      attributes:
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: POINTS
+          include_in_record: true
+    key:
+      - TIME_PERIOD
+    series_context:
+      INDICATOR: Fantasy Score
+    sdmx_notes: Fantasy points scored per game, keyed by game date.

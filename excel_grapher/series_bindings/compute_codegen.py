@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from excel_grapher.grapher.graph import DependencyGraph
-from excel_grapher.series_bindings.coerce import py_scalar_literal
+from excel_grapher.series_bindings.codegen_literals import (
+    emit_compute_preamble_lines,
+    py_scalar_literal,
+    resolution_includes_datetime,
+    resolutions_include_datetime,
+)
 from excel_grapher.series_bindings.docstrings import (
     emit_docstring_literal,
     resolve_series_function_docstring,
@@ -28,12 +33,8 @@ if TYPE_CHECKING:
     from excel_grapher.series_bindings.docstrings import SeriesBindingDocstringCallbackSpec
 
 
-def _py_literal(value: object) -> str:
-    return py_scalar_literal(value)
-
-
 def _record_literal(record: dict[str, object]) -> str:
-    items = ", ".join(f"{repr(k)}: {_py_literal(v)}" for k, v in sorted(record.items()))
+    items = ", ".join(f"{repr(k)}: {py_scalar_literal(v)}" for k, v in sorted(record.items()))
     return f"{{{items}}}"
 
 
@@ -68,6 +69,8 @@ def emit_compute_function(
     leaves_name = f"_OUTPUT_LEAVES_{resolved['series_id'].upper()}"
 
     lines: list[str] = []
+    if resolution_includes_datetime(resolved):
+        lines.extend(["import datetime", ""])
     lines.append(f"{leaves_name} = [")
     for leaf in resolved["leaves"]:
         static_record: dict[str, object] = {
@@ -143,13 +146,8 @@ def emit_computes_block(
     )
     lines: list[str] = ["# --- Series binding output compute (Records API) ---", ""]
     if include_type_aliases:
-        lines.extend(
-            [
-                "Record = dict[str, object]",
-                "Records = list[Record]",
-                "",
-            ]
-        )
+        include_datetime = resolutions_include_datetime(report["series"])
+        lines.extend(emit_compute_preamble_lines(include_datetime=include_datetime))
     by_id = {
         s["id"]: s
         for s in bindings.get("series", [])

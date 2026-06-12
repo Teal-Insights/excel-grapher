@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from excel_grapher.series_bindings.codegen_literals import py_scalar_literal
 from excel_grapher.series_bindings.types import Scalar
 
 _EXCEL_EPOCH = datetime(1899, 12, 30)
@@ -108,20 +109,3 @@ def coerce_scalar(raw: Any, read_as: str) -> Scalar:
 def coerce_constant(value: Any, *, read_as: str) -> Scalar:
     """Coerce a manifest constant using the effective read mode."""
     return coerce_scalar(value, read_as)
-
-
-def py_scalar_literal(value: object) -> str:
-    """Render a scalar value as a Python literal for generated binding code."""
-    if value is None:
-        return "None"
-    if isinstance(value, bool):
-        return "True" if value else "False"
-    if isinstance(value, datetime):
-        return repr(value)
-    if isinstance(value, str):
-        return repr(value)
-    if isinstance(value, int) and not isinstance(value, bool):
-        return repr(value)
-    if isinstance(value, float):
-        return repr(value)
-    return repr(value)
