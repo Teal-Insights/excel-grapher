@@ -49,7 +49,7 @@ display(
 |--------|------------|
 | **Format** | YAML by default (`.bindings.yaml`); JSON (`.bindings.json`) also accepted |
 | **Location** | One sidecar per workbook, colocated with the `.xlsx` |
-| **Granularity (MVP)** | One `series[]` entry per **indicator row** → one `set_*` function (`layout: row_series`) |
+| **Granularity (MVP)** | One `series[]` entry per **indicator row/column** → one `set_*` function (`layout: series`) |
 | **Naming** | Stable `id` (snake_case); `setter.name` must match `set_[a-z][a-z0-9_]*` |
 | **Non-executable prose** | `sdmx_notes`, `notes` — documentation only |
 
@@ -177,18 +177,18 @@ Normalization: `strip`, `strip_trailing_unit` (removes trailing `(…)` unit cla
 
 | `layout` | Status | Description |
 |----------|--------|-------------|
-| `row_series` | **supported** | One indicator row × many columns (MVP) |
+| `series` | **supported** | One indicator series × many columns (MVP) |
 | `scalar` | **supported** | Single editable cell |
 | `matrix` | **schema only** | Multi-row blocks — not implemented yet |
-| `column_series` | **planned** | Not in schema yet; track via follow-up issues |
 
 ## Schema versions
 
 | Version | Contents |
 |---------|----------|
-| **1.0.0** | `row_series`, `scalar`; supported bind kinds above. Use for production workbooks. |
+| **1.0.0** | `series`, `scalar`; supported bind kinds above. Use for production workbooks. |
 | **1.1.0** | Draft extensions (e.g. `matrix` in schema). Not fully implemented in tooling. |
 | **1.2.0** | Optional `input` / `output` direction blocks and output `compute_*` functions. |
+| **1.3.0** | Rename "row_series" to "series" to reflect that it also works with columns. no functional change
 
 ## Validation and codegen closure
 

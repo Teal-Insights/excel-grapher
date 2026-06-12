@@ -24,12 +24,12 @@ BINDINGS_DOCUMENT: dict[str, Any] = {
     "workbook": "series_bindings.xlsx",
     "series": [
         {
-            "id": "borvelia_primary_balance",
+            "id": "borvelia_statistics_year_1",
             "sheet": "Sheet1",
-            "data_range": "Sheet1!F5:J5",
+            "data_range": "Sheet1!F3:F5",
             "layout": "series",
             "editable": True,
-            "setter": {"name": "set_borvelia_primary_balance"},
+            "setter": {"name": "set_borvelia_statistics_year_1"},
             "structure": {
                 "measure": {
                     "concept": "OBS_VALUE",
@@ -47,35 +47,27 @@ BINDINGS_DOCUMENT: dict[str, Any] = {
                     {
                         "concept": "INDICATOR",
                         "role": "key",
-                        "scope": "series",
+                        "scope": "cell",
                         "bind": {
                             "kind": "row_label",
                             "label_column": "A",
                             "read": "string",
-                            "normalize": "strip_trailing_unit",
                         },
                         "include_in_record": False,
-                    },
-                    {
-                        "concept": "TIME_PERIOD",
-                        "role": "key",
-                        "scope": "cell",
-                        "bind": {"kind": "column_header", "header_row": 1, "read": "int"},
                     },
                 ],
                 "attributes": [
                     {
                         "concept": "UNIT_MEASURE",
                         "role": "attribute",
-                        "value": "PC_GDP",
+                        "value": "Year_1_Statistics",
                         "include_in_record": True,
                     }
                 ],
             },
-            "key": ["TIME_PERIOD"],
+            "key": ["INDICATOR"],
             "series_context": {
                 "REF_AREA": "Borvelia",
-                "INDICATOR": "Primary balance (% of GDP)",
             },
         }
     ],
@@ -120,17 +112,23 @@ def test_micro_workbook_resolves_unique_keys(
 ) -> None:
     report = resolve_series_bindings(graph, bindings, workbook=workbook)
     assert report["ok"] is True
-    borvelia = next(s for s in report["series"] if s["series_id"] == "borvelia_primary_balance")
+    print("report[series]", report["series"])
+    borvelia = next(s for s in report["series"] if s["series_id"] == "borvelia_statistics_year_1")
     assert borvelia["requires_address"] is False
-    assert len(borvelia["leaves"]) == 5
-    periods = {leaf["key"]["TIME_PERIOD"] for leaf in borvelia["leaves"]}
-    assert periods == {1, 2, 3, 4, 5}
+    assert len(borvelia["leaves"]) == 3
+    periods = {leaf["key"]["INDICATOR"] for leaf in borvelia["leaves"]}
+    print("periods", periods)
+    assert periods == {
+        "Real interest rate (% per annum)",
+        "Primary balance (% of GDP)",
+        "Real GDP growth (% per annum)",
+    }
 
 
 def test_micro_workbook_covers_mvp_series_layouts(bindings: WorkbookSeriesBindings) -> None:
     by_id = {series["id"]: series for series in bindings["series"]}
-    assert set(by_id) == {"borvelia_primary_balance"}
-    assert by_id["borvelia_primary_balance"]["layout"] == "series"
+    assert set(by_id) == {"borvelia_statistics_year_1"}
+    assert by_id["borvelia_statistics_year_1"]["layout"] == "series"
 
 
 def test_bindings_canonical_hash_is_stable(bindings: WorkbookSeriesBindings) -> None:

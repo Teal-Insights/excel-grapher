@@ -35,14 +35,14 @@ def _write_output_workbook(path: Path) -> None:
 
 
 BINDINGS_DOCUMENT: dict[str, Any] = {
-    "schema_version": "1.2.0",
+    "schema_version": "1.3.0",
     "workbook": "series_bindings_output.xlsx",
     "series": [
         {
             "id": "borvelia_primary_balance",
             "sheet": "Sheet1",
             "data_range": "Sheet1!F5:J5",
-            "layout": "row_series",
+            "layout": "series",
             "input": {"setter": {"name": "set_borvelia_primary_balance"}},
             "output": {"compute": {"name": "compute_borvelia_primary_balance"}},
             "structure": {

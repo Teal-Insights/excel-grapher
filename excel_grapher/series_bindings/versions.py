@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-SUPPORTED_SCHEMA_VERSIONS: frozenset[str] = frozenset({"1.0.0", "1.1.0", "1.2.0"})
+SUPPORTED_SCHEMA_VERSIONS: frozenset[str] = frozenset({"1.0.0", "1.1.0", "1.2.0", "1.3.0"})
 
 IMPLEMENTED_BIND_KINDS: frozenset[str] = frozenset(
     {
@@ -16,7 +16,7 @@ IMPLEMENTED_BIND_KINDS: frozenset[str] = frozenset(
 
 PLANNED_BIND_KINDS: frozenset[str] = frozenset({"row_hierarchy"})
 
-IMPLEMENTED_LAYOUTS: frozenset[str] = frozenset({"row_series", "scalar"})
+IMPLEMENTED_LAYOUTS: frozenset[str] = frozenset({"series", "scalar"})
 
 PLANNED_LAYOUTS: frozenset[str] = frozenset({"matrix"})
 

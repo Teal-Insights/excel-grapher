@@ -56,7 +56,7 @@ bindings_yaml = dedent(
     series:
       - id: borvelia_primary_balance
         data_range: Sheet1!F5:J5
-        layout: row_series
+        layout: series
         editable: true
         input:
           setter:

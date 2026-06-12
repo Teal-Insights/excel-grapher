@@ -4,7 +4,7 @@ series:
   - id: row_a
     sheet: Inputs
     data_range: Inputs!B2:C2
-    layout: row_series
+    layout: series
     setter:
       name: set_row_a
     structure:

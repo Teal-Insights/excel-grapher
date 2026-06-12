@@ -147,7 +147,7 @@ def test_emit_setter_allowed_fields_literal_includes_address_fields_in_order(
         "id": "dup_headers",
         "sheet": "Sheet1",
         "data_range": "Sheet1!C2:D2",
-        "layout": "row_series",
+        "layout": "series",
         "setter": {"name": "set_dup_headers", "allow_address": True, "strict": False},
         "structure": {
             "measure": {
@@ -189,7 +189,7 @@ def test_emit_setter_allow_address(tmp_path: Path) -> None:
         "id": "dup_headers",
         "sheet": "Sheet1",
         "data_range": "Sheet1!C2:D2",
-        "layout": "row_series",
+        "layout": "series",
         "setter": {"name": "set_dup_headers", "allow_address": True, "strict": False},
         "structure": {
             "measure": {

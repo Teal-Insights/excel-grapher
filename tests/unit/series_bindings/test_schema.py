@@ -28,7 +28,7 @@ def test_schema_infers_sheet_from_sheet_qualified_data_range() -> None:
             {
                 "id": "borvelia_primary_balance",
                 "data_range": "Sheet1!F5:J5",
-                "layout": "row_series",
+                "layout": "series",
                 "setter": {"name": "set_borvelia_primary_balance"},
                 "structure": {
                     "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
@@ -115,7 +115,7 @@ def test_schema_accepts_1_1_0_matrix_fixture() -> None:
     assert bindings["series"][0]["structure"]["dimensions"][0]["bind"]["kind"] == "row_hierarchy"
 
 
-def test_row_series_rejects_empty_key() -> None:
+def test_series_rejects_empty_key() -> None:
     doc = {
         "schema_version": "1.0.0",
         "series": [
@@ -123,7 +123,7 @@ def test_row_series_rejects_empty_key() -> None:
                 "id": "empty_key_row",
                 "sheet": "S",
                 "data_range": "S!B2:C2",
-                "layout": "row_series",
+                "layout": "series",
                 "setter": {"name": "set_empty_key_row"},
                 "structure": {
                     "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
@@ -144,7 +144,7 @@ def test_row_series_rejects_empty_key() -> None:
         validate_bindings_document(doc)
 
 
-def test_row_series_requires_cell_scoped_dimension() -> None:
+def test_series_requires_cell_scoped_dimension() -> None:
     doc = {
         "schema_version": "1.0.0",
         "series": [
@@ -152,7 +152,7 @@ def test_row_series_requires_cell_scoped_dimension() -> None:
                 "id": "only_series_scope",
                 "sheet": "S",
                 "data_range": "S!B2:C2",
-                "layout": "row_series",
+                "layout": "series",
                 "setter": {"name": "set_only_series_scope"},
                 "structure": {
                     "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},

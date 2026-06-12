@@ -29,7 +29,7 @@ def _write_borvelia_workbook(path: Path) -> None:
     wb.close()
 
 
-def test_resolve_borvelia_row_series_coordinates(tmp_path: Path) -> None:
+def test_resolve_borvelia_series_coordinates(tmp_path: Path) -> None:
     wb_path = tmp_path / "lic_inputs.xlsx"
     _write_borvelia_workbook(wb_path)
     targets = expand_data_range("Inputs!F5:J5")
@@ -140,7 +140,7 @@ def test_resolve_duplicate_key_sets_requires_address(tmp_path: Path) -> None:
         "id": "dup_headers",
         "sheet": "Sheet1",
         "data_range": "Sheet1!C2:D2",
-        "layout": "row_series",
+        "layout": "series",
         "setter": {"name": "set_dup_headers"},
         "structure": {
             "measure": {

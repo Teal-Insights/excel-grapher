@@ -4,7 +4,7 @@ series:
   - id: row_b
     sheet: Assumptions
     data_range: Assumptions!B3:D3
-    layout: row_series
+    layout: series
     setter:
       name: set_row_b
     structure:

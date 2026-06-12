@@ -221,7 +221,7 @@ def test_derive_doc_contract_required_and_optional_fields(tmp_path: Path) -> Non
     assert contract.function_name == "set_borvelia_primary_balance"
     assert contract.function_kind == "setter"
     assert contract.data_range == "Inputs!F5:J5"
-    assert contract.layout == "row_series"
+    assert contract.layout == "series"
     assert contract.value_type == "float"
     assert contract.required_fields == ("TIME_PERIOD", "OBS_VALUE")
     assert contract.fields["TIME_PERIOD"].required is True

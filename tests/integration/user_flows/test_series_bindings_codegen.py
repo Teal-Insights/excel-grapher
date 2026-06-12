@@ -29,7 +29,7 @@ BINDINGS_DOCUMENT: dict[str, Any] = {
             "id": "borvelia_primary_balance",
             "sheet": "Sheet1",
             "data_range": "Sheet1!F5:J5",
-            "layout": "row_series",
+            "layout": "series",
             "editable": True,
             "setter": {"name": "set_borvelia_primary_balance"},
             "structure": {
