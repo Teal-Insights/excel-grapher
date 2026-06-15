@@ -842,7 +842,7 @@ class TestGeneratedCodeExecution:
         compute_all = namespace["compute_all"]
 
         assert compute_all()["Sheet1!B1"] == 20.0
-        assert compute_all({"Sheet1!A1": 7.0})["Sheet1!B1"] == 14.0
+        assert compute_all(inputs={"Sheet1!A1": 7.0})["Sheet1!B1"] == 14.0
 
     def test_generated_code_caches_formula_results_per_run(self):
         """Generated code should compute formula cells only once per ctx."""

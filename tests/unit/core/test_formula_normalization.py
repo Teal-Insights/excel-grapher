@@ -24,3 +24,15 @@ def test_formula_normalizer_uses_same_pipeline_as_core() -> None:
     n = FormulaNormalizer()
     f = "=SUM(A1:B2)+'Other'!C3"
     assert n.normalize(f, "Here") == normalize_excel_formula(f, "Here")
+
+
+def test_normalize_excel_formula_preserves_cell_like_text_in_string_literals() -> None:
+    """Bare refs inside quoted strings must not be sheet-qualified."""
+    cases = [
+        ('=IF(B5>0,"C13 is large",D5)', '=IF(Sheet1!B5>0,"C13 is large",Sheet1!D5)'),
+        ('="value at C14 is "&B6', '="value at C14 is "&Sheet1!B6'),
+        ('=B7&" says ""C15"""', '=Sheet1!B7&" says ""C15"""'),
+        ('="C17 has data "&B9', '="C17 has data "&Sheet1!B9'),
+    ]
+    for formula, expected in cases:
+        assert normalize_excel_formula(formula, "Sheet1") == expected

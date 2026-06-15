@@ -14,6 +14,25 @@ from typing import cast
 from excel_grapher.core.address_keys import format_cell_key
 
 _FUNC_LIKE = frozenset({"IF", "OR", "AND", "NOT", "SUM", "MAX", "MIN", "AVG"})
+_STRING_LITERAL_RE = re.compile(r'"(?:[^"]|"")*"')
+
+
+def _mask_string_literals(formula: str) -> tuple[str, list[str]]:
+    """Replace Excel string literals with placeholders so normalization skips them."""
+    literals: list[str] = []
+
+    def _stash(match: re.Match[str]) -> str:
+        literals.append(match.group(0))
+        return f"__XL_STR_{len(literals) - 1}__"
+
+    return _STRING_LITERAL_RE.sub(_stash, formula), literals
+
+
+def _unmask_string_literals(formula: str, literals: list[str]) -> str:
+    """Restore stashed string literals after normalization."""
+    for index, literal in enumerate(literals):
+        formula = formula.replace(f"__XL_STR_{index}__", literal)
+    return formula
 
 
 def build_named_range_replacement_state(
@@ -147,8 +166,10 @@ def normalize_excel_formula_with_name_state(
     """Normalize *formula* using pre-built defined-name replacement state."""
     if not formula or not formula.startswith("="):
         return formula
-    result = _normalize_excel_formula_base(formula, current_sheet)
-    return _apply_named_range_replacements(result, replacements, names_re)
+    masked, literals = _mask_string_literals(formula)
+    result = _normalize_excel_formula_base(masked, current_sheet)
+    result = _apply_named_range_replacements(result, replacements, names_re)
+    return _unmask_string_literals(result, literals)
 
 
 def normalize_excel_formula(
