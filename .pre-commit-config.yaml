@@ -1,4 +1,4 @@
-default_install_hook_types: [pre-commit]
+default_install_hook_types: [pre-commit, pre-push]
 default_stages: [pre-commit]
 
 repos:
@@ -22,3 +22,10 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+      - id: version-bump-reminder
+        name: version bump reminder
+        entry: uv run python scripts/check_version_bump.py --pre-push --warn-only
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
