@@ -727,7 +727,7 @@ class TestCodeGeneratorContextManager:
         graph = _make_graph(_make_node("Sheet1!A1", None, 100.0))
         gen = CodeGenerator(graph)
         code = gen.generate(["Sheet1!A1"])
-        assert "def compute_all(inputs=None, *, ctx=None):" in code
+        assert "def compute_all(ctx=None, *, inputs=None):" in code
         assert "'Sheet1!A1'" in code
 
     def test_generate_entrypoint_uses_target_map(self):
@@ -782,7 +782,7 @@ class TestGenerateNamedRanges:
             _make_node("Sheet1!C1", "=Sheet1!B1+1", None),
         )
         code = CodeGenerator(graph).generate(["OneCell"])
-        assert "def compute_all(inputs=None, *, ctx=None):" in code
+        assert "def compute_all(ctx=None, *, inputs=None):" in code
         assert "'Sheet1!C1': xl_cell" in code
 
     def test_generate_expands_defined_name_range(self):

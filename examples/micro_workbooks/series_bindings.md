@@ -473,7 +473,7 @@ assert "Records = list[Record]" in code
 ```
 
 ``` text
-def compute_borvelia_primary_balance(inputs=None, *, ctx=None) -> Records:
+def compute_borvelia_primary_balance(ctx=None, *, inputs=None) -> Records:
 ```
 
 ### Calling the compute function

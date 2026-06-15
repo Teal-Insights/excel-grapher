@@ -79,7 +79,7 @@ def emit_compute_function(
         lines.append(f"    ({repr(leaf['address'])}, {_record_literal(static_record)}),")
     lines.append("]")
     lines.append("")
-    lines.append(f"def {fn_name}(inputs=None, *, ctx=None) -> Records:")
+    lines.append(f"def {fn_name}(ctx=None, *, inputs=None) -> Records:")
     if series_docstring_callback is not None and (
         graph is None or workbook is None or bindings is None
     ):
