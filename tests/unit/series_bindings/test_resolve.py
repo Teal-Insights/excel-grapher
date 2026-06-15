@@ -583,3 +583,126 @@ def test_resolve_series_context_invalid_datetime_fails(tmp_path: Path) -> None:
     )
     assert resolved["ok"] is False
     assert any(i["code"] == "series_context_coercion_failed" for i in resolved["issues"])
+
+
+def _scalar_series_with_attribute_value(
+    *,
+    attribute: dict[str, object],
+    wb_path: Path,
+    direction: str = "input",
+) -> tuple[DependencyGraph, dict[str, object]]:
+    graph = create_dependency_graph(wb_path, ["Sheet1!B2"], load_values=True)
+    series: dict[str, object] = {
+        "id": "attr_value",
+        "sheet": "Sheet1",
+        "data_range": "Sheet1!B2",
+        "layout": "scalar",
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "float",
+                "bind": {"kind": "data_cell", "read": "float"},
+            },
+            "attributes": [attribute],
+        },
+        "key": [],
+    }
+    if direction == "input":
+        series["setter"] = {"name": "set_attr_value"}
+    else:
+        series["output"] = {"compute": {"name": "compute_attr_value"}}
+    return graph, series
+
+
+def test_resolve_attribute_value_datetime_in_input_record(tmp_path: Path) -> None:
+    wb_path = tmp_path / "scalar.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number("B2", 1.0)
+    wb.close()
+
+    graph, series = _scalar_series_with_attribute_value(
+        attribute={
+            "concept": "REPORT_DATE",
+            "value": "2024-06-30",
+            "include_in_record": True,
+        },
+        wb_path=wb_path,
+    )
+    concept_scheme = {
+        "id": "attrs",
+        "concepts": [{"id": "REPORT_DATE", "dtype": "datetime"}],
+    }
+
+    resolved = resolve_series_binding(
+        graph,
+        wb_path,
+        series,
+        concept_scheme=concept_scheme,
+    )
+    leaf = resolved["leaves"][0]
+    expected = datetime(2024, 6, 30)
+
+    assert resolved["ok"] is True
+    assert leaf["coordinates"]["REPORT_DATE"] == expected
+    assert leaf["record"]["REPORT_DATE"] == expected
+
+
+def test_resolve_attribute_value_datetime_in_output_record(tmp_path: Path) -> None:
+    wb_path = tmp_path / "scalar.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_formula("B2", "=1")
+    wb.close()
+
+    graph, series = _scalar_series_with_attribute_value(
+        attribute={
+            "concept": "REPORT_DATE",
+            "value": "2024-06-30",
+            "include_in_record": True,
+        },
+        wb_path=wb_path,
+        direction="output",
+    )
+    concept_scheme = {
+        "id": "attrs",
+        "concepts": [{"id": "REPORT_DATE", "dtype": "datetime"}],
+    }
+
+    resolved = resolve_series_binding(
+        graph,
+        wb_path,
+        series,
+        direction="output",
+        concept_scheme=concept_scheme,
+    )
+    leaf = resolved["leaves"][0]
+    expected = datetime(2024, 6, 30)
+
+    assert resolved["ok"] is True
+    assert leaf["coordinates"]["REPORT_DATE"] == expected
+    assert leaf["record"]["REPORT_DATE"] == expected
+
+
+def test_resolve_attribute_value_string_unit_preserved_in_record(tmp_path: Path) -> None:
+    wb_path = tmp_path / "scalar.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number("B2", 1.0)
+    wb.close()
+
+    graph, series = _scalar_series_with_attribute_value(
+        attribute={
+            "concept": "UNIT",
+            "value": "Percent",
+            "include_in_record": True,
+        },
+        wb_path=wb_path,
+    )
+
+    resolved = resolve_series_binding(graph, wb_path, series)
+    leaf = resolved["leaves"][0]
+
+    assert resolved["ok"] is True
+    assert leaf["coordinates"]["UNIT"] == "Percent"
+    assert leaf["record"]["UNIT"] == "Percent"

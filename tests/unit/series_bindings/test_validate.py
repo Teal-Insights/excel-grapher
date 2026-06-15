@@ -186,3 +186,107 @@ def test_validate_warns_when_dimension_dtype_and_read_disagree(tmp_path: Path) -
     warnings = [issue for issue in report["issues"] if issue["code"] == "dtype_read_mismatch"]
     assert len(warnings) == 1
     assert "dimension 'IS_ACTIVE'" in warnings[0]["message"]
+
+
+def test_validate_warns_when_attribute_bind_read_disagrees_with_concept_dtype(
+    tmp_path: Path,
+) -> None:
+    wb_path = tmp_path / "scalar.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number("B2", 1.0)
+    wb.close()
+
+    graph = create_dependency_graph(wb_path, ["Sheet1!B2"], load_values=True)
+    bindings = validate_bindings_document(
+        {
+            "schema_version": "1.4.0",
+            "workbook": "scalar.xlsx",
+            "concept_scheme": {
+                "id": "attrs",
+                "concepts": [{"id": "REPORT_DATE", "dtype": "datetime"}],
+            },
+            "series": [
+                {
+                    "id": "attr_mismatch",
+                    "sheet": "Sheet1",
+                    "data_range": "Sheet1!B2",
+                    "layout": "scalar",
+                    "setter": {"name": "set_attr_mismatch"},
+                    "structure": {
+                        "measure": {
+                            "concept": "OBS_VALUE",
+                            "bind": {"kind": "data_cell", "read": "float"},
+                        },
+                        "dimensions": [],
+                        "attributes": [
+                            {
+                                "concept": "REPORT_DATE",
+                                "role": "attribute",
+                                "bind": {
+                                    "kind": "cell",
+                                    "address": "Sheet1!A1",
+                                    "read": "string",
+                                },
+                            }
+                        ],
+                    },
+                    "key": [],
+                }
+            ],
+        }
+    )
+    report = validate_series_bindings(graph, bindings, workbook=wb_path)
+    assert report["ok"] is True
+    warnings = [issue for issue in report["issues"] if issue["code"] == "dtype_read_mismatch"]
+    assert len(warnings) == 1
+    assert "attribute 'REPORT_DATE'" in warnings[0]["message"]
+
+
+def test_validate_skips_attribute_value_shorthand_for_dtype_read_check(
+    tmp_path: Path,
+) -> None:
+    wb_path = tmp_path / "scalar.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number("B2", 1.0)
+    wb.close()
+
+    graph = create_dependency_graph(wb_path, ["Sheet1!B2"], load_values=True)
+    bindings = validate_bindings_document(
+        {
+            "schema_version": "1.4.0",
+            "workbook": "scalar.xlsx",
+            "concept_scheme": {
+                "id": "attrs",
+                "concepts": [{"id": "REPORT_DATE", "dtype": "datetime"}],
+            },
+            "series": [
+                {
+                    "id": "attr_constant",
+                    "sheet": "Sheet1",
+                    "data_range": "Sheet1!B2",
+                    "layout": "scalar",
+                    "setter": {"name": "set_attr_constant"},
+                    "structure": {
+                        "measure": {
+                            "concept": "OBS_VALUE",
+                            "bind": {"kind": "data_cell", "read": "float"},
+                        },
+                        "dimensions": [],
+                        "attributes": [
+                            {
+                                "concept": "REPORT_DATE",
+                                "role": "attribute",
+                                "value": "2024-06-30",
+                            }
+                        ],
+                    },
+                    "key": [],
+                }
+            ],
+        }
+    )
+    report = validate_series_bindings(graph, bindings, workbook=wb_path)
+    assert report["ok"] is True
+    assert not any(issue["code"] == "dtype_read_mismatch" for issue in report["issues"])

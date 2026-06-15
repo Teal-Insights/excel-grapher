@@ -173,6 +173,16 @@ def _include_in_record(field: dict[str, Any], default: bool) -> bool:
     return default
 
 
+def _attribute_bind(attr: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize an attribute declaration to a bind mapping for resolution."""
+    bind = attr.get("bind")
+    if isinstance(bind, dict):
+        return bind
+    if "value" in attr:
+        return {"kind": "constant", "value": attr["value"]}
+    return None
+
+
 def _coerce_series_context(
     series: dict[str, Any],
     *,
@@ -229,9 +239,7 @@ def _build_input_record(
         concept = str(attr.get("concept", ""))
         if not _include_in_record(attr, default=False):
             continue
-        if "value" in attr:
-            record[concept] = attr["value"]
-        elif concept in coordinates:
+        if concept in coordinates:
             record[concept] = coordinates[concept]
 
     return record
@@ -262,9 +270,7 @@ def _build_output_record(
         if not isinstance(attr, dict):
             continue
         concept = str(attr.get("concept", ""))
-        if "value" in attr:
-            record[concept] = attr["value"]
-        elif concept in coordinates:
+        if concept in coordinates:
             record[concept] = coordinates[concept]
 
     if measure_concept not in record:
@@ -512,19 +518,17 @@ def resolve_series_binding(
                 if not isinstance(attr, dict):
                     continue
                 concept = str(attr.get("concept", ""))
-                if "value" in attr:
-                    inferred = _lookup_concept_dtype(concept_scheme, series, concept)
-                    read_as = _effective_read_as({"kind": "constant"}, inferred_dtype=inferred)
-                    coordinates[concept] = coerce_constant(attr["value"], read_as=read_as)
-                elif "bind" in attr and isinstance(attr["bind"], dict):
-                    inferred = _lookup_concept_dtype(concept_scheme, series, concept)
-                    coordinates[concept] = _execute_bind(
-                        attr["bind"],
-                        graph=graph,
-                        reader=reader,
-                        data_address=address,
-                        inferred_read_as=inferred,
-                    )
+                bind = _attribute_bind(attr)
+                if bind is None:
+                    continue
+                inferred = _lookup_concept_dtype(concept_scheme, series, concept)
+                coordinates[concept] = _execute_bind(
+                    bind,
+                    graph=graph,
+                    reader=reader,
+                    data_address=address,
+                    inferred_read_as=inferred,
+                )
         except (KeyError, ValueError, TypeError) as exc:
             issues.append(
                 make_issue(

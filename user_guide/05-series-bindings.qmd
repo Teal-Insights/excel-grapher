@@ -163,6 +163,7 @@ Each record must include:
 |---------|-------------------|----------------------|----------------------------|
 | `read: int` on `TIME_PERIOD` | `int` | `3` | `"3"` |
 | `read: datetime` on `TIME_PERIOD` | `datetime.datetime` | `datetime(2024, 1, 1)` | `"2024-01-01"` |
+| `read: auto` on `TIME_PERIOD` (Excel date serial) | `int` or `float` | serial as stored (e.g. `45309.0`) | `datetime(2024, 1, 1)` — use `read: datetime` |
 | `read: bool` on `IS_ACTIVE` | `bool` | `True` | `1` or `"true"` |
 
 Inspect `resolve_series_binding()` output or generated setter index literals to confirm the types for a given manifest. Output `compute_*` functions return the same types in each record’s key fields.
@@ -265,6 +266,8 @@ structure:
 ```
 
 **`read: auto` vs explicit `read: datetime`:** `auto` passes through native datetimes from the workbook reader and is appropriate when headers are stored as Excel date cells. Explicit `datetime` coerces Excel serial numbers and ISO strings and is required when you need deterministic date parsing regardless of how the reader classified the cell. Timezone-aware datetimes are rejected; only naive datetimes are supported.
+
+**`read: auto` footgun:** when the workbook reader returns a calendar date as a **number** (Excel serial), `read: auto` keeps it as `int` or `float` — it does not convert serials to `datetime`. That often surfaces as setter key mismatches: resolution indexed `45309.0` but callers pass `datetime(2024, 1, 1)`. Prefer `read: datetime` on `column_header` binds for calendar `TIME_PERIOD` axes unless you have confirmed the reader yields native `datetime` cells for those headers.
 
 Contrast with Borvelia’s offset-style headers (`read: int`, values 1–5): calendar and offset period axes differ only in the declared `read` mode and analyst notes — not in layout name.
 

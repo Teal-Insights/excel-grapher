@@ -285,6 +285,25 @@ def _validate_dtype_read_consistency(
                     series_id=series_id,
                 )
             )
+
+    for index, attr in enumerate(structure.get("attributes") or []):
+        if not isinstance(attr, dict):
+            continue
+        concept = str(attr.get("concept", f"attributes[{index}]"))
+        dtype = concept_dtypes.get(concept)
+        bind = attr.get("bind")
+        if not isinstance(bind, dict) or dtype is None:
+            continue
+        read = str(bind.get("read", "auto"))
+        if not _read_matches_dtype(read, dtype):
+            issues.append(
+                _issue(
+                    "warning",
+                    "dtype_read_mismatch",
+                    f"attribute {concept!r} dtype {dtype!r} does not match bind read {read!r}",
+                    series_id=series_id,
+                )
+            )
     return issues
 
 
