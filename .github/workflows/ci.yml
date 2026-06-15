@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+  workflow_call:
 
 jobs:
   test:
@@ -13,6 +14,16 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            release:
+              - 'excel_grapher/**'
+              - 'pyproject.toml'
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -21,6 +32,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version-file: pyproject.toml
+
+      - name: Check version bump
+        if: github.event_name == 'pull_request' && steps.changes.outputs.release == 'true'
+        run: python scripts/check_version_bump.py --base origin/${{ github.base_ref }}
 
       - name: Install dependencies
         run: uv sync --all-extras --dev
