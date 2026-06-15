@@ -172,4 +172,5 @@ def test_keyless_scalar_codegen_signature_uses_scalar_alias(tmp_path: Path) -> N
     code = "\n".join(lines)
 
     assert "Scalar = str | int | float | bool | None" in code
+    assert "import datetime" not in code
     assert "records: Records | Record | Scalar," in code

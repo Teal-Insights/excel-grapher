@@ -427,7 +427,7 @@ TARGETS = {
 }
 
 
-def compute_all(inputs=None, *, ctx=None):
+def compute_all(ctx=None, *, inputs=None):
     """Compute all target cells and return results."""
     if ctx is None:
         ctx = make_context(inputs)

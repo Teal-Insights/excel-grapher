@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Literal, TypedDict
+from datetime import datetime
+from typing import Any, Literal, NotRequired, TypedDict
 
 ValidationLevel = Literal["error", "warning"]
-Scalar = str | int | float | bool | None
+Scalar = str | int | float | bool | datetime | None
 
 
 class WorkbookSeriesBindings(TypedDict):
@@ -11,8 +12,8 @@ class WorkbookSeriesBindings(TypedDict):
 
     schema_version: str
     series: list[dict[str, Any]]
-    workbook: str
-    concept_scheme: dict[str, Any]
+    workbook: NotRequired[str]
+    concept_scheme: NotRequired[dict[str, Any]]
 
 
 class ValidationIssue(TypedDict):

@@ -43,8 +43,10 @@ def has_output_direction(series: dict[str, Any]) -> bool:
 
 
 def normalize_series_entry(series: dict[str, Any]) -> dict[str, Any]:
-    """Return a copy with legacy `setter` folded into `input.setter` when needed."""
+    """Return a copy with legacy aliases normalized for schema validation and codegen."""
     out = dict(series)
+    if out.get("layout") == "row_series":
+        out["layout"] = "series"
     legacy_setter = out.pop("setter", None)
     input_block = out.get("input")
     input_block = {} if not isinstance(input_block, dict) else dict(input_block)

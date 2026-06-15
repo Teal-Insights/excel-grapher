@@ -224,6 +224,89 @@ def _validate_implementation_support(series: dict[str, Any]) -> list[ValidationI
     return issues
 
 
+def _concept_dtype_map(bindings: WorkbookSeriesBindings) -> dict[str, str]:
+    scheme = bindings.get("concept_scheme") or {}
+    concepts = scheme.get("concepts") or []
+    result: dict[str, str] = {}
+    for concept in concepts:
+        if isinstance(concept, dict) and concept.get("id") and concept.get("dtype") is not None:
+            result[str(concept["id"])] = str(concept["dtype"])
+    return result
+
+
+def _read_matches_dtype(read: str, dtype: str) -> bool:
+    if read == "auto":
+        return True
+    if read == dtype:
+        return True
+    return read == "number" and dtype in {"int", "float", "number"}
+
+
+def _validate_dtype_read_consistency(
+    series: dict[str, Any],
+    *,
+    concept_dtypes: dict[str, str],
+) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    series_id = str(series.get("id", ""))
+    structure = series.get("structure") or {}
+    measure = structure.get("measure")
+    if isinstance(measure, dict):
+        measure_dtype = measure.get("dtype")
+        bind = measure.get("bind")
+        if isinstance(bind, dict) and measure_dtype is not None:
+            read = str(bind.get("read", "auto"))
+            dtype = str(measure_dtype)
+            if not _read_matches_dtype(read, dtype):
+                issues.append(
+                    _issue(
+                        "warning",
+                        "dtype_read_mismatch",
+                        f"measure dtype {dtype!r} does not match bind read {read!r}",
+                        series_id=series_id,
+                    )
+                )
+
+    for index, dim in enumerate(structure.get("dimensions") or []):
+        if not isinstance(dim, dict):
+            continue
+        concept = str(dim.get("concept", f"dimensions[{index}]"))
+        dtype = concept_dtypes.get(concept)
+        bind = dim.get("bind")
+        if not isinstance(bind, dict) or dtype is None:
+            continue
+        read = str(bind.get("read", "auto"))
+        if not _read_matches_dtype(read, dtype):
+            issues.append(
+                _issue(
+                    "warning",
+                    "dtype_read_mismatch",
+                    f"dimension {concept!r} dtype {dtype!r} does not match bind read {read!r}",
+                    series_id=series_id,
+                )
+            )
+
+    for index, attr in enumerate(structure.get("attributes") or []):
+        if not isinstance(attr, dict):
+            continue
+        concept = str(attr.get("concept", f"attributes[{index}]"))
+        dtype = concept_dtypes.get(concept)
+        bind = attr.get("bind")
+        if not isinstance(bind, dict) or dtype is None:
+            continue
+        read = str(bind.get("read", "auto"))
+        if not _read_matches_dtype(read, dtype):
+            issues.append(
+                _issue(
+                    "warning",
+                    "dtype_read_mismatch",
+                    f"attribute {concept!r} dtype {dtype!r} does not match bind read {read!r}",
+                    series_id=series_id,
+                )
+            )
+    return issues
+
+
 def validate_series_bindings(
     graph: DependencyGraph,
     bindings: WorkbookSeriesBindings,
@@ -232,6 +315,7 @@ def validate_series_bindings(
 ) -> ValidationReport:
     """Validate binding manifests against an extracted dependency graph."""
     issues: list[ValidationIssue] = []
+    concept_dtypes = _concept_dtype_map(bindings)
 
     for series in bindings.get("series", []):
         if not isinstance(series, dict):
@@ -239,6 +323,7 @@ def validate_series_bindings(
         series_id = str(series.get("id", ""))
         issues.extend(_validate_series_structure(series))
         issues.extend(_validate_implementation_support(series))
+        issues.extend(_validate_dtype_read_consistency(series, concept_dtypes=concept_dtypes))
 
         data_range = series.get("data_range")
         if not isinstance(data_range, str):

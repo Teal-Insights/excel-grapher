@@ -8,6 +8,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.series_bindings.codegen_literals import (
+    emit_compute_preamble_lines,
+    py_scalar_literal,
+    resolution_includes_datetime,
+    resolutions_include_datetime,
+)
 from excel_grapher.series_bindings.docstrings import (
     emit_docstring_literal,
     resolve_series_function_docstring,
@@ -27,22 +33,8 @@ if TYPE_CHECKING:
     from excel_grapher.series_bindings.docstrings import SeriesBindingDocstringCallbackSpec
 
 
-def _py_literal(value: object) -> str:
-    if value is None:
-        return "None"
-    if isinstance(value, bool):
-        return "True" if value else "False"
-    if isinstance(value, str):
-        return repr(value)
-    if isinstance(value, int) and not isinstance(value, bool):
-        return repr(value)
-    if isinstance(value, float):
-        return repr(value)
-    return repr(value)
-
-
 def _record_literal(record: dict[str, object]) -> str:
-    items = ", ".join(f"{repr(k)}: {_py_literal(v)}" for k, v in sorted(record.items()))
+    items = ", ".join(f"{repr(k)}: {py_scalar_literal(v)}" for k, v in sorted(record.items()))
     return f"{{{items}}}"
 
 
@@ -60,6 +52,7 @@ def emit_compute_function(
     bindings: WorkbookSeriesBindings | None = None,
     series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
     docstring_renderer: SeriesDocstringRendererSpec = "google",
+    include_datetime_import: bool = True,
 ) -> list[str]:
     """Emit Python source lines for one series binding output compute function."""
     if not resolved["leaves"]:
@@ -77,6 +70,8 @@ def emit_compute_function(
     leaves_name = f"_OUTPUT_LEAVES_{resolved['series_id'].upper()}"
 
     lines: list[str] = []
+    if include_datetime_import and resolution_includes_datetime(resolved):
+        lines.extend(["import datetime", ""])
     lines.append(f"{leaves_name} = [")
     for leaf in resolved["leaves"]:
         static_record: dict[str, object] = {
@@ -85,7 +80,7 @@ def emit_compute_function(
         lines.append(f"    ({repr(leaf['address'])}, {_record_literal(static_record)}),")
     lines.append("]")
     lines.append("")
-    lines.append(f"def {fn_name}(inputs=None, *, ctx=None) -> Records:")
+    lines.append(f"def {fn_name}(ctx=None, *, inputs=None) -> Records:")
     if series_docstring_callback is not None and (
         graph is None or workbook is None or bindings is None
     ):
@@ -151,14 +146,10 @@ def emit_computes_block(
         export_addresses=export_addresses,
     )
     lines: list[str] = ["# --- Series binding output compute (Records API) ---", ""]
+    include_datetime = resolutions_include_datetime(report["series"])
     if include_type_aliases:
-        lines.extend(
-            [
-                "Record = dict[str, object]",
-                "Records = list[Record]",
-                "",
-            ]
-        )
+        lines.extend(emit_compute_preamble_lines(include_datetime=include_datetime))
+    datetime_import_done = include_type_aliases and include_datetime
     by_id = {
         s["id"]: s
         for s in bindings.get("series", [])
@@ -180,6 +171,9 @@ def emit_computes_block(
         series = by_id.get(resolved["series_id"])
         if series is None:
             continue
+        fn_include_datetime_import = (
+            resolution_includes_datetime(resolved) and not datetime_import_done
+        )
         lines.extend(
             emit_compute_function(
                 series,
@@ -189,8 +183,11 @@ def emit_computes_block(
                 bindings=bindings,
                 series_docstring_callback=series_docstring_callback,
                 docstring_renderer=docstring_renderer,
+                include_datetime_import=fn_include_datetime_import,
             )
         )
+        if fn_include_datetime_import:
+            datetime_import_done = True
     if failed:
         raise ValueError(
             f"Cannot codegen output compute functions: resolution failed for {failed!r}"

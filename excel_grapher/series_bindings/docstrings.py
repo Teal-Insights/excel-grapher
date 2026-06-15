@@ -163,6 +163,18 @@ def _record_field_names(series: dict[str, Any]) -> list[str]:
     return _unique([*required, *dimensions, *attributes])
 
 
+def _dimension_bind_read(series: dict[str, Any], field_name: str) -> str | None:
+    for dimension in (series.get("structure") or {}).get("dimensions") or []:
+        if not isinstance(dimension, dict):
+            continue
+        if str(dimension.get("concept", "")) != field_name:
+            continue
+        bind = dimension.get("bind")
+        if isinstance(bind, dict) and bind.get("read") is not None:
+            return str(bind["read"])
+    return None
+
+
 def _field_dtype(
     series: dict[str, Any],
     concepts: dict[str, dict[str, Any]],
@@ -180,6 +192,9 @@ def _field_dtype(
     concept = concepts.get(field_name)
     if concept is not None and concept.get("dtype") is not None:
         return str(concept["dtype"])
+    bind_read = _dimension_bind_read(series, field_name)
+    if bind_read in {"string", "int", "float", "number", "bool", "datetime"}:
+        return bind_read
     return None
 
 

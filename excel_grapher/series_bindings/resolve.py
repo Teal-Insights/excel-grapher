@@ -14,6 +14,7 @@ import fastpyxl.utils.cell
 from excel_grapher.core.address_keys import format_key, parse_address, quote_sheet_if_needed
 from excel_grapher.core.address_keys import normalize_key as normalize_address
 from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.series_bindings.coerce import coerce_constant, coerce_scalar
 from excel_grapher.series_bindings.issues import make_issue
 from excel_grapher.series_bindings.normalize import has_input_direction, has_output_direction
 from excel_grapher.series_bindings.ranges import expand_data_range_for_graph
@@ -66,6 +67,37 @@ def _read_cell_value(graph: DependencyGraph, reader: _WorkbookValues, address: s
     return reader.read(address)
 
 
+def _lookup_concept_dtype(
+    concept_scheme: dict[str, Any] | None,
+    series: dict[str, Any],
+    concept_name: str,
+) -> str | None:
+    measure = (series.get("structure") or {}).get("measure") or {}
+    if concept_name == str(measure.get("concept", "OBS_VALUE")):
+        measure_dtype = measure.get("dtype")
+        if measure_dtype is not None:
+            return str(measure_dtype)
+    if concept_scheme:
+        for concept in concept_scheme.get("concepts") or []:
+            if isinstance(concept, dict) and str(concept.get("id")) == concept_name:
+                dtype = concept.get("dtype")
+                if dtype is not None:
+                    return str(dtype)
+    return None
+
+
+def _effective_read_as(
+    bind: dict[str, Any],
+    *,
+    inferred_dtype: str | None,
+) -> str:
+    if "read" in bind:
+        return str(bind["read"])
+    if inferred_dtype in {"string", "int", "float", "number", "bool", "datetime"}:
+        return inferred_dtype
+    return "auto"
+
+
 def _normalize_string(value: str, normalize: str) -> str:
     if normalize == "none":
         return value
@@ -76,73 +108,31 @@ def _normalize_string(value: str, normalize: str) -> str:
     return value
 
 
-def _coerce_value(raw: Any, read_as: str) -> Scalar:
-    if raw is None:
-        return None
-    if read_as == "auto":
-        if isinstance(raw, bool):
-            return raw
-        if isinstance(raw, int) and not isinstance(raw, bool):
-            return raw
-        if isinstance(raw, float):
-            return raw
-        if isinstance(raw, str):
-            return raw
-        return str(raw)
-    if read_as == "string":
-        return str(raw)
-    if read_as == "int":
-        return int(raw)
-    if read_as == "float":
-        return float(raw)
-    if read_as == "number":
-        if isinstance(raw, int) and not isinstance(raw, bool):
-            return raw
-        return float(raw)
-    if read_as == "bool":
-        if isinstance(raw, bool):
-            return raw
-        if isinstance(raw, (int, float)):
-            return bool(raw)
-        text = str(raw).strip().lower()
-        if text in {"true", "1", "yes"}:
-            return True
-        if text in {"false", "0", "no"}:
-            return False
-        raise ValueError(f"Cannot coerce {raw!r} to bool")
-    raise ValueError(f"Unknown read mode: {read_as!r}")
-
-
-def _parse_data_cell(address: str) -> tuple[str, str, int]:
-    sheet, coord = parse_address(address)
-    col, row = fastpyxl.utils.cell.coordinate_from_string(coord)
-    return sheet, col, row
-
-
 def _execute_bind(
     bind: dict[str, Any],
     *,
     graph: DependencyGraph,
     reader: _WorkbookValues,
     data_address: str,
+    inferred_read_as: str | None = None,
 ) -> Scalar:
     kind = bind.get("kind")
-    read_as = str(bind.get("read", "auto"))
+    read_as = _effective_read_as(bind, inferred_dtype=inferred_read_as)
     normalize = str(bind.get("normalize", "strip"))
 
     if kind == "data_cell":
         raw = _read_cell_value(graph, reader, data_address)
-        return _coerce_value(raw, read_as)
+        return coerce_scalar(raw, read_as)
 
     if kind == "constant":
-        return bind.get("value")
+        return coerce_constant(bind.get("value"), read_as=read_as)
 
     if kind == "cell":
         address = str(bind["address"])
         raw = _read_cell_value(graph, reader, address)
         if read_as in {"auto", "string"} and isinstance(raw, str):
             return _normalize_string(raw, normalize)
-        return _coerce_value(raw, read_as)
+        return coerce_scalar(raw, read_as)
 
     sheet, col, row = _parse_data_cell(data_address)
     quoted_sheet = quote_sheet_if_needed(sheet)
@@ -153,7 +143,7 @@ def _execute_bind(
         raw = _read_cell_value(graph, reader, header_address)
         if read_as in {"auto", "string"} and isinstance(raw, str):
             return _normalize_string(raw, normalize)
-        return _coerce_value(raw, read_as)
+        return coerce_scalar(raw, read_as)
 
     if kind == "row_hierarchy":
         raise ValueError(
@@ -166,9 +156,15 @@ def _execute_bind(
         raw = _read_cell_value(graph, reader, label_address)
         if read_as in {"auto", "string"} and isinstance(raw, str):
             return _normalize_string(raw, normalize)
-        return _coerce_value(raw, read_as)
+        return coerce_scalar(raw, read_as)
 
     raise ValueError(f"Unknown bind kind: {kind!r}")
+
+
+def _parse_data_cell(address: str) -> tuple[str, str, int]:
+    sheet, coord = parse_address(address)
+    col, row = fastpyxl.utils.cell.coordinate_from_string(coord)
+    return sheet, col, row
 
 
 def _include_in_record(field: dict[str, Any], default: bool) -> bool:
@@ -177,11 +173,43 @@ def _include_in_record(field: dict[str, Any], default: bool) -> bool:
     return default
 
 
+def _attribute_bind(attr: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize an attribute declaration to a bind mapping for resolution."""
+    bind = attr.get("bind")
+    if isinstance(bind, dict):
+        return bind
+    if "value" in attr:
+        return {"kind": "constant", "value": attr["value"]}
+    return None
+
+
+def _coerce_series_context(
+    series: dict[str, Any],
+    *,
+    concept_scheme: dict[str, Any] | None,
+) -> dict[str, Scalar]:
+    """Coerce manifest ``series_context`` values using concept-scheme dtypes."""
+    raw = series.get("series_context") or {}
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, Scalar] = {}
+    for concept, value in raw.items():
+        concept_name = str(concept)
+        inferred = _lookup_concept_dtype(concept_scheme, series, concept_name)
+        read_as = _effective_read_as({"kind": "constant"}, inferred_dtype=inferred)
+        try:
+            result[concept_name] = coerce_constant(value, read_as=read_as)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"series_context[{concept_name!r}]: {exc}") from exc
+    return result
+
+
 def _build_input_record(
     *,
     coordinates: dict[str, Scalar],
     series: dict[str, Any],
     measure_concept: str,
+    series_context: dict[str, Scalar],
 ) -> dict[str, Scalar]:
     record: dict[str, Scalar] = {}
     key_concepts = [str(c) for c in (series.get("key") or [])]
@@ -194,7 +222,7 @@ def _build_input_record(
     if obs_value is not None or measure_concept in coordinates:
         record[measure_concept] = obs_value
 
-    for concept, value in (series.get("series_context") or {}).items():
+    for concept, value in series_context.items():
         record[str(concept)] = value
 
     structure = series.get("structure") or {}
@@ -211,9 +239,7 @@ def _build_input_record(
         concept = str(attr.get("concept", ""))
         if not _include_in_record(attr, default=False):
             continue
-        if "value" in attr:
-            record[concept] = attr["value"]
-        elif concept in coordinates:
+        if concept in coordinates:
             record[concept] = coordinates[concept]
 
     return record
@@ -224,11 +250,12 @@ def _build_output_record(
     coordinates: dict[str, Scalar],
     series: dict[str, Any],
     measure_concept: str,
+    series_context: dict[str, Scalar],
 ) -> dict[str, Scalar]:
     """Build a record with all declared dimensions and attributes (OBS_VALUE filled at runtime)."""
     record: dict[str, Scalar] = {}
 
-    for concept, value in (series.get("series_context") or {}).items():
+    for concept, value in series_context.items():
         record[str(concept)] = value
 
     structure = series.get("structure") or {}
@@ -243,9 +270,7 @@ def _build_output_record(
         if not isinstance(attr, dict):
             continue
         concept = str(attr.get("concept", ""))
-        if "value" in attr:
-            record[concept] = attr["value"]
-        elif concept in coordinates:
+        if concept in coordinates:
             record[concept] = coordinates[concept]
 
     if measure_concept not in record:
@@ -364,6 +389,7 @@ def resolve_series_binding(
     *,
     direction: BindingDirection = "input",
     export_addresses: Iterable[str] | None = None,
+    concept_scheme: dict[str, Any] | None = None,
 ) -> SeriesResolution:
     """Resolve each participating cell in a series binding to coordinates and record fields."""
     series_id = str(series.get("id", ""))
@@ -424,12 +450,32 @@ def resolve_series_binding(
     measure = structure.get("measure") or {}
     measure_concept = str(measure.get("concept", "OBS_VALUE"))
     measure_bind = measure.get("bind") or {"kind": "data_cell"}
+    measure_dtype = measure.get("dtype")
+    measure_inferred_read = str(measure_dtype) if measure_dtype is not None else None
     key_concepts = [str(c) for c in (series.get("key") or [])]
     require_unique_key = bool(validation.get("require_unique_key", True))
 
     reader = _WorkbookValues(workbook)
     series_coordinates: dict[str, Scalar] = {}
     seen_keys: dict[tuple[tuple[str, Scalar], ...], str] = {}
+
+    try:
+        coerced_series_context = _coerce_series_context(series, concept_scheme=concept_scheme)
+    except ValueError as exc:
+        return {
+            "series_id": series_id,
+            "ok": False,
+            "requires_address": True,
+            "leaves": [],
+            "issues": [
+                make_issue(
+                    "error",
+                    "series_context_coercion_failed",
+                    str(exc),
+                    series_id=series_id,
+                )
+            ],
+        }
 
     build_record = _build_input_record if direction == "input" else _build_output_record
 
@@ -442,6 +488,7 @@ def resolve_series_binding(
                     graph=graph,
                     reader=reader,
                     data_address=address,
+                    inferred_read_as=measure_inferred_read,
                 )
 
             for dim in structure.get("dimensions") or []:
@@ -455,11 +502,13 @@ def resolve_series_binding(
                 if scope == "series" and concept in series_coordinates:
                     coordinates[concept] = series_coordinates[concept]
                     continue
+                inferred = _lookup_concept_dtype(concept_scheme, series, concept)
                 value = _execute_bind(
                     bind,
                     graph=graph,
                     reader=reader,
                     data_address=address,
+                    inferred_read_as=inferred,
                 )
                 coordinates[concept] = value
                 if scope == "series":
@@ -469,15 +518,17 @@ def resolve_series_binding(
                 if not isinstance(attr, dict):
                     continue
                 concept = str(attr.get("concept", ""))
-                if "value" in attr:
-                    coordinates[concept] = attr["value"]
-                elif "bind" in attr and isinstance(attr["bind"], dict):
-                    coordinates[concept] = _execute_bind(
-                        attr["bind"],
-                        graph=graph,
-                        reader=reader,
-                        data_address=address,
-                    )
+                bind = _attribute_bind(attr)
+                if bind is None:
+                    continue
+                inferred = _lookup_concept_dtype(concept_scheme, series, concept)
+                coordinates[concept] = _execute_bind(
+                    bind,
+                    graph=graph,
+                    reader=reader,
+                    data_address=address,
+                    inferred_read_as=inferred,
+                )
         except (KeyError, ValueError, TypeError) as exc:
             issues.append(
                 make_issue(
@@ -495,6 +546,7 @@ def resolve_series_binding(
             coordinates=coordinates,
             series=series,
             measure_concept=measure_concept,
+            series_context=coerced_series_context,
         )
         leaves.append(
             {
@@ -574,6 +626,9 @@ def resolve_series_bindings(
 
     series_results: list[SeriesResolution] = []
     all_issues: list[ResolutionIssue] = []
+    concept_scheme = bindings.get("concept_scheme")
+    if not isinstance(concept_scheme, dict):
+        concept_scheme = None
     for series in bindings.get("series", []):
         if not isinstance(series, dict):
             continue
@@ -585,6 +640,7 @@ def resolve_series_bindings(
             series,
             direction=direction,
             export_addresses=export_addresses,
+            concept_scheme=concept_scheme,
         )
         series_results.append(result)
         all_issues.extend(result["issues"])

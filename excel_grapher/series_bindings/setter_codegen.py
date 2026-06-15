@@ -8,6 +8,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.series_bindings.codegen_literals import (
+    emit_setter_type_alias_lines,
+    py_scalar_literal,
+    resolution_includes_datetime,
+    resolutions_include_datetime,
+)
 from excel_grapher.series_bindings.docstrings import (
     emit_docstring_literal,
     resolve_series_function_docstring,
@@ -27,22 +33,8 @@ if TYPE_CHECKING:
     from excel_grapher.series_bindings.docstrings import SeriesBindingDocstringCallbackSpec
 
 
-def _py_literal(value: object) -> str:
-    if value is None:
-        return "None"
-    if isinstance(value, bool):
-        return "True" if value else "False"
-    if isinstance(value, str):
-        return repr(value)
-    if isinstance(value, int) and not isinstance(value, bool):
-        return repr(value)
-    if isinstance(value, float):
-        return repr(value)
-    return repr(value)
-
-
 def _key_tuple_literal(key_fields: list[str], key: Mapping[str, object]) -> str:
-    pairs = ", ".join(f"({repr(f)}, {_py_literal(key[f])})" for f in key_fields)
+    pairs = ", ".join(f"({repr(f)}, {py_scalar_literal(key[f])})" for f in key_fields)
     return f"({pairs},)" if len(key_fields) == 1 else f"({pairs})"
 
 
@@ -156,6 +148,7 @@ def emit_setter_function(
     bindings: WorkbookSeriesBindings | None = None,
     series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
     docstring_renderer: SeriesDocstringRendererSpec = "google",
+    include_datetime_import: bool = True,
 ) -> list[str]:
     """Emit Python source lines for one series binding setter."""
     if not resolved["leaves"]:
@@ -181,6 +174,8 @@ def emit_setter_function(
     index_name = f"_LEAF_INDEX_{resolved['series_id'].upper()}"
 
     lines: list[str] = []
+    if include_datetime_import and resolution_includes_datetime(resolved):
+        lines.extend(["import datetime", ""])
     if not requires_address:
         lines.append(f"{index_name} = {{")
         for leaf in resolved["leaves"]:
@@ -263,15 +258,10 @@ def emit_setters_block(
         export_addresses=export_addresses,
     )
     lines: list[str] = ["# --- Series binding setters (Records API) ---", ""]
+    include_datetime = resolutions_include_datetime(report["series"])
     if include_type_aliases:
-        lines.extend(
-            [
-                "Scalar = str | int | float | bool | None",
-                "Record = dict[str, object]",
-                "Records = list[Record]",
-                "",
-            ]
-        )
+        lines.extend(emit_setter_type_alias_lines(include_datetime=include_datetime))
+    datetime_import_done = include_type_aliases and include_datetime
     lines.extend(emit_setter_helpers())
     by_id = {
         s["id"]: s
@@ -294,6 +284,9 @@ def emit_setters_block(
         series = by_id.get(resolved["series_id"])
         if series is None:
             continue
+        fn_include_datetime_import = (
+            resolution_includes_datetime(resolved) and not datetime_import_done
+        )
         lines.extend(
             emit_setter_function(
                 series,
@@ -303,8 +296,11 @@ def emit_setters_block(
                 bindings=bindings,
                 series_docstring_callback=series_docstring_callback,
                 docstring_renderer=docstring_renderer,
+                include_datetime_import=fn_include_datetime_import,
             )
         )
+        if fn_include_datetime_import:
+            datetime_import_done = True
     if failed:
         raise ValueError(f"Cannot codegen setters: resolution failed for {failed!r}")
     return lines

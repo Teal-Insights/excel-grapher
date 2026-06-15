@@ -26,6 +26,7 @@ from excel_grapher.series_bindings.setter_codegen import (
     emit_setter_helpers,
     emit_setters_block,
 )
+from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
 
@@ -385,3 +386,311 @@ def test_emit_setter_callback_requires_codegen_context(tmp_path: Path) -> None:
             resolved,
             series_docstring_callback="series_notes",
         )
+
+
+def _write_bool_key_workbook(path: Path) -> None:
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Flags")
+    ws.write_boolean("A1", True)
+    ws.write_boolean("B1", False)
+    ws.write_number("A2", 10.0)
+    ws.write_number("B2", 20.0)
+    wb.close()
+
+
+def test_emit_setter_bool_key_round_trips(tmp_path: Path) -> None:
+    wb_path = tmp_path / "flags.xlsx"
+    _write_bool_key_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, ["Flags!A2", "Flags!B2"], load_values=True)
+    series = {
+        "id": "bool_keyed",
+        "sheet": "Flags",
+        "data_range": "Flags!A2:B2",
+        "layout": "series",
+        "setter": {"name": "set_bool_keyed"},
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "float",
+                "bind": {"kind": "data_cell", "read": "float"},
+            },
+            "dimensions": [
+                {
+                    "concept": "SLOT",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "column_header", "header_row": 1, "read": "bool"},
+                }
+            ],
+        },
+        "key": ["SLOT"],
+    }
+    resolved = resolve_series_binding(graph, wb_path, series)
+    lines = emit_setter_function(series, resolved)
+    code = "\n".join(lines)
+    assert "(('SLOT', True),): 'Flags!A2'" in code
+    assert "(('SLOT', False),): 'Flags!B2'" in code
+
+    ns = _exec_setters(lines)
+    setter = cast(
+        Callable[[EvalContext, list[dict[str, object]]], None],
+        ns["set_bool_keyed"],
+    )
+    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
+    setter(ctx, [{"SLOT": True, "OBS_VALUE": 99.0}])
+    setter(ctx, [{"SLOT": False, "OBS_VALUE": 88.0}])
+    assert ctx.inputs["Flags!A2"] == 99.0
+    assert ctx.inputs["Flags!B2"] == 88.0
+
+
+def _write_datetime_key_workbook(path: Path) -> None:
+    from datetime import datetime
+
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Inputs")
+    date_format = wb.add_format({"num_format": "yyyy-mm-dd"})
+    periods = [datetime(2024, 1, 1), datetime(2024, 2, 1)]
+    for col_index, period in enumerate(periods, start=1):
+        ws.write_datetime(0, col_index, period, date_format)
+        ws.write_number(1, col_index, float(col_index))
+    wb.close()
+
+
+def test_emit_setter_datetime_key_round_trips(tmp_path: Path) -> None:
+    from datetime import datetime
+
+    wb_path = tmp_path / "calendar.xlsx"
+    _write_datetime_key_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, ["Inputs!B2", "Inputs!C2"], load_values=True)
+    series = {
+        "id": "calendar_keyed",
+        "sheet": "Inputs",
+        "data_range": "Inputs!B2:C2",
+        "layout": "series",
+        "setter": {"name": "set_calendar_keyed"},
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "float",
+                "bind": {"kind": "data_cell", "read": "float"},
+            },
+            "dimensions": [
+                {
+                    "concept": "TIME_PERIOD",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "column_header", "header_row": 1, "read": "datetime"},
+                }
+            ],
+        },
+        "key": ["TIME_PERIOD"],
+    }
+    resolved = resolve_series_binding(graph, wb_path, series)
+    lines = emit_setter_function(series, resolved)
+    code = "\n".join(lines)
+    assert "import datetime" in code
+    assert "datetime.datetime(2024, 1, 1, 0, 0)" in code
+    assert "datetime.datetime(2024, 2, 1, 0, 0)" in code
+
+    ns = _exec_setters(lines)
+    setter = cast(
+        Callable[[EvalContext, list[dict[str, object]]], None],
+        ns["set_calendar_keyed"],
+    )
+    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
+    setter(ctx, [{"TIME_PERIOD": datetime(2024, 1, 1), "OBS_VALUE": 11.0}])
+    setter(ctx, [{"TIME_PERIOD": datetime(2024, 2, 1), "OBS_VALUE": 22.0}])
+    assert ctx.inputs["Inputs!B2"] == 11.0
+    assert ctx.inputs["Inputs!C2"] == 22.0
+
+
+def test_emit_setters_block_includes_datetime_aliases_when_needed(tmp_path: Path) -> None:
+
+    wb_path = tmp_path / "calendar.xlsx"
+    _write_datetime_key_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, ["Inputs!B2"], load_values=True)
+    bindings: WorkbookSeriesBindings = {
+        "schema_version": "1.4.0",
+        "workbook": "calendar.xlsx",
+        "series": [
+            {
+                "id": "calendar_keyed",
+                "sheet": "Inputs",
+                "data_range": "Inputs!B2",
+                "layout": "scalar",
+                "input": {"setter": {"name": "set_calendar_keyed"}},
+                "structure": {
+                    "measure": {
+                        "concept": "OBS_VALUE",
+                        "dtype": "float",
+                        "bind": {"kind": "data_cell", "read": "float"},
+                    },
+                    "dimensions": [
+                        {
+                            "concept": "TIME_PERIOD",
+                            "role": "key",
+                            "scope": "cell",
+                            "bind": {
+                                "kind": "column_header",
+                                "header_row": 1,
+                                "read": "datetime",
+                            },
+                        }
+                    ],
+                },
+                "key": ["TIME_PERIOD"],
+            }
+        ],
+    }
+    code = "\n".join(emit_setters_block(graph, wb_path, bindings))
+    assert "import datetime" in code
+    assert code.count("import datetime") == 1
+    assert "Scalar = str | int | float | bool | datetime.datetime | None" in code
+
+
+def test_emit_setter_scalar_bool_measure_round_trips(tmp_path: Path) -> None:
+    wb_path = tmp_path / "bool_scalar.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Flags")
+    ws.write_boolean("B2", True)
+    wb.close()
+
+    graph = create_dependency_graph(wb_path, ["Flags!B2"], load_values=True)
+    series = {
+        "id": "bool_scalar_measure",
+        "sheet": "Flags",
+        "data_range": "Flags!B2",
+        "layout": "scalar",
+        "setter": {"name": "set_bool_scalar_measure"},
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "bool",
+                "bind": {"kind": "data_cell", "read": "bool"},
+            },
+            "dimensions": [],
+        },
+        "key": [],
+    }
+    resolved = resolve_series_binding(graph, wb_path, series)
+    lines = emit_setter_function(series, resolved)
+    ns = _exec_setters(lines)
+    setter = cast(
+        Callable[[EvalContext, list[dict[str, object]]], None],
+        ns["set_bool_scalar_measure"],
+    )
+
+    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
+    setter(ctx, [{"OBS_VALUE": False}])
+    assert ctx.inputs["Flags!B2"] is False
+
+
+def test_emit_setter_scalar_bool_key_dimension_round_trips(tmp_path: Path) -> None:
+    wb_path = tmp_path / "bool_scalar.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Flags")
+    ws.write_boolean("B2", True)
+    wb.close()
+
+    graph = create_dependency_graph(wb_path, ["Flags!B2"], load_values=True)
+    concept_scheme = {
+        "id": "flags",
+        "concepts": [{"id": "IS_ACTIVE", "dtype": "bool"}],
+    }
+    series = {
+        "id": "bool_scalar_key",
+        "sheet": "Flags",
+        "data_range": "Flags!B2",
+        "layout": "scalar",
+        "setter": {"name": "set_bool_scalar_key"},
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "bool",
+                "bind": {"kind": "data_cell", "read": "bool"},
+            },
+            "dimensions": [
+                {
+                    "concept": "IS_ACTIVE",
+                    "role": "key",
+                    "scope": "series",
+                    "bind": {"kind": "constant", "value": True},
+                }
+            ],
+        },
+        "key": ["IS_ACTIVE"],
+    }
+    resolved = resolve_series_binding(
+        graph,
+        wb_path,
+        series,
+        concept_scheme=concept_scheme,
+    )
+    lines = emit_setter_function(series, resolved)
+    code = "\n".join(lines)
+    assert "(('IS_ACTIVE', True),): 'Flags!B2'" in code
+
+    ns = _exec_setters(lines)
+    setter = cast(
+        Callable[[EvalContext, list[dict[str, object]]], None],
+        ns["set_bool_scalar_key"],
+    )
+    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
+    setter(ctx, [{"IS_ACTIVE": True, "OBS_VALUE": False}])
+    assert ctx.inputs["Flags!B2"] is False
+
+
+def test_emit_setters_block_calendar_year_setter_round_trips(tmp_path: Path) -> None:
+    from datetime import datetime
+
+    wb_path = tmp_path / "calendar.xlsx"
+    _write_datetime_key_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, ["Inputs!B2", "Inputs!C2"], load_values=True)
+    bindings: WorkbookSeriesBindings = {
+        "schema_version": "1.4.0",
+        "workbook": "calendar.xlsx",
+        "concept_scheme": {
+            "id": "calendar",
+            "concepts": [{"id": "TIME_PERIOD", "dtype": "datetime"}],
+        },
+        "series": [
+            {
+                "id": "calendar_keyed",
+                "sheet": "Inputs",
+                "data_range": "Inputs!B2:C2",
+                "layout": "series",
+                "input": {"setter": {"name": "set_calendar_keyed"}},
+                "structure": {
+                    "measure": {
+                        "concept": "OBS_VALUE",
+                        "dtype": "float",
+                        "bind": {"kind": "data_cell", "read": "float"},
+                    },
+                    "dimensions": [
+                        {
+                            "concept": "TIME_PERIOD",
+                            "role": "key",
+                            "scope": "cell",
+                            "bind": {
+                                "kind": "column_header",
+                                "header_row": 1,
+                                "read": "datetime",
+                            },
+                        }
+                    ],
+                },
+                "key": ["TIME_PERIOD"],
+            }
+        ],
+    }
+    lines = emit_setters_block(graph, wb_path, bindings)
+    ns = _exec_setters(lines)
+    setter = cast(
+        Callable[[EvalContext, list[dict[str, object]]], None],
+        ns["set_calendar_keyed"],
+    )
+    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
+    setter(ctx, [{"TIME_PERIOD": datetime(2024, 1, 1), "OBS_VALUE": 11.0}])
+    setter(ctx, [{"TIME_PERIOD": datetime(2024, 2, 1), "OBS_VALUE": 22.0}])
+    assert ctx.inputs["Inputs!B2"] == 11.0
+    assert ctx.inputs["Inputs!C2"] == 22.0
