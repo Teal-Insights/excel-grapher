@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from datetime import datetime
 
+from excel_grapher.series_bindings.scalar_literals import py_scalar_literal
 from excel_grapher.series_bindings.types import SeriesResolution
 
 __all__ = [
@@ -15,23 +16,6 @@ __all__ = [
     "resolutions_include_datetime",
     "values_include_datetime",
 ]
-
-
-def py_scalar_literal(value: object) -> str:
-    """Render a scalar value as a Python literal for generated binding code."""
-    if value is None:
-        return "None"
-    if isinstance(value, bool):
-        return "True" if value else "False"
-    if isinstance(value, datetime):
-        return repr(value)
-    if isinstance(value, str):
-        return repr(value)
-    if isinstance(value, int) and not isinstance(value, bool):
-        return repr(value)
-    if isinstance(value, float):
-        return repr(value)
-    return repr(value)
 
 
 def values_include_datetime(*containers: Mapping[str, object] | None) -> bool:

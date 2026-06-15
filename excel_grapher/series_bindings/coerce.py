@@ -5,14 +5,13 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from excel_grapher.series_bindings.codegen_literals import py_scalar_literal
 from excel_grapher.series_bindings.types import Scalar
 
 _EXCEL_EPOCH = datetime(1899, 12, 30)
 _BOOL_TRUE = frozenset({"true", "1", "yes"})
 _BOOL_FALSE = frozenset({"false", "0", "no"})
 
-__all__ = ["coerce_constant", "coerce_scalar", "py_scalar_literal"]
+__all__ = ["coerce_constant", "coerce_scalar"]
 
 
 def _ensure_naive_datetime(value: datetime) -> datetime:
@@ -36,14 +35,8 @@ def _parse_iso_datetime(text: str) -> datetime:
 
 
 def _excel_serial_to_datetime(serial: float) -> datetime:
-    days = int(serial)
-    fraction = serial - days
-    result = _EXCEL_EPOCH + timedelta(days=days)
-    if fraction:
-        seconds = round(fraction * 86400)
-        if seconds:
-            result += timedelta(seconds=seconds)
-    return result
+    """Convert an Excel day-fraction serial to a naive datetime."""
+    return _EXCEL_EPOCH + timedelta(days=serial)
 
 
 def _coerce_datetime(raw: Any, *, excel_serial: bool) -> datetime:
@@ -61,8 +54,18 @@ def _coerce_datetime(raw: Any, *, excel_serial: bool) -> datetime:
 def _coerce_bool(raw: Any) -> bool:
     if isinstance(raw, bool):
         return raw
-    if isinstance(raw, (int, float)):
-        return bool(raw)
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        if raw == 0:
+            return False
+        if raw == 1:
+            return True
+        raise ValueError(f"Cannot coerce {raw!r} to bool")
+    if isinstance(raw, float):
+        if raw == 0.0:
+            return False
+        if raw == 1.0:
+            return True
+        raise ValueError(f"Cannot coerce {raw!r} to bool")
     text = str(raw).strip().lower()
     if text in _BOOL_TRUE:
         return True

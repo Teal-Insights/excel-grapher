@@ -536,7 +536,7 @@ def test_emit_compute_calendar_year_columns_round_trips(tmp_path: Path) -> None:
         "Record = dict[str, object]",
         "Records = list[Record]",
         "",
-        *emit_compute_function(series, resolved),
+        *emit_compute_function(series, resolved, include_datetime_import=False),
     ]
 
     values = {"Inputs!B2": 10.0, "Inputs!C2": 20.0}
@@ -592,4 +592,5 @@ def test_emit_computes_block_includes_datetime_import_when_needed(tmp_path: Path
     }
     code = "\n".join(emit_computes_block(graph, wb_path, bindings))
     assert "import datetime" in code
+    assert code.count("import datetime") == 1
     assert "datetime.datetime(2024, 1, 1, 0, 0)" in code

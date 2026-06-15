@@ -148,6 +148,7 @@ def emit_setter_function(
     bindings: WorkbookSeriesBindings | None = None,
     series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
     docstring_renderer: SeriesDocstringRendererSpec = "google",
+    include_datetime_import: bool = True,
 ) -> list[str]:
     """Emit Python source lines for one series binding setter."""
     if not resolved["leaves"]:
@@ -173,7 +174,7 @@ def emit_setter_function(
     index_name = f"_LEAF_INDEX_{resolved['series_id'].upper()}"
 
     lines: list[str] = []
-    if resolution_includes_datetime(resolved):
+    if include_datetime_import and resolution_includes_datetime(resolved):
         lines.extend(["import datetime", ""])
     if not requires_address:
         lines.append(f"{index_name} = {{")
@@ -257,9 +258,10 @@ def emit_setters_block(
         export_addresses=export_addresses,
     )
     lines: list[str] = ["# --- Series binding setters (Records API) ---", ""]
+    include_datetime = resolutions_include_datetime(report["series"])
     if include_type_aliases:
-        include_datetime = resolutions_include_datetime(report["series"])
         lines.extend(emit_setter_type_alias_lines(include_datetime=include_datetime))
+    datetime_import_done = include_type_aliases and include_datetime
     lines.extend(emit_setter_helpers())
     by_id = {
         s["id"]: s
@@ -282,6 +284,9 @@ def emit_setters_block(
         series = by_id.get(resolved["series_id"])
         if series is None:
             continue
+        fn_include_datetime_import = (
+            resolution_includes_datetime(resolved) and not datetime_import_done
+        )
         lines.extend(
             emit_setter_function(
                 series,
@@ -291,8 +296,11 @@ def emit_setters_block(
                 bindings=bindings,
                 series_docstring_callback=series_docstring_callback,
                 docstring_renderer=docstring_renderer,
+                include_datetime_import=fn_include_datetime_import,
             )
         )
+        if fn_include_datetime_import:
+            datetime_import_done = True
     if failed:
         raise ValueError(f"Cannot codegen setters: resolution failed for {failed!r}")
     return lines

@@ -173,11 +173,33 @@ def _include_in_record(field: dict[str, Any], default: bool) -> bool:
     return default
 
 
+def _coerce_series_context(
+    series: dict[str, Any],
+    *,
+    concept_scheme: dict[str, Any] | None,
+) -> dict[str, Scalar]:
+    """Coerce manifest ``series_context`` values using concept-scheme dtypes."""
+    raw = series.get("series_context") or {}
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, Scalar] = {}
+    for concept, value in raw.items():
+        concept_name = str(concept)
+        inferred = _lookup_concept_dtype(concept_scheme, series, concept_name)
+        read_as = _effective_read_as({"kind": "constant"}, inferred_dtype=inferred)
+        try:
+            result[concept_name] = coerce_constant(value, read_as=read_as)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"series_context[{concept_name!r}]: {exc}") from exc
+    return result
+
+
 def _build_input_record(
     *,
     coordinates: dict[str, Scalar],
     series: dict[str, Any],
     measure_concept: str,
+    series_context: dict[str, Scalar],
 ) -> dict[str, Scalar]:
     record: dict[str, Scalar] = {}
     key_concepts = [str(c) for c in (series.get("key") or [])]
@@ -190,7 +212,7 @@ def _build_input_record(
     if obs_value is not None or measure_concept in coordinates:
         record[measure_concept] = obs_value
 
-    for concept, value in (series.get("series_context") or {}).items():
+    for concept, value in series_context.items():
         record[str(concept)] = value
 
     structure = series.get("structure") or {}
@@ -220,11 +242,12 @@ def _build_output_record(
     coordinates: dict[str, Scalar],
     series: dict[str, Any],
     measure_concept: str,
+    series_context: dict[str, Scalar],
 ) -> dict[str, Scalar]:
     """Build a record with all declared dimensions and attributes (OBS_VALUE filled at runtime)."""
     record: dict[str, Scalar] = {}
 
-    for concept, value in (series.get("series_context") or {}).items():
+    for concept, value in series_context.items():
         record[str(concept)] = value
 
     structure = series.get("structure") or {}
@@ -430,6 +453,24 @@ def resolve_series_binding(
     series_coordinates: dict[str, Scalar] = {}
     seen_keys: dict[tuple[tuple[str, Scalar], ...], str] = {}
 
+    try:
+        coerced_series_context = _coerce_series_context(series, concept_scheme=concept_scheme)
+    except ValueError as exc:
+        return {
+            "series_id": series_id,
+            "ok": False,
+            "requires_address": True,
+            "leaves": [],
+            "issues": [
+                make_issue(
+                    "error",
+                    "series_context_coercion_failed",
+                    str(exc),
+                    series_id=series_id,
+                )
+            ],
+        }
+
     build_record = _build_input_record if direction == "input" else _build_output_record
 
     for address in addresses:
@@ -501,6 +542,7 @@ def resolve_series_binding(
             coordinates=coordinates,
             series=series,
             measure_concept=measure_concept,
+            series_context=coerced_series_context,
         )
         leaves.append(
             {

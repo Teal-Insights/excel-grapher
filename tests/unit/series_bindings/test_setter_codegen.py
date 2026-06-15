@@ -544,6 +544,7 @@ def test_emit_setters_block_includes_datetime_aliases_when_needed(tmp_path: Path
     }
     code = "\n".join(emit_setters_block(graph, wb_path, bindings))
     assert "import datetime" in code
+    assert code.count("import datetime") == 1
     assert "Scalar = str | int | float | bool | datetime.datetime | None" in code
 
 

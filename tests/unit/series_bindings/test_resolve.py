@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 import xlsxwriter
 
 from excel_grapher.grapher import create_dependency_graph
+from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings import (
     expand_data_range,
     load_series_bindings,
@@ -462,3 +464,122 @@ def test_resolve_datetime_bind_failure_is_reported(tmp_path: Path) -> None:
     )
     assert resolved["ok"] is False
     assert any(i["code"] == "bind_resolution_failed" for i in resolved["issues"])
+
+
+def _scalar_series_with_series_context(
+    *,
+    series_context: dict[str, object],
+    wb_path: Path,
+) -> tuple[DependencyGraph, dict[str, Any]]:
+    graph = create_dependency_graph(wb_path, ["Sheet1!B2"], load_values=True)
+    series: dict[str, Any] = {
+        "id": "context_series",
+        "sheet": "Sheet1",
+        "data_range": "Sheet1!B2",
+        "layout": "scalar",
+        "setter": {"name": "set_context_series"},
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "float",
+                "bind": {"kind": "data_cell", "read": "float"},
+            },
+        },
+        "series_context": series_context,
+    }
+    return graph, series
+
+
+def test_resolve_series_context_datetime_from_iso_string(tmp_path: Path) -> None:
+    wb_path = tmp_path / "scalar.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number("B2", 1.0)
+    wb.close()
+
+    graph, series = _scalar_series_with_series_context(
+        series_context={"REPORT_DATE": "2024-06-30"},
+        wb_path=wb_path,
+    )
+    concept_scheme = {
+        "id": "context",
+        "concepts": [{"id": "REPORT_DATE", "dtype": "datetime"}],
+    }
+
+    resolved = resolve_series_binding(
+        graph,
+        wb_path,
+        series,
+        concept_scheme=concept_scheme,
+    )
+    assert resolved["ok"] is True
+    assert resolved["leaves"][0]["record"]["REPORT_DATE"] == datetime(2024, 6, 30)
+
+
+def test_resolve_series_context_bool_from_string(tmp_path: Path) -> None:
+    wb_path = tmp_path / "scalar.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number("B2", 1.0)
+    wb.close()
+
+    graph, series = _scalar_series_with_series_context(
+        series_context={"IS_ACTIVE": "TRUE"},
+        wb_path=wb_path,
+    )
+    concept_scheme = {
+        "id": "context",
+        "concepts": [{"id": "IS_ACTIVE", "dtype": "bool"}],
+    }
+
+    resolved = resolve_series_binding(
+        graph,
+        wb_path,
+        series,
+        concept_scheme=concept_scheme,
+    )
+    assert resolved["ok"] is True
+    assert resolved["leaves"][0]["record"]["IS_ACTIVE"] is True
+
+
+def test_resolve_series_context_without_dtype_preserves_strings(tmp_path: Path) -> None:
+    wb_path = tmp_path / "scalar.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number("B2", 1.0)
+    wb.close()
+
+    graph, series = _scalar_series_with_series_context(
+        series_context={"INDICATOR": "Rec"},
+        wb_path=wb_path,
+    )
+
+    resolved = resolve_series_binding(graph, wb_path, series)
+    assert resolved["ok"] is True
+    assert resolved["leaves"][0]["record"]["INDICATOR"] == "Rec"
+
+
+def test_resolve_series_context_invalid_datetime_fails(tmp_path: Path) -> None:
+    wb_path = tmp_path / "scalar.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number("B2", 1.0)
+    wb.close()
+
+    graph, series = _scalar_series_with_series_context(
+        series_context={"REPORT_DATE": "not-a-date"},
+        wb_path=wb_path,
+    )
+    concept_scheme = {
+        "id": "context",
+        "concepts": [{"id": "REPORT_DATE", "dtype": "datetime"}],
+    }
+
+    resolved = resolve_series_binding(
+        graph,
+        wb_path,
+        series,
+        concept_scheme=concept_scheme,
+    )
+    assert resolved["ok"] is False
+    assert any(i["code"] == "series_context_coercion_failed" for i in resolved["issues"])
