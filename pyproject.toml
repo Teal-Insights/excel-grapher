@@ -44,6 +44,9 @@ all = [
 Homepage = "https://github.com/Teal-Insights/excel-grapher"
 Repository = "https://github.com/Teal-Insights/excel-grapher"
 
+[project.scripts]
+excel-grapher = "excel_grapher.cli:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

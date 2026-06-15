@@ -340,6 +340,22 @@ results = compute_all(ctx=ctx)
 
 For modular package exports, generated series setters are emitted from the package entrypoint and re-exported from the package root, alongside `make_context` and `compute_all`.
 
+## Command-line validation
+
+The package ships a top-level CLI entry point for sidecar validation while authoring bindings:
+
+```bash
+excel-grapher bindings validate lic_inputs.xlsx
+excel-grapher bindings validate lic_inputs.xlsx --json
+excel-grapher bindings validate lic_inputs.xlsx --smoke-test
+excel-grapher bindings validate lic_inputs.xlsx --smoke-test --emit-dir ./generated
+```
+
+By default the command resolves `lic_inputs.bindings.yaml` or a `lic_inputs.bindings/` shard
+directory colocated with the workbook. Use `--bindings` to override. Validation-only is the default;
+`--smoke-test` generates modular export code and exercises every declared `set_*` / `compute_*`
+function; `--emit-dir` writes generated module files to disk.
+
 ## Design note
 
 Series bindings are framed around **input series** derived from binding manifests, not independently

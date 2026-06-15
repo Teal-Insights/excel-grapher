@@ -1,0 +1,74 @@
+"""Tests for series binding workflow helpers."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from excel_grapher.series_bindings import SeriesBindingsLoadError
+from excel_grapher.series_bindings.workflow import (
+    resolve_bindings_path,
+    run_binding_checks,
+    validate_bindings_workbook,
+)
+from tests.integration.user_flows.utils import write_ffv2_workbook
+
+FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
+
+
+def test_resolve_bindings_path_uses_colocated_yaml(tmp_path: Path) -> None:
+    workbook = tmp_path / "model.xlsx"
+    workbook.write_bytes(b"")
+    bindings = tmp_path / "model.bindings.yaml"
+    bindings.write_text("schema_version: '1.4.0'\nseries: []\n", encoding="utf-8")
+
+    assert resolve_bindings_path(workbook) == bindings
+
+
+def test_resolve_bindings_path_uses_shard_directory(tmp_path: Path) -> None:
+    workbook = tmp_path / "model.xlsx"
+    workbook.write_bytes(b"")
+    shard_dir = tmp_path / "model.bindings"
+    shard_dir.mkdir()
+    shard = shard_dir / "Inputs.bindings.yaml"
+    shard.write_text("schema_version: '1.4.0'\nseries: []\n", encoding="utf-8")
+
+    assert resolve_bindings_path(workbook) == shard_dir
+
+
+def test_resolve_bindings_path_raises_when_missing(tmp_path: Path) -> None:
+    workbook = tmp_path / "model.xlsx"
+    workbook.write_bytes(b"")
+
+    with pytest.raises(SeriesBindingsLoadError, match="No binding sidecar found"):
+        resolve_bindings_path(workbook)
+
+
+def test_validate_bindings_workbook_ffv2_fixture(tmp_path: Path) -> None:
+    workbook = tmp_path / "ffv2.xlsx"
+    write_ffv2_workbook(workbook)
+    bindings_path = FIXTURES / "ffv2.yaml"
+
+    result = validate_bindings_workbook(workbook, bindings_path)
+
+    assert result["report"]["ok"] is True
+    assert len(result["setters"]) == 5
+    assert len(result["computes"]) == 3
+
+
+def test_run_binding_checks_smoke_ffv2_fixture(tmp_path: Path) -> None:
+    workbook = tmp_path / "ffv2.xlsx"
+    write_ffv2_workbook(workbook)
+    bindings_path = FIXTURES / "ffv2.yaml"
+    module_dir = tmp_path / "bindings_module"
+
+    result = run_binding_checks(
+        workbook,
+        bindings_path,
+        module_dir=module_dir,
+        package_name="bindings_module",
+    )
+
+    assert "generated_files" in result
+    assert (module_dir / "__init__.py").is_file()

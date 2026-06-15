@@ -100,7 +100,8 @@ code = CodeGenerator(graph).generate(targets)
 ### Series bindings
 
 Optional sidecar manifests (`.bindings.yaml`) declare structured input/output APIs for **exported**
-code — `set_*` and `compute_*` functions over `Records`. See the
+code — `set_*` and `compute_*` functions over `Records`. Validate sidecars from the shell with
+`excel-grapher bindings validate`. See the
 [Series bindings guide](https://teal-insights.github.io/excel-grapher/user-guide/series-bindings.html)
 and [Code export](https://teal-insights.github.io/excel-grapher/user-guide/export.html) guide.
 
