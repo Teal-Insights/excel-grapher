@@ -11,7 +11,9 @@ from pathlib import Path
 from typing import Any
 
 from excel_grapher.series_bindings.load import SeriesBindingsLoadError
+from excel_grapher.series_bindings.schema import SeriesBindingsSchemaError
 from excel_grapher.series_bindings.smoke import BindingsSmokeError
+from excel_grapher.series_bindings.types import ValidationIssue, ValidationReport
 from excel_grapher.series_bindings.workflow import (
     generate_bindings_modules,
     resolve_bindings_path,
@@ -39,6 +41,12 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         "--json",
         action="store_true",
         help="Print the validation report as JSON",
+    )
+    validate_parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Print validation warnings (errors are always printed on failure)",
     )
     validate_parser.add_argument(
         "--smoke-test",
@@ -84,12 +92,16 @@ def cmd_validate(args: argparse.Namespace) -> int:
     except SeriesBindingsLoadError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    except SeriesBindingsSchemaError as exc:
+        print(f"Binding sidecar schema error:\n  {exc}", file=sys.stderr)
+        return 1
 
     report = result["report"]
     if args.json:
         print(json.dumps(report, indent=2, default=str))
     else:
         _print_summary(result)
+        _print_issues(report, include_warnings=args.verbose)
 
     if not report["ok"]:
         return 1
@@ -152,6 +164,22 @@ def _print_summary(result: Mapping[str, Any]) -> None:
     print(f"canonical_sha256={result['canonical_sha256']}")
     print(f"setters={result['setters']}")
     print(f"computes={result['computes']}")
+
+
+def _format_issue(issue: ValidationIssue) -> str:
+    location_parts: list[str] = []
+    if issue.get("series_id"):
+        location_parts.append(str(issue["series_id"]))
+    if issue.get("address"):
+        location_parts.append(str(issue["address"]))
+    location = ":".join(location_parts) if location_parts else "-"
+    return f"{issue['level']} [{issue['code']}] {location}: {issue['message']}"
+
+
+def _print_issues(report: ValidationReport, *, include_warnings: bool) -> None:
+    for issue in report["issues"]:
+        if issue["level"] == "error" or include_warnings:
+            print(_format_issue(issue))
 
 
 def _write_generated_files(result: Mapping[str, Any], output_dir: Path) -> None:

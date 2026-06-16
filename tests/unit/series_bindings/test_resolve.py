@@ -466,6 +466,55 @@ def test_resolve_datetime_bind_failure_is_reported(tmp_path: Path) -> None:
     assert any(i["code"] == "bind_resolution_failed" for i in resolved["issues"])
 
 
+def test_resolve_deduplicates_identical_bind_failures_across_cells(tmp_path: Path) -> None:
+    wb_path = tmp_path / "calendar.xlsx"
+    _write_datetime_header_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, ["Inputs!B2:C2"], load_values=True)
+    series = {
+        "id": "calendar_int_read",
+        "sheet": "Inputs",
+        "data_range": "Inputs!B2:C2",
+        "layout": "series",
+        "setter": {"name": "set_calendar_int_read"},
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "float",
+                "bind": {"kind": "data_cell", "read": "float"},
+            },
+            "dimensions": [
+                {
+                    "concept": "TIME_PERIOD",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "column_header", "header_row": 1, "read": "int"},
+                }
+            ],
+        },
+        "key": ["TIME_PERIOD"],
+    }
+    concept_scheme = {
+        "id": "calendar",
+        "concepts": [{"id": "TIME_PERIOD", "dtype": "datetime"}],
+    }
+
+    resolved = resolve_series_binding(
+        graph,
+        wb_path,
+        series,
+        concept_scheme=concept_scheme,
+    )
+
+    bind_issues = [
+        issue for issue in resolved["issues"] if issue["code"] == "bind_resolution_failed"
+    ]
+    assert resolved["ok"] is False
+    assert len(bind_issues) == 1
+    assert bind_issues[0]["address"] is None
+    assert "2 cells (Inputs!B2\u2013Inputs!C2)" in bind_issues[0]["message"]
+    assert "datetime.datetime" in bind_issues[0]["message"]
+
+
 def _scalar_series_with_series_context(
     *,
     series_context: dict[str, object],

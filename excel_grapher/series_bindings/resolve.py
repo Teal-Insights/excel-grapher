@@ -108,6 +108,43 @@ def _normalize_string(value: str, normalize: str) -> str:
     return value
 
 
+def _summarize_affected_addresses(addresses: list[str]) -> str:
+    if len(addresses) == 1:
+        return addresses[0]
+    return f"{len(addresses)} cells ({addresses[0]}\u2013{addresses[-1]})"
+
+
+def _bind_resolution_issues(
+    failures: dict[str, list[str]],
+    *,
+    series_id: str,
+) -> list[ResolutionIssue]:
+    issues: list[ResolutionIssue] = []
+    for message, addresses in failures.items():
+        if len(addresses) == 1:
+            issues.append(
+                make_issue(
+                    "error",
+                    "bind_resolution_failed",
+                    message,
+                    series_id=series_id,
+                    address=addresses[0],
+                )
+            )
+            continue
+        summary = _summarize_affected_addresses(addresses)
+        issues.append(
+            make_issue(
+                "error",
+                "bind_resolution_failed",
+                f"{message} (affects {summary})",
+                series_id=series_id,
+                address=None,
+            )
+        )
+    return issues
+
+
 def _execute_bind(
     bind: dict[str, Any],
     *,
@@ -479,6 +516,7 @@ def resolve_series_binding(
 
     build_record = _build_input_record if direction == "input" else _build_output_record
 
+    bind_failures: dict[str, list[str]] = {}
     for address in addresses:
         coordinates: dict[str, Scalar] = {}
         try:
@@ -530,15 +568,7 @@ def resolve_series_binding(
                     inferred_read_as=inferred,
                 )
         except (KeyError, ValueError, TypeError) as exc:
-            issues.append(
-                make_issue(
-                    "error",
-                    "bind_resolution_failed",
-                    str(exc),
-                    series_id=series_id,
-                    address=address,
-                )
-            )
+            bind_failures.setdefault(str(exc), []).append(address)
             continue
 
         key = _extract_key(coordinates, key_concepts)
@@ -573,6 +603,10 @@ def resolve_series_binding(
                 )
             else:
                 seen_keys[key_tuple] = address
+
+    issues.extend(
+        _bind_resolution_issues(bind_failures, series_id=series_id),
+    )
 
     layout = series.get("layout")
     if layout == "scalar" and not key_concepts and len(leaves) > 1:

@@ -342,7 +342,9 @@ For modular package exports, generated series setters are emitted from the packa
 
 ## Command-line validation
 
-The package ships a top-level CLI entry point for sidecar validation while authoring bindings:
+Full CLI reference: [Command-line interface](cli.qmd).
+
+Quick examples:
 
 ```bash
 excel-grapher bindings validate lic_inputs.xlsx
