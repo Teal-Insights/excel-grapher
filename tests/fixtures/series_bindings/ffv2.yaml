@@ -247,3 +247,71 @@ series:
     series_context:
       INDICATOR: Fantasy Score
     sdmx_notes: Fantasy points scored per game, keyed by game date.
+
+  - id: puka_week_1_stats
+    sheet: Sheet1
+    data_range: Sheet1!B3:Q3
+    layout: series
+    editable: true
+    input:
+      setter:
+        name: set_puka_week_1_stats
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 1
+            read: datetime
+      attributes:
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: COUNT
+          include_in_record: true
+    key:
+      - TIME_PERIOD
+    series_context:
+      INDICATOR: Week 1 Performance Stats
+    sdmx_notes: Performance stats in week 1, keyed by game date.
+    
+  - id: puka_week_1_fantasy_score
+    sheet: Sheet1
+    data_range: Sheet1!B18
+    layout: scalar
+    editable: false
+    output:
+      compute:
+        name: compute_puka_week_1_fantasy_score
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 1
+            read: datetime
+      attributes:
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: POINTS
+          include_in_record: true
+    key:
+      - TIME_PERIOD
+    series_context:
+      INDICATOR: Week 1 Fantasy Score
+    sdmx_notes: Fantasy score in week 1, keyed by game date.

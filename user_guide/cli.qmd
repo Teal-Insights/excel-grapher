@@ -1,0 +1,198 @@
+---
+title: "Command-line interface"
+guide-section: "Export & quality"
+---
+
+The `excel-grapher` command-line tool validates series-binding sidecars against workbooks,
+optionally smoke-tests generated setters and computes, and can write export modules to disk.
+It complements the Python APIs documented in [Series bindings](series-bindings.qmd).
+
+Run it from the project environment:
+
+```bash
+uv run excel-grapher --help
+uv run excel-grapher bindings --help
+uv run excel-grapher bindings validate --help
+```
+
+When the package is installed, `excel-grapher` is also available as a console script.
+
+## Command overview
+
+| Command | Purpose |
+|---------|---------|
+| `bindings validate` | Load a sidecar, build the dependency graph, and validate bindings against the workbook |
+
+More subcommands may be added over time; `excel-grapher --help` lists what is available in your
+installed version.
+
+## `bindings validate`
+
+Validate a workbook and its binding sidecar before export or CI.
+
+### Synopsis
+
+```bash
+excel-grapher bindings validate WORKBOOK [--bindings PATH] [--json] [-v]
+  [--smoke-test] [--emit-dir DIR] [--package-name NAME]
+```
+
+### Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `WORKBOOK` | Path to the `.xlsx` workbook (required). |
+| `--bindings PATH` | Binding sidecar **file** or **shard directory**. When omitted, the CLI looks for a colocated sidecar (see below). |
+| `--json` | Print the full validation `report` object as JSON (includes every issue). |
+| `-v`, `--verbose` | Print **warnings** in human-readable output. **Errors** are always printed when validation fails. |
+| `--smoke-test` | After a successful validation, generate binding modules and run setter/compute smoke checks. |
+| `--emit-dir DIR` | Write generated module files under `DIR` (see `--package-name`). Implied when combined with `--smoke-test` and an emit directory. |
+| `--package-name NAME` | Package directory name for smoke tests and emitted files (default: `bindings_module`). |
+
+Validation-only is the default: no code is generated unless you pass `--smoke-test` or `--emit-dir`.
+
+### Resolving the sidecar
+
+When `--bindings` is omitted, `bindings validate` tries, in order:
+
+1. `{workbook_stem}.bindings.yaml` next to the workbook
+2. `{workbook_stem}.bindings/` (directory of `*.bindings.yaml` shards)
+
+Pass `--bindings` explicitly when the sidecar lives elsewhere—for example a shared fixture:
+
+```bash
+uv run excel-grapher bindings validate examples/micro_workbooks/ffv2.xlsx \
+  --bindings tests/fixtures/series_bindings/ffv2.yaml
+```
+
+### Example: ffv2 game log
+
+The [ffv2](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/ffv2.xlsx)
+micro-workbook uses datetime column headers as `TIME_PERIOD` keys. With a valid sidecar:
+
+```bash
+uv run excel-grapher bindings validate examples/micro_workbooks/ffv2.xlsx \
+  --bindings tests/fixtures/series_bindings/ffv2.yaml
+```
+
+Successful validation prints a short summary on stdout:
+
+```text
+ok=True errors=0 warnings=0
+canonical_sha256=…
+setters=['set_puka_longest_reception', 'set_puka_receptions', …]
+computes=['compute_puka_avg_yards_per_reception', …]
+```
+
+Add `-v` to include warnings (for example `dtype_read_mismatch` when a bind `read` mode disagrees
+with a concept `dtype`):
+
+```bash
+uv run excel-grapher bindings validate examples/micro_workbooks/ffv2.xlsx \
+  --bindings tests/fixtures/series_bindings/ffv2.yaml -v
+```
+
+Use `--json` for machine-readable output (the same structure returned by
+`validate_series_bindings()`):
+
+```bash
+uv run excel-grapher bindings validate examples/micro_workbooks/ffv2.xlsx \
+  --bindings tests/fixtures/series_bindings/ffv2.yaml --json
+```
+
+Each issue in the JSON report has `level`, `code`, `message`, and optional `series_id` and
+`address` fields.
+
+### Smoke test and code generation
+
+After validation succeeds, `--smoke-test` generates modular binding code, imports each declared
+`set_*` and `compute_*` function, and runs lightweight round-trip checks:
+
+```bash
+uv run excel-grapher bindings validate lic_inputs.xlsx --smoke-test
+```
+
+To persist generated files:
+
+```bash
+uv run excel-grapher bindings validate lic_inputs.xlsx \
+  --smoke-test --emit-dir ./generated --package-name lic_bindings
+```
+
+Without `--smoke-test`, `--emit-dir` alone writes modules after validation:
+
+```bash
+uv run excel-grapher bindings validate lic_inputs.xlsx --emit-dir ./generated
+```
+
+When smoke checks pass, the CLI prints:
+
+```text
+All setter and compute functions passed smoke checks.
+```
+
+### Error output
+
+Failures fall into two layers:
+
+**Sidecar schema errors** — the YAML/JSON manifest does not satisfy the JSON Schema (missing
+required fields, invalid setter names, and so on). These are reported on **stderr** before workbook
+validation runs:
+
+```text
+Binding sidecar schema error:
+  series[8] "puka_week_1_fantasy_score": missing required field `key` — Add a key list naming the dimension concepts that identify each record.
+```
+
+Locations use the series index and `id` from the sidecar so you can jump straight to the offending
+entry.
+
+**Workbook validation errors** — the sidecar parses, but coordinate resolution or binding rules
+fail against the live workbook. These appear as human-readable lines on **stdout** (or inside
+`issues[]` with `--json`):
+
+```text
+error [bind_resolution_failed] puka_targets:Sheet1!A4: could not convert string to float: 'Tgts'
+```
+
+When the same root cause affects many cells (for example a `read: float` bind over a row that
+includes a text label), identical messages are **aggregated** into one issue with a cell count and
+range rather than one line per cell.
+
+Warnings such as `dtype_read_mismatch` do not fail validation by themselves; use `-v` to see them in
+text mode.
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Validation succeeded (and smoke tests passed, if requested). |
+| `1` | Workbook or sidecar not found, schema error, validation failure, or smoke-test failure. |
+| `2` | Unknown subcommand or invalid CLI usage. |
+
+### Related Python APIs
+
+The CLI wraps the same workflow as:
+
+```python
+from pathlib import Path
+
+from excel_grapher.series_bindings import validate_bindings_workbook, run_binding_checks
+
+workbook = Path("lic_inputs.xlsx")
+bindings_path = workbook.with_suffix(".bindings.yaml")
+
+result = validate_bindings_workbook(workbook, bindings_path)
+assert result["report"]["ok"]
+
+run_binding_checks(
+    workbook,
+    bindings_path,
+    module_dir=Path("./generated/lic_bindings"),
+    package_name="lic_bindings",
+    smoke_test=True,
+)
+```
+
+See [Series bindings](series-bindings.qmd) for manifest authoring, bind kinds, and export
+integration.

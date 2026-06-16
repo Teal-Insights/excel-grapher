@@ -87,6 +87,23 @@ def test_schema_rejects_missing_series() -> None:
         validate_bindings_document({"schema_version": "1.0.0"})
 
 
+def test_schema_error_for_missing_key_names_series_id() -> None:
+    doc = _scalar_series_doc()
+    doc["series"][0].pop("key")
+    doc["series"][0]["id"] = "puka_week_1_fantasy_score"
+
+    with pytest.raises(
+        SeriesBindingsSchemaError,
+        match=r'series\[0\] "puka_week_1_fantasy_score": missing required field `key`',
+    ):
+        validate_bindings_document(doc)
+
+    errors = format_schema_errors(doc)
+    assert errors[0].startswith(
+        'series[0] "puka_week_1_fantasy_score": missing required field `key`'
+    )
+
+
 def test_schema_rejects_bad_setter_name() -> None:
     doc = {
         "schema_version": "1.0.0",
