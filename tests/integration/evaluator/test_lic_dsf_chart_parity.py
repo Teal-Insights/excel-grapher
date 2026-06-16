@@ -3,7 +3,7 @@
 Builds graphs with `use_cached_dynamic_refs=True` and asserts `FormulaEvaluator`
 matches last-saved workbook numbers for figure and stress ranges (evaluator ↔ Excel).
 Live recalculation is covered elsewhere; strict dynamic-ref resolution without cache
-remains tracked separately via `xfail` until `DynamicRefConfig` is complete.
+remains tracked separately via `xfail` (issue #255).
 """
 
 from __future__ import annotations
@@ -72,10 +72,7 @@ def test_lic_dsf_chart_shortlist_evaluator_matches_excel_cache(
 @pytest.mark.xfail(
     raises=DynamicRefError,
     strict=True,
-    reason=(
-        "Strict dynamic-ref resolution for the chart slice is incomplete; "
-        "remove xfail when DynamicRefConfig covers LIC-DSF."
-    ),
+    reason="Issue #255: strict dynamic-ref resolution for the chart slice is incomplete.",
 )
 def test_lic_dsf_chart_shortlist_without_cached_dynamic_refs_raises() -> None:
     if not WORKBOOK_PATH.exists():
