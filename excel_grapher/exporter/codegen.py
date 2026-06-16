@@ -161,6 +161,79 @@ class CodeGenerator:
         self._used_graph_closure = False
         self._formula_cell_address = None
 
+    def _public_graph(self) -> DependencyGraph | GraphLike:
+        original = getattr(self.graph, "original_graph", None)
+        if original is not None:
+            return cast("DependencyGraph | GraphLike", original)
+        return self.graph
+
+    def _projection_manifest(self):
+        return getattr(self.graph, "manifest", None)
+
+    def _map_address_to_projected(self, address: str) -> str:
+        manifest = self._projection_manifest()
+        normalized = normalize_address(address)
+        if manifest is None:
+            return normalized
+        return manifest.map_to_projected(normalized)
+
+    def _export_addresses_with_aliases(self, export_addresses: Iterable[str]) -> list[str]:
+        addresses = [normalize_address(addr) for addr in export_addresses]
+        manifest = self._projection_manifest()
+        if manifest is None:
+            return addresses
+        alias_set = manifest.public_aliases_for_export(addresses)
+        if not alias_set:
+            return addresses
+        merged = list(addresses)
+        seen = set(addresses)
+        for alias in sorted(alias_set):
+            if alias not in seen:
+                merged.append(alias)
+                seen.add(alias)
+        return merged
+
+    def _emit_projection_alias_lines(
+        self,
+        export_addresses: Iterable[str],
+        public_targets: Iterable[str],
+    ) -> list[str]:
+        manifest = self._projection_manifest()
+        if manifest is None or not manifest.removed_to_replacement:
+            return []
+        export_set = frozenset(normalize_address(addr) for addr in export_addresses)
+        alias_set = set(manifest.public_aliases_for_export(export_set))
+        alias_set.update(
+            normalize_address(target)
+            for target in public_targets
+            if normalize_address(target) in manifest.removed_to_replacement
+        )
+        if not alias_set:
+            return []
+        lines = ["# --- Projection public address aliases ---", ""]
+        for public_addr in sorted(alias_set):
+            replacement = normalize_address(manifest.removed_to_replacement[public_addr])
+            public_fn = address_to_python_name(public_addr)
+            replacement_node = self.graph.get_node(replacement)
+            if replacement_node is not None and replacement_node.formula is not None:
+                replacement_fn = address_to_python_name(replacement)
+                lines.extend(
+                    [
+                        f"def {public_fn}(ctx):",
+                        f"    return xl_eval(ctx, {repr(replacement)}, {replacement_fn})",
+                        "",
+                    ]
+                )
+            else:
+                lines.extend(
+                    [
+                        f"def {public_fn}(ctx):",
+                        f"    return xl_cell(ctx, {repr(replacement)})",
+                        "",
+                    ]
+                )
+        return lines
+
     def _graph_sheetnames(self, *, targets: Sequence[str] | None = None) -> list[str]:
         sheet_order = getattr(self.graph, "sheet_order", None)
         if sheet_order:
@@ -209,8 +282,9 @@ class CodeGenerator:
     def _named_range_maps(
         self,
     ) -> tuple[dict[str, tuple[str, str]], dict[str, tuple[str, str, str]]]:
-        named_ranges = getattr(self.graph, "named_ranges", None) or {}
-        named_range_ranges = getattr(self.graph, "named_range_ranges", None) or {}
+        public_graph = self._public_graph()
+        named_ranges = getattr(public_graph, "named_ranges", None) or {}
+        named_range_ranges = getattr(public_graph, "named_range_ranges", None) or {}
         return named_ranges, named_range_ranges
 
     def _expand_target_tokens(self, targets: Sequence[str]) -> list[str]:
@@ -345,10 +419,10 @@ class CodeGenerator:
         from excel_grapher.series_bindings.bindings_codegen import emit_series_bindings_block
 
         return emit_series_bindings_block(
-            cast("DependencyGraph", self.graph),
+            cast("DependencyGraph", self._public_graph()),
             workbook,
             bindings,
-            export_addresses=export_addresses,
+            export_addresses=self._export_addresses_with_aliases(export_addresses),
             series_docstring_callback=series_docstring_callback,
             docstring_renderer=docstring_renderer,
         )
@@ -362,7 +436,9 @@ class CodeGenerator:
         """Derive input-series metadata from explicit series bindings."""
         from excel_grapher.series_bindings import derive_input_series
 
-        return derive_input_series(cast("DependencyGraph", self.graph), bindings, workbook=workbook)
+        return derive_input_series(
+            cast("DependencyGraph", self._public_graph()), bindings, workbook=workbook
+        )
 
     @staticmethod
     def _emitted_function_names(lines: Sequence[str]) -> list[str]:
@@ -1738,6 +1814,8 @@ class CodeGenerator:
         # Export formula cell implementations and a resolver.
         lines.append("# --- Formula cell functions ---\n")
         lines.extend(cell_code_lines)
+        alias_lines = self._emit_projection_alias_lines(_all_cells, normalized_targets)
+        lines.extend(alias_lines)
         lines.extend(
             self._emit_resolver_lines(parts["blank_rects"] if parts["blank_rects"] else None)
         )
@@ -1860,8 +1938,9 @@ class CodeGenerator:
 
         runtime_py = runtime_code.rstrip() + "\n"
 
+        alias_lines = self._emit_projection_alias_lines(_all_cells, normalized_targets)
         internals_import_names = self._internals_runtime_import_names(
-            parts["used_xl_functions"], cell_code_lines
+            parts["used_xl_functions"], cell_code_lines + alias_lines
         )
         runtime_import_block = self._format_from_runtime_import(internals_import_names)
         internals_lines: list[str] = ["from __future__ import annotations", ""]
@@ -1870,6 +1949,7 @@ class CodeGenerator:
             internals_lines.append("")
         internals_lines.append("# --- Formula cell functions ---\n")
         internals_lines.extend(cell_code_lines)
+        internals_lines.extend(alias_lines)
         internals_lines.extend(
             self._emit_resolver_lines(parts["blank_rects"] if parts["blank_rects"] else None)
         )
@@ -2127,7 +2207,7 @@ class CodeGenerator:
     def _resolve_targets(self, targets: Sequence[str] | None) -> list[str]:
         if targets is not None:
             return self._expand_target_tokens(targets)
-        target_keys = getattr(self.graph, "target_keys", None)
+        target_keys = getattr(self._public_graph(), "target_keys", None)
         inferred_targets: list[str] = []
         if callable(target_keys):
             inferred_targets = list(target_keys())
@@ -2144,6 +2224,7 @@ class CodeGenerator:
         evaluation order as the export closure. For other GraphLike implementations, it falls
         back to the CodeGenerator AST-based dependency walk.
         """
+        projected_targets = [self._map_address_to_projected(t) for t in targets]
         # Prefer graph-driven closure when excel_grapher provides an evaluation order AND
         # has dependency edges populated. Many unit tests build a DependencyGraph with nodes
         # only (no edges); for those we must fall back to AST-based dependency discovery.
@@ -2152,13 +2233,13 @@ class CodeGenerator:
             # Heuristic: only use graph edges if any target has at least one dependency edge.
             # (Graphs constructed via create_dependency_graph(...) will satisfy this for
             # non-leaf targets; test graphs that only add nodes will not.)
-            has_edges = any(bool(self.graph.get_dependencies(t)) for t in targets)
+            has_edges = any(bool(self.graph.get_dependencies(t)) for t in projected_targets)
             if not has_edges:
-                return self._collect_all_cells_via_ast(targets)
+                return self._collect_all_cells_via_ast(projected_targets)
 
             self._used_graph_closure = True
             closure: set[str] = set()
-            stack = list(targets)
+            stack = list(projected_targets)
             while stack:
                 addr = normalize_address(stack.pop())
                 if addr in closure:
@@ -2195,7 +2276,7 @@ class CodeGenerator:
                     out.append(addr)
             return out
 
-        return self._collect_all_cells_via_ast(targets)
+        return self._collect_all_cells_via_ast(projected_targets)
 
     def _collect_all_cells_via_ast(self, targets: list[str]) -> list[str]:
         """AST-based dependency walk (works for GraphLike test doubles)."""

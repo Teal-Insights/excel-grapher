@@ -64,7 +64,7 @@ def _networkx_value_type(node: Node | NodeView) -> str:
 
 
 def to_networkx(
-    graph: DependencyGraph,
+    graph: Any,
     *,
     include_formula_on_nodes: bool = True,
     max_formula_length: int | None = 120,

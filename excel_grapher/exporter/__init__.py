@@ -33,6 +33,15 @@ from .lightweight_viz import (
     WebVizPayload,
     to_web_viz_payload,
 )
+from .projection import (
+    CollapsedGroup,
+    FormulaRewrite,
+    IdentityTransitCompression,
+    ProjectedNodeSnapshot,
+    ProjectionManifest,
+    ProjectionResult,
+    apply_projection,
+)
 from .web_viz_layout import (
     LAYOUT_FORCEATLAS2,
     LAYOUT_GRAPHVIZ_DOT,
@@ -52,6 +61,13 @@ __all__ = [
     "CodeGenerator",
     "WebVizPayload",
     "to_web_viz_payload",
+    "CollapsedGroup",
+    "FormulaRewrite",
+    "IdentityTransitCompression",
+    "ProjectionManifest",
+    "ProjectionResult",
+    "ProjectedNodeSnapshot",
+    "apply_projection",
     "FieldDoc",
     "GoogleSeriesDocstringRenderer",
     "NumpySeriesDocstringRenderer",

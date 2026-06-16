@@ -109,15 +109,26 @@ Examples in the current API:
 
 Use direct callables only for local instrumentation hooks that are not reusable plugin choices, such as `NodeHook` graph build hooks. Use named registries for behavior that users may want to list, document, select from config, or share across workflows.
 
-### Export projection transforms (planned)
+### Graph projection for export
 
-The upcoming `ExportTransform` / projection-transform API should follow the same pattern:
+Projections build artifact-specific views of the canonical graph without mutating it.
+`IdentityTransitCompression().project(graph)` returns a `ProjectionResult` facade that
+reads like the projected graph and carries a durable `ProjectionManifest`:
 
-- Define an `ExportTransform` protocol and an `ExportTransformSpec` alias (`str | ExportTransform`).
-- Accept direct transform objects/callables in Python APIs (`CodeGenerator.generate(..., transform=...)`).
-- Expose built-in transforms (e.g. `IdentityTransitReducer`) as importable classes and stable string IDs.
-- Provide `register_export_transform`, `list_export_transforms`, `resolve_export_transform`, and `run_export_transform` when config/CLI selection is needed.
-- Use `replace=True` and `unregister_export_transform` for the same test/bootstrap semantics as other registries.
+- `removed_to_replacement` public aliases
+- `retained_to_collapsed_sources` and ordered `CollapsedGroup` records
+- formula rewrites and node snapshots for later subgraph compression or Python refactoring
+
+Pass the projection directly to exporters:
+
+```python
+projection = IdentityTransitCompression().project(graph)
+CodeGenerator(projection).generate_modules(...)
+to_web_viz_payload(to_networkx(projection))
+```
+
+A future registry (`ExportTransformSpec`, `register_export_transform`, etc.) may follow the
+same pattern as web viz layouts when config-driven projection selection is needed.
 
 ### Alignment status
 
