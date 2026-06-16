@@ -53,8 +53,8 @@ def test_validate_bindings_workbook_ffv2_fixture(tmp_path: Path) -> None:
     result = validate_bindings_workbook(workbook, bindings_path)
 
     assert result["report"]["ok"] is True
-    assert len(result["setters"]) == 5
-    assert len(result["computes"]) == 3
+    assert len(result["setters"]) == 6
+    assert len(result["computes"]) == 4
 
 
 def test_run_binding_checks_smoke_ffv2_fixture(tmp_path: Path) -> None:

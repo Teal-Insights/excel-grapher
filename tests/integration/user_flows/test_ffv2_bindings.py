@@ -51,10 +51,12 @@ def test_ffv2_all_setters_and_computes(
         "set_puka_receptions",
         "set_puka_targets",
         "set_puka_touchdowns",
+        "set_puka_week_1_stats",
         "set_puka_yards",
     ]
     assert result["computes"] == [
         "compute_puka_avg_yards_per_reception",
         "compute_puka_fantasy_score",
+        "compute_puka_week_1_fantasy_score",
         "compute_touchdowns",
     ]

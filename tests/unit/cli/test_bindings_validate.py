@@ -192,9 +192,14 @@ def test_main_schema_error_is_human_readable(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    import yaml
+
     workbook = tmp_path / "ffv2.xlsx"
     write_ffv2_workbook(workbook)
-    bindings = FIXTURES / "ffv2.yaml"
+    bindings = tmp_path / "missing_key.yaml"
+    document = yaml.safe_load((FIXTURES / "ffv2.yaml").read_text(encoding="utf-8"))
+    document["series"][-1].pop("key")
+    bindings.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
 
     exit_code = main(
         [
