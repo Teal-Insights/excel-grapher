@@ -384,7 +384,6 @@ site_url: "https://teal-insights.github.io/excel-grapher/"
 # - patch_great_docs_post_render.py: UTF-8 stdout on Windows
 # - build_workflow.py: live workflow graph (ISSUE_READ_PAT in CI)
 pre_render:
-  - scripts/patch_great_docs_post_render.py
   - scripts/build_workflow.py
 #
 # On Windows, also use UTF-8 for the great-docs CLI itself:
