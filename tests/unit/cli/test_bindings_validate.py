@@ -21,6 +21,49 @@ def test_main_missing_workbook(tmp_path: Path) -> None:
     assert exit_code == 1
 
 
+def test_main_validate_bindings_shard_directory(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import yaml
+
+    workbook = tmp_path / "ffv2.xlsx"
+    write_ffv2_workbook(workbook)
+    document = yaml.safe_load((FIXTURES / "ffv2.yaml").read_text(encoding="utf-8"))
+    shard_dir = tmp_path / "ffv2.bindings"
+    shard_dir.mkdir()
+    midpoint = len(document["series"]) // 2
+    for name, chunk in (
+        ("inputs.bindings.yaml", document["series"][:midpoint]),
+        ("outputs.bindings.yaml", document["series"][midpoint:]),
+    ):
+        shard = {
+            "schema_version": document["schema_version"],
+            "workbook": document["workbook"],
+            "concept_scheme": document["concept_scheme"],
+            "series": chunk,
+        }
+        (shard_dir / name).write_text(yaml.safe_dump(shard, sort_keys=False), encoding="utf-8")
+
+    exit_code = main(
+        [
+            "bindings",
+            "validate",
+            str(workbook),
+            "--bindings",
+            "ffv2.bindings",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+    assert "ok=True" in captured.out
+    assert (
+        len(yaml.safe_load((FIXTURES / "ffv2.yaml").read_text(encoding="utf-8"))["series"])
+        > midpoint
+    )
+
+
 def test_main_validate_ffv2_fixture(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     workbook = tmp_path / "ffv2.xlsx"
     write_ffv2_workbook(workbook)

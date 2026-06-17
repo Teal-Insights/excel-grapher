@@ -11,7 +11,7 @@ from typing import Any, Literal
 import fastpyxl
 import fastpyxl.utils.cell
 
-from excel_grapher.core.address_keys import format_key, parse_address, quote_sheet_if_needed
+from excel_grapher.core.address_keys import format_key, parse_address
 from excel_grapher.core.address_keys import normalize_key as normalize_address
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings.coerce import coerce_constant, coerce_scalar
@@ -172,11 +172,10 @@ def _execute_bind(
         return coerce_scalar(raw, read_as)
 
     sheet, col, row = _parse_data_cell(data_address)
-    quoted_sheet = quote_sheet_if_needed(sheet)
 
     if kind == "column_header":
         header_row = int(bind["header_row"])
-        header_address = format_key(quoted_sheet, f"{col}{header_row}")
+        header_address = format_key(sheet, f"{col}{header_row}")
         raw = _read_cell_value(graph, reader, header_address)
         if read_as in {"auto", "string"} and isinstance(raw, str):
             return _normalize_string(raw, normalize)
@@ -189,7 +188,7 @@ def _execute_bind(
 
     if kind == "row_label":
         label_column = str(bind["label_column"])
-        label_address = format_key(quoted_sheet, f"{label_column}{row}")
+        label_address = format_key(sheet, f"{label_column}{row}")
         raw = _read_cell_value(graph, reader, label_address)
         if read_as in {"auto", "string"} and isinstance(raw, str):
             return _normalize_string(raw, normalize)
