@@ -1,0 +1,50 @@
+Workbook: /home/sravan/excel-grapher/examples/lic_dsf/data/lic-dsf-template-2025-08-12.xlsm
+Formula cells: 199,400
+Unique functions: 44
+
+Function                  Count  
+----------------------------------
+IF                       68,286  
+IFERROR                  11,434  
+ISNUMBER                 11,423  
+SUM                       8,728  
+CHOOSE                    8,240  
+MATCH                     7,920  
+NPV                       6,680  
+INDEX                     6,312  
+AND                       3,251  
+SUMPRODUCT                1,695  
+ROW                         966  
+OFFSET                      957  
+NA                          824  
+VLOOKUP                     684  
+TEXT                        401  
+AVERAGE                     307  
+NORMDIST                    252  
+ISBLANK                     203  
+RANK                        189  
+MAX                         181  
+ROUNDDOWN                   142  
+OR                          139  
+ISERROR                     118  
+CONCATENATE                 116  
+COUNT                        64  
+HLOOKUP                      63  
+COUNTIF                      50  
+LARGE                        50  
+VALUE                        32  
+STDEV                        28  
+MIN                          24  
+LEFT                         21  
+XLOOKUP                      17  
+NUMBERVALUE                  15  
+IFNA                         15  
+ROUND                        13  
+MID                           4  
+COLUMN                        4  
+RIGHT                         4  
+ISTEXT                        4  
+ADDRESS                       2  
+ISNA                          1  
+COLUMNS                       1  
+COUNTA                        1  
