@@ -1,0 +1,292 @@
+schema_version: 1.4.0
+workbook: ffv3_large.xlsx
+concept_scheme:
+  id: player_game_log
+  concepts:
+  - id: GAME_WEEK
+    dtype: string
+    description: Game week label (W1-W18, PO1-PO3) from column A.
+  - id: GAME_DATE
+    dtype: string
+    description: Game date text from column B (vertical matrix key).
+  - id: INDICATOR
+    dtype: string
+    description: Stat column header from row 3 (horizontal matrix key).
+  - id: TOTAL_PHASE
+    dtype: string
+    description: REG SEASON TOTALS or PLAYOFF TOTALS row label from column A.
+series:
+- id: p_nacua_game_date
+  sheet: WR - P.Nacua
+  data_range: WR - P.Nacua!B4:WR - P.Nacua!B24
+  layout: series
+  editable: true
+  input:
+    setter:
+      name: set_p_nacua_game_date
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: string
+      bind:
+        kind: data_cell
+        read: string
+    dimensions:
+    - concept: GAME_WEEK
+      role: key
+      scope: cell
+      bind:
+        kind: row_label
+        label_column: A
+        read: string
+  key:
+  - GAME_WEEK
+  series_context:
+    PLAYER: P. Nacua
+    POSITION: WR
+    INDICATOR: Date
+  sdmx_notes: Game date input column (WR - P.Nacua!B4:B24), keyed by week label in column A.
+- id: p_nacua_game_result
+  sheet: WR - P.Nacua
+  data_range: WR - P.Nacua!D4:WR - P.Nacua!D24
+  layout: series
+  editable: true
+  input:
+    setter:
+      name: set_p_nacua_game_result
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: string
+      bind:
+        kind: data_cell
+        read: string
+    dimensions:
+    - concept: GAME_WEEK
+      role: key
+      scope: cell
+      bind:
+        kind: row_label
+        label_column: A
+        read: string
+  key:
+  - GAME_WEEK
+  series_context:
+    PLAYER: P. Nacua
+    POSITION: WR
+    INDICATOR: Result
+  sdmx_notes: Win/loss result input column (WR - P.Nacua!D4:D24), keyed by week label in column A.
+- id: p_nacua_reg_season_stats
+  sheet: WR - P.Nacua
+  data_range: WR - P.Nacua!E4:WR - P.Nacua!H20
+  layout: matrix
+  editable: true
+  input:
+    setter:
+      name: set_p_nacua_reg_season_stats
+  structure:
+    measure: &id001
+      concept: OBS_VALUE
+      dtype: string
+      bind:
+        kind: data_cell
+        read: auto
+    dimensions:
+    - concept: GAME_DATE
+      role: key
+      scope: cell
+      bind:
+        kind: row_label
+        label_column: B
+        read: string
+    - concept: INDICATOR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 3
+        read: string
+  key:
+  - GAME_DATE
+  - INDICATOR
+  series_context:
+    PLAYER: P. Nacua
+    POSITION: WR
+    PHASE: Regular Season
+  sdmx_notes: Regular-season stat matrix (WR - P.Nacua!E4:H20).
+  notes: Matrix fixture — vertical=date (column B), horizontal=statistic (row 3).
+- id: p_nacua_playoff_stats
+  sheet: WR - P.Nacua
+  data_range: WR - P.Nacua!E22:WR - P.Nacua!H24
+  layout: matrix
+  editable: true
+  input:
+    setter:
+      name: set_p_nacua_playoff_stats
+  structure:
+    measure: *id001
+    dimensions:
+    - concept: GAME_DATE
+      role: key
+      scope: cell
+      bind:
+        kind: row_label
+        label_column: B
+        read: string
+    - concept: INDICATOR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 3
+        read: string
+  key:
+  - GAME_DATE
+  - INDICATOR
+  series_context:
+    PLAYER: P. Nacua
+    POSITION: WR
+    PHASE: Playoffs
+  sdmx_notes: Playoff stat matrix (WR - P.Nacua!E22:H24).
+  notes: Matrix fixture — vertical=date (column B), horizontal=statistic (row 3).
+- id: p_nacua_reg_fantasy_score
+  sheet: WR - P.Nacua
+  data_range: WR - P.Nacua!I4:WR - P.Nacua!I20
+  layout: matrix
+  editable: false
+  output:
+    compute:
+      name: compute_p_nacua_reg_fantasy_score
+  structure:
+    measure: &id002
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: GAME_DATE
+      role: key
+      scope: cell
+      bind:
+        kind: row_label
+        label_column: B
+        read: string
+    - concept: INDICATOR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 3
+        read: string
+  key:
+  - GAME_DATE
+  - INDICATOR
+  series_context:
+    PLAYER: P. Nacua
+    POSITION: WR
+    INDICATOR: Fantasy Score
+    PHASE: Regular Season
+  sdmx_notes: Regular-season fantasy score (WR - P.Nacua!I4:I20).
+  notes: Matrix fixture — vertical=date (column B), horizontal=statistic (row 3).
+- id: p_nacua_playoff_fantasy_score
+  sheet: WR - P.Nacua
+  data_range: WR - P.Nacua!I22:WR - P.Nacua!I24
+  layout: matrix
+  editable: false
+  output:
+    compute:
+      name: compute_p_nacua_playoff_fantasy_score
+  structure:
+    measure: *id002
+    dimensions:
+    - concept: GAME_DATE
+      role: key
+      scope: cell
+      bind:
+        kind: row_label
+        label_column: B
+        read: string
+    - concept: INDICATOR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 3
+        read: string
+  key:
+  - GAME_DATE
+  - INDICATOR
+  series_context:
+    PLAYER: P. Nacua
+    POSITION: WR
+    INDICATOR: Fantasy Score
+    PHASE: Playoffs
+  sdmx_notes: Playoff fantasy score (WR - P.Nacua!I22:I24).
+  notes: Matrix fixture — vertical=date (column B), horizontal=statistic (row 3).
+- id: p_nacua_reg_season_totals
+  sheet: WR - P.Nacua
+  data_range: WR - P.Nacua!F25:WR - P.Nacua!I25
+  layout: matrix
+  editable: false
+  output:
+    compute:
+      name: compute_p_nacua_reg_season_totals
+  structure:
+    measure: *id002
+    dimensions:
+    - concept: TOTAL_PHASE
+      role: key
+      scope: series
+      bind:
+        kind: row_label
+        label_column: A
+        read: string
+    - concept: INDICATOR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 3
+        read: string
+  key:
+  - INDICATOR
+  series_context:
+    PLAYER: P. Nacua
+    POSITION: WR
+    PHASE: Regular Season
+  sdmx_notes: Regular-season totals row (WR - P.Nacua!F25:I25). Touchdowns/Targets column E omitted (— placeholder).
+  notes: Matrix fixture — vertical=totals phase label (column A), horizontal=statistic (row 3).
+- id: p_nacua_playoff_totals
+  sheet: WR - P.Nacua
+  data_range: WR - P.Nacua!F27:WR - P.Nacua!I27
+  layout: matrix
+  editable: false
+  output:
+    compute:
+      name: compute_p_nacua_playoff_totals
+  structure:
+    measure: *id002
+    dimensions:
+    - concept: TOTAL_PHASE
+      role: key
+      scope: series
+      bind:
+        kind: row_label
+        label_column: A
+        read: string
+    - concept: INDICATOR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 3
+        read: string
+  key:
+  - INDICATOR
+  series_context:
+    PLAYER: P. Nacua
+    POSITION: WR
+    PHASE: Playoffs
+  sdmx_notes: Playoff totals row (WR - P.Nacua!F27:I27). Touchdowns/Targets column E omitted (— placeholder).
+  notes: Matrix fixture — vertical=totals phase label (column A), horizontal=statistic (row 3).

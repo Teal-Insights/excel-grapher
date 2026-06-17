@@ -1,0 +1,292 @@
+schema_version: 1.4.0
+workbook: ffv3_large.xlsx
+concept_scheme:
+  id: player_game_log
+  concepts:
+  - id: GAME_WEEK
+    dtype: string
+    description: Game week label (W1-W18, PO1-PO3) from column A.
+  - id: GAME_DATE
+    dtype: string
+    description: Game date text from column B (vertical matrix key).
+  - id: INDICATOR
+    dtype: string
+    description: Stat column header from row 3 (horizontal matrix key).
+  - id: TOTAL_PHASE
+    dtype: string
+    description: REG SEASON TOTALS or PLAYOFF TOTALS row label from column A.
+series:
+- id: b_corum_game_date
+  sheet: RB - B.Corum
+  data_range: RB - B.Corum!B4:RB - B.Corum!B24
+  layout: series
+  editable: true
+  input:
+    setter:
+      name: set_b_corum_game_date
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: string
+      bind:
+        kind: data_cell
+        read: string
+    dimensions:
+    - concept: GAME_WEEK
+      role: key
+      scope: cell
+      bind:
+        kind: row_label
+        label_column: A
+        read: string
+  key:
+  - GAME_WEEK
+  series_context:
+    PLAYER: B. Corum
+    POSITION: RB
+    INDICATOR: Date
+  sdmx_notes: Game date input column (RB - B.Corum!B4:B24), keyed by week label in column A.
+- id: b_corum_game_result
+  sheet: RB - B.Corum
+  data_range: RB - B.Corum!D4:RB - B.Corum!D24
+  layout: series
+  editable: true
+  input:
+    setter:
+      name: set_b_corum_game_result
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: string
+      bind:
+        kind: data_cell
+        read: string
+    dimensions:
+    - concept: GAME_WEEK
+      role: key
+      scope: cell
+      bind:
+        kind: row_label
+        label_column: A
+        read: string
+  key:
+  - GAME_WEEK
+  series_context:
+    PLAYER: B. Corum
+    POSITION: RB
+    INDICATOR: Result
+  sdmx_notes: Win/loss result input column (RB - B.Corum!D4:D24), keyed by week label in column A.
+- id: b_corum_reg_season_stats
+  sheet: RB - B.Corum
+  data_range: RB - B.Corum!E4:RB - B.Corum!G20
+  layout: matrix
+  editable: true
+  input:
+    setter:
+      name: set_b_corum_reg_season_stats
+  structure:
+    measure: &id001
+      concept: OBS_VALUE
+      dtype: int
+      bind:
+        kind: data_cell
+        read: int
+    dimensions:
+    - concept: GAME_DATE
+      role: key
+      scope: cell
+      bind:
+        kind: row_label
+        label_column: B
+        read: string
+    - concept: INDICATOR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 3
+        read: string
+  key:
+  - GAME_DATE
+  - INDICATOR
+  series_context:
+    PLAYER: B. Corum
+    POSITION: RB
+    PHASE: Regular Season
+  sdmx_notes: Regular-season stat matrix (RB - B.Corum!E4:G20).
+  notes: Matrix fixture — vertical=date (column B), horizontal=statistic (row 3).
+- id: b_corum_playoff_stats
+  sheet: RB - B.Corum
+  data_range: RB - B.Corum!E22:RB - B.Corum!G24
+  layout: matrix
+  editable: true
+  input:
+    setter:
+      name: set_b_corum_playoff_stats
+  structure:
+    measure: *id001
+    dimensions:
+    - concept: GAME_DATE
+      role: key
+      scope: cell
+      bind:
+        kind: row_label
+        label_column: B
+        read: string
+    - concept: INDICATOR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 3
+        read: string
+  key:
+  - GAME_DATE
+  - INDICATOR
+  series_context:
+    PLAYER: B. Corum
+    POSITION: RB
+    PHASE: Playoffs
+  sdmx_notes: Playoff stat matrix (RB - B.Corum!E22:G24).
+  notes: Matrix fixture — vertical=date (column B), horizontal=statistic (row 3).
+- id: b_corum_reg_fantasy_score
+  sheet: RB - B.Corum
+  data_range: RB - B.Corum!H4:RB - B.Corum!H20
+  layout: matrix
+  editable: false
+  output:
+    compute:
+      name: compute_b_corum_reg_fantasy_score
+  structure:
+    measure: &id002
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: GAME_DATE
+      role: key
+      scope: cell
+      bind:
+        kind: row_label
+        label_column: B
+        read: string
+    - concept: INDICATOR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 3
+        read: string
+  key:
+  - GAME_DATE
+  - INDICATOR
+  series_context:
+    PLAYER: B. Corum
+    POSITION: RB
+    INDICATOR: Fantasy Score
+    PHASE: Regular Season
+  sdmx_notes: Regular-season fantasy score (RB - B.Corum!H4:H20).
+  notes: Matrix fixture — vertical=date (column B), horizontal=statistic (row 3).
+- id: b_corum_playoff_fantasy_score
+  sheet: RB - B.Corum
+  data_range: RB - B.Corum!H22:RB - B.Corum!H24
+  layout: matrix
+  editable: false
+  output:
+    compute:
+      name: compute_b_corum_playoff_fantasy_score
+  structure:
+    measure: *id002
+    dimensions:
+    - concept: GAME_DATE
+      role: key
+      scope: cell
+      bind:
+        kind: row_label
+        label_column: B
+        read: string
+    - concept: INDICATOR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 3
+        read: string
+  key:
+  - GAME_DATE
+  - INDICATOR
+  series_context:
+    PLAYER: B. Corum
+    POSITION: RB
+    INDICATOR: Fantasy Score
+    PHASE: Playoffs
+  sdmx_notes: Playoff fantasy score (RB - B.Corum!H22:H24).
+  notes: Matrix fixture — vertical=date (column B), horizontal=statistic (row 3).
+- id: b_corum_reg_season_totals
+  sheet: RB - B.Corum
+  data_range: RB - B.Corum!E25:RB - B.Corum!H25
+  layout: matrix
+  editable: false
+  output:
+    compute:
+      name: compute_b_corum_reg_season_totals
+  structure:
+    measure: *id002
+    dimensions:
+    - concept: TOTAL_PHASE
+      role: key
+      scope: series
+      bind:
+        kind: row_label
+        label_column: A
+        read: string
+    - concept: INDICATOR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 3
+        read: string
+  key:
+  - INDICATOR
+  series_context:
+    PLAYER: B. Corum
+    POSITION: RB
+    PHASE: Regular Season
+  sdmx_notes: Regular-season totals row (RB - B.Corum!E25:H25). Touchdowns/Targets column E omitted (— placeholder).
+  notes: Matrix fixture — vertical=totals phase label (column A), horizontal=statistic (row 3).
+- id: b_corum_playoff_totals
+  sheet: RB - B.Corum
+  data_range: RB - B.Corum!E27:RB - B.Corum!H27
+  layout: matrix
+  editable: false
+  output:
+    compute:
+      name: compute_b_corum_playoff_totals
+  structure:
+    measure: *id002
+    dimensions:
+    - concept: TOTAL_PHASE
+      role: key
+      scope: series
+      bind:
+        kind: row_label
+        label_column: A
+        read: string
+    - concept: INDICATOR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 3
+        read: string
+  key:
+  - INDICATOR
+  series_context:
+    PLAYER: B. Corum
+    POSITION: RB
+    PHASE: Playoffs
+  sdmx_notes: Playoff totals row (RB - B.Corum!E27:H27). Touchdowns/Targets column E omitted (— placeholder).
+  notes: Matrix fixture — vertical=totals phase label (column A), horizontal=statistic (row 3).
