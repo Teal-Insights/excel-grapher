@@ -153,10 +153,17 @@ def assert_bindings_validate(case: BindingsAccuracyCase) -> dict[str, Any]:
 def build_dependency_graph(
     workbook: Path,
     bindings: WorkbookSeriesBindings,
+    *,
+    use_cached_dynamic_refs: bool = False,
 ) -> DependencyGraph:
     """Build a dependency graph for all binding targets in ``bindings``."""
     targets = all_series_targets(bindings, workbook=workbook)
-    return create_dependency_graph(workbook, targets, load_values=True)
+    return create_dependency_graph(
+        workbook,
+        targets,
+        load_values=True,
+        use_cached_dynamic_refs=use_cached_dynamic_refs,
+    )
 
 
 def generate_bindings_namespace(
