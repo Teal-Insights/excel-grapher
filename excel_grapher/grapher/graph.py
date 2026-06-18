@@ -5,7 +5,7 @@ import heapq
 import warnings
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from .compression import IdentityTransitCompressionRecord
@@ -54,6 +54,59 @@ class CycleError(ValueError):
         super().__init__(message)
         self.cycle_path = cycle_path
         self.is_must_cycle = is_must_cycle
+
+
+@runtime_checkable
+class GraphReadView(Protocol):
+    """Read-only dependency-graph surface shared by graphs and projected views.
+
+    Consumers that only read a graph (for example `to_networkx` and
+    `CodeGenerator`) can accept any object satisfying this protocol, including
+    projected facades such as `ProjectionResult`, without depending on the
+    concrete `DependencyGraph` type. It captures node iteration, node and edge
+    lookups, key listings, leaf/formula/target classification, and evaluation
+    order; mutation is intentionally excluded.
+    """
+
+    leaf_classification: dict[str, str] | None
+    sheet_order: list[str] | None
+    named_ranges: dict[str, tuple[str, str]] | None
+    named_range_ranges: dict[str, tuple[str, str, str]] | None
+
+    def __contains__(self, key: NodeKey) -> bool: ...
+
+    def __iter__(self) -> Iterator[NodeKey]: ...
+
+    def __len__(self) -> int: ...
+
+    def keys(
+        self,
+        *,
+        order: Literal["insertion", "lexical", "workbook"] = ...,
+        source: Iterable[NodeKey] | None = ...,
+    ) -> list[NodeKey]: ...
+
+    def get_node(self, address: NodeKey) -> NodeView | None: ...
+
+    def get_dependencies(self, address: NodeKey) -> frozenset[NodeKey]: ...
+
+    def get_dependents(self, address: NodeKey) -> frozenset[NodeKey]: ...
+
+    def get_edge_attrs(self, from_key: NodeKey, to_key: NodeKey) -> EdgeAttrs: ...
+
+    def get_edge_guard(self, from_key: NodeKey, to_key: NodeKey) -> GuardExpr | None: ...
+
+    def leaf_keys(self) -> list[NodeKey]: ...
+
+    def formula_keys(self) -> list[NodeKey]: ...
+
+    def target_keys(self) -> list[NodeKey]: ...
+
+    def evaluation_order(
+        self, *, strict: bool = ..., iterate_enabled: bool | None = ...
+    ) -> list[NodeKey]: ...
+
+    def cycle_report(self) -> CycleReport: ...
 
 
 @dataclass
@@ -620,7 +673,7 @@ class DependencyGraph:
         record: IdentityTransitCompressionRecord | None = None,
     ) -> None:
         from .compression import (
-            IdentityTransitFormulaRewrite,
+            FormulaRewrite,
             direct_provenance_for_key_in_strings,
             replace_substrings_at_spans,
         )
@@ -655,7 +708,7 @@ class DependencyGraph:
                 before_formula != new_formula or before_normalized != new_norm
             ):
                 record.formula_rewrites.append(
-                    IdentityTransitFormulaRewrite(
+                    FormulaRewrite(
                         dependent=d_key,
                         before_formula=before_formula,
                         after_formula=new_formula,

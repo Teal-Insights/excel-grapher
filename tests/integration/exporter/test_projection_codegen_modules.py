@@ -1,0 +1,116 @@
+"""Integration: projected `generate_modules` packages import and run on disk.
+
+Writes the multi-file package produced from an identity-transit projection,
+imports it, and asserts the alias resolver in `internals.py` lets removed public
+addresses and series bindings resolve through the projected computation cells.
+"""
+
+from __future__ import annotations
+
+import importlib
+import sys
+from collections.abc import Callable
+from pathlib import Path
+from typing import cast
+
+import xlsxwriter
+
+from excel_grapher.evaluator import FormulaEvaluator
+from excel_grapher.exporter import CodeGenerator, IdentityTransitCompression
+from excel_grapher.grapher import create_dependency_graph
+from excel_grapher.series_bindings import Records, WorkbookSeriesBindings
+
+_PACKAGE = "projected_export_pkg"
+
+
+def _write_identity_workbook(workbook_path: Path) -> None:
+    wb = xlsxwriter.Workbook(workbook_path)
+    engine = wb.add_worksheet("Engine")
+    engine.write_number("C6", 10)
+    out = wb.add_worksheet("Outputs")
+    out.write_formula("B12", "=Engine!C6")
+    out.write_formula("B14", "=Outputs!B12+1")
+    wb.close()
+
+
+def _baseline_bindings(workbook_path: Path) -> WorkbookSeriesBindings:
+    return cast(
+        WorkbookSeriesBindings,
+        {
+            "schema_version": "1.2.0",
+            "workbook": str(workbook_path),
+            "series": [
+                {
+                    "id": "baseline",
+                    "data_range": "Outputs!B12",
+                    "layout": "scalar",
+                    "output": {"compute": {"name": "compute_baseline"}},
+                    "structure": {
+                        "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
+                        "dimensions": [
+                            {
+                                "concept": "LABEL",
+                                "role": "key",
+                                "scope": "series",
+                                "bind": {"kind": "constant", "value": "baseline"},
+                            }
+                        ],
+                    },
+                    "key": ["LABEL"],
+                }
+            ],
+        },
+    )
+
+
+def _clear_package_modules() -> None:
+    for name in list(sys.modules):
+        if name == _PACKAGE or name.startswith(f"{_PACKAGE}."):
+            sys.modules.pop(name, None)
+
+
+def test_projected_generate_modules_package_runs_and_matches_evaluator(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "identity_target.xlsx"
+    _write_identity_workbook(workbook_path)
+
+    targets = ["Outputs!B12", "Outputs!B14"]
+    graph = create_dependency_graph(
+        workbook_path,
+        targets,
+        load_values=True,
+        capture_dependency_provenance=True,
+    )
+    bindings = _baseline_bindings(workbook_path)
+
+    projection = IdentityTransitCompression().project(graph)
+    files = CodeGenerator(projection).generate_modules(
+        targets,
+        series_bindings=bindings,
+        bindings_workbook=workbook_path,
+    )
+
+    assert "xl_eval" in files["internals.py"]
+    assert "def compute_baseline(" in files["api.py"]
+    assert "compute_baseline" in files["__init__.py"]
+
+    pkg_dir = tmp_path / _PACKAGE
+    for filename, content in files.items():
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_dir / filename).write_text(content, encoding="utf-8")
+
+    sys.path.insert(0, str(tmp_path))
+    try:
+        pkg = importlib.import_module(_PACKAGE)
+
+        compute_baseline = cast(Callable[..., Records], pkg.compute_baseline)
+        records = compute_baseline(ctx=pkg.make_context())
+        assert len(records) == 1
+        assert records[0]["OBS_VALUE"] == 10
+
+        generated_targets = pkg.compute_all()
+        with FormulaEvaluator(graph) as ev:
+            evaluator_results = ev.evaluate(targets)
+        assert generated_targets == evaluator_results
+    finally:
+        sys.path.remove(str(tmp_path))
+        _clear_package_modules()

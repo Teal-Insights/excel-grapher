@@ -548,6 +548,32 @@ def test_custom_collapse_projection_uses_public_primitives_without_forwarding() 
     assert condensed.metadata["collapsed_from"] == ["Sheet1!B1"]
 
 
+def test_projection_snapshot_and_rewrite_types_are_shared_across_layers() -> None:
+    from excel_grapher.grapher import compression as grapher_compression
+
+    assert ProjectedNodeSnapshot is grapher_compression.ProjectedNodeSnapshot
+    from excel_grapher.exporter.projection import FormulaRewrite
+
+    assert FormulaRewrite is grapher_compression.FormulaRewrite
+
+
+def test_dependency_graph_and_projection_satisfy_graph_read_view() -> None:
+    from excel_grapher.grapher.graph import DependencyGraph, GraphReadView
+
+    graph = DependencyGraph()
+    c = _make_node("Sheet1!C1", None, None, is_leaf=True)
+    b = _make_node("Sheet1!B1", "=Sheet1!C1", "=Sheet1!C1")
+    for n in (c, b):
+        graph.add_node(n)
+    dr = DependencyCause.direct_ref
+    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=frozenset({dr})))
+
+    projection = IdentityTransitCompression().project(graph)
+
+    assert isinstance(graph, GraphReadView)
+    assert isinstance(projection, GraphReadView)
+
+
 def test_set_node_formula_updates_normalized_formula() -> None:
     from excel_grapher.grapher.graph import DependencyGraph
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -134,8 +135,8 @@ def compression_safe_provenance(prov: EdgeProvenance | None) -> bool:
 
 
 @dataclass(frozen=True)
-class IdentityTransitFormulaRewrite:
-    """Dependent formula rewrite performed during identity transit compression."""
+class FormulaRewrite:
+    """Dependent formula rewrite performed during projection."""
 
     dependent: str
     before_formula: str | None
@@ -143,10 +144,29 @@ class IdentityTransitFormulaRewrite:
     before_normalized: str | None
     after_normalized: str | None
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "dependent": self.dependent,
+            "before_formula": self.before_formula,
+            "after_formula": self.after_formula,
+            "before_normalized": self.before_normalized,
+            "after_normalized": self.after_normalized,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> FormulaRewrite:
+        return cls(
+            dependent=str(data["dependent"]),
+            before_formula=data.get("before_formula"),
+            after_formula=data.get("after_formula"),
+            before_normalized=data.get("before_normalized"),
+            after_normalized=data.get("after_normalized"),
+        )
+
 
 @dataclass(frozen=True)
-class IdentityTransitNodeSnapshot:
-    """Workbook node state captured before an identity transit node is removed."""
+class ProjectedNodeSnapshot:
+    """Workbook node state captured before projection removes or rewrites it."""
 
     address: str
     sheet: str
@@ -159,6 +179,35 @@ class IdentityTransitNodeSnapshot:
     is_leaf: bool
     metadata: dict[str, Any]
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "address": self.address,
+            "sheet": self.sheet,
+            "column": self.column,
+            "row": self.row,
+            "formula": self.formula,
+            "normalized_formula": self.normalized_formula,
+            "value": self.value,
+            "is_target": self.is_target,
+            "is_leaf": self.is_leaf,
+            "metadata": dict(self.metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ProjectedNodeSnapshot:
+        return cls(
+            address=str(data["address"]),
+            sheet=str(data["sheet"]),
+            column=str(data["column"]),
+            row=int(data["row"]),
+            formula=data.get("formula"),
+            normalized_formula=data.get("normalized_formula"),
+            value=data.get("value"),
+            is_target=bool(data.get("is_target", False)),
+            is_leaf=bool(data.get("is_leaf", False)),
+            metadata=dict(data.get("metadata") or {}),
+        )
+
 
 @dataclass
 class IdentityTransitCompressionRecord:
@@ -166,26 +215,26 @@ class IdentityTransitCompressionRecord:
 
     immediate_removed: dict[str, str] = field(default_factory=dict)
     removal_order: list[str] = field(default_factory=list)
-    formula_rewrites: list[IdentityTransitFormulaRewrite] = field(default_factory=list)
-    snapshots_by_removed: dict[str, IdentityTransitNodeSnapshot] = field(default_factory=dict)
+    formula_rewrites: list[FormulaRewrite] = field(default_factory=list)
+    snapshots_by_removed: dict[str, ProjectedNodeSnapshot] = field(default_factory=dict)
 
     def note_removal(
         self,
         t_key: NodeKey,
         r_key: NodeKey,
-        snapshot: IdentityTransitNodeSnapshot,
+        snapshot: ProjectedNodeSnapshot,
     ) -> None:
         self.immediate_removed[t_key] = r_key
         self.removal_order.append(t_key)
         self.snapshots_by_removed[t_key] = snapshot
 
 
-def snapshot_transit_node(graph: DependencyGraph, key: NodeKey) -> IdentityTransitNodeSnapshot:
+def snapshot_transit_node(graph: DependencyGraph, key: NodeKey) -> ProjectedNodeSnapshot:
     """Capture workbook node state for `key` before identity transit removal."""
     node = graph.get_node(key)
     if node is None:
         raise KeyError(key)
-    return IdentityTransitNodeSnapshot(
+    return ProjectedNodeSnapshot(
         address=key,
         sheet=node.sheet,
         column=node.column,

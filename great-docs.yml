@@ -142,6 +142,7 @@ reference:
       - grapher.LightweightVizStats
       - grapher.GRAPH_CACHE_SCHEMA_VERSION
       - grapher.DynamicRefTraceFn
+      - grapher.GraphReadView
       - grapher.NodeHook
       - grapher.NodeKey
       - grapher.infer_dynamic_index_targets

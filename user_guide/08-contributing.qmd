@@ -114,7 +114,10 @@ Use direct callables only for local instrumentation hooks that are not reusable 
 Projections build artifact-specific views of the canonical graph without mutating it. A
 projection step implements the `ProjectionStep` protocol (`project(graph) -> ProjectionResult`)
 and returns a `ProjectionResult` facade that reads like the projected graph and carries a
-durable `ProjectionManifest`. `IdentityTransitCompression` is the built-in reference step:
+durable `ProjectionManifest`. The facade satisfies the read-only `grapher.GraphReadView`
+protocol, the same surface `DependencyGraph` exposes, so read-only consumers such as
+`to_networkx` and `CodeGenerator` accept a graph or a projection interchangeably.
+`IdentityTransitCompression` is the built-in reference step:
 
 ```python
 projection = IdentityTransitCompression().project(graph)

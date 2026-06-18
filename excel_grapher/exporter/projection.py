@@ -25,85 +25,32 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 from excel_grapher.core.address_keys import normalize_key
-from excel_grapher.grapher.compression import IdentityTransitCompressionRecord
+from excel_grapher.grapher.compression import (
+    FormulaRewrite,
+    IdentityTransitCompressionRecord,
+    ProjectedNodeSnapshot,
+)
 from excel_grapher.grapher.graph import CycleError, CycleReport, DependencyGraph, NodeKey
 from excel_grapher.grapher.guard import GuardExpr
 from excel_grapher.grapher.node import NodeView
 
-
-@dataclass(frozen=True)
-class ProjectedNodeSnapshot:
-    """Workbook node state captured before projection removes or rewrites it."""
-
-    address: str
-    sheet: str
-    column: str
-    row: int
-    formula: str | None
-    normalized_formula: str | None
-    value: Any
-    is_target: bool
-    is_leaf: bool
-    metadata: dict[str, Any]
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "address": self.address,
-            "sheet": self.sheet,
-            "column": self.column,
-            "row": self.row,
-            "formula": self.formula,
-            "normalized_formula": self.normalized_formula,
-            "value": self.value,
-            "is_target": self.is_target,
-            "is_leaf": self.is_leaf,
-            "metadata": dict(self.metadata),
-        }
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> ProjectedNodeSnapshot:
-        return cls(
-            address=str(data["address"]),
-            sheet=str(data["sheet"]),
-            column=str(data["column"]),
-            row=int(data["row"]),
-            formula=data.get("formula"),
-            normalized_formula=data.get("normalized_formula"),
-            value=data.get("value"),
-            is_target=bool(data.get("is_target", False)),
-            is_leaf=bool(data.get("is_leaf", False)),
-            metadata=dict(data.get("metadata") or {}),
-        )
-
-
-@dataclass(frozen=True)
-class FormulaRewrite:
-    """Dependent formula rewrite performed during projection."""
-
-    dependent: str
-    before_formula: str | None
-    after_formula: str | None
-    before_normalized: str | None
-    after_normalized: str | None
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "dependent": self.dependent,
-            "before_formula": self.before_formula,
-            "after_formula": self.after_formula,
-            "before_normalized": self.before_normalized,
-            "after_normalized": self.after_normalized,
-        }
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> FormulaRewrite:
-        return cls(
-            dependent=str(data["dependent"]),
-            before_formula=data.get("before_formula"),
-            after_formula=data.get("after_formula"),
-            before_normalized=data.get("before_normalized"),
-            after_normalized=data.get("after_normalized"),
-        )
+__all__ = [
+    "BaseProjectionManifest",
+    "CollapsedGroup",
+    "CompositeProjectionManifest",
+    "FormulaRewrite",
+    "IdentityTransitCompression",
+    "ProjectedNodeSnapshot",
+    "ProjectionManifest",
+    "ProjectionResult",
+    "ProjectionStep",
+    "apply_projection",
+    "build_forwarding_projection_manifest",
+    "project_identity_transits",
+    "register_projection_manifest",
+    "resolve_projection_manifest",
+    "unregister_projection_manifest",
+]
 
 
 @dataclass(frozen=True)
@@ -230,9 +177,13 @@ class BaseProjectionManifest:
 class CompositeProjectionManifest:
     """Lineage for a sequence of composed projection steps.
 
-    `forwarding_map` is the transitively chained forwarding map across all
-    steps (what codegen consumes); `steps` preserves each component manifest for
-    audit and serialization. Heterogeneous step kinds are supported.
+    Codegen consumes `map_to_projected`, which chains each step's mapping in
+    order and works for any step satisfying the `ProjectionManifest` protocol.
+    `forwarding_map` is a precomputed, serializable view of that chained mapping
+    for audit and round-trips; it is derived only from steps that expose a
+    `forwarding_map` field, so it may be empty or partial for protocol-only
+    steps even when `map_to_projected` still maps correctly. `steps` preserves
+    each component manifest. Heterogeneous step kinds are supported.
     """
 
     forwarding_map: dict[str, str]
@@ -303,31 +254,6 @@ def resolve_projection_manifest(data: Mapping[str, Any]) -> ProjectionManifest:
     if from_dict is None:
         raise ValueError(f"unsupported projection manifest kind: {kind!r}")
     return from_dict(data)
-
-
-def _projected_snapshot(snapshot: Any) -> ProjectedNodeSnapshot:
-    return ProjectedNodeSnapshot(
-        address=snapshot.address,
-        sheet=snapshot.sheet,
-        column=snapshot.column,
-        row=snapshot.row,
-        formula=snapshot.formula,
-        normalized_formula=snapshot.normalized_formula,
-        value=snapshot.value,
-        is_target=snapshot.is_target,
-        is_leaf=snapshot.is_leaf,
-        metadata=dict(snapshot.metadata),
-    )
-
-
-def _projected_formula_rewrite(rewrite: Any) -> FormulaRewrite:
-    return FormulaRewrite(
-        dependent=rewrite.dependent,
-        before_formula=rewrite.before_formula,
-        after_formula=rewrite.after_formula,
-        before_normalized=rewrite.before_normalized,
-        after_normalized=rewrite.after_normalized,
-    )
 
 
 def _resolve_alias_chain(immediate: Mapping[str, str]) -> dict[str, str]:
@@ -402,10 +328,7 @@ def build_forwarding_projection_manifest(
         retained: tuple(sources) for retained, sources in retained_sources.items() if sources
     }
 
-    removed_node_snapshots = {
-        address: _projected_snapshot(snapshot)
-        for address, snapshot in record.snapshots_by_removed.items()
-    }
+    removed_node_snapshots = dict(record.snapshots_by_removed)
 
     collapsed_groups = tuple(
         CollapsedGroup(
@@ -426,9 +349,7 @@ def build_forwarding_projection_manifest(
         forwarding_map=forwarding_map,
         retained_to_collapsed_sources=retained_to_collapsed_sources,
         removed_node_snapshots=removed_node_snapshots,
-        formula_rewrites=tuple(
-            _projected_formula_rewrite(rewrite) for rewrite in record.formula_rewrites
-        ),
+        formula_rewrites=tuple(record.formula_rewrites),
         collapsed_groups=collapsed_groups,
     )
 
