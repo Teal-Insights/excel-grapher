@@ -48,6 +48,7 @@ from excel_grapher.grapher.target_expansion import (
 __all__ = ["CodeGenerator", "GenerationParts", "GraphLike", "GraphNode"]
 
 if TYPE_CHECKING:
+    from excel_grapher.exporter.projection import ProjectionManifest
     from excel_grapher.grapher import DependencyGraph  # noqa: F401
     from excel_grapher.series_bindings.docstring_renderers import SeriesDocstringRendererSpec
     from excel_grapher.series_bindings.docstrings import SeriesBindingDocstringCallbackSpec
@@ -161,6 +162,116 @@ class CodeGenerator:
         self._used_graph_closure = False
         self._formula_cell_address = None
 
+    def _public_graph(self) -> DependencyGraph | GraphLike:
+        original = getattr(self.graph, "original_graph", None)
+        if original is not None:
+            return cast("DependencyGraph | GraphLike", original)
+        return self.graph
+
+    def _projection_manifest(self) -> ProjectionManifest | None:
+        return getattr(self.graph, "manifest", None)
+
+    def _map_address_to_projected(self, address: str) -> str:
+        manifest = self._projection_manifest()
+        normalized = normalize_address(address)
+        if manifest is None:
+            return normalized
+        return manifest.map_to_projected(normalized)
+
+    def _projection_alias_map(
+        self,
+        public_addresses: Iterable[str],
+        export_addresses: Iterable[str],
+    ) -> dict[str, str]:
+        manifest = self._projection_manifest()
+        if manifest is None:
+            return {}
+        exported = frozenset(normalize_address(addr) for addr in export_addresses)
+        aliases: dict[str, str] = {}
+        for address in public_addresses:
+            public_addr = normalize_address(address)
+            projected_addr = normalize_address(manifest.map_to_projected(public_addr))
+            if projected_addr != public_addr and projected_addr in exported:
+                aliases[public_addr] = projected_addr
+        return aliases
+
+    def _export_addresses_with_aliases(
+        self,
+        export_addresses: Iterable[str],
+        public_addresses: Iterable[str],
+    ) -> list[str]:
+        addresses = [normalize_address(addr) for addr in export_addresses]
+        alias_map = self._projection_alias_map(public_addresses, addresses)
+        if not alias_map:
+            return addresses
+        merged = list(addresses)
+        seen = set(addresses)
+        for alias in sorted(alias_map):
+            if alias not in seen:
+                merged.append(alias)
+                seen.add(alias)
+        return merged
+
+    def _series_binding_public_addresses(
+        self,
+        bindings: WorkbookSeriesBindings | None,
+        workbook: Path | str | None,
+    ) -> frozenset[str]:
+        if bindings is None:
+            return frozenset()
+        if workbook is None:
+            raise ValueError("bindings_workbook is required when series_bindings is set")
+        from excel_grapher.series_bindings.ranges import expand_data_range_for_graph
+
+        public_graph = cast("DependencyGraph", self._public_graph())
+        addresses: set[str] = set()
+        for series in bindings.get("series", []):
+            if not isinstance(series, dict):
+                continue
+            data_range = series.get("data_range")
+            if not isinstance(data_range, str):
+                continue
+            addresses.update(
+                normalize_address(addr)
+                for addr in expand_data_range_for_graph(
+                    public_graph,
+                    data_range,
+                    workbook=workbook,
+                )
+            )
+        return frozenset(addresses)
+
+    def _emit_projection_alias_lines(
+        self,
+        export_addresses: Iterable[str],
+        public_addresses: Iterable[str],
+    ) -> list[str]:
+        alias_map = self._projection_alias_map(public_addresses, export_addresses)
+        if not alias_map:
+            return []
+        lines = ["# --- Projection public address aliases ---", ""]
+        for public_addr, replacement in sorted(alias_map.items()):
+            public_fn = address_to_python_name(public_addr)
+            replacement_node = self.graph.get_node(replacement)
+            if replacement_node is not None and replacement_node.formula is not None:
+                replacement_fn = address_to_python_name(replacement)
+                lines.extend(
+                    [
+                        f"def {public_fn}(ctx):",
+                        f"    return xl_eval(ctx, {repr(replacement)}, {replacement_fn})",
+                        "",
+                    ]
+                )
+            else:
+                lines.extend(
+                    [
+                        f"def {public_fn}(ctx):",
+                        f"    return xl_cell(ctx, {repr(replacement)})",
+                        "",
+                    ]
+                )
+        return lines
+
     def _graph_sheetnames(self, *, targets: Sequence[str] | None = None) -> list[str]:
         sheet_order = getattr(self.graph, "sheet_order", None)
         if sheet_order:
@@ -209,8 +320,9 @@ class CodeGenerator:
     def _named_range_maps(
         self,
     ) -> tuple[dict[str, tuple[str, str]], dict[str, tuple[str, str, str]]]:
-        named_ranges = getattr(self.graph, "named_ranges", None) or {}
-        named_range_ranges = getattr(self.graph, "named_range_ranges", None) or {}
+        public_graph = self._public_graph()
+        named_ranges = getattr(public_graph, "named_ranges", None) or {}
+        named_range_ranges = getattr(public_graph, "named_range_ranges", None) or {}
         return named_ranges, named_range_ranges
 
     def _expand_target_tokens(self, targets: Sequence[str]) -> list[str]:
@@ -339,16 +451,20 @@ class CodeGenerator:
         workbook: Path | str,
         *,
         export_addresses: Iterable[str],
+        public_addresses: Iterable[str],
         series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
         docstring_renderer: SeriesDocstringRendererSpec = "google",
     ) -> list[str]:
         from excel_grapher.series_bindings.bindings_codegen import emit_series_bindings_block
 
         return emit_series_bindings_block(
-            cast("DependencyGraph", self.graph),
+            cast("DependencyGraph", self._public_graph()),
             workbook,
             bindings,
-            export_addresses=export_addresses,
+            export_addresses=self._export_addresses_with_aliases(
+                export_addresses,
+                public_addresses,
+            ),
             series_docstring_callback=series_docstring_callback,
             docstring_renderer=docstring_renderer,
         )
@@ -362,7 +478,9 @@ class CodeGenerator:
         """Derive input-series metadata from explicit series bindings."""
         from excel_grapher.series_bindings import derive_input_series
 
-        return derive_input_series(cast("DependencyGraph", self.graph), bindings, workbook=workbook)
+        return derive_input_series(
+            cast("DependencyGraph", self._public_graph()), bindings, workbook=workbook
+        )
 
     @staticmethod
     def _emitted_function_names(lines: Sequence[str]) -> list[str]:
@@ -1724,6 +1842,11 @@ class CodeGenerator:
         _formula_cells = parts["formula_cells"]
         _all_cells = parts["all_cells"]
         normalized_targets = parts["targets"]
+        series_public_addresses = self._series_binding_public_addresses(
+            series_bindings,
+            bindings_workbook,
+        )
+        public_addresses = frozenset(normalized_targets) | series_public_addresses
 
         # Combine: runtime + inputs + formulas + entry point
         lines: list[str] = [runtime_code, ""]
@@ -1738,6 +1861,8 @@ class CodeGenerator:
         # Export formula cell implementations and a resolver.
         lines.append("# --- Formula cell functions ---\n")
         lines.extend(cell_code_lines)
+        alias_lines = self._emit_projection_alias_lines(_all_cells, public_addresses)
+        lines.extend(alias_lines)
         lines.extend(
             self._emit_resolver_lines(parts["blank_rects"] if parts["blank_rects"] else None)
         )
@@ -1767,6 +1892,7 @@ class CodeGenerator:
                     series_bindings,
                     bindings_workbook,
                     export_addresses=_all_cells,
+                    public_addresses=series_public_addresses,
                     series_docstring_callback=series_docstring_callback,
                     docstring_renderer=docstring_renderer,
                 )
@@ -1840,6 +1966,11 @@ class CodeGenerator:
         _formula_cells = parts["formula_cells"]
         _all_cells = parts["all_cells"]
         normalized_targets = parts["targets"]
+        series_public_addresses = self._series_binding_public_addresses(
+            series_bindings,
+            bindings_workbook,
+        )
+        public_addresses = frozenset(normalized_targets) | series_public_addresses
 
         targets_entries = self._targets_to_entries(normalized_targets)
         needs_range_helper = any(handler == "xl_range" for _, handler in targets_entries)
@@ -1860,8 +1991,9 @@ class CodeGenerator:
 
         runtime_py = runtime_code.rstrip() + "\n"
 
+        alias_lines = self._emit_projection_alias_lines(_all_cells, public_addresses)
         internals_import_names = self._internals_runtime_import_names(
-            parts["used_xl_functions"], cell_code_lines
+            parts["used_xl_functions"], cell_code_lines + alias_lines
         )
         runtime_import_block = self._format_from_runtime_import(internals_import_names)
         internals_lines: list[str] = ["from __future__ import annotations", ""]
@@ -1870,6 +2002,7 @@ class CodeGenerator:
             internals_lines.append("")
         internals_lines.append("# --- Formula cell functions ---\n")
         internals_lines.extend(cell_code_lines)
+        internals_lines.extend(alias_lines)
         internals_lines.extend(
             self._emit_resolver_lines(parts["blank_rects"] if parts["blank_rects"] else None)
         )
@@ -1916,6 +2049,7 @@ class CodeGenerator:
                 series_bindings,
                 bindings_workbook,
                 export_addresses=_all_cells,
+                public_addresses=series_public_addresses,
                 series_docstring_callback=series_docstring_callback,
                 docstring_renderer=docstring_renderer,
             )
@@ -2127,7 +2261,7 @@ class CodeGenerator:
     def _resolve_targets(self, targets: Sequence[str] | None) -> list[str]:
         if targets is not None:
             return self._expand_target_tokens(targets)
-        target_keys = getattr(self.graph, "target_keys", None)
+        target_keys = getattr(self._public_graph(), "target_keys", None)
         inferred_targets: list[str] = []
         if callable(target_keys):
             inferred_targets = list(target_keys())
@@ -2144,6 +2278,7 @@ class CodeGenerator:
         evaluation order as the export closure. For other GraphLike implementations, it falls
         back to the CodeGenerator AST-based dependency walk.
         """
+        projected_targets = [self._map_address_to_projected(t) for t in targets]
         # Prefer graph-driven closure when excel_grapher provides an evaluation order AND
         # has dependency edges populated. Many unit tests build a DependencyGraph with nodes
         # only (no edges); for those we must fall back to AST-based dependency discovery.
@@ -2152,13 +2287,13 @@ class CodeGenerator:
             # Heuristic: only use graph edges if any target has at least one dependency edge.
             # (Graphs constructed via create_dependency_graph(...) will satisfy this for
             # non-leaf targets; test graphs that only add nodes will not.)
-            has_edges = any(bool(self.graph.get_dependencies(t)) for t in targets)
+            has_edges = any(bool(self.graph.get_dependencies(t)) for t in projected_targets)
             if not has_edges:
-                return self._collect_all_cells_via_ast(targets)
+                return self._collect_all_cells_via_ast(projected_targets)
 
             self._used_graph_closure = True
             closure: set[str] = set()
-            stack = list(targets)
+            stack = list(projected_targets)
             while stack:
                 addr = normalize_address(stack.pop())
                 if addr in closure:
@@ -2195,7 +2330,7 @@ class CodeGenerator:
                     out.append(addr)
             return out
 
-        return self._collect_all_cells_via_ast(targets)
+        return self._collect_all_cells_via_ast(projected_targets)
 
     def _collect_all_cells_via_ast(self, targets: list[str]) -> list[str]:
         """AST-based dependency walk (works for GraphLike test doubles)."""

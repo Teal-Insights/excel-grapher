@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import copy
 import heapq
 import warnings
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from .compression import IdentityTransitCompressionRecord
 
 from excel_grapher.core.address_keys import normalize_key, sort_node_keys
 
@@ -52,6 +56,59 @@ class CycleError(ValueError):
         self.is_must_cycle = is_must_cycle
 
 
+@runtime_checkable
+class GraphReadView(Protocol):
+    """Read-only dependency-graph surface shared by graphs and projected views.
+
+    Consumers that only read a graph (for example `to_networkx` and
+    `CodeGenerator`) can accept any object satisfying this protocol, including
+    projected facades such as `ProjectionResult`, without depending on the
+    concrete `DependencyGraph` type. It captures node iteration, node and edge
+    lookups, key listings, leaf/formula/target classification, and evaluation
+    order; mutation is intentionally excluded.
+    """
+
+    leaf_classification: dict[str, str] | None
+    sheet_order: list[str] | None
+    named_ranges: dict[str, tuple[str, str]] | None
+    named_range_ranges: dict[str, tuple[str, str, str]] | None
+
+    def __contains__(self, key: NodeKey) -> bool: ...
+
+    def __iter__(self) -> Iterator[NodeKey]: ...
+
+    def __len__(self) -> int: ...
+
+    def keys(
+        self,
+        *,
+        order: Literal["insertion", "lexical", "workbook"] = ...,
+        source: Iterable[NodeKey] | None = ...,
+    ) -> list[NodeKey]: ...
+
+    def get_node(self, address: NodeKey) -> NodeView | None: ...
+
+    def get_dependencies(self, address: NodeKey) -> frozenset[NodeKey]: ...
+
+    def get_dependents(self, address: NodeKey) -> frozenset[NodeKey]: ...
+
+    def get_edge_attrs(self, from_key: NodeKey, to_key: NodeKey) -> EdgeAttrs: ...
+
+    def get_edge_guard(self, from_key: NodeKey, to_key: NodeKey) -> GuardExpr | None: ...
+
+    def leaf_keys(self) -> list[NodeKey]: ...
+
+    def formula_keys(self) -> list[NodeKey]: ...
+
+    def target_keys(self) -> list[NodeKey]: ...
+
+    def evaluation_order(
+        self, *, strict: bool = ..., iterate_enabled: bool | None = ...
+    ) -> list[NodeKey]: ...
+
+    def cycle_report(self) -> CycleReport: ...
+
+
 @dataclass
 class DependencyGraph:
     _nodes: dict[NodeKey, Node] = field(default_factory=dict)
@@ -64,6 +121,12 @@ class DependencyGraph:
     sheet_order: list[str] | None = None
     named_ranges: dict[str, tuple[str, str]] | None = None
     named_range_ranges: dict[str, tuple[str, str, str]] | None = None
+
+    def copy(self) -> DependencyGraph:
+        """Return a deep copy of this graph (node hooks are not copied)."""
+        cloned = copy.deepcopy(self)
+        cloned._hooks = []
+        return cloned
 
     # ---- node insertion and iteration ---------------------------------------
 
@@ -227,6 +290,42 @@ class DependencyGraph:
         if node is None:
             raise KeyError(f"Cell {key} not found in graph")
         node.metadata = dict(metadata)
+
+    def set_node_formula(
+        self,
+        key: NodeKey,
+        formula: str | None,
+        normalized_formula: str | None,
+    ) -> None:
+        """Set a node's `formula` and `normalized_formula` durably.
+
+        Edges are not recomputed; callers rewiring dependencies must update edges
+        explicitly. Intended for projection authors building export-only graph
+        views. Raises `KeyError` if the node is missing.
+        """
+        nk = normalize_key(key)
+        node = self._nodes.get(nk)
+        if node is None:
+            raise KeyError(f"Cell {key} not found in graph")
+        node.formula = formula
+        node.normalized_formula = normalized_formula
+
+    def remove_node(self, key: NodeKey) -> None:
+        """Remove a node and all of its incident edges.
+
+        Both outgoing dependency edges and incoming dependent edges are dropped,
+        along with their guards and provenance. Dependent formulas are not
+        rewritten; callers collapsing nodes must update dependents explicitly.
+        Node hooks are not invoked. No-op if the node is absent.
+        """
+        nk = normalize_key(key)
+        for dep in list(self._edges.get(nk, set())):
+            self._remove_edge(nk, dep)
+        for dependent in list(self._reverse_edges.get(nk, set())):
+            self._remove_edge(dependent, nk)
+        self._nodes.pop(nk, None)
+        self._edges.pop(nk, None)
+        self._reverse_edges.pop(nk, None)
 
     # ---- internal accessors -------------------------------------------------
 
@@ -430,7 +529,11 @@ class DependencyGraph:
 
         return order
 
-    def compress_identity_transits(self) -> list[NodeKey]:
+    def compress_identity_transits(
+        self,
+        *,
+        record: IdentityTransitCompressionRecord | None = None,
+    ) -> list[NodeKey]:
         """Remove identity transit nodes and rewire dependents.
 
         Transit nodes whose formula is a single cell reference to one dependency
@@ -440,6 +543,10 @@ class DependencyGraph:
 
         Node hooks are not invoked for removed or updated nodes.
 
+        Args:
+            record: When provided, populate with removal lineage for projection
+                manifests.
+
         Returns:
             Keys of removed transit nodes, in removal order.
         """
@@ -447,6 +554,7 @@ class DependencyGraph:
             clear_identity_singleton_ref_cache,
             compression_safe_provenance,
             is_identity_transit,
+            snapshot_transit_node,
         )
 
         clear_identity_singleton_ref_cache()
@@ -476,7 +584,10 @@ class DependencyGraph:
                     continue
 
                 dependents_before = list(dependents_t)
-                self._compress_one_transit(t_key, r_key)
+                snapshot = snapshot_transit_node(self, t_key) if record is not None else None
+                self._compress_one_transit(t_key, r_key, record=record)
+                if record is not None and snapshot is not None:
+                    record.note_removal(t_key, r_key, snapshot)
                 removed.append(t_key)
                 for d_key in dependents_before:
                     heapq.heappush(heap, d_key)
@@ -554,8 +665,15 @@ class DependencyGraph:
         self._guards.pop(ek, None)
         self._edge_extra.pop(ek, None)
 
-    def _compress_one_transit(self, t_key: NodeKey, r_key: NodeKey) -> None:
+    def _compress_one_transit(
+        self,
+        t_key: NodeKey,
+        r_key: NodeKey,
+        *,
+        record: IdentityTransitCompressionRecord | None = None,
+    ) -> None:
         from .compression import (
+            FormulaRewrite,
             direct_provenance_for_key_in_strings,
             replace_substrings_at_spans,
         )
@@ -568,8 +686,10 @@ class DependencyGraph:
             if d_node is None:
                 continue
 
-            new_formula = d_node.formula
-            new_norm = d_node.normalized_formula
+            before_formula = d_node.formula
+            before_normalized = d_node.normalized_formula
+            new_formula = before_formula
+            new_norm = before_normalized
             if isinstance(prov, EdgeProvenance) and prov.direct_sites_formula and new_formula:
                 new_formula = replace_substrings_at_spans(
                     new_formula, prov.direct_sites_formula, r_key
@@ -583,6 +703,19 @@ class DependencyGraph:
                 )
             elif new_norm and t_key in new_norm:
                 new_norm = new_norm.replace(t_key, r_key)
+
+            if record is not None and (
+                before_formula != new_formula or before_normalized != new_norm
+            ):
+                record.formula_rewrites.append(
+                    FormulaRewrite(
+                        dependent=d_key,
+                        before_formula=before_formula,
+                        after_formula=new_formula,
+                        before_normalized=before_normalized,
+                        after_normalized=new_norm,
+                    )
+                )
 
             d_node.formula = new_formula
             d_node.normalized_formula = new_norm

@@ -50,7 +50,7 @@ from .export import (
     write_lightweight_viz_html,
     write_web_viz_html,
 )
-from .graph import CycleError, CycleReport, DependencyGraph, NodeHook
+from .graph import CycleError, CycleReport, DependencyGraph, GraphReadView, NodeHook
 from .guard import And, Compare, GuardExpr, Literal, Not, Or
 from .guard import CellRef as GuardCellRef
 from .node import Node, NodeKey
@@ -69,6 +69,7 @@ __all__ = [
     "try_load_graph_cache",
     "DependencyCause",
     "DependencyGraph",
+    "GraphReadView",
     "EdgeProvenance",
     "DynamicRefConfig",
     "DynamicRefError",

@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from .formula_label import truncate_formula_display, validate_max_formula_length
-from .graph import DependencyGraph
+from .graph import DependencyGraph, GraphReadView
 from .guard import GuardExpr
 from .lightweight_viz import (
     LightweightVizLocalEdges,
@@ -64,12 +64,15 @@ def _networkx_value_type(node: Node | NodeView) -> str:
 
 
 def to_networkx(
-    graph: DependencyGraph,
+    graph: DependencyGraph | GraphReadView,
     *,
     include_formula_on_nodes: bool = True,
     max_formula_length: int | None = 120,
 ):
-    """Convert DependencyGraph to a NetworkX DiGraph.
+    """Convert a dependency graph to a NetworkX DiGraph.
+
+    Accepts `DependencyGraph` or any graph-like object with node iteration,
+    dependency lookup, and edge attributes (for example `ProjectionResult`).
 
     NetworkX is an optional dependency. If not installed, raises ImportError with a
     helpful message.

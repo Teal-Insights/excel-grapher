@@ -81,7 +81,7 @@ def test_codegen_export_has_no_ty_or_ruff_diagnostics(tmp_path: Path) -> None:
 
 
 @pytest.mark.xfail(
-    reason="CodeGenerator import ordering is not Ruff-clean without --fix (I001).",
+    reason="Issue #252: generated export is not Ruff-clean without --fix (I001).",
     strict=False,
 )
 def test_codegen_export_is_ruff_clean_without_fix(tmp_path: Path) -> None:
@@ -103,7 +103,7 @@ def test_codegen_export_is_ruff_clean_without_fix(tmp_path: Path) -> None:
 
 
 @pytest.mark.xfail(
-    reason="CodeGenerator output is not Ruff-format-clean without rewriting imports.",
+    reason="Issue #253: generated export is not ruff format --check clean without rewriting.",
     strict=False,
 )
 def test_codegen_export_is_ruff_format_clean_without_fix(tmp_path: Path) -> None:
