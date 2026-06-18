@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 import xlsxwriter
 
 from excel_grapher.exporter.projection import (
+    BaseProjectionManifest,
+    CompositeProjectionManifest,
     IdentityTransitCompression,
-    ProjectionManifest,
+    ProjectedNodeSnapshot,
     ProjectionResult,
     apply_projection,
+    register_projection_manifest,
+    resolve_projection_manifest,
+    unregister_projection_manifest,
 )
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
@@ -115,6 +120,29 @@ def test_projection_result_behaves_like_projected_graph() -> None:
     assert "Sheet1!B1" in projection.original_graph
 
 
+def test_resolve_projection_manifest_rejects_unknown_kind() -> None:
+    with pytest.raises(ValueError, match="unsupported projection manifest kind"):
+        resolve_projection_manifest({"kind": "subgraph"})
+
+
+def test_base_projection_manifest_requires_explicit_empty_kind() -> None:
+    with pytest.raises(TypeError):
+        cast(Any, BaseProjectionManifest.empty)()
+
+
+def test_register_and_resolve_custom_projection_manifest_round_trips() -> None:
+    register_projection_manifest("custom_collapse", BaseProjectionManifest.from_dict)
+    try:
+        manifest = BaseProjectionManifest.empty(kind="custom_collapse")
+        manifest.forwarding_map["Sheet1!B1"] = "Sheet1!C1"
+        restored = resolve_projection_manifest(manifest.to_dict())
+        assert isinstance(restored, BaseProjectionManifest)
+        assert restored.kind == "custom_collapse"
+        assert restored.forwarding_map == {"Sheet1!B1": "Sheet1!C1"}
+    finally:
+        unregister_projection_manifest("custom_collapse")
+
+
 def test_manifest_serializes_and_resolves_chain_aliases() -> None:
     from excel_grapher.grapher.graph import DependencyGraph
 
@@ -143,14 +171,17 @@ def test_manifest_serializes_and_resolves_chain_aliases() -> None:
     )
 
     manifest = IdentityTransitCompression().project(graph).manifest
+    assert isinstance(manifest, BaseProjectionManifest)
 
-    assert manifest.removed_to_replacement["Sheet1!B1"] == "Sheet1!D1"
-    assert manifest.removed_to_replacement["Sheet1!C1"] == "Sheet1!D1"
+    assert manifest.forwarding_map["Sheet1!B1"] == "Sheet1!D1"
+    assert manifest.forwarding_map["Sheet1!C1"] == "Sheet1!D1"
     assert manifest.retained_to_collapsed_sources["Sheet1!D1"] == ("Sheet1!B1", "Sheet1!C1")
 
-    restored = type(manifest).from_dict(manifest.to_dict())
-    assert restored.removed_to_replacement == manifest.removed_to_replacement
+    restored = resolve_projection_manifest(manifest.to_dict())
+    assert isinstance(restored, BaseProjectionManifest)
+    assert restored.forwarding_map == manifest.forwarding_map
     assert restored.collapsed_groups == manifest.collapsed_groups
+    assert restored.removed_node_snapshots.keys() == manifest.removed_node_snapshots.keys()
 
 
 def test_collapsed_group_records_statement_order_and_external_boundary() -> None:
@@ -180,14 +211,16 @@ def test_collapsed_group_records_statement_order_and_external_boundary() -> None
         ),
     )
 
-    groups = IdentityTransitCompression().project(graph).manifest.collapsed_groups
+    manifest = IdentityTransitCompression().project(graph).manifest
+    assert isinstance(manifest, BaseProjectionManifest)
+    groups = manifest.collapsed_groups
     assert len(groups) >= 1
     group = groups[-1]
     assert group.retained == "Sheet1!D1"
     assert group.collapsed_sources == ("Sheet1!B1", "Sheet1!C1")
     assert group.statement_order == ("Sheet1!C1", "Sheet1!B1")
     assert "Sheet1!D1" not in group.external_dependencies
-    assert any(snapshot.address in {"Sheet1!B1", "Sheet1!C1"} for snapshot in group.node_snapshots)
+    assert {"Sheet1!B1", "Sheet1!C1"} <= manifest.removed_node_snapshots.keys()
 
 
 def test_apply_projection_preserves_manifest_from_earlier_steps() -> None:
@@ -222,32 +255,75 @@ def test_apply_projection_preserves_manifest_from_earlier_steps() -> None:
         [IdentityTransitCompression(), IdentityTransitCompression()],
     )
 
-    assert projection.manifest.removed_to_replacement["Sheet1!B1"] == "Sheet1!D1"
-    assert projection.manifest.removed_to_replacement["Sheet1!C1"] == "Sheet1!D1"
+    assert projection.manifest.map_to_projected("Sheet1!B1") == "Sheet1!D1"
+    assert projection.manifest.map_to_projected("Sheet1!C1") == "Sheet1!D1"
 
 
-@pytest.mark.xfail(
-    reason="apply_projection only composes identity-transit manifests today",
-    strict=True,
-)
-def test_apply_projection_rejects_heterogeneous_projection_manifests() -> None:
+def test_apply_projection_composes_heterogeneous_kinds() -> None:
     from excel_grapher.grapher.graph import DependencyGraph
 
-    class HeterogeneousProjection:
+    class TagProjection:
+        """Custom-kind step that records a tag without removing nodes."""
+
         def project(self, graph: DependencyGraph) -> ProjectionResult:
-            manifest = ProjectionManifest.empty()
-            object.__setattr__(manifest, "kind", "subgraph")
             return ProjectionResult(
                 original_graph=graph,
-                projected_graph=graph,
-                manifest=manifest,
+                projected_graph=graph.copy(),
+                manifest=BaseProjectionManifest.empty(kind="custom_tag"),
             )
 
     graph = DependencyGraph()
-    graph.add_node(_make_node("Sheet1!A1", None, None, is_leaf=True))
+    c = _make_node("Sheet1!C1", None, None, is_leaf=True)
+    b = _make_node("Sheet1!B1", "=Sheet1!C1", "=Sheet1!C1")
+    a = _make_node("Sheet1!A1", "=Sheet1!B1", "=Sheet1!B1")
+    for n in (c, b, a):
+        graph.add_node(n)
+    dr = DependencyCause.direct_ref
+    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=frozenset({dr})))
+    af = "=Sheet1!B1"
+    ref = "Sheet1!B1"
+    i = af.index(ref)
+    sp = ((i, i + len(ref)),)
+    graph.add_edge(
+        "Sheet1!A1",
+        "Sheet1!B1",
+        provenance=EdgeProvenance(
+            causes=frozenset({dr}),
+            direct_sites_formula=sp,
+            direct_sites_normalized=sp,
+        ),
+    )
 
-    with pytest.raises(NotImplementedError, match="heterogeneous projection"):
-        apply_projection(graph, [HeterogeneousProjection()])
+    projection = apply_projection(graph, [IdentityTransitCompression(), TagProjection()])
+
+    assert isinstance(projection.manifest, CompositeProjectionManifest)
+    assert projection.manifest.map_to_projected("Sheet1!B1") == "Sheet1!C1"
+    assert [step.kind for step in projection.manifest.steps] == ["identity_transit", "custom_tag"]
+
+    register_projection_manifest("custom_tag", BaseProjectionManifest.from_dict)
+    try:
+        restored = resolve_projection_manifest(projection.manifest.to_dict())
+    finally:
+        unregister_projection_manifest("custom_tag")
+    assert isinstance(restored, CompositeProjectionManifest)
+    assert restored.forwarding_map == projection.manifest.forwarding_map
+    assert [step.kind for step in restored.steps] == ["identity_transit", "custom_tag"]
+
+
+def test_composite_projection_uses_manifest_protocol_for_mapping() -> None:
+    class MapOnlyManifest:
+        kind = "map_only"
+
+        def map_to_projected(self, address: str) -> str:
+            return "Sheet1!C1" if address == "Sheet1!B1" else address
+
+        def to_dict(self) -> dict[str, object]:
+            return {"kind": self.kind}
+
+    manifest = CompositeProjectionManifest(forwarding_map={}, steps=(MapOnlyManifest(),))
+
+    assert manifest.map_to_projected("Sheet1!B1") == "Sheet1!C1"
+    assert manifest.forwarding_map == {}
 
 
 def test_manifest_node_snapshots_preserve_cell_coordinates_and_values() -> None:
@@ -278,7 +354,7 @@ def test_manifest_node_snapshots_preserve_cell_coordinates_and_values() -> None:
     )
 
     manifest_dict = IdentityTransitCompression().project(graph).manifest.to_dict()
-    snapshot = manifest_dict["collapsed_groups"][0]["node_snapshots"][0]
+    snapshot = manifest_dict["removed_node_snapshots"]["Sheet1!B1"]
 
     assert snapshot["sheet"] == "Sheet1"
     assert snapshot["column"] == "B"
@@ -356,7 +432,7 @@ def test_static_range_blocks_projection(tmp_path: Path) -> None:
     )
     projection = IdentityTransitCompression().project(graph)
     assert "Sheet1!B1" in projection
-    assert not projection.manifest.removed_to_replacement
+    assert projection.manifest.map_to_projected("Sheet1!B1") == "Sheet1!B1"
 
 
 @pytest.mark.parametrize(
@@ -400,4 +476,92 @@ def test_projection_respects_compression_safety(test_name: str) -> None:
 
     projection = IdentityTransitCompression().project(graph)
     assert "Sheet1!B1" in projection
-    assert not projection.manifest.removed_to_replacement
+    assert projection.manifest.map_to_projected("Sheet1!B1") == "Sheet1!B1"
+
+
+def test_custom_collapse_projection_uses_public_primitives_without_forwarding() -> None:
+    from excel_grapher.grapher.graph import DependencyGraph
+
+    graph = DependencyGraph()
+    d = _make_node("Sheet1!D1", None, None, is_leaf=True)
+    object.__setattr__(d, "value", 5)
+    b = _make_node("Sheet1!B1", "=Sheet1!D1*2", "=Sheet1!D1*2")
+    a = _make_node("Sheet1!A1", "=Sheet1!B1+1", "=Sheet1!B1+1", is_target=True)
+    for n in (d, b, a):
+        graph.add_node(n)
+    dr = DependencyCause.direct_ref
+    graph.add_edge("Sheet1!B1", "Sheet1!D1", provenance=EdgeProvenance(causes=frozenset({dr})))
+    graph.add_edge("Sheet1!A1", "Sheet1!B1", provenance=EdgeProvenance(causes=frozenset({dr})))
+    graph.set_node_metadata("Sheet1!B1", {"label": "doubled input"})
+
+    class InlineCollapse:
+        """Inline B1's body into A1 and delete B1 (no public forwarding)."""
+
+        def project(self, source: DependencyGraph) -> ProjectionResult:
+            projected = source.copy()
+            node_b = projected.get_node("Sheet1!B1")
+            assert node_b is not None
+            snapshot = ProjectedNodeSnapshot(
+                address="Sheet1!B1",
+                sheet=node_b.sheet,
+                column=node_b.column,
+                row=node_b.row,
+                formula=node_b.formula,
+                normalized_formula=node_b.normalized_formula,
+                value=node_b.value,
+                is_target=node_b.is_target,
+                is_leaf=node_b.is_leaf,
+                metadata=dict(node_b.metadata),
+            )
+            projected.set_node_formula("Sheet1!A1", "=Sheet1!D1*2+1", "=Sheet1!D1*2+1")
+            projected.add_edge(
+                "Sheet1!A1",
+                "Sheet1!D1",
+                provenance=EdgeProvenance(causes=frozenset({dr})),
+            )
+            projected.remove_node("Sheet1!B1")
+            projected.set_node_metadata("Sheet1!A1", {"collapsed_from": ["Sheet1!B1"]})
+            manifest = BaseProjectionManifest(
+                kind="inline_collapse",
+                forwarding_map={},
+                retained_to_collapsed_sources={"Sheet1!A1": ("Sheet1!B1",)},
+                removed_node_snapshots={"Sheet1!B1": snapshot},
+                formula_rewrites=(),
+                collapsed_groups=(),
+            )
+            return ProjectionResult(source, projected, manifest)
+
+    projection = InlineCollapse().project(graph)
+
+    assert "Sheet1!B1" in graph
+    assert "Sheet1!B1" not in projection
+    assert projection.get_dependencies("Sheet1!A1") == frozenset({"Sheet1!D1"})
+    assert projection.manifest.map_to_projected("Sheet1!B1") == "Sheet1!B1"
+
+    assert isinstance(projection.manifest, BaseProjectionManifest)
+    snapshot = projection.manifest.removed_node_snapshots["Sheet1!B1"]
+    assert snapshot.formula == "=Sheet1!D1*2"
+    assert snapshot.metadata["label"] == "doubled input"
+
+    condensed = projection.get_node("Sheet1!A1")
+    assert condensed is not None
+    assert condensed.metadata["collapsed_from"] == ["Sheet1!B1"]
+
+
+def test_set_node_formula_updates_normalized_formula() -> None:
+    from excel_grapher.grapher.graph import DependencyGraph
+
+    graph = DependencyGraph()
+    graph.add_node(_make_node("Sheet1!A1", "=Sheet1!B1", "=Sheet1!B1"))
+
+    graph.set_node_formula("Sheet1!A1", "=Sheet1!C1", "=Sheet1!C1")
+    updated = graph.get_node("Sheet1!A1")
+    assert updated is not None
+    assert updated.formula == "=Sheet1!C1"
+    assert updated.normalized_formula == "=Sheet1!C1"
+
+    graph.set_node_formula("Sheet1!A1", None, None)
+    cleared = graph.get_node("Sheet1!A1")
+    assert cleared is not None
+    assert cleared.formula is None
+    assert cleared.normalized_formula is None

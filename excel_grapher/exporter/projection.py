@@ -1,64 +1,34 @@
-"""Graph projection for export and visualization artifacts."""
+"""Graph projection for export and visualization artifacts.
+
+Projections build artifact-specific, non-mutating views of a canonical
+`DependencyGraph`. A projection produces a `ProjectionResult` (a read-only graph
+facade plus a serializable `ProjectionManifest`) so exporters and visualization
+can consume a smaller graph while preserving workbook-facing identity and
+lineage back to the original graph.
+
+The manifest separates two concerns:
+
+- `forwarding_map`: value-equivalent removed addresses mapped to retained
+  computations. Codegen queries this through `map_to_projected` only for
+  addresses that are part of the public export surface.
+- collapse lineage (`retained_to_collapsed_sources`, `removed_node_snapshots`,
+  `collapsed_groups`, `formula_rewrites`): a durable record of which original
+  nodes folded into each retained node, in dependency order, with original
+  formulas and metadata. This supports audit and downstream refactoring and does
+  not imply value-equivalence.
+"""
 
 from __future__ import annotations
 
-import heapq
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 from excel_grapher.core.address_keys import normalize_key
-from excel_grapher.grapher.compression import (
-    clear_identity_singleton_ref_cache,
-    compression_safe_provenance,
-    direct_provenance_for_key_in_strings,
-    is_identity_transit,
-    replace_substrings_at_spans,
-)
-from excel_grapher.grapher.dependency_provenance import EdgeProvenance
-from excel_grapher.grapher.graph import CycleReport, DependencyGraph, NodeKey
+from excel_grapher.grapher.compression import IdentityTransitCompressionRecord
+from excel_grapher.grapher.graph import CycleError, CycleReport, DependencyGraph, NodeKey
 from excel_grapher.grapher.guard import GuardExpr
-from excel_grapher.grapher.node import Node, NodeView
-
-
-def copy_dependency_graph(graph: DependencyGraph) -> DependencyGraph:
-    """Return a deep copy of `graph` including edges, guards, and provenance."""
-    copied = DependencyGraph()
-    if graph.sheet_order is not None:
-        copied.sheet_order = list(graph.sheet_order)
-    if graph.leaf_classification is not None:
-        copied.leaf_classification = dict(graph.leaf_classification)
-    if graph.named_ranges is not None:
-        copied.named_ranges = dict(graph.named_ranges)
-    if graph.named_range_ranges is not None:
-        copied.named_range_ranges = dict(graph.named_range_ranges)
-
-    for key in graph.keys(order="workbook"):
-        node = graph._get_internal_node(key)
-        if node is None:
-            continue
-        copied.add_node(
-            Node(
-                sheet=node.sheet,
-                column=node.column,
-                row=node.row,
-                formula=node.formula,
-                normalized_formula=node.normalized_formula,
-                value=node.value,
-                is_leaf=node.is_leaf,
-                is_target=node.is_target,
-                metadata=dict(node.metadata),
-            )
-        )
-
-    for from_key in graph.keys(order="workbook"):
-        for to_key in graph.keys(order="workbook", source=graph.get_dependencies(from_key)):
-            attrs = graph.get_edge_attrs(from_key, to_key)
-            edge_kwargs: dict[str, Any] = {}
-            if attrs.provenance is not None:
-                edge_kwargs["provenance"] = attrs.provenance
-            copied.add_edge(from_key, to_key, guard=attrs.guard, **edge_kwargs)
-    return copied
+from excel_grapher.grapher.node import NodeView
 
 
 @dataclass(frozen=True)
@@ -138,13 +108,16 @@ class FormulaRewrite:
 
 @dataclass(frozen=True)
 class CollapsedGroup:
-    """Collapsed source nodes mapped to one retained computation address."""
+    """Source nodes that folded into one retained computation address.
+
+    Node snapshots are stored once on the manifest's `removed_node_snapshots`
+    and referenced here by address via `collapsed_sources` / `statement_order`.
+    """
 
     retained: str
     collapsed_sources: tuple[str, ...]
     statement_order: tuple[str, ...]
     external_dependencies: tuple[str, ...]
-    node_snapshots: tuple[ProjectedNodeSnapshot, ...]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -152,7 +125,6 @@ class CollapsedGroup:
             "collapsed_sources": list(self.collapsed_sources),
             "statement_order": list(self.statement_order),
             "external_dependencies": list(self.external_dependencies),
-            "node_snapshots": [snap.to_dict() for snap in self.node_snapshots],
         }
 
     @classmethod
@@ -162,54 +134,88 @@ class CollapsedGroup:
             collapsed_sources=tuple(str(x) for x in data.get("collapsed_sources") or ()),
             statement_order=tuple(str(x) for x in data.get("statement_order") or ()),
             external_dependencies=tuple(str(x) for x in data.get("external_dependencies") or ()),
-            node_snapshots=tuple(
-                ProjectedNodeSnapshot.from_dict(item) for item in data.get("node_snapshots") or ()
-            ),
         )
 
 
-@dataclass(frozen=True)
-class ProjectionManifest:
-    """Serializable lineage for a projected graph artifact."""
+class ProjectionManifest(Protocol):
+    """Stable contract a projection manifest exposes to export and composition.
 
-    kind: Literal["identity_transit"]
-    removed_to_replacement: dict[str, str]
+    Implementations must surface a `kind` tag, an address-mapping helper that
+    codegen consumes, plus a serializable `to_dict`. Kind-specific forwarding
+    maps and lineage may be carried as additional fields.
+    """
+
+    kind: str
+
+    def map_to_projected(self, address: str) -> str: ...
+
+    def to_dict(self) -> dict[str, Any]: ...
+
+
+def _map_to_projected(forwarding_map: Mapping[str, str], address: str) -> str:
+    normalized = normalize_key(address)
+    return forwarding_map.get(normalized, normalized)
+
+
+@dataclass(frozen=True)
+class BaseProjectionManifest:
+    """General, serializable projection manifest for node-collapsing projections.
+
+    Directly usable by any projection that removes nodes and (optionally) maps
+    value-equivalent removed addresses to retained computations; custom projections may also
+    subclass to add kind-specific fields. Register `from_dict` under the manifest
+    `kind` via `register_projection_manifest` to enable deserialization.
+    """
+
+    kind: str
+    forwarding_map: dict[str, str]
     retained_to_collapsed_sources: dict[str, tuple[str, ...]]
+    removed_node_snapshots: dict[str, ProjectedNodeSnapshot]
     formula_rewrites: tuple[FormulaRewrite, ...]
     collapsed_groups: tuple[CollapsedGroup, ...]
 
     @classmethod
-    def empty(cls) -> ProjectionManifest:
-        """Return an empty identity-transit projection manifest."""
+    def empty(cls, kind: str) -> BaseProjectionManifest:
+        """Return an empty manifest tagged with `kind`."""
         return cls(
-            kind="identity_transit",
-            removed_to_replacement={},
+            kind=kind,
+            forwarding_map={},
             retained_to_collapsed_sources={},
+            removed_node_snapshots={},
             formula_rewrites=(),
             collapsed_groups=(),
         )
 
+    def map_to_projected(self, address: str) -> str:
+        """Return the projected computation address for a workbook address."""
+        return _map_to_projected(self.forwarding_map, address)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "kind": self.kind,
-            "removed_to_replacement": dict(self.removed_to_replacement),
+            "forwarding_map": dict(self.forwarding_map),
             "retained_to_collapsed_sources": {
                 key: list(value) for key, value in self.retained_to_collapsed_sources.items()
+            },
+            "removed_node_snapshots": {
+                key: snap.to_dict() for key, snap in self.removed_node_snapshots.items()
             },
             "formula_rewrites": [item.to_dict() for item in self.formula_rewrites],
             "collapsed_groups": [group.to_dict() for group in self.collapsed_groups],
         }
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> ProjectionManifest:
+    def from_dict(cls, data: Mapping[str, Any]) -> BaseProjectionManifest:
         retained_raw = data.get("retained_to_collapsed_sources") or {}
+        snapshots_raw = data.get("removed_node_snapshots") or {}
         return cls(
-            kind="identity_transit",
-            removed_to_replacement={
-                str(k): str(v) for k, v in (data.get("removed_to_replacement") or {}).items()
-            },
+            kind=str(data["kind"]),
+            forwarding_map={str(k): str(v) for k, v in (data.get("forwarding_map") or {}).items()},
             retained_to_collapsed_sources={
                 str(k): tuple(str(x) for x in v) for k, v in retained_raw.items()
+            },
+            removed_node_snapshots={
+                str(k): ProjectedNodeSnapshot.from_dict(v) for k, v in snapshots_raw.items()
             },
             formula_rewrites=tuple(
                 FormulaRewrite.from_dict(item) for item in data.get("formula_rewrites") or ()
@@ -219,84 +225,109 @@ class ProjectionManifest:
             ),
         )
 
-    def compose(
-        self,
-        next_manifest: ProjectionManifest,
-        *,
-        original_graph: DependencyGraph,
-    ) -> ProjectionManifest:
-        """Compose this manifest with a subsequent projection step.
 
-        `self` maps the original graph to an intermediate graph. `next_manifest`
-        maps that intermediate graph to a later projected graph. The composed
-        manifest maps original workbook addresses directly to the later projected
-        computation addresses.
-        """
-        if not self.removed_to_replacement:
-            return next_manifest
-        if not next_manifest.removed_to_replacement:
-            return self
+@dataclass(frozen=True)
+class CompositeProjectionManifest:
+    """Lineage for a sequence of composed projection steps.
 
-        composed_removed: dict[str, str] = {
-            removed: next_manifest.map_to_projected(replacement)
-            for removed, replacement in self.removed_to_replacement.items()
-        }
-        for removed, replacement in next_manifest.removed_to_replacement.items():
-            composed_removed[removed] = next_manifest.map_to_projected(replacement)
+    `forwarding_map` is the transitively chained forwarding map across all
+    steps (what codegen consumes); `steps` preserves each component manifest for
+    audit and serialization. Heterogeneous step kinds are supported.
+    """
 
-        retained_sources: dict[str, list[str]] = {}
-        for removed, replacement in composed_removed.items():
-            retained_sources.setdefault(replacement, []).append(removed)
-        retained_to_collapsed_sources = {
-            retained: tuple(sources) for retained, sources in retained_sources.items()
-        }
-
-        snapshots_by_address: dict[str, ProjectedNodeSnapshot] = {}
-        for group in self.collapsed_groups + next_manifest.collapsed_groups:
-            for snapshot in group.node_snapshots:
-                snapshots_by_address[snapshot.address] = snapshot
-
-        collapsed_groups: list[CollapsedGroup] = []
-        for retained, sources in retained_to_collapsed_sources.items():
-            collapsed_groups.append(
-                CollapsedGroup(
-                    retained=retained,
-                    collapsed_sources=tuple(sources),
-                    statement_order=_statement_order(original_graph, sources),
-                    external_dependencies=_external_dependencies(
-                        original_graph,
-                        retained=retained,
-                        collapsed_sources=sources,
-                    ),
-                    node_snapshots=tuple(
-                        snapshots_by_address[source]
-                        for source in sources
-                        if source in snapshots_by_address
-                    ),
-                )
-            )
-
-        return ProjectionManifest(
-            kind="identity_transit",
-            removed_to_replacement=composed_removed,
-            retained_to_collapsed_sources=retained_to_collapsed_sources,
-            formula_rewrites=self.formula_rewrites + next_manifest.formula_rewrites,
-            collapsed_groups=tuple(collapsed_groups),
-        )
+    forwarding_map: dict[str, str]
+    steps: tuple[ProjectionManifest, ...]
+    kind: str = "composite"
 
     def map_to_projected(self, address: str) -> str:
         """Return the projected computation address for a workbook address."""
-        normalized = normalize_key(address)
-        return self.removed_to_replacement.get(normalized, normalized)
+        projected = normalize_key(address)
+        for step in self.steps:
+            projected = step.map_to_projected(projected)
+        return projected
 
-    def public_aliases_for_export(self, export_addresses: Iterable[str]) -> frozenset[str]:
-        """Return public alias addresses whose replacements appear in `export_addresses`."""
-        exported = frozenset(normalize_key(addr) for addr in export_addresses)
-        aliases: set[str] = set()
-        for removed, replacement in self.removed_to_replacement.items():
-            if replacement in exported:
-                aliases.add(removed)
-        return frozenset(aliases)
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "forwarding_map": dict(self.forwarding_map),
+            "steps": [step.to_dict() for step in self.steps],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> CompositeProjectionManifest:
+        return cls(
+            forwarding_map={str(k): str(v) for k, v in (data.get("forwarding_map") or {}).items()},
+            steps=tuple(resolve_projection_manifest(step) for step in data.get("steps") or ()),
+        )
+
+
+ProjectionManifestFromDict = Callable[[Mapping[str, Any]], ProjectionManifest]
+
+_MANIFEST_REGISTRY: dict[str, ProjectionManifestFromDict] = {}
+
+
+def register_projection_manifest(
+    kind: str,
+    from_dict: ProjectionManifestFromDict,
+    *,
+    replace: bool = False,
+) -> None:
+    """Register a `from_dict` deserializer for projection manifests of `kind`.
+
+    Args:
+        kind: Manifest `kind` tag to register.
+        from_dict: Callable building a manifest from its serialized mapping.
+        replace: Allow overwriting an existing registration.
+
+    Raises:
+        ValueError: If `kind` is already registered and `replace` is False.
+    """
+    if not replace and kind in _MANIFEST_REGISTRY:
+        raise ValueError(f"projection manifest kind already registered: {kind!r}")
+    _MANIFEST_REGISTRY[kind] = from_dict
+
+
+def unregister_projection_manifest(kind: str) -> None:
+    """Remove a registered projection manifest `kind` (no-op if absent)."""
+    _MANIFEST_REGISTRY.pop(kind, None)
+
+
+def resolve_projection_manifest(data: Mapping[str, Any]) -> ProjectionManifest:
+    """Deserialize a manifest by dispatching on its `kind` via the registry.
+
+    Raises:
+        ValueError: If the manifest `kind` has no registered deserializer.
+    """
+    kind = str(data.get("kind", ""))
+    from_dict = _MANIFEST_REGISTRY.get(kind)
+    if from_dict is None:
+        raise ValueError(f"unsupported projection manifest kind: {kind!r}")
+    return from_dict(data)
+
+
+def _projected_snapshot(snapshot: Any) -> ProjectedNodeSnapshot:
+    return ProjectedNodeSnapshot(
+        address=snapshot.address,
+        sheet=snapshot.sheet,
+        column=snapshot.column,
+        row=snapshot.row,
+        formula=snapshot.formula,
+        normalized_formula=snapshot.normalized_formula,
+        value=snapshot.value,
+        is_target=snapshot.is_target,
+        is_leaf=snapshot.is_leaf,
+        metadata=dict(snapshot.metadata),
+    )
+
+
+def _projected_formula_rewrite(rewrite: Any) -> FormulaRewrite:
+    return FormulaRewrite(
+        dependent=rewrite.dependent,
+        before_formula=rewrite.before_formula,
+        after_formula=rewrite.after_formula,
+        before_normalized=rewrite.before_normalized,
+        after_normalized=rewrite.after_normalized,
+    )
 
 
 def _resolve_alias_chain(immediate: Mapping[str, str]) -> dict[str, str]:
@@ -311,24 +342,6 @@ def _resolve_alias_chain(immediate: Mapping[str, str]) -> dict[str, str]:
             current = immediate[current]
         final[start] = current
     return final
-
-
-def _node_snapshot(graph: DependencyGraph, key: NodeKey) -> ProjectedNodeSnapshot:
-    node = graph._get_internal_node(key)
-    if node is None:
-        raise KeyError(key)
-    return ProjectedNodeSnapshot(
-        address=key,
-        sheet=node.sheet,
-        column=node.column,
-        row=node.row,
-        formula=node.formula,
-        normalized_formula=node.normalized_formula,
-        value=node.value,
-        is_target=node.is_target,
-        is_leaf=node.is_leaf,
-        metadata=dict(node.metadata),
-    )
 
 
 def _external_dependencies(
@@ -357,7 +370,7 @@ def _statement_order(
         return ()
     try:
         ordered = [key for key in graph.evaluation_order(strict=False) if key in sources]
-    except Exception:
+    except CycleError:
         ordered = []
     seen = set(ordered)
     for key in graph.keys(order="workbook", source=sources):
@@ -367,165 +380,67 @@ def _statement_order(
     return tuple(ordered)
 
 
-def _compress_one_transit_on_copy(
-    graph: DependencyGraph,
-    t_key: NodeKey,
-    r_key: NodeKey,
-    *,
-    formula_rewrites: list[FormulaRewrite],
-) -> ProjectedNodeSnapshot:
-    """Rewrite dependents and remove transit node `t_key` on `graph`."""
-    snapshot = _node_snapshot(graph, t_key)
-    for d_key in list(graph._reverse_edges.get(t_key, set())):
-        extra = graph._edge_extra.get((d_key, t_key), {})
-        prov = extra.get("provenance")
-        guard = graph._guards.get((d_key, t_key))
-        d_node = graph._nodes.get(d_key)
-        if d_node is None:
-            continue
-
-        before_formula = d_node.formula
-        before_normalized = d_node.normalized_formula
-        new_formula = before_formula
-        new_norm = before_normalized
-        if isinstance(prov, EdgeProvenance) and prov.direct_sites_formula and new_formula:
-            new_formula = replace_substrings_at_spans(new_formula, prov.direct_sites_formula, r_key)
-        elif new_formula and t_key in new_formula:
-            new_formula = new_formula.replace(t_key, r_key)
-
-        if isinstance(prov, EdgeProvenance) and prov.direct_sites_normalized and new_norm:
-            new_norm = replace_substrings_at_spans(new_norm, prov.direct_sites_normalized, r_key)
-        elif new_norm and t_key in new_norm:
-            new_norm = new_norm.replace(t_key, r_key)
-
-        if before_formula != new_formula or before_normalized != new_norm:
-            formula_rewrites.append(
-                FormulaRewrite(
-                    dependent=d_key,
-                    before_formula=before_formula,
-                    after_formula=new_formula,
-                    before_normalized=before_normalized,
-                    after_normalized=new_norm,
-                )
-            )
-
-        d_node.formula = new_formula
-        d_node.normalized_formula = new_norm
-
-        graph._remove_edge(d_key, t_key)
-        new_prov = direct_provenance_for_key_in_strings(new_formula, new_norm, r_key)
-        graph.add_edge(d_key, r_key, guard=guard, provenance=new_prov)
-
-    for dep in list(graph._edges.get(t_key, set())):
-        graph._remove_edge(t_key, dep)
-    graph._nodes.pop(t_key, None)
-    graph._edges.pop(t_key, None)
-    graph._reverse_edges.pop(t_key, None)
-    return snapshot
-
-
-def _build_identity_transit_manifest(
+def build_forwarding_projection_manifest(
     original_graph: DependencyGraph,
+    record: IdentityTransitCompressionRecord,
     *,
-    immediate_removed: dict[str, str],
-    removal_order: list[str],
-    formula_rewrites: list[FormulaRewrite],
-    snapshots_by_removed: dict[str, ProjectedNodeSnapshot],
-) -> ProjectionManifest:
-    removed_to_replacement = _resolve_alias_chain(immediate_removed)
+    kind: str,
+) -> BaseProjectionManifest:
+    """Build a `BaseProjectionManifest` from a graph compression `record`.
+
+    All removed nodes are treated as value-equivalent forwarding aliases (the
+    identity-transit contract). The collapse lineage is keyed back to
+    `original_graph` for statement order and external-dependency boundaries.
+    """
+    forwarding_map = _resolve_alias_chain(record.immediate_removed)
     retained_sources: dict[str, list[str]] = {}
-    for removed in removal_order:
-        retained = removed_to_replacement[removed]
+    for removed in record.removal_order:
+        retained = forwarding_map[removed]
         retained_sources.setdefault(retained, []).append(removed)
 
     retained_to_collapsed_sources = {
         retained: tuple(sources) for retained, sources in retained_sources.items() if sources
     }
 
-    collapsed_groups: list[CollapsedGroup] = []
-    for retained, sources in retained_to_collapsed_sources.items():
-        collapsed_groups.append(
-            CollapsedGroup(
-                retained=retained,
-                collapsed_sources=tuple(sources),
-                statement_order=_statement_order(original_graph, sources),
-                external_dependencies=_external_dependencies(
-                    original_graph,
-                    retained=retained,
-                    collapsed_sources=sources,
-                ),
-                node_snapshots=tuple(snapshots_by_removed[source] for source in sources),
-            )
-        )
+    removed_node_snapshots = {
+        address: _projected_snapshot(snapshot)
+        for address, snapshot in record.snapshots_by_removed.items()
+    }
 
-    return ProjectionManifest(
-        kind="identity_transit",
-        removed_to_replacement=removed_to_replacement,
+    collapsed_groups = tuple(
+        CollapsedGroup(
+            retained=retained,
+            collapsed_sources=tuple(sources),
+            statement_order=_statement_order(original_graph, sources),
+            external_dependencies=_external_dependencies(
+                original_graph,
+                retained=retained,
+                collapsed_sources=sources,
+            ),
+        )
+        for retained, sources in retained_to_collapsed_sources.items()
+    )
+
+    return BaseProjectionManifest(
+        kind=kind,
+        forwarding_map=forwarding_map,
         retained_to_collapsed_sources=retained_to_collapsed_sources,
-        formula_rewrites=tuple(formula_rewrites),
-        collapsed_groups=tuple(collapsed_groups),
+        removed_node_snapshots=removed_node_snapshots,
+        formula_rewrites=tuple(
+            _projected_formula_rewrite(rewrite) for rewrite in record.formula_rewrites
+        ),
+        collapsed_groups=collapsed_groups,
     )
 
 
 def project_identity_transits(
     graph: DependencyGraph,
-) -> tuple[DependencyGraph, ProjectionManifest]:
+) -> tuple[DependencyGraph, BaseProjectionManifest]:
     """Return a projected copy of `graph` with identity transit nodes collapsed."""
-    original_graph = graph
-    projected = copy_dependency_graph(graph)
-    immediate_removed: dict[str, str] = {}
-    removal_order: list[str] = []
-    formula_rewrites: list[FormulaRewrite] = []
-    snapshots_by_removed: dict[str, ProjectedNodeSnapshot] = {}
-
-    clear_identity_singleton_ref_cache()
-    try:
-        heap: list[NodeKey] = list(projected._nodes.keys())
-        heapq.heapify(heap)
-        while heap:
-            t_key = heapq.heappop(heap)
-            if t_key not in projected._nodes:
-                continue
-            r_key = is_identity_transit(projected, t_key)
-            if r_key is None:
-                continue
-            dependents_t = projected._reverse_edges.get(t_key, set())
-            if not dependents_t:
-                continue
-            ok = True
-            for d_key in dependents_t:
-                prov = projected._edge_extra.get((d_key, t_key), {}).get("provenance")
-                if not compression_safe_provenance(
-                    prov if isinstance(prov, EdgeProvenance) else None
-                ):
-                    ok = False
-                    break
-            if not ok:
-                continue
-
-            dependents_before = list(dependents_t)
-            snapshot = _compress_one_transit_on_copy(
-                projected,
-                t_key,
-                r_key,
-                formula_rewrites=formula_rewrites,
-            )
-            immediate_removed[t_key] = r_key
-            removal_order.append(t_key)
-            snapshots_by_removed[t_key] = snapshot
-            for d_key in dependents_before:
-                heapq.heappush(heap, d_key)
-    finally:
-        clear_identity_singleton_ref_cache()
-
-    manifest = _build_identity_transit_manifest(
-        original_graph,
-        immediate_removed=immediate_removed,
-        removal_order=removal_order,
-        formula_rewrites=formula_rewrites,
-        snapshots_by_removed=snapshots_by_removed,
-    )
-    return projected, manifest
+    projected = graph.copy()
+    record = IdentityTransitCompressionRecord()
+    projected.compress_identity_transits(record=record)
+    return projected, build_forwarding_projection_manifest(graph, record, kind="identity_transit")
 
 
 @dataclass
@@ -630,34 +545,64 @@ class IdentityTransitCompression:
 
 
 class ProjectionStep(Protocol):
-    """Projection step that can build a `ProjectionResult` from a graph."""
+    """Projection step that builds a `ProjectionResult` from a graph."""
 
     def project(self, graph: DependencyGraph) -> ProjectionResult: ...
+
+
+def _chain_forwarding_maps(manifests: list[ProjectionManifest]) -> dict[str, str]:
+    composed: dict[str, str] = {}
+    for index, manifest in enumerate(manifests):
+        later = manifests[index + 1 :]
+        forwarding_map = getattr(manifest, "forwarding_map", {})
+        for removed, replacement in forwarding_map.items():
+            final = replacement
+            for following in later:
+                final = following.map_to_projected(final)
+            composed[removed] = final
+    return composed
 
 
 def apply_projection(
     graph: DependencyGraph,
     projections: Iterable[ProjectionStep],
 ) -> ProjectionResult:
-    """Apply one or more projection steps, returning the final projection result."""
-    current = graph
-    projected = copy_dependency_graph(graph)
-    manifest = ProjectionManifest.empty()
-    applied = False
+    """Apply one or more projection steps, returning the final projection result.
+
+    Steps are applied in order, each projecting the previous step's projected
+    graph. A single step's manifest is returned as-is; multiple steps are folded
+    into a `CompositeProjectionManifest` carrying the chained forwarding map and
+    every component manifest. Heterogeneous step kinds are supported.
+    """
+    manifests: list[ProjectionManifest] = []
+    projected = graph
     for step in projections:
-        result = step.project(current)
-        manifest = manifest.compose(result.manifest, original_graph=graph)
-        current = result.projected_graph
+        result = step.project(projected)
+        manifests.append(result.manifest)
         projected = result.projected_graph
-        applied = True
-    if not applied:
+
+    if not manifests:
+        return ProjectionResult(
+            original_graph=graph,
+            projected_graph=graph.copy(),
+            manifest=BaseProjectionManifest.empty(kind="empty"),
+        )
+    if len(manifests) == 1:
         return ProjectionResult(
             original_graph=graph,
             projected_graph=projected,
-            manifest=manifest,
+            manifest=manifests[0],
         )
     return ProjectionResult(
         original_graph=graph,
         projected_graph=projected,
-        manifest=manifest,
+        manifest=CompositeProjectionManifest(
+            forwarding_map=_chain_forwarding_maps(manifests),
+            steps=tuple(manifests),
+        ),
     )
+
+
+register_projection_manifest("identity_transit", BaseProjectionManifest.from_dict)
+register_projection_manifest("empty", BaseProjectionManifest.from_dict)
+register_projection_manifest("composite", CompositeProjectionManifest.from_dict)

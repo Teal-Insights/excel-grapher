@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 
 from .formula_label import truncate_formula_display, validate_max_formula_length
-from .graph import DependencyGraph
+from .graph import DependencyGraph, EdgeAttrs
 from .guard import GuardExpr
 from .lightweight_viz import (
     LightweightVizLocalEdges,
@@ -22,6 +22,18 @@ from .lightweight_viz import (
 )
 from .node import Node, NodeKey, NodeView
 from .subgraph import select_path_induced_subgraph
+
+
+class NetworkXGraphSource(Protocol):
+    """Minimal graph read surface consumed by `to_networkx`."""
+
+    def __iter__(self) -> Iterator[NodeKey]: ...
+
+    def get_node(self, address: NodeKey) -> NodeView | None: ...
+
+    def get_dependencies(self, address: NodeKey) -> frozenset[NodeKey]: ...
+
+    def get_edge_attrs(self, from_key: NodeKey, to_key: NodeKey) -> EdgeAttrs: ...
 
 
 def _dot_escape(s: str) -> str:
@@ -64,12 +76,15 @@ def _networkx_value_type(node: Node | NodeView) -> str:
 
 
 def to_networkx(
-    graph: Any,
+    graph: DependencyGraph | NetworkXGraphSource,
     *,
     include_formula_on_nodes: bool = True,
     max_formula_length: int | None = 120,
 ):
-    """Convert DependencyGraph to a NetworkX DiGraph.
+    """Convert a dependency graph to a NetworkX DiGraph.
+
+    Accepts `DependencyGraph` or any graph-like object with node iteration,
+    dependency lookup, and edge attributes (for example `ProjectionResult`).
 
     NetworkX is an optional dependency. If not installed, raises ImportError with a
     helpful message.

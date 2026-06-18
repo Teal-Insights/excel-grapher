@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+from typing import Any
+
 from excel_grapher.core.formula_ast import (
     CellRefNode,
     FormulaParseError,
@@ -128,3 +131,69 @@ def compression_safe_provenance(prov: EdgeProvenance | None) -> bool:
         DependencyCause.dynamic_indirect,
     }
     return not (prov.causes & unsafe)
+
+
+@dataclass(frozen=True)
+class IdentityTransitFormulaRewrite:
+    """Dependent formula rewrite performed during identity transit compression."""
+
+    dependent: str
+    before_formula: str | None
+    after_formula: str | None
+    before_normalized: str | None
+    after_normalized: str | None
+
+
+@dataclass(frozen=True)
+class IdentityTransitNodeSnapshot:
+    """Workbook node state captured before an identity transit node is removed."""
+
+    address: str
+    sheet: str
+    column: str
+    row: int
+    formula: str | None
+    normalized_formula: str | None
+    value: Any
+    is_target: bool
+    is_leaf: bool
+    metadata: dict[str, Any]
+
+
+@dataclass
+class IdentityTransitCompressionRecord:
+    """Lineage collected while compressing identity transit nodes."""
+
+    immediate_removed: dict[str, str] = field(default_factory=dict)
+    removal_order: list[str] = field(default_factory=list)
+    formula_rewrites: list[IdentityTransitFormulaRewrite] = field(default_factory=list)
+    snapshots_by_removed: dict[str, IdentityTransitNodeSnapshot] = field(default_factory=dict)
+
+    def note_removal(
+        self,
+        t_key: NodeKey,
+        r_key: NodeKey,
+        snapshot: IdentityTransitNodeSnapshot,
+    ) -> None:
+        self.immediate_removed[t_key] = r_key
+        self.removal_order.append(t_key)
+        self.snapshots_by_removed[t_key] = snapshot
+
+
+def snapshot_transit_node(graph: DependencyGraph, key: NodeKey) -> IdentityTransitNodeSnapshot:
+    """Capture workbook node state for `key` before identity transit removal."""
+    node = graph.get_node(key)
+    if node is None:
+        raise KeyError(key)
+    return IdentityTransitNodeSnapshot(
+        address=key,
+        sheet=node.sheet,
+        column=node.column,
+        row=node.row,
+        formula=node.formula,
+        normalized_formula=node.normalized_formula,
+        value=node.value,
+        is_target=node.is_target,
+        is_leaf=node.is_leaf,
+        metadata=dict(node.metadata),
+    )

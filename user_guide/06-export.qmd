@@ -121,8 +121,11 @@ modules = CodeGenerator(projection).generate_modules(
 ```
 
 `ProjectionResult` behaves like the projected graph for dependency reads, and exposes
-`original_graph` plus a serializable `manifest` with removed-to-replacement aliases,
-formula rewrites, and collapsed-group lineage. Visualization can use the same facade:
+`original_graph` plus a serializable `manifest`. The manifest separates **address
+projection** (`map_to_projected`, used by codegen to keep removed public addresses
+resolving) from **collapse lineage** (`retained_to_collapsed_sources`,
+`removed_node_snapshots` with original formulas and metadata, `collapsed_groups`,
+`formula_rewrites`) for audit and refactoring. Visualization can use the same facade:
 
 ```python
 from excel_grapher.grapher import to_networkx
@@ -131,6 +134,8 @@ from excel_grapher.exporter import to_web_viz_payload
 payload = to_web_viz_payload(to_networkx(projection))
 ```
 
+Projection is an extension point: implement the `ProjectionStep` protocol to build your own
+projected graph (see the contributing guide), and compose steps with `apply_projection`.
 In-place `DependencyGraph.compress_identity_transits()` remains available for destructive
 graph simplification; prefer projections for export and viz workflows.
 

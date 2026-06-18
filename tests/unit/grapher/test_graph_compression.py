@@ -77,6 +77,52 @@ def test_compress_happy_path_manual_graph() -> None:
     assert na.normalized_formula == "=Sheet1!C1"
 
 
+def test_compress_identity_transits_populates_record() -> None:
+    from excel_grapher.grapher.compression import IdentityTransitCompressionRecord
+    from excel_grapher.grapher.graph import DependencyGraph
+
+    graph = DependencyGraph()
+    c = Node(
+        sheet="Sheet1",
+        column="C",
+        row=1,
+        formula=None,
+        normalized_formula=None,
+        value=42,
+        is_leaf=True,
+    )
+    b = _make_node("Sheet1!B1", "=Sheet1!C1", "=Sheet1!C1")
+    a = _make_node("Sheet1!A1", "=Sheet1!B1", "=Sheet1!B1")
+    graph.add_node(c)
+    graph.add_node(b)
+    graph.add_node(a)
+    dr = DependencyCause.direct_ref
+    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=frozenset({dr})))
+    af = "=Sheet1!B1"
+    ref = "Sheet1!B1"
+    i = af.index(ref)
+    sp = ((i, i + len(ref)),)
+    graph.add_edge(
+        "Sheet1!A1",
+        "Sheet1!B1",
+        provenance=EdgeProvenance(
+            causes=frozenset({dr}),
+            direct_sites_formula=sp,
+            direct_sites_normalized=sp,
+        ),
+    )
+
+    record = IdentityTransitCompressionRecord()
+    removed = graph.compress_identity_transits(record=record)
+
+    assert removed == ["Sheet1!B1"]
+    assert record.immediate_removed["Sheet1!B1"] == "Sheet1!C1"
+    assert record.removal_order == ["Sheet1!B1"]
+    assert len(record.formula_rewrites) == 1
+    assert record.formula_rewrites[0].dependent == "Sheet1!A1"
+    assert record.snapshots_by_removed["Sheet1!B1"].address == "Sheet1!B1"
+
+
 def test_compress_chain_manual_graph() -> None:
     from excel_grapher.grapher.graph import DependencyGraph
 

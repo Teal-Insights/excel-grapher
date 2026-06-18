@@ -146,13 +146,32 @@ def test_projected_codegen_omits_unrelated_public_aliases_outside_export_closure
         capture_dependency_provenance=True,
     )
     projection = IdentityTransitCompression().project(graph)
-    assert projection.manifest.removed_to_replacement["Other!B1"] == "Engine!C7"
+    assert projection.manifest.map_to_projected("Other!B1") == "Engine!C7"
 
     code = CodeGenerator(projection).generate(["Outputs!B12"])
 
     assert "cell_outputs_b12" in code
     assert "cell_other_b1" not in code
     assert "Engine!C7" not in code
+
+
+def test_projected_codegen_omits_internal_aliases_inside_export_closure(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "identity_target.xlsx"
+    _write_identity_workbook(workbook_path)
+
+    graph = create_dependency_graph(
+        workbook_path,
+        ["Outputs!B14"],
+        load_values=True,
+        capture_dependency_provenance=True,
+    )
+    projection = IdentityTransitCompression().project(graph)
+    assert projection.manifest.map_to_projected("Outputs!B12") == "Engine!C6"
+
+    code = CodeGenerator(projection).generate(["Outputs!B14"])
+
+    assert "cell_outputs_b14" in code
+    assert "cell_outputs_b12" not in code
 
 
 def test_projected_codegen_preserves_public_targets_for_removed_mirror(tmp_path: Path) -> None:
