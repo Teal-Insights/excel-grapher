@@ -18,6 +18,10 @@ from excel_grapher.evaluator.parser import (
 )
 from excel_grapher.evaluator.types import XlError
 from excel_grapher.exporter.codegen import CodeGenerator
+from tests.integration.utils.parity_harness import (
+    CACHE_EVAL_SCAFFOLD_LINE_BUDGET,
+    assert_cache_eval_scaffold_within_budget,
+)
 
 
 def _set_leaf_classification(graph: DependencyGraph, value: dict[str, str]) -> None:
@@ -533,6 +537,13 @@ class TestCodeGeneratorContextManager:
         assert "def xl_cell(" in code
         # Should be standalone - no excel_evaluator imports
         assert "from excel_evaluator" not in code
+
+    def test_emitted_cache_eval_scaffold_within_line_budget(self) -> None:
+        """Shared _evaluate_address helper keeps export scaffold under line budget."""
+        graph = _make_graph(_make_node("Sheet1!A1", "=1+1", None))
+        code = CodeGenerator(graph).generate(["Sheet1!A1"])
+        line_count = assert_cache_eval_scaffold_within_budget(code)
+        assert line_count <= CACHE_EVAL_SCAFFOLD_LINE_BUDGET
 
     def test_generate_runtime_imports_do_not_redefine_callable(self):
         """Generated runtime should not import Callable twice (ruff F811)."""

@@ -1558,6 +1558,8 @@ class CodeGenerator:
         lines: list[str] = []
         lines.append(f"def {func_name}(ctx):")
         doc = f"Formula: {node.formula}".replace("'''", "\\'''")
+        if doc[-1] not in ".?!":
+            doc = f"{doc}."
         lines.append(f"    '''{doc}'''")
         # Reset temp var counter for each cell to keep variable names short
         self._temp_var_counter = 0
