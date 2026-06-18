@@ -7,6 +7,7 @@ from excel_grapher.core.formula_ast import (
     BinaryOpNode,
     BoolNode,
     CellRefNode,
+    EmptyArgNode,
     ErrorNode,
     FormulaParseError,
     FunctionCallNode,
@@ -14,7 +15,8 @@ from excel_grapher.core.formula_ast import (
     RangeNode,
     StringNode,
     UnaryOpNode,
-    EmptyArgNode,
+    WholeColumnNode,
+    WholeRowNode,
     parse as _core_parse,
 )
 
@@ -33,6 +35,8 @@ __all__ = [
     "StringNode",
     "UnaryOpNode",
     "EmptyArgNode",
+    "WholeColumnNode",
+    "WholeRowNode",
     "parse",
 ]
 
