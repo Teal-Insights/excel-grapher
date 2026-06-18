@@ -6,9 +6,11 @@ from excel_grapher.runtime.text import (
     xl__xlfn_numbervalue,
     xl_concatenate,
     xl_left,
+    xl_lower,
     xl_mid,
     xl_right,
     xl_text,
+    xl_value,
 )
 
 from . import register
@@ -18,5 +20,7 @@ register("RIGHT")(xl_right)
 register("MID")(xl_mid)
 register("CONCATENATE")(xl_concatenate)
 register("TEXT")(xl_text)
+register("LOWER")(xl_lower)
+register("VALUE")(xl_value)
 register("NUMBERVALUE")(xl__xlfn_numbervalue)
 register("_XLFN.NUMBERVALUE")(xl__xlfn_numbervalue)

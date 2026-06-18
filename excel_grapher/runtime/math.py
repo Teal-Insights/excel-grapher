@@ -20,7 +20,9 @@ from excel_grapher.core import (
 T = TypeVar("T", str, float)
 
 __all__ = [
+    "xl_abs",
     "xl_average",
+    "xl_averageif",
     "xl_count",
     "xl_counta",
     "xl_countif",
@@ -36,6 +38,16 @@ __all__ = [
     "xl_sum",
     "xl_sumproduct",
 ]
+
+
+def xl_abs(*args: CellValue) -> float | XlError:
+    """Return the absolute value of a number (Excel ``ABS``)."""
+    if len(args) != 1:
+        return XlError.VALUE
+    n = to_number(args[0])
+    if isinstance(n, XlError):
+        return n
+    return float(abs(n))
 
 
 def xl_sum(*args: CellValue) -> float | XlError:
@@ -215,77 +227,79 @@ def _parse_countif_criteria(criteria: str) -> tuple[str | None, str]:
     return (None, s)
 
 
-def xl_countif(range_values: CellValue, criteria: CellValue) -> int | XlError:
+def _value_matches_criteria(cell_value: CellValue, criteria: CellValue) -> bool:
     if isinstance(criteria, XlError):
-        return criteria
-    values = list(flatten(range_values))
+        return False
     if not isinstance(criteria, str):
         target = criteria
-
-        def pred(v: CellValue) -> bool:
-            if isinstance(v, XlError):
-                return False
-            if target is None:
-                return v is None
-            if isinstance(target, bool):
-                b = to_bool(v)
-                return (not isinstance(b, XlError)) and b == target
-            if isinstance(target, (int, float)) and not isinstance(target, bool):
-                vn = to_number(v)
-                return (not isinstance(vn, XlError)) and vn == float(target)
-            return excel_casefold(to_string(v)) == excel_casefold(to_string(target))
-
-        return sum(1 for v in values if pred(v))
+        if isinstance(cell_value, XlError):
+            return False
+        if target is None:
+            return cell_value is None
+        if isinstance(target, bool):
+            b = to_bool(cell_value)
+            return (not isinstance(b, XlError)) and b == target
+        if isinstance(target, (int, float)) and not isinstance(target, bool):
+            vn = to_number(cell_value)
+            return (not isinstance(vn, XlError)) and vn == float(target)
+        return excel_casefold(to_string(cell_value)) == excel_casefold(to_string(target))
 
     op, rhs = _parse_countif_criteria(criteria)
+    if isinstance(cell_value, XlError):
+        return False
 
-    # Wildcard / equality mode.
     if op is None:
         if any(ch in rhs for ch in ("*", "?", "~")):
             rx = _wildcard_to_regex(rhs)
-            return sum(
-                1
-                for v in values
-                if not isinstance(v, XlError) and rx.match(to_string(v)) is not None
-            )
+            return rx.match(to_string(cell_value)) is not None
+        return excel_casefold(to_string(cell_value)) == excel_casefold(rhs)
 
-        rhs_cf = excel_casefold(rhs)
-        return sum(
-            1
-            for v in values
-            if not isinstance(v, XlError) and excel_casefold(to_string(v)) == rhs_cf
-        )
-
-    # Operator mode: try numeric compare first if RHS parses as a number.
-    rhs_num: float | None
     try:
         rhs_num = float(rhs) if rhs != "" else 0.0
     except ValueError:
         rhs_num = None
 
-    count = 0
-    for v in values:
-        if isinstance(v, XlError):
+    if rhs_num is not None:
+        vn = to_number(cell_value)
+        if isinstance(vn, XlError):
+            return False
+        return _criteria_compare(op, vn, rhs_num)
+
+    return _criteria_compare(op, excel_casefold(to_string(cell_value)), excel_casefold(rhs))
+
+
+def xl_countif(range_values: CellValue, criteria: CellValue) -> int | XlError:
+    if isinstance(criteria, XlError):
+        return criteria
+    values = list(flatten(range_values))
+    return sum(1 for v in values if _value_matches_criteria(v, criteria))
+
+
+def xl_averageif(
+    range_values: CellValue,
+    criteria: CellValue,
+    average_range: CellValue | None = None,
+) -> float | XlError:
+    if isinstance(criteria, XlError):
+        return criteria
+    crit_vals = list(flatten(range_values))
+    avg_vals = list(flatten(average_range if average_range is not None else range_values))
+    if len(crit_vals) != len(avg_vals):
+        return XlError.VALUE
+    matched: list[float] = []
+    for crit_val, avg_val in zip(crit_vals, avg_vals, strict=True):
+        if not _value_matches_criteria(crit_val, criteria):
             continue
-
-        if rhs_num is not None:
-            vn = to_number(v)
-            if isinstance(vn, XlError):
-                # Non-numeric cells simply don't match numeric criteria.
-                continue
-            match = _compare_values(op, vn, rhs_num)
-        else:
-            left_str = excel_casefold(to_string(v))
-            right_str = excel_casefold(rhs)
-            match = _compare_values(op, left_str, right_str)
-
-        if match:
-            count += 1
-
-    return count
+        n = to_number(avg_val)
+        if isinstance(n, XlError):
+            return n
+        matched.append(float(n))
+    if not matched:
+        return XlError.DIV
+    return sum(matched) / len(matched)
 
 
-def _compare_values(op: str, left: T, right: T) -> bool:
+def _criteria_compare(op: str, left: T, right: T) -> bool:
     """Compare two values of the same type."""
     if op == "=":
         return left == right

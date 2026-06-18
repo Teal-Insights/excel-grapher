@@ -11,8 +11,9 @@ from fastpyxl.utils.cell import (
 )
 
 from excel_grapher.core.address_keys import parse_address
+from excel_grapher.runtime.math import xl_abs
 
-from .coercions import flatten, numeric_values, to_bool, to_number, to_string
+from .coercions import flatten, numeric_values, to_bool, to_string
 from .formula_ast import (
     AstNode,
     BinaryOpNode,
@@ -330,12 +331,7 @@ def _fn_max(args: list[CellValue]) -> CellValue:
 
 
 def _fn_abs(args: list[CellValue]) -> CellValue:
-    if not args:
-        return XlError.VALUE
-    n = to_number(args[0])
-    if isinstance(n, XlError):
-        return n
-    return float(abs(n))
+    return xl_abs(*args)
 
 
 def _fn_if(args: list[CellValue]) -> CellValue:

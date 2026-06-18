@@ -13,6 +13,7 @@ from excel_grapher.core.address_keys import (
     format_cell_key,
     needs_quoting,
 )
+from excel_grapher.core.excel_function_names import excel_function_call_prefixes
 from excel_grapher.core.formula_normalization import (
     build_named_range_replacement_state,
     normalize_excel_formula,
@@ -430,7 +431,7 @@ def split_top_level_function(formula: str, fn: str) -> list[str] | None:
         return None
     s = formula[1:].lstrip()
     fn_u = fn.upper()
-    prefixes = (f"{fn_u}(", f"_XLFN.{fn_u}(")
+    prefixes = excel_function_call_prefixes(fn_u)
     if not any(s[: len(p)].upper() == p for p in prefixes):
         return None
 

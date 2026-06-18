@@ -40,10 +40,12 @@ def test_ifna_parity_with_na_and_value() -> None:
         _make_node("S!A3", "=_xlfn.IFNA(S!A1, 9)", None),
         _make_node("S!A4", "=IFNA(5, 11)", None),
         _make_node("S!A5", '=_xlfn.IFNA("text", "fallback")', None),
+        _make_node("S!A6", "=_xludf.IFNA(S!A1, 13)", None),
     )
 
-    result = assert_codegen_matches_evaluator(graph, ["S!A2", "S!A3", "S!A4", "S!A5"])
+    result = assert_codegen_matches_evaluator(graph, ["S!A2", "S!A3", "S!A4", "S!A5", "S!A6"])
     assert result.generated_results["S!A2"] == 7
     assert result.generated_results["S!A3"] == 9
     assert result.generated_results["S!A4"] == 5
     assert result.generated_results["S!A5"] == "text"
+    assert result.generated_results["S!A6"] == 13

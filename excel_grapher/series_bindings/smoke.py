@@ -110,10 +110,16 @@ def smoke_test_setters(
         leaf = resolved["leaves"][0]
         key = leaf["key"]
         address = leaf["address"]
-        obs_value = cast(int | float, leaf["record"]["OBS_VALUE"])
-        records: list[dict[str, object]] = [
-            cast(dict[str, object], {**key, "OBS_VALUE": float(obs_value) + 1.0})
-        ]
+        obs_value = leaf["record"]["OBS_VALUE"]
+        if isinstance(obs_value, str):
+            bumped: object = f"{obs_value}*"
+        elif isinstance(obs_value, bool):
+            bumped = not obs_value
+        elif isinstance(obs_value, (int, float)) and not isinstance(obs_value, bool):
+            bumped = float(obs_value) + 1.0
+        else:
+            bumped = obs_value
+        records: list[dict[str, object]] = [cast(dict[str, object], {**key, "OBS_VALUE": bumped})]
         setter(ctx, records)
         if ctx.inputs[address] != records[0]["OBS_VALUE"]:
             raise BindingsSmokeError(

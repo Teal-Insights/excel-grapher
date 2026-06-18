@@ -16,6 +16,7 @@ from excel_grapher.core.address_keys import (
     quote_sheet_if_needed,
     sort_node_keys,
 )
+from excel_grapher.core.excel_function_names import normalize_excel_function_name
 from excel_grapher.evaluator.errors import MissingNormalizedFormulaError
 from excel_grapher.evaluator.name_utils import (
     address_to_python_name,
@@ -862,7 +863,7 @@ class CodeGenerator:
         IF, OFFSET are handled specially.
         """
         func_name = excel_func_to_python(node.name)
-        upper_name = node.name.upper()
+        upper_name = normalize_excel_function_name(node.name)
 
         # IF needs special handling - emit as Python conditional for lazy evaluation
         if upper_name == "IF":
@@ -873,7 +874,7 @@ class CodeGenerator:
             return self._emit_iferror(node)
 
         # IFNA needs special handling - only evaluate fallback if value is #N/A
-        if upper_name in {"IFNA", "_XLFN.IFNA"}:
+        if upper_name == "IFNA":
             return self._emit_ifna(node)
 
         # CHOOSE needs special handling - only evaluate the selected argument
@@ -906,9 +907,9 @@ class CodeGenerator:
             return self._emit_columns(node)
 
         # TRUE()/FALSE() as zero-arg function calls
-        if upper_name in {"TRUE", "_XLFN.TRUE"}:
+        if upper_name == "TRUE":
             return "True"
-        if upper_name in {"FALSE", "_XLFN.FALSE"}:
+        if upper_name == "FALSE":
             return "False"
 
         # Functions that need numpy arrays for their array/table arguments
@@ -1585,13 +1586,13 @@ class CodeGenerator:
             # Error literal requires XlError enum
             funcs.add("XlError")
         elif isinstance(node, FunctionCallNode):
-            upper_name = node.name.upper()
+            upper_name = normalize_excel_function_name(node.name)
 
             # IF, IFERROR, CHOOSE are special - emitted as native Python conditionals
             if upper_name == "IF":
                 funcs.add("XlError")
                 funcs.add("to_bool")
-            elif upper_name == "IFERROR" or upper_name in {"IFNA", "_XLFN.IFNA"}:
+            elif upper_name == "IFERROR" or upper_name == "IFNA":
                 funcs.add("XlError")
             elif upper_name == "CHOOSE":
                 funcs.add("XlError")

@@ -9,6 +9,10 @@ import re
 from excel_grapher.core.address_keys import (
     parse_address,
 )
+from excel_grapher.core.excel_function_names import (
+    excel_func_to_python_runtime_name,
+    normalize_excel_function_name,
+)
 
 
 def address_to_python_name(address: str) -> str:
@@ -61,16 +65,12 @@ def excel_func_to_python(name: str) -> str:
     Returns:
         Python function name with 'xl_' prefix.
     """
-    # Lowercase
-    result = name.lower()
-
-    # Replace dots with underscores (e.g., NORM.DIST -> norm_dist)
-    result = result.replace(".", "_")
-
-    return f"xl_{result}"
+    result = normalize_excel_function_name(name)
+    return excel_func_to_python_runtime_name(result)
 
 
 __all__ = [
     "address_to_python_name",
     "excel_func_to_python",
+    "normalize_excel_function_name",
 ]

@@ -12,6 +12,10 @@ from excel_grapher.core.address_keys import (
     parse_address,
     quote_sheet_if_needed,
 )
+from excel_grapher.core.excel_function_names import (
+    excel_function_call_prefixes,
+    normalize_excel_function_name,
+)
 from excel_grapher.evaluator.name_utils import address_to_python_name, excel_func_to_python
 
 
@@ -68,6 +72,41 @@ class TestAddressToPythonName:
         assert address_to_python_name("'Data (v2)'!B5") == "cell_data_v2_b5"
 
 
+class TestNormalizeExcelFunctionName:
+    """Tests for normalize_excel_function_name."""
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("IFNA", "IFNA"),
+            ("ifna", "IFNA"),
+            ("_XLFN.IFNA", "IFNA"),
+            ("_xlfn.IFNA", "IFNA"),
+            ("_XLUDF.IFNA", "IFNA"),
+            ("_xludf.XLOOKUP", "XLOOKUP"),
+            ("_XLFN.NUMBERVALUE", "NUMBERVALUE"),
+            ("_XLUDF.NUMBERVALUE", "NUMBERVALUE"),
+            ("SUM", "SUM"),
+            ("_XLFN.IFS", "IFS"),
+            ("NORM.DIST", "NORM.DIST"),
+            ("_XLUDF.MYADDIN", "_XLUDF.MYADDIN"),
+            ("_XLUDF.CUSTOM_UDF", "_XLUDF.CUSTOM_UDF"),
+        ],
+    )
+    def test_normalize_excel_function_name(self, raw: str, expected: str) -> None:
+        assert normalize_excel_function_name(raw) == expected
+
+    def test_excel_function_call_prefixes_includes_xludf_for_allowlisted(self) -> None:
+        assert excel_function_call_prefixes("IFNA") == (
+            "IFNA(",
+            "_XLFN.IFNA(",
+            "_XLUDF.IFNA(",
+        )
+
+    def test_excel_function_call_prefixes_omits_xludf_for_unknown(self) -> None:
+        assert excel_function_call_prefixes("SUM") == ("SUM(", "_XLFN.SUM(")
+
+
 class TestExcelFuncToPython:
     """Tests for excel_func_to_python function."""
 
@@ -98,6 +137,11 @@ class TestExcelFuncToPython:
     def test_function_with_underscore(self):
         """Function with underscore (rare but possible)."""
         assert excel_func_to_python("AGGREGATE_X") == "xl_aggregate_x"
+
+    def test_prefixed_function_normalizes_before_python_name(self):
+        """Compatibility prefixes should not appear in generated Python names."""
+        assert excel_func_to_python("_XLUDF.IFNA") == "xl_ifna"
+        assert excel_func_to_python("_xlfn.XLOOKUP") == "xl__xlfn_xlookup"
 
 
 class TestParseAddress:
