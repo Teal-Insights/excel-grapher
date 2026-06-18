@@ -4,7 +4,7 @@ import numpy as np
 
 from excel_grapher.core import CellValue, XlError
 
-__all__ = ["xl_isblank", "xl_isnumber", "xl_istext", "xl_na"]
+__all__ = ["xl_isblank", "xl_iserror", "xl_isna", "xl_isnumber", "xl_istext", "xl_na"]
 
 
 def xl_isnumber(value: CellValue) -> bool:
@@ -21,3 +21,11 @@ def xl_isblank(value: CellValue) -> bool:
 
 def xl_na() -> XlError:
     return XlError.NA
+
+
+def xl_iserror(value: CellValue) -> bool:
+    return isinstance(value, XlError)
+
+
+def xl_isna(value: CellValue) -> bool:
+    return value == XlError.NA

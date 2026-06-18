@@ -6,10 +6,12 @@ __all__ = [
     "xl__xlfn_numbervalue",
     "xl_concatenate",
     "xl_left",
+    "xl_lower",
     "xl_mid",
     "xl_numbervalue",
     "xl_right",
     "xl_text",
+    "xl_value",
 ]
 
 
@@ -165,3 +167,14 @@ def xl_numbervalue(
 ) -> float | XlError:
     """Excel NUMBERVALUE wrapper (non _xlfn prefix)."""
     return xl__xlfn_numbervalue(text, decimal_separator, group_separator)
+
+
+def xl_lower(text: CellValue) -> str | XlError:
+    if isinstance(text, XlError):
+        return text
+    return to_string(text).lower()
+
+
+def xl_value(text: CellValue) -> float | XlError:
+    """Convert text to a number (Excel ``VALUE``)."""
+    return to_number(text)

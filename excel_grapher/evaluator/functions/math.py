@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from excel_grapher.runtime.math import (
+    xl_abs,
     xl_average,
+    xl_averageif,
     xl_count,
     xl_counta,
     xl_countif,
@@ -24,11 +26,13 @@ from . import register
 
 register("SUM")(xl_sum)
 register("AVERAGE")(xl_average)
+register("ABS")(xl_abs)
 register("MIN")(xl_min)
 register("MAX")(xl_max)
 register("COUNT")(xl_count)
 register("COUNTA")(xl_counta)
 register("COUNTIF")(xl_countif)
+register("AVERAGEIF")(xl_averageif)
 register("SUMPRODUCT")(xl_sumproduct)
 register("ROUND")(xl_round)
 register("ROUNDDOWN")(xl_rounddown)

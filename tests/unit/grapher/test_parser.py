@@ -83,6 +83,17 @@ class TestSplitTopLevelIfs:
         assert result is None
 
 
+class TestSplitTopLevelFunctionPrefixes:
+    """Tests for compatibility-prefix recognition in split_top_level_function."""
+
+    def test_ifna_with_xludf_prefix_parses_via_formula_ast(self) -> None:
+        from excel_grapher.core.formula_ast import FunctionCallNode, parse
+
+        ast = parse('=_xludf.IFNA(Sheet1!A1, "x")')
+        assert isinstance(ast, FunctionCallNode)
+        assert ast.name == "IFNA"
+
+
 class TestSplitTopLevelChoose:
     """Tests for split_top_level_choose function."""
 

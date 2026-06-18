@@ -21,6 +21,8 @@ from tests.integration.user_flows.bindings_accuracy import (
     generate_bindings_namespace,
 )
 
+pytestmark = pytest.mark.slow
+
 EXAMPLES = Path(__file__).resolve().parents[3] / "examples" / "micro_workbooks"
 WORKBOOK = EXAMPLES / "ffv3_large.xlsx"
 BINDINGS_DIR = EXAMPLES / "ffv3_large.bindings"

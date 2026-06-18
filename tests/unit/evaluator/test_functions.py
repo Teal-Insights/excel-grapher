@@ -162,6 +162,19 @@ def test_min_max() -> None:
         assert result["S!A2"] == 3.0
 
 
+def test_abs() -> None:
+    """Test ABS function."""
+    graph = _make_graph(
+        _make_node("S!A1", None, -4),
+        _make_node("S!B1", "=ABS(-3)", None),
+        _make_node("S!B2", "=ABS(S!A1)", None),
+    )
+    with FormulaEvaluator(graph) as ev:
+        result = ev.evaluate(["S!B1", "S!B2"])
+        assert result["S!B1"] == 3.0
+        assert result["S!B2"] == 4.0
+
+
 def test_count_counta() -> None:
     """Test COUNT and COUNTA functions."""
     graph = _make_graph(

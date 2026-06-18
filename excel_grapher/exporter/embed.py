@@ -24,6 +24,7 @@ _RUNTIME_MODULES: list[tuple[str, Path]] = [
     ("math", _RUNTIME_DIR / "math.py"),
     ("text", _RUNTIME_DIR / "text.py"),
     ("info", _RUNTIME_DIR / "info.py"),
+    ("datetime", _RUNTIME_DIR / "datetime.py"),
     ("logic", _RUNTIME_DIR / "logic.py"),
     ("lookup", _RUNTIME_DIR / "lookup.py"),
     ("reference", _RUNTIME_DIR / "reference.py"),

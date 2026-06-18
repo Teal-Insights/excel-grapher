@@ -13,6 +13,7 @@ from excel_grapher.core.address_keys import (
     parse_address,
 )
 from excel_grapher.core.addressing import index_excel_range
+from excel_grapher.core.excel_function_names import normalize_excel_function_name
 from excel_grapher.core.range_shorthand import (
     SheetBounds,
     resolve_whole_column,
@@ -70,7 +71,6 @@ _SKIP_ERROR_PRECHECK = {
     "INDEX",
     "MATCH",
     "XLOOKUP",
-    "_XLFN.XLOOKUP",
 }
 
 if TYPE_CHECKING:
@@ -290,12 +290,12 @@ class FormulaEvaluator:
         if isinstance(node, RangeNode):
             return _range_from_a1(node.start, node.end)
         if isinstance(node, FunctionCallNode):
-            name = node.name.upper()
+            name = normalize_excel_function_name(node.name)
             if name == "IF":
                 return self._eval_if(node.args)
             if name == "IFERROR":
                 return self._eval_iferror(node.args)
-            if name == "IFNA" or name == "_XLFN.IFNA":
+            if name == "IFNA":
                 return self._eval_ifna(node.args)
             if name == "ISERROR":
                 return self._eval_iserror(node.args)
@@ -315,9 +315,9 @@ class FormulaEvaluator:
                 return self._eval_columns(node.args)
             if name == "INDEX":
                 return self._eval_index(node.args)
-            if name in {"TRUE", "_XLFN.TRUE"}:
+            if name == "TRUE":
                 return True
-            if name in {"FALSE", "_XLFN.FALSE"}:
+            if name == "FALSE":
                 return False
 
             args = [self._evaluate_ast(a) for a in node.args]

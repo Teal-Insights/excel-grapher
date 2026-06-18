@@ -34,6 +34,14 @@ def test_core_formula_ast_parses_basic_literals_and_refs() -> None:
     assert ast.name == "SUM"
     assert ast.args == [RangeNode("Sheet1!A1", "Sheet1!A3")]
 
+    ast = parse('=_xludf.IFNA(Sheet1!A1, "fallback")')
+    assert isinstance(ast, FunctionCallNode)
+    assert ast.name == "IFNA"
+
+    ast = parse("=_xlfn.XLOOKUP(Sheet1!A1, Sheet1!A1:A3, Sheet1!B1:B3)")
+    assert isinstance(ast, FunctionCallNode)
+    assert ast.name == "XLOOKUP"
+
 
 def test_core_expr_eval_basic_functions_over_integers() -> None:
     values: dict[str, CellValue] = {
