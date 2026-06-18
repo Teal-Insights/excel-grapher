@@ -345,7 +345,8 @@ def _parse_ref_after_sheet_bang(s: _Scanner, original: str, *, sheet_qualifier: 
     if s.peek() == "$":
         s.consume()
 
-    if s.peek() and s.peek().isdigit():
+    ch = s.peek()
+    if ch is not None and ch.isdigit():
         row_start = s.i
         row_str = s.take_while(lambda c: c.isdigit())
         s.skip_ws()
