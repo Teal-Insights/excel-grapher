@@ -119,6 +119,7 @@ class DependencyGraph:
     _hooks: list[NodeHook] = field(default_factory=list)
     leaf_classification: dict[str, str] | None = None
     sheet_order: list[str] | None = None
+    sheet_bounds: dict[str, tuple[int, int]] | None = None
     named_ranges: dict[str, tuple[str, str]] | None = None
     named_range_ranges: dict[str, tuple[str, str, str]] | None = None
 

@@ -47,6 +47,18 @@ class RangeNode:
 
 
 @dataclass(frozen=True, slots=True)
+class WholeColumnNode:
+    sheet: str
+    column: str
+
+
+@dataclass(frozen=True, slots=True)
+class WholeRowNode:
+    sheet: str
+    row: int
+
+
+@dataclass(frozen=True, slots=True)
 class FunctionCallNode:
     name: str
     args: list[AstNode]
@@ -79,6 +91,8 @@ AstNode: TypeAlias = (
     | ErrorNode
     | CellRefNode
     | RangeNode
+    | WholeColumnNode
+    | WholeRowNode
     | FunctionCallNode
     | BinaryOpNode
     | UnaryOpNode
@@ -275,14 +289,7 @@ def _parse_atom(s: _Scanner, original: str) -> AstNode:
         # If there's an exclamation next, ident is the sheet name.
         if s.peek() == "!":
             s.consume()
-            addr = _parse_cell_coord(s, original)
-            start = f"{ident}!{addr}"
-            s.skip_ws()
-            if s.peek() == ":":
-                s.consume()
-                end = _parse_range_end(s, original, default_sheet=ident)
-                return RangeNode(start=start, end=end)
-            return CellRefNode(start)
+            return _parse_ref_after_sheet_bang(s, original, sheet_qualifier=ident)
 
         # Bare A1 is not supported because inputs are normalized and sheet-qualified.
         raise FormulaParseError(
@@ -319,21 +326,64 @@ def _parse_quoted_sheet_ref(s: _Scanner, original: str) -> AstNode:
         raise FormulaParseError(original, f"Expected '!' after quoted sheet name '{sheet_name}'")
     s.consume()
 
-    # Parse cell coordinate
-    addr = _parse_cell_coord(s, original)
-    start = f"{sheet_name}!{addr}"
-
-    s.skip_ws()
-    if s.peek() == ":":
-        s.consume()
-        end = _parse_range_end(s, original, default_sheet=sheet_name)
-        return RangeNode(start=start, end=end)
-
-    return CellRefNode(start)
+    return _parse_ref_after_sheet_bang(s, original, sheet_qualifier=sheet_name)
 
 
 def _parse_ident(s: _Scanner) -> str:
     return s.take_while(lambda c: c.isalnum() or c in ("_", ".", " "))
+
+
+def _bare_sheet_name(sheet_qualifier: str) -> str:
+    if sheet_qualifier.startswith("'") and sheet_qualifier.endswith("'"):
+        return sheet_qualifier[1:-1].replace("''", "'")
+    return sheet_qualifier
+
+
+def _parse_ref_after_sheet_bang(s: _Scanner, original: str, *, sheet_qualifier: str) -> AstNode:
+    """Parse a reference after ``sheet!`` (cell, whole column/row, or A1 range)."""
+    s.skip_ws()
+    if s.peek() == "$":
+        s.consume()
+
+    if s.peek() and s.peek().isdigit():
+        row_start = s.i
+        row_str = s.take_while(lambda c: c.isdigit())
+        s.skip_ws()
+        if s.peek() == ":":
+            s.consume()
+            s.skip_ws()
+            if s.peek() == "$":
+                s.consume()
+            row2 = s.take_while(lambda c: c.isdigit())
+            if row2 == row_str:
+                return WholeRowNode(sheet=_bare_sheet_name(sheet_qualifier), row=int(row_str))
+        s.i = row_start
+
+    col_start = s.i
+    col = s.take_while(lambda c: c.isalpha())
+    if col:
+        s.skip_ws()
+        if s.peek() == ":":
+            s.consume()
+            s.skip_ws()
+            if s.peek() == "$":
+                s.consume()
+            col2 = s.take_while(lambda c: c.isalpha())
+            if col2.upper() == col.upper():
+                return WholeColumnNode(
+                    sheet=_bare_sheet_name(sheet_qualifier),
+                    column=col.upper(),
+                )
+        s.i = col_start
+
+    addr = _parse_cell_coord(s, original)
+    start = f"{sheet_qualifier}!{addr}"
+    s.skip_ws()
+    if s.peek() == ":":
+        s.consume()
+        end = _parse_range_end(s, original, default_sheet=sheet_qualifier)
+        return RangeNode(start=start, end=end)
+    return CellRefNode(start)
 
 
 def _parse_cell_coord(s: _Scanner, original: str) -> str:

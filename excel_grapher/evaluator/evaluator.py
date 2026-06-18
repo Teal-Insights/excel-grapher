@@ -13,6 +13,11 @@ from excel_grapher.core.address_keys import (
     parse_address,
 )
 from excel_grapher.core.addressing import index_excel_range
+from excel_grapher.core.range_shorthand import (
+    SheetBounds,
+    resolve_whole_column,
+    resolve_whole_row,
+)
 from excel_grapher.grapher.blank_ranges import (
     address_in_blank_ranges,
     normalize_blank_range_specs,
@@ -52,6 +57,8 @@ from .parser import (
     RangeNode,
     StringNode,
     UnaryOpNode,
+    WholeColumnNode,
+    WholeRowNode,
     parse,
 )
 from .types import CellValue, ExcelRange, XlError
@@ -276,6 +283,10 @@ class FormulaEvaluator:
             return node.error
         if isinstance(node, CellRefNode):
             return self._evaluate_cell(node.address)
+        if isinstance(node, WholeColumnNode):
+            return self._resolve_whole_column(node.sheet, node.column)
+        if isinstance(node, WholeRowNode):
+            return self._resolve_whole_row(node.sheet, node.row)
         if isinstance(node, RangeNode):
             return _range_from_a1(node.start, node.end)
         if isinstance(node, FunctionCallNode):
@@ -330,6 +341,16 @@ class FormulaEvaluator:
 
     def _resolve_range(self, rng: ExcelRange) -> numpy.ndarray:
         return rng.resolve(self._evaluate_cell)
+
+    def _sheet_bounds(self) -> SheetBounds:
+        bounds = getattr(self.graph, "sheet_bounds", None)
+        return dict(bounds) if bounds else {}
+
+    def _resolve_whole_column(self, sheet: str, column: str) -> ExcelRange:
+        return resolve_whole_column(sheet, column, self._sheet_bounds())
+
+    def _resolve_whole_row(self, sheet: str, row: int) -> ExcelRange:
+        return resolve_whole_row(sheet, row, self._sheet_bounds())
 
     def _auto_resolve_single_cell(self, value: CellValue) -> CellValue:
         """If value is a 1x1 ExcelRange, resolve it to its single cell value."""
@@ -546,7 +567,11 @@ class FormulaEvaluator:
         if len(node.args) < 1:
             return XlError.VALUE
         array_node = node.args[0]
-        if isinstance(array_node, RangeNode):
+        if isinstance(array_node, WholeColumnNode):
+            base = self._resolve_whole_column(array_node.sheet, array_node.column)
+        elif isinstance(array_node, WholeRowNode):
+            base = self._resolve_whole_row(array_node.sheet, array_node.row)
+        elif isinstance(array_node, RangeNode):
             base = _range_from_a1(array_node.start, array_node.end)
         else:
             inner = self._range_from_ref_node(array_node)
@@ -572,6 +597,10 @@ class FormulaEvaluator:
         """Interpret an AST node as a reference (cell or range) without evaluating its value."""
         if isinstance(node, RangeNode):
             return _range_from_a1(node.start, node.end)
+        if isinstance(node, WholeColumnNode):
+            return self._resolve_whole_column(node.sheet, node.column)
+        if isinstance(node, WholeRowNode):
+            return self._resolve_whole_row(node.sheet, node.row)
 
         if isinstance(node, CellRefNode):
             sheet, coord = parse_address(node.address)
