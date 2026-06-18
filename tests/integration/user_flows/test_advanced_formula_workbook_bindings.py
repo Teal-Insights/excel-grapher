@@ -10,10 +10,29 @@ import pytest
 from fastpyxl import load_workbook
 
 from excel_grapher.exporter.codegen import CodeGenerator
-from excel_grapher.series_bindings.workflow import run_binding_checks, validate_bindings_workbook
+from excel_grapher.grapher import DependencyGraph
+from excel_grapher.series_bindings.types import WorkbookSeriesBindings
+from excel_grapher.series_bindings.workflow import (
+    BindingsCheckResult,
+    run_binding_checks,
+    validate_bindings_workbook,
+)
+from tests.integration.user_flows.advanced_formula_workbook_cases import (
+    BINDINGS_DIR as SANDBOX_BINDINGS,
+)
+from tests.integration.user_flows.advanced_formula_workbook_cases import (
+    MERGED_BINDINGS_CASE,
+    SERIES_SPOT_CHECKS,
+    SHARD_BINDING_CASES,
+)
+from tests.integration.user_flows.advanced_formula_workbook_cases import (
+    WORKBOOK as SANDBOX_WORKBOOK,
+)
 from tests.integration.user_flows.bindings_accuracy import (
     BindingsAccuracyCase,
+    SeriesSpotCheck,
     assert_bindings_validate,
+    assert_series_spot_check,
 )
 from tests.integration.utils.rewrite_xludf_workbook import rewrite_formula_to_xludf
 
@@ -22,8 +41,6 @@ SANDBOX = Path(__file__).resolve().parents[3] / "sandbox" / "model"
 
 WORKBOOK = EXAMPLES / "advanced_formula_workbook_xludf.xlsx"
 BINDINGS_DIR = EXAMPLES / "advanced_formula_workbook_xludf.bindings"
-SANDBOX_WORKBOOK = SANDBOX / "advanced_formula_workbook.xlsx"
-SANDBOX_BINDINGS = SANDBOX / "advanced_formula_workbook.bindings"
 
 _XLUDF_RUNTIME_PATTERN = re.compile(r"xl__xludf_[a-z0-9_]+")
 
@@ -35,12 +52,59 @@ def _skip_if_fixtures_missing() -> None:
         pytest.skip(f"Bindings directory missing: {BINDINGS_DIR}")
 
 
-def test_sandbox_bindings_validate() -> None:
-    """Sandbox shard bindings validate against the source workbook."""
+def _skip_if_sandbox_fixtures_missing() -> None:
     if not SANDBOX_WORKBOOK.is_file() or not SANDBOX_BINDINGS.is_dir():
         pytest.skip("sandbox advanced_formula_workbook fixtures missing")
-    result = validate_bindings_workbook(SANDBOX_WORKBOOK, SANDBOX_BINDINGS)
+
+
+@pytest.fixture(scope="module")
+def sandbox_workbook() -> Path:
+    _skip_if_sandbox_fixtures_missing()
+    return SANDBOX_WORKBOOK
+
+
+@pytest.fixture(scope="module")
+def sandbox_validation(sandbox_workbook: Path) -> BindingsCheckResult:
+    result = validate_bindings_workbook(sandbox_workbook, SANDBOX_BINDINGS)
     assert result["report"]["ok"], result["report"]["issues"]
+    return result
+
+
+@pytest.fixture(scope="module")
+def sandbox_bindings(sandbox_validation: BindingsCheckResult) -> WorkbookSeriesBindings:
+    return sandbox_validation["bindings"]
+
+
+@pytest.fixture(scope="module")
+def sandbox_graph(sandbox_validation: BindingsCheckResult) -> DependencyGraph:
+    return sandbox_validation["graph"]
+
+
+def test_sandbox_bindings_validate(sandbox_workbook: Path) -> None:
+    """All sandbox shards load together without schema or resolution errors."""
+    assert_bindings_validate(MERGED_BINDINGS_CASE)
+
+
+@pytest.mark.parametrize(
+    "shard_case", SHARD_BINDING_CASES, ids=[case.name for case in SHARD_BINDING_CASES]
+)
+def test_sandbox_shard_bindings_validate(shard_case: BindingsAccuracyCase) -> None:
+    """Each binding shard validates independently against the sandbox workbook."""
+    _skip_if_sandbox_fixtures_missing()
+    assert_bindings_validate(shard_case)
+
+
+@pytest.mark.parametrize(
+    "spot_check", SERIES_SPOT_CHECKS, ids=[check.series_id for check in SERIES_SPOT_CHECKS]
+)
+def test_sandbox_series_spot_checks(
+    sandbox_workbook: Path,
+    sandbox_bindings: WorkbookSeriesBindings,
+    sandbox_graph: DependencyGraph,
+    spot_check: SeriesSpotCheck,
+) -> None:
+    """Per-sheet resolution spot checks for leaf counts, keys, and input parity."""
+    assert_series_spot_check(sandbox_graph, sandbox_workbook, sandbox_bindings, spot_check)
 
 
 def test_xludf_fixture_bindings_validate() -> None:

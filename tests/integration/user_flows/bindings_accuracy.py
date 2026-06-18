@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -18,6 +18,7 @@ from excel_grapher.series_bindings.types import LeafResolution, WorkbookSeriesBi
 from excel_grapher.series_bindings.workflow import all_series_targets, compute_names, setter_names
 
 BindingDirection = Literal["input", "output"]
+BindingKey = Mapping[str, object]
 
 
 @dataclass(frozen=True)
@@ -27,7 +28,7 @@ class SeriesSpotCheck:
     series_id: str
     direction: BindingDirection = "input"
     leaf_count: int | None = None
-    sample_key: dict[str, str] | None = None
+    sample_key: BindingKey | None = None
     sample_value: object | None = None
     unique_key_fields: tuple[str, ...] | None = None
 
@@ -39,7 +40,7 @@ class DownstreamUpdateCase:
     setter_name: str
     setter_records: tuple[dict[str, object], ...]
     compute_name: str
-    record_key: dict[str, str]
+    record_key: BindingKey
     expected_obs_value: float
 
 
@@ -123,7 +124,7 @@ def assert_unique_keys(
     assert len(keys) == len(set(keys))
 
 
-def leaf_matching(leaves: Sequence[LeafResolution], key: dict[str, str]) -> LeafResolution:
+def leaf_matching(leaves: Sequence[LeafResolution], key: Mapping[str, object]) -> LeafResolution:
     """Return the first leaf whose ``key`` equals ``key``."""
     return next(leaf for leaf in leaves if leaf["key"] == key)
 
