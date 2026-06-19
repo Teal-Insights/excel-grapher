@@ -5,12 +5,12 @@ import numpy as np
 from excel_grapher.core import CellValue, XlError, excel_casefold, to_native, to_number
 
 __all__ = [
-    "xl__xlfn_xlookup",
     "xl_hlookup",
     "xl_index",
     "xl_lookup",
     "xl_match",
     "xl_vlookup",
+    "xl_xlookup",
 ]
 
 
@@ -257,7 +257,7 @@ def xl_hlookup(
     return to_native(table_array[row_index - 1, last_match_idx])
 
 
-def xl__xlfn_xlookup(
+def xl_xlookup(
     lookup_value: CellValue,
     lookup_array: np.ndarray,
     return_array: np.ndarray,
@@ -265,7 +265,7 @@ def xl__xlfn_xlookup(
     match_mode: CellValue = 0,
     search_mode: CellValue = 1,
 ) -> CellValue:
-    """Excel XLOOKUP (including `_xlfn.XLOOKUP`).
+    """Excel XLOOKUP.
 
     This implementation supports:
     - exact match (match_mode=0)

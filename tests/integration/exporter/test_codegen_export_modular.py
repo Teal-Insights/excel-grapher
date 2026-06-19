@@ -214,3 +214,78 @@ def test_codegen_generate_modules_has_no_ty_diagnostics_for_xlookup(tmp_path: Pa
     )
     assert ty.returncode == 0, f"ty failed:\n{ty.stdout}\n{ty.stderr}"
     assert ty.stderr.strip() == ""
+
+
+def test_codegen_generate_modules_has_no_ty_diagnostics_for_xludf_xlookup(
+    tmp_path: Path,
+) -> None:
+    """``_xludf.XLOOKUP`` should normalize to the same runtime symbol as ``_xlfn``."""
+    repo_root = Path(__file__).resolve().parents[3]
+
+    graph = _make_graph(
+        _make_node("S!A1", None, 1),
+        _make_node("S!A2", None, 2),
+        _make_node("S!A3", None, 3),
+        _make_node("S!B1", None, "a"),
+        _make_node("S!B2", None, "b"),
+        _make_node("S!B3", None, "c"),
+        _make_node("S!C1", "=_xludf.XLOOKUP(2,S!A1:S!A3,S!B1:S!B3)", None),
+    )
+    files = CodeGenerator(graph).generate_modules(["S!C1"])
+
+    pkg_root = tmp_path / "exported_xludf"
+    for filename, content in files.items():
+        pkg_root.mkdir(parents=True, exist_ok=True)
+        (pkg_root / filename).write_text(content, encoding="utf-8")
+
+    internals = (pkg_root / "internals.py").read_text(encoding="utf-8")
+    assert "xl__xludf_xlookup" not in internals
+    assert "xl_xlookup" in internals
+
+    ty = _run(
+        [
+            "uv",
+            "run",
+            "ty",
+            "check",
+            "--project",
+            str(repo_root),
+            "--extra-search-path",
+            str(tmp_path),
+            str(pkg_root),
+        ],
+        cwd=repo_root,
+    )
+    assert ty.returncode == 0, f"ty failed:\n{ty.stdout}\n{ty.stderr}"
+    assert ty.stderr.strip() == ""
+
+
+def test_codegen_generate_modules_embeds_xl_abs_in_runtime(tmp_path: Path) -> None:
+    """Modular export embeds ``xl_abs`` when the graph uses ``ABS``."""
+    graph = _make_graph(
+        _make_node("S!A1", None, -2.5),
+        _make_node("S!B1", "=ABS(S!A1)", None),
+    )
+    files = CodeGenerator(graph).generate_modules(["S!B1"])
+
+    runtime = files["runtime.py"]
+    internals = files["internals.py"]
+    assert "def xl_abs" in runtime
+    assert "xl_abs" in internals
+
+    pkg_dir = tmp_path / "exported_abs"
+    for filename, content in files.items():
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_dir / filename).write_text(content, encoding="utf-8")
+
+    sys.path.insert(0, str(tmp_path))
+    try:
+        pkg = importlib.import_module("exported_abs")
+        results = pkg.compute_all()
+        assert results["S!B1"] == 2.5
+    finally:
+        sys.path.remove(str(tmp_path))
+        sys.modules.pop("exported_abs", None)
+        for name in list(sys.modules):
+            if name.startswith("exported_abs."):
+                sys.modules.pop(name, None)

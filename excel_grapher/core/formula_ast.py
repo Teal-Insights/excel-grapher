@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TypeAlias
 
+from .excel_function_names import normalize_excel_function_name
 from .types import XlError
 
 
@@ -276,7 +277,7 @@ def _parse_atom(s: _Scanner, original: str) -> AstNode:
         if s.peek() == "(":
             s.consume()  # '('
             args = _parse_args(s, original)
-            return FunctionCallNode(name=upper, args=args)
+            return FunctionCallNode(name=normalize_excel_function_name(upper), args=args)
 
         # Booleans
         if upper == "TRUE":

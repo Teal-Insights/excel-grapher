@@ -20,6 +20,7 @@ from excel_grapher.evaluator.errors import MissingNormalizedFormulaError
 from excel_grapher.evaluator.name_utils import (
     address_to_python_name,
     excel_func_to_python,
+    normalize_excel_function_name,
 )
 from excel_grapher.evaluator.parser import (
     AstNode,
@@ -980,19 +981,15 @@ class CodeGenerator:
         IF, OFFSET are handled specially.
         """
         func_name = excel_func_to_python(node.name)
-        upper_name = node.name.upper()
+        upper_name = normalize_excel_function_name(node.name)
 
         # IF needs special handling - emit as Python conditional for lazy evaluation
         if upper_name == "IF":
             return self._emit_if(node)
 
-        # IFERROR needs special handling - only evaluate fallback if value is error
-        if upper_name == "IFERROR":
-            return self._emit_iferror(node)
-
-        # IFNA needs special handling - only evaluate fallback if value is #N/A
-        if upper_name in {"IFNA", "_XLFN.IFNA"}:
-            return self._emit_ifna(node)
+        # IFERROR / IFNA need lazy fallback branches (not plain runtime calls).
+        if upper_name in {"IFERROR", "IFNA"}:
+            return self._emit_lazy_error_fallback(node, upper_name)
 
         # CHOOSE needs special handling - only evaluate the selected argument
         if upper_name == "CHOOSE":
@@ -1024,9 +1021,9 @@ class CodeGenerator:
             return self._emit_columns(node)
 
         # TRUE()/FALSE() as zero-arg function calls
-        if upper_name in {"TRUE", "_XLFN.TRUE"}:
+        if upper_name == "TRUE":
             return "True"
-        if upper_name in {"FALSE", "_XLFN.FALSE"}:
+        if upper_name == "FALSE":
             return "False"
 
         # Functions that need numpy arrays for their array/table arguments
@@ -1059,42 +1056,27 @@ class CodeGenerator:
         self._temp_var_counter += 1
         return f"_t{self._temp_var_counter}"
 
-    def _emit_iferror(self, node: FunctionCallNode) -> str:
-        """Emit IFERROR as a Python conditional for lazy evaluation.
+    def _emit_lazy_error_fallback(self, node: FunctionCallNode, name: str) -> str:
+        """Emit IFERROR/IFNA as Python conditionals for lazy fallback evaluation.
 
-        IFERROR(value, value_if_error)
-
-        Emits as: (value_if_error if isinstance(value, XlError) else value)
-        The value is evaluated once and stored, then checked for errors.
-        The value_if_error is only evaluated if value is an error.
+        IFERROR(value, value_if_error) evaluates the fallback only when ``value``
+        is any ``XlError``. IFNA(value, value_if_na) does so only for ``#N/A``.
         """
         if len(node.args) < 2:
             return "XlError.VALUE"
 
         value_expr = self._emit_ast(node.args[0])
-        error_expr = self._emit_ast(node.args[1])
-
-        # Store value in uniquely-named temp var to avoid evaluating twice
+        fallback_expr = self._emit_ast(node.args[1])
         var = self._next_temp_var()
-        return f"(({error_expr}) if isinstance(({var} := {value_expr}), XlError) else {var})"
 
-    def _emit_ifna(self, node: FunctionCallNode) -> str:
-        """Emit IFNA as a Python conditional for lazy evaluation.
+        if name == "IFERROR":
+            condition = f"isinstance(({var} := {value_expr}), XlError)"
+        elif name == "IFNA":
+            condition = f"(({var} := {value_expr}) == XlError.NA)"
+        else:
+            raise ValueError(f"Unsupported lazy error fallback function: {name!r}")
 
-        IFNA(value, value_if_na)
-
-        Emits as: (value_if_na if value is #N/A else value)
-        The value is evaluated once and stored, then checked for #N/A.
-        The value_if_na is only evaluated if value is #N/A.
-        """
-        if len(node.args) < 2:
-            return "XlError.VALUE"
-
-        value_expr = self._emit_ast(node.args[0])
-        na_expr = self._emit_ast(node.args[1])
-
-        var = self._next_temp_var()
-        return f"(({na_expr}) if (({var} := {value_expr}) == XlError.NA) else {var})"
+        return f"(({fallback_expr}) if {condition} else {var})"
 
     def _emit_if(self, node: FunctionCallNode) -> str:
         """Emit IF as a Python conditional expression for lazy evaluation.
@@ -1705,13 +1687,13 @@ class CodeGenerator:
             # Error literal requires XlError enum
             funcs.add("XlError")
         elif isinstance(node, FunctionCallNode):
-            upper_name = node.name.upper()
+            upper_name = normalize_excel_function_name(node.name)
 
             # IF, IFERROR, CHOOSE are special - emitted as native Python conditionals
             if upper_name == "IF":
                 funcs.add("XlError")
                 funcs.add("to_bool")
-            elif upper_name == "IFERROR" or upper_name in {"IFNA", "_XLFN.IFNA"}:
+            elif upper_name == "IFERROR" or upper_name == "IFNA":
                 funcs.add("XlError")
             elif upper_name == "CHOOSE":
                 funcs.add("XlError")

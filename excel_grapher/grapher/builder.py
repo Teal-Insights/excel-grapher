@@ -65,8 +65,11 @@ _logger = logging.getLogger(__name__)
 _VOLATILE_DYNAMIC_REF_FUNCS = frozenset(
     {"NOW", "TODAY", "RAND", "RANDBETWEEN", "RANDARRAY", "INFO"}
 )
+# Matches volatile builtins with optional Excel compatibility prefixes. Add new
+# volatile function names to ``_VOLATILE_DYNAMIC_REF_FUNCS`` only (not prefix
+# variants); ``_XLFN.`` / ``_XLUDF.`` are handled generically here.
 _VOLATILE_DYNAMIC_REF_PATTERN = re.compile(
-    r"(?<![A-Z0-9_])(?:_XLFN\.)?(?:NOW|TODAY|RANDBETWEEN|RANDARRAY|RAND|INFO)\s*\("
+    r"(?<![A-Z0-9_])(?:_XLFN\.|_XLUDF\.)?(?:NOW|TODAY|RANDBETWEEN|RANDARRAY|RAND|INFO)\s*\("
 )
 
 

@@ -12,7 +12,8 @@ from fastpyxl.utils.cell import (
 
 from excel_grapher.core.address_keys import parse_address
 
-from .coercions import flatten, numeric_values, to_bool, to_number, to_string
+from .coercions import flatten, numeric_values, to_bool, to_string
+from .excel_function_names import normalize_excel_function_name
 from .formula_ast import (
     AstNode,
     BinaryOpNode,
@@ -25,6 +26,7 @@ from .formula_ast import (
     StringNode,
     UnaryOpNode,
 )
+from .functions import xl_abs
 from .operators import (
     xl_add,
     xl_concat,
@@ -196,7 +198,7 @@ def _eval(
         return Unsupported(f"Unsupported binary operator {op!r}")
 
     if isinstance(node, FunctionCallNode):
-        name = node.name.upper()
+        name = normalize_excel_function_name(node.name)
         # ROW/COLUMN: ref argument is not evaluated; we use the reference's row/column.
         if name == "ROW":
             if len(node.args) == 0:
@@ -263,11 +265,7 @@ def _eval(
             cast(CellValue, v) for v in args if not isinstance(v, (XlError, Unsupported))
         ]
 
-        impl = (
-            functions.get(name)
-            or _DEFAULT_FUNCTIONS.get(name)
-            or _DEFAULT_FUNCTIONS.get(name.split(".")[-1] if "." in name else "")
-        )
+        impl = functions.get(name) or _DEFAULT_FUNCTIONS.get(name)
         if impl is None:
             return Unsupported(f"Unsupported function {name!r}")
         return impl(flat_args)
@@ -330,12 +328,7 @@ def _fn_max(args: list[CellValue]) -> CellValue:
 
 
 def _fn_abs(args: list[CellValue]) -> CellValue:
-    if not args:
-        return XlError.VALUE
-    n = to_number(args[0])
-    if isinstance(n, XlError):
-        return n
-    return float(abs(n))
+    return xl_abs(*args)
 
 
 def _fn_if(args: list[CellValue]) -> CellValue:

@@ -17,6 +17,7 @@ _CORE_MODULES: list[tuple[str, Path]] = [
     ("core.coercions", _CORE_DIR / "coercions.py"),
     ("core.operators", _CORE_DIR / "operators.py"),
     ("core.addressing", _CORE_DIR / "addressing.py"),
+    ("core.functions", _CORE_DIR / "functions.py"),
 ]
 
 # Export runtime modules (representation-specific implementations); order preserved for iteration.
@@ -24,6 +25,7 @@ _RUNTIME_MODULES: list[tuple[str, Path]] = [
     ("math", _RUNTIME_DIR / "math.py"),
     ("text", _RUNTIME_DIR / "text.py"),
     ("info", _RUNTIME_DIR / "info.py"),
+    ("datetime", _RUNTIME_DIR / "datetime.py"),
     ("logic", _RUNTIME_DIR / "logic.py"),
     ("lookup", _RUNTIME_DIR / "lookup.py"),
     ("reference", _RUNTIME_DIR / "reference.py"),

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import cast
 
 from excel_grapher.core.address_keys import format_cell_key, quote_sheet_if_needed
 
@@ -61,7 +60,7 @@ def build_named_range_replacement_state(
     if not replacements:
         return {}, None
 
-    names = cast(list[str], sorted(replacements, key=len, reverse=True))
+    names = sorted(replacements, key=len, reverse=True)
     alt = "|".join(re.escape(n) for n in names)
     names_re = re.compile(rf"\b(?:{alt})\b(?!\s*!)")
     return replacements, names_re

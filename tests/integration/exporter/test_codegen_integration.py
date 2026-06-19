@@ -84,6 +84,30 @@ class TestGeneratedCodeExecution:
         result = assert_codegen_matches_evaluator(graph, ["S!C1"])
         assert result.generated_results["S!C1"] == "b"
 
+    def test_generated_code_xludf_xlookup_matches_evaluator(self) -> None:
+        """Generated code matches evaluator for ``_xludf.XLOOKUP`` spelling."""
+        graph = _make_graph(
+            _make_node("S!A1", None, 1),
+            _make_node("S!A2", None, 2),
+            _make_node("S!A3", None, 3),
+            _make_node("S!B1", None, "a"),
+            _make_node("S!B2", None, "b"),
+            _make_node("S!B3", None, "c"),
+            _make_node("S!C1", "=_xludf.XLOOKUP(2,S!A1:S!A3,S!B1:S!B3)", None),
+        )
+        result = assert_codegen_matches_evaluator(graph, ["S!C1"])
+        assert result.generated_results["S!C1"] == "b"
+        assert "xl__xludf_xlookup" not in result.generated_code
+
+    def test_generated_code_xludf_numbervalue_matches_evaluator(self) -> None:
+        """Generated code matches evaluator for ``_xludf.NUMBERVALUE`` spelling."""
+        graph = _make_graph(
+            _make_node("S!A1", '=_xludf.NUMBERVALUE("1,234.56", ".", ",")', None),
+        )
+        result = assert_codegen_matches_evaluator(graph, ["S!A1"])
+        assert result.generated_results["S!A1"] == 1234.56
+        assert "xl__xludf_numbervalue" not in result.generated_code
+
     def test_generated_code_simple_arithmetic(self) -> None:
         """Generated code correctly computes simple arithmetic."""
         graph = _make_graph(

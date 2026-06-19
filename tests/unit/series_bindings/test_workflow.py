@@ -45,6 +45,25 @@ def test_resolve_bindings_path_raises_when_missing(tmp_path: Path) -> None:
         resolve_bindings_path(workbook)
 
 
+def test_resolve_bindings_path_explicit_folder_relative_to_workbook(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    workbook = project / "model.xlsx"
+    workbook.write_bytes(b"")
+    shard_dir = project / "model.bindings"
+    shard_dir.mkdir()
+    (shard_dir / "Inputs.bindings.yaml").write_text(
+        "schema_version: '1.4.0'\nseries: []\n",
+        encoding="utf-8",
+    )
+
+    resolved = resolve_bindings_path(workbook, Path("model.bindings"))
+
+    assert resolved == shard_dir
+
+
 def test_validate_bindings_workbook_ffv2_fixture(tmp_path: Path) -> None:
     workbook = tmp_path / "ffv2.xlsx"
     write_ffv2_workbook(workbook)

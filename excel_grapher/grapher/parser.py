@@ -14,6 +14,7 @@ from excel_grapher.core.address_keys import (
     format_cell_key,
     needs_quoting,
 )
+from excel_grapher.core.excel_function_names import excel_function_call_prefixes
 from excel_grapher.core.formula_normalization import (
     build_named_range_replacement_state,
     normalize_excel_formula,
@@ -475,64 +476,8 @@ class FormulaNormalizer:
 @functools.lru_cache(maxsize=4096)
 def split_top_level_if(formula: str) -> tuple[str, str, str] | None:
     """If formula is a top-level IF(...), return (cond, then_expr, else_expr) strings."""
-    if not isinstance(formula, str) or not formula.startswith("="):
-        return None
-    s = formula[1:].lstrip()
-    if s[:3].upper() != "IF(":
-        return None
-
-    # Parse the IF argument list at the top level of IF(...).
-    i = s.find("(")
-    if i < 0:
-        return None
-    inner = s[i + 1 :]
-
-    args: list[str] = []
-    buf: list[str] = []
-    depth = 0
-    in_str = False
-    j = 0
-    while j < len(inner):
-        ch = inner[j]
-        if ch == '"':
-            in_str = not in_str
-            buf.append(ch)
-            j += 1
-            continue
-        if in_str:
-            buf.append(ch)
-            j += 1
-            continue
-        if ch == "(":
-            depth += 1
-            buf.append(ch)
-            j += 1
-            continue
-        if ch == ")":
-            if depth == 0:
-                args.append("".join(buf).strip())
-                buf = []
-                # Consume the closing paren and stop; ignore any trailing whitespace.
-                j += 1
-                break
-            depth -= 1
-            buf.append(ch)
-            j += 1
-            continue
-        if ch == "," and depth == 0:
-            args.append("".join(buf).strip())
-            buf = []
-            j += 1
-            continue
-        buf.append(ch)
-        j += 1
-
-    # Check for trailing content - if present, this is not a top-level IF
-    remaining = inner[j:].strip()
-    if remaining:
-        return None
-
-    if len(args) != 3:
+    args = split_top_level_function(formula, "IF")
+    if args is None or len(args) != 3:
         return None
     cond, then_expr, else_expr = args
     if not cond or not then_expr:
@@ -551,7 +496,7 @@ def split_top_level_function(formula: str, fn: str) -> list[str] | None:
         return None
     s = formula[1:].lstrip()
     fn_u = fn.upper()
-    prefixes = (f"{fn_u}(", f"_XLFN.{fn_u}(")
+    prefixes = excel_function_call_prefixes(fn_u)
     if not any(s[: len(p)].upper() == p for p in prefixes):
         return None
 

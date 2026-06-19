@@ -22,6 +22,7 @@ def register(
 
 
 # Import modules for side-effect registration.
+from . import datetime as _datetime  # noqa: E402,F401
 from . import info as _info  # noqa: E402,F401
 from . import logic as _logic  # noqa: E402,F401
 from . import lookup as _lookup  # noqa: E402,F401

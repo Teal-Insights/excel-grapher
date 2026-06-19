@@ -71,6 +71,14 @@ def all_series_targets(
     return sorted(set(targets))
 
 
+def _explicit_bindings_candidates(workbook: Path, bindings: Path) -> list[Path]:
+    """Return candidate paths for an explicit ``--bindings`` argument."""
+    candidates = [bindings]
+    if not bindings.is_absolute():
+        candidates.append(workbook.parent / bindings)
+    return candidates
+
+
 def resolve_bindings_path(workbook: Path, bindings: Path | None = None) -> Path:
     """Resolve a binding sidecar path from an explicit path or workbook conventions.
 
@@ -85,9 +93,11 @@ def resolve_bindings_path(workbook: Path, bindings: Path | None = None) -> Path:
         SeriesBindingsLoadError: When no sidecar can be resolved.
     """
     if bindings is not None:
-        if not bindings.exists():
-            raise SeriesBindingsLoadError(f"Binding path does not exist: {bindings}")
-        return bindings
+        for candidate in _explicit_bindings_candidates(workbook, bindings):
+            if candidate.is_file() or candidate.is_dir():
+                return candidate
+        tried = ", ".join(str(path) for path in _explicit_bindings_candidates(workbook, bindings))
+        raise SeriesBindingsLoadError(f"Binding path does not exist: {bindings} (tried: {tried})")
 
     candidates: list[Path] = [
         workbook.with_suffix(".bindings.yaml"),
@@ -111,7 +121,12 @@ def validate_bindings_workbook(
     """Load bindings, build the graph, and validate against the workbook."""
     bindings = load_series_bindings(bindings_path)
     targets = all_series_targets(bindings, workbook=workbook)
-    graph = create_dependency_graph(workbook, targets, load_values=True)
+    graph = create_dependency_graph(
+        workbook,
+        targets,
+        load_values=True,
+        use_cached_dynamic_refs=True,
+    )
     report = validate_series_bindings(graph, bindings, workbook=workbook)
     return {
         "bindings": bindings,
