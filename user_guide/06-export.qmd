@@ -102,6 +102,43 @@ Callback contract highlights:
 - Docstring renderers can be built-in names (`"plain"`, `"rst"`, `"google"`, `"numpy"`), renderer objects implementing `SeriesDocstringRenderer`, or simple callables `(contract, doc, *, series=None) -> str`.
 - If callback rendering is requested, codegen requires full series context (`series_bindings` + `bindings_workbook`).
 
+## Graph projection for export
+
+Identity transit nodes (pure mirrors such as `Outputs!B12 = Engine!C6`) can be collapsed in
+**projected** export artifacts while the canonical workbook graph stays unchanged. Pass a
+`ProjectionResult` to `CodeGenerator` so public targets and series bindings keep their
+workbook-facing addresses:
+
+```python
+from excel_grapher.exporter import CodeGenerator, IdentityTransitCompression
+
+projection = IdentityTransitCompression().project(graph)
+modules = CodeGenerator(projection).generate_modules(
+    targets,
+    series_bindings=series_bindings,
+    bindings_workbook=workbook_path,
+)
+```
+
+`ProjectionResult` behaves like the projected graph for dependency reads, and exposes
+`original_graph` plus a serializable `manifest`. The manifest separates **address
+projection** (`map_to_projected`, used by codegen to keep removed public addresses
+resolving) from **collapse lineage** (`retained_to_collapsed_sources`,
+`removed_node_snapshots` with original formulas and metadata, `collapsed_groups`,
+`formula_rewrites`) for audit and refactoring. Visualization can use the same facade:
+
+```python
+from excel_grapher.grapher import to_networkx
+from excel_grapher.exporter import to_web_viz_payload
+
+payload = to_web_viz_payload(to_networkx(projection))
+```
+
+Projection is an extension point: implement the `ProjectionStep` protocol to build your own
+projected graph (see the contributing guide), and compose steps with `apply_projection`.
+In-place `DependencyGraph.compress_identity_transits()` remains available for destructive
+graph simplification; prefer projections for export and viz workflows.
+
 ## Exported code sketch
 
 A (truncated) sketch of the exported code:

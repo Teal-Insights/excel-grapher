@@ -49,10 +49,13 @@ from excel_grapher.core.formula_ast import (
     RangeNode,
     StringNode,
     UnaryOpNode,
+    WholeColumnNode,
+    WholeRowNode,
 )
 from excel_grapher.core.formula_ast import (
     parse as parse_ast,
 )
+from excel_grapher.core.range_shorthand import expand_whole_column_deps, expand_whole_row_deps
 from excel_grapher.core.types import ExcelRange, XlError
 
 from .parser import _find_function_calls_with_spans, expand_range, format_key
@@ -3276,7 +3279,12 @@ def _ast_address_to_ref_key(address: str) -> str:
     return format_key(sheet, f"{col_letter}{row}")
 
 
-def _collect_static_addresses_from_ast(node: AstNode, *, max_range_cells: int) -> set[str]:
+def _collect_static_addresses_from_ast(
+    node: AstNode,
+    *,
+    max_range_cells: int,
+    sheet_bounds: dict[str, tuple[int, int]] | None = None,
+) -> set[str]:
     """Collect static cell/range addresses while skipping dynamic-ref call subtrees.
 
     Range expansion uses the same `max_range_cells` policy as
@@ -3288,6 +3296,16 @@ def _collect_static_addresses_from_ast(node: AstNode, *, max_range_cells: int) -
     def visit(n: AstNode) -> None:
         if isinstance(n, CellRefNode):
             addrs.add(_ast_address_to_ref_key(n.address))
+            return
+        if isinstance(n, WholeColumnNode):
+            bounds = sheet_bounds or {}
+            for dep_sheet, dep_a1 in expand_whole_column_deps(n.sheet, n.column, bounds):
+                addrs.add(format_key(dep_sheet, dep_a1))
+            return
+        if isinstance(n, WholeRowNode):
+            bounds = sheet_bounds or {}
+            for dep_sheet, dep_a1 in expand_whole_row_deps(n.sheet, n.row, bounds):
+                addrs.add(format_key(dep_sheet, dep_a1))
             return
         if isinstance(n, RangeNode):
             try:

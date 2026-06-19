@@ -312,7 +312,7 @@ def test_infer_raises_dynamic_ref_error_is_caught(tmp_path: Path) -> None:
     assert isinstance(result, list)
 
 
-@pytest.mark.xfail(reason="Known issue #97: downstream blank leaf can be skipped")
+@pytest.mark.xfail(reason="Issue #254: downstream blank leaf skipped after upstream infer failure")
 def test_candidate_scan_surfaces_downstream_blank_leaf_despite_blocking_infer_issue_97(
     tmp_path: Path,
 ) -> None:

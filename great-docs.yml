@@ -82,6 +82,20 @@ reference:
     desc: Export and extension APIs under excel_grapher.exporter
     contents:
       - exporter.CodeGenerator
+      - exporter.IdentityTransitCompression
+      - exporter.ProjectionStep
+      - exporter.ProjectionResult
+      - exporter.ProjectionManifest
+      - exporter.BaseProjectionManifest
+      - exporter.CompositeProjectionManifest
+      - exporter.ProjectedNodeSnapshot
+      - exporter.FormulaRewrite
+      - exporter.CollapsedGroup
+      - exporter.apply_projection
+      - exporter.build_forwarding_projection_manifest
+      - exporter.register_projection_manifest
+      - exporter.resolve_projection_manifest
+      - exporter.unregister_projection_manifest
       - exporter.WebVizPayload
       - exporter.to_web_viz_payload
       - exporter.LAYOUT_FORCEATLAS2
@@ -128,6 +142,7 @@ reference:
       - grapher.LightweightVizStats
       - grapher.GRAPH_CACHE_SCHEMA_VERSION
       - grapher.DynamicRefTraceFn
+      - grapher.GraphReadView
       - grapher.NodeHook
       - grapher.NodeKey
       - grapher.infer_dynamic_index_targets

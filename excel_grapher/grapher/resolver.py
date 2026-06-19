@@ -25,6 +25,7 @@ from excel_grapher.core.formula_ast import (
 from excel_grapher.core.formula_ast import (
     parse as parse_formula_ast,
 )
+from excel_grapher.core.formula_normalization import expand_whole_column_row_for_parse
 from excel_grapher.core.types import CellValue, ExcelRange, XlError
 
 from .parser import CellRef
@@ -278,22 +279,8 @@ def _eval_indirect_formula_to_range(
 
 
 def _normalize_formula_for_parse(formula: str, bounds: dict[str, tuple[int, int]]) -> str:
-    """Strip $ and expand whole-column/whole-row refs so formula_ast can parse."""
-    s = formula.replace("$", "")
-    for sheet, (max_r, max_c) in bounds.items():
-        col_letter = get_column_letter(max_c)
-        s = re.sub(
-            re.escape(sheet) + r"!\s*([A-Z]+)\s*:\s*\1\b",
-            f"{sheet}!\\g<1>1:\\g<1>{max_r}",
-            s,
-            flags=re.IGNORECASE,
-        )
-        s = re.sub(
-            re.escape(sheet) + r"!\s*(\d+)\s*:\s*\1\b",
-            f"{sheet}!A\\g<1>:{col_letter}\\g<1>",
-            s,
-        )
-    return s
+    """Strip ``$`` and expand whole-column/whole-row refs so formula_ast can parse."""
+    return expand_whole_column_row_for_parse(formula, bounds)
 
 
 def _try_resolve_formula_defined_name(

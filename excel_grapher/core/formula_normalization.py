@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 from typing import cast
 
-from excel_grapher.core.address_keys import format_cell_key
+from excel_grapher.core.address_keys import format_cell_key, quote_sheet_if_needed
 
 _FUNC_LIKE = frozenset({"IF", "OR", "AND", "NOT", "SUM", "MAX", "MIN", "AVG"})
 _STRING_LITERAL_RE = re.compile(r'"(?:[^"]|"")*"')
@@ -81,9 +81,130 @@ def _apply_named_range_replacements(
     return names_re.sub(replace_name, formula)
 
 
+def _format_whole_column_ref(sheet: str, column: str) -> str:
+    col = column.upper()
+    return f"{quote_sheet_if_needed(sheet)}!{col}:{col}"
+
+
+def _format_whole_row_ref(sheet: str, row: int) -> str:
+    return f"{quote_sheet_if_needed(sheet)}!{row}:{row}"
+
+
+def _normalize_whole_column_row_shorthand(formula: str, current_sheet: str) -> str:
+    """Strip ``$`` and sheet-qualify whole-column/row shorthand without expanding bounds."""
+    result = formula
+
+    def quoted_whole_col(m: re.Match[str]) -> str:
+        return _format_whole_column_ref(m.group("sheet"), m.group("col"))
+
+    result = re.sub(
+        r"'(?P<sheet>[^']+)'!\$?(?P<col>[A-Z]{1,3})\s*:\s*\$?(?P=col)\b",
+        quoted_whole_col,
+        result,
+        flags=re.IGNORECASE,
+    )
+
+    def unquoted_whole_col(m: re.Match[str]) -> str:
+        return _format_whole_column_ref(m.group("sheet"), m.group("col"))
+
+    result = re.sub(
+        r"(?<![A-Za-z_'])(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!\$?(?P<col>[A-Z]{1,3})\s*:\s*\$?(?P=col)\b",
+        unquoted_whole_col,
+        result,
+        flags=re.IGNORECASE,
+    )
+
+    def local_whole_col(m: re.Match[str]) -> str:
+        col = m.group("col")
+        if col in _FUNC_LIKE:
+            return m.group(0)
+        return _format_whole_column_ref(current_sheet, col)
+
+    result = re.sub(
+        r"(?<![!A-Za-z0-9_'])(?<!\$)\$?(?P<col>[A-Z]{1,3})\s*:\s*\$?(?P=col)\b(?![A-Za-z0-9_])",
+        local_whole_col,
+        result,
+        flags=re.IGNORECASE,
+    )
+
+    def quoted_whole_row(m: re.Match[str]) -> str:
+        return _format_whole_row_ref(m.group("sheet"), int(m.group("row")))
+
+    result = re.sub(
+        r"'(?P<sheet>[^']+)'!\$?(?P<row>\d+)\s*:\s*\$?(?P=row)\b",
+        quoted_whole_row,
+        result,
+    )
+
+    def unquoted_whole_row(m: re.Match[str]) -> str:
+        return _format_whole_row_ref(m.group("sheet"), int(m.group("row")))
+
+    result = re.sub(
+        r"(?<![A-Za-z_'])(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!\$?(?P<row>\d+)\s*:\s*\$?(?P=row)\b",
+        unquoted_whole_row,
+        result,
+    )
+
+    def local_whole_row(m: re.Match[str]) -> str:
+        return _format_whole_row_ref(current_sheet, int(m.group("row")))
+
+    result = re.sub(
+        r"(?<![!A-Za-z0-9_'])(?<!\$)(?P<row>\d+)\s*:\s*\$?(?P=row)\b(?![A-Za-z0-9_])",
+        local_whole_row,
+        result,
+    )
+
+    return result
+
+
+def expand_whole_column_row_for_parse(
+    formula: str,
+    bounds: dict[str, tuple[int, int]],
+) -> str:
+    """Expand whole-column/row shorthand to bounded A1 ranges for parse-only paths.
+
+    Used when a workbook is available outside graph build (e.g. defined-name OFFSET
+    resolution). Strips ``$`` markers before matching.
+    """
+    from excel_grapher.core.range_shorthand import (
+        whole_column_to_bounded_a1,
+        whole_row_to_bounded_a1,
+    )
+
+    s = formula.replace("$", "")
+    for sheet in bounds:
+        quoted = re.escape(quote_sheet_if_needed(sheet))
+        bare = re.escape(sheet)
+
+        def repl_col(m: re.Match[str], *, _sheet: str = sheet) -> str:
+            start, end = whole_column_to_bounded_a1(_sheet, m.group(1), bounds)
+            return f"{start}:{end}"
+
+        for prefix in (quoted, bare):
+            s = re.sub(
+                prefix + r"!\s*([A-Z]+)\s*:\s*\1\b",
+                repl_col,
+                s,
+                flags=re.IGNORECASE,
+            )
+
+        def repl_row(m: re.Match[str], *, _sheet: str = sheet) -> str:
+            row = int(m.group(1))
+            start, end = whole_row_to_bounded_a1(_sheet, row, bounds)
+            return f"{start}:{end}"
+
+        for prefix in (quoted, bare):
+            s = re.sub(
+                prefix + r"!\s*(\d+)\s*:\s*\1\b",
+                repl_row,
+                s,
+            )
+    return s
+
+
 def _normalize_excel_formula_base(formula: str, current_sheet: str) -> str:
     """Strip $ markers, qualify ranges and cells, without defined-name substitution."""
-    result = formula
+    result = _normalize_whole_column_row_shorthand(formula, current_sheet)
 
     def replace_quoted_range(m: re.Match[str]) -> str:
         sheet = m.group("sheet")

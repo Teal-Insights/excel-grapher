@@ -44,6 +44,7 @@ from .parser import (
     _find_function_calls_with_spans,
     _split_function_args,
     expand_range,
+    expand_range_ref,
     format_key,
     mask_spans,
     parse_cell_refs,
@@ -321,6 +322,7 @@ def create_dependency_graph(
             _wb_sha256 = hashlib.file_digest(_f, "sha256").hexdigest()
 
     graph = DependencyGraph(sheet_order=list(wb_formulas.sheetnames))
+    sheet_bounds: dict[str, tuple[int, int]] = {}
     for h in hooks or []:
         graph.register_hook(h)
 
@@ -351,7 +353,18 @@ def create_dependency_graph(
         if ws is None:
             ws = wb_formulas[sheet]
             _ws_f_cache[sheet] = ws
+            max_row = getattr(ws, "max_row", None) or 1
+            max_col = getattr(ws, "max_column", None) or 1
+            if max_row < 1:
+                max_row = 1
+            if max_col < 1:
+                max_col = 1
+            sheet_bounds[sheet] = (max_row, max_col)
         return ws
+
+    def _ensure_sheet_bounds(sheet: str) -> None:
+        if sheet not in sheet_bounds:
+            _get_ws_f(sheet)
 
     def _get_ws_v(sheet: str) -> Worksheet:
         # Only called when wb_values is not None.
@@ -388,13 +401,13 @@ def create_dependency_graph(
             out.add(format_key(sh, f"{ref.column}{ref.row}"))
         for start, end, _span in parse_range_refs_with_spans(normalized):
             sh = start.sheet if start.sheet is not None else sheet_of_cell
-            for dep_sheet, dep_a1 in expand_range(
-                sheet=sh,
-                start_col=start.column,
-                start_row=start.row,
-                end_col=end.column,
-                end_row=end.row,
+            _ensure_sheet_bounds(sh)
+            for dep_sheet, dep_a1 in expand_range_ref(
+                start=start,
+                end=end,
+                default_sheet=sh,
                 max_cells=max_range_cells,
+                sheet_bounds=sheet_bounds,
             ):
                 out.add(format_key(dep_sheet, dep_a1))
         return out
@@ -815,14 +828,14 @@ def create_dependency_graph(
                 for start, end, span in parse_range_refs_with_spans(masked):
                     spans.append(span)
                     sheet = start.sheet if start.sheet is not None else current_sheet
+                    _ensure_sheet_bounds(sheet)
                     deps.extend(
-                        expand_range(
-                            sheet=sheet,
-                            start_col=start.column,
-                            start_row=start.row,
-                            end_col=end.column,
-                            end_row=end.row,
+                        expand_range_ref(
+                            start=start,
+                            end=end,
+                            default_sheet=sheet,
                             max_cells=max_range_cells,
+                            sheet_bounds=sheet_bounds,
                         )
                     )
                 masked = mask_spans(masked, spans)
@@ -1213,6 +1226,7 @@ def create_dependency_graph(
 
     graph.named_ranges = dict(named_ranges)
     graph.named_range_ranges = dict(named_range_ranges)
+    graph.sheet_bounds = dict(sheet_bounds)
     return graph
 
 

@@ -186,6 +186,51 @@ def assert_codegen_matches_evaluator(
     )
 
 
+_CACHE_EVAL_SCAFFOLD_DEFS = ("def _evaluate_address(", "def xl_cell(", "def xl_eval(")
+# Pre-refactor standalone exports embedded ~78 lines for xl_cell + xl_eval alone.
+# Post-refactor shared helper keeps the block at ~69 lines; budget guards re-bloat.
+CACHE_EVAL_SCAFFOLD_LINE_BUDGET = 72
+
+
+def count_cache_eval_scaffold_lines(code: str) -> int:
+    """Count lines for ``_evaluate_address``, ``xl_cell``, and ``xl_eval`` in export code."""
+    lines = code.splitlines()
+    try:
+        start = next(
+            i for i, line in enumerate(lines) if line.startswith(_CACHE_EVAL_SCAFFOLD_DEFS[0])
+        )
+    except StopIteration as exc:
+        raise ValueError("cache eval scaffold not found in generated code") from exc
+
+    end = len(lines)
+    for index, line in enumerate(lines[start + 1 :], start + 1):
+        if line.startswith("def ") and not any(
+            line.startswith(marker) for marker in _CACHE_EVAL_SCAFFOLD_DEFS
+        ):
+            end = index
+            break
+    return end - start
+
+
+def assert_cache_eval_scaffold_within_budget(
+    code: str,
+    *,
+    max_lines: int = CACHE_EVAL_SCAFFOLD_LINE_BUDGET,
+) -> int:
+    """Assert exported cache eval helpers stay within the deduplication line budget."""
+    for marker in _CACHE_EVAL_SCAFFOLD_DEFS:
+        if marker not in code:
+            raise AssertionError(f"Expected {marker!r} in generated export code")
+
+    line_count = count_cache_eval_scaffold_lines(code)
+    if line_count > max_lines:
+        raise AssertionError(
+            f"Cache eval scaffold bloated to {line_count} lines (budget {max_lines}); "
+            "xl_cell/xl_eval may have diverged from _evaluate_address"
+        )
+    return line_count
+
+
 def assert_code_does_not_embed_symbols(code: str, *, absent: set[str]) -> None:
     """Pruning helper: assert certain top-level runtime defs are not embedded."""
     hits = {sym for sym in absent if f"def {sym}(" in code or f"class {sym}:" in code}
