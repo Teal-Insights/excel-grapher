@@ -167,4 +167,7 @@ def xl_lower(text: CellValue) -> str | XlError:
 
 def xl_value(text: CellValue) -> float | XlError:
     """Convert locale-formatted text to a number (Excel VALUE)."""
-    return xl_numbervalue(text)
+    parsed = xl_numbervalue(text)
+    if parsed is XlError.VALUE and isinstance(text, str):
+        return to_number(text)
+    return parsed
