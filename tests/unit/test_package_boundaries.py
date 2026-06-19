@@ -2,6 +2,8 @@
 
 Dependency rules (strictest first):
 
+- `excel_grapher.core` must not import from `runtime`, `evaluator`,
+  `exporter`, or `grapher`.
 - `excel_grapher.runtime` must not import from `evaluator`, `exporter`,
   or `grapher`. It may use `core`.
 - `excel_grapher.grapher` must not import from `evaluator`, `exporter`,
@@ -20,6 +22,34 @@ import pkgutil
 from pathlib import Path
 
 
+def _forbidden_imports_in_package(
+    package_name: str,
+    forbidden_prefixes: tuple[str, ...],
+) -> list[tuple[str, str]]:
+    repo_root = Path(__file__).resolve().parents[2]
+    pkg_path = repo_root / Path(*package_name.split("."))
+    offenders: list[tuple[str, str]] = []
+    for path in sorted(pkg_path.rglob("*.py")):
+        rel = path.relative_to(repo_root / "excel_grapher")
+        mod_name = "excel_grapher." + rel.with_suffix("").as_posix().replace("/", ".")
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                if any(
+                    node.module == bad or node.module.startswith(f"{bad}.")
+                    for bad in forbidden_prefixes
+                ):
+                    offenders.append((mod_name, f"from {node.module} import ..."))
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if any(
+                        alias.name == bad or alias.name.startswith(f"{bad}.")
+                        for bad in forbidden_prefixes
+                    ):
+                        offenders.append((mod_name, f"import {alias.name}"))
+    return offenders
+
+
 def _leaked_imports(
     package_name: str, forbidden_prefixes: tuple[str, ...]
 ) -> list[tuple[str, str]]:
@@ -32,6 +62,19 @@ def _leaked_imports(
             if any(origin.startswith(bad) for bad in forbidden_prefixes):
                 offenders.append((mod_info.name, f"{name} <- {origin}"))
     return offenders
+
+
+def test_core_has_no_upward_deps() -> None:
+    offenders = _forbidden_imports_in_package(
+        "excel_grapher.core",
+        (
+            "excel_grapher.runtime",
+            "excel_grapher.evaluator",
+            "excel_grapher.exporter",
+            "excel_grapher.grapher",
+        ),
+    )
+    assert not offenders, f"core leaked imports: {offenders}"
 
 
 def test_runtime_has_no_upward_deps() -> None:

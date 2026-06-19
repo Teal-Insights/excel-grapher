@@ -11,7 +11,6 @@ from fastpyxl.utils.cell import (
 )
 
 from excel_grapher.core.address_keys import parse_address
-from excel_grapher.runtime.math import xl_abs
 
 from .coercions import flatten, numeric_values, to_bool, to_string
 from .formula_ast import (
@@ -26,6 +25,7 @@ from .formula_ast import (
     StringNode,
     UnaryOpNode,
 )
+from .functions import xl_abs
 from .operators import (
     xl_add,
     xl_concat,
