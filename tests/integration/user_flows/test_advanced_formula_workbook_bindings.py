@@ -183,7 +183,7 @@ def test_codegen_modules_never_emit_xludf_runtime_symbols(tmp_path: Path) -> Non
     files = CodeGenerator(graph).generate_modules(["S!B1"])
     combined = "\n".join(files.values())
     assert _XLUDF_RUNTIME_PATTERN.search(combined) is None
-    assert "xl__xlfn_xlookup" in combined or "xl_ifna" in combined
+    assert "xl_xlookup" in combined or "xl_ifna" in combined
 
 
 def test_sandbox_advanced_formula_workbook_smoke_test() -> None:

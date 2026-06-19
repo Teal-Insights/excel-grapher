@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tests.integration.utils.rewrite_xludf_workbook import write_xludf_workbook_copy
+from tests.integration.utils.rewrite_prefixed_workbook import write_xludf_workbook_copy
 
 REPO = Path(__file__).resolve().parents[1]
 SANDBOX = REPO / "sandbox" / "model"

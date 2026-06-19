@@ -2,6 +2,8 @@
 
 from typing import cast
 
+import pytest
+
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.evaluator.evaluator import FormulaEvaluator
@@ -669,3 +671,41 @@ def test_offset_returns_range() -> None:
     with FormulaEvaluator(graph) as ev:
         result = ev.evaluate(["S!C1"])
         assert result["S!C1"] == 30.0
+
+
+@pytest.mark.parametrize(
+    ("bare_formula", "prefixed_formula", "expected"),
+    [
+        ("=IFNA(S!A1, 9)", "=_xlfn.IFNA(S!A1, 9)", 9),
+        (
+            "=XLOOKUP(2, S!A1:S!A3, S!B1:S!B3)",
+            "=_xlfn.XLOOKUP(2, S!A1:S!A3, S!B1:S!B3)",
+            "c",
+        ),
+        (
+            '=NUMBERVALUE("1,234.56", ".", ",")',
+            '=_xlfn.NUMBERVALUE("1,234.56", ".", ",")',
+            1234.56,
+        ),
+    ],
+)
+def test_xlfn_prefixed_formulas_match_bare_spellings(
+    bare_formula: str, prefixed_formula: str, expected: object
+) -> None:
+    """``_xlfn.`` spellings dispatch through normalization, not alias registry keys."""
+    graph = _make_graph(
+        _make_node("S!A1", None, XlError.NA),
+        _make_node("S!A2", None, 1),
+        _make_node("S!A3", None, 2),
+        _make_node("S!B1", None, "a"),
+        _make_node("S!B2", None, "b"),
+        _make_node("S!B3", None, "c"),
+        _make_node("S!C1", bare_formula, None),
+        _make_node("S!C2", prefixed_formula, None),
+    )
+    with FormulaEvaluator(graph) as ev:
+        bare_result = ev.evaluate(["S!C1"])["S!C1"]
+        prefixed_result = ev.evaluate(["S!C2"])["S!C2"]
+    assert bare_result == expected
+    assert prefixed_result == expected
+    assert bare_result == prefixed_result

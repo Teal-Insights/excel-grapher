@@ -1,0 +1,246 @@
+schema_version: 1.4.0
+workbook: advanced_formula_workbook_xlfn.xlsx
+concept_scheme:
+  id: advanced_formula_workbook
+  concepts:
+  - id: PARAMETER
+    dtype: string
+    description: Assumption label from column A.
+  - id: FISCAL_YEAR
+    dtype: int
+    description: Projection year from header row.
+  - id: LINE_ITEM
+    dtype: string
+    description: Statement line item from column A.
+  - id: METRIC
+    dtype: string
+    description: Summary metric label.
+  - id: EMP_ID
+    dtype: string
+    description: Employee identifier from column A.
+  - id: SKU
+    dtype: string
+    description: Product SKU from column A.
+  - id: REP_ID
+    dtype: string
+    description: Sales rep identifier from column A.
+  - id: QUARTER
+    dtype: string
+    description: Fiscal quarter from header row.
+  - id: FIELD
+    dtype: string
+    description: Lookup or analytics field label.
+  - id: PERIOD
+    dtype: string
+    description: Month label or period key.
+  - id: MONTH
+    dtype: string
+    description: Calendar month label from column B.
+  - id: YEAR
+    dtype: int
+    description: Calendar year from column C.
+  - id: STATISTIC
+    dtype: string
+    description: Descriptive statistic label.
+  - id: FUNCTION
+    dtype: string
+    description: Excel function name.
+  - id: DEMO
+    dtype: string
+    description: Formula toolkit demo name.
+series:
+- id: product_list_price
+  sheet: Product Lookup
+  data_range: '''Product Lookup''!E5:''Product Lookup''!E19'
+  layout: series
+  editable: true
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: SKU
+      role: key
+      scope: cell
+      bind:
+        kind: row_label
+        label_column: A
+        read: string
+  key:
+  - SKU
+  sdmx_notes: List price inputs (column E).
+  series_context:
+    TABLE: Product Master
+  input:
+    setter:
+      name: set_product_list_price
+- id: product_cost
+  sheet: Product Lookup
+  data_range: '''Product Lookup''!F5:''Product Lookup''!F19'
+  layout: series
+  editable: true
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: SKU
+      role: key
+      scope: cell
+      bind:
+        kind: row_label
+        label_column: A
+        read: string
+  key:
+  - SKU
+  sdmx_notes: Cost inputs (column F).
+  series_context:
+    TABLE: Product Master
+  input:
+    setter:
+      name: set_product_cost
+- id: product_margin_dollars
+  sheet: Product Lookup
+  data_range: '''Product Lookup''!G5:''Product Lookup''!G19'
+  layout: series
+  editable: false
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: SKU
+      role: key
+      scope: cell
+      bind:
+        kind: row_label
+        label_column: A
+        read: string
+  key:
+  - SKU
+  sdmx_notes: Computed margin dollars (column G).
+  series_context:
+    TABLE: Product Master
+  output:
+    compute:
+      name: compute_product_margin_dollars
+- id: product_margin_pct
+  sheet: Product Lookup
+  data_range: '''Product Lookup''!H5:''Product Lookup''!H19'
+  layout: series
+  editable: false
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: SKU
+      role: key
+      scope: cell
+      bind:
+        kind: row_label
+        label_column: A
+        read: string
+  key:
+  - SKU
+  sdmx_notes: Computed margin percentages (column H).
+  series_context:
+    TABLE: Product Master
+  output:
+    compute:
+      name: compute_product_margin_pct
+- id: lookup_sku
+  sheet: Product Lookup
+  data_range: '''Product Lookup''!K5:''Product Lookup''!K5'
+  layout: scalar
+  editable: true
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: string
+      bind:
+        kind: data_cell
+        read: string
+    dimensions:
+    - concept: FIELD
+      role: key
+      scope: series
+      bind:
+        kind: constant
+        value: Lookup SKU
+  key:
+  - FIELD
+  sdmx_notes: Lookup SKU input ('Product Lookup'!K5).
+  series_context:
+    PANEL: Dynamic Lookup
+  input:
+    setter:
+      name: set_lookup_sku
+- id: lookup_panel
+  sheet: Product Lookup
+  data_range: '''Product Lookup''!K6:''Product Lookup''!K19'
+  layout: series
+  editable: false
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: string
+      bind:
+        kind: data_cell
+        read: string
+    dimensions:
+    - concept: FIELD
+      role: key
+      scope: cell
+      bind:
+        kind: row_label
+        label_column: J
+        read: string
+  key:
+  - FIELD
+  sdmx_notes: Lookup panel results (K6:K19).
+  series_context:
+    PANEL: Dynamic Lookup
+  output:
+    compute:
+      name: compute_lookup_panel
+- id: sumproduct_analytics
+  sheet: Product Lookup
+  data_range: '''Product Lookup''!K21:''Product Lookup''!K30'
+  layout: series
+  editable: false
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: FIELD
+      role: key
+      scope: cell
+      bind:
+        kind: row_label
+        label_column: J
+        read: string
+  key:
+  - FIELD
+  sdmx_notes: SUMPRODUCT and related analytics (K21:K30).
+  series_context:
+    PANEL: SUMPRODUCT Analytics
+  output:
+    compute:
+      name: compute_sumproduct_analytics

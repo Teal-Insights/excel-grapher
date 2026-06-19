@@ -1,0 +1,573 @@
+schema_version: 1.4.0
+workbook: advanced_formula_workbook_xlfn.xlsx
+concept_scheme:
+  id: advanced_formula_workbook
+  concepts:
+  - id: PARAMETER
+    dtype: string
+    description: Assumption label from column A.
+  - id: FISCAL_YEAR
+    dtype: int
+    description: Projection year from header row.
+  - id: LINE_ITEM
+    dtype: string
+    description: Statement line item from column A.
+  - id: METRIC
+    dtype: string
+    description: Summary metric label.
+  - id: EMP_ID
+    dtype: string
+    description: Employee identifier from column A.
+  - id: SKU
+    dtype: string
+    description: Product SKU from column A.
+  - id: REP_ID
+    dtype: string
+    description: Sales rep identifier from column A.
+  - id: QUARTER
+    dtype: string
+    description: Fiscal quarter from header row.
+  - id: FIELD
+    dtype: string
+    description: Lookup or analytics field label.
+  - id: PERIOD
+    dtype: string
+    description: Month label or period key.
+  - id: MONTH
+    dtype: string
+    description: Calendar month label from column B.
+  - id: YEAR
+    dtype: int
+    description: Calendar year from column C.
+  - id: STATISTIC
+    dtype: string
+    description: Descriptive statistic label.
+  - id: FUNCTION
+    dtype: string
+    description: Excel function name.
+  - id: DEMO
+    dtype: string
+    description: Formula toolkit demo name.
+series:
+- id: revenue_base_revenue
+  sheet: Revenue Model
+  data_range: '''Revenue Model''!B6:''Revenue Model''!H6'
+  layout: series
+  editable: false
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: FISCAL_YEAR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 4
+        read: int
+  key:
+  - FISCAL_YEAR
+  sdmx_notes: Revenue model row 6 by fiscal year.
+  series_context:
+    MODEL: 7-Year Revenue & Profitability
+    LINE_ITEM: base_revenue
+  output:
+    compute:
+      name: compute_revenue_base_revenue
+- id: revenue_yoy_growth
+  sheet: Revenue Model
+  data_range: '''Revenue Model''!C7:''Revenue Model''!H7'
+  layout: series
+  editable: false
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: FISCAL_YEAR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 4
+        read: int
+  key:
+  - FISCAL_YEAR
+  sdmx_notes: Revenue model row 7 by fiscal year.
+  series_context:
+    MODEL: 7-Year Revenue & Profitability
+    LINE_ITEM: yoy_growth
+  output:
+    compute:
+      name: compute_revenue_yoy_growth
+- id: revenue_revenue
+  sheet: Revenue Model
+  data_range: '''Revenue Model''!B8:''Revenue Model''!H8'
+  layout: series
+  editable: false
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: FISCAL_YEAR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 4
+        read: int
+  key:
+  - FISCAL_YEAR
+  sdmx_notes: Revenue model row 8 by fiscal year.
+  series_context:
+    MODEL: 7-Year Revenue & Profitability
+    LINE_ITEM: revenue
+  output:
+    compute:
+      name: compute_revenue_revenue
+- id: revenue_gross_profit
+  sheet: Revenue Model
+  data_range: '''Revenue Model''!B10:''Revenue Model''!H10'
+  layout: series
+  editable: false
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: FISCAL_YEAR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 4
+        read: int
+  key:
+  - FISCAL_YEAR
+  sdmx_notes: Revenue model row 10 by fiscal year.
+  series_context:
+    MODEL: 7-Year Revenue & Profitability
+    LINE_ITEM: gross_profit
+  output:
+    compute:
+      name: compute_revenue_gross_profit
+- id: revenue_gross_margin
+  sheet: Revenue Model
+  data_range: '''Revenue Model''!B11:''Revenue Model''!H11'
+  layout: series
+  editable: false
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: FISCAL_YEAR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 4
+        read: int
+  key:
+  - FISCAL_YEAR
+  sdmx_notes: Revenue model row 11 by fiscal year.
+  series_context:
+    MODEL: 7-Year Revenue & Profitability
+    LINE_ITEM: gross_margin
+  output:
+    compute:
+      name: compute_revenue_gross_margin
+- id: revenue_operating_expenses
+  sheet: Revenue Model
+  data_range: '''Revenue Model''!B12:''Revenue Model''!H12'
+  layout: series
+  editable: false
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: FISCAL_YEAR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 4
+        read: int
+  key:
+  - FISCAL_YEAR
+  sdmx_notes: Revenue model row 12 by fiscal year.
+  series_context:
+    MODEL: 7-Year Revenue & Profitability
+    LINE_ITEM: operating_expenses
+  output:
+    compute:
+      name: compute_revenue_operating_expenses
+- id: revenue_ebitda
+  sheet: Revenue Model
+  data_range: '''Revenue Model''!B13:''Revenue Model''!H13'
+  layout: series
+  editable: false
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: FISCAL_YEAR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 4
+        read: int
+  key:
+  - FISCAL_YEAR
+  sdmx_notes: Revenue model row 13 by fiscal year.
+  series_context:
+    MODEL: 7-Year Revenue & Profitability
+    LINE_ITEM: ebitda
+  output:
+    compute:
+      name: compute_revenue_ebitda
+- id: revenue_ebitda_margin
+  sheet: Revenue Model
+  data_range: '''Revenue Model''!B14:''Revenue Model''!H14'
+  layout: series
+  editable: false
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: FISCAL_YEAR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 4
+        read: int
+  key:
+  - FISCAL_YEAR
+  sdmx_notes: Revenue model row 14 by fiscal year.
+  series_context:
+    MODEL: 7-Year Revenue & Profitability
+    LINE_ITEM: ebitda_margin
+  output:
+    compute:
+      name: compute_revenue_ebitda_margin
+- id: revenue_depreciation
+  sheet: Revenue Model
+  data_range: '''Revenue Model''!B15:''Revenue Model''!H15'
+  layout: series
+  editable: false
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: FISCAL_YEAR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 4
+        read: int
+  key:
+  - FISCAL_YEAR
+  sdmx_notes: Revenue model row 15 by fiscal year.
+  series_context:
+    MODEL: 7-Year Revenue & Profitability
+    LINE_ITEM: depreciation
+  output:
+    compute:
+      name: compute_revenue_depreciation
+- id: revenue_ebit
+  sheet: Revenue Model
+  data_range: '''Revenue Model''!B16:''Revenue Model''!H16'
+  layout: series
+  editable: false
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: FISCAL_YEAR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 4
+        read: int
+  key:
+  - FISCAL_YEAR
+  sdmx_notes: Revenue model row 16 by fiscal year.
+  series_context:
+    MODEL: 7-Year Revenue & Profitability
+    LINE_ITEM: ebit
+  output:
+    compute:
+      name: compute_revenue_ebit
+- id: revenue_ebit_margin
+  sheet: Revenue Model
+  data_range: '''Revenue Model''!B17:''Revenue Model''!H17'
+  layout: series
+  editable: false
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: FISCAL_YEAR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 4
+        read: int
+  key:
+  - FISCAL_YEAR
+  sdmx_notes: Revenue model row 17 by fiscal year.
+  series_context:
+    MODEL: 7-Year Revenue & Profitability
+    LINE_ITEM: ebit_margin
+  output:
+    compute:
+      name: compute_revenue_ebit_margin
+- id: revenue_tax_expense
+  sheet: Revenue Model
+  data_range: '''Revenue Model''!B18:''Revenue Model''!H18'
+  layout: series
+  editable: false
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: FISCAL_YEAR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 4
+        read: int
+  key:
+  - FISCAL_YEAR
+  sdmx_notes: Revenue model row 18 by fiscal year.
+  series_context:
+    MODEL: 7-Year Revenue & Profitability
+    LINE_ITEM: tax_expense
+  output:
+    compute:
+      name: compute_revenue_tax_expense
+- id: revenue_net_income
+  sheet: Revenue Model
+  data_range: '''Revenue Model''!B19:''Revenue Model''!H19'
+  layout: series
+  editable: false
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: FISCAL_YEAR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 4
+        read: int
+  key:
+  - FISCAL_YEAR
+  sdmx_notes: Revenue model row 19 by fiscal year.
+  series_context:
+    MODEL: 7-Year Revenue & Profitability
+    LINE_ITEM: net_income
+  output:
+    compute:
+      name: compute_revenue_net_income
+- id: revenue_net_margin
+  sheet: Revenue Model
+  data_range: '''Revenue Model''!B20:''Revenue Model''!H20'
+  layout: series
+  editable: false
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: FISCAL_YEAR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 4
+        read: int
+  key:
+  - FISCAL_YEAR
+  sdmx_notes: Revenue model row 20 by fiscal year.
+  series_context:
+    MODEL: 7-Year Revenue & Profitability
+    LINE_ITEM: net_margin
+  output:
+    compute:
+      name: compute_revenue_net_margin
+- id: revenue_da_addback
+  sheet: Revenue Model
+  data_range: '''Revenue Model''!B22:''Revenue Model''!H22'
+  layout: series
+  editable: false
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: FISCAL_YEAR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 4
+        read: int
+  key:
+  - FISCAL_YEAR
+  sdmx_notes: Revenue model row 22 by fiscal year.
+  series_context:
+    MODEL: 7-Year Revenue & Profitability
+    LINE_ITEM: da_addback
+  output:
+    compute:
+      name: compute_revenue_da_addback
+- id: revenue_capex
+  sheet: Revenue Model
+  data_range: '''Revenue Model''!B23:''Revenue Model''!H23'
+  layout: series
+  editable: false
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: FISCAL_YEAR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 4
+        read: int
+  key:
+  - FISCAL_YEAR
+  sdmx_notes: Revenue model row 23 by fiscal year.
+  series_context:
+    MODEL: 7-Year Revenue & Profitability
+    LINE_ITEM: capex
+  output:
+    compute:
+      name: compute_revenue_capex
+- id: revenue_free_cash_flow
+  sheet: Revenue Model
+  data_range: '''Revenue Model''!B24:''Revenue Model''!H24'
+  layout: series
+  editable: false
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: FISCAL_YEAR
+      role: key
+      scope: cell
+      bind:
+        kind: column_header
+        header_row: 4
+        read: int
+  key:
+  - FISCAL_YEAR
+  sdmx_notes: Revenue model row 24 by fiscal year.
+  series_context:
+    MODEL: 7-Year Revenue & Profitability
+    LINE_ITEM: free_cash_flow
+  output:
+    compute:
+      name: compute_revenue_free_cash_flow
+- id: revenue_summary
+  sheet: Revenue Model
+  data_range: '''Revenue Model''!B29:''Revenue Model''!B40'
+  layout: series
+  editable: false
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: float
+      bind:
+        kind: data_cell
+        read: float
+    dimensions:
+    - concept: METRIC
+      role: key
+      scope: cell
+      bind:
+        kind: row_label
+        label_column: A
+        read: string
+  key:
+  - METRIC
+  sdmx_notes: Summary statistics ('Revenue Model'!B29:B40).
+  series_context:
+    MODEL: 7-Year Revenue & Profitability
+    SECTION: Summary Statistics
+  output:
+    compute:
+      name: compute_revenue_summary

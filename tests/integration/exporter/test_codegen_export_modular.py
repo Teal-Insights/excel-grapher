@@ -240,7 +240,7 @@ def test_codegen_generate_modules_has_no_ty_diagnostics_for_xludf_xlookup(
 
     internals = (pkg_root / "internals.py").read_text(encoding="utf-8")
     assert "xl__xludf_xlookup" not in internals
-    assert "xl__xlfn_xlookup" in internals
+    assert "xl_xlookup" in internals
 
     ty = _run(
         [

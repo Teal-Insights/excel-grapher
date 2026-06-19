@@ -11,6 +11,7 @@ from fastpyxl.utils.cell import (
 )
 
 from excel_grapher.core.address_keys import parse_address
+from excel_grapher.core.excel_function_names import normalize_excel_function_name
 from excel_grapher.runtime.math import xl_abs
 
 from .coercions import flatten, numeric_values, to_bool, to_string
@@ -197,7 +198,7 @@ def _eval(
         return Unsupported(f"Unsupported binary operator {op!r}")
 
     if isinstance(node, FunctionCallNode):
-        name = node.name.upper()
+        name = normalize_excel_function_name(node.name)
         # ROW/COLUMN: ref argument is not evaluated; we use the reference's row/column.
         if name == "ROW":
             if len(node.args) == 0:
@@ -264,11 +265,7 @@ def _eval(
             cast(CellValue, v) for v in args if not isinstance(v, (XlError, Unsupported))
         ]
 
-        impl = (
-            functions.get(name)
-            or _DEFAULT_FUNCTIONS.get(name)
-            or _DEFAULT_FUNCTIONS.get(name.split(".")[-1] if "." in name else "")
-        )
+        impl = functions.get(name) or _DEFAULT_FUNCTIONS.get(name)
         if impl is None:
             return Unsupported(f"Unsupported function {name!r}")
         return impl(flat_args)

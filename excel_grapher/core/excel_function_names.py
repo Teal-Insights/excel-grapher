@@ -1,4 +1,24 @@
-"""Normalize Excel function names from on-disk formula spellings."""
+"""Normalize Excel function names from on-disk formula spellings.
+
+Excel compatibility prefixes
+----------------------------
+
+``_xlfn.``
+    Future-function prefix stored by Excel for newer built-ins (e.g.
+    ``=_xlfn.XLOOKUP(...)``). Stripped **unconditionally** by
+    ``normalize_excel_function_name`` so dispatch, codegen, and the evaluator
+    registry use canonical names only (``XLOOKUP``, not ``_XLFN.XLOOKUP``).
+
+``_xludf.``
+    Prefix Excel uses for some built-ins after round-trip, or for real add-in
+    UDFs. Stripped **only** for names in ``_XLUDF_STRIPPABLE_BUILTINS``;
+    unknown ``_xludf.*`` tokens are left unchanged.
+
+All code paths that resolve Excel function names must call
+``normalize_excel_function_name`` (or parse via ``formula_ast``, which does).
+Do not register ``_XLFN.*`` aliases in the evaluator or hand-strip prefixes
+elsewhere.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +27,12 @@ _XLUDF_PREFIX = "_XLUDF."
 
 # Built-ins that Excel may store with a ``_xludf.`` prefix after round-trip.
 # Unknown ``_xludf.*`` names are left unchanged (custom / add-in UDFs).
+#
+# To support a new built-in after round-trip with ``_xludf.``:
+# 1. Add the canonical upper-case name here.
+# 2. Implement the function in the shared runtime and register under the
+#    canonical name only.
+# 3. Extend regression fixtures via ``rewrite_prefixed_workbook`` if needed.
 _XLUDF_STRIPPABLE_BUILTINS: frozenset[str] = frozenset(
     {
         "FALSE",
@@ -17,18 +43,14 @@ _XLUDF_STRIPPABLE_BUILTINS: frozenset[str] = frozenset(
     }
 )
 
-# Export-runtime Python names that differ from ``xl_{normalized_lower}``.
-_RUNTIME_PYTHON_NAMES: dict[str, str] = {
-    "XLOOKUP": "xl__xlfn_xlookup",
-}
+
+# Public alias for fixture helpers and documentation.
+XLUDF_STRIPPABLE_BUILTINS = _XLUDF_STRIPPABLE_BUILTINS
 
 
 def excel_func_to_python_runtime_name(normalized_name: str) -> str:
     """Map a canonical Excel function name to the export-runtime Python callable."""
-    upper = normalized_name.upper()
-    if upper in _RUNTIME_PYTHON_NAMES:
-        return _RUNTIME_PYTHON_NAMES[upper]
-    result = upper.lower().replace(".", "_")
+    result = normalized_name.upper().lower().replace(".", "_")
     return f"xl_{result}"
 
 
@@ -75,6 +97,7 @@ def excel_function_call_prefixes(function_name: str) -> tuple[str, ...]:
 
 
 __all__ = [
+    "XLUDF_STRIPPABLE_BUILTINS",
     "excel_func_to_python_runtime_name",
     "excel_function_call_prefixes",
     "normalize_excel_function_name",

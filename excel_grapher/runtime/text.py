@@ -3,7 +3,6 @@ from __future__ import annotations
 from excel_grapher.core import CellValue, XlError, to_number, to_string
 
 __all__ = [
-    "xl__xlfn_numbervalue",
     "xl_concatenate",
     "xl_left",
     "xl_lower",
@@ -93,7 +92,7 @@ def xl_text(value: CellValue, format_text: CellValue) -> str | XlError:
     return str(n)
 
 
-def xl__xlfn_numbervalue(
+def xl_numbervalue(
     text: CellValue,
     decimal_separator: CellValue = ".",
     group_separator: CellValue = ",",
@@ -158,15 +157,6 @@ def xl__xlfn_numbervalue(
     if negative:
         value = -abs(value)
     return value * sign
-
-
-def xl_numbervalue(
-    text: CellValue,
-    decimal_separator: CellValue = ".",
-    group_separator: CellValue = ",",
-) -> float | XlError:
-    """Excel NUMBERVALUE wrapper (non _xlfn prefix)."""
-    return xl__xlfn_numbervalue(text, decimal_separator, group_separator)
 
 
 def xl_lower(text: CellValue) -> str | XlError:

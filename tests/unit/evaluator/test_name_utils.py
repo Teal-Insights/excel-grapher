@@ -141,7 +141,9 @@ class TestExcelFuncToPython:
     def test_prefixed_function_normalizes_before_python_name(self):
         """Compatibility prefixes should not appear in generated Python names."""
         assert excel_func_to_python("_XLUDF.IFNA") == "xl_ifna"
-        assert excel_func_to_python("_xlfn.XLOOKUP") == "xl__xlfn_xlookup"
+        assert excel_func_to_python("_xlfn.XLOOKUP") == "xl_xlookup"
+        assert excel_func_to_python("_xlfn.NUMBERVALUE") == "xl_numbervalue"
+        assert excel_func_to_python("SUM") == excel_func_to_python("_xlfn.SUM")
 
 
 class TestParseAddress:

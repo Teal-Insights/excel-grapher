@@ -8,6 +8,7 @@ from excel_grapher.grapher.parser import (
     parse_cell_refs_with_spans,
     parse_range_refs_with_spans,
     split_top_level_choose,
+    split_top_level_function,
     split_top_level_if,
     split_top_level_ifs,
     split_top_level_switch,
@@ -42,6 +43,16 @@ class TestSplitTopLevelIf:
         """IF with nested function calls should parse correctly."""
         result = split_top_level_if("=IF(SUM(A1:A10)>0, MAX(B1:B10), 0)")
         assert result == ("SUM(A1:A10)>0", "MAX(B1:B10)", "0")
+
+    def test_if_with_xlfn_prefix(self) -> None:
+        """IF with _xlfn. prefix should parse correctly."""
+        result = split_top_level_if("=_xlfn.IF(A1>0, B1, C1)")
+        assert result == ("A1>0", "B1", "C1")
+
+    def test_if_with_xlfn_and_trailing_returns_none(self) -> None:
+        """IF with _xlfn. prefix and trailing content should return None."""
+        result = split_top_level_if("=_xlfn.IF(A1>0, B1, C1)+D1")
+        assert result is None
 
     def test_if_with_trailing_whitespace(self) -> None:
         """IF with trailing whitespace only should still parse."""
@@ -85,6 +96,18 @@ class TestSplitTopLevelIfs:
 
 class TestSplitTopLevelFunctionPrefixes:
     """Tests for compatibility-prefix recognition in split_top_level_function."""
+
+    def test_sumproduct_with_xlfn_prefix(self) -> None:
+        result = split_top_level_function(
+            "=_xlfn.SUMPRODUCT((A1:A3>0)*1)",
+            "SUMPRODUCT",
+        )
+        assert result == ["(A1:A3>0)*1"]
+
+    def test_sumproduct_bare_and_xlfn_match(self) -> None:
+        bare = split_top_level_function("=SUMPRODUCT(A1:A3, B1:B3)", "SUMPRODUCT")
+        prefixed = split_top_level_function("=_xlfn.SUMPRODUCT(A1:A3, B1:B3)", "SUMPRODUCT")
+        assert bare == prefixed == ["A1:A3", "B1:B3"]
 
     def test_ifna_with_xludf_prefix_parses_via_formula_ast(self) -> None:
         from excel_grapher.core.formula_ast import FunctionCallNode, parse
