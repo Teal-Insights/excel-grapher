@@ -16,11 +16,11 @@ from excel_grapher.core.address_keys import (
     quote_sheet_if_needed,
     sort_node_keys,
 )
-from excel_grapher.core.excel_function_names import normalize_excel_function_name
 from excel_grapher.evaluator.errors import MissingNormalizedFormulaError
 from excel_grapher.evaluator.name_utils import (
     address_to_python_name,
     excel_func_to_python,
+    normalize_excel_function_name,
 )
 from excel_grapher.evaluator.parser import (
     AstNode,

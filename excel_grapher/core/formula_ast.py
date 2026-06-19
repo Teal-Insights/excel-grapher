@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from .excel_function_names import normalize_excel_function_name
+from excel_grapher.evaluator.name_utils import normalize_excel_function_name
+
 from .types import XlError
 
 

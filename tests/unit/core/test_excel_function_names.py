@@ -6,12 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from excel_grapher.core.excel_function_names import (
-    excel_func_to_python_runtime_name,
-    normalize_excel_function_name,
-)
+from excel_grapher.core.excel_function_names import excel_func_to_python_runtime_name
 from excel_grapher.evaluator.functions import FUNCTIONS
-from excel_grapher.evaluator.name_utils import excel_func_to_python
+from excel_grapher.evaluator.name_utils import excel_func_to_python, normalize_excel_function_name
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _SOURCE_ROOT = _REPO_ROOT / "excel_grapher"
@@ -34,6 +31,8 @@ _SOURCE_ROOT = _REPO_ROOT / "excel_grapher"
         ("_xlfn.IFS", "IFS"),
         ("SUMPRODUCT", "SUMPRODUCT"),
         ("_xlfn.SUMPRODUCT", "SUMPRODUCT"),
+        ("_xludf.IFNA", "IFNA"),
+        ("_xludf.XLOOKUP", "XLOOKUP"),
         ("NORM.DIST", "NORM.DIST"),
         ("_xlfn.NORM.DIST", "NORM.DIST"),
     ],
@@ -92,7 +91,7 @@ def test_functions_registry_has_no_xlfn_alias_keys() -> None:
     ],
 )
 def test_source_tree_has_no_legacy_prefix_handling(pattern: str) -> None:
-    """Regression gate: prefix handling stays centralized in ``excel_function_names``."""
+    """Regression gate: prefix handling stays centralized in ``name_utils``."""
     offenders: list[str] = []
     for path in _SOURCE_ROOT.rglob("*.py"):
         text = path.read_text(encoding="utf-8")

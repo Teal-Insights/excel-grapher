@@ -14,9 +14,12 @@ from excel_grapher.core.address_keys import (
 )
 from excel_grapher.core.excel_function_names import (
     excel_function_call_prefixes,
+)
+from excel_grapher.evaluator.name_utils import (
+    address_to_python_name,
+    excel_func_to_python,
     normalize_excel_function_name,
 )
-from excel_grapher.evaluator.name_utils import address_to_python_name, excel_func_to_python
 
 
 class TestAddressToPythonName:
@@ -89,22 +92,26 @@ class TestNormalizeExcelFunctionName:
             ("SUM", "SUM"),
             ("_XLFN.IFS", "IFS"),
             ("NORM.DIST", "NORM.DIST"),
-            ("_XLUDF.MYADDIN", "_XLUDF.MYADDIN"),
-            ("_XLUDF.CUSTOM_UDF", "_XLUDF.CUSTOM_UDF"),
+            ("_XLUDF.MYADDIN", "MYADDIN"),
+            ("_XLUDF.CUSTOM_UDF", "CUSTOM_UDF"),
         ],
     )
     def test_normalize_excel_function_name(self, raw: str, expected: str) -> None:
         assert normalize_excel_function_name(raw) == expected
 
-    def test_excel_function_call_prefixes_includes_xludf_for_allowlisted(self) -> None:
+    def test_excel_function_call_prefixes_includes_compatibility_variants(self) -> None:
         assert excel_function_call_prefixes("IFNA") == (
             "IFNA(",
             "_XLFN.IFNA(",
             "_XLUDF.IFNA(",
         )
 
-    def test_excel_function_call_prefixes_omits_xludf_for_unknown(self) -> None:
-        assert excel_function_call_prefixes("SUM") == ("SUM(", "_XLFN.SUM(")
+    def test_excel_function_call_prefixes_includes_xludf_for_all_functions(self) -> None:
+        assert excel_function_call_prefixes("SUM") == (
+            "SUM(",
+            "_XLFN.SUM(",
+            "_XLUDF.SUM(",
+        )
 
 
 class TestExcelFuncToPython:

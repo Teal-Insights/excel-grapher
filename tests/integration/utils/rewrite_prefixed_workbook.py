@@ -9,14 +9,23 @@ from typing import Literal, cast
 
 from fastpyxl import load_workbook
 
-from excel_grapher.core.excel_function_names import XLUDF_STRIPPABLE_BUILTINS
+# Built-ins commonly rewritten in prefix-regression workbook fixtures.
+_REWRITABLE_BUILTINS: frozenset[str] = frozenset(
+    {
+        "FALSE",
+        "IFNA",
+        "NUMBERVALUE",
+        "TRUE",
+        "XLOOKUP",
+    }
+)
 
 ExcelBuiltinPrefix = Literal["_xlfn", "_xludf"]
 
 # Longest names first so shorter prefixes do not shadow longer function names.
 _REWRITABLE_ORDER: tuple[str, ...] = cast(
     tuple[str, ...],
-    tuple(sorted(XLUDF_STRIPPABLE_BUILTINS, key=len, reverse=True)),
+    tuple(sorted(_REWRITABLE_BUILTINS, key=len, reverse=True)),
 )
 
 
