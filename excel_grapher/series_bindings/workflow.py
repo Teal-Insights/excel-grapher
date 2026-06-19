@@ -118,7 +118,20 @@ def validate_bindings_workbook(
     workbook: Path,
     bindings_path: Path,
 ) -> BindingsCheckResult:
-    """Load bindings, build the graph, and validate against the workbook."""
+    """Load bindings, build the graph, and validate against the workbook.
+
+    This is a **fast sanity-check** entry point (CLI ``bindings validate``,
+    smoke tests, and similar). Graph construction intentionally uses
+    ``use_cached_dynamic_refs=True`` so dynamic OFFSET/INDIRECT-style refs
+    resolve from cached workbook values rather than the full constraint-based
+    dynamic-reference solver, which is computationally expensive and not
+    required to check binding schema, address coverage, or leaf resolution.
+
+    Callers that need exhaustive dynamic-ref behavior (parity tests, export
+    closure checks, etc.) should build the graph themselves via
+    ``create_dependency_graph`` with the appropriate ``use_cached_dynamic_refs``
+    / ``dynamic_refs`` settings instead of relying on this helper's graph.
+    """
     bindings = load_series_bindings(bindings_path)
     targets = all_series_targets(bindings, workbook=workbook)
     graph = create_dependency_graph(
