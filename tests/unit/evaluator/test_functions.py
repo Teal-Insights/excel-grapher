@@ -439,6 +439,28 @@ def test_text() -> None:
         assert result["S!A2"] == "25%"
 
 
+def test_value() -> None:
+    """Test VALUE function."""
+    graph = _make_graph(
+        _make_node("S!A1", '=VALUE("42")', None),
+        _make_node("S!A2", '=VALUE("12.5")', None),
+        _make_node("S!A3", '=VALUE("6522014")', None),
+        _make_node("S!A4", '=VALUE("$1,234.56")', None),
+        _make_node("S!A5", '=VALUE("abc")', None),
+        _make_node("S!A6", "=VALUE(#REF!)", None),
+        _make_node("S!A7", '=VALUE("")', None),
+    )
+    with FormulaEvaluator(graph) as ev:
+        result = ev.evaluate(["S!A1", "S!A2", "S!A3", "S!A4", "S!A5", "S!A6", "S!A7"])
+        assert result["S!A1"] == 42.0
+        assert result["S!A2"] == 12.5
+        assert result["S!A3"] == 6522014.0
+        assert result["S!A4"] == 1234.56
+        assert result["S!A5"] == XlError.VALUE
+        assert result["S!A6"] == XlError.REF
+        assert result["S!A7"] == 0.0
+
+
 # --- Additional lookup function tests ---
 
 
