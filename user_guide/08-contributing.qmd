@@ -109,15 +109,78 @@ Examples in the current API:
 
 Use direct callables only for local instrumentation hooks that are not reusable plugin choices, such as `NodeHook` graph build hooks. Use named registries for behavior that users may want to list, document, select from config, or share across workflows.
 
-### Export projection transforms (planned)
+### Graph projection for export
 
-The upcoming `ExportTransform` / projection-transform API should follow the same pattern:
+Projections build artifact-specific views of the canonical graph without mutating it. A
+projection step implements the `ProjectionStep` protocol (`project(graph) -> ProjectionResult`)
+and returns a `ProjectionResult` facade that reads like the projected graph and carries a
+durable `ProjectionManifest`. The facade satisfies the read-only `grapher.GraphReadView`
+protocol, the same surface `DependencyGraph` exposes, so read-only consumers such as
+`to_networkx` and `CodeGenerator` accept a graph or a projection interchangeably.
+`IdentityTransitCompression` is the built-in reference step:
 
-- Define an `ExportTransform` protocol and an `ExportTransformSpec` alias (`str | ExportTransform`).
-- Accept direct transform objects/callables in Python APIs (`CodeGenerator.generate(..., transform=...)`).
-- Expose built-in transforms (e.g. `IdentityTransitReducer`) as importable classes and stable string IDs.
-- Provide `register_export_transform`, `list_export_transforms`, `resolve_export_transform`, and `run_export_transform` when config/CLI selection is needed.
-- Use `replace=True` and `unregister_export_transform` for the same test/bootstrap semantics as other registries.
+```python
+projection = IdentityTransitCompression().project(graph)
+CodeGenerator(projection).generate_modules(...)
+to_web_viz_payload(to_networkx(projection))
+```
+
+#### The manifest contract
+
+`ProjectionManifest` is a protocol; codegen depends only on its small address-projection
+surface (`kind`, `map_to_projected`, `to_dict`). `BaseProjectionManifest` is a
+ready-to-use implementation that also carries
+collapse lineage. It deliberately separates two concerns:
+
+- **Forwarding map** (`forwarding_map`): removed addresses that are value-equivalent to a
+  retained computation. Codegen queries this through `map_to_projected` only for public
+  targets and series binding ranges, so internal-only collapses should leave it empty.
+- **Collapse lineage** (`retained_to_collapsed_sources`, `removed_node_snapshots`,
+  `collapsed_groups`, `formula_rewrites`): which originals folded into each retained node,
+  in dependency order, with original formulas and metadata. This is for audit and
+  downstream refactoring and does *not* imply value-equivalence.
+
+#### Writing a custom projection
+
+Build the projected graph from a copy and record lineage on the manifest:
+
+```python
+from excel_grapher.exporter import (
+    BaseProjectionManifest, ProjectedNodeSnapshot, ProjectionResult,
+    register_projection_manifest,
+)
+
+class SubgraphCollapse:
+    def project(self, graph):
+        projected = graph.copy()                      # never mutate the canonical graph
+        # ... select a single-exit subgraph, then on `projected`:
+        #     set_node_formula(root, inlined_formula, normalized_formula)  # substitute bodies
+        #     add_edge(root, external_dep, ...)              # rewire to surviving deps
+        #     remove_node(internal)                          # delete collapsed internals
+        #     set_node_metadata(root, {"collapsed_from": [...]})  # tag the condensed node
+        manifest = BaseProjectionManifest(
+            kind="subgraph_collapse",
+            forwarding_map={},                         # internal nodes are not forwarded
+            retained_to_collapsed_sources={root: tuple(internals)},
+            removed_node_snapshots={addr: ProjectedNodeSnapshot(...) for addr in internals},
+            formula_rewrites=(),
+            collapsed_groups=(),
+        )
+        return ProjectionResult(graph, projected, manifest)
+
+# Enable serialization round-trips for the custom kind:
+register_projection_manifest("subgraph_collapse", BaseProjectionManifest.from_dict)
+```
+
+Public graph-mutation primitives for projection authors: `DependencyGraph.copy`,
+`set_node_formula`, `remove_node`, `set_node_metadata`, `add_edge`. Compose steps with
+`apply_projection(graph, [step_a, step_b])`; multiple steps fold into a
+`CompositeProjectionManifest` that chains the forwarding map and preserves each component
+manifest (heterogeneous kinds supported).
+
+A parity-tested formula-inlining/subgraph-collapse engine is a planned follow-up; until
+then, authors own the substitution logic in their projection step. A config-driven registry
+for selecting projections (mirroring web viz layouts) may follow when needed.
 
 ### Alignment status
 

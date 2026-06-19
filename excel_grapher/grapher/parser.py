@@ -5,6 +5,7 @@ import re
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Literal as TypingLiteral
 
 import fastpyxl.utils.cell
 
@@ -18,6 +19,11 @@ from excel_grapher.core.formula_normalization import (
     build_named_range_replacement_state,
     normalize_excel_formula,
     normalize_excel_formula_with_name_state,
+)
+from excel_grapher.core.range_shorthand import (
+    SheetBounds,
+    expand_whole_column_deps,
+    expand_whole_row_deps,
 )
 
 from .guard import And, Compare, GuardExpr, Literal, Not, Or
@@ -37,6 +43,7 @@ class CellRef:
     row: int
     is_absolute_col: bool = False
     is_absolute_row: bool = False
+    range_kind: TypingLiteral["cell", "whole_column", "whole_row"] = "cell"
 
 
 _SHEET_CELL_RE = re.compile(
@@ -63,6 +70,25 @@ _RANGE_UNQUOTED_BOTH_ENDPOINTS_RE = re.compile(
 )
 _RANGE_LOCAL_RE = re.compile(
     r"(?<![!A-Za-z0-9_])(?<!\$)\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)(?![A-Za-z0-9_])"
+)
+_RANGE_WHOLE_COL_QUOTED_RE = re.compile(
+    r"'(?P<sheet>[^']+)'!\$?(?P<col>[A-Z]{1,3})\s*:\s*\$?(?P=col)\b",
+    re.IGNORECASE,
+)
+_RANGE_WHOLE_COL_UNQUOTED_RE = re.compile(
+    r"(?<![A-Za-z_'])(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!\$?(?P<col>[A-Z]{1,3})\s*:\s*\$?(?P=col)\b",
+    re.IGNORECASE,
+)
+_RANGE_WHOLE_COL_LOCAL_RE = re.compile(
+    r"(?<![!A-Za-z0-9_'])(?<!\$)\$?(?P<col>[A-Z]{1,3})\s*:\s*\$?(?P=col)\b(?![A-Za-z0-9_])",
+    re.IGNORECASE,
+)
+_RANGE_WHOLE_ROW_QUOTED_RE = re.compile(r"'(?P<sheet>[^']+)'!\$?(?P<row>\d+)\s*:\s*\$?(?P=row)\b")
+_RANGE_WHOLE_ROW_UNQUOTED_RE = re.compile(
+    r"(?<![A-Za-z_'])(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!\$?(?P<row>\d+)\s*:\s*\$?(?P=row)\b"
+)
+_RANGE_WHOLE_ROW_LOCAL_RE = re.compile(
+    r"(?<![!A-Za-z0-9_'])(?<!\$)(?P<row>\d+)\s*:\s*\$?(?P=row)\b(?![A-Za-z0-9_])"
 )
 
 
@@ -117,6 +143,40 @@ def parse_range_refs(formula: str) -> list[tuple[CellRef, CellRef]]:
         return []
 
     out: list[tuple[CellRef, CellRef]] = []
+
+    for m in _RANGE_WHOLE_COL_QUOTED_RE.finditer(formula):
+        sheet = m.group("sheet")
+        col = m.group("col").upper()
+        ref = CellRef(sheet=sheet, column=col, row=0, range_kind="whole_column")
+        out.append((ref, ref))
+
+    for m in _RANGE_WHOLE_COL_UNQUOTED_RE.finditer(formula):
+        sheet = m.group("sheet")
+        col = m.group("col").upper()
+        ref = CellRef(sheet=sheet, column=col, row=0, range_kind="whole_column")
+        out.append((ref, ref))
+
+    for m in _RANGE_WHOLE_COL_LOCAL_RE.finditer(formula):
+        col = m.group("col").upper()
+        ref = CellRef(sheet=None, column=col, row=0, range_kind="whole_column")
+        out.append((ref, ref))
+
+    for m in _RANGE_WHOLE_ROW_QUOTED_RE.finditer(formula):
+        sheet = m.group("sheet")
+        row = int(m.group("row"))
+        ref = CellRef(sheet=sheet, column="", row=row, range_kind="whole_row")
+        out.append((ref, ref))
+
+    for m in _RANGE_WHOLE_ROW_UNQUOTED_RE.finditer(formula):
+        sheet = m.group("sheet")
+        row = int(m.group("row"))
+        ref = CellRef(sheet=sheet, column="", row=row, range_kind="whole_row")
+        out.append((ref, ref))
+
+    for m in _RANGE_WHOLE_ROW_LOCAL_RE.finditer(formula):
+        row = int(m.group("row"))
+        ref = CellRef(sheet=None, column="", row=row, range_kind="whole_row")
+        out.append((ref, ref))
 
     for m in _RANGE_QUOTED_BOTH_ENDPOINTS_RE.finditer(formula):
         sheet = m.group("sheet")
@@ -175,6 +235,40 @@ def parse_range_refs_with_spans(formula: str) -> list[tuple[CellRef, CellRef, tu
         return []
 
     out: list[tuple[CellRef, CellRef, tuple[int, int]]] = []
+
+    for m in _RANGE_WHOLE_COL_QUOTED_RE.finditer(formula):
+        sheet = m.group("sheet")
+        col = m.group("col").upper()
+        ref = CellRef(sheet=sheet, column=col, row=0, range_kind="whole_column")
+        out.append((ref, ref, m.span()))
+
+    for m in _RANGE_WHOLE_COL_UNQUOTED_RE.finditer(formula):
+        sheet = m.group("sheet")
+        col = m.group("col").upper()
+        ref = CellRef(sheet=sheet, column=col, row=0, range_kind="whole_column")
+        out.append((ref, ref, m.span()))
+
+    for m in _RANGE_WHOLE_COL_LOCAL_RE.finditer(formula):
+        col = m.group("col").upper()
+        ref = CellRef(sheet=None, column=col, row=0, range_kind="whole_column")
+        out.append((ref, ref, m.span()))
+
+    for m in _RANGE_WHOLE_ROW_QUOTED_RE.finditer(formula):
+        sheet = m.group("sheet")
+        row = int(m.group("row"))
+        ref = CellRef(sheet=sheet, column="", row=row, range_kind="whole_row")
+        out.append((ref, ref, m.span()))
+
+    for m in _RANGE_WHOLE_ROW_UNQUOTED_RE.finditer(formula):
+        sheet = m.group("sheet")
+        row = int(m.group("row"))
+        ref = CellRef(sheet=sheet, column="", row=row, range_kind="whole_row")
+        out.append((ref, ref, m.span()))
+
+    for m in _RANGE_WHOLE_ROW_LOCAL_RE.finditer(formula):
+        row = int(m.group("row"))
+        ref = CellRef(sheet=None, column="", row=row, range_kind="whole_row")
+        out.append((ref, ref, m.span()))
 
     for m in _RANGE_QUOTED_BOTH_ENDPOINTS_RE.finditer(formula):
         sheet = m.group("sheet")
@@ -251,6 +345,33 @@ def expand_range(
         for cc in range(clo, chi + 1):
             out.append((sheet, f"{fastpyxl.utils.cell.get_column_letter(cc)}{rr}"))
     return out
+
+
+def expand_range_ref(
+    *,
+    start: CellRef,
+    end: CellRef,
+    default_sheet: str,
+    max_cells: int,
+    sheet_bounds: SheetBounds | None = None,
+) -> list[tuple[str, str]]:
+    """Expand a parsed range reference, using workbook bounds for whole-column/row forms."""
+    sheet = start.sheet if start.sheet is not None else default_sheet
+    bounds = sheet_bounds or {}
+
+    if start.range_kind == "whole_column":
+        return expand_whole_column_deps(sheet, start.column, bounds)
+    if start.range_kind == "whole_row":
+        return expand_whole_row_deps(sheet, start.row, bounds)
+
+    return expand_range(
+        sheet=sheet,
+        start_col=start.column,
+        start_row=start.row,
+        end_col=end.column,
+        end_row=end.row,
+        max_cells=max_cells,
+    )
 
 
 def mask_spans(s: str, spans: list[tuple[int, int]]) -> str:

@@ -13,9 +13,12 @@ Known gaps exercised here:
   dynamic-ref resolution; the generic ``build_dependency_graph`` helper does not
   enable ``use_cached_dynamic_refs``.
 - **Whole-column references**: ``Aggregate Stats!E28:E32`` use ``'Sheet'!C:C`` and
-  ``'Sheet'!A:A`` inside ``INDEX``/``MATCH``; the formula parser rejects them today.
-- **Compute codegen**: exporting all 325 ``compute_*`` functions fails on the
-  whole-column formulas above.
+  ``'Sheet'!A:A`` inside ``INDEX``/``MATCH``. The evaluator matches Excel for
+  ``E28`` when the graph is built with ``use_cached_dynamic_refs=True``; raw
+  ``parse()`` on the on-disk formula still fails on unqualified refs (``C3:V3``).
+- **Compute codegen**: exporting ``compute_agg_perf_best_opp_*`` (and the full
+  325-function export) fails because codegen does not emit ``WholeColumnNode``
+  yet.
 """
 
 from __future__ import annotations
@@ -164,7 +167,7 @@ def test_aggregate_stats_best_week_evaluator_matches_excel(
 @pytest.mark.xfail(
     raises=ParseError,
     strict=True,
-    reason="Whole-column refs like 'QB - Stafford'!C:C are not parsed yet.",
+    reason="Raw parse of E28 still fails on unqualified local refs (C3:V4), not whole-column shorthand.",
 )
 def test_aggregate_stats_whole_column_formula_parses(workbook: Path) -> None:
     """Best-opponent formulas using !C:C and !A:A should parse."""
@@ -177,10 +180,6 @@ def test_aggregate_stats_whole_column_formula_parses(workbook: Path) -> None:
     parse(formula)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Evaluator cannot parse whole-column INDEX/MATCH formulas yet.",
-)
 def test_aggregate_stats_best_opponent_evaluator_matches_excel(
     workbook: Path,
     aggregate_graph,
@@ -192,7 +191,7 @@ def test_aggregate_stats_best_opponent_evaluator_matches_excel(
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Codegen for agg_perf_best_opp_* fails until whole-column refs parse.",
+    reason="Codegen does not emit WholeColumnNode yet (agg_perf_best_opp_*).",
 )
 def test_aggregate_stats_best_opponent_compute_matches_workbook(
     workbook: Path,
@@ -213,7 +212,7 @@ def test_aggregate_stats_best_opponent_compute_matches_workbook(
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Exporting all 325 aggregate compute functions blocks on whole-column refs.",
+    reason="Exporting all 325 aggregate compute functions blocks on WholeColumnNode in codegen.",
 )
 def test_aggregate_stats_all_compute_functions_match_workbook(
     workbook: Path,
