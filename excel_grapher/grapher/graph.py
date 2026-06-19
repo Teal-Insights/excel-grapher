@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 from excel_grapher.core.address_keys import normalize_key, sort_node_keys
 
-from .dependency_provenance import EdgeProvenance, merge_edge_provenance
+from .dependency_provenance import DependencyCause, EdgeProvenance, merge_edge_provenance
 from .guard import And, CellRef, Compare, GuardConstraints, GuardExpr, Not, Or, or_guard
 from .node import Node, NodeKey, NodeView, node_to_view
 
@@ -555,9 +555,11 @@ class DependencyGraph:
             clear_identity_singleton_ref_cache,
             compression_safe_provenance,
             is_identity_transit,
+            require_compression_provenance,
             snapshot_transit_node,
         )
 
+        require_compression_provenance(self)
         clear_identity_singleton_ref_cache()
         try:
             heap: list[NodeKey] = list(self._nodes.keys())
@@ -624,6 +626,7 @@ class DependencyGraph:
             dependent_context_substitutable,
             is_identity_transit,
             node_body_substitutable,
+            require_compression_provenance,
             snapshot_transit_node,
         )
 
@@ -633,6 +636,7 @@ class DependencyGraph:
             inline_preserve = frozenset(normalize_key(key) for key in preserve)
         forwarding_protected: set[NodeKey] = set()
 
+        require_compression_provenance(self)
         clear_identity_singleton_ref_cache()
         try:
             heap: list[NodeKey] = list(self._nodes.keys())
@@ -781,6 +785,7 @@ class DependencyGraph:
         from .compression import (
             FormulaRewrite,
             direct_provenance_for_key_in_strings,
+            refresh_direct_sites,
             replace_substrings_at_spans,
         )
 
@@ -830,6 +835,25 @@ class DependencyGraph:
             new_prov = direct_provenance_for_key_in_strings(new_formula, new_norm, r_key)
             self.add_edge(d_key, r_key, guard=guard, provenance=new_prov)
 
+            for dep in list(self._edges.get(d_key, set())):
+                if dep == r_key:
+                    continue
+                dep_extra = self._edge_extra.get((d_key, dep), {})
+                old_dep_prov = dep_extra.get("provenance")
+                if not isinstance(old_dep_prov, EdgeProvenance):
+                    continue
+                if DependencyCause.direct_ref not in old_dep_prov.causes:
+                    continue
+                dep_extra["provenance"] = refresh_direct_sites(
+                    old_dep_prov,
+                    old_formula=before_formula,
+                    new_formula=new_formula,
+                    old_normalized=before_normalized,
+                    new_normalized=new_norm,
+                    precedent_key=dep,
+                )
+                self._edge_extra[(d_key, dep)] = dep_extra
+
         for dep in list(self._edges.get(t_key, set())):
             self._remove_edge(t_key, dep)
         self._nodes.pop(t_key, None)
@@ -862,6 +886,7 @@ class DependencyGraph:
         from .compression import (
             FormulaRewrite,
             direct_provenance_for_key_in_strings,
+            refresh_direct_sites,
             substitute_body_at_spans,
         )
 
@@ -909,6 +934,11 @@ class DependencyGraph:
         t_deps = set(self._edges.get(t_key, set()))
         d_dep_guards = {dep: self._guards.get((d_key, dep)) for dep in d_other_deps}
         t_dep_guards = {dep: self._guards.get((t_key, dep)) for dep in t_deps}
+        old_dependent_provenance: dict[NodeKey, EdgeProvenance] = {}
+        for dep in d_other_deps:
+            prov = self.get_edge_attrs(d_key, dep).provenance
+            if isinstance(prov, EdgeProvenance):
+                old_dependent_provenance[dep] = prov
 
         d_node.formula = new_formula
         d_node.normalized_formula = new_norm
@@ -916,11 +946,26 @@ class DependencyGraph:
         for dep in list(self._edges.get(d_key, set())):
             self._remove_edge(d_key, dep)
 
+        inherited_deps = t_deps - d_other_deps
         for dep in d_other_deps | t_deps:
             guard = d_dep_guards.get(dep)
             if guard is None:
                 guard = t_dep_guards.get(dep)
-            new_prov = direct_provenance_for_key_in_strings(new_formula, new_norm, dep)
+            if dep in inherited_deps:
+                new_prov = direct_provenance_for_key_in_strings(new_formula, new_norm, dep)
+            else:
+                old_prov = old_dependent_provenance.get(dep)
+                if old_prov is not None:
+                    new_prov = refresh_direct_sites(
+                        old_prov,
+                        old_formula=before_formula,
+                        new_formula=new_formula,
+                        old_normalized=before_normalized,
+                        new_normalized=new_norm,
+                        precedent_key=dep,
+                    )
+                else:
+                    new_prov = direct_provenance_for_key_in_strings(new_formula, new_norm, dep)
             self.add_edge(d_key, dep, guard=guard, provenance=new_prov)
 
         for dep in list(self._edges.get(t_key, set())):

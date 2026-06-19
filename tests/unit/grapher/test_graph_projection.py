@@ -20,6 +20,7 @@ from excel_grapher.exporter.projection import (
     unregister_projection_manifest,
 )
 from excel_grapher.grapher import create_dependency_graph
+from excel_grapher.grapher.compression import CompressionProvenanceRequiredError
 from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
 from excel_grapher.grapher.node import Node
 from excel_grapher.series_bindings import WorkbookSeriesBindings, resolve_series_bindings
@@ -473,6 +474,9 @@ def test_projection_respects_compression_safety(test_name: str) -> None:
     else:
         graph.add_edge("Sheet1!B1", "Sheet1!C1")
         graph.add_edge("Sheet1!A1", "Sheet1!B1")
+        with pytest.raises(CompressionProvenanceRequiredError, match="provenance"):
+            IdentityTransitCompression().project(graph)
+        return
 
     projection = IdentityTransitCompression().project(graph)
     assert "Sheet1!B1" in projection

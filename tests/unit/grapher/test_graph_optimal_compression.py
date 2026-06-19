@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Annotated, Literal
 
+import fastpyxl
 import pytest
 import xlsxwriter
 
 from excel_grapher import create_dependency_graph
-from excel_grapher.core.cell_types import CellKind, EnumDomain
-from excel_grapher.grapher.compression import OptimalCompressionRecord
+from excel_grapher.core.cell_types import Between, CellKind, EnumDomain, RealBetween
+from excel_grapher.evaluator.parser import parse
+from excel_grapher.grapher.compression import (
+    CompressionProvenanceRequiredError,
+    OptimalCompressionRecord,
+)
 from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
 from excel_grapher.grapher.dynamic_refs import DynamicRefConfig, DynamicRefLimits
 from excel_grapher.grapher.graph import DependencyGraph
@@ -65,6 +71,190 @@ def _direct_edge(
             direct_sites_normalized=((i_n, i_n + len(ref)),),
         ),
     )
+
+
+def _local_ref_edge(
+    graph: DependencyGraph,
+    dependent: str,
+    precedent: str,
+    *,
+    formula_ref: str,
+    normalized_ref: str | None = None,
+) -> None:
+    dr = DependencyCause.direct_ref
+    dep_node = graph.get_node(dependent)
+    assert dep_node is not None
+    f = dep_node.formula
+    n = dep_node.normalized_formula
+    assert f is not None and n is not None
+    ref_n = normalized_ref if normalized_ref is not None else precedent
+    i_f = f.index(formula_ref)
+    i_n = n.index(ref_n)
+    graph.add_edge(
+        dependent,
+        precedent,
+        provenance=EdgeProvenance(
+            causes=frozenset({dr}),
+            direct_sites_formula=((i_f, i_f + len(formula_ref)),),
+            direct_sites_normalized=((i_n, i_n + len(ref_n)),),
+        ),
+    )
+
+
+def _build_issue_277_workbook(path: Path) -> None:
+    wb = fastpyxl.Workbook()
+    ws_inputs = wb.active
+    ws_inputs.title = "Inputs"
+    ws_engine = wb.create_sheet("Engine")
+
+    cells = {
+        ("Inputs", "B6"): 100,
+        ("Inputs", "B21"): 1,
+        ("Inputs", "B22"): 1,
+        ("Inputs", "C16"): 2.0,
+        ("Inputs", "C17"): 3.0,
+        ("Inputs", "C18"): -1.0,
+        ("Engine", "B9"): 0.5,
+        ("Engine", "C5"): 1,
+        ("Engine", "B20"): "=Inputs!B6",
+        ("Engine", "C10"): "=IF(C5>=Inputs!$B$21,1,0)",
+        ("Engine", "C14"): "=Inputs!C16+CHOOSE(Inputs!$B$22,$B$9,0,0)*C10",
+        ("Engine", "C15"): "=Inputs!C17+CHOOSE(Inputs!$B$22,0,$B$9,0)*C10",
+        ("Engine", "C16"): "=Inputs!C18+CHOOSE(Inputs!$B$22,0,0,$B$9)*C10",
+        ("Engine", "C20"): "=B20*(1+C15/100)/(1+C14/100)-C16",
+    }
+    for (sheet, addr), value in cells.items():
+        worksheet = ws_inputs if sheet == "Inputs" else ws_engine
+        worksheet[addr] = value
+    wb.save(path)
+
+
+def test_compress_identity_transit_refreshes_sibling_edge_spans() -> None:
+    graph = DependencyGraph()
+    b20 = _make_node("Engine!B20", "=Inputs!B6", "=Inputs!B6")
+    c14 = _make_node(
+        "Engine!C14",
+        "=Inputs!C16+CHOOSE(Inputs!$B$22,$B$9,0,0)*C10",
+        "=Inputs!C16+CHOOSE(Inputs!$B$22,Engine!$B$9,0,0)*Engine!C10",
+    )
+    c15 = _make_node("Engine!C15", "=Inputs!C17", "=Inputs!C17")
+    c16 = _make_node("Engine!C16", "=Inputs!C18", "=Inputs!C18")
+    c20 = _make_node(
+        "Engine!C20",
+        "=B20*(1+C15/100)/(1+C14/100)-C16",
+        "=Engine!B20*(1+Engine!C15/100)/(1+Engine!C14/100)-Engine!C16",
+    )
+    for n in (b20, c14, c15, c16, c20):
+        graph.add_node(n)
+    graph.add_edge(
+        "Engine!B20",
+        "Inputs!B6",
+        provenance=EdgeProvenance(causes=frozenset({DependencyCause.direct_ref})),
+    )
+    _local_ref_edge(graph, "Engine!C20", "Engine!B20", formula_ref="B20")
+    _local_ref_edge(graph, "Engine!C20", "Engine!C14", formula_ref="C14")
+    _local_ref_edge(graph, "Engine!C20", "Engine!C15", formula_ref="C15")
+    _local_ref_edge(graph, "Engine!C20", "Engine!C16", formula_ref="C16")
+
+    graph._compress_one_transit("Engine!B20", "Inputs!B6")
+
+    prov = graph.get_edge_attrs("Engine!C20", "Engine!C14").provenance
+    assert prov is not None
+    node = graph.get_node("Engine!C20")
+    assert node is not None
+    formula = node.formula
+    normalized = node.normalized_formula
+    assert formula is not None and normalized is not None
+    assert formula[prov.direct_sites_formula[0][0] : prov.direct_sites_formula[0][1]] == "C14"
+    assert (
+        normalized[prov.direct_sites_normalized[0][0] : prov.direct_sites_normalized[0][1]]
+        == "Engine!C14"
+    )
+
+
+def test_optimal_inline_local_ref_after_identity_transit(tmp_path: Path) -> None:
+    path = tmp_path / "issue_277.xlsx"
+    _build_issue_277_workbook(path)
+
+    constraints = {
+        "Engine!C5": Literal[1],
+        "Inputs!B21": Annotated[int, Between(1, 5)],
+        "Inputs!B22": Literal[1, 2, 3],
+        "Inputs!C16": Annotated[float, RealBetween(-10.0, 15.0)],
+        "Inputs!C17": Annotated[float, RealBetween(0.0, 20.0)],
+        "Inputs!C18": Annotated[float, RealBetween(-15.0, 15.0)],
+    }
+    config = DynamicRefConfig.from_constraints(constraints, {})
+    graph = create_dependency_graph(
+        path,
+        ["Engine!C20"],
+        load_values=True,
+        dynamic_refs=config,
+        capture_dependency_provenance=True,
+    )
+
+    projected = graph.copy()
+    removed = projected.compress_optimal()
+    assert "Engine!B20" in removed
+    assert "Engine!C14" in removed
+
+    node = projected.get_node("Engine!C20")
+    assert node is not None
+    formula = node.normalized_formula
+    assert formula is not None
+    parse(formula.strip())
+    assert "/100" in formula
+    assert "(Inputs!C16+CHOOSE" in formula
+
+
+def test_optimal_raises_when_provenance_missing(tmp_path: Path) -> None:
+    path = tmp_path / "no_prov.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws_inputs = wb.add_worksheet("Inputs")
+    ws_engine = wb.add_worksheet("Engine")
+    ws_inputs.write_number(5, 1, 100)
+    ws_engine.write_formula(19, 1, "=Inputs!B6", None, 100)
+    ws_engine.write_formula(19, 2, "=B20*2", None, 200)
+    wb.close()
+
+    graph = create_dependency_graph(
+        path,
+        ["Engine!C20"],
+        load_values=False,
+        capture_dependency_provenance=False,
+    )
+    with pytest.raises(CompressionProvenanceRequiredError, match="provenance"):
+        graph.compress_optimal()
+
+
+def test_optimal_no_raise_when_nothing_compressible(tmp_path: Path) -> None:
+    path = tmp_path / "leaf.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(0, 0, 1)
+    wb.close()
+
+    graph = create_dependency_graph(
+        path,
+        ["Sheet1!A1"],
+        load_values=False,
+        capture_dependency_provenance=False,
+    )
+    assert graph.compress_optimal() == []
+
+
+def test_optimal_manual_graph_with_explicit_provenance_still_works() -> None:
+    graph = DependencyGraph()
+    d = _make_node("Sheet1!D1", None, None, is_leaf=True)
+    b = _make_node("Sheet1!B1", "=Sheet1!D1*2", "=Sheet1!D1*2")
+    a = _make_node("Sheet1!A1", "=Sheet1!B1+1", "=Sheet1!B1+1")
+    for n in (d, b, a):
+        graph.add_node(n)
+    _direct_edge(graph, "Sheet1!B1", "Sheet1!D1")
+    _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
+
+    removed = graph.compress_optimal()
+    assert "Sheet1!B1" in removed
 
 
 def test_optimal_inline_single_call_site() -> None:

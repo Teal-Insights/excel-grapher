@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import xlsxwriter
 
 from excel_grapher import create_dependency_graph
 from excel_grapher.core.cell_types import CellKind, EnumDomain
+from excel_grapher.grapher.compression import CompressionProvenanceRequiredError
 from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
 from excel_grapher.grapher.dynamic_refs import DynamicRefConfig, DynamicRefLimits
 from excel_grapher.grapher.node import Node
@@ -157,6 +159,26 @@ def test_compress_chain_manual_graph() -> None:
     assert graph.get_dependencies("Sheet1!A1") == {"Sheet1!D1"}
 
 
+def test_identity_transit_raises_when_provenance_missing(tmp_path: Path) -> None:
+    path = tmp_path / "no_prov.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws_inputs = wb.add_worksheet("Inputs")
+    ws_engine = wb.add_worksheet("Engine")
+    ws_inputs.write_number(5, 1, 100)
+    ws_engine.write_formula(19, 1, "=Inputs!B6", None, 100)
+    ws_engine.write_formula(19, 2, "=B20*2", None, 200)
+    wb.close()
+
+    graph = create_dependency_graph(
+        path,
+        ["Engine!C20"],
+        load_values=False,
+        capture_dependency_provenance=False,
+    )
+    with pytest.raises(CompressionProvenanceRequiredError, match="provenance"):
+        graph.compress_identity_transits()
+
+
 def test_static_range_blocks_compression(tmp_path: Path) -> None:
     path = tmp_path / "rng.xlsx"
     wb = xlsxwriter.Workbook(path)
@@ -256,7 +278,7 @@ def test_guarded_transit_not_compressed() -> None:
     assert graph.compress_identity_transits() == []
 
 
-def test_provenance_absent_skips_compression() -> None:
+def test_provenance_absent_raises_for_identity_transit() -> None:
     from excel_grapher.grapher.graph import DependencyGraph
 
     graph = DependencyGraph()
@@ -268,7 +290,8 @@ def test_provenance_absent_skips_compression() -> None:
     graph.add_edge("Sheet1!B1", "Sheet1!C1")
     graph.add_edge("Sheet1!A1", "Sheet1!B1")
 
-    assert graph.compress_identity_transits() == []
+    with pytest.raises(CompressionProvenanceRequiredError, match="provenance"):
+        graph.compress_identity_transits()
 
 
 def test_indirect_enum_blocks_when_direct_same_cell(tmp_path: Path) -> None:
