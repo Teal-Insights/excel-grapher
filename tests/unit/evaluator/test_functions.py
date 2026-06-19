@@ -1,11 +1,13 @@
 """Tests for Excel function implementations."""
 
+from datetime import datetime
 from typing import cast
 
 import pytest
 
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
+from excel_grapher.core.coercions import datetime_to_excel_serial
 from excel_grapher.evaluator.evaluator import FormulaEvaluator
 from excel_grapher.evaluator.types import XlError
 
@@ -437,6 +439,31 @@ def test_text() -> None:
         result = ev.evaluate(["S!A1", "S!A2"])
         assert result["S!A1"] == "1234.50"
         assert result["S!A2"] == "25%"
+
+
+def test_value() -> None:
+    """Test VALUE function."""
+    expected_date_serial = datetime_to_excel_serial(datetime(2018, 3, 15))
+    graph = _make_graph(
+        _make_node("S!A1", '=VALUE("42")', None),
+        _make_node("S!A2", '=VALUE("12.5")', None),
+        _make_node("S!A3", '=VALUE("6522014")', None),
+        _make_node("S!A4", '=VALUE("$1,234.56")', None),
+        _make_node("S!A5", '=VALUE("abc")', None),
+        _make_node("S!A6", "=VALUE(#REF!)", None),
+        _make_node("S!A7", '=VALUE("")', None),
+        _make_node("S!A8", '=VALUE("2018-03-15")', None),
+    )
+    with FormulaEvaluator(graph) as ev:
+        result = ev.evaluate(["S!A1", "S!A2", "S!A3", "S!A4", "S!A5", "S!A6", "S!A7", "S!A8"])
+        assert result["S!A1"] == 42.0
+        assert result["S!A2"] == 12.5
+        assert result["S!A3"] == 6522014.0
+        assert result["S!A4"] == 1234.56
+        assert result["S!A5"] == XlError.VALUE
+        assert result["S!A6"] == XlError.REF
+        assert result["S!A7"] == 0.0
+        assert result["S!A8"] == pytest.approx(expected_date_serial)
 
 
 # --- Additional lookup function tests ---
