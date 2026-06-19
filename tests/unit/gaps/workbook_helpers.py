@@ -70,11 +70,11 @@ def write_sumproduct_std_dev(path: Path) -> Path:
 
 
 def write_sumproduct_category_filter(path: Path) -> Path:
-    r"""``SUMPRODUCT((range="label")*values)`` (financial_model ``I14``)."""
+    r"""``SUMPRODUCT((range="label")*values)`` (financial_model ``I14``–``I16``)."""
 
     def populate(workbook: xlsxwriter.Workbook) -> None:
         ws = workbook.add_worksheet("Product Lookup")
-        categories = ["Software", "Hardware"] * 4
+        categories = ["Software", "Hardware", "Software", "Hardware"] * 2
         values = [100, 50, 200, 75, 150, 60, 180, 90]
         for row, (category, value) in enumerate(zip(categories, values, strict=True), start=5):
             ws.write_string(row - 1, 2, category)
@@ -85,6 +85,39 @@ def write_sumproduct_category_filter(path: Path) -> Path:
             '=SUMPRODUCT((C5:C12="Software")*F5:F12)',
             None,
             640,
+        )
+        ws.write_formula(
+            14,
+            8,
+            '=SUMPRODUCT((C5:C12="Hardware")*F5:F12)',
+            None,
+            275,
+        )
+        ws.write_formula(
+            15,
+            8,
+            '=SUMPRODUCT((C5:C12="Accessory")*F5:F12)',
+            None,
+            0,
+        )
+
+    return write_workbook(path, populate)
+
+
+def write_sumproduct_row_weighted_category_count(path: Path) -> Path:
+    """``SUMPRODUCT((ROW(...)-ROW(...)+1)*(range="label"))`` (financial_model ``I19``)."""
+
+    def populate(workbook: xlsxwriter.Workbook) -> None:
+        ws = workbook.add_worksheet("Product Lookup")
+        categories = ["Software", "Hardware"] * 4
+        for row, category in enumerate(categories, start=5):
+            ws.write_string(row - 1, 2, category)
+        ws.write_formula(
+            18,
+            8,
+            '=SUMPRODUCT((ROW(A5:A12)-ROW(A5)+1)*(C5:C12="Software"))',
+            None,
+            12,
         )
 
     return write_workbook(path, populate)
@@ -151,6 +184,63 @@ def write_sumproduct_price_threshold_k24(path: Path) -> Path:
         for row, value in enumerate([1499, 800, 1200, 600, 999], start=5):
             ws.write_number(row - 1, 4, value)
         ws.write_formula(23, 10, "=SUMPRODUCT(($E$5:$E$19>1000)*1)", None, 3)
+
+    return write_workbook(path, populate)
+
+
+def write_statistical_normdist_panel(path: Path) -> Path:
+    """NORMDIST panel whose z-score/CDF depend on sample std-dev (financial_model ``F6``–``H16``)."""
+
+    def populate(workbook: xlsxwriter.Workbook) -> None:
+        ws = workbook.add_worksheet("Statistical Analysis")
+        for row, value in enumerate(
+            [312, 400, 280, 350, 290, 310, 330, 295, 305, 315, 325, 340],
+            start=5,
+        ):
+            ws.write_number(row - 1, 1, value)
+        ws.write_formula(4, 5, "=AVERAGE(B5:B16)", None, 318.75)
+        ws.write_formula(
+            5,
+            5,
+            "=IFERROR(SUMPRODUCT((B5:B16-AVERAGE(B5:B16))^2)/COUNT(B5:B16),NA())^0.5",
+            None,
+            102.9,
+        )
+        ws.write_number(15, 4, 312)
+        ws.write_formula(15, 5, "=IFERROR((E16-$F$5)/$F$6,NA())", None, -0.066)
+        ws.write_formula(
+            15,
+            6,
+            "=IFERROR(NORMDIST(E16,$F$5,$F$6,TRUE()),NA())",
+            None,
+            0.47,
+        )
+        ws.write_formula(
+            15,
+            7,
+            '=IF(ISNUMBER(F16),IF(F16>0,"Above","Below"),"N/A")',
+            None,
+            "Below",
+        )
+
+    return write_workbook(path, populate)
+
+
+def write_text_currency_thousands(path: Path) -> Path:
+    r"""``TEXT(value,"$#,##0")&"K"`` enterprise-value label (financial_model ``B24``)."""
+
+    def populate(workbook: xlsxwriter.Workbook) -> None:
+        ws = workbook.add_worksheet("DCF Valuation")
+        for col, value in enumerate([1000, 800, 900, 543], start=1):
+            ws.write_number(12, col, value)
+        ws.write_formula(17, 1, "=SUM(B13:E13)", None, 3243)
+        ws.write_formula(
+            23,
+            1,
+            '=IFERROR(TEXT(B18,"$#,##0")&"K","N/A")',
+            None,
+            "$3,243K",
+        )
 
     return write_workbook(path, populate)
 
