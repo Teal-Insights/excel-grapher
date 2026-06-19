@@ -28,6 +28,7 @@ from excel_grapher.core.address_keys import normalize_key
 from excel_grapher.grapher.compression import (
     FormulaRewrite,
     IdentityTransitCompressionRecord,
+    OptimalCompressionRecord,
     ProjectedNodeSnapshot,
 )
 from excel_grapher.grapher.graph import CycleError, CycleReport, DependencyGraph, NodeKey
@@ -40,13 +41,16 @@ __all__ = [
     "CompositeProjectionManifest",
     "FormulaRewrite",
     "IdentityTransitCompression",
+    "OptimalCompression",
     "ProjectedNodeSnapshot",
     "ProjectionManifest",
     "ProjectionResult",
     "ProjectionStep",
     "apply_projection",
     "build_forwarding_projection_manifest",
+    "build_optimal_projection_manifest",
     "project_identity_transits",
+    "project_optimal",
     "register_projection_manifest",
     "resolve_projection_manifest",
     "unregister_projection_manifest",
@@ -364,6 +368,75 @@ def project_identity_transits(
     return projected, build_forwarding_projection_manifest(graph, record, kind="identity_transit")
 
 
+def _resolve_inline_chains(inlined_to: Mapping[str, str]) -> dict[str, tuple[str, ...]]:
+    retained_sources: dict[str, list[str]] = {}
+    for removed, immediate in inlined_to.items():
+        final = immediate
+        seen: set[str] = {removed}
+        while final in inlined_to and final not in seen:
+            seen.add(final)
+            final = inlined_to[final]
+        retained_sources.setdefault(final, []).append(removed)
+    return {retained: tuple(sources) for retained, sources in retained_sources.items() if sources}
+
+
+def build_optimal_projection_manifest(
+    original_graph: DependencyGraph,
+    record: OptimalCompressionRecord,
+) -> BaseProjectionManifest:
+    """Build a manifest from an optimal compression record."""
+    forwarding_map = _resolve_alias_chain(record.forwarded_removed)
+
+    retained_sources: dict[str, list[str]] = {}
+    for removed in record.forwarded_removed:
+        retained = forwarding_map[removed]
+        retained_sources.setdefault(retained, []).append(removed)
+
+    for retained, sources in _resolve_inline_chains(record.inlined_to).items():
+        retained_sources.setdefault(retained, []).extend(sources)
+
+    retained_to_collapsed_sources = {
+        retained: tuple(sources) for retained, sources in retained_sources.items() if sources
+    }
+
+    removed_node_snapshots = dict(record.snapshots_by_removed)
+
+    collapsed_groups = tuple(
+        CollapsedGroup(
+            retained=retained,
+            collapsed_sources=tuple(sources),
+            statement_order=_statement_order(original_graph, sources),
+            external_dependencies=_external_dependencies(
+                original_graph,
+                retained=retained,
+                collapsed_sources=sources,
+            ),
+        )
+        for retained, sources in retained_to_collapsed_sources.items()
+    )
+
+    return BaseProjectionManifest(
+        kind="optimal_compression",
+        forwarding_map=forwarding_map,
+        retained_to_collapsed_sources=retained_to_collapsed_sources,
+        removed_node_snapshots=removed_node_snapshots,
+        formula_rewrites=tuple(record.formula_rewrites),
+        collapsed_groups=collapsed_groups,
+    )
+
+
+def project_optimal(
+    graph: DependencyGraph,
+    *,
+    preserve: set[str] | None = None,
+) -> tuple[DependencyGraph, BaseProjectionManifest]:
+    """Return a projected copy of `graph` with optimal compression applied."""
+    projected = graph.copy()
+    record = OptimalCompressionRecord()
+    projected.compress_optimal(preserve=preserve, record=record)
+    return projected, build_optimal_projection_manifest(graph, record)
+
+
 @dataclass
 class ProjectionResult:
     """Projected graph facade with durable lineage back to the canonical graph."""
@@ -465,6 +538,22 @@ class IdentityTransitCompression:
         )
 
 
+class OptimalCompression:
+    """Collapse identity transits and safely inlinable formula nodes."""
+
+    def __init__(self, *, preserve: set[str] | None = None) -> None:
+        self._preserve = preserve
+
+    def project(self, graph: DependencyGraph) -> ProjectionResult:
+        """Build a non-mutating optimal-compression projection for export artifacts."""
+        projected, manifest = project_optimal(graph, preserve=self._preserve)
+        return ProjectionResult(
+            original_graph=graph,
+            projected_graph=projected,
+            manifest=manifest,
+        )
+
+
 class ProjectionStep(Protocol):
     """Projection step that builds a `ProjectionResult` from a graph."""
 
@@ -525,5 +614,6 @@ def apply_projection(
 
 
 register_projection_manifest("identity_transit", BaseProjectionManifest.from_dict)
+register_projection_manifest("optimal_compression", BaseProjectionManifest.from_dict)
 register_projection_manifest("empty", BaseProjectionManifest.from_dict)
 register_projection_manifest("composite", CompositeProjectionManifest.from_dict)
