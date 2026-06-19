@@ -36,7 +36,7 @@ def test_core_formula_ast_parses_basic_literals_and_refs() -> None:
 
     ast = parse('=_xludf.IFNA(Sheet1!A1, "fallback")')
     assert isinstance(ast, FunctionCallNode)
-    assert ast.name == "IFNA"
+    assert ast.name == "_XLUDF.IFNA"
 
     ast = parse("=_xlfn.XLOOKUP(Sheet1!A1, Sheet1!A1:A3, Sheet1!B1:B3)")
     assert isinstance(ast, FunctionCallNode)

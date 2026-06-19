@@ -14,8 +14,18 @@ from excel_grapher.core.address_keys import (
 from excel_grapher.core.excel_function_names import (
     EXCEL_FUNCTION_PREFIXES,
     excel_func_to_python_runtime_name,
-    normalize_excel_function_name,
 )
+from excel_grapher.core.excel_function_names import (
+    normalize_excel_function_name as _normalize_excel_function_name,
+)
+from excel_grapher.evaluator.functions import FUNCTIONS
+
+_REGISTERED_BUILTINS = frozenset(FUNCTIONS)
+
+
+def normalize_excel_function_name(name: str) -> str:
+    """Normalize using the evaluator built-in registry for ``_XLUDF.`` stripping."""
+    return _normalize_excel_function_name(name, registered_builtins=_REGISTERED_BUILTINS)
 
 
 def address_to_python_name(address: str) -> str:

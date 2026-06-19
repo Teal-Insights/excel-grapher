@@ -114,7 +114,7 @@ class TestSplitTopLevelFunctionPrefixes:
 
         ast = parse('=_xludf.IFNA(Sheet1!A1, "x")')
         assert isinstance(ast, FunctionCallNode)
-        assert ast.name == "IFNA"
+        assert ast.name == "_XLUDF.IFNA"
 
 
 class TestSplitTopLevelChoose:

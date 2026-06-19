@@ -92,12 +92,15 @@ class TestNormalizeExcelFunctionName:
             ("SUM", "SUM"),
             ("_XLFN.IFS", "IFS"),
             ("NORM.DIST", "NORM.DIST"),
-            ("_XLUDF.MYADDIN", "MYADDIN"),
-            ("_XLUDF.CUSTOM_UDF", "CUSTOM_UDF"),
+            ("_XLUDF.MYADDIN", "_XLUDF.MYADDIN"),
+            ("_XLUDF.CUSTOM_UDF", "_XLUDF.CUSTOM_UDF"),
         ],
     )
     def test_normalize_excel_function_name(self, raw: str, expected: str) -> None:
         assert normalize_excel_function_name(raw) == expected
+
+    def test_excel_func_to_python_preserves_unknown_xludf_addin_name(self) -> None:
+        assert excel_func_to_python("_XLUDF.MYADDIN") == "xl__xludf_myaddin"
 
     def test_excel_function_call_prefixes_includes_compatibility_variants(self) -> None:
         assert excel_function_call_prefixes("IFNA") == (

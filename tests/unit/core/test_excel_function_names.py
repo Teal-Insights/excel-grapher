@@ -7,6 +7,9 @@ from pathlib import Path
 import pytest
 
 from excel_grapher.core.excel_function_names import excel_func_to_python_runtime_name
+from excel_grapher.core.excel_function_names import (
+    normalize_excel_function_name as _normalize_excel_function_name,
+)
 from excel_grapher.evaluator.functions import FUNCTIONS
 from excel_grapher.evaluator.name_utils import excel_func_to_python, normalize_excel_function_name
 
@@ -38,6 +41,25 @@ _SOURCE_ROOT = _REPO_ROOT / "excel_grapher"
     ],
 )
 def test_xlfn_prefix_normalizes_to_canonical_name(raw: str, expected: str) -> None:
+    from excel_grapher.evaluator.functions import FUNCTIONS
+
+    assert normalize_excel_function_name(raw) == expected
+    assert _normalize_excel_function_name(raw, registered_builtins=frozenset(FUNCTIONS)) == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("_xludf.MYADDIN", "_XLUDF.MYADDIN"),
+        ("_xludf.CUSTOM_UDF", "_XLUDF.CUSTOM_UDF"),
+    ],
+)
+def test_xludf_prefix_preserved_for_unknown_addins(raw: str, expected: str) -> None:
+    from excel_grapher.core.excel_function_names import (
+        normalize_excel_function_name as core_normalize,
+    )
+
+    assert core_normalize(raw) == expected
     assert normalize_excel_function_name(raw) == expected
 
 
