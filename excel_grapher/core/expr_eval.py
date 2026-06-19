@@ -11,10 +11,9 @@ from fastpyxl.utils.cell import (
 )
 
 from excel_grapher.core.address_keys import parse_address
-from excel_grapher.evaluator.name_utils import normalize_excel_function_name
-from excel_grapher.runtime.math import xl_abs
 
 from .coercions import flatten, numeric_values, to_bool, to_string
+from .excel_function_names import normalize_excel_function_name
 from .formula_ast import (
     AstNode,
     BinaryOpNode,
@@ -27,6 +26,7 @@ from .formula_ast import (
     StringNode,
     UnaryOpNode,
 )
+from .functions import xl_abs
 from .operators import (
     xl_add,
     xl_concat,

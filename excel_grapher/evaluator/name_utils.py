@@ -14,27 +14,8 @@ from excel_grapher.core.address_keys import (
 from excel_grapher.core.excel_function_names import (
     EXCEL_FUNCTION_PREFIXES,
     excel_func_to_python_runtime_name,
+    normalize_excel_function_name,
 )
-
-
-def normalize_excel_function_name(name: str) -> str:
-    """Normalize a parsed Excel function name to its canonical built-in form.
-
-    Strips known Excel compatibility prefixes so dispatch, codegen, and the
-    evaluator registry use canonical names only (``XLOOKUP``, not
-    ``_XLFN.XLOOKUP``).
-
-    Args:
-        name: Function name as it appears in a formula token (any casing).
-
-    Returns:
-        Canonical upper-case function name for dispatch and codegen.
-    """
-    upper = name.upper()
-    for prefix in EXCEL_FUNCTION_PREFIXES:
-        if upper.startswith(prefix):
-            return upper.split(".", 1)[1]
-    return upper
 
 
 def address_to_python_name(address: str) -> str:

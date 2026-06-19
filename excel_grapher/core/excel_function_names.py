@@ -6,6 +6,26 @@ from __future__ import annotations
 EXCEL_FUNCTION_PREFIXES: tuple[str, ...] = ("_XLFN.", "_XLUDF.")
 
 
+def normalize_excel_function_name(name: str) -> str:
+    """Normalize a parsed Excel function name to its canonical built-in form.
+
+    Strips known Excel compatibility prefixes so dispatch, codegen, and the
+    evaluator registry use canonical names only (``XLOOKUP``, not
+    ``_XLFN.XLOOKUP``).
+
+    Args:
+        name: Function name as it appears in a formula token (any casing).
+
+    Returns:
+        Canonical upper-case function name for dispatch and codegen.
+    """
+    upper = name.upper()
+    for prefix in EXCEL_FUNCTION_PREFIXES:
+        if upper.startswith(prefix):
+            return upper.split(".", 1)[1]
+    return upper
+
+
 def excel_func_to_python_runtime_name(normalized_name: str) -> str:
     """Map a canonical Excel function name to the export-runtime Python callable."""
     result = normalized_name.upper().lower().replace(".", "_")
@@ -34,4 +54,5 @@ __all__ = [
     "EXCEL_FUNCTION_PREFIXES",
     "excel_func_to_python_runtime_name",
     "excel_function_call_prefixes",
+    "normalize_excel_function_name",
 ]

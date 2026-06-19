@@ -16,6 +16,7 @@ from excel_grapher.core import (
     to_number,
     to_string,
 )
+from excel_grapher.core.functions import xl_abs
 
 T = TypeVar("T", str, float)
 
@@ -38,16 +39,6 @@ __all__ = [
     "xl_sum",
     "xl_sumproduct",
 ]
-
-
-def xl_abs(*args: CellValue) -> float | XlError:
-    """Return the absolute value of a number (Excel ``ABS``)."""
-    if len(args) != 1:
-        return XlError.VALUE
-    n = to_number(args[0])
-    if isinstance(n, XlError):
-        return n
-    return float(abs(n))
 
 
 def xl_sum(*args: CellValue) -> float | XlError:
