@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import shutil
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal
 
 from fastpyxl import load_workbook
 
@@ -23,10 +23,7 @@ _REWRITABLE_BUILTINS: frozenset[str] = frozenset(
 ExcelBuiltinPrefix = Literal["_xlfn", "_xludf"]
 
 # Longest names first so shorter prefixes do not shadow longer function names.
-_REWRITABLE_ORDER: tuple[str, ...] = cast(
-    tuple[str, ...],
-    tuple(sorted(_REWRITABLE_BUILTINS, key=len, reverse=True)),
-)
+_REWRITABLE_ORDER: tuple[str, ...] = tuple(sorted(_REWRITABLE_BUILTINS, key=len, reverse=True))
 
 
 def _call_site_pattern(name: str) -> re.Pattern[str]:

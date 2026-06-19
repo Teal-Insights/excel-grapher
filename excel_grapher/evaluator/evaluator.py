@@ -13,12 +13,12 @@ from excel_grapher.core.address_keys import (
     parse_address,
 )
 from excel_grapher.core.addressing import index_excel_range
-from excel_grapher.evaluator.name_utils import normalize_excel_function_name
 from excel_grapher.core.range_shorthand import (
     SheetBounds,
     resolve_whole_column,
     resolve_whole_row,
 )
+from excel_grapher.evaluator.name_utils import normalize_excel_function_name
 from excel_grapher.grapher.blank_ranges import (
     address_in_blank_ranges,
     normalize_blank_range_specs,

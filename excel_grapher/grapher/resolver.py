@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol, cast
+from typing import Protocol
 
 import fastpyxl
 from fastpyxl.utils.cell import (
@@ -340,7 +340,7 @@ def build_named_range_map(wb: fastpyxl.Workbook) -> NamedRangeMaps:
                 if len(resolved) == 2:
                     cell_map[str(name)] = (resolved[0], resolved[1])
                 elif len(resolved) == 3:
-                    range_map[str(name)] = cast(tuple[str, str, str], resolved)
+                    range_map[str(name)] = resolved
                 continue
         if "," in attr_text:
             continue
@@ -355,7 +355,7 @@ def build_named_range_map(wb: fastpyxl.Workbook) -> NamedRangeMaps:
                     if len(resolved) == 2:
                         cell_map[str(name)] = (resolved[0], resolved[1])
                     elif len(resolved) == 3:
-                        range_map[str(name)] = cast(tuple[str, str, str], resolved)
+                        range_map[str(name)] = resolved
                 continue
             sheet_name = m.group("sheet")
             start = f"{m.group('c1')}{m.group('r1')}"
