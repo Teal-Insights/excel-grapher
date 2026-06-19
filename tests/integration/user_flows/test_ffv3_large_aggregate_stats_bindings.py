@@ -177,10 +177,6 @@ def test_aggregate_stats_whole_column_formula_parses(workbook: Path) -> None:
     parse(formula)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Evaluator cannot parse whole-column INDEX/MATCH formulas yet.",
-)
 def test_aggregate_stats_best_opponent_evaluator_matches_excel(
     workbook: Path,
     aggregate_graph,
