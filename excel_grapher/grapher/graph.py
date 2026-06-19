@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from .compression import IdentityTransitCompressionRecord
+    from .compression import IdentityTransitCompressionRecord, OptimalCompressionRecord
 
 from excel_grapher.core.address_keys import normalize_key, sort_node_keys
 
@@ -596,6 +596,111 @@ class DependencyGraph:
         finally:
             clear_identity_singleton_ref_cache()
 
+    def compress_optimal(
+        self,
+        *,
+        preserve: set[NodeKey] | None = None,
+        record: OptimalCompressionRecord | None = None,
+    ) -> list[NodeKey]:
+        """Remove identity transits and inline single-call-site formula nodes.
+
+        Collapses nodes with exactly one dependent when substitution is safe.
+        Identity transit forwarding is always attempted; formula inlining respects
+        `preserve` (defaults to target-marked nodes) and protects forwarding targets
+        from later inlining.
+
+        Args:
+            preserve: Node keys that must not be inlined into their dependent.
+            record: When provided, populate with removal lineage for projection.
+
+        Returns:
+            Keys of removed nodes, in removal order.
+        """
+        from .compression import (
+            IdentityTransitCompressionRecord,
+            _incoming_edge_substitutable,
+            clear_identity_singleton_ref_cache,
+            compression_safe_provenance,
+            dependent_context_substitutable,
+            is_identity_transit,
+            node_body_substitutable,
+            snapshot_transit_node,
+        )
+
+        if preserve is None:
+            inline_preserve = frozenset(self.target_keys())
+        else:
+            inline_preserve = frozenset(normalize_key(key) for key in preserve)
+        forwarding_protected: set[NodeKey] = set()
+
+        clear_identity_singleton_ref_cache()
+        try:
+            heap: list[NodeKey] = list(self._nodes.keys())
+            heapq.heapify(heap)
+            removed: list[NodeKey] = []
+            while heap:
+                t_key = heapq.heappop(heap)
+                if t_key not in self._nodes:
+                    continue
+
+                r_key = is_identity_transit(self, t_key)
+                if r_key is not None:
+                    dependents_t = self._reverse_edges.get(t_key, set())
+                    if not dependents_t:
+                        continue
+                    ok = True
+                    for d_key in dependents_t:
+                        prov = self._edge_extra.get((d_key, t_key), {}).get("provenance")
+                        if not compression_safe_provenance(
+                            prov if isinstance(prov, EdgeProvenance) else None
+                        ):
+                            ok = False
+                            break
+                    if not ok:
+                        continue
+
+                    dependents_before = list(dependents_t)
+                    snapshot = snapshot_transit_node(self, t_key) if record is not None else None
+                    id_record = IdentityTransitCompressionRecord()
+                    self._compress_one_transit(t_key, r_key, record=id_record)
+                    if record is not None and snapshot is not None:
+                        record.note_forwarding(t_key, r_key, snapshot)
+                        record.formula_rewrites.extend(id_record.formula_rewrites)
+                    forwarding_protected.add(r_key)
+                    removed.append(t_key)
+                    for d_key in dependents_before:
+                        heapq.heappush(heap, d_key)
+                    continue
+
+                t_node = self.get_node(t_key)
+                if t_node is None or t_node.is_leaf or t_node.formula is None:
+                    continue
+                if t_key in inline_preserve or t_key in forwarding_protected:
+                    continue
+
+                dependents_t = self._reverse_edges.get(t_key, set())
+                if len(dependents_t) != 1:
+                    continue
+                d_key = next(iter(dependents_t))
+                if self._is_dependency_reachable(t_key, d_key):
+                    continue
+                if not _incoming_edge_substitutable(self, d_key, t_key):
+                    continue
+                if not node_body_substitutable(self, t_key):
+                    continue
+                if not dependent_context_substitutable(self, d_key, replacing=t_key):
+                    continue
+
+                snapshot = snapshot_transit_node(self, t_key) if record is not None else None
+                self._inline_one_node(t_key, d_key, record=record)
+                if record is not None and snapshot is not None:
+                    record.note_inline(t_key, d_key, snapshot)
+                removed.append(t_key)
+                heapq.heappush(heap, d_key)
+            return removed
+        finally:
+            clear_identity_singleton_ref_cache()
+
     # ---- serialization ------------------------------------------------------
 
     def __getstate__(self) -> dict[str, Any]:
@@ -724,6 +829,99 @@ class DependencyGraph:
             self._remove_edge(d_key, t_key)
             new_prov = direct_provenance_for_key_in_strings(new_formula, new_norm, r_key)
             self.add_edge(d_key, r_key, guard=guard, provenance=new_prov)
+
+        for dep in list(self._edges.get(t_key, set())):
+            self._remove_edge(t_key, dep)
+        self._nodes.pop(t_key, None)
+        self._edges.pop(t_key, None)
+        self._reverse_edges.pop(t_key, None)
+
+    def _is_dependency_reachable(self, start: NodeKey, target: NodeKey) -> bool:
+        """Return whether `target` is reachable from `start` along dependency edges."""
+        if start == target:
+            return True
+        seen: set[NodeKey] = {start}
+        stack = list(self._edges.get(start, set()))
+        while stack:
+            key = stack.pop()
+            if key == target:
+                return True
+            if key in seen:
+                continue
+            seen.add(key)
+            stack.extend(self._edges.get(key, set()))
+        return False
+
+    def _inline_one_node(
+        self,
+        t_key: NodeKey,
+        d_key: NodeKey,
+        *,
+        record: OptimalCompressionRecord | None = None,
+    ) -> None:
+        from .compression import (
+            FormulaRewrite,
+            direct_provenance_for_key_in_strings,
+            substitute_body_at_spans,
+        )
+
+        t_node = self._nodes.get(t_key)
+        d_node = self._nodes.get(d_key)
+        if t_node is None or d_node is None:
+            return
+        if t_node.formula is None or t_node.normalized_formula is None:
+            return
+
+        extra = self._edge_extra.get((d_key, t_key), {})
+        prov = extra.get("provenance")
+        if not isinstance(prov, EdgeProvenance):
+            return
+
+        before_formula = d_node.formula
+        before_normalized = d_node.normalized_formula
+        new_formula = before_formula
+        new_norm = before_normalized
+        if new_formula is not None and prov.direct_sites_formula:
+            new_formula = substitute_body_at_spans(
+                new_formula,
+                prov.direct_sites_formula,
+                t_node.formula,
+            )
+        if new_norm is not None and prov.direct_sites_normalized:
+            new_norm = substitute_body_at_spans(
+                new_norm,
+                prov.direct_sites_normalized,
+                t_node.normalized_formula,
+            )
+
+        if record is not None and (before_formula != new_formula or before_normalized != new_norm):
+            record.formula_rewrites.append(
+                FormulaRewrite(
+                    dependent=d_key,
+                    before_formula=before_formula,
+                    after_formula=new_formula,
+                    before_normalized=before_normalized,
+                    after_normalized=new_norm,
+                )
+            )
+
+        d_other_deps = set(self._edges.get(d_key, set())) - {t_key}
+        t_deps = set(self._edges.get(t_key, set()))
+        d_dep_guards = {dep: self._guards.get((d_key, dep)) for dep in d_other_deps}
+        t_dep_guards = {dep: self._guards.get((t_key, dep)) for dep in t_deps}
+
+        d_node.formula = new_formula
+        d_node.normalized_formula = new_norm
+
+        for dep in list(self._edges.get(d_key, set())):
+            self._remove_edge(d_key, dep)
+
+        for dep in d_other_deps | t_deps:
+            guard = d_dep_guards.get(dep)
+            if guard is None:
+                guard = t_dep_guards.get(dep)
+            new_prov = direct_provenance_for_key_in_strings(new_formula, new_norm, dep)
+            self.add_edge(d_key, dep, guard=guard, provenance=new_prov)
 
         for dep in list(self._edges.get(t_key, set())):
             self._remove_edge(t_key, dep)

@@ -246,3 +246,103 @@ def snapshot_transit_node(graph: DependencyGraph, key: NodeKey) -> ProjectedNode
         is_leaf=node.is_leaf,
         metadata=dict(node.metadata),
     )
+
+
+def _formula_body(formula: str) -> str:
+    return formula[1:] if formula.startswith("=") else formula
+
+
+def node_body_substitutable(graph: DependencyGraph, key: NodeKey) -> bool:
+    """Return whether `key`'s formula body may be pasted into a sole dependent."""
+    node = graph.get_node(key)
+    if node is None or node.is_leaf or not node.normalized_formula:
+        return False
+    for dep in graph.get_dependencies(key):
+        attrs = graph.get_edge_attrs(key, dep)
+        if graph.get_edge_guard(key, dep) is not None:
+            return False
+        if not compression_safe_provenance(attrs.provenance):
+            return False
+    return True
+
+
+def dependent_context_substitutable(
+    graph: DependencyGraph,
+    dependent: NodeKey,
+    *,
+    replacing: NodeKey,
+) -> bool:
+    """Return whether `dependent` can be rewritten after inlining `replacing`."""
+    for dep in graph.get_dependencies(dependent):
+        if dep == replacing:
+            continue
+        if graph.get_edge_guard(dependent, dep) is not None:
+            return False
+        attrs = graph.get_edge_attrs(dependent, dep)
+        if not compression_safe_provenance(attrs.provenance):
+            return False
+    return True
+
+
+def _incoming_edge_substitutable(
+    graph: DependencyGraph,
+    dependent: NodeKey,
+    precedent: NodeKey,
+) -> bool:
+    if graph.get_edge_guard(dependent, precedent) is not None:
+        return False
+    prov = graph.get_edge_attrs(dependent, precedent).provenance
+    if not compression_safe_provenance(prov):
+        return False
+    if prov is None:
+        return False
+    if len(prov.direct_sites_normalized) != 1:
+        return False
+    dep_node = graph.get_node(dependent)
+    if dep_node is None:
+        return False
+    return dep_node.formula is None or len(prov.direct_sites_formula) == 1
+
+
+def substitute_body_at_spans(
+    formula: str,
+    spans: tuple[tuple[int, int], ...],
+    body_formula: str,
+) -> str:
+    """Replace provenance spans with a parenthesized formula body."""
+    return replace_substrings_at_spans(formula, spans, f"({_formula_body(body_formula)})")
+
+
+@dataclass
+class OptimalCompressionRecord:
+    """Lineage collected while performing optimal graph compression."""
+
+    forwarded_removed: dict[str, str] = field(default_factory=dict)
+    inlined_to: dict[str, str] = field(default_factory=dict)
+    removal_order: list[str] = field(default_factory=list)
+    formula_rewrites: list[FormulaRewrite] = field(default_factory=list)
+    snapshots_by_removed: dict[str, ProjectedNodeSnapshot] = field(default_factory=dict)
+
+    def note_forwarding(
+        self,
+        removed: NodeKey,
+        replacement: NodeKey,
+        snapshot: ProjectedNodeSnapshot,
+    ) -> None:
+        self.forwarded_removed[removed] = replacement
+        self.removal_order.append(removed)
+        self.snapshots_by_removed[removed] = snapshot
+
+    def note_inline(
+        self,
+        removed: NodeKey,
+        retained: NodeKey,
+        snapshot: ProjectedNodeSnapshot,
+    ) -> None:
+        self.inlined_to[removed] = retained
+        self.removal_order.append(removed)
+        self.snapshots_by_removed[removed] = snapshot
+
+    def ensure_snapshot(self, key: NodeKey, snapshot: ProjectedNodeSnapshot) -> None:
+        if key not in self.snapshots_by_removed:
+            self.snapshots_by_removed[key] = snapshot
