@@ -32,19 +32,23 @@ from .helpers import (
     get_error,
     to_bool,
     to_number,
+    xl_add,
     xl_column,
     xl_columns,
     xl_concat,
+    xl_div,
     xl_eq,
     xl_ge,
     xl_gt,
     xl_le,
     xl_lt,
+    xl_mul,
     xl_ne,
     xl_offset_ref,
     xl_percent,
     xl_pow,
     xl_row,
+    xl_sub,
 )
 from .parser import (
     AstNode,
@@ -393,9 +397,15 @@ class FormulaEvaluator:
             return arr[0, 0]
         return value
 
+    def _resolve_binary_operand(self, value: CellValue) -> CellValue:
+        """Resolve range references to arrays for element-wise binary operators."""
+        if isinstance(value, ExcelRange):
+            return self._resolve_range(value)
+        return value
+
     def _eval_binary_op(self, node: BinaryOpNode) -> CellValue:
-        left = self._evaluate_ast(node.left)
-        right = self._evaluate_ast(node.right)
+        left = self._resolve_binary_operand(self._evaluate_ast(node.left))
+        right = self._resolve_binary_operand(self._evaluate_ast(node.right))
 
         # Propagate errors
         if isinstance(left, XlError):
@@ -421,24 +431,15 @@ class FormulaEvaluator:
             }
             return cmp_fns[op](left, right)
 
-        # Arithmetic operators - coerce to numbers
-        ln = to_number(left)
-        rn = to_number(right)
-        if isinstance(ln, XlError):
-            return ln
-        if isinstance(rn, XlError):
-            return rn
-
+        # Arithmetic operators - element-wise when operands include arrays
         if op == "+":
-            return ln + rn
+            return xl_add(left, right)
         if op == "-":
-            return ln - rn
+            return xl_sub(left, right)
         if op == "*":
-            return ln * rn
+            return xl_mul(left, right)
         if op == "/":
-            if rn == 0:
-                return XlError.DIV
-            return ln / rn
+            return xl_div(left, right)
         if op == "^":
             return xl_pow(left, right)
 
