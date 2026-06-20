@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from excel_grapher.core.formula_ast import (
@@ -119,6 +119,101 @@ def _find_literal_spans(s: str, needle: str) -> list[tuple[int, int]]:
         out.append((j, j + len(needle)))
         i = j + len(needle)
     return out
+
+
+class CompressionProvenanceRequiredError(RuntimeError):
+    """Compression cannot run safely without captured dependency provenance."""
+
+
+def refresh_direct_sites(
+    provenance: EdgeProvenance,
+    *,
+    old_formula: str | None,
+    new_formula: str | None,
+    old_normalized: str | None,
+    new_normalized: str | None,
+    precedent_key: NodeKey,
+) -> EdgeProvenance:
+    """Re-locate direct-ref spans after a dependent formula rewrite."""
+    sites_n: list[tuple[int, int]] = []
+    if new_normalized:
+        sites_n = _find_literal_spans(new_normalized, precedent_key)
+
+    sites_f: list[tuple[int, int]] = []
+    if new_formula:
+        if provenance.direct_sites_formula and old_formula:
+            for a, b in provenance.direct_sites_formula:
+                if 0 <= a <= b <= len(old_formula):
+                    needle = old_formula[a:b]
+                    if needle:
+                        sites_f.extend(_find_literal_spans(new_formula, needle))
+        else:
+            sites_f = _find_literal_spans(new_formula, precedent_key)
+
+    return replace(
+        provenance,
+        direct_sites_formula=tuple(sites_f),
+        direct_sites_normalized=tuple(sites_n),
+    )
+
+
+def _structural_inline_candidate(
+    graph: DependencyGraph,
+    transit_key: NodeKey,
+) -> NodeKey | None:
+    """Return the sole dependent when `transit_key` is structurally inlinable."""
+    if is_identity_transit(graph, transit_key) is not None:
+        return None
+    t_node = graph.get_node(transit_key)
+    if t_node is None or t_node.is_leaf or t_node.formula is None:
+        return None
+    dependents = graph.get_dependents(transit_key)
+    if len(dependents) != 1:
+        return None
+    dependent = next(iter(dependents))
+    if graph._is_dependency_reachable(transit_key, dependent):
+        return None
+    if graph.get_edge_guard(dependent, transit_key) is not None:
+        return None
+    if not node_body_substitutable(graph, transit_key):
+        return None
+    if not dependent_context_substitutable(graph, dependent, replacing=transit_key):
+        return None
+    prov = graph.get_edge_attrs(dependent, transit_key).provenance
+    if prov is not None:
+        if len(prov.direct_sites_normalized) != 1:
+            return None
+        dep_node = graph.get_node(dependent)
+        if dep_node is None:
+            return None
+        if dep_node.formula is not None and len(prov.direct_sites_formula) != 1:
+            return None
+    return dependent
+
+
+def require_compression_provenance(graph: DependencyGraph) -> None:
+    """Raise when compression candidates exist but edge provenance is missing."""
+    missing: list[tuple[str, str]] = []
+    for transit_key in graph:
+        replacement = is_identity_transit(graph, transit_key)
+        if replacement is not None:
+            for dependent in graph.get_dependents(transit_key):
+                if graph.get_edge_attrs(dependent, transit_key).provenance is None:
+                    missing.append((dependent, transit_key))
+            continue
+        dependent = _structural_inline_candidate(graph, transit_key)
+        if (
+            dependent is not None
+            and graph.get_edge_attrs(dependent, transit_key).provenance is None
+        ):
+            missing.append((dependent, transit_key))
+    if missing:
+        dependent, transit = missing[0]
+        raise CompressionProvenanceRequiredError(
+            "Dependency provenance is required for compression but is missing on edge "
+            f"{dependent} -> {transit}. Build the graph with "
+            "capture_dependency_provenance=True."
+        )
 
 
 def compression_safe_provenance(prov: EdgeProvenance | None) -> bool:
