@@ -73,6 +73,16 @@ _SKIP_ERROR_PRECHECK = {
     "XLOOKUP",
 }
 
+# Argument indices that must stay as numpy arrays (aligned with export codegen).
+_ARRAY_ARG_INDICES: dict[str, set[int]] = {
+    "LOOKUP": {1, 2},
+    "VLOOKUP": {1},
+    "HLOOKUP": {1},
+    "INDEX": {0},
+    "MATCH": {1},
+    "SUMPRODUCT": set(range(10)),
+}
+
 if TYPE_CHECKING:
     import numpy
 
@@ -321,8 +331,7 @@ class FormulaEvaluator:
                 return False
 
             args = [self._evaluate_ast(a) for a in node.args]
-            # Resolve ExcelRange objects to numpy arrays
-            args = [self._resolve_range(a) if isinstance(a, ExcelRange) else a for a in args]
+            args = [self._resolve_function_arg(arg, name, index) for index, arg in enumerate(args)]
             if name not in _SKIP_ERROR_PRECHECK:
                 err = get_error(*args)
                 if err is not None:
@@ -341,6 +350,26 @@ class FormulaEvaluator:
 
     def _resolve_range(self, rng: ExcelRange) -> numpy.ndarray:
         return rng.resolve(self._evaluate_cell)
+
+    def _resolve_function_arg(
+        self,
+        value: CellValue,
+        func_name: str,
+        arg_index: int,
+    ) -> CellValue:
+        """Resolve ``ExcelRange`` arguments for runtime function calls.
+
+        Array/table parameters keep numpy arrays; single-cell references in value
+        contexts (e.g. ``TEXT(INDEX(...))``) promote to scalars so export parity
+        matches codegen's scalar ``INDEX`` handling.
+        """
+        if not isinstance(value, ExcelRange):
+            return value
+        if arg_index in _ARRAY_ARG_INDICES.get(func_name, set()):
+            return self._resolve_range(value)
+        if value.start_row == value.end_row and value.start_col == value.end_col:
+            return self._auto_resolve_single_cell(value)
+        return self._resolve_range(value)
 
     def _sheet_bounds(self) -> SheetBounds:
         bounds = getattr(self.graph, "sheet_bounds", None)
