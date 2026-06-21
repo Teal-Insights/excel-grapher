@@ -39,4 +39,4 @@ series:
       - REF_AREA
       - INDICATOR
       - TIME_PERIOD
-    notes: Schema 1.1.0 example; row_hierarchy and matrix resolution are not implemented yet.
+    notes: Schema 1.1.0 example; uses row_hierarchy (planned bind kind, not yet supported by resolver/codegen).

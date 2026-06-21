@@ -10,7 +10,7 @@
     "schema_version": {
       "type": "string",
       "enum": ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"],
-      "description": "Schema version for tooling and migrations. 1.0.0–1.2.0: row_series and scalar (fully supported). 1.1.0: adds matrix layout and row_hierarchy bind (schema-valid; resolver/codegen may lag). 1.2.0: optional input/output direction blocks and output compute functions. 1.3.0: row_series renamed to series layout; load-time normalization accepts legacy row_series. 1.4.0: adds bool and datetime read modes and dtypes for dimensions and constants (ISO 8601 date strings in manifests)."
+      "description": "Schema version for tooling and migrations. 1.0.0–1.2.0: row_series and scalar (fully supported). 1.1.0: adds matrix layout and row_hierarchy bind (matrix supported with explicit binds; row_hierarchy schema-valid only). 1.2.0: optional input/output direction blocks and output compute functions. 1.3.0: row_series renamed to series layout; load-time normalization accepts legacy row_series. 1.4.0: adds bool and datetime read modes and dtypes for dimensions and constants (ISO 8601 date strings in manifests)."
     },
     "workbook": {
       "type": "string",
@@ -335,7 +335,7 @@
     "Layout": {
       "type": "string",
       "enum": ["series", "scalar", "matrix"],
-      "description": "series: one-dimensional data_range with at least one cell-scoped dimension; orientation (row vs column) comes from bind kinds (e.g. column_header vs row_label), not the layout name. scalar: single leaf. matrix (1.1.0): country/indicator block over a rectangular data_range (multi-row); resolver/codegen may lag schema."
+      "description": "series: one-dimensional data_range with at least one cell-scoped dimension; orientation (row vs column) comes from bind kinds (e.g. column_header vs row_label), not the layout name. scalar: single leaf. matrix (1.1.0): rectangular multi-row data_range; vertical keys from row binds and horizontal keys from column binds when using implemented bind kinds."
     },
     "SeriesBinding": {
       "type": "object",
