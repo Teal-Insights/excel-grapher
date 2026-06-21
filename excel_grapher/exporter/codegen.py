@@ -16,6 +16,7 @@ from excel_grapher.core.address_keys import (
     quote_sheet_if_needed,
     sort_node_keys,
 )
+from excel_grapher.core.excel_function_meta import numpy_array_arg_indices
 from excel_grapher.evaluator.errors import MissingNormalizedFormulaError
 from excel_grapher.evaluator.name_utils import (
     address_to_python_name,
@@ -1027,17 +1028,7 @@ class CodeGenerator:
             return "False"
 
         # Functions that need numpy arrays for their array/table arguments
-        # Maps function name -> set of argument indices that need np.array wrapping
-        numpy_array_args: dict[str, set[int]] = {
-            "LOOKUP": {1, 2},  # lookup_vector/array + optional result_vector
-            "VLOOKUP": {1},  # table_array is 2nd arg (index 1)
-            "HLOOKUP": {1},  # table_array is 2nd arg (index 1)
-            "INDEX": {0},  # array is 1st arg (index 0)
-            "MATCH": {1},  # lookup_array is 2nd arg (index 1)
-            "SUMPRODUCT": set(range(10)),  # all args can be arrays
-        }
-
-        needs_numpy_wrap = numpy_array_args.get(upper_name, set())
+        needs_numpy_wrap = numpy_array_arg_indices(upper_name)
 
         emitted_args = []
         for i, arg in enumerate(node.args):
@@ -1734,15 +1725,8 @@ class CodeGenerator:
                 funcs.add(excel_func_to_python(node.name))
 
             # Check if this function needs numpy array wrapping for range args
-            numpy_array_args = {
-                "LOOKUP": {1, 2},
-                "VLOOKUP": {1},
-                "HLOOKUP": {1},
-                "INDEX": {0},
-                "MATCH": {1},
-                "SUMPRODUCT": set(range(10)),
-            }
-            if upper_name in numpy_array_args:
+            array_arg_indices = numpy_array_arg_indices(upper_name)
+            if array_arg_indices:
                 skip_index_array = (
                     upper_name == "INDEX"
                     and node.args
@@ -1752,7 +1736,7 @@ class CodeGenerator:
                 for i, arg in enumerate(node.args):
                     if skip_index_array and upper_name == "INDEX":
                         break
-                    if i in numpy_array_args[upper_name] and isinstance(arg, RangeNode):
+                    if i in array_arg_indices and isinstance(arg, RangeNode):
                         funcs.add("numpy")
                         break
             for arg in node.args:

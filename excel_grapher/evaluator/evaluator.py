@@ -13,6 +13,7 @@ from excel_grapher.core.address_keys import (
     parse_address,
 )
 from excel_grapher.core.addressing import index_excel_range
+from excel_grapher.core.excel_function_meta import numpy_array_arg_indices
 from excel_grapher.core.range_shorthand import (
     SheetBounds,
     resolve_whole_column,
@@ -75,16 +76,6 @@ _SKIP_ERROR_PRECHECK = {
     "INDEX",
     "MATCH",
     "XLOOKUP",
-}
-
-# Argument indices that must stay as numpy arrays (aligned with export codegen).
-_ARRAY_ARG_INDICES: dict[str, set[int]] = {
-    "LOOKUP": {1, 2},
-    "VLOOKUP": {1},
-    "HLOOKUP": {1},
-    "INDEX": {0},
-    "MATCH": {1},
-    "SUMPRODUCT": set(range(10)),
 }
 
 if TYPE_CHECKING:
@@ -369,7 +360,7 @@ class FormulaEvaluator:
         """
         if not isinstance(value, ExcelRange):
             return value
-        if arg_index in _ARRAY_ARG_INDICES.get(func_name, set()):
+        if arg_index in numpy_array_arg_indices(func_name):
             return self._resolve_range(value)
         if value.start_row == value.end_row and value.start_col == value.end_col:
             return self._auto_resolve_single_cell(value)

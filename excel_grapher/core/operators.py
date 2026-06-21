@@ -89,6 +89,7 @@ def _xl_compare(op: str, left: CellValue, right: CellValue) -> CellValue:
         result = np.empty(arr_left.shape, dtype=object)
         for indices in np.ndindex(arr_left.shape):
             cell = _compare_scalars(op, arr_left[indices], arr_right[indices])
+            # Fail-fast: first cell error replaces the whole array (matches xl_sumproduct).
             if isinstance(cell, XlError):
                 return cell
             result[indices] = cell
@@ -120,6 +121,7 @@ def _xl_arithmetic(
                 return ln
             if isinstance(rn, XlError):
                 return rn
+            # Fail-fast per cell (aligned with xl_sumproduct error propagation).
             if op == "+":
                 result[indices] = ln + rn
             elif op == "-":
@@ -130,6 +132,14 @@ def _xl_arithmetic(
                 if rn == 0:
                     return XlError.DIV
                 result[indices] = ln / rn
+            elif op == "^":
+                try:
+                    value = ln**rn
+                except (ValueError, OverflowError):
+                    return XlError.NUM
+                if isinstance(value, complex):
+                    return XlError.NUM
+                result[indices] = value
             else:
                 raise ValueError(f"Unknown arithmetic operator: {op}")
         return result
@@ -150,15 +160,42 @@ def _xl_arithmetic(
         if rn == 0:
             return XlError.DIV
         return ln / rn
+    if op == "^":
+        try:
+            value = ln**rn
+        except (ValueError, OverflowError):
+            return XlError.NUM
+        if isinstance(value, complex):
+            return XlError.NUM
+        return value
     raise ValueError(f"Unknown arithmetic operator: {op}")
 
 
-def xl_concat(left: CellValue, right: CellValue) -> str | XlError:
+def _concat_scalars(left: CellValue, right: CellValue) -> str:
+    return to_string(left) + to_string(right)
+
+
+def _xl_concat(left: CellValue, right: CellValue) -> CellValue:
     if isinstance(left, XlError):
         return left
     if isinstance(right, XlError):
         return right
-    return to_string(left) + to_string(right)
+
+    if isinstance(left, np.ndarray) or isinstance(right, np.ndarray):
+        pair = _broadcast_pair(left, right)
+        if isinstance(pair, XlError):
+            return pair
+        arr_left, arr_right = pair
+        result = np.empty(arr_left.shape, dtype=object)
+        for indices in np.ndindex(arr_left.shape):
+            result[indices] = _concat_scalars(arr_left[indices], arr_right[indices])
+        return result
+
+    return _concat_scalars(left, right)
+
+
+def xl_concat(left: CellValue, right: CellValue) -> CellValue:
+    return _xl_concat(left, right)
 
 
 def xl_eq(left: CellValue, right: CellValue) -> CellValue:
@@ -207,21 +244,8 @@ def xl_mul(left: CellValue, right: CellValue) -> CellValue:
     return _xl_arithmetic("*", left, right)
 
 
-def xl_pow(left: CellValue, right: CellValue) -> float | XlError:
-    if isinstance(left, XlError):
-        return left
-    if isinstance(right, XlError):
-        return right
-    ln = to_number(left)
-    rn = to_number(right)
-    if isinstance(ln, XlError):
-        return ln
-    if isinstance(rn, XlError):
-        return rn
-    try:
-        return ln**rn
-    except (ValueError, OverflowError):
-        return XlError.NUM
+def xl_pow(left: CellValue, right: CellValue) -> CellValue:
+    return _xl_arithmetic("^", left, right)
 
 
 def xl_neg(value: CellValue) -> float | XlError:
