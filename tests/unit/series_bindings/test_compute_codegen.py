@@ -18,6 +18,7 @@ from excel_grapher.series_bindings import (
     expand_data_range,
     load_series_bindings,
     resolve_series_binding,
+    validate_bindings_document,
 )
 from excel_grapher.series_bindings.compute_codegen import emit_compute_function, emit_computes_block
 from excel_grapher.series_bindings.docstrings import (
@@ -594,3 +595,194 @@ def test_emit_computes_block_includes_datetime_import_when_needed(tmp_path: Path
     assert "import datetime" in code
     assert code.count("import datetime") == 1
     assert "datetime.datetime(2024, 1, 1, 0, 0)" in code
+
+
+def test_emit_compute_matrix_evaluates_formula_outputs(tmp_path: Path) -> None:
+    wb_path = tmp_path / "matrix_compute.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Inputs")
+    ws.write("A2", "Indicator")
+    matrix_rows = (
+        ("GDP growth", [1.2, 1.4, 1.5]),
+        ("Inflation", [3.1, 2.9, 2.7]),
+        ("Debt", [55.0, 54.2, 53.8]),
+    )
+    for col_offset, period in enumerate([2024, 2025, 2026]):
+        ws.write_number(1, 1 + col_offset, period)
+    for row_offset, (indicator, values) in enumerate(matrix_rows):
+        excel_row = 2 + row_offset
+        ws.write(excel_row, 0, indicator)
+        for col_offset, value in enumerate(values):
+            ws.write_formula(
+                excel_row,
+                1 + col_offset,
+                f"={value}*2",
+                None,
+                float(value) * 2.0,
+            )
+    wb.close()
+
+    bindings = validate_bindings_document(
+        {
+            "schema_version": "1.4.0",
+            "workbook": "matrix_compute.xlsx",
+            "series": [
+                {
+                    "id": "macro_matrix",
+                    "sheet": "Inputs",
+                    "data_range": "Inputs!B3:D5",
+                    "layout": "matrix",
+                    "output": {"compute": {"name": "compute_macro_matrix"}},
+                    "structure": {
+                        "measure": {
+                            "concept": "OBS_VALUE",
+                            "dtype": "float",
+                            "bind": {"kind": "data_cell", "read": "float"},
+                        },
+                        "dimensions": [
+                            {
+                                "concept": "INDICATOR",
+                                "role": "key",
+                                "scope": "cell",
+                                "bind": {
+                                    "kind": "row_label",
+                                    "label_column": "A",
+                                    "read": "string",
+                                    "normalize": "strip",
+                                },
+                            },
+                            {
+                                "concept": "TIME_PERIOD",
+                                "role": "key",
+                                "scope": "cell",
+                                "bind": {
+                                    "kind": "column_header",
+                                    "header_row": 2,
+                                    "read": "int",
+                                },
+                            },
+                        ],
+                    },
+                    "key": ["INDICATOR", "TIME_PERIOD"],
+                }
+            ],
+        }
+    )
+    targets = expand_data_range("Inputs!B3:D5", workbook=wb_path)
+    graph = create_dependency_graph(wb_path, targets, load_values=True)
+
+    with CodeGenerator(graph) as gen:
+        code = gen.generate(
+            targets,
+            series_bindings=bindings,
+            bindings_workbook=wb_path,
+        )
+
+    assert "def compute_macro_matrix(" in code
+    ns: dict[str, object] = {}
+    exec(code, ns)
+    compute = cast(Callable[..., Records], ns["compute_macro_matrix"])
+    records = compute()
+    assert len(records) == 9
+    by_key = {
+        (record["INDICATOR"], record["TIME_PERIOD"]): record["OBS_VALUE"] for record in records
+    }
+    assert by_key[("GDP growth", 2024)] == pytest.approx(2.4)
+    assert by_key[("Inflation", 2025)] == pytest.approx(5.8)
+    assert by_key[("Debt", 2026)] == pytest.approx(107.6)
+
+
+def test_emit_compute_matrix_bindings_module_smoke(tmp_path: Path) -> None:
+    from excel_grapher.series_bindings.smoke import smoke_test_bindings_module
+    from excel_grapher.series_bindings.validate import validate_series_bindings
+    from excel_grapher.series_bindings.workflow import generate_bindings_modules
+
+    wb_path = tmp_path / "matrix_compute_smoke.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Inputs")
+    ws.write("A2", "Indicator")
+    matrix_rows = (
+        ("GDP growth", [1.2, 1.4, 1.5]),
+        ("Inflation", [3.1, 2.9, 2.7]),
+        ("Debt", [55.0, 54.2, 53.8]),
+    )
+    for col_offset, period in enumerate([2024, 2025, 2026]):
+        ws.write_number(1, 1 + col_offset, period)
+    for row_offset, (indicator, values) in enumerate(matrix_rows):
+        excel_row = 2 + row_offset
+        ws.write(excel_row, 0, indicator)
+        for col_offset, value in enumerate(values):
+            ws.write_formula(
+                excel_row,
+                1 + col_offset,
+                f"={value}*2",
+                None,
+                float(value) * 2.0,
+            )
+    wb.close()
+
+    bindings = validate_bindings_document(
+        {
+            "schema_version": "1.4.0",
+            "workbook": "matrix_compute_smoke.xlsx",
+            "series": [
+                {
+                    "id": "macro_matrix",
+                    "sheet": "Inputs",
+                    "data_range": "Inputs!B3:D5",
+                    "layout": "matrix",
+                    "output": {"compute": {"name": "compute_macro_matrix"}},
+                    "structure": {
+                        "measure": {
+                            "concept": "OBS_VALUE",
+                            "dtype": "float",
+                            "bind": {"kind": "data_cell", "read": "float"},
+                        },
+                        "dimensions": [
+                            {
+                                "concept": "INDICATOR",
+                                "role": "key",
+                                "scope": "cell",
+                                "bind": {
+                                    "kind": "row_label",
+                                    "label_column": "A",
+                                    "read": "string",
+                                    "normalize": "strip",
+                                },
+                            },
+                            {
+                                "concept": "TIME_PERIOD",
+                                "role": "key",
+                                "scope": "cell",
+                                "bind": {
+                                    "kind": "column_header",
+                                    "header_row": 2,
+                                    "read": "int",
+                                },
+                            },
+                        ],
+                    },
+                    "key": ["INDICATOR", "TIME_PERIOD"],
+                }
+            ],
+        }
+    )
+    targets = expand_data_range("Inputs!B3:D5", workbook=wb_path)
+    graph = create_dependency_graph(wb_path, targets, load_values=True)
+    report = validate_series_bindings(graph, bindings, workbook=wb_path)
+    assert report["ok"] is True
+
+    files = generate_bindings_modules(
+        graph,
+        targets=targets,
+        bindings=bindings,
+        workbook=wb_path,
+    )
+    smoke_test_bindings_module(
+        files,
+        bindings=bindings,
+        graph=graph,
+        workbook=wb_path,
+        module_dir=tmp_path / "bindings_module",
+        package_name="bindings_module",
+    )

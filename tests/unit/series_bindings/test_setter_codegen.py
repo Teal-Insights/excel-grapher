@@ -696,6 +696,44 @@ def test_emit_setters_block_calendar_year_setter_round_trips(tmp_path: Path) -> 
     assert ctx.inputs["Inputs!C2"] == 22.0
 
 
+def test_emit_setters_block_matrix_explicit_codegen_shape_and_round_trip(tmp_path: Path) -> None:
+    from tests.fixtures.series_bindings.matrix_helpers import write_matrix_explicit_workbook
+
+    wb_path = tmp_path / "matrix_inputs.xlsx"
+    write_matrix_explicit_workbook(wb_path)
+    graph = create_dependency_graph(
+        wb_path,
+        expand_data_range("Inputs!B3:D5"),
+        load_values=True,
+    )
+    bindings = load_series_bindings(FIXTURES / "matrix_explicit_1_4_0.yaml")
+    code = "\n".join(emit_setters_block(graph, wb_path, bindings))
+
+    assert "def set_macro_matrix(" in code
+    assert "(('INDICATOR', 'GDP growth'), ('TIME_PERIOD', 2024)): 'Inputs!B3'" in code
+    assert "(('INDICATOR', 'Debt'), ('TIME_PERIOD', 2026)): 'Inputs!D5'" in code
+
+    ns = _exec_setters(emit_setters_block(graph, wb_path, bindings))
+    setter = cast(
+        Callable[[EvalContext, list[dict[str, object]]], None],
+        ns["set_macro_matrix"],
+    )
+    ctx = EvalContext(
+        inputs=coerce_inputs_dict({"Inputs!B3": 1.2}),
+        resolver=lambda _a: None,
+    )
+    setter(
+        ctx,
+        [
+            {"INDICATOR": "GDP growth", "TIME_PERIOD": 2025, "OBS_VALUE": 9.9},
+            {"INDICATOR": "Debt", "TIME_PERIOD": 2026, "OBS_VALUE": 44.4},
+        ],
+    )
+    assert ctx.inputs["Inputs!C3"] == 9.9
+    assert ctx.inputs["Inputs!D5"] == 44.4
+    assert ctx.inputs["Inputs!B3"] == 1.2
+
+
 def test_emit_setter_matrix_explicit_updates_by_row_and_column_keys(tmp_path: Path) -> None:
     from tests.fixtures.series_bindings.matrix_helpers import write_matrix_explicit_workbook
 
