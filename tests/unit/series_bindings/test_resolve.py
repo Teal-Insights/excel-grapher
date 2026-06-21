@@ -755,3 +755,46 @@ def test_resolve_attribute_value_string_unit_preserved_in_record(tmp_path: Path)
     assert resolved["ok"] is True
     assert leaf["coordinates"]["UNIT"] == "Percent"
     assert leaf["record"]["UNIT"] == "Percent"
+
+
+def test_resolve_matrix_explicit_coordinates(tmp_path: Path) -> None:
+    from tests.fixtures.series_bindings.matrix_helpers import write_matrix_explicit_workbook
+
+    wb_path = tmp_path / "matrix_inputs.xlsx"
+    write_matrix_explicit_workbook(wb_path)
+    targets = expand_data_range("Inputs!B3:D5")
+    graph = create_dependency_graph(wb_path, targets, load_values=True)
+    bindings = load_series_bindings(FIXTURES / "matrix_explicit_1_4_0.yaml")
+    series = bindings["series"][0]
+
+    resolved = resolve_series_binding(graph, wb_path, series)
+    assert resolved["ok"] is True
+    assert resolved["requires_address"] is False
+    assert len(resolved["leaves"]) == 9
+
+    by_key = {
+        (leaf["key"]["INDICATOR"], leaf["key"]["TIME_PERIOD"]): leaf for leaf in resolved["leaves"]
+    }
+    assert set(by_key) == {
+        ("GDP growth", 2024),
+        ("GDP growth", 2025),
+        ("GDP growth", 2026),
+        ("Inflation", 2024),
+        ("Inflation", 2025),
+        ("Inflation", 2026),
+        ("Debt", 2024),
+        ("Debt", 2025),
+        ("Debt", 2026),
+    }
+
+    gdp_2024 = by_key[("GDP growth", 2024)]
+    assert gdp_2024["address"] == "Inputs!B3"
+    assert gdp_2024["coordinates"]["INDICATOR"] == "GDP growth"
+    assert gdp_2024["coordinates"]["TIME_PERIOD"] == 2024
+    assert gdp_2024["coordinates"]["OBS_VALUE"] == 1.2
+
+    debt_2026 = by_key[("Debt", 2026)]
+    assert debt_2026["address"] == "Inputs!D5"
+    assert debt_2026["coordinates"]["INDICATOR"] == "Debt"
+    assert debt_2026["coordinates"]["TIME_PERIOD"] == 2026
+    assert debt_2026["coordinates"]["OBS_VALUE"] == 53.8
