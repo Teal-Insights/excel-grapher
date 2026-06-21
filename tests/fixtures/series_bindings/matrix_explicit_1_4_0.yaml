@@ -1,0 +1,38 @@
+schema_version: "1.4.0"
+workbook: matrix_inputs.xlsx
+series:
+  - id: macro_matrix
+    sheet: Inputs
+    data_range: Inputs!B3:D5
+    layout: matrix
+    editable: true
+    input:
+      setter:
+        name: set_macro_matrix
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - concept: INDICATOR
+          role: key
+          scope: cell
+          bind:
+            kind: row_label
+            label_column: A
+            read: string
+            normalize: strip
+        - concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 2
+            read: int
+    key:
+      - INDICATOR
+      - TIME_PERIOD
+    notes: Explicit matrix fixture; vertical=row_label, horizontal=column_header.
