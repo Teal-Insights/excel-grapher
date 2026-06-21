@@ -16,9 +16,9 @@ IMPLEMENTED_BIND_KINDS: frozenset[str] = frozenset(
 
 PLANNED_BIND_KINDS: frozenset[str] = frozenset({"row_hierarchy"})
 
-IMPLEMENTED_LAYOUTS: frozenset[str] = frozenset({"series", "scalar"})
+IMPLEMENTED_LAYOUTS: frozenset[str] = frozenset({"series", "scalar", "matrix"})
 
-PLANNED_LAYOUTS: frozenset[str] = frozenset({"matrix"})
+PLANNED_LAYOUTS: frozenset[str] = frozenset({})
 
 
 def is_bind_implemented(kind: str | None) -> bool:
