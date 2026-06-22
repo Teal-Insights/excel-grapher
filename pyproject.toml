@@ -40,6 +40,9 @@ all = [
     "networkx>=3.0",
     "graphviz>=0.20",
 ]
+embeddings = [
+    "openai>=1.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/Teal-Insights/excel-grapher"
