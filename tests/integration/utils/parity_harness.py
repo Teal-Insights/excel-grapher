@@ -238,3 +238,150 @@ def assert_code_does_not_embed_symbols(code: str, *, absent: set[str]) -> None:
         raise AssertionError(
             f"Expected symbols to be pruned, but found in generated code: {sorted(hits)}"
         )
+
+
+EMBEDDED_RUNTIME_HEADER = '"""Standalone runtime for generated Excel formula code."""'
+FORMULA_CELLS_MARKER = "# --- Formula cell functions ---"
+
+DEP_TRACKING_METHOD_SYMBOLS = frozenset(
+    {
+        "_record_dependency",
+        "invalidate",
+        "set_inputs",
+    }
+)
+DEP_TRACKING_FIELD_MARKERS = frozenset(
+    {
+        "deps: dict[str, set[str]]",
+        "reverse_deps: dict[str, set[str]]",
+    }
+)
+DEP_TRACKING_CALL_MARKERS = frozenset(
+    {
+        "ctx._record_dependency(",
+    }
+)
+
+# Sprint 0 baseline for non-iterative minimal export (S!A1 leaf + S!B1 formula).
+# Sprint 2 should drive dep_tracking_lines to 0 and lower the scaffold budget.
+DEP_TRACKING_BASELINE_VERSION = 1
+SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET = 45
+
+
+def extract_embedded_runtime(code: str) -> str:
+    """Return the embedded ``emit_runtime`` block from generated export code."""
+    lines = code.splitlines()
+    try:
+        start = next(i for i, line in enumerate(lines) if line.strip() == EMBEDDED_RUNTIME_HEADER)
+    except StopIteration as exc:
+        raise ValueError("embedded runtime header not found in generated code") from exc
+
+    end = len(lines)
+    for index, line in enumerate(lines[start + 1 :], start + 1):
+        if line.startswith(FORMULA_CELLS_MARKER):
+            end = index
+            break
+        if line.startswith("DEFAULT_INPUTS = {"):
+            end = index
+            break
+    return "\n".join(lines[start:end]).rstrip()
+
+
+def count_embedded_runtime_lines(code: str) -> int:
+    """Count lines in the embedded runtime block."""
+    return len(extract_embedded_runtime(code).splitlines())
+
+
+def dep_tracking_hits(code: str) -> dict[str, Any]:
+    """Report whether dep-tracking fields, methods, and call sites are present."""
+    return {
+        "deps_field": any(marker in code for marker in DEP_TRACKING_FIELD_MARKERS),
+        "reverse_deps_field": "reverse_deps: dict[str, set[str]]" in code,
+        "methods": {symbol: f"def {symbol}(" in code for symbol in DEP_TRACKING_METHOD_SYMBOLS},
+        "record_dependency_call": any(marker in code for marker in DEP_TRACKING_CALL_MARKERS),
+    }
+
+
+def count_dep_tracking_lines(code: str) -> int:
+    """Count EvalContext dep-tracking fields/methods plus ``_record_dependency`` call sites."""
+    lines = code.splitlines()
+    try:
+        class_start = next(
+            i for i, line in enumerate(lines) if line.startswith("class EvalContext")
+        )
+    except StopIteration:
+        return 0
+
+    count = 0
+    in_method = False
+    method_indent = 0
+    for line in lines[class_start + 1 :]:
+        stripped = line.strip()
+        if stripped.startswith("class ") or (
+            stripped.startswith("def ") and not line.startswith("    ")
+        ):
+            break
+
+        if (
+            stripped.startswith("def _record_dependency(")
+            or stripped.startswith("def invalidate(")
+            or stripped.startswith("def set_inputs(")
+        ):
+            in_method = True
+            method_indent = len(line) - len(line.lstrip())
+            count += 1
+            continue
+
+        if in_method:
+            indent = len(line) - len(line.lstrip())
+            if stripped and indent <= method_indent:
+                in_method = False
+            else:
+                count += 1
+                continue
+
+        if stripped in DEP_TRACKING_FIELD_MARKERS or stripped.startswith("stack: list[str]"):
+            count += 1
+
+    count += sum(1 for line in lines if "ctx._record_dependency(" in line)
+    return count
+
+
+def assert_dep_tracking_present(code: str) -> None:
+    """Assert generated export embeds the invalidation subsystem."""
+    hits = dep_tracking_hits(code)
+    methods = cast(dict[str, bool], hits["methods"])
+    missing: list[str] = []
+    if not hits["deps_field"]:
+        missing.append("deps field")
+    if not hits["reverse_deps_field"]:
+        missing.append("reverse_deps field")
+    for symbol, present in methods.items():
+        if not present:
+            missing.append(f"def {symbol}")
+    if not hits["record_dependency_call"]:
+        missing.append("ctx._record_dependency call site")
+    if missing:
+        raise AssertionError(
+            f"Expected dependency-tracking scaffold in generated code; missing: {missing}"
+        )
+
+
+def assert_dep_tracking_absent(code: str) -> None:
+    """Assert generated export omits the invalidation subsystem (Sprint 2 target)."""
+    hits = dep_tracking_hits(code)
+    methods = cast(dict[str, bool], hits["methods"])
+    present: list[str] = []
+    if hits["deps_field"]:
+        present.append("deps field")
+    if hits["reverse_deps_field"]:
+        present.append("reverse_deps field")
+    for symbol, found in methods.items():
+        if found:
+            present.append(f"def {symbol}")
+    if hits["record_dependency_call"]:
+        present.append("ctx._record_dependency call site")
+    if present:
+        raise AssertionError(
+            f"Expected dependency-tracking scaffold to be omitted; found: {present}"
+        )
