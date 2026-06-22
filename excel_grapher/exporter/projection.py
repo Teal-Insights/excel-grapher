@@ -34,6 +34,8 @@ from excel_grapher.grapher.compression import (
 from excel_grapher.grapher.graph import CycleError, CycleReport, DependencyGraph, NodeKey
 from excel_grapher.grapher.guard import GuardExpr
 from excel_grapher.grapher.node import NodeView
+from excel_grapher.grapher.similarity_compression.config import SimilarityCompressionConfig
+from excel_grapher.grapher.similarity_compression.embedding import EmbeddingProvider
 from excel_grapher.grapher.similarity_compression.packings import Packing
 
 __all__ = [
@@ -47,6 +49,7 @@ __all__ = [
     "ProjectionManifest",
     "ProjectionResult",
     "ProjectionStep",
+    "SimilarityAwareCompression",
     "SimilarityPackingProjection",
     "apply_projection",
     "build_forwarding_projection_manifest",
@@ -616,6 +619,40 @@ class SimilarityPackingProjection:
         return ProjectionResult(
             original_graph=graph,
             projected_graph=projected,
+            manifest=manifest,
+        )
+
+
+class SimilarityAwareCompression:
+    """Select and apply a similarity-aware compressible packing."""
+
+    def __init__(
+        self,
+        *,
+        preserve: set[str] | None = None,
+        config: SimilarityCompressionConfig | None = None,
+        provider: EmbeddingProvider | None = None,
+    ) -> None:
+        self._preserve = preserve
+        self._config = config
+        self._provider = provider
+
+    def project(self, graph: DependencyGraph) -> ProjectionResult:
+        """Build a non-mutating similarity-aware compression projection."""
+        from excel_grapher.grapher.similarity_compression.selection import (
+            select_similarity_projection,
+        )
+
+        selection = select_similarity_projection(
+            graph,
+            preserve=self._preserve,
+            config=self._config,
+            provider=self._provider,
+        )
+        manifest = build_similarity_projection_manifest(graph, selection.simulation.record)
+        return ProjectionResult(
+            original_graph=graph,
+            projected_graph=selection.simulation.projected_graph,
             manifest=manifest,
         )
 
