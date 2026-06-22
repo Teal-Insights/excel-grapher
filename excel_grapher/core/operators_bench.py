@@ -12,7 +12,7 @@ from typing import Any
 import numpy as np
 
 from excel_grapher.core.operators import xl_concat, xl_eq, xl_gt, xl_mul
-from excel_grapher.runtime.math import xl_sumproduct
+from excel_grapher.core.sumproduct import xl_sumproduct
 
 BASELINE_VERSION = 1
 DEFAULT_WARMUP_ROUNDS = 2

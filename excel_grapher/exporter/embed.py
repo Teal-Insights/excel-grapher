@@ -18,6 +18,7 @@ _CORE_MODULES: list[tuple[str, Path]] = [
     ("core.operators_reference", _CORE_DIR / "operators_reference.py"),
     ("core.operators_fastpath", _CORE_DIR / "operators_fastpath.py"),
     ("core.operators", _CORE_DIR / "operators.py"),
+    ("core.sumproduct", _CORE_DIR / "sumproduct.py"),
     ("core.addressing", _CORE_DIR / "addressing.py"),
     ("core.functions", _CORE_DIR / "functions.py"),
 ]

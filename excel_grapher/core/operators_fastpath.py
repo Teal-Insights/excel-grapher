@@ -1,4 +1,4 @@
-"""Vectorized fast paths for Excel binary operators (numeric arithmetic and compare)."""
+"""Vectorized fast paths for Excel binary operators and SUMPRODUCT reduction."""
 
 from __future__ import annotations
 
@@ -7,12 +7,14 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .coercions import excel_casefold, to_number
+from .coercions import excel_casefold, to_number, to_string
 from .types import XlError
 
 _NUMERIC_CELL_TYPES = (int, float, np.integer, np.floating)
 _CASEFOLD_UFUNC = np.frompyfunc(excel_casefold, 1, 1)
+_TO_STRING_UFUNC = np.frompyfunc(to_string, 1, 1)
 _MIN_COMPARE_FASTPATH_CELLS = 64
+_MIN_CONCAT_FASTPATH_CELLS = 64
 
 
 def _try_asarray_float64(arr: np.ndarray) -> np.ndarray | None:
@@ -301,3 +303,118 @@ def try_fastpath_arithmetic_array(
     if op == "^":
         return _fastpath_pow(left, right)
     raise ValueError(f"Unknown arithmetic operator: {op}")
+
+
+def _detect_concat_column_kind(arr: np.ndarray) -> str | None:
+    """Return a homogeneous column kind tag, or None when cells are mixed."""
+    flat = arr.ravel()
+    if flat.size == 0:
+        return "string"
+
+    kind: str | None = None
+    for value in flat:
+        if isinstance(value, str):
+            current = "string"
+        elif isinstance(value, bool):
+            current = "bool"
+        elif isinstance(value, (int, np.integer)):
+            current = "integer"
+        elif isinstance(value, (float, np.floating)):
+            current = "float"
+        elif value is None:
+            current = "none"
+        elif isinstance(value, XlError):
+            current = "xl_error"
+        else:
+            return None
+        if kind is None:
+            kind = current
+        elif kind != current:
+            return None
+    return kind
+
+
+def _format_concat_column(arr: np.ndarray, kind: str) -> np.ndarray:
+    """Format a homogeneous object column with Excel ``to_string`` rules."""
+    if kind == "string":
+        return _as_unicode_strings(arr)
+    if kind == "integer":
+        return np.asarray(np.asarray(arr, dtype=np.int64), dtype=np.str_)
+    if kind == "float":
+        return np.asarray(_TO_STRING_UFUNC(arr.ravel()), dtype=np.str_).reshape(arr.shape)
+    if kind == "bool":
+        flat = arr.ravel()
+        formatted = np.empty(flat.size, dtype=np.str_)
+        for index, value in enumerate(flat):
+            formatted[index] = "TRUE" if value else "FALSE"
+        return formatted.reshape(arr.shape)
+    if kind == "none":
+        return np.full(arr.shape, "", dtype=np.str_)
+    if kind == "xl_error":
+        flat = arr.ravel()
+        formatted = np.empty(flat.size, dtype=np.str_)
+        for index, value in enumerate(flat):
+            formatted[index] = value.value
+        return formatted.reshape(arr.shape)
+    raise ValueError(f"Unknown concat column kind: {kind}")
+
+
+def _concat_formatted_columns(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+    result = np.char.add(left, right)
+    return result.astype(object)
+
+
+def try_fastpath_concat_array(
+    arr_left: np.ndarray,
+    arr_right: np.ndarray,
+) -> np.ndarray | None:
+    """Apply a vectorized concat fast path, or return None to use the reference loop.
+
+    Handles homogeneous string, integer, float, bool, null, and ``XlError`` columns by
+    batch-formatting each side with ``to_string`` rules, then ``np.char.add``.
+    """
+    if arr_left.size < _MIN_CONCAT_FASTPATH_CELLS:
+        return None
+
+    left_kind = _detect_concat_column_kind(arr_left)
+    if left_kind is None:
+        return None
+    right_kind = _detect_concat_column_kind(arr_right)
+    if right_kind is None:
+        return None
+
+    left_formatted = _format_concat_column(arr_left, left_kind)
+    right_formatted = _format_concat_column(arr_right, right_kind)
+
+    if left_kind == "string":
+        left_meta = _string_array_meta(arr_left)
+        if left_meta is not None and left_meta.is_constant and right_kind != "string":
+            return _concat_formatted_columns(
+                np.asarray(left_meta.constant_value),
+                right_formatted,
+            )
+    if right_kind == "string":
+        right_meta = _string_array_meta(arr_right)
+        if right_meta is not None and right_meta.is_constant and left_kind != "string":
+            return _concat_formatted_columns(
+                left_formatted,
+                np.asarray(right_meta.constant_value),
+            )
+
+    return _concat_formatted_columns(left_formatted, right_formatted)
+
+
+def try_fastpath_sumproduct(arrays: list[np.ndarray]) -> float | None:
+    """Sum element-wise products when every array batch-coerces to float64."""
+    if not arrays:
+        return 0.0
+    coerced: list[np.ndarray] = []
+    for arr in arrays:
+        batch = batch_coerce_to_float64(arr)
+        if batch is None:
+            return None
+        coerced.append(batch)
+    product = coerced[0]
+    for arr in coerced[1:]:
+        product = product * arr
+    return float(np.sum(product))

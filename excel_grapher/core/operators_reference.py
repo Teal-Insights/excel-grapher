@@ -145,3 +145,20 @@ def reference_concat_array(
     for indices in np.ndindex(arr_left.shape):
         result[indices] = concat_scalars(arr_left[indices], arr_right[indices])
     return result
+
+
+def reference_sumproduct_arrays(arrays: list[np.ndarray]) -> float | XlError:
+    """Element-wise product reduction (C-order, fail-fast on ``to_number`` errors)."""
+    if not arrays:
+        return 0.0
+    shape = arrays[0].shape
+    result = 0.0
+    for indices in np.ndindex(shape):
+        product = 1.0
+        for arr in arrays:
+            number = to_number(arr[indices])
+            if isinstance(number, XlError):
+                return number
+            product *= number
+        result += product
+    return result

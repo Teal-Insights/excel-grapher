@@ -1,11 +1,20 @@
-"""Excel-style scalar and array operators (representation-agnostic)."""
+"""Excel-style scalar and array operators (representation-agnostic).
+
+Array operands try vectorized fast paths in ``operators_fastpath`` first; when
+size or cell-type guards fail, per-cell reference loops in ``operators_reference``
+preserve Excel coercion, broadcasting, and error semantics.
+"""
 
 from __future__ import annotations
 
 import numpy as np
 
 from .coercions import to_number
-from .operators_fastpath import try_fastpath_arithmetic_array, try_fastpath_compare_array
+from .operators_fastpath import (
+    try_fastpath_arithmetic_array,
+    try_fastpath_compare_array,
+    try_fastpath_concat_array,
+)
 from .operators_reference import (
     broadcast_pair,
     compare_scalars,
@@ -109,6 +118,9 @@ def _xl_concat(left: CellValue, right: CellValue) -> CellValue:
         if isinstance(pair, XlError):
             return pair
         arr_left, arr_right = pair
+        fast = try_fastpath_concat_array(arr_left, arr_right)
+        if fast is not None:
+            return fast
         return reference_concat_array(arr_left, arr_right)
 
     return _concat_scalars(left, right)
