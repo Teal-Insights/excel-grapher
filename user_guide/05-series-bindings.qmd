@@ -183,11 +183,18 @@ Optional:
 | `cell` | series | **supported** | Fixed address (e.g. country in `A2`) |
 | `column_header` | cell | **supported** | Header row for the data column |
 | `row_label` | series/cell | **supported** | Label text on the data row |
+| `row_hierarchy` | cell | **schema only** | Inferred hierarchy from row labels; not supported by resolver/codegen |
 | `constant` | series | **supported** | Fixed scalar (e.g. scalar layout key) |
 
 Normalization: `strip`, `strip_trailing_unit` (removes trailing `(…)` unit clauses from indicator text).
 
 ## Layouts
+
+`layout` is **optional**. Resolution and codegen use **bind kinds**, not the layout name. When set, `layout` expresses analyst intent and triggers layout-specific schema and validation rules:
+
+- `scalar` — relaxes empty-key rules for single-cell bindings
+- `series` — requires at least one cell-scoped dimension
+- `matrix` — requires at least two dimensions, including one cell-scoped dimension
 
 `layout: series` names a **one-dimensional** `data_range` with at least one **cell-scoped** dimension in `key`. Whether data runs across rows or columns is determined by **bind kinds** (`column_header`, `row_label`, …), not by the layout name. Borvelia’s wide-row example is one orientation; a single-column range with `row_label` for the varying dimension is equally valid.
 
@@ -195,7 +202,56 @@ Normalization: `strip`, `strip_trailing_unit` (removes trailing `(…)` unit cla
 |----------|--------|-------------|
 | `series` | **supported** | 1D `data_range` + bind geometry (row- or column-oriented) |
 | `scalar` | **supported** | Single editable cell |
-| `matrix` | **schema only** | Multi-row blocks — not implemented yet |
+| `matrix` | **supported** | Rectangular blocks; vertical keys from row binds, horizontal keys from column binds |
+
+Example (`layout: matrix` with explicit row and column binds):
+
+```yaml
+schema_version: "1.4.0"
+workbook: matrix_inputs.xlsx
+series:
+  - id: macro_matrix
+    sheet: Inputs
+    data_range: Inputs!B3:D5
+    layout: matrix
+    input:
+      setter:
+        name: set_macro_matrix
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - concept: INDICATOR
+          role: key
+          scope: cell
+          bind:
+            kind: row_label
+            label_column: A
+            read: string
+        - concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 2
+            read: int
+    key:
+      - INDICATOR
+      - TIME_PERIOD
+```
+
+Generated setters accept long/tidy `list[dict]` records:
+
+```python
+set_macro_matrix(ctx, [
+    {"INDICATOR": "GDP growth", "TIME_PERIOD": 2024, "OBS_VALUE": 1.5},
+    {"INDICATOR": "Inflation", "TIME_PERIOD": 2025, "OBS_VALUE": 2.8},
+])
+```
 
 ## Boolean and datetime types (1.4.0)
 
@@ -278,7 +334,7 @@ Generated code imports `datetime` and emits `datetime.datetime(...)` literals on
 | Version | Contents |
 |---------|----------|
 | **1.0.0–1.2.0** | `row_series`, `scalar`; supported bind kinds above. Use for production workbooks. |
-| **1.1.0** | Draft extensions (e.g. `matrix` in schema). Not fully implemented in tooling. |
+| **1.1.0** | Adds `matrix` layout (supported with explicit binds) and `row_hierarchy` bind (schema only). |
 | **1.2.0** | Optional `input` / `output` direction blocks and output `compute_*` functions. |
 | **1.3.0** | `row_series` renamed to `series` (no resolver/codegen change). Legacy `row_series` accepted at load time. |
 | **1.4.0** | `bool` and `datetime` read modes and dtypes; ISO date strings in manifest constants. |

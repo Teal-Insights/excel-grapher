@@ -22,7 +22,26 @@ def test_supported_schema_versions() -> None:
     assert frozenset({"1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"}) == SUPPORTED_SCHEMA_VERSIONS
 
 
-def test_validate_1_1_0_matrix_emits_implementation_warnings(tmp_path: Path) -> None:
+def test_validate_explicit_matrix_no_implementation_warnings(tmp_path: Path) -> None:
+    from tests.fixtures.series_bindings.matrix_helpers import write_matrix_explicit_workbook
+
+    wb_path = tmp_path / "matrix_inputs.xlsx"
+    write_matrix_explicit_workbook(wb_path)
+    graph = create_dependency_graph(
+        wb_path,
+        ["Inputs!B3", "Inputs!C3", "Inputs!D5"],
+        load_values=True,
+    )
+    bindings = load_series_bindings(FIXTURES / "matrix_explicit_1_4_0.yaml")
+    report = validate_series_bindings(graph, bindings)
+    codes = {i["code"] for i in report["issues"]}
+    assert "layout_not_implemented" not in codes
+    assert "bind_not_implemented" not in codes
+    assert "matrix" in IMPLEMENTED_LAYOUTS
+    assert "row_hierarchy" in PLANNED_BIND_KINDS
+
+
+def test_validate_country_block_matrix_emits_row_hierarchy_warning_only(tmp_path: Path) -> None:
     wb_path = tmp_path / "lic_inputs.xlsx"
     wb = xlsxwriter.Workbook(wb_path)
     ws = wb.add_worksheet("Inputs")
@@ -36,7 +55,7 @@ def test_validate_1_1_0_matrix_emits_implementation_warnings(tmp_path: Path) -> 
     bindings = load_series_bindings(FIXTURES / "matrix_country_block_1_1_0.yaml")
     report = validate_series_bindings(graph, bindings)
     codes = {i["code"] for i in report["issues"]}
-    assert "layout_not_implemented" in codes
+    assert "layout_not_implemented" not in codes
     assert "bind_not_implemented" in codes
-    assert "matrix" not in IMPLEMENTED_LAYOUTS
+    assert "matrix" in IMPLEMENTED_LAYOUTS
     assert "row_hierarchy" in PLANNED_BIND_KINDS

@@ -19,7 +19,7 @@ _FIELD_HINTS: dict[str, str] = {
     "key": "Add a key list naming the dimension concepts that identify each record.",
     "structure": "Add a structure block describing measure, dimensions, and attributes.",
     "data_range": "Add the Excel range this series covers (for example Sheet1!B3:Q3).",
-    "layout": "Add layout: scalar or series.",
+    "layout": "Optional layout intent: scalar, series, or matrix.",
     "input": "Add an input block with a setter for editable series.",
     "output": "Add an output block with a compute for derived series.",
 }

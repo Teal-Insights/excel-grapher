@@ -18,6 +18,7 @@ from excel_grapher.series_bindings import (
     expand_data_range,
     load_series_bindings,
     resolve_series_binding,
+    validate_bindings_document,
 )
 from excel_grapher.series_bindings.compute_codegen import emit_compute_function, emit_computes_block
 from excel_grapher.series_bindings.docstrings import (
@@ -594,3 +595,73 @@ def test_emit_computes_block_includes_datetime_import_when_needed(tmp_path: Path
     assert "import datetime" in code
     assert code.count("import datetime") == 1
     assert "datetime.datetime(2024, 1, 1, 0, 0)" in code
+
+
+def test_emit_compute_matrix_evaluates_formula_outputs(tmp_path: Path) -> None:
+    from tests.fixtures.series_bindings.matrix_helpers import (
+        macro_matrix_bindings_document,
+        write_matrix_explicit_workbook,
+    )
+
+    wb_path = tmp_path / "matrix_compute.xlsx"
+    write_matrix_explicit_workbook(wb_path, use_formulas=True)
+    bindings = validate_bindings_document(
+        macro_matrix_bindings_document(direction="output", workbook="matrix_compute.xlsx")
+    )
+    targets = expand_data_range("Inputs!B3:D5", workbook=wb_path)
+    graph = create_dependency_graph(wb_path, targets, load_values=True)
+
+    with CodeGenerator(graph) as gen:
+        code = gen.generate(
+            targets,
+            series_bindings=bindings,
+            bindings_workbook=wb_path,
+        )
+
+    assert "def compute_macro_matrix(" in code
+    ns: dict[str, object] = {}
+    exec(code, ns)
+    compute = cast(Callable[..., Records], ns["compute_macro_matrix"])
+    records = compute()
+    assert len(records) == 9
+    by_key = {
+        (record["INDICATOR"], record["TIME_PERIOD"]): record["OBS_VALUE"] for record in records
+    }
+    assert by_key[("GDP growth", 2024)] == pytest.approx(2.4)
+    assert by_key[("Inflation", 2025)] == pytest.approx(5.8)
+    assert by_key[("Debt", 2026)] == pytest.approx(107.6)
+
+
+def test_emit_compute_matrix_bindings_module_smoke(tmp_path: Path) -> None:
+    from excel_grapher.series_bindings.smoke import smoke_test_bindings_module
+    from excel_grapher.series_bindings.validate import validate_series_bindings
+    from excel_grapher.series_bindings.workflow import generate_bindings_modules
+    from tests.fixtures.series_bindings.matrix_helpers import (
+        macro_matrix_bindings_document,
+        write_matrix_explicit_workbook,
+    )
+
+    wb_path = tmp_path / "matrix_compute_smoke.xlsx"
+    write_matrix_explicit_workbook(wb_path, use_formulas=True)
+    bindings = validate_bindings_document(
+        macro_matrix_bindings_document(direction="output", workbook="matrix_compute_smoke.xlsx")
+    )
+    targets = expand_data_range("Inputs!B3:D5", workbook=wb_path)
+    graph = create_dependency_graph(wb_path, targets, load_values=True)
+    report = validate_series_bindings(graph, bindings, workbook=wb_path)
+    assert report["ok"] is True
+
+    files = generate_bindings_modules(
+        graph,
+        targets=targets,
+        bindings=bindings,
+        workbook=wb_path,
+    )
+    smoke_test_bindings_module(
+        files,
+        bindings=bindings,
+        graph=graph,
+        workbook=wb_path,
+        module_dir=tmp_path / "bindings_module",
+        package_name="bindings_module",
+    )

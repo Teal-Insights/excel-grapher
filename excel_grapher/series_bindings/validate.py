@@ -155,6 +155,57 @@ def _validate_series_structure(series: dict[str, Any]) -> list[ValidationIssue]:
     return issues
 
 
+def _cell_scoped_dimension_count(series: dict[str, Any]) -> int:
+    structure = series.get("structure") or {}
+    dimensions = structure.get("dimensions") or []
+    return sum(1 for dim in dimensions if isinstance(dim, dict) and dim.get("scope") == "cell")
+
+
+def _validate_layout_intent(series: dict[str, Any]) -> list[ValidationIssue]:
+    """Validate layout-specific structural intent when ``layout`` is declared."""
+    issues: list[ValidationIssue] = []
+    series_id = str(series.get("id", ""))
+    layout = series.get("layout")
+    if not isinstance(layout, str):
+        return issues
+
+    structure = series.get("structure") or {}
+    dimensions = structure.get("dimensions") or []
+    dimension_count = len([dim for dim in dimensions if isinstance(dim, dict)])
+    cell_scoped_count = _cell_scoped_dimension_count(series)
+
+    if layout == "matrix":
+        if dimension_count < 2:
+            issues.append(
+                _issue(
+                    "error",
+                    "layout_constraint_violation",
+                    "layout 'matrix' requires at least two structure.dimensions entries",
+                    series_id=series_id,
+                )
+            )
+        if cell_scoped_count < 1:
+            issues.append(
+                _issue(
+                    "error",
+                    "layout_constraint_violation",
+                    "layout 'matrix' requires at least one cell-scoped dimension",
+                    series_id=series_id,
+                )
+            )
+    elif layout == "series" and cell_scoped_count < 1:
+        issues.append(
+            _issue(
+                "error",
+                "layout_constraint_violation",
+                "layout 'series' requires at least one cell-scoped dimension",
+                series_id=series_id,
+            )
+        )
+
+    return issues
+
+
 def _validate_implementation_support(series: dict[str, Any]) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     series_id = str(series.get("id", ""))
@@ -322,6 +373,7 @@ def validate_series_bindings(
             continue
         series_id = str(series.get("id", ""))
         issues.extend(_validate_series_structure(series))
+        issues.extend(_validate_layout_intent(series))
         issues.extend(_validate_implementation_support(series))
         issues.extend(_validate_dtype_read_consistency(series, concept_dtypes=concept_dtypes))
 
