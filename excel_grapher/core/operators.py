@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from .coercions import to_number
-from .operators_fastpath import try_fastpath_arithmetic_array
+from .operators_fastpath import try_fastpath_arithmetic_array, try_fastpath_compare_array
 from .operators_reference import (
     broadcast_pair,
     compare_scalars,
@@ -39,6 +39,9 @@ def _xl_compare(op: str, left: CellValue, right: CellValue) -> CellValue:
         if isinstance(pair, XlError):
             return pair
         arr_left, arr_right = pair
+        fast = try_fastpath_compare_array(op, arr_left, arr_right)
+        if fast is not None:
+            return fast
         return reference_compare_array(op, arr_left, arr_right)
 
     return _compare_scalars(op, left, right)

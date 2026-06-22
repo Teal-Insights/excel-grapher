@@ -1,4 +1,4 @@
-"""Sprint 1: vectorized numeric arithmetic fast path for binary operators."""
+"""Vectorized numeric arithmetic fast path for binary operators."""
 
 from __future__ import annotations
 
@@ -19,11 +19,11 @@ from excel_grapher.core.operators_bench import (
 from excel_grapher.core.operators_reference import broadcast_pair, reference_arithmetic_array
 from excel_grapher.core.types import CellValue, XlError
 from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
-from tests.unit.core.test_sprint0_operators_baseline import BASELINE_PATH
+from tests.unit.core.test_operators_baseline import BASELINE_PATH
 from tests.unit.gaps.workbook_helpers import write_large_numeric_sumproduct
 
 LARGE_SHAPE = (2_000, 1)
-SPRINT1_MUL_1K_SPEEDUP_FACTOR = 5.0
+MUL_1K_BASELINE_SPEEDUP_FACTOR = 5.0
 
 
 def _as_ndarray(value: object) -> np.ndarray:
@@ -152,15 +152,15 @@ def test_large_numeric_sumproduct_eval_codegen_parity(tmp_path: Path) -> None:
 
 
 @pytest.mark.slow
-def test_xl_mul_numeric_1k_beats_sprint0_baseline() -> None:
-    """Numeric multiply fast path should materially exceed Sprint 0 loop throughput."""
+def test_xl_mul_numeric_1k_beats_baseline() -> None:
+    """Numeric multiply fast path should materially exceed the loop baseline throughput."""
     workload = next(w for w in build_workloads() if w.name == "xl_mul_numeric_1k")
-    sprint0 = load_baseline_document(BASELINE_PATH)["workloads"]
+    baseline_doc = load_baseline_document(BASELINE_PATH)["workloads"]
     baseline_cps = next(
-        entry["cells_per_sec"] for entry in sprint0 if entry["name"] == "xl_mul_numeric_1k"
+        entry["cells_per_sec"] for entry in baseline_doc if entry["name"] == "xl_mul_numeric_1k"
     )
     result = bench_workload(workload, warmup_rounds=2, bench_rounds=5)
-    assert result.cells_per_sec >= baseline_cps * SPRINT1_MUL_1K_SPEEDUP_FACTOR, (
+    assert result.cells_per_sec >= baseline_cps * MUL_1K_BASELINE_SPEEDUP_FACTOR, (
         f"xl_mul 1k: {result.cells_per_sec:.0f} cells/s, "
-        f"expected >= {baseline_cps * SPRINT1_MUL_1K_SPEEDUP_FACTOR:.0f}"
+        f"expected >= {baseline_cps * MUL_1K_BASELINE_SPEEDUP_FACTOR:.0f}"
     )

@@ -1,13 +1,18 @@
-"""Vectorized fast paths for Excel binary operators (numeric arithmetic)."""
+"""Vectorized fast paths for Excel binary operators (numeric arithmetic and compare)."""
 
 from __future__ import annotations
 
+import operator
+from dataclasses import dataclass
+
 import numpy as np
 
-from .coercions import to_number
+from .coercions import excel_casefold, to_number
 from .types import XlError
 
 _NUMERIC_CELL_TYPES = (int, float, np.integer, np.floating)
+_CASEFOLD_UFUNC = np.frompyfunc(excel_casefold, 1, 1)
+_MIN_COMPARE_FASTPATH_CELLS = 64
 
 
 def _try_asarray_float64(arr: np.ndarray) -> np.ndarray | None:
@@ -82,8 +87,192 @@ def _fastpath_pow(left: np.ndarray, right: np.ndarray) -> np.ndarray | XlError:
     return out.reshape(left.shape).astype(object)
 
 
+def _bool_result_as_object(values: np.ndarray) -> np.ndarray:
+    return values.astype(object)
+
+
 def _float_result_as_object(values: np.ndarray) -> np.ndarray:
     return values.astype(object)
+
+
+def _first_paired_error_c_order(
+    arr_left: np.ndarray,
+    arr_right: np.ndarray,
+) -> XlError | None:
+    """Return the first embedded ``XlError`` in C-order (left operand wins per cell)."""
+    for left_value, right_value in zip(arr_left.ravel(), arr_right.ravel(), strict=True):
+        if isinstance(left_value, XlError):
+            return left_value
+        if isinstance(right_value, XlError):
+            return right_value
+    return None
+
+
+@dataclass(frozen=True)
+class _StringArrayMeta:
+    """Summary of a homogeneous string ndarray gathered in one C-order scan."""
+
+    is_constant: bool
+    constant_value: str
+    ascii_only: bool
+
+
+def _string_array_meta(arr: np.ndarray) -> _StringArrayMeta | None:
+    """Classify a string-only ndarray, or return None when any cell is not ``str``."""
+    if arr.dtype.kind in "SU" or arr.dtype == object:
+        flat = arr.ravel()
+    else:
+        return None
+
+    if flat.size == 0:
+        return _StringArrayMeta(is_constant=True, constant_value="", ascii_only=True)
+
+    first = flat[0]
+    if not isinstance(first, str):
+        return None
+
+    if flat.size == 1 or (flat[-1] is first and flat[flat.size // 2] is first):
+        return _StringArrayMeta(
+            is_constant=True,
+            constant_value=first,
+            ascii_only=first.isascii(),
+        )
+
+    is_constant = True
+    ascii_only = first.isascii()
+    for value in flat[1:]:
+        if not isinstance(value, str):
+            return None
+        if value != first:
+            is_constant = False
+        if not value.isascii():
+            ascii_only = False
+
+    return _StringArrayMeta(
+        is_constant=is_constant,
+        constant_value=first,
+        ascii_only=ascii_only,
+    )
+
+
+def _as_unicode_strings(arr: np.ndarray) -> np.ndarray:
+    if arr.dtype.kind in "SU":
+        return arr
+    return np.asarray(arr, dtype=np.str_)
+
+
+def _fold_string_column(arr: np.ndarray, meta: _StringArrayMeta) -> np.ndarray:
+    unicode_arr = _as_unicode_strings(arr)
+    if meta.ascii_only:
+        return np.char.lower(unicode_arr)
+    return np.asarray(_CASEFOLD_UFUNC(unicode_arr), dtype=np.str_)
+
+
+def _fold_scalar_string(value: str, *, ascii_only: bool) -> str:
+    folded = excel_casefold(value)
+    return folded.lower() if ascii_only else folded
+
+
+def _compare_folded_strings(
+    op: str,
+    left_folded: np.ndarray,
+    right_folded: np.ndarray,
+) -> np.ndarray:
+    if op == "=":
+        return _bool_result_as_object(np.char.equal(left_folded, right_folded))
+    if op == "<>":
+        return _bool_result_as_object(np.char.not_equal(left_folded, right_folded))
+    if op == "<":
+        return _bool_result_as_object(np.char.less(left_folded, right_folded))
+    if op == ">":
+        return _bool_result_as_object(np.char.greater(left_folded, right_folded))
+    if op == "<=":
+        return _bool_result_as_object(np.char.less_equal(left_folded, right_folded))
+    if op == ">=":
+        return _bool_result_as_object(np.char.greater_equal(left_folded, right_folded))
+    raise ValueError(f"Unknown comparison operator: {op}")
+
+
+def _try_string_compare_fastpath(
+    op: str,
+    arr_left: np.ndarray,
+    arr_right: np.ndarray,
+) -> np.ndarray | None:
+    """Vectorized casefolded string compare when both sides are plain strings."""
+    left_meta = _string_array_meta(arr_left)
+    if left_meta is None:
+        return None
+    right_meta = _string_array_meta(arr_right)
+    if right_meta is None:
+        return None
+
+    if right_meta.is_constant and not left_meta.is_constant:
+        left_folded = _fold_string_column(arr_left, left_meta)
+        right_folded = _fold_scalar_string(
+            right_meta.constant_value,
+            ascii_only=right_meta.ascii_only,
+        )
+        return _compare_folded_strings(op, left_folded, np.asarray(right_folded))
+    if left_meta.is_constant and not right_meta.is_constant:
+        right_folded = _fold_string_column(arr_right, right_meta)
+        left_folded = _fold_scalar_string(
+            left_meta.constant_value,
+            ascii_only=left_meta.ascii_only,
+        )
+        return _compare_folded_strings(op, np.asarray(left_folded), right_folded)
+
+    left_folded = _fold_string_column(arr_left, left_meta)
+    right_folded = _fold_string_column(arr_right, right_meta)
+    return _compare_folded_strings(op, left_folded, right_folded)
+
+
+_COMPARE_UFUNCS = {
+    "=": operator.eq,
+    "<>": operator.ne,
+    "<": operator.lt,
+    ">": operator.gt,
+    "<=": operator.le,
+    ">=": operator.ge,
+}
+
+
+def _numpy_compare(op: str, left: np.ndarray, right: np.ndarray) -> np.ndarray:
+    compare = _COMPARE_UFUNCS[op]
+    return _bool_result_as_object(compare(left, right))
+
+
+def try_fastpath_compare_array(
+    op: str,
+    arr_left: np.ndarray,
+    arr_right: np.ndarray,
+) -> np.ndarray | XlError | None:
+    """Apply a vectorized compare fast path, or return None to use the reference loop.
+
+    Dispatch tiers (arrays with at least ``_MIN_COMPARE_FASTPATH_CELLS`` elements):
+
+    1. Fail-fast scan for embedded ``XlError`` values (C-order, left wins per cell).
+    2. String path when both sides are plain ``str`` cells (scalar-broadcast aware).
+    3. Numeric path when both sides batch-coerce to float64.
+
+    Smaller arrays and mixed-type cells fall through to the per-cell reference loop.
+    """
+    if arr_left.size < _MIN_COMPARE_FASTPATH_CELLS:
+        return None
+
+    error = _first_paired_error_c_order(arr_left, arr_right)
+    if error is not None:
+        return error
+
+    string_result = _try_string_compare_fastpath(op, arr_left, arr_right)
+    if string_result is not None:
+        return string_result
+
+    left_numeric = batch_coerce_to_float64(arr_left)
+    right_numeric = batch_coerce_to_float64(arr_right)
+    if left_numeric is not None and right_numeric is not None:
+        return _numpy_compare(op, left_numeric, right_numeric)
+
+    return None
 
 
 def try_fastpath_arithmetic_array(

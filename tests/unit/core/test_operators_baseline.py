@@ -1,4 +1,4 @@
-"""Sprint 0 baseline for vectorized binary-operator work.
+"""Baseline semantics and throughput for vectorized binary-operator work.
 
 Records the per-cell loop semantics contract, reference-path equivalence,
 and checked-in throughput numbers that later sprints must beat while preserving
@@ -17,7 +17,7 @@ Semantics contract (array paths):
 - **Broadcasting**: shape mismatch returns ``VALUE``; scalars broadcast with
   ``np.full(..., dtype=object)``.
 
-Later sprints should target **>=10x** ``cells_per_sec`` on 10K-cell compare and
+Fast-path work should target **>=10x** ``cells_per_sec`` on 10K-cell compare and
 multiply workloads while keeping gap-sized (~15 cell) paths within ~5% of this
 baseline.
 """

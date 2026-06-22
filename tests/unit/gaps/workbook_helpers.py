@@ -100,3 +100,24 @@ def write_large_numeric_sumproduct(path: Path, *, rows: int = 500) -> Path:
         )
 
     return write_workbook(path, populate)
+
+
+def write_large_string_criteria_sumproduct(path: Path, *, rows: int = 2_000) -> Path:
+    """``SUMPRODUCT`` over large string-equality criteria (Sprint 2 parity fixture)."""
+
+    def populate(workbook: xlsxwriter.Workbook) -> None:
+        ws = workbook.add_worksheet("Data")
+        for row in range(rows):
+            category = "Software" if row % 2 == 0 else "Hardware"
+            ws.write_string(row, 0, category)
+            ws.write_number(row, 1, 500.0)
+        last_row = rows
+        ws.write_formula(
+            0,
+            2,
+            f'=SUMPRODUCT((A1:A{last_row}="Software")*B1:B{last_row})',
+            None,
+            500_000.0,
+        )
+
+    return write_workbook(path, populate)
