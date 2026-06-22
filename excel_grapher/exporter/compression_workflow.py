@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -18,7 +18,9 @@ from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.similarity_compression import (
     EmbeddingProvider,
     MockEmbeddingProvider,
+    OpenAIEmbeddingProvider,
     PackingScore,
+    SimilarityCompressionConfig,
 )
 
 CompressionMethod = Literal["similarity", "optimal", "identity"]
@@ -88,6 +90,7 @@ def compress_graph(
     *,
     method: CompressionMethod = "similarity",
     provider: EmbeddingProvider | None = None,
+    config: SimilarityCompressionConfig | None = None,
     preserve: set[str] | None = None,
 ) -> tuple[ProjectionResult, CompressionReport]:
     """Compress ``graph`` with the requested projection method."""
@@ -99,6 +102,7 @@ def compress_graph(
             graph,
             preserve=preserve,
             provider=embedder,
+            config=config,
         )
         manifest = build_similarity_projection_manifest(graph, selection.simulation.record)
         projection = ProjectionResult(
@@ -149,6 +153,7 @@ def compress_workbook(
     *,
     method: CompressionMethod = "similarity",
     provider: EmbeddingProvider | None = None,
+    config: SimilarityCompressionConfig | None = None,
     preserve: set[str] | None = None,
     load_values: bool = True,
 ) -> tuple[ProjectionResult, CompressionReport]:
@@ -158,6 +163,7 @@ def compress_workbook(
         graph,
         method=method,
         provider=provider,
+        config=config,
         preserve=preserve,
     )
     report = CompressionReport(
@@ -204,3 +210,50 @@ def format_report_text(report: CompressionReport) -> str:
         sources = ", ".join(group["collapsed_sources"])
         lines.append(f"  {retained} <- [{sources}]")
     return "\n".join(lines)
+
+
+def build_embedding_provider(
+    name: str,
+    *,
+    model: str = "text-embedding-3-small",
+) -> EmbeddingProvider:
+    """Construct an embedding provider from a CLI-style name."""
+    if name == "mock":
+        return MockEmbeddingProvider()
+    if name == "openai":
+        import importlib
+
+        try:
+            importlib.import_module("openai")
+        except ImportError as exc:
+            raise ImportError(
+                "OpenAIEmbeddingProvider requires the optional `embeddings` extra: "
+                "uv add --optional embeddings openai"
+            ) from exc
+        return OpenAIEmbeddingProvider(model=model)
+    raise ValueError(f"Unsupported embedding provider: {name!r}")
+
+
+def build_similarity_config(
+    *,
+    max_candidates: int | None = None,
+    top_n_packings: int | None = None,
+    score_flatness_epsilon: float | None = None,
+    fallback_to_optimal: bool | None = None,
+    embedding_model: str | None = None,
+) -> SimilarityCompressionConfig | None:
+    """Build a ``SimilarityCompressionConfig`` when any override is set."""
+    updates: dict[str, int | float | bool | str] = {}
+    if max_candidates is not None:
+        updates["max_candidates"] = max_candidates
+    if top_n_packings is not None:
+        updates["top_n_packings"] = top_n_packings
+    if score_flatness_epsilon is not None:
+        updates["score_flatness_epsilon"] = score_flatness_epsilon
+    if fallback_to_optimal is not None:
+        updates["fallback_to_optimal"] = fallback_to_optimal
+    if embedding_model is not None:
+        updates["embedding_model"] = embedding_model
+    if not updates:
+        return None
+    return replace(SimilarityCompressionConfig(), **updates)

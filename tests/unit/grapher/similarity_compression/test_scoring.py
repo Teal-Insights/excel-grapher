@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from excel_grapher import create_dependency_graph
 from excel_grapher.grapher.similarity_compression import (
     MockEmbeddingProvider,
     Packing,
+    SimilarityCompressionConfig,
     cosine_distance,
     embed_texts,
     enumerate_compressible_candidates,
@@ -112,6 +114,71 @@ def test_score_packings_shares_embedding_work(tmp_path: Path) -> None:
     packings = enumerate_packings(enumerate_compressible_candidates(graph))[:3]
     score_packings(graph, packings, provider=provider)
     assert provider.call_count == 1
+
+
+def test_select_best_packing_flat_scores_falls_back_to_max_reduction(tmp_path: Path) -> None:
+    """When similarity scores tie, prefer the packing with greatest node reduction."""
+    path = tmp_path / "tiny_dsa.xlsx"
+    build_tiny_dsa_workbook(path)
+    graph = create_dependency_graph(
+        path,
+        list(TINY_DSA_TARGETS),
+        load_values=True,
+        capture_dependency_provenance=True,
+    )
+    packings = enumerate_packings(enumerate_compressible_candidates(graph))
+    assert len(packings) > 1
+    reductions = {packing.total_reduction for packing in packings}
+    assert len(reductions) > 1
+
+    flat_config = SimilarityCompressionConfig(
+        alpha=0.0,
+        beta=0.0,
+        gamma=0.0,
+        fallback_to_optimal=True,
+        score_flatness_epsilon=1.0,
+    )
+    score, _simulation = select_best_packing(
+        graph,
+        packings,
+        provider=MockEmbeddingProvider(),
+        config=flat_config,
+    )
+    assert score.total_reduction == max(reductions)
+    assert score.total_reduction == 18
+
+
+def test_select_best_packing_flat_scores_disabled_keeps_score_order(tmp_path: Path) -> None:
+    path = tmp_path / "tiny_dsa.xlsx"
+    build_tiny_dsa_workbook(path)
+    graph = create_dependency_graph(
+        path,
+        list(TINY_DSA_TARGETS),
+        load_values=True,
+        capture_dependency_provenance=True,
+    )
+    packings = enumerate_packings(enumerate_compressible_candidates(graph))
+    flat_config = SimilarityCompressionConfig(
+        alpha=0.0,
+        beta=0.0,
+        gamma=0.0,
+        fallback_to_optimal=False,
+        score_flatness_epsilon=1.0,
+    )
+    with_fallback, _ = select_best_packing(
+        graph,
+        packings,
+        provider=MockEmbeddingProvider(),
+        config=replace(flat_config, fallback_to_optimal=True),
+    )
+    without_fallback, _ = select_best_packing(
+        graph,
+        packings,
+        provider=MockEmbeddingProvider(),
+        config=flat_config,
+    )
+    assert with_fallback.total_reduction == 18
+    assert without_fallback.final_score == with_fallback.final_score
 
 
 def _candidate(root: str, internals: tuple[str, ...]) -> CompressibleCandidate:
