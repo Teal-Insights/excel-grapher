@@ -190,6 +190,12 @@ Normalization: `strip`, `strip_trailing_unit` (removes trailing `(…)` unit cla
 
 ## Layouts
 
+`layout` is **optional**. Resolution and codegen use **bind kinds**, not the layout name. When set, `layout` expresses analyst intent and triggers layout-specific schema and validation rules:
+
+- `scalar` — relaxes empty-key rules for single-cell bindings
+- `series` — requires at least one cell-scoped dimension
+- `matrix` — requires at least two dimensions, including one cell-scoped dimension
+
 `layout: series` names a **one-dimensional** `data_range` with at least one **cell-scoped** dimension in `key`. Whether data runs across rows or columns is determined by **bind kinds** (`column_header`, `row_label`, …), not by the layout name. Borvelia’s wide-row example is one orientation; a single-column range with `row_label` for the varying dimension is equally valid.
 
 | `layout` | Status | Description |

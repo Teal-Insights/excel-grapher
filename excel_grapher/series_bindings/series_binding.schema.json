@@ -335,7 +335,7 @@
     "Layout": {
       "type": "string",
       "enum": ["series", "scalar", "matrix"],
-      "description": "series: one-dimensional data_range with at least one cell-scoped dimension; orientation (row vs column) comes from bind kinds (e.g. column_header vs row_label), not the layout name. scalar: single leaf. matrix (1.1.0): rectangular multi-row data_range; vertical keys from row binds and horizontal keys from column binds when using implemented bind kinds."
+      "description": "Optional declarative intent for analysts and layout-specific validation. Resolution and codegen use bind kinds, not layout name. series: one-dimensional data_range with at least one cell-scoped dimension when declared. scalar: single leaf. matrix: rectangular multi-row data_range with at least two dimensions and a cell-scoped dimension when declared."
     },
     "SeriesBinding": {
       "type": "object",
@@ -344,7 +344,6 @@
         "id",
         "sheet",
         "data_range",
-        "layout",
         "structure",
         "key"
       ],
@@ -363,7 +362,10 @@
           "$ref": "#/$defs/DataRange",
           "description": "Numeric input cells for this setter; codegen intersects with graph leaves."
         },
-        "layout": { "$ref": "#/$defs/Layout" },
+        "layout": {
+          "$ref": "#/$defs/Layout",
+          "description": "Optional analyst-facing layout intent; triggers layout-specific schema and validation rules when set."
+        },
         "editable": {
           "type": "boolean",
           "default": true

@@ -598,75 +598,15 @@ def test_emit_computes_block_includes_datetime_import_when_needed(tmp_path: Path
 
 
 def test_emit_compute_matrix_evaluates_formula_outputs(tmp_path: Path) -> None:
-    wb_path = tmp_path / "matrix_compute.xlsx"
-    wb = xlsxwriter.Workbook(wb_path)
-    ws = wb.add_worksheet("Inputs")
-    ws.write("A2", "Indicator")
-    matrix_rows = (
-        ("GDP growth", [1.2, 1.4, 1.5]),
-        ("Inflation", [3.1, 2.9, 2.7]),
-        ("Debt", [55.0, 54.2, 53.8]),
+    from tests.fixtures.series_bindings.matrix_helpers import (
+        macro_matrix_bindings_document,
+        write_matrix_explicit_workbook,
     )
-    for col_offset, period in enumerate([2024, 2025, 2026]):
-        ws.write_number(1, 1 + col_offset, period)
-    for row_offset, (indicator, values) in enumerate(matrix_rows):
-        excel_row = 2 + row_offset
-        ws.write(excel_row, 0, indicator)
-        for col_offset, value in enumerate(values):
-            ws.write_formula(
-                excel_row,
-                1 + col_offset,
-                f"={value}*2",
-                None,
-                float(value) * 2.0,
-            )
-    wb.close()
 
+    wb_path = tmp_path / "matrix_compute.xlsx"
+    write_matrix_explicit_workbook(wb_path, use_formulas=True)
     bindings = validate_bindings_document(
-        {
-            "schema_version": "1.4.0",
-            "workbook": "matrix_compute.xlsx",
-            "series": [
-                {
-                    "id": "macro_matrix",
-                    "sheet": "Inputs",
-                    "data_range": "Inputs!B3:D5",
-                    "layout": "matrix",
-                    "output": {"compute": {"name": "compute_macro_matrix"}},
-                    "structure": {
-                        "measure": {
-                            "concept": "OBS_VALUE",
-                            "dtype": "float",
-                            "bind": {"kind": "data_cell", "read": "float"},
-                        },
-                        "dimensions": [
-                            {
-                                "concept": "INDICATOR",
-                                "role": "key",
-                                "scope": "cell",
-                                "bind": {
-                                    "kind": "row_label",
-                                    "label_column": "A",
-                                    "read": "string",
-                                    "normalize": "strip",
-                                },
-                            },
-                            {
-                                "concept": "TIME_PERIOD",
-                                "role": "key",
-                                "scope": "cell",
-                                "bind": {
-                                    "kind": "column_header",
-                                    "header_row": 2,
-                                    "read": "int",
-                                },
-                            },
-                        ],
-                    },
-                    "key": ["INDICATOR", "TIME_PERIOD"],
-                }
-            ],
-        }
+        macro_matrix_bindings_document(direction="output", workbook="matrix_compute.xlsx")
     )
     targets = expand_data_range("Inputs!B3:D5", workbook=wb_path)
     graph = create_dependency_graph(wb_path, targets, load_values=True)
@@ -696,76 +636,15 @@ def test_emit_compute_matrix_bindings_module_smoke(tmp_path: Path) -> None:
     from excel_grapher.series_bindings.smoke import smoke_test_bindings_module
     from excel_grapher.series_bindings.validate import validate_series_bindings
     from excel_grapher.series_bindings.workflow import generate_bindings_modules
+    from tests.fixtures.series_bindings.matrix_helpers import (
+        macro_matrix_bindings_document,
+        write_matrix_explicit_workbook,
+    )
 
     wb_path = tmp_path / "matrix_compute_smoke.xlsx"
-    wb = xlsxwriter.Workbook(wb_path)
-    ws = wb.add_worksheet("Inputs")
-    ws.write("A2", "Indicator")
-    matrix_rows = (
-        ("GDP growth", [1.2, 1.4, 1.5]),
-        ("Inflation", [3.1, 2.9, 2.7]),
-        ("Debt", [55.0, 54.2, 53.8]),
-    )
-    for col_offset, period in enumerate([2024, 2025, 2026]):
-        ws.write_number(1, 1 + col_offset, period)
-    for row_offset, (indicator, values) in enumerate(matrix_rows):
-        excel_row = 2 + row_offset
-        ws.write(excel_row, 0, indicator)
-        for col_offset, value in enumerate(values):
-            ws.write_formula(
-                excel_row,
-                1 + col_offset,
-                f"={value}*2",
-                None,
-                float(value) * 2.0,
-            )
-    wb.close()
-
+    write_matrix_explicit_workbook(wb_path, use_formulas=True)
     bindings = validate_bindings_document(
-        {
-            "schema_version": "1.4.0",
-            "workbook": "matrix_compute_smoke.xlsx",
-            "series": [
-                {
-                    "id": "macro_matrix",
-                    "sheet": "Inputs",
-                    "data_range": "Inputs!B3:D5",
-                    "layout": "matrix",
-                    "output": {"compute": {"name": "compute_macro_matrix"}},
-                    "structure": {
-                        "measure": {
-                            "concept": "OBS_VALUE",
-                            "dtype": "float",
-                            "bind": {"kind": "data_cell", "read": "float"},
-                        },
-                        "dimensions": [
-                            {
-                                "concept": "INDICATOR",
-                                "role": "key",
-                                "scope": "cell",
-                                "bind": {
-                                    "kind": "row_label",
-                                    "label_column": "A",
-                                    "read": "string",
-                                    "normalize": "strip",
-                                },
-                            },
-                            {
-                                "concept": "TIME_PERIOD",
-                                "role": "key",
-                                "scope": "cell",
-                                "bind": {
-                                    "kind": "column_header",
-                                    "header_row": 2,
-                                    "read": "int",
-                                },
-                            },
-                        ],
-                    },
-                    "key": ["INDICATOR", "TIME_PERIOD"],
-                }
-            ],
-        }
+        macro_matrix_bindings_document(direction="output", workbook="matrix_compute_smoke.xlsx")
     )
     targets = expand_data_range("Inputs!B3:D5", workbook=wb_path)
     graph = create_dependency_graph(wb_path, targets, load_values=True)
