@@ -7,6 +7,7 @@ import sys
 from collections.abc import Sequence
 
 from excel_grapher.cli import bindings
+from excel_grapher.cli import project as project_cli
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -14,6 +15,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="excel-grapher")
     subparsers = parser.add_subparsers(dest="command", required=True)
     bindings.register(subparsers)
+    project_cli.register(subparsers)
     return parser
 
 
@@ -23,6 +25,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(list(argv) if argv is not None else None)
     if args.command == "bindings":
         return bindings.dispatch(args)
+    if args.command == "project":
+        return project_cli.dispatch(args)
     parser.error(f"unknown command: {args.command!r}")
     return 2
 

@@ -139,6 +139,50 @@ projected graph (see the contributing guide), and compose steps with `apply_proj
 In-place `DependencyGraph.compress_identity_transits()` remains available for destructive
 graph simplification; prefer projections for export and viz workflows.
 
+### Optimal compression
+
+`OptimalCompression` greedily removes identity transits and safely inlinable nodes with a
+single dependent. It maximizes node reduction but may stop early when substitution is
+blocked (for example on a `-C16` term in a shocked-year root):
+
+```python
+from excel_grapher.exporter import CodeGenerator, OptimalCompression
+
+projection = OptimalCompression().project(graph)
+modules = CodeGenerator(projection).generate_modules(targets)
+```
+
+### Similarity-aware compression
+
+`SimilarityAwareCompression` searches over non-overlapping compressible subgraph
+packings, simulates each candidate packing, and scores collapsed root formulas for
+parallel-family tightness (embedding distance within structural clusters). Use it when
+you want export graphs whose collapsed formulas are good candidates for later
+parameterization (for example five nearly identical shocked-year blocks):
+
+```python
+from excel_grapher.exporter import CodeGenerator, SimilarityAwareCompression
+from excel_grapher.grapher.similarity_compression import MockEmbeddingProvider
+
+projection = SimilarityAwareCompression(provider=MockEmbeddingProvider()).project(graph)
+modules = CodeGenerator(projection).generate_modules(targets)
+```
+
+The default `MockEmbeddingProvider` is deterministic and needs no API keys. For live
+embeddings, install the optional `embeddings` extra and pass `OpenAIEmbeddingProvider()`.
+
+Offline analysis from the CLI:
+
+```bash
+uv run excel-grapher project compress workbook.xlsx \
+  --targets Engine!C20 Engine!D20 \
+  --method similarity \
+  --json
+```
+
+`SimilarityPackingProjection` applies one pre-selected packing when you already know
+which groups to collapse.
+
 ## Exported code sketch
 
 A (truncated) sketch of the exported code:
