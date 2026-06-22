@@ -34,6 +34,7 @@ from excel_grapher.grapher.compression import (
 from excel_grapher.grapher.graph import CycleError, CycleReport, DependencyGraph, NodeKey
 from excel_grapher.grapher.guard import GuardExpr
 from excel_grapher.grapher.node import NodeView
+from excel_grapher.grapher.similarity_compression.packings import Packing
 
 __all__ = [
     "BaseProjectionManifest",
@@ -46,11 +47,14 @@ __all__ = [
     "ProjectionManifest",
     "ProjectionResult",
     "ProjectionStep",
+    "SimilarityPackingProjection",
     "apply_projection",
     "build_forwarding_projection_manifest",
     "build_optimal_projection_manifest",
+    "build_similarity_projection_manifest",
     "project_identity_transits",
     "project_optimal",
+    "project_similarity_packing",
     "register_projection_manifest",
     "resolve_projection_manifest",
     "unregister_projection_manifest",
@@ -385,6 +389,31 @@ def build_optimal_projection_manifest(
     record: OptimalCompressionRecord,
 ) -> BaseProjectionManifest:
     """Build a manifest from an optimal compression record."""
+    return _build_compression_projection_manifest(
+        original_graph,
+        record,
+        kind="optimal_compression",
+    )
+
+
+def build_similarity_projection_manifest(
+    original_graph: DependencyGraph,
+    record: OptimalCompressionRecord,
+) -> BaseProjectionManifest:
+    """Build a manifest from a similarity-aware packing simulation record."""
+    return _build_compression_projection_manifest(
+        original_graph,
+        record,
+        kind="similarity_aware_compression",
+    )
+
+
+def _build_compression_projection_manifest(
+    original_graph: DependencyGraph,
+    record: OptimalCompressionRecord,
+    *,
+    kind: str,
+) -> BaseProjectionManifest:
     forwarding_map = _resolve_alias_chain(record.forwarded_removed)
 
     retained_sources: dict[str, list[str]] = {}
@@ -416,7 +445,7 @@ def build_optimal_projection_manifest(
     )
 
     return BaseProjectionManifest(
-        kind="optimal_compression",
+        kind=kind,
         forwarding_map=forwarding_map,
         retained_to_collapsed_sources=retained_to_collapsed_sources,
         removed_node_snapshots=removed_node_snapshots,
@@ -435,6 +464,22 @@ def project_optimal(
     record = OptimalCompressionRecord()
     projected.compress_optimal(preserve=preserve, record=record)
     return projected, build_optimal_projection_manifest(graph, record)
+
+
+def project_similarity_packing(
+    graph: DependencyGraph,
+    packing: Packing,
+    *,
+    preserve: set[str] | None = None,
+) -> tuple[DependencyGraph, BaseProjectionManifest]:
+    """Return a projected copy of `graph` with one packing applied."""
+    from excel_grapher.grapher.similarity_compression.simulate import simulate_packing
+
+    simulation = simulate_packing(graph, packing, preserve=preserve)
+    return simulation.projected_graph, build_similarity_projection_manifest(
+        graph,
+        simulation.record,
+    )
 
 
 @dataclass
@@ -554,6 +599,27 @@ class OptimalCompression:
         )
 
 
+@dataclass(frozen=True)
+class SimilarityPackingProjection:
+    """Apply a pre-selected similarity-aware packing to a graph."""
+
+    packing: Packing
+    preserve: set[str] | None = None
+
+    def project(self, graph: DependencyGraph) -> ProjectionResult:
+        """Build a non-mutating projection for one similarity packing."""
+        projected, manifest = project_similarity_packing(
+            graph,
+            self.packing,
+            preserve=self.preserve,
+        )
+        return ProjectionResult(
+            original_graph=graph,
+            projected_graph=projected,
+            manifest=manifest,
+        )
+
+
 class ProjectionStep(Protocol):
     """Projection step that builds a `ProjectionResult` from a graph."""
 
@@ -615,5 +681,6 @@ def apply_projection(
 
 register_projection_manifest("identity_transit", BaseProjectionManifest.from_dict)
 register_projection_manifest("optimal_compression", BaseProjectionManifest.from_dict)
+register_projection_manifest("similarity_aware_compression", BaseProjectionManifest.from_dict)
 register_projection_manifest("empty", BaseProjectionManifest.from_dict)
 register_projection_manifest("composite", CompositeProjectionManifest.from_dict)
