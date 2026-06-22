@@ -939,7 +939,7 @@ class TestGeneratedCodeExecution:
             _ = compute_all(ctx=ctx, inputs={"Sheet1!A1": 99.0})
 
     def test_generated_code_partial_cache_invalidation_on_input_change(self):
-        """Changing an input should invalidate only dependent cached cells."""
+        """Slim exports recompute via fresh context; full exports invalidate selectively."""
         graph = _make_graph(
             _make_node("Sheet1!A1", None, 10.0),
             _make_node("Sheet1!B1", "=Sheet1!A1*2", None),
@@ -954,6 +954,8 @@ class TestGeneratedCodeExecution:
         exec(code, namespace)
         make_context = namespace["make_context"]
         compute_all = namespace["compute_all"]
+
+        assert "def set_inputs(" not in code
 
         call_count = {"C1": 0, "E1": 0}
         original_c1 = namespace["cell_sheet1_c1"]
@@ -976,17 +978,10 @@ class TestGeneratedCodeExecution:
         assert result["Sheet1!E1"] == 4.0
         assert call_count == {"C1": 1, "E1": 1}
 
-        ctx.set_inputs({"Sheet1!A1": 7.0})
-        assert "Sheet1!A1" not in ctx.cache
-        assert "Sheet1!B1" not in ctx.cache
-        assert "Sheet1!C1" not in ctx.cache
-        assert "Sheet1!D1" in ctx.cache
-        assert "Sheet1!E1" in ctx.cache
-
-        result = compute_all(ctx=ctx)
+        result = compute_all(inputs={"Sheet1!A1": 7.0})
         assert result["Sheet1!C1"] == 15.0
         assert result["Sheet1!E1"] == 4.0
-        assert call_count == {"C1": 2, "E1": 1}
+        assert call_count == {"C1": 2, "E1": 2}
 
     def test_generated_code_with_sum(self):
         """Generated code with SUM function should execute correctly."""

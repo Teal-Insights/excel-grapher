@@ -1,18 +1,16 @@
-"""Sprint 0 baseline for gating dependency-tracking in ``emit_runtime`` exports (#238).
+"""Codegen emission contract for gating dependency tracking in exports (#238).
 
-Records the current always-on invalidation scaffold and defines the Sprint 2
-target: non-iterative exports should omit ``deps`` / ``reverse_deps``,
-``_record_dependency``, ``invalidate``, ``set_inputs``, and the
+Non-iterative exports without input-direction series bindings omit ``deps`` /
+``reverse_deps``, ``_record_dependency``, ``invalidate``, ``set_inputs``, and the
 ``ctx._record_dependency`` call site in ``_evaluate_address``.
 
-Sprint 0 baseline (minimal non-iterative export, ``S!A1`` leaf + ``S!B1`` formula):
+Minimal non-iterative export baseline (``S!A1`` leaf + ``S!B1`` formula):
 
-- **416 total lines**; embedded runtime **356 lines** (~86% of export)
-- **41 dep-tracking lines** in ``EvalContext`` + one ``_record_dependency`` call site
-- **70 cache-eval scaffold lines** (``_evaluate_address``, ``xl_cell``, ``xl_eval``)
+- **356 total lines**; embedded runtime **296 lines** (~83% of export)
+- **0 dep-tracking lines**
+- **54 cache-eval scaffold lines** (``_evaluate_address``, ``xl_cell``, ``xl_eval``)
 
-Sprint 2 should drive ``dep_tracking_lines`` to **0** and lower the scaffold budget
-toward **54** lines (see ``SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET``).
+Iterative exports and series bindings with input setters retain the full scaffold.
 """
 
 from __future__ import annotations
@@ -21,8 +19,6 @@ import json
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, cast
-
-import pytest
 
 from excel_grapher import DependencyGraph, Node, create_dependency_graph
 from excel_grapher.core.address_keys import parse_address
@@ -37,7 +33,6 @@ from tests.integration.utils.parity_harness import (
     count_cache_eval_scaffold_lines,
     count_dep_tracking_lines,
     count_embedded_runtime_lines,
-    dep_tracking_hits,
 )
 
 BASELINE_PATH = (
@@ -80,15 +75,15 @@ def test_dep_tracking_baseline_fixture_matches_schema() -> None:
     assert document["version"] == DEP_TRACKING_BASELINE_VERSION
     metrics = document["minimal_non_iterative_export"]
     assert isinstance(metrics, dict)
-    assert metrics["dep_tracking_lines"] == 41
-    assert metrics["embedded_runtime_lines"] == 354
+    assert metrics["dep_tracking_lines"] == 0
+    assert metrics["embedded_runtime_lines"] == 296
     targets = document["sprint2_targets"]
     assert targets["dep_tracking_lines"] == 0
     assert targets["cache_eval_scaffold_line_budget"] == SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET
 
 
-def test_minimal_non_iterative_export_matches_sprint0_baseline_metrics() -> None:
-    """Record current emission size before gating dep tracking."""
+def test_minimal_non_iterative_export_matches_baseline_metrics() -> None:
+    """Record slim emission size for the canonical minimal export."""
     code = _minimal_non_iterative_code()
     baseline = _load_baseline()["minimal_non_iterative_export"]
 
@@ -104,29 +99,11 @@ def test_minimal_non_iterative_export_matches_sprint0_baseline_metrics() -> None
     assert round(100 * embedded_lines / total_lines, 1) == baseline["embedded_runtime_share_pct"]
 
 
-def test_minimal_non_iterative_export_currently_emits_dep_tracking() -> None:
-    """Sprint 0 documents today's always-on invalidation scaffold (pre-gate)."""
-    code = _minimal_non_iterative_code()
-    assert_dep_tracking_present(code)
-    hits = dep_tracking_hits(code)
-    methods = cast(dict[str, bool], hits["methods"])
-    assert all(methods.values())
-    assert hits["record_dependency_call"] is True
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="Sprint 2: omit dep tracking from non-iterative exports",
-)
 def test_minimal_non_iterative_export_omits_dep_tracking() -> None:
-    """Acceptance target: one-shot exports should not embed invalidation machinery."""
+    """One-shot exports should not embed invalidation machinery."""
     assert_dep_tracking_absent(_minimal_non_iterative_code())
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Sprint 2: slim scaffold budget after dep-tracking gate",
-)
 def test_minimal_non_iterative_export_meets_slim_scaffold_budget() -> None:
     code = _minimal_non_iterative_code()
     line_count = count_cache_eval_scaffold_lines(code)
@@ -168,5 +145,5 @@ def test_series_binding_export_retains_dep_tracking_and_setters(
 
 
 def test_dep_tracking_gate_contract_documents_required_modes() -> None:
-    """Inventory: slim vs full emission modes for later sprints."""
-    assert SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET < 67
+    """Inventory: slim vs full emission modes."""
+    assert SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET == 54

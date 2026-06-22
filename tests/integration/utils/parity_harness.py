@@ -262,9 +262,8 @@ DEP_TRACKING_CALL_MARKERS = frozenset(
     }
 )
 
-# Sprint 0 baseline for non-iterative minimal export (S!A1 leaf + S!B1 formula).
-# Sprint 2 should drive dep_tracking_lines to 0 and lower the scaffold budget.
-DEP_TRACKING_BASELINE_VERSION = 1
+# Baseline for non-iterative minimal export (S!A1 leaf + S!B1 formula).
+DEP_TRACKING_BASELINE_VERSION = 2
 SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET = 54
 
 

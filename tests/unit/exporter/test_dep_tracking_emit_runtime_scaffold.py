@@ -1,4 +1,4 @@
-"""Sprint 1: dual cache scaffold extraction for slim vs full ``emit_runtime`` emission."""
+"""``emit_runtime`` dual scaffold: slim vs full dependency-tracking emission."""
 
 from __future__ import annotations
 
@@ -110,3 +110,59 @@ def test_library_xl_cell_still_records_dependencies() -> None:
     )
     xl_cell(ctx, "S!A1")
     assert child in ctx.deps["S!A1"]
+
+
+def test_full_emitted_runtime_partial_cache_invalidation_on_input_change() -> None:
+    """Full ``emit_runtime`` scaffold invalidates only dependent cached cells."""
+    code = _minimal_cache_runtime(include_dep_tracking=True)
+
+    namespace: dict[str, object] = {}
+    exec(code, namespace)
+
+    eval_context = cast(type[EvalContext], namespace["EvalContext"])
+    coerce = cast(
+        Callable[[dict[str, object]], dict[str, CellValue]], namespace["coerce_inputs_dict"]
+    )
+    cell = cast(Callable[[EvalContext, str], CellValue], namespace["xl_cell"])
+
+    call_count = {"B1": 0, "C1": 0, "E1": 0}
+
+    def cell_b1(ctx: EvalContext) -> CellValue:
+        call_count["B1"] += 1
+        return cast(float, cell(ctx, "S!A1")) * 2.0
+
+    def cell_c1(ctx: EvalContext) -> CellValue:
+        call_count["C1"] += 1
+        return cast(float, cell(ctx, "S!B1")) + 1.0
+
+    def cell_e1(ctx: EvalContext) -> CellValue:
+        call_count["E1"] += 1
+        return cast(float, cell(ctx, "S!D1")) + 1.0
+
+    def resolver(address: str) -> Callable[[EvalContext], CellValue] | None:
+        if address == "S!B1":
+            return cell_b1
+        if address == "S!C1":
+            return cell_c1
+        if address == "S!E1":
+            return cell_e1
+        return None
+
+    ctx = eval_context(
+        inputs=coerce({"S!A1": 10.0, "S!D1": 3.0}),
+        resolver=resolver,
+    )
+    assert cell(ctx, "S!C1") == 21.0
+    assert cell(ctx, "S!E1") == 4.0
+    assert call_count == {"B1": 1, "C1": 1, "E1": 1}
+
+    ctx.set_inputs({"S!A1": 7.0})
+    assert "S!A1" not in ctx.cache
+    assert "S!B1" not in ctx.cache
+    assert "S!C1" not in ctx.cache
+    assert "S!D1" in ctx.cache
+    assert "S!E1" in ctx.cache
+
+    assert cell(ctx, "S!C1") == 15.0
+    assert cell(ctx, "S!E1") == 4.0
+    assert call_count == {"B1": 2, "C1": 2, "E1": 1}

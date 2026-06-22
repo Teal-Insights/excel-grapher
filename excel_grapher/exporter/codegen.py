@@ -164,6 +164,21 @@ class CodeGenerator:
         self._used_graph_closure = False
         self._formula_cell_address = None
 
+    def _include_dep_tracking(
+        self,
+        series_bindings: WorkbookSeriesBindings | None,
+    ) -> bool:
+        """Return whether exported runtime should embed dependency invalidation."""
+        if self._iterate_enabled:
+            return True
+        if series_bindings is not None:
+            from excel_grapher.series_bindings.normalize import has_input_direction
+
+            for series in series_bindings.get("series", []):
+                if isinstance(series, dict) and has_input_direction(series):
+                    return True
+        return False
+
     def _public_graph(self) -> DependencyGraph | GraphLike:
         original = getattr(self.graph, "original_graph", None)
         if original is not None:
@@ -1804,6 +1819,7 @@ class CodeGenerator:
             constant_blanks=constant_blanks,
             input_ranges=input_ranges,
             blank_ranges=blank_ranges,
+            series_bindings=series_bindings,
         )
         runtime_code = parts["runtime_code"]
         cell_code_lines = parts["cell_code_lines"]
@@ -1928,6 +1944,7 @@ class CodeGenerator:
             constant_blanks=constant_blanks,
             input_ranges=input_ranges,
             blank_ranges=blank_ranges,
+            series_bindings=series_bindings,
         )
         runtime_code = parts["runtime_code"]
         cell_code_lines = parts["cell_code_lines"]
@@ -2096,6 +2113,7 @@ class CodeGenerator:
         constant_blanks: bool = False,
         input_ranges: Sequence[str] | None = None,
         blank_ranges: Sequence[str] | None = None,
+        series_bindings: WorkbookSeriesBindings | None = None,
     ) -> GenerationParts:
         """Generate shared intermediate artifacts for single-file and modular exports."""
         self._reset_transient_state()
@@ -2190,7 +2208,12 @@ class CodeGenerator:
         }
         if self._iterate_enabled:
             runtime_symbols.add("xl_iterative_compute")
-        runtime_code = emit_runtime(runtime_symbols, include_offset_table=False)
+        include_dep_tracking = self._include_dep_tracking(series_bindings)
+        runtime_code = emit_runtime(
+            runtime_symbols,
+            include_offset_table=False,
+            include_dep_tracking=include_dep_tracking,
+        )
         runtime_code = runtime_code.rstrip()
 
         normalized_constant_types = self._normalize_constant_types(constant_types)
