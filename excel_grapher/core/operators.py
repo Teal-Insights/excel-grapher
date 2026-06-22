@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from .coercions import to_number
+from .operators_fastpath import try_fastpath_arithmetic_array
 from .operators_reference import (
     broadcast_pair,
     compare_scalars,
@@ -58,6 +59,9 @@ def _xl_arithmetic(
         if isinstance(pair, XlError):
             return pair
         arr_left, arr_right = pair
+        fast = try_fastpath_arithmetic_array(op, arr_left, arr_right)
+        if fast is not None:
+            return fast
         return reference_arithmetic_array(op, arr_left, arr_right)
 
     ln = to_number(left)

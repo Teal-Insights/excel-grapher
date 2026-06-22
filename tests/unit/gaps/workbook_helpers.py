@@ -80,3 +80,23 @@ def write_sumproduct_price_threshold_k24(path: Path) -> Path:
         ws.write_formula(23, 10, "=SUMPRODUCT(($E$5:$E$19>1000)*1)", None, 7)
 
     return write_workbook(path, populate)
+
+
+def write_large_numeric_sumproduct(path: Path, *, rows: int = 500) -> Path:
+    """``SUMPRODUCT`` over a large numeric range product (Sprint 1 parity fixture)."""
+
+    def populate(workbook: xlsxwriter.Workbook) -> None:
+        ws = workbook.add_worksheet("Data")
+        for row in range(rows):
+            ws.write_number(row, 0, float((row % 5) + 1))
+            ws.write_number(row, 1, 10.0)
+        last_row = rows
+        ws.write_formula(
+            0,
+            2,
+            f"=SUMPRODUCT(A1:A{last_row}*B1:B{last_row})",
+            None,
+            15_000.0,
+        )
+
+    return write_workbook(path, populate)
