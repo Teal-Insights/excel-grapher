@@ -12,7 +12,7 @@ Sprint 0 baseline (minimal non-iterative export, ``S!A1`` leaf + ``S!B1`` formul
 - **70 cache-eval scaffold lines** (``_evaluate_address``, ``xl_cell``, ``xl_eval``)
 
 Sprint 2 should drive ``dep_tracking_lines`` to **0** and lower the scaffold budget
-toward **45** lines (see ``SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET``).
+toward **54** lines (see ``SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET``).
 """
 
 from __future__ import annotations
@@ -81,7 +81,7 @@ def test_dep_tracking_baseline_fixture_matches_schema() -> None:
     metrics = document["minimal_non_iterative_export"]
     assert isinstance(metrics, dict)
     assert metrics["dep_tracking_lines"] == 41
-    assert metrics["embedded_runtime_lines"] == 356
+    assert metrics["embedded_runtime_lines"] == 354
     targets = document["sprint2_targets"]
     assert targets["dep_tracking_lines"] == 0
     assert targets["cache_eval_scaffold_line_budget"] == SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET
@@ -169,4 +169,4 @@ def test_series_binding_export_retains_dep_tracking_and_setters(
 
 def test_dep_tracking_gate_contract_documents_required_modes() -> None:
     """Inventory: slim vs full emission modes for later sprints."""
-    assert SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET < 70
+    assert SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET < 67

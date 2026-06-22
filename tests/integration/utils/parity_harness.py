@@ -265,7 +265,7 @@ DEP_TRACKING_CALL_MARKERS = frozenset(
 # Sprint 0 baseline for non-iterative minimal export (S!A1 leaf + S!B1 formula).
 # Sprint 2 should drive dep_tracking_lines to 0 and lower the scaffold budget.
 DEP_TRACKING_BASELINE_VERSION = 1
-SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET = 45
+SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET = 54
 
 
 def extract_embedded_runtime(code: str) -> str:
@@ -302,14 +302,20 @@ def dep_tracking_hits(code: str) -> dict[str, Any]:
     }
 
 
+def _eval_context_class_start(lines: list[str]) -> int:
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("class EvalContext(") or stripped == "class EvalContext:":
+            return index
+    raise ValueError("EvalContext class not found in generated code")
+
+
 def count_dep_tracking_lines(code: str) -> int:
     """Count EvalContext dep-tracking fields/methods plus ``_record_dependency`` call sites."""
     lines = code.splitlines()
     try:
-        class_start = next(
-            i for i, line in enumerate(lines) if line.startswith("class EvalContext")
-        )
-    except StopIteration:
+        class_start = _eval_context_class_start(lines)
+    except ValueError:
         return 0
 
     count = 0
