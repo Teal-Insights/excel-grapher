@@ -67,3 +67,16 @@ def write_sumproduct_threshold_count(path: Path) -> Path:
         ws.write_formula(17, 8, "=SUMPRODUCT((D5:D12>200)*1)", None, 3)
 
     return write_workbook(path, populate)
+
+
+def write_sumproduct_price_threshold_k24(path: Path) -> Path:
+    """``SUMPRODUCT(($E$5:$E$19>1000)*1)`` (advanced_formula ``K24`` / issue #265)."""
+
+    def populate(workbook: xlsxwriter.Workbook) -> None:
+        ws = workbook.add_worksheet("Product Lookup")
+        prices = [1499, 800, 1200, 600, 999, 750, 1100, 500, 1300, 700, 1600, 900, 1400, 850, 1500]
+        for row, price in enumerate(prices, start=5):
+            ws.write_number(row - 1, 4, price)
+        ws.write_formula(23, 10, "=SUMPRODUCT(($E$5:$E$19>1000)*1)", None, 7)
+
+    return write_workbook(path, populate)
