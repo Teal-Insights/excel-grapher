@@ -16,6 +16,7 @@ from excel_grapher.core.address_keys import (
     quote_sheet_if_needed,
     sort_node_keys,
 )
+from excel_grapher.core.array_results import spill_footprint_addresses
 from excel_grapher.core.excel_function_meta import numpy_array_arg_indices
 from excel_grapher.core.operators_fastpath import MIN_OPERATOR_FASTPATH_CELLS
 from excel_grapher.evaluator.errors import MissingNormalizedFormulaError
@@ -732,24 +733,83 @@ class CodeGenerator:
         )
         return prefix + resolve_head
 
-    def _spill_occupied_addresses(self) -> frozenset[str]:
-        """Addresses with formulas or stored leaf values that can block array spill."""
-        if self.graph is None:
+    @staticmethod
+    def _broadcast_array_shapes(
+        left: tuple[int, int] | None,
+        right: tuple[int, int] | None,
+    ) -> tuple[int, int] | None:
+        """Broadcast two static array shapes for top-level binary operators."""
+        if left is None:
+            return right
+        if right is None:
+            return left
+        if left == (1, 1):
+            return right
+        if right == (1, 1):
+            return left
+        if left == right:
+            return left
+        return None
+
+    def _ast_result_shape(self, node: AstNode) -> tuple[int, int] | None:
+        """Infer a static result shape from an AST subtree when possible."""
+        if isinstance(node, RangeNode):
+            rows = self._range_addresses_2d(node.start, node.end)
+            if not rows or not rows[0]:
+                return None
+            return (len(rows), len(rows[0]))
+        if isinstance(node, CellRefNode):
+            return (1, 1)
+        if isinstance(node, (NumberNode, StringNode, BoolNode, ErrorNode, EmptyArgNode)):
+            return (1, 1)
+        if isinstance(node, BinaryOpNode):
+            return self._broadcast_array_shapes(
+                self._ast_result_shape(node.left),
+                self._ast_result_shape(node.right),
+            )
+        if isinstance(node, UnaryOpNode):
+            return self._ast_result_shape(node.operand)
+        if isinstance(node, FunctionCallNode):
+            return None
+        return None
+
+    def _infer_top_level_array_shape(self, ast: AstNode) -> tuple[int, int] | None:
+        """Return spill footprint shape for formulas that yield multi-cell arrays."""
+        shape = self._ast_result_shape(ast)
+        if shape is None or shape == (1, 1):
+            return None
+        return shape
+
+    def _spill_footprint_slots_for_formula(self, anchor: str) -> set[str]:
+        """Return spill footprint addresses for a top-level array formula."""
+        ast = self._get_or_parse_ast(anchor)
+        if ast is None:
+            return set()
+        shape = self._infer_top_level_array_shape(ast)
+        if shape is None:
+            return set()
+        return set(spill_footprint_addresses(anchor, shape))
+
+    def _spill_occupied_addresses(self, closure: frozenset[str] | None = None) -> frozenset[str]:
+        """Occupied spill slots that can block array formulas in the export closure."""
+        if self.graph is None or closure is None:
             return frozenset()
         occupied: set[str] = set()
-        keys = getattr(self.graph, "keys", None)
-        key_iter = keys(order="workbook") if callable(keys) else ()
-        for key in key_iter:
-            node = self.graph.get_node(key)
-            if node is None:
+        for addr in closure:
+            node = self.graph.get_node(addr)
+            if node is None or node.formula is None:
                 continue
-            if node.formula is not None or node.value is not None:
-                occupied.add(key)
+            for slot in self._spill_footprint_slots_for_formula(addr):
+                slot_node = self.graph.get_node(slot)
+                if slot_node is None:
+                    continue
+                if slot_node.formula is not None or slot_node.value is not None:
+                    occupied.add(slot)
         return frozenset(occupied)
 
-    def _emit_spill_occupancy_lines(self) -> list[str]:
+    def _emit_spill_occupancy_lines(self, closure: frozenset[str] | None = None) -> list[str]:
         """Emit spill occupancy helper used by ``EvalContext``."""
-        occupied = sorted(self._spill_occupied_addresses())
+        occupied = sorted(self._spill_occupied_addresses(closure))
         if not occupied:
             return [
                 "def _spill_is_occupied(_address: str) -> bool:",
@@ -1943,7 +2003,7 @@ class CodeGenerator:
             self._emit_resolver_lines(parts["blank_rects"] if parts["blank_rects"] else None)
         )
         lines.append("")
-        lines.extend(self._emit_spill_occupancy_lines())
+        lines.extend(self._emit_spill_occupancy_lines(frozenset(_all_cells)))
 
         # Generate entry point helpers
         lines.append("def make_context(inputs=None):")
@@ -2098,7 +2158,7 @@ class CodeGenerator:
             "import warnings",
             "",
         ]
-        api_lines.extend(self._emit_spill_occupancy_lines())
+        api_lines.extend(self._emit_spill_occupancy_lines(frozenset(_all_cells)))
         api_lines.extend(
             [
                 "",

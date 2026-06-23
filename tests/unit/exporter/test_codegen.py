@@ -140,10 +140,10 @@ class TestEmitAstReferences:
     def test_emit_range_1d_column(self, gen):
         """1D range (column)."""
         result = gen._emit_ast(RangeNode("Sheet1!A1", "Sheet1!A3"))
-        # Should expand to list of cell calls
-        assert "xl_cell(ctx, 'Sheet1!A1')" in result
-        assert "xl_cell(ctx, 'Sheet1!A2')" in result
-        assert "xl_cell(ctx, 'Sheet1!A3')" in result
+        # Should expand to list of range member reads
+        assert "xl_cell_in_range(ctx, 'Sheet1!A1')" in result
+        assert "xl_cell_in_range(ctx, 'Sheet1!A2')" in result
+        assert "xl_cell_in_range(ctx, 'Sheet1!A3')" in result
         # Should be an object-dtype ndarray
         assert result.startswith("np.array([")
         assert result.endswith("dtype=object)")
@@ -151,17 +151,17 @@ class TestEmitAstReferences:
     def test_emit_range_1d_row(self, gen):
         """1D range (row)."""
         result = gen._emit_ast(RangeNode("Sheet1!A1", "Sheet1!C1"))
-        assert "xl_cell(ctx, 'Sheet1!A1')" in result
-        assert "xl_cell(ctx, 'Sheet1!B1')" in result
-        assert "xl_cell(ctx, 'Sheet1!C1')" in result
+        assert "xl_cell_in_range(ctx, 'Sheet1!A1')" in result
+        assert "xl_cell_in_range(ctx, 'Sheet1!B1')" in result
+        assert "xl_cell_in_range(ctx, 'Sheet1!C1')" in result
 
     def test_emit_range_2d(self, gen):
         """2D range."""
         result = gen._emit_ast(RangeNode("Sheet1!A1", "Sheet1!B2"))
-        assert "xl_cell(ctx, 'Sheet1!A1')" in result
-        assert "xl_cell(ctx, 'Sheet1!B1')" in result
-        assert "xl_cell(ctx, 'Sheet1!A2')" in result
-        assert "xl_cell(ctx, 'Sheet1!B2')" in result
+        assert "xl_cell_in_range(ctx, 'Sheet1!A1')" in result
+        assert "xl_cell_in_range(ctx, 'Sheet1!B1')" in result
+        assert "xl_cell_in_range(ctx, 'Sheet1!A2')" in result
+        assert "xl_cell_in_range(ctx, 'Sheet1!B2')" in result
 
 
 class TestEmitAstOperators:
