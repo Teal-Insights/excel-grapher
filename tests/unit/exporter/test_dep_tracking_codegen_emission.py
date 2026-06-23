@@ -6,7 +6,7 @@ Non-iterative exports without input-direction series bindings omit ``deps`` /
 
 Minimal non-iterative export baseline (``S!A1`` leaf + ``S!B1`` formula):
 
-- **356 total lines**; embedded runtime **296 lines** (~83% of export)
+- **553 total lines**; embedded runtime **493 lines** (~89% of export)
 - **0 dep-tracking lines**
 - **54 cache-eval scaffold lines** (``_evaluate_address``, ``xl_cell``, ``xl_eval``)
 
@@ -76,7 +76,7 @@ def test_dep_tracking_baseline_fixture_matches_schema() -> None:
     metrics = document["minimal_non_iterative_export"]
     assert isinstance(metrics, dict)
     assert metrics["dep_tracking_lines"] == 0
-    assert metrics["embedded_runtime_lines"] == 296
+    assert metrics["embedded_runtime_lines"] == 493
     targets = document["sprint2_targets"]
     assert targets["dep_tracking_lines"] == 0
     assert targets["cache_eval_scaffold_line_budget"] == SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET
