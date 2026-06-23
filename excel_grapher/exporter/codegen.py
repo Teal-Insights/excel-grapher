@@ -144,6 +144,7 @@ class CodeGenerator:
         self._needs_offset_runtime = False  # Set to True if dynamic OFFSET is used
         self._needs_index_ref_runtime = False  # OFFSET(INDEX(...), ...) requires xl_index_ref
         self._needs_operators_fastpath = False  # Large array binary ops / SUMPRODUCT
+        self._needs_array_results = False  # Top-level arrays, spill reads, spill blocking
         self._offset_runtime_sheets: set[str] = set()
         self._temp_var_counter = 0  # Counter for unique temp variable names
         self._ast_cache: dict[str, AstNode] = {}
@@ -162,6 +163,7 @@ class CodeGenerator:
         self._needs_offset_runtime = False
         self._needs_index_ref_runtime = False
         self._needs_operators_fastpath = False
+        self._needs_array_results = False
         self._offset_runtime_sheets.clear()
         self._temp_var_counter = 0
         self._ast_cache.clear()
@@ -831,13 +833,20 @@ class CodeGenerator:
 
     def _eval_context_ctor_kwargs(self) -> str:
         """Keyword arguments for generated ``EvalContext(...)`` calls."""
-        return (
-            "inputs=coerce_inputs_dict(merged), resolver=_resolve_formula, "
-            "spill_is_occupied=_spill_is_occupied, "
-            f"iterative_enabled={bool(self._iterate_enabled)}, "
-            f"iterate_count={int(self._iterate_count)}, "
-            f"iterate_delta={float(self._iterate_delta)!r}"
+        parts = [
+            "inputs=coerce_inputs_dict(merged)",
+            "resolver=_resolve_formula",
+        ]
+        if self._needs_array_results:
+            parts.append("spill_is_occupied=_spill_is_occupied")
+        parts.extend(
+            [
+                f"iterative_enabled={bool(self._iterate_enabled)}",
+                f"iterate_count={int(self._iterate_count)}",
+                f"iterate_delta={float(self._iterate_delta)!r}",
+            ]
         )
+        return ", ".join(parts)
 
     @staticmethod
     def _internals_runtime_import_names(
@@ -1525,6 +1534,10 @@ class CodeGenerator:
         if self._max_array_extent_in_ast(node) >= MIN_OPERATOR_FASTPATH_CELLS:
             self._needs_operators_fastpath = True
 
+    def _note_array_results_from_ast(self, node: AstNode) -> None:
+        if self._infer_top_level_array_shape(node) is not None:
+            self._needs_array_results = True
+
     def _emit_offset_static(
         self, base_address: str, rows: int, cols: int, height: int, width: int
     ) -> str:
@@ -2003,7 +2016,8 @@ class CodeGenerator:
             self._emit_resolver_lines(parts["blank_rects"] if parts["blank_rects"] else None)
         )
         lines.append("")
-        lines.extend(self._emit_spill_occupancy_lines(frozenset(_all_cells)))
+        if self._needs_array_results:
+            lines.extend(self._emit_spill_occupancy_lines(frozenset(_all_cells)))
 
         # Generate entry point helpers
         lines.append("def make_context(inputs=None):")
@@ -2158,7 +2172,8 @@ class CodeGenerator:
             "import warnings",
             "",
         ]
-        api_lines.extend(self._emit_spill_occupancy_lines(frozenset(_all_cells)))
+        if self._needs_array_results:
+            api_lines.extend(self._emit_spill_occupancy_lines(frozenset(_all_cells)))
         api_lines.extend(
             [
                 "",
@@ -2341,7 +2356,14 @@ class CodeGenerator:
             ast = self._get_or_parse_ast(address)
             assert ast is not None
             self._note_operators_fastpath_from_ast(ast)
+            self._note_array_results_from_ast(ast)
             used_xl_functions.update(self._extract_xl_functions(ast))
+
+        cell_blob = "\n".join(cell_code_lines)
+        if "scalar_for_range_member" in cell_blob:
+            self._needs_array_results = True
+        if self._spill_occupied_addresses(frozenset(all_cells)):
+            self._needs_array_results = True
 
         # Always include per-call evaluation scaffolding.
         # XlError is commonly referenced by generated code (error literals, IF/IFERROR, and
@@ -2350,11 +2372,12 @@ class CodeGenerator:
             "EvalContext",
             "coerce_inputs_dict",
             "xl_cell",
-            "xl_cell_in_range",
             "xl_eval",
             "xl_range",
             "XlError",
         }
+        if self._needs_array_results:
+            runtime_symbols.add("xl_cell_in_range")
         if self._iterate_enabled:
             runtime_symbols.add("xl_iterative_compute")
         include_dep_tracking = self._include_dep_tracking(series_bindings)
@@ -2363,6 +2386,7 @@ class CodeGenerator:
             include_offset_table=False,
             include_dep_tracking=include_dep_tracking,
             include_operators_fastpath=self._needs_operators_fastpath,
+            include_array_results=self._needs_array_results,
         )
         runtime_code = runtime_code.rstrip()
 
