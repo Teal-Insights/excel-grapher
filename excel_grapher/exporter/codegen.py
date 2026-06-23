@@ -436,10 +436,10 @@ class CodeGenerator:
         return f"np.array([{', '.join(row_strs)}], dtype=object)"
 
     def _emit_cell_eval_for_range(self, address: str) -> str:
-        """Emit a range member read with array spill scalar projection (#284)."""
+        """Emit a range member read, with spill projection only when needed (#284)."""
         normalized = normalize_address(address)
         if self.graph is None:
-            return f"xl_cell_in_range(ctx, {repr(normalized)})"
+            return f"xl_cell(ctx, {repr(normalized)})"
         node = self.graph.get_node(normalized)
         if node is not None and node.formula is not None:
             func_name = address_to_python_name(normalized)
@@ -447,6 +447,8 @@ class CodeGenerator:
                 f"scalar_for_range_member({repr(normalized)}, "
                 f"xl_eval(ctx, {repr(normalized)}, {func_name}))"
             )
+        if node is not None:
+            return f"xl_cell(ctx, {repr(normalized)})"
         return f"xl_cell_in_range(ctx, {repr(normalized)})"
 
     def _emit_cell_eval(self, address: str) -> str:
@@ -858,7 +860,9 @@ class CodeGenerator:
             return []
         names = set(used_xl_functions)
         names.discard("numpy")
-        names.update({"xl_cell", "xl_cell_in_range", "xl_eval"})
+        names.update({"xl_cell", "xl_eval"})
+        if "xl_cell_in_range" in blob:
+            names.add("xl_cell_in_range")
         if "scalar_for_range_member" in blob:
             names.add("scalar_for_range_member")
         if "numpy" in used_xl_functions or "np." in blob or "np.array" in blob:
@@ -2360,7 +2364,7 @@ class CodeGenerator:
             used_xl_functions.update(self._extract_xl_functions(ast))
 
         cell_blob = "\n".join(cell_code_lines)
-        if "scalar_for_range_member" in cell_blob:
+        if "scalar_for_range_member" in cell_blob or "xl_cell_in_range" in cell_blob:
             self._needs_array_results = True
         if self._spill_occupied_addresses(frozenset(all_cells)):
             self._needs_array_results = True
