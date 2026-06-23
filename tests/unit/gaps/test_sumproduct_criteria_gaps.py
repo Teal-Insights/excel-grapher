@@ -7,13 +7,10 @@ Regression coverage for element-wise range comparisons and products inside
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
 
-import numpy as np
 import pytest
 
-from excel_grapher import DependencyGraph, FormulaEvaluator, Node, create_dependency_graph
-from excel_grapher.core.address_keys import parse_address
+from excel_grapher import FormulaEvaluator, create_dependency_graph
 from excel_grapher.evaluator.types import XlError
 from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
 from tests.unit.gaps.workbook_helpers import (
@@ -23,21 +20,6 @@ from tests.unit.gaps.workbook_helpers import (
     write_sumproduct_threshold_count,
 )
 from tests.utils.excel_workbook_parity import assert_workbook_parity
-
-
-def _make_node(address: str, formula: str | None, value: object) -> Node:
-    sheet, coord = parse_address(address)
-    col = "".join(c for c in coord if c.isalpha())
-    row = int("".join(c for c in coord if c.isdigit()))
-    return Node(
-        sheet=sheet,
-        column=col,
-        row=row,
-        formula=formula,
-        normalized_formula=formula,
-        value=value,
-        is_leaf=formula is None,
-    )
 
 
 def _evaluate(path: Path, address: str) -> object:

@@ -1,7 +1,6 @@
 [project]
 name = "excel-grapher"
 version = "0.6.9"
-
 description = "Build and analyze dependency graphs from Excel workbooks"
 readme = "README.md"
 license = { text = "Proprietary" }

@@ -86,6 +86,17 @@ if TYPE_CHECKING:
 
 @dataclass
 class FormulaEvaluator:
+    """Evaluate workbook formulas against a dependency graph.
+
+    **Top-level array results (#284):** When a formula's top-level result is a
+    multi-cell binary operation (compare, arithmetic, concat), the cached value at
+    the formula cell is an ``object``-dtype ``numpy.ndarray`` matching the
+    broadcast shape (e.g. ``=C5:C7="Software"`` → column of booleans). Only 1×1
+    ``ExcelRange`` results are auto-resolved to scalars via
+    ``_auto_resolve_single_cell``. Physical dynamic-array spill into neighboring
+    cells is not modeled; the logical array lives on the anchor address only.
+    """
+
     graph: DependencyGraph
     auto_detect_changes: bool = True
     eager_invalidation: bool = True
