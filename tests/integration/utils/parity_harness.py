@@ -2,6 +2,9 @@
 
 Excel reference checks live elsewhere (e.g. `excel_workbook_parity` for cached
 workbook values; live Excel via automation when available). See `.cursor/rules/parity.mdc`.
+
+Top-level multi-cell ``ndarray`` results (issue #284) compare element-wise via
+``excel_grapher.core.array_results.array_values_equal``.
 """
 
 from __future__ import annotations
@@ -11,7 +14,10 @@ from dataclasses import dataclass
 from math import isfinite
 from typing import Any, cast
 
+import numpy as np
+
 from excel_grapher import CycleError, DependencyGraph, FormulaEvaluator
+from excel_grapher.core.array_results import array_values_equal
 from excel_grapher.exporter.codegen import CodeGenerator
 
 
@@ -31,6 +37,19 @@ def _is_finite_number(x: object) -> bool:
 
 
 def _values_equal(a: object, b: object, *, rtol: float, atol: float) -> bool:
+    if isinstance(a, np.ndarray) or isinstance(b, np.ndarray):
+        if not isinstance(a, np.ndarray) or not isinstance(b, np.ndarray):
+            return False
+        if not array_values_equal(a, b):
+            return False
+        if rtol == 0.0 and atol == 0.0:
+            return True
+        for index in range(int(cast(np.ndarray, a).size)):
+            left = cast(np.ndarray, a).flat[index]
+            right = cast(np.ndarray, b).flat[index]
+            if not _values_equal(left, right, rtol=rtol, atol=atol):
+                return False
+        return True
     if a == b:
         return True
     if _is_finite_number(a) and _is_finite_number(b):

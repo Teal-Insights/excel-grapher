@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import numpy as np
 
-from excel_grapher.core.array_results import array_values_equal, is_array_result
+from excel_grapher.core.array_results import (
+    array_values_equal,
+    is_array_result,
+    read_spill_scalar,
+    spill_offsets,
+)
 from excel_grapher.core.types import XlError
 
 
@@ -34,3 +39,15 @@ def test_array_values_equal_compares_xlerror_cells() -> None:
     left = np.array([[XlError.VALUE, 1]], dtype=object)
     right = np.array([[XlError.VALUE, 1]], dtype=object)
     assert array_values_equal(left, right)
+
+
+def test_spill_offsets_column_vector() -> None:
+    assert spill_offsets(10, 4, 11, 4, (3, 1)) == (1, 0)
+    assert spill_offsets(10, 4, 12, 5, (3, 1)) is None
+
+
+def test_read_spill_scalar_from_cached_anchor() -> None:
+    anchor = np.array([[True], [False], [True]], dtype=object)
+    cache = {"Data!D10": anchor}
+    assert read_spill_scalar("Data!D11", cache) is False
+    assert read_spill_scalar("Data!D12", cache) is True

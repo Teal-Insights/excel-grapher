@@ -8,7 +8,9 @@ from typing import cast
 import fastpyxl.utils.cell
 
 from excel_grapher.core import CellValue, ExcelRange, XlError
+from excel_grapher.core.address_keys import normalize_key
 from excel_grapher.core.addressing import split_sheet_qualified_address
+from excel_grapher.core.array_results import read_spill_scalar, scalar_for_range_member
 
 from .cache_context import EvalContext, EvalContextBase
 
@@ -19,6 +21,7 @@ __all__ = [
     "circular_safe_cache",
     "coerce_inputs_dict",
     "xl_cell",
+    "xl_cell_in_range",
     "xl_circular_reference",
     "xl_eval",
     "xl_iterative_compute",
@@ -109,6 +112,18 @@ def _evaluate_address(
             ctx.stack.pop()
 
 
+def xl_cell_in_range(ctx: EvalContext, address: str) -> CellValue:
+    """Evaluate one range member, projecting array anchors to spilled scalars."""
+    norm = normalize_key(address)
+    if ctx.resolver(norm) is not None or norm in ctx.inputs or norm in ctx.cache:
+        value = xl_cell(ctx, norm)
+        return scalar_for_range_member(norm, value)
+    spilled = read_spill_scalar(norm, ctx.cache)
+    if spilled is not None:
+        return spilled
+    raise KeyError(f"Cell {address} not found in graph")
+
+
 def xl_cell(ctx: EvalContext, address: str) -> CellValue:
     """Evaluate a single cell address under the given context.
 
@@ -181,7 +196,7 @@ def xl_range(ctx: EvalContext, address: str) -> CellValue:
         start_col_idx, end_col_idx = end_col_idx, start_col_idx
 
     rng = ExcelRange(sheet, start_row, start_col_idx, end_row, end_col_idx)
-    return rng.resolve(lambda addr: xl_cell(ctx, addr))
+    return rng.resolve(lambda addr: xl_cell_in_range(ctx, addr))
 
 
 def _convergence_delta(prev: CellValue, curr: CellValue) -> float:

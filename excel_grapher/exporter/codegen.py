@@ -426,11 +426,25 @@ class CodeGenerator:
         rows = self._range_addresses_2d(node.start, node.end)
         row_strs = []
         for row_addrs in rows:
-            cell_calls = [self._emit_cell_eval(addr) for addr in row_addrs]
+            cell_calls = [self._emit_cell_eval_for_range(addr) for addr in row_addrs]
             row_strs.append("[" + ", ".join(cell_calls) + "]")
         # Model ranges as object-dtype ndarrays so they fit `CellValue` and work
         # with runtime helpers like `flatten(*args)`.
         return f"np.array([{', '.join(row_strs)}], dtype=object)"
+
+    def _emit_cell_eval_for_range(self, address: str) -> str:
+        """Emit a range member read with array spill scalar projection (#284)."""
+        normalized = normalize_address(address)
+        if self.graph is None:
+            return f"xl_cell_in_range(ctx, {repr(normalized)})"
+        node = self.graph.get_node(normalized)
+        if node is not None and node.formula is not None:
+            func_name = address_to_python_name(normalized)
+            return (
+                f"scalar_for_range_member({repr(normalized)}, "
+                f"xl_eval(ctx, {repr(normalized)}, {func_name}))"
+            )
+        return f"xl_cell_in_range(ctx, {repr(normalized)})"
 
     def _emit_cell_eval(self, address: str) -> str:
         normalized = normalize_address(address)
@@ -728,7 +742,9 @@ class CodeGenerator:
             return []
         names = set(used_xl_functions)
         names.discard("numpy")
-        names.update({"xl_cell", "xl_eval"})
+        names.update({"xl_cell", "xl_cell_in_range", "xl_eval"})
+        if "scalar_for_range_member" in blob:
+            names.add("scalar_for_range_member")
         if "numpy" in used_xl_functions or "np." in blob or "np.array" in blob:
             names.add("np")
         if "XlError" in blob:
@@ -2232,6 +2248,7 @@ class CodeGenerator:
             "EvalContext",
             "coerce_inputs_dict",
             "xl_cell",
+            "xl_cell_in_range",
             "xl_eval",
             "xl_range",
             "XlError",

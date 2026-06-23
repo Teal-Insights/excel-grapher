@@ -192,6 +192,70 @@ def test_if_on_array_cell_returns_value_error() -> None:
     assert result is XlError.VALUE
 
 
+def test_sum_spill_range_without_neighbor_nodes() -> None:
+    """``SUM(D10:D12)`` reads virtual spill scalars from the anchor array."""
+    graph = DependencyGraph()
+    for row, category in enumerate(["Software", "Hardware", "Software"], start=5):
+        graph.add_node(_make_node(f"Data!C{row}", None, category))
+    graph.add_node(_make_node("Data!D10", '=Data!C5:C7="Software"', None))
+    graph.add_node(_make_node("Data!F10", "=SUM(Data!D10:Data!D12)", None))
+    result = _evaluate_graph(graph, "Data!F10")
+    assert result == pytest.approx(2.0)
+
+
+def test_sumproduct_spill_range_matches_cell_ref() -> None:
+    """``SUMPRODUCT(D10:D12,…)`` agrees with using the anchor array cell ref."""
+    graph = DependencyGraph()
+    for row, (category, value) in enumerate(
+        zip(["Software", "Hardware", "Software"], [10.0, 20.0, 30.0], strict=True),
+        start=5,
+    ):
+        graph.add_node(_make_node(f"Data!C{row}", None, category))
+        graph.add_node(_make_node(f"Data!E{row}", None, value))
+    graph.add_node(_make_node("Data!D10", '=Data!C5:C7="Software"', None))
+    graph.add_node(_make_node("Data!F10", "=SUMPRODUCT(Data!D10,Data!E5:E7)", None))
+    graph.add_node(_make_node("Data!G10", "=SUMPRODUCT(Data!D10:Data!D12,Data!E5:E7)", None))
+    ref_result = _evaluate_graph(graph, "Data!F10")
+    spill_result = _evaluate_graph(graph, "Data!G10")
+    assert ref_result == pytest.approx(40.0)
+    assert spill_result == ref_result
+
+
+def test_explicit_leaf_wins_over_virtual_spill() -> None:
+    """A leaf value in a spill slot overrides the virtual spill read."""
+    graph = DependencyGraph()
+    for row, category in enumerate(["Software", "Hardware", "Software"], start=5):
+        graph.add_node(_make_node(f"Data!C{row}", None, category))
+    graph.add_node(_make_node("Data!D10", '=Data!C5:C7="Software"', None))
+    graph.add_node(_make_node("Data!D11", None, 0))
+    assert _evaluate_graph(graph, "Data!D11") == 0
+    graph.add_node(_make_node("Data!F10", "=SUM(Data!D10:Data!D11)", None))
+    result = _evaluate_graph(graph, "Data!F10")
+    assert result == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize(
+    ("formula_address", "formula"),
+    [
+        ("Data!E10", "=Data!D10*1"),
+        ("Data!F10", "=SUMPRODUCT(Data!D10,Data!E5:E7)"),
+        ("Data!G10", "=SUM(Data!D10:Data!D12)"),
+    ],
+)
+def test_array_consumer_eval_codegen_parity(formula_address: str, formula: str) -> None:
+    """Dependent formulas using array anchors match between evaluator and export."""
+    graph = DependencyGraph()
+    for row, (category, value) in enumerate(
+        zip(["Software", "Hardware", "Software"], [10.0, 20.0, 30.0], strict=True),
+        start=5,
+    ):
+        graph.add_node(_make_node(f"Data!C{row}", None, category))
+        graph.add_node(_make_node(f"Data!E{row}", None, value))
+    graph.add_node(_make_node("Data!D10", '=Data!C5:C7="Software"', None))
+    graph.add_node(_make_node(formula_address, formula, None))
+    assert_codegen_matches_evaluator(graph, [formula_address])
+
+
 def test_column_compare_eval_codegen_parity() -> None:
     """Evaluator and export must agree on ndarray top-level results (Sprint 2)."""
     graph = _graph_from_workbook(column_compare_path(), COLUMN_COMPARE_TARGET)

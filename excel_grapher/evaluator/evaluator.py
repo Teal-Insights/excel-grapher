@@ -14,6 +14,7 @@ from excel_grapher.core.address_keys import (
     parse_address,
 )
 from excel_grapher.core.addressing import index_excel_range
+from excel_grapher.core.array_results import read_spill_scalar, scalar_for_range_member
 from excel_grapher.core.excel_function_meta import numpy_array_arg_indices
 from excel_grapher.core.range_shorthand import (
     SheetBounds,
@@ -96,6 +97,13 @@ class FormulaEvaluator:
     ``ExcelRange`` results are auto-resolved to scalars via
     ``_auto_resolve_single_cell``. Physical dynamic-array spill into neighboring
     cells is not modeled; the logical array lives on the anchor address only.
+
+    **Array consumers:** Dependent formulas read spilled scalars when an address
+    appears inside a range operand (``SUM(Data!D10:Data!D12)``) or via operators
+    that broadcast cached arrays (``=Data!D10*1``). ``SUMPRODUCT`` accepts a
+    single-cell ref to an array anchor. ``IF`` on a multi-cell array returns
+    ``#VALUE!``. Leaf cells overlapping a spill footprint win over virtual spill
+    reads.
     """
 
     graph: DependencyGraph
@@ -355,8 +363,27 @@ class FormulaEvaluator:
 
         raise TypeError(f"Unknown AST node: {type(node)}")
 
+    def _evaluate_cell_for_range(self, address: str) -> CellValue:
+        """Evaluate a cell as one position inside a range operand.
+
+        Array formula anchors keep their full ``ndarray`` in the cell cache but
+        project to spilled scalars here. Spill slots without graph nodes read
+        from cached anchor arrays (issue #284).
+        """
+        norm = normalize_address(address)
+        if self._blank_range_rects and address_in_blank_ranges(norm, self._blank_range_rects):
+            return None
+        node = self.graph.get_node(norm)
+        if node is None:
+            spilled = read_spill_scalar(norm, self._cache)
+            if spilled is not None:
+                return spilled
+            raise KeyError(f"Cell {address} not found in graph")
+        value = self._evaluate_cell(norm)
+        return scalar_for_range_member(norm, value)
+
     def _resolve_range(self, rng: ExcelRange) -> numpy.ndarray:
-        return rng.resolve(self._evaluate_cell)
+        return rng.resolve(self._evaluate_cell_for_range)
 
     def _resolve_function_arg(
         self,
