@@ -732,6 +732,53 @@ class CodeGenerator:
         )
         return prefix + resolve_head
 
+    def _spill_occupied_addresses(self) -> frozenset[str]:
+        """Addresses with formulas or stored leaf values that can block array spill."""
+        if self.graph is None:
+            return frozenset()
+        occupied: set[str] = set()
+        keys = getattr(self.graph, "keys", None)
+        key_iter = keys(order="workbook") if callable(keys) else ()
+        for key in key_iter:
+            node = self.graph.get_node(key)
+            if node is None:
+                continue
+            if node.formula is not None or node.value is not None:
+                occupied.add(key)
+        return frozenset(occupied)
+
+    def _emit_spill_occupancy_lines(self) -> list[str]:
+        """Emit spill occupancy helper used by ``EvalContext``."""
+        occupied = sorted(self._spill_occupied_addresses())
+        if not occupied:
+            return [
+                "def _spill_is_occupied(_address: str) -> bool:",
+                "    return False",
+                "",
+            ]
+        lines = ["_SPILL_OCCUPIED = frozenset({"]
+        lines.extend(f"    {address!r}," for address in occupied)
+        lines.extend(
+            [
+                "})",
+                "",
+                "def _spill_is_occupied(address: str) -> bool:",
+                "    return address in _SPILL_OCCUPIED",
+                "",
+            ]
+        )
+        return lines
+
+    def _eval_context_ctor_kwargs(self) -> str:
+        """Keyword arguments for generated ``EvalContext(...)`` calls."""
+        return (
+            "inputs=coerce_inputs_dict(merged), resolver=_resolve_formula, "
+            "spill_is_occupied=_spill_is_occupied, "
+            f"iterative_enabled={bool(self._iterate_enabled)}, "
+            f"iterate_count={int(self._iterate_count)}, "
+            f"iterate_delta={float(self._iterate_delta)!r}"
+        )
+
     @staticmethod
     def _internals_runtime_import_names(
         used_xl_functions: Set[str], cell_code_lines: list[str]
@@ -1895,6 +1942,8 @@ class CodeGenerator:
         lines.extend(
             self._emit_resolver_lines(parts["blank_rects"] if parts["blank_rects"] else None)
         )
+        lines.append("")
+        lines.extend(self._emit_spill_occupancy_lines())
 
         # Generate entry point helpers
         lines.append("def make_context(inputs=None):")
@@ -1904,13 +1953,7 @@ class CodeGenerator:
             lines.append("    merged.update(CONSTANTS)")
         lines.append("    if inputs is not None:")
         lines.append("        merged.update(inputs)")
-        lines.append(
-            "    return EvalContext("
-            "inputs=coerce_inputs_dict(merged), resolver=_resolve_formula, "
-            f"iterative_enabled={bool(self._iterate_enabled)}, "
-            f"iterate_count={int(self._iterate_count)}, "
-            f"iterate_delta={float(self._iterate_delta)!r})"
-        )
+        lines.append(f"    return EvalContext({self._eval_context_ctor_kwargs()})")
         lines.append("")
         lines.append("")
         if series_bindings is not None:
@@ -2054,23 +2097,22 @@ class CodeGenerator:
             runtime_imports,
             "import warnings",
             "",
-            "",
-            "def make_context(inputs=None):",
-            '    """Create an EvalContext with merged inputs."""',
-            "    merged = dict(DEFAULT_INPUTS)",
-            "    merged.update(CONSTANTS)",
-            "    if inputs is not None:",
-            "        merged.update(inputs)",
-            (
-                "    return EvalContext("
-                "inputs=coerce_inputs_dict(merged), resolver=_resolve_formula, "
-                f"iterative_enabled={bool(self._iterate_enabled)}, "
-                f"iterate_count={int(self._iterate_count)}, "
-                f"iterate_delta={float(self._iterate_delta)!r})"
-            ),
-            "",
-            "",
         ]
+        api_lines.extend(self._emit_spill_occupancy_lines())
+        api_lines.extend(
+            [
+                "",
+                "def make_context(inputs=None):",
+                '    """Create an EvalContext with merged inputs."""',
+                "    merged = dict(DEFAULT_INPUTS)",
+                "    merged.update(CONSTANTS)",
+                "    if inputs is not None:",
+                "        merged.update(inputs)",
+                f"    return EvalContext({self._eval_context_ctor_kwargs()})",
+                "",
+                "",
+            ]
+        )
         series_setter_names: list[str] = []
         if series_bindings is not None:
             if bindings_workbook is None:

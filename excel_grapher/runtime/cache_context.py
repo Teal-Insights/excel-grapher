@@ -16,6 +16,7 @@ class EvalContextBase:
 
     inputs: dict[str, CellValue]
     resolver: Callable[[str], Callable[[EvalContext], CellValue] | None]
+    spill_is_occupied: Callable[[str], bool] | None = None
     cache: dict[str, CellValue] = field(default_factory=dict)
     computing: set[str] = field(default_factory=set)
     iterative_enabled: bool = False

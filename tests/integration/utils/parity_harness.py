@@ -17,8 +17,21 @@ from typing import Any, cast
 import numpy as np
 
 from excel_grapher import CycleError, DependencyGraph, FormulaEvaluator
+from excel_grapher.core.address_keys import normalize_key as normalize_address
 from excel_grapher.core.array_results import array_values_equal
 from excel_grapher.exporter.codegen import CodeGenerator
+
+
+def _graph_spill_is_occupied(graph: DependencyGraph) -> Callable[[str], bool]:
+    def is_occupied(address: str) -> bool:
+        node = graph.get_node(normalize_address(address))
+        if node is None:
+            return False
+        if node.formula is not None:
+            return True
+        return node.value is not None
+
+    return is_occupied
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,7 +136,14 @@ def exec_generated_code_with_cache(
     exec(code, ns)
     merged = dict(cast(dict[str, object], ns["DEFAULT_INPUTS"]))
     resolver = cast(Callable[[str], object], ns["_resolve_formula"])
-    ctx = cast(Callable[..., object], ns["EvalContext"])(inputs=merged, resolver=resolver)
+    spill_is_occupied = ns.get("_spill_is_occupied")
+    if not callable(spill_is_occupied):
+        spill_is_occupied = _graph_spill_is_occupied(graph)
+    ctx = cast(Callable[..., object], ns["EvalContext"])(
+        inputs=merged,
+        resolver=resolver,
+        spill_is_occupied=cast(Callable[[str], bool], spill_is_occupied),
+    )
     xl_cell = cast(Callable[..., object], ns["xl_cell"])
     for target in targets:
         xl_cell(ctx, target)

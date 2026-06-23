@@ -1,20 +1,72 @@
-"""Helpers for top-level array formula results (issue #284)."""
+"""Helpers for top-level array formula results (issue #284).
+
+Top-level multi-cell results stay as ``ndarray`` values on the anchor cell.
+Range operands project spilled scalars from cached anchors. Occupied spill slots
+in the graph return ``XlError.SPILL`` at the anchor.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import cast
 
 import fastpyxl.utils.cell
 import numpy as np
 
-from excel_grapher.core.address_keys import parse_address
+from excel_grapher.core.address_keys import format_key, parse_address
 from excel_grapher.core.types import CellValue, XlError
 
 
 def is_array_result(value: CellValue) -> bool:
     """Return whether ``value`` is a multi-cell array formula result."""
     return isinstance(value, np.ndarray) and value.size > 1
+
+
+def spill_footprint_addresses(anchor_address: str, shape: tuple[int, ...]) -> list[str]:
+    """Return sheet-qualified addresses covered by an anchor array spill."""
+    sheet, anchor_row, anchor_col = _cell_row_col(anchor_address)
+    if len(shape) != 2:
+        return [anchor_address]
+    rows, cols = int(shape[0]), int(shape[1])
+    if rows == 1 and cols == 1:
+        return [anchor_address]
+    addresses: list[str] = []
+    for row_delta in range(rows):
+        for col_delta in range(cols):
+            row = anchor_row + row_delta
+            col = anchor_col + col_delta
+            col_text = fastpyxl.utils.cell.get_column_letter(col)
+            addresses.append(format_key(sheet, f"{col_text}{row}"))
+    return addresses
+
+
+def spill_blocked_at_anchor(
+    anchor_address: str,
+    shape: tuple[int, ...],
+    is_occupied: Callable[[str], bool],
+) -> bool:
+    """Return whether any non-anchor spill slot is occupied."""
+    for address in spill_footprint_addresses(anchor_address, shape):
+        if address == anchor_address:
+            continue
+        if is_occupied(address):
+            return True
+    return False
+
+
+def finalize_top_level_array_result(
+    anchor_address: str,
+    result: CellValue,
+    *,
+    is_occupied: Callable[[str], bool],
+) -> CellValue:
+    """Apply spill blocking to a top-level formula result before caching."""
+    if not is_array_result(result):
+        return result
+    array = cast(np.ndarray, result)
+    if spill_blocked_at_anchor(anchor_address, array.shape, is_occupied):
+        return XlError.SPILL
+    return result
 
 
 def spill_offsets(

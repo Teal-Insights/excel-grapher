@@ -21,6 +21,7 @@ class XlError(StrEnum):
     NAME = "#NAME?"
     NUM = "#NUM!"
     NULL = "#NULL!"
+    SPILL = "#SPILL!"
 
     @classmethod
     def from_text(cls, value: str) -> XlError | None:

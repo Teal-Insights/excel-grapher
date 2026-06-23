@@ -13,10 +13,12 @@ from excel_grapher.core.array_results import array_values_equal, is_array_result
 from excel_grapher.core.types import CellValue
 from tests.fixtures.array_results.workbook import (
     COLUMN_COMPARE_XLSX,
+    GRID_2D_COMPARE_XLSX,
     NUMERIC_COMPARE_XLSX,
     ROW_COMPARE_XLSX,
     column_compare_path,
     ensure_committed_fixtures,
+    grid_2d_compare_path,
     numeric_compare_path,
     row_compare_path,
 )
@@ -31,7 +33,11 @@ _ARRAY_RESULT_CASES = (
 )
 
 
-@pytest.mark.parametrize(("workbook", "target", "expected"), _ARRAY_RESULT_CASES)
+@pytest.mark.parametrize(
+    ("workbook", "target", "expected"),
+    _ARRAY_RESULT_CASES
+    + (pytest.param(grid_2d_compare_path(), "Data!D10", [[True, False], [True, True]], id="grid"),),
+)
 def test_top_level_array_formula_codegen_parity(
     workbook: Path,
     target: str,
@@ -50,6 +56,11 @@ def test_top_level_array_formula_codegen_parity(
 
 def test_array_result_fixtures_are_committed() -> None:
     """Static workbook fixtures ship with the repo."""
-    for name in (COLUMN_COMPARE_XLSX, ROW_COMPARE_XLSX, NUMERIC_COMPARE_XLSX):
+    for name in (
+        COLUMN_COMPARE_XLSX,
+        ROW_COMPARE_XLSX,
+        NUMERIC_COMPARE_XLSX,
+        GRID_2D_COMPARE_XLSX,
+    ):
         path = column_compare_path().parent / name
         assert path.is_file(), f"missing fixture: {name}"

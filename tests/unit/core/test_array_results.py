@@ -6,8 +6,11 @@ import numpy as np
 
 from excel_grapher.core.array_results import (
     array_values_equal,
+    finalize_top_level_array_result,
     is_array_result,
     read_spill_scalar,
+    spill_blocked_at_anchor,
+    spill_footprint_addresses,
     spill_offsets,
 )
 from excel_grapher.core.types import XlError
@@ -51,3 +54,38 @@ def test_read_spill_scalar_from_cached_anchor() -> None:
     cache = {"Data!D10": anchor}
     assert read_spill_scalar("Data!D11", cache) is False
     assert read_spill_scalar("Data!D12", cache) is True
+
+
+def test_spill_footprint_addresses_column() -> None:
+    assert spill_footprint_addresses("Data!D10", (3, 1)) == [
+        "Data!D10",
+        "Data!D11",
+        "Data!D12",
+    ]
+
+
+def test_spill_footprint_addresses_2d() -> None:
+    assert spill_footprint_addresses("Data!D10", (2, 2)) == [
+        "Data!D10",
+        "Data!E10",
+        "Data!D11",
+        "Data!E11",
+    ]
+
+
+def test_finalize_top_level_array_result_spill_blocked() -> None:
+    array = np.array([[True], [False], [True]], dtype=object)
+    result = finalize_top_level_array_result(
+        "Data!D10",
+        array,
+        is_occupied=lambda addr: addr == "Data!D11",
+    )
+    assert result is XlError.SPILL
+
+
+def test_spill_blocked_at_anchor_ignores_anchor_itself() -> None:
+    assert not spill_blocked_at_anchor(
+        "Data!D10",
+        (3, 1),
+        is_occupied=lambda addr: addr == "Data!D10",
+    )

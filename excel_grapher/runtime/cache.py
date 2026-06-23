@@ -10,7 +10,11 @@ import fastpyxl.utils.cell
 from excel_grapher.core import CellValue, ExcelRange, XlError
 from excel_grapher.core.address_keys import normalize_key
 from excel_grapher.core.addressing import split_sheet_qualified_address
-from excel_grapher.core.array_results import read_spill_scalar, scalar_for_range_member
+from excel_grapher.core.array_results import (
+    finalize_top_level_array_result,
+    read_spill_scalar,
+    scalar_for_range_member,
+)
 
 from .cache_context import EvalContext, EvalContextBase
 
@@ -70,6 +74,7 @@ def coerce_inputs_dict(values: Mapping[str, object]) -> dict[str, CellValue]:
     return cast(dict[str, CellValue], dict(values))
 
 
+
 def _evaluate_address(
     ctx: EvalContext,
     address: str,
@@ -104,6 +109,9 @@ def _evaluate_address(
             preserve_structural_blank and getattr(fn, "__structural_blank__", False)
         ):
             v = 0
+        occupant = ctx.spill_is_occupied
+        if occupant is not None:
+            v = finalize_top_level_array_result(address, v, is_occupied=occupant)
         ctx.cache[address] = v
         return v
     finally:

@@ -20,10 +20,12 @@ from excel_grapher.core.array_results import array_values_equal, is_array_result
 from excel_grapher.evaluator.types import XlError
 from tests.fixtures.array_results.workbook import (
     build_column_compare_workbook,
+    build_grid_2d_compare_workbook,
     build_numeric_compare_workbook,
     build_row_compare_workbook,
     column_compare_path,
     ensure_committed_fixtures,
+    grid_2d_compare_path,
     numeric_compare_path,
     row_compare_path,
 )
@@ -192,6 +194,26 @@ def test_if_on_array_cell_returns_value_error() -> None:
     assert result is XlError.VALUE
 
 
+def test_grid_2d_compare_returns_bool_ndarray() -> None:
+    """``=C5:D6>5`` at top level is a 2×2 boolean array."""
+    result = _evaluate_workbook(grid_2d_compare_path(), "Data!D10")
+    assert isinstance(result, np.ndarray)
+    arr = cast(np.ndarray, result)
+    assert arr.shape == (2, 2)
+    assert cast(Any, arr).tolist() == [[True, False], [True, True]]
+
+
+def test_spill_blocked_when_spill_slot_has_leaf_value() -> None:
+    """Occupied spill slot returns ``#SPILL!`` instead of spilling the array."""
+    graph = DependencyGraph()
+    for row, category in enumerate(["Software", "Hardware", "Software"], start=5):
+        graph.add_node(_make_node(f"Data!C{row}", None, category))
+    graph.add_node(_make_node("Data!D10", '=Data!C5:C7="Software"', None))
+    graph.add_node(_make_node("Data!D11", None, 1))
+    result = _evaluate_graph(graph, "Data!D10")
+    assert result == XlError.SPILL
+
+
 def test_sum_spill_range_without_neighbor_nodes() -> None:
     """``SUM(D10:D12)`` reads virtual spill scalars from the anchor array."""
     graph = DependencyGraph()
@@ -222,16 +244,14 @@ def test_sumproduct_spill_range_matches_cell_ref() -> None:
 
 
 def test_explicit_leaf_wins_over_virtual_spill() -> None:
-    """A leaf value in a spill slot overrides the virtual spill read."""
+    """A leaf in a spill slot blocks the anchor formula with ``#SPILL!``."""
     graph = DependencyGraph()
     for row, category in enumerate(["Software", "Hardware", "Software"], start=5):
         graph.add_node(_make_node(f"Data!C{row}", None, category))
     graph.add_node(_make_node("Data!D10", '=Data!C5:C7="Software"', None))
     graph.add_node(_make_node("Data!D11", None, 0))
     assert _evaluate_graph(graph, "Data!D11") == 0
-    graph.add_node(_make_node("Data!F10", "=SUM(Data!D10:Data!D11)", None))
-    result = _evaluate_graph(graph, "Data!F10")
-    assert result == pytest.approx(1.0)
+    assert _evaluate_graph(graph, "Data!D10") is XlError.SPILL
 
 
 @pytest.mark.parametrize(
@@ -240,6 +260,8 @@ def test_explicit_leaf_wins_over_virtual_spill() -> None:
         ("Data!E10", "=Data!D10*1"),
         ("Data!F10", "=SUMPRODUCT(Data!D10,Data!E5:E7)"),
         ("Data!G10", "=SUM(Data!D10:Data!D12)"),
+        ("Data!H10", "=SUMPRODUCT(Data!D10:Data!D12,Data!E5:E7)"),
+        ("Data!D10", '=Data!C5:C7="Software"'),
     ],
 )
 def test_array_consumer_eval_codegen_parity(formula_address: str, formula: str) -> None:
@@ -273,6 +295,7 @@ def test_workbook_builders_match_committed_fixtures(tmp_path: Path) -> None:
         (build_column_compare_workbook, column_compare_path(), COLUMN_COMPARE_TARGET),
         (build_row_compare_workbook, row_compare_path(), ROW_COMPARE_TARGET),
         (build_numeric_compare_workbook, numeric_compare_path(), NUMERIC_COMPARE_TARGET),
+        (build_grid_2d_compare_workbook, grid_2d_compare_path(), "Data!D10"),
     ]
     for builder, committed, target in cases:
         fresh = builder(tmp_path / committed.name)

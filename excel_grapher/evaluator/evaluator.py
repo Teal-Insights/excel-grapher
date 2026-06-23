@@ -14,7 +14,11 @@ from excel_grapher.core.address_keys import (
     parse_address,
 )
 from excel_grapher.core.addressing import index_excel_range
-from excel_grapher.core.array_results import read_spill_scalar, scalar_for_range_member
+from excel_grapher.core.array_results import (
+    finalize_top_level_array_result,
+    read_spill_scalar,
+    scalar_for_range_member,
+)
 from excel_grapher.core.excel_function_meta import numpy_array_arg_indices
 from excel_grapher.core.range_shorthand import (
     SheetBounds,
@@ -102,8 +106,8 @@ class FormulaEvaluator:
     appears inside a range operand (``SUM(Data!D10:Data!D12)``) or via operators
     that broadcast cached arrays (``=Data!D10*1``). ``SUMPRODUCT`` accepts a
     single-cell ref to an array anchor. ``IF`` on a multi-cell array returns
-    ``#VALUE!``. Leaf cells overlapping a spill footprint win over virtual spill
-    reads.
+    ``#VALUE!``. Occupied spill slots in the graph yield ``#SPILL!`` at the
+    anchor formula cell.
     """
 
     graph: DependencyGraph
@@ -285,6 +289,11 @@ class FormulaEvaluator:
             result = self._evaluate_ast(ast)
             # Promote 1×1 ExcelRange to scalar; preserve multi-cell ndarrays (#284).
             result = self._auto_resolve_single_cell(result)
+            result = finalize_top_level_array_result(
+                norm,
+                result,
+                is_occupied=self._spill_slot_occupied,
+            )
             # Excel treats formula results of None (empty cell reference) as 0
             if result is None:
                 result = 0
@@ -362,6 +371,15 @@ class FormulaEvaluator:
             return self._eval_unary_op(node)
 
         raise TypeError(f"Unknown AST node: {type(node)}")
+
+    def _spill_slot_occupied(self, address: str) -> bool:
+        """Return whether ``address`` blocks a dynamic-array spill footprint."""
+        node = self.graph.get_node(normalize_address(address))
+        if node is None:
+            return False
+        if node.formula is not None:
+            return True
+        return node.value is not None
 
     def _evaluate_cell_for_range(self, address: str) -> CellValue:
         """Evaluate a cell as one position inside a range operand.
