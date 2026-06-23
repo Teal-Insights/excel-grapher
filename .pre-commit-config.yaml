@@ -1,7 +1,15 @@
-default_install_hook_types: [pre-commit, pre-push]
+default_install_hook_types: [pre-commit, pre-push, commit-msg]
 default_stages: [pre-commit]
 
 repos:
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v4.10.0
+    hooks:
+      - id: commitizen
+        stages: [commit-msg]
+      - id: commitizen-branch
+        stages: [pre-push]
+
   - repo: local
     hooks:
       - id: ruff-check
@@ -22,10 +30,3 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
-      - id: version-bump-reminder
-        name: version bump reminder
-        entry: uv run python scripts/check_version_bump.py --pre-push --warn-only
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [pre-push]
