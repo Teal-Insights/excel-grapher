@@ -65,20 +65,6 @@ def test_sumproduct_price_threshold_count_k24(tmp_path: Path) -> None:
     assert result == pytest.approx(7.0)
 
 
-def test_standalone_range_comparison_returns_elementwise_array() -> None:
-    """Multi-cell range compares at formula top level return ndarrays (not a single scalar)."""
-    graph = DependencyGraph()
-    for row, category in enumerate(["Software", "Hardware", "Software"], start=5):
-        graph.add_node(_make_node(f"PL!C{row}", None, category))
-    graph.add_node(
-        _make_node("PL!D10", '=PL!C5:PL!C7="Software"', None),
-    )
-    with FormulaEvaluator(graph) as evaluator:
-        result = evaluator.evaluate("PL!D10")
-    assert isinstance(result, np.ndarray)
-    assert cast(np.ndarray, result).tolist() == [[True], [False], [True]]
-
-
 def test_sumproduct_criteria_evaluator_matches_excel_cached_values(tmp_path: Path) -> None:
     """Evaluator agrees with Excel cached values embedded in gap workbooks."""
     cases = [

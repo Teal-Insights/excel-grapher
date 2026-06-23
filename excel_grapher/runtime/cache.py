@@ -74,7 +74,6 @@ def coerce_inputs_dict(values: Mapping[str, object]) -> dict[str, CellValue]:
     return cast(dict[str, CellValue], dict(values))
 
 
-
 def _evaluate_address(
     ctx: EvalContext,
     address: str,
