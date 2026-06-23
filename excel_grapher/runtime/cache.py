@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping
 from math import isfinite
 from typing import cast
 
@@ -11,9 +10,12 @@ import fastpyxl.utils.cell
 from excel_grapher.core import CellValue, ExcelRange, XlError
 from excel_grapher.core.addressing import split_sheet_qualified_address
 
+from .cache_context import EvalContext, EvalContextBase
+
 __all__ = [
     "CircularReferenceWarning",
     "EvalContext",
+    "EvalContextBase",
     "circular_safe_cache",
     "coerce_inputs_dict",
     "xl_cell",
@@ -63,66 +65,6 @@ def circular_safe_cache(func: Callable[[], CellValue]) -> Callable[[], CellValue
 def coerce_inputs_dict(values: Mapping[str, object]) -> dict[str, CellValue]:
     """Widen inferred default-input dicts to `dict[str, CellValue]` for `EvalContext`."""
     return cast(dict[str, CellValue], dict(values))
-
-
-@dataclass(slots=True)
-class EvalContext:
-    """Per-run evaluation state for generated spreadsheets.
-
-    The exported-code path needs a mutable inputs mapping and a cache that is scoped
-    to a single compute call, so callers can run many scenarios without global state.
-    """
-
-    inputs: dict[str, CellValue]
-    resolver: Callable[[str], Callable[[EvalContext], CellValue] | None]
-    cache: dict[str, CellValue] = field(default_factory=dict)
-    computing: set[str] = field(default_factory=set)
-    deps: dict[str, set[str]] = field(default_factory=dict)
-    reverse_deps: dict[str, set[str]] = field(default_factory=dict)
-    stack: list[str] = field(default_factory=list)
-    iterative_enabled: bool = False
-    iterate_count: int = 100
-    iterate_delta: float = 0.001
-    iteration_values: dict[str, CellValue] = field(default_factory=dict)
-
-    def _record_dependency(self, parent: str, child: str) -> None:
-        if parent == child:
-            return
-        self.deps.setdefault(parent, set()).add(child)
-        self.reverse_deps.setdefault(child, set()).add(parent)
-
-    def invalidate(self, addresses: Iterable[str]) -> None:
-        """Invalidate cached values for the given addresses and their dependents."""
-        to_visit = list(addresses)
-        seen: set[str] = set()
-        while to_visit:
-            addr = to_visit.pop()
-            if addr in seen:
-                continue
-            seen.add(addr)
-
-            self.cache.pop(addr, None)
-            self.computing.discard(addr)
-
-            dependents = list(self.reverse_deps.get(addr, set()))
-            to_visit.extend(dependents)
-
-            for dep in self.deps.get(addr, set()):
-                parents = self.reverse_deps.get(dep)
-                if parents is not None:
-                    parents.discard(addr)
-                    if not parents:
-                        self.reverse_deps.pop(dep, None)
-
-            self.deps.pop(addr, None)
-            self.reverse_deps.pop(addr, None)
-
-    def set_inputs(self, inputs: dict[str, CellValue]) -> None:
-        """Update input values and invalidate dependent cached results."""
-        changed = [k for k, v in inputs.items() if self.inputs.get(k) != v]
-        self.inputs.update(inputs)
-        if changed:
-            self.invalidate(changed)
 
 
 def _evaluate_address(
@@ -183,9 +125,6 @@ def xl_cell(ctx: EvalContext, address: str) -> CellValue:
             raise KeyError(f"Cell {address} not found in graph")
         return fn
 
-    # Excel treats "empty" formula results as 0 in most numeric contexts; the evaluator
-    # normalizes those Nones to 0. Structural blank-range cells intentionally stay None
-    # so INDEX/MATCH (and similar) see true empty cells in object arrays.
     return _evaluate_address(ctx, address, obtain_fn, preserve_structural_blank=True)
 
 
