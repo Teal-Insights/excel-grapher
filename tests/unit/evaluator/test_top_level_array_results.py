@@ -16,6 +16,8 @@ import pytest
 
 from excel_grapher import DependencyGraph, FormulaEvaluator, Node, create_dependency_graph
 from excel_grapher.core.address_keys import parse_address
+from excel_grapher.core.array_results import array_values_equal, is_array_result
+from excel_grapher.evaluator.types import XlError
 from tests.fixtures.array_results.workbook import (
     build_column_compare_workbook,
     build_numeric_compare_workbook,
@@ -68,10 +70,23 @@ def _graph_from_workbook(path: Path, target: str) -> DependencyGraph:
     )
 
 
-def _evaluate_workbook(path: Path, target: str) -> object:
-    graph = _graph_from_workbook(path, target)
+def _evaluate_graph(graph: DependencyGraph, target: str) -> object:
     with FormulaEvaluator(graph) as evaluator:
         return evaluator.evaluate(target)
+
+
+def _evaluate_workbook(path: Path, target: str) -> object:
+    graph = _graph_from_workbook(path, target)
+    return _evaluate_graph(graph, target)
+
+
+def _graph_with_array_compare_and(formula_address: str, formula: str) -> DependencyGraph:
+    graph = DependencyGraph()
+    for row, category in enumerate(["Software", "Hardware", "Software"], start=5):
+        graph.add_node(_make_node(f"Data!C{row}", None, category))
+    graph.add_node(_make_node("Data!D10", '=Data!C5:C7="Software"', None))
+    graph.add_node(_make_node(formula_address, formula, None))
+    return graph
 
 
 def _assert_bool_column_array(result: object, expected: list[list[bool]]) -> np.ndarray:
@@ -133,6 +148,50 @@ def test_sumproduct_sibling_still_returns_scalar(tmp_path: Path) -> None:
     assert result == pytest.approx(630.0)
 
 
+def test_multicell_ndarray_survives_cache_round_trip() -> None:
+    """Multi-cell top-level results are cached as ndarrays and reused."""
+    graph = DependencyGraph()
+    for row, category in enumerate(["Software", "Hardware", "Software"], start=5):
+        graph.add_node(_make_node(f"Data!C{row}", None, category))
+    graph.add_node(_make_node("Data!D10", '=Data!C5:C7="Software"', None))
+    with FormulaEvaluator(graph) as evaluator:
+        first = evaluator.evaluate("Data!D10")
+        second = evaluator.evaluate("Data!D10")
+    assert is_array_result(first)
+    assert first is second
+    assert array_values_equal(first, second)
+
+
+def test_array_cell_ref_binary_multiply_broadcasts() -> None:
+    """``=D10*1`` element-wise coerces a cached bool column to numbers."""
+    graph = _graph_with_array_compare_and("Data!E10", "=Data!D10*1")
+    result = _evaluate_graph(graph, "Data!E10")
+    assert isinstance(result, np.ndarray)
+    assert _array_tolist(result) == [[1.0], [0.0], [1.0]]
+
+
+def test_array_cell_ref_sumproduct_with_range() -> None:
+    """``SUMPRODUCT`` accepts an array-result cell ref when shapes align."""
+    graph = DependencyGraph()
+    for row, (category, value) in enumerate(
+        zip(["Software", "Hardware", "Software"], [10.0, 20.0, 30.0], strict=True),
+        start=5,
+    ):
+        graph.add_node(_make_node(f"Data!C{row}", None, category))
+        graph.add_node(_make_node(f"Data!E{row}", None, value))
+    graph.add_node(_make_node("Data!D10", '=Data!C5:C7="Software"', None))
+    graph.add_node(_make_node("Data!F10", "=SUMPRODUCT(Data!D10,Data!E5:E7)", None))
+    result = _evaluate_graph(graph, "Data!F10")
+    assert result == pytest.approx(40.0)
+
+
+def test_if_on_array_cell_returns_value_error() -> None:
+    """``IF`` cannot coerce a multi-cell array operand to a scalar condition."""
+    graph = _graph_with_array_compare_and("Data!E10", "=IF(Data!D10,1,0)")
+    result = _evaluate_graph(graph, "Data!E10")
+    assert result is XlError.VALUE
+
+
 def test_column_compare_eval_codegen_parity() -> None:
     """Evaluator and export must agree on ndarray top-level results (Sprint 2)."""
     graph = _graph_from_workbook(column_compare_path(), COLUMN_COMPARE_TARGET)
@@ -141,7 +200,7 @@ def test_column_compare_eval_codegen_parity() -> None:
     gen_value = result.generated_results[COLUMN_COMPARE_TARGET]
     assert isinstance(eval_value, np.ndarray)
     assert isinstance(gen_value, np.ndarray)
-    assert _array_tolist(eval_value) == _array_tolist(gen_value)
+    assert array_values_equal(eval_value, gen_value)
 
 
 def test_workbook_builders_match_committed_fixtures(tmp_path: Path) -> None:
@@ -157,6 +216,6 @@ def test_workbook_builders_match_committed_fixtures(tmp_path: Path) -> None:
         fresh_result = _evaluate_workbook(fresh, target)
         if isinstance(committed_result, np.ndarray):
             assert isinstance(fresh_result, np.ndarray)
-            assert _array_tolist(committed_result) == _array_tolist(fresh_result)
+            assert array_values_equal(committed_result, fresh_result)
         else:
             assert committed_result == fresh_result

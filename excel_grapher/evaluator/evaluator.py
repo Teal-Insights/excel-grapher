@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, overload
 
 import fastpyxl.utils.cell
+import numpy as np
 
 from excel_grapher.core.address_keys import (
     normalize_key as normalize_address,
@@ -274,7 +275,7 @@ class FormulaEvaluator:
         try:
             ast = parse(formula)
             result = self._evaluate_ast(ast)
-            # Auto-resolve 1x1 ExcelRange to single value
+            # Promote 1×1 ExcelRange to scalar; preserve multi-cell ndarrays (#284).
             result = self._auto_resolve_single_cell(result)
             # Excel treats formula results of None (empty cell reference) as 0
             if result is None:
@@ -365,9 +366,10 @@ class FormulaEvaluator:
     ) -> CellValue:
         """Resolve ``ExcelRange`` arguments for runtime function calls.
 
-        Array/table parameters keep numpy arrays; single-cell references in value
-        contexts (e.g. ``TEXT(INDEX(...))``) promote to scalars so export parity
-        matches codegen's scalar ``INDEX`` handling.
+        ``ExcelRange`` operands follow function metadata: array/table parameters
+        (see ``numpy_array_arg_indices``) become ``ndarray``; other contexts
+        promote 1×1 references to scalars. ``ndarray`` values from cell refs
+        (top-level array results, issue #284) pass through unchanged.
         """
         if not isinstance(value, ExcelRange):
             return value
@@ -388,19 +390,28 @@ class FormulaEvaluator:
         return resolve_whole_row(sheet, row, self._sheet_bounds())
 
     def _auto_resolve_single_cell(self, value: CellValue) -> CellValue:
-        """If value is a 1x1 ExcelRange, resolve it to its single cell value."""
+        """Promote 1×1 ``ExcelRange`` references to scalars.
+
+        Multi-cell ``numpy.ndarray`` results are returned unchanged (issue #284).
+        """
+        if isinstance(value, np.ndarray):
+            return value
         if (
             isinstance(value, ExcelRange)
             and value.start_row == value.end_row
             and value.start_col == value.end_col
         ):
-            # 1x1 range - resolve to single value
             arr = self._resolve_range(value)
             return arr[0, 0]
         return value
 
     def _resolve_binary_operand(self, value: CellValue) -> CellValue:
-        """Resolve range references to arrays for element-wise binary operators."""
+        """Resolve operands for element-wise binary operators.
+
+        ``ExcelRange`` references expand to ``ndarray``. Cached array results
+        and other ``ndarray`` values (e.g. ``=D10*2`` when ``D10`` is an array
+        cell) pass through for broadcast via ``xl_*`` helpers.
+        """
         if isinstance(value, ExcelRange):
             return self._resolve_range(value)
         return value
