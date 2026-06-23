@@ -2,31 +2,25 @@
 
 from __future__ import annotations
 
-from typing import cast
-
 import numpy as np
 import pytest
 
 from excel_grapher.core.operators import xl_concat, xl_eq, xl_mul, xl_pow
 from excel_grapher.core.types import XlError
-
-
-def _as_ndarray(result: object) -> np.ndarray:
-    assert isinstance(result, np.ndarray)
-    return cast(np.ndarray, result)
+from tests.unit.core.operators_test_helpers import as_ndarray
 
 
 def test_xl_pow_elementwise_array_and_scalar() -> None:
     left = np.array([[2.0, 3.0], [4.0, 5.0]], dtype=object)
     result = xl_pow(left, 2)
-    arr = _as_ndarray(result)
+    arr = as_ndarray(result)
     assert arr.shape == (2, 2)
     assert arr.tolist() == [[4.0, 9.0], [16.0, 25.0]]
 
 
 def test_xl_pow_broadcasts_scalar_base_across_array_exponent() -> None:
     right = np.array([[2.0, 3.0]], dtype=object)
-    arr = _as_ndarray(xl_pow(3.0, right))
+    arr = as_ndarray(xl_pow(3.0, right))
     assert arr.tolist() == [[9.0, 27.0]]
 
 
@@ -48,7 +42,7 @@ def test_xl_pow_invalid_power_returns_num() -> None:
 
 def test_xl_eq_elementwise_string_equality() -> None:
     left = np.array([["Software", "Hardware"], ["Software", "Other"]], dtype=object)
-    assert _as_ndarray(xl_eq(left, "Software")).tolist() == [[True, False], [True, False]]
+    assert as_ndarray(xl_eq(left, "Software")).tolist() == [[True, False], [True, False]]
 
 
 def test_xl_eq_array_compare_fail_fast_on_first_cell_error() -> None:
@@ -64,17 +58,17 @@ def test_xl_mul_array_arithmetic_fail_fast_on_first_cell_error() -> None:
 def test_xl_concat_elementwise_arrays() -> None:
     left = np.array([["a", "b"], ["c", "d"]], dtype=object)
     right = np.array([["1", "2"], ["3", "4"]], dtype=object)
-    assert _as_ndarray(xl_concat(left, right)).tolist() == [["a1", "b2"], ["c3", "d4"]]
+    assert as_ndarray(xl_concat(left, right)).tolist() == [["a1", "b2"], ["c3", "d4"]]
 
 
 def test_xl_concat_broadcasts_scalar_suffix() -> None:
     left = np.array([["x", "y"]], dtype=object)
-    assert _as_ndarray(xl_concat(left, "!")).tolist() == [["x!", "y!"]]
+    assert as_ndarray(xl_concat(left, "!")).tolist() == [["x!", "y!"]]
 
 
 def test_xl_concat_broadcasts_scalar_prefix() -> None:
     right = np.array([[1.0, 2.0]], dtype=object)
-    assert _as_ndarray(xl_concat("v", right)).tolist() == [["v1", "v2"]]
+    assert as_ndarray(xl_concat("v", right)).tolist() == [["v1", "v2"]]
 
 
 def test_xl_concat_shape_mismatch_returns_value() -> None:

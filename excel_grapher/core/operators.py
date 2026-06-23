@@ -1,10 +1,29 @@
-"""Excel-style scalar and array operators (representation-agnostic)."""
+"""Excel-style scalar and array operators (representation-agnostic).
+
+Array operands try vectorized fast paths in ``operators_fastpath`` first when the
+broadcast array has at least ``MIN_OPERATOR_FASTPATH_CELLS`` (64) elements; smaller
+arrays and failed guards use per-cell reference loops in ``operators_reference``.
+Exponent (``^``) stays on a per-cell loop inside the fast path for parity.
+"""
 
 from __future__ import annotations
 
 import numpy as np
 
-from .coercions import excel_casefold, to_number, to_string
+from .coercions import to_number
+from .operators_fastpath import (
+    try_fastpath_arithmetic_array,
+    try_fastpath_compare_array,
+    try_fastpath_concat_array,
+)
+from .operators_reference import (
+    broadcast_pair,
+    compare_scalars,
+    concat_scalars,
+    reference_arithmetic_array,
+    reference_compare_array,
+    reference_concat_array,
+)
 from .types import CellValue, XlError
 
 
@@ -12,67 +31,11 @@ def _broadcast_pair(
     left: CellValue,
     right: CellValue,
 ) -> tuple[np.ndarray, np.ndarray] | XlError:
-    """Broadcast scalar/array operands to matching object ndarrays."""
-    if isinstance(left, XlError):
-        return left
-    if isinstance(right, XlError):
-        return right
-    if isinstance(left, np.ndarray) and isinstance(right, np.ndarray):
-        if left.shape != right.shape:
-            return XlError.VALUE
-        return left, right
-    if isinstance(left, np.ndarray):
-        return left, np.full(left.shape, right, dtype=object)
-    if isinstance(right, np.ndarray):
-        return np.full(right.shape, left, dtype=object), right
-    raise TypeError("expected at least one ndarray operand")
+    return broadcast_pair(left, right)
 
 
 def _compare_scalars(op: str, left: CellValue, right: CellValue) -> bool | XlError:
-    if isinstance(left, XlError):
-        return left
-    if isinstance(right, XlError):
-        return right
-
-    def _cmp_str(a: str, b: str) -> bool:
-        if op == "=":
-            return a == b
-        if op == "<>":
-            return a != b
-        if op == "<":
-            return a < b
-        if op == ">":
-            return a > b
-        if op == "<=":
-            return a <= b
-        if op == ">=":
-            return a >= b
-        raise ValueError(f"Unknown comparison operator: {op}")
-
-    def _cmp_float(a: float, b: float) -> bool:
-        if op == "=":
-            return a == b
-        if op == "<>":
-            return a != b
-        if op == "<":
-            return a < b
-        if op == ">":
-            return a > b
-        if op == "<=":
-            return a <= b
-        if op == ">=":
-            return a >= b
-        raise ValueError(f"Unknown comparison operator: {op}")
-
-    if isinstance(left, str) and isinstance(right, str):
-        return _cmp_str(excel_casefold(left), excel_casefold(right))
-
-    ln = to_number(left)
-    rn = to_number(right)
-    if isinstance(ln, XlError) or isinstance(rn, XlError):
-        return _cmp_str(excel_casefold(to_string(left)), excel_casefold(to_string(right)))
-
-    return _cmp_float(float(ln), float(rn))
+    return compare_scalars(op, left, right)
 
 
 def _xl_compare(op: str, left: CellValue, right: CellValue) -> CellValue:
@@ -86,14 +49,10 @@ def _xl_compare(op: str, left: CellValue, right: CellValue) -> CellValue:
         if isinstance(pair, XlError):
             return pair
         arr_left, arr_right = pair
-        result = np.empty(arr_left.shape, dtype=object)
-        for indices in np.ndindex(arr_left.shape):
-            cell = _compare_scalars(op, arr_left[indices], arr_right[indices])
-            # Fail-fast: first cell error replaces the whole array (matches xl_sumproduct).
-            if isinstance(cell, XlError):
-                return cell
-            result[indices] = cell
-        return result
+        fast = try_fastpath_compare_array(op, arr_left, arr_right)
+        if fast is not None:
+            return fast
+        return reference_compare_array(op, arr_left, arr_right)
 
     return _compare_scalars(op, left, right)
 
@@ -113,36 +72,10 @@ def _xl_arithmetic(
         if isinstance(pair, XlError):
             return pair
         arr_left, arr_right = pair
-        result = np.empty(arr_left.shape, dtype=object)
-        for indices in np.ndindex(arr_left.shape):
-            ln = to_number(arr_left[indices])
-            rn = to_number(arr_right[indices])
-            if isinstance(ln, XlError):
-                return ln
-            if isinstance(rn, XlError):
-                return rn
-            # Fail-fast per cell (aligned with xl_sumproduct error propagation).
-            if op == "+":
-                result[indices] = ln + rn
-            elif op == "-":
-                result[indices] = ln - rn
-            elif op == "*":
-                result[indices] = ln * rn
-            elif op == "/":
-                if rn == 0:
-                    return XlError.DIV
-                result[indices] = ln / rn
-            elif op == "^":
-                try:
-                    value = ln**rn
-                except (ValueError, OverflowError):
-                    return XlError.NUM
-                if isinstance(value, complex):
-                    return XlError.NUM
-                result[indices] = value
-            else:
-                raise ValueError(f"Unknown arithmetic operator: {op}")
-        return result
+        fast = try_fastpath_arithmetic_array(op, arr_left, arr_right)
+        if fast is not None:
+            return fast
+        return reference_arithmetic_array(op, arr_left, arr_right)
 
     ln = to_number(left)
     rn = to_number(right)
@@ -172,7 +105,7 @@ def _xl_arithmetic(
 
 
 def _concat_scalars(left: CellValue, right: CellValue) -> str:
-    return to_string(left) + to_string(right)
+    return concat_scalars(left, right)
 
 
 def _xl_concat(left: CellValue, right: CellValue) -> CellValue:
@@ -186,10 +119,10 @@ def _xl_concat(left: CellValue, right: CellValue) -> CellValue:
         if isinstance(pair, XlError):
             return pair
         arr_left, arr_right = pair
-        result = np.empty(arr_left.shape, dtype=object)
-        for indices in np.ndindex(arr_left.shape):
-            result[indices] = _concat_scalars(arr_left[indices], arr_right[indices])
-        return result
+        fast = try_fastpath_concat_array(arr_left, arr_right)
+        if fast is not None:
+            return fast
+        return reference_concat_array(arr_left, arr_right)
 
     return _concat_scalars(left, right)
 

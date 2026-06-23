@@ -9,16 +9,31 @@ __all__ = ["emit_runtime", "runtime_cache_seed_symbols"]
 _PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 _RUNTIME_DIR = _PACKAGE_ROOT / "runtime"
 _CORE_DIR = _PACKAGE_ROOT / "core"
+_OPERATORS_FASTPATH_MODULE = _CORE_DIR / "operators_fastpath.py"
+_OPERATORS_FASTPATH_STUB_MODULE = _CORE_DIR / "operators_fastpath_stub.py"
+
 
 # Core package modules define types, coercions, scalar operators, and addressing (canonical source).
-_CORE_MODULES: list[tuple[str, Path]] = [
-    ("core.address_keys", _CORE_DIR / "address_keys.py"),
-    ("core.types", _CORE_DIR / "types.py"),
-    ("core.coercions", _CORE_DIR / "coercions.py"),
-    ("core.operators", _CORE_DIR / "operators.py"),
-    ("core.addressing", _CORE_DIR / "addressing.py"),
-    ("core.functions", _CORE_DIR / "functions.py"),
-]
+def _core_modules(*, include_operators_fastpath: bool) -> list[tuple[str, Path]]:
+    fastpath_path = (
+        _OPERATORS_FASTPATH_MODULE
+        if include_operators_fastpath
+        else _OPERATORS_FASTPATH_STUB_MODULE
+    )
+    return [
+        ("core.address_keys", _CORE_DIR / "address_keys.py"),
+        ("core.types", _CORE_DIR / "types.py"),
+        ("core.coercions", _CORE_DIR / "coercions.py"),
+        ("core.operators_reference", _CORE_DIR / "operators_reference.py"),
+        ("core.operators_fastpath", fastpath_path),
+        ("core.operators", _CORE_DIR / "operators.py"),
+        ("core.sumproduct", _CORE_DIR / "sumproduct.py"),
+        ("core.addressing", _CORE_DIR / "addressing.py"),
+        ("core.functions", _CORE_DIR / "functions.py"),
+    ]
+
+
+_CORE_MODULES: list[tuple[str, Path]] = _core_modules(include_operators_fastpath=True)
 
 # Export runtime modules (representation-specific implementations); order preserved for iteration.
 _RUNTIME_MODULES: list[tuple[str, Path]] = [
@@ -372,19 +387,29 @@ def emit_runtime(
     *,
     include_offset_table: bool,
     include_dep_tracking: bool = True,
+    include_operators_fastpath: bool = True,
 ) -> str:
     """Emit standalone runtime code for generated output.
 
     When ``include_dep_tracking`` is False, the slim cache eval scaffold is emitted
     instead of the invalidating ``EvalContext`` helpers.
+
+    When ``include_operators_fastpath`` is False, stub fast-path functions that
+    always fall back to the reference loops are embedded instead of the vectorized
+    implementation.
     """
+    all_modules = (
+        _core_modules(include_operators_fastpath=include_operators_fastpath) + _RUNTIME_MODULES
+    )
+    all_module_names = [name for name, _ in all_modules]
+
     # Parse all runtime and core modules.
     module_src: dict[str, str] = {}
     module_ast: dict[str, ast.Module] = {}
     defs_by_module: dict[str, dict[str, ast.AST]] = {}
     imports_by_module: dict[str, list[str]] = {}
 
-    for mod_name, mod_path in _ALL_MODULES:
+    for mod_name, mod_path in all_modules:
         src = mod_path.read_text(encoding="utf-8")
         module_src[mod_name] = src
         mod_ast = ast.parse(src, filename=str(mod_path))
@@ -425,7 +450,7 @@ def emit_runtime(
     # Imports: union external imports from modules that contribute symbols.
     used_modules = {symbol_to_module[s] for s in needed if s in symbol_to_module}
     import_lines: list[str] = []
-    for mod in _ALL_MODULE_NAMES:
+    for mod in all_module_names:
         if mod not in used_modules:
             continue
         for line in imports_by_module[mod]:

@@ -51,3 +51,26 @@ def test_emit_runtime_dep_tracking_flag_selects_scaffold() -> None:
     )
     assert_dep_tracking_absent(slim)
     assert_dep_tracking_present(full)
+
+
+def test_emit_runtime_operators_fastpath_flag_selects_implementation() -> None:
+    symbols = {
+        "xl_eq",
+        "xl_mul",
+        "xl_sumproduct",
+        *runtime_cache_seed_symbols(include_dep_tracking=False),
+    }
+    stubbed = emit_runtime(
+        symbols,
+        include_offset_table=False,
+        include_dep_tracking=False,
+        include_operators_fastpath=False,
+    )
+    vectorized = emit_runtime(
+        symbols,
+        include_offset_table=False,
+        include_dep_tracking=False,
+        include_operators_fastpath=True,
+    )
+    assert "batch_coerce_to_float64" not in stubbed
+    assert "batch_coerce_to_float64" in vectorized
