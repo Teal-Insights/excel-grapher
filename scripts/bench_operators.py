@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from excel_grapher.core.operators_bench import (
+from tests.bench.operators_bench import (
     collect_baseline,
     write_baseline_document,
 )

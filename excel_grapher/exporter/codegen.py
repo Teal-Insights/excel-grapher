@@ -17,6 +17,7 @@ from excel_grapher.core.address_keys import (
     sort_node_keys,
 )
 from excel_grapher.core.excel_function_meta import numpy_array_arg_indices
+from excel_grapher.core.operators_fastpath import MIN_OPERATOR_FASTPATH_CELLS
 from excel_grapher.evaluator.errors import MissingNormalizedFormulaError
 from excel_grapher.evaluator.name_utils import (
     address_to_python_name,
@@ -141,6 +142,7 @@ class CodeGenerator:
         self._emitted: set[str] = set()
         self._needs_offset_runtime = False  # Set to True if dynamic OFFSET is used
         self._needs_index_ref_runtime = False  # OFFSET(INDEX(...), ...) requires xl_index_ref
+        self._needs_operators_fastpath = False  # Large array binary ops / SUMPRODUCT
         self._offset_runtime_sheets: set[str] = set()
         self._temp_var_counter = 0  # Counter for unique temp variable names
         self._ast_cache: dict[str, AstNode] = {}
@@ -158,6 +160,7 @@ class CodeGenerator:
         self._emitted.clear()
         self._needs_offset_runtime = False
         self._needs_index_ref_runtime = False
+        self._needs_operators_fastpath = False
         self._offset_runtime_sheets.clear()
         self._temp_var_counter = 0
         self._ast_cache.clear()
@@ -1373,6 +1376,32 @@ class CodeGenerator:
         c1, c2 = (start_col, end_col) if start_col <= end_col else (end_col, start_col)
         return (start_sheet, r1, c1, r2, c2)
 
+    def _range_cell_count(self, start: str, end: str) -> int:
+        _, r1, c1, r2, c2 = self._range_coords(start, end)
+        return (r2 - r1 + 1) * (c2 - c1 + 1)
+
+    def _max_array_extent_in_ast(self, node: AstNode) -> int:
+        """Return the largest array operand size referenced in *node*."""
+        if isinstance(node, RangeNode):
+            return self._range_cell_count(node.start, node.end)
+        if isinstance(node, BinaryOpNode):
+            return max(
+                self._max_array_extent_in_ast(node.left),
+                self._max_array_extent_in_ast(node.right),
+            )
+        if isinstance(node, UnaryOpNode):
+            return self._max_array_extent_in_ast(node.operand)
+        if isinstance(node, FunctionCallNode):
+            extent = 1
+            for arg in node.args:
+                extent = max(extent, self._max_array_extent_in_ast(arg))
+            return extent
+        return 1
+
+    def _note_operators_fastpath_from_ast(self, node: AstNode) -> None:
+        if self._max_array_extent_in_ast(node) >= MIN_OPERATOR_FASTPATH_CELLS:
+            self._needs_operators_fastpath = True
+
     def _emit_offset_static(
         self, base_address: str, rows: int, cols: int, height: int, width: int
     ) -> str:
@@ -2193,6 +2222,7 @@ class CodeGenerator:
 
             ast = self._get_or_parse_ast(address)
             assert ast is not None
+            self._note_operators_fastpath_from_ast(ast)
             used_xl_functions.update(self._extract_xl_functions(ast))
 
         # Always include per-call evaluation scaffolding.
@@ -2213,6 +2243,7 @@ class CodeGenerator:
             runtime_symbols,
             include_offset_table=False,
             include_dep_tracking=include_dep_tracking,
+            include_operators_fastpath=self._needs_operators_fastpath,
         )
         runtime_code = runtime_code.rstrip()
 

@@ -3,23 +3,26 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, cast
 
 import numpy as np
 import pytest
 
 from excel_grapher import create_dependency_graph
-from excel_grapher.core.operators import xl_eq, xl_ge, xl_gt, xl_le, xl_lt, xl_ne
-from excel_grapher.core.operators_bench import (
+from excel_grapher.core.operators import xl_eq
+from excel_grapher.core.types import XlError
+from tests.bench.operators_bench import (
     bench_workload,
     build_workloads,
     category_column,
     load_baseline_document,
     numeric_column,
 )
-from excel_grapher.core.operators_reference import broadcast_pair, reference_compare_array
-from excel_grapher.core.types import CellValue, XlError
 from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.unit.core.operators_test_helpers import (
+    COMPARE_OPS,
+    as_ndarray,
+    assert_compare_matches_reference,
+)
 from tests.unit.core.test_operators_baseline import BASELINE_PATH
 from tests.unit.gaps.workbook_helpers import write_large_string_criteria_sumproduct
 
@@ -28,71 +31,42 @@ MEDIUM_SHAPE = (1_000, 1)
 EQ_STRING_10K_BASELINE_SPEEDUP_FACTOR = 1.25
 GT_NUMERIC_1K_BASELINE_SPEEDUP_FACTOR = 5.0
 
-COMPARE_OPS = ("=", "<>", "<", ">", "<=", ">=")
-
-COMPARE_DISPATCH = {
-    "=": xl_eq,
-    "<>": xl_ne,
-    "<": xl_lt,
-    ">": xl_gt,
-    "<=": xl_le,
-    ">=": xl_ge,
-}
-
-
-def _as_ndarray(value: object) -> np.ndarray:
-    assert isinstance(value, np.ndarray)
-    return cast(np.ndarray, value)
-
-
-def _assert_matches_reference(op: str, left: CellValue, right: CellValue) -> None:
-    pair = broadcast_pair(left, right)
-    assert not isinstance(pair, XlError)
-    arr_left, arr_right = pair
-    expected = reference_compare_array(op, arr_left, arr_right)
-    actual = COMPARE_DISPATCH[op](left, right)
-    if isinstance(expected, XlError):
-        assert actual == expected
-        return
-    assert isinstance(actual, np.ndarray)
-    assert cast(Any, actual).tolist() == cast(Any, expected).tolist()
-
 
 @pytest.mark.parametrize("op", COMPARE_OPS)
 def test_compare_fastpath_matches_reference_on_large_string_equality(op: str) -> None:
     categories = category_column(LARGE_SHAPE, seed=31)
-    _assert_matches_reference(op, categories, "Software")
+    assert_compare_matches_reference(op, categories, "Software")
 
 
 @pytest.mark.parametrize("op", [">", ">=", "<", "<="])
 def test_compare_fastpath_matches_reference_on_large_numeric_threshold(op: str) -> None:
     numbers = numeric_column(MEDIUM_SHAPE, seed=41)
-    _assert_matches_reference(op, numbers, 200)
+    assert_compare_matches_reference(op, numbers, 200)
 
 
 def test_compare_fastpath_string_equality_is_case_insensitive_at_scale() -> None:
     labels = np.array([["software", "SOFTWARE", "Software"]], dtype=object)
-    result = _as_ndarray(xl_eq(labels, "software"))
+    result = as_ndarray(xl_eq(labels, "software"))
     assert result.tolist() == [[True, True, True]]
 
 
 def test_compare_fastpath_matches_reference_with_numeric_strings() -> None:
     left = np.array([["10", " 2.5 "], ["0", ""]], dtype=object)
     right = np.array([[10.0, 2.5], [0.0, 0.0]], dtype=object)
-    _assert_matches_reference("=", left, right)
-    _assert_matches_reference("<=", left, right)
+    assert_compare_matches_reference("=", left, right)
+    assert_compare_matches_reference("<=", left, right)
 
 
 def test_compare_fastpath_falls_back_on_mixed_type_cells() -> None:
     left = np.array([["TRUE", 2.0]], dtype=object)
     right = np.array([[True, "2"]], dtype=object)
-    _assert_matches_reference("=", left, right)
+    assert_compare_matches_reference("=", left, right)
 
 
 def test_compare_fastpath_falls_back_on_non_numeric_string_with_number() -> None:
     left = np.array([["abc", 2.0]], dtype=object)
     right = np.array([[0.0, 2.0]], dtype=object)
-    _assert_matches_reference("=", left, right)
+    assert_compare_matches_reference("=", left, right)
 
 
 def test_compare_fastpath_fail_fast_on_first_error_at_index_zero() -> None:

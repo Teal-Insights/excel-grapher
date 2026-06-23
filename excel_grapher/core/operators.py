@@ -1,8 +1,9 @@
 """Excel-style scalar and array operators (representation-agnostic).
 
-Array operands try vectorized fast paths in ``operators_fastpath`` first; when
-size or cell-type guards fail, per-cell reference loops in ``operators_reference``
-preserve Excel coercion, broadcasting, and error semantics.
+Array operands try vectorized fast paths in ``operators_fastpath`` first when the
+broadcast array has at least ``MIN_OPERATOR_FASTPATH_CELLS`` (64) elements; smaller
+arrays and failed guards use per-cell reference loops in ``operators_reference``.
+Exponent (``^``) stays on a per-cell loop inside the fast path for parity.
 """
 
 from __future__ import annotations

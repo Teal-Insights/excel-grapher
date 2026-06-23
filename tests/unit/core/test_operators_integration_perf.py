@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from excel_grapher import FormulaEvaluator, create_dependency_graph
-from excel_grapher.core.operators_bench import (
+from tests.bench.operators_bench import (
     bench_workload,
     build_workloads,
     load_baseline_document,

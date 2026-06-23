@@ -5,27 +5,28 @@ from __future__ import annotations
 import numpy as np
 
 from excel_grapher.core.operators import xl_eq, xl_mul
-from excel_grapher.core.operators_bench import category_column, numeric_column
-from excel_grapher.core.operators_reference import reference_sumproduct_arrays
+from excel_grapher.core.operators_fastpath import (
+    MIN_OPERATOR_FASTPATH_CELLS,
+    try_fastpath_sumproduct,
+)
 from excel_grapher.core.sumproduct import xl_sumproduct
-from excel_grapher.core.types import CellValue, XlError
+from excel_grapher.core.types import XlError
+from tests.bench.operators_bench import category_column, numeric_column
+from tests.unit.core.operators_test_helpers import assert_sumproduct_matches_reference
 
 LARGE_SHAPE = (2_000, 1)
 
 
-def _assert_matches_reference(*args: CellValue) -> None:
-    arrays = [
-        arg if isinstance(arg, np.ndarray) else np.array([[arg]], dtype=object) for arg in args
-    ]
-    expected = reference_sumproduct_arrays(arrays)
-    actual = xl_sumproduct(*args)
-    assert actual == expected
+def test_sumproduct_fastpath_skips_arrays_below_size_threshold() -> None:
+    shape = (MIN_OPERATOR_FASTPATH_CELLS - 1, 1)
+    arrays = [np.ones(shape, dtype=object), np.full(shape, 2.0, dtype=object)]
+    assert try_fastpath_sumproduct(arrays) is None
 
 
 def test_sumproduct_fastpath_matches_reference_on_numeric_arrays() -> None:
     left = numeric_column(LARGE_SHAPE, seed=51)
     right = numeric_column(LARGE_SHAPE, seed=52)
-    _assert_matches_reference(left, right)
+    assert_sumproduct_matches_reference(left, right)
 
 
 def test_sumproduct_fastpath_matches_reference_on_criteria_chain() -> None:
@@ -33,13 +34,13 @@ def test_sumproduct_fastpath_matches_reference_on_criteria_chain() -> None:
     values = numeric_column(LARGE_SHAPE, seed=62)
     criteria = xl_mul(xl_eq(categories, "Software"), values)
     assert isinstance(criteria, np.ndarray)
-    _assert_matches_reference(criteria)
+    assert_sumproduct_matches_reference(criteria)
 
 
 def test_sumproduct_fastpath_matches_reference_with_bool_mask() -> None:
     mask = np.array([[True, False], [True, True]], dtype=object)
     values = np.array([[10.0, 20.0], [30.0, 40.0]], dtype=object)
-    _assert_matches_reference(mask, values)
+    assert_sumproduct_matches_reference(mask, values)
 
 
 def test_sumproduct_fastpath_falls_back_on_embedded_error() -> None:

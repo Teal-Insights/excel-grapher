@@ -1,4 +1,9 @@
-"""Vectorized fast paths for Excel binary operators and SUMPRODUCT reduction."""
+"""Vectorized fast paths for Excel binary operators and SUMPRODUCT reduction.
+
+``+``, ``-``, ``*``, and ``/`` use NumPy element-wise ops on coerced float64 arrays.
+The ``^`` exponent operator is not vectorized: it runs a C-order Python loop so
+fail-fast ``#NUM!`` semantics match the reference implementation.
+"""
 
 from __future__ import annotations
 
@@ -10,11 +15,10 @@ import numpy as np
 from .coercions import excel_casefold, to_number, to_string
 from .types import XlError
 
+MIN_OPERATOR_FASTPATH_CELLS = 64
 _NUMERIC_CELL_TYPES = (int, float, np.integer, np.floating)
 _CASEFOLD_UFUNC = np.frompyfunc(excel_casefold, 1, 1)
 _TO_STRING_UFUNC = np.frompyfunc(to_string, 1, 1)
-_MIN_COMPARE_FASTPATH_CELLS = 64
-_MIN_CONCAT_FASTPATH_CELLS = 64
 
 
 def _try_asarray_float64(arr: np.ndarray) -> np.ndarray | None:
@@ -72,7 +76,11 @@ def _first_zero_index(values: np.ndarray) -> int | None:
 
 
 def _fastpath_pow(left: np.ndarray, right: np.ndarray) -> np.ndarray | XlError:
-    """Element-wise power on pre-coerced float arrays (C-order fail-fast)."""
+    """Element-wise power on pre-coerced float arrays (C-order fail-fast).
+
+    Uses Python ``**`` per cell rather than ``np.power`` so complex results and
+    exceptions align with ``operators_reference``.
+    """
     flat_left = left.ravel()
     flat_right = right.ravel()
     out = np.empty(flat_left.size, dtype=np.float64)
@@ -250,7 +258,7 @@ def try_fastpath_compare_array(
 ) -> np.ndarray | XlError | None:
     """Apply a vectorized compare fast path, or return None to use the reference loop.
 
-    Dispatch tiers (arrays with at least ``_MIN_COMPARE_FASTPATH_CELLS`` elements):
+    Dispatch tiers (arrays with at least ``MIN_OPERATOR_FASTPATH_CELLS`` elements):
 
     1. Fail-fast scan for embedded ``XlError`` values (C-order, left wins per cell).
     2. String path when both sides are plain ``str`` cells (scalar-broadcast aware).
@@ -258,7 +266,7 @@ def try_fastpath_compare_array(
 
     Smaller arrays and mixed-type cells fall through to the per-cell reference loop.
     """
-    if arr_left.size < _MIN_COMPARE_FASTPATH_CELLS:
+    if arr_left.size < MIN_OPERATOR_FASTPATH_CELLS:
         return None
 
     error = _first_paired_error_c_order(arr_left, arr_right)
@@ -282,7 +290,14 @@ def try_fastpath_arithmetic_array(
     arr_left: np.ndarray,
     arr_right: np.ndarray,
 ) -> np.ndarray | XlError | None:
-    """Apply a vectorized numeric fast path, or return None to use the reference loop."""
+    """Apply a vectorized numeric fast path, or return None to use the reference loop.
+
+    ``+``, ``-``, ``*``, and ``/`` are fully vectorized. ``^`` delegates to a
+    per-cell Python loop (not ``np.power``) to preserve reference error semantics.
+    """
+    if arr_left.size < MIN_OPERATOR_FASTPATH_CELLS:
+        return None
+
     left = batch_coerce_to_float64(arr_left)
     if left is None:
         return None
@@ -373,7 +388,7 @@ def try_fastpath_concat_array(
     Handles homogeneous string, integer, float, bool, null, and ``XlError`` columns by
     batch-formatting each side with ``to_string`` rules, then ``np.char.add``.
     """
-    if arr_left.size < _MIN_CONCAT_FASTPATH_CELLS:
+    if arr_left.size < MIN_OPERATOR_FASTPATH_CELLS:
         return None
 
     left_kind = _detect_concat_column_kind(arr_left)
@@ -408,6 +423,8 @@ def try_fastpath_sumproduct(arrays: list[np.ndarray]) -> float | None:
     """Sum element-wise products when every array batch-coerces to float64."""
     if not arrays:
         return 0.0
+    if arrays[0].size < MIN_OPERATOR_FASTPATH_CELLS:
+        return None
     coerced: list[np.ndarray] = []
     for arr in arrays:
         batch = batch_coerce_to_float64(arr)

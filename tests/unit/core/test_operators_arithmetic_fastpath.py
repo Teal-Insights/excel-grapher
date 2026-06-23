@@ -10,45 +10,25 @@ import pytest
 
 from excel_grapher import DependencyGraph, FormulaEvaluator, Node, create_dependency_graph
 from excel_grapher.core.address_keys import parse_address
-from excel_grapher.core.operators import xl_add, xl_div, xl_mul, xl_pow, xl_sub
-from excel_grapher.core.operators_bench import (
+from excel_grapher.core.operators import xl_div, xl_mul, xl_pow
+from excel_grapher.core.operators_fastpath import (
+    MIN_OPERATOR_FASTPATH_CELLS,
+    try_fastpath_arithmetic_array,
+)
+from excel_grapher.core.operators_reference import reference_arithmetic_array
+from excel_grapher.core.types import XlError
+from tests.bench.operators_bench import (
     bench_workload,
     build_workloads,
     load_baseline_document,
 )
-from excel_grapher.core.operators_reference import broadcast_pair, reference_arithmetic_array
-from excel_grapher.core.types import CellValue, XlError
 from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.unit.core.operators_test_helpers import assert_arithmetic_matches_reference
 from tests.unit.core.test_operators_baseline import BASELINE_PATH
 from tests.unit.gaps.workbook_helpers import write_large_numeric_sumproduct
 
 LARGE_SHAPE = (2_000, 1)
 MUL_1K_BASELINE_SPEEDUP_FACTOR = 5.0
-
-
-def _as_ndarray(value: object) -> np.ndarray:
-    assert isinstance(value, np.ndarray)
-    return cast(np.ndarray, value)
-
-
-def _assert_matches_reference(op: str, left: CellValue, right: CellValue) -> None:
-    pair = broadcast_pair(left, right)
-    assert not isinstance(pair, XlError)
-    arr_left, arr_right = pair
-    expected = reference_arithmetic_array(op, arr_left, arr_right)
-    dispatch = {
-        "+": xl_add,
-        "-": xl_sub,
-        "*": xl_mul,
-        "/": xl_div,
-        "^": xl_pow,
-    }
-    actual = dispatch[op](left, right)
-    if isinstance(expected, XlError):
-        assert actual == expected
-        return
-    assert isinstance(actual, np.ndarray)
-    assert cast(Any, actual).tolist() == cast(Any, expected).tolist()
 
 
 def _numeric_array(shape: tuple[int, ...], *, seed: int) -> np.ndarray:
@@ -57,29 +37,36 @@ def _numeric_array(shape: tuple[int, ...], *, seed: int) -> np.ndarray:
     return flat.astype(object).reshape(shape)
 
 
+def test_numeric_fastpath_skips_arrays_below_size_threshold() -> None:
+    shape = (MIN_OPERATOR_FASTPATH_CELLS - 1, 1)
+    left = np.ones(shape, dtype=object)
+    right = np.ones(shape, dtype=object)
+    assert try_fastpath_arithmetic_array("*", left, right) is None
+
+
 @pytest.mark.parametrize("op", ["+", "-", "*", "/", "^"])
 def test_numeric_fastpath_matches_reference_on_large_arrays(op: str) -> None:
     left = _numeric_array(LARGE_SHAPE, seed=11)
     right = _numeric_array(LARGE_SHAPE, seed=12)
-    _assert_matches_reference(op, left, right)
+    assert_arithmetic_matches_reference(op, left, right)
 
 
 @pytest.mark.parametrize("op", ["+", "-", "*", "/", "^"])
 def test_numeric_fastpath_matches_reference_with_scalar_broadcast(op: str) -> None:
     left = _numeric_array((500, 1), seed=21)
-    _assert_matches_reference(op, left, 2.0)
+    assert_arithmetic_matches_reference(op, left, 2.0)
 
 
 def test_numeric_fastpath_matches_reference_with_bools_and_none() -> None:
     left = np.array([[True, None], [False, 3.0]], dtype=object)
     right = np.array([[2.0, 4.0], [1.0, 2.0]], dtype=object)
-    _assert_matches_reference("*", left, right)
+    assert_arithmetic_matches_reference("*", left, right)
 
 
 def test_numeric_fastpath_matches_reference_with_numeric_strings() -> None:
     left = np.array([["10", " 2.5 "], ["0", ""]], dtype=object)
     right = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=object)
-    _assert_matches_reference("+", left, right)
+    assert_arithmetic_matches_reference("+", left, right)
 
 
 def test_numeric_fastpath_falls_back_on_embedded_error() -> None:

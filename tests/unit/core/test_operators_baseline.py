@@ -25,38 +25,28 @@ baseline.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, cast
 
 import numpy as np
 import pytest
 
-from excel_grapher.core.operators import (
-    xl_add,
-    xl_concat,
-    xl_div,
-    xl_eq,
-    xl_ge,
-    xl_gt,
-    xl_le,
-    xl_lt,
-    xl_mul,
-    xl_ne,
-    xl_pow,
-    xl_sub,
-)
-from excel_grapher.core.operators_bench import (
+from excel_grapher.core.operators import xl_concat, xl_div, xl_eq, xl_mul
+from excel_grapher.core.types import XlError
+from tests.bench.operators_bench import (
     BASELINE_VERSION,
     build_workloads,
     collect_baseline,
     load_baseline_document,
 )
-from excel_grapher.core.operators_reference import (
-    broadcast_pair,
-    reference_arithmetic_array,
-    reference_compare_array,
-    reference_concat_array,
+from tests.unit.core.operators_test_helpers import (
+    ARITHMETIC_DISPATCH,
+    COMPARE_DISPATCH,
+    COMPARE_OPS,
+    as_ndarray,
+    assert_cellvalue_equal,
+    reference_arithmetic,
+    reference_compare,
+    reference_concat,
 )
-from excel_grapher.core.types import CellValue, XlError
 
 BASELINE_PATH = (
     Path(__file__).resolve().parents[2] / "fixtures" / "operators_baseline" / "baseline.json"
@@ -75,80 +65,31 @@ EXPECTED_WORKLOAD_NAMES = frozenset(
     }
 )
 
-COMPARE_OPS = ("=", "<>", "<", ">", "<=", ">=")
-
-
-def _assert_cellvalue_equal(actual: object, expected: object) -> None:
-    if isinstance(actual, np.ndarray) and isinstance(expected, np.ndarray):
-        assert actual.shape == expected.shape
-        actual_list = cast(Any, actual).tolist()
-        expected_list = cast(Any, expected).tolist()
-        assert actual_list == expected_list
-        return
-    assert actual == expected
-
-
-def _as_ndarray(value: object) -> np.ndarray:
-    assert isinstance(value, np.ndarray)
-    return cast(np.ndarray, value)
-
-
-def _via_reference_compare(op: str, left: CellValue, right: CellValue) -> object:
-    pair = broadcast_pair(left, right)
-    if isinstance(pair, XlError):
-        return pair
-    return reference_compare_array(op, pair[0], pair[1])
-
-
-def _via_reference_arithmetic(op: str, left: CellValue, right: CellValue) -> object:
-    pair = broadcast_pair(left, right)
-    if isinstance(pair, XlError):
-        return pair
-    return reference_arithmetic_array(op, pair[0], pair[1])
-
-
-def _via_reference_concat(left: CellValue, right: CellValue) -> object:
-    pair = broadcast_pair(left, right)
-    if isinstance(pair, XlError):
-        return pair
-    return reference_concat_array(pair[0], pair[1])
-
 
 @pytest.mark.parametrize("op", COMPARE_OPS)
 def test_reference_compare_matches_public_compare(op: str) -> None:
     left = np.array([["Software", 2.0], [XlError.NA, "Hardware"]], dtype=object)
     right = np.array([["software", "2"], [1.0, "hardware"]], dtype=object)
-    dispatch = {
-        "=": xl_eq,
-        "<>": xl_ne,
-        "<": xl_lt,
-        ">": xl_gt,
-        "<=": xl_le,
-        ">=": xl_ge,
-    }
-    _assert_cellvalue_equal(dispatch[op](left, right), _via_reference_compare(op, left, right))
+    assert_cellvalue_equal(
+        COMPARE_DISPATCH[op](left, right),
+        reference_compare(op, left, right),
+    )
 
 
 @pytest.mark.parametrize(
     ("op", "dispatch"),
-    [
-        ("+", xl_add),
-        ("-", xl_sub),
-        ("*", xl_mul),
-        ("/", xl_div),
-        ("^", xl_pow),
-    ],
+    [(op, fn) for op, fn in ARITHMETIC_DISPATCH.items()],
 )
 def test_reference_arithmetic_matches_public_arithmetic(op: str, dispatch) -> None:
     left = np.array([[2.0, 4.0], [9.0, -1.0]], dtype=object)
     right = np.array([[1.0, 2.0], [0.5, 2.0]], dtype=object)
-    _assert_cellvalue_equal(dispatch(left, right), _via_reference_arithmetic(op, left, right))
+    assert_cellvalue_equal(dispatch(left, right), reference_arithmetic(op, left, right))
 
 
 def test_reference_concat_matches_public_concat() -> None:
     left = np.array([["a", 1.0], [True, None]], dtype=object)
     right = np.array([["z", 2], ["!", ""]], dtype=object)
-    _assert_cellvalue_equal(xl_concat(left, right), _via_reference_concat(left, right))
+    assert_cellvalue_equal(xl_concat(left, right), reference_concat(left, right))
 
 
 def test_array_compare_fail_fast_returns_first_error_in_c_order() -> None:
@@ -182,7 +123,7 @@ def test_top_level_error_propagates_before_array_compare() -> None:
 def test_string_compare_uses_casefolded_fallback_when_numeric_coercion_fails() -> None:
     left = np.array([["TRUE", "AbC"]], dtype=object)
     right = np.array([[True, "aBc"]], dtype=object)
-    assert _as_ndarray(xl_eq(left, right)).tolist() == [[True, True]]
+    assert as_ndarray(xl_eq(left, right)).tolist() == [[True, True]]
 
 
 def test_baseline_fixture_exists_and_matches_schema() -> None:
