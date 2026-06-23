@@ -39,3 +39,52 @@ with FormulaEvaluator(graph) as ev:
 print(evaluator_results)
 ## {'Sheet1!B10': ...}
 ```
+
+### Top-level array formula results
+
+Excel 365 dynamic-array formulas such as `=C5:C7="Software"` produce a **multi-cell
+result**. In excel-grapher the **logical array** is stored on the **formula anchor
+cell** as an `object`-dtype `numpy.ndarray`—not as separate values written into
+neighboring cells.
+
+```python
+import numpy as np
+from excel_grapher import DependencyGraph, FormulaEvaluator, Node
+
+graph = DependencyGraph()
+graph.add_node(Node("Data", "C", 5, None, None, "Software", True))
+graph.add_node(Node("Data", "C", 6, None, None, "Hardware", True))
+graph.add_node(Node("Data", "C", 7, None, None, "Software", True))
+graph.add_node(
+    Node("Data", "D", 10, '=Data!C5:C7="Software"', '=Data!C5:C7="Software"', None, False)
+)
+
+with FormulaEvaluator(graph) as ev:
+    result = ev.evaluate("Data!D10")
+
+assert isinstance(result, np.ndarray)
+assert result.tolist() == [[True], [False], [True]]
+```
+
+**Contract (issue #284):**
+
+| Situation | `evaluate(anchor)` |
+| --------- | -------------------- |
+| `=C5:C7="label"` (column compare) | `ndarray` shape `(n, 1)` of `bool` |
+| `=C5` or `=C5:C5` at top level | scalar (`1×1` auto-resolve) |
+| `=SUMPRODUCT((range="x")*values)` | scalar (arrays stay internal) |
+| Occupied spill slot in the **graph** | `#SPILL!` at the anchor |
+| `IF(array_cell, …)` | `#VALUE!` |
+
+**Range operands** (e.g. `SUM(Data!D10:Data!D12)`) read **virtual spill scalars**
+from a cached anchor array when spill-slot addresses are not separate graph nodes.
+Cells that **are** in the graph with a formula or stored value **block** spill and
+yield `#SPILL!` on the anchor.
+
+**Not modeled:** legacy implicit intersection (`@`), physical spill metadata on
+neighbor cells, or `#SPILL!` detection for obstructing cells that are absent from the
+dependency graph. Include obstructing addresses as graph nodes (or targets when
+building from a workbook) so spill blocking can see them.
+
+Regression coverage: `tests/unit/evaluator/test_top_level_array_results.py`,
+`tests/fixtures/array_results/`, and `tests/integration/exporter/test_top_level_array_*`.

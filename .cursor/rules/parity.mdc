@@ -66,3 +66,20 @@ assert result.generated_results["S!A1"] == 123
 ```
 
 Avoid duplicating operator or coercion behavior in both evaluator and codegen paths.
+
+### Top-level array formula results (#284)
+
+Multi-cell compare/arithmetic at the **formula anchor** returns a `numpy.ndarray` on
+`evaluate(anchor)`; export `xl_cell` returns the same value. Parity harness compares
+arrays with `array_values_equal`.
+
+| Check | Tests / helpers |
+| ----- | ---------------- |
+| Evaluator contract | `tests/unit/evaluator/test_top_level_array_results.py` |
+| Evaluator ↔ export (anchor) | `tests/integration/exporter/test_top_level_array_codegen_parity.py` |
+| Evaluator ↔ export (consumers) | `tests/integration/exporter/test_top_level_array_dependencies.py` |
+| Cached `#SPILL!` workbook | `tests/integration/evaluator/test_top_level_array_excel_cache.py` |
+| Shared helpers | `excel_grapher/core/array_results.py` |
+
+When testing spill blocking from a workbook, include obstructing cells in graph
+targets so `create_dependency_graph` loads them.

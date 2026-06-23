@@ -3,7 +3,13 @@
 Product contract: standalone formulas whose top-level result is a multi-cell
 binary operation (compare, arithmetic, concat) return an ``object``-dtype
 ``numpy.ndarray`` at the formula anchor cell. Only 1×1 ranges auto-resolve to
-scalars. Physical spill into neighbor cells is not modeled.
+scalars at top level.
+
+Range operands read virtual spill scalars from cached anchor arrays. Occupied spill
+slots in the dependency graph yield ``XlError.SPILL`` at the anchor. Legacy
+implicit intersection and physical neighbor-cell spill are not modeled.
+
+See ``user_guide/03-evaluator.qmd`` (Top-level array formula results).
 """
 
 from __future__ import annotations

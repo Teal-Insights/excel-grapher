@@ -12,6 +12,7 @@ from excel_grapher import create_dependency_graph
 from excel_grapher.core.array_results import array_values_equal, is_array_result
 from excel_grapher.core.types import CellValue
 from tests.fixtures.array_results.workbook import (
+    BLOCKED_SPILL_XLSX,
     COLUMN_COMPARE_XLSX,
     GRID_2D_COMPARE_XLSX,
     NUMERIC_COMPARE_XLSX,
@@ -61,6 +62,7 @@ def test_array_result_fixtures_are_committed() -> None:
         ROW_COMPARE_XLSX,
         NUMERIC_COMPARE_XLSX,
         GRID_2D_COMPARE_XLSX,
+        BLOCKED_SPILL_XLSX,
     ):
         path = column_compare_path().parent / name
         assert path.is_file(), f"missing fixture: {name}"
