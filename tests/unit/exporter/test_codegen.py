@@ -138,30 +138,42 @@ class TestEmitAstReferences:
         assert gen._emit_ast(CellRefNode("'My Sheet'!B2")) == "xl_cell(ctx, \"'My Sheet'!B2\")"
 
     def test_emit_range_1d_column(self, gen):
-        """1D range (column)."""
+        """1D range (column) without a graph uses ordinary cell reads."""
         result = gen._emit_ast(RangeNode("Sheet1!A1", "Sheet1!A3"))
-        # Should expand to list of range member reads
-        assert "xl_cell_in_range(ctx, 'Sheet1!A1')" in result
-        assert "xl_cell_in_range(ctx, 'Sheet1!A2')" in result
-        assert "xl_cell_in_range(ctx, 'Sheet1!A3')" in result
-        # Should be an object-dtype ndarray
+        assert "xl_cell(ctx, 'Sheet1!A1')" in result
+        assert "xl_cell(ctx, 'Sheet1!A2')" in result
+        assert "xl_cell(ctx, 'Sheet1!A3')" in result
+        assert "xl_cell_in_range" not in result
         assert result.startswith("np.array([")
         assert result.endswith("dtype=object)")
 
     def test_emit_range_1d_row(self, gen):
-        """1D range (row)."""
+        """1D range (row) without a graph uses ordinary cell reads."""
         result = gen._emit_ast(RangeNode("Sheet1!A1", "Sheet1!C1"))
-        assert "xl_cell_in_range(ctx, 'Sheet1!A1')" in result
-        assert "xl_cell_in_range(ctx, 'Sheet1!B1')" in result
-        assert "xl_cell_in_range(ctx, 'Sheet1!C1')" in result
+        assert "xl_cell(ctx, 'Sheet1!A1')" in result
+        assert "xl_cell(ctx, 'Sheet1!B1')" in result
+        assert "xl_cell(ctx, 'Sheet1!C1')" in result
+        assert "xl_cell_in_range" not in result
 
     def test_emit_range_2d(self, gen):
-        """2D range."""
+        """2D range without a graph uses ordinary cell reads."""
         result = gen._emit_ast(RangeNode("Sheet1!A1", "Sheet1!B2"))
-        assert "xl_cell_in_range(ctx, 'Sheet1!A1')" in result
-        assert "xl_cell_in_range(ctx, 'Sheet1!B1')" in result
+        assert "xl_cell(ctx, 'Sheet1!A1')" in result
+        assert "xl_cell(ctx, 'Sheet1!B1')" in result
+        assert "xl_cell(ctx, 'Sheet1!A2')" in result
+        assert "xl_cell(ctx, 'Sheet1!B2')" in result
+        assert "xl_cell_in_range" not in result
+
+    def test_emit_range_missing_graph_members_use_xl_cell_in_range(self):
+        """Range members absent from the graph use spill-aware range reads."""
+        graph = _make_graph(
+            _make_node("Sheet1!A1", None, 1.0),
+        )
+        gen = CodeGenerator(graph)
+        result = gen._emit_ast(RangeNode("Sheet1!A1", "Sheet1!A3"))
+        assert "xl_cell(ctx, 'Sheet1!A1')" in result
         assert "xl_cell_in_range(ctx, 'Sheet1!A2')" in result
-        assert "xl_cell_in_range(ctx, 'Sheet1!B2')" in result
+        assert "xl_cell_in_range(ctx, 'Sheet1!A3')" in result
 
 
 class TestEmitAstOperators:
