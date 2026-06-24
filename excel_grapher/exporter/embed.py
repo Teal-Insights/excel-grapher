@@ -4,21 +4,36 @@ import ast
 from collections import deque
 from pathlib import Path
 
-__all__ = ["emit_runtime"]
+__all__ = ["emit_runtime", "runtime_cache_seed_symbols"]
 
 _PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 _RUNTIME_DIR = _PACKAGE_ROOT / "runtime"
 _CORE_DIR = _PACKAGE_ROOT / "core"
+_OPERATORS_FASTPATH_MODULE = _CORE_DIR / "operators_fastpath.py"
+_OPERATORS_FASTPATH_STUB_MODULE = _CORE_DIR / "operators_fastpath_stub.py"
+
 
 # Core package modules define types, coercions, scalar operators, and addressing (canonical source).
-_CORE_MODULES: list[tuple[str, Path]] = [
-    ("core.address_keys", _CORE_DIR / "address_keys.py"),
-    ("core.types", _CORE_DIR / "types.py"),
-    ("core.coercions", _CORE_DIR / "coercions.py"),
-    ("core.operators", _CORE_DIR / "operators.py"),
-    ("core.addressing", _CORE_DIR / "addressing.py"),
-    ("core.functions", _CORE_DIR / "functions.py"),
-]
+def _core_modules(*, include_operators_fastpath: bool) -> list[tuple[str, Path]]:
+    fastpath_path = (
+        _OPERATORS_FASTPATH_MODULE
+        if include_operators_fastpath
+        else _OPERATORS_FASTPATH_STUB_MODULE
+    )
+    return [
+        ("core.address_keys", _CORE_DIR / "address_keys.py"),
+        ("core.types", _CORE_DIR / "types.py"),
+        ("core.coercions", _CORE_DIR / "coercions.py"),
+        ("core.operators_reference", _CORE_DIR / "operators_reference.py"),
+        ("core.operators_fastpath", fastpath_path),
+        ("core.operators", _CORE_DIR / "operators.py"),
+        ("core.sumproduct", _CORE_DIR / "sumproduct.py"),
+        ("core.addressing", _CORE_DIR / "addressing.py"),
+        ("core.functions", _CORE_DIR / "functions.py"),
+    ]
+
+
+_CORE_MODULES: list[tuple[str, Path]] = _core_modules(include_operators_fastpath=True)
 
 # Export runtime modules (representation-specific implementations); order preserved for iteration.
 _RUNTIME_MODULES: list[tuple[str, Path]] = [
@@ -30,8 +45,22 @@ _RUNTIME_MODULES: list[tuple[str, Path]] = [
     ("lookup", _RUNTIME_DIR / "lookup.py"),
     ("reference", _RUNTIME_DIR / "reference.py"),
     ("offset_runtime", _RUNTIME_DIR / "offset_runtime.py"),
+    ("cache_context", _RUNTIME_DIR / "cache_context.py"),
+    ("cache_eval_slim", _RUNTIME_DIR / "cache_eval_slim.py"),
     ("cache", _RUNTIME_DIR / "cache.py"),
 ]
+
+_SLIM_CACHE_EVAL_SYMBOLS = frozenset(
+    {
+        "EvalContext",
+        "_evaluate_address",
+        "xl_cell",
+        "xl_eval",
+    }
+)
+_SLIM_CACHE_EVAL_MODULE = "cache_eval_slim"
+_FULL_CACHE_EVAL_MODULE = "cache"
+_FULL_EVAL_CONTEXT_SYMBOL = "EvalContext"
 
 # All modules: core first so their definitions win when symbols are defined in both.
 _ALL_MODULES: list[tuple[str, Path]] = _CORE_MODULES + _RUNTIME_MODULES
@@ -315,19 +344,72 @@ def _prune_import_lines(import_lines: list[str], *, used_names: set[str]) -> lis
     return deduped
 
 
-def emit_runtime(required_symbols: set[str], *, include_offset_table: bool) -> str:
+def runtime_cache_seed_symbols(*, include_dep_tracking: bool) -> set[str]:
+    """Return cache-eval symbol names for ``emit_runtime`` seeding."""
+    symbols = {
+        "EvalContext",
+        "coerce_inputs_dict",
+        "xl_cell",
+        "xl_eval",
+        "xl_range",
+    }
+    if include_dep_tracking:
+        symbols.add("xl_circular_reference")
+    return symbols
+
+
+def _register_runtime_symbol_maps(
+    defs_by_module: dict[str, dict[str, ast.AST]],
+    *,
+    include_dep_tracking: bool,
+) -> tuple[dict[str, ast.AST], dict[str, str]]:
+    symbol_to_node: dict[str, ast.AST] = {}
+    symbol_to_module: dict[str, str] = {}
+
+    for mod, defs in defs_by_module.items():
+        for name, node in defs.items():
+            if include_dep_tracking:
+                if mod == _SLIM_CACHE_EVAL_MODULE and name in _SLIM_CACHE_EVAL_SYMBOLS:
+                    continue
+            else:
+                if mod == _FULL_CACHE_EVAL_MODULE and name in _SLIM_CACHE_EVAL_SYMBOLS:
+                    continue
+                if mod == "cache_context" and name == _FULL_EVAL_CONTEXT_SYMBOL:
+                    continue
+            symbol_to_node[name] = node
+            symbol_to_module[name] = mod
+
+    return symbol_to_node, symbol_to_module
+
+
+def emit_runtime(
+    required_symbols: set[str],
+    *,
+    include_offset_table: bool,
+    include_dep_tracking: bool = True,
+    include_operators_fastpath: bool = True,
+) -> str:
     """Emit standalone runtime code for generated output.
 
-    This uses AST-based extraction from curated runtime modules and core,
-    including only the requested symbols (and their transitive runtime dependencies).
+    When ``include_dep_tracking`` is False, the slim cache eval scaffold is emitted
+    instead of the invalidating ``EvalContext`` helpers.
+
+    When ``include_operators_fastpath`` is False, stub fast-path functions that
+    always fall back to the reference loops are embedded instead of the vectorized
+    implementation.
     """
+    all_modules = (
+        _core_modules(include_operators_fastpath=include_operators_fastpath) + _RUNTIME_MODULES
+    )
+    all_module_names = [name for name, _ in all_modules]
+
     # Parse all runtime and core modules.
     module_src: dict[str, str] = {}
     module_ast: dict[str, ast.Module] = {}
     defs_by_module: dict[str, dict[str, ast.AST]] = {}
     imports_by_module: dict[str, list[str]] = {}
 
-    for mod_name, mod_path in _ALL_MODULES:
+    for mod_name, mod_path in all_modules:
         src = mod_path.read_text(encoding="utf-8")
         module_src[mod_name] = src
         mod_ast = ast.parse(src, filename=str(mod_path))
@@ -335,12 +417,10 @@ def emit_runtime(required_symbols: set[str], *, include_offset_table: bool) -> s
         defs_by_module[mod_name] = _top_level_defs(mod_ast)
         imports_by_module[mod_name] = _collect_external_import_lines(mod_ast, src)
 
-    symbol_to_node: dict[str, ast.AST] = {}
-    symbol_to_module: dict[str, str] = {}
-    for mod, defs in defs_by_module.items():
-        for name, node in defs.items():
-            symbol_to_node[name] = node
-            symbol_to_module[name] = mod
+    symbol_to_node, symbol_to_module = _register_runtime_symbol_maps(
+        defs_by_module,
+        include_dep_tracking=include_dep_tracking,
+    )
 
     # Dependency graph between runtime symbols.
     symbol_deps: dict[str, set[str]] = {}
@@ -370,7 +450,7 @@ def emit_runtime(required_symbols: set[str], *, include_offset_table: bool) -> s
     # Imports: union external imports from modules that contribute symbols.
     used_modules = {symbol_to_module[s] for s in needed if s in symbol_to_module}
     import_lines: list[str] = []
-    for mod in _ALL_MODULE_NAMES:
+    for mod in all_module_names:
         if mod not in used_modules:
             continue
         for line in imports_by_module[mod]:

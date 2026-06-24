@@ -1,12 +1,14 @@
-schema_version: "1.1.0"
-workbook: lic_inputs.xlsx
+schema_version: "1.4.0"
+workbook: matrix_inputs.xlsx
 series:
-  - id: country_block_primary_balance
+  - id: macro_matrix
     sheet: Inputs
-    data_range: Inputs!F3:J8
+    data_range: Inputs!B3:D5
     layout: matrix
-    setter:
-      name: set_country_block_primary_balance
+    editable: true
+    input:
+      setter:
+        name: set_macro_matrix
     structure:
       measure:
         concept: OBS_VALUE
@@ -15,28 +17,22 @@ series:
           kind: data_cell
           read: float
       dimensions:
-        - concept: REF_AREA
-          role: key
-          scope: cell
-          bind:
-            kind: row_hierarchy
-            label_column: A
-            max_depth: 4
         - concept: INDICATOR
           role: key
           scope: cell
           bind:
             kind: row_label
             label_column: A
+            read: string
+            normalize: strip
         - concept: TIME_PERIOD
           role: key
           scope: cell
           bind:
             kind: column_header
-            header_row: 1
+            header_row: 2
             read: int
     key:
-      - REF_AREA
       - INDICATOR
       - TIME_PERIOD
-    notes: Schema 1.1.0 example; uses row_hierarchy (planned bind kind, not yet supported by resolver/codegen).
+    notes: Explicit matrix fixture; vertical=row_label, horizontal=column_header.

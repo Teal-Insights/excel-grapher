@@ -165,6 +165,29 @@ def test_schema_accepts_1_1_0_matrix_fixture() -> None:
     assert bindings["series"][0]["structure"]["dimensions"][0]["bind"]["kind"] == "row_hierarchy"
 
 
+def test_schema_accepts_series_without_layout() -> None:
+    from tests.fixtures.series_bindings.matrix_helpers import macro_matrix_bindings_document
+
+    doc = macro_matrix_bindings_document()
+    del doc["series"][0]["layout"]
+    bindings = validate_bindings_document(doc)
+    assert "layout" not in bindings["series"][0]
+
+
+def test_schema_rejects_matrix_with_single_dimension() -> None:
+    from tests.fixtures.series_bindings.matrix_helpers import (
+        macro_matrix_bindings_document,
+        macro_matrix_structure,
+    )
+
+    doc = macro_matrix_bindings_document()
+    structure = macro_matrix_structure()
+    structure["dimensions"] = structure["dimensions"][:1]
+    doc["series"][0]["structure"] = structure
+    with pytest.raises(SeriesBindingsSchemaError):
+        validate_bindings_document(doc)
+
+
 def test_schema_accepts_legacy_row_series_layout() -> None:
     doc = {
         "schema_version": "1.0.0",

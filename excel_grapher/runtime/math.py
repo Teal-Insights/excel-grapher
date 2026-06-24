@@ -17,6 +17,7 @@ from excel_grapher.core import (
     to_string,
 )
 from excel_grapher.core.functions import xl_abs
+from excel_grapher.core.sumproduct import xl_sumproduct
 
 T = TypeVar("T", str, float)
 
@@ -93,32 +94,6 @@ def xl_counta(*args: CellValue) -> int:
         if v is not None and v != "":
             count += 1
     return count
-
-
-def xl_sumproduct(*args: CellValue) -> float | XlError:
-    if len(args) == 0:
-        return 0.0
-    arrays: list[np.ndarray] = []
-    for arg in args:
-        if isinstance(arg, np.ndarray):
-            arrays.append(arg)
-        else:
-            arrays.append(np.array([[arg]], dtype=object))
-    shape = arrays[0].shape
-    for arr in arrays[1:]:
-        if arr.shape != shape:
-            return XlError.VALUE
-    result = 0.0
-    for indices in np.ndindex(shape):
-        product = 1.0
-        for arr in arrays:
-            val = arr[indices]
-            n = to_number(val)
-            if isinstance(n, XlError):
-                return n
-            product *= n
-        result += product
-    return result
 
 
 def xl_round(number: CellValue, num_digits: CellValue) -> float | XlError:

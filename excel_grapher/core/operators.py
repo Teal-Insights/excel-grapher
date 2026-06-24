@@ -1,87 +1,157 @@
-"""Excel-style scalar operators (representation-agnostic)."""
+"""Excel-style scalar and array operators (representation-agnostic).
+
+Array operands try vectorized fast paths in ``operators_fastpath`` first when the
+broadcast array has at least ``MIN_OPERATOR_FASTPATH_CELLS`` (64) elements; smaller
+arrays and failed guards use per-cell reference loops in ``operators_reference``.
+Exponent (``^``) stays on a per-cell loop inside the fast path for parity.
+"""
 
 from __future__ import annotations
 
-from .coercions import excel_casefold, to_number, to_string
+import numpy as np
+
+from .coercions import to_number
+from .operators_fastpath import (
+    try_fastpath_arithmetic_array,
+    try_fastpath_compare_array,
+    try_fastpath_concat_array,
+)
+from .operators_reference import (
+    broadcast_pair,
+    compare_scalars,
+    concat_scalars,
+    reference_arithmetic_array,
+    reference_compare_array,
+    reference_concat_array,
+)
 from .types import CellValue, XlError
 
 
-def _xl_compare(op: str, left: CellValue, right: CellValue) -> bool | XlError:
+def _broadcast_pair(
+    left: CellValue,
+    right: CellValue,
+) -> tuple[np.ndarray, np.ndarray] | XlError:
+    return broadcast_pair(left, right)
+
+
+def _compare_scalars(op: str, left: CellValue, right: CellValue) -> bool | XlError:
+    return compare_scalars(op, left, right)
+
+
+def _xl_compare(op: str, left: CellValue, right: CellValue) -> CellValue:
     if isinstance(left, XlError):
         return left
     if isinstance(right, XlError):
         return right
 
-    def _cmp_str(a: str, b: str) -> bool:
-        if op == "=":
-            return a == b
-        if op == "<>":
-            return a != b
-        if op == "<":
-            return a < b
-        if op == ">":
-            return a > b
-        if op == "<=":
-            return a <= b
-        if op == ">=":
-            return a >= b
-        raise ValueError(f"Unknown comparison operator: {op}")
+    if isinstance(left, np.ndarray) or isinstance(right, np.ndarray):
+        pair = _broadcast_pair(left, right)
+        if isinstance(pair, XlError):
+            return pair
+        arr_left, arr_right = pair
+        fast = try_fastpath_compare_array(op, arr_left, arr_right)
+        if fast is not None:
+            return fast
+        return reference_compare_array(op, arr_left, arr_right)
 
-    def _cmp_float(a: float, b: float) -> bool:
-        if op == "=":
-            return a == b
-        if op == "<>":
-            return a != b
-        if op == "<":
-            return a < b
-        if op == ">":
-            return a > b
-        if op == "<=":
-            return a <= b
-        if op == ">=":
-            return a >= b
-        raise ValueError(f"Unknown comparison operator: {op}")
+    return _compare_scalars(op, left, right)
 
-    if isinstance(left, str) and isinstance(right, str):
-        return _cmp_str(excel_casefold(left), excel_casefold(right))
+
+def _xl_arithmetic(
+    op: str,
+    left: CellValue,
+    right: CellValue,
+) -> CellValue:
+    if isinstance(left, XlError):
+        return left
+    if isinstance(right, XlError):
+        return right
+
+    if isinstance(left, np.ndarray) or isinstance(right, np.ndarray):
+        pair = _broadcast_pair(left, right)
+        if isinstance(pair, XlError):
+            return pair
+        arr_left, arr_right = pair
+        fast = try_fastpath_arithmetic_array(op, arr_left, arr_right)
+        if fast is not None:
+            return fast
+        return reference_arithmetic_array(op, arr_left, arr_right)
 
     ln = to_number(left)
     rn = to_number(right)
-    if isinstance(ln, XlError) or isinstance(rn, XlError):
-        return _cmp_str(excel_casefold(to_string(left)), excel_casefold(to_string(right)))
+    if isinstance(ln, XlError):
+        return ln
+    if isinstance(rn, XlError):
+        return rn
+    if op == "+":
+        return ln + rn
+    if op == "-":
+        return ln - rn
+    if op == "*":
+        return ln * rn
+    if op == "/":
+        if rn == 0:
+            return XlError.DIV
+        return ln / rn
+    if op == "^":
+        try:
+            value = ln**rn
+        except (ValueError, OverflowError):
+            return XlError.NUM
+        if isinstance(value, complex):
+            return XlError.NUM
+        return value
+    raise ValueError(f"Unknown arithmetic operator: {op}")
 
-    return _cmp_float(float(ln), float(rn))
+
+def _concat_scalars(left: CellValue, right: CellValue) -> str:
+    return concat_scalars(left, right)
 
 
-def xl_concat(left: CellValue, right: CellValue) -> str | XlError:
+def _xl_concat(left: CellValue, right: CellValue) -> CellValue:
     if isinstance(left, XlError):
         return left
     if isinstance(right, XlError):
         return right
-    return to_string(left) + to_string(right)
+
+    if isinstance(left, np.ndarray) or isinstance(right, np.ndarray):
+        pair = _broadcast_pair(left, right)
+        if isinstance(pair, XlError):
+            return pair
+        arr_left, arr_right = pair
+        fast = try_fastpath_concat_array(arr_left, arr_right)
+        if fast is not None:
+            return fast
+        return reference_concat_array(arr_left, arr_right)
+
+    return _concat_scalars(left, right)
 
 
-def xl_eq(left: CellValue, right: CellValue) -> bool | XlError:
+def xl_concat(left: CellValue, right: CellValue) -> CellValue:
+    return _xl_concat(left, right)
+
+
+def xl_eq(left: CellValue, right: CellValue) -> CellValue:
     return _xl_compare("=", left, right)
 
 
-def xl_ne(left: CellValue, right: CellValue) -> bool | XlError:
+def xl_ne(left: CellValue, right: CellValue) -> CellValue:
     return _xl_compare("<>", left, right)
 
 
-def xl_lt(left: CellValue, right: CellValue) -> bool | XlError:
+def xl_lt(left: CellValue, right: CellValue) -> CellValue:
     return _xl_compare("<", left, right)
 
 
-def xl_gt(left: CellValue, right: CellValue) -> bool | XlError:
+def xl_gt(left: CellValue, right: CellValue) -> CellValue:
     return _xl_compare(">", left, right)
 
 
-def xl_le(left: CellValue, right: CellValue) -> bool | XlError:
+def xl_le(left: CellValue, right: CellValue) -> CellValue:
     return _xl_compare("<=", left, right)
 
 
-def xl_ge(left: CellValue, right: CellValue) -> bool | XlError:
+def xl_ge(left: CellValue, right: CellValue) -> CellValue:
     return _xl_compare(">=", left, right)
 
 
@@ -91,79 +161,24 @@ def xl_iferror(value: CellValue, value_if_error: CellValue) -> CellValue:
     return value
 
 
-def xl_div(left: CellValue, right: CellValue) -> float | XlError:
-    if isinstance(left, XlError):
-        return left
-    if isinstance(right, XlError):
-        return right
-    ln = to_number(left)
-    rn = to_number(right)
-    if isinstance(ln, XlError):
-        return ln
-    if isinstance(rn, XlError):
-        return rn
-    if rn == 0:
-        return XlError.DIV
-    return ln / rn
+def xl_div(left: CellValue, right: CellValue) -> CellValue:
+    return _xl_arithmetic("/", left, right)
 
 
-def xl_add(left: CellValue, right: CellValue) -> float | XlError:
-    if isinstance(left, XlError):
-        return left
-    if isinstance(right, XlError):
-        return right
-    ln = to_number(left)
-    rn = to_number(right)
-    if isinstance(ln, XlError):
-        return ln
-    if isinstance(rn, XlError):
-        return rn
-    return ln + rn
+def xl_add(left: CellValue, right: CellValue) -> CellValue:
+    return _xl_arithmetic("+", left, right)
 
 
-def xl_sub(left: CellValue, right: CellValue) -> float | XlError:
-    if isinstance(left, XlError):
-        return left
-    if isinstance(right, XlError):
-        return right
-    ln = to_number(left)
-    rn = to_number(right)
-    if isinstance(ln, XlError):
-        return ln
-    if isinstance(rn, XlError):
-        return rn
-    return ln - rn
+def xl_sub(left: CellValue, right: CellValue) -> CellValue:
+    return _xl_arithmetic("-", left, right)
 
 
-def xl_mul(left: CellValue, right: CellValue) -> float | XlError:
-    if isinstance(left, XlError):
-        return left
-    if isinstance(right, XlError):
-        return right
-    ln = to_number(left)
-    rn = to_number(right)
-    if isinstance(ln, XlError):
-        return ln
-    if isinstance(rn, XlError):
-        return rn
-    return ln * rn
+def xl_mul(left: CellValue, right: CellValue) -> CellValue:
+    return _xl_arithmetic("*", left, right)
 
 
-def xl_pow(left: CellValue, right: CellValue) -> float | XlError:
-    if isinstance(left, XlError):
-        return left
-    if isinstance(right, XlError):
-        return right
-    ln = to_number(left)
-    rn = to_number(right)
-    if isinstance(ln, XlError):
-        return ln
-    if isinstance(rn, XlError):
-        return rn
-    try:
-        return ln**rn
-    except (ValueError, OverflowError):
-        return XlError.NUM
+def xl_pow(left: CellValue, right: CellValue) -> CellValue:
+    return _xl_arithmetic("^", left, right)
 
 
 def xl_neg(value: CellValue) -> float | XlError:

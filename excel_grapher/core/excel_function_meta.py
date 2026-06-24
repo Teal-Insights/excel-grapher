@@ -35,6 +35,21 @@ FUNCTION_META: dict[str, ExcelFunctionMeta] = {
     "CONCAT": ExcelFunctionMeta("CONCAT", ()),
 }
 
+# Functions whose range arguments must stay as object-dtype ndarrays (evaluator + codegen).
+NUMPY_ARRAY_ARG_INDICES: dict[str, frozenset[int]] = {
+    "LOOKUP": frozenset({1, 2}),
+    "VLOOKUP": frozenset({1}),
+    "HLOOKUP": frozenset({1}),
+    "INDEX": frozenset({0}),
+    "MATCH": frozenset({1}),
+    "SUMPRODUCT": frozenset(range(10)),
+}
+
+
+def numpy_array_arg_indices(function_name: str) -> frozenset[int]:
+    """Return argument indices that keep numpy arrays for ``function_name``."""
+    return NUMPY_ARRAY_ARG_INDICES.get(function_name.upper(), frozenset())
+
 
 def is_ref_only_arg(function_name: str, arg_index: int) -> bool:
     """True if this argument position is ref_only (no domain required for cell refs)."""

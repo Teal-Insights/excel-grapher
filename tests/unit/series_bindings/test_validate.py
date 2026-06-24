@@ -13,6 +13,7 @@ from excel_grapher.series_bindings import (
     validate_series_bindings,
 )
 from excel_grapher.series_bindings.schema import validate_bindings_document
+from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
 
@@ -290,3 +291,70 @@ def test_validate_skips_attribute_value_shorthand_for_dtype_read_check(
     report = validate_series_bindings(graph, bindings, workbook=wb_path)
     assert report["ok"] is True
     assert not any(issue["code"] == "dtype_read_mismatch" for issue in report["issues"])
+
+
+def test_validate_matrix_layout_intent_requires_two_dimensions(tmp_path: Path) -> None:
+    from tests.fixtures.series_bindings.matrix_helpers import (
+        macro_matrix_bindings_document,
+        write_matrix_explicit_workbook,
+    )
+
+    wb_path = tmp_path / "matrix_inputs.xlsx"
+    write_matrix_explicit_workbook(wb_path)
+    graph = create_dependency_graph(
+        wb_path,
+        expand_data_range("Inputs!B3:D5"),
+        load_values=True,
+    )
+    bindings = validate_bindings_document(macro_matrix_bindings_document())
+    bindings["series"][0]["structure"]["dimensions"] = bindings["series"][0]["structure"][
+        "dimensions"
+    ][:1]
+    report = validate_series_bindings(graph, bindings, workbook=wb_path)
+    assert report["ok"] is False
+    assert any(issue["code"] == "layout_constraint_violation" for issue in report["issues"])
+
+
+def test_validate_series_layout_requires_cell_scoped_dimension(tmp_path: Path) -> None:
+    wb_path = tmp_path / "series_layout.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Inputs")
+    ws.write_number("B2", 1.0)
+    wb.close()
+    graph = create_dependency_graph(wb_path, ["Inputs!B2"], load_values=True)
+    bindings: WorkbookSeriesBindings = {
+        "schema_version": "1.4.0",
+        "series": [
+            {
+                "id": "series_only_scope",
+                "sheet": "Inputs",
+                "data_range": "Inputs!B2",
+                "layout": "series",
+                "input": {"setter": {"name": "set_series_only_scope"}},
+                "structure": {
+                    "measure": {
+                        "concept": "OBS_VALUE",
+                        "bind": {"kind": "data_cell", "read": "float"},
+                    },
+                    "dimensions": [
+                        {
+                            "concept": "COUNTRY",
+                            "role": "key",
+                            "scope": "series",
+                            "bind": {
+                                "kind": "constant",
+                                "value": "Borvelia",
+                            },
+                        }
+                    ],
+                },
+                "key": ["COUNTRY"],
+            }
+        ],
+    }
+    report = validate_series_bindings(graph, bindings, workbook=wb_path)
+    assert report["ok"] is False
+    assert any(
+        issue["code"] == "layout_constraint_violation" and "cell-scoped" in issue["message"]
+        for issue in report["issues"]
+    )

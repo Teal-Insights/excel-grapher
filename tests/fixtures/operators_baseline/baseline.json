@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "workloads": [
+    {
+      "category": "compare",
+      "cell_count": 15,
+      "cells_per_sec": 263167.11,
+      "elapsed_sec": 5.7e-05,
+      "name": "xl_eq_string_gap_15"
+    },
+    {
+      "category": "compare",
+      "cell_count": 1000,
+      "cells_per_sec": 332118.0,
+      "elapsed_sec": 0.003011,
+      "name": "xl_eq_string_1k"
+    },
+    {
+      "category": "compare",
+      "cell_count": 10000,
+      "cells_per_sec": 320412.89,
+      "elapsed_sec": 0.03121,
+      "name": "xl_eq_string_10k"
+    },
+    {
+      "category": "compare",
+      "cell_count": 1000,
+      "cells_per_sec": 192712.05,
+      "elapsed_sec": 0.005189,
+      "name": "xl_gt_numeric_1k"
+    },
+    {
+      "category": "arithmetic",
+      "cell_count": 1000,
+      "cells_per_sec": 220477.27,
+      "elapsed_sec": 0.004536,
+      "name": "xl_mul_numeric_1k"
+    },
+    {
+      "category": "concat",
+      "cell_count": 1000,
+      "cells_per_sec": 217831.09,
+      "elapsed_sec": 0.004591,
+      "name": "xl_concat_string_1k"
+    },
+    {
+      "category": "integration",
+      "cell_count": 1000,
+      "cells_per_sec": 129034.31,
+      "elapsed_sec": 0.00775,
+      "name": "sumproduct_criteria_chain_1k"
+    },
+    {
+      "category": "compare",
+      "cell_count": 10000,
+      "cells_per_sec": 289819.28,
+      "elapsed_sec": 0.034504,
+      "name": "xl_eq_string_10k_square"
+    }
+  ]
+}

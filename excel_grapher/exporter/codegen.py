@@ -16,6 +16,8 @@ from excel_grapher.core.address_keys import (
     quote_sheet_if_needed,
     sort_node_keys,
 )
+from excel_grapher.core.excel_function_meta import numpy_array_arg_indices
+from excel_grapher.core.operators_fastpath import MIN_OPERATOR_FASTPATH_CELLS
 from excel_grapher.evaluator.errors import MissingNormalizedFormulaError
 from excel_grapher.evaluator.name_utils import (
     address_to_python_name,
@@ -140,6 +142,7 @@ class CodeGenerator:
         self._emitted: set[str] = set()
         self._needs_offset_runtime = False  # Set to True if dynamic OFFSET is used
         self._needs_index_ref_runtime = False  # OFFSET(INDEX(...), ...) requires xl_index_ref
+        self._needs_operators_fastpath = False  # Large array binary ops / SUMPRODUCT
         self._offset_runtime_sheets: set[str] = set()
         self._temp_var_counter = 0  # Counter for unique temp variable names
         self._ast_cache: dict[str, AstNode] = {}
@@ -157,11 +160,27 @@ class CodeGenerator:
         self._emitted.clear()
         self._needs_offset_runtime = False
         self._needs_index_ref_runtime = False
+        self._needs_operators_fastpath = False
         self._offset_runtime_sheets.clear()
         self._temp_var_counter = 0
         self._ast_cache.clear()
         self._used_graph_closure = False
         self._formula_cell_address = None
+
+    def _include_dep_tracking(
+        self,
+        series_bindings: WorkbookSeriesBindings | None,
+    ) -> bool:
+        """Return whether exported runtime should embed dependency invalidation."""
+        if self._iterate_enabled:
+            return True
+        if series_bindings is not None:
+            from excel_grapher.series_bindings.normalize import has_input_direction
+
+            for series in series_bindings.get("series", []):
+                if isinstance(series, dict) and has_input_direction(series):
+                    return True
+        return False
 
     def _public_graph(self) -> DependencyGraph | GraphLike:
         original = getattr(self.graph, "original_graph", None)
@@ -1027,17 +1046,7 @@ class CodeGenerator:
             return "False"
 
         # Functions that need numpy arrays for their array/table arguments
-        # Maps function name -> set of argument indices that need np.array wrapping
-        numpy_array_args: dict[str, set[int]] = {
-            "LOOKUP": {1, 2},  # lookup_vector/array + optional result_vector
-            "VLOOKUP": {1},  # table_array is 2nd arg (index 1)
-            "HLOOKUP": {1},  # table_array is 2nd arg (index 1)
-            "INDEX": {0},  # array is 1st arg (index 0)
-            "MATCH": {1},  # lookup_array is 2nd arg (index 1)
-            "SUMPRODUCT": set(range(10)),  # all args can be arrays
-        }
-
-        needs_numpy_wrap = numpy_array_args.get(upper_name, set())
+        needs_numpy_wrap = numpy_array_arg_indices(upper_name)
 
         emitted_args = []
         for i, arg in enumerate(node.args):
@@ -1366,6 +1375,32 @@ class CodeGenerator:
         r1, r2 = (start_row, end_row) if start_row <= end_row else (end_row, start_row)
         c1, c2 = (start_col, end_col) if start_col <= end_col else (end_col, start_col)
         return (start_sheet, r1, c1, r2, c2)
+
+    def _range_cell_count(self, start: str, end: str) -> int:
+        _, r1, c1, r2, c2 = self._range_coords(start, end)
+        return (r2 - r1 + 1) * (c2 - c1 + 1)
+
+    def _max_array_extent_in_ast(self, node: AstNode) -> int:
+        """Return the largest array operand size referenced in *node*."""
+        if isinstance(node, RangeNode):
+            return self._range_cell_count(node.start, node.end)
+        if isinstance(node, BinaryOpNode):
+            return max(
+                self._max_array_extent_in_ast(node.left),
+                self._max_array_extent_in_ast(node.right),
+            )
+        if isinstance(node, UnaryOpNode):
+            return self._max_array_extent_in_ast(node.operand)
+        if isinstance(node, FunctionCallNode):
+            extent = 1
+            for arg in node.args:
+                extent = max(extent, self._max_array_extent_in_ast(arg))
+            return extent
+        return 1
+
+    def _note_operators_fastpath_from_ast(self, node: AstNode) -> None:
+        if self._max_array_extent_in_ast(node) >= MIN_OPERATOR_FASTPATH_CELLS:
+            self._needs_operators_fastpath = True
 
     def _emit_offset_static(
         self, base_address: str, rows: int, cols: int, height: int, width: int
@@ -1734,15 +1769,8 @@ class CodeGenerator:
                 funcs.add(excel_func_to_python(node.name))
 
             # Check if this function needs numpy array wrapping for range args
-            numpy_array_args = {
-                "LOOKUP": {1, 2},
-                "VLOOKUP": {1},
-                "HLOOKUP": {1},
-                "INDEX": {0},
-                "MATCH": {1},
-                "SUMPRODUCT": set(range(10)),
-            }
-            if upper_name in numpy_array_args:
+            array_arg_indices = numpy_array_arg_indices(upper_name)
+            if array_arg_indices:
                 skip_index_array = (
                     upper_name == "INDEX"
                     and node.args
@@ -1752,7 +1780,7 @@ class CodeGenerator:
                 for i, arg in enumerate(node.args):
                     if skip_index_array and upper_name == "INDEX":
                         break
-                    if i in numpy_array_args[upper_name] and isinstance(arg, RangeNode):
+                    if i in array_arg_indices and isinstance(arg, RangeNode):
                         funcs.add("numpy")
                         break
             for arg in node.args:
@@ -1820,6 +1848,7 @@ class CodeGenerator:
             constant_blanks=constant_blanks,
             input_ranges=input_ranges,
             blank_ranges=blank_ranges,
+            series_bindings=series_bindings,
         )
         runtime_code = parts["runtime_code"]
         cell_code_lines = parts["cell_code_lines"]
@@ -1944,6 +1973,7 @@ class CodeGenerator:
             constant_blanks=constant_blanks,
             input_ranges=input_ranges,
             blank_ranges=blank_ranges,
+            series_bindings=series_bindings,
         )
         runtime_code = parts["runtime_code"]
         cell_code_lines = parts["cell_code_lines"]
@@ -2112,6 +2142,7 @@ class CodeGenerator:
         constant_blanks: bool = False,
         input_ranges: Sequence[str] | None = None,
         blank_ranges: Sequence[str] | None = None,
+        series_bindings: WorkbookSeriesBindings | None = None,
     ) -> GenerationParts:
         """Generate shared intermediate artifacts for single-file and modular exports."""
         self._reset_transient_state()
@@ -2191,6 +2222,7 @@ class CodeGenerator:
 
             ast = self._get_or_parse_ast(address)
             assert ast is not None
+            self._note_operators_fastpath_from_ast(ast)
             used_xl_functions.update(self._extract_xl_functions(ast))
 
         # Always include per-call evaluation scaffolding.
@@ -2206,7 +2238,13 @@ class CodeGenerator:
         }
         if self._iterate_enabled:
             runtime_symbols.add("xl_iterative_compute")
-        runtime_code = emit_runtime(runtime_symbols, include_offset_table=False)
+        include_dep_tracking = self._include_dep_tracking(series_bindings)
+        runtime_code = emit_runtime(
+            runtime_symbols,
+            include_offset_table=False,
+            include_dep_tracking=include_dep_tracking,
+            include_operators_fastpath=self._needs_operators_fastpath,
+        )
         runtime_code = runtime_code.rstrip()
 
         normalized_constant_types = self._normalize_constant_types(constant_types)
