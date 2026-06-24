@@ -58,6 +58,7 @@ def emit_setter_type_alias_lines(*, include_datetime: bool) -> list[str]:
         scalar_type,
         "Record = dict[str, object]",
         "Records = list[Record]",
+        "SeriesInput = Records | Record | Sequence[Scalar]",
         "",
         "if TYPE_CHECKING:",
         "    import pandas as pd",
