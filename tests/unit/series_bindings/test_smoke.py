@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import xlsxwriter
 import yaml
 
 from excel_grapher.series_bindings.smoke import BindingsSmokeError, smoke_test_bindings_module
@@ -19,6 +20,18 @@ from tests.integration.user_flows.utils import write_ffv2_workbook
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
 FFV2_BINDINGS = FIXTURES / "ffv2.yaml"
+BORVELIA_BINDINGS = FIXTURES / "borvelia_primary_balance.yaml"
+
+
+def _write_borvelia_workbook(path: Path) -> None:
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Inputs")
+    ws.write("A2", "Borvelia")
+    ws.write("A5", "Primary balance (% of GDP)")
+    for col, year in enumerate([1, 2, 3, 4, 5], start=5):
+        ws.write(0, col, year)
+        ws.write_number(4, col, float(year - 3))
+    wb.close()
 
 
 def _load_ffv2_bindings_document() -> dict[str, Any]:
@@ -29,13 +42,6 @@ def _write_bindings_variant(path: Path, mutate: Callable[[dict[str, Any]], None]
     document = _load_ffv2_bindings_document()
     mutate(document)
     path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-
-
-@pytest.fixture
-def ffv2_workbook(tmp_path: Path) -> Path:
-    path = tmp_path / "ffv2.xlsx"
-    write_ffv2_workbook(path)
-    return path
 
 
 def test_smoke_test_bindings_module_ffv2_fixture(tmp_path: Path) -> None:
@@ -57,6 +63,35 @@ def test_smoke_test_bindings_module_ffv2_fixture(tmp_path: Path) -> None:
         graph=result["graph"],
         workbook=workbook,
         module_dir=module_dir,
+        package_name="bindings_module",
+    )
+
+
+@pytest.fixture
+def ffv2_workbook(tmp_path: Path) -> Path:
+    path = tmp_path / "ffv2.xlsx"
+    write_ffv2_workbook(path)
+    return path
+
+
+def test_smoke_test_setters_positional_and_dataframe_inputs(tmp_path: Path) -> None:
+    """Single-key setters accept positional values and tidy DataFrames in smoke."""
+    pytest.importorskip("pandas")
+    workbook = tmp_path / "lic_inputs.xlsx"
+    _write_borvelia_workbook(workbook)
+    result = validate_bindings_workbook(workbook, BORVELIA_BINDINGS)
+    files = generate_bindings_modules(
+        result["graph"],
+        targets=result["targets"],
+        bindings=result["bindings"],
+        workbook=workbook,
+    )
+    smoke_test_bindings_module(
+        files,
+        bindings=result["bindings"],
+        graph=result["graph"],
+        workbook=workbook,
+        module_dir=tmp_path / "bindings_module",
         package_name="bindings_module",
     )
 

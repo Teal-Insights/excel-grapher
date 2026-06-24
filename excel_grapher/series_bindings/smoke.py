@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -10,10 +11,11 @@ from typing import Any, cast
 
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings.resolve import resolve_series_binding
-from excel_grapher.series_bindings.types import WorkbookSeriesBindings
+from excel_grapher.series_bindings.setter_codegen import _canonical_key_order
+from excel_grapher.series_bindings.types import SeriesResolution, WorkbookSeriesBindings
 from excel_grapher.series_bindings.workflow import compute_names, setter_names
 
-SetterFn = Callable[[Any, list[dict[str, object]]], None]
+SetterFn = Callable[[Any, object], None]
 ComputeFn = Callable[..., list[dict[str, object]]]
 
 
@@ -40,6 +42,21 @@ def _series_for_setter(bindings: WorkbookSeriesBindings, setter_name: str) -> di
         if isinstance(setter, dict) and setter.get("name") == setter_name:
             return series
     raise BindingsSmokeError(f"No series declares setter {setter_name!r}")
+
+
+def _measure_concept(series: dict[str, Any]) -> str:
+    measure = (series.get("structure") or {}).get("measure") or {}
+    return str(measure.get("concept") or "OBS_VALUE")
+
+
+def _bump_value(value: object) -> object:
+    if isinstance(value, str):
+        return f"{value}*"
+    if isinstance(value, bool):
+        return not value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value) + 1.0
+    return value
 
 
 def _series_for_compute(bindings: WorkbookSeriesBindings, compute_name: str) -> dict[str, Any]:
@@ -81,6 +98,92 @@ def _cleanup_generated_package(*, package_name: str, output_dir: Path) -> None:
             sys.modules.pop(name, None)
 
 
+def _find_single_key_setter_candidate(
+    setter_function_names: list[str],
+    *,
+    bindings: WorkbookSeriesBindings,
+    graph: DependencyGraph,
+    workbook: Path,
+    scheme: dict[str, Any] | None,
+) -> tuple[str, dict[str, Any], SeriesResolution] | None:
+    for name in setter_function_names:
+        series = _series_for_setter(bindings, name)
+        if str(series.get("layout") or "series") == "scalar":
+            continue
+        key_fields = _key_concepts(series)
+        if len(key_fields) != 1:
+            continue
+        resolved = resolve_series_binding(
+            graph,
+            workbook,
+            series,
+            concept_scheme=scheme,
+            direction="input",
+        )
+        if not resolved["ok"] or resolved["requires_address"] or not resolved["leaves"]:
+            continue
+        if _canonical_key_order(resolved, key_fields) is None:
+            continue
+        return name, series, resolved
+    return None
+
+
+def _smoke_setter_positional_input(
+    pkg: Any,
+    setter_name: str,
+    series: dict[str, Any],
+    resolved: SeriesResolution,
+    *,
+    make_context: Callable[[], Any],
+) -> None:
+    setter = cast(SetterFn, getattr(pkg, setter_name))
+    key_fields = _key_concepts(series)
+    key_field = key_fields[0]
+    measure = _measure_concept(series)
+    leaves = sorted(resolved["leaves"], key=lambda leaf: leaf["key"][key_field])
+    values: list[object] = [leaf["record"][measure] for leaf in leaves]
+    target_index = 0
+    bumped = _bump_value(values[target_index])
+    values[target_index] = bumped
+    target_address = leaves[target_index]["address"]
+    ctx = make_context()
+    setter(ctx, values)
+    if ctx.inputs[target_address] != bumped:
+        raise BindingsSmokeError(
+            f"Setter {setter_name!r} positional input did not update {target_address!r} "
+            f"(expected {bumped!r}, got {ctx.inputs[target_address]!r})"
+        )
+
+
+def _smoke_setter_dataframe_input(
+    pkg: Any,
+    setter_name: str,
+    series: dict[str, Any],
+    resolved: SeriesResolution,
+    *,
+    make_context: Callable[[], Any],
+) -> None:
+    if importlib.util.find_spec("pandas") is None:
+        return
+    import pandas as pd
+
+    setter = cast(SetterFn, getattr(pkg, setter_name))
+    key_fields = _key_concepts(series)
+    key_field = key_fields[0]
+    measure = _measure_concept(series)
+    leaves = sorted(resolved["leaves"], key=lambda leaf: leaf["key"][key_field])
+    leaf = leaves[0]
+    bumped = _bump_value(leaf["record"][measure])
+    frame = pd.DataFrame([{key_field: leaf["key"][key_field], measure: bumped}])
+    ctx = make_context()
+    setter(ctx, frame)
+    if ctx.inputs[leaf["address"]] != bumped:
+        raise BindingsSmokeError(
+            f"Setter {setter_name!r} DataFrame input did not update {leaf['address']!r} "
+            f"(expected {bumped!r}, got {ctx.inputs[leaf['address']]!r})"
+        )
+
+
 def smoke_test_setters(
     pkg: Any,
     setter_function_names: list[str],
@@ -90,7 +193,11 @@ def smoke_test_setters(
     workbook: Path,
     ctx: Any,
 ) -> None:
-    """Exercise each generated setter with one bumped record."""
+    """Exercise each generated setter with one bumped record.
+
+    Also smoke-tests one single-key series setter with positional values and,
+    when pandas is installed, a tidy DataFrame partial update.
+    """
     concept_scheme = bindings.get("concept_scheme")
     scheme = concept_scheme if isinstance(concept_scheme, dict) else None
     for name in setter_function_names:
@@ -110,22 +217,40 @@ def smoke_test_setters(
         leaf = resolved["leaves"][0]
         key = leaf["key"]
         address = leaf["address"]
-        obs_value = leaf["record"]["OBS_VALUE"]
-        if isinstance(obs_value, str):
-            bumped: object = f"{obs_value}*"
-        elif isinstance(obs_value, bool):
-            bumped = not obs_value
-        elif isinstance(obs_value, (int, float)) and not isinstance(obs_value, bool):
-            bumped = float(obs_value) + 1.0
-        else:
-            bumped = obs_value
-        records: list[dict[str, object]] = [cast(dict[str, object], {**key, "OBS_VALUE": bumped})]
+        measure = _measure_concept(series)
+        bumped = _bump_value(leaf["record"][measure])
+        records: list[dict[str, object]] = [{**key, measure: bumped}]
         setter(ctx, records)
-        if ctx.inputs[address] != records[0]["OBS_VALUE"]:
+        if ctx.inputs[address] != bumped:
             raise BindingsSmokeError(
                 f"Setter {name!r} did not update {address!r} "
-                f"(expected {records[0]['OBS_VALUE']!r}, got {ctx.inputs[address]!r})"
+                f"(expected {bumped!r}, got {ctx.inputs[address]!r})"
             )
+
+    candidate = _find_single_key_setter_candidate(
+        setter_function_names,
+        bindings=bindings,
+        graph=graph,
+        workbook=workbook,
+        scheme=scheme,
+    )
+    if candidate is not None:
+        name, series, resolved = candidate
+        make_context = cast(Callable[[], Any], pkg.make_context)
+        _smoke_setter_positional_input(
+            pkg,
+            name,
+            series,
+            resolved,
+            make_context=make_context,
+        )
+        _smoke_setter_dataframe_input(
+            pkg,
+            name,
+            series,
+            resolved,
+            make_context=make_context,
+        )
 
 
 def smoke_test_computes(

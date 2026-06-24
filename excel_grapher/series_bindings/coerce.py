@@ -10,6 +10,10 @@ from excel_grapher.series_bindings.types import Scalar
 _EXCEL_EPOCH = datetime(1899, 12, 30)
 _BOOL_TRUE = frozenset({"true", "1", "yes"})
 _BOOL_FALSE = frozenset({"false", "0", "no"})
+# Bound at import time so inlined codegen keeps working when later blocks import the
+# ``datetime`` module for compute literals.
+_DATETIME_CLS = datetime
+_DATE_CLS = date
 
 __all__ = ["coerce_constant", "coerce_scalar"]
 
@@ -40,9 +44,9 @@ def _excel_serial_to_datetime(serial: float) -> datetime:
 
 
 def _coerce_datetime(raw: Any, *, excel_serial: bool) -> datetime:
-    if isinstance(raw, datetime):
+    if isinstance(raw, _DATETIME_CLS):
         return _ensure_naive_datetime(raw)
-    if isinstance(raw, date):
+    if isinstance(raw, _DATE_CLS):
         return _normalize_date(raw)
     if isinstance(raw, str):
         return _parse_iso_datetime(raw)
@@ -87,9 +91,9 @@ def coerce_scalar(raw: Any, read_as: str) -> Scalar:
             return raw
         if isinstance(raw, str):
             return raw
-        if isinstance(raw, datetime):
+        if isinstance(raw, _DATETIME_CLS):
             return _ensure_naive_datetime(raw)
-        if isinstance(raw, date):
+        if isinstance(raw, _DATE_CLS):
             return _normalize_date(raw)
         return str(raw)
     if read_as == "string":

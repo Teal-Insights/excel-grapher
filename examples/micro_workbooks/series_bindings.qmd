@@ -214,6 +214,9 @@ set_borvelia_primary_balance(ctx, [-2.0, -1.0, 0.0, 7.5, 8.0])
 
 **Tidy DataFrame** (pandas or polars, if installed):
 
+See [setter_dataframe_example.py](setter_dataframe_example.py) for a runnable script. In short,
+pass a tidy table with binding `key` columns plus `OBS_VALUE` only:
+
 ```python
 import pandas as pd
 

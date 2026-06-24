@@ -149,3 +149,15 @@ def test_generated_setter_matches_library_coercion_for_positional_input(tmp_path
         requires_address=False,
     )
     assert ctx_generated.inputs == ctx_library.inputs
+
+
+def test_emitted_coerce_datetime_survives_datetime_module_shadow() -> None:
+    """Codegen compute blocks import the datetime module; coercion must keep working."""
+    pd = pytest.importorskip("pandas")
+    from datetime import datetime as dt
+
+    namespace: dict[str, object] = {}
+    exec("\n".join(emit_input_coerce_helpers() + ["import datetime", ""]), namespace)
+    coerce = cast(Callable[[object, str], object], namespace["coerce_scalar"])
+    ts = pd.Timestamp("2026-09-07")
+    assert coerce(ts, "datetime") == dt(2026, 9, 7)
