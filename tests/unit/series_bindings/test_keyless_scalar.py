@@ -16,6 +16,7 @@ from excel_grapher.series_bindings import (
     validate_bindings_document,
 )
 from excel_grapher.series_bindings.setter_codegen import (
+    emit_input_coerce_helpers,
     emit_setter_function,
     emit_setter_helpers,
     emit_setters_block,
@@ -64,7 +65,10 @@ def _exec_setters(lines: list[str]) -> dict[str, object]:
         "EvalContext": EvalContext,
         "coerce_inputs_dict": coerce_inputs_dict,
     }
-    exec("\n".join(emit_setter_helpers() + lines), namespace)
+    source_lines = lines
+    if "def coerce_setter_input(" not in "\n".join(lines):
+        source_lines = emit_input_coerce_helpers() + emit_setter_helpers() + lines
+    exec("\n".join(source_lines), namespace)
     return namespace
 
 
@@ -172,5 +176,5 @@ def test_keyless_scalar_codegen_signature_uses_scalar_alias(tmp_path: Path) -> N
     code = "\n".join(lines)
 
     assert "Scalar = str | int | float | bool | None" in code
-    assert "import datetime" not in code
+    assert "Scalar = str | int | float | bool | datetime | None" not in code
     assert "records: Records | Record | Scalar," in code

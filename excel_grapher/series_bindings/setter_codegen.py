@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import warnings
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
@@ -11,7 +12,6 @@ from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings.codegen_literals import (
     emit_setter_type_alias_lines,
     py_scalar_literal,
-    resolution_includes_datetime,
     resolutions_include_datetime,
 )
 from excel_grapher.series_bindings.docstrings import (
@@ -34,7 +34,9 @@ if TYPE_CHECKING:
 
 
 def _key_tuple_literal(key_fields: list[str], key: Mapping[str, object]) -> str:
-    pairs = ", ".join(f"({repr(f)}, {py_scalar_literal(key[f])})" for f in key_fields)
+    pairs = ", ".join(
+        f"({repr(f)}, {py_scalar_literal(key[f], datetime_ref='datetime')})" for f in key_fields
+    )
     return f"({pairs},)" if len(key_fields) == 1 else f"({pairs})"
 
 
@@ -79,6 +81,114 @@ def _allowed_fields_literal(allowed: Sequence[str]) -> str:
     """Emit a deterministic frozenset literal for generated setter calls."""
     inner = ", ".join(repr(field) for field in allowed)
     return f"frozenset({{{inner}}})"
+
+
+def _emit_python_module_body(path: Path) -> list[str]:
+    """Emit top-level definitions from a module without imports or ``__all__``."""
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    lines_out: list[str] = []
+    for node in tree.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets
+        ):
+            continue
+        segment = ast.get_source_segment(source, node)
+        if segment:
+            lines_out.extend(segment.splitlines())
+            lines_out.append("")
+    return lines_out
+
+
+def emit_input_coerce_helpers() -> list[str]:
+    """Emit inlined ``coerce_scalar`` and ``coerce_setter_input`` for generated modules."""
+    package_dir = Path(__file__).resolve().parent
+    lines = [
+        "# --- Setter input coercion (inlined from series_bindings) ---",
+        "from collections.abc import Iterable, Mapping",
+        "from datetime import date, datetime, timedelta",
+        "from typing import Any, Literal",
+        "",
+        "Scalar = object",
+        "",
+    ]
+    lines.extend(_emit_python_module_body(package_dir / "coerce.py"))
+    lines.extend(_emit_python_module_body(package_dir / "input_coerce.py"))
+    return lines
+
+
+def _key_dtypes_for_codegen(series: dict[str, Any], key_fields: list[str]) -> dict[str, str]:
+    dtypes: dict[str, str] = {}
+    for dim in (series.get("structure") or {}).get("dimensions") or []:
+        if not isinstance(dim, dict):
+            continue
+        concept = str(dim.get("concept", ""))
+        if concept not in key_fields:
+            continue
+        bind = dim.get("bind") if isinstance(dim.get("bind"), dict) else {}
+        if "read" in bind:
+            dtypes[concept] = str(bind["read"])
+        elif dim.get("dtype") is not None:
+            dtypes[concept] = str(dim["dtype"])
+    return dtypes
+
+
+def _canonical_key_order(
+    resolved: SeriesResolution,
+    key_fields: list[str],
+) -> tuple[object, ...] | None:
+    if len(key_fields) != 1 or resolved["requires_address"]:
+        return None
+    key_field = key_fields[0]
+    leaves = sorted(resolved["leaves"], key=lambda leaf: leaf["key"][key_field])
+    return tuple(leaf["key"][key_field] for leaf in leaves)
+
+
+def _key_order_constant_name(series_id: str) -> str:
+    return f"_KEY_ORDER_{series_id.upper()}"
+
+
+def _emit_key_order_constant(
+    resolved: SeriesResolution,
+    key_fields: list[str],
+) -> list[str]:
+    key_order = _canonical_key_order(resolved, key_fields)
+    if key_order is None:
+        return []
+    name = _key_order_constant_name(resolved["series_id"])
+    inner = ", ".join(py_scalar_literal(value, datetime_ref="datetime") for value in key_order)
+    return [f"{name} = ({inner},)" if len(key_order) == 1 else f"{name} = ({inner})", ""]
+
+
+def _coerce_setter_input_call(
+    series: dict[str, Any],
+    resolved: SeriesResolution,
+    *,
+    key_fields: list[str],
+    measure_concept: str,
+    strict_kwarg: str,
+) -> str:
+    layout = str(series.get("layout") or "series")
+    key_order = _canonical_key_order(resolved, key_fields)
+    key_order_expr = (
+        _key_order_constant_name(resolved["series_id"]) if key_order is not None else "None"
+    )
+    key_dtypes = _key_dtypes_for_codegen(series, key_fields)
+    parts = [
+        "coerce_setter_input(",
+        "            records,",
+        f"            layout={layout!r},",
+        f"            key_fields={tuple(key_fields)!r},",
+        f"            measure_field={measure_concept!r},",
+        f"            key_order={key_order_expr},",
+        f"            strict={strict_kwarg},",
+    ]
+    if key_dtypes:
+        parts.append(f"            key_dtypes={key_dtypes!r},")
+    parts.append("        )")
+    return "\n".join(parts)
 
 
 def emit_setter_helpers() -> list[str]:
@@ -148,7 +258,6 @@ def emit_setter_function(
     bindings: WorkbookSeriesBindings | None = None,
     series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
     docstring_renderer: SeriesDocstringRendererSpec = "google",
-    include_datetime_import: bool = True,
 ) -> list[str]:
     """Emit Python source lines for one series binding setter."""
     if not resolved["leaves"]:
@@ -174,8 +283,6 @@ def emit_setter_function(
     index_name = f"_LEAF_INDEX_{resolved['series_id'].upper()}"
 
     lines: list[str] = []
-    if include_datetime_import and resolution_includes_datetime(resolved):
-        lines.extend(["import datetime", ""])
     if not requires_address:
         lines.append(f"{index_name} = {{")
         for leaf in resolved["leaves"]:
@@ -183,13 +290,12 @@ def emit_setter_function(
             lines.append(f"    {key_tuple_src}: {repr(leaf['address'])},")
         lines.append("}")
         lines.append("")
+    lines.extend(_emit_key_order_constant(resolved, key_fields))
     scalar_shorthand = _accepts_scalar_shorthand(series, resolved)
+    input_type = "Records | Record | Scalar" if scalar_shorthand else "SeriesInput"
     lines.append(f"def {fn_name}(")
     lines.append("    ctx: EvalContext,")
-    if scalar_shorthand:
-        lines.append("    records: Records | Record | Scalar,")
-    else:
-        lines.append("    records: Records,")
+    lines.append(f"    records: {input_type},")
     lines.append("    *,")
     lines.append(f"    strict: bool = {strict!r},")
     lines.append(") -> None:")
@@ -219,13 +325,18 @@ def emit_setter_function(
         lines.extend(emit_docstring_literal(doc))
     leaf_index_arg = "{}" if requires_address else index_name
     if scalar_shorthand:
-        lines.append("    _apply_series_records(")
-        lines.append("        ctx,")
-        lines.append(f"        _coerce_records(records, {measure_concept!r}, allow_scalar=True),")
+        coerced_records = f"_coerce_records(records, {measure_concept!r}, allow_scalar=True)"
     else:
-        lines.append("    _apply_series_records(")
-        lines.append("        ctx,")
-        lines.append("        records,")
+        coerced_records = _coerce_setter_input_call(
+            series,
+            resolved,
+            key_fields=key_fields,
+            measure_concept=measure_concept,
+            strict_kwarg="strict",
+        )
+    lines.append("    _apply_series_records(")
+    lines.append("        ctx,")
+    lines.append(f"        {coerced_records},")
     lines.append(f"        key_fields={tuple(key_fields)!r},")
     lines.append(f"        allowed_fields={_allowed_fields_literal(allowed)},")
     lines.append(f"        measure_field={measure_concept!r},")
@@ -259,9 +370,9 @@ def emit_setters_block(
     )
     lines: list[str] = ["# --- Series binding setters (Records API) ---", ""]
     include_datetime = resolutions_include_datetime(report["series"])
+    lines.extend(emit_input_coerce_helpers())
     if include_type_aliases:
         lines.extend(emit_setter_type_alias_lines(include_datetime=include_datetime))
-    datetime_import_done = include_type_aliases and include_datetime
     lines.extend(emit_setter_helpers())
     by_id = {
         s["id"]: s
@@ -284,9 +395,6 @@ def emit_setters_block(
         series = by_id.get(resolved["series_id"])
         if series is None:
             continue
-        fn_include_datetime_import = (
-            resolution_includes_datetime(resolved) and not datetime_import_done
-        )
         lines.extend(
             emit_setter_function(
                 series,
@@ -296,11 +404,8 @@ def emit_setters_block(
                 bindings=bindings,
                 series_docstring_callback=series_docstring_callback,
                 docstring_renderer=docstring_renderer,
-                include_datetime_import=fn_include_datetime_import,
             )
         )
-        if fn_include_datetime_import:
-            datetime_import_done = True
     if failed:
         raise ValueError(f"Cannot codegen setters: resolution failed for {failed!r}")
     return lines

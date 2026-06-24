@@ -27,17 +27,21 @@ def test_py_scalar_literal_bool_and_datetime() -> None:
 def test_emit_setter_type_alias_lines_omit_datetime_when_unused() -> None:
     lines = emit_setter_type_alias_lines(include_datetime=False)
     assert lines == [
+        "from collections.abc import Sequence",
+        "",
         "Scalar = str | int | float | bool | None",
         "Record = dict[str, object]",
         "Records = list[Record]",
+        "SeriesInput = Records | Record | Sequence[Scalar]",
         "",
     ]
 
 
 def test_emit_setter_type_alias_lines_include_datetime_when_needed() -> None:
     lines = emit_setter_type_alias_lines(include_datetime=True)
-    assert lines[0] == "import datetime"
-    assert "datetime.datetime | None" in lines[2]
+    assert lines[0] == "from collections.abc import Sequence"
+    assert "Scalar = str | int | float | bool | datetime | None" in lines
+    assert "SeriesInput = Records | Record | Sequence[Scalar]" in lines
 
 
 def test_emit_compute_preamble_lines_include_datetime_when_needed() -> None:
