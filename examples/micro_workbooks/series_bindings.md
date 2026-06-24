@@ -267,13 +267,13 @@ print(
   'key_fields': ['TIME_PERIOD']}
 ```
 
-### Generated setter (Records API)
+### Generated setter (SeriesInput API)
 
 Passing the same binding into `CodeGenerator` appends a
-`set_borvelia_primary_balance` function. Callers pass `list[dict]`
-**records** with at least `OBS_VALUE` and each key field (`TIME_PERIOD`
-here); the setter writes into the graph’s input map via
-`EvalContext.set_inputs`.
+`set_borvelia_primary_balance` function. Callers pass **`SeriesInput`**:
+`list[dict]` records, a 1D iterable of measure values (single-key series), or a tidy
+pandas/polars `DataFrame` with binding `key` columns plus `OBS_VALUE`. The setter
+writes into the graph’s input map via `EvalContext.set_inputs`.
 
 ``` python
 from excel_grapher.exporter import CodeGenerator
@@ -294,7 +294,7 @@ print(f"```text\n{code[signature_start:signature_end]}\n```\n")
 ``` text
 def set_borvelia_primary_balance(
     ctx: EvalContext,
-    records: Records,
+    records: SeriesInput,
     *,
     strict: bool = True,
 ) -> None:
@@ -302,33 +302,60 @@ def set_borvelia_primary_balance(
 
 ### Calling the setter
 
-In an exported model, the generated setter is imported and called like
-any other package function. Each record must include an `OBS_VALUE` key
-and each key field (`TIME_PERIOD` here):
+In an exported model, the generated setter is imported and called like any other
+package function. `ctx` is always required. For this binding, input needs only
+`TIME_PERIOD` and `OBS_VALUE` — not `REF_AREA` or `INDICATOR` (those come from the
+binding manifest).
+
+**Records:**
 
 ``` python
 from exported_model import make_context, set_borvelia_primary_balance
 
 ctx = make_context()
-records = [
-    {"TIME_PERIOD": 4, "OBS_VALUE": 7.5},
-    {"TIME_PERIOD": 5, "OBS_VALUE": 8.0},
-]
-
-set_borvelia_primary_balance(ctx, records)
+set_borvelia_primary_balance(
+    ctx,
+    [
+        {"TIME_PERIOD": 4, "OBS_VALUE": 7.5},
+        {"TIME_PERIOD": 5, "OBS_VALUE": 8.0},
+    ],
+)
 ```
 
-The setter writes into the graph’s input map via
-`EvalContext.set_inputs`. In this notebook, the generated code is
-executed dynamically so the example can verify the same effect:
+**Positional measure values** (periods 1..5 in binding order):
+
+``` python
+set_borvelia_primary_balance(ctx, [-2.0, -1.0, 0.0, 7.5, 8.0])
+```
+
+**Tidy DataFrame** (pandas or polars, if installed):
+
+``` python
+import pandas as pd
+
+df = pd.DataFrame({"TIME_PERIOD": [4, 5], "OBS_VALUE": [7.5, 8.0]})
+set_borvelia_primary_balance(ctx, df)
+```
+
+**Wide grid → tidy** (caller responsibility; setters do not accept wide grids):
+
+``` python
+# One indicator row, periods as columns:
+tidy = df_wide.T.reset_index().rename(columns={"index": "TIME_PERIOD", 0: "OBS_VALUE"})
+set_borvelia_primary_balance(ctx, tidy)
+```
+
+The notebook verifies records and positional input against dynamically executed codegen:
 
 ``` text
-Sheet1!I5 after setter: 7.5
-Sheet1!J5 after setter: 8.0
+Sheet1!I5 after records: 7.5
+Sheet1!J5 after records: 8.0
+Sheet1!I5 after positional: 7.5
+Sheet1!J5 after positional: 8.0
 ```
 
-Periods **4** and **5** correspond to columns I and J; the setter
-updates those leaves without requiring sheet addresses in the records.
+Periods **4** and **5** correspond to columns I and J. Records and positional input
+both update those leaves without requiring sheet addresses in the input.
 
 ### Structured docstring callback
 

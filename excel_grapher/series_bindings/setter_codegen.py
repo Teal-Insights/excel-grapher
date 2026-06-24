@@ -109,9 +109,11 @@ def emit_input_coerce_helpers() -> list[str]:
         "# --- Setter input coercion (inlined from series_bindings) ---",
         "from collections.abc import Iterable, Mapping",
         "from datetime import date, datetime, timedelta",
-        "from typing import Any, Literal",
+        "from typing import Any, Literal, TypeGuard, cast",
         "",
         "Scalar = object",
+        "Record = dict[str, object]",
+        "Records = list[Record]",
         "",
     ]
     lines.extend(_emit_python_module_body(package_dir / "coerce.py"))
