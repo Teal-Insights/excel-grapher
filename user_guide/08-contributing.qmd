@@ -30,6 +30,17 @@ Install pre-commit hooks:
 uv run pre-commit install
 ```
 
+Commit messages must follow [Conventional Commits](https://www.conventionalcommits.org/).
+Use prefixes such as `feat:`, `fix:`, and `docs:` so releases can be versioned
+automatically on merge to `main`. The `commitizen` hook validates messages locally;
+CI uses the same rules via `python-semantic-release`.
+
+```bash
+# examples
+git commit -m "feat: add OFFSET spill handling"
+git commit -m "fix: correct SUMPRODUCT criteria matching"
+```
+
 To render the documentation, install Quarto if you don't have it already:
 
 ```bash
