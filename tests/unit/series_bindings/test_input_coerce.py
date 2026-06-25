@@ -133,6 +133,23 @@ def test_missing_measure_column_raises() -> None:
         coerce_setter_input(df, **_SERIES_KWARGS)
 
 
+def test_key_coercion_int_from_float_records() -> None:
+    records = [
+        {"TIME_PERIOD": 4.0, "OBS_VALUE": 7.5},
+        {"TIME_PERIOD": 5.0, "OBS_VALUE": 8.0},
+    ]
+    result = coerce_setter_input(
+        records,
+        key_dtypes={"TIME_PERIOD": "int"},
+        **_SERIES_KWARGS,
+    )
+    assert result == [
+        {"TIME_PERIOD": 4, "OBS_VALUE": 7.5},
+        {"TIME_PERIOD": 5, "OBS_VALUE": 8.0},
+    ]
+    assert result is not records
+
+
 def test_key_coercion_int_from_float() -> None:
     pd = pytest.importorskip("pandas")
     df = pd.DataFrame({"TIME_PERIOD": [4.0, 5.0], "OBS_VALUE": [7.5, 8.0]})

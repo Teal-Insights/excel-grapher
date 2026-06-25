@@ -125,13 +125,31 @@ def _row_dicts_from_dataframe(data: object) -> list[Record]:
     raise TypeError(f"unsupported DataFrame-like input: {type(data)!r}")
 
 
+def _apply_key_dtypes(
+    records: Records,
+    *,
+    key_fields: tuple[str, ...],
+    key_dtypes: Mapping[str, str] | None,
+) -> Records:
+    """Coerce key field values on each record using binding read modes."""
+    if not key_dtypes:
+        return records
+    coerced: list[dict[str, object]] = []
+    for record in records:
+        updated = dict(record)
+        for field in key_fields:
+            if field in updated:
+                updated[field] = _coerce_key_value(field, updated[field], key_dtypes)
+        coerced.append(updated)
+    return coerced
+
+
 def _coerce_dataframe_records(
     data: object,
     *,
     key_fields: tuple[str, ...],
     measure_field: str,
     strict: bool,
-    key_dtypes: Mapping[str, str] | None,
 ) -> Records:
     column_names = _dataframe_column_names(data)
     _validate_dataframe_columns(
@@ -142,9 +160,7 @@ def _coerce_dataframe_records(
     )
     records: list[dict[str, object]] = []
     for row in _row_dicts_from_dataframe(data):
-        record: dict[str, object] = {}
-        for field in key_fields:
-            record[field] = _coerce_key_value(field, row[field], key_dtypes)
+        record: dict[str, object] = {field: row[field] for field in key_fields}
         record[measure_field] = row[measure_field]
         records.append(record)
     return records
@@ -173,47 +189,21 @@ def _coerce_positional_records(
     ]
 
 
-def coerce_setter_input(
+def _coerce_non_scalar_records(
     data: SetterInput,
     *,
-    layout: Layout,
     key_fields: tuple[str, ...],
     measure_field: str,
     key_order: tuple[object, ...] | None,
     strict: bool,
-    key_dtypes: Mapping[str, str] | None = None,
 ) -> Records:
-    """Normalize caller input into records for ``_apply_series_records``.
-
-    Args:
-        data: Scalar value, record(s), 1D measure values, or tidy DataFrame.
-        layout: Binding layout (`scalar`, `series`, or `matrix`).
-        key_fields: Key column names from the binding manifest.
-        measure_field: Measure concept name (e.g. `OBS_VALUE`).
-        key_order: Canonical key values for positional measure iterables.
-        strict: When true, reject unknown DataFrame columns.
-        key_dtypes: Optional read modes per key field for DataFrame coercion.
-
-    Returns:
-        List of record dicts ready for leaf resolution.
-
-    Raises:
-        ImportError: When a DataFrame-like value is passed but pandas/polars is missing.
-        TypeError: When the input shape is unsupported for the layout.
-        ValueError: When columns, keys, or positional lengths are invalid.
-    """
-    if layout == "scalar":
-        if _is_tabular_dataframe(data):
-            raise TypeError("scalar setters do not accept DataFrame input")
-        return _coerce_scalar_records(data, measure_field)
-
+    """Normalize series/matrix setter input to records before key coercion."""
     if _is_tabular_dataframe(data):
         return _coerce_dataframe_records(
             data,
             key_fields=key_fields,
             measure_field=measure_field,
             strict=strict,
-            key_dtypes=key_dtypes,
         )
 
     if _is_mapping(data):
@@ -221,7 +211,7 @@ def coerce_setter_input(
 
     if isinstance(data, list):
         if _is_records_list(data):
-            return data
+            return cast(Records, data)
         if key_order is None:
             raise ValueError("positional input requires key_order")
         return _coerce_positional_records(
@@ -250,4 +240,52 @@ def coerce_setter_input(
     raise TypeError(
         f"unsupported series setter input type {type(data)!r}; "
         "pass records, a 1D iterable of measure values, or a tidy DataFrame"
+    )
+
+
+def coerce_setter_input(
+    data: SetterInput,
+    *,
+    layout: Layout,
+    key_fields: tuple[str, ...],
+    measure_field: str,
+    key_order: tuple[object, ...] | None,
+    strict: bool,
+    key_dtypes: Mapping[str, str] | None = None,
+) -> Records:
+    """Normalize caller input into records for ``_apply_series_records``.
+
+    Args:
+        data: Scalar value, record(s), 1D measure values, or tidy DataFrame.
+        layout: Binding layout (`scalar`, `series`, or `matrix`).
+        key_fields: Key column names from the binding manifest.
+        measure_field: Measure concept name (e.g. `OBS_VALUE`).
+        key_order: Canonical key values for positional measure iterables.
+        strict: When true, reject unknown DataFrame columns.
+        key_dtypes: Optional read modes per key field applied to all input shapes.
+
+    Returns:
+        List of record dicts ready for leaf resolution.
+
+    Raises:
+        ImportError: When a DataFrame-like value is passed but pandas/polars is missing.
+        TypeError: When the input shape is unsupported for the layout.
+        ValueError: When columns, keys, or positional lengths are invalid.
+    """
+    if layout == "scalar":
+        if _is_tabular_dataframe(data):
+            raise TypeError("scalar setters do not accept DataFrame input")
+        return _coerce_scalar_records(data, measure_field)
+
+    records = _coerce_non_scalar_records(
+        data,
+        key_fields=key_fields,
+        measure_field=measure_field,
+        key_order=key_order,
+        strict=strict,
+    )
+    return _apply_key_dtypes(
+        records,
+        key_fields=key_fields,
+        key_dtypes=key_dtypes,
     )
