@@ -11,7 +11,7 @@ from excel_grapher.series_bindings.input_coerce import coerce_setter_input
 
 
 class _SeriesCoerceKwargs(TypedDict):
-    layout: Literal["series"]
+    layout: Literal["series", "matrix"]
     key_fields: tuple[str, ...]
     measure_field: str
     key_order: tuple[int, ...]
@@ -82,6 +82,29 @@ def test_series_single_dict_wrapped_as_record() -> None:
         **_SERIES_KWARGS,
     )
     assert result == [{"TIME_PERIOD": 4, "OBS_VALUE": 7.5}]
+
+
+def test_tidy_pandas_dataframe_matrix_layout() -> None:
+    pd = pytest.importorskip("pandas")
+    df = pd.DataFrame(
+        {
+            "INDICATOR": ["GDP growth", "Debt"],
+            "TIME_PERIOD": [2025, 2026],
+            "OBS_VALUE": [9.9, 44.4],
+        }
+    )
+    result = coerce_setter_input(
+        df,
+        layout="matrix",
+        key_fields=("INDICATOR", "TIME_PERIOD"),
+        measure_field="OBS_VALUE",
+        key_order=None,
+        strict=True,
+    )
+    assert result == [
+        {"INDICATOR": "GDP growth", "TIME_PERIOD": 2025, "OBS_VALUE": 9.9},
+        {"INDICATOR": "Debt", "TIME_PERIOD": 2026, "OBS_VALUE": 44.4},
+    ]
 
 
 def test_tidy_pandas_dataframe() -> None:

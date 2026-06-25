@@ -107,10 +107,14 @@ def emit_input_coerce_helpers() -> list[str]:
     package_dir = Path(__file__).resolve().parent
     lines = [
         "# --- Setter input coercion (inlined from series_bindings) ---",
-        "from collections.abc import Iterable, Mapping",
+        "from __future__ import annotations",
+        "",
+        "from collections.abc import Iterable, Mapping, Sequence",
         "from datetime import date, datetime, timedelta",
         "from typing import Any, Literal, TypeGuard, cast",
         "",
+        'Layout = Literal["scalar", "series", "matrix"]',
+        "SetterInput = object",
         "Scalar = object",
         "Record = dict[str, object]",
         "Records = list[Record]",

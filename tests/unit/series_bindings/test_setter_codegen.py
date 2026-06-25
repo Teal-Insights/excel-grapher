@@ -795,3 +795,40 @@ def test_emit_setters_block_matrix_explicit_codegen_shape_and_round_trip(tmp_pat
     assert ctx.inputs["Inputs!C3"] == 9.9
     assert ctx.inputs["Inputs!D5"] == 44.4
     assert ctx.inputs["Inputs!B3"] == 1.2
+
+
+def test_emit_setter_matrix_pandas_dataframe_updates_context(tmp_path: Path) -> None:
+    pd = pytest.importorskip("pandas")
+    from tests.fixtures.series_bindings.matrix_helpers import (
+        MATRIX_EXPLICIT_BINDINGS,
+        write_matrix_explicit_workbook,
+    )
+
+    wb_path = tmp_path / "matrix_inputs.xlsx"
+    write_matrix_explicit_workbook(wb_path)
+    graph = create_dependency_graph(
+        wb_path,
+        expand_data_range("Inputs!B3:D5"),
+        load_values=True,
+    )
+    bindings = load_series_bindings(MATRIX_EXPLICIT_BINDINGS)
+    series = bindings["series"][0]
+    resolved = resolve_series_binding(graph, wb_path, series)
+    ns = _exec_setters(emit_setter_function(series, resolved))
+    setter = cast(Callable[[EvalContext, object], None], ns["set_macro_matrix"])
+
+    df = pd.DataFrame(
+        {
+            "INDICATOR": ["GDP growth", "Debt"],
+            "TIME_PERIOD": [2025, 2026],
+            "OBS_VALUE": [9.9, 44.4],
+        }
+    )
+    ctx = EvalContext(
+        inputs=coerce_inputs_dict({"Inputs!B3": 1.2}),
+        resolver=lambda _a: None,
+    )
+    setter(ctx, df)
+    assert ctx.inputs["Inputs!C3"] == 9.9
+    assert ctx.inputs["Inputs!D5"] == 44.4
+    assert ctx.inputs["Inputs!B3"] == 1.2
