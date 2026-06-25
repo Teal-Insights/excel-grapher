@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from typing import Any, cast
+
+import numpy as np
 import pytest
 
 import tests.integration.utils.parity_harness as parity_harness
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
+from excel_grapher.core.array_results import is_array_result
+from excel_grapher.core.types import CellValue
 from tests.integration.utils.parity_harness import (
     assert_code_does_not_embed_symbols,
     assert_codegen_matches_evaluator,
@@ -91,6 +96,20 @@ def test_parity_row_without_reference_matches_evaluator() -> None:
     graph = _make_graph(_make_node("S!E12", "=ROW()", None))
     result = assert_codegen_matches_evaluator(graph, ["S!E12"])
     assert result.generated_results["S!E12"] == 12
+
+
+def test_parity_harness_compares_ndarray_results() -> None:
+    graph = _make_graph(
+        _make_node("S!C5", None, "Software"),
+        _make_node("S!C6", None, "Hardware"),
+        _make_node("S!C7", None, "Software"),
+        _make_node("S!D10", '=S!C5:S!C7="Software"', None),
+    )
+    result = assert_codegen_matches_evaluator(graph, ["S!D10"])
+    value = cast(CellValue, result.generated_results["S!D10"])
+    assert is_array_result(value)
+    assert isinstance(value, np.ndarray)
+    assert cast(Any, value).tolist() == [[True], [False], [True]]
 
 
 def test_parity_column_and_columns_with_offset() -> None:

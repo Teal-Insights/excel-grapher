@@ -11,16 +11,22 @@ _RUNTIME_DIR = _PACKAGE_ROOT / "runtime"
 _CORE_DIR = _PACKAGE_ROOT / "core"
 _OPERATORS_FASTPATH_MODULE = _CORE_DIR / "operators_fastpath.py"
 _OPERATORS_FASTPATH_STUB_MODULE = _CORE_DIR / "operators_fastpath_stub.py"
+_SLIM_CACHE_EVAL_SOURCE = _RUNTIME_DIR / "cache_eval_slim.py"
+_SLIM_CACHE_EVAL_ARRAY_SOURCE = _RUNTIME_DIR / "cache_eval_slim_array.py"
 
 
 # Core package modules define types, coercions, scalar operators, and addressing (canonical source).
-def _core_modules(*, include_operators_fastpath: bool) -> list[tuple[str, Path]]:
+def _core_modules(
+    *,
+    include_operators_fastpath: bool,
+    include_array_results: bool = True,
+) -> list[tuple[str, Path]]:
     fastpath_path = (
         _OPERATORS_FASTPATH_MODULE
         if include_operators_fastpath
         else _OPERATORS_FASTPATH_STUB_MODULE
     )
-    return [
+    modules: list[tuple[str, Path]] = [
         ("core.address_keys", _CORE_DIR / "address_keys.py"),
         ("core.types", _CORE_DIR / "types.py"),
         ("core.coercions", _CORE_DIR / "coercions.py"),
@@ -28,28 +34,45 @@ def _core_modules(*, include_operators_fastpath: bool) -> list[tuple[str, Path]]
         ("core.operators_fastpath", fastpath_path),
         ("core.operators", _CORE_DIR / "operators.py"),
         ("core.sumproduct", _CORE_DIR / "sumproduct.py"),
-        ("core.addressing", _CORE_DIR / "addressing.py"),
-        ("core.functions", _CORE_DIR / "functions.py"),
     ]
+    if include_array_results:
+        modules.append(("core.array_results", _CORE_DIR / "array_results.py"))
+    modules.extend(
+        [
+            ("core.addressing", _CORE_DIR / "addressing.py"),
+            ("core.functions", _CORE_DIR / "functions.py"),
+        ]
+    )
+    return modules
 
 
 _CORE_MODULES: list[tuple[str, Path]] = _core_modules(include_operators_fastpath=True)
 
-# Export runtime modules (representation-specific implementations); order preserved for iteration.
-_RUNTIME_MODULES: list[tuple[str, Path]] = [
-    ("math", _RUNTIME_DIR / "math.py"),
-    ("text", _RUNTIME_DIR / "text.py"),
-    ("info", _RUNTIME_DIR / "info.py"),
-    ("datetime", _RUNTIME_DIR / "datetime.py"),
-    ("logic", _RUNTIME_DIR / "logic.py"),
-    ("lookup", _RUNTIME_DIR / "lookup.py"),
-    ("reference", _RUNTIME_DIR / "reference.py"),
-    ("offset_runtime", _RUNTIME_DIR / "offset_runtime.py"),
-    ("cache_context", _RUNTIME_DIR / "cache_context.py"),
-    ("cache_eval_slim", _RUNTIME_DIR / "cache_eval_slim.py"),
-    ("cache", _RUNTIME_DIR / "cache.py"),
-]
 
+def _runtime_modules(*, include_array_results: bool) -> list[tuple[str, Path]]:
+    slim_path = _SLIM_CACHE_EVAL_ARRAY_SOURCE if include_array_results else _SLIM_CACHE_EVAL_SOURCE
+    modules: list[tuple[str, Path]] = [
+        ("math", _RUNTIME_DIR / "math.py"),
+        ("text", _RUNTIME_DIR / "text.py"),
+        ("info", _RUNTIME_DIR / "info.py"),
+        ("datetime", _RUNTIME_DIR / "datetime.py"),
+        ("logic", _RUNTIME_DIR / "logic.py"),
+        ("lookup", _RUNTIME_DIR / "lookup.py"),
+        ("reference", _RUNTIME_DIR / "reference.py"),
+        ("offset_runtime", _RUNTIME_DIR / "offset_runtime.py"),
+        ("cache_context", _RUNTIME_DIR / "cache_context.py"),
+        ("cache_eval_slim", slim_path),
+        ("cache", _RUNTIME_DIR / "cache.py"),
+    ]
+    if include_array_results:
+        modules.append(("cache_array", _RUNTIME_DIR / "cache_array.py"))
+    return modules
+
+
+_RUNTIME_MODULES: list[tuple[str, Path]] = _runtime_modules(include_array_results=True)
+
+_ARRAY_RANGE_SYMBOLS = frozenset({"xl_cell_in_range", "xl_range"})
+_ARRAY_RANGE_MODULE = "cache_array"
 _SLIM_CACHE_EVAL_SYMBOLS = frozenset(
     {
         "EvalContext",
@@ -362,6 +385,7 @@ def _register_runtime_symbol_maps(
     defs_by_module: dict[str, dict[str, ast.AST]],
     *,
     include_dep_tracking: bool,
+    include_array_results: bool,
 ) -> tuple[dict[str, ast.AST], dict[str, str]]:
     symbol_to_node: dict[str, ast.AST] = {}
     symbol_to_module: dict[str, str] = {}
@@ -376,6 +400,12 @@ def _register_runtime_symbol_maps(
                     continue
                 if mod == "cache_context" and name == _FULL_EVAL_CONTEXT_SYMBOL:
                     continue
+            if (
+                include_array_results
+                and mod == _FULL_CACHE_EVAL_MODULE
+                and name in _ARRAY_RANGE_SYMBOLS
+            ):
+                continue
             symbol_to_node[name] = node
             symbol_to_module[name] = mod
 
@@ -388,6 +418,7 @@ def emit_runtime(
     include_offset_table: bool,
     include_dep_tracking: bool = True,
     include_operators_fastpath: bool = True,
+    include_array_results: bool = True,
 ) -> str:
     """Emit standalone runtime code for generated output.
 
@@ -397,10 +428,14 @@ def emit_runtime(
     When ``include_operators_fastpath`` is False, stub fast-path functions that
     always fall back to the reference loops are embedded instead of the vectorized
     implementation.
+
+    When ``include_array_results`` is False, omit top-level array / spill helpers
+    from the embedded core runtime.
     """
-    all_modules = (
-        _core_modules(include_operators_fastpath=include_operators_fastpath) + _RUNTIME_MODULES
-    )
+    all_modules = _core_modules(
+        include_operators_fastpath=include_operators_fastpath,
+        include_array_results=include_array_results,
+    ) + _runtime_modules(include_array_results=include_array_results)
     all_module_names = [name for name, _ in all_modules]
 
     # Parse all runtime and core modules.
@@ -420,6 +455,7 @@ def emit_runtime(
     symbol_to_node, symbol_to_module = _register_runtime_symbol_maps(
         defs_by_module,
         include_dep_tracking=include_dep_tracking,
+        include_array_results=include_array_results,
     )
 
     # Dependency graph between runtime symbols.

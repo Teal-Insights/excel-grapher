@@ -4,3 +4,17 @@ guide-section: "Export & quality"
 ---
 
 **Behavioral parity** is defined across three layers: **Excel** (reference), **`FormulaEvaluator`**, and **standalone exported code**. Shared semantics live in `excel_grapher/exporter/export_runtime/` so the evaluator and generated code stay aligned (**evaluator ↔ export** checks use `tests/integration/utils/parity_harness.py`). **Evaluator ↔ Excel** checks use values saved in the workbook and, when automation is available, **live recalculation** via xlwings that require Excel should **run when automation works** and **`pytest.skip`** otherwise (see `tests/integration/evaluator/test_golden_master.py`).
+
+### Top-level array results (#284)
+
+Standalone compare/arithmetic formulas that return multi-cell arrays are covered by:
+
+- `tests/unit/evaluator/test_top_level_array_results.py` — evaluator contract
+- `tests/integration/exporter/test_top_level_array_codegen_parity.py` — anchor `ndarray` parity
+- `tests/integration/exporter/test_top_level_array_dependencies.py` — consumer formulas
+- `tests/integration/evaluator/test_top_level_array_excel_cache.py` — cached `#SPILL!` workbooks
+
+`assert_codegen_matches_evaluator` compares `numpy.ndarray` results element-wise via
+`excel_grapher.core.array_results.array_values_equal`. Excel cached-value parity for
+the anchor cell may record `#SPILL!` when spill is blocked; obstructing cells must be
+present in the dependency graph for blocking to apply.

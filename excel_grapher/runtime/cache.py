@@ -9,6 +9,7 @@ import fastpyxl.utils.cell
 
 from excel_grapher.core import CellValue, ExcelRange, XlError
 from excel_grapher.core.addressing import split_sheet_qualified_address
+from excel_grapher.core.array_results import finalize_top_level_array_result
 
 from .cache_context import EvalContext, EvalContextBase
 
@@ -101,6 +102,9 @@ def _evaluate_address(
             preserve_structural_blank and getattr(fn, "__structural_blank__", False)
         ):
             v = 0
+        occupant = ctx.spill_is_occupied
+        if occupant is not None:
+            v = finalize_top_level_array_result(address, v, is_occupied=occupant)
         ctx.cache[address] = v
         return v
     finally:

@@ -16,6 +16,7 @@ from excel_grapher.core.address_keys import (
     quote_sheet_if_needed,
     sort_node_keys,
 )
+from excel_grapher.core.array_results import spill_footprint_addresses
 from excel_grapher.core.excel_function_meta import numpy_array_arg_indices
 from excel_grapher.core.operators_fastpath import MIN_OPERATOR_FASTPATH_CELLS
 from excel_grapher.evaluator.errors import MissingNormalizedFormulaError
@@ -143,6 +144,7 @@ class CodeGenerator:
         self._needs_offset_runtime = False  # Set to True if dynamic OFFSET is used
         self._needs_index_ref_runtime = False  # OFFSET(INDEX(...), ...) requires xl_index_ref
         self._needs_operators_fastpath = False  # Large array binary ops / SUMPRODUCT
+        self._needs_array_results = False  # Top-level arrays, spill reads, spill blocking
         self._offset_runtime_sheets: set[str] = set()
         self._temp_var_counter = 0  # Counter for unique temp variable names
         self._ast_cache: dict[str, AstNode] = {}
@@ -161,6 +163,7 @@ class CodeGenerator:
         self._needs_offset_runtime = False
         self._needs_index_ref_runtime = False
         self._needs_operators_fastpath = False
+        self._needs_array_results = False
         self._offset_runtime_sheets.clear()
         self._temp_var_counter = 0
         self._ast_cache.clear()
@@ -426,11 +429,27 @@ class CodeGenerator:
         rows = self._range_addresses_2d(node.start, node.end)
         row_strs = []
         for row_addrs in rows:
-            cell_calls = [self._emit_cell_eval(addr) for addr in row_addrs]
+            cell_calls = [self._emit_cell_eval_for_range(addr) for addr in row_addrs]
             row_strs.append("[" + ", ".join(cell_calls) + "]")
         # Model ranges as object-dtype ndarrays so they fit `CellValue` and work
         # with runtime helpers like `flatten(*args)`.
         return f"np.array([{', '.join(row_strs)}], dtype=object)"
+
+    def _emit_cell_eval_for_range(self, address: str) -> str:
+        """Emit a range member read, with spill projection only when needed (#284)."""
+        normalized = normalize_address(address)
+        if self.graph is None:
+            return f"xl_cell(ctx, {repr(normalized)})"
+        node = self.graph.get_node(normalized)
+        if node is not None and node.formula is not None:
+            func_name = address_to_python_name(normalized)
+            return (
+                f"scalar_for_range_member({repr(normalized)}, "
+                f"xl_eval(ctx, {repr(normalized)}, {func_name}))"
+            )
+        if node is not None:
+            return f"xl_cell(ctx, {repr(normalized)})"
+        return f"xl_cell_in_range(ctx, {repr(normalized)})"
 
     def _emit_cell_eval(self, address: str) -> str:
         normalized = normalize_address(address)
@@ -719,6 +738,119 @@ class CodeGenerator:
         return prefix + resolve_head
 
     @staticmethod
+    def _broadcast_array_shapes(
+        left: tuple[int, int] | None,
+        right: tuple[int, int] | None,
+    ) -> tuple[int, int] | None:
+        """Broadcast two static array shapes for top-level binary operators."""
+        if left is None:
+            return right
+        if right is None:
+            return left
+        if left == (1, 1):
+            return right
+        if right == (1, 1):
+            return left
+        if left == right:
+            return left
+        return None
+
+    def _ast_result_shape(self, node: AstNode) -> tuple[int, int] | None:
+        """Infer a static result shape from an AST subtree when possible."""
+        if isinstance(node, RangeNode):
+            rows = self._range_addresses_2d(node.start, node.end)
+            if not rows or not rows[0]:
+                return None
+            return (len(rows), len(rows[0]))
+        if isinstance(node, CellRefNode):
+            return (1, 1)
+        if isinstance(node, (NumberNode, StringNode, BoolNode, ErrorNode, EmptyArgNode)):
+            return (1, 1)
+        if isinstance(node, BinaryOpNode):
+            return self._broadcast_array_shapes(
+                self._ast_result_shape(node.left),
+                self._ast_result_shape(node.right),
+            )
+        if isinstance(node, UnaryOpNode):
+            return self._ast_result_shape(node.operand)
+        if isinstance(node, FunctionCallNode):
+            return None
+        return None
+
+    def _infer_top_level_array_shape(self, ast: AstNode) -> tuple[int, int] | None:
+        """Return spill footprint shape for formulas that yield multi-cell arrays."""
+        shape = self._ast_result_shape(ast)
+        if shape is None or shape == (1, 1):
+            return None
+        return shape
+
+    def _spill_footprint_slots_for_formula(self, anchor: str) -> set[str]:
+        """Return spill footprint addresses for a top-level array formula."""
+        ast = self._get_or_parse_ast(anchor)
+        if ast is None:
+            return set()
+        shape = self._infer_top_level_array_shape(ast)
+        if shape is None:
+            return set()
+        return set(spill_footprint_addresses(anchor, shape))
+
+    def _spill_occupied_addresses(self, closure: frozenset[str] | None = None) -> frozenset[str]:
+        """Occupied spill slots that can block array formulas in the export closure."""
+        if self.graph is None or closure is None:
+            return frozenset()
+        occupied: set[str] = set()
+        for addr in closure:
+            node = self.graph.get_node(addr)
+            if node is None or node.formula is None:
+                continue
+            for slot in self._spill_footprint_slots_for_formula(addr):
+                slot_node = self.graph.get_node(slot)
+                if slot_node is None:
+                    continue
+                if slot_node.formula is not None or slot_node.value is not None:
+                    occupied.add(slot)
+        return frozenset(occupied)
+
+    def _emit_spill_occupancy_lines(self, closure: frozenset[str] | None = None) -> list[str]:
+        """Emit spill occupancy helper used by ``EvalContext``."""
+        occupied = sorted(self._spill_occupied_addresses(closure))
+        if not occupied:
+            return [
+                "def _spill_is_occupied(_address: str) -> bool:",
+                "    return False",
+                "",
+            ]
+        lines = ["_SPILL_OCCUPIED = frozenset({"]
+        lines.extend(f"    {address!r}," for address in occupied)
+        lines.extend(
+            [
+                "})",
+                "",
+                "def _spill_is_occupied(address: str) -> bool:",
+                "    return address in _SPILL_OCCUPIED",
+                "",
+            ]
+        )
+        return lines
+
+    def _eval_context_ctor_kwargs(self) -> str:
+        """Keyword arguments for generated ``EvalContext(...)`` calls."""
+        parts = [
+            "inputs=coerce_inputs_dict(merged)",
+            "resolver=_resolve_formula",
+        ]
+        if self._needs_array_results:
+            parts.append("spill_is_occupied=_spill_is_occupied")
+        parts.extend(
+            [
+                f"iterative_enabled={bool(self._iterate_enabled)}",
+                f"iterate_count={int(self._iterate_count)}",
+                f"iterate_delta={float(self._iterate_delta)!r}",
+            ]
+        )
+        return ", ".join(parts)
+
+    @staticmethod
     def _internals_runtime_import_names(
         used_xl_functions: Set[str], cell_code_lines: list[str]
     ) -> list[str]:
@@ -729,6 +861,10 @@ class CodeGenerator:
         names = set(used_xl_functions)
         names.discard("numpy")
         names.update({"xl_cell", "xl_eval"})
+        if "xl_cell_in_range" in blob:
+            names.add("xl_cell_in_range")
+        if "scalar_for_range_member" in blob:
+            names.add("scalar_for_range_member")
         if "numpy" in used_xl_functions or "np." in blob or "np.array" in blob:
             names.add("np")
         if "XlError" in blob:
@@ -1402,6 +1538,10 @@ class CodeGenerator:
         if self._max_array_extent_in_ast(node) >= MIN_OPERATOR_FASTPATH_CELLS:
             self._needs_operators_fastpath = True
 
+    def _note_array_results_from_ast(self, node: AstNode) -> None:
+        if self._infer_top_level_array_shape(node) is not None:
+            self._needs_array_results = True
+
     def _emit_offset_static(
         self, base_address: str, rows: int, cols: int, height: int, width: int
     ) -> str:
@@ -1879,6 +2019,9 @@ class CodeGenerator:
         lines.extend(
             self._emit_resolver_lines(parts["blank_rects"] if parts["blank_rects"] else None)
         )
+        lines.append("")
+        if self._needs_array_results:
+            lines.extend(self._emit_spill_occupancy_lines(frozenset(_all_cells)))
 
         # Generate entry point helpers
         lines.append("def make_context(inputs=None):")
@@ -1888,13 +2031,7 @@ class CodeGenerator:
             lines.append("    merged.update(CONSTANTS)")
         lines.append("    if inputs is not None:")
         lines.append("        merged.update(inputs)")
-        lines.append(
-            "    return EvalContext("
-            "inputs=coerce_inputs_dict(merged), resolver=_resolve_formula, "
-            f"iterative_enabled={bool(self._iterate_enabled)}, "
-            f"iterate_count={int(self._iterate_count)}, "
-            f"iterate_delta={float(self._iterate_delta)!r})"
-        )
+        lines.append(f"    return EvalContext({self._eval_context_ctor_kwargs()})")
         lines.append("")
         lines.append("")
         if series_bindings is not None:
@@ -2038,23 +2175,23 @@ class CodeGenerator:
             runtime_imports,
             "import warnings",
             "",
-            "",
-            "def make_context(inputs=None):",
-            '    """Create an EvalContext with merged inputs."""',
-            "    merged = dict(DEFAULT_INPUTS)",
-            "    merged.update(CONSTANTS)",
-            "    if inputs is not None:",
-            "        merged.update(inputs)",
-            (
-                "    return EvalContext("
-                "inputs=coerce_inputs_dict(merged), resolver=_resolve_formula, "
-                f"iterative_enabled={bool(self._iterate_enabled)}, "
-                f"iterate_count={int(self._iterate_count)}, "
-                f"iterate_delta={float(self._iterate_delta)!r})"
-            ),
-            "",
-            "",
         ]
+        if self._needs_array_results:
+            api_lines.extend(self._emit_spill_occupancy_lines(frozenset(_all_cells)))
+        api_lines.extend(
+            [
+                "",
+                "def make_context(inputs=None):",
+                '    """Create an EvalContext with merged inputs."""',
+                "    merged = dict(DEFAULT_INPUTS)",
+                "    merged.update(CONSTANTS)",
+                "    if inputs is not None:",
+                "        merged.update(inputs)",
+                f"    return EvalContext({self._eval_context_ctor_kwargs()})",
+                "",
+                "",
+            ]
+        )
         series_setter_names: list[str] = []
         if series_bindings is not None:
             if bindings_workbook is None:
@@ -2223,7 +2360,14 @@ class CodeGenerator:
             ast = self._get_or_parse_ast(address)
             assert ast is not None
             self._note_operators_fastpath_from_ast(ast)
+            self._note_array_results_from_ast(ast)
             used_xl_functions.update(self._extract_xl_functions(ast))
+
+        cell_blob = "\n".join(cell_code_lines)
+        if "scalar_for_range_member" in cell_blob or "xl_cell_in_range" in cell_blob:
+            self._needs_array_results = True
+        if self._spill_occupied_addresses(frozenset(all_cells)):
+            self._needs_array_results = True
 
         # Always include per-call evaluation scaffolding.
         # XlError is commonly referenced by generated code (error literals, IF/IFERROR, and
@@ -2236,6 +2380,8 @@ class CodeGenerator:
             "xl_range",
             "XlError",
         }
+        if self._needs_array_results:
+            runtime_symbols.add("xl_cell_in_range")
         if self._iterate_enabled:
             runtime_symbols.add("xl_iterative_compute")
         include_dep_tracking = self._include_dep_tracking(series_bindings)
@@ -2244,6 +2390,7 @@ class CodeGenerator:
             include_offset_table=False,
             include_dep_tracking=include_dep_tracking,
             include_operators_fastpath=self._needs_operators_fastpath,
+            include_array_results=self._needs_array_results,
         )
         runtime_code = runtime_code.rstrip()
 

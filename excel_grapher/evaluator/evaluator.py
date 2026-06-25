@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, overload
 
 import fastpyxl.utils.cell
+import numpy as np
 
 from excel_grapher.core.address_keys import (
     normalize_key as normalize_address,
@@ -13,6 +14,11 @@ from excel_grapher.core.address_keys import (
     parse_address,
 )
 from excel_grapher.core.addressing import index_excel_range
+from excel_grapher.core.array_results import (
+    finalize_top_level_array_result,
+    read_spill_scalar,
+    scalar_for_range_member,
+)
 from excel_grapher.core.excel_function_meta import numpy_array_arg_indices
 from excel_grapher.core.range_shorthand import (
     SheetBounds,
@@ -86,6 +92,24 @@ if TYPE_CHECKING:
 
 @dataclass
 class FormulaEvaluator:
+    """Evaluate workbook formulas against a dependency graph.
+
+    **Top-level array results (#284):** When a formula's top-level result is a
+    multi-cell binary operation (compare, arithmetic, concat), the cached value at
+    the formula cell is an ``object``-dtype ``numpy.ndarray`` matching the
+    broadcast shape (e.g. ``=C5:C7="Software"`` → column of booleans). Only 1×1
+    ``ExcelRange`` results are auto-resolved to scalars via
+    ``_auto_resolve_single_cell``. Physical dynamic-array spill into neighboring
+    cells is not modeled; the logical array lives on the anchor address only.
+
+    **Array consumers:** Dependent formulas read spilled scalars when an address
+    appears inside a range operand (``SUM(Data!D10:Data!D12)``) or via operators
+    that broadcast cached arrays (``=Data!D10*1``). ``SUMPRODUCT`` accepts a
+    single-cell ref to an array anchor. ``IF`` on a multi-cell array returns
+    ``#VALUE!``. Occupied spill slots in the graph yield ``#SPILL!`` at the
+    anchor formula cell.
+    """
+
     graph: DependencyGraph
     auto_detect_changes: bool = True
     eager_invalidation: bool = True
@@ -263,8 +287,13 @@ class FormulaEvaluator:
         try:
             ast = parse(formula)
             result = self._evaluate_ast(ast)
-            # Auto-resolve 1x1 ExcelRange to single value
+            # Promote 1×1 ExcelRange to scalar; preserve multi-cell ndarrays (#284).
             result = self._auto_resolve_single_cell(result)
+            result = finalize_top_level_array_result(
+                norm,
+                result,
+                is_occupied=self._spill_slot_occupied,
+            )
             # Excel treats formula results of None (empty cell reference) as 0
             if result is None:
                 result = 0
@@ -343,8 +372,36 @@ class FormulaEvaluator:
 
         raise TypeError(f"Unknown AST node: {type(node)}")
 
+    def _spill_slot_occupied(self, address: str) -> bool:
+        """Return whether ``address`` blocks a dynamic-array spill footprint."""
+        node = self.graph.get_node(normalize_address(address))
+        if node is None:
+            return False
+        if node.formula is not None:
+            return True
+        return node.value is not None
+
+    def _evaluate_cell_for_range(self, address: str) -> CellValue:
+        """Evaluate a cell as one position inside a range operand.
+
+        Array formula anchors keep their full ``ndarray`` in the cell cache but
+        project to spilled scalars here. Spill slots without graph nodes read
+        from cached anchor arrays (issue #284).
+        """
+        norm = normalize_address(address)
+        if self._blank_range_rects and address_in_blank_ranges(norm, self._blank_range_rects):
+            return None
+        node = self.graph.get_node(norm)
+        if node is None:
+            spilled = read_spill_scalar(norm, self._cache)
+            if spilled is not None:
+                return spilled
+            raise KeyError(f"Cell {address} not found in graph")
+        value = self._evaluate_cell(norm)
+        return scalar_for_range_member(norm, value)
+
     def _resolve_range(self, rng: ExcelRange) -> numpy.ndarray:
-        return rng.resolve(self._evaluate_cell)
+        return rng.resolve(self._evaluate_cell_for_range)
 
     def _resolve_function_arg(
         self,
@@ -354,9 +411,10 @@ class FormulaEvaluator:
     ) -> CellValue:
         """Resolve ``ExcelRange`` arguments for runtime function calls.
 
-        Array/table parameters keep numpy arrays; single-cell references in value
-        contexts (e.g. ``TEXT(INDEX(...))``) promote to scalars so export parity
-        matches codegen's scalar ``INDEX`` handling.
+        ``ExcelRange`` operands follow function metadata: array/table parameters
+        (see ``numpy_array_arg_indices``) become ``ndarray``; other contexts
+        promote 1×1 references to scalars. ``ndarray`` values from cell refs
+        (top-level array results, issue #284) pass through unchanged.
         """
         if not isinstance(value, ExcelRange):
             return value
@@ -377,19 +435,28 @@ class FormulaEvaluator:
         return resolve_whole_row(sheet, row, self._sheet_bounds())
 
     def _auto_resolve_single_cell(self, value: CellValue) -> CellValue:
-        """If value is a 1x1 ExcelRange, resolve it to its single cell value."""
+        """Promote 1×1 ``ExcelRange`` references to scalars.
+
+        Multi-cell ``numpy.ndarray`` results are returned unchanged (issue #284).
+        """
+        if isinstance(value, np.ndarray):
+            return value
         if (
             isinstance(value, ExcelRange)
             and value.start_row == value.end_row
             and value.start_col == value.end_col
         ):
-            # 1x1 range - resolve to single value
             arr = self._resolve_range(value)
             return arr[0, 0]
         return value
 
     def _resolve_binary_operand(self, value: CellValue) -> CellValue:
-        """Resolve range references to arrays for element-wise binary operators."""
+        """Resolve operands for element-wise binary operators.
+
+        ``ExcelRange`` references expand to ``ndarray``. Cached array results
+        and other ``ndarray`` values (e.g. ``=D10*2`` when ``D10`` is an array
+        cell) pass through for broadcast via ``xl_*`` helpers.
+        """
         if isinstance(value, ExcelRange):
             return self._resolve_range(value)
         return value
