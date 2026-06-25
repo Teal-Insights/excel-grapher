@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict, cast
 
 import pytest
 
 from excel_grapher.series_bindings.input_coerce import coerce_setter_input
+from excel_grapher.series_bindings.records_types import Records
 
 
 class _SeriesCoerceKwargs(TypedDict):
@@ -28,7 +29,7 @@ _SERIES_KWARGS: _SeriesCoerceKwargs = {
 
 
 def test_records_pass_through_unchanged() -> None:
-    records = [
+    records: Records = [
         {"TIME_PERIOD": 4, "OBS_VALUE": 7.5},
         {"TIME_PERIOD": 5, "OBS_VALUE": 8.0},
     ]
@@ -157,7 +158,7 @@ def test_missing_measure_column_raises() -> None:
 
 
 def test_key_coercion_int_from_float_records() -> None:
-    records = [
+    records: Records = [
         {"TIME_PERIOD": 4.0, "OBS_VALUE": 7.5},
         {"TIME_PERIOD": 5.0, "OBS_VALUE": 8.0},
     ]
@@ -209,7 +210,7 @@ def test_dataframe_like_without_pandas_raises() -> None:
     type(fake).__name__ = "DataFrame"  # type: ignore[misc]
 
     with pytest.raises(ImportError, match="pandas"):
-        coerce_setter_input(fake, **_SERIES_KWARGS)
+        coerce_setter_input(cast(Any, fake), **_SERIES_KWARGS)
 
 
 def test_scalar_layout_bare_value() -> None:
@@ -237,7 +238,7 @@ def test_scalar_layout_dict_record() -> None:
 
 
 def test_scalar_layout_list_passes_through() -> None:
-    records = [{"OBS_VALUE": "France"}]
+    records: Records = [{"OBS_VALUE": "France"}]
     result = coerce_setter_input(
         records,
         layout="scalar",

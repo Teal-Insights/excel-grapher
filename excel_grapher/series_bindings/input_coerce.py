@@ -245,7 +245,7 @@ def _coerce_non_scalar_records(
 
     if isinstance(data, list):
         if _is_records_list(data):
-            return cast(Records, data)
+            return data
         if key_order is None:
             raise ValueError("positional input requires key_order")
         return _coerce_positional_records(

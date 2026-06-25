@@ -24,6 +24,7 @@ from excel_grapher.series_bindings.setter_codegen import (
     emit_setter_function,
     emit_setter_helpers,
 )
+from excel_grapher.series_bindings.setter_input_types import SetterInput
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
 
@@ -89,7 +90,9 @@ def test_emitted_coerce_matches_library_for_series_inputs(
 ) -> None:
     emitted = _emitted_coerce_setter_input()
     kwargs = _borvelia_series_kwargs(tmp_path)
-    assert coerce_setter_input(data, **kwargs) == emitted(data, **kwargs)
+    assert coerce_setter_input(cast(SetterInput, data), **kwargs) == emitted(
+        cast(SetterInput, data), **kwargs
+    )
 
 
 def test_emitted_coerce_matches_library_for_pandas_dataframe(tmp_path: Path) -> None:
