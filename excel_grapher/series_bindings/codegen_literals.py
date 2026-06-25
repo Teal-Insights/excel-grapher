@@ -44,19 +44,29 @@ def resolutions_include_datetime(resolutions: Iterable[SeriesResolution]) -> boo
 
 def emit_setter_type_alias_lines(*, include_datetime: bool) -> list[str]:
     """Emit shared type aliases for generated setter blocks."""
-    if include_datetime:
-        return [
-            "import datetime",
-            "",
-            "Scalar = str | int | float | bool | datetime.datetime | None",
-            "Record = dict[str, object]",
-            "Records = list[Record]",
-            "",
-        ]
-    return [
-        "Scalar = str | int | float | bool | None",
+    sequence_import = [
+        "from collections.abc import Sequence",
+        "from typing import TYPE_CHECKING",
+        "",
+    ]
+    scalar_type = (
+        "Scalar = str | int | float | bool | datetime | None"
+        if include_datetime
+        else "Scalar = str | int | float | bool | None"
+    )
+    return sequence_import + [
+        scalar_type,
         "Record = dict[str, object]",
         "Records = list[Record]",
+        "SeriesInput = Records | Record | Sequence[Scalar]",
+        "",
+        "if TYPE_CHECKING:",
+        "    import pandas as pd",
+        "    import polars as pl",
+        "",
+        "    SeriesInput = Records | Record | Sequence[Scalar] | pd.DataFrame | pl.DataFrame",
+        "else:",
+        "    SeriesInput = Records | Record | Sequence[Scalar] | object",
         "",
     ]
 

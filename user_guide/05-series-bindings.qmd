@@ -146,16 +146,55 @@ Offset projection years (1..5) vs calendar years (1999..2000) are distinguished 
 
 ## Records contract
 
-Generated setters accept:
+Generated **series** setters accept `SeriesInput`: records, a 1D iterable of measure values
+(single-key series only), or a **tidy** pandas/polars `DataFrame`. **Scalar** setters accept a
+bare measure value, one record dict, or a one-element record list. `ctx: EvalContext` is always the
+first argument.
 
 ```python
-records: list[dict[str, object]]
+# Records (always supported)
+set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 4, "OBS_VALUE": 7.5}])
+
+# Positional measure values — one float per leaf, in codegen key order (periods 1..5 here)
+set_borvelia_primary_balance(ctx, [-2.0, -1.0, 0.0, 7.5, 8.0])
+
+# Tidy DataFrame — columns are binding `key` fields plus the measure concept only
+import pandas as pd
+
+df = pd.DataFrame({"TIME_PERIOD": [4, 5], "OBS_VALUE": [7.5, 8.0]})
+set_borvelia_primary_balance(ctx, df)
 ```
+
+`layout: matrix` setters are **not** implemented yet; matrix-shaped input is out of scope.
+
+### Record dicts
 
 Each record must include:
 
 - **Measure field** — observation written to the matched leaf cell, named by `structure.measure.concept` (`OBS_VALUE` by default).
 - **Key fields** — every concept listed in `key` (e.g. `TIME_PERIOD: 3` for offset-style int keys).
+
+Do **not** repeat `series_context`, attributes, or documentation dimensions in caller input unless
+they are listed in `key`. For example, `REF_AREA` and `INDICATOR` are binding metadata for
+Borvelia-style series — only `TIME_PERIOD` and `OBS_VALUE` are required in records or DataFrame
+columns.
+
+### Wide grids → tidy DataFrames
+
+Setters accept **long/tidy** tables only. Convert wide Excel-shaped grids before calling a setter:
+
+```python
+# Single-key series: periods across columns, one indicator row
+tidy = df_wide.T.reset_index().rename(columns={"index": "TIME_PERIOD", 0: "OBS_VALUE"})
+
+# pandas melt (multi-column wide grid)
+tidy = df_wide.reset_index().melt(id_vars=["INDICATOR"], var_name="TIME_PERIOD", value_name="OBS_VALUE")
+
+# polars
+tidy = df_wide.unpivot(on="TIME_PERIOD", index="INDICATOR", value_name="OBS_VALUE")
+```
+
+Only include columns that appear in `key` plus the measure concept.
 
 **Key types must match resolved Python types.** Resolution coerces workbook and manifest values according to each bind’s `read` mode (and `concept_scheme` dtypes for constants and `series_context` entries). Generated setters index records by the same types — callers must not pass strings when resolution produced `datetime` or `bool` objects:
 

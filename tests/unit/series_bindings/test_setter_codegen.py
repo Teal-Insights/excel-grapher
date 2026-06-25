@@ -22,6 +22,7 @@ from excel_grapher.series_bindings.docstrings import (
     register_series_docstring_callback,
 )
 from excel_grapher.series_bindings.setter_codegen import (
+    emit_input_coerce_helpers,
     emit_setter_function,
     emit_setter_helpers,
     emit_setters_block,
@@ -53,7 +54,10 @@ def _exec_setters(
     }
     if extra:
         namespace.update(extra)
-    exec("\n".join(emit_setter_helpers() + lines), namespace)
+    source_lines = lines
+    if "def coerce_setter_input(" not in "\n".join(lines):
+        source_lines = emit_input_coerce_helpers() + emit_setter_helpers() + lines
+    exec("\n".join(source_lines), namespace)
     return namespace
 
 
@@ -228,6 +232,15 @@ def test_emit_setters_block_emits_helpers_once(tmp_path: Path) -> None:
 
     assert code.count("def _apply_series_records(") == 1
     assert code.count("def _coerce_records(") == 1
+    assert code.count("def coerce_setter_input(") == 1
+    assert code.count("if TYPE_CHECKING:") == 1
+    assert (
+        code.count(
+            "SeriesInput = Records | Record | Sequence[Scalar] | pd.DataFrame | pl.DataFrame"
+        )
+        >= 1
+    )
+    assert "_KEY_ORDER_BORVELIA_PRIMARY_BALANCE" in code
     assert "_apply_series_records(" in code
     assert "def set_borvelia_primary_balance(" in code
 
@@ -294,7 +307,7 @@ def test_emit_setter_structured_docstring_callback(tmp_path: Path) -> None:
     assert "Set borvelia values." in setter.__doc__
     assert 'Value with "quotes".' in setter.__doc__
     exec(
-        "\n".join(emit_setter_helpers() + lines),
+        "\n".join(emit_input_coerce_helpers() + emit_setter_helpers() + lines),
         {"EvalContext": EvalContext, "coerce_inputs_dict": coerce_inputs_dict},
     )
 
@@ -488,9 +501,8 @@ def test_emit_setter_datetime_key_round_trips(tmp_path: Path) -> None:
     resolved = resolve_series_binding(graph, wb_path, series)
     lines = emit_setter_function(series, resolved)
     code = "\n".join(lines)
-    assert "import datetime" in code
-    assert "datetime.datetime(2024, 1, 1, 0, 0)" in code
-    assert "datetime.datetime(2024, 2, 1, 0, 0)" in code
+    assert "datetime(2024, 1, 1, 0, 0)" in code
+    assert "datetime(2024, 2, 1, 0, 0)" in code
 
     ns = _exec_setters(lines)
     setter = cast(
@@ -543,9 +555,8 @@ def test_emit_setters_block_includes_datetime_aliases_when_needed(tmp_path: Path
         ],
     }
     code = "\n".join(emit_setters_block(graph, wb_path, bindings))
-    assert "import datetime" in code
-    assert code.count("import datetime") == 1
-    assert "Scalar = str | int | float | bool | datetime.datetime | None" in code
+    assert "from datetime import date, datetime, timedelta" in code
+    assert "Scalar = str | int | float | bool | datetime | None" in code
 
 
 def test_emit_setter_scalar_bool_measure_round_trips(tmp_path: Path) -> None:
@@ -696,6 +707,51 @@ def test_emit_setters_block_calendar_year_setter_round_trips(tmp_path: Path) -> 
     assert ctx.inputs["Inputs!C2"] == 22.0
 
 
+def test_emit_setter_series_signature_uses_series_input(tmp_path: Path) -> None:
+    wb_path = tmp_path / "lic_inputs.xlsx"
+    _write_borvelia_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, expand_data_range("Inputs!F5:J5"), load_values=True)
+    bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
+    series = bindings["series"][0]
+    resolved = resolve_series_binding(graph, wb_path, series)
+    code = "\n".join(emit_setter_function(series, resolved))
+    assert "records: SeriesInput," in code
+
+
+def test_emit_setter_positional_values_update_context(tmp_path: Path) -> None:
+    wb_path = tmp_path / "lic_inputs.xlsx"
+    _write_borvelia_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, expand_data_range("Inputs!F5:J5"), load_values=True)
+    bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
+    series = bindings["series"][0]
+    resolved = resolve_series_binding(graph, wb_path, series)
+    ns = _exec_setters(emit_setter_function(series, resolved))
+    setter = cast(Callable[[EvalContext, object], None], ns["set_borvelia_primary_balance"])
+
+    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
+    setter(ctx, [-2.0, -1.0, 0.0, 7.5, 8.0])
+    assert ctx.inputs["Inputs!I5"] == 7.5
+    assert ctx.inputs["Inputs!J5"] == 8.0
+
+
+def test_emit_setter_pandas_dataframe_updates_context(tmp_path: Path) -> None:
+    pd = pytest.importorskip("pandas")
+    wb_path = tmp_path / "lic_inputs.xlsx"
+    _write_borvelia_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, expand_data_range("Inputs!F5:J5"), load_values=True)
+    bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
+    series = bindings["series"][0]
+    resolved = resolve_series_binding(graph, wb_path, series)
+    ns = _exec_setters(emit_setter_function(series, resolved))
+    setter = cast(Callable[[EvalContext, object], None], ns["set_borvelia_primary_balance"])
+
+    df = pd.DataFrame({"TIME_PERIOD": [4, 5], "OBS_VALUE": [7.5, 8.0]})
+    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
+    setter(ctx, df)
+    assert ctx.inputs["Inputs!I5"] == 7.5
+    assert ctx.inputs["Inputs!J5"] == 8.0
+
+
 def test_emit_setters_block_matrix_explicit_codegen_shape_and_round_trip(tmp_path: Path) -> None:
     from tests.fixtures.series_bindings.matrix_helpers import (
         MATRIX_EXPLICIT_BINDINGS,
@@ -739,3 +795,93 @@ def test_emit_setters_block_matrix_explicit_codegen_shape_and_round_trip(tmp_pat
     assert ctx.inputs["Inputs!C3"] == 9.9
     assert ctx.inputs["Inputs!D5"] == 44.4
     assert ctx.inputs["Inputs!B3"] == 1.2
+
+
+def test_emit_setter_matrix_pandas_dataframe_updates_context(tmp_path: Path) -> None:
+    pd = pytest.importorskip("pandas")
+    from tests.fixtures.series_bindings.matrix_helpers import (
+        MATRIX_EXPLICIT_BINDINGS,
+        write_matrix_explicit_workbook,
+    )
+
+    wb_path = tmp_path / "matrix_inputs.xlsx"
+    write_matrix_explicit_workbook(wb_path)
+    graph = create_dependency_graph(
+        wb_path,
+        expand_data_range("Inputs!B3:D5"),
+        load_values=True,
+    )
+    bindings = load_series_bindings(MATRIX_EXPLICIT_BINDINGS)
+    series = bindings["series"][0]
+    resolved = resolve_series_binding(graph, wb_path, series)
+    ns = _exec_setters(emit_setter_function(series, resolved))
+    setter = cast(Callable[[EvalContext, object], None], ns["set_macro_matrix"])
+
+    df = pd.DataFrame(
+        {
+            "INDICATOR": ["GDP growth", "Debt"],
+            "TIME_PERIOD": [2025, 2026],
+            "OBS_VALUE": [9.9, 44.4],
+        }
+    )
+    ctx = EvalContext(
+        inputs=coerce_inputs_dict({"Inputs!B3": 1.2}),
+        resolver=lambda _a: None,
+    )
+    setter(ctx, df)
+    assert ctx.inputs["Inputs!C3"] == 9.9
+    assert ctx.inputs["Inputs!D5"] == 44.4
+    assert ctx.inputs["Inputs!B3"] == 1.2
+
+
+def test_emit_setter_duplicate_composite_key_in_records_raises(tmp_path: Path) -> None:
+    wb_path = tmp_path / "lic_inputs.xlsx"
+    _write_borvelia_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, expand_data_range("Inputs!F5:J5"), load_values=True)
+    bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
+    series = bindings["series"][0]
+    resolved = resolve_series_binding(graph, wb_path, series)
+    ns = _exec_setters(emit_setter_function(series, resolved))
+    setter = cast(Callable[[EvalContext, object], None], ns["set_borvelia_primary_balance"])
+    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
+
+    with pytest.raises(ValueError, match=r"record\[1\]: duplicate key .*record\[0\]"):
+        setter(
+            ctx,
+            [
+                {"TIME_PERIOD": 4, "OBS_VALUE": 7.5},
+                {"TIME_PERIOD": 4, "OBS_VALUE": 8.0},
+            ],
+        )
+
+
+def test_emit_setter_matrix_dataframe_duplicate_composite_key_raises(tmp_path: Path) -> None:
+    pd = pytest.importorskip("pandas")
+    from tests.fixtures.series_bindings.matrix_helpers import (
+        MATRIX_EXPLICIT_BINDINGS,
+        write_matrix_explicit_workbook,
+    )
+
+    wb_path = tmp_path / "matrix_inputs.xlsx"
+    write_matrix_explicit_workbook(wb_path)
+    graph = create_dependency_graph(
+        wb_path,
+        expand_data_range("Inputs!B3:D5"),
+        load_values=True,
+    )
+    bindings = load_series_bindings(MATRIX_EXPLICIT_BINDINGS)
+    series = bindings["series"][0]
+    resolved = resolve_series_binding(graph, wb_path, series)
+    ns = _exec_setters(emit_setter_function(series, resolved))
+    setter = cast(Callable[[EvalContext, object], None], ns["set_macro_matrix"])
+    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
+
+    df = pd.DataFrame(
+        {
+            "INDICATOR": ["GDP growth", "GDP growth"],
+            "TIME_PERIOD": [2025, 2025],
+            "OBS_VALUE": [9.9, 10.1],
+        }
+    )
+    with pytest.raises(ValueError, match=r"record\[1\]: duplicate key .*record\[0\]"):
+        setter(ctx, df)

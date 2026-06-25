@@ -32,6 +32,7 @@ from excel_grapher.series_bindings.docstrings import (
     resolve_series_docstring_callback,
     unregister_series_docstring_callback,
 )
+from excel_grapher.series_bindings.input_coerce import coerce_setter_input
 from excel_grapher.series_bindings.input_series import derive_input_series
 from excel_grapher.series_bindings.load import (
     SeriesBindingsLoadError,
@@ -61,6 +62,7 @@ from excel_grapher.series_bindings.setter_codegen import (
     emit_setters_block,
     generate_setters_module,
 )
+from excel_grapher.series_bindings.setter_input_types import Layout, SeriesInput
 from excel_grapher.series_bindings.types import (
     InputSeries,
     InputSeriesCell,
@@ -140,6 +142,9 @@ __all__ = [
     "WorkbookSeriesBindings",
     "BindingsCheckResult",
     "bindings_canonical_sha256",
+    "Layout",
+    "SeriesInput",
+    "coerce_setter_input",
     "derive_input_series",
     "derive_output_series",
     "emit_compute_function",

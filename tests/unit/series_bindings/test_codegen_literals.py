@@ -26,18 +26,32 @@ def test_py_scalar_literal_bool_and_datetime() -> None:
 
 def test_emit_setter_type_alias_lines_omit_datetime_when_unused() -> None:
     lines = emit_setter_type_alias_lines(include_datetime=False)
-    assert lines == [
-        "Scalar = str | int | float | bool | None",
-        "Record = dict[str, object]",
-        "Records = list[Record]",
-        "",
+    assert lines[:2] == [
+        "from collections.abc import Sequence",
+        "from typing import TYPE_CHECKING",
     ]
+    assert "Scalar = str | int | float | bool | None" in lines
+    assert "if TYPE_CHECKING:" in lines
+    assert any(
+        line.strip()
+        == "SeriesInput = Records | Record | Sequence[Scalar] | pd.DataFrame | pl.DataFrame"
+        for line in lines
+    )
+    assert any(
+        line.strip() == "SeriesInput = Records | Record | Sequence[Scalar] | object"
+        for line in lines
+    )
 
 
 def test_emit_setter_type_alias_lines_include_datetime_when_needed() -> None:
     lines = emit_setter_type_alias_lines(include_datetime=True)
-    assert lines[0] == "import datetime"
-    assert "datetime.datetime | None" in lines[2]
+    assert lines[0] == "from collections.abc import Sequence"
+    assert "Scalar = str | int | float | bool | datetime | None" in lines
+    assert any(
+        line.strip()
+        == "SeriesInput = Records | Record | Sequence[Scalar] | pd.DataFrame | pl.DataFrame"
+        for line in lines
+    )
 
 
 def test_emit_compute_preamble_lines_include_datetime_when_needed() -> None:
