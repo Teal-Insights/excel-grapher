@@ -29,7 +29,7 @@ FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
 
 
 class _SeriesCoerceKwargs(TypedDict, total=False):
-    layout: Literal["scalar", "series"]
+    layout: Literal["scalar", "series", "matrix"]
     key_fields: tuple[str, ...]
     measure_field: str
     key_order: tuple[object, ...] | None

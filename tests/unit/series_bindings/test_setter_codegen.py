@@ -233,7 +233,13 @@ def test_emit_setters_block_emits_helpers_once(tmp_path: Path) -> None:
     assert code.count("def _apply_series_records(") == 1
     assert code.count("def _coerce_records(") == 1
     assert code.count("def coerce_setter_input(") == 1
-    assert code.count("SeriesInput = Records | Record | Sequence[Scalar]") == 1
+    assert code.count("if TYPE_CHECKING:") == 1
+    assert (
+        code.count(
+            "SeriesInput = Records | Record | Sequence[Scalar] | pd.DataFrame | pl.DataFrame"
+        )
+        >= 1
+    )
     assert "_KEY_ORDER_BORVELIA_PRIMARY_BALANCE" in code
     assert "_apply_series_records(" in code
     assert "def set_borvelia_primary_balance(" in code

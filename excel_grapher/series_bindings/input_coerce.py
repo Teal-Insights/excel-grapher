@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Any, Literal, TypeGuard, cast
+from typing import Any, TypeGuard, cast
 
 from excel_grapher.series_bindings.coerce import coerce_scalar
 from excel_grapher.series_bindings.records_types import Record, Records
+from excel_grapher.series_bindings.setter_input_types import Layout, SetterInput
 
-__all__ = ["coerce_setter_input"]
-
-Layout = Literal["scalar", "series"]
+__all__ = ["Layout", "coerce_setter_input"]
 
 
 def _is_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
@@ -175,7 +174,7 @@ def _coerce_positional_records(
 
 
 def coerce_setter_input(
-    data: object,
+    data: SetterInput,
     *,
     layout: Layout,
     key_fields: tuple[str, ...],
@@ -188,7 +187,7 @@ def coerce_setter_input(
 
     Args:
         data: Scalar value, record(s), 1D measure values, or tidy DataFrame.
-        layout: Binding layout (`scalar` or `series`).
+        layout: Binding layout (`scalar`, `series`, or `matrix`).
         key_fields: Key column names from the binding manifest.
         measure_field: Measure concept name (e.g. `OBS_VALUE`).
         key_order: Canonical key values for positional measure iterables.
