@@ -1,6 +1,6 @@
 [project]
 name = "excel-grapher"
-version = "0.6.9"
+version = "1.0.0"
 
 description = "Build and analyze dependency graphs from Excel workbooks"
 readme = "README.md"
@@ -48,6 +48,7 @@ Repository = "https://github.com/Teal-Insights/excel-grapher"
 [project.scripts]
 excel-grapher = "excel_grapher.cli:main"
 
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -68,26 +69,6 @@ include = [
 ]
 
 # uv's dependency groups for development (separate from optional-dependencies)
-[dependency-groups]
-dev = [
-    "graphviz>=0.21",
-    "great-docs>=0.13.0",
-    "jupyter>=1.1.1",
-    "matplotlib>=3.10.8",
-    "nbformat>=5.10.4",
-    "networkx>=3.6.1",
-    "pandas>=3.0.3",
-    "polars>=1.42.0",
-    "pre-commit>=4.5.1",
-    "pytest>=9.0.2",
-    "pytest-cov>=4.0.0",
-    "python-semantic-release>=10.5.3",
-    "quarto>=0.1.0",
-    "ruff>=0.14.0",
-    "ty>=0.0.9",
-    "xlsxwriter>=3.2.0",
-    "xlwings>=0.34.0",
-]
 
 [tool.ruff]
 line-length = 100
@@ -111,6 +92,7 @@ ignore = [
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
@@ -118,6 +100,7 @@ addopts = ["--import-mode=importlib", "-m", "not slow"]
 markers = [
     "slow: opt-in tests that are long-running (deselected by default)"
 ]
+
 
 [tool.coverage.run]
 source = ["excel_grapher"]
@@ -130,8 +113,10 @@ exclude_lines = [
     "if TYPE_CHECKING:",
 ]
 
+
 [tool.uv.sources]
 fastpyxl = { git = "https://github.com/Promptly-Technologies-LLC/fastpyxl" }
+
 
 [tool.semantic_release]
 assets = []
@@ -197,3 +182,25 @@ insecure = false
 [tool.semantic_release.publish]
 dist_glob_patterns = ["dist/*"]
 upload_to_vcs_release = false
+
+[dependency-groups]
+dev = [
+    "graphviz>=0.21",
+    "great-docs>=0.13.0",
+    "jupyter>=1.1.1",
+    "matplotlib>=3.10.8",
+    "nbformat>=5.10.4",
+    "networkx>=3.6.1",
+    "pandas>=3.0.3",
+    "polars>=1.42.0",
+    "pre-commit>=4.5.1",
+    "pytest>=9.0.2",
+    "pytest-cov>=4.0.0",
+    "python-semantic-release>=10.5.3",
+    "quarto>=0.1.0",
+    "ruff>=0.14.0",
+    "ty>=0.0.9",
+    "xlsxwriter>=3.2.0",
+    "xlwings>=0.34.0",
+]
+
