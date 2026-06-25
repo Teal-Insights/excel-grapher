@@ -1,0 +1,6 @@
+---
+alwaysApply: true
+---
+Use conventional commit messages, as these are used for version bumping via Semantic Release.
+
+Breaking API changes should use an exclamation mark after the type/scope (such as "feat!:").
