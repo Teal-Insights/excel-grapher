@@ -832,3 +832,56 @@ def test_emit_setter_matrix_pandas_dataframe_updates_context(tmp_path: Path) -> 
     assert ctx.inputs["Inputs!C3"] == 9.9
     assert ctx.inputs["Inputs!D5"] == 44.4
     assert ctx.inputs["Inputs!B3"] == 1.2
+
+
+def test_emit_setter_duplicate_composite_key_in_records_raises(tmp_path: Path) -> None:
+    wb_path = tmp_path / "lic_inputs.xlsx"
+    _write_borvelia_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, expand_data_range("Inputs!F5:J5"), load_values=True)
+    bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
+    series = bindings["series"][0]
+    resolved = resolve_series_binding(graph, wb_path, series)
+    ns = _exec_setters(emit_setter_function(series, resolved))
+    setter = cast(Callable[[EvalContext, object], None], ns["set_borvelia_primary_balance"])
+    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
+
+    with pytest.raises(ValueError, match=r"record\[1\]: duplicate key .*record\[0\]"):
+        setter(
+            ctx,
+            [
+                {"TIME_PERIOD": 4, "OBS_VALUE": 7.5},
+                {"TIME_PERIOD": 4, "OBS_VALUE": 8.0},
+            ],
+        )
+
+
+def test_emit_setter_matrix_dataframe_duplicate_composite_key_raises(tmp_path: Path) -> None:
+    pd = pytest.importorskip("pandas")
+    from tests.fixtures.series_bindings.matrix_helpers import (
+        MATRIX_EXPLICIT_BINDINGS,
+        write_matrix_explicit_workbook,
+    )
+
+    wb_path = tmp_path / "matrix_inputs.xlsx"
+    write_matrix_explicit_workbook(wb_path)
+    graph = create_dependency_graph(
+        wb_path,
+        expand_data_range("Inputs!B3:D5"),
+        load_values=True,
+    )
+    bindings = load_series_bindings(MATRIX_EXPLICIT_BINDINGS)
+    series = bindings["series"][0]
+    resolved = resolve_series_binding(graph, wb_path, series)
+    ns = _exec_setters(emit_setter_function(series, resolved))
+    setter = cast(Callable[[EvalContext, object], None], ns["set_macro_matrix"])
+    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
+
+    df = pd.DataFrame(
+        {
+            "INDICATOR": ["GDP growth", "GDP growth"],
+            "TIME_PERIOD": [2025, 2025],
+            "OBS_VALUE": [9.9, 10.1],
+        }
+    )
+    with pytest.raises(ValueError, match=r"record\[1\]: duplicate key .*record\[0\]"):
+        setter(ctx, df)
