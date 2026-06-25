@@ -166,14 +166,47 @@ def _coerce_dataframe_records(
     return records
 
 
+def _non_scalar_input_hint(
+    *,
+    layout: Layout,
+    key_fields: tuple[str, ...],
+    measure_field: str,
+) -> str:
+    if layout == "matrix":
+        columns = ", ".join([*key_fields, measure_field])
+        return f"pass records or a tidy DataFrame with columns {columns!r}"
+    return "pass records, a 1D iterable of measure values, or a tidy DataFrame"
+
+
+def _unsupported_non_scalar_input_type_error(
+    data: object,
+    *,
+    layout: Layout,
+    key_fields: tuple[str, ...],
+    measure_field: str,
+) -> TypeError:
+    hint = _non_scalar_input_hint(
+        layout=layout,
+        key_fields=key_fields,
+        measure_field=measure_field,
+    )
+    return TypeError(f"unsupported {layout} setter input type {type(data)!r}; {hint}")
+
+
 def _coerce_positional_records(
     data: Iterable[object],
     *,
+    layout: Layout,
     key_fields: tuple[str, ...],
     measure_field: str,
     key_order: tuple[object, ...],
 ) -> Records:
     if len(key_fields) != 1:
+        if layout == "matrix":
+            raise ValueError(
+                "positional measure values are not supported for matrix setters; "
+                "pass records or a tidy DataFrame"
+            )
         raise ValueError(
             "positional measure values require a single-key series binding; "
             f"got key_fields={list(key_fields)!r}"
@@ -192,6 +225,7 @@ def _coerce_positional_records(
 def _coerce_non_scalar_records(
     data: SetterInput,
     *,
+    layout: Layout,
     key_fields: tuple[str, ...],
     measure_field: str,
     key_order: tuple[object, ...] | None,
@@ -216,15 +250,18 @@ def _coerce_non_scalar_records(
             raise ValueError("positional input requires key_order")
         return _coerce_positional_records(
             data,
+            layout=layout,
             key_fields=key_fields,
             measure_field=measure_field,
             key_order=key_order,
         )
 
     if isinstance(data, (str, bytes, bytearray)):
-        raise TypeError(
-            f"unsupported series setter input type {type(data)!r}; "
-            "pass records, a 1D iterable of measure values, or a tidy DataFrame"
+        raise _unsupported_non_scalar_input_type_error(
+            data,
+            layout=layout,
+            key_fields=key_fields,
+            measure_field=measure_field,
         )
 
     if isinstance(data, Iterable):
@@ -232,14 +269,17 @@ def _coerce_non_scalar_records(
             raise ValueError("positional input requires key_order")
         return _coerce_positional_records(
             data,
+            layout=layout,
             key_fields=key_fields,
             measure_field=measure_field,
             key_order=key_order,
         )
 
-    raise TypeError(
-        f"unsupported series setter input type {type(data)!r}; "
-        "pass records, a 1D iterable of measure values, or a tidy DataFrame"
+    raise _unsupported_non_scalar_input_type_error(
+        data,
+        layout=layout,
+        key_fields=key_fields,
+        measure_field=measure_field,
     )
 
 
@@ -279,6 +319,7 @@ def coerce_setter_input(
 
     records = _coerce_non_scalar_records(
         data,
+        layout=layout,
         key_fields=key_fields,
         measure_field=measure_field,
         key_order=key_order,

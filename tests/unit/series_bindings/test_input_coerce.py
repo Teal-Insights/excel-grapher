@@ -264,12 +264,45 @@ def test_dataframe_on_scalar_layout_raises() -> None:
 
 
 def test_unsupported_type_raises() -> None:
-    with pytest.raises(TypeError, match="unsupported"):
+    with pytest.raises(TypeError, match=r"unsupported series setter input type"):
         coerce_setter_input(42, **_SERIES_KWARGS)
 
 
+def test_unsupported_type_matrix_layout() -> None:
+    with pytest.raises(TypeError, match=r"unsupported matrix setter input type"):
+        coerce_setter_input(
+            42,
+            layout="matrix",
+            key_fields=("INDICATOR", "TIME_PERIOD"),
+            measure_field="OBS_VALUE",
+            key_order=None,
+            strict=True,
+        )
+    with pytest.raises(TypeError, match="INDICATOR, TIME_PERIOD, OBS_VALUE"):
+        coerce_setter_input(
+            42,
+            layout="matrix",
+            key_fields=("INDICATOR", "TIME_PERIOD"),
+            measure_field="OBS_VALUE",
+            key_order=None,
+            strict=True,
+        )
+
+
+def test_positional_multi_key_matrix_raises() -> None:
+    with pytest.raises(ValueError, match="matrix setters"):
+        coerce_setter_input(
+            [1.0, 2.0],
+            layout="matrix",
+            key_fields=("INDICATOR", "TIME_PERIOD"),
+            measure_field="OBS_VALUE",
+            key_order=((1, 2),),
+            strict=True,
+        )
+
+
 def test_positional_rejects_string() -> None:
-    with pytest.raises(TypeError, match="unsupported"):
+    with pytest.raises(TypeError, match=r"unsupported series setter input type"):
         coerce_setter_input("not-a-record", **_SERIES_KWARGS)
 
 
