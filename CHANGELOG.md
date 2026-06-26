@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.0.1 (2026-06-26)
+
+### Bug Fixes
+
+- **series-bindings**: Make setter docstrings layout-aware
+  ([#302](https://github.com/Teal-Insights/excel-grapher/pull/302),
+  [`bba3a1e`](https://github.com/Teal-Insights/excel-grapher/commit/bba3a1ec856a4c2b1197b3f7332703f59d01e110))
+
+### Continuous Integration
+
+- Skip CI on version bump
+  ([`eb433b2`](https://github.com/Teal-Insights/excel-grapher/commit/eb433b27babee558853e0338985ec70a4fb29627))
+
+### Documentation
+
+- Clarify use_cached_dynamic_refs warning (#138)
+  ([#301](https://github.com/Teal-Insights/excel-grapher/pull/301),
+  [`7797ecb`](https://github.com/Teal-Insights/excel-grapher/commit/7797ecb51234c93d63e8d2478cfb5da4fd3bb9cb))
+
+
 ## v1.0.0 (2026-06-25)
 
 ### Bug Fixes
