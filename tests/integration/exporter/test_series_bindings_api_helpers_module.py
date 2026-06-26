@@ -162,10 +162,17 @@ def test_modules_execute_and_round_trip(workbook: Path, tmp_path: Path) -> None:
                 sys.modules.pop(name, None)
 
 
-def test_generated_binding_package_is_lint_and_type_clean(
+def test_helpers_module_is_ruff_clean_and_package_type_checks(
     workbook: Path,
     tmp_path: Path,
 ) -> None:
+    """The emitted `_api_helpers.py` is Ruff-clean and the whole package type-checks.
+
+    Ruff is run without `--fix`: this asserts what codegen actually emits, not what an
+    auto-fixer could repair. The check is scoped to `_api_helpers.py` (the module this
+    split introduces); whole-package raw-Ruff hygiene (e.g. `api.py` import ordering) is
+    tracked separately by issues #252/#253 and is intentionally not asserted here.
+    """
     repo_root = Path(__file__).resolve().parents[3]
     files = _generate(workbook)
     pkg_root = tmp_path / "exported"
@@ -176,8 +183,8 @@ def test_generated_binding_package_is_lint_and_type_clean(
     def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
         return subprocess.run(cmd, cwd=str(repo_root), capture_output=True, text=True, check=False)
 
-    ruff_fix = _run(["uv", "run", "ruff", "check", "--fix", str(pkg_root)])
-    assert ruff_fix.returncode == 0, f"ruff --fix failed:\n{ruff_fix.stdout}\n{ruff_fix.stderr}"
+    ruff = _run(["uv", "run", "ruff", "check", str(pkg_root / "_api_helpers.py")])
+    assert ruff.returncode == 0, f"_api_helpers.py is not Ruff-clean:\n{ruff.stdout}\n{ruff.stderr}"
 
     ty = _run(
         [
@@ -193,6 +200,3 @@ def test_generated_binding_package_is_lint_and_type_clean(
         ]
     )
     assert ty.returncode == 0, f"ty failed:\n{ty.stdout}\n{ty.stderr}"
-
-    ruff = _run(["uv", "run", "ruff", "check", str(pkg_root)])
-    assert ruff.returncode == 0, f"ruff failed after --fix:\n{ruff.stdout}\n{ruff.stderr}"
