@@ -72,7 +72,7 @@ def emit_compute_function(
     lines: list[str] = []
     if include_datetime_import and resolution_includes_datetime(resolved):
         lines.extend(["import datetime", ""])
-    lines.append(f"{leaves_name} = [")
+    lines.append(f"{leaves_name}: list[tuple[str, Record]] = [")
     for leaf in resolved["leaves"]:
         static_record: dict[str, object] = {
             str(k): v for k, v in leaf["record"].items() if k != measure_concept

@@ -123,6 +123,50 @@ def emit_input_coerce_helpers() -> list[str]:
     return lines
 
 
+SERIES_HELPERS_STDLIB_IMPORTS: tuple[str, ...] = (
+    "from collections.abc import Iterable, Mapping, Sequence",
+    "from datetime import date, datetime, timedelta",
+    "from typing import TYPE_CHECKING, Any, Literal, TypeGuard, cast",
+)
+"""Standard-library imports required by `emit_series_helpers_definitions`."""
+
+
+def emit_series_helpers_definitions() -> list[str]:
+    """Emit consolidated type aliases, coercion, and record-apply helpers.
+
+    The returned block is the body of a dedicated helper module for the multi-module
+    export. It defines the setter type aliases, the inlined `coerce_scalar` /
+    `coerce_setter_input` machinery, and the shared `_apply_series_records` helper.
+    Callers must provide the imports in `SERIES_HELPERS_STDLIB_IMPORTS` plus a
+    `coerce_inputs_dict` binding (e.g. `from .runtime import coerce_inputs_dict`).
+
+    Returns:
+        Source lines defining the helpers, without any import statements.
+    """
+    package_dir = Path(__file__).resolve().parent
+    lines = [
+        'Layout = Literal["scalar", "series", "matrix"]',
+        "SetterInput = object",
+        "Scalar = str | int | float | bool | datetime | None",
+        "Record = dict[str, object]",
+        "Records = list[Record]",
+        "SeriesInput = Records | Record | Sequence[Scalar]",
+        "",
+        "if TYPE_CHECKING:",
+        "    import pandas as pd",
+        "    import polars as pl",
+        "",
+        "    SeriesInput = Records | Record | Sequence[Scalar] | pd.DataFrame | pl.DataFrame",
+        "else:",
+        "    SeriesInput = Records | Record | Sequence[Scalar] | object",
+        "",
+    ]
+    lines.extend(_emit_python_module_body(package_dir / "coerce.py"))
+    lines.extend(_emit_python_module_body(package_dir / "input_coerce.py"))
+    lines.extend(emit_setter_helpers())
+    return lines
+
+
 def _key_dtypes_for_codegen(series: dict[str, Any], key_fields: list[str]) -> dict[str, str]:
     dtypes: dict[str, str] = {}
     for dim in (series.get("structure") or {}).get("dimensions") or []:
@@ -250,6 +294,7 @@ def emit_setter_helpers() -> list[str]:
         "                    )",
         "        elif not requires_address and all(field in record for field in key_fields):",
         "            key_tuple = tuple((field, record[field]) for field in key_fields)",
+        "        assert address is not None",
         "        if address in updates:",
         "            prior = first_record_by_address[address]",
         "            if key_tuple is not None:",
@@ -373,10 +418,17 @@ def emit_setters_block(
     *,
     export_addresses: Iterable[str] | None = None,
     include_type_aliases: bool = True,
+    include_helpers: bool = True,
     series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
     docstring_renderer: SeriesDocstringRendererSpec = "google",
 ) -> list[str]:
-    """Emit all series setter functions for a validated binding manifest."""
+    """Emit all series setter functions for a validated binding manifest.
+
+    When `include_helpers` is true the coercion/record-apply helpers and type aliases
+    are inlined alongside the setters (single-file export). When false only the setter
+    functions are emitted and callers must supply the helpers separately, e.g. via a
+    dedicated `_api_helpers` module in the multi-module export.
+    """
     report = resolve_series_bindings(
         graph,
         bindings,
@@ -386,10 +438,13 @@ def emit_setters_block(
     )
     lines: list[str] = ["# --- Series binding setters (Records API) ---", ""]
     include_datetime = resolutions_include_datetime(report["series"])
-    lines.extend(emit_input_coerce_helpers())
-    if include_type_aliases:
-        lines.extend(emit_setter_type_alias_lines(include_datetime=include_datetime))
-    lines.extend(emit_setter_helpers())
+    if include_helpers:
+        lines.extend(emit_input_coerce_helpers())
+        if include_type_aliases:
+            lines.extend(emit_setter_type_alias_lines(include_datetime=include_datetime))
+        lines.extend(emit_setter_helpers())
+    elif include_datetime:
+        lines.extend(["from datetime import datetime", ""])
     by_id = {
         s["id"]: s
         for s in bindings.get("series", [])
