@@ -489,7 +489,7 @@ chain.
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!E10"], load_values=False, use_cached_dynamic_refs=True)
 ```
 
-    C:\Users\chris\Software\excel-grapher\excel_grapher\grapher\parser.py:704: UserWarning: Resolved OFFSET/INDIRECT arguments using cached workbook values. Results may differ if cached values are stale.
+    C:\Users\chris\Software\excel-grapher\excel_grapher\grapher\parser.py:753: UserWarning: Resolved OFFSET/INDIRECT references from cached workbook values; these dependencies are fixed at graph-build time. Changing an input that shifts a resolution target outside the graph makes the graph uncomputable. Pass `dynamic_refs` to resolve over an input domain instead.
       _warn_cached_dynamic_once()
 
 The risk with this approach is that the user may modify “Sheet1!B10”
