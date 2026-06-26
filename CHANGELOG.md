@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.0.2 (2026-06-26)
+
+### Bug Fixes
+
+- **evaluator**: Track runtime deps so dynamic-ref shifts invalidate correctly
+  ([#303](https://github.com/Teal-Insights/excel-grapher/pull/303),
+  [`acf9301`](https://github.com/Teal-Insights/excel-grapher/commit/acf9301dde364352434998dcf803f8c8b5cb4814))
+
+### Continuous Integration
+
+- Use conventional commit for releases
+  ([`cdc155a`](https://github.com/Teal-Insights/excel-grapher/commit/cdc155a3dc90e463a85cb0b6dcf1b92cc0a72708))
+
+### Refactoring
+
+- Add series-binding helper-block emitter and include_helpers flag
+  ([#299](https://github.com/Teal-Insights/excel-grapher/pull/299),
+  [`3c2a37d`](https://github.com/Teal-Insights/excel-grapher/commit/3c2a37d8f792a06be2af78de656d22173129b6ec))
+
+- Emit series-binding coercion into a dedicated _api_helpers module
+  ([#299](https://github.com/Teal-Insights/excel-grapher/pull/299),
+  [`3c2a37d`](https://github.com/Teal-Insights/excel-grapher/commit/3c2a37d8f792a06be2af78de656d22173129b6ec))
+
+### Testing
+
+- Assert raw-emitted Ruff cleanliness instead of post-fix
+  ([#299](https://github.com/Teal-Insights/excel-grapher/pull/299),
+  [`3c2a37d`](https://github.com/Teal-Insights/excel-grapher/commit/3c2a37d8f792a06be2af78de656d22173129b6ec))
+
+
 ## v1.0.1 (2026-06-26)
 
 ### Bug Fixes
