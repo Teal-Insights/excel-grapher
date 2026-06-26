@@ -54,19 +54,86 @@ def _field_description_line(
     return f'{field_name}: {description} If supplied, expected value: "{expected_value}".'
 
 
+def _indent_lines(lines: list[str], prefix: str) -> list[str]:
+    """Indent non-empty lines, leaving blank lines free of trailing whitespace."""
+    return [f"{prefix}{line}" if line else "" for line in lines]
+
+
 def _render_record(record: Mapping[str, object]) -> str:
     fields = ", ".join(f"{field_name!r}: {value!r}" for field_name, value in record.items())
     return f"{{{fields}}}"
 
 
+def _measure_field(contract: SeriesBindingDocstringContract) -> str | None:
+    """Return the measure field name (the last required field), if any."""
+    if contract.required_fields:
+        return contract.required_fields[-1]
+    return None
+
+
+def _is_single_key(contract: SeriesBindingDocstringContract) -> bool:
+    """True when the binding has exactly one key field (one key plus the measure)."""
+    return len(contract.required_fields) == 2
+
+
+_SETTER_INPUT_TYPE_NAMES: dict[str, str] = {
+    "scalar": "Scalar | Record | Records",
+    "series": "SeriesInput",
+    "matrix": "SeriesInput",
+}
+
+
+def _setter_input_type_name(contract: SeriesBindingDocstringContract) -> str:
+    """Return the type-alias name advertised by the generated setter signature."""
+    return _SETTER_INPUT_TYPE_NAMES.get(contract.layout, "SeriesInput")
+
+
+def _setter_input_description(contract: SeriesBindingDocstringContract) -> str:
+    """Describe the input shapes accepted for the binding's layout."""
+    if contract.layout == "scalar":
+        return "A bare scalar value, a single record dict, or a list of records."
+    if contract.layout == "series" and _is_single_key(contract):
+        return (
+            "A list of records, a single record dict, a tidy pandas/polars "
+            "DataFrame, or a 1-D iterable of measure values in key order."
+        )
+    return "A list of records, a single record dict, or a tidy pandas/polars DataFrame."
+
+
+def _render_records_example(contract: SeriesBindingDocstringContract) -> list[str]:
+    lines = [f"{contract.function_name}(ctx, ["]
+    for record in contract.example_records:
+        lines.append(f"    {_render_record(record)},")
+    lines.append("])")
+    return lines
+
+
+def _render_scalar_example(contract: SeriesBindingDocstringContract) -> list[str]:
+    measure = _measure_field(contract)
+    value = contract.example_records[0].get(measure) if contract.example_records else None
+    return [f"{contract.function_name}(ctx, {value!r})"]
+
+
+def _render_positional_example(contract: SeriesBindingDocstringContract) -> list[str]:
+    measure = _measure_field(contract)
+    values = [record.get(measure) for record in contract.example_records]
+    return [f"{contract.function_name}(ctx, {values!r})"]
+
+
 def _render_example_call(contract: SeriesBindingDocstringContract) -> list[str]:
-    if contract.function_kind == "setter":
-        lines = [f"{contract.function_name}(ctx, ["]
-        for record in contract.example_records:
-            lines.append(f"    {_render_record(record)},")
-        lines.append("])")
-        return lines
-    return [f"{contract.function_name}(ctx=ctx)"]
+    if contract.function_kind != "setter":
+        return [f"{contract.function_name}(ctx=ctx)"]
+    if contract.layout == "scalar":
+        return _render_scalar_example(contract)
+    blocks = [_render_records_example(contract)]
+    if contract.layout == "series" and _is_single_key(contract):
+        blocks.append(_render_positional_example(contract))
+    lines: list[str] = []
+    for index, block in enumerate(blocks):
+        if index:
+            lines.append("")
+        lines.extend(block)
+    return lines
 
 
 def _required_and_optional_fields(
@@ -135,6 +202,10 @@ class PlainSeriesDocstringRenderer:
 
         lines: list[str] = []
         _append_intro(lines, doc)
+        if contract.function_kind == "setter":
+            lines.append("Accepted input:")
+            lines.append(f"    {_setter_input_description(contract)}")
+            lines.append("")
         lines.append("Required record fields:")
         lines.extend(
             [
@@ -158,7 +229,7 @@ class PlainSeriesDocstringRenderer:
                 *[f"    {line}" for line in _source_binding_lines(contract, series)],
                 "",
                 "Example:",
-                *[f"    {line}" for line in example_lines],
+                *_indent_lines(example_lines, "    "),
             ]
         )
         return "\n".join(lines)
@@ -180,6 +251,15 @@ class RstSeriesDocstringRenderer:
             lines.extend(["Purpose", "-------", doc.purpose, ""])
         if doc.record_matching:
             lines.extend(["Record matching", "---------------", doc.record_matching, ""])
+        if contract.function_kind == "setter":
+            lines.extend(
+                [
+                    "Accepted input",
+                    "--------------",
+                    _setter_input_description(contract),
+                    "",
+                ]
+            )
         lines.append("Required record fields")
         lines.append("----------------------")
         for name in required:
@@ -214,7 +294,10 @@ class GoogleSeriesDocstringRenderer:
         _append_intro(lines, doc)
         lines.append("Args:")
         if contract.function_kind == "setter":
-            lines.append("    records (Records): Records to apply to the workbook inputs.")
+            lines.append(
+                f"    records ({_setter_input_type_name(contract)}): "
+                f"{_setter_input_description(contract)}"
+            )
             _append_field_bullets(
                 lines,
                 doc=doc,
@@ -246,7 +329,7 @@ class GoogleSeriesDocstringRenderer:
         for line in _source_binding_lines(contract, series):
             lines.append(f"    {line}")
         lines.extend(["", "Examples:"])
-        lines.extend(f"    {line}" for line in example_lines)
+        lines.extend(_indent_lines(example_lines, "    "))
         return "\n".join(lines)
 
 
@@ -268,8 +351,8 @@ class NumpySeriesDocstringRenderer:
             lines.extend([doc.record_matching, ""])
         lines.extend(["Parameters", "----------"])
         if contract.function_kind == "setter":
-            lines.append("records : Records")
-            lines.append("    Records to apply to workbook inputs.")
+            lines.append(f"records : {_setter_input_type_name(contract)}")
+            lines.append(f"    {_setter_input_description(contract)}")
             _append_field_bullets(
                 lines,
                 doc=doc,

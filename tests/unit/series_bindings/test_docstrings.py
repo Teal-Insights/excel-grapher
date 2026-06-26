@@ -25,6 +25,7 @@ from excel_grapher.series_bindings.docstring_renderers import (
     resolve_series_docstring_renderer,
 )
 from excel_grapher.series_bindings.docstrings import (
+    FieldContract,
     FieldDoc,
     SeriesBindingDocstringContext,
     SeriesBindingDocstringContract,
@@ -479,6 +480,115 @@ def _demo_contract_and_doc() -> tuple[SeriesBindingDocstringContract, SeriesFunc
     return contract, doc
 
 
+def _series_contract_and_doc(
+    *,
+    layout: str = "series",
+    keys: tuple[str, ...] = ("COUNTRY",),
+) -> tuple[SeriesBindingDocstringContract, SeriesFunctionDoc]:
+    example_records: list[dict[str, object]] = [
+        {**{key: country for key in keys}, "OBS_VALUE": value}
+        for country, value in (("Borvelia", 60.0), ("Litellia", 80.0))
+    ]
+    contract = SeriesBindingDocstringContract(
+        series_id="country_initial_debt",
+        function_name="set_country_initial_debt",
+        function_kind="setter",
+        data_range="Inputs!B10:B12",
+        layout=layout,
+        value_type="float",
+        required_fields=(*keys, "OBS_VALUE"),
+        fields={
+            **{
+                key: FieldContract(
+                    concept_name=key,
+                    dtype="string",
+                    required=True,
+                    expected_value=None,
+                )
+                for key in keys
+            },
+            "OBS_VALUE": FieldContract(
+                concept_name="Observation value",
+                dtype="float",
+                required=True,
+                expected_value=None,
+            ),
+        },
+        example_records=tuple(example_records),
+        notes="",
+    )
+    doc = SeriesFunctionDoc(
+        summary="Set country initial debt.",
+        purpose="Updates the bound range.",
+        record_matching="Match by key.",
+        field_descriptions={
+            **{key: FieldDoc(description=f"Describe {key}.") for key in keys},
+            "OBS_VALUE": FieldDoc(description="Observation value."),
+        },
+    )
+    return contract, doc
+
+
+def test_scalar_setter_docstring_describes_scalar_shapes() -> None:
+    contract, doc = _demo_contract_and_doc()
+    rendered = GoogleSeriesDocstringRenderer().render(contract, doc, series={"id": "demo"})
+    assert "bare scalar" in rendered
+    assert "tidy pandas/polars DataFrame" not in rendered
+    assert "set_demo(ctx, 2.0)" in rendered
+    assert "set_demo(ctx, [" not in rendered
+
+
+def test_series_setter_docstring_describes_series_shapes() -> None:
+    contract, doc = _series_contract_and_doc(layout="series", keys=("COUNTRY",))
+    rendered = GoogleSeriesDocstringRenderer().render(
+        contract, doc, series={"id": "country_initial_debt"}
+    )
+    assert "tidy pandas/polars DataFrame" in rendered
+    assert "1-D iterable of measure values in key order" in rendered
+    assert "set_country_initial_debt(ctx, [" in rendered
+    assert "set_country_initial_debt(ctx, [60.0, 80.0])" in rendered
+
+
+def test_series_multi_key_setter_omits_positional_shape() -> None:
+    contract, doc = _series_contract_and_doc(layout="series", keys=("COUNTRY", "TIME_PERIOD"))
+    rendered = GoogleSeriesDocstringRenderer().render(
+        contract, doc, series={"id": "country_initial_debt"}
+    )
+    assert "tidy pandas/polars DataFrame" in rendered
+    assert "1-D iterable of measure values in key order" not in rendered
+
+
+def test_matrix_setter_docstring_describes_matrix_shapes() -> None:
+    contract, doc = _series_contract_and_doc(layout="matrix", keys=("INDICATOR", "TIME_PERIOD"))
+    rendered = GoogleSeriesDocstringRenderer().render(
+        contract, doc, series={"id": "country_initial_debt"}
+    )
+    assert "tidy pandas/polars DataFrame" in rendered
+    assert "1-D iterable of measure values in key order" not in rendered
+    assert "set_country_initial_debt(ctx, [" in rendered
+
+
+@pytest.mark.parametrize(
+    "renderer_cls",
+    [
+        PlainSeriesDocstringRenderer,
+        RstSeriesDocstringRenderer,
+        GoogleSeriesDocstringRenderer,
+        NumpySeriesDocstringRenderer,
+    ],
+)
+def test_all_renderers_describe_layout_specific_input(renderer_cls: type) -> None:
+    scalar_contract, doc = _demo_contract_and_doc()
+    scalar_rendered = renderer_cls().render(scalar_contract, doc, series={"id": "demo"})
+    assert "bare scalar" in scalar_rendered
+
+    series_contract, series_doc = _series_contract_and_doc()
+    series_rendered = renderer_cls().render(
+        series_contract, series_doc, series={"id": "country_initial_debt"}
+    )
+    assert "tidy pandas/polars DataFrame" in series_rendered
+
+
 def test_resolve_series_docstring_renderer_builtin_names() -> None:
     for name in ("plain", "rst", "google", "numpy"):
         renderer = resolve_series_docstring_renderer(name)
@@ -547,7 +657,7 @@ def test_builtin_renderer_includes_sections(
     rendered = renderer_cls().render(contract, doc, series={"id": "demo"})
     assert "Set demo values." in rendered
     assert "TIME_PERIOD" in rendered
-    assert "set_demo(ctx, [" in rendered
+    assert "set_demo(ctx, 2.0)" in rendered
     for marker in markers:
         assert marker in rendered
 
@@ -560,7 +670,7 @@ def test_plain_renderer_includes_sections() -> None:
     assert "TIME_PERIOD:" in rendered
     assert "Source binding:" in rendered
     assert "Example:" in rendered
-    assert "set_demo(ctx, [" in rendered
+    assert "set_demo(ctx, 2.0)" in rendered
 
 
 def test_emit_docstring_literal_escapes_quotes_and_is_valid_python() -> None:
