@@ -613,8 +613,10 @@ def _warn_cached_dynamic_once() -> None:
         return
     _WARNED_CACHED_DYNAMIC = True
     warnings.warn(
-        "Resolved OFFSET/INDIRECT arguments using cached workbook values. "
-        "Results may differ if cached values are stale.",
+        "Resolved OFFSET/INDIRECT references from cached workbook values; these "
+        "dependencies are fixed at graph-build time. Changing an input that shifts a "
+        "resolution target outside the graph makes the graph uncomputable. Pass "
+        "`dynamic_refs` to resolve over an input domain instead.",
         UserWarning,
         stacklevel=2,
     )

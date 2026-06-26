@@ -123,6 +123,10 @@ def test_offset_with_cached_named_range_warns_once(
 
     cache_warnings = [w for w in caught if "cached workbook values" in str(w.message)]
     assert len(cache_warnings) == 1
+    message = str(cache_warnings[0].message)
+    assert "fixed at graph-build time" in message
+    assert "dynamic_refs" in message
+    assert "stale" not in message.lower()
 
 
 def test_offset_index_row_resolves_named_range(tmp_path: Path) -> None:
