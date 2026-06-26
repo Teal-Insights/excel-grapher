@@ -23,10 +23,17 @@ def emit_series_bindings_block(
     bindings: WorkbookSeriesBindings,
     *,
     export_addresses: Iterable[str] | None = None,
+    include_helpers: bool = True,
     series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
     docstring_renderer: SeriesDocstringRendererSpec = "google",
 ) -> list[str]:
-    """Emit setter and/or output compute functions for a binding manifest."""
+    """Emit setter and/or output compute functions for a binding manifest.
+
+    When `include_helpers` is true the coercion helpers and type aliases are inlined
+    (single-file export). When false only the public setter/compute functions are
+    emitted; the helpers and aliases are expected to be importable from a separate
+    module (the multi-module export's `_api_helpers`).
+    """
     series_list = [s for s in bindings.get("series", []) if isinstance(s, dict)]
     emit_input = any(has_input_direction(s) for s in series_list)
     emit_output = any(has_output_direction(s) for s in series_list)
@@ -34,7 +41,7 @@ def emit_series_bindings_block(
         return []
 
     lines: list[str] = []
-    include_aliases = True
+    include_aliases = include_helpers
     if emit_input:
         lines.extend(
             emit_setters_block(
@@ -43,6 +50,7 @@ def emit_series_bindings_block(
                 bindings,
                 export_addresses=export_addresses,
                 include_type_aliases=include_aliases,
+                include_helpers=include_helpers,
                 series_docstring_callback=series_docstring_callback,
                 docstring_renderer=docstring_renderer,
             )
