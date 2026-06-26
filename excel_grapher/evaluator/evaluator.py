@@ -101,6 +101,14 @@ class FormulaEvaluator:
         self._leaf_values: dict[str, CellValue] = {}  # For auto-detection
         self._iteration_values: dict[str, CellValue] = {}
         self._blank_range_rects = normalize_blank_range_specs(self.blank_ranges)
+        # Runtime dependency edges recorded as cells are evaluated. Unlike the
+        # static graph edges (which freeze the build-time resolution of dynamic
+        # refs such as OFFSET/INDIRECT under `use_cached_dynamic_refs`), these
+        # follow argument-driven resolution shifts, so invalidation tracks the
+        # currently-resolved dependency chain. This mirrors the exported
+        # `EvalContext` runtime, keeping evaluator and export in parity.
+        self._runtime_deps: dict[str, set[str]] = {}
+        self._runtime_reverse_deps: dict[str, set[str]] = {}
 
     def __enter__(self) -> FormulaEvaluator:
         return self
@@ -108,18 +116,38 @@ class FormulaEvaluator:
     def __exit__(self, *args: object) -> None:
         return None
 
+    def _record_runtime_dependency(self, parent: str, child: str) -> None:
+        """Record that `parent` read `child` during the current evaluation."""
+        if parent == child:
+            return
+        self._runtime_deps.setdefault(parent, set()).add(child)
+        self._runtime_reverse_deps.setdefault(child, set()).add(parent)
+
     def _invalidate_with_dependents(self, key: str) -> None:
-        """Invalidate cache for a key and all cells that depend on it (transitively)."""
-        to_invalidate = {key}
-        queue = [key]
-        while queue:
-            current = queue.pop(0)
-            for dependent in self.graph.get_dependents(current):
-                if dependent not in to_invalidate:
-                    to_invalidate.add(dependent)
-                    queue.append(dependent)
-        for k in to_invalidate:
-            self._cache.pop(k, None)
+        """Invalidate cache for a key and all cells that depend on it (transitively).
+
+        Walks runtime dependency edges recorded during evaluation rather than the
+        static graph edges, so dependents reached through a shifted dynamic-ref
+        resolution are invalidated. Invalidated cells drop their outgoing edges so
+        the current dependency chain is re-recorded on recompute.
+        """
+        to_visit = [key]
+        seen: set[str] = set()
+        while to_visit:
+            addr = to_visit.pop()
+            if addr in seen:
+                continue
+            seen.add(addr)
+            self._cache.pop(addr, None)
+            to_visit.extend(self._runtime_reverse_deps.get(addr, set()))
+            for dep in self._runtime_deps.get(addr, set()):
+                parents = self._runtime_reverse_deps.get(dep)
+                if parents is not None:
+                    parents.discard(addr)
+                    if not parents:
+                        self._runtime_reverse_deps.pop(dep, None)
+            self._runtime_deps.pop(addr, None)
+            self._runtime_reverse_deps.pop(addr, None)
 
     def _iterative_target_handler(self, addr: str) -> Callable[[EvalContext, str], CellValue]:
         def handler(_ctx: EvalContext, _target: str) -> CellValue:
@@ -193,10 +221,15 @@ class FormulaEvaluator:
         return changed
 
     def _get_transitive_leaf_dependencies(self, address: str) -> set[str]:
-        """Get all leaf nodes that this address transitively depends on."""
+        """Get all leaf nodes that this address transitively depends on.
+
+        Walks runtime dependency edges (recorded during evaluation) so the leaf
+        set reflects the currently-resolved dynamic-ref chain rather than the
+        static build-time resolution.
+        """
         leaves: set[str] = set()
         visited: set[str] = set()
-        queue = [address]
+        queue = [normalize_address(address)]
 
         while queue:
             current = queue.pop(0)
@@ -213,7 +246,7 @@ class FormulaEvaluator:
                 leaves.add(current)
             else:
                 # Add its dependencies to the queue
-                for dep in self.graph.get_dependencies(current):
+                for dep in self._runtime_deps.get(current, set()):
                     if dep not in visited:
                         queue.append(dep)
 
@@ -221,6 +254,8 @@ class FormulaEvaluator:
 
     def _evaluate_cell(self, address: str) -> CellValue:
         norm = normalize_address(address)
+        if self._call_stack:
+            self._record_runtime_dependency(self._call_stack[-1], norm)
         if norm in self._cache:
             # Lazy invalidation: check if leaf dependencies have changed
             if self.auto_detect_changes and not self.eager_invalidation:
