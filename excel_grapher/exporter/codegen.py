@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping, Sequence, Set
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
@@ -472,6 +473,7 @@ class CodeGenerator:
         *,
         export_addresses: Iterable[str],
         public_addresses: Iterable[str],
+        include_helpers: bool = True,
         series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
         docstring_renderer: SeriesDocstringRendererSpec = "google",
     ) -> list[str]:
@@ -485,9 +487,59 @@ class CodeGenerator:
                 export_addresses,
                 public_addresses,
             ),
+            include_helpers=include_helpers,
             series_docstring_callback=series_docstring_callback,
             docstring_renderer=docstring_renderer,
         )
+
+    @staticmethod
+    def _series_bindings_have_input(bindings: WorkbookSeriesBindings) -> bool:
+        """Return True when any series declares an input (setter) direction."""
+        from excel_grapher.series_bindings.normalize import has_input_direction
+
+        return any(
+            isinstance(series, dict) and has_input_direction(series)
+            for series in bindings.get("series", [])
+        )
+
+    @staticmethod
+    def _emit_api_helpers_module() -> str:
+        """Emit the `_api_helpers.py` module holding series-binding coercion helpers."""
+        from excel_grapher.series_bindings.setter_codegen import (
+            SERIES_HELPERS_STDLIB_IMPORTS,
+            emit_series_helpers_definitions,
+        )
+
+        lines: list[str] = [
+            "from __future__ import annotations",
+            "",
+            *SERIES_HELPERS_STDLIB_IMPORTS,
+            "",
+            "from .runtime import coerce_inputs_dict",
+            "",
+            *emit_series_helpers_definitions(),
+        ]
+        return "\n".join(lines).rstrip() + "\n"
+
+    _SERIES_HELPER_IMPORT_NAMES: tuple[str, ...] = (
+        "Record",
+        "Records",
+        "Scalar",
+        "SeriesInput",
+        "_apply_series_records",
+        "_coerce_records",
+        "coerce_setter_input",
+    )
+
+    @classmethod
+    def _series_helper_imports(cls, lines: Sequence[str]) -> list[str]:
+        """Return the helper names referenced by emitted setter/compute code."""
+        text = "\n".join(lines)
+        return [
+            name
+            for name in cls._SERIES_HELPER_IMPORT_NAMES
+            if re.search(rf"\b{re.escape(name)}\b", text)
+        ]
 
     def derive_input_series(
         self,
@@ -2056,17 +2108,27 @@ class CodeGenerator:
             "",
         ]
         series_setter_names: list[str] = []
+        api_helpers_py: str | None = None
         if series_bindings is not None:
             if bindings_workbook is None:
                 raise ValueError("bindings_workbook is required when series_bindings is set")
+            # Route the verbose input-coercion helpers to a private `_api_helpers`
+            # module so `api.py` stays focused on the public surface.
+            emit_input = self._series_bindings_have_input(series_bindings)
             setter_lines = self._emit_series_binding_setters(
                 series_bindings,
                 bindings_workbook,
                 export_addresses=_all_cells,
                 public_addresses=series_public_addresses,
+                include_helpers=not emit_input,
                 series_docstring_callback=series_docstring_callback,
                 docstring_renderer=docstring_renderer,
             )
+            if emit_input:
+                api_helpers_py = self._emit_api_helpers_module()
+                helper_imports = self._series_helper_imports(setter_lines)
+                if helper_imports:
+                    api_lines.insert(4, f"from ._api_helpers import {', '.join(helper_imports)}")
             api_lines.extend(setter_lines)
             series_setter_names = self._emitted_function_names(setter_lines)
             api_lines.append("")
@@ -2114,13 +2176,16 @@ class CodeGenerator:
             ]
         )
 
-        return {
+        modules = {
             "__init__.py": init_py,
             "api.py": api_py,
             "data.py": data_py,
             "runtime.py": runtime_py,
             "internals.py": internals_py,
         }
+        if api_helpers_py is not None:
+            modules["_api_helpers.py"] = api_helpers_py
+        return modules
 
     def _workbook_sort_addresses(self, addresses: Iterable[str]) -> list[str]:
         """Return addresses sorted by workbook sheet order, then row, then column."""
