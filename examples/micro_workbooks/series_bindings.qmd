@@ -409,6 +409,27 @@ print(records_markdown_table(records))
 
 After the setter runs, period **4** and **5** records reflect the updated input values (`7.5` and `8.0`) while still carrying dimensions such as `REF_AREA` and `UNIT_MEASURE` from the binding. Address-keyed `compute_all(ctx=ctx)` remains available for the full target map; `compute_borvelia_primary_balance` is the tabular, dimension-keyed view of this series only.
 
+### Discovering the generated API
+
+The generated module also exposes two zero-argument discovery helpers, `list_setters()` and `list_computes()`. They return the names of the emitted `set_*` and `compute_*` functions, so tooling can enumerate the series API without parsing source:
+
+```python
+from exported_model import list_setters, list_computes
+
+list_setters()   # ["set_borvelia_primary_balance"]
+list_computes()  # ["compute_borvelia_primary_balance"]
+```
+
+```{python}
+#| echo: false
+print(
+    "```text\n"
+    f"list_setters():  {namespace['list_setters']()}\n"
+    f"list_computes(): {namespace['list_computes']()}\n"
+    "```\n"
+)
+```
+
 ### Modular exports
 
 For package-style exports, generated series setters and output compute functions are emitted from the package entrypoint and re-exported from the package root. This keeps the callable surface next to `make_context` and `compute_all`:

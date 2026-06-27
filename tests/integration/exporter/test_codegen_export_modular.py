@@ -96,6 +96,32 @@ def test_codegen_generate_modules_api_uses_target_map(tmp_path: Path) -> None:
     )
 
 
+def test_codegen_generate_modules_emits_empty_discovery_helpers(tmp_path: Path) -> None:
+    graph = _make_graph(_make_node("Sheet1!A1", None, 10.0))
+    files = CodeGenerator(graph).generate_modules(["Sheet1!A1"])
+
+    api_py = files["api.py"]
+    init_py = files["__init__.py"]
+    assert "def list_setters() -> list[str]:" in api_py
+    assert "def list_computes() -> list[str]:" in api_py
+    assert "list_setters" in init_py
+    assert "list_computes" in init_py
+
+    pkg_dir = tmp_path / "exported_discovery"
+    for filename, content in files.items():
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_dir / filename).write_text(content, encoding="utf-8")
+
+    sys.path.insert(0, str(tmp_path))
+    try:
+        pkg = importlib.import_module("exported_discovery")
+        assert pkg.list_setters() == []
+        assert pkg.list_computes() == []
+    finally:
+        sys.path.remove(str(tmp_path))
+        sys.modules.pop("exported_discovery", None)
+
+
 def test_codegen_generate_modules_splits_constants(tmp_path: Path) -> None:
     graph = _make_graph(
         _make_node("Sheet1!A1", None, 10.0),

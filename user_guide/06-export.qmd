@@ -25,6 +25,12 @@ For a multi-file package, `generate_modules()` returns a `dict[str, str]` keyed 
 (`__init__.py`, `api.py`, `data.py`, `runtime.py`, `internals.py`). Write those files into a package
 directory of your choice, then import the package as usual.
 
+Every export — single-file and modular — also emits two zero-argument discovery helpers,
+`list_setters()` and `list_computes()`, that return the names of the generated series-binding
+`set_*` and `compute_*` functions (empty lists when no series bindings are supplied). In the
+modular build they live in `api.py` and are re-exported from the package root, so downstream
+tooling can enumerate the generated callable surface without parsing source.
+
 ## Series bindings
 
 Optional sidecar manifests (`.bindings.yaml`) declare structured input/output APIs on exported code.
@@ -141,67 +147,47 @@ graph simplification; prefer projections for export and viz workflows.
 
 ## Exported code sketch
 
-A (truncated) sketch of the exported code:
+Build a tiny two-cell graph (`S!A1` leaf, `S!B1 = S!A1*2`) and generate standalone code:
 
-```python
-"""Standalone runtime for generated Excel formula code."""
+```{python}
+from excel_grapher import DependencyGraph, Node
+from excel_grapher.exporter import CodeGenerator
 
-from __future__ import annotations
+graph = DependencyGraph()
+graph.add_node(
+    Node(sheet="S", column="A", row=1, formula=None, normalized_formula=None, value=10.0, is_leaf=True)
+)
+graph.add_node(
+    Node(sheet="S", column="B", row=1, formula="=S!A1*2", normalized_formula="=S!A1*2", value=None, is_leaf=False)
+)
+graph.add_edge("S!B1", "S!A1")
 
-from enum import Enum
+code = CodeGenerator(graph).generate(["S!B1"])
+```
 
+The exported module opens with the embedded `xl_*` runtime (a few hundred lines, elided here).
+The workbook-specific tail below shows the shape of the output: leaf cells become `DEFAULT_INPUTS`
+data, formula cells become `ctx`-taking functions dispatched through a `TARGETS` map, and the public
+entry points are `make_context`, `compute_all`, and the series-binding discovery helpers
+`list_setters` / `list_computes`:
 
-class XlError(str, Enum):
-    """Excel error values."""
-    VALUE = "#VALUE!"
-    REF = "#REF!"
-    DIV = "#DIV/0!"
-    NA = "#N/A"
-    NAME = "#NAME?"
-    NUM = "#NUM!"
-    NULL = "#NULL!"
+```{python}
+# | echo: false
+from IPython.display import Markdown, display
 
-
-def to_number(value) -> float | XlError:
-    ...
-
-
-def xl_mul(left, right) -> float | XlError:
-    ...
-
-
-from functools import lru_cache
-
-
-# --- Cell functions ---
-
-@lru_cache(maxsize=None)
-def cell_s_a1():
-    """Leaf cell: S!A1"""
-    return 10
-
-
-@lru_cache(maxsize=None)
-def cell_s_b1():
-    """Formula: =A1*2"""
-    return xl_mul(cell_s_a1(), 2.0)
-
-
-def compute_all():
-    """Compute all target cells and return results."""
-    return {
-        "S!B1": cell_s_b1(),
-    }
+_lines = code.splitlines()
+_start = next(i for i, line in enumerate(_lines) if line.startswith("DEFAULT_INPUTS"))
+display(Markdown("```python\n" + "\n".join(_lines[_start:]) + "\n```"))
 ```
 
 ### Exported code results
 
-```python
+The generated module is plain Python; execute it and call `compute_all()`:
+
+```{python}
 namespace: dict = {}
 exec(code, namespace)
-generated_results = namespace["compute_all"]()
-print(generated_results)
-# {'S!B1': 20.0}
+namespace["compute_all"]()
 ```
 
 **Tradeoffs for the exported-code approach:**

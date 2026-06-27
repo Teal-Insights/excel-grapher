@@ -555,15 +555,30 @@ class CodeGenerator:
         )
 
     @staticmethod
-    def _emitted_function_names(lines: Sequence[str]) -> list[str]:
-        names: list[str] = []
-        for line in lines:
-            if not line.startswith("def "):
-                continue
-            name, _open_paren, _rest = line[4:].partition("(")
-            if name:
-                names.append(name)
-        return names
+    def _series_binding_public_names(
+        bindings: WorkbookSeriesBindings,
+    ) -> tuple[list[str], list[str]]:
+        """Return declared public setter and compute function names."""
+        from excel_grapher.series_bindings.workflow import compute_names, setter_names
+
+        return setter_names(bindings), compute_names(bindings)
+
+    @staticmethod
+    def _emit_series_binding_discovery_lines(
+        setter_names: Sequence[str],
+        compute_names: Sequence[str],
+    ) -> list[str]:
+        """Emit generated-code helpers that list public series-binding functions."""
+        return [
+            "def list_setters() -> list[str]:",
+            '    """Return generated series-binding setter function names."""',
+            f"    return {list(setter_names)!r}",
+            "",
+            "",
+            "def list_computes() -> list[str]:",
+            '    """Return generated series-binding compute function names."""',
+            f"    return {list(compute_names)!r}",
+        ]
 
     def _range_addresses_2d(self, start: str, end: str) -> list[list[str]]:
         """Generate all cell addresses in a range as a 2D list (rows x cols)."""
@@ -1933,9 +1948,9 @@ class CodeGenerator:
         )
 
         # Generate entry point helpers
-        lines.append("def make_context(inputs=None):")
+        lines.append("def make_context(inputs: dict[str, object] | None = None) -> EvalContext:")
         lines.append('    """Create an EvalContext with merged inputs."""')
-        lines.append("    merged = dict(DEFAULT_INPUTS)")
+        lines.append("    merged: dict[str, object] = dict(DEFAULT_INPUTS)")
         if parts["has_constants"]:
             lines.append("    merged.update(CONSTANTS)")
         lines.append("    if inputs is not None:")
@@ -1949,9 +1964,14 @@ class CodeGenerator:
         )
         lines.append("")
         lines.append("")
+        series_setter_names: list[str] = []
+        series_compute_names: list[str] = []
         if series_bindings is not None:
             if bindings_workbook is None:
                 raise ValueError("bindings_workbook is required when series_bindings is set")
+            series_setter_names, series_compute_names = self._series_binding_public_names(
+                series_bindings
+            )
             lines.extend(
                 self._emit_series_binding_setters(
                     series_bindings,
@@ -1963,13 +1983,24 @@ class CodeGenerator:
                 )
             )
             lines.append("")
+        lines.extend(
+            self._emit_series_binding_discovery_lines(
+                series_setter_names,
+                series_compute_names,
+            )
+        )
+        lines.append("")
+        lines.append("")
         lines.append("TARGETS = {")
         for target, handler in self._targets_to_entries(normalized_targets):
             lines.append(f"    {repr(target)}: {handler},")
         lines.append("}")
         lines.append("")
         lines.append("")
-        lines.append("def compute_all(ctx=None, *, inputs=None):")
+        lines.append(
+            "def compute_all(ctx: EvalContext | None = None, *, "
+            "inputs: dict[str, object] | None = None) -> dict[str, object]:"
+        )
         lines.append('    """Compute all target cells and return results."""')
         lines.append("    if ctx is None:")
         lines.append("        ctx = make_context(inputs)")
@@ -2091,9 +2122,9 @@ class CodeGenerator:
             "import warnings",
             "",
             "",
-            "def make_context(inputs=None):",
+            "def make_context(inputs: dict[str, object] | None = None) -> EvalContext:",
             '    """Create an EvalContext with merged inputs."""',
-            "    merged = dict(DEFAULT_INPUTS)",
+            "    merged: dict[str, object] = dict(DEFAULT_INPUTS)",
             "    merged.update(CONSTANTS)",
             "    if inputs is not None:",
             "        merged.update(inputs)",
@@ -2108,6 +2139,7 @@ class CodeGenerator:
             "",
         ]
         series_setter_names: list[str] = []
+        series_compute_names: list[str] = []
         api_helpers_py: str | None = None
         if series_bindings is not None:
             if bindings_workbook is None:
@@ -2130,8 +2162,18 @@ class CodeGenerator:
                 if helper_imports:
                     api_lines.insert(4, f"from ._api_helpers import {', '.join(helper_imports)}")
             api_lines.extend(setter_lines)
-            series_setter_names = self._emitted_function_names(setter_lines)
+            series_setter_names, series_compute_names = self._series_binding_public_names(
+                series_bindings
+            )
             api_lines.append("")
+        api_lines.extend(
+            self._emit_series_binding_discovery_lines(
+                series_setter_names,
+                series_compute_names,
+            )
+        )
+        api_lines.append("")
+        api_lines.append("")
         api_lines.append("TARGETS = {")
         for target, handler in targets_entries:
             api_lines.append(f"    {repr(target)}: {handler},")
@@ -2140,7 +2182,8 @@ class CodeGenerator:
                 "}",
                 "",
                 "",
-                "def compute_all(ctx=None, *, inputs=None):",
+                "def compute_all(ctx: EvalContext | None = None, *, "
+                "inputs: dict[str, object] | None = None) -> dict[str, object]:",
                 '    """Compute all target cells and return results."""',
                 "    if ctx is None:",
                 "        ctx = make_context(inputs)",
@@ -2160,8 +2203,9 @@ class CodeGenerator:
         )
         api_py = "\n".join(api_lines)
 
-        api_exports = ["compute_all", "make_context"]
+        api_exports = ["compute_all", "make_context", "list_setters", "list_computes"]
         api_exports.extend(series_setter_names)
+        api_exports.extend(series_compute_names)
         api_imports = ", ".join(api_exports)
         all_exports = api_exports + ["DEFAULT_INPUTS"]
         init_py = "\n".join(

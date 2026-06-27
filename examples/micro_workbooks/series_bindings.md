@@ -271,9 +271,10 @@ print(
 
 Passing the same binding into `CodeGenerator` appends a
 `set_borvelia_primary_balance` function. Callers pass **`SeriesInput`**:
-`list[dict]` records, a 1D iterable of measure values (single-key series), or a tidy
-pandas/polars `DataFrame` with binding `key` columns plus `OBS_VALUE`. The setter
-writes into the graph’s input map via `EvalContext.set_inputs`.
+`list[dict]` records, a 1D iterable of measure values (single-key
+series), or a tidy pandas/polars `DataFrame` with binding `key` columns
+plus `OBS_VALUE`. The setter writes into the graph’s input map via
+`EvalContext.set_inputs`.
 
 ``` python
 from excel_grapher.exporter import CodeGenerator
@@ -302,10 +303,10 @@ def set_borvelia_primary_balance(
 
 ### Calling the setter
 
-In an exported model, the generated setter is imported and called like any other
-package function. `ctx` is always required. For this binding, input needs only
-`TIME_PERIOD` and `OBS_VALUE` — not `REF_AREA` or `INDICATOR` (those come from the
-binding manifest).
+In an exported model, the generated setter is imported and called like
+any other package function. `ctx` is always required. For this binding,
+input needs only `TIME_PERIOD` and `OBS_VALUE` — not `REF_AREA` or
+`INDICATOR` (those come from the binding manifest).
 
 **Records:**
 
@@ -330,8 +331,9 @@ set_borvelia_primary_balance(ctx, [-2.0, -1.0, 0.0, 7.5, 8.0])
 
 **Tidy DataFrame** (pandas or polars, if installed):
 
-See [setter_dataframe_example.py](setter_dataframe_example.py) for a runnable script. In short,
-pass a tidy table with binding `key` columns plus `OBS_VALUE` only:
+See [setter_dataframe_example.py](setter_dataframe_example.py) for a
+runnable script. In short, pass a tidy table with binding `key` columns
+plus `OBS_VALUE` only:
 
 ``` python
 import pandas as pd
@@ -340,7 +342,8 @@ df = pd.DataFrame({"TIME_PERIOD": [4, 5], "OBS_VALUE": [7.5, 8.0]})
 set_borvelia_primary_balance(ctx, df)
 ```
 
-**Wide grid → tidy** (caller responsibility; setters do not accept wide grids):
+**Wide grid → tidy** (caller responsibility; setters do not accept wide
+grids):
 
 ``` python
 # One indicator row, periods as columns:
@@ -348,17 +351,22 @@ tidy = df_wide.T.reset_index().rename(columns={"index": "TIME_PERIOD", 0: "OBS_V
 set_borvelia_primary_balance(ctx, tidy)
 ```
 
-The notebook verifies records and positional input against dynamically executed codegen:
+The notebook below verifies records and positional input against
+dynamically executed codegen:
 
 ``` text
 Sheet1!I5 after records: 7.5
 Sheet1!J5 after records: 8.0
+```
+
+``` text
 Sheet1!I5 after positional: 7.5
 Sheet1!J5 after positional: 8.0
 ```
 
-Periods **4** and **5** correspond to columns I and J. Records and positional input
-both update those leaves without requiring sheet addresses in the input.
+Periods **4** and **5** correspond to columns I and J. Records and
+positional input both update those leaves without requiring sheet
+addresses in the input.
 
 ### Structured docstring callback
 
@@ -418,7 +426,7 @@ Updates workbook inputs from Records.
 Records match cells by key fields.
 
 Args:
-    records (Records): Records to apply to the workbook inputs.
+    records (SeriesInput): A list of records, a single record dict, a tidy pandas/polars DataFrame, or a 1-D iterable of measure values in key order.
         Required record fields:
             - TIME_PERIOD: Value for TIME_PERIOD.
             - OBS_VALUE: Value for OBS_VALUE.
@@ -440,6 +448,8 @@ Examples:
         {'TIME_PERIOD': 1, 'OBS_VALUE': -1.0},
         {'TIME_PERIOD': 2, 'OBS_VALUE': -0.5},
     ])
+
+    set_borvelia_primary_balance(ctx, [-1.0, -0.5])
 ```
 
 ### Output series
@@ -551,6 +561,25 @@ such as `REF_AREA` and `UNIT_MEASURE` from the binding. Address-keyed
 `compute_all(ctx=ctx)` remains available for the full target map;
 `compute_borvelia_primary_balance` is the tabular, dimension-keyed view
 of this series only.
+
+### Discovering the generated API
+
+The generated module also exposes two zero-argument discovery helpers,
+`list_setters()` and `list_computes()`. They return the names of the
+emitted `set_*` and `compute_*` functions, so tooling can enumerate the
+series API without parsing source:
+
+``` python
+from exported_model import list_setters, list_computes
+
+list_setters()   # ["set_borvelia_primary_balance"]
+list_computes()  # ["compute_borvelia_primary_balance"]
+```
+
+``` text
+list_setters():  ['set_borvelia_primary_balance']
+list_computes(): ['compute_borvelia_primary_balance']
+```
 
 ### Modular exports
 
