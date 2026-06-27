@@ -110,16 +110,23 @@ def test_codegen_includes_output_compute_and_setter(workbook: Path) -> None:
 
     assert "def set_borvelia_primary_balance(" in code
     assert "def compute_borvelia_primary_balance(" in code
+    assert "def list_setters() -> list[str]:" in code
+    assert "def list_computes() -> list[str]:" in code
     assert "Record = dict[str, object]" in code
     assert "-> Records:" in code
 
     ns: dict[str, object] = {}
     exec(code, ns)
     make_context = cast(Callable[[], Any], ns["make_context"])
+    list_setters = cast(Callable[[], list[str]], ns["list_setters"])
+    list_computes = cast(Callable[[], list[str]], ns["list_computes"])
     setter = cast(
         Callable[[Any, list[dict[str, object]]], None], ns["set_borvelia_primary_balance"]
     )
     compute = cast(Callable[..., list[dict[str, object]]], ns["compute_borvelia_primary_balance"])
+
+    assert list_setters() == ["set_borvelia_primary_balance"]
+    assert list_computes() == ["compute_borvelia_primary_balance"]
 
     ctx = make_context()
     setter(ctx, [{"TIME_PERIOD": 4, "OBS_VALUE": 7.5}])
@@ -179,7 +186,11 @@ def test_generate_modules_exports_output_compute(
         bindings_workbook=workbook,
     )
     assert "def compute_borvelia_primary_balance(" in files["api.py"]
+    assert "def list_setters() -> list[str]:" in files["api.py"]
+    assert "def list_computes() -> list[str]:" in files["api.py"]
     assert "compute_borvelia_primary_balance" in files["__init__.py"]
+    assert "list_setters" in files["__init__.py"]
+    assert "list_computes" in files["__init__.py"]
     assert "Record" in files["api.py"]
 
     pkg_dir = tmp_path / "exported_series_output"
@@ -191,6 +202,8 @@ def test_generate_modules_exports_output_compute(
     try:
         pkg = importlib.import_module("exported_series_output")
         ctx = pkg.make_context()
+        assert pkg.list_setters() == ["set_borvelia_primary_balance"]
+        assert pkg.list_computes() == ["compute_borvelia_primary_balance"]
         records = pkg.compute_borvelia_primary_balance(ctx=ctx)
         assert len(records) == 5
         assert all("OBS_VALUE" in r for r in records)

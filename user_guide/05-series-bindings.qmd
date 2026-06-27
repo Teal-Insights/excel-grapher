@@ -433,7 +433,15 @@ set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 3, "OBS_VALUE": -0.5}])
 results = compute_all(ctx=ctx)
 ```
 
-For modular package exports, generated series setters are emitted from the package entrypoint and re-exported from the package root, alongside `make_context` and `compute_all`.
+The generated module also exposes two zero-argument discovery helpers for enumerating the series
+API without parsing source:
+
+```python
+list_setters()   # ["set_borvelia_primary_balance"]
+list_computes()  # ["compute_borvelia_primary_balance"]
+```
+
+For modular package exports, generated series setters and output compute functions are emitted from the package entrypoint and re-exported from the package root, alongside `make_context`, `compute_all`, `list_setters`, and `list_computes`.
 
 ## Command-line validation
 

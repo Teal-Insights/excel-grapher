@@ -102,10 +102,16 @@ def test_codegen_includes_setters_and_updates_inputs(workbook: Path) -> None:
     ns: dict[str, object] = {}
     exec(code, ns)
     make_context = cast(Callable[[], Any], ns["make_context"])
+    list_setters = cast(Callable[[], list[str]], ns["list_setters"])
+    list_computes = cast(Callable[[], list[str]], ns["list_computes"])
     set_borvelia_primary_balance = cast(
         Callable[[Any, list[dict[str, object]]], None],
         ns["set_borvelia_primary_balance"],
     )
+
+    assert list_setters() == ["set_borvelia_primary_balance"]
+    assert list_computes() == []
+
     ctx = make_context()
     set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 4, "OBS_VALUE": 7.5}])
     assert ctx.inputs["Sheet1!I5"] == 7.5

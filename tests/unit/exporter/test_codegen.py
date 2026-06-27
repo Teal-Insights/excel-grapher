@@ -1,5 +1,8 @@
 """Tests for codegen module."""
 
+from collections.abc import Callable
+from typing import cast
+
 import pytest
 
 from excel_grapher import DependencyGraph, Node
@@ -738,8 +741,24 @@ class TestCodeGeneratorContextManager:
         graph = _make_graph(_make_node("Sheet1!A1", None, 100.0))
         gen = CodeGenerator(graph)
         code = gen.generate(["Sheet1!A1"])
-        assert "def compute_all(ctx=None, *, inputs=None):" in code
+        assert (
+            "def compute_all(ctx: EvalContext | None = None, *, "
+            "inputs: dict[str, object] | None = None) -> dict[str, object]:"
+        ) in code
         assert "'Sheet1!A1'" in code
+
+    def test_generate_includes_empty_series_binding_discovery_helpers(self):
+        """Generated code should expose discovery helpers even without bindings."""
+        graph = _make_graph(_make_node("Sheet1!A1", None, 100.0))
+        code = CodeGenerator(graph).generate(["Sheet1!A1"])
+
+        namespace: dict[str, object] = {}
+        exec(code, namespace)
+        list_setters = cast(Callable[[], list[str]], namespace["list_setters"])
+        list_computes = cast(Callable[[], list[str]], namespace["list_computes"])
+
+        assert list_setters() == []
+        assert list_computes() == []
 
     def test_generate_entrypoint_uses_target_map(self):
         """Generated compute_all should iterate a shared targets map."""
@@ -793,7 +812,10 @@ class TestGenerateNamedRanges:
             _make_node("Sheet1!C1", "=Sheet1!B1+1", None),
         )
         code = CodeGenerator(graph).generate(["OneCell"])
-        assert "def compute_all(ctx=None, *, inputs=None):" in code
+        assert (
+            "def compute_all(ctx: EvalContext | None = None, *, "
+            "inputs: dict[str, object] | None = None) -> dict[str, object]:"
+        ) in code
         assert "'Sheet1!C1': xl_cell" in code
 
     def test_generate_expands_defined_name_range(self):

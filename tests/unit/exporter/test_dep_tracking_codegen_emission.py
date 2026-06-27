@@ -6,7 +6,7 @@ Non-iterative exports without input-direction series bindings omit ``deps`` /
 
 Minimal non-iterative export baseline (``S!A1`` leaf + ``S!B1`` formula):
 
-- **460 total lines**; embedded runtime **400 lines** (~87% of export)
+- **470 total lines**; embedded runtime **400 lines** (~85% of export)
 - **0 dep-tracking lines**
 - **54 cache-eval scaffold lines** (``_evaluate_address``, ``xl_cell``, ``xl_eval``)
 
