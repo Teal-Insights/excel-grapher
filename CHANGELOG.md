@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.1.0 (2026-06-27)
+
+### Features
+
+- **exporter**: Emit list_setters/list_computes discovery helpers
+  ([#305](https://github.com/Teal-Insights/excel-grapher/pull/305),
+  [`93b71d4`](https://github.com/Teal-Insights/excel-grapher/commit/93b71d4f39f7388b3d5d8cd8b9a1ef89ca4b4399))
+
+
 ## v1.0.2 (2026-06-26)
 
 ### Bug Fixes
