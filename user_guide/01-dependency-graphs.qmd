@@ -30,6 +30,38 @@ print(len(g))          # number of visited nodes
 print(to_graphviz(g))  # GraphViz DOT
 ```
 
+### Optional TACO range-pattern index
+
+After building a cell-level graph, you can optionally attach a **TACO-style**
+([arXiv:2302.05482](https://arxiv.org/pdf/2302.05482)) compressed dependency
+index. The graph remains canonical for evaluation and export; the index is a
+parallel structure for range-pattern dependency queries (autofill columns,
+running totals, fixed lookup tables, and similar).
+
+```python
+from pathlib import Path
+
+from excel_grapher.grapher import build_taco_index, create_dependency_graph
+
+wb_path = Path("model.xlsx")
+
+# Attach during graph build:
+graph = create_dependency_graph(wb_path, ["Sheet1!D3:D100"], taco_index=True)
+index = graph.taco_index
+
+# Or build afterward:
+graph = create_dependency_graph(wb_path, ["Sheet1!D3:D100"])
+index = build_taco_index(graph)
+
+# Query compressed ranges, then materialize to cell keys when needed:
+dependents = index.find_dependents("Sheet1!B10")
+precedents = index.find_precedents("Sheet1!D10")
+```
+
+When `taco_index=False` (the default), `graph.taco_index` is `None` and graph
+build behavior is unchanged. See `examples/micro_workbooks/taco_patterns.xlsx`
+for RR, RF, FR, FF, and RR-Chain pattern examples.
+
 ### Target forms
 
 `targets` accepts any mix of:

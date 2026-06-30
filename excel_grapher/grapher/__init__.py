@@ -55,10 +55,13 @@ from .guard import And, Compare, GuardExpr, Literal, Not, Or
 from .guard import CellRef as GuardCellRef
 from .node import Node, NodeKey
 from .parser import format_cell_key, format_key, needs_quoting
+from .range_compression import TacoIndex, build_taco_index
 from .validation import ValidationResult, WorkbookCalcSettings, get_calc_settings, validate_graph
 
 __all__ = [
     "create_dependency_graph",
+    "build_taco_index",
+    "TacoIndex",
     "normalize_blank_range_specs",
     "list_dynamic_ref_constraint_candidates",
     "GRAPH_CACHE_SCHEMA_VERSION",
