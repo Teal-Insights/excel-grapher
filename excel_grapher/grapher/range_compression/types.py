@@ -54,6 +54,28 @@ class RangeRef:
         lo, hi = (first_row, last_row) if first_row <= last_row else (last_row, first_row)
         return cls(sheet=sheet, min_col=column, min_row=lo, max_col=column, max_row=hi)
 
+    @classmethod
+    def rectangle(
+        cls,
+        sheet: str,
+        min_col: str,
+        min_row: int,
+        max_col: str,
+        max_row: int,
+    ) -> RangeRef:
+        """Return a normalized rectangular range."""
+        c1 = fastpyxl.utils.cell.column_index_from_string(min_col)
+        c2 = fastpyxl.utils.cell.column_index_from_string(max_col)
+        r1, r2 = (min_row, max_row) if min_row <= max_row else (max_row, min_row)
+        clo, chi = (c1, c2) if c1 <= c2 else (c2, c1)
+        return cls(
+            sheet=sheet,
+            min_col=fastpyxl.utils.cell.get_column_letter(clo),
+            min_row=r1,
+            max_col=fastpyxl.utils.cell.get_column_letter(chi),
+            max_row=r2,
+        )
+
     def contains(self, key: str) -> bool:
         """Return True when `key` lies inside this range."""
         sheet, coord = parse_address(key)
@@ -84,6 +106,10 @@ class PatternMeta:
     kind: PatternKind
     col_offset: int = 0
     row_offset: int = 0
+    fixed_head_col: str | None = None
+    fixed_head_row: int | None = None
+    fixed_tail_col: str | None = None
+    fixed_tail_row: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
