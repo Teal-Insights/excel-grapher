@@ -9,6 +9,12 @@ from excel_grapher.grapher.dependency_provenance import DependencyCause
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.node import NodeKey
 
+from .boundaries import (
+    precedent_may_compress,
+    range_ref_dependents_may_compress,
+    range_ref_precedents_may_compress,
+)
+from .config import TacoBuildConfig
 from .grouping import column_adjacent_groups
 from .index import TacoIndex
 from .patterns import is_rr_chain_ref, is_rr_ref, materialize_precedents_for_edge
@@ -32,13 +38,17 @@ _EXCLUDED_CAUSES = frozenset(
 )
 
 
-def build_taco_index(graph: DependencyGraph) -> TacoIndex:
+def build_taco_index(
+    graph: DependencyGraph,
+    config: TacoBuildConfig | None = None,
+) -> TacoIndex:
     """Build a TACO compressed index from `graph` without mutating it."""
+    cfg = config or TacoBuildConfig()
     index = TacoIndex()
     covered: set[tuple[NodeKey, NodeKey]] = set()
 
-    for group in column_adjacent_groups(graph):
-        _compress_group(graph, index, group, covered)
+    for group in column_adjacent_groups(graph, config=cfg):
+        _compress_group(graph, index, group, covered, cfg)
 
     for dep in graph:
         for prec in graph.get_dependencies(dep):
@@ -69,6 +79,7 @@ def _compress_group(
     index: TacoIndex,
     group: list[NodeKey],
     covered: set[tuple[NodeKey, NodeKey]],
+    config: TacoBuildConfig,
 ) -> None:
     first = graph.get_node(group[0])
     if first is None or not first.formula:
@@ -79,12 +90,16 @@ def _compress_group(
 
     for ref_idx in range(len(streams)):
         if isinstance(streams[ref_idx], AbsCellRef):
-            stream = _collect_cell_stream(graph, group, ref_idx)
+            stream = _collect_cell_stream(graph, group, ref_idx, config)
         else:
-            stream = _collect_range_stream(graph, group, ref_idx)
+            stream = _collect_range_stream(graph, group, ref_idx, config)
         if stream is None:
             continue
         dep_range, prec_range, meta = stream
+        if not range_ref_dependents_may_compress(graph, dep_range, config):
+            continue
+        if not range_ref_precedents_may_compress(graph, prec_range, config):
+            continue
         edge = CompressedEdge(precedent=prec_range, dependent=dep_range, meta=meta)
         index.compressed_edges.append(edge)
         for dep_key in dep_range.cell_keys():
@@ -98,6 +113,7 @@ def _collect_cell_stream(
     graph: DependencyGraph,
     group: list[NodeKey],
     ref_idx: int,
+    config: TacoBuildConfig,
 ) -> tuple[RangeRef, RangeRef, PatternMeta] | None:
     dep_sheet: str | None = None
     dep_col: str | None = None
@@ -124,6 +140,8 @@ def _collect_cell_stream(
             return None
         prec_key = abs_ref_to_key(ref, default_sheet=node.sheet)
         if prec_key not in graph.get_dependencies(dep_key):
+            return None
+        if not precedent_may_compress(graph, prec_key, config):
             return None
         if _edge_is_excluded_from_pattern_inference(graph, dep_key, prec_key):
             return None
@@ -192,6 +210,7 @@ def _collect_range_stream(
     graph: DependencyGraph,
     group: list[NodeKey],
     ref_idx: int,
+    config: TacoBuildConfig,
 ) -> tuple[RangeRef, RangeRef, PatternMeta] | None:
     dep_sheet: str | None = None
     dep_col: str | None = None
@@ -217,6 +236,8 @@ def _collect_range_stream(
             return None
         expected = set(range_ref_to_keys(ref, default_sheet=node.sheet))
         if not expected:
+            return None
+        if any(not precedent_may_compress(graph, prec, config) for prec in expected):
             return None
         if any(
             _edge_is_excluded_from_pattern_inference(graph, dep_key, prec)
