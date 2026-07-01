@@ -32,6 +32,16 @@ from excel_grapher.series_bindings.docstrings import (
     resolve_series_docstring_callback,
     unregister_series_docstring_callback,
 )
+from excel_grapher.series_bindings.groups import (
+    GroupMember,
+    GroupNode,
+    GroupsManifest,
+    bindings_export_order,
+    bindings_have_groups,
+    group_manifest,
+    group_slug,
+    grouped_public_names,
+)
 from excel_grapher.series_bindings.input_coerce import coerce_setter_input
 from excel_grapher.series_bindings.input_series import derive_input_series
 from excel_grapher.series_bindings.load import (
@@ -141,7 +151,15 @@ __all__ = [
     "ValidationReport",
     "WorkbookSeriesBindings",
     "BindingsCheckResult",
+    "GroupMember",
+    "GroupNode",
+    "GroupsManifest",
     "bindings_canonical_sha256",
+    "bindings_export_order",
+    "bindings_have_groups",
+    "group_manifest",
+    "group_slug",
+    "grouped_public_names",
     "Layout",
     "SeriesInput",
     "coerce_setter_input",
