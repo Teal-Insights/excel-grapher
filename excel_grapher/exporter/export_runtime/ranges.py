@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from typing import Any
 
 import fastpyxl.utils.cell
 
@@ -28,7 +29,9 @@ class Range:
     start_col: int
     end_row: int
     end_col: int
-    _resolver: Callable[[str], CellValue] = field(repr=False, compare=False)
+    # Resolvers may come from evaluation contexts with their own value
+    # vocabulary; values are validated/coerced at consumption time.
+    _resolver: Callable[[str], Any] = field(repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Validate the rectangular bounds."""
@@ -116,6 +119,32 @@ class Range:
             self.start_col + col_end - 1,
             self._resolver,
         )
+
+    def value_at(self, row: int, col: int) -> CellValue:
+        """Return a single relative cell value without translating errors.
+
+        Unlike `cell`, Excel error values are returned as `XlError` sentinels.
+        Range consumers that implement Excel sentinel semantics use this
+        accessor; `cell`/iteration raise `XlErrorException` instead.
+        """
+        self._validate_relative_cell(row, col)
+        return self._resolver(self._address(self.start_row + row - 1, self.start_col + col - 1))
+
+    def iter_raw(self) -> Iterator[CellValue]:
+        """Yield raw values (error sentinels included) in row-major order."""
+        nrows, ncols = self.shape
+        for row in range(1, nrows + 1):
+            for col in range(1, ncols + 1):
+                yield self.value_at(row, col)
+
+    def rows_raw(self) -> list[list[CellValue]]:
+        """Materialize the range as nested row lists of raw values."""
+        nrows, ncols = self.shape
+        return [[self.value_at(r, c) for c in range(1, ncols + 1)] for r in range(1, nrows + 1)]
+
+    def tolist(self) -> list[list[CellValue]]:
+        """Materialize the range as nested row lists of raw values."""
+        return self.rows_raw()
 
     def iter_values(self) -> Iterator[CellValue]:
         """Yield values in deterministic row-major order."""

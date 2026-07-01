@@ -36,10 +36,18 @@ def _core_modules(*, include_operators_fastpath: bool) -> list[tuple[str, Path]]
 
 _CORE_MODULES: list[tuple[str, Path]] = _core_modules(include_operators_fastpath=True)
 
-# Export-owned runtime primitives used by generated code as it diverges from the evaluator.
+# Export-owned runtime modules. These come after `runtime/` in module order, so
+# symbols defined in both (e.g. `xl_index`, `xl_range`) resolve to the export
+# implementations in emitted code while the evaluator keeps the shared versions.
 _EXPORT_RUNTIME_MODULES: list[tuple[str, Path]] = [
     ("export_runtime.errors", _EXPORT_RUNTIME_DIR / "errors.py"),
     ("export_runtime.ranges", _EXPORT_RUNTIME_DIR / "ranges.py"),
+    ("export_runtime.values", _EXPORT_RUNTIME_DIR / "values.py"),
+    ("export_runtime.lookup", _EXPORT_RUNTIME_DIR / "lookup.py"),
+    ("export_runtime.operators", _EXPORT_RUNTIME_DIR / "operators.py"),
+    ("export_runtime.aggregates", _EXPORT_RUNTIME_DIR / "aggregates.py"),
+    ("export_runtime.offset", _EXPORT_RUNTIME_DIR / "offset.py"),
+    ("export_runtime.info", _EXPORT_RUNTIME_DIR / "info.py"),
 ]
 
 # Export runtime modules (representation-specific implementations); order preserved for iteration.
@@ -69,8 +77,10 @@ _SLIM_CACHE_EVAL_MODULE = "cache_eval_slim"
 _FULL_CACHE_EVAL_MODULE = "cache"
 _FULL_EVAL_CONTEXT_SYMBOL = "EvalContext"
 
-# All modules: core first so their definitions win when symbols are defined in both.
-_ALL_MODULES: list[tuple[str, Path]] = _CORE_MODULES + _EXPORT_RUNTIME_MODULES + _RUNTIME_MODULES
+# All modules in registration order. Symbol collisions resolve to the module
+# registered last, so export_runtime overrides shared core/runtime symbols in
+# emitted code without changing what the evaluator imports.
+_ALL_MODULES: list[tuple[str, Path]] = _CORE_MODULES + _RUNTIME_MODULES + _EXPORT_RUNTIME_MODULES
 _ALL_MODULE_NAMES: list[str] = [name for name, _ in _ALL_MODULES]
 
 # Top-level names that are stdlib so emitted "import X" order satisfies ruff isort (I001).
@@ -411,8 +421,8 @@ def emit_runtime(
     """
     all_modules = (
         _core_modules(include_operators_fastpath=include_operators_fastpath)
-        + _EXPORT_RUNTIME_MODULES
         + _RUNTIME_MODULES
+        + _EXPORT_RUNTIME_MODULES
     )
     all_module_names = [name for name, _ in all_modules]
 

@@ -204,9 +204,12 @@ def count_cache_eval_scaffold_lines(code: str) -> int:
 
     end = len(lines)
     for index, line in enumerate(lines[start + 1 :], start + 1):
-        if line.startswith("def ") and not any(
+        is_next_def = line.startswith("def ") and not any(
             line.startswith(marker) for marker in _CACHE_EVAL_SCAFFOLD_DEFS
-        ):
+        )
+        # Stop at section markers too: the scaffold may be the last runtime def
+        # before generated data/formula sections.
+        if is_next_def or line.startswith("# ---"):
             end = index
             break
     return end - start
@@ -263,7 +266,7 @@ DEP_TRACKING_CALL_MARKERS = frozenset(
 )
 
 # Baseline for non-iterative minimal export (S!A1 leaf + S!B1 formula).
-DEP_TRACKING_BASELINE_VERSION = 5
+DEP_TRACKING_BASELINE_VERSION = 6
 SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET = 54
 
 

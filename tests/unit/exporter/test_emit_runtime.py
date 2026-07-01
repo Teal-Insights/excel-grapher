@@ -55,27 +55,24 @@ def test_emit_runtime_dep_tracking_flag_selects_scaffold() -> None:
     assert_dep_tracking_present(full)
 
 
-def test_emit_runtime_operators_fastpath_flag_selects_implementation() -> None:
+def test_emit_runtime_operator_symbols_resolve_to_export_runtime() -> None:
+    """Exported operators consume lazy ranges; numpy fastpaths stay out of exports."""
     symbols = {
         "xl_eq",
         "xl_mul",
         "xl_sumproduct",
         *runtime_cache_seed_symbols(include_dep_tracking=False),
     }
-    stubbed = emit_runtime(
-        symbols,
-        include_offset_table=False,
-        include_dep_tracking=False,
-        include_operators_fastpath=False,
-    )
-    vectorized = emit_runtime(
-        symbols,
-        include_offset_table=False,
-        include_dep_tracking=False,
-        include_operators_fastpath=True,
-    )
-    assert "batch_coerce_to_float64" not in stubbed
-    assert "batch_coerce_to_float64" in vectorized
+    for include_operators_fastpath in (False, True):
+        code = emit_runtime(
+            symbols,
+            include_offset_table=False,
+            include_dep_tracking=False,
+            include_operators_fastpath=include_operators_fastpath,
+        )
+        assert "batch_coerce_to_float64" not in code
+        assert "import numpy" not in code
+        assert "class Range" in code
 
 
 def test_emit_runtime_includes_export_runtime_primitives() -> None:
@@ -85,8 +82,8 @@ def test_emit_runtime_includes_export_runtime_primitives() -> None:
 
     ns: dict[str, Any] = {}
     exec(code, ns)
-    range_type = cast(Any, ns["Range"])
-    xl_error = cast(Any, ns["XlError"])
+    range_type = ns["Range"]
+    xl_error = ns["XlError"]
     xl_error_exception = cast(type[BaseException], ns["XlErrorException"])
 
     calls: list[str] = []

@@ -148,9 +148,8 @@ class TestMissingCellReferences:
         gen = CodeGenerator(graph)
         code = gen.generate(["S!B1"])
 
-        # Missing cells are evaluated via xl_cell() and must raise KeyError.
-        assert "xl_cell(ctx, 'S!A2')" in code
-        assert "xl_cell(ctx, 'S!A3')" in code
+        # Ranges resolve lazily; missing cells must still raise KeyError when reduced.
+        assert "xl_range(ctx, 'S!A1:S!A3')" in code
 
         namespace: dict = {}
         exec(code, namespace)

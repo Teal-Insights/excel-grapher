@@ -141,30 +141,19 @@ class TestEmitAstReferences:
         assert gen._emit_ast(CellRefNode("'My Sheet'!B2")) == "xl_cell(ctx, \"'My Sheet'!B2\")"
 
     def test_emit_range_1d_column(self, gen):
-        """1D range (column)."""
+        """1D range (column) emits a lazy xl_range call."""
         result = gen._emit_ast(RangeNode("Sheet1!A1", "Sheet1!A3"))
-        # Should expand to list of cell calls
-        assert "xl_cell(ctx, 'Sheet1!A1')" in result
-        assert "xl_cell(ctx, 'Sheet1!A2')" in result
-        assert "xl_cell(ctx, 'Sheet1!A3')" in result
-        # Should be an object-dtype ndarray
-        assert result.startswith("np.array([")
-        assert result.endswith("dtype=object)")
+        assert result == "xl_range(ctx, 'Sheet1!A1:Sheet1!A3')"
 
     def test_emit_range_1d_row(self, gen):
-        """1D range (row)."""
+        """1D range (row) emits a lazy xl_range call."""
         result = gen._emit_ast(RangeNode("Sheet1!A1", "Sheet1!C1"))
-        assert "xl_cell(ctx, 'Sheet1!A1')" in result
-        assert "xl_cell(ctx, 'Sheet1!B1')" in result
-        assert "xl_cell(ctx, 'Sheet1!C1')" in result
+        assert result == "xl_range(ctx, 'Sheet1!A1:Sheet1!C1')"
 
     def test_emit_range_2d(self, gen):
-        """2D range."""
+        """2D range emits a lazy xl_range call."""
         result = gen._emit_ast(RangeNode("Sheet1!A1", "Sheet1!B2"))
-        assert "xl_cell(ctx, 'Sheet1!A1')" in result
-        assert "xl_cell(ctx, 'Sheet1!B1')" in result
-        assert "xl_cell(ctx, 'Sheet1!A2')" in result
-        assert "xl_cell(ctx, 'Sheet1!B2')" in result
+        assert result == "xl_range(ctx, 'Sheet1!A1:Sheet1!B2')"
 
 
 class TestEmitAstOperators:
@@ -1036,7 +1025,7 @@ class TestGeneratedCodeExecution:
         exec(code, namespace)
         result = namespace["compute_all"]()
 
-        assert result["Sheet1!B1:Sheet1!C1"].tolist() == [[20.0, 30.0]]
+        assert result["Sheet1!B1:Sheet1!C1"] == [[20.0, 30.0]]
 
 
 class TestIndexPrunedRangeCodegen:
