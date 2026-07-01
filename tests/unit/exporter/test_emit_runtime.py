@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 from excel_grapher.exporter.embed import emit_runtime, runtime_cache_seed_symbols
 from tests.integration.utils.parity_harness import (
     assert_dep_tracking_absent,
@@ -81,15 +83,15 @@ def test_emit_runtime_includes_export_runtime_primitives() -> None:
     assert "class XlErrorException" in code
     assert "class Range" in code
 
-    ns: dict[str, object] = {}
+    ns: dict[str, Any] = {}
     exec(code, ns)
-    range_type = ns["Range"]
-    xl_error = ns["XlError"]
-    xl_error_exception = ns["XlErrorException"]
+    range_type = cast(Any, ns["Range"])
+    xl_error = cast(Any, ns["XlError"])
+    xl_error_exception = cast(type[BaseException], ns["XlErrorException"])
 
     calls: list[str] = []
 
-    def resolve(address: str) -> object:
+    def resolve(address: str) -> Any:
         calls.append(address)
         return xl_error.DIV if address == "S!B1" else 1
 
@@ -97,7 +99,7 @@ def test_emit_runtime_includes_export_runtime_primitives() -> None:
     try:
         list(rng)
     except xl_error_exception as exc:
-        assert exc.code == xl_error.DIV
+        assert cast(Any, exc).code == xl_error.DIV
     else:
         raise AssertionError("Expected exported Range iteration to raise")
 

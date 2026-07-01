@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from excel_grapher.core import XlError
+from excel_grapher.core import CellValue, XlError
 from excel_grapher.exporter.export_runtime import Range, XlErrorException
 
 
@@ -16,7 +16,7 @@ def test_xl_error_exception_carries_excel_error_code() -> None:
 def test_range_cell_access_evaluates_only_requested_cell() -> None:
     calls: list[str] = []
 
-    def resolve(address: str) -> object:
+    def resolve(address: str) -> CellValue:
         calls.append(address)
         return {"S!A1": 1, "S!B1": 2, "S!A2": 3, "S!B2": 4}[address]
 
@@ -29,9 +29,9 @@ def test_range_cell_access_evaluates_only_requested_cell() -> None:
 
 def test_range_iteration_is_row_major() -> None:
     calls: list[str] = []
-    values = {"S!A1": 1, "S!B1": 2, "S!A2": 3, "S!B2": 4}
+    values: dict[str, CellValue] = {"S!A1": 1, "S!B1": 2, "S!A2": 3, "S!B2": 4}
 
-    def resolve(address: str) -> object:
+    def resolve(address: str) -> CellValue:
         calls.append(address)
         return values[address]
 
@@ -43,9 +43,14 @@ def test_range_iteration_is_row_major() -> None:
 
 def test_range_iteration_raises_first_excel_error() -> None:
     calls: list[str] = []
-    values = {"S!A1": 1, "S!B1": XlError.NA, "S!A2": XlError.DIV, "S!B2": 4}
+    values: dict[str, CellValue] = {
+        "S!A1": 1,
+        "S!B1": XlError.NA,
+        "S!A2": XlError.DIV,
+        "S!B2": 4,
+    }
 
-    def resolve(address: str) -> object:
+    def resolve(address: str) -> CellValue:
         calls.append(address)
         return values[address]
 
@@ -61,7 +66,7 @@ def test_range_iteration_raises_first_excel_error() -> None:
 def test_range_row_and_column_views_preserve_laziness() -> None:
     calls: list[str] = []
 
-    def resolve(address: str) -> object:
+    def resolve(address: str) -> CellValue:
         calls.append(address)
         return address
 
@@ -72,4 +77,3 @@ def test_range_row_and_column_views_preserve_laziness() -> None:
     assert rng.column(1).shape == (3, 1)
     assert rng.column(1).cell(3, 1) == "S!A3"
     assert calls == ["S!C2", "S!A3"]
-
