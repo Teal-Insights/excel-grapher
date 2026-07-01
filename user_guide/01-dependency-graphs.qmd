@@ -60,7 +60,9 @@ precedents = index.find_precedents("Sheet1!D10")
 
 When `taco_index=False` (the default), `graph.taco_index` is `None` and graph
 build behavior is unchanged. See `examples/micro_workbooks/taco_patterns.xlsx`
-for RR, RF, FR, FF, and RR-Chain pattern examples.
+for RR, RF, FR, FF, and RR-Chain pattern examples, and
+`examples/micro_workbooks/cross_sheet_taco_patterns.xlsx` for cross-sheet
+precedents (dependent cells on one sheet, input ranges on another).
 
 ### Target forms
 

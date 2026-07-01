@@ -101,6 +101,7 @@ def _collect_cell_stream(
 ) -> tuple[RangeRef, RangeRef, PatternMeta] | None:
     dep_sheet: str | None = None
     dep_col: str | None = None
+    prec_sheet: str | None = None
     prec_col: str | None = None
     first_row: int | None = None
     last_row: int | None = None
@@ -131,7 +132,7 @@ def _collect_cell_stream(
 
         dep_c = node.column
         dep_r = node.row
-        _, prec_coord = parse_address(prec_key)
+        prec_sheet_name, prec_coord = parse_address(prec_key)
         prec_c, prec_r = fastpyxl.utils.cell.coordinate_from_string(prec_coord)
         this_chain = is_rr_chain_ref(
             dep_col=dep_c,
@@ -141,6 +142,8 @@ def _collect_cell_stream(
             is_absolute_col=ref.is_absolute_col,
             is_absolute_row=ref.is_absolute_row,
         )
+        if this_chain and prec_sheet_name != node.sheet:
+            this_chain = False
 
         dep_col_i = fastpyxl.utils.cell.column_index_from_string(dep_c)
         prec_col_i = fastpyxl.utils.cell.column_index_from_string(prec_c)
@@ -150,6 +153,7 @@ def _collect_cell_stream(
         if dep_sheet is None:
             dep_sheet = node.sheet
             dep_col = dep_c
+            prec_sheet = prec_sheet_name
             prec_col = prec_c
             first_row = dep_r
             last_row = dep_r
@@ -157,7 +161,9 @@ def _collect_cell_stream(
             row_offset = this_row_offset
             chain = this_chain
         else:
-            if node.sheet != dep_sheet or dep_c != dep_col or prec_c != prec_col:
+            if node.sheet != dep_sheet or dep_c != dep_col:
+                return None
+            if prec_sheet_name != prec_sheet or prec_c != prec_col:
                 return None
             if this_col_offset != col_offset or this_row_offset != row_offset:
                 return None
@@ -168,13 +174,14 @@ def _collect_cell_stream(
                 return None
             last_row = dep_r
 
-    assert dep_sheet is not None and dep_col is not None and prec_col is not None
+    assert dep_sheet is not None and dep_col is not None and prec_sheet is not None
+    assert prec_col is not None
     assert first_row is not None and last_row is not None
     assert col_offset is not None and row_offset is not None
 
     dep_range = RangeRef.column_span(dep_sheet, dep_col, first_row, last_row)
     prec_range = RangeRef.column_span(
-        dep_sheet, prec_col, first_row + row_offset, last_row + row_offset
+        prec_sheet, prec_col, first_row + row_offset, last_row + row_offset
     )
     kind = PatternKind.rr_chain if chain else PatternKind.rr
     meta = PatternMeta(kind=kind, col_offset=col_offset, row_offset=row_offset)
@@ -282,6 +289,8 @@ def _bounding_box(ref: AbsRangeRef, *, default_sheet: str) -> tuple[str, str, in
 
 
 def _union_ranges(a: RangeRef, b: RangeRef) -> RangeRef:
+    if a.sheet != b.sheet:
+        raise ValueError(f"cannot union ranges on different sheets: {a!r} vs {b!r}")
     a_c1 = fastpyxl.utils.cell.column_index_from_string(a.min_col)
     a_c2 = fastpyxl.utils.cell.column_index_from_string(a.max_col)
     b_c1 = fastpyxl.utils.cell.column_index_from_string(b.min_col)
