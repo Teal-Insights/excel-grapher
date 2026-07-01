@@ -226,7 +226,6 @@ def create_dependency_graph(
     capture_dependency_provenance: bool = False,
     blank_ranges: Iterable[str] | None = None,
     type_analysis_cache: TypeAnalysisCache | None = None,
-    taco_index: bool = False,
 ) -> DependencyGraph:
     r"""Build a dependency graph starting from target cells.
 
@@ -278,10 +277,6 @@ def create_dependency_graph(
     expansion instead of repeating it.  Callers doing iterative constraint-tuning
     workflows can still set `capture_dependency_provenance=False` to avoid any
     provenance overhead (formula-string span collection, branch-union merging, etc.).
-
-    When `taco_index` is True, attach an optional TACO-style range-pattern compression
-    index on `graph.taco_index` after the graph is built. The cell-level graph remains
-    canonical; the index is a parallel structure for compressed dependency queries.
     """
     if not isinstance(workbook, (str, Path)):
         raise TypeError(
@@ -1232,10 +1227,6 @@ def create_dependency_graph(
     graph.named_ranges = dict(named_ranges)
     graph.named_range_ranges = dict(named_range_ranges)
     graph.sheet_bounds = dict(sheet_bounds)
-    if taco_index:
-        from .range_compression import build_taco_index
-
-        graph.taco_index = build_taco_index(graph)
     return graph
 
 

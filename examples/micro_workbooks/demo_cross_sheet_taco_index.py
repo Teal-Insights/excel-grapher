@@ -129,11 +129,8 @@ def main() -> None:
         WORKBOOK,
         TARGETS,
         load_values=True,
-        taco_index=True,
     )
-    full_index = graph.taco_index
-    if full_index is None:
-        raise RuntimeError("Expected graph.taco_index")
+    full_index = build_taco_index(graph)
 
     print(f"workbook: {WORKBOOK.name}")
     print(f"targets: {', '.join(TARGETS)}")

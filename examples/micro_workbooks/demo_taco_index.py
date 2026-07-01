@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Demonstrate the ``taco_index`` flag on ``taco_patterns.xlsx``.
+"""Demonstrate ``build_taco_index`` on ``taco_patterns.xlsx``.
 
-Builds a dependency graph with an optional TACO range-pattern compression
-index, prints a short summary, and plots the cell-level graph next to the
+Builds a dependency graph, derives a TACO range-pattern compression index from
+it, prints a short summary, and plots the cell-level graph next to the
 compressed range-pattern graph (NetworkX + Matplotlib).
 
 Run from the repo root::
@@ -22,6 +22,7 @@ from excel_grapher import create_dependency_graph
 from excel_grapher.grapher.export import to_networkx
 from excel_grapher.grapher.range_compression import (
     TacoIndex,
+    build_taco_index,
     materialize_precedents,
 )
 from excel_grapher.grapher.range_compression.types import RangeRef
@@ -195,11 +196,8 @@ def main() -> None:
         WORKBOOK,
         TARGETS,
         load_values=False,
-        taco_index=True,
     )
-    index = graph.taco_index
-    if index is None:
-        raise RuntimeError("Expected graph.taco_index when taco_index=True")
+    index = build_taco_index(graph)
 
     cell_edges = sum(len(graph.get_dependencies(key)) for key in graph)
     compressed = len(index.compressed_edges)

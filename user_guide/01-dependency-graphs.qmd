@@ -45,11 +45,7 @@ from excel_grapher.grapher import build_taco_index, create_dependency_graph
 
 wb_path = Path("model.xlsx")
 
-# Attach during graph build:
-graph = create_dependency_graph(wb_path, ["Sheet1!D3:D100"], taco_index=True)
-index = graph.taco_index
-
-# Or build afterward:
+# Build the index as a derived artifact from the canonical graph:
 graph = create_dependency_graph(wb_path, ["Sheet1!D3:D100"])
 index = build_taco_index(graph)
 
@@ -75,11 +71,13 @@ index = build_taco_index(
 )
 ```
 
-When `taco_index=False` (the default), `graph.taco_index` is `None` and graph
-build behavior is unchanged. See `examples/micro_workbooks/taco_patterns.xlsx`
-for RR, RF, FR, FF, and RR-Chain pattern examples, and
-`examples/micro_workbooks/cross_sheet_taco_patterns.xlsx` for cross-sheet
-precedents (dependent cells on one sheet, input ranges on another).
+The index is a derived artifact: `create_dependency_graph` never builds it and
+its default output is unchanged. Build the index on demand with
+`build_taco_index(graph)` (and rebuild it after mutating the graph). See
+`examples/micro_workbooks/taco_patterns.xlsx` for RR, RF, FR, FF, and RR-Chain
+pattern examples, and `examples/micro_workbooks/cross_sheet_taco_patterns.xlsx`
+for cross-sheet precedents (dependent cells on one sheet, input ranges on
+another).
 
 ### Target forms
 

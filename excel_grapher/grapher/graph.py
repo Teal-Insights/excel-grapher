@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from .compression import IdentityTransitCompressionRecord, OptimalCompressionRecord
-    from .range_compression import TacoIndex
 
 from excel_grapher.core.address_keys import normalize_key, sort_node_keys
 
@@ -123,7 +122,6 @@ class DependencyGraph:
     sheet_bounds: dict[str, tuple[int, int]] | None = None
     named_ranges: dict[str, tuple[str, str]] | None = None
     named_range_ranges: dict[str, tuple[str, str, str]] | None = None
-    taco_index: TacoIndex | None = None
 
     def copy(self) -> DependencyGraph:
         """Return a deep copy of this graph (node hooks are not copied)."""
@@ -767,7 +765,6 @@ class DependencyGraph:
         self.named_ranges = dict(nr) if nr else None
         nrr = state.get("named_range_ranges")
         self.named_range_ranges = dict(nrr) if nrr else None
-        self.taco_index = None
 
     # ---- internal edge mutation --------------------------------------------
 
