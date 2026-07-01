@@ -74,3 +74,31 @@ def test_emit_runtime_operators_fastpath_flag_selects_implementation() -> None:
     )
     assert "batch_coerce_to_float64" not in stubbed
     assert "batch_coerce_to_float64" in vectorized
+
+
+def test_emit_runtime_includes_export_runtime_primitives() -> None:
+    code = emit_runtime({"Range"}, include_offset_table=False)
+    assert "class XlErrorException" in code
+    assert "class Range" in code
+
+    ns: dict[str, object] = {}
+    exec(code, ns)
+    range_type = ns["Range"]
+    xl_error = ns["XlError"]
+    xl_error_exception = ns["XlErrorException"]
+
+    calls: list[str] = []
+
+    def resolve(address: str) -> object:
+        calls.append(address)
+        return xl_error.DIV if address == "S!B1" else 1
+
+    rng = range_type("S", 1, 1, 1, 2, resolve)
+    try:
+        list(rng)
+    except xl_error_exception as exc:
+        assert exc.code == xl_error.DIV
+    else:
+        raise AssertionError("Expected exported Range iteration to raise")
+
+    assert calls == ["S!A1", "S!B1"]
