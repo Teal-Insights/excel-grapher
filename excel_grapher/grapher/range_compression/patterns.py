@@ -6,8 +6,7 @@ import fastpyxl.utils.cell
 
 from excel_grapher.core.address_keys import format_cell_key, parse_address
 
-from .grouping import Orientation
-from .types import PatternKind, PatternMeta, RangeRef
+from .types import Orientation, PatternKind, PatternMeta, RangeRef
 
 
 def is_rr_ref(*, is_absolute_col: bool, is_absolute_row: bool) -> bool:
@@ -75,8 +74,12 @@ def materialize_precedents_for_edge(
     if meta.kind in (PatternKind.rr, PatternKind.rr_chain):
         return {rr_materialize_precedent(edge_dependent, edge_precedent, dep_key)}
     if meta.kind == PatternKind.rf:
+        if meta.orientation is Orientation.row:
+            return _rf_materialize_precedents_row(meta, dep_key, precedent=edge_precedent)
         return _rf_materialize_precedents(meta, dep_key, precedent=edge_precedent)
     if meta.kind == PatternKind.fr:
+        if meta.orientation is Orientation.row:
+            return _fr_materialize_precedents_row(meta, dep_key, precedent=edge_precedent)
         return _fr_materialize_precedents(meta, dep_key, precedent=edge_precedent)
     if meta.kind == PatternKind.ff:
         return set(edge_precedent.cell_keys())
@@ -93,8 +96,12 @@ def materialize_dependents_for_edge(
     if meta.kind in (PatternKind.rr, PatternKind.rr_chain):
         return {rr_materialize_dependent(edge_precedent, edge_dependent, prec_key)}
     if meta.kind == PatternKind.rf:
+        if meta.orientation is Orientation.row:
+            return _rf_materialize_dependents_row(edge_dependent, meta, prec_key)
         return _rf_materialize_dependents(edge_dependent, meta, prec_key)
     if meta.kind == PatternKind.fr:
+        if meta.orientation is Orientation.row:
+            return _fr_materialize_dependents_row(edge_dependent, meta, prec_key)
         return _fr_materialize_dependents(edge_dependent, meta, prec_key)
     if meta.kind == PatternKind.ff:
         return set(edge_dependent.cell_keys())
@@ -159,5 +166,81 @@ def _fr_materialize_dependents(dependent: RangeRef, meta: PatternMeta, prec_key:
     for dep_key in dependent.cell_keys():
         _, _, dep_row = _dep_row_col(dep_key)
         if dep_row >= row:
+            out.add(dep_key)
+    return out
+
+
+def _rf_materialize_precedents_row(
+    meta: PatternMeta, dep_key: str, *, precedent: RangeRef
+) -> set[str]:
+    _, dep_col, _ = _dep_row_col(dep_key)
+    dep_col_i = fastpyxl.utils.cell.column_index_from_string(dep_col)
+    head_col_i = dep_col_i + meta.col_offset
+    assert meta.fixed_tail_col is not None and meta.fixed_tail_row is not None
+    tail_col_i = fastpyxl.utils.cell.column_index_from_string(meta.fixed_tail_col)
+    if head_col_i > tail_col_i:
+        return set()
+    sheet = precedent.sheet
+    row = meta.fixed_tail_row
+    return {
+        format_cell_key(sheet, fastpyxl.utils.cell.get_column_letter(col_i), row)
+        for col_i in range(head_col_i, tail_col_i + 1)
+    }
+
+
+def _rf_materialize_dependents_row(
+    dependent: RangeRef, meta: PatternMeta, prec_key: str
+) -> set[str]:
+    _, prec_col, prec_row = _dep_row_col(prec_key)
+    assert meta.fixed_tail_col is not None and meta.fixed_tail_row is not None
+    prec_col_i = fastpyxl.utils.cell.column_index_from_string(prec_col)
+    tail_col_i = fastpyxl.utils.cell.column_index_from_string(meta.fixed_tail_col)
+    if prec_row != meta.fixed_tail_row or prec_col_i > tail_col_i:
+        return set()
+    out: set[str] = set()
+    for dep_key in dependent.cell_keys():
+        _, dep_col, dep_row = _dep_row_col(dep_key)
+        if dep_row != meta.fixed_tail_row:
+            continue
+        dep_col_i = fastpyxl.utils.cell.column_index_from_string(dep_col)
+        head_col_i = dep_col_i + meta.col_offset
+        if head_col_i <= prec_col_i <= tail_col_i:
+            out.add(dep_key)
+    return out
+
+
+def _fr_materialize_precedents_row(
+    meta: PatternMeta, dep_key: str, *, precedent: RangeRef
+) -> set[str]:
+    _, dep_col, _ = _dep_row_col(dep_key)
+    assert meta.fixed_head_col is not None and meta.fixed_head_row is not None
+    head_col_i = fastpyxl.utils.cell.column_index_from_string(meta.fixed_head_col)
+    tail_col_i = fastpyxl.utils.cell.column_index_from_string(dep_col)
+    if tail_col_i < head_col_i:
+        return set()
+    sheet = precedent.sheet
+    row = meta.fixed_head_row
+    return {
+        format_cell_key(sheet, fastpyxl.utils.cell.get_column_letter(col_i), row)
+        for col_i in range(head_col_i, tail_col_i + 1)
+    }
+
+
+def _fr_materialize_dependents_row(
+    dependent: RangeRef, meta: PatternMeta, prec_key: str
+) -> set[str]:
+    _, prec_col, prec_row = _dep_row_col(prec_key)
+    assert meta.fixed_head_col is not None and meta.fixed_head_row is not None
+    head_col_i = fastpyxl.utils.cell.column_index_from_string(meta.fixed_head_col)
+    prec_col_i = fastpyxl.utils.cell.column_index_from_string(prec_col)
+    if prec_col_i < head_col_i or prec_row != meta.fixed_head_row:
+        return set()
+    out: set[str] = set()
+    for dep_key in dependent.cell_keys():
+        _, dep_col, dep_row = _dep_row_col(dep_key)
+        if dep_row != meta.fixed_head_row:
+            continue
+        dep_col_i = fastpyxl.utils.cell.column_index_from_string(dep_col)
+        if dep_col_i >= prec_col_i:
             out.add(dep_key)
     return out

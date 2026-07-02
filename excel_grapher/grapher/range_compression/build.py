@@ -289,7 +289,12 @@ def _collect_cell_stream(
         )
 
     kind = PatternKind.rr_chain if chain else PatternKind.rr
-    meta = PatternMeta(kind=kind, col_offset=col_offset, row_offset=row_offset)
+    meta = PatternMeta(
+        kind=kind,
+        col_offset=col_offset,
+        row_offset=row_offset,
+        orientation=orientation,
+    )
     return dep_range, prec_range, meta
 
 
@@ -300,15 +305,14 @@ def _collect_range_stream(
     config: TacoBuildConfig,
     orientation: Orientation,
 ) -> tuple[RangeRef, RangeRef, PatternMeta] | None:
-    if orientation is Orientation.row:
-        return None
     dep_sheet: str | None = None
-    dep_col: str | None = None
-    first_row: int | None = None
-    last_row: int | None = None
+    dep_fixed: str | int | None = None
+    first_advance: int | None = None
+    last_advance: int | None = None
     pattern: str | None = None
     prec_range: RangeRef | None = None
     meta: PatternMeta | None = None
+    col_offset: int | None = None
 
     for dep_key in group:
         node = graph.get_node(dep_key)
@@ -339,45 +343,82 @@ def _collect_range_stream(
             return None
 
         sheet, sc, sr, ec, er = _bounding_box(ref, default_sheet=node.sheet)
-        row_prec = RangeRef.rectangle(sheet, sc, sr, ec, er)
+        cell_prec = RangeRef.rectangle(sheet, sc, sr, ec, er)
+
+        if orientation is Orientation.column:
+            advance = node.row
+            this_dep_fixed = node.column
+        else:
+            advance = node.column_index
+            this_dep_fixed = node.row
 
         if dep_sheet is None:
             dep_sheet = node.sheet
-            dep_col = node.column
-            first_row = node.row
-            last_row = node.row
+            dep_fixed = this_dep_fixed
+            first_advance = advance
+            last_advance = advance
             pattern = this_pattern
-            prec_range = row_prec
-            meta = _meta_for_range_pattern(this_pattern, ref)
+            prec_range = cell_prec
+            meta = _meta_for_range_pattern(this_pattern, ref, orientation, node.column, node.row)
+            if orientation is Orientation.row and this_pattern == "RF":
+                start_col_i = fastpyxl.utils.cell.column_index_from_string(ref.start_col)
+                col_offset = start_col_i - node.column_index
         else:
-            if node.sheet != dep_sheet or node.column != dep_col or this_pattern != pattern:
+            if node.sheet != dep_sheet or this_dep_fixed != dep_fixed or this_pattern != pattern:
                 return None
-            assert last_row is not None and prec_range is not None and meta is not None
-            if node.row != last_row + 1:
+            assert last_advance is not None and prec_range is not None and meta is not None
+            if advance != last_advance + 1:
                 return None
-            last_row = node.row
-            prec_range = _union_ranges(prec_range, row_prec)
+            if orientation is Orientation.row and this_pattern == "RF":
+                start_col_i = fastpyxl.utils.cell.column_index_from_string(ref.start_col)
+                this_col_offset = start_col_i - node.column_index
+                if col_offset is not None and this_col_offset != col_offset:
+                    return None
+            last_advance = advance
+            prec_range = _union_ranges(prec_range, cell_prec)
 
-    assert dep_sheet is not None and dep_col is not None and prec_range is not None
-    assert first_row is not None and last_row is not None and meta is not None
-    dep_range = RangeRef.column_span(dep_sheet, dep_col, first_row, last_row)
+    assert dep_sheet is not None and dep_fixed is not None and prec_range is not None
+    assert first_advance is not None and last_advance is not None and meta is not None
+
+    if orientation is Orientation.column:
+        assert isinstance(dep_fixed, str)
+        dep_range = RangeRef.column_span(dep_sheet, dep_fixed, first_advance, last_advance)
+    else:
+        assert isinstance(dep_fixed, int)
+        first_col = fastpyxl.utils.cell.get_column_letter(first_advance)
+        last_col = fastpyxl.utils.cell.get_column_letter(last_advance)
+        dep_range = RangeRef.row_span(dep_sheet, dep_fixed, first_col, last_col)
     return dep_range, prec_range, meta
 
 
-def _meta_for_range_pattern(pattern: str, ref: AbsRangeRef) -> PatternMeta:
+def _meta_for_range_pattern(
+    pattern: str,
+    ref: AbsRangeRef,
+    orientation: Orientation,
+    dep_col: str,
+    _dep_row: int,
+) -> PatternMeta:
     if pattern == "RF":
+        col_offset = 0
+        if orientation is Orientation.row:
+            start_col_i = fastpyxl.utils.cell.column_index_from_string(ref.start_col)
+            dep_col_i = fastpyxl.utils.cell.column_index_from_string(dep_col)
+            col_offset = start_col_i - dep_col_i
         return PatternMeta(
             kind=PatternKind.rf,
             fixed_tail_col=ref.end_col,
             fixed_tail_row=ref.end_row,
+            orientation=orientation,
+            col_offset=col_offset,
         )
     if pattern == "FR":
         return PatternMeta(
             kind=PatternKind.fr,
             fixed_head_col=ref.start_col,
             fixed_head_row=ref.start_row,
+            orientation=orientation,
         )
-    return PatternMeta(kind=PatternKind.ff)
+    return PatternMeta(kind=PatternKind.ff, orientation=orientation)
 
 
 def _bounding_box(ref: AbsRangeRef, *, default_sheet: str) -> tuple[str, str, int, str, int]:

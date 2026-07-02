@@ -21,6 +21,13 @@ class PatternKind(StrEnum):
     single = "Single"
 
 
+class Orientation(StrEnum):
+    """Axis along which a compressed formula run advances."""
+
+    column = "column"
+    row = "row"
+
+
 @dataclass(frozen=True, slots=True)
 class RangeRef:
     """Sheet-qualified rectangular cell range."""
@@ -124,6 +131,7 @@ class PatternMeta:
     fixed_head_row: int | None = None
     fixed_tail_col: str | None = None
     fixed_tail_row: int | None = None
+    orientation: Orientation = Orientation.column
 
 
 @dataclass(frozen=True, slots=True)

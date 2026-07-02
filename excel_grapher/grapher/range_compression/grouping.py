@@ -3,20 +3,13 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from enum import StrEnum
 
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.node import NodeKey
 
 from .boundaries import dependent_may_compress
 from .config import TacoBuildConfig
-
-
-class Orientation(StrEnum):
-    """Axis along which formula runs are grouped for compression."""
-
-    column = "column"
-    row = "row"
+from .types import Orientation
 
 
 def column_adjacent_groups(
