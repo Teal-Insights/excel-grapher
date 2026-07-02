@@ -31,6 +31,23 @@ class XlError(StrEnum):
         return None
 
 
+class XlErrorException(Exception):
+    """Exception form of an Excel error code.
+
+    The exported runtime raises Excel errors as exceptions; the evaluator keeps
+    `XlError` sentinel values and never raises this type.
+    """
+
+    code: XlError
+
+    def __init__(self, code: XlError) -> None:
+        """Initialize the exception with an Excel error code."""
+        if not isinstance(code, XlError):
+            raise TypeError(f"Expected XlError, got {type(code).__name__}")
+        self.code = code
+        super().__init__(code.value)
+
+
 @dataclass(frozen=True, slots=True)
 class ExcelRange:
     sheet: str

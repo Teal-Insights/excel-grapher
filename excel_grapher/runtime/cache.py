@@ -7,7 +7,7 @@ from typing import cast
 
 import fastpyxl.utils.cell
 
-from excel_grapher.core import CellValue, ExcelRange, XlError
+from excel_grapher.core import CellValue, ExcelRange, XlError, XlErrorException
 from excel_grapher.core.addressing import split_sheet_qualified_address
 
 from .cache_context import EvalContext, EvalContextBase
@@ -67,6 +67,13 @@ def coerce_inputs_dict(values: Mapping[str, object]) -> dict[str, CellValue]:
     return cast(dict[str, CellValue], dict(values))
 
 
+def _raise_if_error_value(value: CellValue) -> CellValue:
+    """Surface Excel error values as raised exceptions at the cell boundary."""
+    if isinstance(value, XlError):
+        raise XlErrorException(value)
+    return value
+
+
 def _evaluate_address(
     ctx: EvalContext,
     address: str,
@@ -74,12 +81,16 @@ def _evaluate_address(
     *,
     preserve_structural_blank: bool = False,
 ) -> CellValue:
-    """Shared evaluation path for ``xl_cell`` and ``xl_eval``."""
+    """Shared evaluation path for ``xl_cell`` and ``xl_eval``.
+
+    Excel error values raise `XlErrorException`; the raising cell's error code
+    is cached so re-reads raise without re-evaluating.
+    """
     if ctx.stack:
         ctx._record_dependency(ctx.stack[-1], address)
 
     if address in ctx.cache:
-        return ctx.cache[address]
+        return _raise_if_error_value(ctx.cache[address])
 
     if address in ctx.computing:
         if ctx.iterative_enabled:
@@ -89,20 +100,24 @@ def _evaluate_address(
     if address in ctx.inputs:
         v = ctx.inputs[address]
         ctx.cache[address] = v
-        return v
+        return _raise_if_error_value(v)
 
     fn = obtain_fn()
 
     ctx.computing.add(address)
     ctx.stack.append(address)
     try:
-        v = fn(ctx)
+        try:
+            v = fn(ctx)
+        except XlErrorException as exc:
+            ctx.cache[address] = exc.code
+            raise
         if v is None and not (
             preserve_structural_blank and getattr(fn, "__structural_blank__", False)
         ):
             v = 0
         ctx.cache[address] = v
-        return v
+        return _raise_if_error_value(v)
     finally:
         ctx.computing.discard(address)
         if ctx.stack and ctx.stack[-1] == address:
