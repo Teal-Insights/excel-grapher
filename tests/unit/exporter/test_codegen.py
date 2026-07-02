@@ -164,76 +164,79 @@ class TestEmitAstOperators:
         return CodeGenerator(None)  # type: ignore
 
     def test_emit_binary_add(self, gen):
-        """Addition operator uses xl_add for error propagation."""
+        """Addition inlines native + with xl_number coercion."""
         node = BinaryOpNode("+", NumberNode(1.0), NumberNode(2.0))
-        assert gen._emit_ast(node) == "xl_add(1.0, 2.0)"
+        assert gen._emit_ast(node) == "(xl_number(1.0) + xl_number(2.0))"
 
     def test_emit_binary_subtract(self, gen):
-        """Subtraction operator uses xl_sub for error propagation."""
+        """Subtraction inlines native - with xl_number coercion."""
         node = BinaryOpNode("-", NumberNode(5.0), NumberNode(3.0))
-        assert gen._emit_ast(node) == "xl_sub(5.0, 3.0)"
+        assert gen._emit_ast(node) == "(xl_number(5.0) - xl_number(3.0))"
 
     def test_emit_binary_multiply(self, gen):
-        """Multiplication operator uses xl_mul for error propagation."""
+        """Multiplication inlines native * with xl_number coercion."""
         node = BinaryOpNode("*", NumberNode(4.0), NumberNode(2.0))
-        assert gen._emit_ast(node) == "xl_mul(4.0, 2.0)"
+        assert gen._emit_ast(node) == "(xl_number(4.0) * xl_number(2.0))"
 
     def test_emit_binary_divide(self, gen):
-        """Division operator uses xl_div for safe division."""
+        """Division inlines native / with Excel div-by-zero handling."""
         node = BinaryOpNode("/", NumberNode(10.0), NumberNode(2.0))
-        assert gen._emit_ast(node) == "xl_div(10.0, 2.0)"
+        assert gen._emit_ast(node) == (
+            "((lambda _ln, _rn: (_ln / _rn if _rn != 0 else xl_raise(XlError.DIV)))"
+            "(xl_number(10.0), xl_number(2.0)))"
+        )
 
     def test_emit_binary_power(self, gen):
-        """Exponentiation operator uses xl_pow for error propagation."""
+        """Exponentiation uses xl_pow_numbers on coerced operands."""
         node = BinaryOpNode("^", NumberNode(2.0), NumberNode(3.0))
-        assert gen._emit_ast(node) == "xl_pow(2.0, 3.0)"
+        assert gen._emit_ast(node) == "xl_pow_numbers(xl_number(2.0), xl_number(3.0))"
 
     def test_emit_binary_concat(self, gen):
-        """Concatenation operator (& -> xl_concat)."""
+        """Concatenation inlines to_string + to_string."""
         node = BinaryOpNode("&", StringNode("a"), StringNode("b"))
-        assert gen._emit_ast(node) == "xl_concat('a', 'b')"
+        assert gen._emit_ast(node) == "(to_string('a') + to_string('b'))"
 
     def test_emit_binary_eq(self, gen):
-        """Equality operator (= -> xl_eq for Excel semantics)."""
+        """Equality uses xl_compare for Excel semantics."""
         node = BinaryOpNode("=", NumberNode(1.0), NumberNode(1.0))
-        assert gen._emit_ast(node) == "xl_eq(1.0, 1.0)"
+        assert gen._emit_ast(node) == "xl_compare('=', 1.0, 1.0)"
 
     def test_emit_binary_ne(self, gen):
-        """Not equal operator (<> -> xl_ne)."""
+        """Not equal uses xl_compare."""
         node = BinaryOpNode("<>", NumberNode(1.0), NumberNode(2.0))
-        assert gen._emit_ast(node) == "xl_ne(1.0, 2.0)"
+        assert gen._emit_ast(node) == "xl_compare('<>', 1.0, 2.0)"
 
     def test_emit_binary_lt(self, gen):
-        """Less than operator (< -> xl_lt)."""
+        """Less than uses xl_compare."""
         node = BinaryOpNode("<", NumberNode(1.0), NumberNode(2.0))
-        assert gen._emit_ast(node) == "xl_lt(1.0, 2.0)"
+        assert gen._emit_ast(node) == "xl_compare('<', 1.0, 2.0)"
 
     def test_emit_binary_gt(self, gen):
-        """Greater than operator (> -> xl_gt)."""
+        """Greater than uses xl_compare."""
         node = BinaryOpNode(">", NumberNode(2.0), NumberNode(1.0))
-        assert gen._emit_ast(node) == "xl_gt(2.0, 1.0)"
+        assert gen._emit_ast(node) == "xl_compare('>', 2.0, 1.0)"
 
     def test_emit_binary_le(self, gen):
-        """Less than or equal operator (<= -> xl_le)."""
+        """Less than or equal uses xl_compare."""
         node = BinaryOpNode("<=", NumberNode(1.0), NumberNode(2.0))
-        assert gen._emit_ast(node) == "xl_le(1.0, 2.0)"
+        assert gen._emit_ast(node) == "xl_compare('<=', 1.0, 2.0)"
 
     def test_emit_binary_ge(self, gen):
-        """Greater than or equal operator (>= -> xl_ge)."""
+        """Greater than or equal uses xl_compare."""
         node = BinaryOpNode(">=", NumberNode(2.0), NumberNode(1.0))
-        assert gen._emit_ast(node) == "xl_ge(2.0, 1.0)"
+        assert gen._emit_ast(node) == "xl_compare('>=', 2.0, 1.0)"
 
     def test_emit_unary_minus(self, gen):
-        """Unary minus uses xl_neg for error propagation."""
+        """Unary minus inlines native negation with xl_number coercion."""
         node = UnaryOpNode("-", NumberNode(5.0))
-        assert gen._emit_ast(node) == "xl_neg(5.0)"
+        assert gen._emit_ast(node) == "(-xl_number(5.0))"
 
     def test_emit_nested_binary(self, gen):
-        """Nested binary operations."""
-        # (1 + 2) * 3
+        """Nested binary operations preserve inlined scalar paths."""
         inner = BinaryOpNode("+", NumberNode(1.0), NumberNode(2.0))
         outer = BinaryOpNode("*", inner, NumberNode(3.0))
-        assert gen._emit_ast(outer) == "xl_mul(xl_add(1.0, 2.0), 3.0)"
+        inner_code = gen._emit_ast(inner)
+        assert gen._emit_ast(outer) == f"(xl_number({inner_code}) * xl_number(3.0))"
 
 
 class TestEmitAstFunctions:
@@ -281,7 +284,7 @@ class TestEmitAstFunctions:
         )
         result = gen._emit_ast(node)
         # IF is emitted as lazy conditional: error check, then conditional expression
-        assert "xl_gt(xl_cell(ctx, 'Sheet1!A1'), 0.0)" in result
+        assert "xl_compare('>', xl_cell(ctx, 'Sheet1!A1'), 0.0)" in result
         assert "'positive'" in result
         assert "'non-positive'" in result
         assert "XlError" in result  # Error propagation check
@@ -405,7 +408,8 @@ class TestEmitCell:
         code = gen._emit_cell("Sheet1!B1")
         assert "def cell_sheet1_b1(ctx):" in code
         assert "xl_cell(ctx, 'Sheet1!A1')" in code
-        assert "xl_mul(" in code  # Uses wrapper for error propagation
+        assert "xl_number(" in code
+        assert "xl_mul(" not in code
 
     def test_emit_formula_cell_with_function(self):
         """Formula cell with function call."""

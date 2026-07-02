@@ -58,8 +58,8 @@ def test_emit_runtime_dep_tracking_flag_selects_scaffold() -> None:
 def test_emit_runtime_operator_symbols_resolve_to_export_runtime() -> None:
     """Exported operators consume lazy ranges; numpy fastpaths stay out of exports."""
     symbols = {
-        "xl_eq",
-        "xl_mul",
+        "xl_compare",
+        "xl_number",
         "xl_sumproduct",
         *runtime_cache_seed_symbols(include_dep_tracking=False),
     }

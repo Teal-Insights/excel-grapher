@@ -90,27 +90,11 @@ class GenerationParts(TypedDict):
     blank_rects: tuple[BlankRangeRect, ...]
 
 
-# Operators that need wrapper functions for Excel semantics (error propagation)
-_BINARY_OPS = {
-    "+": "xl_add",
-    "-": "xl_sub",
-    "*": "xl_mul",
-    "/": "xl_div",
-    "^": "xl_pow",
-    "=": "xl_eq",
-    "<>": "xl_ne",
-    "<": "xl_lt",
-    ">": "xl_gt",
-    "<=": "xl_le",
-    ">=": "xl_ge",
-}
+# Comparison operators emitted via xl_compare / xl_map_compare.
+_COMPARE_OPS = frozenset({"=", "<>", "<", ">", "<=", ">="})
 
-# Unary operators that need wrapper functions
-_UNARY_OPS = {
-    "-": "xl_neg",
-    "+": "xl_pos",
-    "%": "xl_percent",
-}
+# Binary operators emitted as native Python with coercion helpers.
+_ARITHMETIC_OPS = frozenset({"+", "-", "*", "/", "^"})
 
 # Functions whose single argument is emitted as a lazily-evaluated thunk so the
 # exported runtime can catch raised Excel errors. Mirrors the evaluator's
@@ -1039,31 +1023,80 @@ class CodeGenerator:
                 constants.add(key)
         return self._apply_input_ranges_override(needed_leaves, constants, input_ranges)
 
+    def _emit_array_guard(self, left: str, right: str, *, array_expr: str, scalar_expr: str) -> str:
+        """Emit a runtime branch between array broadcast and scalar inlined operators."""
+        return f"({array_expr} if (xl_is_array({left}) or xl_is_array({right})) else {scalar_expr})"
+
+    def _emit_scalar_or_array_binary(
+        self,
+        node: BinaryOpNode,
+        *,
+        left: str,
+        right: str,
+        scalar_expr: str,
+        array_expr: str,
+    ) -> str:
+        if self._ast_needs_array_operator_branch(node):
+            return self._emit_array_guard(
+                left, right, array_expr=array_expr, scalar_expr=scalar_expr
+            )
+        return scalar_expr
+
     def _emit_binary_op(self, node: BinaryOpNode) -> str:
-        """Emit a binary operation."""
+        """Emit a binary operation with inlined scalar operators."""
         left = self._emit_ast(node.left)
         right = self._emit_ast(node.right)
         op = node.op
 
-        # Concatenation: & -> xl_concat
         if op == "&":
-            return f"xl_concat({left}, {right})"
+            scalar = f"(to_string({left}) + to_string({right}))"
+            array = f"xl_map_concat({left}, {right})"
+            return self._emit_scalar_or_array_binary(
+                node, left=left, right=right, scalar_expr=scalar, array_expr=array
+            )
 
-        # All other operators use wrapper functions for error propagation
-        if op in _BINARY_OPS:
-            func = _BINARY_OPS[op]
-            return f"{func}({left}, {right})"
+        if op in _ARITHMETIC_OPS:
+            if op in {"+", "-", "*"}:
+                scalar = f"(xl_number({left}) {op} xl_number({right}))"
+            elif op == "/":
+                scalar = (
+                    f"((lambda _ln, _rn: (_ln / _rn if _rn != 0 else xl_raise(XlError.DIV)))"
+                    f"(xl_number({left}), xl_number({right})))"
+                )
+            else:
+                scalar = f"xl_pow_numbers(xl_number({left}), xl_number({right}))"
+            array = f"xl_map_arithmetic({op!r}, {left}, {right})"
+            return self._emit_scalar_or_array_binary(
+                node, left=left, right=right, scalar_expr=scalar, array_expr=array
+            )
+
+        if op in _COMPARE_OPS:
+            scalar = f"xl_compare({op!r}, {left}, {right})"
+            array = f"xl_map_compare({op!r}, {left}, {right})"
+            return self._emit_scalar_or_array_binary(
+                node, left=left, right=right, scalar_expr=scalar, array_expr=array
+            )
 
         raise ValueError(f"Unknown operator: {op}")
 
     def _emit_unary_op(self, node: UnaryOpNode) -> str:
-        """Emit a unary operation."""
+        """Emit a unary operation with inlined scalar operators."""
         operand = self._emit_ast(node.operand)
         op = node.op
-        if op in _UNARY_OPS:
-            func = _UNARY_OPS[op]
-            return f"{func}({operand})"
-        raise ValueError(f"Unknown unary operator: {op}")
+
+        if op == "-":
+            scalar = f"(-xl_number({operand}))"
+        elif op == "+":
+            scalar = f"(+xl_number({operand}))"
+        elif op == "%":
+            scalar = f"(xl_number({operand}) / 100.0)"
+        else:
+            raise ValueError(f"Unknown unary operator: {op}")
+
+        array = f"xl_map_unary({op!r}, {operand})"
+        if self._ast_needs_array_operator_branch(node):
+            return f"({array} if xl_is_array({operand}) else {scalar})"
+        return scalar
 
     def _emit_function_call(self, node: FunctionCallNode) -> str:
         """Emit a function call.
@@ -1481,6 +1514,27 @@ class CodeGenerator:
             return extent
         return 1
 
+    def _ast_needs_array_operator_branch(self, node: AstNode) -> bool:
+        """Return whether an operator subtree can yield range/array operands at runtime."""
+        if isinstance(node, RangeNode):
+            return True
+        if isinstance(node, BinaryOpNode):
+            return self._ast_needs_array_operator_branch(
+                node.left
+            ) or self._ast_needs_array_operator_branch(node.right)
+        if isinstance(node, UnaryOpNode):
+            return self._ast_needs_array_operator_branch(node.operand)
+        if isinstance(node, FunctionCallNode):
+            upper = normalize_excel_function_name(node.name)
+            if upper == "OFFSET":
+                return not self._can_offset_be_static(node) or self._static_offset_is_multicell(
+                    node
+                )
+            if upper == "INDEX" and node.args and isinstance(node.args[0], RangeNode):
+                return True
+            return any(self._ast_needs_array_operator_branch(arg) for arg in node.args)
+        return False
+
     def _note_operators_fastpath_from_ast(self, node: AstNode) -> None:
         if self._max_array_extent_in_ast(node) >= MIN_OPERATOR_FASTPATH_CELLS:
             self._needs_operators_fastpath = True
@@ -1866,17 +1920,33 @@ class CodeGenerator:
                     continue
                 funcs.update(self._extract_xl_functions(arg))
         elif isinstance(node, BinaryOpNode):
-            # Binary operators use xl_* functions for error propagation
+            needs_array = self._ast_needs_array_operator_branch(node)
+            if needs_array:
+                funcs.add("xl_is_array")
             if node.op == "&":
-                funcs.add("xl_concat")
-            elif node.op in _BINARY_OPS:
-                funcs.add(_BINARY_OPS[node.op])
+                if needs_array:
+                    funcs.add("xl_map_concat")
+                funcs.add("to_string")
+            elif node.op in _ARITHMETIC_OPS:
+                funcs.add("xl_number")
+                if needs_array:
+                    funcs.add("xl_map_arithmetic")
+                if node.op == "^":
+                    funcs.add("xl_pow_numbers")
+                if node.op == "/":
+                    funcs.add("xl_raise")
+                    funcs.add("XlError")
+            elif node.op in _COMPARE_OPS:
+                funcs.add("xl_compare")
+                if needs_array:
+                    funcs.add("xl_map_compare")
             funcs.update(self._extract_xl_functions(node.left))
             funcs.update(self._extract_xl_functions(node.right))
         elif isinstance(node, UnaryOpNode):
-            # Unary operators use xl_* functions for error propagation
-            if node.op in _UNARY_OPS:
-                funcs.add(_UNARY_OPS[node.op])
+            funcs.add("xl_number")
+            if self._ast_needs_array_operator_branch(node):
+                funcs.add("xl_is_array")
+                funcs.add("xl_map_unary")
             funcs.update(self._extract_xl_functions(node.operand))
 
         return funcs

@@ -1,4 +1,8 @@
-"""Excel operators over scalars and lazy ranges for exported code."""
+"""Excel operators for exported code: coercion helpers and array broadcast maps.
+
+Scalar formulas emit native Python operators in generated code; these helpers
+cover coercion, Excel-specific error semantics, and lazy-range array broadcast.
+"""
 
 from __future__ import annotations
 
@@ -10,30 +14,59 @@ from excel_grapher.core.operators_reference import (
 )
 from excel_grapher.core.types import XlErrorException
 
-from .values import CellValue, Grid, Scalar, as_scalar
+from .ranges import Range
+from .values import CellValue, ExcelRange, Grid, Scalar, as_scalar
 
 __all__ = [
-    "xl_add",
-    "xl_concat",
-    "xl_div",
-    "xl_eq",
-    "xl_ge",
-    "xl_gt",
-    "xl_le",
-    "xl_lt",
-    "xl_mul",
-    "xl_ne",
-    "xl_neg",
-    "xl_percent",
-    "xl_pos",
-    "xl_pow",
-    "xl_sub",
+    "xl_compare",
+    "xl_is_array",
+    "xl_map_arithmetic",
+    "xl_map_compare",
+    "xl_map_concat",
+    "xl_map_unary",
+    "xl_number",
+    "xl_pow_numbers",
 ]
 
 
 def _raise_error(code: XlError) -> XlErrorException:
     """Build the exception for an Excel error code (callers raise the result)."""
     return XlErrorException(code)
+
+
+def xl_number(value: CellValue) -> float:
+    """Coerce a scalar cell value to a number, raising on Excel errors."""
+    scalar = as_scalar(value)
+    if isinstance(scalar, XlError):
+        raise _raise_error(scalar)
+    number = to_number(scalar)
+    if isinstance(number, XlError):
+        raise _raise_error(number)
+    return number
+
+
+def xl_is_array(value: object) -> bool:
+    """Return whether *value* is a range or nested-list array operand."""
+    return isinstance(value, (Range, ExcelRange, list, tuple))
+
+
+def xl_pow_numbers(left: float, right: float) -> float:
+    """Apply Excel exponentiation to coerced numbers."""
+    try:
+        value = left**right
+    except (ValueError, OverflowError):
+        raise _raise_error(XlError.NUM) from None
+    if isinstance(value, complex):
+        raise _raise_error(XlError.NUM)
+    return value
+
+
+def xl_compare(op: str, left: CellValue, right: CellValue) -> bool:
+    """Compare two scalar operands with Excel ordering rules."""
+    result = compare_scalars(op, as_scalar(left), as_scalar(right))
+    if isinstance(result, XlError):
+        raise _raise_error(result)
+    return result
 
 
 def _scalar_or_raise(value: CellValue) -> Scalar:
@@ -72,13 +105,42 @@ def _broadcast_pair(left: CellValue, right: CellValue) -> tuple[Grid, Grid] | No
     return scalar_left, right_grid
 
 
-def _xl_compare(op: str, left: CellValue, right: CellValue) -> CellValue:
+def _apply_arithmetic_or_raise(op: str, left: CellValue, right: CellValue) -> CellValue:
+    ln = xl_number(left)
+    rn = xl_number(right)
+    if op == "^":
+        return xl_pow_numbers(ln, rn)
+    cell = apply_arithmetic(op, ln, rn)
+    if isinstance(cell, XlError):
+        raise _raise_error(cell)
+    return cell
+
+
+def xl_map_arithmetic(op: str, left: CellValue, right: CellValue) -> CellValue:
+    """Element-wise arithmetic over scalar or broadcast array operands."""
     pair = _broadcast_pair(left, right)
     if pair is None:
-        cell = compare_scalars(op, _scalar_or_raise(left), _scalar_or_raise(right))
-        if isinstance(cell, XlError):
-            raise _raise_error(cell)
-        return cell
+        return _apply_arithmetic_or_raise(op, left, right)
+
+    arr_left, arr_right = pair
+    result: list[list[CellValue]] = []
+    for row0 in range(arr_left.nrows):
+        out_row: list[CellValue] = []
+        for col0 in range(arr_left.ncols):
+            out_row.append(
+                _apply_arithmetic_or_raise(
+                    op, _cell_or_raise(arr_left, row0, col0), _cell_or_raise(arr_right, row0, col0)
+                )
+            )
+        result.append(out_row)
+    return result
+
+
+def xl_map_compare(op: str, left: CellValue, right: CellValue) -> CellValue:
+    """Element-wise comparison over scalar or broadcast array operands."""
+    pair = _broadcast_pair(left, right)
+    if pair is None:
+        return xl_compare(op, left, right)
 
     arr_left, arr_right = pair
     result: list[list[CellValue]] = []
@@ -95,40 +157,8 @@ def _xl_compare(op: str, left: CellValue, right: CellValue) -> CellValue:
     return result
 
 
-def _number_or_raise(value: Scalar) -> float:
-    """Coerce a scalar to a number, raising on Excel coercion errors."""
-    number = to_number(value)
-    if isinstance(number, XlError):
-        raise _raise_error(number)
-    return number
-
-
-def _xl_arithmetic(op: str, left: CellValue, right: CellValue) -> CellValue:
-    pair = _broadcast_pair(left, right)
-    if pair is None:
-        ln = _number_or_raise(_scalar_or_raise(left))
-        rn = _number_or_raise(_scalar_or_raise(right))
-        cell = apply_arithmetic(op, ln, rn)
-        if isinstance(cell, XlError):
-            raise _raise_error(cell)
-        return cell
-
-    arr_left, arr_right = pair
-    result: list[list[CellValue]] = []
-    for row0 in range(arr_left.nrows):
-        out_row: list[CellValue] = []
-        for col0 in range(arr_left.ncols):
-            ln = _number_or_raise(_cell_or_raise(arr_left, row0, col0))
-            rn = _number_or_raise(_cell_or_raise(arr_right, row0, col0))
-            cell = apply_arithmetic(op, ln, rn)
-            if isinstance(cell, XlError):
-                raise _raise_error(cell)
-            out_row.append(cell)
-        result.append(out_row)
-    return result
-
-
-def xl_concat(left: CellValue, right: CellValue) -> CellValue:
+def xl_map_concat(left: CellValue, right: CellValue) -> CellValue:
+    """Element-wise string concatenation over scalar or broadcast array operands."""
     pair = _broadcast_pair(left, right)
     if pair is None:
         return concat_scalars(_scalar_or_raise(left), _scalar_or_raise(right))
@@ -145,58 +175,31 @@ def xl_concat(left: CellValue, right: CellValue) -> CellValue:
     ]
 
 
-def xl_eq(left: CellValue, right: CellValue) -> CellValue:
-    return _xl_compare("=", left, right)
+def xl_map_unary(op: str, value: CellValue) -> CellValue:
+    """Apply a unary Excel operator over scalar or array operands."""
+    grid = Grid.wrap(value)
+    if grid is None:
+        number = xl_number(value)
+        if op == "-":
+            return -number
+        if op == "+":
+            return +number
+        if op == "%":
+            return number / 100.0
+        raise ValueError(f"Unknown unary operator: {op}")
 
-
-def xl_ne(left: CellValue, right: CellValue) -> CellValue:
-    return _xl_compare("<>", left, right)
-
-
-def xl_lt(left: CellValue, right: CellValue) -> CellValue:
-    return _xl_compare("<", left, right)
-
-
-def xl_gt(left: CellValue, right: CellValue) -> CellValue:
-    return _xl_compare(">", left, right)
-
-
-def xl_le(left: CellValue, right: CellValue) -> CellValue:
-    return _xl_compare("<=", left, right)
-
-
-def xl_ge(left: CellValue, right: CellValue) -> CellValue:
-    return _xl_compare(">=", left, right)
-
-
-def xl_div(left: CellValue, right: CellValue) -> CellValue:
-    return _xl_arithmetic("/", left, right)
-
-
-def xl_add(left: CellValue, right: CellValue) -> CellValue:
-    return _xl_arithmetic("+", left, right)
-
-
-def xl_sub(left: CellValue, right: CellValue) -> CellValue:
-    return _xl_arithmetic("-", left, right)
-
-
-def xl_mul(left: CellValue, right: CellValue) -> CellValue:
-    return _xl_arithmetic("*", left, right)
-
-
-def xl_pow(left: CellValue, right: CellValue) -> CellValue:
-    return _xl_arithmetic("^", left, right)
-
-
-def xl_neg(value: CellValue) -> float:
-    return -_number_or_raise(_scalar_or_raise(value))
-
-
-def xl_pos(value: CellValue) -> float:
-    return +_number_or_raise(_scalar_or_raise(value))
-
-
-def xl_percent(value: CellValue) -> float:
-    """Excel postfix percent operator (%): divide a numeric value by 100."""
-    return _number_or_raise(_scalar_or_raise(value)) / 100.0
+    result: list[list[CellValue]] = []
+    for row0 in range(grid.nrows):
+        out_row: list[CellValue] = []
+        for col0 in range(grid.ncols):
+            number = xl_number(_cell_or_raise(grid, row0, col0))
+            if op == "-":
+                out_row.append(-number)
+            elif op == "+":
+                out_row.append(+number)
+            elif op == "%":
+                out_row.append(number / 100.0)
+            else:
+                raise ValueError(f"Unknown unary operator: {op}")
+        result.append(out_row)
+    return result
