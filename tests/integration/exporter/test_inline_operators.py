@@ -134,3 +134,65 @@ class TestInlineOperatorParity:
             assert dead_wrapper not in code
         assert "xl_number(" in code
         assert "xl_compare(" in code
+
+
+class TestArrayOperatorOperandBinding:
+    """Guarded array operators bind operands once: no double-eval or blowup."""
+
+    @staticmethod
+    def _cell_body(code: str, key: str) -> str:
+        out: list[str] = []
+        grab = False
+        for line in code.splitlines():
+            if line.startswith(f"def {key}"):
+                grab = True
+            elif grab and line.startswith("def "):
+                break
+            if grab:
+                out.append(line)
+        return "\n".join(out)
+
+    @classmethod
+    def _array_graph(cls, formula: str) -> DependencyGraph:
+        nodes = [_make_node("S!Z1", formula, None)]
+        for col in "ABCD":
+            for row in (1, 2, 3):
+                nodes.append(_make_node(f"S!{col}{row}", None, float(row)))
+        return _make_graph(*nodes)
+
+    def test_guarded_operator_evaluates_each_operand_once(self) -> None:
+        """A scalar-returning operand under a guard is emitted (evaluated) once."""
+        graph = self._array_graph("=SUM(S!A1:S!A3)+S!B1")
+        body = self._cell_body(CodeGenerator(graph).generate(["S!Z1"]), "cell_s_z1")
+        assert body.count("xl_sum(") == 1
+        assert body.count("xl_cell(ctx, 'S!B1')") == 1
+
+    def test_nested_array_operators_do_not_duplicate_operands(self) -> None:
+        """Each leaf operand appears once per textual use, not 3x per nesting level."""
+        formula = "=((S!A1:A3+S!B1:B3)*(S!C1:C3-S!D1:D3))+((S!A1:A3-S!B1:B3)*(S!C1:C3+S!D1:D3))"
+        body = self._cell_body(
+            CodeGenerator(self._array_graph(formula)).generate(["S!Z1"]), "cell_s_z1"
+        )
+        # S!A1:A3 is used twice in the formula; without operand binding the
+        # three-way guard duplicates it many times per nesting level.
+        assert body.count("xl_range(ctx, 'S!A1:S!A3')") == 2
+
+    def test_nested_array_operator_code_size_stays_linear(self) -> None:
+        depth1 = self._cell_body(
+            CodeGenerator(self._array_graph("=S!A1:A3+S!B1:B3")).generate(["S!Z1"]),
+            "cell_s_z1",
+        )
+        depth3 = self._cell_body(
+            CodeGenerator(
+                self._array_graph(
+                    "=((S!A1:A3+S!B1:B3)*(S!C1:C3-S!D1:D3))+((S!A1:A3-S!B1:B3)*(S!C1:C3+S!D1:D3))"
+                )
+            ).generate(["S!Z1"]),
+            "cell_s_z1",
+        )
+        # Seven operators over eight leaves; the exponential guard produced ~27x.
+        assert len(depth3) < 10 * len(depth1)
+
+    def test_nested_array_operator_parity(self) -> None:
+        graph = self._array_graph("=SUM((S!A1:A3+S!B1:B3)*(S!C1:C3-S!D1:D3))")
+        assert_codegen_matches_evaluator(graph, ["S!Z1"])

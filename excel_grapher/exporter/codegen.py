@@ -1023,38 +1023,15 @@ class CodeGenerator:
                 constants.add(key)
         return self._apply_input_ranges_override(needed_leaves, constants, input_ranges)
 
-    def _emit_array_guard(self, left: str, right: str, *, array_expr: str, scalar_expr: str) -> str:
-        """Emit a runtime branch between array broadcast and scalar inlined operators."""
-        return f"({array_expr} if (xl_is_array({left}) or xl_is_array({right})) else {scalar_expr})"
+    def _binary_operator_exprs(self, op: str, left: str, right: str) -> tuple[str, str]:
+        """Return `(scalar_expr, array_expr)` for a binary operator over two operands.
 
-    def _emit_scalar_or_array_binary(
-        self,
-        node: BinaryOpNode,
-        *,
-        left: str,
-        right: str,
-        scalar_expr: str,
-        array_expr: str,
-    ) -> str:
-        if self._ast_needs_array_operator_branch(node):
-            return self._emit_array_guard(
-                left, right, array_expr=array_expr, scalar_expr=scalar_expr
-            )
-        return scalar_expr
-
-    def _emit_binary_op(self, node: BinaryOpNode) -> str:
-        """Emit a binary operation with inlined scalar operators."""
-        left = self._emit_ast(node.left)
-        right = self._emit_ast(node.right)
-        op = node.op
-
+        The operand strings are substituted verbatim; callers that emit the
+        array guard pass bound temp-variable names so each operand is rendered
+        (and evaluated) once.
+        """
         if op == "&":
-            scalar = f"(to_string({left}) + to_string({right}))"
-            array = f"xl_map_concat({left}, {right})"
-            return self._emit_scalar_or_array_binary(
-                node, left=left, right=right, scalar_expr=scalar, array_expr=array
-            )
-
+            return f"(to_string({left}) + to_string({right}))", f"xl_map_concat({left}, {right})"
         if op in _ARITHMETIC_OPS:
             if op in {"+", "-", "*"}:
                 scalar = f"(xl_number({left}) {op} xl_number({right}))"
@@ -1065,38 +1042,62 @@ class CodeGenerator:
                 )
             else:
                 scalar = f"xl_pow_numbers(xl_number({left}), xl_number({right}))"
-            array = f"xl_map_arithmetic({op!r}, {left}, {right})"
-            return self._emit_scalar_or_array_binary(
-                node, left=left, right=right, scalar_expr=scalar, array_expr=array
-            )
-
+            return scalar, f"xl_map_arithmetic({op!r}, {left}, {right})"
         if op in _COMPARE_OPS:
-            scalar = f"xl_compare({op!r}, {left}, {right})"
-            array = f"xl_map_compare({op!r}, {left}, {right})"
-            return self._emit_scalar_or_array_binary(
-                node, left=left, right=right, scalar_expr=scalar, array_expr=array
+            return (
+                f"xl_compare({op!r}, {left}, {right})",
+                f"xl_map_compare({op!r}, {left}, {right})",
             )
-
         raise ValueError(f"Unknown operator: {op}")
 
+    def _emit_binary_op(self, node: BinaryOpNode) -> str:
+        """Emit a binary operation with inlined scalar operators.
+
+        When operands may be arrays at runtime, the operator branches between
+        broadcast and scalar handling. Operands are bound to temp variables via
+        a lambda so each is evaluated once, keeping generated code linear in the
+        operator-tree depth instead of tripling per nesting level.
+        """
+        left = self._emit_ast(node.left)
+        right = self._emit_ast(node.right)
+        op = node.op
+
+        if not self._ast_needs_array_operator_branch(node):
+            scalar, _ = self._binary_operator_exprs(op, left, right)
+            return scalar
+
+        lname = self._next_temp_var()
+        rname = self._next_temp_var()
+        scalar, array = self._binary_operator_exprs(op, lname, rname)
+        guard = f"({array} if (xl_is_array({lname}) or xl_is_array({rname})) else {scalar})"
+        return f"(lambda {lname}, {rname}: {guard})({left}, {right})"
+
+    def _unary_scalar_expr(self, op: str, operand: str) -> str:
+        if op == "-":
+            return f"(-xl_number({operand}))"
+        if op == "+":
+            return f"(+xl_number({operand}))"
+        if op == "%":
+            return f"(xl_number({operand}) / 100.0)"
+        raise ValueError(f"Unknown unary operator: {op}")
+
     def _emit_unary_op(self, node: UnaryOpNode) -> str:
-        """Emit a unary operation with inlined scalar operators."""
+        """Emit a unary operation with inlined scalar operators.
+
+        Like `_emit_binary_op`, the operand is bound once when an array branch
+        is possible so the operand is not re-emitted across guard branches.
+        """
         operand = self._emit_ast(node.operand)
         op = node.op
 
-        if op == "-":
-            scalar = f"(-xl_number({operand}))"
-        elif op == "+":
-            scalar = f"(+xl_number({operand}))"
-        elif op == "%":
-            scalar = f"(xl_number({operand}) / 100.0)"
-        else:
-            raise ValueError(f"Unknown unary operator: {op}")
+        if not self._ast_needs_array_operator_branch(node):
+            return self._unary_scalar_expr(op, operand)
 
-        array = f"xl_map_unary({op!r}, {operand})"
-        if self._ast_needs_array_operator_branch(node):
-            return f"({array} if xl_is_array({operand}) else {scalar})"
-        return scalar
+        name = self._next_temp_var()
+        scalar = self._unary_scalar_expr(op, name)
+        array = f"xl_map_unary({op!r}, {name})"
+        guard = f"({array} if xl_is_array({name}) else {scalar})"
+        return f"(lambda {name}: {guard})({operand})"
 
     def _emit_function_call(self, node: FunctionCallNode) -> str:
         """Emit a function call.
