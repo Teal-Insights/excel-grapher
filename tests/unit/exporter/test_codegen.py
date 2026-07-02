@@ -248,8 +248,13 @@ class TestEmitAstFunctions:
 
     def test_emit_function_no_args(self, gen):
         """Function with no arguments."""
+        node = FunctionCallNode("TODAY", [])
+        assert gen._emit_ast(node) == "xl_today()"
+
+    def test_emit_na_raises_error_literal(self, gen):
+        """NA() emits a raising error literal, not a sentinel-returning call."""
         node = FunctionCallNode("NA", [])
-        assert gen._emit_ast(node) == "xl_na()"
+        assert gen._emit_ast(node) == "xl_raise(XlError.NA)"
 
     def test_emit_function_one_arg(self, gen):
         """Function with one argument."""

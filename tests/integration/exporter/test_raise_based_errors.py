@@ -164,6 +164,22 @@ class TestErrorConsumers:
         assert result.generated_results["S!A1"] == XlError.DIV
         assert result.generated_results["S!A2"] is True
 
+    def test_generic_functions_propagate_error_returning_argument(self) -> None:
+        """`NA()` returns an error sentinel; a generic consumer must propagate it.
+
+        Unlike `1/0` (which raises), an error-returning function yields an
+        `XlError` sentinel. A non-thunked generic function such as `ISNUMBER`
+        or `ISTEXT` must not swallow it: the evaluator's argument error
+        precheck returns the error, so the export path must too.
+        """
+        graph = _make_graph(
+            _make_node("S!A1", "=ISNUMBER(NA())", None),
+            _make_node("S!A2", "=ISTEXT(NA())", None),
+        )
+        result = assert_codegen_matches_evaluator(graph, ["S!A1", "S!A2"])
+        assert result.generated_results["S!A1"] == XlError.NA
+        assert result.generated_results["S!A2"] == XlError.NA
+
     def test_if_with_erroring_condition_propagates(self) -> None:
         graph = _make_graph(_make_node("S!A1", "=IF(1/0, 1, 2)", None))
         result = assert_codegen_matches_evaluator(graph, ["S!A1"])
@@ -178,6 +194,7 @@ class TestErrorCodeParity:
         [
             ("=1/0", XlError.DIV),
             ("=#N/A", XlError.NA),
+            ("=NA()", XlError.NA),
             ('=NA()+"x"', XlError.NA),
             ('="abc"+1', XlError.VALUE),
             ("=INDEX(S!B1:S!B2, 5)", XlError.REF),

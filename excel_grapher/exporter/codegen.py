@@ -1150,6 +1150,12 @@ class CodeGenerator:
         if upper_name == "FALSE":
             return "False"
 
+        # NA() is the functional spelling of the #N/A literal: raise in the
+        # export error channel so the code never leaks as a sentinel into a
+        # generic consumer (matching the evaluator's argument error precheck).
+        if upper_name == "NA":
+            return "xl_raise(XlError.NA)"
+
         # IS functions must not propagate errors: the argument is passed as a
         # lazily-evaluated thunk so the runtime can catch raised Excel errors.
         if upper_name in _THUNK_ARG_FUNCTIONS and len(node.args) == 1:
@@ -1857,8 +1863,12 @@ class CodeGenerator:
         elif isinstance(node, FunctionCallNode):
             upper_name = normalize_excel_function_name(node.name)
 
+            # NA() emits a raising error literal (xl_raise(XlError.NA)).
+            if upper_name == "NA":
+                funcs.add("XlError")
+                funcs.add("xl_raise")
             # IF, IFERROR, CHOOSE are special - emitted as native Python conditionals
-            if upper_name == "IF":
+            elif upper_name == "IF":
                 funcs.add("XlError")
                 funcs.add("to_bool")
                 funcs.add("xl_raise")
