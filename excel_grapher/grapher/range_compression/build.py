@@ -49,7 +49,11 @@ def build_taco_index(
     graph: DependencyGraph,
     config: TacoBuildConfig | None = None,
 ) -> TacoIndex:
-    """Build a TACO compressed index from `graph` without mutating it."""
+    """Build a TACO compressed index from `graph` without mutating it.
+
+    Uses column- and row-adjacent grouping (column-first) so fill-down and
+    fill-right autofill runs both compress when pattern rules match.
+    """
     cfg = config or TacoBuildConfig()
     index = TacoIndex()
     covered: set[tuple[NodeKey, NodeKey]] = set()

@@ -1,4 +1,9 @@
-"""Optional TACO-style range-pattern compression for dependency graphs."""
+"""Optional TACO-style range-pattern compression for dependency graphs.
+
+Groups consecutive formula cells along a **column** (fill-down) or **row** (fill-right),
+classifies RR / RF / FR / FF / RR-Chain autofill, and builds a parallel compressed
+index without mutating the cell-level graph.
+"""
 
 from __future__ import annotations
 

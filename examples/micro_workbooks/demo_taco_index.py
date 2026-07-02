@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Demonstrate the ``taco_index`` flag on ``taco_patterns.xlsx``.
 
-Builds a dependency graph with an optional TACO range-pattern compression
-index, prints a short summary, and plots the cell-level graph next to the
+Builds a dependency graph with TACO range-pattern compression (column autofill
+demos), prints a short summary, and plots the cell-level graph next to the
 compressed range-pattern graph (NetworkX + Matplotlib).
+
+Row-autofill demos: ``demo_taco_row_index.py`` on ``taco_row_patterns.xlsx``.
 
 Run from the repo root::
 
@@ -165,14 +167,21 @@ def _draw_compressed_graph(ax, graph) -> None:
     ax.axis("off")
 
 
-def plot_side_by_side(cell_graph, index: TacoIndex, *, output: Path | None) -> None:
+def plot_side_by_side(
+    cell_graph,
+    index: TacoIndex,
+    *,
+    output: Path | None,
+    workbook_name: str | None = None,
+) -> None:
     import matplotlib.pyplot as plt
 
     compressed = _build_compressed_digraph(index)
     fig, axes = plt.subplots(1, 2, figsize=(18, 9))
     _draw_cell_graph(axes[0], cell_graph)
     _draw_compressed_graph(axes[1], compressed)
-    fig.suptitle(f"TACO compression — {WORKBOOK.name}", fontsize=14)
+    title_name = workbook_name or WORKBOOK.name
+    fig.suptitle(f"TACO compression — {title_name}", fontsize=14)
     fig.tight_layout()
     if output is not None:
         fig.savefig(output, dpi=150, bbox_inches="tight")

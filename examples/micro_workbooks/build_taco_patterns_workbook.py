@@ -1,12 +1,15 @@
 """Build a demo workbook with one example per TACO compression pattern.
 
-Patterns (head / tail reference style when autofilled down a column):
+Patterns (head / tail reference style when autofilled **down a column**):
 
 - RR: Relative + Relative — e.g. ``=B2*C2`` (both operands shift per row).
 - RF: Relative + Fixed — e.g. ``=SUM(E2:$E$10)`` (head moves, tail pinned).
 - FR: Fixed + Relative — e.g. ``=SUM($G$2:G2)`` (running total / YTD).
 - FF: Fixed + Fixed — e.g. ``=VLOOKUP(J2,$M$2:$N$6,2,FALSE)`` (same table every row).
 - RR-Chain: each row references the cell above in the same column.
+
+Row-autofill counterparts (filled **across a row**) live in
+``build_taco_row_patterns_workbook.py`` → ``taco_row_patterns.xlsx``.
 """
 
 from __future__ import annotations
@@ -53,6 +56,10 @@ def main() -> None:
             (
                 "RR-Chain",
                 "RR special case: each row depends on the cell immediately above (P3=P2+1, …).",
+            ),
+            (
+                "Row fixtures",
+                "See build_taco_row_patterns_workbook.py for the same five patterns filled right.",
             ),
         ],
         start=1,
