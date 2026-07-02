@@ -17,7 +17,6 @@ from excel_grapher.core.address_keys import (
     quote_sheet_if_needed,
     sort_node_keys,
 )
-from excel_grapher.core.excel_function_meta import numpy_array_arg_indices
 from excel_grapher.core.operators_fastpath import MIN_OPERATOR_FASTPATH_CELLS
 from excel_grapher.evaluator.errors import MissingNormalizedFormulaError
 from excel_grapher.evaluator.name_utils import (
@@ -93,27 +92,16 @@ class GenerationParts(TypedDict):
     blank_rects: tuple[BlankRangeRect, ...]
 
 
-# Operators that need wrapper functions for Excel semantics (error propagation)
-_BINARY_OPS = {
-    "+": "xl_add",
-    "-": "xl_sub",
-    "*": "xl_mul",
-    "/": "xl_div",
-    "^": "xl_pow",
-    "=": "xl_eq",
-    "<>": "xl_ne",
-    "<": "xl_lt",
-    ">": "xl_gt",
-    "<=": "xl_le",
-    ">=": "xl_ge",
-}
+# Comparison operators emitted via xl_compare / xl_map_compare.
+_COMPARE_OPS = frozenset({"=", "<>", "<", ">", "<=", ">="})
 
-# Unary operators that need wrapper functions
-_UNARY_OPS = {
-    "-": "xl_neg",
-    "+": "xl_pos",
-    "%": "xl_percent",
-}
+# Binary operators emitted as native Python with coercion helpers.
+_ARITHMETIC_OPS = frozenset({"+", "-", "*", "/", "^"})
+
+# Functions whose single argument is emitted as a lazily-evaluated thunk so the
+# exported runtime can catch raised Excel errors. Mirrors the evaluator's
+# AST-level special cases; other IS functions propagate argument errors there.
+_THUNK_ARG_FUNCTIONS = frozenset({"ISERROR", "ISNA", "ISBLANK"})
 
 
 class CodeGenerator:
@@ -412,7 +400,8 @@ class CodeGenerator:
             return "True" if node.value else "False"
 
         if isinstance(node, ErrorNode):
-            return f"XlError.{node.error.name}"
+            # Error literals raise in the exported error channel.
+            return f"xl_raise(XlError.{node.error.name})"
 
         if isinstance(node, CellRefNode):
             return self._emit_cell_eval(node.address)
@@ -432,19 +421,19 @@ class CodeGenerator:
         raise ValueError(f"Unknown AST node type: {type(node)}")
 
     def _emit_range(self, node: RangeNode) -> str:
-        """Emit a range as a 2D nested list of cell evaluations.
+        """Emit a range as a lazy `Range` value resolved through the context.
 
-        The outer list contains rows, inner lists contain columns.
-        For A1:B3, emits: [[xl_eval(ctx, "S!A1", cell_s_a1), xl_eval(ctx, "S!B1", ...)], ...]
+        For A1:B3, emits: xl_range(ctx, "S!A1:S!B3"). Consumers evaluate cells
+        positionally; unused cells are never evaluated.
         """
-        rows = self._range_addresses_2d(node.start, node.end)
-        row_strs = []
-        for row_addrs in rows:
-            cell_calls = [self._emit_cell_eval(addr) for addr in row_addrs]
-            row_strs.append("[" + ", ".join(cell_calls) + "]")
-        # Model ranges as object-dtype ndarrays so they fit `CellValue` and work
-        # with runtime helpers like `flatten(*args)`.
-        return f"np.array([{', '.join(row_strs)}], dtype=object)"
+        return self._emit_range_address(node.start, node.end)
+
+    def _emit_range_address(self, start: str, end: str) -> str:
+        """Emit an xl_range call for a normalized start/end address pair."""
+        sheet, r1, c1, r2, c2 = self._range_coords(start, end)
+        start_addr = self._format_cell_address(sheet, r1, c1)
+        end_addr = self._format_cell_address(sheet, r2, c2)
+        return f"xl_range(ctx, {repr(f'{start_addr}:{end_addr}')})"
 
     def _emit_cell_eval(self, address: str) -> str:
         normalized = normalize_address(address)
@@ -662,14 +651,14 @@ class CodeGenerator:
                     if start == prev:
                         row_entries.append((start_addr, "xl_cell"))
                     else:
-                        row_entries.append((f"{start_addr}:{end_addr}", "xl_range"))
+                        row_entries.append((f"{start_addr}:{end_addr}", "xl_range_rows"))
                     start = prev = col
                 start_addr = self._format_cell_address(sheet, row, start)
                 end_addr = self._format_cell_address(sheet, row, prev)
                 if start == prev:
                     row_entries.append((start_addr, "xl_cell"))
                 else:
-                    row_entries.append((f"{start_addr}:{end_addr}", "xl_range"))
+                    row_entries.append((f"{start_addr}:{end_addr}", "xl_range_rows"))
 
             col_entries: list[tuple[str, str]] = []
             for col, rows in col_groups.items():
@@ -684,14 +673,14 @@ class CodeGenerator:
                     if start == prev:
                         col_entries.append((start_addr, "xl_cell"))
                     else:
-                        col_entries.append((f"{start_addr}:{end_addr}", "xl_range"))
+                        col_entries.append((f"{start_addr}:{end_addr}", "xl_range_rows"))
                     start = prev = row
                 start_addr = self._format_cell_address(sheet, start, col)
                 end_addr = self._format_cell_address(sheet, prev, col)
                 if start == prev:
                     col_entries.append((start_addr, "xl_cell"))
                 else:
-                    col_entries.append((f"{start_addr}:{end_addr}", "xl_range"))
+                    col_entries.append((f"{start_addr}:{end_addr}", "xl_range_rows"))
 
             entries.extend(row_entries if len(row_entries) <= len(col_entries) else col_entries)
 
@@ -807,10 +796,11 @@ class CodeGenerator:
         if "def " not in blob:
             return []
         names = set(used_xl_functions)
-        names.discard("numpy")
         names.update({"xl_cell", "xl_eval"})
-        if "numpy" in used_xl_functions or "np." in blob or "np.array" in blob:
-            names.add("np")
+        if "xl_range(" in blob:
+            names.add("xl_range")
+        if "xl_raise(" in blob:
+            names.add("xl_raise")
         if "XlError" in blob:
             names.add("XlError")
         if "ExcelRange(" in blob:
@@ -1141,38 +1131,87 @@ class CodeGenerator:
                 constants.add(key)
         return self._apply_input_ranges_override(needed_leaves, constants, input_ranges)
 
+    def _binary_operator_exprs(self, op: str, left: str, right: str) -> tuple[str, str]:
+        """Return `(scalar_expr, array_expr)` for a binary operator over two operands.
+
+        The operand strings are substituted verbatim; callers that emit the
+        array guard pass bound temp-variable names so each operand is rendered
+        (and evaluated) once.
+        """
+        if op == "&":
+            return f"(to_string({left}) + to_string({right}))", f"xl_map_concat({left}, {right})"
+        if op in _ARITHMETIC_OPS:
+            if op in {"+", "-", "*"}:
+                scalar = f"(xl_number({left}) {op} xl_number({right}))"
+            elif op == "/":
+                scalar = (
+                    f"((lambda _ln, _rn: (_ln / _rn if _rn != 0 else xl_raise(XlError.DIV)))"
+                    f"(xl_number({left}), xl_number({right})))"
+                )
+            else:
+                scalar = f"xl_pow_numbers(xl_number({left}), xl_number({right}))"
+            return scalar, f"xl_map_arithmetic({op!r}, {left}, {right})"
+        if op in _COMPARE_OPS:
+            return (
+                f"xl_compare({op!r}, {left}, {right})",
+                f"xl_map_compare({op!r}, {left}, {right})",
+            )
+        raise ValueError(f"Unknown operator: {op}")
+
     def _emit_binary_op(self, node: BinaryOpNode) -> str:
-        """Emit a binary operation."""
+        """Emit a binary operation with inlined scalar operators.
+
+        When operands may be arrays at runtime, the operator branches between
+        broadcast and scalar handling. Operands are bound to temp variables via
+        a lambda so each is evaluated once, keeping generated code linear in the
+        operator-tree depth instead of tripling per nesting level.
+        """
         left = self._emit_ast(node.left)
         right = self._emit_ast(node.right)
         op = node.op
 
-        # Concatenation: & -> xl_concat
-        if op == "&":
-            return f"xl_concat({left}, {right})"
+        if not self._ast_needs_array_operator_branch(node):
+            scalar, _ = self._binary_operator_exprs(op, left, right)
+            return scalar
 
-        # All other operators use wrapper functions for error propagation
-        if op in _BINARY_OPS:
-            func = _BINARY_OPS[op]
-            return f"{func}({left}, {right})"
+        lname = self._next_temp_var()
+        rname = self._next_temp_var()
+        scalar, array = self._binary_operator_exprs(op, lname, rname)
+        guard = f"({array} if (xl_is_array({lname}) or xl_is_array({rname})) else {scalar})"
+        return f"(lambda {lname}, {rname}: {guard})({left}, {right})"
 
-        raise ValueError(f"Unknown operator: {op}")
+    def _unary_scalar_expr(self, op: str, operand: str) -> str:
+        if op == "-":
+            return f"(-xl_number({operand}))"
+        if op == "+":
+            return f"(+xl_number({operand}))"
+        if op == "%":
+            return f"(xl_number({operand}) / 100.0)"
+        raise ValueError(f"Unknown unary operator: {op}")
 
     def _emit_unary_op(self, node: UnaryOpNode) -> str:
-        """Emit a unary operation."""
+        """Emit a unary operation with inlined scalar operators.
+
+        Like `_emit_binary_op`, the operand is bound once when an array branch
+        is possible so the operand is not re-emitted across guard branches.
+        """
         operand = self._emit_ast(node.operand)
         op = node.op
-        if op in _UNARY_OPS:
-            func = _UNARY_OPS[op]
-            return f"{func}({operand})"
-        raise ValueError(f"Unknown unary operator: {op}")
+
+        if not self._ast_needs_array_operator_branch(node):
+            return self._unary_scalar_expr(op, operand)
+
+        name = self._next_temp_var()
+        scalar = self._unary_scalar_expr(op, name)
+        array = f"xl_map_unary({op!r}, {name})"
+        guard = f"({array} if xl_is_array({name}) else {scalar})"
+        return f"(lambda {name}: {guard})({operand})"
 
     def _emit_function_call(self, node: FunctionCallNode) -> str:
         """Emit a function call.
 
-        For functions that need numpy arrays (LOOKUP, VLOOKUP, HLOOKUP, INDEX,
-        MATCH, SUMPRODUCT), range arguments are wrapped with np.array().
-        IF, OFFSET are handled specially.
+        Range arguments pass through as lazy `Range` values; IF, IFERROR/IFNA,
+        CHOOSE, OFFSET, INDEX, ROW/COLUMN/COLUMNS are handled specially.
         """
         func_name = excel_func_to_python(node.name)
         upper_name = normalize_excel_function_name(node.name)
@@ -1220,18 +1259,19 @@ class CodeGenerator:
         if upper_name == "FALSE":
             return "False"
 
-        # Functions that need numpy arrays for their array/table arguments
-        needs_numpy_wrap = numpy_array_arg_indices(upper_name)
+        # NA() is the functional spelling of the #N/A literal: raise in the
+        # export error channel so the code never leaks as a sentinel into a
+        # generic consumer (matching the evaluator's argument error precheck).
+        if upper_name == "NA":
+            return "xl_raise(XlError.NA)"
 
-        emitted_args = []
-        for i, arg in enumerate(node.args):
-            emitted = self._emit_ast(arg)
-            # Wrap range arguments with np.array() for functions that need it
-            # Use dtype=object to preserve original Python types (mixed str/int/float)
-            if i in needs_numpy_wrap and isinstance(arg, RangeNode):
-                emitted = f"np.array({emitted}, dtype=object)"
-            emitted_args.append(emitted)
+        # IS functions must not propagate errors: the argument is passed as a
+        # lazily-evaluated thunk so the runtime can catch raised Excel errors.
+        if upper_name in _THUNK_ARG_FUNCTIONS and len(node.args) == 1:
+            arg_expr = self._emit_ast(node.args[0])
+            return f"{func_name}(lambda: ({arg_expr}))"
 
+        emitted_args = [self._emit_ast(arg) for arg in node.args]
         args = ", ".join(emitted_args)
         return f"{func_name}({args})"
 
@@ -1241,26 +1281,27 @@ class CodeGenerator:
         return f"_t{self._temp_var_counter}"
 
     def _emit_lazy_error_fallback(self, node: FunctionCallNode, name: str) -> str:
-        """Emit IFERROR/IFNA as Python conditionals for lazy fallback evaluation.
+        """Emit IFERROR/IFNA as thunked runtime calls with try/except semantics.
 
-        IFERROR(value, value_if_error) evaluates the fallback only when ``value``
-        is any ``XlError``. IFNA(value, value_if_na) does so only for ``#N/A``.
+        IFERROR(value, value_if_error) evaluates the fallback only when
+        evaluating ``value`` produces any Excel error (raised
+        ``XlErrorException`` or ``XlError`` sentinel). IFNA does so only for
+        ``#N/A`` and re-raises other errors.
         """
         if len(node.args) < 2:
-            return "XlError.VALUE"
+            return "xl_raise(XlError.VALUE)"
 
         value_expr = self._emit_ast(node.args[0])
         fallback_expr = self._emit_ast(node.args[1])
-        var = self._next_temp_var()
 
         if name == "IFERROR":
-            condition = f"isinstance(({var} := {value_expr}), XlError)"
+            func = "xl_iferror"
         elif name == "IFNA":
-            condition = f"(({var} := {value_expr}) == XlError.NA)"
+            func = "xl_ifna"
         else:
             raise ValueError(f"Unsupported lazy error fallback function: {name!r}")
 
-        return f"(({fallback_expr}) if {condition} else {var})"
+        return f"{func}(lambda: ({value_expr}), lambda: ({fallback_expr}))"
 
     def _emit_if(self, node: FunctionCallNode) -> str:
         """Emit IF as a Python conditional expression for lazy evaluation.
@@ -1275,7 +1316,7 @@ class CodeGenerator:
         for breaking circular references that Excel handles via lazy evaluation.
         """
         if len(node.args) < 2:
-            return "XlError.VALUE"
+            return "xl_raise(XlError.VALUE)"
 
         cond_expr = self._emit_ast(node.args[0])
         true_expr = self._emit_ast(node.args[1])
@@ -1285,10 +1326,12 @@ class CodeGenerator:
         # - "FALSE" should behave like False
         # - "0" should produce #VALUE! (per to_bool)
         # We must coerce via to_bool(), and keep lazy branch evaluation.
+        # Erroring conditions propagate: raised errors pass through, and
+        # sentinel coercion failures are re-raised via xl_raise.
         cond_var = self._next_temp_var()
         bool_var = self._next_temp_var()
         return (
-            f"({bool_var} if isinstance(({bool_var} := to_bool(({cond_var} := {cond_expr}))), XlError) "
+            f"(xl_raise({bool_var}) if isinstance(({bool_var} := to_bool(({cond_var} := {cond_expr}))), XlError) "
             f"else (({true_expr}) if {bool_var} else ({false_expr})))"
         )
 
@@ -1296,7 +1339,7 @@ class CodeGenerator:
         if not node.args or (len(node.args) == 1 and isinstance(node.args[0], EmptyArgNode)):
             addr = self._formula_cell_address
             if addr is None:
-                return "XlError.VALUE"
+                return "xl_raise(XlError.VALUE)"
             _sheet, cell = parse_address(addr)
             cell_clean = cell.replace("$", "")
             _col_str, row = fastpyxl.utils.cell.coordinate_from_string(cell_clean)
@@ -1320,7 +1363,7 @@ class CodeGenerator:
         if not node.args or (len(node.args) == 1 and isinstance(node.args[0], EmptyArgNode)):
             addr = self._formula_cell_address
             if addr is None:
-                return "XlError.VALUE"
+                return "xl_raise(XlError.VALUE)"
             _sheet, cell = parse_address(addr)
             cell_clean = cell.replace("$", "")
             col_str, _row = fastpyxl.utils.cell.coordinate_from_string(cell_clean)
@@ -1343,7 +1386,7 @@ class CodeGenerator:
 
     def _emit_columns(self, node: FunctionCallNode) -> str:
         if len(node.args) < 1:
-            return "XlError.VALUE"
+            return "xl_raise(XlError.VALUE)"
 
         arg = node.args[0]
         if isinstance(arg, CellRefNode):
@@ -1369,7 +1412,7 @@ class CodeGenerator:
         via lazy evaluation.
         """
         if len(node.args) < 2:
-            return "XlError.VALUE"
+            return "xl_raise(XlError.VALUE)"
 
         index_expr = self._emit_ast(node.args[0])
         value_exprs = [self._emit_ast(arg) for arg in node.args[1:]]
@@ -1381,16 +1424,16 @@ class CodeGenerator:
         idx_var = self._next_temp_var()
 
         # Build chained conditionals: if idx==1 then val1 else if idx==2 then val2 ...
-        # Start from the innermost (last value or VALUE error for out of bounds)
-        result = "XlError.VALUE"
+        # Start from the innermost (last value or a raised VALUE error when out of bounds)
+        result = "xl_raise(XlError.VALUE)"
         for i, val_expr in reversed(list(enumerate(value_exprs, start=1))):
             result = f"(({val_expr}) if {idx_var} == {i} else ({result}))"
 
-        # Wrap with error/bounds checking
+        # Wrap with error/bounds checking; sentinel index coercions re-raise.
         return (
-            f"({var} if isinstance(({var} := {index_expr}), XlError) "
-            f"else ({idx_var} if isinstance(({idx_var} := to_int({var})), XlError) "
-            f"else XlError.VALUE if {idx_var} < 1 or {idx_var} > {len(value_exprs)} else {result}))"
+            f"(xl_raise({var}) if isinstance(({var} := {index_expr}), XlError) "
+            f"else (xl_raise({idx_var}) if isinstance(({idx_var} := to_int({var})), XlError) "
+            f"else xl_raise(XlError.VALUE) if {idx_var} < 1 or {idx_var} > {len(value_exprs)} else {result}))"
         )
 
     def _is_constant_number(self, node: AstNode) -> bool:
@@ -1441,6 +1484,19 @@ class CodeGenerator:
             and (width_node is None or self._is_constant_number(width_node))
         )
 
+    def _static_offset_is_multicell(self, node: FunctionCallNode) -> bool:
+        """True when a statically resolvable OFFSET produces a multi-cell range."""
+        if not self._can_offset_be_static(node):
+            return False
+        ref_node = node.args[0]
+        assert isinstance(ref_node, (CellRefNode, RangeNode))
+        height_node = node.args[3] if len(node.args) > 3 else None
+        width_node = node.args[4] if len(node.args) > 4 else None
+        base_h, base_w = self._offset_base_shape(ref_node)
+        height = int(self._get_constant_number(height_node)) if height_node is not None else base_h
+        width = int(self._get_constant_number(width_node)) if width_node is not None else base_w
+        return height != 1 or width != 1
+
     def _emit_offset(self, node: FunctionCallNode) -> str:
         """Emit OFFSET function, trying static resolution first.
 
@@ -1451,7 +1507,7 @@ class CodeGenerator:
         """
         if len(node.args) < 3:
             # Invalid OFFSET - need at least reference, rows, cols
-            return "XlError.VALUE"
+            return "xl_raise(XlError.VALUE)"
 
         ref_node = node.args[0]
         rows_node = node.args[1]
@@ -1573,6 +1629,41 @@ class CodeGenerator:
             return extent
         return 1
 
+    def _ast_needs_array_operator_branch(self, node: AstNode) -> bool:
+        """Return whether a subtree can *evaluate to* a range/array at runtime.
+
+        Only array-producing nodes require the operator broadcast branch: ranges,
+        multi-cell `OFFSET`, non-scalar `INDEX` slices, and the pass-through
+        functions (`IF`/`IFERROR`/`IFNA`/`CHOOSE`) when a returned branch is
+        itself an array. Scalar-returning functions (e.g. `SUM`, `MATCH`,
+        `VLOOKUP`) never yield arrays even when their arguments contain ranges,
+        so they take the inlined scalar path without a guard.
+        """
+        if isinstance(node, RangeNode):
+            return True
+        if isinstance(node, BinaryOpNode):
+            return self._ast_needs_array_operator_branch(
+                node.left
+            ) or self._ast_needs_array_operator_branch(node.right)
+        if isinstance(node, UnaryOpNode):
+            return self._ast_needs_array_operator_branch(node.operand)
+        if isinstance(node, FunctionCallNode):
+            upper = normalize_excel_function_name(node.name)
+            if upper == "OFFSET":
+                return not self._can_offset_be_static(node) or self._static_offset_is_multicell(
+                    node
+                )
+            if upper == "INDEX" and node.args and isinstance(node.args[0], RangeNode):
+                return not self._index_range_result_is_scalar(node.args[0], node)
+            if upper in {"IFERROR", "IFNA"}:
+                return any(self._ast_needs_array_operator_branch(arg) for arg in node.args)
+            if upper in {"IF", "CHOOSE"}:
+                # The result is one of the value branches (args[1:]); the
+                # condition/index (args[0]) does not affect array-ness.
+                return any(self._ast_needs_array_operator_branch(arg) for arg in node.args[1:])
+            return False
+        return False
+
     def _note_operators_fastpath_from_ast(self, node: AstNode) -> None:
         if self._max_array_extent_in_ast(node) >= MIN_OPERATOR_FASTPATH_CELLS:
             self._needs_operators_fastpath = True
@@ -1591,7 +1682,7 @@ class CodeGenerator:
 
         if target_row < 1 or target_col < 1:
             # Invalid reference
-            return "XlError.REF"
+            return "xl_raise(XlError.REF)"
 
         target_col_str = fastpyxl.utils.cell.get_column_letter(target_col)
 
@@ -1600,21 +1691,14 @@ class CodeGenerator:
             target_addr = f"{quote_sheet_if_needed(base_sheet)}!{target_col_str}{target_row}"
             return self._emit_cell_eval(target_addr)
         else:
-            # Range reference - emit as 2D array
+            # Range reference - emit as a lazy range like _emit_range does
             end_row = target_row + height - 1
             end_col = target_col + width - 1
             end_col_str = fastpyxl.utils.cell.get_column_letter(end_col)
 
             start_addr = f"{quote_sheet_if_needed(base_sheet)}!{target_col_str}{target_row}"
             end_addr = f"{quote_sheet_if_needed(base_sheet)}!{end_col_str}{end_row}"
-
-            # Generate 2D array like _emit_range does
-            rows_list = self._range_addresses_2d(start_addr, end_addr)
-            row_strs = []
-            for row_addrs in rows_list:
-                cell_calls = [self._emit_cell_eval(addr) for addr in row_addrs]
-                row_strs.append("[" + ", ".join(cell_calls) + "]")
-            return f"np.array([{', '.join(row_strs)}], dtype=object)"
+            return self._emit_range_address(start_addr, end_addr)
 
     def _emit_offset_dynamic(
         self,
@@ -1638,7 +1722,7 @@ class CodeGenerator:
             ref_info = f"({repr(base_sheet)}, {r1}, {c1}, {r2}, {c2})"
         elif isinstance(ref_node, FunctionCallNode) and ref_node.name.upper() == "INDEX":
             if len(ref_node.args) < 1:
-                return "XlError.VALUE"
+                return "xl_raise(XlError.VALUE)"
             base = ref_node.args[0]
             if isinstance(base, CellRefNode):
                 base_sheet, base_cell = parse_address(base.address)
@@ -1651,7 +1735,7 @@ class CodeGenerator:
                 self._offset_runtime_sheets.add(base_sheet)
                 base_ref_info = f"({repr(base_sheet)}, {r1}, {c1}, {r2}, {c2})"
             else:
-                return "XlError.REF"
+                return "xl_raise(XlError.REF)"
 
             row_expr = (
                 "None"
@@ -1667,7 +1751,7 @@ class CodeGenerator:
             ref_info = f"xl_index_ref({base_ref_info}, {row_expr}, {col_expr})"
         else:
             # If reference is not a simple cell, we can't handle it
-            return "XlError.REF"
+            return "xl_raise(XlError.REF)"
 
         rows_expr = self._emit_ast(rows_node)
         cols_expr = self._emit_ast(cols_node)
@@ -1678,7 +1762,7 @@ class CodeGenerator:
 
     def _emit_offset_ref(self, node: FunctionCallNode) -> str:
         if len(node.args) < 3:
-            return "XlError.VALUE"
+            return "xl_raise(XlError.VALUE)"
 
         ref_node = node.args[0]
         rows_node = node.args[1]
@@ -1696,7 +1780,7 @@ class CodeGenerator:
             ref_info = f"({repr(base_sheet)}, {r1}, {c1}, {r2}, {c2})"
         elif isinstance(ref_node, FunctionCallNode) and ref_node.name.upper() == "INDEX":
             if len(ref_node.args) < 1:
-                return "XlError.VALUE"
+                return "xl_raise(XlError.VALUE)"
             base = ref_node.args[0]
             if isinstance(base, CellRefNode):
                 base_sheet, base_cell = parse_address(base.address)
@@ -1707,7 +1791,7 @@ class CodeGenerator:
                 base_sheet, r1, c1, r2, c2 = self._range_coords(base.start, base.end)
                 base_ref_info = f"({repr(base_sheet)}, {r1}, {c1}, {r2}, {c2})"
             else:
-                return "XlError.REF"
+                return "xl_raise(XlError.REF)"
 
             row_expr = (
                 "None"
@@ -1722,7 +1806,7 @@ class CodeGenerator:
             self._needs_index_ref_runtime = True
             ref_info = f"xl_index_ref({base_ref_info}, {row_expr}, {col_expr})"
         else:
-            return "XlError.REF"
+            return "xl_raise(XlError.REF)"
 
         rows_expr = self._emit_ast(rows_node)
         cols_expr = self._emit_ast(cols_node)
@@ -1889,25 +1973,38 @@ class CodeGenerator:
 
         Special markers:
         - "XlError": XlError enum is needed (e.g., error literals like #N/A)
-        - "numpy": numpy is needed for np.array() wrapping of ranges
         """
         funcs: set[str] = set()
 
         if isinstance(node, ErrorNode):
-            # Error literal requires XlError enum
+            # Error literals raise via xl_raise and reference the XlError enum
             funcs.add("XlError")
+            funcs.add("xl_raise")
+        elif isinstance(node, RangeNode):
+            # Ranges emit lazy xl_range(ctx, ...) calls
+            funcs.add("xl_range")
         elif isinstance(node, FunctionCallNode):
             upper_name = normalize_excel_function_name(node.name)
 
+            # NA() emits a raising error literal (xl_raise(XlError.NA)).
+            if upper_name == "NA":
+                funcs.add("XlError")
+                funcs.add("xl_raise")
             # IF, IFERROR, CHOOSE are special - emitted as native Python conditionals
-            if upper_name == "IF":
+            elif upper_name == "IF":
                 funcs.add("XlError")
                 funcs.add("to_bool")
-            elif upper_name == "IFERROR" or upper_name == "IFNA":
+                funcs.add("xl_raise")
+            elif upper_name == "IFERROR":
                 funcs.add("XlError")
+                funcs.add("xl_iferror")
+            elif upper_name == "IFNA":
+                funcs.add("XlError")
+                funcs.add("xl_ifna")
             elif upper_name == "CHOOSE":
                 funcs.add("XlError")
                 funcs.add("to_int")
+                funcs.add("xl_raise")
             elif upper_name == "ROW":
                 funcs.add("xl_row")
                 if node.args:
@@ -1932,6 +2029,8 @@ class CodeGenerator:
             elif upper_name == "OFFSET":
                 if not self._can_offset_be_static(node):
                     funcs.add("xl_offset")
+                elif self._static_offset_is_multicell(node):
+                    funcs.add("xl_range")
             elif (
                 upper_name == "INDEX"
                 and node.args
@@ -1943,35 +2042,44 @@ class CodeGenerator:
             else:
                 funcs.add(excel_func_to_python(node.name))
 
-            # Check if this function needs numpy array wrapping for range args
-            array_arg_indices = numpy_array_arg_indices(upper_name)
-            if array_arg_indices:
-                skip_index_array = (
-                    upper_name == "INDEX"
-                    and node.args
-                    and isinstance(node.args[0], RangeNode)
-                    and self._index_range_result_is_scalar(node.args[0], node)
-                )
-                for i, arg in enumerate(node.args):
-                    if skip_index_array and upper_name == "INDEX":
-                        break
-                    if i in array_arg_indices and isinstance(arg, RangeNode):
-                        funcs.add("numpy")
-                        break
-            for arg in node.args:
+            skip_index_range_arg = (
+                upper_name == "INDEX"
+                and node.args
+                and isinstance(node.args[0], RangeNode)
+                and self._index_range_result_is_scalar(node.args[0], node)
+            )
+            for i, arg in enumerate(node.args):
+                if skip_index_range_arg and i == 0:
+                    continue
                 funcs.update(self._extract_xl_functions(arg))
         elif isinstance(node, BinaryOpNode):
-            # Binary operators use xl_* functions for error propagation
+            needs_array = self._ast_needs_array_operator_branch(node)
+            if needs_array:
+                funcs.add("xl_is_array")
             if node.op == "&":
-                funcs.add("xl_concat")
-            elif node.op in _BINARY_OPS:
-                funcs.add(_BINARY_OPS[node.op])
+                if needs_array:
+                    funcs.add("xl_map_concat")
+                funcs.add("to_string")
+            elif node.op in _ARITHMETIC_OPS:
+                funcs.add("xl_number")
+                if needs_array:
+                    funcs.add("xl_map_arithmetic")
+                if node.op == "^":
+                    funcs.add("xl_pow_numbers")
+                if node.op == "/":
+                    funcs.add("xl_raise")
+                    funcs.add("XlError")
+            elif node.op in _COMPARE_OPS:
+                funcs.add("xl_compare")
+                if needs_array:
+                    funcs.add("xl_map_compare")
             funcs.update(self._extract_xl_functions(node.left))
             funcs.update(self._extract_xl_functions(node.right))
         elif isinstance(node, UnaryOpNode):
-            # Unary operators use xl_* functions for error propagation
-            if node.op in _UNARY_OPS:
-                funcs.add(_UNARY_OPS[node.op])
+            funcs.add("xl_number")
+            if self._ast_needs_array_operator_branch(node):
+                funcs.add("xl_is_array")
+                funcs.add("xl_map_unary")
             funcs.update(self._extract_xl_functions(node.operand))
 
         return funcs
@@ -2178,7 +2286,7 @@ class CodeGenerator:
         public_addresses = frozenset(normalized_targets) | series_public_addresses
 
         targets_entries = self._targets_to_entries(normalized_targets)
-        needs_range_helper = any(handler == "xl_range" for _, handler in targets_entries)
+        needs_range_helper = any(handler == "xl_range_rows" for _, handler in targets_entries)
 
         data_lines_out: list[str] = [
             "from __future__ import annotations",
@@ -2215,7 +2323,7 @@ class CodeGenerator:
 
         runtime_entry_names = ["EvalContext", "coerce_inputs_dict", "xl_cell"]
         if needs_range_helper:
-            runtime_entry_names.append("xl_range")
+            runtime_entry_names.append("xl_range_rows")
         if self._iterate_enabled:
             runtime_entry_names.append("xl_iterative_compute")
         runtime_entry_names.sort()
@@ -2450,9 +2558,16 @@ class CodeGenerator:
             "coerce_inputs_dict",
             "xl_cell",
             "xl_eval",
-            "xl_range",
+            "xl_raise",
             "XlError",
+            "XlErrorException",
         }
+        # Multi-cell targets materialize through the eager range boundary handler.
+        if any(
+            handler == "xl_range_rows"
+            for _, handler in self._targets_to_entries(normalized_targets)
+        ):
+            runtime_symbols.add("xl_range_rows")
         if self._iterate_enabled:
             runtime_symbols.add("xl_iterative_compute")
         include_dep_tracking = self._include_dep_tracking(series_bindings)

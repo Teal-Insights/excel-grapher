@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import cast
+from typing import Any, cast
+
+import pytest
 
 from excel_grapher.evaluator.types import XlError
 from excel_grapher.exporter.codegen import CodeGenerator, GraphLike
@@ -61,9 +63,12 @@ def test_codegen_serializes_xlerror_leaf_values() -> None:
     code = CodeGenerator(cast(GraphLike, graph)).generate(["S!A1"])
     compiled = compile(code, "<generated>", "exec")
     assert compiled is not None
+    assert "XlError.DIV" in code
 
     namespace: dict[str, object] = {}
     exec(code, namespace)
     compute_all = cast(Callable[[], dict[str, object]], namespace["compute_all"])
-    results = compute_all()
-    assert results["S!A1"] == XlError.DIV
+    exception_type = cast("type[BaseException]", namespace["XlErrorException"])
+    with pytest.raises(exception_type) as exc_info:
+        compute_all()
+    assert cast(Any, exc_info.value).code == XlError.DIV

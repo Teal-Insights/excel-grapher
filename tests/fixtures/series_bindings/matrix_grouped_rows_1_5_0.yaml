@@ -1,0 +1,51 @@
+schema_version: "1.5.0"
+workbook: grouped_inputs.xlsx
+series:
+  - id: discrete_risks
+    sheet: Inputs
+    data_range: Inputs!C2:D8
+    layout: matrix
+    exclude_rows: [2, "5:6"]
+    input:
+      setter:
+        name: set_discrete_risks
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - concept: SCENARIO
+          role: key
+          scope: cell
+          bind:
+            kind: row_label
+            label_column: A
+            include: [2, 6]
+            fill: true
+            read: string
+        - concept: SHOCK_TYPE
+          role: key
+          scope: cell
+          bind:
+            kind: row_label
+            label_column: A
+            skip: [2, 6]
+            read: string
+        - concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 1
+            read: int
+    key:
+      - SCENARIO
+      - SHOCK_TYPE
+      - TIME_PERIOD
+    notes: >-
+      Grouped-row matrix: SCENARIO band headers in column A (rows 2 and 6)
+      fill down over their bands; SHOCK_TYPE sub-labels share column A on the
+      data rows; header and separator rows are excluded from the data set.

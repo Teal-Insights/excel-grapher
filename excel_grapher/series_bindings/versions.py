@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-SUPPORTED_SCHEMA_VERSIONS: frozenset[str] = frozenset({"1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"})
+SUPPORTED_SCHEMA_VERSIONS: frozenset[str] = frozenset(
+    {"1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0"}
+)
 
 IMPLEMENTED_BIND_KINDS: frozenset[str] = frozenset(
     {
@@ -10,6 +12,7 @@ IMPLEMENTED_BIND_KINDS: frozenset[str] = frozenset(
         "cell",
         "column_header",
         "row_label",
+        "value_map",
         "constant",
     }
 )

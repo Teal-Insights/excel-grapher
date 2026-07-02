@@ -17,6 +17,7 @@ from .operators_fastpath import (
     try_fastpath_concat_array,
 )
 from .operators_reference import (
+    apply_arithmetic,
     broadcast_pair,
     compare_scalars,
     concat_scalars,
@@ -83,25 +84,7 @@ def _xl_arithmetic(
         return ln
     if isinstance(rn, XlError):
         return rn
-    if op == "+":
-        return ln + rn
-    if op == "-":
-        return ln - rn
-    if op == "*":
-        return ln * rn
-    if op == "/":
-        if rn == 0:
-            return XlError.DIV
-        return ln / rn
-    if op == "^":
-        try:
-            value = ln**rn
-        except (ValueError, OverflowError):
-            return XlError.NUM
-        if isinstance(value, complex):
-            return XlError.NUM
-        return value
-    raise ValueError(f"Unknown arithmetic operator: {op}")
+    return apply_arithmetic(op, ln, rn)
 
 
 def _concat_scalars(left: CellValue, right: CellValue) -> str:

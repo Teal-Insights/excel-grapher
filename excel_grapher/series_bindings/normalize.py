@@ -9,6 +9,7 @@ _STRUCTURAL_FIELDS = frozenset(
         "id",
         "sheet",
         "data_range",
+        "exclude_rows",
         "layout",
         "structure",
         "key",

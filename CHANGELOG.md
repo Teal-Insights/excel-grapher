@@ -7,6 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v2.0.0 (2026-07-02)
+
+### Bug Fixes
+
+- **exporter**: Raise NA() as an error literal to preserve parity
+  ([#318](https://github.com/Teal-Insights/excel-grapher/pull/318),
+  [`9c9c9b7`](https://github.com/Teal-Insights/excel-grapher/commit/9c9c9b7e2ab6fddf182bf054255408330752d837))
+
+### Documentation
+
+- **parity**: Correct list of thunked error-consuming functions
+  ([#318](https://github.com/Teal-Insights/excel-grapher/pull/318),
+  [`9c9c9b7`](https://github.com/Teal-Insights/excel-grapher/commit/9c9c9b7e2ab6fddf182bf054255408330752d837))
+
+### Features
+
+- Add export runtime scaffolding ([#318](https://github.com/Teal-Insights/excel-grapher/pull/318),
+  [`9c9c9b7`](https://github.com/Teal-Insights/excel-grapher/commit/9c9c9b7e2ab6fddf182bf054255408330752d837))
+
+- Inline operators in exported codegen
+  ([#318](https://github.com/Teal-Insights/excel-grapher/pull/318),
+  [`9c9c9b7`](https://github.com/Teal-Insights/excel-grapher/commit/9c9c9b7e2ab6fddf182bf054255408330752d837))
+
+- Migrate exported range consumers onto lazy Range
+  ([#318](https://github.com/Teal-Insights/excel-grapher/pull/318),
+  [`9c9c9b7`](https://github.com/Teal-Insights/excel-grapher/commit/9c9c9b7e2ab6fddf182bf054255408330752d837))
+
+- Pythonic exported runtime — lazy ranges and raise-based errors
+  ([#318](https://github.com/Teal-Insights/excel-grapher/pull/318),
+  [`9c9c9b7`](https://github.com/Teal-Insights/excel-grapher/commit/9c9c9b7e2ab6fddf182bf054255408330752d837))
+
+- Raise Excel errors as exceptions in exported code
+  ([#318](https://github.com/Teal-Insights/excel-grapher/pull/318),
+  [`9c9c9b7`](https://github.com/Teal-Insights/excel-grapher/commit/9c9c9b7e2ab6fddf182bf054255408330752d837))
+
+### Performance Improvements
+
+- **exporter**: Bind operands once in array-operator guards
+  ([#318](https://github.com/Teal-Insights/excel-grapher/pull/318),
+  [`9c9c9b7`](https://github.com/Teal-Insights/excel-grapher/commit/9c9c9b7e2ab6fddf182bf054255408330752d837))
+
+- **exporter**: Only guard operands that can evaluate to arrays
+  ([#318](https://github.com/Teal-Insights/excel-grapher/pull/318),
+  [`9c9c9b7`](https://github.com/Teal-Insights/excel-grapher/commit/9c9c9b7e2ab6fddf182bf054255408330752d837))
+
+### Refactoring
+
+- **export-runtime**: Drop dead code in export runtime
+  ([#318](https://github.com/Teal-Insights/excel-grapher/pull/318),
+  [`9c9c9b7`](https://github.com/Teal-Insights/excel-grapher/commit/9c9c9b7e2ab6fddf182bf054255408330752d837))
+
+- **export-runtime**: Use canonical sheet-name quoting in OFFSET
+  ([#318](https://github.com/Teal-Insights/excel-grapher/pull/318),
+  [`9c9c9b7`](https://github.com/Teal-Insights/excel-grapher/commit/9c9c9b7e2ab6fddf182bf054255408330752d837))
+
+### Testing
+
+- Align dep-tracking baseline assertion with regenerated fixture
+  ([#318](https://github.com/Teal-Insights/excel-grapher/pull/318),
+  [`9c9c9b7`](https://github.com/Teal-Insights/excel-grapher/commit/9c9c9b7e2ab6fddf182bf054255408330752d837))
+
+- Satisfy export runtime hook checks
+  ([#318](https://github.com/Teal-Insights/excel-grapher/pull/318),
+  [`9c9c9b7`](https://github.com/Teal-Insights/excel-grapher/commit/9c9c9b7e2ab6fddf182bf054255408330752d837))
+
+
+## v1.2.0 (2026-07-02)
+
+### Documentation
+
+- **user_guide**: Grouped-row matrix geometry semantics and decision table
+  ([#321](https://github.com/Teal-Insights/excel-grapher/pull/321),
+  [`e71d121`](https://github.com/Teal-Insights/excel-grapher/commit/e71d121b307fb7e7b9559e68b13e9d90dfe730cb))
+
+### Features
+
+- **series_bindings**: Grouped-row matrix geometry (schema 1.5.0)
+  ([#321](https://github.com/Teal-Insights/excel-grapher/pull/321),
+  [`e71d121`](https://github.com/Teal-Insights/excel-grapher/commit/e71d121b307fb7e7b9559e68b13e9d90dfe730cb))
+
+### Refactoring
+
+- **grapher**: Make TACO index a derived artifact, not graph state
+  ([`6370794`](https://github.com/Teal-Insights/excel-grapher/commit/637079425e6402aff6a6b5d1ec53becb66dd380d))
+
+
 ## v1.1.0 (2026-06-27)
 
 ### Features

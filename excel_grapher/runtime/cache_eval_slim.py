@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import cast
 
-from excel_grapher.core import CellValue
+from excel_grapher.core import CellValue, XlError, XlErrorException
 
 from .cache import xl_circular_reference
 from .cache_context import EvalContextBase
@@ -20,6 +20,13 @@ __all__ = [
 EvalContext = EvalContextBase
 
 
+def _raise_if_error_value(value: CellValue) -> CellValue:
+    """Surface Excel error values as raised exceptions at the cell boundary."""
+    if isinstance(value, XlError):
+        raise XlErrorException(value)
+    return value
+
+
 def _evaluate_address(
     ctx: EvalContextBase,
     address: str,
@@ -27,9 +34,13 @@ def _evaluate_address(
     *,
     preserve_structural_blank: bool = False,
 ) -> CellValue:
-    """Shared evaluation path without dependency recording (slim export scaffold)."""
+    """Shared evaluation path without dependency recording (slim export scaffold).
+
+    Excel error values raise `XlErrorException`; the raising cell's error code
+    is cached so re-reads raise without re-evaluating.
+    """
     if address in ctx.cache:
-        return ctx.cache[address]
+        return _raise_if_error_value(ctx.cache[address])
 
     if address in ctx.computing:
         if ctx.iterative_enabled:
@@ -39,19 +50,23 @@ def _evaluate_address(
     if address in ctx.inputs:
         value = ctx.inputs[address]
         ctx.cache[address] = value
-        return value
+        return _raise_if_error_value(value)
 
     fn = obtain_fn()
 
     ctx.computing.add(address)
     try:
-        value = fn(ctx)
+        try:
+            value = fn(ctx)
+        except XlErrorException as exc:
+            ctx.cache[address] = exc.code
+            raise
         if value is None and not (
             preserve_structural_blank and getattr(fn, "__structural_blank__", False)
         ):
             value = 0
         ctx.cache[address] = value
-        return value
+        return _raise_if_error_value(value)
     finally:
         ctx.computing.discard(address)
 

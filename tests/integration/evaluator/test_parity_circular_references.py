@@ -7,7 +7,7 @@ Builds small graphs with circular formulas and exercises `FormulaEvaluator`,
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import pytest
 
@@ -17,9 +17,6 @@ from excel_grapher.evaluator.evaluator import FormulaEvaluator
 from excel_grapher.exporter.codegen import CodeGenerator
 from excel_grapher.runtime.cache import CircularReferenceWarning
 from tests.integration.utils.parity_harness import exec_generated_code
-
-if TYPE_CHECKING:
-    import numpy as np
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -74,8 +71,8 @@ def test_parity_indirect_cycle_returns_zero() -> None:
 
     assert evaluator_result == {"S!A1": 0, "S!B1": 0}
     if "S!A1:S!B1" in generated_result:
-        result = cast("np.ndarray", generated_result["S!A1:S!B1"])
-        assert result.tolist() == [[0, 0]]
+        result = cast("list[list[float]]", generated_result["S!A1:S!B1"])
+        assert result == [[0, 0]]
     else:
         assert generated_result == {"S!A1": 0, "S!B1": 0}
 
@@ -118,8 +115,8 @@ def test_iterative_mutual_cycle_converges_with_parity() -> None:
     compute_all = cast(Callable[[], dict[str, Any]], ns["compute_all"])
     generated_raw = compute_all()
     if "S!A1:S!B1" in generated_raw:
-        result = cast("np.ndarray", generated_raw["S!A1:S!B1"])
-        generated_result = {"S!A1": result.tolist()[0][0], "S!B1": result.tolist()[0][1]}
+        result = cast("list[list[float]]", generated_raw["S!A1:S!B1"])
+        generated_result = {"S!A1": result[0][0], "S!B1": result[0][1]}
     else:
         generated_result = cast("dict[str, float]", generated_raw)
 

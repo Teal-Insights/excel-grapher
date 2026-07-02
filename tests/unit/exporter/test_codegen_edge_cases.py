@@ -148,9 +148,8 @@ class TestMissingCellReferences:
         gen = CodeGenerator(graph)
         code = gen.generate(["S!B1"])
 
-        # Missing cells are evaluated via xl_cell() and must raise KeyError.
-        assert "xl_cell(ctx, 'S!A2')" in code
-        assert "xl_cell(ctx, 'S!A3')" in code
+        # Ranges resolve lazily; missing cells must still raise KeyError when reduced.
+        assert "xl_range(ctx, 'S!A1:S!A3')" in code
 
         namespace: dict = {}
         exec(code, namespace)
@@ -297,7 +296,7 @@ class TestErrorHandling:
     """Tests for error value handling."""
 
     def test_division_by_zero(self):
-        """Division by zero returns XlError.DIV (Excel semantics)."""
+        """Division by zero raises XlErrorException with the DIV code."""
         graph = _make_graph(
             _make_node("S!A1", None, 10.0),
             _make_node("S!B1", None, 0.0),
@@ -308,24 +307,25 @@ class TestErrorHandling:
 
         namespace: dict = {}
         exec(code, namespace)
-        # xl_div returns XlError.DIV for division by zero (Excel semantics)
-        result = namespace["compute_all"]()
-        assert result["S!C1"] == namespace["XlError"].DIV
+        with pytest.raises(namespace["XlErrorException"]) as exc_info:
+            namespace["compute_all"]()
+        assert exc_info.value.code == namespace["XlError"].DIV
 
     def test_error_literal_in_formula(self):
-        """Formula contains error literal."""
+        """Formula containing an error literal raises the matching code."""
         graph = _make_graph(
             _make_node("S!A1", "=#N/A", None),
         )
         gen = CodeGenerator(graph)
         code = gen.generate(["S!A1"])
 
-        assert "XlError.NA" in code
+        assert "xl_raise(XlError.NA)" in code
 
         namespace: dict = {}
         exec(code, namespace)
-        result = namespace["compute_all"]()
-        assert result["S!A1"] == namespace["XlError"].NA
+        with pytest.raises(namespace["XlErrorException"]) as exc_info:
+            namespace["compute_all"]()
+        assert exc_info.value.code == namespace["XlError"].NA
 
 
 class TestOffsetFunction:
@@ -433,7 +433,7 @@ class TestOffsetFunction:
         assert result["S!B1"] == 10.0
 
     def test_offset_invalid_reference(self):
-        """OFFSET that results in invalid reference returns error."""
+        """OFFSET that results in an invalid reference raises the REF code."""
         graph = _make_graph(
             _make_node("S!A1", None, 10.0),
             # OFFSET(A1, -1, 0) -> invalid (row 0)
@@ -444,8 +444,9 @@ class TestOffsetFunction:
 
         namespace: dict = {}
         exec(code, namespace)
-        result = namespace["compute_all"]()
-        assert result["S!B1"] == namespace["XlError"].REF
+        with pytest.raises(namespace["XlErrorException"]) as exc_info:
+            namespace["compute_all"]()
+        assert exc_info.value.code == namespace["XlError"].REF
 
     def test_offset_with_formulas(self):
         """OFFSET works with formula cells."""

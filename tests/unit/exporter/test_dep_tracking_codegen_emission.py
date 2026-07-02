@@ -6,9 +6,9 @@ Non-iterative exports without input-direction series bindings omit ``deps`` /
 
 Minimal non-iterative export baseline (``S!A1`` leaf + ``S!B1`` formula):
 
-- **470 total lines**; embedded runtime **400 lines** (~85% of export)
+- **488 total lines**; embedded runtime **418 lines** (~86% of export)
 - **0 dep-tracking lines**
-- **54 cache-eval scaffold lines** (``_evaluate_address``, ``xl_cell``, ``xl_eval``)
+- **62 cache-eval scaffold lines** (``_evaluate_address``, ``xl_cell``, ``xl_eval``)
 
 Iterative exports and series bindings with input setters retain the full scaffold.
 """
@@ -76,7 +76,7 @@ def test_dep_tracking_baseline_fixture_matches_schema() -> None:
     metrics = document["minimal_non_iterative_export"]
     assert isinstance(metrics, dict)
     assert metrics["dep_tracking_lines"] == 0
-    assert metrics["embedded_runtime_lines"] == 400
+    assert metrics["embedded_runtime_lines"] == 418
     targets = document["sprint2_targets"]
     assert targets["dep_tracking_lines"] == 0
     assert targets["cache_eval_scaffold_line_budget"] == SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET
@@ -146,4 +146,4 @@ def test_series_binding_export_retains_dep_tracking_and_setters(
 
 def test_dep_tracking_gate_contract_documents_required_modes() -> None:
     """Inventory: slim vs full emission modes."""
-    assert SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET == 54
+    assert SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET == 62
