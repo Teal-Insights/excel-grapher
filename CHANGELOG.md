@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.2.0 (2026-07-02)
+
+### Documentation
+
+- **user_guide**: Grouped-row matrix geometry semantics and decision table
+  ([#321](https://github.com/Teal-Insights/excel-grapher/pull/321),
+  [`e71d121`](https://github.com/Teal-Insights/excel-grapher/commit/e71d121b307fb7e7b9559e68b13e9d90dfe730cb))
+
+### Features
+
+- **series_bindings**: Grouped-row matrix geometry (schema 1.5.0)
+  ([#321](https://github.com/Teal-Insights/excel-grapher/pull/321),
+  [`e71d121`](https://github.com/Teal-Insights/excel-grapher/commit/e71d121b307fb7e7b9559e68b13e9d90dfe730cb))
+
+### Refactoring
+
+- **grapher**: Make TACO index a derived artifact, not graph state
+  ([`6370794`](https://github.com/Teal-Insights/excel-grapher/commit/637079425e6402aff6a6b5d1ec53becb66dd380d))
+
+
 ## v1.1.0 (2026-06-27)
 
 ### Features
