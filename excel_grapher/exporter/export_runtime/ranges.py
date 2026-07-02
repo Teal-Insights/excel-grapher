@@ -147,10 +147,6 @@ class Range:
         nrows, ncols = self.shape
         return [[self.value_at(r, c) for c in range(1, ncols + 1)] for r in range(1, nrows + 1)]
 
-    def tolist(self) -> list[list[CellValue]]:
-        """Materialize the range as nested row lists of raw values."""
-        return self.rows_raw()
-
     def iter_values(self) -> Iterator[CellValue]:
         """Yield values in deterministic row-major order."""
         nrows, ncols = self.shape
