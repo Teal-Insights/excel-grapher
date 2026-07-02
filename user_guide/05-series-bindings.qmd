@@ -165,7 +165,8 @@ df = pd.DataFrame({"TIME_PERIOD": [4, 5], "OBS_VALUE": [7.5, 8.0]})
 set_borvelia_primary_balance(ctx, df)
 ```
 
-`layout: matrix` setters are **not** implemented yet; matrix-shaped input is out of scope.
+`layout: matrix` setters accept records or a tidy DataFrame with all `key` fields plus the measure
+concept; positional 1D measure values are rejected for matrix bindings.
 
 ### Record dicts
 
@@ -222,7 +223,8 @@ Optional:
 | `cell` | series | **supported** | Fixed address (e.g. country in `A2`) |
 | `column_header` | cell | **supported** | Header row for the data column |
 | `row_label` | series/cell | **supported** | Label text on the data row |
-| `row_hierarchy` | cell | **schema only** | Inferred hierarchy from row labels; not supported by resolver/codegen |
+| `value_map` | cell | **supported** | Key rows or columns by manifest values (1.5.0) |
+| `row_hierarchy` | cell | **schema only** | Inferred hierarchy from row labels; superseded by explicit grouped-row geometry (1.5.0) |
 | `constant` | series | **supported** | Fixed scalar (e.g. scalar layout key) |
 
 Normalization: `strip`, `strip_trailing_unit` (removes trailing `(…)` unit clauses from indicator text).
@@ -291,6 +293,151 @@ set_macro_matrix(ctx, [
     {"INDICATOR": "Inflation", "TIME_PERIOD": 2025, "OBS_VALUE": 2.8},
 ])
 ```
+
+## Grouped-row matrix geometry (1.5.0)
+
+The dense matrix above assumes every cell-scoped key is read from a label **directly adjacent** to
+the data cell: `row_label` immediately left, `column_header` immediately above. Schema **1.5.0**
+adds explicit geometry for banded blocks where that contract does not hold — a group label appears
+once per band and sub-rows carry a second row dimension:
+
+```text
+        A                     C       D
+1                             2024    2025
+2       Paris
+3       Revenue               1.1     1.2
+4       Primary expenditure   2.1     2.2
+5
+6       Moderate
+7       Revenue               3.1     3.2
+8       Primary expenditure   4.1     4.2
+```
+
+All geometry is declared explicitly in the manifest — there is no indentation or formatting
+inference (which is why the heuristic `row_hierarchy` bind remains schema-only).
+
+### Label sources: `skip`, `include`, `fill`, `missing`
+
+`row_label` and `column_header` binds accept four optional fields:
+
+- **`skip`** / **`include`** — restrict which rows (or header columns) are **label sources** for
+  this dimension. `skip` lists rows that are *not* sources; `include` lists the *only* sources.
+  They are mutually exclusive. Row specs are 1-based integers or inclusive `"first:last"` strings;
+  column specs are letters (`"C"`, `"C:D"`). Quote range strings — YAML parses a bare `[3:4]` as a
+  mapping, not a string.
+- **`fill`** — when `true`, a data row (or column) whose own label source is skipped or empty
+  inherits the nearest non-skipped, non-empty label **above** it (`row_label`) or to its **left**
+  (`column_header`). Because merged cells store their value only in the anchor cell, `fill: true`
+  also covers merged group headers with no further configuration.
+- **`missing`** — what to do when no source label exists for a data cell: `error` (default) fails
+  resolution with `bind_resolution_failed`; `null` keys the cell on `None`. YAML `null` is accepted
+  as a spelling of `"null"`. `None` keys participate in the composite key and leaf index like any
+  other value — callers pass `None` in that field to match.
+
+Two key dimensions may bind the **same** label column: in the banded sheet above, `SCENARIO` reads
+only the band header rows and fills down, while `SHOCK_TYPE` reads everything else:
+
+```yaml
+schema_version: "1.5.0"
+workbook: grouped_inputs.xlsx
+series:
+  - id: discrete_risks
+    sheet: Inputs
+    data_range: Inputs!C2:D8
+    layout: matrix
+    exclude_rows: [2, "5:6"]
+    input:
+      setter:
+        name: set_discrete_risks
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind: {kind: data_cell, read: float}
+      dimensions:
+        - concept: SCENARIO
+          role: key
+          scope: cell
+          bind:
+            kind: row_label
+            label_column: A
+            include: [2, 6]     # band header rows are the only label sources
+            fill: true          # sub-rows inherit the band label above
+            read: string
+        - concept: SHOCK_TYPE
+          role: key
+          scope: cell
+          bind:
+            kind: row_label
+            label_column: A
+            skip: [2, 6]        # band header rows are not sub-labels
+            read: string
+        - concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind: {kind: column_header, header_row: 1, read: int}
+    key: [SCENARIO, SHOCK_TYPE, TIME_PERIOD]
+```
+
+This emits **one** `set_discrete_risks` accepting the full composite key — no per-band shards with
+group names smuggled through `series_context`:
+
+```python
+set_discrete_risks(ctx, [
+    {"SCENARIO": "Paris", "SHOCK_TYPE": "Revenue", "TIME_PERIOD": 2024, "OBS_VALUE": 9.9},
+])
+```
+
+For the simpler sparse/merged variant — group labels in their own column, blank (or merge-covered)
+on sub-rows — `fill: true` alone suffices; no `skip`/`include` lists are needed because emptiness
+already identifies the non-source rows.
+
+### Data membership: `exclude_rows`
+
+Which rows count as **data** is a series-level concern, separate from label geometry. By default
+resolution keeps cells that are graph input leaves, so unreferenced decorative rows drop out
+automatically. But a formula spanning the block (a `SUM` or a lookup table array) makes embedded
+blank rows graph leaves too. `exclude_rows` force-drops rows that are never data:
+
+- In the example, rows 2 and 6 (band headers) and row 5 (separator) are excluded even though the
+  block-wide `SUM` references them.
+- Excluded rows can still serve as **label sources** — `SCENARIO` reads its band labels from
+  excluded rows 2 and 6. Label reads go through the workbook, not the graph.
+- Without `exclude_rows`, an unlabeled row fails resolution loudly under `missing: error` (the
+  `SHOCK_TYPE` bind cannot label it) instead of mis-keying a record — configure nothing and you
+  get an error, not corruption.
+
+### Hardcoded keys: `value_map`
+
+When labels are absent from the sheet entirely (or unreliable), key rows or columns by manifest
+values. The axis is inferred from spec syntax — row specs (`3`, `"3:4"`) key data rows, column
+specs (`"C"`, `"C:D"`) key data columns; mixing axes or assigning one row to two values is a
+validation error (`invalid_bind_geometry`):
+
+```yaml
+- concept: SCENARIO
+  role: key
+  scope: cell
+  bind:
+    kind: value_map
+    values:
+      Paris: "3:4"
+      Moderate: [7, 8]     # lists allow disjoint rows, e.g. repeated sub-labels
+```
+
+`value_map` shares the `missing` policy: a data row covered by no entry is an error by default, or
+`None`-keyed with `missing: null`. Map keys are coerced through `read` (and `concept_scheme`
+dtypes) like `constant` values; keys within one bind must share one scalar type.
+
+### Choosing a mechanism
+
+| Sheet geometry | Mechanism |
+|----------------|-----------|
+| Dense block, labels directly adjacent | plain `row_label` / `column_header` |
+| Group labels merged or sparse in their own column | `fill: true` |
+| Group headers interleaved with sub-labels in one column | `skip`/`include` + `fill: true` |
+| Labels absent from the sheet | `value_map` |
+| Referenced non-data rows (headers, separators, subtotals) | `exclude_rows` |
 
 ## Boolean and datetime types (1.4.0)
 
@@ -377,6 +524,7 @@ Generated code imports `datetime` and emits `datetime.datetime(...)` literals on
 | **1.2.0** | Optional `input` / `output` direction blocks and output `compute_*` functions. |
 | **1.3.0** | `row_series` renamed to `series` (no resolver/codegen change). Legacy `row_series` accepted at load time. |
 | **1.4.0** | `bool` and `datetime` read modes and dtypes; ISO date strings in manifest constants. |
+| **1.5.0** | Grouped-row matrix geometry: `skip`/`include`/`fill`/`missing` on `row_label` and `column_header` binds, the `value_map` bind kind, and series-level `exclude_rows`. |
 
 ## Validation and codegen closure
 

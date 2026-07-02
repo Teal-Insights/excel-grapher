@@ -19,7 +19,8 @@ FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
 
 
 def test_supported_schema_versions() -> None:
-    assert frozenset({"1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"}) == SUPPORTED_SCHEMA_VERSIONS
+    expected = frozenset({"1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0"})
+    assert expected == SUPPORTED_SCHEMA_VERSIONS
 
 
 def test_validate_explicit_matrix_no_implementation_warnings(tmp_path: Path) -> None:

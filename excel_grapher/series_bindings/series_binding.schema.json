@@ -9,8 +9,8 @@
   "properties": {
     "schema_version": {
       "type": "string",
-      "enum": ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"],
-      "description": "Schema version for tooling and migrations. 1.0.0–1.2.0: row_series and scalar (fully supported). 1.1.0: adds matrix layout and row_hierarchy bind (matrix supported with explicit binds; row_hierarchy schema-valid only). 1.2.0: optional input/output direction blocks and output compute functions. 1.3.0: row_series renamed to series layout; load-time normalization accepts legacy row_series. 1.4.0: adds bool and datetime read modes and dtypes for dimensions and constants (ISO 8601 date strings in manifests)."
+      "enum": ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0"],
+      "description": "Schema version for tooling and migrations. 1.0.0–1.2.0: row_series and scalar (fully supported). 1.1.0: adds matrix layout and row_hierarchy bind (matrix supported with explicit binds; row_hierarchy schema-valid only). 1.2.0: optional input/output direction blocks and output compute functions. 1.3.0: row_series renamed to series layout; load-time normalization accepts legacy row_series. 1.4.0: adds bool and datetime read modes and dtypes for dimensions and constants (ISO 8601 date strings in manifests). 1.5.0: grouped-row matrix geometry — skip/include/fill/missing on row_label and column_header binds, the value_map bind kind, and series-level exclude_rows."
     },
     "workbook": {
       "type": "string",
@@ -68,6 +68,23 @@
         { "type": "null" }
       ]
     },
+    "RowSpec": {
+      "description": "One 1-based row index, or an inclusive row range string like 3:8.",
+      "oneOf": [
+        { "type": "integer", "minimum": 1 },
+        { "type": "string", "pattern": "^[1-9][0-9]*(:[1-9][0-9]*)?$" }
+      ]
+    },
+    "ColumnSpec": {
+      "type": "string",
+      "pattern": "^[A-Z]{1,3}(:[A-Z]{1,3})?$",
+      "description": "One column letter, or an inclusive column range string like C:D."
+    },
+    "MissingPolicy": {
+      "description": "What to do when no source label exists for a data cell: error (default) fails resolution; null keys the cell on None. YAML null is accepted as a spelling of \"null\".",
+      "enum": ["error", "null", null],
+      "default": "error"
+    },
     "ReadAs": {
       "type": "string",
       "enum": ["string", "int", "float", "number", "bool", "datetime", "auto"],
@@ -118,6 +135,7 @@
         { "$ref": "#/$defs/BindCell" },
         { "$ref": "#/$defs/BindColumnHeader" },
         { "$ref": "#/$defs/BindRowLabel" },
+        { "$ref": "#/$defs/BindValueMap" },
         { "$ref": "#/$defs/BindRowHierarchy" },
         { "$ref": "#/$defs/BindConstant" }
       ]
@@ -146,6 +164,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "header_row"],
+      "not": { "required": ["skip", "include"] },
       "properties": {
         "kind": { "const": "column_header" },
         "header_row": {
@@ -153,6 +172,22 @@
           "minimum": 1,
           "description": "1-based row index containing column headers for the data columns."
         },
+        "skip": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ColumnSpec" },
+          "description": "Columns in header_row that are not label sources for this dimension. Mutually exclusive with include."
+        },
+        "include": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ColumnSpec" },
+          "description": "The only columns in header_row that are label sources for this dimension. Mutually exclusive with skip."
+        },
+        "fill": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, a data column whose header source is skipped or empty inherits the nearest non-skipped, non-empty header to its left."
+        },
+        "missing": { "$ref": "#/$defs/MissingPolicy" },
         "read": { "$ref": "#/$defs/ReadAs" },
         "normalize": { "$ref": "#/$defs/Normalize" }
       }
@@ -161,12 +196,61 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "label_column"],
+      "not": { "required": ["skip", "include"] },
       "description": "Read the label on the same row as the data cell from label_column (typical for indicator text in column A).",
       "properties": {
         "kind": { "const": "row_label" },
         "label_column": { "$ref": "#/$defs/ColumnLetter" },
+        "skip": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/RowSpec" },
+          "description": "Rows in label_column that are not label sources for this dimension (e.g. group header rows for a sub-label key). Mutually exclusive with include."
+        },
+        "include": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/RowSpec" },
+          "description": "The only rows in label_column that are label sources for this dimension (e.g. group header rows for a band key). Mutually exclusive with skip."
+        },
+        "fill": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, a data row whose label source is skipped or empty inherits the nearest non-skipped, non-empty label above it."
+        },
+        "missing": { "$ref": "#/$defs/MissingPolicy" },
         "read": { "$ref": "#/$defs/ReadAs" },
         "normalize": { "$ref": "#/$defs/Normalize" }
+      }
+    },
+    "BindValueMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "values"],
+      "description": "Key data rows or columns by manifest values when labels are absent from the sheet. Axis is inferred from spec syntax: row specs (3, 3:4) key data rows; column specs (C, C:D) key data columns. Map keys within one bind must share one scalar type.",
+      "properties": {
+        "kind": { "const": "value_map" },
+        "values": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "oneOf": [
+              { "$ref": "#/$defs/RowSpec" },
+              { "$ref": "#/$defs/ColumnSpec" },
+              {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "oneOf": [
+                    { "$ref": "#/$defs/RowSpec" },
+                    { "$ref": "#/$defs/ColumnSpec" }
+                  ]
+                }
+              }
+            ]
+          },
+          "description": "Mapping from dimension value to the row or column specs it covers."
+        },
+        "missing": { "$ref": "#/$defs/MissingPolicy" },
+        "read": { "$ref": "#/$defs/ReadAs" }
       }
     },
     "BindRowHierarchy": {
@@ -365,6 +449,11 @@
         "layout": {
           "$ref": "#/$defs/Layout",
           "description": "Optional analyst-facing layout intent; triggers layout-specific schema and validation rules when set."
+        },
+        "exclude_rows": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/RowSpec" },
+          "description": "Rows within data_range that are never data (e.g. group header or separator rows referenced by lookup formulas). Applied before graph-leaf intersection."
         },
         "editable": {
           "type": "boolean",
