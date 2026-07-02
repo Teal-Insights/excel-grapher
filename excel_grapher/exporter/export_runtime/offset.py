@@ -7,6 +7,7 @@ from typing import Any, cast
 import fastpyxl.utils.cell
 
 from excel_grapher.core import XlError, to_number
+from excel_grapher.core.address_keys import format_cell_key
 from excel_grapher.core.types import XlErrorException
 from excel_grapher.runtime.cache import EvalContext, _parse_range_address, xl_cell
 
@@ -16,16 +17,8 @@ from .values import CellValue, as_scalar
 __all__ = ["xl_offset", "xl_range", "xl_range_rows"]
 
 
-def _quote_sheet_if_needed(sheet: str) -> str:
-    if " " in sheet or "-" in sheet or "'" in sheet:
-        return f"'{sheet}'"
-    return sheet
-
-
 def _format_address(sheet: str, row: int, col: int) -> str:
-    sheet_name = _quote_sheet_if_needed(sheet)
-    col_letter = fastpyxl.utils.cell.get_column_letter(col)
-    return f"{sheet_name}!{col_letter}{row}"
+    return format_cell_key(sheet, fastpyxl.utils.cell.get_column_letter(col), row)
 
 
 def _number_or_raise(value: CellValue) -> float:
