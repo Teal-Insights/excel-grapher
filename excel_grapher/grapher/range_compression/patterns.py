@@ -6,6 +6,7 @@ import fastpyxl.utils.cell
 
 from excel_grapher.core.address_keys import format_cell_key, parse_address
 
+from .grouping import Orientation
 from .types import PatternKind, PatternMeta, RangeRef
 
 
@@ -22,13 +23,20 @@ def is_rr_chain_ref(
     prec_row: int,
     is_absolute_col: bool,
     is_absolute_row: bool,
+    orientation: Orientation = Orientation.column,
 ) -> bool:
-    """Return True when a cell ref points to the cell directly above in the same column."""
-    return (
-        is_rr_ref(is_absolute_col=is_absolute_col, is_absolute_row=is_absolute_row)
-        and prec_col == dep_col
-        and prec_row == dep_row - 1
-    )
+    """Return True when a cell ref is an RR-chain step along the run axis.
+
+    Column runs: precedent is the cell directly above in the same column.
+    Row runs: precedent is the cell directly to the left on the same row.
+    """
+    if not is_rr_ref(is_absolute_col=is_absolute_col, is_absolute_row=is_absolute_row):
+        return False
+    if orientation is Orientation.column:
+        return prec_col == dep_col and prec_row == dep_row - 1
+    dep_col_i = fastpyxl.utils.cell.column_index_from_string(dep_col)
+    prec_col_i = fastpyxl.utils.cell.column_index_from_string(prec_col)
+    return prec_row == dep_row and prec_col_i == dep_col_i - 1
 
 
 def rr_materialize_precedent(dependent: RangeRef, precedent: RangeRef, dep_key: str) -> str:

@@ -19,7 +19,7 @@ from .boundaries import (
     range_ref_precedents_may_compress,
 )
 from .config import TacoBuildConfig
-from .grouping import column_adjacent_groups
+from .grouping import Orientation, adjacent_groups
 from .index import TacoIndex
 from .patterns import is_rr_chain_ref, is_rr_ref, materialize_precedents_for_edge
 from .ref_parser import (
@@ -54,8 +54,9 @@ def build_taco_index(
     index = TacoIndex()
     covered: set[tuple[NodeKey, NodeKey]] = set()
 
-    for group in column_adjacent_groups(graph, config=cfg):
-        _compress_group(graph, index, group, covered, cfg)
+    for group in adjacent_groups(graph, config=cfg):
+        orientation = _infer_group_orientation(graph, group)
+        _compress_group(graph, index, group, covered, cfg, orientation)
 
     for dep in graph:
         for prec in graph.get_dependencies(dep):
@@ -110,12 +111,30 @@ def _edge_is_excluded_from_pattern_inference(
     return bool(prov.causes & (_EXCLUDED_CAUSES - {DependencyCause.static_range}))
 
 
+def _infer_group_orientation(graph: DependencyGraph, group: list[NodeKey]) -> Orientation:
+    """Infer whether a grouped run advances down a column or across a row."""
+    cols: set[str] = set()
+    rows: set[int] = set()
+    for key in group:
+        node = graph.get_node(key)
+        if node is None:
+            continue
+        cols.add(node.column)
+        rows.add(node.row)
+    if len(cols) == 1:
+        return Orientation.column
+    if len(rows) == 1:
+        return Orientation.row
+    raise ValueError(f"ambiguous TACO group orientation: {group!r}")
+
+
 def _compress_group(
     graph: DependencyGraph,
     index: TacoIndex,
     group: list[NodeKey],
     covered: set[tuple[NodeKey, NodeKey]],
     config: TacoBuildConfig,
+    orientation: Orientation,
 ) -> None:
     first = graph.get_node(group[0])
     if first is None or not first.formula:
@@ -126,9 +145,9 @@ def _compress_group(
 
     for ref_idx in range(len(streams)):
         if isinstance(streams[ref_idx], AbsCellRef):
-            stream = _collect_cell_stream(graph, group, ref_idx, config)
+            stream = _collect_cell_stream(graph, group, ref_idx, config, orientation)
         else:
-            stream = _collect_range_stream(graph, group, ref_idx, config)
+            stream = _collect_range_stream(graph, group, ref_idx, config, orientation)
         if stream is None:
             continue
         dep_range, prec_range, meta = stream
@@ -150,13 +169,14 @@ def _collect_cell_stream(
     group: list[NodeKey],
     ref_idx: int,
     config: TacoBuildConfig,
+    orientation: Orientation,
 ) -> tuple[RangeRef, RangeRef, PatternMeta] | None:
     dep_sheet: str | None = None
-    dep_col: str | None = None
     prec_sheet: str | None = None
-    prec_col: str | None = None
-    first_row: int | None = None
-    last_row: int | None = None
+    dep_fixed: str | int | None = None
+    prec_fixed: str | int | None = None
+    first_advance: int | None = None
+    last_advance: int | None = None
     col_offset: int | None = None
     row_offset: int | None = None
     chain = False
@@ -186,8 +206,10 @@ def _collect_cell_stream(
 
         dep_c = node.column
         dep_r = node.row
+        dep_col_i = fastpyxl.utils.cell.column_index_from_string(dep_c)
         prec_sheet_name, prec_coord = parse_address(prec_key)
         prec_c, prec_r = fastpyxl.utils.cell.coordinate_from_string(prec_coord)
+        prec_col_i = fastpyxl.utils.cell.column_index_from_string(prec_c)
         this_chain = is_rr_chain_ref(
             dep_col=dep_c,
             dep_row=dep_r,
@@ -195,48 +217,77 @@ def _collect_cell_stream(
             prec_row=prec_r,
             is_absolute_col=ref.is_absolute_col,
             is_absolute_row=ref.is_absolute_row,
+            orientation=orientation,
         )
         if this_chain and prec_sheet_name != node.sheet:
             this_chain = False
 
-        dep_col_i = fastpyxl.utils.cell.column_index_from_string(dep_c)
-        prec_col_i = fastpyxl.utils.cell.column_index_from_string(prec_c)
         this_col_offset = prec_col_i - dep_col_i
         this_row_offset = prec_r - dep_r
 
+        if orientation is Orientation.column:
+            advance = dep_r
+            this_dep_fixed = dep_c
+            this_prec_fixed = prec_c
+        else:
+            advance = dep_col_i
+            this_dep_fixed = dep_r
+            this_prec_fixed = prec_r
+
         if dep_sheet is None:
             dep_sheet = node.sheet
-            dep_col = dep_c
             prec_sheet = prec_sheet_name
-            prec_col = prec_c
-            first_row = dep_r
-            last_row = dep_r
+            dep_fixed = this_dep_fixed
+            prec_fixed = this_prec_fixed
+            first_advance = advance
+            last_advance = advance
             col_offset = this_col_offset
             row_offset = this_row_offset
             chain = this_chain
         else:
-            if node.sheet != dep_sheet or dep_c != dep_col:
+            if node.sheet != dep_sheet or this_dep_fixed != dep_fixed:
                 return None
-            if prec_sheet_name != prec_sheet or prec_c != prec_col:
+            if prec_sheet_name != prec_sheet or this_prec_fixed != prec_fixed:
                 return None
             if this_col_offset != col_offset or this_row_offset != row_offset:
                 return None
             if this_chain != chain:
                 return None
-            assert last_row is not None
-            if dep_r != last_row + 1:
+            assert last_advance is not None
+            if advance != last_advance + 1:
                 return None
-            last_row = dep_r
+            last_advance = advance
 
-    assert dep_sheet is not None and dep_col is not None and prec_sheet is not None
-    assert prec_col is not None
-    assert first_row is not None and last_row is not None
+    assert dep_sheet is not None and prec_sheet is not None
+    assert dep_fixed is not None and prec_fixed is not None
+    assert first_advance is not None and last_advance is not None
     assert col_offset is not None and row_offset is not None
 
-    dep_range = RangeRef.column_span(dep_sheet, dep_col, first_row, last_row)
-    prec_range = RangeRef.column_span(
-        prec_sheet, prec_col, first_row + row_offset, last_row + row_offset
-    )
+    if orientation is Orientation.column:
+        assert isinstance(dep_fixed, str)
+        assert isinstance(prec_fixed, str)
+        dep_range = RangeRef.column_span(dep_sheet, dep_fixed, first_advance, last_advance)
+        prec_range = RangeRef.column_span(
+            prec_sheet,
+            prec_fixed,
+            first_advance + row_offset,
+            last_advance + row_offset,
+        )
+    else:
+        assert isinstance(dep_fixed, int)
+        assert isinstance(prec_fixed, int)
+        first_col = fastpyxl.utils.cell.get_column_letter(first_advance)
+        last_col = fastpyxl.utils.cell.get_column_letter(last_advance)
+        prec_first_col = fastpyxl.utils.cell.get_column_letter(first_advance + col_offset)
+        prec_last_col = fastpyxl.utils.cell.get_column_letter(last_advance + col_offset)
+        dep_range = RangeRef.row_span(dep_sheet, dep_fixed, first_col, last_col)
+        prec_range = RangeRef.row_span(
+            prec_sheet,
+            prec_fixed + row_offset,
+            prec_first_col,
+            prec_last_col,
+        )
+
     kind = PatternKind.rr_chain if chain else PatternKind.rr
     meta = PatternMeta(kind=kind, col_offset=col_offset, row_offset=row_offset)
     return dep_range, prec_range, meta
@@ -247,7 +298,10 @@ def _collect_range_stream(
     group: list[NodeKey],
     ref_idx: int,
     config: TacoBuildConfig,
+    orientation: Orientation,
 ) -> tuple[RangeRef, RangeRef, PatternMeta] | None:
+    if orientation is Orientation.row:
+        return None
     dep_sheet: str | None = None
     dep_col: str | None = None
     first_row: int | None = None

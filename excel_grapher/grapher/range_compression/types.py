@@ -55,6 +55,20 @@ class RangeRef:
         return cls(sheet=sheet, min_col=column, min_row=lo, max_col=column, max_row=hi)
 
     @classmethod
+    def row_span(cls, sheet: str, row: int, first_col: str, last_col: str) -> RangeRef:
+        """Return a single-row horizontal range."""
+        c1 = fastpyxl.utils.cell.column_index_from_string(first_col)
+        c2 = fastpyxl.utils.cell.column_index_from_string(last_col)
+        clo, chi = (c1, c2) if c1 <= c2 else (c2, c1)
+        return cls(
+            sheet=sheet,
+            min_col=fastpyxl.utils.cell.get_column_letter(clo),
+            min_row=row,
+            max_col=fastpyxl.utils.cell.get_column_letter(chi),
+            max_row=row,
+        )
+
+    @classmethod
     def rectangle(
         cls,
         sheet: str,
