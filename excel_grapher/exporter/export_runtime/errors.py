@@ -1,20 +1,15 @@
-"""Excel error exceptions for the exported Python runtime."""
+"""Excel error exceptions and raise helpers for the exported Python runtime."""
 
 from __future__ import annotations
 
+from typing import NoReturn
+
 from excel_grapher.core import XlError
+from excel_grapher.core.types import XlErrorException
 
-__all__ = ["XlErrorException"]
+__all__ = ["XlErrorException", "xl_raise"]
 
 
-class XlErrorException(Exception):
-    """Exception form of an Excel error code in exported Python code."""
-
-    code: XlError
-
-    def __init__(self, code: XlError) -> None:
-        """Initialize the exception with an Excel error code."""
-        if not isinstance(code, XlError):
-            raise TypeError(f"Expected XlError, got {type(code).__name__}")
-        self.code = code
-        super().__init__(code.value)
+def xl_raise(code: XlError) -> NoReturn:
+    """Raise an Excel error code from an expression position."""
+    raise XlErrorException(code)

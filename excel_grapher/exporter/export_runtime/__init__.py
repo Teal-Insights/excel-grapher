@@ -4,10 +4,14 @@ The lazy range value is named `Range`. It stores rectangular worksheet geometry
 and a resolver callable with the shape `resolver(address: str) -> CellValue`.
 Range consumers in this package accept lazy ranges (and nested lists) instead
 of numpy object arrays.
+
+Excel errors raise `XlErrorException` in exported code; error-consuming
+functions (`IFERROR`, `IS*`) receive lazily-evaluated thunks.
 """
 
 from .aggregates import xl_sumproduct
-from .errors import XlErrorException
+from .error_funcs import xl_iferror, xl_ifna, xl_isblank, xl_iserror, xl_isna
+from .errors import XlErrorException, xl_raise
 from .lookup import xl_hlookup, xl_index, xl_lookup, xl_match, xl_vlookup, xl_xlookup
 from .offset import xl_offset, xl_range, xl_range_rows
 from .operators import (
@@ -43,7 +47,12 @@ __all__ = [
     "xl_ge",
     "xl_gt",
     "xl_hlookup",
+    "xl_iferror",
+    "xl_ifna",
     "xl_index",
+    "xl_isblank",
+    "xl_iserror",
+    "xl_isna",
     "xl_le",
     "xl_lookup",
     "xl_lt",
@@ -55,6 +64,7 @@ __all__ = [
     "xl_percent",
     "xl_pos",
     "xl_pow",
+    "xl_raise",
     "xl_range",
     "xl_range_rows",
     "xl_sub",

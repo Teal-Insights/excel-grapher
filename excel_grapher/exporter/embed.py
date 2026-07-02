@@ -48,6 +48,7 @@ _EXPORT_RUNTIME_MODULES: list[tuple[str, Path]] = [
     ("export_runtime.aggregates", _EXPORT_RUNTIME_DIR / "aggregates.py"),
     ("export_runtime.offset", _EXPORT_RUNTIME_DIR / "offset.py"),
     ("export_runtime.info", _EXPORT_RUNTIME_DIR / "info.py"),
+    ("export_runtime.error_funcs", _EXPORT_RUNTIME_DIR / "error_funcs.py"),
 ]
 
 # Export runtime modules (representation-specific implementations); order preserved for iteration.

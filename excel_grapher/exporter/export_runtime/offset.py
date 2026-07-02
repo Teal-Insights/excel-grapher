@@ -7,6 +7,7 @@ from typing import Any, cast
 import fastpyxl.utils.cell
 
 from excel_grapher.core import XlError, to_number
+from excel_grapher.core.types import XlErrorException
 from excel_grapher.runtime.cache import EvalContext, _parse_range_address, xl_cell
 
 from .ranges import Range
@@ -27,6 +28,14 @@ def _format_address(sheet: str, row: int, col: int) -> str:
     return f"{sheet_name}!{col_letter}{row}"
 
 
+def _number_or_raise(value: CellValue) -> float:
+    """Coerce a scalar argument to a number, raising on Excel coercion errors."""
+    number = to_number(as_scalar(value))
+    if isinstance(number, XlError):
+        raise XlErrorException(number)
+    return number
+
+
 def _ctx_range(ctx: EvalContext, sheet: str, r1: int, c1: int, r2: int, c2: int) -> Range:
     def resolve(address: str) -> Any:
         return xl_cell(ctx, address)
@@ -42,15 +51,11 @@ def xl_offset(
     height: CellValue | None = None,
     width: CellValue | None = None,
 ) -> CellValue:
-    rr = to_number(as_scalar(rows))
-    if isinstance(rr, XlError):
-        return rr
-    cc = to_number(as_scalar(cols))
-    if isinstance(cc, XlError):
-        return cc
+    rr = _number_or_raise(rows)
+    cc = _number_or_raise(cols)
 
     if isinstance(ref_info, XlError):
-        return ref_info
+        raise XlErrorException(ref_info)
 
     match ref_info:
         case (sheet, base_row, base_col):
@@ -58,34 +63,21 @@ def xl_offset(
         case (sheet, base_row, base_col, base_end_row, base_end_col):
             pass
         case _:
-            return XlError.VALUE
+            raise XlErrorException(XlError.VALUE)
 
     base_h = int(base_end_row - base_row + 1)
     base_w = int(base_end_col - base_col + 1)
 
-    if height is None:
-        h = base_h
-    else:
-        hh = to_number(as_scalar(height))
-        if isinstance(hh, XlError):
-            return hh
-        h = int(hh)
-
-    if width is None:
-        w = base_w
-    else:
-        ww = to_number(as_scalar(width))
-        if isinstance(ww, XlError):
-            return ww
-        w = int(ww)
+    h = base_h if height is None else int(_number_or_raise(height))
+    w = base_w if width is None else int(_number_or_raise(width))
 
     target_row = int(base_row + int(rr))
     target_col = int(base_col + int(cc))
 
     if target_row < 1 or target_col < 1:
-        return XlError.REF
+        raise XlErrorException(XlError.REF)
     if h <= 0 or w <= 0:
-        return XlError.VALUE
+        raise XlErrorException(XlError.VALUE)
 
     if h == 1 and w == 1:
         addr = _format_address(sheet, target_row, target_col)
@@ -98,7 +90,7 @@ def xl_range(ctx: EvalContext, address: str) -> CellValue:
     """Evaluate a sheet-qualified range address into a lazy `Range` value."""
     parsed = _parse_range_address(address)
     if isinstance(parsed, XlError):
-        return parsed
+        raise XlErrorException(parsed)
     sheet, start_cell, end_cell = parsed
     try:
         start_col, start_row = fastpyxl.utils.cell.coordinate_from_string(start_cell)
@@ -106,7 +98,7 @@ def xl_range(ctx: EvalContext, address: str) -> CellValue:
         start_col_idx = fastpyxl.utils.cell.column_index_from_string(start_col)
         end_col_idx = fastpyxl.utils.cell.column_index_from_string(end_col)
     except ValueError:
-        return XlError.VALUE
+        raise XlErrorException(XlError.VALUE) from None
 
     if start_row > end_row:
         start_row, end_row = end_row, start_row

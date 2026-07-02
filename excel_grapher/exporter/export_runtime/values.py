@@ -8,6 +8,7 @@ from math import isfinite
 from typing import TypeAlias, cast
 
 from excel_grapher.core import XlError
+from excel_grapher.core.types import XlErrorException
 
 from .ranges import Range
 
@@ -142,14 +143,19 @@ def _convergence_delta(prev: CellValue, curr: CellValue) -> float:
 def flatten(*args: CellValue) -> Iterator[Scalar]:
     """Yield scalar values from scalars, nested lists, and lazy ranges.
 
-    Lazy ranges yield raw values (error sentinels included) so reduction
-    consumers keep Excel sentinel semantics until the raise-based error
-    channel lands.
+    Excel errors raise `XlErrorException` on encounter, mirroring the
+    evaluator's argument error precheck for generic worksheet functions.
+    Lookup scans keep skip semantics through `Grid`/`Range.value_at` instead.
     """
     for arg in args:
         if isinstance(arg, Range):
-            yield from (cast(Scalar, v) for v in arg.iter_raw())
+            for v in arg.iter_raw():
+                if isinstance(v, XlError):
+                    raise XlErrorException(v)
+                yield cast(Scalar, v)
         elif isinstance(arg, (list, tuple)):
             yield from flatten(*arg)
         else:
+            if isinstance(arg, XlError):
+                raise XlErrorException(arg)
             yield cast(Scalar, arg)

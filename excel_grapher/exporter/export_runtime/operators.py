@@ -8,8 +8,9 @@ from excel_grapher.core.operators_reference import (
     compare_scalars,
     concat_scalars,
 )
+from excel_grapher.core.types import XlErrorException
 
-from .values import CellValue, Grid, as_scalar
+from .values import CellValue, Grid, Scalar, as_scalar
 
 __all__ = [
     "xl_add",
@@ -30,7 +31,28 @@ __all__ = [
 ]
 
 
-def _broadcast_pair(left: CellValue, right: CellValue) -> tuple[Grid, Grid] | XlError | None:
+def _raise_error(code: XlError) -> XlErrorException:
+    """Build the exception for an Excel error code (callers raise the result)."""
+    return XlErrorException(code)
+
+
+def _scalar_or_raise(value: CellValue) -> Scalar:
+    """Collapse to a scalar, raising when the value is an Excel error."""
+    scalar = as_scalar(value)
+    if isinstance(scalar, XlError):
+        raise _raise_error(scalar)
+    return scalar
+
+
+def _cell_or_raise(grid: Grid, row0: int, col0: int) -> Scalar:
+    """Read one grid cell, raising when the stored value is an error sentinel."""
+    value = grid.at(row0, col0)
+    if isinstance(value, XlError):
+        raise _raise_error(value)
+    return value
+
+
+def _broadcast_pair(left: CellValue, right: CellValue) -> tuple[Grid, Grid] | None:
     """Wrap array operands as aligned grids; `None` when both operands are scalar."""
     left_grid = Grid.wrap(left)
     right_grid = Grid.wrap(right)
@@ -38,7 +60,7 @@ def _broadcast_pair(left: CellValue, right: CellValue) -> tuple[Grid, Grid] | Xl
         return None
     if left_grid is not None and right_grid is not None:
         if (left_grid.nrows, left_grid.ncols) != (right_grid.nrows, right_grid.ncols):
-            return XlError.VALUE
+            raise _raise_error(XlError.VALUE)
         return left_grid, right_grid
     if left_grid is not None:
         scalar_right = Grid.wrap([[right] * left_grid.ncols for _ in range(left_grid.nrows)])
@@ -51,83 +73,72 @@ def _broadcast_pair(left: CellValue, right: CellValue) -> tuple[Grid, Grid] | Xl
 
 
 def _xl_compare(op: str, left: CellValue, right: CellValue) -> CellValue:
-    if isinstance(left, XlError):
-        return left
-    if isinstance(right, XlError):
-        return right
-
     pair = _broadcast_pair(left, right)
-    if isinstance(pair, XlError):
-        return pair
     if pair is None:
-        return compare_scalars(op, as_scalar(left), as_scalar(right))
+        cell = compare_scalars(op, _scalar_or_raise(left), _scalar_or_raise(right))
+        if isinstance(cell, XlError):
+            raise _raise_error(cell)
+        return cell
 
     arr_left, arr_right = pair
     result: list[list[CellValue]] = []
     for row0 in range(arr_left.nrows):
         out_row: list[CellValue] = []
         for col0 in range(arr_left.ncols):
-            cell = compare_scalars(op, arr_left.at(row0, col0), arr_right.at(row0, col0))
+            cell = compare_scalars(
+                op, _cell_or_raise(arr_left, row0, col0), _cell_or_raise(arr_right, row0, col0)
+            )
             if isinstance(cell, XlError):
-                return cell
+                raise _raise_error(cell)
             out_row.append(cell)
         result.append(out_row)
     return result
 
 
-def _xl_arithmetic(op: str, left: CellValue, right: CellValue) -> CellValue:
-    if isinstance(left, XlError):
-        return left
-    if isinstance(right, XlError):
-        return right
+def _number_or_raise(value: Scalar) -> float:
+    """Coerce a scalar to a number, raising on Excel coercion errors."""
+    number = to_number(value)
+    if isinstance(number, XlError):
+        raise _raise_error(number)
+    return number
 
+
+def _xl_arithmetic(op: str, left: CellValue, right: CellValue) -> CellValue:
     pair = _broadcast_pair(left, right)
-    if isinstance(pair, XlError):
-        return pair
     if pair is None:
-        ln = to_number(as_scalar(left))
-        rn = to_number(as_scalar(right))
-        if isinstance(ln, XlError):
-            return ln
-        if isinstance(rn, XlError):
-            return rn
-        return apply_arithmetic(op, ln, rn)
+        ln = _number_or_raise(_scalar_or_raise(left))
+        rn = _number_or_raise(_scalar_or_raise(right))
+        cell = apply_arithmetic(op, ln, rn)
+        if isinstance(cell, XlError):
+            raise _raise_error(cell)
+        return cell
 
     arr_left, arr_right = pair
     result: list[list[CellValue]] = []
     for row0 in range(arr_left.nrows):
         out_row: list[CellValue] = []
         for col0 in range(arr_left.ncols):
-            ln = to_number(arr_left.at(row0, col0))
-            if isinstance(ln, XlError):
-                return ln
-            rn = to_number(arr_right.at(row0, col0))
-            if isinstance(rn, XlError):
-                return rn
+            ln = _number_or_raise(_cell_or_raise(arr_left, row0, col0))
+            rn = _number_or_raise(_cell_or_raise(arr_right, row0, col0))
             cell = apply_arithmetic(op, ln, rn)
             if isinstance(cell, XlError):
-                return cell
+                raise _raise_error(cell)
             out_row.append(cell)
         result.append(out_row)
     return result
 
 
 def xl_concat(left: CellValue, right: CellValue) -> CellValue:
-    if isinstance(left, XlError):
-        return left
-    if isinstance(right, XlError):
-        return right
-
     pair = _broadcast_pair(left, right)
-    if isinstance(pair, XlError):
-        return pair
     if pair is None:
-        return concat_scalars(as_scalar(left), as_scalar(right))
+        return concat_scalars(_scalar_or_raise(left), _scalar_or_raise(right))
 
     arr_left, arr_right = pair
     return [
         [
-            concat_scalars(arr_left.at(row0, col0), arr_right.at(row0, col0))
+            concat_scalars(
+                _cell_or_raise(arr_left, row0, col0), _cell_or_raise(arr_right, row0, col0)
+            )
             for col0 in range(arr_left.ncols)
         ]
         for row0 in range(arr_left.nrows)
@@ -178,29 +189,14 @@ def xl_pow(left: CellValue, right: CellValue) -> CellValue:
     return _xl_arithmetic("^", left, right)
 
 
-def xl_neg(value: CellValue) -> float | XlError:
-    if isinstance(value, XlError):
-        return value
-    n = to_number(as_scalar(value))
-    if isinstance(n, XlError):
-        return n
-    return -n
+def xl_neg(value: CellValue) -> float:
+    return -_number_or_raise(_scalar_or_raise(value))
 
 
-def xl_pos(value: CellValue) -> float | XlError:
-    if isinstance(value, XlError):
-        return value
-    n = to_number(as_scalar(value))
-    if isinstance(n, XlError):
-        return n
-    return +n
+def xl_pos(value: CellValue) -> float:
+    return +_number_or_raise(_scalar_or_raise(value))
 
 
-def xl_percent(value: CellValue) -> float | XlError:
+def xl_percent(value: CellValue) -> float:
     """Excel postfix percent operator (%): divide a numeric value by 100."""
-    if isinstance(value, XlError):
-        return value
-    n = to_number(as_scalar(value))
-    if isinstance(n, XlError):
-        return n
-    return n / 100.0
+    return _number_or_raise(_scalar_or_raise(value)) / 100.0

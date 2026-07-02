@@ -112,6 +112,11 @@ _UNARY_OPS = {
     "%": "xl_percent",
 }
 
+# Functions whose single argument is emitted as a lazily-evaluated thunk so the
+# exported runtime can catch raised Excel errors. Mirrors the evaluator's
+# AST-level special cases; other IS functions propagate argument errors there.
+_THUNK_ARG_FUNCTIONS = frozenset({"ISERROR", "ISNA", "ISBLANK"})
+
 
 class CodeGenerator:
     """Generates Python code from Excel formulas."""
@@ -398,7 +403,8 @@ class CodeGenerator:
             return "True" if node.value else "False"
 
         if isinstance(node, ErrorNode):
-            return f"XlError.{node.error.name}"
+            # Error literals raise in the exported error channel.
+            return f"xl_raise(XlError.{node.error.name})"
 
         if isinstance(node, CellRefNode):
             return self._emit_cell_eval(node.address)
@@ -796,6 +802,8 @@ class CodeGenerator:
         names.update({"xl_cell", "xl_eval"})
         if "xl_range(" in blob:
             names.add("xl_range")
+        if "xl_raise(" in blob:
+            names.add("xl_raise")
         if "XlError" in blob:
             names.add("XlError")
         if "ExcelRange(" in blob:
@@ -1109,6 +1117,12 @@ class CodeGenerator:
         if upper_name == "FALSE":
             return "False"
 
+        # IS functions must not propagate errors: the argument is passed as a
+        # lazily-evaluated thunk so the runtime can catch raised Excel errors.
+        if upper_name in _THUNK_ARG_FUNCTIONS and len(node.args) == 1:
+            arg_expr = self._emit_ast(node.args[0])
+            return f"{func_name}(lambda: ({arg_expr}))"
+
         emitted_args = [self._emit_ast(arg) for arg in node.args]
         args = ", ".join(emitted_args)
         return f"{func_name}({args})"
@@ -1119,26 +1133,27 @@ class CodeGenerator:
         return f"_t{self._temp_var_counter}"
 
     def _emit_lazy_error_fallback(self, node: FunctionCallNode, name: str) -> str:
-        """Emit IFERROR/IFNA as Python conditionals for lazy fallback evaluation.
+        """Emit IFERROR/IFNA as thunked runtime calls with try/except semantics.
 
-        IFERROR(value, value_if_error) evaluates the fallback only when ``value``
-        is any ``XlError``. IFNA(value, value_if_na) does so only for ``#N/A``.
+        IFERROR(value, value_if_error) evaluates the fallback only when
+        evaluating ``value`` produces any Excel error (raised
+        ``XlErrorException`` or ``XlError`` sentinel). IFNA does so only for
+        ``#N/A`` and re-raises other errors.
         """
         if len(node.args) < 2:
-            return "XlError.VALUE"
+            return "xl_raise(XlError.VALUE)"
 
         value_expr = self._emit_ast(node.args[0])
         fallback_expr = self._emit_ast(node.args[1])
-        var = self._next_temp_var()
 
         if name == "IFERROR":
-            condition = f"isinstance(({var} := {value_expr}), XlError)"
+            func = "xl_iferror"
         elif name == "IFNA":
-            condition = f"(({var} := {value_expr}) == XlError.NA)"
+            func = "xl_ifna"
         else:
             raise ValueError(f"Unsupported lazy error fallback function: {name!r}")
 
-        return f"(({fallback_expr}) if {condition} else {var})"
+        return f"{func}(lambda: ({value_expr}), lambda: ({fallback_expr}))"
 
     def _emit_if(self, node: FunctionCallNode) -> str:
         """Emit IF as a Python conditional expression for lazy evaluation.
@@ -1153,7 +1168,7 @@ class CodeGenerator:
         for breaking circular references that Excel handles via lazy evaluation.
         """
         if len(node.args) < 2:
-            return "XlError.VALUE"
+            return "xl_raise(XlError.VALUE)"
 
         cond_expr = self._emit_ast(node.args[0])
         true_expr = self._emit_ast(node.args[1])
@@ -1163,10 +1178,12 @@ class CodeGenerator:
         # - "FALSE" should behave like False
         # - "0" should produce #VALUE! (per to_bool)
         # We must coerce via to_bool(), and keep lazy branch evaluation.
+        # Erroring conditions propagate: raised errors pass through, and
+        # sentinel coercion failures are re-raised via xl_raise.
         cond_var = self._next_temp_var()
         bool_var = self._next_temp_var()
         return (
-            f"({bool_var} if isinstance(({bool_var} := to_bool(({cond_var} := {cond_expr}))), XlError) "
+            f"(xl_raise({bool_var}) if isinstance(({bool_var} := to_bool(({cond_var} := {cond_expr}))), XlError) "
             f"else (({true_expr}) if {bool_var} else ({false_expr})))"
         )
 
@@ -1174,7 +1191,7 @@ class CodeGenerator:
         if not node.args or (len(node.args) == 1 and isinstance(node.args[0], EmptyArgNode)):
             addr = self._formula_cell_address
             if addr is None:
-                return "XlError.VALUE"
+                return "xl_raise(XlError.VALUE)"
             _sheet, cell = parse_address(addr)
             cell_clean = cell.replace("$", "")
             _col_str, row = fastpyxl.utils.cell.coordinate_from_string(cell_clean)
@@ -1198,7 +1215,7 @@ class CodeGenerator:
         if not node.args or (len(node.args) == 1 and isinstance(node.args[0], EmptyArgNode)):
             addr = self._formula_cell_address
             if addr is None:
-                return "XlError.VALUE"
+                return "xl_raise(XlError.VALUE)"
             _sheet, cell = parse_address(addr)
             cell_clean = cell.replace("$", "")
             col_str, _row = fastpyxl.utils.cell.coordinate_from_string(cell_clean)
@@ -1221,7 +1238,7 @@ class CodeGenerator:
 
     def _emit_columns(self, node: FunctionCallNode) -> str:
         if len(node.args) < 1:
-            return "XlError.VALUE"
+            return "xl_raise(XlError.VALUE)"
 
         arg = node.args[0]
         if isinstance(arg, CellRefNode):
@@ -1247,7 +1264,7 @@ class CodeGenerator:
         via lazy evaluation.
         """
         if len(node.args) < 2:
-            return "XlError.VALUE"
+            return "xl_raise(XlError.VALUE)"
 
         index_expr = self._emit_ast(node.args[0])
         value_exprs = [self._emit_ast(arg) for arg in node.args[1:]]
@@ -1259,16 +1276,16 @@ class CodeGenerator:
         idx_var = self._next_temp_var()
 
         # Build chained conditionals: if idx==1 then val1 else if idx==2 then val2 ...
-        # Start from the innermost (last value or VALUE error for out of bounds)
-        result = "XlError.VALUE"
+        # Start from the innermost (last value or a raised VALUE error when out of bounds)
+        result = "xl_raise(XlError.VALUE)"
         for i, val_expr in reversed(list(enumerate(value_exprs, start=1))):
             result = f"(({val_expr}) if {idx_var} == {i} else ({result}))"
 
-        # Wrap with error/bounds checking
+        # Wrap with error/bounds checking; sentinel index coercions re-raise.
         return (
-            f"({var} if isinstance(({var} := {index_expr}), XlError) "
-            f"else ({idx_var} if isinstance(({idx_var} := to_int({var})), XlError) "
-            f"else XlError.VALUE if {idx_var} < 1 or {idx_var} > {len(value_exprs)} else {result}))"
+            f"(xl_raise({var}) if isinstance(({var} := {index_expr}), XlError) "
+            f"else (xl_raise({idx_var}) if isinstance(({idx_var} := to_int({var})), XlError) "
+            f"else xl_raise(XlError.VALUE) if {idx_var} < 1 or {idx_var} > {len(value_exprs)} else {result}))"
         )
 
     def _is_constant_number(self, node: AstNode) -> bool:
@@ -1342,7 +1359,7 @@ class CodeGenerator:
         """
         if len(node.args) < 3:
             # Invalid OFFSET - need at least reference, rows, cols
-            return "XlError.VALUE"
+            return "xl_raise(XlError.VALUE)"
 
         ref_node = node.args[0]
         rows_node = node.args[1]
@@ -1482,7 +1499,7 @@ class CodeGenerator:
 
         if target_row < 1 or target_col < 1:
             # Invalid reference
-            return "XlError.REF"
+            return "xl_raise(XlError.REF)"
 
         target_col_str = fastpyxl.utils.cell.get_column_letter(target_col)
 
@@ -1522,7 +1539,7 @@ class CodeGenerator:
             ref_info = f"({repr(base_sheet)}, {r1}, {c1}, {r2}, {c2})"
         elif isinstance(ref_node, FunctionCallNode) and ref_node.name.upper() == "INDEX":
             if len(ref_node.args) < 1:
-                return "XlError.VALUE"
+                return "xl_raise(XlError.VALUE)"
             base = ref_node.args[0]
             if isinstance(base, CellRefNode):
                 base_sheet, base_cell = parse_address(base.address)
@@ -1535,7 +1552,7 @@ class CodeGenerator:
                 self._offset_runtime_sheets.add(base_sheet)
                 base_ref_info = f"({repr(base_sheet)}, {r1}, {c1}, {r2}, {c2})"
             else:
-                return "XlError.REF"
+                return "xl_raise(XlError.REF)"
 
             row_expr = (
                 "None"
@@ -1551,7 +1568,7 @@ class CodeGenerator:
             ref_info = f"xl_index_ref({base_ref_info}, {row_expr}, {col_expr})"
         else:
             # If reference is not a simple cell, we can't handle it
-            return "XlError.REF"
+            return "xl_raise(XlError.REF)"
 
         rows_expr = self._emit_ast(rows_node)
         cols_expr = self._emit_ast(cols_node)
@@ -1562,7 +1579,7 @@ class CodeGenerator:
 
     def _emit_offset_ref(self, node: FunctionCallNode) -> str:
         if len(node.args) < 3:
-            return "XlError.VALUE"
+            return "xl_raise(XlError.VALUE)"
 
         ref_node = node.args[0]
         rows_node = node.args[1]
@@ -1580,7 +1597,7 @@ class CodeGenerator:
             ref_info = f"({repr(base_sheet)}, {r1}, {c1}, {r2}, {c2})"
         elif isinstance(ref_node, FunctionCallNode) and ref_node.name.upper() == "INDEX":
             if len(ref_node.args) < 1:
-                return "XlError.VALUE"
+                return "xl_raise(XlError.VALUE)"
             base = ref_node.args[0]
             if isinstance(base, CellRefNode):
                 base_sheet, base_cell = parse_address(base.address)
@@ -1591,7 +1608,7 @@ class CodeGenerator:
                 base_sheet, r1, c1, r2, c2 = self._range_coords(base.start, base.end)
                 base_ref_info = f"({repr(base_sheet)}, {r1}, {c1}, {r2}, {c2})"
             else:
-                return "XlError.REF"
+                return "xl_raise(XlError.REF)"
 
             row_expr = (
                 "None"
@@ -1606,7 +1623,7 @@ class CodeGenerator:
             self._needs_index_ref_runtime = True
             ref_info = f"xl_index_ref({base_ref_info}, {row_expr}, {col_expr})"
         else:
-            return "XlError.REF"
+            return "xl_raise(XlError.REF)"
 
         rows_expr = self._emit_ast(rows_node)
         cols_expr = self._emit_ast(cols_node)
@@ -1777,8 +1794,9 @@ class CodeGenerator:
         funcs: set[str] = set()
 
         if isinstance(node, ErrorNode):
-            # Error literal requires XlError enum
+            # Error literals raise via xl_raise and reference the XlError enum
             funcs.add("XlError")
+            funcs.add("xl_raise")
         elif isinstance(node, RangeNode):
             # Ranges emit lazy xl_range(ctx, ...) calls
             funcs.add("xl_range")
@@ -1789,11 +1807,17 @@ class CodeGenerator:
             if upper_name == "IF":
                 funcs.add("XlError")
                 funcs.add("to_bool")
-            elif upper_name == "IFERROR" or upper_name == "IFNA":
+                funcs.add("xl_raise")
+            elif upper_name == "IFERROR":
                 funcs.add("XlError")
+                funcs.add("xl_iferror")
+            elif upper_name == "IFNA":
+                funcs.add("XlError")
+                funcs.add("xl_ifna")
             elif upper_name == "CHOOSE":
                 funcs.add("XlError")
                 funcs.add("to_int")
+                funcs.add("xl_raise")
             elif upper_name == "ROW":
                 funcs.add("xl_row")
                 if node.args:
@@ -2331,7 +2355,9 @@ class CodeGenerator:
             "coerce_inputs_dict",
             "xl_cell",
             "xl_eval",
+            "xl_raise",
             "XlError",
+            "XlErrorException",
         }
         # Multi-cell targets materialize through the eager range boundary handler.
         if any(

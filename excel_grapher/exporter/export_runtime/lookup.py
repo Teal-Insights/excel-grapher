@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from excel_grapher.core import XlError, excel_casefold, to_number
+from excel_grapher.core.types import XlErrorException
 
-from .values import CellValue, Grid, as_scalar
+from .values import CellValue, Grid, Scalar, as_scalar
 
 __all__ = [
     "xl_hlookup",
@@ -14,6 +15,21 @@ __all__ = [
     "xl_vlookup",
     "xl_xlookup",
 ]
+
+
+def _number_arg(value: CellValue) -> float:
+    """Coerce a scalar function argument, raising on Excel coercion errors."""
+    number = to_number(as_scalar(value))
+    if isinstance(number, XlError):
+        raise XlErrorException(number)
+    return number
+
+
+def _result_or_raise(value: Scalar) -> Scalar:
+    """Return a lookup result cell, raising when it holds an error sentinel."""
+    if isinstance(value, XlError):
+        raise XlErrorException(value)
+    return value
 
 
 def _values_match(a: CellValue, b: CellValue) -> bool:
@@ -56,10 +72,10 @@ def xl_lookup(
 ) -> CellValue:
     grid = Grid.wrap(lookup_vector_or_array)
     if grid is None:
-        return XlError.VALUE
+        raise XlErrorException(XlError.VALUE)
     result_grid = Grid.wrap(result_vector) if result_vector is not None else None
     if result_vector is not None and result_grid is None:
-        return XlError.VALUE
+        raise XlErrorException(XlError.VALUE)
 
     if result_grid is None:
         vector = _vector_of(grid)
@@ -76,9 +92,9 @@ def xl_lookup(
             assert lookup_flat is not None and result_flat is not None
     else:
         if _vector_of(grid) is None or _vector_of(result_grid) is None:
-            return XlError.NA
+            raise XlErrorException(XlError.NA)
         if grid.size != result_grid.size:
-            return XlError.NA
+            raise XlErrorException(XlError.NA)
         lookup_flat = grid
         result_flat = result_grid
 
@@ -89,84 +105,74 @@ def xl_lookup(
         else:
             break
     if last_match_idx is None:
-        return XlError.NA
-    return result_flat.at_flat(last_match_idx)
+        raise XlErrorException(XlError.NA)
+    return _result_or_raise(result_flat.at_flat(last_match_idx))
 
 
 def xl_index(array: CellValue, row_num: CellValue, col_num: CellValue = None) -> CellValue:
     grid = Grid.wrap(array)
     if grid is None:
-        return XlError.VALUE
+        raise XlErrorException(XlError.VALUE)
     nrows, ncols = grid.nrows, grid.ncols
     row_omitted = row_num is None
     col_omitted = col_num is None
 
     if row_omitted and col_omitted:
         if nrows == 1 and ncols == 1:
-            return grid.at(0, 0)
+            return _result_or_raise(grid.at(0, 0))
         if nrows == 1:
-            return grid.at(0, ncols - 1)
+            return _result_or_raise(grid.at(0, ncols - 1))
         if ncols == 1:
-            return grid.at(nrows - 1, 0)
-        return XlError.VALUE
+            return _result_or_raise(grid.at(nrows - 1, 0))
+        raise XlErrorException(XlError.VALUE)
 
     if row_omitted:
-        cn = to_number(as_scalar(col_num))
-        if isinstance(cn, XlError):
-            return cn
+        cn = _number_arg(col_num)
         col = int(cn)
         if col < 1 or col > ncols:
-            return XlError.REF
+            raise XlErrorException(XlError.REF)
         if nrows == 1:
-            return grid.at(0, col - 1)
+            return _result_or_raise(grid.at(0, col - 1))
         return grid.col_slice(col - 1)
 
-    rn = to_number(as_scalar(row_num))
-    if isinstance(rn, XlError):
-        return rn
+    rn = _number_arg(row_num)
     row = int(rn)
 
     if col_omitted:
         if nrows == 1:
             if row < 1 or row > ncols:
-                return XlError.REF
-            return grid.at(0, row - 1)
+                raise XlErrorException(XlError.REF)
+            return _result_or_raise(grid.at(0, row - 1))
         if ncols == 1:
             if row < 1 or row > nrows:
-                return XlError.REF
-            return grid.at(row - 1, 0)
+                raise XlErrorException(XlError.REF)
+            return _result_or_raise(grid.at(row - 1, 0))
         if row < 1 or row > nrows:
-            return XlError.REF
+            raise XlErrorException(XlError.REF)
         return grid.row_slice(row - 1)
 
-    cn = to_number(as_scalar(col_num))
-    if isinstance(cn, XlError):
-        return cn
+    cn = _number_arg(col_num)
     col = int(cn)
     if nrows == 1:
         if row < 1 or row > ncols:
-            return XlError.REF
-        return grid.at(0, row - 1)
+            raise XlErrorException(XlError.REF)
+        return _result_or_raise(grid.at(0, row - 1))
     if ncols == 1:
         if row < 1 or row > nrows:
-            return XlError.REF
-        return grid.at(row - 1, 0)
+            raise XlErrorException(XlError.REF)
+        return _result_or_raise(grid.at(row - 1, 0))
     if row < 1 or row > nrows:
-        return XlError.REF
+        raise XlErrorException(XlError.REF)
     if col < 1 or col > ncols:
-        return XlError.REF
-    return grid.at(row - 1, col - 1)
+        raise XlErrorException(XlError.REF)
+    return _result_or_raise(grid.at(row - 1, col - 1))
 
 
-def xl_match(
-    lookup_value: CellValue, lookup_array: CellValue, match_type: CellValue = 1
-) -> int | XlError:
-    mt = to_number(as_scalar(match_type))
-    if isinstance(mt, XlError):
-        return mt
+def xl_match(lookup_value: CellValue, lookup_array: CellValue, match_type: CellValue = 1) -> int:
+    mt = _number_arg(match_type)
     match_type_int = int(mt)
     if isinstance(lookup_array, XlError):
-        return lookup_array
+        raise XlErrorException(lookup_array)
     grid = Grid.wrap(lookup_array)
     if grid is None:
         grid_wrapped = Grid.wrap([[lookup_array]])
@@ -176,7 +182,7 @@ def xl_match(
         for i in range(grid.size):
             if _values_match(lookup_value, grid.at_flat(i)):
                 return i + 1
-        return XlError.NA
+        raise XlErrorException(XlError.NA)
     if match_type_int == 1:
         last_match = None
         for i in range(grid.size):
@@ -184,7 +190,9 @@ def xl_match(
                 last_match = i + 1
             else:
                 break
-        return XlError.NA if last_match is None else last_match
+        if last_match is None:
+            raise XlErrorException(XlError.NA)
+        return last_match
     if match_type_int == -1:
         last_match = None
         for i in range(grid.size):
@@ -192,8 +200,10 @@ def xl_match(
                 last_match = i + 1
             else:
                 break
-        return XlError.NA if last_match is None else last_match
-    return XlError.VALUE
+        if last_match is None:
+            raise XlErrorException(XlError.NA)
+        return last_match
+    raise XlErrorException(XlError.VALUE)
 
 
 def xl_vlookup(
@@ -202,23 +212,21 @@ def xl_vlookup(
     col_index_num: CellValue,
     range_lookup: CellValue = True,
 ) -> CellValue:
-    cn = to_number(as_scalar(col_index_num))
-    if isinstance(cn, XlError):
-        return cn
+    cn = _number_arg(col_index_num)
     col_index = int(cn)
     if col_index < 1:
-        return XlError.VALUE
+        raise XlErrorException(XlError.VALUE)
     grid = Grid.wrap(table_array)
     if grid is None:
-        return XlError.VALUE
+        raise XlErrorException(XlError.VALUE)
     if col_index > grid.ncols:
-        return XlError.REF
+        raise XlErrorException(XlError.REF)
     exact_match = not bool(range_lookup)
     if exact_match:
         for i in range(grid.nrows):
             if _values_match(lookup_value, grid.at(i, 0)):
-                return grid.at(i, col_index - 1)
-        return XlError.NA
+                return _result_or_raise(grid.at(i, col_index - 1))
+        raise XlErrorException(XlError.NA)
     last_match_idx = None
     for i in range(grid.nrows):
         if _compare_values(grid.at(i, 0), lookup_value) <= 0:
@@ -226,8 +234,8 @@ def xl_vlookup(
         else:
             break
     if last_match_idx is None:
-        return XlError.NA
-    return grid.at(last_match_idx, col_index - 1)
+        raise XlErrorException(XlError.NA)
+    return _result_or_raise(grid.at(last_match_idx, col_index - 1))
 
 
 def xl_hlookup(
@@ -236,23 +244,21 @@ def xl_hlookup(
     row_index_num: CellValue,
     range_lookup: CellValue = True,
 ) -> CellValue:
-    rn = to_number(as_scalar(row_index_num))
-    if isinstance(rn, XlError):
-        return rn
+    rn = _number_arg(row_index_num)
     row_index = int(rn)
     if row_index < 1:
-        return XlError.VALUE
+        raise XlErrorException(XlError.VALUE)
     grid = Grid.wrap(table_array)
     if grid is None:
-        return XlError.VALUE
+        raise XlErrorException(XlError.VALUE)
     if row_index > grid.nrows:
-        return XlError.REF
+        raise XlErrorException(XlError.REF)
     exact_match = not bool(range_lookup)
     if exact_match:
         for i in range(grid.ncols):
             if _values_match(lookup_value, grid.at(0, i)):
-                return grid.at(row_index - 1, i)
-        return XlError.NA
+                return _result_or_raise(grid.at(row_index - 1, i))
+        raise XlErrorException(XlError.NA)
     last_match_idx = None
     for i in range(grid.ncols):
         if _compare_values(grid.at(0, i), lookup_value) <= 0:
@@ -260,8 +266,8 @@ def xl_hlookup(
         else:
             break
     if last_match_idx is None:
-        return XlError.NA
-    return grid.at(row_index - 1, last_match_idx)
+        raise XlErrorException(XlError.NA)
+    return _result_or_raise(grid.at(row_index - 1, last_match_idx))
 
 
 def xl_xlookup(
@@ -278,31 +284,29 @@ def xl_xlookup(
     - exact match (match_mode=0)
     - search first-to-last (search_mode=1) and last-to-first (search_mode=-1)
     """
-    mm = to_number(as_scalar(match_mode))
-    if isinstance(mm, XlError):
-        return mm
-    sm = to_number(as_scalar(search_mode))
-    if isinstance(sm, XlError):
-        return sm
+    mm = _number_arg(match_mode)
+    sm = _number_arg(search_mode)
 
     mm_i = int(mm)
     sm_i = int(sm)
 
     if mm_i != 0:
-        return XlError.VALUE
+        raise XlErrorException(XlError.VALUE)
     if sm_i not in (1, -1):
-        return XlError.VALUE
+        raise XlErrorException(XlError.VALUE)
 
     keys = Grid.wrap(lookup_array)
     vals = Grid.wrap(return_array)
     if keys is None or vals is None:
-        return XlError.VALUE
+        raise XlErrorException(XlError.VALUE)
     if keys.size != vals.size:
-        return XlError.VALUE
+        raise XlErrorException(XlError.VALUE)
 
     idxs = range(keys.size) if sm_i == 1 else range(keys.size - 1, -1, -1)
     for i in idxs:
         if _values_match(lookup_value, keys.at_flat(i)):
-            return vals.at_flat(i)
+            return _result_or_raise(vals.at_flat(i))
 
-    return XlError.NA if if_not_found is None else if_not_found
+    if if_not_found is None:
+        raise XlErrorException(XlError.NA)
+    return if_not_found

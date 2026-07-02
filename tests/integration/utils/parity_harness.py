@@ -98,7 +98,12 @@ def exec_generated_code_with_cache(
     namespace_seed: dict[str, object] | None = None,
     blank_ranges: list[str] | tuple[str, ...] | None = None,
 ) -> tuple[dict[str, object], str, dict[str, object]]:
-    """Generate + exec code for targets and return (cache, code, namespace)."""
+    """Generate + exec code for targets and return (cache, code, namespace).
+
+    The exported runtime raises `XlErrorException` for Excel errors; raised
+    codes are recorded in the returned cache as `XlError` sentinel values so
+    they compare directly against evaluator results.
+    """
     code = CodeGenerator(graph).generate(targets, blank_ranges=blank_ranges)
     ns: dict[str, object] = dict(namespace_seed or {})
     exec(code, ns)
@@ -106,10 +111,17 @@ def exec_generated_code_with_cache(
     resolver = cast(Callable[[str], object], ns["_resolve_formula"])
     ctx = cast(Callable[..., object], ns["EvalContext"])(inputs=merged, resolver=resolver)
     xl_cell = cast(Callable[..., object], ns["xl_cell"])
-    for target in targets:
-        xl_cell(ctx, target)
+    xl_error_exception = cast("type[BaseException] | None", ns.get("XlErrorException"))
     ctx_any = cast(Any, ctx)
     cache = cast(dict[str, object], ctx_any.cache)
+    for target in targets:
+        try:
+            xl_cell(ctx, target)
+        except BaseException as exc:  # noqa: B036 (re-raised unless Excel error)
+            if xl_error_exception is None or not isinstance(exc, xl_error_exception):
+                raise
+            # The evaluation boundary caches the raising cell's error code.
+            cache.setdefault(target, cast(Any, exc).code)
     return dict(cache), code, ns
 
 
@@ -189,7 +201,7 @@ def assert_codegen_matches_evaluator(
 _CACHE_EVAL_SCAFFOLD_DEFS = ("def _evaluate_address(", "def xl_cell(", "def xl_eval(")
 # Pre-refactor standalone exports embedded ~78 lines for xl_cell + xl_eval alone.
 # Post-refactor shared helper keeps the block at ~69 lines; budget guards re-bloat.
-CACHE_EVAL_SCAFFOLD_LINE_BUDGET = 72
+CACHE_EVAL_SCAFFOLD_LINE_BUDGET = 80
 
 
 def count_cache_eval_scaffold_lines(code: str) -> int:
@@ -266,8 +278,8 @@ DEP_TRACKING_CALL_MARKERS = frozenset(
 )
 
 # Baseline for non-iterative minimal export (S!A1 leaf + S!B1 formula).
-DEP_TRACKING_BASELINE_VERSION = 6
-SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET = 54
+DEP_TRACKING_BASELINE_VERSION = 7
+SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET = 62
 
 
 def extract_embedded_runtime(code: str) -> str:

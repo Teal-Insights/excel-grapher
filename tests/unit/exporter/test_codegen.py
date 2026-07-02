@@ -83,20 +83,20 @@ class TestEmitAstLiterals:
         assert gen._emit_ast(BoolNode(False)) == "False"
 
     def test_emit_error_na(self, gen):
-        """#N/A error."""
-        assert gen._emit_ast(ErrorNode(XlError.NA)) == "XlError.NA"
+        """#N/A error literals raise in the exported error channel."""
+        assert gen._emit_ast(ErrorNode(XlError.NA)) == "xl_raise(XlError.NA)"
 
     def test_emit_error_value(self, gen):
-        """#VALUE! error."""
-        assert gen._emit_ast(ErrorNode(XlError.VALUE)) == "XlError.VALUE"
+        """#VALUE! error literals raise in the exported error channel."""
+        assert gen._emit_ast(ErrorNode(XlError.VALUE)) == "xl_raise(XlError.VALUE)"
 
     def test_emit_error_ref(self, gen):
-        """#REF! error."""
-        assert gen._emit_ast(ErrorNode(XlError.REF)) == "XlError.REF"
+        """#REF! error literals raise in the exported error channel."""
+        assert gen._emit_ast(ErrorNode(XlError.REF)) == "xl_raise(XlError.REF)"
 
     def test_emit_error_div(self, gen):
-        """#DIV/0! error."""
-        assert gen._emit_ast(ErrorNode(XlError.DIV)) == "XlError.DIV"
+        """#DIV/0! error literals raise in the exported error channel."""
+        assert gen._emit_ast(ErrorNode(XlError.DIV)) == "xl_raise(XlError.DIV)"
 
 
 class TestEmitAstEmptyArg:

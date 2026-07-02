@@ -88,8 +88,8 @@ def test_match_over_column_slice_of_index() -> None:
     assert result.generated_results["S!C1"] == 2
 
 
-def test_sum_over_range_with_error_returns_error_sentinel() -> None:
-    """SUM over a range containing an error keeps sentinel semantics (pre-#315)."""
+def test_sum_over_range_with_error_produces_error_code() -> None:
+    """SUM over a range containing an error surfaces the first error's code."""
     graph = _make_graph(
         _make_node("S!A1", None, 1),
         _make_node("S!A2", "=1/0", None),

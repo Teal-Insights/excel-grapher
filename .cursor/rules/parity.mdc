@@ -15,17 +15,57 @@ alwaysApply: false
 | Check | Typical tests / helpers |
 | ----- | ----------------------- |
 | **Evaluator ↔ Excel** | Compare evaluator output to workbook **cached** values (`tests/evaluator/excel_workbook_parity.py`), or to **live-recalculated** results when xlwings / Windows Excel / WSL+COM is available. |
-| **Evaluator ↔ exported code (`export parity`)** | `tests/evaluator/parity_harness.py` (`assert_codegen_matches_evaluator`, etc.). |
+| **Evaluator ↔ exported code (`export parity`)** | `tests/integration/utils/parity_harness.py` (`assert_codegen_matches_evaluator`, etc.). |
 
 When both evaluator↔Excel and evaluator↔export hold for overlapping coverage, you get **three-way parity** for those cells/features.
 
-## Single source of truth for Excel semantics
+## Two error channels (intentional divergence)
 
-- **Canonical runtime**: Excel-compatible semantics live in `excel_grapher/exporter/export_runtime/*`.
-- **Evaluator**: must call runtime semantics (directly or via re-exports in `excel_grapher/evaluator/helpers.py`).
-- **Codegen**: must emit calls to the same runtime symbols and embed them using `excel_grapher/exporter/export_runtime/embed.py::emit_runtime(...)`.
+The evaluator and the exported runtime use **different error channels** with the
+**same error codes**:
 
-Do not introduce a second implementation of semantics elsewhere; it will drift.
+- **Evaluator = literal Excel model.** Errors are `XlError` sentinel values;
+  ranges resolve to numpy object arrays. The evaluator never raises
+  `XlErrorException`.
+- **Export = Pythonic model.** Where Excel displays error code `E`, exported
+  code **raises `XlErrorException(E)`** (a traceback, not a silently propagated
+  sentinel). Ranges are lazy `Range` values; unused cells are never evaluated.
+
+Export-path parity is therefore asserted on **raised codes**: the parity
+harness catches `XlErrorException` per target and compares `exc.code` against
+the evaluator's sentinel. `assert_codegen_matches_evaluator` already does this.
+
+Export error-channel specifics:
+
+- The cell-evaluation boundary (`_evaluate_address` in `runtime/cache.py` and
+  `runtime/cache_eval_slim.py`) raises for `XlError` values and caches the
+  raising cell's code so re-reads raise without re-evaluating.
+- Error-consuming functions (`IFERROR`, `IFNA`, `ISERROR`, `ISNA`, `ISBLANK`,
+  `ISNUMBER`, `ISTEXT`) receive **lazily-evaluated thunks** and handle both
+  raised errors and sentinel returns from embedded shared helpers.
+- `compute_all` raises by default. Multi-cell range targets materialize as
+  nested lists with per-cell sentinel codes (grid display semantics).
+- Lookup scans and criteria matching keep Excel **skip semantics** through the
+  sentinel probe channel (`Range.value_at` / `Grid.at` convert raised errors
+  back to sentinels for inspection without propagation).
+
+## Layered semantics: shared core vs export-owned runtime
+
+- **Shared semantics**: coercions, scalar operator semantics, and most
+  worksheet functions live in `excel_grapher/core/*` and
+  `excel_grapher/runtime/*`. The evaluator imports these directly.
+- **Export-owned semantics**: `excel_grapher/exporter/export_runtime/*` defines
+  the exported error channel (`XlErrorException`, `xl_raise`, thunked
+  error-consumers) and lazy-range consumers (operators, lookups, `SUMPRODUCT`,
+  `OFFSET`, `xl_range`). The operator/error/range layer is **not** a single
+  shared implementation anymore — divergence here is deliberate.
+- **Embedding**: codegen embeds runtime code via
+  `excel_grapher/exporter/embed.py::emit_runtime(...)`. Export-owned modules
+  register **last**, so their symbols override shared `core`/`runtime` symbols
+  in emitted code without changing what the evaluator imports.
+
+Do not introduce a *third* implementation of semantics elsewhere; put shared
+logic in `core`/`runtime` and export-specific behavior in `export_runtime`.
 
 ## Tests that require Excel automation (run-if-available)
 
@@ -39,15 +79,17 @@ Do **not** substitute alternative spreadsheet engines (for example LibreOffice C
 
 When adding a new function/operator or changing semantics:
 
-1) **Add a parity test first (RED)** using `tests/evaluator/parity_harness.py`.
+1) **Add a parity test first (RED)** using `tests/integration/utils/parity_harness.py`.
 
 2) **Implement or update the runtime (GREEN)**
-   - Add/modify the canonical implementation in `excel_grapher/exporter/export_runtime/*`.
+   - Shared logic goes in `excel_grapher/core/*` or `excel_grapher/runtime/*`.
+   - Export-specific behavior (raise-based errors, lazy ranges) goes in
+     `excel_grapher/exporter/export_runtime/*`.
 
-3) **Wire the evaluator to the runtime**
-   - Update `FormulaEvaluator` and/or `helpers.py` so the evaluator calls the runtime implementation.
+3) **Wire the evaluator**
+   - Update `FormulaEvaluator` and/or `helpers.py` so the evaluator calls the shared implementation.
 
-4) **Wire codegen to the runtime**
+4) **Wire codegen**
    - Ensure `CodeGenerator` emits the correct runtime symbol and `emit_runtime(...)` includes it via dependency closure.
 
 5) **Add a pruning assertion** when runtime surface area might bloat generated output (optional).
@@ -59,10 +101,14 @@ When adding a new function/operator or changing semantics:
 Preferred pattern for codegen parity:
 
 ```python
-from tests.evaluator.parity_harness import assert_codegen_matches_evaluator
+from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
 
 result = assert_codegen_matches_evaluator(graph, targets)
 assert result.generated_results["S!A1"] == 123
 ```
+
+Error targets compare as codes: the harness records a raised
+`XlErrorException(E)` from the export path as the sentinel `E`, matching the
+evaluator's sentinel output.
 
 Avoid duplicating operator or coercion behavior in both evaluator and codegen paths.

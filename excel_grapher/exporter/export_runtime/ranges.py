@@ -121,14 +121,19 @@ class Range:
         )
 
     def value_at(self, row: int, col: int) -> CellValue:
-        """Return a single relative cell value without translating errors.
+        """Return a single relative cell value with errors as sentinels.
 
-        Unlike `cell`, Excel error values are returned as `XlError` sentinels.
-        Range consumers that implement Excel sentinel semantics use this
-        accessor; `cell`/iteration raise `XlErrorException` instead.
+        Unlike `cell`, Excel errors surface as `XlError` sentinel values (raised
+        `XlErrorException`s from the resolver are caught and converted). Range
+        consumers that implement Excel skip semantics (lookup scans, criteria
+        matching) use this accessor; `cell`/iteration raise instead.
         """
         self._validate_relative_cell(row, col)
-        return self._resolver(self._address(self.start_row + row - 1, self.start_col + col - 1))
+        address = self._address(self.start_row + row - 1, self.start_col + col - 1)
+        try:
+            return self._resolver(address)
+        except XlErrorException as exc:
+            return exc.code
 
     def iter_raw(self) -> Iterator[CellValue]:
         """Yield raw values (error sentinels included) in row-major order."""
