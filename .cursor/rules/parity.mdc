@@ -40,9 +40,11 @@ Export error-channel specifics:
 - The cell-evaluation boundary (`_evaluate_address` in `runtime/cache.py` and
   `runtime/cache_eval_slim.py`) raises for `XlError` values and caches the
   raising cell's code so re-reads raise without re-evaluating.
-- Error-consuming functions (`IFERROR`, `IFNA`, `ISERROR`, `ISNA`, `ISBLANK`,
-  `ISNUMBER`, `ISTEXT`) receive **lazily-evaluated thunks** and handle both
-  raised errors and sentinel returns from embedded shared helpers.
+- Error-consuming functions (`IFERROR`, `IFNA`, `ISERROR`, `ISNA`, `ISBLANK`)
+  receive **lazily-evaluated thunks** and handle both raised errors and
+  sentinel returns from embedded shared helpers. This mirrors the evaluator's
+  AST-level special cases; other functions (e.g. `ISNUMBER`, `ISTEXT`) are not
+  thunked and propagate argument errors like any generic worksheet function.
 - `compute_all` raises by default. Multi-cell range targets materialize as
   nested lists with per-cell sentinel codes (grid display semantics).
 - Lookup scans and criteria matching keep Excel **skip semantics** through the
