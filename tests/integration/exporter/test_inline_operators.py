@@ -196,3 +196,57 @@ class TestArrayOperatorOperandBinding:
     def test_nested_array_operator_parity(self) -> None:
         graph = self._array_graph("=SUM((S!A1:A3+S!B1:B3)*(S!C1:C3-S!D1:D3))")
         assert_codegen_matches_evaluator(graph, ["S!Z1"])
+
+
+class TestArrayOperatorPredicateTightening:
+    """Scalar-returning functions do not trigger the operator array guard."""
+
+    @staticmethod
+    def _cell_body(code: str, key: str) -> str:
+        out: list[str] = []
+        grab = False
+        for line in code.splitlines():
+            if line.startswith(f"def {key}"):
+                grab = True
+            elif grab and line.startswith("def "):
+                break
+            if grab:
+                out.append(line)
+        return "\n".join(out)
+
+    @classmethod
+    def _array_graph(cls, formula: str) -> DependencyGraph:
+        nodes = [_make_node("S!Z1", formula, None)]
+        for col in "ABCD":
+            for row in (1, 2, 3):
+                nodes.append(_make_node(f"S!{col}{row}", None, float(row)))
+        return _make_graph(*nodes)
+
+    def test_scalar_aggregate_operand_emits_no_array_guard(self) -> None:
+        """SUM over a range returns a scalar, so `SUM(range) + x` needs no guard."""
+        graph = self._array_graph("=SUM(S!A1:S!A3)+S!B1")
+        body = self._cell_body(CodeGenerator(graph).generate(["S!Z1"]), "cell_s_z1")
+        assert "xl_is_array(" not in body
+        assert "xl_map_arithmetic(" not in body
+        assert "lambda" not in body
+
+    def test_scalar_lookup_operand_emits_no_array_guard(self) -> None:
+        graph = self._array_graph("=MATCH(2, S!A1:S!A3, 0)+S!B1")
+        body = self._cell_body(CodeGenerator(graph).generate(["S!Z1"]), "cell_s_z1")
+        assert "xl_is_array(" not in body
+
+    def test_scalar_aggregate_parity(self) -> None:
+        graph = self._array_graph("=SUM(S!A1:S!A3)+S!B1")
+        result = assert_codegen_matches_evaluator(graph, ["S!Z1"])
+        assert result.generated_results["S!Z1"] == 7.0
+
+    def test_choose_passthrough_array_still_broadcasts(self) -> None:
+        """A pass-through returning an array must still trigger the guard."""
+        graph = self._array_graph("=SUM(CHOOSE(2, S!A1:A3, S!B1:B3) + 10)")
+        result = assert_codegen_matches_evaluator(graph, ["S!Z1"])
+        assert result.generated_results["S!Z1"] == 36.0
+
+    def test_if_passthrough_array_still_broadcasts(self) -> None:
+        graph = self._array_graph("=SUM(IF(S!A1>0, S!A1:A3, S!B1:B3) + 10)")
+        result = assert_codegen_matches_evaluator(graph, ["S!Z1"])
+        assert result.generated_results["S!Z1"] == 36.0

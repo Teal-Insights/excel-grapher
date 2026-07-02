@@ -1522,7 +1522,15 @@ class CodeGenerator:
         return 1
 
     def _ast_needs_array_operator_branch(self, node: AstNode) -> bool:
-        """Return whether an operator subtree can yield range/array operands at runtime."""
+        """Return whether a subtree can *evaluate to* a range/array at runtime.
+
+        Only array-producing nodes require the operator broadcast branch: ranges,
+        multi-cell `OFFSET`, non-scalar `INDEX` slices, and the pass-through
+        functions (`IF`/`IFERROR`/`IFNA`/`CHOOSE`) when a returned branch is
+        itself an array. Scalar-returning functions (e.g. `SUM`, `MATCH`,
+        `VLOOKUP`) never yield arrays even when their arguments contain ranges,
+        so they take the inlined scalar path without a guard.
+        """
         if isinstance(node, RangeNode):
             return True
         if isinstance(node, BinaryOpNode):
@@ -1538,8 +1546,14 @@ class CodeGenerator:
                     node
                 )
             if upper == "INDEX" and node.args and isinstance(node.args[0], RangeNode):
-                return True
-            return any(self._ast_needs_array_operator_branch(arg) for arg in node.args)
+                return not self._index_range_result_is_scalar(node.args[0], node)
+            if upper in {"IFERROR", "IFNA"}:
+                return any(self._ast_needs_array_operator_branch(arg) for arg in node.args)
+            if upper in {"IF", "CHOOSE"}:
+                # The result is one of the value branches (args[1:]); the
+                # condition/index (args[0]) does not affect array-ness.
+                return any(self._ast_needs_array_operator_branch(arg) for arg in node.args[1:])
+            return False
         return False
 
     def _note_operators_fastpath_from_ast(self, node: AstNode) -> None:
