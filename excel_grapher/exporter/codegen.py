@@ -54,6 +54,8 @@ __all__ = ["CodeGenerator", "GenerationParts", "GraphLike", "GraphNode"]
 if TYPE_CHECKING:
     from excel_grapher.exporter.projection import ProjectionManifest
     from excel_grapher.grapher import DependencyGraph  # noqa: F401
+    from excel_grapher.grapher.range_compression import TacoBuildConfig, TacoIndex
+    from excel_grapher.grapher.range_compression.codegen_plan import CodegenPlan
     from excel_grapher.series_bindings.docstring_renderers import SeriesDocstringRendererSpec
     from excel_grapher.series_bindings.docstrings import SeriesBindingDocstringCallbackSpec
     from excel_grapher.series_bindings.types import InputSeries, WorkbookSeriesBindings
@@ -188,6 +190,17 @@ class CodeGenerator:
         if original is not None:
             return cast("DependencyGraph | GraphLike", original)
         return self.graph
+
+    def _dependency_graph(self) -> DependencyGraph:
+        """Return the canonical ``DependencyGraph`` backing this generator."""
+        from excel_grapher.grapher.graph import DependencyGraph as _DependencyGraph
+
+        graph = self._public_graph()
+        if not isinstance(graph, _DependencyGraph):
+            raise TypeError(
+                "TACO codegen boundaries require a DependencyGraph-backed CodeGenerator"
+            )
+        return graph
 
     def _projection_manifest(self) -> ProjectionManifest | None:
         return getattr(self.graph, "manifest", None)
@@ -1008,6 +1021,101 @@ class CodeGenerator:
             self.graph.leaf_classification = classification
 
         return inputs, constants
+
+    def build_codegen_taco_config(
+        self,
+        targets: Sequence[str] | None = None,
+        *,
+        input_ranges: Sequence[str] | None = None,
+        series_bindings: WorkbookSeriesBindings | None = None,
+        bindings_workbook: Path | str | None = None,
+        internal_only: bool = True,
+        attach_classification: bool = True,
+    ) -> TacoBuildConfig:
+        """Return a codegen-boundary ``TacoBuildConfig`` for this export closure."""
+        from excel_grapher.grapher.range_compression import TacoBuildConfig
+
+        return TacoBuildConfig.for_codegen_from_generator(
+            self,
+            targets,
+            input_ranges=input_ranges,
+            series_bindings=series_bindings,
+            bindings_workbook=bindings_workbook,
+            internal_only=internal_only,
+            attach_classification=attach_classification,
+        )
+
+    def build_codegen_taco_index(
+        self,
+        targets: Sequence[str] | None = None,
+        *,
+        input_ranges: Sequence[str] | None = None,
+        series_bindings: WorkbookSeriesBindings | None = None,
+        bindings_workbook: Path | str | None = None,
+        internal_only: bool = True,
+        attach_classification: bool = True,
+        attach_to_graph: bool = True,
+    ) -> TacoIndex:
+        """Build a codegen-boundary TACO index for this export closure."""
+        from excel_grapher.grapher.range_compression import build_taco_index
+
+        config = self.build_codegen_taco_config(
+            targets,
+            input_ranges=input_ranges,
+            series_bindings=series_bindings,
+            bindings_workbook=bindings_workbook,
+            internal_only=internal_only,
+            attach_classification=attach_classification,
+        )
+        graph = self._dependency_graph()
+        index = build_taco_index(graph, config)
+        if attach_to_graph:
+            graph.codegen_taco_index = index
+        return index
+
+    def build_codegen_plan(
+        self,
+        targets: Sequence[str] | None = None,
+        *,
+        input_ranges: Sequence[str] | None = None,
+        series_bindings: WorkbookSeriesBindings | None = None,
+        bindings_workbook: Path | str | None = None,
+        internal_only: bool = True,
+        attach_classification: bool = True,
+        attach_to_graph: bool = True,
+    ) -> CodegenPlan:
+        """Build a unit-level codegen evaluation plan for this export closure."""
+        from excel_grapher.grapher.range_compression import build_codegen_plan
+
+        normalized_targets = (
+            self._resolve_targets(targets)
+            if targets is not None
+            else list(self._dependency_graph().target_keys())
+        )
+        graph = self._dependency_graph()
+        index = self.build_codegen_taco_index(
+            normalized_targets,
+            input_ranges=input_ranges,
+            series_bindings=series_bindings,
+            bindings_workbook=bindings_workbook,
+            internal_only=internal_only,
+            attach_classification=attach_classification,
+            attach_to_graph=attach_to_graph,
+        )
+        config = self.build_codegen_taco_config(
+            normalized_targets,
+            input_ranges=input_ranges,
+            series_bindings=series_bindings,
+            bindings_workbook=bindings_workbook,
+            internal_only=internal_only,
+            attach_classification=False,
+        )
+        closure = [
+            key
+            for key in self._collect_all_cells(normalized_targets)
+            if (node := graph.get_node(key)) is not None and node.formula
+        ]
+        return build_codegen_plan(graph, index, config, closure=closure)
 
     def _classify_leaf_nodes(
         self,

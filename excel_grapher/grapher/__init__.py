@@ -55,10 +55,32 @@ from .guard import And, Compare, GuardExpr, Literal, Not, Or
 from .guard import CellRef as GuardCellRef
 from .node import Node, NodeKey
 from .parser import format_cell_key, format_key, needs_quoting
+from .range_compression import (
+    CodegenPlan,
+    TacoBuildConfig,
+    TacoIndex,
+    build_codegen_plan,
+    build_codegen_taco_index,
+    build_taco_index,
+    codegen_boundary_keys,
+    input_keys_from_graph,
+    input_keys_from_ranges,
+    setter_keys_from_bindings,
+)
 from .validation import ValidationResult, WorkbookCalcSettings, get_calc_settings, validate_graph
 
 __all__ = [
     "create_dependency_graph",
+    "build_taco_index",
+    "build_codegen_taco_index",
+    "build_codegen_plan",
+    "CodegenPlan",
+    "codegen_boundary_keys",
+    "input_keys_from_graph",
+    "input_keys_from_ranges",
+    "setter_keys_from_bindings",
+    "TacoBuildConfig",
+    "TacoIndex",
     "normalize_blank_range_specs",
     "list_dynamic_ref_constraint_candidates",
     "GRAPH_CACHE_SCHEMA_VERSION",
