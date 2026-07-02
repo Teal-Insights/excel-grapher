@@ -76,7 +76,75 @@ def _validate_bind_smoke(bind: Any, *, series_id: str, context: str) -> list[Val
                 series_id=series_id,
             )
         ]
-    return []
+    return _validate_bind_geometry(bind, series_id=series_id, context=context)
+
+
+def _validate_bind_geometry(
+    bind: dict[str, Any], *, series_id: str, context: str
+) -> list[ValidationIssue]:
+    """Statically check skip/include specs and value_map axis and overlap rules."""
+    from excel_grapher.series_bindings.geometry import (
+        expand_column_specs,
+        expand_row_specs,
+        parse_value_map,
+    )
+
+    issues: list[ValidationIssue] = []
+    kind = bind.get("kind")
+
+    if bind.get("skip") is not None and bind.get("include") is not None:
+        issues.append(
+            _issue(
+                "error",
+                "invalid_bind_geometry",
+                f"{context}: skip and include are mutually exclusive",
+                series_id=series_id,
+            )
+        )
+
+    expand = expand_row_specs if kind == "row_label" else expand_column_specs
+    if kind in {"row_label", "column_header"}:
+        for field in ("skip", "include"):
+            specs = bind.get(field)
+            if specs is None:
+                continue
+            try:
+                expand(specs)
+            except ValueError as exc:
+                issues.append(
+                    _issue(
+                        "error",
+                        "invalid_bind_geometry",
+                        f"{context}: {exc}",
+                        series_id=series_id,
+                    )
+                )
+
+    if kind == "value_map":
+        values = bind.get("values")
+        key_types = {type(key) for key in values} if isinstance(values, dict) else set()
+        if len(key_types) > 1:
+            issues.append(
+                _issue(
+                    "error",
+                    "invalid_bind_geometry",
+                    f"{context}: value_map keys must share one scalar type",
+                    series_id=series_id,
+                )
+            )
+        try:
+            parse_value_map(values or {})
+        except (ValueError, TypeError) as exc:
+            issues.append(
+                _issue(
+                    "error",
+                    "invalid_bind_geometry",
+                    f"{context}: {exc}",
+                    series_id=series_id,
+                )
+            )
+
+    return issues
 
 
 def _validate_series_structure(series: dict[str, Any]) -> list[ValidationIssue]:
@@ -98,6 +166,22 @@ def _validate_series_structure(series: dict[str, Any]) -> list[ValidationIssue]:
                     "error",
                     "sheet_mismatch",
                     f"series sheet {sheet!r} does not match data_range sheet {range_sheet!r}",
+                    series_id=series_id,
+                )
+            )
+
+    exclude_rows = series.get("exclude_rows")
+    if exclude_rows is not None:
+        from excel_grapher.series_bindings.geometry import expand_row_specs
+
+        try:
+            expand_row_specs(exclude_rows)
+        except ValueError as exc:
+            issues.append(
+                _issue(
+                    "error",
+                    "invalid_bind_geometry",
+                    f"exclude_rows: {exc}",
                     series_id=series_id,
                 )
             )
