@@ -28,30 +28,22 @@ def test_emit_setter_type_alias_lines_omit_datetime_when_unused() -> None:
     lines = emit_setter_type_alias_lines(include_datetime=False)
     assert lines[:2] == [
         "from collections.abc import Sequence",
-        "from typing import TYPE_CHECKING",
+        "from typing import TYPE_CHECKING, TypeAlias",
     ]
-    assert "Scalar = str | int | float | bool | None" in lines
+    assert "Scalar: TypeAlias = str | int | float | bool | None" in lines
     assert "if TYPE_CHECKING:" in lines
     assert any(
-        line.strip()
-        == "SeriesInput = Records | Record | Sequence[Scalar] | pd.DataFrame | pl.DataFrame"
-        for line in lines
+        line.strip() == "DataFrameInput: TypeAlias = pd.DataFrame | pl.DataFrame" for line in lines
     )
-    assert any(
-        line.strip() == "SeriesInput = Records | Record | Sequence[Scalar] | object"
-        for line in lines
-    )
+    assert any(line.strip() == "DataFrameInput: TypeAlias = object" for line in lines)
+    assert "SeriesInput: TypeAlias = Records | Record | Sequence[Scalar] | DataFrameInput" in lines
 
 
 def test_emit_setter_type_alias_lines_include_datetime_when_needed() -> None:
     lines = emit_setter_type_alias_lines(include_datetime=True)
     assert lines[0] == "from collections.abc import Sequence"
-    assert "Scalar = str | int | float | bool | datetime | None" in lines
-    assert any(
-        line.strip()
-        == "SeriesInput = Records | Record | Sequence[Scalar] | pd.DataFrame | pl.DataFrame"
-        for line in lines
-    )
+    assert "Scalar: TypeAlias = str | int | float | bool | datetime | None" in lines
+    assert "SeriesInput: TypeAlias = Records | Record | Sequence[Scalar] | DataFrameInput" in lines
 
 
 def test_emit_compute_preamble_lines_include_datetime_when_needed() -> None:

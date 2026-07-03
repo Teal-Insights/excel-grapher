@@ -46,27 +46,28 @@ def emit_setter_type_alias_lines(*, include_datetime: bool) -> list[str]:
     """Emit shared type aliases for generated setter blocks."""
     sequence_import = [
         "from collections.abc import Sequence",
-        "from typing import TYPE_CHECKING",
+        "from typing import TYPE_CHECKING, TypeAlias",
         "",
     ]
     scalar_type = (
-        "Scalar = str | int | float | bool | datetime | None"
+        "Scalar: TypeAlias = str | int | float | bool | datetime | None"
         if include_datetime
-        else "Scalar = str | int | float | bool | None"
+        else "Scalar: TypeAlias = str | int | float | bool | None"
     )
     return sequence_import + [
         scalar_type,
-        "Record = dict[str, object]",
-        "Records = list[Record]",
-        "SeriesInput = Records | Record | Sequence[Scalar]",
+        "Record: TypeAlias = dict[str, object]",
+        "Records: TypeAlias = list[Record]",
         "",
         "if TYPE_CHECKING:",
         "    import pandas as pd",
         "    import polars as pl",
         "",
-        "    SeriesInput = Records | Record | Sequence[Scalar] | pd.DataFrame | pl.DataFrame",
+        "    DataFrameInput: TypeAlias = pd.DataFrame | pl.DataFrame",
         "else:",
-        "    SeriesInput = Records | Record | Sequence[Scalar] | object",
+        "    DataFrameInput: TypeAlias = object",
+        "",
+        "SeriesInput: TypeAlias = Records | Record | Sequence[Scalar] | DataFrameInput",
         "",
     ]
 
