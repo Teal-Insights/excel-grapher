@@ -288,14 +288,14 @@ class TestEmitAstFunctions:
             ],
         )
         result = gen._emit_ast(node)
-        # IF is emitted as lazy conditional: error check, then conditional expression
+        # IF is emitted as a lazy conditional with raise-only boolean coercion.
         assert "xl_compare('>', xl_cell(ctx, 'Sheet1!A1'), 0.0)" in result
         assert "'positive'" in result
         assert "'non-positive'" in result
-        assert "XlError" in result  # Error propagation check
-        # Condition is evaluated once, coerced via to_bool(), then used in a lazy conditional.
-        assert "to_bool" in result
-        assert "if _t2 else" in result
+        assert "XlError" not in result
+        assert "to_bool" not in result
+        assert "xl_bool(" in result
+        assert "if (_t1 :=" in result
 
     def test_emit_function_vlookup(self, gen):
         """VLOOKUP function."""
