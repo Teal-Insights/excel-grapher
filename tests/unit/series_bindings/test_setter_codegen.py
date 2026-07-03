@@ -885,3 +885,48 @@ def test_emit_setter_matrix_dataframe_duplicate_composite_key_raises(tmp_path: P
     )
     with pytest.raises(ValueError, match=r"record\[1\]: duplicate key .*record\[0\]"):
         setter(ctx, df)
+
+
+def test_emit_setter_requires_address_rejects_dataframe(tmp_path: Path) -> None:
+    pd = pytest.importorskip("pandas")
+    wb_path = tmp_path / "dup_headers.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write(0, 2, 1)
+    ws.write(0, 3, 1)
+    ws.write_number(1, 2, 1.0)
+    ws.write_number(1, 3, 2.0)
+    wb.close()
+
+    graph = create_dependency_graph(wb_path, ["Sheet1!C2", "Sheet1!D2"], load_values=True)
+    series = {
+        "id": "dup_headers",
+        "sheet": "Sheet1",
+        "data_range": "Sheet1!C2:D2",
+        "layout": "series",
+        "setter": {"name": "set_dup_headers", "allow_address": True, "strict": False},
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "bind": {"kind": "data_cell", "read": "float"},
+            },
+            "dimensions": [
+                {
+                    "concept": "TIME_PERIOD",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "column_header", "header_row": 1, "read": "int"},
+                }
+            ],
+        },
+        "key": ["TIME_PERIOD"],
+        "validation": {"require_unique_key": True},
+    }
+    resolved = resolve_series_binding(graph, wb_path, series)
+    ns = _exec_setters(emit_setter_function(series, resolved))
+    setter = cast(Callable[[EvalContext, object], None], ns["set_dup_headers"])
+    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
+
+    df = pd.DataFrame({"TIME_PERIOD": [1], "OBS_VALUE": [99.0]})
+    with pytest.raises(TypeError, match="requires address"):
+        setter(ctx, df)

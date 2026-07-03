@@ -522,6 +522,7 @@ class CodeGenerator:
         return "\n".join(lines).rstrip() + "\n"
 
     _SERIES_HELPER_IMPORT_NAMES: tuple[str, ...] = (
+        "EmptyMeasure",
         "Record",
         "Records",
         "Scalar",

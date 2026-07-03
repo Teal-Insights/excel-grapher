@@ -146,10 +146,10 @@ Offset projection years (1..5) vs calendar years (1999..2000) are distinguished 
 
 ## Records contract
 
-Generated **series** setters accept `SeriesInput`: records, a 1D iterable of measure values
-(single-key series only), or a **tidy** pandas/polars `DataFrame`. **Scalar** setters accept a
-bare measure value, one record dict, or a one-element record list. `ctx: EvalContext` is always the
-first argument.
+Generated **series** and **matrix** setters accept `SeriesInput`: records or a **tidy**
+pandas/polars `DataFrame`. **Series** setters also accept a 1D iterable of measure values when
+the binding has a single key. **Scalar** setters accept a bare measure value, one record dict, or
+a one-element record list. `ctx: EvalContext` is always the first argument.
 
 ```python
 # Records (always supported)
@@ -163,9 +163,22 @@ import pandas as pd
 
 df = pd.DataFrame({"TIME_PERIOD": [4, 5], "OBS_VALUE": [7.5, 8.0]})
 set_borvelia_primary_balance(ctx, df)
+
+# Matrix setters use the same tidy contract (one row per cell)
+set_macro_matrix(
+    ctx,
+    pd.DataFrame(
+        {
+            "INDICATOR": ["GDP growth", "Inflation"],
+            "TIME_PERIOD": [2024, 2025],
+            "OBS_VALUE": [1.5, 2.8],
+        }
+    ),
+)
 ```
 
-`layout: matrix` setters are **not** implemented yet; matrix-shaped input is out of scope.
+See also `examples/micro_workbooks/setter_dataframe_example.py` (single-key series) and
+`examples/micro_workbooks/matrix_dataframe_example.py` (matrix).
 
 ### Record dicts
 
@@ -194,7 +207,21 @@ tidy = df_wide.reset_index().melt(id_vars=["INDICATOR"], var_name="TIME_PERIOD",
 tidy = df_wide.unpivot(on="TIME_PERIOD", index="INDICATOR", value_name="OBS_VALUE")
 ```
 
-Only include columns that appear in `key` plus the measure concept.
+Only include columns that appear in `key` plus the measure concept. Passing a wide grid (periods
+as columns) raises a validation error with a hint to melt or stack to tidy.
+
+### Empty measure cells
+
+Generated setters accept `empty_measure: Literal["skip", "write", "error"] = "write"`:
+
+- **`write`** (default) — pass the measure value through; the runtime applies its own empty vs
+  N/A semantics.
+- **`skip`** — drop rows whose measure is missing or NaN (convenient after melting a wide grid
+  with gaps).
+- **`error`** — raise when a row includes a missing or NaN measure.
+
+Empty **key** fields always raise, regardless of `empty_measure`. A zero-row DataFrame with valid
+columns is a no-op (partial update with zero cells).
 
 **Key types must match resolved Python types.** Resolution coerces workbook and manifest values according to each bind’s `read` mode (and `concept_scheme` dtypes for constants and `series_context` entries). Generated setters index records by the same types — callers must not pass strings when resolution produced `datetime` or `bool` objects:
 
@@ -243,6 +270,13 @@ Normalization: `strip`, `strip_trailing_unit` (removes trailing `(…)` unit cla
 | `scalar` | **supported** | Single editable cell |
 | `matrix` | **supported** | Rectangular blocks; vertical keys from row binds, horizontal keys from column binds |
 
+**Supported matrix shape.** Matrix setters and `compute_*` functions support **dense logical
+tables**: no blank rows or columns inside the data range, with each cell-scoped key read from a
+label **directly to the left** of the cell (`row_label`) or **directly above** it
+(`column_header`), plus any number of whole-matrix scalar keys (`cell` / `constant`). Nested or
+banded labels that require scanning beyond the immediately adjacent row/column (e.g.
+country-block hierarchies) are not yet supported — see issue #287.
+
 Example (`layout: matrix` with explicit row and column binds):
 
 ```yaml
@@ -283,13 +317,24 @@ series:
       - TIME_PERIOD
 ```
 
-Generated setters accept long/tidy `list[dict]` records:
+Generated setters accept long/tidy `list[dict]` records or a tidy DataFrame:
 
 ```python
 set_macro_matrix(ctx, [
     {"INDICATOR": "GDP growth", "TIME_PERIOD": 2024, "OBS_VALUE": 1.5},
     {"INDICATOR": "Inflation", "TIME_PERIOD": 2025, "OBS_VALUE": 2.8},
 ])
+
+import pandas as pd
+
+df = pd.DataFrame(
+    {
+        "INDICATOR": ["GDP growth", "Inflation"],
+        "TIME_PERIOD": [2024, 2025],
+        "OBS_VALUE": [1.5, 2.8],
+    }
+)
+set_macro_matrix(ctx, df)
 ```
 
 ## Boolean and datetime types (1.4.0)

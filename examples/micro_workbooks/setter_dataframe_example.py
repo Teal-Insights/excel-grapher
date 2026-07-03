@@ -5,6 +5,8 @@ Demonstrates the **SeriesInput** DataFrame contract for a single-key series bind
 one row per observation, columns = binding ``key`` fields plus the measure concept
 (``OBS_VALUE``). Binding metadata (country, indicator, units) is omitted.
 
+See also ``matrix_dataframe_example.py`` for multi-key matrix bindings.
+
 Run from the repo root::
 
     uv run python examples/micro_workbooks/setter_dataframe_example.py
