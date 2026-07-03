@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v2.1.3 (2026-07-03)
+
+### Bug Fixes
+
+- Enforce raise-only export boundary
+  ([#327](https://github.com/Teal-Insights/excel-grapher/pull/327),
+  [`8991987`](https://github.com/Teal-Insights/excel-grapher/commit/899198771ad9e5c37d359abaa40d21d7f9bb31de))
+
+- Satisfy export runtime type check
+  ([#327](https://github.com/Teal-Insights/excel-grapher/pull/327),
+  [`8991987`](https://github.com/Teal-Insights/excel-grapher/commit/899198771ad9e5c37d359abaa40d21d7f9bb31de))
+
+### Code Style
+
+- Sort export runtime imports ([#327](https://github.com/Teal-Insights/excel-grapher/pull/327),
+  [`8991987`](https://github.com/Teal-Insights/excel-grapher/commit/899198771ad9e5c37d359abaa40d21d7f9bb31de))
+
+### Testing
+
+- Update if codegen boundary assertion
+  ([#327](https://github.com/Teal-Insights/excel-grapher/pull/327),
+  [`8991987`](https://github.com/Teal-Insights/excel-grapher/commit/899198771ad9e5c37d359abaa40d21d7f9bb31de))
+
+
 ## v2.1.2 (2026-07-03)
 
 ### Bug Fixes
