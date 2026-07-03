@@ -2367,6 +2367,14 @@ class CodeGenerator:
         }
         if api_helpers_py is not None:
             modules["_api_helpers.py"] = api_helpers_py
+        if series_bindings is not None:
+            from excel_grapher.series_bindings.groups import (
+                any_series_has_groups,
+                emit_api_manifest_json,
+            )
+
+            if any_series_has_groups(series_bindings):
+                modules["api_manifest.json"] = emit_api_manifest_json(series_bindings)
         return modules
 
     def _workbook_sort_addresses(self, addresses: Iterable[str]) -> list[str]:

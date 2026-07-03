@@ -18,6 +18,7 @@ _STRUCTURAL_FIELDS = frozenset(
         "editable",
         "sdmx_notes",
         "notes",
+        "groups",
     }
 )
 

@@ -18,6 +18,7 @@ from excel_grapher.series_bindings.docstrings import (
     emit_docstring_literal,
     resolve_series_function_docstring,
 )
+from excel_grapher.series_bindings.groups import any_series_has_groups, ordered_series_for_direction
 from excel_grapher.series_bindings.normalize import has_input_direction
 from excel_grapher.series_bindings.resolve import (
     resolve_series_bindings,
@@ -462,7 +463,17 @@ def emit_setters_block(
         if isinstance(s, dict) and has_input_direction(s)
     }
     failed: list[str] = []
-    for resolved in report["series"]:
+    resolved_by_id = {resolved["series_id"]: resolved for resolved in report["series"]}
+    if any_series_has_groups(bindings):
+        series_order = ordered_series_for_direction(bindings, "input")
+        resolution_order = [
+            resolved_by_id[series["id"]]
+            for series in series_order
+            if series["id"] in resolved_by_id
+        ]
+    else:
+        resolution_order = report["series"]
+    for resolved in resolution_order:
         if not resolved["ok"] and not resolved["requires_address"]:
             failed.append(resolved["series_id"])
             continue

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings.canonical import bindings_canonical_sha256
+from excel_grapher.series_bindings.groups import ordered_compute_names, ordered_setter_names
 from excel_grapher.series_bindings.input_series import derive_input_series
 from excel_grapher.series_bindings.load import SeriesBindingsLoadError, load_series_bindings
 from excel_grapher.series_bindings.ranges import expand_data_range
@@ -36,25 +37,13 @@ class BindingsCheckResult(TypedDict):
 
 
 def setter_names(bindings: WorkbookSeriesBindings) -> list[str]:
-    """Return sorted unique declared input setter function names."""
-    names: list[str] = []
-    for series in bindings["series"]:
-        input_block = series.get("input") or {}
-        setter = input_block.get("setter") or series.get("setter")
-        if isinstance(setter, dict) and setter.get("name"):
-            names.append(str(setter["name"]))
-    return sorted(set(names))
+    """Return declared input setter function names in export order."""
+    return ordered_setter_names(bindings)
 
 
 def compute_names(bindings: WorkbookSeriesBindings) -> list[str]:
-    """Return sorted unique declared output compute function names."""
-    names: list[str] = []
-    for series in bindings["series"]:
-        output_block = series.get("output") or {}
-        compute = output_block.get("compute")
-        if isinstance(compute, dict) and compute.get("name"):
-            names.append(str(compute["name"]))
-    return sorted(set(names))
+    """Return declared output compute function names in export order."""
+    return ordered_compute_names(bindings)
 
 
 def all_series_targets(

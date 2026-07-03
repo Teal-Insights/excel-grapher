@@ -7,6 +7,13 @@ ValidationLevel = Literal["error", "warning"]
 Scalar = str | int | float | bool | datetime | None
 
 
+class BindingGroup(TypedDict):
+    """View-level API group membership for a series binding."""
+
+    path: list[str]
+    order: NotRequired[float | int]
+
+
 class WorkbookSeriesBindings(TypedDict):
     """Top-level workbook binding manifest (post-merge, post-schema validation)."""
 
