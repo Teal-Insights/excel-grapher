@@ -5,7 +5,7 @@ from __future__ import annotations
 import random
 import warnings
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 import xlsxwriter
@@ -2410,6 +2410,189 @@ def _build_wide_index_sweep_workbook(path: Path, n_rows: int = 50) -> None:
         )
 
     wb.close()
+
+
+def _literal_constraint(*values: object) -> object:
+    return Literal.__getitem__(values)
+
+
+def _build_repeated_index_match_workbook(
+    path: Path,
+    *,
+    formula_count: int = 25,
+    country_count: int = 20,
+) -> tuple[list[str], dict[str, object]]:
+    """Create repeated INDEX/MATCH formulas sharing one controller/list pair."""
+    countries = [f"Country {i:03d}" for i in range(1, country_count + 1)]
+    wb = xlsxwriter.Workbook(path)
+    inputs = wb.add_worksheet("Inputs")
+    lookup = wb.add_worksheet("Lookup")
+    outputs = wb.add_worksheet("Outputs")
+
+    inputs.write("A1", countries[0])
+    for row, country in enumerate(countries, start=1):
+        lookup.write(row, 0, country)
+        lookup.write_number(row, 1, row * 10)
+
+    targets: list[str] = []
+    last_lookup_row = country_count + 1
+    for row in range(1, formula_count + 1):
+        address = f"A{row}"
+        outputs.write_formula(
+            address,
+            "=INDEX("
+            f"Lookup!$B$2:$B${last_lookup_row},"
+            f"MATCH(Inputs!$A$1,Lookup!$A$2:$A${last_lookup_row},0),"
+            "1"
+            ")",
+        )
+        targets.append(f"Outputs!{address}")
+
+    wb.close()
+
+    constraints: dict[str, object] = {"Inputs!A1": _literal_constraint(*countries)}
+    for row, country in enumerate(countries, start=2):
+        constraints[f"Lookup!A{row}"] = _literal_constraint(country)
+    return targets, constraints
+
+
+def test_repeated_identical_index_match_reuses_dynamic_ref_expansion(tmp_path: Path) -> None:
+    """Repeated identical INDEX/MATCH formulas should not redo MATCH inference."""
+    from unittest.mock import patch
+
+    formula_count = 25
+    country_count = 20
+    excel_path = tmp_path / "repeated_index_match.xlsx"
+    targets, constraints = _build_repeated_index_match_workbook(
+        excel_path,
+        formula_count=formula_count,
+        country_count=country_count,
+    )
+    config = DynamicRefConfig.from_constraints(constraints, {})
+
+    original_infer_match = dynamic_refs_mod._infer_exact_match_position_domain
+    match_infer_calls = 0
+
+    def counting_infer_match(*args: Any, **kwargs: Any):
+        nonlocal match_infer_calls
+        match_infer_calls += 1
+        return original_infer_match(*args, **kwargs)
+
+    with patch.object(
+        dynamic_refs_mod,
+        "_infer_exact_match_position_domain",
+        side_effect=counting_infer_match,
+    ):
+        graph = create_dependency_graph(
+            excel_path,
+            targets,
+            load_values=True,
+            dynamic_refs=config,
+        )
+
+    assert len(graph.leaf_keys()) == (2 * country_count) + 1
+    for target in targets:
+        deps = graph.get_dependencies(target)
+        assert "Inputs!A1" in deps
+        assert "Lookup!A2" in deps
+        assert "Lookup!B2" in deps
+
+    assert match_infer_calls == 1
+
+
+def _build_row_sensitive_index_workbook(path: Path) -> list[str]:
+    """Create identical formulas whose dynamic INDEX target depends on row context."""
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+    for row in range(3):
+        ws.write_number(row, 0, row + 1)
+    for row in range(2):
+        ws.write_formula(row, 1, "=INDEX(Sheet1!$A$1:$A$3,ROW(),1)")
+    wb.close()
+    return ["Sheet1!B1", "Sheet1!B2"]
+
+
+def test_repeated_index_cache_keeps_row_sensitive_formulas_separate(tmp_path: Path) -> None:
+    """Identical formulas containing ROW() should still use each cell's position."""
+    excel_path = tmp_path / "row_sensitive_index.xlsx"
+    targets = _build_row_sensitive_index_workbook(excel_path)
+
+    graph = create_dependency_graph(
+        excel_path,
+        targets,
+        load_values=True,
+        dynamic_refs=DynamicRefConfig(cell_type_env={}, limits=DynamicRefLimits()),
+    )
+
+    assert "Sheet1!A1" in graph.get_dependencies("Sheet1!B1")
+    assert "Sheet1!A2" not in graph.get_dependencies("Sheet1!B1")
+    assert "Sheet1!A2" in graph.get_dependencies("Sheet1!B2")
+    assert "Sheet1!A1" not in graph.get_dependencies("Sheet1!B2")
+
+
+def _build_equivalent_index_match_spellings_workbook(
+    path: Path,
+    *,
+    anchored_first: bool,
+) -> tuple[list[str], dict[str, object]]:
+    """Build two INDEX/MATCH formulas that normalize identically but differ in raw text."""
+    countries = [f"Country {i}" for i in range(1, 5)]
+    wb = xlsxwriter.Workbook(path)
+    inputs = wb.add_worksheet("Inputs")
+    lookup = wb.add_worksheet("Lookup")
+    outputs = wb.add_worksheet("Outputs")
+
+    inputs.write("A1", countries[0])
+    for row, country in enumerate(countries, start=1):
+        lookup.write(row, 0, country)
+        lookup.write_number(row, 1, row * 10)
+
+    anchored = "=INDEX(Lookup!$B$2:$B$5,MATCH(Inputs!$A$1,Lookup!$A$2:$A$5,0),1)"
+    unanchored = "=INDEX(Lookup!B2:B5,MATCH(Inputs!A1,Lookup!A2:A5,0),1)"
+    first, second = (anchored, unanchored) if anchored_first else (unanchored, anchored)
+    outputs.write_formula("A1", first)
+    outputs.write_formula("A2", second)
+    wb.close()
+
+    constraints: dict[str, object] = {"Inputs!A1": _literal_constraint(*countries)}
+    for row, country in enumerate(countries, start=2):
+        constraints[f"Lookup!A{row}"] = _literal_constraint(country)
+    return ["Outputs!A1", "Outputs!A2"], constraints
+
+
+@pytest.mark.parametrize("anchored_first", [True, False])
+def test_dynamic_dep_cache_masks_current_formula_text(
+    tmp_path: Path,
+    anchored_first: bool,
+) -> None:
+    """Normalized-equivalent formulas must mask spans from their own raw text."""
+    excel_path = tmp_path / f"index_match_spellings_{int(anchored_first)}.xlsx"
+    targets, constraints = _build_equivalent_index_match_spellings_workbook(
+        excel_path,
+        anchored_first=anchored_first,
+    )
+    config = DynamicRefConfig.from_constraints(constraints, {})
+
+    graph = create_dependency_graph(
+        excel_path,
+        targets,
+        load_values=True,
+        dynamic_refs=config,
+    )
+
+    expected = {
+        "Inputs!A1",
+        "Lookup!A2",
+        "Lookup!A3",
+        "Lookup!A4",
+        "Lookup!A5",
+        "Lookup!B2",
+        "Lookup!B3",
+        "Lookup!B4",
+        "Lookup!B5",
+    }
+    for target in targets:
+        assert set(graph.get_dependencies(target)) == expected
 
 
 def test_wide_index_sweep_shared_env_cache(tmp_path: Path) -> None:
