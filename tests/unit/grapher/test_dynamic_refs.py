@@ -2547,13 +2547,9 @@ def _build_equivalent_index_match_spellings_workbook(
         lookup.write(row, 0, country)
         lookup.write_number(row, 1, row * 10)
 
-    anchored = (
-        "=INDEX(Lookup!$B$2:$B$5,MATCH(Inputs!$A$1,Lookup!$A$2:$A$5,0),1)"
-    )
+    anchored = "=INDEX(Lookup!$B$2:$B$5,MATCH(Inputs!$A$1,Lookup!$A$2:$A$5,0),1)"
     unanchored = "=INDEX(Lookup!B2:B5,MATCH(Inputs!A1,Lookup!A2:A5,0),1)"
-    first, second = (
-        (anchored, unanchored) if anchored_first else (unanchored, anchored)
-    )
+    first, second = (anchored, unanchored) if anchored_first else (unanchored, anchored)
     outputs.write_formula("A1", first)
     outputs.write_formula("A2", second)
     wb.close()

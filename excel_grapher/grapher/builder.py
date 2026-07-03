@@ -1256,11 +1256,7 @@ def create_dependency_graph(
             if not graph.get_dependencies(key):
                 node.is_leaf = True
     finally:
-        if (
-            _dyn_stats["infer_calls"]
-            or _dyn_stats["cache_hits"]
-            or _dyn_stats["dep_cache_hits"]
-        ):
+        if _dyn_stats["infer_calls"] or _dyn_stats["cache_hits"] or _dyn_stats["dep_cache_hits"]:
             _emit_trace(
                 DynamicRefTraceEvent(
                     kind="bfs-done",
