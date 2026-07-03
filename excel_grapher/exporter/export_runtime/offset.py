@@ -70,7 +70,11 @@ def xl_index_ref(
     col_num: CellValue | None,
 ) -> tuple[str, int, int] | tuple[str, int, int, int, int]:
     """Return INDEX reference metadata, raising on Excel reference errors."""
-    out = index_excel_range(_range_from_ref_info(ref), row_num, col_num)
+    out = index_excel_range(
+        cast("Any", _range_from_ref_info(ref)),
+        cast("Any", row_num),
+        cast("Any", col_num),
+    )
     if isinstance(out, XlError):
         raise XlErrorException(out)
     if out.start_row == out.end_row and out.start_col == out.end_col:
