@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v2.1.2 (2026-07-03)
+
+### Bug Fixes
+
+- **exporter**: Emit TypeAlias for SeriesInput in exported code
+  ([#325](https://github.com/Teal-Insights/excel-grapher/pull/325),
+  [`514d3cb`](https://github.com/Teal-Insights/excel-grapher/commit/514d3cb0240d5ecd8423faf3176c7dd58c536de2))
+
+
 ## v2.1.1 (2026-07-03)
 
 ### Bug Fixes
