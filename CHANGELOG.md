@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v2.2.0 (2026-07-03)
+
+### Chores
+
+- Relicense project under MIT ([#330](https://github.com/Teal-Insights/excel-grapher/pull/330),
+  [`a82aadc`](https://github.com/Teal-Insights/excel-grapher/commit/a82aadce07570ead3142e48d88b3e83a17de25ee))
+
+### Features
+
+- **series_bindings**: Add optional view-level groups for export sequencing (#308)
+  ([#332](https://github.com/Teal-Insights/excel-grapher/pull/332),
+  [`5d2e610`](https://github.com/Teal-Insights/excel-grapher/commit/5d2e6103b588ec158306d5eb6d0364f75921c39c))
+
+
 ## v2.1.3 (2026-07-03)
 
 ### Bug Fixes
