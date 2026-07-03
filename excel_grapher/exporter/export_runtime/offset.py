@@ -7,14 +7,15 @@ from typing import Any, cast
 import fastpyxl.utils.cell
 
 from excel_grapher.core import XlError, to_number
+from excel_grapher.core.addressing import index_excel_range
 from excel_grapher.core.address_keys import format_cell_key
 from excel_grapher.core.types import XlErrorException
 from excel_grapher.runtime.cache import EvalContext, _parse_range_address, xl_cell
 
 from .ranges import Range
-from .values import CellValue, as_scalar
+from .values import CellValue, ExcelRange, as_scalar
 
-__all__ = ["xl_offset", "xl_range", "xl_range_rows"]
+__all__ = ["xl_index_ref", "xl_offset", "xl_range", "xl_range_rows"]
 
 
 def _format_address(sheet: str, row: int, col: int) -> str:
@@ -34,6 +35,47 @@ def _ctx_range(ctx: EvalContext, sheet: str, r1: int, c1: int, r2: int, c2: int)
         return xl_cell(ctx, address)
 
     return Range(sheet, r1, c1, r2, c2, resolve)
+
+
+def _range_from_ref_info(
+    ref: ExcelRange | tuple[str, int, int] | tuple[str, int, int, int, int],
+) -> ExcelRange:
+    """Normalize generated reference metadata into an `ExcelRange`."""
+    if isinstance(ref, ExcelRange):
+        return ref
+    match ref:
+        case (sheet, base_row, base_col):
+            return ExcelRange(
+                sheet=sheet,
+                start_row=base_row,
+                start_col=base_col,
+                end_row=base_row,
+                end_col=base_col,
+            )
+        case (sheet, base_row, base_col, base_end_row, base_end_col):
+            return ExcelRange(
+                sheet=sheet,
+                start_row=base_row,
+                start_col=base_col,
+                end_row=base_end_row,
+                end_col=base_end_col,
+            )
+        case _:
+            raise XlErrorException(XlError.VALUE)
+
+
+def xl_index_ref(
+    ref: ExcelRange | tuple[str, int, int] | tuple[str, int, int, int, int],
+    row_num: CellValue | None,
+    col_num: CellValue | None,
+) -> tuple[str, int, int] | tuple[str, int, int, int, int]:
+    """Return INDEX reference metadata, raising on Excel reference errors."""
+    out = index_excel_range(_range_from_ref_info(ref), row_num, col_num)
+    if isinstance(out, XlError):
+        raise XlErrorException(out)
+    if out.start_row == out.end_row and out.start_col == out.end_col:
+        return (out.sheet, out.start_row, out.start_col)
+    return (out.sheet, out.start_row, out.start_col, out.end_row, out.end_col)
 
 
 def xl_offset(

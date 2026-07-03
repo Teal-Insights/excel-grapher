@@ -15,7 +15,9 @@ from .errors import XlErrorException, xl_raise
 from .lookup import xl_hlookup, xl_index, xl_lookup, xl_match, xl_vlookup, xl_xlookup
 from .offset import xl_offset, xl_range, xl_range_rows
 from .operators import (
+    xl_bool,
     xl_compare,
+    xl_int,
     xl_is_array,
     xl_map_arithmetic,
     xl_map_compare,
@@ -33,11 +35,13 @@ __all__ = [
     "Range",
     "XlErrorException",
     "flatten",
+    "xl_bool",
     "xl_compare",
     "xl_hlookup",
     "xl_iferror",
     "xl_ifna",
     "xl_index",
+    "xl_int",
     "xl_is_array",
     "xl_isblank",
     "xl_iserror",
