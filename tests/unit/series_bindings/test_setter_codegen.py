@@ -234,12 +234,7 @@ def test_emit_setters_block_emits_helpers_once(tmp_path: Path) -> None:
     assert code.count("def _coerce_records(") == 1
     assert code.count("def coerce_setter_input(") == 1
     assert code.count("if TYPE_CHECKING:") == 1
-    assert (
-        code.count(
-            "SeriesInput = Records | Record | Sequence[Scalar] | pd.DataFrame | pl.DataFrame"
-        )
-        >= 1
-    )
+    assert "SeriesInput: TypeAlias = Records | Record | Sequence[Scalar] | DataFrameInput" in code
     assert "_KEY_ORDER_BORVELIA_PRIMARY_BALANCE" in code
     assert "_apply_series_records(" in code
     assert "def set_borvelia_primary_balance(" in code
@@ -556,7 +551,7 @@ def test_emit_setters_block_includes_datetime_aliases_when_needed(tmp_path: Path
     }
     code = "\n".join(emit_setters_block(graph, wb_path, bindings))
     assert "from datetime import date, datetime, timedelta" in code
-    assert "Scalar = str | int | float | bool | datetime | None" in code
+    assert "Scalar: TypeAlias = str | int | float | bool | datetime | None" in code
 
 
 def test_emit_setter_scalar_bool_measure_round_trips(tmp_path: Path) -> None:
