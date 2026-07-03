@@ -35,13 +35,14 @@ from .operators import (
     xl_pow,
     xl_sub,
 )
-from .types import CellValue, ExcelRange, XlError
+from .types import CellValue, ExcelRange, XlError, XlErrorException
 
 __all__ = [
     "NormalizedAddress",
     "CellValue",
     "ExcelRange",
     "XlError",
+    "XlErrorException",
     "excel_casefold",
     "flatten",
     "get_error",

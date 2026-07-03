@@ -30,6 +30,55 @@ print(len(g))          # number of visited nodes
 print(to_graphviz(g))  # GraphViz DOT
 ```
 
+### Optional TACO range-pattern index
+
+After building a cell-level graph, you can optionally attach a **TACO-style**
+([arXiv:2302.05482](https://arxiv.org/pdf/2302.05482)) compressed dependency
+index. The graph remains canonical for evaluation and export; the index is a
+parallel structure for range-pattern dependency queries (autofill columns,
+running totals, fixed lookup tables, and similar).
+
+```python
+from pathlib import Path
+
+from excel_grapher.grapher import build_taco_index, create_dependency_graph
+
+wb_path = Path("model.xlsx")
+
+# Build the index as a derived artifact from the canonical graph:
+graph = create_dependency_graph(wb_path, ["Sheet1!D3:D100"])
+index = build_taco_index(graph)
+
+# Query compressed ranges, then materialize to cell keys when needed:
+dependents = index.find_dependents("Sheet1!B10")
+precedents = index.find_precedents("Sheet1!D10")
+
+# Codegen boundaries: keep targets and inputs at cell granularity; compress internals only:
+from excel_grapher.grapher import TacoBuildConfig, build_taco_index, input_keys_from_graph
+
+index = build_taco_index(
+    graph,
+    TacoBuildConfig.for_codegen(graph),  # exclude targets + graph leaf inputs, internal_only=True
+)
+# Or step-by-step:
+index = build_taco_index(
+    graph,
+    TacoBuildConfig(
+        exclude_targets=True,
+        exclude_input_keys=input_keys_from_graph(graph),
+        internal_only=True,
+    ),
+)
+```
+
+The index is a derived artifact: `create_dependency_graph` never builds it and
+its default output is unchanged. Build the index on demand with
+`build_taco_index(graph)` (and rebuild it after mutating the graph). See
+`examples/micro_workbooks/taco_patterns.xlsx` for RR, RF, FR, FF, and RR-Chain
+pattern examples, and `examples/micro_workbooks/cross_sheet_taco_patterns.xlsx`
+for cross-sheet precedents (dependent cells on one sheet, input ranges on
+another).
+
 ### Target forms
 
 `targets` accepts any mix of:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 from excel_grapher.exporter.embed import emit_runtime, runtime_cache_seed_symbols
 from tests.integration.utils.parity_harness import (
     assert_dep_tracking_absent,
@@ -53,24 +55,49 @@ def test_emit_runtime_dep_tracking_flag_selects_scaffold() -> None:
     assert_dep_tracking_present(full)
 
 
-def test_emit_runtime_operators_fastpath_flag_selects_implementation() -> None:
+def test_emit_runtime_operator_symbols_resolve_to_export_runtime() -> None:
+    """Exported operators consume lazy ranges; numpy fastpaths stay out of exports."""
     symbols = {
-        "xl_eq",
-        "xl_mul",
+        "xl_compare",
+        "xl_number",
         "xl_sumproduct",
         *runtime_cache_seed_symbols(include_dep_tracking=False),
     }
-    stubbed = emit_runtime(
-        symbols,
-        include_offset_table=False,
-        include_dep_tracking=False,
-        include_operators_fastpath=False,
-    )
-    vectorized = emit_runtime(
-        symbols,
-        include_offset_table=False,
-        include_dep_tracking=False,
-        include_operators_fastpath=True,
-    )
-    assert "batch_coerce_to_float64" not in stubbed
-    assert "batch_coerce_to_float64" in vectorized
+    for include_operators_fastpath in (False, True):
+        code = emit_runtime(
+            symbols,
+            include_offset_table=False,
+            include_dep_tracking=False,
+            include_operators_fastpath=include_operators_fastpath,
+        )
+        assert "batch_coerce_to_float64" not in code
+        assert "import numpy" not in code
+        assert "class Range" in code
+
+
+def test_emit_runtime_includes_export_runtime_primitives() -> None:
+    code = emit_runtime({"Range"}, include_offset_table=False)
+    assert "class XlErrorException" in code
+    assert "class Range" in code
+
+    ns: dict[str, Any] = {}
+    exec(code, ns)
+    range_type = ns["Range"]
+    xl_error = ns["XlError"]
+    xl_error_exception = cast(type[BaseException], ns["XlErrorException"])
+
+    calls: list[str] = []
+
+    def resolve(address: str) -> Any:
+        calls.append(address)
+        return xl_error.DIV if address == "S!B1" else 1
+
+    rng = range_type("S", 1, 1, 1, 2, resolve)
+    try:
+        list(rng)
+    except xl_error_exception as exc:
+        assert cast(Any, exc).code == xl_error.DIV
+    else:
+        raise AssertionError("Expected exported Range iteration to raise")
+
+    assert calls == ["S!A1", "S!B1"]

@@ -10,11 +10,17 @@ from typing import Any, Literal
 
 import fastpyxl
 import fastpyxl.utils.cell
+from fastpyxl.utils import column_index_from_string, get_column_letter
 
 from excel_grapher.core.address_keys import format_key, parse_address
 from excel_grapher.core.address_keys import normalize_key as normalize_address
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings.coerce import coerce_constant, coerce_scalar
+from excel_grapher.series_bindings.geometry import (
+    expand_column_specs,
+    expand_row_specs,
+    parse_value_map,
+)
 from excel_grapher.series_bindings.issues import make_issue
 from excel_grapher.series_bindings.normalize import has_input_direction, has_output_direction
 from excel_grapher.series_bindings.ranges import expand_data_range_for_graph
@@ -145,6 +151,92 @@ def _bind_resolution_issues(
     return issues
 
 
+def _is_blank_label(raw: Any) -> bool:
+    return raw is None or (isinstance(raw, str) and not raw.strip())
+
+
+def _missing_policy(bind: dict[str, Any]) -> str:
+    """Return the effective missing-label policy (`missing: null` in YAML is None)."""
+    if "missing" not in bind:
+        return "error"
+    value = bind["missing"]
+    return "null" if value is None else str(value)
+
+
+def _label_source_indices(bind: dict[str, Any], *, axis: str) -> tuple[set[int] | None, bool]:
+    """Return (allowed source indices or None for all, whether include was used)."""
+    skip = bind.get("skip")
+    include = bind.get("include")
+    if skip is not None and include is not None:
+        raise ValueError("skip and include are mutually exclusive on a bind")
+    expand = expand_row_specs if axis == "rows" else expand_column_specs
+    if include is not None:
+        return expand(include), True
+    if skip is not None:
+        return expand(skip), False
+    return None, False
+
+
+def _is_label_source(index: int, sources: set[int] | None, *, is_include: bool) -> bool:
+    if sources is None:
+        return True
+    return index in sources if is_include else index not in sources
+
+
+def _resolve_label(
+    bind: dict[str, Any],
+    *,
+    graph: DependencyGraph,
+    reader: _WorkbookValues,
+    axis: str,
+    index: int,
+    address_for: Any,
+    concept_hint: str,
+) -> Any:
+    """Read a row_label or column_header source value honoring skip/include/fill.
+
+    Args:
+        bind: The bind mapping carrying skip/include/fill/missing fields.
+        graph: Dependency graph consulted before the workbook reader.
+        reader: Lazy workbook value reader for cells outside the graph.
+        axis: `rows` for row_label (walk up) or `columns` for column_header
+            (walk left).
+        index: 1-based data row (rows axis) or data column (columns axis).
+        address_for: Callable mapping a source index to a sheet-qualified
+            address.
+        concept_hint: Bind description used in missing-label error messages.
+
+    Returns:
+        The raw label value, or None when no source label exists and the
+        bind's missing policy is `null`.
+
+    Raises:
+        ValueError: When no source label exists and the policy is `error`.
+    """
+    sources, is_include = _label_source_indices(bind, axis=axis)
+    fill = bool(bind.get("fill", False))
+
+    def source_value(candidate: int) -> Any:
+        if not _is_label_source(candidate, sources, is_include=is_include):
+            return None
+        raw = _read_cell_value(graph, reader, address_for(candidate))
+        return None if _is_blank_label(raw) else raw
+
+    raw = source_value(index)
+    if raw is None and fill:
+        for candidate in range(index - 1, 0, -1):
+            raw = source_value(candidate)
+            if raw is not None:
+                break
+
+    if raw is None:
+        if _missing_policy(bind) == "null":
+            return None
+        direction = "at or above row" if axis == "rows" else "at or left of column"
+        raise ValueError(f"{concept_hint}: no source label {direction} {index}")
+    return raw
+
+
 def _execute_bind(
     bind: dict[str, Any],
     *,
@@ -175,8 +267,17 @@ def _execute_bind(
 
     if kind == "column_header":
         header_row = int(bind["header_row"])
-        header_address = format_key(sheet, f"{col}{header_row}")
-        raw = _read_cell_value(graph, reader, header_address)
+        raw = _resolve_label(
+            bind,
+            graph=graph,
+            reader=reader,
+            axis="columns",
+            index=column_index_from_string(col),
+            address_for=lambda c: format_key(sheet, f"{get_column_letter(c)}{header_row}"),
+            concept_hint=f"column_header row {header_row}",
+        )
+        if raw is None:
+            return None
         if read_as in {"auto", "string"} and isinstance(raw, str):
             return _normalize_string(raw, normalize)
         return coerce_scalar(raw, read_as)
@@ -188,11 +289,31 @@ def _execute_bind(
 
     if kind == "row_label":
         label_column = str(bind["label_column"])
-        label_address = format_key(sheet, f"{label_column}{row}")
-        raw = _read_cell_value(graph, reader, label_address)
+        raw = _resolve_label(
+            bind,
+            graph=graph,
+            reader=reader,
+            axis="rows",
+            index=row,
+            address_for=lambda r: format_key(sheet, f"{label_column}{r}"),
+            concept_hint=f"row_label column {label_column}",
+        )
+        if raw is None:
+            return None
         if read_as in {"auto", "string"} and isinstance(raw, str):
             return _normalize_string(raw, normalize)
         return coerce_scalar(raw, read_as)
+
+    if kind == "value_map":
+        axis, mapping = parse_value_map(bind.get("values") or {})
+        index = row if axis == "rows" else column_index_from_string(col)
+        for value, indices in mapping.items():
+            if index in indices:
+                return coerce_constant(value, read_as=read_as)
+        if _missing_policy(bind) == "null":
+            return None
+        unit = "row" if axis == "rows" else "column"
+        raise ValueError(f"value_map: no value covers data {unit} {index}")
 
     raise ValueError(f"Unknown bind kind: {kind!r}")
 
@@ -201,6 +322,15 @@ def _parse_data_cell(address: str) -> tuple[str, str, int]:
     sheet, coord = parse_address(address)
     col, row = fastpyxl.utils.cell.coordinate_from_string(coord)
     return sheet, col, row
+
+
+def _apply_exclude_rows(addresses: list[str], series: dict[str, Any]) -> list[str]:
+    """Drop addresses on rows the series declares as never-data via `exclude_rows`."""
+    specs = series.get("exclude_rows")
+    if not specs:
+        return addresses
+    excluded = expand_row_specs(specs)
+    return [address for address in addresses if _parse_data_cell(address)[2] not in excluded]
 
 
 def _include_in_record(field: dict[str, Any], default: bool) -> bool:
@@ -449,6 +579,7 @@ def resolve_series_binding(
 
     try:
         expanded_addresses = expand_data_range_for_graph(graph, data_range, workbook=workbook)
+        expanded_addresses = _apply_exclude_rows(expanded_addresses, series)
     except (ValueError, TypeError) as exc:
         return {
             "series_id": series_id,

@@ -84,6 +84,29 @@ def concat_scalars(left: CellValue, right: CellValue) -> str:
     return to_string(left) + to_string(right)
 
 
+def apply_arithmetic(op: str, ln: float, rn: float) -> float | XlError:
+    """Apply an Excel arithmetic operator to two coerced numbers."""
+    if op == "+":
+        return ln + rn
+    if op == "-":
+        return ln - rn
+    if op == "*":
+        return ln * rn
+    if op == "/":
+        if rn == 0:
+            return XlError.DIV
+        return ln / rn
+    if op == "^":
+        try:
+            value = ln**rn
+        except (ValueError, OverflowError):
+            return XlError.NUM
+        if isinstance(value, complex):
+            return XlError.NUM
+        return value
+    raise ValueError(f"Unknown arithmetic operator: {op}")
+
+
 def reference_compare_array(
     op: str,
     arr_left: np.ndarray,
