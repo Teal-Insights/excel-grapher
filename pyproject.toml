@@ -4,7 +4,7 @@ version = "2.1.3"
 
 description = "Build and analyze dependency graphs from Excel workbooks"
 readme = "README.md"
-license = { text = "Proprietary" }
+license = { file = "LICENSE" }
 requires-python = ">=3.11"
 authors = [
     { name = "Teal Insights", email = "info@tealinsights.com" },
@@ -13,7 +13,7 @@ keywords = ["excel", "dependency", "graph", "spreadsheet", "formula", "transpile
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: Other/Proprietary License",
+    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
