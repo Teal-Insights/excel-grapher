@@ -103,6 +103,44 @@ def test_emitted_coerce_matches_library_for_pandas_dataframe(tmp_path: Path) -> 
     assert coerce_setter_input(df, **kwargs) == emitted(df, **kwargs)
 
 
+def _macro_matrix_coerce_kwargs(tmp_path: Path) -> _SeriesCoerceKwargs:
+    from tests.fixtures.series_bindings.matrix_helpers import (
+        MATRIX_EXPLICIT_BINDINGS,
+        write_matrix_explicit_workbook,
+    )
+
+    wb_path = tmp_path / "matrix_inputs.xlsx"
+    write_matrix_explicit_workbook(wb_path)
+    bindings = load_series_bindings(MATRIX_EXPLICIT_BINDINGS)
+    series = bindings["series"][0]
+    key_fields = [str(c) for c in (series.get("key") or [])]
+    key_dtypes = _key_dtypes_for_codegen(series, key_fields)
+    kwargs: _SeriesCoerceKwargs = {
+        "layout": "matrix",
+        "key_fields": tuple(key_fields),
+        "measure_field": "OBS_VALUE",
+        "key_order": None,
+        "strict": True,
+    }
+    if key_dtypes:
+        kwargs["key_dtypes"] = key_dtypes
+    return kwargs
+
+
+def test_emitted_coerce_matches_library_for_matrix_pandas_dataframe(tmp_path: Path) -> None:
+    pd = pytest.importorskip("pandas")
+    emitted = _emitted_coerce_setter_input()
+    kwargs = _macro_matrix_coerce_kwargs(tmp_path)
+    df = pd.DataFrame(
+        {
+            "INDICATOR": ["GDP growth", "Debt"],
+            "TIME_PERIOD": [2025, 2026],
+            "OBS_VALUE": [9.9, 44.4],
+        }
+    )
+    assert coerce_setter_input(df, **kwargs) == emitted(df, **kwargs)
+
+
 def test_generated_setter_matches_library_coercion_for_positional_input(tmp_path: Path) -> None:
     wb_path = tmp_path / "lic_inputs.xlsx"
     _write_borvelia_workbook(wb_path)

@@ -100,6 +100,18 @@ def _setter_input_description(contract: SeriesBindingDocstringContract) -> str:
     return "A list of records, a single record dict, or a tidy pandas/polars DataFrame."
 
 
+def _setter_supports_empty_measure(contract: SeriesBindingDocstringContract) -> bool:
+    return contract.function_kind == "setter" and contract.layout != "scalar"
+
+
+def _empty_measure_kwarg_description() -> str:
+    return (
+        "How to treat rows with missing measure values (`None` or float NaN after "
+        'DataFrame coercion). "write" (default) passes values through; "skip" drops '
+        'them; "error" raises. Empty key fields always raise.'
+    )
+
+
 def _render_records_example(contract: SeriesBindingDocstringContract) -> list[str]:
     lines = [f"{contract.function_name}(ctx, ["]
     for record in contract.example_records:
@@ -206,6 +218,10 @@ class PlainSeriesDocstringRenderer:
             lines.append("Accepted input:")
             lines.append(f"    {_setter_input_description(contract)}")
             lines.append("")
+            if _setter_supports_empty_measure(contract):
+                lines.append("Keyword arguments:")
+                lines.append(f"    empty_measure: {_empty_measure_kwarg_description()}")
+                lines.append("")
         lines.append("Required record fields:")
         lines.extend(
             [
@@ -260,6 +276,15 @@ class RstSeriesDocstringRenderer:
                     "",
                 ]
             )
+            if _setter_supports_empty_measure(contract):
+                lines.extend(
+                    [
+                        "Keyword arguments",
+                        "-------------------",
+                        f"empty_measure: {_empty_measure_kwarg_description()}",
+                        "",
+                    ]
+                )
         lines.append("Required record fields")
         lines.append("----------------------")
         for name in required:
@@ -298,6 +323,10 @@ class GoogleSeriesDocstringRenderer:
                 f"    records ({_setter_input_type_name(contract)}): "
                 f"{_setter_input_description(contract)}"
             )
+            if _setter_supports_empty_measure(contract):
+                lines.append(
+                    f"    empty_measure (EmptyMeasure): {_empty_measure_kwarg_description()}"
+                )
             _append_field_bullets(
                 lines,
                 doc=doc,
@@ -353,6 +382,9 @@ class NumpySeriesDocstringRenderer:
         if contract.function_kind == "setter":
             lines.append(f"records : {_setter_input_type_name(contract)}")
             lines.append(f"    {_setter_input_description(contract)}")
+            if _setter_supports_empty_measure(contract):
+                lines.append('empty_measure : EmptyMeasure, default "write"')
+                lines.append(f"    {_empty_measure_kwarg_description()}")
             _append_field_bullets(
                 lines,
                 doc=doc,

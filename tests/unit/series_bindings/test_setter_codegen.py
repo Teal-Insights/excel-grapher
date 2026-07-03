@@ -716,6 +716,36 @@ def test_emit_setter_series_signature_uses_series_input(tmp_path: Path) -> None:
     resolved = resolve_series_binding(graph, wb_path, series)
     code = "\n".join(emit_setter_function(series, resolved))
     assert "records: SeriesInput," in code
+    assert 'empty_measure: EmptyMeasure = "write"' in code
+
+
+def test_emit_setter_scalar_omits_empty_measure_kwarg(tmp_path: Path) -> None:
+    wb_path = tmp_path / "bool_scalar.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Flags")
+    ws.write_boolean("B2", True)
+    wb.close()
+
+    graph = create_dependency_graph(wb_path, ["Flags!B2"], load_values=True)
+    series = {
+        "id": "bool_scalar_measure",
+        "sheet": "Flags",
+        "data_range": "Flags!B2",
+        "layout": "scalar",
+        "setter": {"name": "set_bool_scalar_measure"},
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "bool",
+                "bind": {"kind": "data_cell", "read": "bool"},
+            },
+            "dimensions": [],
+        },
+        "key": [],
+    }
+    resolved = resolve_series_binding(graph, wb_path, series)
+    code = "\n".join(emit_setter_function(series, resolved))
+    assert "empty_measure" not in code
 
 
 def test_emit_setter_positional_values_update_context(tmp_path: Path) -> None:
@@ -885,3 +915,69 @@ def test_emit_setter_matrix_dataframe_duplicate_composite_key_raises(tmp_path: P
     )
     with pytest.raises(ValueError, match=r"record\[1\]: duplicate key .*record\[0\]"):
         setter(ctx, df)
+
+
+def test_emit_setter_requires_address_rejects_dataframe(tmp_path: Path) -> None:
+    pd = pytest.importorskip("pandas")
+    wb_path = tmp_path / "dup_headers.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write(0, 2, 1)
+    ws.write(0, 3, 1)
+    ws.write_number(1, 2, 1.0)
+    ws.write_number(1, 3, 2.0)
+    wb.close()
+
+    graph = create_dependency_graph(wb_path, ["Sheet1!C2", "Sheet1!D2"], load_values=True)
+    series = {
+        "id": "dup_headers",
+        "sheet": "Sheet1",
+        "data_range": "Sheet1!C2:D2",
+        "layout": "series",
+        "setter": {"name": "set_dup_headers", "allow_address": True, "strict": False},
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "bind": {"kind": "data_cell", "read": "float"},
+            },
+            "dimensions": [
+                {
+                    "concept": "TIME_PERIOD",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "column_header", "header_row": 1, "read": "int"},
+                }
+            ],
+        },
+        "key": ["TIME_PERIOD"],
+        "validation": {"require_unique_key": True},
+    }
+    resolved = resolve_series_binding(graph, wb_path, series)
+    ns = _exec_setters(emit_setter_function(series, resolved))
+    setter = cast(Callable[[EvalContext, object], None], ns["set_dup_headers"])
+    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
+
+    df = pd.DataFrame({"TIME_PERIOD": [1], "OBS_VALUE": [99.0]})
+    with pytest.raises(TypeError, match="requires address"):
+        setter(ctx, df)
+
+
+def test_emit_setter_empty_measure_skip_drops_nan_rows(tmp_path: Path) -> None:
+    pd = pytest.importorskip("pandas")
+    wb_path = tmp_path / "lic_inputs.xlsx"
+    _write_borvelia_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, expand_data_range("Inputs!F5:J5"), load_values=True)
+    bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
+    series = bindings["series"][0]
+    resolved = resolve_series_binding(graph, wb_path, series)
+    ns = _exec_setters(emit_setter_function(series, resolved))
+    setter = cast(Callable[..., None], ns["set_borvelia_primary_balance"])
+
+    df = pd.DataFrame({"TIME_PERIOD": [4, 5], "OBS_VALUE": [7.5, float("nan")]})
+    ctx = EvalContext(
+        inputs=coerce_inputs_dict({"Inputs!I5": 1.0, "Inputs!J5": 2.0}),
+        resolver=lambda _a: None,
+    )
+    setter(ctx, df, empty_measure="skip")
+    assert ctx.inputs["Inputs!I5"] == 7.5
+    assert ctx.inputs["Inputs!J5"] == 2.0
