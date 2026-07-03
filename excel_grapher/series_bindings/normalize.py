@@ -13,6 +13,7 @@ _STRUCTURAL_FIELDS = frozenset(
         "layout",
         "structure",
         "key",
+        "groups",
         "series_context",
         "validation",
         "editable",

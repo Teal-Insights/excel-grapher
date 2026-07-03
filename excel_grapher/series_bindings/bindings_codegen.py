@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings.compute_codegen import emit_computes_block
+from excel_grapher.series_bindings.groups import bindings_export_order
 from excel_grapher.series_bindings.normalize import has_input_direction, has_output_direction
 from excel_grapher.series_bindings.setter_codegen import emit_setters_block
 from excel_grapher.series_bindings.types import WorkbookSeriesBindings
@@ -34,11 +35,12 @@ def emit_series_bindings_block(
     emitted; the helpers and aliases are expected to be importable from a separate
     module (the multi-module export's `_api_helpers`).
     """
-    series_list = [s for s in bindings.get("series", []) if isinstance(s, dict)]
+    series_list = bindings_export_order(bindings)
     emit_input = any(has_input_direction(s) for s in series_list)
     emit_output = any(has_output_direction(s) for s in series_list)
     if not emit_input and not emit_output:
         return []
+    bindings = cast(WorkbookSeriesBindings, {**bindings, "series": series_list})
 
     lines: list[str] = []
     include_aliases = include_helpers
