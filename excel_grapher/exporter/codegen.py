@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast as py_ast
 import re
 from collections.abc import Iterable, Mapping, Sequence, Set
 from pathlib import Path
@@ -524,6 +525,7 @@ class CodeGenerator:
         return "\n".join(lines).rstrip() + "\n"
 
     _SERIES_HELPER_IMPORT_NAMES: tuple[str, ...] = (
+        "EmptyMeasure",
         "Record",
         "Records",
         "Scalar",
@@ -1334,15 +1336,9 @@ class CodeGenerator:
         # Excel-style boolean coercion is not Python truthiness:
         # - "FALSE" should behave like False
         # - "0" should produce #VALUE! (per to_bool)
-        # We must coerce via to_bool(), and keep lazy branch evaluation.
-        # Erroring conditions propagate: raised errors pass through, and
-        # sentinel coercion failures are re-raised via xl_raise.
-        cond_var = self._next_temp_var()
+        # `xl_bool` keeps lazy branch evaluation while raising coercion errors.
         bool_var = self._next_temp_var()
-        return (
-            f"(xl_raise({bool_var}) if isinstance(({bool_var} := to_bool(({cond_var} := {cond_expr}))), XlError) "
-            f"else (({true_expr}) if {bool_var} else ({false_expr})))"
-        )
+        return f"(({true_expr}) if ({bool_var} := xl_bool({cond_expr})) else ({false_expr}))"
 
     def _emit_row(self, node: FunctionCallNode) -> str:
         if not node.args or (len(node.args) == 1 and isinstance(node.args[0], EmptyArgNode)):
@@ -1426,10 +1422,8 @@ class CodeGenerator:
         index_expr = self._emit_ast(node.args[0])
         value_exprs = [self._emit_ast(arg) for arg in node.args[1:]]
 
-        # Store index in temp vars to avoid evaluating twice and to keep typing clean.
-        # We coerce via to_int() (Excel-style numeric coercion + error propagation)
-        # to avoid `int(CellValue)` in generated code (which type-checkers reject).
-        var = self._next_temp_var()
+        # Store index in a temp var to avoid evaluating twice and to keep typing clean.
+        # `xl_int` performs Excel-style numeric coercion and raises on errors.
         idx_var = self._next_temp_var()
 
         # Build chained conditionals: if idx==1 then val1 else if idx==2 then val2 ...
@@ -1438,11 +1432,10 @@ class CodeGenerator:
         for i, val_expr in reversed(list(enumerate(value_exprs, start=1))):
             result = f"(({val_expr}) if {idx_var} == {i} else ({result}))"
 
-        # Wrap with error/bounds checking; sentinel index coercions re-raise.
+        # Wrap with bounds checking; coercion errors raise from `xl_int`.
         return (
-            f"(xl_raise({var}) if isinstance(({var} := {index_expr}), XlError) "
-            f"else (xl_raise({idx_var}) if isinstance(({idx_var} := to_int({var})), XlError) "
-            f"else xl_raise(XlError.VALUE) if {idx_var} < 1 or {idx_var} > {len(value_exprs)} else {result}))"
+            f"((xl_raise(XlError.VALUE) if ({idx_var} := xl_int({index_expr})) < 1 "
+            f"or {idx_var} > {len(value_exprs)} else {result}))"
         )
 
     def _is_constant_number(self, node: AstNode) -> bool:
@@ -1860,6 +1853,45 @@ class CodeGenerator:
 
         return "\n".join(lines)
 
+    @staticmethod
+    def _is_xlerror_type_expr(node: py_ast.AST) -> bool:
+        if isinstance(node, py_ast.Name):
+            return node.id == "XlError"
+        if isinstance(node, py_ast.Tuple):
+            return any(CodeGenerator._is_xlerror_type_expr(elt) for elt in node.elts)
+        return False
+
+    @classmethod
+    def _cell_function_has_xlerror_isinstance(cls, node: py_ast.FunctionDef) -> bool:
+        for child in py_ast.walk(node):
+            if not isinstance(child, py_ast.Call):
+                continue
+            if not isinstance(child.func, py_ast.Name) or child.func.id != "isinstance":
+                continue
+            if len(child.args) < 2:
+                continue
+            if cls._is_xlerror_type_expr(child.args[1]):
+                return True
+        return False
+
+    @classmethod
+    def _assert_raise_only_cell_boundary(cls, cell_code_lines: list[str]) -> None:
+        """Reject generated formula cells that inspect `XlError` sentinels."""
+        module = py_ast.parse("\n".join(cell_code_lines))
+        offenders = [
+            node.name
+            for node in module.body
+            if isinstance(node, py_ast.FunctionDef)
+            and node.name.startswith("cell_")
+            and cls._cell_function_has_xlerror_isinstance(node)
+        ]
+        if offenders:
+            joined = ", ".join(offenders)
+            raise ValueError(
+                "Generated formula cell functions must not inspect XlError sentinels "
+                f"with isinstance(): {joined}"
+            )
+
     def _collect_dependencies(self, address: str) -> list[str]:
         """Collect all cell addresses that a cell depends on (recursively).
 
@@ -2001,9 +2033,7 @@ class CodeGenerator:
                 funcs.add("xl_raise")
             # IF, IFERROR, CHOOSE are special - emitted as native Python conditionals
             elif upper_name == "IF":
-                funcs.add("XlError")
-                funcs.add("to_bool")
-                funcs.add("xl_raise")
+                funcs.add("xl_bool")
             elif upper_name == "IFERROR":
                 funcs.add("XlError")
                 funcs.add("xl_iferror")
@@ -2012,7 +2042,7 @@ class CodeGenerator:
                 funcs.add("xl_ifna")
             elif upper_name == "CHOOSE":
                 funcs.add("XlError")
-                funcs.add("to_int")
+                funcs.add("xl_int")
                 funcs.add("xl_raise")
             elif upper_name == "ROW":
                 funcs.add("xl_row")
@@ -2558,6 +2588,8 @@ class CodeGenerator:
             assert ast is not None
             self._note_operators_fastpath_from_ast(ast)
             used_xl_functions.update(self._extract_xl_functions(ast))
+
+        self._assert_raise_only_cell_boundary(cell_code_lines)
 
         # Always include per-call evaluation scaffolding.
         # XlError is commonly referenced by generated code (error literals, IF/IFERROR, and

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Literal, TypeAlias
 from excel_grapher.series_bindings.records_types import Record, Records, Scalar
 
 Layout: TypeAlias = Literal["scalar", "series", "matrix"]
+EmptyMeasure: TypeAlias = Literal["skip", "write", "error"]
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -22,6 +23,7 @@ SetterInput: TypeAlias = SeriesInput | Scalar
 
 __all__ = [
     "DataFrameInput",
+    "EmptyMeasure",
     "Layout",
     "SeriesInput",
     "SetterInput",

@@ -15,7 +15,7 @@ class _SeriesCoerceKwargs(TypedDict):
     layout: Literal["series", "matrix"]
     key_fields: tuple[str, ...]
     measure_field: str
-    key_order: tuple[int, ...]
+    key_order: tuple[int, ...] | None
     strict: bool
 
 
@@ -321,3 +321,85 @@ def test_key_coercion_datetime() -> None:
         strict=True,
     )
     assert result == [{"TIME_PERIOD": dt, "OBS_VALUE": 1.0}]
+
+
+_MATRIX_KWARGS: _SeriesCoerceKwargs = {
+    "layout": "matrix",
+    "key_fields": ("INDICATOR", "TIME_PERIOD"),
+    "measure_field": "OBS_VALUE",
+    "key_order": None,
+    "strict": True,
+}
+
+
+def test_tidy_polars_dataframe_matrix_layout() -> None:
+    pl = pytest.importorskip("polars")
+    df = pl.DataFrame(
+        {
+            "INDICATOR": ["GDP growth", "Debt"],
+            "TIME_PERIOD": [2025, 2026],
+            "OBS_VALUE": [9.9, 44.4],
+        }
+    )
+    result = coerce_setter_input(df, **_MATRIX_KWARGS)
+    assert result == [
+        {"INDICATOR": "GDP growth", "TIME_PERIOD": 2025, "OBS_VALUE": 9.9},
+        {"INDICATOR": "Debt", "TIME_PERIOD": 2026, "OBS_VALUE": 44.4},
+    ]
+
+
+def test_empty_dataframe_matrix_layout_is_noop() -> None:
+    pd = pytest.importorskip("pandas")
+    df = pd.DataFrame({"INDICATOR": [], "TIME_PERIOD": [], "OBS_VALUE": []})
+    result = coerce_setter_input(df, **_MATRIX_KWARGS)
+    assert result == []
+
+
+def test_wide_dataframe_matrix_layout_hint() -> None:
+    pd = pytest.importorskip("pandas")
+    df = pd.DataFrame(
+        {
+            "INDICATOR": ["GDP growth"],
+            2024: [1.5],
+            2025: [1.8],
+        }
+    )
+    with pytest.raises(ValueError, match="looks wide"):
+        coerce_setter_input(df, **_MATRIX_KWARGS)
+
+
+def test_empty_measure_write_passes_none_through() -> None:
+    records: Records = [{"TIME_PERIOD": 4, "OBS_VALUE": None}]
+    result = coerce_setter_input(records, **_SERIES_KWARGS, empty_measure="write")
+    assert result == [{"TIME_PERIOD": 4, "OBS_VALUE": None}]
+
+
+def test_empty_measure_skip_drops_row() -> None:
+    pd = pytest.importorskip("pandas")
+    df = pd.DataFrame({"TIME_PERIOD": [4, 5], "OBS_VALUE": [7.5, float("nan")]})
+    result = coerce_setter_input(df, **_SERIES_KWARGS, empty_measure="skip")
+    assert result == [{"TIME_PERIOD": 4, "OBS_VALUE": 7.5}]
+
+
+def test_empty_measure_error_raises() -> None:
+    records: Records = [{"TIME_PERIOD": 4, "OBS_VALUE": None}]
+    with pytest.raises(ValueError, match="empty measure field"):
+        coerce_setter_input(records, **_SERIES_KWARGS, empty_measure="error")
+
+
+def test_empty_key_always_errors() -> None:
+    pd = pytest.importorskip("pandas")
+    df = pd.DataFrame({"TIME_PERIOD": [None], "OBS_VALUE": [7.5]})
+    with pytest.raises(ValueError, match="empty key field"):
+        coerce_setter_input(df, **_SERIES_KWARGS, empty_measure="skip")
+
+
+def test_requires_address_dataframe_rejected() -> None:
+    pd = pytest.importorskip("pandas")
+    df = pd.DataFrame({"TIME_PERIOD": [4], "OBS_VALUE": [7.5]})
+    with pytest.raises(TypeError, match="requires address"):
+        coerce_setter_input(
+            df,
+            **_SERIES_KWARGS,
+            requires_address=True,
+        )

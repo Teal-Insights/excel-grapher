@@ -128,6 +128,34 @@ def _find_single_key_setter_candidate(
     return None
 
 
+def _find_matrix_setter_candidate(
+    setter_function_names: list[str],
+    *,
+    bindings: WorkbookSeriesBindings,
+    graph: DependencyGraph,
+    workbook: Path,
+    scheme: dict[str, Any] | None,
+) -> tuple[str, dict[str, Any], SeriesResolution] | None:
+    for name in setter_function_names:
+        series = _series_for_setter(bindings, name)
+        if str(series.get("layout") or "series") != "matrix":
+            continue
+        key_fields = _key_concepts(series)
+        if len(key_fields) < 2:
+            continue
+        resolved = resolve_series_binding(
+            graph,
+            workbook,
+            series,
+            concept_scheme=scheme,
+            direction="input",
+        )
+        if not resolved["ok"] or resolved["requires_address"] or not resolved["leaves"]:
+            continue
+        return name, series, resolved
+    return None
+
+
 def _smoke_setter_positional_input(
     pkg: Any,
     setter_name: str,
@@ -184,6 +212,35 @@ def _smoke_setter_dataframe_input(
         )
 
 
+def _smoke_setter_matrix_dataframe_input(
+    pkg: Any,
+    setter_name: str,
+    series: dict[str, Any],
+    resolved: SeriesResolution,
+    *,
+    make_context: Callable[[], Any],
+) -> None:
+    if importlib.util.find_spec("pandas") is None:
+        return
+    import pandas as pd
+
+    setter = cast(SetterFn, getattr(pkg, setter_name))
+    key_fields = _key_concepts(series)
+    measure = _measure_concept(series)
+    leaf = resolved["leaves"][0]
+    bumped = _bump_value(leaf["record"][measure])
+    row: dict[str, object] = {field: leaf["key"][field] for field in key_fields}
+    row[measure] = bumped
+    frame = pd.DataFrame([row])
+    ctx = make_context()
+    setter(ctx, frame)
+    if ctx.inputs[leaf["address"]] != bumped:
+        raise BindingsSmokeError(
+            f"Setter {setter_name!r} matrix DataFrame input did not update {leaf['address']!r} "
+            f"(expected {bumped!r}, got {ctx.inputs[leaf['address']]!r})"
+        )
+
+
 def smoke_test_setters(
     pkg: Any,
     setter_function_names: list[str],
@@ -196,7 +253,8 @@ def smoke_test_setters(
     """Exercise each generated setter with one bumped record.
 
     Also smoke-tests one single-key series setter with positional values and,
-    when pandas is installed, a tidy DataFrame partial update.
+    when pandas is installed, a tidy DataFrame partial update. When a matrix
+    setter is available, also smoke-tests one matrix DataFrame partial update.
     """
     concept_scheme = bindings.get("concept_scheme")
     scheme = concept_scheme if isinstance(concept_scheme, dict) else None
@@ -245,6 +303,24 @@ def smoke_test_setters(
             make_context=make_context,
         )
         _smoke_setter_dataframe_input(
+            pkg,
+            name,
+            series,
+            resolved,
+            make_context=make_context,
+        )
+
+    matrix_candidate = _find_matrix_setter_candidate(
+        setter_function_names,
+        bindings=bindings,
+        graph=graph,
+        workbook=workbook,
+        scheme=scheme,
+    )
+    if matrix_candidate is not None:
+        name, series, resolved = matrix_candidate
+        make_context = cast(Callable[[], Any], pkg.make_context)
+        _smoke_setter_matrix_dataframe_input(
             pkg,
             name,
             series,

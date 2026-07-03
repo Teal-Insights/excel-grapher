@@ -7,6 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v2.1.3 (2026-07-03)
+
+### Bug Fixes
+
+- Enforce raise-only export boundary
+  ([#327](https://github.com/Teal-Insights/excel-grapher/pull/327),
+  [`8991987`](https://github.com/Teal-Insights/excel-grapher/commit/899198771ad9e5c37d359abaa40d21d7f9bb31de))
+
+- Satisfy export runtime type check
+  ([#327](https://github.com/Teal-Insights/excel-grapher/pull/327),
+  [`8991987`](https://github.com/Teal-Insights/excel-grapher/commit/899198771ad9e5c37d359abaa40d21d7f9bb31de))
+
+### Code Style
+
+- Sort export runtime imports ([#327](https://github.com/Teal-Insights/excel-grapher/pull/327),
+  [`8991987`](https://github.com/Teal-Insights/excel-grapher/commit/899198771ad9e5c37d359abaa40d21d7f9bb31de))
+
+### Testing
+
+- Update if codegen boundary assertion
+  ([#327](https://github.com/Teal-Insights/excel-grapher/pull/327),
+  [`8991987`](https://github.com/Teal-Insights/excel-grapher/commit/899198771ad9e5c37d359abaa40d21d7f9bb31de))
+
+
+## v2.1.2 (2026-07-03)
+
+### Bug Fixes
+
+- **exporter**: Emit TypeAlias for SeriesInput in exported code
+  ([#325](https://github.com/Teal-Insights/excel-grapher/pull/325),
+  [`514d3cb`](https://github.com/Teal-Insights/excel-grapher/commit/514d3cb0240d5ecd8423faf3176c7dd58c536de2))
+
+
+## v2.1.1 (2026-07-03)
+
+### Bug Fixes
+
+- Cache repeated dynamic ref expansions
+  ([#324](https://github.com/Teal-Insights/excel-grapher/pull/324),
+  [`e92f979`](https://github.com/Teal-Insights/excel-grapher/commit/e92f979b9f8cbc131cd345f321d17300215ae46e))
+
+- Stop caching dynamic-ref mask spans in dep cache
+  ([#324](https://github.com/Teal-Insights/excel-grapher/pull/324),
+  [`e92f979`](https://github.com/Teal-Insights/excel-grapher/commit/e92f979b9f8cbc131cd345f321d17300215ae46e))
+
+### Code Style
+
+- Apply ruff format to builder and dynamic refs tests
+  ([#324](https://github.com/Teal-Insights/excel-grapher/pull/324),
+  [`e92f979`](https://github.com/Teal-Insights/excel-grapher/commit/e92f979b9f8cbc131cd345f321d17300215ae46e))
+
+
+## v2.1.0 (2026-07-03)
+
+### Features
+
+- **exporter**: Emit list_setters/list_computes discovery helpers
+  ([#323](https://github.com/Teal-Insights/excel-grapher/pull/323),
+  [`85bef61`](https://github.com/Teal-Insights/excel-grapher/commit/85bef61936ba40ff87c7834736d8ce31841357aa))
+
+- **series-bindings**: Add empty_measure and matrix DataFrame setter input
+  ([#323](https://github.com/Teal-Insights/excel-grapher/pull/323),
+  [`85bef61`](https://github.com/Teal-Insights/excel-grapher/commit/85bef61936ba40ff87c7834736d8ce31841357aa))
+
+- **series-bindings**: Empty_measure knob and matrix DataFrame setter ergonomics
+  ([#323](https://github.com/Teal-Insights/excel-grapher/pull/323),
+  [`85bef61`](https://github.com/Teal-Insights/excel-grapher/commit/85bef61936ba40ff87c7834736d8ce31841357aa))
+
+### Refactoring
+
+- **series-bindings**: Tighten empty_measure setter ergonomics
+  ([#323](https://github.com/Teal-Insights/excel-grapher/pull/323),
+  [`85bef61`](https://github.com/Teal-Insights/excel-grapher/commit/85bef61936ba40ff87c7834736d8ce31841357aa))
+
+
 ## v2.0.0 (2026-07-02)
 
 ### Bug Fixes

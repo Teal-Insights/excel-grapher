@@ -6,6 +6,7 @@ the evaluator keeps `XlError` sentinels. Parity is asserted on matching codes.
 
 from __future__ import annotations
 
+import ast as py_ast
 from typing import Any, cast
 
 import pytest
@@ -15,6 +16,8 @@ from excel_grapher.core.address_keys import parse_address
 from excel_grapher.core.types import XlErrorException
 from excel_grapher.evaluator.types import XlError
 from excel_grapher.exporter.codegen import CodeGenerator
+from excel_grapher.exporter.export_runtime.offset import xl_index_ref
+from excel_grapher.exporter.export_runtime.operators import xl_bool, xl_int
 from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
 
 
@@ -45,6 +48,76 @@ def _compute_all(graph: DependencyGraph, targets: list[str]) -> tuple[Any, dict[
     ns: dict[str, Any] = {}
     exec(code, ns)
     return ns["compute_all"], ns
+
+
+def _cell_function_sources(code: str) -> dict[str, str]:
+    module = py_ast.parse(code)
+    out: dict[str, str] = {}
+    for node in module.body:
+        if isinstance(node, py_ast.FunctionDef) and node.name.startswith("cell_"):
+            source = py_ast.get_source_segment(code, node)
+            assert source is not None
+            out[node.name] = source
+    return out
+
+
+def _has_xlerror_isinstance(function_source: str) -> bool:
+    function = py_ast.parse(function_source).body[0]
+    assert isinstance(function, py_ast.FunctionDef)
+    for node in py_ast.walk(function):
+        if not isinstance(node, py_ast.Call):
+            continue
+        if not isinstance(node.func, py_ast.Name) or node.func.id != "isinstance":
+            continue
+        if len(node.args) < 2:
+            continue
+        type_arg = node.args[1]
+        if isinstance(type_arg, py_ast.Name) and type_arg.id == "XlError":
+            return True
+        if isinstance(type_arg, py_ast.Tuple):
+            for elt in type_arg.elts:
+                if isinstance(elt, py_ast.Name) and elt.id == "XlError":
+                    return True
+    return False
+
+
+class TestExportRuntimeBoundaryHelpers:
+    """Export-owned coercion and reference helpers raise at the codegen boundary."""
+
+    @pytest.mark.parametrize(
+        ("helper", "bad_value"),
+        [
+            (xl_bool, "nope"),
+            (xl_int, "nope"),
+        ],
+    )
+    def test_scalar_coercion_wrappers_raise_errors(self, helper: Any, bad_value: object) -> None:
+        with pytest.raises(XlErrorException) as exc_info:
+            helper(bad_value)
+        assert exc_info.value.code == XlError.VALUE
+
+    def test_index_ref_raises_reference_errors(self) -> None:
+        with pytest.raises(XlErrorException) as exc_info:
+            xl_index_ref(("Sheet1", 1, 1, 3, 1), 99, None)
+        assert exc_info.value.code == XlError.REF
+
+
+class TestGeneratedBoundaryInvariant:
+    """Generated formula cells do not inspect `XlError` sentinels directly."""
+
+    def test_if_and_choose_use_raise_only_coercion_wrappers(self) -> None:
+        graph = _make_graph(
+            _make_node("S!A1", '=IF("nope", 1, 2)', None),
+            _make_node("S!A2", '=CHOOSE("nope", 1, 2)', None),
+        )
+        code = CodeGenerator(graph).generate(["S!A1", "S!A2"])
+        cells = _cell_function_sources(code)
+
+        assert "xl_bool(" in cells["cell_s_a1"]
+        assert "to_bool(" not in cells["cell_s_a1"]
+        assert "xl_int(" in cells["cell_s_a2"]
+        assert "to_int(" not in cells["cell_s_a2"]
+        assert not any(_has_xlerror_isinstance(source) for source in cells.values())
 
 
 class TestComputeAllRaises:

@@ -112,6 +112,7 @@ def emit_input_coerce_helpers() -> list[str]:
         "from typing import Any, Literal, TypeGuard, cast",
         "",
         'Layout = Literal["scalar", "series", "matrix"]',
+        'EmptyMeasure = Literal["skip", "write", "error"]',
         "SetterInput = object",
         "Scalar = object",
         "Record = dict[str, object]",
@@ -126,7 +127,7 @@ def emit_input_coerce_helpers() -> list[str]:
 SERIES_HELPERS_STDLIB_IMPORTS: tuple[str, ...] = (
     "from collections.abc import Iterable, Mapping, Sequence",
     "from datetime import date, datetime, timedelta",
-    "from typing import TYPE_CHECKING, Any, Literal, TypeGuard, cast",
+    "from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, cast",
 )
 """Standard-library imports required by `emit_series_helpers_definitions`."""
 
@@ -145,20 +146,22 @@ def emit_series_helpers_definitions() -> list[str]:
     """
     package_dir = Path(__file__).resolve().parent
     lines = [
-        'Layout = Literal["scalar", "series", "matrix"]',
-        "SetterInput = object",
-        "Scalar = str | int | float | bool | datetime | None",
-        "Record = dict[str, object]",
-        "Records = list[Record]",
-        "SeriesInput = Records | Record | Sequence[Scalar]",
+        'Layout: TypeAlias = Literal["scalar", "series", "matrix"]',
+        'EmptyMeasure: TypeAlias = Literal["skip", "write", "error"]',
+        "SetterInput: TypeAlias = object",
+        "Scalar: TypeAlias = str | int | float | bool | datetime | None",
+        "Record: TypeAlias = dict[str, object]",
+        "Records: TypeAlias = list[Record]",
         "",
         "if TYPE_CHECKING:",
         "    import pandas as pd",
         "    import polars as pl",
         "",
-        "    SeriesInput = Records | Record | Sequence[Scalar] | pd.DataFrame | pl.DataFrame",
+        "    DataFrameInput: TypeAlias = pd.DataFrame | pl.DataFrame",
         "else:",
-        "    SeriesInput = Records | Record | Sequence[Scalar] | object",
+        "    DataFrameInput: TypeAlias = object",
+        "",
+        "SeriesInput: TypeAlias = Records | Record | Sequence[Scalar] | DataFrameInput",
         "",
     ]
     lines.extend(_emit_python_module_body(package_dir / "coerce.py"))
@@ -217,6 +220,8 @@ def _coerce_setter_input_call(
     key_fields: list[str],
     measure_concept: str,
     strict_kwarg: str,
+    empty_measure_kwarg: str,
+    requires_address: bool,
 ) -> str:
     layout = str(series.get("layout") or "series")
     key_order = _canonical_key_order(resolved, key_fields)
@@ -232,6 +237,8 @@ def _coerce_setter_input_call(
         f"            measure_field={measure_concept!r},",
         f"            key_order={key_order_expr},",
         f"            strict={strict_kwarg},",
+        f"            empty_measure={empty_measure_kwarg},",
+        f"            requires_address={requires_address!r},",
     ]
     if key_dtypes:
         parts.append(f"            key_dtypes={key_dtypes!r},")
@@ -359,6 +366,8 @@ def emit_setter_function(
     lines.append(f"    records: {input_type},")
     lines.append("    *,")
     lines.append(f"    strict: bool = {strict!r},")
+    if not scalar_shorthand:
+        lines.append('    empty_measure: EmptyMeasure = "write",')
     lines.append(") -> None:")
     if series_docstring_callback is not None and (
         graph is None or workbook is None or bindings is None
@@ -394,6 +403,8 @@ def emit_setter_function(
             key_fields=key_fields,
             measure_concept=measure_concept,
             strict_kwarg="strict",
+            empty_measure_kwarg="empty_measure",
+            requires_address=requires_address,
         )
     lines.append("    _apply_series_records(")
     lines.append("        ctx,")

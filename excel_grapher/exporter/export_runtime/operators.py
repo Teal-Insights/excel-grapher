@@ -6,7 +6,7 @@ cover coercion, Excel-specific error semantics, and lazy-range array broadcast.
 
 from __future__ import annotations
 
-from excel_grapher.core import XlError, to_number
+from excel_grapher.core import XlError, to_bool, to_int, to_number
 from excel_grapher.core.operators_reference import (
     apply_arithmetic,
     compare_scalars,
@@ -19,6 +19,8 @@ from .values import CellValue, ExcelRange, Grid, Scalar, as_scalar
 
 __all__ = [
     "xl_compare",
+    "xl_bool",
+    "xl_int",
     "xl_is_array",
     "xl_map_arithmetic",
     "xl_map_compare",
@@ -43,6 +45,28 @@ def xl_number(value: CellValue) -> float:
     if isinstance(number, XlError):
         raise _raise_error(number)
     return number
+
+
+def xl_int(value: CellValue) -> int:
+    """Coerce a scalar cell value to an integer, raising on Excel errors."""
+    scalar = as_scalar(value)
+    if isinstance(scalar, XlError):
+        raise _raise_error(scalar)
+    integer = to_int(scalar)
+    if isinstance(integer, XlError):
+        raise _raise_error(integer)
+    return integer
+
+
+def xl_bool(value: CellValue) -> bool:
+    """Coerce a scalar cell value to a boolean, raising on Excel errors."""
+    scalar = as_scalar(value)
+    if isinstance(scalar, XlError):
+        raise _raise_error(scalar)
+    boolean = to_bool(scalar)
+    if isinstance(boolean, XlError):
+        raise _raise_error(boolean)
+    return boolean
 
 
 def xl_is_array(value: object) -> bool:
