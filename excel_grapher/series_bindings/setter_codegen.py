@@ -365,7 +365,8 @@ def emit_setter_function(
     lines.append(f"    records: {input_type},")
     lines.append("    *,")
     lines.append(f"    strict: bool = {strict!r},")
-    lines.append('    empty_measure: EmptyMeasure = "write",')
+    if not scalar_shorthand:
+        lines.append('    empty_measure: EmptyMeasure = "write",')
     lines.append(") -> None:")
     if series_docstring_callback is not None and (
         graph is None or workbook is None or bindings is None

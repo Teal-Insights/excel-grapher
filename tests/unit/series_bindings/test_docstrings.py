@@ -534,6 +534,7 @@ def test_scalar_setter_docstring_describes_scalar_shapes() -> None:
     rendered = GoogleSeriesDocstringRenderer().render(contract, doc, series={"id": "demo"})
     assert "bare scalar" in rendered
     assert "tidy pandas/polars DataFrame" not in rendered
+    assert "empty_measure" not in rendered
     assert "set_demo(ctx, 2.0)" in rendered
     assert "set_demo(ctx, [" not in rendered
 
@@ -545,6 +546,7 @@ def test_series_setter_docstring_describes_series_shapes() -> None:
     )
     assert "tidy pandas/polars DataFrame" in rendered
     assert "1-D iterable of measure values in key order" in rendered
+    assert "empty_measure" in rendered
     assert "set_country_initial_debt(ctx, [" in rendered
     assert "set_country_initial_debt(ctx, [60.0, 80.0])" in rendered
 
@@ -556,6 +558,7 @@ def test_series_multi_key_setter_omits_positional_shape() -> None:
     )
     assert "tidy pandas/polars DataFrame" in rendered
     assert "1-D iterable of measure values in key order" not in rendered
+    assert "empty_measure" in rendered
 
 
 def test_matrix_setter_docstring_describes_matrix_shapes() -> None:
@@ -565,6 +568,7 @@ def test_matrix_setter_docstring_describes_matrix_shapes() -> None:
     )
     assert "tidy pandas/polars DataFrame" in rendered
     assert "1-D iterable of measure values in key order" not in rendered
+    assert "empty_measure" in rendered
     assert "set_country_initial_debt(ctx, [" in rendered
 
 
@@ -581,12 +585,14 @@ def test_all_renderers_describe_layout_specific_input(renderer_cls: type) -> Non
     scalar_contract, doc = _demo_contract_and_doc()
     scalar_rendered = renderer_cls().render(scalar_contract, doc, series={"id": "demo"})
     assert "bare scalar" in scalar_rendered
+    assert "empty_measure" not in scalar_rendered
 
     series_contract, series_doc = _series_contract_and_doc()
     series_rendered = renderer_cls().render(
         series_contract, series_doc, series={"id": "country_initial_debt"}
     )
     assert "tidy pandas/polars DataFrame" in series_rendered
+    assert "empty_measure" in series_rendered
 
 
 def test_resolve_series_docstring_renderer_builtin_names() -> None:

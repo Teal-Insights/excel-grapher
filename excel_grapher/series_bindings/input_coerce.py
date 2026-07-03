@@ -90,7 +90,23 @@ def _dataframe_column_names(data: object) -> list[str]:
 
 
 def _is_missing_value(value: object) -> bool:
+    """Return whether a normalized cell value counts as missing for empty-measure policy.
+
+    Treats ``None`` and float NaN as missing. Tabular inputs are normalized via
+    pandas/polars record conversion before this check runs.
+    """
     return value is None or (isinstance(value, float) and value != value)
+
+
+def _validate_nonempty_key_fields(
+    records: Records,
+    *,
+    key_fields: tuple[str, ...],
+) -> None:
+    for index, record in enumerate(records):
+        for field in key_fields:
+            if field in record and _is_missing_value(record[field]):
+                raise ValueError(f"record[{index}]: empty key field {field!r}")
 
 
 def _validate_dataframe_columns(
@@ -127,18 +143,12 @@ def _apply_empty_measure(
     empty_measure: EmptyMeasure,
 ) -> Records:
     """Apply empty key/measure policy after input normalization."""
+    _validate_nonempty_key_fields(records, key_fields=key_fields)
     if empty_measure == "write":
-        for index, record in enumerate(records):
-            for field in key_fields:
-                if field in record and _is_missing_value(record[field]):
-                    raise ValueError(f"record[{index}]: empty key field {field!r}")
         return records
 
     kept: list[dict[str, object]] = []
     for index, record in enumerate(records):
-        for field in key_fields:
-            if field in record and _is_missing_value(record[field]):
-                raise ValueError(f"record[{index}]: empty key field {field!r}")
         if measure_field not in record:
             if empty_measure == "error":
                 raise ValueError(f"record[{index}]: missing required field {measure_field!r}")

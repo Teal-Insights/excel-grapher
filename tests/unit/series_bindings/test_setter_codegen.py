@@ -716,6 +716,36 @@ def test_emit_setter_series_signature_uses_series_input(tmp_path: Path) -> None:
     resolved = resolve_series_binding(graph, wb_path, series)
     code = "\n".join(emit_setter_function(series, resolved))
     assert "records: SeriesInput," in code
+    assert 'empty_measure: EmptyMeasure = "write"' in code
+
+
+def test_emit_setter_scalar_omits_empty_measure_kwarg(tmp_path: Path) -> None:
+    wb_path = tmp_path / "bool_scalar.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Flags")
+    ws.write_boolean("B2", True)
+    wb.close()
+
+    graph = create_dependency_graph(wb_path, ["Flags!B2"], load_values=True)
+    series = {
+        "id": "bool_scalar_measure",
+        "sheet": "Flags",
+        "data_range": "Flags!B2",
+        "layout": "scalar",
+        "setter": {"name": "set_bool_scalar_measure"},
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "bool",
+                "bind": {"kind": "data_cell", "read": "bool"},
+            },
+            "dimensions": [],
+        },
+        "key": [],
+    }
+    resolved = resolve_series_binding(graph, wb_path, series)
+    code = "\n".join(emit_setter_function(series, resolved))
+    assert "empty_measure" not in code
 
 
 def test_emit_setter_positional_values_update_context(tmp_path: Path) -> None:
@@ -930,3 +960,24 @@ def test_emit_setter_requires_address_rejects_dataframe(tmp_path: Path) -> None:
     df = pd.DataFrame({"TIME_PERIOD": [1], "OBS_VALUE": [99.0]})
     with pytest.raises(TypeError, match="requires address"):
         setter(ctx, df)
+
+
+def test_emit_setter_empty_measure_skip_drops_nan_rows(tmp_path: Path) -> None:
+    pd = pytest.importorskip("pandas")
+    wb_path = tmp_path / "lic_inputs.xlsx"
+    _write_borvelia_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, expand_data_range("Inputs!F5:J5"), load_values=True)
+    bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
+    series = bindings["series"][0]
+    resolved = resolve_series_binding(graph, wb_path, series)
+    ns = _exec_setters(emit_setter_function(series, resolved))
+    setter = cast(Callable[..., None], ns["set_borvelia_primary_balance"])
+
+    df = pd.DataFrame({"TIME_PERIOD": [4, 5], "OBS_VALUE": [7.5, float("nan")]})
+    ctx = EvalContext(
+        inputs=coerce_inputs_dict({"Inputs!I5": 1.0, "Inputs!J5": 2.0}),
+        resolver=lambda _a: None,
+    )
+    setter(ctx, df, empty_measure="skip")
+    assert ctx.inputs["Inputs!I5"] == 7.5
+    assert ctx.inputs["Inputs!J5"] == 2.0
