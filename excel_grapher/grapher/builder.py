@@ -75,13 +75,13 @@ _POSITION_DEPENDENT_DYNAMIC_REF_PATTERN = re.compile(
     r"(?<![A-Z0-9_])(?:ROW|COLUMN)\s*\(\s*\)",
     re.IGNORECASE,
 )
+# Position-independent formulas: (normalized_formula, sheet).
+# Formulas with argument-less ROW()/COLUMN(): (normalized_formula, sheet, cell_a1).
 _DynamicRefCacheKey = tuple[str, str] | tuple[str, str, str]
 _DynamicRefTargets = tuple[set[str], set[str], set[str]]
-_DynamicRefDependencyCacheValue = tuple[
-    list[tuple[str, str]],
-    list[tuple[int, int]],
-    _DynamicRefTargets,
-]
+# Deps and inferred targets are keyed by normalized formula; masking spans are not
+# cached because they refer to raw formula text offsets.
+_DynamicRefDependencyCacheValue = tuple[list[tuple[str, str]], _DynamicRefTargets]
 
 
 def _dynamic_ref_cache_key(
@@ -651,16 +651,15 @@ def create_dependency_graph(
                         )
                         _cached_dynamic_deps = _dyn_dep_cache.get(_dyn_dep_cache_key)
                         if _cached_dynamic_deps is not None:
-                            cached_deps, cached_dyn_spans, cached_targets = _cached_dynamic_deps
+                            cached_deps, cached_targets = _cached_dynamic_deps
                             deps.extend(cached_deps)
-                            dyn_spans.extend(cached_dyn_spans)
+                            dyn_spans.extend(span for _, _, span in calls)
                             _dyn_cache[_cell_cache_key] = cached_targets
-                            _dyn_stats["cache_hits"] += 1
+                            _dyn_stats["dep_cache_hits"] += 1
                             calls = []
                     argument_addrs: set[str] = set()
                     if calls:
                         _deps_start = len(deps)
-                        _dyn_spans_start = len(dyn_spans)
                         for fn_name, inner, span in calls:
                             dyn_spans.append(span)
                             args = _split_function_args(inner)
@@ -868,7 +867,6 @@ def create_dependency_graph(
                             deps.append((sh, a1))
                         _dyn_dep_cache[_dyn_dep_cache_key] = (
                             deps[_deps_start:],
-                            dyn_spans[_dyn_spans_start:],
                             (offset_targets, indirect_targets, index_targets),
                         )
             masked = mask_spans(masked, dyn_spans)
@@ -1137,7 +1135,7 @@ def create_dependency_graph(
     _bfs_t0 = time.perf_counter()
     _bfs_count = 0
     _bfs_next_log = 5000
-    _dyn_stats = {"infer_calls": 0, "cache_hits": 0}
+    _dyn_stats = {"infer_calls": 0, "cache_hits": 0, "dep_cache_hits": 0}
 
     try:
         while q:
@@ -1160,6 +1158,7 @@ def create_dependency_graph(
                             "last": key,
                             "infer_calls": _dyn_stats["infer_calls"],
                             "cache_hits": _dyn_stats["cache_hits"],
+                            "dep_cache_hits": _dyn_stats["dep_cache_hits"],
                             "env_cache_size": len(_shared_cell_type_cache),
                         },
                     )
@@ -1257,7 +1256,11 @@ def create_dependency_graph(
             if not graph.get_dependencies(key):
                 node.is_leaf = True
     finally:
-        if _dyn_stats["infer_calls"] or _dyn_stats["cache_hits"]:
+        if (
+            _dyn_stats["infer_calls"]
+            or _dyn_stats["cache_hits"]
+            or _dyn_stats["dep_cache_hits"]
+        ):
             _emit_trace(
                 DynamicRefTraceEvent(
                     kind="bfs-done",
@@ -1267,6 +1270,7 @@ def create_dependency_graph(
                         "nodes": _bfs_count,
                         "infer_calls": _dyn_stats["infer_calls"],
                         "cache_hits": _dyn_stats["cache_hits"],
+                        "dep_cache_hits": _dyn_stats["dep_cache_hits"],
                         "env_cache_size": len(_shared_cell_type_cache),
                     },
                 )

@@ -2530,6 +2530,75 @@ def test_repeated_index_cache_keeps_row_sensitive_formulas_separate(tmp_path: Pa
     assert "Sheet1!A1" not in graph.get_dependencies("Sheet1!B2")
 
 
+def _build_equivalent_index_match_spellings_workbook(
+    path: Path,
+    *,
+    anchored_first: bool,
+) -> tuple[list[str], dict[str, object]]:
+    """Build two INDEX/MATCH formulas that normalize identically but differ in raw text."""
+    countries = [f"Country {i}" for i in range(1, 5)]
+    wb = xlsxwriter.Workbook(path)
+    inputs = wb.add_worksheet("Inputs")
+    lookup = wb.add_worksheet("Lookup")
+    outputs = wb.add_worksheet("Outputs")
+
+    inputs.write("A1", countries[0])
+    for row, country in enumerate(countries, start=1):
+        lookup.write(row, 0, country)
+        lookup.write_number(row, 1, row * 10)
+
+    anchored = (
+        "=INDEX(Lookup!$B$2:$B$5,MATCH(Inputs!$A$1,Lookup!$A$2:$A$5,0),1)"
+    )
+    unanchored = "=INDEX(Lookup!B2:B5,MATCH(Inputs!A1,Lookup!A2:A5,0),1)"
+    first, second = (
+        (anchored, unanchored) if anchored_first else (unanchored, anchored)
+    )
+    outputs.write_formula("A1", first)
+    outputs.write_formula("A2", second)
+    wb.close()
+
+    constraints: dict[str, object] = {"Inputs!A1": _literal_constraint(*countries)}
+    for row, country in enumerate(countries, start=2):
+        constraints[f"Lookup!A{row}"] = _literal_constraint(country)
+    return ["Outputs!A1", "Outputs!A2"], constraints
+
+
+@pytest.mark.parametrize("anchored_first", [True, False])
+def test_dynamic_dep_cache_masks_current_formula_text(
+    tmp_path: Path,
+    anchored_first: bool,
+) -> None:
+    """Normalized-equivalent formulas must mask spans from their own raw text."""
+    excel_path = tmp_path / f"index_match_spellings_{int(anchored_first)}.xlsx"
+    targets, constraints = _build_equivalent_index_match_spellings_workbook(
+        excel_path,
+        anchored_first=anchored_first,
+    )
+    config = DynamicRefConfig.from_constraints(constraints, {})
+
+    graph = create_dependency_graph(
+        excel_path,
+        targets,
+        load_values=True,
+        dynamic_refs=config,
+    )
+
+    expected = {
+        "Inputs!A1",
+        "Lookup!A2",
+        "Lookup!A3",
+        "Lookup!A4",
+        "Lookup!A5",
+        "Lookup!B2",
+        "Lookup!B3",
+        "Lookup!B4",
+        "Lookup!B5",
+    }
+    for target in targets:
+        assert set(graph.get_dependencies(target)) == expected
+
+
 def test_wide_index_sweep_shared_env_cache(tmp_path: Path) -> None:
     """Benchmark: many INDEX formulas should share env expansion work.
 
