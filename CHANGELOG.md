@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v2.1.1 (2026-07-03)
+
+### Bug Fixes
+
+- Cache repeated dynamic ref expansions
+  ([#324](https://github.com/Teal-Insights/excel-grapher/pull/324),
+  [`e92f979`](https://github.com/Teal-Insights/excel-grapher/commit/e92f979b9f8cbc131cd345f321d17300215ae46e))
+
+- Stop caching dynamic-ref mask spans in dep cache
+  ([#324](https://github.com/Teal-Insights/excel-grapher/pull/324),
+  [`e92f979`](https://github.com/Teal-Insights/excel-grapher/commit/e92f979b9f8cbc131cd345f321d17300215ae46e))
+
+### Code Style
+
+- Apply ruff format to builder and dynamic refs tests
+  ([#324](https://github.com/Teal-Insights/excel-grapher/pull/324),
+  [`e92f979`](https://github.com/Teal-Insights/excel-grapher/commit/e92f979b9f8cbc131cd345f321d17300215ae46e))
+
+
 ## v2.1.0 (2026-07-03)
 
 ### Features
