@@ -71,6 +71,28 @@ _VOLATILE_DYNAMIC_REF_FUNCS = frozenset(
 _VOLATILE_DYNAMIC_REF_PATTERN = re.compile(
     r"(?<![A-Z0-9_])(?:_XLFN\.|_XLUDF\.)?(?:NOW|TODAY|RANDBETWEEN|RANDARRAY|RAND|INFO)\s*\("
 )
+_POSITION_DEPENDENT_DYNAMIC_REF_PATTERN = re.compile(
+    r"(?<![A-Z0-9_])(?:ROW|COLUMN)\s*\(\s*\)",
+    re.IGNORECASE,
+)
+_DynamicRefCacheKey = tuple[str, str] | tuple[str, str, str]
+_DynamicRefTargets = tuple[set[str], set[str], set[str]]
+_DynamicRefDependencyCacheValue = tuple[
+    list[tuple[str, str]],
+    list[tuple[int, int]],
+    _DynamicRefTargets,
+]
+
+
+def _dynamic_ref_cache_key(
+    formula_for_infer: str,
+    current_sheet: str,
+    current_a1: str,
+) -> _DynamicRefCacheKey:
+    """Return the safest per-build cache key for dynamic-ref expansion."""
+    if _POSITION_DEPENDENT_DYNAMIC_REF_PATTERN.search(formula_for_infer):
+        return (formula_for_infer, current_sheet, current_a1)
+    return (formula_for_infer, current_sheet)
 
 
 def _parse_address_to_sheet_a1(addr: str) -> tuple[str, str]:
@@ -337,7 +359,11 @@ def create_dependency_graph(
     # Per-graph cache: (normalized_formula, current_sheet, current_a1) -> (offset_targets, indirect_targets, index_targets).
     # Populated by extract_expr_deps (constraint path); consumed by collect_provenance_for_formula
     # to avoid re-running the expensive expand_leaf_env_to_argument_env call.
-    _dyn_cache: dict[tuple[str, str, str], tuple[set[str], set[str], set[str]]] = {}
+    _dyn_cache: dict[tuple[str, str, str], _DynamicRefTargets] = {}
+    # Per-graph cache for the full dependency contribution of constraint-based
+    # dynamic refs. Position-independent repeated formulas can share this before
+    # rebuilding argument domains and rerunning INDEX/MATCH inference.
+    _dyn_dep_cache: dict[_DynamicRefCacheKey, _DynamicRefDependencyCacheValue] = {}
     # Shared cell-type cache for expand_leaf_env_to_argument_env: intermediate
     # formula cells inferred once are reused across BFS nodes, avoiding redundant
     # recursive domain inference when many dynamic-ref formulas share intermediates.
@@ -612,8 +638,29 @@ def create_dependency_graph(
                         )
                 else:
                     bounds = GlobalWorkbookBounds(sheet=current_sheet)
+                    if calls:
+                        formula_for_infer = normalizer.normalize(
+                            f if f.startswith("=") else "=" + f,
+                            current_sheet,
+                        )
+                        _cell_cache_key = (formula_for_infer, current_sheet, current_a1)
+                        _dyn_dep_cache_key = _dynamic_ref_cache_key(
+                            formula_for_infer,
+                            current_sheet,
+                            current_a1,
+                        )
+                        _cached_dynamic_deps = _dyn_dep_cache.get(_dyn_dep_cache_key)
+                        if _cached_dynamic_deps is not None:
+                            cached_deps, cached_dyn_spans, cached_targets = _cached_dynamic_deps
+                            deps.extend(cached_deps)
+                            dyn_spans.extend(cached_dyn_spans)
+                            _dyn_cache[_cell_cache_key] = cached_targets
+                            _dyn_stats["cache_hits"] += 1
+                            calls = []
                     argument_addrs: set[str] = set()
                     if calls:
+                        _deps_start = len(deps)
+                        _dyn_spans_start = len(dyn_spans)
                         for fn_name, inner, span in calls:
                             dyn_spans.append(span)
                             args = _split_function_args(inner)
@@ -819,6 +866,11 @@ def create_dependency_graph(
                         ):
                             sh, a1 = _parse_address_to_sheet_a1(addr)
                             deps.append((sh, a1))
+                        _dyn_dep_cache[_dyn_dep_cache_key] = (
+                            deps[_deps_start:],
+                            dyn_spans[_dyn_spans_start:],
+                            (offset_targets, indirect_targets, index_targets),
+                        )
             masked = mask_spans(masked, dyn_spans)
 
             # 1) Expand ranges, then mask them so later cell-ref parsing doesn't
