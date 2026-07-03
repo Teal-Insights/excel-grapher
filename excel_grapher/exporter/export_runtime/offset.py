@@ -7,8 +7,8 @@ from typing import Any, cast
 import fastpyxl.utils.cell
 
 from excel_grapher.core import XlError, to_number
-from excel_grapher.core.addressing import index_excel_range
 from excel_grapher.core.address_keys import format_cell_key
+from excel_grapher.core.addressing import index_excel_range
 from excel_grapher.core.types import XlErrorException
 from excel_grapher.runtime.cache import EvalContext, _parse_range_address, xl_cell
 
