@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v2.1.0 (2026-07-03)
+
+### Features
+
+- **exporter**: Emit list_setters/list_computes discovery helpers
+  ([#323](https://github.com/Teal-Insights/excel-grapher/pull/323),
+  [`85bef61`](https://github.com/Teal-Insights/excel-grapher/commit/85bef61936ba40ff87c7834736d8ce31841357aa))
+
+- **series-bindings**: Add empty_measure and matrix DataFrame setter input
+  ([#323](https://github.com/Teal-Insights/excel-grapher/pull/323),
+  [`85bef61`](https://github.com/Teal-Insights/excel-grapher/commit/85bef61936ba40ff87c7834736d8ce31841357aa))
+
+- **series-bindings**: Empty_measure knob and matrix DataFrame setter ergonomics
+  ([#323](https://github.com/Teal-Insights/excel-grapher/pull/323),
+  [`85bef61`](https://github.com/Teal-Insights/excel-grapher/commit/85bef61936ba40ff87c7834736d8ce31841357aa))
+
+### Refactoring
+
+- **series-bindings**: Tighten empty_measure setter ergonomics
+  ([#323](https://github.com/Teal-Insights/excel-grapher/pull/323),
+  [`85bef61`](https://github.com/Teal-Insights/excel-grapher/commit/85bef61936ba40ff87c7834736d8ce31841357aa))
+
+
 ## v2.0.0 (2026-07-02)
 
 ### Bug Fixes
