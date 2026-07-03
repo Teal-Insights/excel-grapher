@@ -14,7 +14,6 @@ from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.node import NodeKey
 
 if TYPE_CHECKING:
-    from excel_grapher.exporter.codegen import CodeGenerator
     from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 
 
@@ -45,49 +44,6 @@ class TacoBuildConfig:
         return cls(
             exclude_targets=True,
             exclude_input_keys=input_keys or frozenset(),
-            internal_only=internal_only,
-        )
-
-    @classmethod
-    def for_codegen_from_generator(
-        cls,
-        generator: CodeGenerator,
-        targets: Sequence[str] | None = None,
-        *,
-        input_ranges: Sequence[str] | None = None,
-        series_bindings: WorkbookSeriesBindings | None = None,
-        bindings_workbook: Path | str | None = None,
-        internal_only: bool = True,
-        attach_classification: bool = True,
-    ) -> TacoBuildConfig:
-        """Build a codegen boundary config from ``CodeGenerator`` export state.
-
-        Classifies leaf nodes (optionally attaching ``leaf_classification`` to the
-        graph), then unions declared ``input_ranges``, graph input leaves, and
-        series-binding setter addresses into ``exclude_input_keys``.
-        """
-        from excel_grapher.exporter.codegen import CodeGenerator
-
-        if not isinstance(generator, CodeGenerator):
-            raise TypeError("generator must be a CodeGenerator instance")
-        graph = generator._dependency_graph()
-        normalized_targets = (
-            generator._resolve_targets(targets)
-            if targets is not None
-            else list(graph.target_keys())
-        )
-        if attach_classification:
-            generator.classify_leaf_nodes(
-                normalized_targets,
-                input_ranges=input_ranges,
-                attach_to_graph=True,
-            )
-        return cls.for_codegen_export(
-            graph,
-            input_ranges=input_ranges,
-            series_bindings=series_bindings,
-            bindings_workbook=bindings_workbook,
-            export_addresses=normalized_targets,
             internal_only=internal_only,
         )
 

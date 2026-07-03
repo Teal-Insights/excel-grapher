@@ -1025,14 +1025,23 @@ class CodeGenerator:
         """Return a codegen-boundary ``TacoBuildConfig`` for this export closure."""
         from excel_grapher.grapher.range_compression import TacoBuildConfig
 
-        return TacoBuildConfig.for_codegen_from_generator(
-            self,
-            targets,
+        graph = self._dependency_graph()
+        normalized_targets = (
+            self._resolve_targets(targets) if targets is not None else list(graph.target_keys())
+        )
+        if attach_classification:
+            self.classify_leaf_nodes(
+                normalized_targets,
+                input_ranges=input_ranges,
+                attach_to_graph=True,
+            )
+        return TacoBuildConfig.for_codegen_export(
+            graph,
             input_ranges=input_ranges,
             series_bindings=series_bindings,
             bindings_workbook=bindings_workbook,
+            export_addresses=normalized_targets,
             internal_only=internal_only,
-            attach_classification=attach_classification,
         )
 
     def build_codegen_taco_index(
