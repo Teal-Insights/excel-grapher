@@ -6,11 +6,13 @@ import json
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
+from excel_grapher.core.coercions import datetime_to_excel_serial
 from excel_grapher.core.operators import xl_concat, xl_eq, xl_gt, xl_mul
 from excel_grapher.core.sumproduct import xl_sumproduct
 
@@ -75,6 +77,28 @@ def whitespace_numeric_string_column(shape: tuple[int, ...], *, seed: int = 0) -
     rng = np.random.default_rng(seed)
     flat = rng.integers(50, 500, size=int(np.prod(shape)), dtype=np.int64)
     return np.array([f" {value} " for value in flat], dtype=object).reshape(shape)
+
+
+def iso_date_compare_columns(
+    shape: tuple[int, ...],
+    *,
+    seed: int = 0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build paired ISO date strings and matching Excel serial columns."""
+    rng = np.random.default_rng(seed)
+    base = datetime(2018, 1, 1)
+    size = int(np.prod(shape))
+    offsets = rng.integers(0, 365 * 5, size=size)
+    strings: list[str] = []
+    serials: list[float] = []
+    for offset in offsets:
+        value = base + timedelta(days=int(offset))
+        strings.append(value.date().isoformat())
+        serials.append(datetime_to_excel_serial(value))
+    return (
+        np.array(strings, dtype=object).reshape(shape),
+        np.array(serials, dtype=object).reshape(shape),
+    )
 
 
 def string_prefix_column(shape: tuple[int, ...], *, seed: int = 0) -> np.ndarray:

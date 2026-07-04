@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .coercions import _try_parse_iso_date_serial, excel_casefold, to_number, to_string
+from .coercions import excel_casefold, to_number, to_string, try_coerce_string_to_float
 from .types import XlError
 
 MIN_OPERATOR_FASTPATH_CELLS = 64
@@ -36,17 +36,6 @@ def _try_asarray_float64(arr: np.ndarray) -> np.ndarray | None:
     return np.asarray(arr, dtype=np.float64)
 
 
-def _coerce_string_cell_to_float(value: str) -> float | None:
-    """Parse one Excel numeric string cell, or return None when coercion fails."""
-    stripped = value.strip()
-    if stripped == "":
-        return 0.0
-    try:
-        return float(stripped)
-    except ValueError:
-        return _try_parse_iso_date_serial(stripped)
-
-
 def _try_batch_coerce_numeric_strings(arr: np.ndarray) -> np.ndarray | None:
     """Coerce an all-string object ndarray to float64 without per-cell ``to_number`` calls."""
     if arr.dtype != object:
@@ -62,7 +51,7 @@ def _try_batch_coerce_numeric_strings(arr: np.ndarray) -> np.ndarray | None:
     for index, value in enumerate(flat):
         if not isinstance(value, str):
             return None
-        number = _coerce_string_cell_to_float(value)
+        number = try_coerce_string_to_float(value)
         if number is None:
             return None
         out[index] = number

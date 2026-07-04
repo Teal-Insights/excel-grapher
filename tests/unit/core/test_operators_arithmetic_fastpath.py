@@ -21,6 +21,8 @@ from tests.bench.operators_bench import (
     bench_workload,
     build_workloads,
     load_baseline_document,
+    numeric_column,
+    numeric_string_column,
 )
 from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
 from tests.unit.core.operators_test_helpers import assert_arithmetic_matches_reference
@@ -67,6 +69,13 @@ def test_numeric_fastpath_matches_reference_with_numeric_strings() -> None:
     left = np.array([["10", " 2.5 "], ["0", ""]], dtype=object)
     right = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=object)
     assert_arithmetic_matches_reference("+", left, right)
+
+
+@pytest.mark.parametrize("op", ["+", "-", "*", "/", "^"])
+def test_numeric_fastpath_matches_reference_on_large_numeric_strings(op: str) -> None:
+    left = numeric_string_column(LARGE_SHAPE, seed=61)
+    right = numeric_column(LARGE_SHAPE, seed=62)
+    assert_arithmetic_matches_reference(op, left, right)
 
 
 def test_numeric_fastpath_falls_back_on_embedded_error() -> None:

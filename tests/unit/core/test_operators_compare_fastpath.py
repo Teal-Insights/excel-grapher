@@ -14,6 +14,7 @@ from tests.bench.operators_bench import (
     bench_workload,
     build_workloads,
     category_column,
+    iso_date_compare_columns,
     load_baseline_document,
     numeric_column,
     numeric_string_column,
@@ -71,6 +72,12 @@ def test_compare_fastpath_matches_reference_on_large_numeric_strings(op: str) ->
 def test_compare_fastpath_matches_reference_on_large_whitespace_numeric_strings(op: str) -> None:
     left = whitespace_numeric_string_column(LARGE_SHAPE, seed=53)
     right = numeric_column(LARGE_SHAPE, seed=54)
+    assert_compare_matches_reference(op, left, right)
+
+
+@pytest.mark.parametrize("op", COMPARE_OPS)
+def test_compare_fastpath_matches_reference_on_large_iso_date_strings(op: str) -> None:
+    left, right = iso_date_compare_columns(LARGE_SHAPE, seed=55)
     assert_compare_matches_reference(op, left, right)
 
 
@@ -163,7 +170,9 @@ def test_xl_gt_numeric_1k_beats_baseline() -> None:
         ("xl_eq_numeric_string_ws_10k", EQ_NUMERIC_STRING_10K_BASELINE_SPEEDUP_FACTOR),
     ],
 )
-def test_xl_eq_numeric_string_10k_beats_baseline(workload_name: str, speedup_factor: float) -> None:
+def test_xl_eq_numeric_string_workloads_beats_baseline(
+    workload_name: str, speedup_factor: float
+) -> None:
     workload = next(w for w in build_workloads() if w.name == workload_name)
     baseline_doc = load_baseline_document(BASELINE_PATH)["workloads"]
     baseline_cps = next(
