@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v2.4.1 (2026-07-04)
+
+### Performance Improvements
+
+- **operators**: Fast batch coercion for numeric-string compare arrays
+  ([#339](https://github.com/Teal-Insights/excel-grapher/pull/339),
+  [`28e532c`](https://github.com/Teal-Insights/excel-grapher/commit/28e532c1f2c0fb9c8a42d9a556c68cb4df72b041))
+
+### Refactoring
+
+- **operators**: Address PR review feedback for numeric-string fastpath
+  ([#339](https://github.com/Teal-Insights/excel-grapher/pull/339),
+  [`28e532c`](https://github.com/Teal-Insights/excel-grapher/commit/28e532c1f2c0fb9c8a42d9a556c68cb4df72b041))
+
+### Testing
+
+- **exporter**: Refresh dep-tracking baseline after coercion helper
+  ([#339](https://github.com/Teal-Insights/excel-grapher/pull/339),
+  [`28e532c`](https://github.com/Teal-Insights/excel-grapher/commit/28e532c1f2c0fb9c8a42d9a556c68cb4df72b041))
+
+
 ## v2.4.0 (2026-07-04)
 
 ### Code Style
