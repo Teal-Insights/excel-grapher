@@ -11,7 +11,7 @@ from excel_grapher.core.operators_fastpath import (
 )
 from excel_grapher.core.sumproduct import xl_sumproduct
 from excel_grapher.core.types import XlError
-from tests.bench.operators_bench import category_column, numeric_column
+from tests.bench.operators_bench import category_column, numeric_column, numeric_string_column
 from tests.unit.core.operators_test_helpers import assert_sumproduct_matches_reference
 
 LARGE_SHAPE = (2_000, 1)
@@ -26,6 +26,12 @@ def test_sumproduct_fastpath_skips_arrays_below_size_threshold() -> None:
 def test_sumproduct_fastpath_matches_reference_on_numeric_arrays() -> None:
     left = numeric_column(LARGE_SHAPE, seed=51)
     right = numeric_column(LARGE_SHAPE, seed=52)
+    assert_sumproduct_matches_reference(left, right)
+
+
+def test_sumproduct_fastpath_matches_reference_on_numeric_string_arrays() -> None:
+    left = numeric_string_column(LARGE_SHAPE, seed=71)
+    right = numeric_column(LARGE_SHAPE, seed=72)
     assert_sumproduct_matches_reference(left, right)
 
 

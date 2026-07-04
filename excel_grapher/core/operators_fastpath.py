@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .coercions import excel_casefold, to_number, to_string
+from .coercions import excel_casefold, to_number, to_string, try_coerce_string_to_float
 from .types import XlError
 
 MIN_OPERATOR_FASTPATH_CELLS = 64
@@ -36,11 +36,37 @@ def _try_asarray_float64(arr: np.ndarray) -> np.ndarray | None:
     return np.asarray(arr, dtype=np.float64)
 
 
+def _try_batch_coerce_numeric_strings(arr: np.ndarray) -> np.ndarray | None:
+    """Coerce an all-string object ndarray to float64 without per-cell ``to_number`` calls."""
+    if arr.dtype != object:
+        return None
+
+    flat = arr.ravel()
+    if flat.size == 0:
+        return np.empty(arr.shape, dtype=np.float64)
+    if not isinstance(flat[0], str):
+        return None
+
+    out = np.empty(flat.size, dtype=np.float64)
+    for index, value in enumerate(flat):
+        if not isinstance(value, str):
+            return None
+        number = try_coerce_string_to_float(value)
+        if number is None:
+            return None
+        out[index] = number
+    return out.reshape(arr.shape)
+
+
 def batch_coerce_to_float64(arr: np.ndarray) -> np.ndarray | None:
     """Coerce an object ndarray to float64, or return None when any cell fails."""
     direct = _try_asarray_float64(arr)
     if direct is not None:
         return direct
+
+    numeric_strings = _try_batch_coerce_numeric_strings(arr)
+    if numeric_strings is not None:
+        return numeric_strings
 
     flat = arr.ravel()
     out = np.empty(flat.size, dtype=np.float64)
@@ -262,7 +288,8 @@ def try_fastpath_compare_array(
 
     1. Fail-fast scan for embedded ``XlError`` values (C-order, left wins per cell).
     2. String path when both sides are plain ``str`` cells (scalar-broadcast aware).
-    3. Numeric path when both sides batch-coerce to float64.
+    3. Numeric path when both sides batch-coerce to float64 (including all-string
+       numeric text columns via ``_try_batch_coerce_numeric_strings``).
 
     Smaller arrays and mixed-type cells fall through to the per-cell reference loop.
     """

@@ -57,6 +57,8 @@ EXPECTED_WORKLOAD_NAMES = frozenset(
         "xl_eq_string_gap_15",
         "xl_eq_string_1k",
         "xl_eq_string_10k",
+        "xl_eq_numeric_string_10k",
+        "xl_eq_numeric_string_ws_10k",
         "xl_gt_numeric_1k",
         "xl_mul_numeric_1k",
         "xl_concat_string_1k",
