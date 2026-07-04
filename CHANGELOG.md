@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v2.3.0 (2026-07-04)
+
+### Code Style
+
+- Sort imports in evaluator math functions
+  ([#334](https://github.com/Teal-Insights/excel-grapher/pull/334),
+  [`5103a4a`](https://github.com/Teal-Insights/excel-grapher/commit/5103a4a9ef2a00e2cfb24f61e2e393f722ef57a2))
+
+### Features
+
+- **evaluator**: Implement EXP function
+  ([#334](https://github.com/Teal-Insights/excel-grapher/pull/334),
+  [`5103a4a`](https://github.com/Teal-Insights/excel-grapher/commit/5103a4a9ef2a00e2cfb24f61e2e393f722ef57a2))
+
+### Testing
+
+- **exp**: Strengthen coverage and add dynamic-ref domain inference
+  ([#334](https://github.com/Teal-Insights/excel-grapher/pull/334),
+  [`5103a4a`](https://github.com/Teal-Insights/excel-grapher/commit/5103a4a9ef2a00e2cfb24f61e2e393f722ef57a2))
+
+- **parity**: Add live Excel harness and ABS/EXP excel parity tests
+  ([#334](https://github.com/Teal-Insights/excel-grapher/pull/334),
+  [`5103a4a`](https://github.com/Teal-Insights/excel-grapher/commit/5103a4a9ef2a00e2cfb24f61e2e393f722ef57a2))
+
+
 ## v2.2.0 (2026-07-03)
 
 ### Chores
