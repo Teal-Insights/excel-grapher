@@ -16,6 +16,8 @@ from tests.bench.operators_bench import (
     category_column,
     load_baseline_document,
     numeric_column,
+    numeric_string_column,
+    whitespace_numeric_string_column,
 )
 from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
 from tests.unit.core.operators_test_helpers import (
@@ -30,6 +32,7 @@ LARGE_SHAPE = (10_000, 1)
 MEDIUM_SHAPE = (1_000, 1)
 EQ_STRING_10K_BASELINE_SPEEDUP_FACTOR = 1.25
 GT_NUMERIC_1K_BASELINE_SPEEDUP_FACTOR = 5.0
+EQ_NUMERIC_STRING_10K_BASELINE_SPEEDUP_FACTOR = 1.5
 
 
 @pytest.mark.parametrize("op", COMPARE_OPS)
@@ -55,6 +58,20 @@ def test_compare_fastpath_matches_reference_with_numeric_strings() -> None:
     right = np.array([[10.0, 2.5], [0.0, 0.0]], dtype=object)
     assert_compare_matches_reference("=", left, right)
     assert_compare_matches_reference("<=", left, right)
+
+
+@pytest.mark.parametrize("op", COMPARE_OPS)
+def test_compare_fastpath_matches_reference_on_large_numeric_strings(op: str) -> None:
+    left = numeric_string_column(LARGE_SHAPE, seed=51)
+    right = numeric_column(LARGE_SHAPE, seed=52)
+    assert_compare_matches_reference(op, left, right)
+
+
+@pytest.mark.parametrize("op", COMPARE_OPS)
+def test_compare_fastpath_matches_reference_on_large_whitespace_numeric_strings(op: str) -> None:
+    left = whitespace_numeric_string_column(LARGE_SHAPE, seed=53)
+    right = numeric_column(LARGE_SHAPE, seed=54)
+    assert_compare_matches_reference(op, left, right)
 
 
 def test_compare_fastpath_falls_back_on_mixed_type_cells() -> None:
@@ -135,4 +152,25 @@ def test_xl_gt_numeric_1k_beats_baseline() -> None:
     assert result.cells_per_sec >= baseline_cps * GT_NUMERIC_1K_BASELINE_SPEEDUP_FACTOR, (
         f"xl_gt numeric 1k: {result.cells_per_sec:.0f} cells/s, "
         f"expected >= {baseline_cps * GT_NUMERIC_1K_BASELINE_SPEEDUP_FACTOR:.0f}"
+    )
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("workload_name", "speedup_factor"),
+    [
+        ("xl_eq_numeric_string_10k", EQ_NUMERIC_STRING_10K_BASELINE_SPEEDUP_FACTOR),
+        ("xl_eq_numeric_string_ws_10k", EQ_NUMERIC_STRING_10K_BASELINE_SPEEDUP_FACTOR),
+    ],
+)
+def test_xl_eq_numeric_string_10k_beats_baseline(workload_name: str, speedup_factor: float) -> None:
+    workload = next(w for w in build_workloads() if w.name == workload_name)
+    baseline_doc = load_baseline_document(BASELINE_PATH)["workloads"]
+    baseline_cps = next(
+        entry["cells_per_sec"] for entry in baseline_doc if entry["name"] == workload_name
+    )
+    result = bench_workload(workload, warmup_rounds=2, bench_rounds=5)
+    assert result.cells_per_sec >= baseline_cps * speedup_factor, (
+        f"{workload_name}: {result.cells_per_sec:.0f} cells/s, "
+        f"expected >= {baseline_cps * speedup_factor:.0f}"
     )

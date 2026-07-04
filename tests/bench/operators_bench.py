@@ -63,6 +63,20 @@ def numeric_column(shape: tuple[int, ...], *, seed: int = 0) -> np.ndarray:
     return flat.astype(object).reshape(shape)
 
 
+def numeric_string_column(shape: tuple[int, ...], *, seed: int = 0) -> np.ndarray:
+    """Build a column of numeric strings stored as Excel text cells."""
+    rng = np.random.default_rng(seed)
+    flat = rng.integers(50, 500, size=int(np.prod(shape)), dtype=np.int64)
+    return flat.astype(str).astype(object).reshape(shape)
+
+
+def whitespace_numeric_string_column(shape: tuple[int, ...], *, seed: int = 0) -> np.ndarray:
+    """Build numeric strings with leading/trailing whitespace."""
+    rng = np.random.default_rng(seed)
+    flat = rng.integers(50, 500, size=int(np.prod(shape)), dtype=np.int64)
+    return np.array([f" {value} " for value in flat], dtype=object).reshape(shape)
+
+
 def string_prefix_column(shape: tuple[int, ...], *, seed: int = 0) -> np.ndarray:
     """Build single-letter prefixes for concat benchmarks."""
     rng = np.random.default_rng(seed)
@@ -98,6 +112,9 @@ def build_workloads() -> tuple[OperatorWorkload, ...]:
     square_categories = category_column(square_shape, seed=4)
     medium_values = numeric_column(medium_shape, seed=5)
     medium_numbers = numeric_column(medium_shape, seed=7)
+    large_numeric_strings = numeric_string_column(large_shape, seed=10)
+    large_numeric_string_values = numeric_column(large_shape, seed=11)
+    large_whitespace_numeric_strings = whitespace_numeric_string_column(large_shape, seed=12)
     medium_prefixes = string_prefix_column(medium_shape, seed=8)
     medium_suffixes = digit_suffix_column(medium_shape, seed=9)
 
@@ -125,6 +142,18 @@ def build_workloads() -> tuple[OperatorWorkload, ...]:
             cell_count=MEDIUM_ARRAY_SIZE,
             category="compare",
             fn=lambda: xl_gt(medium_numbers, 200),
+        ),
+        OperatorWorkload(
+            name="xl_eq_numeric_string_10k",
+            cell_count=LARGE_ARRAY_SIZE,
+            category="compare",
+            fn=lambda: xl_eq(large_numeric_strings, large_numeric_string_values),
+        ),
+        OperatorWorkload(
+            name="xl_eq_numeric_string_ws_10k",
+            cell_count=LARGE_ARRAY_SIZE,
+            category="compare",
+            fn=lambda: xl_eq(large_whitespace_numeric_strings, large_numeric_string_values),
         ),
         OperatorWorkload(
             name="xl_mul_numeric_1k",
