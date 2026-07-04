@@ -26,6 +26,7 @@ from excel_grapher.grapher.blank_ranges import (
 )
 from excel_grapher.runtime.cache import EvalContext, xl_circular_reference, xl_iterative_compute
 
+from .ast_cache import DEFAULT_AST_CACHE_MAXSIZE, AstCache, AstCacheInfo
 from .errors import MissingNormalizedFormulaError, ParseError
 from .functions import FUNCTIONS
 from .functions.info import xl_isblank
@@ -94,9 +95,11 @@ class FormulaEvaluator:
     iterate_count: int = 100
     iterate_delta: float = 0.001
     blank_ranges: tuple[str, ...] | None = None
+    ast_cache_maxsize: int = DEFAULT_AST_CACHE_MAXSIZE
 
     def __post_init__(self) -> None:
         self._cache: dict[str, CellValue] = {}
+        self._ast_cache = AstCache(maxsize=self.ast_cache_maxsize)
         self._call_stack: list[str] = []
         self._leaf_values: dict[str, CellValue] = {}  # For auto-detection
         self._iteration_values: dict[str, CellValue] = {}
@@ -115,6 +118,18 @@ class FormulaEvaluator:
 
     def __exit__(self, *args: object) -> None:
         return None
+
+    def clear_caches(self) -> None:
+        """Clear cached cell values and parsed formula ASTs."""
+        self._cache.clear()
+        self._ast_cache.clear()
+
+    def ast_cache_info(self) -> AstCacheInfo:
+        """Return hit/miss statistics for the AST parse cache."""
+        return self._ast_cache.cache_info()
+
+    def _parse_cached(self, normalized_formula: str) -> AstNode:
+        return self._ast_cache.get(normalized_formula, parse_fn=parse)
 
     def _record_runtime_dependency(self, parent: str, child: str) -> None:
         """Record that `parent` read `child` during the current evaluation."""
@@ -296,7 +311,7 @@ class FormulaEvaluator:
 
         self._call_stack.append(norm)
         try:
-            ast = parse(formula)
+            ast = self._parse_cached(formula)
             result = self._evaluate_ast(ast)
             # Auto-resolve 1x1 ExcelRange to single value
             result = self._auto_resolve_single_cell(result)
