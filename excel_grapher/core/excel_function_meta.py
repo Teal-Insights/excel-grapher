@@ -31,6 +31,7 @@ FUNCTION_META: dict[str, ExcelFunctionMeta] = {
     "MIN": ExcelFunctionMeta("MIN", ()),
     "MAX": ExcelFunctionMeta("MAX", ()),
     "ABS": ExcelFunctionMeta("ABS", ("value",)),
+    "EXP": ExcelFunctionMeta("EXP", ("value",)),
     "IF": ExcelFunctionMeta("IF", ("value", "value", "value")),
     "CONCAT": ExcelFunctionMeta("CONCAT", ()),
 }

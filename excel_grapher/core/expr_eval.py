@@ -26,7 +26,7 @@ from .formula_ast import (
     StringNode,
     UnaryOpNode,
 )
-from .functions import xl_abs
+from .functions import xl_abs, xl_exp
 from .operators import (
     xl_add,
     xl_concat,
@@ -331,6 +331,10 @@ def _fn_abs(args: list[CellValue]) -> CellValue:
     return xl_abs(*args)
 
 
+def _fn_exp(args: list[CellValue]) -> CellValue:
+    return xl_exp(*args)
+
+
 def _fn_if(args: list[CellValue]) -> CellValue:
     if len(args) < 2:
         return XlError.VALUE
@@ -363,6 +367,7 @@ _DEFAULT_FUNCTIONS: dict[str, Callable[[list[CellValue]], CellValue]] = {
     "MIN": _fn_min,
     "MAX": _fn_max,
     "ABS": _fn_abs,
+    "EXP": _fn_exp,
     "IF": _fn_if,
     "CONCAT": _fn_concat,
 }

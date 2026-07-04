@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from excel_grapher.runtime.math import (
     xl_abs,
+    xl_exp,
     xl_average,
     xl_averageif,
     xl_count,
@@ -27,6 +28,7 @@ from . import register
 register("SUM")(xl_sum)
 register("AVERAGE")(xl_average)
 register("ABS")(xl_abs)
+register("EXP")(xl_exp)
 register("MIN")(xl_min)
 register("MAX")(xl_max)
 register("COUNT")(xl_count)
