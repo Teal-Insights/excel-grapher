@@ -2108,6 +2108,7 @@ def test_infer_numeric_domain_parity_never_raises() -> None:
         "MIN(Sheet1!A1)",
         "MAX(Sheet1!A1)",
         "ABS(-1)",
+        "EXP(1)",
         "ROW()",
         "COLUMN()",
         "ROW(Sheet1!A5)",
@@ -2989,6 +2990,18 @@ class TestAbstractPathCharacterization:
         result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
         assert result.domain is not None, "ABS should now produce an abstract domain"
 
+    def test_exp_stays_abstract_after_phase1(self) -> None:
+        """EXP(A1) stays on the abstract path after Phase 1 (regression guard)."""
+        ast = _parse_selector("EXP(Sheet1!A1)")
+        env = _make_env(
+            {"Sheet1!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=5))}
+        )
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
+        assert result.domain is not None, "EXP should now produce an abstract domain"
+        bounds = dynamic_refs_mod._normalize_to_bounds(result.domain)
+        assert bounds.lo == 2
+        assert bounds.hi == 149
+
     def test_min_stays_abstract_after_phase1(self) -> None:
         """MIN(A1, B1) stays on the abstract path after Phase 1 (regression guard)."""
         ast = _parse_selector("MIN(Sheet1!A1, Sheet1!B1)")
@@ -3106,6 +3119,18 @@ class TestAbstractMinMaxAbsTransferRules:
         b = dynamic_refs_mod._normalize_to_bounds(result.domain)
         assert b.lo == 0
         assert b.hi == 700
+
+    def test_exp_finite_enum_returns_conservative_bounds(self) -> None:
+        """EXP with a small enum domain maps to a conservative integer hull."""
+        ast = _parse_selector("EXP(Sheet1!A1)")
+        env = _make_env(
+            {"Sheet1!A1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({0, 1})))}
+        )
+        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
+        assert result.domain is not None
+        b = dynamic_refs_mod._normalize_to_bounds(result.domain)
+        assert b.lo == 1
+        assert b.hi == 3
 
     def test_abs_unsupported_returns_none(self) -> None:
         """ABS with no domain info (e.g. unknown cell) still returns None."""

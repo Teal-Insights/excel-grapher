@@ -47,13 +47,16 @@ def test_exp_parity_scalar_and_cell_ref() -> None:
 
 
 def test_exp_parity_logistic_convergence_pattern() -> None:
-    """Mirror Q-CRAFT logistic convergence: ``1/(1+EXP(-rate*(x-pivot)))``."""
+    """Mirror Q-CRAFT logistic convergence with a computed year column (issue #333 MCVE)."""
     graph = _make_graph(
+        _make_node("S!A1", None, 1.0),
+        _make_node("S!B1", "=EXP(S!A1)", None),
         _make_node("S!A2", None, 0.5),
-        _make_node("S!B1", None, 15.0),
         _make_node("S!A3", None, 15.0),
         _make_node("S!B2", "=1/(1+EXP(-S!A2*(S!B1-S!A3)))", None),
     )
 
-    result = assert_codegen_matches_evaluator(graph, ["S!B2"])
-    assert result.generated_results["S!B2"] == 0.5
+    expected = 1.0 / (1.0 + math.exp(-0.5 * (math.e - 15.0)))
+    result = assert_codegen_matches_evaluator(graph, ["S!B1", "S!B2"])
+    assert result.generated_results["S!B1"] == pytest.approx(math.e)
+    assert result.generated_results["S!B2"] == pytest.approx(expected)

@@ -42,3 +42,18 @@ def test_xl_exp_wrong_arity_returns_value_error() -> None:
 
 def test_xl_exp_overflow_returns_num_error() -> None:
     assert xl_exp(1000) == XlError.NUM
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (709.782, 1.7964120280206387e308),
+        (710, XlError.NUM),
+    ],
+)
+def test_xl_exp_overflow_boundary(raw: CellValue, expected: float | XlError) -> None:
+    result = xl_exp(raw)
+    if isinstance(expected, XlError):
+        assert result == expected
+    else:
+        assert result == pytest.approx(expected)
