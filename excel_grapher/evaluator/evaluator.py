@@ -26,7 +26,7 @@ from excel_grapher.grapher.blank_ranges import (
 )
 from excel_grapher.runtime.cache import EvalContext, xl_circular_reference, xl_iterative_compute
 
-from .ast_cache import AstCache, AstCacheInfo, DEFAULT_AST_CACHE_MAXSIZE
+from .ast_cache import DEFAULT_AST_CACHE_MAXSIZE, AstCache, AstCacheInfo
 from .errors import MissingNormalizedFormulaError, ParseError
 from .functions import FUNCTIONS
 from .functions.info import xl_isblank

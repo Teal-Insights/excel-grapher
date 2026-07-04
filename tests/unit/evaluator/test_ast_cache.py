@@ -6,13 +6,13 @@ from unittest.mock import patch
 
 import pytest
 
+import excel_grapher.evaluator.evaluator as evaluator_module
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
+from excel_grapher.evaluator import parser as evaluator_parser
 from excel_grapher.evaluator.ast_cache import DEFAULT_AST_CACHE_MAXSIZE, AstCache
 from excel_grapher.evaluator.errors import ParseError
 from excel_grapher.evaluator.evaluator import FormulaEvaluator
-from excel_grapher.evaluator import parser as evaluator_parser
-import excel_grapher.evaluator.evaluator as evaluator_module
 
 
 def _make_node(
@@ -58,16 +58,18 @@ def test_second_eval_after_invalidation_reuses_ast() -> None:
         parse_calls += 1
         return original_parse(formula)
 
-    with FormulaEvaluator(graph, auto_detect_changes=True) as ev:
-        with patch.object(evaluator_module, "parse", counting_parse):
-            ev.evaluate(["S!B1"])
-            assert parse_calls == 1
+    with (
+        FormulaEvaluator(graph, auto_detect_changes=True) as ev,
+        patch.object(evaluator_module, "parse", counting_parse),
+    ):
+        ev.evaluate(["S!B1"])
+        assert parse_calls == 1
 
-            graph.set_node_value("S!A1", 5)
+        graph.set_node_value("S!A1", 5)
 
-            ev.evaluate(["S!B1"])
-            assert parse_calls == 1
-            assert ev.evaluate(["S!B1"])["S!B1"] == 10.0
+        ev.evaluate(["S!B1"])
+        assert parse_calls == 1
+        assert ev.evaluate(["S!B1"])["S!B1"] == 10.0
 
 
 def test_distinct_cells_same_normalized_formula_share_ast() -> None:
@@ -88,10 +90,9 @@ def test_distinct_cells_same_normalized_formula_share_ast() -> None:
         parse_calls += 1
         return original_parse(formula)
 
-    with FormulaEvaluator(graph) as ev:
-        with patch.object(evaluator_module, "parse", counting_parse):
-            ev.evaluate(["S!B1", "S!B2"])
-            assert parse_calls == 1
+    with FormulaEvaluator(graph) as ev, patch.object(evaluator_module, "parse", counting_parse):
+        ev.evaluate(["S!B1", "S!B2"])
+        assert parse_calls == 1
 
 
 def test_different_formulas_distinct_ast_entries() -> None:
@@ -108,10 +109,9 @@ def test_different_formulas_distinct_ast_entries() -> None:
         parse_calls += 1
         return original_parse(formula)
 
-    with FormulaEvaluator(graph) as ev:
-        with patch.object(evaluator_module, "parse", counting_parse):
-            ev.evaluate(["S!A1", "S!A2"])
-            assert parse_calls == 2
+    with FormulaEvaluator(graph) as ev, patch.object(evaluator_module, "parse", counting_parse):
+        ev.evaluate(["S!A1", "S!A2"])
+        assert parse_calls == 2
 
 
 def test_ast_cache_is_bounded() -> None:

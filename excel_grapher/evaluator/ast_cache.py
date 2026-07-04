@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from excel_grapher.evaluator.parser import AstNode
 
@@ -42,7 +42,7 @@ class AstCache:
         return len(self._cache)
 
     def get(self, normalized_formula: str, *, parse_fn: _ParseFn) -> AstNode:
-        """Return a cached AST or parse and store ``normalized_formula``."""
+        """Return a cached AST or parse and store `normalized_formula`."""
         if normalized_formula in self._cache:
             self._hits += 1
             self._cache.move_to_end(normalized_formula)
