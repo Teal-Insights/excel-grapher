@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from excel_grapher.runtime.math import (
     xl_abs,
-    xl_exp,
     xl_average,
     xl_averageif,
     xl_count,
     xl_counta,
     xl_countif,
+    xl_exp,
     xl_large,
     xl_max,
     xl_min,
