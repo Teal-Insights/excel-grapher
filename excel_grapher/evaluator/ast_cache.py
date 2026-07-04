@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from excel_grapher.evaluator.parser import AstNode
@@ -54,6 +54,15 @@ class AstCache:
         if len(self._cache) > self._maxsize:
             self._cache.popitem(last=False)
         return ast
+
+    def seed(self, entries: Mapping[str, AstNode]) -> None:
+        """Insert pre-parsed ASTs without affecting hit/miss statistics."""
+        for normalized_formula, ast in entries.items():
+            if normalized_formula in self._cache:
+                continue
+            self._cache[normalized_formula] = ast
+            if len(self._cache) > self._maxsize:
+                self._cache.popitem(last=False)
 
     def clear(self) -> None:
         """Remove all cached ASTs and reset statistics."""

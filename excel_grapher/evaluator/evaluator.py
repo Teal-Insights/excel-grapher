@@ -100,6 +100,9 @@ class FormulaEvaluator:
     def __post_init__(self) -> None:
         self._cache: dict[str, CellValue] = {}
         self._ast_cache = AstCache(maxsize=self.ast_cache_maxsize)
+        preparsed = self.graph.preparsed_formulas
+        if preparsed:
+            self._ast_cache.seed(preparsed)
         self._call_stack: list[str] = []
         self._leaf_values: dict[str, CellValue] = {}  # For auto-detection
         self._iteration_values: dict[str, CellValue] = {}
