@@ -1,4 +1,7 @@
-"""EXP: evaluator and generated export runtime agree on synthetic graphs (integration)."""
+"""EXP: evaluator and generated export runtime agree on synthetic graphs (integration).
+
+Live Excel parity for ``EXP`` lives in ``test_exp_excel_parity.py`` (slow, run-if-available).
+"""
 
 from __future__ import annotations
 
