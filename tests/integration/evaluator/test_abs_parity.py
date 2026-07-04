@@ -1,4 +1,7 @@
-"""ABS: evaluator and generated export runtime agree on synthetic graphs (integration)."""
+"""ABS: evaluator and generated export runtime agree on synthetic graphs (integration).
+
+Live Excel parity for ``ABS`` lives in ``test_abs_excel_parity.py`` (slow, run-if-available).
+"""
 
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address

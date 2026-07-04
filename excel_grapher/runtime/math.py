@@ -16,13 +16,14 @@ from excel_grapher.core import (
     to_number,
     to_string,
 )
-from excel_grapher.core.functions import xl_abs
+from excel_grapher.core.functions import xl_abs, xl_exp
 from excel_grapher.core.sumproduct import xl_sumproduct
 
 T = TypeVar("T", str, float)
 
 __all__ = [
     "xl_abs",
+    "xl_exp",
     "xl_average",
     "xl_averageif",
     "xl_count",

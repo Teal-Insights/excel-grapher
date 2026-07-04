@@ -9,6 +9,7 @@ from excel_grapher.runtime.math import (
     xl_count,
     xl_counta,
     xl_countif,
+    xl_exp,
     xl_large,
     xl_max,
     xl_min,
@@ -27,6 +28,7 @@ from . import register
 register("SUM")(xl_sum)
 register("AVERAGE")(xl_average)
 register("ABS")(xl_abs)
+register("EXP")(xl_exp)
 register("MIN")(xl_min)
 register("MAX")(xl_max)
 register("COUNT")(xl_count)

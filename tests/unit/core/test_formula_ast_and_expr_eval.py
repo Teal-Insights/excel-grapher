@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
+
+import pytest
 
 from excel_grapher.core.expr_eval import Unsupported, evaluate_expr
 from excel_grapher.core.formula_ast import (
@@ -66,6 +69,10 @@ def test_core_expr_eval_basic_functions_over_integers() -> None:
     # ABS over a single cell reference.
     ast = parse("=ABS(Sheet1!B1)")
     assert evaluate_expr(ast, get_cell_value=get_cell_value) == 5.0
+
+    # EXP over a single cell reference.
+    ast = parse("=EXP(Sheet1!A1)")
+    assert evaluate_expr(ast, get_cell_value=get_cell_value) == pytest.approx(math.e)
 
     # IF over simple boolean conditions.
     ast = parse("=IF(TRUE, 1, 2)")
