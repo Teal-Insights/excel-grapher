@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v2.4.0 (2026-07-04)
+
+### Code Style
+
+- **evaluator**: Fix ruff and docstring issues in AST cache PR
+  ([#338](https://github.com/Teal-Insights/excel-grapher/pull/338),
+  [`3724cfa`](https://github.com/Teal-Insights/excel-grapher/commit/3724cfa4f2ebddc037ef8e8f268fd4cbf31ab488))
+
+### Features
+
+- **evaluator**: Cache parsed formula ASTs keyed by normalized_formula
+  ([#338](https://github.com/Teal-Insights/excel-grapher/pull/338),
+  [`3724cfa`](https://github.com/Teal-Insights/excel-grapher/commit/3724cfa4f2ebddc037ef8e8f268fd4cbf31ab488))
+
+
 ## v2.3.0 (2026-07-04)
 
 ### Code Style
