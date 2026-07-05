@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v2.5.0 (2026-07-05)
+
+### Documentation
+
+- Add Cursor Cloud setup instructions to AGENTS.md
+  ([#340](https://github.com/Teal-Insights/excel-grapher/pull/340),
+  [`47b078a`](https://github.com/Teal-Insights/excel-grapher/commit/47b078aa48bc6f837651e409f44d7f86a09ba026))
+
+### Features
+
+- **grapher**: Opt-in AST pre-parsing during graph extraction
+  ([#341](https://github.com/Teal-Insights/excel-grapher/pull/341),
+  [`511492a`](https://github.com/Teal-Insights/excel-grapher/commit/511492ac5b77b797fc9053fab74c2fe25440d6a5))
+
+### Testing
+
+- Address PR 341 review feedback on preparsed formulas
+  ([#341](https://github.com/Teal-Insights/excel-grapher/pull/341),
+  [`511492a`](https://github.com/Teal-Insights/excel-grapher/commit/511492ac5b77b797fc9053fab74c2fe25440d6a5))
+
+
 ## v2.4.1 (2026-07-04)
 
 ### Performance Improvements
