@@ -123,6 +123,7 @@ class DependencyGraph:
     sheet_bounds: dict[str, tuple[int, int]] | None = None
     named_ranges: dict[str, tuple[str, str]] | None = None
     named_range_ranges: dict[str, tuple[str, str, str]] | None = None
+    # Opt-in AST cache from warm_ast_cache; not JSON-serialized; re-warm after load.
     preparsed_formulas: dict[str, AstNode] | None = None
 
     def copy(self) -> DependencyGraph:

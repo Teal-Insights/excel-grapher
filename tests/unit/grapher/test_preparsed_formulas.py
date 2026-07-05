@@ -6,9 +6,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 import fastpyxl
+import pytest
 
-from excel_grapher import create_dependency_graph
-from excel_grapher.core.formula_ast import AstNode
+from excel_grapher import DependencyGraph, Node, create_dependency_graph
+from excel_grapher.core.address_keys import parse_address
+from excel_grapher.core.formula_ast import AstNode, FormulaParseError, parse
 from excel_grapher.grapher.preparsed_formulas import warm_preparsed_formulas
 
 
@@ -25,12 +27,11 @@ def test_warm_preparsed_formulas_deduplicates_by_normalized_formula(tmp_path: Pa
 
     graph = create_dependency_graph(excel_path, ["Sheet1!B1", "Sheet1!B2"], load_values=False)
     parse_calls = 0
-    original_parse = warm_preparsed_formulas.__globals__["parse"]
 
     def counting_parse(formula: str) -> AstNode:
         nonlocal parse_calls
         parse_calls += 1
-        return original_parse(formula)
+        return parse(formula)
 
     with patch("excel_grapher.grapher.preparsed_formulas.parse", counting_parse):
         warmed = warm_preparsed_formulas(graph)
@@ -65,3 +66,24 @@ def test_create_dependency_graph_warm_ast_cache_opt_in(tmp_path: Path) -> None:
     node = graph_warm.get_node("Sheet1!A2")
     assert node is not None
     assert node.normalized_formula in graph_warm.preparsed_formulas
+
+
+def test_warm_preparsed_formulas_raises_on_invalid_formula() -> None:
+    sheet, coord = parse_address("S!A1")
+    col = "".join(c for c in coord if c.isalpha())
+    row = int("".join(c for c in coord if c.isdigit()))
+    graph = DependencyGraph()
+    graph.add_node(
+        Node(
+            sheet=sheet,
+            column=col,
+            row=row,
+            formula="=1+",
+            normalized_formula="=1+",
+            value=None,
+            is_leaf=False,
+        )
+    )
+
+    with pytest.raises(FormulaParseError):
+        warm_preparsed_formulas(graph)

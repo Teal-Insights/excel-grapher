@@ -12,6 +12,15 @@ def warm_preparsed_formulas(graph: DependencyGraph) -> dict[str, AstNode]:
 
     Returns a mapping from stripped normalized formula strings to AST roots.
     Duplicate formulas across cells share one entry.
+
+    Re-call after loading a graph from JSON cache or mutating node formulas
+    post-extraction so `DependencyGraph.preparsed_formulas` stays aligned.
+
+    Raises:
+        FormulaParseError: If any distinct normalized formula is syntactically
+            invalid. Warming fails fast on the first bad formula (unlike
+            `FormulaEvaluator`, which raises `ParseError` per cell at evaluate
+            time).
     """
     warmed: dict[str, AstNode] = {}
     for _, node in graph.formula_nodes():

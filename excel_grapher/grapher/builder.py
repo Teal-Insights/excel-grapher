@@ -296,7 +296,11 @@ def create_dependency_graph(
     When `warm_ast_cache` is True, each distinct `normalized_formula` in the
     built graph is parsed once and stored on `DependencyGraph.preparsed_formulas`.
     `FormulaEvaluator` seeds its AST cache from that mapping so first evaluation
-    does not re-parse unless formulas change after extraction.
+    does not re-parse unless formulas change after extraction. Seeding is
+    best-effort when distinct formulas exceed `FormulaEvaluator.ast_cache_maxsize`
+    (oldest warmed entries may be evicted). `preparsed_formulas` is not stored
+    in JSON graph caches; call `warm_preparsed_formulas` after cache load or
+    formula mutation.
 
     **Cost model**: constraint-based dynamic-ref expansion (`dynamic_refs` set,
     `use_cached_dynamic_refs=False`) runs `expand_leaf_env_to_argument_env`

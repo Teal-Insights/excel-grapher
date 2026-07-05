@@ -181,3 +181,44 @@ def test_ast_cache_info_tracks_hits_and_misses() -> None:
     assert info.hits == 1
     assert info.misses == 2
     assert info.currsize == 2
+
+
+def test_ast_cache_seed_does_not_affect_hit_miss_stats() -> None:
+    cache = AstCache(maxsize=8)
+    cache.seed({"=1": evaluator_parser.parse("=1")})
+
+    info = cache.cache_info()
+    assert info.hits == 0
+    assert info.misses == 0
+    assert info.currsize == 1
+
+
+def test_ast_cache_seed_skips_existing_keys() -> None:
+    cache = AstCache(maxsize=8)
+    original = cache.get("=1", parse_fn=evaluator_parser.parse)
+    info_before = cache.cache_info()
+
+    replacement = evaluator_parser.parse("=2")
+    cache.seed({"=1": replacement, "=2": replacement})
+
+    assert cache.get("=1", parse_fn=evaluator_parser.parse) is original
+    info_after = cache.cache_info()
+    assert info_after.hits == info_before.hits + 1
+    assert info_after.misses == info_before.misses
+    assert info_after.currsize == 2
+
+
+def test_ast_cache_seed_respects_maxsize() -> None:
+    cache = AstCache(maxsize=2)
+    cache.seed(
+        {
+            "=1": evaluator_parser.parse("=1"),
+            "=2": evaluator_parser.parse("=2"),
+            "=3": evaluator_parser.parse("=3"),
+        }
+    )
+
+    assert len(cache) == 2
+    assert "=1" not in cache._cache  # noqa: SLF001
+    assert "=2" in cache._cache  # noqa: SLF001
+    assert "=3" in cache._cache  # noqa: SLF001
