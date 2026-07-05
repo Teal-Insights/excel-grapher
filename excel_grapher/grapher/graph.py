@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from .compression import IdentityTransitCompressionRecord, OptimalCompressionRecord
 
 from excel_grapher.core.address_keys import normalize_key, sort_node_keys
+from excel_grapher.core.formula_ast import AstNode
 
 from .dependency_provenance import DependencyCause, EdgeProvenance, merge_edge_provenance
 from .guard import And, CellRef, Compare, GuardConstraints, GuardExpr, Not, Or, or_guard
@@ -122,6 +123,8 @@ class DependencyGraph:
     sheet_bounds: dict[str, tuple[int, int]] | None = None
     named_ranges: dict[str, tuple[str, str]] | None = None
     named_range_ranges: dict[str, tuple[str, str, str]] | None = None
+    # Opt-in AST cache from warm_ast_cache; not JSON-serialized; re-warm after load.
+    preparsed_formulas: dict[str, AstNode] | None = None
 
     def copy(self) -> DependencyGraph:
         """Return a deep copy of this graph (node hooks are not copied)."""

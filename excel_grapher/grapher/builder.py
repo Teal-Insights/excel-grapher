@@ -248,6 +248,7 @@ def create_dependency_graph(
     capture_dependency_provenance: bool = False,
     blank_ranges: Iterable[str] | None = None,
     type_analysis_cache: TypeAnalysisCache | None = None,
+    warm_ast_cache: bool = False,
 ) -> DependencyGraph:
     r"""Build a dependency graph starting from target cells.
 
@@ -291,6 +292,15 @@ def create_dependency_graph(
     same declarations on `excel_grapher.FormulaEvaluator` and
     `excel_grapher.exporter.codegen.CodeGenerator.generate` for **evaluator
     <-> export** parity (consistent behavior between evaluation and generated code).
+
+    When `warm_ast_cache` is True, each distinct `normalized_formula` in the
+    built graph is parsed once and stored on `DependencyGraph.preparsed_formulas`.
+    `FormulaEvaluator` seeds its AST cache from that mapping so first evaluation
+    does not re-parse unless formulas change after extraction. Seeding is
+    best-effort when distinct formulas exceed `FormulaEvaluator.ast_cache_maxsize`
+    (oldest warmed entries may be evicted). `preparsed_formulas` is not stored
+    in JSON graph caches; call `warm_preparsed_formulas` after cache load or
+    formula mutation.
 
     **Cost model**: constraint-based dynamic-ref expansion (`dynamic_refs` set,
     `use_cached_dynamic_refs=False`) runs `expand_leaf_env_to_argument_env`
@@ -1279,6 +1289,10 @@ def create_dependency_graph(
     graph.named_ranges = dict(named_ranges)
     graph.named_range_ranges = dict(named_range_ranges)
     graph.sheet_bounds = dict(sheet_bounds)
+    if warm_ast_cache:
+        from .preparsed_formulas import warm_preparsed_formulas
+
+        graph.preparsed_formulas = warm_preparsed_formulas(graph)
     return graph
 
 
