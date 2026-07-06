@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.0.1 (2026-07-06)
+
+### Performance Improvements
+
+- Speed up optimal projection manifests
+  ([#350](https://github.com/Teal-Insights/excel-grapher/pull/350),
+  [`9133cae`](https://github.com/Teal-Insights/excel-grapher/commit/9133caef3a687bf2da4476469c2c26332db75615))
+
+### Testing
+
+- Cover projection manifest ordering guards
+  ([#350](https://github.com/Teal-Insights/excel-grapher/pull/350),
+  [`9133cae`](https://github.com/Teal-Insights/excel-grapher/commit/9133caef3a687bf2da4476469c2c26332db75615))
+
+- Guard projection metadata copy fields
+  ([#350](https://github.com/Teal-Insights/excel-grapher/pull/350),
+  [`9133cae`](https://github.com/Teal-Insights/excel-grapher/commit/9133caef3a687bf2da4476469c2c26332db75615))
+
+- Guard shared preparsed ast projection copy
+  ([#350](https://github.com/Teal-Insights/excel-grapher/pull/350),
+  [`9133cae`](https://github.com/Teal-Insights/excel-grapher/commit/9133caef3a687bf2da4476469c2c26332db75615))
+
+
 ## v3.0.0 (2026-07-06)
 
 ### Refactoring
