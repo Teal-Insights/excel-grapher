@@ -1308,7 +1308,7 @@ def write_lightweight_viz_data(payload: LightweightVizPayload, path: Path | str)
     p.write_text(serialize_lightweight_viz_json(payload), encoding="utf-8")
 
 
-def write_lightweight_viz_html(
+def write_web_viz_html(
     payload: LightweightVizPayload,
     path: Path | str,
     *,
@@ -1318,6 +1318,7 @@ def write_lightweight_viz_html(
     inline_size_budget_mb: int = 50,
     template_path: Path | str | None = None,
 ) -> None:
+    """Write a web visualization HTML bundle from a web-viz payload."""
     from importlib import resources
 
     if payload.version != VIZ_PAYLOAD_VERSION:
@@ -1381,25 +1382,3 @@ def write_lightweight_viz_html(
         .replace("/*__SIDECAR__*/", sidecar_js)
     )
     out.write_text(html, encoding="utf-8")
-
-
-def write_web_viz_html(
-    payload: LightweightVizPayload,
-    path: Path | str,
-    *,
-    title: str = "Workbook dependency graph",
-    data_mode: Literal["inline", "sidecar", "auto"] = "auto",
-    data_path: Path | str | None = None,
-    inline_size_budget_mb: int = 50,
-    template_path: Path | str | None = None,
-) -> None:
-    """Write a web visualization HTML bundle from a web-viz payload."""
-    write_lightweight_viz_html(
-        payload,
-        path,
-        title=title,
-        data_mode=data_mode,
-        data_path=data_path,
-        inline_size_budget_mb=inline_size_budget_mb,
-        template_path=template_path,
-    )

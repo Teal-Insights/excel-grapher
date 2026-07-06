@@ -343,7 +343,6 @@ reference:
       - validate_graph
       - validate_series_bindings
       - write_lightweight_viz_data
-      - write_lightweight_viz_html
       - write_web_viz_html
 
   - title: Constants
