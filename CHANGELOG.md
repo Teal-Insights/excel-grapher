@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v2.5.2 (2026-07-06)
+
+### Bug Fixes
+
+- **grapher**: Repair local force subgraph selection
+  ([#345](https://github.com/Teal-Insights/excel-grapher/pull/345),
+  [`5d824bf`](https://github.com/Teal-Insights/excel-grapher/commit/5d824bf26d65f935748eba6d9cb57e5b7dcf86ab))
+
+- **grapher**: Repair local force subgraph selection and add tests
+  ([#345](https://github.com/Teal-Insights/excel-grapher/pull/345),
+  [`5d824bf`](https://github.com/Teal-Insights/excel-grapher/commit/5d824bf26d65f935748eba6d9cb57e5b7dcf86ab))
+
+### Code Style
+
+- Fix import ordering in local force subgraph tests
+  ([#345](https://github.com/Teal-Insights/excel-grapher/pull/345),
+  [`5d824bf`](https://github.com/Teal-Insights/excel-grapher/commit/5d824bf26d65f935748eba6d9cb57e5b7dcf86ab))
+
+### Refactoring
+
+- Minor grapher cleanup (dead code, sha256, version, viz API)
+  ([#348](https://github.com/Teal-Insights/excel-grapher/pull/348),
+  [`208a56f`](https://github.com/Teal-Insights/excel-grapher/commit/208a56f7aad90d16207498423a2544299f57e23d))
+
+- **test**: Move local force subgraph oracle into test helpers
+  ([#345](https://github.com/Teal-Insights/excel-grapher/pull/345),
+  [`5d824bf`](https://github.com/Teal-Insights/excel-grapher/commit/5d824bf26d65f935748eba6d9cb57e5b7dcf86ab))
+
+### Testing
+
+- **grapher**: Replace local force oracle with regression asserts
+  ([#345](https://github.com/Teal-Insights/excel-grapher/pull/345),
+  [`5d824bf`](https://github.com/Teal-Insights/excel-grapher/commit/5d824bf26d65f935748eba6d9cb57e5b7dcf86ab))
+
+
 ## v2.5.1 (2026-07-06)
 
 ### Bug Fixes
