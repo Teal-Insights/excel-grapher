@@ -8,7 +8,7 @@ from typing import Any, Literal, TypedDict, cast
 import pytest
 
 from excel_grapher.series_bindings.input_coerce import coerce_setter_input
-from excel_grapher.series_bindings.records_types import Records
+from excel_grapher.series_bindings.types import Records
 
 
 class _SeriesCoerceKwargs(TypedDict):

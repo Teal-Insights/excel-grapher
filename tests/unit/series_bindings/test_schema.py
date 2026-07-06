@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -13,8 +12,7 @@ from excel_grapher.series_bindings.schema import (
     format_schema_errors,
     validate_bindings_document,
 )
-
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
+from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
 
 def _scalar_series_doc(**series_overrides: Any) -> dict[str, Any]:
@@ -162,7 +160,7 @@ def test_schema_accepts_1_1_0_matrix_fixture() -> None:
     bindings = load_series_bindings(FIXTURES / "matrix_country_block_1_1_0.yaml")
     assert bindings["schema_version"] == "1.1.0"
     assert bindings["series"][0]["layout"] == "matrix"
-    assert bindings["series"][0]["structure"]["dimensions"][0]["bind"]["kind"] == "row_hierarchy"
+    assert bindings["series"][0]["structure"]["dimensions"][0]["bind"]["kind"] == "row_label"
 
 
 def test_schema_accepts_series_without_layout() -> None:

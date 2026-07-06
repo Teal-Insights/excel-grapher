@@ -253,7 +253,6 @@ Optional:
 | `column_header` | cell | **supported** | Header row for the data column |
 | `row_label` | series/cell | **supported** | Label text on the data row |
 | `value_map` | cell | **supported** | Key rows or columns by manifest values (1.5.0) |
-| `row_hierarchy` | cell | **schema only** | Inferred hierarchy from row labels; superseded by explicit grouped-row geometry (1.5.0) |
 | `constant` | series | **supported** | Fixed scalar (e.g. scalar layout key) |
 
 Normalization: `strip`, `strip_trailing_unit` (removes trailing `(…)` unit clauses from indicator text).
@@ -361,7 +360,7 @@ once per band and sub-rows carry a second row dimension:
 ```
 
 All geometry is declared explicitly in the manifest — there is no indentation or formatting
-inference (which is why the heuristic `row_hierarchy` bind remains schema-only).
+inference.
 
 ### Label sources: `skip`, `include`, `fill`, `missing`
 
@@ -567,7 +566,7 @@ Generated code imports `datetime` and emits `datetime.datetime(...)` literals on
 | Version | Contents |
 |---------|----------|
 | **1.0.0–1.2.0** | `row_series`, `scalar`; supported bind kinds above. Use for production workbooks. |
-| **1.1.0** | Adds `matrix` layout (supported with explicit binds) and `row_hierarchy` bind (schema only). |
+| **1.1.0** | Adds `matrix` layout (supported with explicit binds). |
 | **1.2.0** | Optional `input` / `output` direction blocks and output `compute_*` functions. |
 | **1.3.0** | `row_series` renamed to `series` (no resolver/codegen change). Legacy `row_series` accepted at load time. |
 | **1.4.0** | `bool` and `datetime` read modes and dtypes; ISO date strings in manifest constants. |

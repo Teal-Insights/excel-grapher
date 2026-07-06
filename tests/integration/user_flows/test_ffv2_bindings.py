@@ -9,8 +9,7 @@ import pytest
 from excel_grapher.series_bindings import run_binding_checks, validate_bindings_workbook
 from excel_grapher.series_bindings.workflow import setter_names
 from tests.integration.user_flows.utils import write_ffv2_workbook
-
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
+from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
 
 @pytest.fixture

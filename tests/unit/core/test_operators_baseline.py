@@ -3,7 +3,6 @@
 Records the per-cell loop semantics contract, reference-path equivalence,
 and checked-in throughput numbers that later sprints must beat while preserving
 Excel coercion and error behavior.
-
 Semantics contract (array paths):
 
 - **Fail-fast, C-order**: the first embedded ``XlError`` during row-major
@@ -24,8 +23,6 @@ baseline.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 
@@ -37,6 +34,7 @@ from tests.bench.operators_bench import (
     collect_baseline,
     load_baseline_document,
 )
+from tests.paths import OPERATORS_BASELINE_FIXTURES
 from tests.unit.core.operators_test_helpers import (
     ARITHMETIC_DISPATCH,
     COMPARE_DISPATCH,
@@ -48,9 +46,7 @@ from tests.unit.core.operators_test_helpers import (
     reference_concat,
 )
 
-BASELINE_PATH = (
-    Path(__file__).resolve().parents[2] / "fixtures" / "operators_baseline" / "baseline.json"
-)
+BASELINE_PATH = OPERATORS_BASELINE_FIXTURES / "baseline.json"
 
 EXPECTED_WORKLOAD_NAMES = frozenset(
     {

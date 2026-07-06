@@ -24,8 +24,6 @@ from tests.fixtures.series_bindings.grouped_matrix_helpers import (
     write_grouped_matrix_workbook,
 )
 
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
-
 
 def _grouped_graph(tmp_path: Path) -> tuple[Path, Any]:
     wb_path = tmp_path / "grouped_inputs.xlsx"

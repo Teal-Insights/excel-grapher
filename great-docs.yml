@@ -183,8 +183,6 @@ reference:
       - series_bindings.WorkbookSeriesBindings
       - series_bindings.IMPLEMENTED_BIND_KINDS
       - series_bindings.IMPLEMENTED_LAYOUTS
-      - series_bindings.PLANNED_BIND_KINDS
-      - series_bindings.PLANNED_LAYOUTS
       - series_bindings.SUPPORTED_SCHEMA_VERSIONS
       - series_bindings.bindings_canonical_sha256
       - series_bindings.derive_input_series

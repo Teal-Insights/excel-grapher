@@ -40,8 +40,7 @@ from excel_grapher.series_bindings.docstrings import (
     unregister_series_docstring_callback,
 )
 from excel_grapher.series_bindings.types import SeriesResolution, WorkbookSeriesBindings
-
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
+from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
 
 def _bindings_stub() -> WorkbookSeriesBindings:

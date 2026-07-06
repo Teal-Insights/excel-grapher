@@ -28,8 +28,7 @@ from excel_grapher.series_bindings.setter_codegen import (
     emit_setters_block,
 )
 from excel_grapher.series_bindings.types import WorkbookSeriesBindings
-
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
+from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
 
 def _write_borvelia_workbook(path: Path) -> None:

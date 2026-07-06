@@ -15,8 +15,7 @@ from excel_grapher.series_bindings import (
     normalize_series_entry,
     parse_bindings_file,
 )
-
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
+from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
 
 def test_normalize_renames_legacy_row_series_layout() -> None:
