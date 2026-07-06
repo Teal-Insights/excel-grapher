@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import NamedTuple
 from xml.etree import ElementTree as ET
 
+from excel_grapher.core.address_keys import parse_address
+
 from .graph import DependencyGraph
 from .parser import format_key
 
@@ -74,10 +76,7 @@ def _sheet_name_from_key(key: str) -> str:
     """
     if "!" not in key:
         return key
-    if key.startswith("'"):
-        end_quote = key.index("'", 1)
-        return key[1:end_quote]
-    return key.split("!", 1)[0]
+    return parse_address(key)[0]
 
 
 @dataclass(frozen=True)

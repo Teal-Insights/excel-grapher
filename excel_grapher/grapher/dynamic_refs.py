@@ -392,10 +392,7 @@ def _sheet_from_addr(addr: str) -> str:
     """Return sheet part of address (e.g. 'Sheet1!A1' -> 'Sheet1')."""
     if "!" not in addr:
         return ""
-    if addr.startswith("'"):
-        end = addr.index("'", 1)
-        return addr[1:end]
-    return addr.split("!", 1)[0]
+    return parse_address(addr)[0]
 
 
 def expand_leaf_env_to_argument_env(
@@ -3298,14 +3295,7 @@ def _collect_addresses(node: AstNode) -> set[str]:
 def _split_qualified_to_sheet_a1(qualified: str) -> tuple[str, str]:
     if "!" not in qualified:
         raise ValueError(f"Expected sheet-qualified reference, got {qualified!r}")
-    if qualified.startswith("'"):
-        end = qualified.index("'", 1)
-        sheet = qualified[1:end].replace("''", "'")
-        tail = qualified[end + 1 :]
-        if not tail.startswith("!"):
-            raise ValueError(f"Expected '!' after quoted sheet in {qualified!r}")
-        return sheet, tail[1:].strip()
-    sheet, a1 = qualified.split("!", 1)
+    sheet, a1 = parse_address(qualified)
     return sheet.strip(), a1.strip()
 
 
