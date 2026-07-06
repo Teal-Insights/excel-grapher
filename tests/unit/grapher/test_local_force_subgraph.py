@@ -6,8 +6,8 @@ import pytest
 from excel_grapher.exporter import to_web_viz_payload
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.lightweight_viz import (
-    LocalForceSubgraph,
     LightweightVizPayload,
+    LocalForceSubgraph,
     VizLimits,
     assemble_lightweight_viz_payload,
     build_lightweight_viz_core,
