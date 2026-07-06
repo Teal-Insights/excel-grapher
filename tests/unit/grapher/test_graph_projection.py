@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
 from pathlib import Path
 from typing import Any, cast
 
@@ -578,6 +579,45 @@ def test_projection_copy_isolates_projection_mutations() -> None:
     assert original.metadata["label"] == "source"
     assert graph.get_dependencies("Sheet1!B1") == frozenset({"Sheet1!C1"})
     assert "Sheet1!C1" in graph
+
+
+def test_projection_copy_preserves_graph_metadata_fields() -> None:
+    from excel_grapher.grapher.graph import DependencyGraph
+
+    graph = DependencyGraph()
+    graph.leaf_classification = {"Sheet1!A1": "input"}
+    graph.sheet_order = ["Sheet1", "Sheet2"]
+    graph.sheet_bounds = {"Sheet1": (1, 10)}
+    graph.named_ranges = {"Rate": ("Sheet1", "A1")}
+    graph.named_range_ranges = {"Table": ("Sheet1", "A1", "B2")}
+    graph.preparsed_formulas = cast(Any, {"Sheet1!A1": object()})
+
+    graph_structure_fields = {
+        "_nodes",
+        "_edges",
+        "_reverse_edges",
+        "_guards",
+        "_edge_extra",
+        "_hooks",
+    }
+    metadata_field_names = tuple(
+        field.name for field in fields(DependencyGraph) if field.name not in graph_structure_fields
+    )
+    assert metadata_field_names == (
+        "leaf_classification",
+        "sheet_order",
+        "sheet_bounds",
+        "named_ranges",
+        "named_range_ranges",
+        "preparsed_formulas",
+    )
+
+    projected = graph._copy_for_projection()
+    for field_name in metadata_field_names:
+        original_value = getattr(graph, field_name)
+        projected_value = getattr(projected, field_name)
+        assert projected_value == original_value
+        assert projected_value is not original_value
 
 
 def test_projection_snapshot_and_rewrite_types_are_shared_across_layers() -> None:
