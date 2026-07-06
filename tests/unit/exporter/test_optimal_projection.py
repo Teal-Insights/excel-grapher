@@ -5,8 +5,10 @@ from __future__ import annotations
 from excel_grapher.exporter.projection import (
     BaseProjectionManifest,
     OptimalCompression,
+    build_optimal_projection_manifest,
     resolve_projection_manifest,
 )
+from excel_grapher.grapher.compression import OptimalCompressionRecord
 from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.node import Node
@@ -125,6 +127,39 @@ def test_optimal_projection_resolves_chained_inline_to_final_retained() -> None:
     assert isinstance(manifest, BaseProjectionManifest)
     collapsed = set(manifest.retained_to_collapsed_sources["Sheet1!A1"])
     assert collapsed == {"Sheet1!B1", "Sheet1!C1"}
+
+
+def test_optimal_manifest_reuses_statement_order_across_groups() -> None:
+    graph = DependencyGraph()
+    record = OptimalCompressionRecord()
+    group_count = 8
+    for row in range(1, group_count + 1):
+        retained = f"Sheet1!A{row}"
+        source = f"Sheet1!B{row}"
+        leaf = f"Sheet1!C{row}"
+        graph.add_node(_make_node(leaf, None, None, is_leaf=True))
+        graph.add_node(_make_node(source, f"={leaf}+1", f"={leaf}+1"))
+        graph.add_node(_make_node(retained, f"={source}+1", f"={source}+1"))
+        _direct_edge(graph, source, leaf)
+        _direct_edge(graph, retained, source)
+        record.inlined_to[source] = retained
+
+    calls = 0
+    original_evaluation_order = graph.evaluation_order
+
+    def counted_evaluation_order(
+        *, strict: bool = True, iterate_enabled: bool | None = None
+    ) -> list[str]:
+        nonlocal calls
+        calls += 1
+        return original_evaluation_order(strict=strict, iterate_enabled=iterate_enabled)
+
+    object.__setattr__(graph, "evaluation_order", counted_evaluation_order)
+
+    manifest = build_optimal_projection_manifest(graph, record)
+
+    assert len(manifest.collapsed_groups) == group_count
+    assert calls == 1
 
 
 def test_optimal_projection_manifest_round_trips() -> None:

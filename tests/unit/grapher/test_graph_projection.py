@@ -552,6 +552,34 @@ def test_custom_collapse_projection_uses_public_primitives_without_forwarding() 
     assert condensed.metadata["collapsed_from"] == ["Sheet1!B1"]
 
 
+def test_projection_copy_isolates_projection_mutations() -> None:
+    from excel_grapher.grapher.graph import DependencyGraph
+
+    graph = DependencyGraph()
+    c = _make_node("Sheet1!C1", None, None, is_leaf=True)
+    b = _make_node("Sheet1!B1", "=Sheet1!C1", "=Sheet1!C1")
+    for n in (c, b):
+        graph.add_node(n)
+    graph.add_edge(
+        "Sheet1!B1",
+        "Sheet1!C1",
+        provenance=EdgeProvenance(causes=frozenset({DependencyCause.direct_ref})),
+    )
+    graph.set_node_metadata("Sheet1!B1", {"label": "source"})
+
+    projected = graph._copy_for_projection()
+    projected.set_node_formula("Sheet1!B1", "=1", "=1")
+    projected.set_node_metadata("Sheet1!B1", {"label": "projected"})
+    projected.remove_node("Sheet1!C1")
+
+    original = graph.get_node("Sheet1!B1")
+    assert original is not None
+    assert original.normalized_formula == "=Sheet1!C1"
+    assert original.metadata["label"] == "source"
+    assert graph.get_dependencies("Sheet1!B1") == frozenset({"Sheet1!C1"})
+    assert "Sheet1!C1" in graph
+
+
 def test_projection_snapshot_and_rewrite_types_are_shared_across_layers() -> None:
     from excel_grapher.grapher import compression as grapher_compression
 

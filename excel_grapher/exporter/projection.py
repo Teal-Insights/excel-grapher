@@ -292,22 +292,38 @@ def _external_dependencies(
 
 
 def _statement_order(
-    graph: DependencyGraph, collapsed_sources: Iterable[NodeKey]
+    graph: DependencyGraph,
+    collapsed_sources: Iterable[NodeKey],
+    *,
+    order_index: Mapping[NodeKey, int] | None = None,
 ) -> tuple[str, ...]:
     """Return dependency-first statement order for collapsed source nodes."""
     sources = {normalize_key(key) for key in collapsed_sources}
     if not sources:
         return ()
-    try:
-        ordered = [key for key in graph.evaluation_order(strict=False) if key in sources]
-    except CycleError:
-        ordered = []
+    if order_index is None:
+        try:
+            ordered = [key for key in graph.evaluation_order(strict=False) if key in sources]
+        except CycleError:
+            ordered = []
+    else:
+        ordered = sorted(
+            (key for key in sources if key in order_index), key=order_index.__getitem__
+        )
     seen = set(ordered)
     for key in graph.keys(order="workbook", source=sources):
         if key not in seen:
             ordered.append(key)
             seen.add(key)
     return tuple(ordered)
+
+
+def _statement_order_index(graph: DependencyGraph) -> dict[NodeKey, int]:
+    """Return one graph-wide dependency order index for collapsed group ordering."""
+    try:
+        return {key: index for index, key in enumerate(graph.evaluation_order(strict=False))}
+    except CycleError:
+        return {}
 
 
 def build_forwarding_projection_manifest(
@@ -333,12 +349,13 @@ def build_forwarding_projection_manifest(
     }
 
     removed_node_snapshots = dict(record.snapshots_by_removed)
+    order_index = _statement_order_index(original_graph)
 
     collapsed_groups = tuple(
         CollapsedGroup(
             retained=retained,
             collapsed_sources=tuple(sources),
-            statement_order=_statement_order(original_graph, sources),
+            statement_order=_statement_order(original_graph, sources, order_index=order_index),
             external_dependencies=_external_dependencies(
                 original_graph,
                 retained=retained,
@@ -362,7 +379,7 @@ def project_identity_transits(
     graph: DependencyGraph,
 ) -> tuple[DependencyGraph, BaseProjectionManifest]:
     """Return a projected copy of `graph` with identity transit nodes collapsed."""
-    projected = graph.copy()
+    projected = graph._copy_for_projection()
     record = IdentityTransitCompressionRecord()
     projected.compress_identity_transits(record=record)
     return projected, build_forwarding_projection_manifest(graph, record, kind="identity_transit")
@@ -400,12 +417,13 @@ def build_optimal_projection_manifest(
     }
 
     removed_node_snapshots = dict(record.snapshots_by_removed)
+    order_index = _statement_order_index(original_graph)
 
     collapsed_groups = tuple(
         CollapsedGroup(
             retained=retained,
             collapsed_sources=tuple(sources),
-            statement_order=_statement_order(original_graph, sources),
+            statement_order=_statement_order(original_graph, sources, order_index=order_index),
             external_dependencies=_external_dependencies(
                 original_graph,
                 retained=retained,
@@ -431,7 +449,7 @@ def project_optimal(
     preserve: set[str] | None = None,
 ) -> tuple[DependencyGraph, BaseProjectionManifest]:
     """Return a projected copy of `graph` with optimal compression applied."""
-    projected = graph.copy()
+    projected = graph._copy_for_projection()
     record = OptimalCompressionRecord()
     projected.compress_optimal(preserve=preserve, record=record)
     return projected, build_optimal_projection_manifest(graph, record)
@@ -594,7 +612,7 @@ def apply_projection(
     if not manifests:
         return ProjectionResult(
             original_graph=graph,
-            projected_graph=graph.copy(),
+            projected_graph=graph._copy_for_projection(),
             manifest=BaseProjectionManifest.empty(kind="empty"),
         )
     if len(manifests) == 1:
