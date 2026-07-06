@@ -6,6 +6,7 @@ import re
 import zipfile
 from pathlib import Path
 
+import pytest
 import xlsxwriter
 
 from excel_grapher import create_dependency_graph, validate_graph
@@ -38,15 +39,17 @@ def _with_calcchain(src_xlsx: Path, dst_xlsx: Path, *, sheet_id: str, cell_refs:
         zout.writestr("xl/calcChain.xml", calc_xml)
 
 
+@pytest.mark.xfail(
+    reason="Formula normalization corrupts quoted apostrophe sheet refs ('O''Neil' -> 'O'Neil')",
+    strict=True,
+)
 def test_create_dependency_graph_handles_apostrophe_sheet_names(tmp_path: Path) -> None:
     sheet_name = "O'Neil"
     excel_path = tmp_path / "apostrophe_sheet.xlsx"
     wb = xlsxwriter.Workbook(excel_path)
     ws = wb.add_worksheet(sheet_name)
     ws.write_number(0, 0, 2)  # A1
-    ws.write_formula(
-        0, 1, "=A1*2", None, 4
-    )  # B1 (same-sheet ref avoids quoted-sheet normalization)
+    ws.write_formula(0, 1, "='O''Neil'!A1*2", None, 4)  # B1
     wb.close()
 
     graph = create_dependency_graph(excel_path, ["'O''Neil'!B1"], load_values=False)
