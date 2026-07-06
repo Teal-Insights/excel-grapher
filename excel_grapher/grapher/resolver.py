@@ -12,6 +12,7 @@ from fastpyxl.utils.cell import (
     get_column_letter,
 )
 
+from excel_grapher.core.address_keys import needs_quoting
 from excel_grapher.core.addressing import offset_range, split_sheet_qualified_address
 from excel_grapher.core.coercions import to_number
 from excel_grapher.core.formula_ast import (
@@ -26,9 +27,12 @@ from excel_grapher.core.formula_ast import (
     parse as parse_formula_ast,
 )
 from excel_grapher.core.formula_normalization import expand_whole_column_row_for_parse
+from excel_grapher.core.range_shorthand import sheet_used_extent
 from excel_grapher.core.types import CellValue, ExcelRange, XlError
 
 from .parser import CellRef
+
+_NAME_TOKEN_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*!)")
 
 
 class NameResolver(Protocol):
@@ -278,6 +282,103 @@ def _eval_indirect_formula_to_range(
         return None
 
 
+def _quote_sheet_for_formula(sheet: str) -> str:
+    if needs_quoting(sheet):
+        return "'" + sheet.replace("'", "''") + "'"
+    return sheet
+
+
+def _format_cell_ref_for_formula(sheet: str, a1: str) -> str:
+    col, row = coordinate_from_string(a1)
+    return f"{_quote_sheet_for_formula(sheet)}!${col}${row}"
+
+
+def _substitute_defined_names_in_attr_text(
+    attr_text: str,
+    cell_map: dict[str, tuple[str, str]],
+    range_map: dict[str, tuple[str, str, str]],
+) -> str:
+    """Inline already-resolved defined names so OFFSET/INDIRECT bodies can parse."""
+
+    def repl(match: re.Match[str]) -> str:
+        token = match.group(1)
+        if token in cell_map:
+            sheet, a1 = cell_map[token]
+            return _format_cell_ref_for_formula(sheet, a1)
+        if token in range_map:
+            sheet, start_a1, end_a1 = range_map[token]
+            c1, r1 = coordinate_from_string(start_a1)
+            c2, r2 = coordinate_from_string(end_a1)
+            return f"{_quote_sheet_for_formula(sheet)}!${c1}${r1}:${c2}${r2}"
+        return token
+
+    return _NAME_TOKEN_RE.sub(repl, attr_text)
+
+
+def _store_resolved_name(
+    resolved: tuple[str, str] | tuple[str, str, str],
+    *,
+    cell_map: dict[str, tuple[str, str]],
+    range_map: dict[str, tuple[str, str, str]],
+    name: str,
+) -> None:
+    if len(resolved) == 2:
+        cell_map[name] = (resolved[0], resolved[1])
+    elif len(resolved) == 3:
+        range_map[name] = resolved
+
+
+def _resolve_static_defined_name(
+    attr_text: str,
+    bounds: dict[str, tuple[int, int]],
+) -> tuple[str, str] | tuple[str, str, str] | None:
+    if "," in attr_text:
+        return None
+
+    m = re.match(r"'?([^'!]+)'?!\$?([A-Z]{1,3})\$?(\d+)$", attr_text, re.IGNORECASE)
+    if m:
+        return (m.group(1), f"{m.group(2).upper()}{m.group(3)}")
+
+    if ":" in attr_text:
+        m = re.match(
+            r"'?(?P<sheet>[^'!]+)'?!\$?(?P<c>[A-Z]{1,3}):\$?(?P=c)$",
+            attr_text,
+            re.IGNORECASE,
+        )
+        if m:
+            sheet = m.group("sheet")
+            col = m.group("c").upper()
+            max_row, _ = sheet_used_extent(bounds, sheet)
+            return (sheet, f"{col}1", f"{col}{max_row}")
+
+        m = re.match(
+            r"'?(?P<sheet>[^'!]+)'?!\$?(?P<r>\d+):\$?(?P=r)$",
+            attr_text,
+        )
+        if m:
+            sheet = m.group("sheet")
+            row = int(m.group("r"))
+            _, max_col = sheet_used_extent(bounds, sheet)
+            return (
+                sheet,
+                f"A{row}",
+                f"{get_column_letter(max_col)}{row}",
+            )
+
+        m = re.match(
+            r"'?(?P<sheet>[^'!]+)'?!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+):\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)$",
+            attr_text,
+            re.IGNORECASE,
+        )
+        if m:
+            sheet_name = m.group("sheet")
+            start = f"{m.group('c1').upper()}{m.group('r1')}"
+            end = f"{m.group('c2').upper()}{m.group('r2')}"
+            return (sheet_name, start, end)
+
+    return None
+
+
 def _normalize_formula_for_parse(formula: str, bounds: dict[str, tuple[int, int]]) -> str:
     """Strip ``$`` and expand whole-column/whole-row refs so formula_ast can parse."""
     return expand_whole_column_row_for_parse(formula, bounds)
@@ -326,50 +427,38 @@ def build_named_range_map(wb: fastpyxl.Workbook) -> NamedRangeMaps:
     (optionally quoted sheet name). Skips multi-area and complex formulas.
     Formula-based names (OFFSET, INDIRECT) are evaluated using workbook values.
     """
+    bounds = _sheet_bounds(wb)
     cell_map: dict[str, tuple[str, str]] = {}
     range_map: dict[str, tuple[str, str, str]] = {}
+    pending: dict[str, str] = {}
     for name, defn in wb.defined_names.items():
         attr_text = getattr(defn, "attr_text", None)
         if not isinstance(attr_text, str) or not attr_text:
             continue
-        if attr_text.startswith("{") or attr_text.startswith("#") or attr_text.startswith('"'):
+        stripped = attr_text.strip()
+        if stripped.startswith("{") or stripped.startswith("#") or stripped.startswith('"'):
             continue
-        if attr_text.strip().upper().startswith(("OFFSET(", "INDIRECT(")):
-            resolved = _try_resolve_formula_defined_name(attr_text, wb)
-            if resolved is not None:
-                if len(resolved) == 2:
-                    cell_map[str(name)] = (resolved[0], resolved[1])
-                elif len(resolved) == 3:
-                    range_map[str(name)] = resolved
-                continue
-        if "," in attr_text:
-            continue
-        if ":" in attr_text:
-            m = re.match(
-                r"'?(?P<sheet>[^'!]+)'?!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+):\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)$",
-                attr_text,
-            )
-            if not m:
-                resolved = _try_resolve_formula_defined_name(attr_text, wb)
-                if resolved is not None:
-                    if len(resolved) == 2:
-                        cell_map[str(name)] = (resolved[0], resolved[1])
-                    elif len(resolved) == 3:
-                        range_map[str(name)] = resolved
-                continue
-            sheet_name = m.group("sheet")
-            start = f"{m.group('c1')}{m.group('r1')}"
-            end = f"{m.group('c2')}{m.group('r2')}"
-            range_map[str(name)] = (sheet_name, start, end)
-            continue
+        pending[str(name)] = stripped
 
-        m = re.match(r"'?([^'!]+)'?!\$?([A-Z]{1,3})\$?(\d+)$", attr_text)
-        if not m:
-            continue
-        sheet_name = m.group(1)
-        col = m.group(2)
-        row = m.group(3)
-        cell_map[str(name)] = (sheet_name, f"{col}{row}")
+    changed = True
+    while changed and pending:
+        changed = False
+        for name in list(pending):
+            attr_text = _substitute_defined_names_in_attr_text(pending[name], cell_map, range_map)
+            resolved = _resolve_static_defined_name(attr_text, bounds)
+            if resolved is None:
+                resolved = _try_resolve_formula_defined_name(attr_text, wb)
+            if resolved is None:
+                continue
+            _store_resolved_name(
+                resolved,
+                cell_map=cell_map,
+                range_map=range_map,
+                name=name,
+            )
+            del pending[name]
+            changed = True
+
     return NamedRangeMaps(cell_map=cell_map, range_map=range_map)
 
 

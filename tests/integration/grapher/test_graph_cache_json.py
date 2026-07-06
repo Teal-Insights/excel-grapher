@@ -32,6 +32,59 @@ def _make_simple_workbook(path: Path) -> None:
     wb.close()
 
 
+def test_cache_roundtrip_date_and_time_leaf_values(tmp_path: Path) -> None:
+    """Excel cached values may include date/time objects; graph cache must round-trip them."""
+    from datetime import date, time
+
+    from excel_grapher.grapher.cache import _value_from_json, _value_to_json
+    from excel_grapher.grapher.graph import DependencyGraph
+    from excel_grapher.grapher.node import Node
+
+    graph = DependencyGraph(sheet_order=["Sheet1"])
+    graph.add_node(
+        Node(
+            sheet="Sheet1",
+            column="A",
+            row=1,
+            formula=None,
+            normalized_formula=None,
+            value=date(2025, 8, 12),
+            is_leaf=True,
+            is_target=False,
+        )
+    )
+    graph.add_node(
+        Node(
+            sheet="Sheet1",
+            column="B",
+            row=1,
+            formula=None,
+            normalized_formula=None,
+            value=time(9, 30),
+            is_leaf=True,
+            is_target=False,
+        )
+    )
+
+    workbook = tmp_path / "book.xlsx"
+    _make_simple_workbook(workbook)
+    meta = build_graph_cache_meta(workbook, ["Sheet1!A1"], extraction_params={})
+    cache_path = tmp_path / "typed-leaves.json"
+    save_graph_cache(cache_path, graph, meta)
+
+    loaded = try_load_graph_cache(cache_path, expected_meta=meta)
+    assert loaded is not None
+    node_a1 = loaded.get_node("Sheet1!A1")
+    node_b1 = loaded.get_node("Sheet1!B1")
+    assert node_a1 is not None
+    assert node_b1 is not None
+    assert node_a1.value == date(2025, 8, 12)
+    assert node_b1.value == time(9, 30)
+
+    assert _value_from_json(_value_to_json(date(2024, 1, 2))) == date(2024, 1, 2)
+    assert _value_from_json(_value_to_json(time(12, 0))) == time(12, 0)
+
+
 def test_cache_roundtrip_strict_hit(tmp_path: Path) -> None:
     workbook = tmp_path / "book.xlsx"
     _make_simple_workbook(workbook)

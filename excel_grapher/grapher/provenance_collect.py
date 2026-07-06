@@ -11,6 +11,7 @@ import fastpyxl
 import fastpyxl.utils.cell
 
 from excel_grapher.core.cell_types import leaves_missing_cell_type_constraints
+from excel_grapher.core.formula_normalization import _mask_string_literals
 
 from .dependency_provenance import DependencyCause, EdgeProvenance, merge_provenance_maps
 from .dynamic_refs import (
@@ -333,7 +334,8 @@ def _flat_provenance_one_string(
         k = format_key(sh, f"{ref.column}{ref.row}")
         _merge_into(acc, k, _prov_with_direct_span(span, span_target=span_target))
 
-    for m in _NAME_TOKEN_RE.finditer(masked):
+    name_scan, _ = _mask_string_literals(masked)
+    for m in _NAME_TOKEN_RE.finditer(name_scan):
         token = m.group(1)
         resolved = named_ranges.get(token)
         if resolved is not None:

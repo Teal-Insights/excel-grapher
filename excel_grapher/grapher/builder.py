@@ -16,6 +16,7 @@ from fastpyxl.worksheet.worksheet import Worksheet
 
 from excel_grapher.core.address_keys import sort_node_keys
 from excel_grapher.core.cell_types import CellType, leaves_missing_cell_type_constraints
+from excel_grapher.core.formula_normalization import _mask_string_literals
 
 from .blank_ranges import (
     address_in_blank_ranges,
@@ -899,8 +900,9 @@ def create_dependency_graph(
                 sh = ref.sheet if ref.sheet is not None else current_sheet
                 deps.append((sh, f"{ref.column}{ref.row}"))
 
-            # 3) Named ranges
-            for m in _NAME_TOKEN_RE.finditer(masked):
+            # 3) Named ranges (ignore tokens that appear only inside string literals).
+            name_scan, _ = _mask_string_literals(masked)
+            for m in _NAME_TOKEN_RE.finditer(name_scan):
                 token = m.group(1)
                 resolved = named_ranges.get(token)
                 if resolved is not None:

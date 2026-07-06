@@ -4,7 +4,7 @@ import gzip
 import hashlib
 import importlib.metadata
 import json
-from datetime import datetime
+from datetime import date, datetime, time
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal, TypedDict, cast
@@ -190,7 +190,7 @@ def try_load_graph_cache(
 
 
 class _JsonValue(TypedDict):
-    t: Literal["none", "bool", "int", "float", "str", "datetime"]
+    t: Literal["none", "bool", "int", "float", "str", "datetime", "date", "time"]
     v: object
 
 
@@ -207,6 +207,10 @@ def _value_to_json(v: Any) -> _JsonValue:
         return {"t": "str", "v": v}
     if isinstance(v, datetime):
         return {"t": "datetime", "v": v.isoformat()}
+    if isinstance(v, date):
+        return {"t": "date", "v": v.isoformat()}
+    if isinstance(v, time):
+        return {"t": "time", "v": v.isoformat()}
     raise ValueError(f"Unsupported node value type for JSON cache: {type(v)!r}")
 
 
@@ -238,6 +242,14 @@ def _value_from_json(v: object) -> Any:
         if not isinstance(payload, str):
             raise TypeError("datetime payload must be str")
         return datetime.fromisoformat(payload)
+    if t == "date":
+        if not isinstance(payload, str):
+            raise TypeError("date payload must be str")
+        return date.fromisoformat(payload)
+    if t == "time":
+        if not isinstance(payload, str):
+            raise TypeError("time payload must be str")
+        return time.fromisoformat(payload)
     raise ValueError(f"Unknown JSON value tag: {t!r}")
 
 

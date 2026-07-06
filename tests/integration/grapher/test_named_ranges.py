@@ -139,6 +139,63 @@ def test_dependency_graph_expands_formula_based_named_range(tmp_path: Path) -> N
     assert "Country_Information!A2" in deps
 
 
+def test_named_range_map_resolves_whole_column_defined_name(tmp_path: Path) -> None:
+    """Whole-column defined names like lookup!$E:$E resolve to the sheet used range."""
+    excel_path = tmp_path / "whole_column_name.xlsx"
+    wb = _new_workbook()
+    wb.create_sheet("lookup")
+    lookup = wb["lookup"]
+    lookup["E1"].value = "hdr"
+    lookup["E3"].value = "x"
+    wb.defined_names.add(DefinedName("MDRI_Column", attr_text="lookup!$E:$E"))
+    wb.save(excel_path)
+
+    maps = build_named_range_map(
+        fastpyxl.load_workbook(excel_path, data_only=False, read_only=True)
+    )
+    assert maps.range_map["MDRI_Column"] == ("lookup", "E1", "E3")
+
+
+def test_named_range_map_resolves_offset_with_nested_defined_name(tmp_path: Path) -> None:
+    """OFFSET bases that reference another defined name resolve after substitution."""
+    excel_path = tmp_path / "offset_nested_name.xlsx"
+    wb = _new_workbook()
+    wb.create_sheet("data all")
+    data = wb["data all"]
+    data["A2"].value = "hdr1"
+    data["A3"].value = "hdr2"
+    data["B2"].value = 1
+    data["C2"].value = 2
+    wb.defined_names.add(DefinedName("DSF__PREV_DSA_START_CELL", attr_text="'data all'!$A$2"))
+    wb.defined_names.add(
+        DefinedName(
+            "DSF__PREV_DSA_DATA",
+            attr_text="OFFSET(DSF__PREV_DSA_START_CELL,0,0,COUNTA('data all'!$A:$A)-1,COUNTA('data all'!$2:$2))",
+        )
+    )
+    wb.save(excel_path)
+
+    maps = build_named_range_map(
+        fastpyxl.load_workbook(excel_path, data_only=False, read_only=True)
+    )
+    assert maps.range_map["DSF__PREV_DSA_DATA"] == ("data all", "A2", "C2")
+
+
+def test_defined_name_token_not_matched_inside_string_literal(tmp_path: Path) -> None:
+    """Bare defined-name tokens inside string literals must not be treated as references."""
+    excel_path = tmp_path / "string_literal_name_collision.xlsx"
+    wb = _new_workbook()
+    ws = wb["Sheet1"]
+    ws["A1"].value = 1
+    ws["B1"].value = '="Tableau xx. "&Sheet1!A1'
+    wb.defined_names.add(DefinedName("xx", attr_text='{"WEO",#N/A,FALSE,"Data"}'))
+    wb.save(excel_path)
+
+    graph = create_dependency_graph(excel_path, ["Sheet1!B1"], load_values=False)
+    deps = graph.get_dependencies("Sheet1!B1")
+    assert deps == {"Sheet1!A1"}
+
+
 def test_normalized_formula_resolves_range_named_range(tmp_path: Path) -> None:
     """Normalized formulas should expand range-based named ranges for codegen."""
     excel_path = tmp_path / "named_range_normalized.xlsx"
