@@ -50,7 +50,7 @@ from excel_grapher.grapher.target_expansion import (
     split_range_target_on_colon,
 )
 
-__all__ = ["CodeGenerator", "GenerationParts", "GraphLike", "GraphNode"]
+__all__ = ["CodeGenerator", "GraphLike", "GraphNode"]
 
 if TYPE_CHECKING:
     from excel_grapher.exporter.projection import ProjectionManifest

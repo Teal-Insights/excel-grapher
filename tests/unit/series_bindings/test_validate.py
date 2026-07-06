@@ -14,8 +14,7 @@ from excel_grapher.series_bindings import (
 )
 from excel_grapher.series_bindings.schema import validate_bindings_document
 from excel_grapher.series_bindings.types import WorkbookSeriesBindings
-
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
+from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
 
 def _write_borvelia_workbook(path: Path) -> None:

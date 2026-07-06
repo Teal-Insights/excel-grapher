@@ -59,7 +59,6 @@ from excel_grapher.series_bindings.normalize import (
 )
 from excel_grapher.series_bindings.output_series import derive_output_series
 from excel_grapher.series_bindings.ranges import expand_data_range, expand_data_range_for_graph
-from excel_grapher.series_bindings.records_types import Record, Records, Scalar
 from excel_grapher.series_bindings.resolve import resolve_series_binding, resolve_series_bindings
 from excel_grapher.series_bindings.schema import (
     SeriesBindingsSchemaError,
@@ -79,8 +78,11 @@ from excel_grapher.series_bindings.types import (
     LeafResolution,
     OutputSeries,
     OutputSeriesCell,
+    Record,
+    Records,
     ResolutionIssue,
     ResolutionReport,
+    Scalar,
     SeriesResolution,
     ValidationIssue,
     ValidationLevel,
@@ -91,8 +93,6 @@ from excel_grapher.series_bindings.validate import validate_series_bindings
 from excel_grapher.series_bindings.versions import (
     IMPLEMENTED_BIND_KINDS,
     IMPLEMENTED_LAYOUTS,
-    PLANNED_BIND_KINDS,
-    PLANNED_LAYOUTS,
     SUPPORTED_SCHEMA_VERSIONS,
     is_bind_implemented,
     is_layout_implemented,
@@ -122,8 +122,6 @@ __all__ = [
     "Records",
     "IMPLEMENTED_BIND_KINDS",
     "IMPLEMENTED_LAYOUTS",
-    "PLANNED_BIND_KINDS",
-    "PLANNED_LAYOUTS",
     "SUPPORTED_SCHEMA_VERSIONS",
     "FieldDoc",
     "GoogleSeriesDocstringRenderer",

@@ -12,8 +12,7 @@ from excel_grapher.series_bindings import (
     load_series_bindings,
     resolve_series_binding,
 )
-
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
+from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
 
 def _write_formula_workbook(path: Path) -> None:

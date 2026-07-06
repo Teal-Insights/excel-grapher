@@ -2,24 +2,20 @@
 
 Verifies that ``FormulaEvaluator`` and generated export code compute G3:G10 to
 the workbook cached values (Excel reference).
-
 Run:
     uv run pytest tests/integration/user_flows/formula_test.py -v
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from excel_grapher import FormulaEvaluator, create_dependency_graph
 from excel_grapher.grapher import DependencyGraph
 from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.paths import TEST_SHEETS_FIXTURES
 
-WORKBOOK_PATH = (
-    Path(__file__).resolve().parents[2] / "fixtures" / "test_sheets" / "formula_test_cases.xlsx"
-)
+WORKBOOK_PATH = TEST_SHEETS_FIXTURES / "formula_test_cases.xlsx"
 SHEET = "Sheet1"
 FORMULA_TARGETS = [f"{SHEET}!G{row}" for row in range(3, 10)]
 TARGETS = FORMULA_TARGETS + [f"{SHEET}!G10"]

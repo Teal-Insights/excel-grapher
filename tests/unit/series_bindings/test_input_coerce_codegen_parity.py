@@ -25,8 +25,7 @@ from excel_grapher.series_bindings.setter_codegen import (
     emit_setter_helpers,
 )
 from excel_grapher.series_bindings.setter_input_types import SetterInput
-
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
+from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
 
 class _SeriesCoerceKwargs(TypedDict, total=False):

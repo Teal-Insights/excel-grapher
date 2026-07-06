@@ -4,21 +4,16 @@ from pathlib import Path
 from typing import Any, Literal
 
 from excel_grapher.grapher.graph import DependencyGraph
-from excel_grapher.series_bindings.issues import make_issue
 from excel_grapher.series_bindings.ranges import expand_data_range_for_graph
 from excel_grapher.series_bindings.types import (
     ValidationIssue,
     ValidationReport,
     WorkbookSeriesBindings,
+    make_issue,
 )
-from excel_grapher.series_bindings.versions import (
-    IMPLEMENTED_BIND_KINDS,
-    IMPLEMENTED_LAYOUTS,
-    PLANNED_BIND_KINDS,
-    PLANNED_LAYOUTS,
-)
+from excel_grapher.series_bindings.versions import IMPLEMENTED_BIND_KINDS, IMPLEMENTED_LAYOUTS
 
-_KNOWN_BIND_KINDS = IMPLEMENTED_BIND_KINDS | PLANNED_BIND_KINDS
+_KNOWN_BIND_KINDS = IMPLEMENTED_BIND_KINDS
 
 
 def _issue(
@@ -294,60 +289,7 @@ def _validate_implementation_support(series: dict[str, Any]) -> list[ValidationI
     issues: list[ValidationIssue] = []
     series_id = str(series.get("id", ""))
     layout = series.get("layout")
-    if isinstance(layout, str) and layout in PLANNED_LAYOUTS:
-        issues.append(
-            _issue(
-                "warning",
-                "layout_not_implemented",
-                f"layout {layout!r} is defined in schema 1.1.0 but not yet supported by resolve/codegen",
-                series_id=series_id,
-            )
-        )
-    structure = series.get("structure") or {}
-    for dim in structure.get("dimensions") or []:
-        if not isinstance(dim, dict):
-            continue
-        bind = dim.get("bind")
-        if isinstance(bind, dict):
-            kind = bind.get("kind")
-            if kind in PLANNED_BIND_KINDS:
-                issues.append(
-                    _issue(
-                        "warning",
-                        "bind_not_implemented",
-                        f"bind kind {kind!r} is not yet supported by resolve/codegen",
-                        series_id=series_id,
-                    )
-                )
-    for attr in structure.get("attributes") or []:
-        if isinstance(attr, dict) and isinstance(attr.get("bind"), dict):
-            kind = attr["bind"].get("kind")
-            if kind in PLANNED_BIND_KINDS:
-                issues.append(
-                    _issue(
-                        "warning",
-                        "bind_not_implemented",
-                        f"bind kind {kind!r} is not yet supported by resolve/codegen",
-                        series_id=series_id,
-                    )
-                )
-    measure = structure.get("measure")
-    if isinstance(measure, dict) and isinstance(measure.get("bind"), dict):
-        kind = measure["bind"].get("kind")
-        if kind in PLANNED_BIND_KINDS:
-            issues.append(
-                _issue(
-                    "warning",
-                    "bind_not_implemented",
-                    f"bind kind {kind!r} is not yet supported by resolve/codegen",
-                    series_id=series_id,
-                )
-            )
-    if (
-        isinstance(layout, str)
-        and layout not in IMPLEMENTED_LAYOUTS
-        and layout not in PLANNED_LAYOUTS
-    ):
+    if isinstance(layout, str) and layout not in IMPLEMENTED_LAYOUTS:
         issues.append(
             _issue(
                 "error",

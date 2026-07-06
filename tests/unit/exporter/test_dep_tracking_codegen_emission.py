@@ -3,7 +3,6 @@
 Non-iterative exports without input-direction series bindings omit ``deps`` /
 ``reverse_deps``, ``_record_dependency``, ``invalidate``, ``set_inputs``, and the
 ``ctx._record_dependency`` call site in ``_evaluate_address``.
-
 Minimal non-iterative export baseline (``S!A1`` leaf + ``S!B1`` formula):
 
 - **492 total lines**; embedded runtime **422 lines** (~86% of export)
@@ -34,10 +33,9 @@ from tests.integration.utils.parity_harness import (
     count_dep_tracking_lines,
     count_embedded_runtime_lines,
 )
+from tests.paths import DEP_TRACKING_BASELINE_FIXTURES
 
-BASELINE_PATH = (
-    Path(__file__).resolve().parents[2] / "fixtures" / "dep_tracking_baseline" / "baseline.json"
-)
+BASELINE_PATH = DEP_TRACKING_BASELINE_FIXTURES / "baseline.json"
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:

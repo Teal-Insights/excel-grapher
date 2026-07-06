@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
-from excel_grapher.series_bindings.records_types import Record, Records, Scalar
+from excel_grapher.series_bindings.types import Record, Records, Scalar
 
 Layout: TypeAlias = Literal["scalar", "series", "matrix"]
 EmptyMeasure: TypeAlias = Literal["skip", "write", "error"]

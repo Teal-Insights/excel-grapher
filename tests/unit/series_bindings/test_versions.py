@@ -9,13 +9,11 @@ import xlsxwriter
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings import (
     IMPLEMENTED_LAYOUTS,
-    PLANNED_BIND_KINDS,
     load_series_bindings,
     validate_series_bindings,
 )
 from excel_grapher.series_bindings.versions import SUPPORTED_SCHEMA_VERSIONS
-
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
+from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
 
 def test_supported_schema_versions() -> None:
@@ -36,13 +34,12 @@ def test_validate_explicit_matrix_no_implementation_warnings(tmp_path: Path) -> 
     bindings = load_series_bindings(FIXTURES / "matrix_explicit_1_4_0.yaml")
     report = validate_series_bindings(graph, bindings)
     codes = {i["code"] for i in report["issues"]}
-    assert "layout_not_implemented" not in codes
-    assert "bind_not_implemented" not in codes
+    assert "unknown_layout" not in codes
+    assert "unknown_bind_kind" not in codes
     assert "matrix" in IMPLEMENTED_LAYOUTS
-    assert "row_hierarchy" in PLANNED_BIND_KINDS
 
 
-def test_validate_country_block_matrix_emits_row_hierarchy_warning_only(tmp_path: Path) -> None:
+def test_validate_country_block_matrix_fixture(tmp_path: Path) -> None:
     wb_path = tmp_path / "lic_inputs.xlsx"
     wb = xlsxwriter.Workbook(wb_path)
     ws = wb.add_worksheet("Inputs")
@@ -56,7 +53,6 @@ def test_validate_country_block_matrix_emits_row_hierarchy_warning_only(tmp_path
     bindings = load_series_bindings(FIXTURES / "matrix_country_block_1_1_0.yaml")
     report = validate_series_bindings(graph, bindings)
     codes = {i["code"] for i in report["issues"]}
-    assert "layout_not_implemented" not in codes
-    assert "bind_not_implemented" in codes
+    assert "unknown_layout" not in codes
+    assert "unknown_bind_kind" not in codes
     assert "matrix" in IMPLEMENTED_LAYOUTS
-    assert "row_hierarchy" in PLANNED_BIND_KINDS

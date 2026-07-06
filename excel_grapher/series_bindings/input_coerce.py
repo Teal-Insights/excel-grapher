@@ -6,8 +6,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, TypeGuard, cast
 
 from excel_grapher.series_bindings.coerce import coerce_scalar
-from excel_grapher.series_bindings.records_types import Record, Records
 from excel_grapher.series_bindings.setter_input_types import EmptyMeasure, Layout, SetterInput
+from excel_grapher.series_bindings.types import Record, Records
 
 __all__ = ["EmptyMeasure", "Layout", "coerce_setter_input"]
 
