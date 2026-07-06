@@ -183,41 +183,19 @@
     const n = data.stats.node_count;
     const maxN = data.max_local_nodes == null ? n : data.max_local_nodes;
     const maxE = data.max_local_edges == null ? null : data.max_local_edges;
-    const mid = data.nodes.module_id[nodeId];
-    const mod = data.modules[mid];
-    if (mod.node_count <= maxN) {
-      const nodes = [];
-      for (let i = 0; i < n; i++) {
-        if (data.nodes.module_id[i] === mid) nodes.push(i);
-      }
-      nodes.sort(function(a,b){return a-b;});
-      const set = new Set(nodes);
-      const ef = [], et = [], eg = [];
-      const off = data.local_edges.offsets;
-      const tg = data.local_edges.targets;
-      const gd = data.local_edges.guarded;
-      for (let ni = 0; ni < nodes.length; ni++) {
-        const u = nodes[ni];
-        for (let k = off[u]; k < off[u + 1]; k++) {
-          const v = tg[k];
-          if (set.has(v)) {
-            ef.push(u); et.push(v); eg.push(gd[k]);
-          }
-        }
-      }
-      return {
-        nodeIds: nodes,
-        edgesFrom: ef, edgesTo: et, edgesGuarded: eg,
-        moduleScope: true,
-        truncated: !data.local_edges.complete[nodeId]
-      };
-    }
-    const expanded = new Set();
-    const seeds = [nodeId];
-    const ef = [], et = [], eg = [];
     const off = data.local_edges.offsets;
     const tg = data.local_edges.targets;
     const gd = data.local_edges.guarded;
+    const incoming = new Array(n);
+    for (let i = 0; i < n; i++) incoming[i] = [];
+    for (let u = 0; u < n; u++) {
+      for (let k = off[u]; k < off[u + 1]; k++) {
+        incoming[tg[k]].push([u, gd[k]]);
+      }
+    }
+
+    const expanded = new Set();
+    const seeds = [nodeId];
     while (seeds.length && expanded.size < maxN) {
       seeds.sort(function(a,b){return a-b;});
       const u = seeds.shift();
@@ -225,11 +203,28 @@
       expanded.add(u);
       for (let k = off[u]; k < off[u + 1]; k++) {
         const v = tg[k];
-        ef.push(u); et.push(v); eg.push(gd[k]);
         if (!expanded.has(v) && expanded.size + seeds.length < maxN) seeds.push(v);
+      }
+      const inc = incoming[u];
+      for (let j = 0; j < inc.length; j++) {
+        const w = inc[j][0];
+        if (!expanded.has(w) && expanded.size + seeds.length < maxN) seeds.push(w);
+      }
+    }
+
+    const nodeIds = Array.from(expanded).sort(function(a,b){return a-b;});
+    const nodeSet = new Set(nodeIds);
+    const ef = [], et = [], eg = [];
+    let truncated = !data.local_edges.complete[nodeId];
+    for (let ni = 0; ni < nodeIds.length; ni++) {
+      const u = nodeIds[ni];
+      for (let k = off[u]; k < off[u + 1]; k++) {
+        const v = tg[k];
+        if (!nodeSet.has(v)) continue;
+        ef.push(u); et.push(v); eg.push(gd[k]);
         if (maxE !== null && ef.length >= maxE) {
           return {
-            nodeIds: Array.from(expanded).sort(function(a,b){return a-b;}),
+            nodeIds: nodeIds,
             edgesFrom: ef, edgesTo: et, edgesGuarded: eg,
             moduleScope: false, truncated: true
           };
@@ -237,10 +232,10 @@
       }
     }
     return {
-      nodeIds: Array.from(expanded).sort(function(a,b){return a-b;}),
+      nodeIds: nodeIds,
       edgesFrom: ef, edgesTo: et, edgesGuarded: eg,
       moduleScope: false,
-      truncated: !data.local_edges.complete[nodeId]
+      truncated: truncated
     };
   }
 

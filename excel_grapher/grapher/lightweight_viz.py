@@ -1234,6 +1234,11 @@ def select_local_force_subgraph(
     *,
     node_id: int,
 ) -> LocalForceSubgraph:
+    """Select a bounded neighborhood around ``node_id`` for client-side force layout.
+
+    Expansion follows exported ``local_edges`` in both directions (precedents and
+    dependents), stopping at ``max_local_nodes`` / ``max_local_edges`` when set.
+    """
     data = lightweight_viz_flat(payload)
     n = data.stats.node_count
     max_nodes = data.max_local_nodes if data.max_local_nodes is not None else n
@@ -1241,42 +1246,16 @@ def select_local_force_subgraph(
     if not (0 <= node_id < n):
         raise ValueError(f"node_id out of range: {node_id}")
 
-    mid = data.nodes.module_id[node_id]
-    mod = data.modules[mid]
-    if mod.node_count <= max_nodes:
-        nodes = [i for i in range(n) if data.nodes.module_id[i] == mid]
-        nodes.sort()
-        node_set = set(nodes)
-        ef: list[int] = []
-        et: list[int] = []
-        eg: list[bool] = []
-        off = data.local_edges.offsets
-        tg = data.local_edges.targets
-        gd = data.local_edges.guarded
-        for u in nodes:
-            for k in range(off[u], off[u + 1]):
-                v = tg[k]
-                if v in node_set:
-                    ef.append(u)
-                    et.append(v)
-                    eg.append(gd[k])
-        return LocalForceSubgraph(
-            node_ids=tuple(nodes),
-            edges_from=tuple(ef),
-            edges_to=tuple(et),
-            edges_guarded=tuple(eg),
-            is_module_scope=True,
-            truncated=not data.local_edges.complete[node_id],
-        )
-
     off = data.local_edges.offsets
     tg = data.local_edges.targets
     gd = data.local_edges.guarded
+    incoming: list[list[tuple[int, bool]]] = [[] for _ in range(n)]
+    for u in range(n):
+        for k in range(off[u], off[u + 1]):
+            incoming[tg[k]].append((u, gd[k]))
+
     seeds = {node_id}
     expanded: set[int] = set()
-    edges_from: list[int] = []
-    edges_to: list[int] = []
-    edges_guarded: list[bool] = []
     while seeds and len(expanded) < max_nodes:
         u = min(seeds)
         seeds.discard(u)
@@ -1285,14 +1264,28 @@ def select_local_force_subgraph(
         expanded.add(u)
         for k in range(off[u], off[u + 1]):
             v = tg[k]
+            if v not in expanded and len(expanded) + len(seeds) < max_nodes:
+                seeds.add(v)
+        for w, _ in incoming[u]:
+            if w not in expanded and len(expanded) + len(seeds) < max_nodes:
+                seeds.add(w)
+
+    node_set = expanded
+    edges_from: list[int] = []
+    edges_to: list[int] = []
+    edges_guarded: list[bool] = []
+    truncated = not data.local_edges.complete[node_id]
+    for u in sorted(node_set):
+        for k in range(off[u], off[u + 1]):
+            v = tg[k]
+            if v not in node_set:
+                continue
             edges_from.append(u)
             edges_to.append(v)
             edges_guarded.append(gd[k])
-            if v not in expanded and len(expanded) + len(seeds) < max_nodes:
-                seeds.add(v)
             if max_edges is not None and len(edges_from) >= max_edges:
                 return LocalForceSubgraph(
-                    node_ids=tuple(sorted(expanded)),
+                    node_ids=tuple(sorted(node_set)),
                     edges_from=tuple(edges_from),
                     edges_to=tuple(edges_to),
                     edges_guarded=tuple(edges_guarded),
@@ -1300,12 +1293,12 @@ def select_local_force_subgraph(
                     truncated=True,
                 )
     return LocalForceSubgraph(
-        node_ids=tuple(sorted(expanded)),
+        node_ids=tuple(sorted(node_set)),
         edges_from=tuple(edges_from),
         edges_to=tuple(edges_to),
         edges_guarded=tuple(edges_guarded),
         is_module_scope=False,
-        truncated=not data.local_edges.complete[node_id],
+        truncated=truncated,
     )
 
 
