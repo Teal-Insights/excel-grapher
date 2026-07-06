@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.0.0 (2026-07-06)
+
+### Refactoring
+
+- **series_bindings**: Drop planned metadata and consolidate types
+  ([#349](https://github.com/Teal-Insights/excel-grapher/pull/349),
+  [`d9ba8fd`](https://github.com/Teal-Insights/excel-grapher/commit/d9ba8fd3d5d2acf917b141c4f7244b1117599d15))
+
+
 ## v2.5.2 (2026-07-06)
 
 ### Bug Fixes
