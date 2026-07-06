@@ -351,11 +351,6 @@ def create_dependency_graph(
     for h in hooks or []:
         graph.register_hook(h)
 
-    named_range_maps = build_named_range_map(wb_formulas)
-    named_ranges = named_range_maps.cell_map
-    named_range_ranges = named_range_maps.range_map
-    normalizer = FormulaNormalizer(named_ranges, named_range_ranges)
-    defined_names: set[str] = {str(name) for name in wb_formulas.defined_names}
     # Clear per-graph-build caches from previous invocations.
     clear_index_target_cache()
 
@@ -394,6 +389,14 @@ def create_dependency_graph(
     def _ensure_sheet_bounds(sheet: str) -> None:
         if sheet not in sheet_bounds:
             _get_ws_f(sheet)
+
+    for _sheet_name in wb_formulas.sheetnames:
+        _ensure_sheet_bounds(_sheet_name)
+    named_range_maps = build_named_range_map(wb_formulas, bounds=sheet_bounds)
+    named_ranges = named_range_maps.cell_map
+    named_range_ranges = named_range_maps.range_map
+    normalizer = FormulaNormalizer(named_ranges, named_range_ranges)
+    defined_names: set[str] = {str(name) for name in wb_formulas.defined_names}
 
     def _get_ws_v(sheet: str) -> Worksheet:
         # Only called when wb_values is not None.

@@ -611,6 +611,8 @@ def test_projection_copy_preserves_graph_metadata_fields() -> None:
         "sheet_bounds",
         "named_ranges",
         "named_range_ranges",
+        "taco_index",
+        "codegen_taco_index",
         "preparsed_formulas",
     )
 
@@ -619,7 +621,8 @@ def test_projection_copy_preserves_graph_metadata_fields() -> None:
         original_value = getattr(graph, field_name)
         projected_value = getattr(projected, field_name)
         assert projected_value == original_value
-        assert projected_value is not original_value
+        if original_value is not None:
+            assert projected_value is not original_value
 
 
 def test_optimal_projection_does_not_mutate_shared_preparsed_ast() -> None:

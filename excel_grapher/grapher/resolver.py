@@ -406,14 +406,19 @@ def _try_resolve_formula_defined_name(
     return None
 
 
-def build_named_range_map(wb: fastpyxl.Workbook) -> NamedRangeMaps:
+def build_named_range_map(
+    wb: fastpyxl.Workbook,
+    *,
+    bounds: dict[str, tuple[int, int]] | None = None,
+) -> NamedRangeMaps:
     """Map defined names to single-cell and range references.
 
     Only includes simple definitions like Sheet1!$A$1 or Sheet1!$A$1:$B$10
     (optionally quoted sheet name). Skips multi-area and complex formulas.
     Formula-based names (OFFSET, INDIRECT) are evaluated using workbook values.
     """
-    bounds = _sheet_bounds(wb)
+    if bounds is None:
+        bounds = _sheet_bounds(wb)
     cell_map: dict[str, tuple[str, str]] = {}
     range_map: dict[str, tuple[str, str, str]] = {}
     pending: dict[str, str] = {}

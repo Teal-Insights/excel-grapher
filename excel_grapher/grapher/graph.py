@@ -167,6 +167,8 @@ class DependencyGraph:
         cloned.named_range_ranges = (
             dict(self.named_range_ranges) if self.named_range_ranges is not None else None
         )
+        cloned.taco_index = self.taco_index
+        cloned.codegen_taco_index = self.codegen_taco_index
         cloned.preparsed_formulas = (
             dict(self.preparsed_formulas) if self.preparsed_formulas is not None else None
         )
