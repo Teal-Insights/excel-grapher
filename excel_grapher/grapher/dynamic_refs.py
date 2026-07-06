@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 import fastpyxl
 from fastpyxl.utils.cell import coordinate_from_string, coordinate_to_tuple
 
+from excel_grapher.core.address_keys import parse_address
 from excel_grapher.core.addressing import (
     WorkbookBoundsProtocol,
     indirect_text_to_range,
@@ -311,13 +312,10 @@ def _has_from_workbook_marker(annotated_type: Any) -> bool:
 
 def _split_addr_sheet_coord(addr: str) -> tuple[str, str]:
     """Split an address-style key into (sheet_name, coord) and normalize quoting."""
-    if "!" not in addr:
-        raise DynamicRefError(f"Constraint address must be sheet-qualified: {addr!r}")
-    sheet_part, coord = addr.split("!", 1)
-    sheet_part = sheet_part.strip()
-    if sheet_part.startswith("'") and sheet_part.endswith("'"):
-        sheet_part = sheet_part[1:-1].replace("''", "'")
-    return sheet_part, coord
+    try:
+        return parse_address(addr)
+    except ValueError as exc:
+        raise DynamicRefError(str(exc)) from exc
 
 
 def _infer_kind_from_value(value: Any) -> CellKind:
