@@ -9,10 +9,12 @@ from typing import Any, cast
 import pytest
 import xlsxwriter
 
+from excel_grapher.core.formula_ast import FunctionCallNode, parse
 from excel_grapher.exporter.projection import (
     BaseProjectionManifest,
     CompositeProjectionManifest,
     IdentityTransitCompression,
+    OptimalCompression,
     ProjectedNodeSnapshot,
     ProjectionResult,
     apply_projection,
@@ -618,6 +620,50 @@ def test_projection_copy_preserves_graph_metadata_fields() -> None:
         projected_value = getattr(projected, field_name)
         assert projected_value == original_value
         assert projected_value is not original_value
+
+
+def test_optimal_projection_does_not_mutate_shared_preparsed_ast() -> None:
+    from excel_grapher.grapher.graph import DependencyGraph
+
+    graph = DependencyGraph()
+    c = _make_node("Sheet1!C1", None, None, is_leaf=True)
+    b = _make_node("Sheet1!B1", "=SUM(Sheet1!C1,1)", "=SUM(Sheet1!C1,1)")
+    a = _make_node("Sheet1!A1", "=Sheet1!B1+1", "=Sheet1!B1+1")
+    for n in (c, b, a):
+        graph.add_node(n)
+    dr = DependencyCause.direct_ref
+    graph.add_edge(
+        "Sheet1!B1",
+        "Sheet1!C1",
+        provenance=EdgeProvenance(causes=frozenset({dr})),
+    )
+    ref = "Sheet1!B1"
+    formula = "=Sheet1!B1+1"
+    span = ((formula.index(ref), formula.index(ref) + len(ref)),)
+    graph.add_edge(
+        "Sheet1!A1",
+        "Sheet1!B1",
+        provenance=EdgeProvenance(
+            causes=frozenset({dr}),
+            direct_sites_formula=span,
+            direct_sites_normalized=span,
+        ),
+    )
+    ast = parse("=SUM(Sheet1!C1,1)")
+    assert isinstance(ast, FunctionCallNode)
+    original_args = tuple(ast.args)
+    graph.preparsed_formulas = {"=SUM(Sheet1!C1,1)": ast}
+
+    projection = OptimalCompression().project(graph)
+
+    assert "Sheet1!B1" not in projection
+    assert graph.preparsed_formulas is not None
+    projected_cache = projection.projected_graph.preparsed_formulas
+    assert projected_cache is not None
+    assert projected_cache is not graph.preparsed_formulas
+    assert projected_cache["=SUM(Sheet1!C1,1)"] is ast
+    assert graph.preparsed_formulas["=SUM(Sheet1!C1,1)"] is ast
+    assert ast.args == list(original_args)
 
 
 def test_projection_snapshot_and_rewrite_types_are_shared_across_layers() -> None:
