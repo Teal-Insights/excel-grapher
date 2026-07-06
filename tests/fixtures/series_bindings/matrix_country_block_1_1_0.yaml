@@ -19,9 +19,8 @@ series:
           role: key
           scope: cell
           bind:
-            kind: row_hierarchy
+            kind: row_label
             label_column: A
-            max_depth: 4
         - concept: INDICATOR
           role: key
           scope: cell
@@ -39,4 +38,4 @@ series:
       - REF_AREA
       - INDICATOR
       - TIME_PERIOD
-    notes: Schema 1.1.0 example; uses row_hierarchy (planned bind kind, not yet supported by resolver/codegen).
+    notes: Schema 1.1.0 example matrix binding with explicit row_label and column_header binds.

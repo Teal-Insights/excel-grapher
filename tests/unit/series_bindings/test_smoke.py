@@ -17,8 +17,8 @@ from excel_grapher.series_bindings.workflow import (
     validate_bindings_workbook,
 )
 from tests.integration.user_flows.utils import write_ffv2_workbook
+from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
 FFV2_BINDINGS = FIXTURES / "ffv2.yaml"
 BORVELIA_BINDINGS = FIXTURES / "borvelia_primary_balance.yaml"
 

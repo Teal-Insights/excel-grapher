@@ -13,8 +13,7 @@ from excel_grapher.series_bindings.workflow import (
     validate_bindings_workbook,
 )
 from tests.integration.user_flows.utils import write_ffv2_workbook
-
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
+from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
 
 def test_resolve_bindings_path_uses_colocated_yaml(tmp_path: Path) -> None:

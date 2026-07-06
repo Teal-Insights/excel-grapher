@@ -7,6 +7,206 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.0.1 (2026-07-06)
+
+### Performance Improvements
+
+- Speed up optimal projection manifests
+  ([#350](https://github.com/Teal-Insights/excel-grapher/pull/350),
+  [`9133cae`](https://github.com/Teal-Insights/excel-grapher/commit/9133caef3a687bf2da4476469c2c26332db75615))
+
+### Testing
+
+- Cover projection manifest ordering guards
+  ([#350](https://github.com/Teal-Insights/excel-grapher/pull/350),
+  [`9133cae`](https://github.com/Teal-Insights/excel-grapher/commit/9133caef3a687bf2da4476469c2c26332db75615))
+
+- Guard projection metadata copy fields
+  ([#350](https://github.com/Teal-Insights/excel-grapher/pull/350),
+  [`9133cae`](https://github.com/Teal-Insights/excel-grapher/commit/9133caef3a687bf2da4476469c2c26332db75615))
+
+- Guard shared preparsed ast projection copy
+  ([#350](https://github.com/Teal-Insights/excel-grapher/pull/350),
+  [`9133cae`](https://github.com/Teal-Insights/excel-grapher/commit/9133caef3a687bf2da4476469c2c26332db75615))
+
+
+## v3.0.0 (2026-07-06)
+
+### Refactoring
+
+- **series_bindings**: Drop planned metadata and consolidate types
+  ([#349](https://github.com/Teal-Insights/excel-grapher/pull/349),
+  [`d9ba8fd`](https://github.com/Teal-Insights/excel-grapher/commit/d9ba8fd3d5d2acf917b141c4f7244b1117599d15))
+
+
+## v2.5.2 (2026-07-06)
+
+### Bug Fixes
+
+- **grapher**: Repair local force subgraph selection
+  ([#345](https://github.com/Teal-Insights/excel-grapher/pull/345),
+  [`5d824bf`](https://github.com/Teal-Insights/excel-grapher/commit/5d824bf26d65f935748eba6d9cb57e5b7dcf86ab))
+
+- **grapher**: Repair local force subgraph selection and add tests
+  ([#345](https://github.com/Teal-Insights/excel-grapher/pull/345),
+  [`5d824bf`](https://github.com/Teal-Insights/excel-grapher/commit/5d824bf26d65f935748eba6d9cb57e5b7dcf86ab))
+
+### Code Style
+
+- Fix import ordering in local force subgraph tests
+  ([#345](https://github.com/Teal-Insights/excel-grapher/pull/345),
+  [`5d824bf`](https://github.com/Teal-Insights/excel-grapher/commit/5d824bf26d65f935748eba6d9cb57e5b7dcf86ab))
+
+### Refactoring
+
+- Minor grapher cleanup (dead code, sha256, version, viz API)
+  ([#348](https://github.com/Teal-Insights/excel-grapher/pull/348),
+  [`208a56f`](https://github.com/Teal-Insights/excel-grapher/commit/208a56f7aad90d16207498423a2544299f57e23d))
+
+- **test**: Move local force subgraph oracle into test helpers
+  ([#345](https://github.com/Teal-Insights/excel-grapher/pull/345),
+  [`5d824bf`](https://github.com/Teal-Insights/excel-grapher/commit/5d824bf26d65f935748eba6d9cb57e5b7dcf86ab))
+
+### Testing
+
+- **grapher**: Replace local force oracle with regression asserts
+  ([#345](https://github.com/Teal-Insights/excel-grapher/pull/345),
+  [`5d824bf`](https://github.com/Teal-Insights/excel-grapher/commit/5d824bf26d65f935748eba6d9cb57e5b7dcf86ab))
+
+
+## v2.5.1 (2026-07-06)
+
+### Bug Fixes
+
+- Preserve quoted apostrophe sheet refs in formula normalization
+  ([#346](https://github.com/Teal-Insights/excel-grapher/pull/346),
+  [`d4d05a2`](https://github.com/Teal-Insights/excel-grapher/commit/d4d05a2b50c2a5b3f9bb5395abb0cf2da4d81b65))
+
+- **evaluator**: Import xl_isblank from runtime after shim removal
+  ([#347](https://github.com/Teal-Insights/excel-grapher/pull/347),
+  [`37677be`](https://github.com/Teal-Insights/excel-grapher/commit/37677be0734d2af64b94b117612a72e0b9863a49))
+
+### Refactoring
+
+- Consolidate sheet-qualified address parsing
+  ([#343](https://github.com/Teal-Insights/excel-grapher/pull/343),
+  [`4ce69d7`](https://github.com/Teal-Insights/excel-grapher/commit/4ce69d72d87ba423929c4f8fb348c345334f11bd))
+
+- Remove unused LocalForceSubgraph API
+  ([#342](https://github.com/Teal-Insights/excel-grapher/pull/342),
+  [`d3f261e`](https://github.com/Teal-Insights/excel-grapher/commit/d3f261e8d78ca6bea1f23c560edae7eb58b6140f))
+
+- **evaluator**: Collapse function shims into explicit registry
+  ([#347](https://github.com/Teal-Insights/excel-grapher/pull/347),
+  [`37677be`](https://github.com/Teal-Insights/excel-grapher/commit/37677be0734d2af64b94b117612a72e0b9863a49))
+
+### Testing
+
+- Cover remaining apostrophe address parsers and fix call sites
+  ([#343](https://github.com/Teal-Insights/excel-grapher/pull/343),
+  [`4ce69d7`](https://github.com/Teal-Insights/excel-grapher/commit/4ce69d72d87ba423929c4f8fb348c345334f11bd))
+
+- Xfail graph build with quoted apostrophe sheet refs in formulas
+  ([#343](https://github.com/Teal-Insights/excel-grapher/pull/343),
+  [`4ce69d7`](https://github.com/Teal-Insights/excel-grapher/commit/4ce69d72d87ba423929c4f8fb348c345334f11bd))
+
+
+## v2.5.0 (2026-07-05)
+
+### Documentation
+
+- Add Cursor Cloud setup instructions to AGENTS.md
+  ([#340](https://github.com/Teal-Insights/excel-grapher/pull/340),
+  [`47b078a`](https://github.com/Teal-Insights/excel-grapher/commit/47b078aa48bc6f837651e409f44d7f86a09ba026))
+
+### Features
+
+- **grapher**: Opt-in AST pre-parsing during graph extraction
+  ([#341](https://github.com/Teal-Insights/excel-grapher/pull/341),
+  [`511492a`](https://github.com/Teal-Insights/excel-grapher/commit/511492ac5b77b797fc9053fab74c2fe25440d6a5))
+
+### Testing
+
+- Address PR 341 review feedback on preparsed formulas
+  ([#341](https://github.com/Teal-Insights/excel-grapher/pull/341),
+  [`511492a`](https://github.com/Teal-Insights/excel-grapher/commit/511492ac5b77b797fc9053fab74c2fe25440d6a5))
+
+
+## v2.4.1 (2026-07-04)
+
+### Performance Improvements
+
+- **operators**: Fast batch coercion for numeric-string compare arrays
+  ([#339](https://github.com/Teal-Insights/excel-grapher/pull/339),
+  [`28e532c`](https://github.com/Teal-Insights/excel-grapher/commit/28e532c1f2c0fb9c8a42d9a556c68cb4df72b041))
+
+### Refactoring
+
+- **operators**: Address PR review feedback for numeric-string fastpath
+  ([#339](https://github.com/Teal-Insights/excel-grapher/pull/339),
+  [`28e532c`](https://github.com/Teal-Insights/excel-grapher/commit/28e532c1f2c0fb9c8a42d9a556c68cb4df72b041))
+
+### Testing
+
+- **exporter**: Refresh dep-tracking baseline after coercion helper
+  ([#339](https://github.com/Teal-Insights/excel-grapher/pull/339),
+  [`28e532c`](https://github.com/Teal-Insights/excel-grapher/commit/28e532c1f2c0fb9c8a42d9a556c68cb4df72b041))
+
+
+## v2.4.0 (2026-07-04)
+
+### Code Style
+
+- **evaluator**: Fix ruff and docstring issues in AST cache PR
+  ([#338](https://github.com/Teal-Insights/excel-grapher/pull/338),
+  [`3724cfa`](https://github.com/Teal-Insights/excel-grapher/commit/3724cfa4f2ebddc037ef8e8f268fd4cbf31ab488))
+
+### Features
+
+- **evaluator**: Cache parsed formula ASTs keyed by normalized_formula
+  ([#338](https://github.com/Teal-Insights/excel-grapher/pull/338),
+  [`3724cfa`](https://github.com/Teal-Insights/excel-grapher/commit/3724cfa4f2ebddc037ef8e8f268fd4cbf31ab488))
+
+
+## v2.3.0 (2026-07-04)
+
+### Code Style
+
+- Sort imports in evaluator math functions
+  ([#334](https://github.com/Teal-Insights/excel-grapher/pull/334),
+  [`5103a4a`](https://github.com/Teal-Insights/excel-grapher/commit/5103a4a9ef2a00e2cfb24f61e2e393f722ef57a2))
+
+### Features
+
+- **evaluator**: Implement EXP function
+  ([#334](https://github.com/Teal-Insights/excel-grapher/pull/334),
+  [`5103a4a`](https://github.com/Teal-Insights/excel-grapher/commit/5103a4a9ef2a00e2cfb24f61e2e393f722ef57a2))
+
+### Testing
+
+- **exp**: Strengthen coverage and add dynamic-ref domain inference
+  ([#334](https://github.com/Teal-Insights/excel-grapher/pull/334),
+  [`5103a4a`](https://github.com/Teal-Insights/excel-grapher/commit/5103a4a9ef2a00e2cfb24f61e2e393f722ef57a2))
+
+- **parity**: Add live Excel harness and ABS/EXP excel parity tests
+  ([#334](https://github.com/Teal-Insights/excel-grapher/pull/334),
+  [`5103a4a`](https://github.com/Teal-Insights/excel-grapher/commit/5103a4a9ef2a00e2cfb24f61e2e393f722ef57a2))
+
+
+## v2.2.0 (2026-07-03)
+
+### Chores
+
+- Relicense project under MIT ([#330](https://github.com/Teal-Insights/excel-grapher/pull/330),
+  [`a82aadc`](https://github.com/Teal-Insights/excel-grapher/commit/a82aadce07570ead3142e48d88b3e83a17de25ee))
+
+### Features
+
+- **series_bindings**: Add optional view-level groups for export sequencing (#308)
+  ([#332](https://github.com/Teal-Insights/excel-grapher/pull/332),
+  [`5d2e610`](https://github.com/Teal-Insights/excel-grapher/commit/5d2e6103b588ec158306d5eb6d0364f75921c39c))
+
+
 ## v2.1.3 (2026-07-03)
 
 ### Bug Fixes

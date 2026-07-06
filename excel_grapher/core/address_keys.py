@@ -37,6 +37,25 @@ def quote_sheet_if_needed(sheet: str) -> str:
     return "'" + _escape_sheet_for_formula(sheet) + "'"
 
 
+# Regex fragment for the inner part of a quoted Excel sheet name in formulas.
+_QUOTED_SHEET_NAME_INNER = r"(?:[^']|'')+"
+
+
+def quoted_sheet_name_regex(*, capture_group: str = "sheet") -> str:
+    """Return a regex fragment matching a quoted Excel sheet name (no trailing ``!``)."""
+    return rf"'(?P<{capture_group}>{_QUOTED_SHEET_NAME_INNER})'"
+
+
+def quoted_sheet_prefix_regex(*, capture_group: str = "sheet") -> str:
+    """Return a regex fragment matching ``'Sheet Name'!`` with Excel ``''`` escape."""
+    return quoted_sheet_name_regex(capture_group=capture_group) + "!"
+
+
+def unescape_formula_sheet_name(escaped: str) -> str:
+    """Unescape a sheet name captured from a quoted formula reference."""
+    return escaped.replace("''", "'")
+
+
 def parse_address(address: str) -> tuple[str, str]:
     """Parse a sheet-qualified address into `(sheet, cell_coord)`.
 

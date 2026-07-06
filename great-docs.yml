@@ -183,8 +183,6 @@ reference:
       - series_bindings.WorkbookSeriesBindings
       - series_bindings.IMPLEMENTED_BIND_KINDS
       - series_bindings.IMPLEMENTED_LAYOUTS
-      - series_bindings.PLANNED_BIND_KINDS
-      - series_bindings.PLANNED_LAYOUTS
       - series_bindings.SUPPORTED_SCHEMA_VERSIONS
       - series_bindings.bindings_canonical_sha256
       - series_bindings.derive_input_series
@@ -256,7 +254,6 @@ reference:
       - GuardExpr
       - LightweightVizPayload
       - Literal  # 1 method(s)
-      - LocalForceSubgraph
       - Node
       - Not  # 1 method(s)
       - NotEqualCell
@@ -334,7 +331,6 @@ reference:
       - normalize_blank_range_specs
       - resolve_series_bindings
       - save_graph_cache
-      - select_local_force_subgraph
       - select_path_induced_subgraph
       - to_graphviz
       - to_mermaid
@@ -345,7 +341,6 @@ reference:
       - validate_graph
       - validate_series_bindings
       - write_lightweight_viz_data
-      - write_lightweight_viz_html
       - write_web_viz_html
 
   - title: Constants

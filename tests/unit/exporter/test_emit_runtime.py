@@ -17,6 +17,12 @@ def test_emit_runtime_includes_xl_abs_definition() -> None:
     assert "xl_abs" in code
 
 
+def test_emit_runtime_includes_xl_exp_definition() -> None:
+    code = emit_runtime({"xl_exp"}, include_offset_table=False)
+    assert "def xl_exp" in code
+    assert "xl_exp" in code
+
+
 def test_emit_runtime_includes_smoke_blocker_symbols() -> None:
     code = emit_runtime(
         {

@@ -30,6 +30,20 @@
       "name": "xl_gt_numeric_1k"
     },
     {
+      "category": "compare",
+      "cell_count": 10000,
+      "cells_per_sec": 1516045.75,
+      "elapsed_sec": 0.006596,
+      "name": "xl_eq_numeric_string_10k"
+    },
+    {
+      "category": "compare",
+      "cell_count": 10000,
+      "cells_per_sec": 1481043.31,
+      "elapsed_sec": 0.006752,
+      "name": "xl_eq_numeric_string_ws_10k"
+    },
+    {
       "category": "arithmetic",
       "cell_count": 1000,
       "cells_per_sec": 220477.27,

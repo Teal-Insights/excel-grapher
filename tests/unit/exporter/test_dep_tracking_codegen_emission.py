@@ -3,10 +3,9 @@
 Non-iterative exports without input-direction series bindings omit ``deps`` /
 ``reverse_deps``, ``_record_dependency``, ``invalidate``, ``set_inputs``, and the
 ``ctx._record_dependency`` call site in ``_evaluate_address``.
-
 Minimal non-iterative export baseline (``S!A1`` leaf + ``S!B1`` formula):
 
-- **488 total lines**; embedded runtime **418 lines** (~86% of export)
+- **492 total lines**; embedded runtime **422 lines** (~86% of export)
 - **0 dep-tracking lines**
 - **62 cache-eval scaffold lines** (``_evaluate_address``, ``xl_cell``, ``xl_eval``)
 
@@ -34,10 +33,9 @@ from tests.integration.utils.parity_harness import (
     count_dep_tracking_lines,
     count_embedded_runtime_lines,
 )
+from tests.paths import DEP_TRACKING_BASELINE_FIXTURES
 
-BASELINE_PATH = (
-    Path(__file__).resolve().parents[2] / "fixtures" / "dep_tracking_baseline" / "baseline.json"
-)
+BASELINE_PATH = DEP_TRACKING_BASELINE_FIXTURES / "baseline.json"
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -76,7 +74,7 @@ def test_dep_tracking_baseline_fixture_matches_schema() -> None:
     metrics = document["minimal_non_iterative_export"]
     assert isinstance(metrics, dict)
     assert metrics["dep_tracking_lines"] == 0
-    assert metrics["embedded_runtime_lines"] == 418
+    assert metrics["embedded_runtime_lines"] == 422
     targets = document["sprint2_targets"]
     assert targets["dep_tracking_lines"] == 0
     assert targets["cache_eval_scaffold_line_budget"] == SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET

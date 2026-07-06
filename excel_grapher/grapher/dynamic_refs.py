@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 import fastpyxl
 from fastpyxl.utils.cell import coordinate_from_string, coordinate_to_tuple
 
+from excel_grapher.core.address_keys import parse_address
 from excel_grapher.core.addressing import (
     WorkbookBoundsProtocol,
     indirect_text_to_range,
@@ -311,13 +312,10 @@ def _has_from_workbook_marker(annotated_type: Any) -> bool:
 
 def _split_addr_sheet_coord(addr: str) -> tuple[str, str]:
     """Split an address-style key into (sheet_name, coord) and normalize quoting."""
-    if "!" not in addr:
-        raise DynamicRefError(f"Constraint address must be sheet-qualified: {addr!r}")
-    sheet_part, coord = addr.split("!", 1)
-    sheet_part = sheet_part.strip()
-    if sheet_part.startswith("'") and sheet_part.endswith("'"):
-        sheet_part = sheet_part[1:-1].replace("''", "'")
-    return sheet_part, coord
+    try:
+        return parse_address(addr)
+    except ValueError as exc:
+        raise DynamicRefError(str(exc)) from exc
 
 
 def _infer_kind_from_value(value: Any) -> CellKind:
@@ -394,10 +392,7 @@ def _sheet_from_addr(addr: str) -> str:
     """Return sheet part of address (e.g. 'Sheet1!A1' -> 'Sheet1')."""
     if "!" not in addr:
         return ""
-    if addr.startswith("'"):
-        end = addr.index("'", 1)
-        return addr[1:end]
-    return addr.split("!", 1)[0]
+    return parse_address(addr)[0]
 
 
 def expand_leaf_env_to_argument_env(
@@ -1912,6 +1907,32 @@ def _abs_numeric_domain(
     return _IntBounds(0, max(-lo, hi))
 
 
+def _exp_numeric_domain(
+    d: _FiniteInts | _IntBounds | None,
+) -> _FiniteInts | _IntBounds | None:
+    """Map an integer numeric domain through ``EXP`` as conservative ``_IntBounds``."""
+    if d is None:
+        return None
+    if isinstance(d, _FiniteInts):
+        exp_lo = math.inf
+        exp_hi = -math.inf
+        for value in d.values:
+            try:
+                ev = math.exp(value)
+            except OverflowError:
+                return None
+            exp_lo = min(exp_lo, ev)
+            exp_hi = max(exp_hi, ev)
+        return _IntBounds(int(math.floor(exp_lo)), int(math.ceil(exp_hi)))
+    lo, hi = d.lo, d.hi
+    try:
+        exp_lo = math.exp(lo)
+        exp_hi = math.exp(hi)
+    except OverflowError:
+        return None
+    return _IntBounds(int(math.floor(exp_lo)), int(math.ceil(exp_hi)))
+
+
 def _min_numeric_domains(
     a: _FiniteInts | _IntBounds,
     b: _FiniteInts | _IntBounds,
@@ -2201,6 +2222,7 @@ def _describe_unsupported_numeric_construct(node: AstNode | None) -> str | None:
             "MIN",
             "MAX",
             "ABS",
+            "EXP",
         }:
             for arg in node.args:
                 reason = _describe_unsupported_numeric_construct(arg)
@@ -2665,6 +2687,17 @@ def _infer_numeric_domain_result(
             if inner.domain is None:
                 return _domain_result(None)
             return _domain_result(_abs_numeric_domain(inner.domain))
+        if name == "EXP":
+            if len(node.args) != 1:
+                return _domain_result(None)
+            inner = _infer_numeric_domain_result(
+                node.args[0], env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
+            )
+            if inner.diagnostic is not None:
+                return inner
+            if inner.domain is None:
+                return _domain_result(None)
+            return _domain_result(_exp_numeric_domain(inner.domain))
         if name in {"MIN", "MAX"}:
             if len(node.args) < 1:
                 return _domain_result(None)
@@ -3262,14 +3295,7 @@ def _collect_addresses(node: AstNode) -> set[str]:
 def _split_qualified_to_sheet_a1(qualified: str) -> tuple[str, str]:
     if "!" not in qualified:
         raise ValueError(f"Expected sheet-qualified reference, got {qualified!r}")
-    if qualified.startswith("'"):
-        end = qualified.index("'", 1)
-        sheet = qualified[1:end].replace("''", "'")
-        tail = qualified[end + 1 :]
-        if not tail.startswith("!"):
-            raise ValueError(f"Expected '!' after quoted sheet in {qualified!r}")
-        return sheet, tail[1:].strip()
-    sheet, a1 = qualified.split("!", 1)
+    sheet, a1 = parse_address(qualified)
     return sheet.strip(), a1.strip()
 
 

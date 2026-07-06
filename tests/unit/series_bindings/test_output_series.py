@@ -10,8 +10,7 @@ from excel_grapher.series_bindings import (
     expand_data_range,
     load_series_bindings,
 )
-
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
+from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
 
 def test_derive_output_series_from_merged_manifest(tmp_path: Path) -> None:

@@ -37,7 +37,7 @@ from excel_grapher.core import XlError  # and other shared types, if needed
 
 ### Installation
 
-This is a proprietary package. Install from the private GitHub repository:
+Released under the [MIT license](LICENSE). Install from GitHub:
 
 **Using `uv` (recommended):**
 
@@ -60,8 +60,6 @@ pip install git+https://github.com/Teal-Insights/excel-grapher
 # With extras:
 pip install "excel-grapher[networkx] @ git+https://github.com/Teal-Insights/excel-grapher"
 ```
-
-> **Note:** You must have access to the Teal-Insights GitHub organization and appropriate SSH keys or tokens configured.
 
 ---
 

@@ -11,8 +11,7 @@ import pytest
 
 from excel_grapher.cli import main
 from tests.integration.user_flows.utils import write_ffv2_workbook
-
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
+from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
 
 def test_main_missing_workbook(tmp_path: Path) -> None:

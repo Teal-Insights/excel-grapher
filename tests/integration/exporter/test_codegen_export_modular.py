@@ -11,6 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from excel_grapher import DependencyGraph, FormulaEvaluator, Node
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.exporter.codegen import CodeGenerator
@@ -314,4 +316,35 @@ def test_codegen_generate_modules_embeds_xl_abs_in_runtime(tmp_path: Path) -> No
         sys.modules.pop("exported_abs", None)
         for name in list(sys.modules):
             if name.startswith("exported_abs."):
+                sys.modules.pop(name, None)
+
+
+def test_codegen_generate_modules_embeds_xl_exp_in_runtime(tmp_path: Path) -> None:
+    """Modular export embeds ``xl_exp`` when the graph uses ``EXP``."""
+    graph = _make_graph(
+        _make_node("S!A1", None, 1.0),
+        _make_node("S!B1", "=EXP(S!A1)", None),
+    )
+    files = CodeGenerator(graph).generate_modules(["S!B1"])
+
+    runtime = files["runtime.py"]
+    internals = files["internals.py"]
+    assert "def xl_exp" in runtime
+    assert "xl_exp" in internals
+
+    pkg_dir = tmp_path / "exported_exp"
+    for filename, content in files.items():
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_dir / filename).write_text(content, encoding="utf-8")
+
+    sys.path.insert(0, str(tmp_path))
+    try:
+        pkg = importlib.import_module("exported_exp")
+        results = pkg.compute_all()
+        assert results["S!B1"] == pytest.approx(2.718281828459045)
+    finally:
+        sys.path.remove(str(tmp_path))
+        sys.modules.pop("exported_exp", None)
+        for name in list(sys.modules):
+            if name.startswith("exported_exp."):
                 sys.modules.pop(name, None)

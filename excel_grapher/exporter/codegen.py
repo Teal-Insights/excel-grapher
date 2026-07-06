@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast as py_ast
+import json
 import re
 from collections.abc import Iterable, Mapping, Sequence, Set
 from pathlib import Path
@@ -49,7 +50,7 @@ from excel_grapher.grapher.target_expansion import (
     split_range_target_on_colon,
 )
 
-__all__ = ["CodeGenerator", "GenerationParts", "GraphLike", "GraphNode"]
+__all__ = ["CodeGenerator", "GraphLike", "GraphNode"]
 
 if TYPE_CHECKING:
     from excel_grapher.exporter.projection import ProjectionManifest
@@ -562,18 +563,42 @@ class CodeGenerator:
     def _series_binding_public_names(
         bindings: WorkbookSeriesBindings,
     ) -> tuple[list[str], list[str]]:
-        """Return declared public setter and compute function names."""
+        """Return declared public setter and compute function names.
+
+        Without groups the names sort alphabetically (flat export); with
+        view-level groups they follow the grouped export order.
+        """
+        from excel_grapher.series_bindings.groups import (
+            bindings_have_groups,
+            grouped_public_names,
+        )
         from excel_grapher.series_bindings.workflow import compute_names, setter_names
 
+        if bindings_have_groups(bindings):
+            return grouped_public_names(bindings)
         return setter_names(bindings), compute_names(bindings)
+
+    @staticmethod
+    def _series_binding_groups_manifest(
+        bindings: WorkbookSeriesBindings | None,
+    ) -> dict[str, Any] | None:
+        """Return the group manifest when any binding declares groups."""
+        if bindings is None:
+            return None
+        from excel_grapher.series_bindings.groups import bindings_have_groups, group_manifest
+
+        if not bindings_have_groups(bindings):
+            return None
+        return dict(group_manifest(bindings))
 
     @staticmethod
     def _emit_series_binding_discovery_lines(
         setter_names: Sequence[str],
         compute_names: Sequence[str],
+        groups_manifest: Mapping[str, Any] | None = None,
     ) -> list[str]:
         """Emit generated-code helpers that list public series-binding functions."""
-        return [
+        lines = [
             "def list_setters() -> list[str]:",
             '    """Return generated series-binding setter function names."""',
             f"    return {list(setter_names)!r}",
@@ -583,6 +608,17 @@ class CodeGenerator:
             '    """Return generated series-binding compute function names."""',
             f"    return {list(compute_names)!r}",
         ]
+        if groups_manifest is not None:
+            lines.extend(
+                [
+                    "",
+                    "",
+                    "def list_groups() -> dict[str, object]:",
+                    '    """Return the view-level group manifest for the generated API."""',
+                    f"    return {dict(groups_manifest)!r}",
+                ]
+            )
+        return lines
 
     def _range_addresses_2d(self, start: str, end: str) -> list[list[str]]:
         """Generate all cell addresses in a range as a 2D list (rows x cols)."""
@@ -2242,6 +2278,7 @@ class CodeGenerator:
             self._emit_series_binding_discovery_lines(
                 series_setter_names,
                 series_compute_names,
+                self._series_binding_groups_manifest(series_bindings),
             )
         )
         lines.append("")
@@ -2421,10 +2458,12 @@ class CodeGenerator:
                 series_bindings
             )
             api_lines.append("")
+        groups_manifest = self._series_binding_groups_manifest(series_bindings)
         api_lines.extend(
             self._emit_series_binding_discovery_lines(
                 series_setter_names,
                 series_compute_names,
+                groups_manifest,
             )
         )
         api_lines.append("")
@@ -2459,6 +2498,8 @@ class CodeGenerator:
         api_py = "\n".join(api_lines)
 
         api_exports = ["compute_all", "make_context", "list_setters", "list_computes"]
+        if groups_manifest is not None:
+            api_exports.append("list_groups")
         api_exports.extend(series_setter_names)
         api_exports.extend(series_compute_names)
         api_imports = ", ".join(api_exports)
@@ -2484,6 +2525,8 @@ class CodeGenerator:
         }
         if api_helpers_py is not None:
             modules["_api_helpers.py"] = api_helpers_py
+        if groups_manifest is not None:
+            modules["groups.json"] = json.dumps(groups_manifest, indent=2) + "\n"
         return modules
 
     def _workbook_sort_addresses(self, addresses: Iterable[str]) -> list[str]:

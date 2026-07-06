@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from .range_compression import TacoIndex
 
 from excel_grapher.core.address_keys import normalize_key, sort_node_keys
+from excel_grapher.core.formula_ast import AstNode
 
 from .dependency_provenance import DependencyCause, EdgeProvenance, merge_edge_provenance
 from .guard import And, CellRef, Compare, GuardConstraints, GuardExpr, Not, Or, or_guard
@@ -125,11 +126,50 @@ class DependencyGraph:
     named_range_ranges: dict[str, tuple[str, str, str]] | None = None
     taco_index: TacoIndex | None = None
     codegen_taco_index: TacoIndex | None = None
+    # Opt-in AST cache from warm_ast_cache; not JSON-serialized; re-warm after load.
+    preparsed_formulas: dict[str, AstNode] | None = None
 
     def copy(self) -> DependencyGraph:
         """Return a deep copy of this graph (node hooks are not copied)."""
         cloned = copy.deepcopy(self)
         cloned._hooks = []
+        return cloned
+
+    def _copy_for_projection(self) -> DependencyGraph:
+        """Return an isolated mutable graph clone for projection rewrites."""
+        cloned = DependencyGraph()
+        cloned._nodes = {
+            key: Node(
+                sheet=node.sheet,
+                column=node.column,
+                row=node.row,
+                formula=node.formula,
+                normalized_formula=node.normalized_formula,
+                value=node.value,
+                is_leaf=node.is_leaf,
+                is_target=node.is_target,
+                metadata=dict(node.metadata),
+            )
+            for key, node in self._nodes.items()
+        }
+        cloned._edges = {key: set(deps) for key, deps in self._edges.items()}
+        cloned._reverse_edges = {
+            key: set(dependents) for key, dependents in self._reverse_edges.items()
+        }
+        cloned._guards = dict(self._guards)
+        cloned._edge_extra = {edge: dict(extra) for edge, extra in self._edge_extra.items()}
+        cloned.leaf_classification = (
+            dict(self.leaf_classification) if self.leaf_classification is not None else None
+        )
+        cloned.sheet_order = list(self.sheet_order) if self.sheet_order is not None else None
+        cloned.sheet_bounds = dict(self.sheet_bounds) if self.sheet_bounds is not None else None
+        cloned.named_ranges = dict(self.named_ranges) if self.named_ranges is not None else None
+        cloned.named_range_ranges = (
+            dict(self.named_range_ranges) if self.named_range_ranges is not None else None
+        )
+        cloned.preparsed_formulas = (
+            dict(self.preparsed_formulas) if self.preparsed_formulas is not None else None
+        )
         return cloned
 
     # ---- node insertion and iteration ---------------------------------------

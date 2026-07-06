@@ -36,6 +36,17 @@ def _try_parse_iso_date_serial(text: str) -> float | None:
         return None
 
 
+def try_coerce_string_to_float(text: str) -> float | None:
+    """Parse one Excel numeric string, or return None when coercion fails."""
+    stripped = text.strip()
+    if stripped == "":
+        return 0.0
+    try:
+        return float(stripped)
+    except ValueError:
+        return _try_parse_iso_date_serial(stripped)
+
+
 def to_native(value: Any) -> Any:
     if hasattr(value, "item"):
         return value.item()
@@ -52,16 +63,10 @@ def to_number(value: CellValue) -> float | XlError:
     if isinstance(value, (int, float)):
         return float(value)
     if isinstance(value, str):
-        s = value.strip()
-        if s == "":
-            return 0.0
-        try:
-            return float(s)
-        except ValueError:
-            serial = _try_parse_iso_date_serial(s)
-            if serial is not None:
-                return serial
+        number = try_coerce_string_to_float(value)
+        if number is None:
             return XlError.VALUE
+        return number
     if isinstance(value, ExcelRange):
         return XlError.VALUE
     return XlError.VALUE

@@ -1219,96 +1219,6 @@ def lightweight_viz_flat(payload: LightweightVizPayload) -> LightweightVizFlat:
     )
 
 
-@dataclass(frozen=True, slots=True)
-class LocalForceSubgraph:
-    node_ids: tuple[int, ...]
-    edges_from: tuple[int, ...]
-    edges_to: tuple[int, ...]
-    edges_guarded: tuple[bool, ...]
-    is_module_scope: bool
-    truncated: bool
-
-
-def select_local_force_subgraph(
-    payload: LightweightVizPayload,
-    *,
-    node_id: int,
-) -> LocalForceSubgraph:
-    data = lightweight_viz_flat(payload)
-    n = data.stats.node_count
-    max_nodes = data.max_local_nodes if data.max_local_nodes is not None else n
-    max_edges = data.max_local_edges
-    if not (0 <= node_id < n):
-        raise ValueError(f"node_id out of range: {node_id}")
-
-    mid = data.nodes.module_id[node_id]
-    mod = data.modules[mid]
-    if mod.node_count <= max_nodes:
-        nodes = [i for i in range(n) if data.nodes.module_id[i] == mid]
-        nodes.sort()
-        node_set = set(nodes)
-        ef: list[int] = []
-        et: list[int] = []
-        eg: list[bool] = []
-        off = data.local_edges.offsets
-        tg = data.local_edges.targets
-        gd = data.local_edges.guarded
-        for u in nodes:
-            for k in range(off[u], off[u + 1]):
-                v = tg[k]
-                if v in node_set:
-                    ef.append(u)
-                    et.append(v)
-                    eg.append(gd[k])
-        return LocalForceSubgraph(
-            node_ids=tuple(nodes),
-            edges_from=tuple(ef),
-            edges_to=tuple(et),
-            edges_guarded=tuple(eg),
-            is_module_scope=True,
-            truncated=not data.local_edges.complete[node_id],
-        )
-
-    off = data.local_edges.offsets
-    tg = data.local_edges.targets
-    gd = data.local_edges.guarded
-    seeds = {node_id}
-    expanded: set[int] = set()
-    edges_from: list[int] = []
-    edges_to: list[int] = []
-    edges_guarded: list[bool] = []
-    while seeds and len(expanded) < max_nodes:
-        u = min(seeds)
-        seeds.discard(u)
-        if u in expanded:
-            continue
-        expanded.add(u)
-        for k in range(off[u], off[u + 1]):
-            v = tg[k]
-            edges_from.append(u)
-            edges_to.append(v)
-            edges_guarded.append(gd[k])
-            if v not in expanded and len(expanded) + len(seeds) < max_nodes:
-                seeds.add(v)
-            if max_edges is not None and len(edges_from) >= max_edges:
-                return LocalForceSubgraph(
-                    node_ids=tuple(sorted(expanded)),
-                    edges_from=tuple(edges_from),
-                    edges_to=tuple(edges_to),
-                    edges_guarded=tuple(edges_guarded),
-                    is_module_scope=False,
-                    truncated=True,
-                )
-    return LocalForceSubgraph(
-        node_ids=tuple(sorted(expanded)),
-        edges_from=tuple(edges_from),
-        edges_to=tuple(edges_to),
-        edges_guarded=tuple(edges_guarded),
-        is_module_scope=False,
-        truncated=not data.local_edges.complete[node_id],
-    )
-
-
 # --- Serialization ------------------------------------------------------------
 
 
@@ -1398,7 +1308,7 @@ def write_lightweight_viz_data(payload: LightweightVizPayload, path: Path | str)
     p.write_text(serialize_lightweight_viz_json(payload), encoding="utf-8")
 
 
-def write_lightweight_viz_html(
+def write_web_viz_html(
     payload: LightweightVizPayload,
     path: Path | str,
     *,
@@ -1408,6 +1318,7 @@ def write_lightweight_viz_html(
     inline_size_budget_mb: int = 50,
     template_path: Path | str | None = None,
 ) -> None:
+    """Write a web visualization HTML bundle from a web-viz payload."""
     from importlib import resources
 
     if payload.version != VIZ_PAYLOAD_VERSION:
@@ -1471,25 +1382,3 @@ def write_lightweight_viz_html(
         .replace("/*__SIDECAR__*/", sidecar_js)
     )
     out.write_text(html, encoding="utf-8")
-
-
-def write_web_viz_html(
-    payload: LightweightVizPayload,
-    path: Path | str,
-    *,
-    title: str = "Workbook dependency graph",
-    data_mode: Literal["inline", "sidecar", "auto"] = "auto",
-    data_path: Path | str | None = None,
-    inline_size_budget_mb: int = 50,
-    template_path: Path | str | None = None,
-) -> None:
-    """Write a web visualization HTML bundle from a web-viz payload."""
-    write_lightweight_viz_html(
-        payload,
-        path,
-        title=title,
-        data_mode=data_mode,
-        data_path=data_path,
-        inline_size_budget_mb=inline_size_budget_mb,
-        template_path=template_path,
-    )

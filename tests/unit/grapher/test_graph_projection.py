@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 import xlsxwriter
 
+from excel_grapher.core.formula_ast import FunctionCallNode, parse
 from excel_grapher.exporter.projection import (
     BaseProjectionManifest,
     CompositeProjectionManifest,
     IdentityTransitCompression,
+    OptimalCompression,
     ProjectedNodeSnapshot,
     ProjectionResult,
     apply_projection,
@@ -550,6 +553,117 @@ def test_custom_collapse_projection_uses_public_primitives_without_forwarding() 
     condensed = projection.get_node("Sheet1!A1")
     assert condensed is not None
     assert condensed.metadata["collapsed_from"] == ["Sheet1!B1"]
+
+
+def test_projection_copy_isolates_projection_mutations() -> None:
+    from excel_grapher.grapher.graph import DependencyGraph
+
+    graph = DependencyGraph()
+    c = _make_node("Sheet1!C1", None, None, is_leaf=True)
+    b = _make_node("Sheet1!B1", "=Sheet1!C1", "=Sheet1!C1")
+    for n in (c, b):
+        graph.add_node(n)
+    graph.add_edge(
+        "Sheet1!B1",
+        "Sheet1!C1",
+        provenance=EdgeProvenance(causes=frozenset({DependencyCause.direct_ref})),
+    )
+    graph.set_node_metadata("Sheet1!B1", {"label": "source"})
+
+    projected = graph._copy_for_projection()
+    projected.set_node_formula("Sheet1!B1", "=1", "=1")
+    projected.set_node_metadata("Sheet1!B1", {"label": "projected"})
+    projected.remove_node("Sheet1!C1")
+
+    original = graph.get_node("Sheet1!B1")
+    assert original is not None
+    assert original.normalized_formula == "=Sheet1!C1"
+    assert original.metadata["label"] == "source"
+    assert graph.get_dependencies("Sheet1!B1") == frozenset({"Sheet1!C1"})
+    assert "Sheet1!C1" in graph
+
+
+def test_projection_copy_preserves_graph_metadata_fields() -> None:
+    from excel_grapher.grapher.graph import DependencyGraph
+
+    graph = DependencyGraph()
+    graph.leaf_classification = {"Sheet1!A1": "input"}
+    graph.sheet_order = ["Sheet1", "Sheet2"]
+    graph.sheet_bounds = {"Sheet1": (1, 10)}
+    graph.named_ranges = {"Rate": ("Sheet1", "A1")}
+    graph.named_range_ranges = {"Table": ("Sheet1", "A1", "B2")}
+    graph.preparsed_formulas = cast(Any, {"Sheet1!A1": object()})
+
+    graph_structure_fields = {
+        "_nodes",
+        "_edges",
+        "_reverse_edges",
+        "_guards",
+        "_edge_extra",
+        "_hooks",
+    }
+    metadata_field_names = tuple(
+        field.name for field in fields(DependencyGraph) if field.name not in graph_structure_fields
+    )
+    assert metadata_field_names == (
+        "leaf_classification",
+        "sheet_order",
+        "sheet_bounds",
+        "named_ranges",
+        "named_range_ranges",
+        "preparsed_formulas",
+    )
+
+    projected = graph._copy_for_projection()
+    for field_name in metadata_field_names:
+        original_value = getattr(graph, field_name)
+        projected_value = getattr(projected, field_name)
+        assert projected_value == original_value
+        assert projected_value is not original_value
+
+
+def test_optimal_projection_does_not_mutate_shared_preparsed_ast() -> None:
+    from excel_grapher.grapher.graph import DependencyGraph
+
+    graph = DependencyGraph()
+    c = _make_node("Sheet1!C1", None, None, is_leaf=True)
+    b = _make_node("Sheet1!B1", "=SUM(Sheet1!C1,1)", "=SUM(Sheet1!C1,1)")
+    a = _make_node("Sheet1!A1", "=Sheet1!B1+1", "=Sheet1!B1+1")
+    for n in (c, b, a):
+        graph.add_node(n)
+    dr = DependencyCause.direct_ref
+    graph.add_edge(
+        "Sheet1!B1",
+        "Sheet1!C1",
+        provenance=EdgeProvenance(causes=frozenset({dr})),
+    )
+    ref = "Sheet1!B1"
+    formula = "=Sheet1!B1+1"
+    span = ((formula.index(ref), formula.index(ref) + len(ref)),)
+    graph.add_edge(
+        "Sheet1!A1",
+        "Sheet1!B1",
+        provenance=EdgeProvenance(
+            causes=frozenset({dr}),
+            direct_sites_formula=span,
+            direct_sites_normalized=span,
+        ),
+    )
+    ast = parse("=SUM(Sheet1!C1,1)")
+    assert isinstance(ast, FunctionCallNode)
+    original_args = tuple(ast.args)
+    graph.preparsed_formulas = {"=SUM(Sheet1!C1,1)": ast}
+
+    projection = OptimalCompression().project(graph)
+
+    assert "Sheet1!B1" not in projection
+    assert graph.preparsed_formulas is not None
+    projected_cache = projection.projected_graph.preparsed_formulas
+    assert projected_cache is not None
+    assert projected_cache is not graph.preparsed_formulas
+    assert projected_cache["=SUM(Sheet1!C1,1)"] is ast
+    assert graph.preparsed_formulas["=SUM(Sheet1!C1,1)"] is ast
+    assert ast.args == list(original_args)
 
 
 def test_projection_snapshot_and_rewrite_types_are_shared_across_layers() -> None:

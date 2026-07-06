@@ -5,6 +5,8 @@ from typing import Any, Literal, NotRequired, TypedDict
 
 ValidationLevel = Literal["error", "warning"]
 Scalar = str | int | float | bool | datetime | None
+Record = dict[str, object]
+Records = list[Record]
 
 
 class WorkbookSeriesBindings(TypedDict):
@@ -22,6 +24,23 @@ class ValidationIssue(TypedDict):
     message: str
     series_id: str | None
     address: str | None
+
+
+def make_issue(
+    level: Literal["error", "warning"],
+    code: str,
+    message: str,
+    *,
+    series_id: str | None = None,
+    address: str | None = None,
+) -> ValidationIssue:
+    return {
+        "level": level,
+        "code": code,
+        "message": message,
+        "series_id": series_id,
+        "address": address,
+    }
 
 
 class ValidationReport(TypedDict):

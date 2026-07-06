@@ -21,7 +21,6 @@ from excel_grapher.series_bindings.geometry import (
     expand_row_specs,
     parse_value_map,
 )
-from excel_grapher.series_bindings.issues import make_issue
 from excel_grapher.series_bindings.normalize import has_input_direction, has_output_direction
 from excel_grapher.series_bindings.ranges import expand_data_range_for_graph
 from excel_grapher.series_bindings.types import (
@@ -31,6 +30,7 @@ from excel_grapher.series_bindings.types import (
     Scalar,
     SeriesResolution,
     WorkbookSeriesBindings,
+    make_issue,
 )
 
 BindingDirection = Literal["input", "output"]
@@ -281,11 +281,6 @@ def _execute_bind(
         if read_as in {"auto", "string"} and isinstance(raw, str):
             return _normalize_string(raw, normalize)
         return coerce_scalar(raw, read_as)
-
-    if kind == "row_hierarchy":
-        raise ValueError(
-            "bind kind 'row_hierarchy' is defined in schema 1.1.0 but not yet implemented"
-        )
 
     if kind == "row_label":
         label_column = str(bind["label_column"])

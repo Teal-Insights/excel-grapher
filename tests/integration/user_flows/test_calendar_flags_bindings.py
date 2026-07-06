@@ -13,8 +13,7 @@ from excel_grapher.series_bindings import (
     validate_series_bindings,
 )
 from tests.integration.user_flows.utils import write_calendar_flags_workbook
-
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
+from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
 
 def test_calendar_flags_workbook_validates_and_resolves(tmp_path: Path) -> None:

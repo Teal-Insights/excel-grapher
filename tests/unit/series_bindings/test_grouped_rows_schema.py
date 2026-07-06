@@ -26,8 +26,6 @@ from tests.fixtures.series_bindings.grouped_matrix_helpers import (
     write_grouped_matrix_workbook,
 )
 
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
-
 
 def test_schema_version_1_5_0_supported() -> None:
     assert "1.5.0" in SUPPORTED_SCHEMA_VERSIONS
@@ -110,7 +108,7 @@ def test_validate_grouped_rows_fixture_ok(tmp_path: Path) -> None:
     report = validate_series_bindings(graph, bindings, workbook=wb_path)
     assert report["ok"] is True, report["issues"]
     codes = {issue["code"] for issue in report["issues"]}
-    assert "bind_not_implemented" not in codes
+    assert "unknown_bind_kind" not in codes
 
 
 def test_validate_value_map_mixed_axis_errors(tmp_path: Path) -> None:

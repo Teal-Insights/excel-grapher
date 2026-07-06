@@ -261,6 +261,11 @@ class TestEmitAstFunctions:
         node = FunctionCallNode("ABS", [NumberNode(-5.0)])
         assert gen._emit_ast(node) == "xl_abs(-5.0)"
 
+    def test_emit_function_exp(self, gen):
+        """EXP emits the shared runtime helper."""
+        node = FunctionCallNode("EXP", [NumberNode(1.0)])
+        assert gen._emit_ast(node) == "xl_exp(1.0)"
+
     def test_emit_function_multiple_args(self, gen):
         """Function with multiple arguments."""
         node = FunctionCallNode("SUM", [NumberNode(1.0), NumberNode(2.0), NumberNode(3.0)])

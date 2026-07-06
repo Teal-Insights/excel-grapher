@@ -40,14 +40,11 @@ from .export import (
     LightweightVizNodeColumns,
     LightweightVizPayload,
     LightweightVizStats,
-    LocalForceSubgraph,
-    select_local_force_subgraph,
     select_path_induced_subgraph,
     to_graphviz,
     to_mermaid,
     to_networkx,
     write_lightweight_viz_data,
-    write_lightweight_viz_html,
     write_web_viz_html,
 )
 from .graph import CycleError, CycleReport, DependencyGraph, GraphReadView, NodeHook
@@ -67,6 +64,8 @@ from .range_compression import (
     input_keys_from_ranges,
     setter_keys_from_bindings,
 )
+from .preparsed_formulas import warm_preparsed_formulas
+from .range_compression import TacoBuildConfig, TacoIndex, build_taco_index, input_keys_from_graph
 from .validation import ValidationResult, WorkbookCalcSettings, get_calc_settings, validate_graph
 
 __all__ = [
@@ -89,6 +88,7 @@ __all__ = [
     "CacheValidationPolicy",
     "save_graph_cache",
     "try_load_graph_cache",
+    "warm_preparsed_formulas",
     "DependencyCause",
     "DependencyGraph",
     "GraphReadView",
@@ -119,21 +119,18 @@ __all__ = [
     "Or",
     "Node",
     "NodeKey",
-    "LocalForceSubgraph",
     "LightweightVizLocalEdges",
     "LightweightVizModule",
     "LightweightVizModuleEdge",
     "LightweightVizNodeColumns",
     "LightweightVizPayload",
     "LightweightVizStats",
-    "select_local_force_subgraph",
     "select_path_induced_subgraph",
     "to_graphviz",
     "to_mermaid",
     "to_networkx",
     "write_web_viz_html",
     "write_lightweight_viz_data",
-    "write_lightweight_viz_html",
     "validate_graph",
     "ValidationResult",
     "get_calc_settings",

@@ -2,13 +2,25 @@
 
 from __future__ import annotations
 
+import pytest
+
+from excel_grapher.core.formula_ast import parse
 from excel_grapher.exporter.projection import (
     BaseProjectionManifest,
     OptimalCompression,
+    _statement_order,
+    _statement_order_index,
+    build_forwarding_projection_manifest,
+    build_optimal_projection_manifest,
     resolve_projection_manifest,
+)
+from excel_grapher.grapher.compression import (
+    IdentityTransitCompressionRecord,
+    OptimalCompressionRecord,
 )
 from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
 from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.grapher.guard import CellRef, Compare, Literal
 from excel_grapher.grapher.node import Node
 
 
@@ -65,6 +77,9 @@ def test_optimal_projection_does_not_mutate_original_graph() -> None:
         graph.add_node(n)
     _direct_edge(graph, "Sheet1!B1", "Sheet1!D1")
     _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
+    graph.set_node_metadata("Sheet1!B1", {"label": "source"})
+    ast = parse("=Sheet1!D1*2")
+    graph.preparsed_formulas = {"=Sheet1!D1*2": ast}
 
     original_keys = set(graph)
     projection = OptimalCompression().project(graph)
@@ -72,6 +87,20 @@ def test_optimal_projection_does_not_mutate_original_graph() -> None:
     assert set(graph) == original_keys
     assert "Sheet1!B1" in graph
     assert "Sheet1!B1" not in projection
+    original_a = graph.get_node("Sheet1!A1")
+    original_b = graph.get_node("Sheet1!B1")
+    projected_a = projection.get_node("Sheet1!A1")
+    assert original_a is not None
+    assert original_b is not None
+    assert projected_a is not None
+    assert original_a.normalized_formula == "=Sheet1!B1+1"
+    assert original_b.normalized_formula == "=Sheet1!D1*2"
+    assert original_b.metadata["label"] == "source"
+    assert graph.get_dependencies("Sheet1!A1") == frozenset({"Sheet1!B1"})
+    assert graph.get_dependencies("Sheet1!B1") == frozenset({"Sheet1!D1"})
+    assert graph.preparsed_formulas == {"=Sheet1!D1*2": ast}
+    assert projected_a.normalized_formula == "=(Sheet1!D1*2)+1"
+    assert projection.get_dependencies("Sheet1!A1") == frozenset({"Sheet1!D1"})
 
 
 def test_optimal_projection_manifest_kind_and_forwarding() -> None:
@@ -125,6 +154,102 @@ def test_optimal_projection_resolves_chained_inline_to_final_retained() -> None:
     assert isinstance(manifest, BaseProjectionManifest)
     collapsed = set(manifest.retained_to_collapsed_sources["Sheet1!A1"])
     assert collapsed == {"Sheet1!B1", "Sheet1!C1"}
+
+
+def test_optimal_manifest_reuses_statement_order_across_groups(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph = DependencyGraph()
+    record = OptimalCompressionRecord()
+    group_count = 8
+    for row in range(1, group_count + 1):
+        retained = f"Sheet1!A{row}"
+        source = f"Sheet1!B{row}"
+        leaf = f"Sheet1!C{row}"
+        graph.add_node(_make_node(leaf, None, None, is_leaf=True))
+        graph.add_node(_make_node(source, f"={leaf}+1", f"={leaf}+1"))
+        graph.add_node(_make_node(retained, f"={source}+1", f"={source}+1"))
+        _direct_edge(graph, source, leaf)
+        _direct_edge(graph, retained, source)
+        record.inlined_to[source] = retained
+
+    calls = 0
+    original_evaluation_order = graph.evaluation_order
+
+    def counted_evaluation_order(
+        *, strict: bool = True, iterate_enabled: bool | None = None
+    ) -> list[str]:
+        nonlocal calls
+        calls += 1
+        return original_evaluation_order(strict=strict, iterate_enabled=iterate_enabled)
+
+    monkeypatch.setattr(graph, "evaluation_order", counted_evaluation_order)
+
+    manifest = build_optimal_projection_manifest(graph, record)
+
+    assert len(manifest.collapsed_groups) == group_count
+    assert calls == 1
+
+
+def test_forwarding_manifest_reuses_statement_order_across_groups(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph = DependencyGraph()
+    record = IdentityTransitCompressionRecord()
+    group_count = 8
+    for row in range(1, group_count + 1):
+        dependent = f"Sheet1!A{row}"
+        source = f"Sheet1!B{row}"
+        retained = f"Sheet1!C{row}"
+        graph.add_node(_make_node(retained, None, None, is_leaf=True))
+        graph.add_node(_make_node(source, f"={retained}", f"={retained}"))
+        graph.add_node(_make_node(dependent, f"={source}", f"={source}"))
+        _direct_edge(graph, source, retained)
+        _direct_edge(graph, dependent, source)
+        record.immediate_removed[source] = retained
+        record.removal_order.append(source)
+
+    calls = 0
+    original_evaluation_order = graph.evaluation_order
+
+    def counted_evaluation_order(
+        *, strict: bool = True, iterate_enabled: bool | None = None
+    ) -> list[str]:
+        nonlocal calls
+        calls += 1
+        return original_evaluation_order(strict=strict, iterate_enabled=iterate_enabled)
+
+    monkeypatch.setattr(graph, "evaluation_order", counted_evaluation_order)
+
+    manifest = build_forwarding_projection_manifest(graph, record, kind="identity_transit")
+
+    assert len(manifest.collapsed_groups) == group_count
+    assert calls == 1
+
+
+def test_statement_order_cached_matches_uncached_may_cycle_fallback() -> None:
+    graph = DependencyGraph()
+    a = _make_node("Sheet1!A1", "=Sheet1!B1+1", "=Sheet1!B1+1")
+    b = _make_node("Sheet1!B1", "=Sheet1!A1+1", "=Sheet1!A1+1")
+    c = _make_node("Sheet1!C1", None, None, is_leaf=True)
+    for n in (a, b, c):
+        graph.add_node(n)
+    provenance = EdgeProvenance(causes=frozenset({DependencyCause.direct_ref}))
+    guard = Compare(left=CellRef(key="Sheet1!C1"), op="=", right=Literal(value=True))
+    graph.add_edge("Sheet1!A1", "Sheet1!B1", guard=guard, provenance=provenance)
+    graph.add_edge("Sheet1!B1", "Sheet1!A1", guard=guard, provenance=provenance)
+
+    with pytest.warns(UserWarning, match="May-cycles detected"):
+        uncached = _statement_order(graph, ("Sheet1!B1", "Sheet1!A1"))
+    with pytest.warns(UserWarning, match="May-cycles detected"):
+        order_index = _statement_order_index(graph)
+    cached = _statement_order(
+        graph,
+        ("Sheet1!B1", "Sheet1!A1"),
+        order_index=order_index,
+    )
+
+    assert cached == uncached == ("Sheet1!A1", "Sheet1!B1")
 
 
 def test_optimal_projection_manifest_round_trips() -> None:

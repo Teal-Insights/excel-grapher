@@ -13,8 +13,7 @@ from excel_grapher.series_bindings import (
     merge_series_binding_documents,
     parse_bindings_file,
 )
-
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
+from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
 
 def test_load_yaml_binding_file() -> None:

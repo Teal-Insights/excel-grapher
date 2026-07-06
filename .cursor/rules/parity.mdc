@@ -77,6 +77,19 @@ Prefer **live Excel** over cached workbook snapshots when validating against the
 
 Do **not** substitute alternative spreadsheet engines (for example LibreOffice Calc) as an “Excel”; they diverge semantically.
 
+### Per-function live Excel parity (precedent: `ABS`, `EXP`)
+
+When implementing or changing a worksheet function, add **two** integration tests:
+
+| File | Path | CI default | Checks |
+| ---- | ---- | ---------- | ------ |
+| Codegen parity | `tests/integration/evaluator/test_<fn>_parity.py` | runs | evaluator ↔ export (`assert_codegen_matches_evaluator`) |
+| Live Excel parity | `tests/integration/evaluator/test_<fn>_excel_parity.py` | skipped (`@pytest.mark.slow`) | evaluator ↔ live Excel (`assert_evaluator_matches_live_excel`) |
+
+Shared harness: `tests/utils/excel_live_parity.py` — writes a small workbook, recalculates via `modify_and_recalculate_workbook`, builds a graph, and compares numeric **and error-code** results.
+
+Run locally: `uv run pytest tests/integration/evaluator/test_abs_excel_parity.py tests/integration/evaluator/test_exp_excel_parity.py -m slow`
+
 ## How to add or change Excel behavior (TDD workflow)
 
 When adding a new function/operator or changing semantics:

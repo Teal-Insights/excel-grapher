@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import xlsxwriter
 
+import excel_grapher.evaluator.evaluator as evaluator_module
 from excel_grapher import FormulaEvaluator, create_dependency_graph
 from excel_grapher.grapher.cache import (
     GRAPH_CACHE_SCHEMA_VERSION,
@@ -21,6 +23,7 @@ from excel_grapher.grapher.cache import (
     save_graph_cache,
     try_load_graph_cache,
 )
+from excel_grapher.grapher.preparsed_formulas import warm_preparsed_formulas
 
 
 def _make_simple_workbook(path: Path) -> None:
@@ -106,6 +109,39 @@ def test_cache_roundtrip_strict_hit(tmp_path: Path) -> None:
 
     with FormulaEvaluator(loaded) as ev:
         assert ev.evaluate(["Sheet1!A3"])["Sheet1!A3"] == 5
+
+
+def test_cache_load_rewarm_avoids_evaluator_parse_on_first_pass(tmp_path: Path) -> None:
+    workbook = tmp_path / "book.xlsx"
+    _make_simple_workbook(workbook)
+
+    targets = ["Sheet1!A3"]
+    graph = create_dependency_graph(workbook, targets, load_values=True)
+    meta = build_graph_cache_meta(workbook, targets, extraction_params={"load_values": True})
+
+    cache_path = tmp_path / "graph.json"
+    save_graph_cache(cache_path, graph, meta)
+
+    loaded = try_load_graph_cache(cache_path, expected_meta=meta)
+    assert loaded is not None
+    assert loaded.preparsed_formulas is None
+
+    loaded.preparsed_formulas = warm_preparsed_formulas(loaded)
+
+    parse_calls = 0
+    original_parse = evaluator_module.parse
+
+    def counting_parse(formula: str):
+        nonlocal parse_calls
+        parse_calls += 1
+        return original_parse(formula)
+
+    with (
+        FormulaEvaluator(loaded) as ev,
+        patch.object(evaluator_module, "parse", counting_parse),
+    ):
+        assert ev.evaluate(["Sheet1!A3"])["Sheet1!A3"] == 5
+        assert parse_calls == 0
 
 
 def test_cache_miss_when_targets_differ(tmp_path: Path) -> None:

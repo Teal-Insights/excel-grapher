@@ -13,7 +13,6 @@ import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +27,7 @@ from excel_grapher.core.cell_types import (
     NotEqualCell,
     RealIntervalDomain,
 )
+from excel_grapher.grapher.cache import _package_version
 from excel_grapher.grapher.dynamic_refs import DynamicRefLimits
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # Bump this when the analysis logic changes in a way that affects cached results.
 ANALYSIS_SCHEMA_VERSION: int = 2
 
-_EXCEL_GRAPHER_VERSION: str = _pkg_version("excel_grapher")
+_EXCEL_GRAPHER_VERSION: str = _package_version()
 
 # ---------------------------------------------------------------------------
 # CellType JSON serialization

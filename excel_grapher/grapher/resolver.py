@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
 
 import fastpyxl
 from fastpyxl.utils.cell import (
@@ -33,19 +32,6 @@ from excel_grapher.core.types import CellValue, ExcelRange, XlError
 from .parser import CellRef
 
 _NAME_TOKEN_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*!)")
-
-
-class NameResolver(Protocol):
-    def resolve(self, name: str) -> tuple[str, str] | None:
-        """Return (sheet, A1) for a defined name, or None if unknown/unsupported."""
-
-
-class DictNameResolver:
-    def __init__(self, mapping: dict[str, tuple[str, str]]):
-        self._mapping = mapping
-
-    def resolve(self, name: str) -> tuple[str, str] | None:
-        return self._mapping.get(name)
 
 
 @dataclass(frozen=True)

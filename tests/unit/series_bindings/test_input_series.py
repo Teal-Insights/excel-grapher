@@ -9,8 +9,7 @@ import xlsxwriter
 from excel_grapher.exporter import CodeGenerator
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings import derive_input_series, load_series_bindings
-
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "series_bindings"
+from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
 
 def _write_borvelia_workbook(path: Path) -> None:

@@ -14,7 +14,7 @@ import fastpyxl.utils.cell
 from fastpyxl.worksheet.formula import ArrayFormula
 from fastpyxl.worksheet.worksheet import Worksheet
 
-from excel_grapher.core.address_keys import sort_node_keys
+from excel_grapher.core.address_keys import parse_address, sort_node_keys
 from excel_grapher.core.cell_types import CellType, leaves_missing_cell_type_constraints
 from excel_grapher.core.formula_normalization import _mask_string_literals
 
@@ -96,19 +96,6 @@ def _dynamic_ref_cache_key(
     return (formula_for_infer, current_sheet)
 
 
-def _parse_address_to_sheet_a1(addr: str) -> tuple[str, str]:
-    """Parse a sheet-qualified address (e.g. Sheet1!A1 or 'My Sheet'!A1) to (sheet, a1)."""
-    if "!" not in addr:
-        raise ValueError(f"Address must be sheet-qualified: {addr}")
-    if addr.startswith("'"):
-        end_quote = addr.index("'", 1)
-        sheet = addr[1:end_quote]
-        a1 = addr[end_quote + 2 :]
-        return sheet, a1
-    sheet, a1 = addr.split("!", 1)
-    return sheet, a1
-
-
 def _workbook_sorted_sheet_a1_pairs(
     pairs: Iterable[tuple[str, str]], *, sheet_order: list[str]
 ) -> list[tuple[str, str]]:
@@ -120,7 +107,7 @@ def _workbook_sorted_sheet_a1_pairs(
         [format_key(sh, a1) for sh, a1 in materialized],
         sheet_order=sheet_order,
     )
-    return [_parse_address_to_sheet_a1(key) for key in sorted_keys]
+    return [parse_address(key) for key in sorted_keys]
 
 
 def _sorted_guard_deps(
@@ -168,7 +155,7 @@ def _format_missing_leaves(missing_leaves: set[str]) -> list[str]:
             others.append(addr)
             continue
         try:
-            sheet, a1 = _parse_address_to_sheet_a1(addr)
+            sheet, a1 = parse_address(addr)
         except ValueError:
             others.append(addr)
             continue
@@ -250,6 +237,7 @@ def create_dependency_graph(
     blank_ranges: Iterable[str] | None = None,
     type_analysis_cache: TypeAnalysisCache | None = None,
     taco_index: bool = False,
+    warm_ast_cache: bool = False,
 ) -> DependencyGraph:
     r"""Build a dependency graph starting from target cells.
 
@@ -293,6 +281,15 @@ def create_dependency_graph(
     same declarations on `excel_grapher.FormulaEvaluator` and
     `excel_grapher.exporter.codegen.CodeGenerator.generate` for **evaluator
     <-> export** parity (consistent behavior between evaluation and generated code).
+
+    When `warm_ast_cache` is True, each distinct `normalized_formula` in the
+    built graph is parsed once and stored on `DependencyGraph.preparsed_formulas`.
+    `FormulaEvaluator` seeds its AST cache from that mapping so first evaluation
+    does not re-parse unless formulas change after extraction. Seeding is
+    best-effort when distinct formulas exceed `FormulaEvaluator.ast_cache_maxsize`
+    (oldest warmed entries may be evicted). `preparsed_formulas` is not stored
+    in JSON graph caches; call `warm_preparsed_formulas` after cache load or
+    formula mutation.
 
     **Cost model**: constraint-based dynamic-ref expansion (`dynamic_refs` set,
     `use_cached_dynamic_refs=False`) runs `expand_leaf_env_to_argument_env`
@@ -476,7 +473,7 @@ def create_dependency_graph(
             if addr in visited:
                 continue
             visited.add(addr)
-            sh, a1 = _parse_address_to_sheet_a1(addr)
+            sh, a1 = parse_address(addr)
             if sh not in wb_formulas.sheetnames:
                 continue
             cell_val = _get_ws_f(sh)[a1].value
@@ -754,7 +751,7 @@ def create_dependency_graph(
                             if addr in all_refs:
                                 continue
                             all_refs.add(addr)
-                            sh, a1 = _parse_address_to_sheet_a1(addr)
+                            sh, a1 = parse_address(addr)
                             if sh not in wb_formulas.sheetnames:
                                 continue
                             cell_val = _get_ws_f(sh)[a1].value
@@ -762,7 +759,7 @@ def create_dependency_graph(
                                 to_visit.update(_refs_in_formula_without_dynamic(cell_val, sh))
                         leaves = set()
                         for addr in all_refs:
-                            sh, a1 = _parse_address_to_sheet_a1(addr)
+                            sh, a1 = parse_address(addr)
                             if sh not in wb_formulas.sheetnames:
                                 continue
                             cell_val = _get_ws_f(sh)[a1].value
@@ -801,7 +798,7 @@ def create_dependency_graph(
                             _dyn_stats["infer_calls"] += 1
 
                             def _get_cell_formula(addr: str) -> str | None:
-                                sh, a1 = _parse_address_to_sheet_a1(addr)
+                                sh, a1 = parse_address(addr)
                                 if sh not in wb_formulas.sheetnames:
                                     return None
                                 v = _get_ws_f(sh)[a1].value
@@ -869,7 +866,7 @@ def create_dependency_graph(
                             offset_targets | indirect_targets | index_targets,
                             sheet_order=sheet_order,
                         ):
-                            sh, a1 = _parse_address_to_sheet_a1(addr)
+                            sh, a1 = parse_address(addr)
                             deps.append((sh, a1))
                         _dyn_dep_cache[_dyn_dep_cache_key] = (
                             deps[_deps_start:],
@@ -1290,6 +1287,10 @@ def create_dependency_graph(
         from .range_compression import build_taco_index
 
         graph.taco_index = build_taco_index(graph)
+    if warm_ast_cache:
+        from .preparsed_formulas import warm_preparsed_formulas
+
+        graph.preparsed_formulas = warm_preparsed_formulas(graph)
     return graph
 
 
@@ -1481,7 +1482,7 @@ def list_dynamic_ref_constraint_candidates(
                     if addr in all_refs:
                         continue
                     all_refs.add(addr)
-                    sh, a1 = _parse_address_to_sheet_a1(addr)
+                    sh, a1 = parse_address(addr)
                     if sh not in wb_formulas.sheetnames:
                         continue
                     inner_val = wb_formulas[sh][a1].value
@@ -1490,7 +1491,7 @@ def list_dynamic_ref_constraint_candidates(
 
                 leaves: set[str] = set()
                 for addr in all_refs:
-                    sh, a1 = _parse_address_to_sheet_a1(addr)
+                    sh, a1 = parse_address(addr)
                     if sh not in wb_formulas.sheetnames:
                         continue
                     inner_val = wb_formulas[sh][a1].value
@@ -1512,7 +1513,7 @@ def list_dynamic_ref_constraint_candidates(
                         _current_col = fastpyxl.utils.cell.column_index_from_string(_col_letter)
 
                         def _get_cell_formula(addr: str) -> str | None:
-                            sh2, a1_2 = _parse_address_to_sheet_a1(addr)
+                            sh2, a1_2 = parse_address(addr)
                             if sh2 not in wb_formulas.sheetnames:
                                 return None
                             v = wb_formulas[sh2][a1_2].value
@@ -1567,14 +1568,14 @@ def list_dynamic_ref_constraint_candidates(
                             offset_targets | indirect_targets | index_targets,
                             sheet_order=list(wb_formulas.sheetnames),
                         ):
-                            sh, a1 = _parse_address_to_sheet_a1(addr)
+                            sh, a1 = parse_address(addr)
                             queue.append((sh, a1, depth + 1))
                     except DynamicRefError:
                         pass  # best-effort: skip dynamic targets for this formula
 
             # Queue static (non-dynamic-ref) deps for continued BFS.
             for addr in _refs_without_dynamic(f, current_sheet):
-                sh, a1 = _parse_address_to_sheet_a1(addr)
+                sh, a1 = parse_address(addr)
                 if sh in wb_formulas.sheetnames:
                     queue.append((sh, a1, depth + 1))
 
