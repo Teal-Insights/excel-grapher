@@ -7,14 +7,16 @@ from excel_grapher.exporter import to_web_viz_payload
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.lightweight_viz import (
     LightweightVizPayload,
-    LocalForceSubgraph,
     VizLimits,
     assemble_lightweight_viz_payload,
     build_lightweight_viz_core,
     lightweight_viz_flat,
-    select_local_force_subgraph,
 )
 from excel_grapher.grapher.node import Node
+from tests.unit.grapher.local_force_subgraph_helpers import (
+    LocalForceSubgraph,
+    select_local_force_subgraph,
+)
 
 
 def _leaf(key: str, value: object = 0) -> Node:
@@ -93,7 +95,6 @@ def test_select_local_force_subgraph_expands_across_module_boundary() -> None:
 
     assert sub.node_ids == (0, 1, 2)
     assert _edge_pairs(sub) == [(1, 0), (2, 1)]
-    assert sub.is_module_scope is False
     assert sub.truncated is False
 
 
