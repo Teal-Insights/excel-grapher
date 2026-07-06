@@ -45,7 +45,6 @@ from .export import (
     to_mermaid,
     to_networkx,
     write_lightweight_viz_data,
-    write_lightweight_viz_html,
     write_web_viz_html,
 )
 from .graph import CycleError, CycleReport, DependencyGraph, GraphReadView, NodeHook
@@ -114,7 +113,6 @@ __all__ = [
     "to_networkx",
     "write_web_viz_html",
     "write_lightweight_viz_data",
-    "write_lightweight_viz_html",
     "validate_graph",
     "ValidationResult",
     "get_calc_settings",

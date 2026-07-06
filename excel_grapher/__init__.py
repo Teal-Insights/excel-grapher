@@ -64,7 +64,6 @@ from .grapher import (
     try_load_graph_cache,
     validate_graph,
     write_lightweight_viz_data,
-    write_lightweight_viz_html,
     write_web_viz_html,
 )
 from .series_bindings import (
@@ -130,7 +129,6 @@ __all__ = [
     "to_mermaid",
     "to_networkx",
     "write_lightweight_viz_data",
-    "write_lightweight_viz_html",
     "write_web_viz_html",
     "validate_graph",
     "save_graph_cache",
