@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v2.5.1 (2026-07-06)
+
+### Bug Fixes
+
+- Preserve quoted apostrophe sheet refs in formula normalization
+  ([#346](https://github.com/Teal-Insights/excel-grapher/pull/346),
+  [`d4d05a2`](https://github.com/Teal-Insights/excel-grapher/commit/d4d05a2b50c2a5b3f9bb5395abb0cf2da4d81b65))
+
+- **evaluator**: Import xl_isblank from runtime after shim removal
+  ([#347](https://github.com/Teal-Insights/excel-grapher/pull/347),
+  [`37677be`](https://github.com/Teal-Insights/excel-grapher/commit/37677be0734d2af64b94b117612a72e0b9863a49))
+
+### Refactoring
+
+- Consolidate sheet-qualified address parsing
+  ([#343](https://github.com/Teal-Insights/excel-grapher/pull/343),
+  [`4ce69d7`](https://github.com/Teal-Insights/excel-grapher/commit/4ce69d72d87ba423929c4f8fb348c345334f11bd))
+
+- Remove unused LocalForceSubgraph API
+  ([#342](https://github.com/Teal-Insights/excel-grapher/pull/342),
+  [`d3f261e`](https://github.com/Teal-Insights/excel-grapher/commit/d3f261e8d78ca6bea1f23c560edae7eb58b6140f))
+
+- **evaluator**: Collapse function shims into explicit registry
+  ([#347](https://github.com/Teal-Insights/excel-grapher/pull/347),
+  [`37677be`](https://github.com/Teal-Insights/excel-grapher/commit/37677be0734d2af64b94b117612a72e0b9863a49))
+
+### Testing
+
+- Cover remaining apostrophe address parsers and fix call sites
+  ([#343](https://github.com/Teal-Insights/excel-grapher/pull/343),
+  [`4ce69d7`](https://github.com/Teal-Insights/excel-grapher/commit/4ce69d72d87ba423929c4f8fb348c345334f11bd))
+
+- Xfail graph build with quoted apostrophe sheet refs in formulas
+  ([#343](https://github.com/Teal-Insights/excel-grapher/pull/343),
+  [`4ce69d7`](https://github.com/Teal-Insights/excel-grapher/commit/4ce69d72d87ba423929c4f8fb348c345334f11bd))
+
+
 ## v2.5.0 (2026-07-05)
 
 ### Documentation
