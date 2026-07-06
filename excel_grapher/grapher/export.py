@@ -14,8 +14,6 @@ from .lightweight_viz import (
     LightweightVizNodeColumns,
     LightweightVizPayload,
     LightweightVizStats,
-    LocalForceSubgraph,
-    select_local_force_subgraph,
     write_lightweight_viz_data,
     write_lightweight_viz_html,
     write_web_viz_html,
@@ -233,14 +231,12 @@ def to_mermaid(
 
 
 __all__ = [
-    "LocalForceSubgraph",
     "LightweightVizLocalEdges",
     "LightweightVizModule",
     "LightweightVizModuleEdge",
     "LightweightVizNodeColumns",
     "LightweightVizPayload",
     "LightweightVizStats",
-    "select_local_force_subgraph",
     "select_path_induced_subgraph",
     "to_graphviz",
     "to_mermaid",
