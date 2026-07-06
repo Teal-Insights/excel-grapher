@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 import fastpyxl
 import fastpyxl.utils.cell
 
+from excel_grapher.core.address_keys import parse_address
 from excel_grapher.core.cell_types import leaves_missing_cell_type_constraints
 
 from .dependency_provenance import DependencyCause, EdgeProvenance, merge_provenance_maps
@@ -37,19 +38,6 @@ from .parser import (
     split_top_level_ifs,
     split_top_level_switch,
 )
-
-
-def _parse_address_to_sheet_a1(addr: str) -> tuple[str, str]:
-    if "!" not in addr:
-        raise ValueError(f"Address must be sheet-qualified: {addr}")
-    if addr.startswith("'"):
-        end_quote = addr.index("'", 1)
-        sheet = addr[1:end_quote]
-        a1 = addr[end_quote + 2 :]
-        return sheet, a1
-    sheet, a1 = addr.split("!", 1)
-    return sheet, a1
-
 
 _NAME_TOKEN_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*!)")
 
@@ -223,7 +211,7 @@ def _flat_provenance_one_string(
                     if addr in all_refs:
                         continue
                     all_refs.add(addr)
-                    sh, a1 = _parse_address_to_sheet_a1(addr)
+                    sh, a1 = parse_address(addr)
                     if sh not in wb_formulas.sheetnames:
                         continue
                     cell_val = wb_formulas[sh][a1].value
@@ -231,7 +219,7 @@ def _flat_provenance_one_string(
                         to_visit.update(_refs_in_formula_without_dynamic(cell_val, sh))
                 leaves: set[str] = set()
                 for addr in all_refs:
-                    sh, a1 = _parse_address_to_sheet_a1(addr)
+                    sh, a1 = parse_address(addr)
                     if sh not in wb_formulas.sheetnames:
                         continue
                     cell_val = wb_formulas[sh][a1].value
@@ -254,7 +242,7 @@ def _flat_provenance_one_string(
                 else:
 
                     def _get_cell_formula(addr: str) -> str | None:
-                        sh, a1 = _parse_address_to_sheet_a1(addr)
+                        sh, a1 = parse_address(addr)
                         if sh not in wb_formulas.sheetnames:
                             return None
                         v = wb_formulas[sh][a1].value

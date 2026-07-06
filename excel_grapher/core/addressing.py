@@ -5,6 +5,7 @@ from typing import Protocol
 import fastpyxl.utils.cell
 
 from . import CellValue, ExcelRange, XlError, to_number
+from .address_keys import parse_address
 
 
 def index_excel_range(
@@ -104,27 +105,12 @@ def split_sheet_qualified_address(address: str) -> tuple[str, str] | None:
 
     Returns `None` when *address* has no sheet qualifier (plain `A1`).
     """
-    if address.startswith("'"):
-        i = 1
-        while i < len(address):
-            if address[i] == "'":
-                if i + 1 < len(address) and address[i + 1] == "'":
-                    i += 2
-                    continue
-                break
-            i += 1
-        if i >= len(address):
-            return None
-        sheet = address[1:i].replace("''", "'")
-        rest = address[i + 1 :]
-        if not rest.startswith("!"):
-            return None
-        return sheet, rest[1:]
-
     if "!" not in address:
         return None
-    sheet, cell = address.rsplit("!", 1)
-    return sheet, cell
+    try:
+        return parse_address(address)
+    except ValueError:
+        return None
 
 
 _split_sheet_qualified_address = split_sheet_qualified_address
