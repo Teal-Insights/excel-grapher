@@ -256,7 +256,6 @@ reference:
       - GuardExpr
       - LightweightVizPayload
       - Literal  # 1 method(s)
-      - LocalForceSubgraph
       - Node
       - Not  # 1 method(s)
       - NotEqualCell
@@ -334,7 +333,6 @@ reference:
       - normalize_blank_range_specs
       - resolve_series_bindings
       - save_graph_cache
-      - select_local_force_subgraph
       - select_path_induced_subgraph
       - to_graphviz
       - to_mermaid
