@@ -13,6 +13,9 @@ from excel_grapher.core import address_keys as _address_keys
 from excel_grapher.core.address_keys import (
     format_cell_key,
     needs_quoting,
+    quoted_sheet_name_regex,
+    quoted_sheet_prefix_regex,
+    unescape_formula_sheet_name,
 )
 from excel_grapher.core.excel_function_names import excel_function_call_prefixes
 from excel_grapher.core.formula_normalization import (
@@ -46,24 +49,45 @@ class CellRef:
     range_kind: TypingLiteral["cell", "whole_column", "whole_row"] = "cell"
 
 
+_FUNC_LIKE = {"IF", "OR", "AND", "NOT", "SUM", "MAX", "MIN", "AVG"}
+
+_QUOTED_SHEET = quoted_sheet_name_regex(capture_group="sheet")
+_QUOTED_SHEET_QS = quoted_sheet_name_regex(capture_group="qs")
+_QUOTED_SHEET_PREFIX = quoted_sheet_prefix_regex()
+
+
+def _sheet_from_cell_match(m: re.Match[str]) -> str:
+    qs = m.group("qs")
+    if qs is not None:
+        return unescape_formula_sheet_name(qs)
+    us = m.group("us")
+    assert us is not None
+    return us
+
+
+def _sheet_from_quoted_group(m: re.Match[str], *, group: str = "sheet") -> str:
+    return unescape_formula_sheet_name(m.group(group))
+
+
 _SHEET_CELL_RE = re.compile(
-    r"(?:'(?P<qs>[^']+)'|(?P<us>[A-Za-z][A-Za-z0-9_]*))!\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)"
+    rf"(?:{_QUOTED_SHEET_QS}|(?P<us>[A-Za-z][A-Za-z0-9_]*))!\$?(?P<col>[A-Z]{{1,3}})\$?(?P<row>\d+)"
 )
 # Do not treat `Col` in `Sheet!$Col$Row` as a local ref: the column letter can follow `!$`.
 # Sheet tokens may look like A1 (e.g. `S2` / `'S2'`); do not match those as local refs.
 _LOCAL_CELL_RE = re.compile(
     r"(?<![!A-Za-z0-9_])(?<!\$)\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)(?![A-Za-z0-9_!'])"
 )
-_FUNC_LIKE = {"IF", "OR", "AND", "NOT", "SUM", "MAX", "MIN", "AVG"}
 
 _RANGE_QUOTED_RE = re.compile(
-    r"'(?P<sheet>[^']+)'!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)"
+    _QUOTED_SHEET_PREFIX
+    + r"\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)"
 )
 _RANGE_UNQUOTED_RE = re.compile(
     r"(?<![A-Za-z_])(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)"
 )
 _RANGE_QUOTED_BOTH_ENDPOINTS_RE = re.compile(
-    r"'(?P<sheet>[^']+)'!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*'(?P=sheet)'!\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)"
+    _QUOTED_SHEET_PREFIX
+    + r"\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*'(?P=sheet)'!\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)"
 )
 _RANGE_UNQUOTED_BOTH_ENDPOINTS_RE = re.compile(
     r"(?<![A-Za-z_])(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*(?P=sheet)!\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)"
@@ -72,7 +96,7 @@ _RANGE_LOCAL_RE = re.compile(
     r"(?<![!A-Za-z0-9_])(?<!\$)\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)(?![A-Za-z0-9_])"
 )
 _RANGE_WHOLE_COL_QUOTED_RE = re.compile(
-    r"'(?P<sheet>[^']+)'!\$?(?P<col>[A-Z]{1,3})\s*:\s*\$?(?P=col)\b",
+    _QUOTED_SHEET_PREFIX + r"\$?(?P<col>[A-Z]{1,3})\s*:\s*\$?(?P=col)\b",
     re.IGNORECASE,
 )
 _RANGE_WHOLE_COL_UNQUOTED_RE = re.compile(
@@ -83,7 +107,9 @@ _RANGE_WHOLE_COL_LOCAL_RE = re.compile(
     r"(?<![!A-Za-z0-9_'])(?<!\$)\$?(?P<col>[A-Z]{1,3})\s*:\s*\$?(?P=col)\b(?![A-Za-z0-9_])",
     re.IGNORECASE,
 )
-_RANGE_WHOLE_ROW_QUOTED_RE = re.compile(r"'(?P<sheet>[^']+)'!\$?(?P<row>\d+)\s*:\s*\$?(?P=row)\b")
+_RANGE_WHOLE_ROW_QUOTED_RE = re.compile(
+    _QUOTED_SHEET_PREFIX + r"\$?(?P<row>\d+)\s*:\s*\$?(?P=row)\b"
+)
 _RANGE_WHOLE_ROW_UNQUOTED_RE = re.compile(
     r"(?<![A-Za-z_'])(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!\$?(?P<row>\d+)\s*:\s*\$?(?P=row)\b"
 )
@@ -103,7 +129,7 @@ def parse_cell_refs(formula: str) -> list[CellRef]:
     out: list[CellRef] = []
 
     for m in _SHEET_CELL_RE.finditer(formula):
-        sheet = m.group("qs") or m.group("us")
+        sheet = _sheet_from_cell_match(m)
         out.append(CellRef(sheet=sheet, column=m.group("col"), row=int(m.group("row"))))
 
     for m in _LOCAL_CELL_RE.finditer(formula):
@@ -123,7 +149,7 @@ def parse_cell_refs_with_spans(formula: str) -> list[tuple[CellRef, tuple[int, i
     out: list[tuple[CellRef, tuple[int, int]]] = []
 
     for m in _SHEET_CELL_RE.finditer(formula):
-        sheet = m.group("qs") or m.group("us")
+        sheet = _sheet_from_cell_match(m)
         ref = CellRef(sheet=sheet, column=m.group("col"), row=int(m.group("row")))
         out.append((ref, m.span()))
 
@@ -145,7 +171,7 @@ def parse_range_refs(formula: str) -> list[tuple[CellRef, CellRef]]:
     out: list[tuple[CellRef, CellRef]] = []
 
     for m in _RANGE_WHOLE_COL_QUOTED_RE.finditer(formula):
-        sheet = m.group("sheet")
+        sheet = _sheet_from_quoted_group(m)
         col = m.group("col").upper()
         ref = CellRef(sheet=sheet, column=col, row=0, range_kind="whole_column")
         out.append((ref, ref))
@@ -162,7 +188,7 @@ def parse_range_refs(formula: str) -> list[tuple[CellRef, CellRef]]:
         out.append((ref, ref))
 
     for m in _RANGE_WHOLE_ROW_QUOTED_RE.finditer(formula):
-        sheet = m.group("sheet")
+        sheet = _sheet_from_quoted_group(m)
         row = int(m.group("row"))
         ref = CellRef(sheet=sheet, column="", row=row, range_kind="whole_row")
         out.append((ref, ref))
@@ -179,7 +205,7 @@ def parse_range_refs(formula: str) -> list[tuple[CellRef, CellRef]]:
         out.append((ref, ref))
 
     for m in _RANGE_QUOTED_BOTH_ENDPOINTS_RE.finditer(formula):
-        sheet = m.group("sheet")
+        sheet = _sheet_from_quoted_group(m)
         out.append(
             (
                 CellRef(sheet=sheet, column=m.group("c1"), row=int(m.group("r1"))),
@@ -197,7 +223,7 @@ def parse_range_refs(formula: str) -> list[tuple[CellRef, CellRef]]:
         )
 
     for m in _RANGE_QUOTED_RE.finditer(formula):
-        sheet = m.group("sheet")
+        sheet = _sheet_from_quoted_group(m)
         out.append(
             (
                 CellRef(sheet=sheet, column=m.group("c1"), row=int(m.group("r1"))),
@@ -237,7 +263,7 @@ def parse_range_refs_with_spans(formula: str) -> list[tuple[CellRef, CellRef, tu
     out: list[tuple[CellRef, CellRef, tuple[int, int]]] = []
 
     for m in _RANGE_WHOLE_COL_QUOTED_RE.finditer(formula):
-        sheet = m.group("sheet")
+        sheet = _sheet_from_quoted_group(m)
         col = m.group("col").upper()
         ref = CellRef(sheet=sheet, column=col, row=0, range_kind="whole_column")
         out.append((ref, ref, m.span()))
@@ -254,7 +280,7 @@ def parse_range_refs_with_spans(formula: str) -> list[tuple[CellRef, CellRef, tu
         out.append((ref, ref, m.span()))
 
     for m in _RANGE_WHOLE_ROW_QUOTED_RE.finditer(formula):
-        sheet = m.group("sheet")
+        sheet = _sheet_from_quoted_group(m)
         row = int(m.group("row"))
         ref = CellRef(sheet=sheet, column="", row=row, range_kind="whole_row")
         out.append((ref, ref, m.span()))
@@ -271,7 +297,7 @@ def parse_range_refs_with_spans(formula: str) -> list[tuple[CellRef, CellRef, tu
         out.append((ref, ref, m.span()))
 
     for m in _RANGE_QUOTED_BOTH_ENDPOINTS_RE.finditer(formula):
-        sheet = m.group("sheet")
+        sheet = _sheet_from_quoted_group(m)
         out.append(
             (
                 CellRef(sheet=sheet, column=m.group("c1"), row=int(m.group("r1"))),
@@ -291,7 +317,7 @@ def parse_range_refs_with_spans(formula: str) -> list[tuple[CellRef, CellRef, tu
         )
 
     for m in _RANGE_QUOTED_RE.finditer(formula):
-        sheet = m.group("sheet")
+        sheet = _sheet_from_quoted_group(m)
         out.append(
             (
                 CellRef(sheet=sheet, column=m.group("c1"), row=int(m.group("r1"))),
@@ -574,13 +600,15 @@ def split_top_level_switch(formula: str) -> list[str] | None:
 
 
 _CELL_TOKEN_RE = re.compile(
-    r"^(?:(?:'(?P<qs>[^']+)')|(?P<us>[A-Za-z][A-Za-z0-9_]*))!\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)$"
+    rf"^(?:{_QUOTED_SHEET_QS}|(?P<us>[A-Za-z][A-Za-z0-9_]*))!\$?(?P<col>[A-Z]{{1,3}})\$?(?P<row>\d+)$"
 )
 _LOCAL_CELL_TOKEN_RE = re.compile(r"^\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)$")
 _NUMBER_TOKEN_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
 _INT_TOKEN_RE = re.compile(r"^[+-]?\d+$")
 _RANGE_TOKEN_QUOTED_RE = re.compile(
-    r"^'(?P<sheet>[^']+)'!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)$"
+    "^"
+    + _QUOTED_SHEET_PREFIX
+    + r"\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)$"
 )
 _RANGE_TOKEN_UNQUOTED_RE = re.compile(
     r"^(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)$"
@@ -868,7 +896,7 @@ def _parse_ref_or_range_token(
     # Quoted sheet range
     m = _RANGE_TOKEN_QUOTED_RE.match(tok)
     if m:
-        sheet = m.group("sheet")
+        sheet = _sheet_from_quoted_group(m)
         return (
             CellRef(sheet=sheet, column=m.group("c1"), row=int(m.group("r1"))),
             CellRef(sheet=sheet, column=m.group("c2"), row=int(m.group("r2"))),
@@ -894,7 +922,7 @@ def _parse_ref_or_range_token(
     # Sheet-qualified cell
     m = _CELL_TOKEN_RE.match(tok)
     if m:
-        sheet = m.group("qs") or m.group("us")
+        sheet = _sheet_from_cell_match(m)
         ref = CellRef(sheet=sheet, column=m.group("col"), row=int(m.group("row")))
         return ref, ref
 
@@ -1360,7 +1388,7 @@ def _parse_guard_atom(
     # Sheet-qualified cell
     m = _CELL_TOKEN_RE.match(s)
     if m:
-        sheet = m.group("qs") or m.group("us")
+        sheet = _sheet_from_cell_match(m)
         return GuardCellRef(_to_node_key(str(sheet), m.group("col"), int(m.group("row"))))
 
     # Local cell

@@ -36,3 +36,21 @@ def test_normalize_excel_formula_preserves_cell_like_text_in_string_literals() -
     ]
     for formula, expected in cases:
         assert normalize_excel_formula(formula, "Sheet1") == expected
+
+
+def test_normalize_excel_formula_preserves_quoted_apostrophe_sheet_refs() -> None:
+    """Quoted sheet names with escaped apostrophes must not be corrupted."""
+    sheet = "O'Neil"
+    cases = [
+        ("='O''Neil'!A1*2", "='O''Neil'!A1*2"),
+        ("='O''Neil'!A1:'O''Neil'!B2", "='O''Neil'!A1:'O''Neil'!B2"),
+        ("=SUM('O''Neil'!A:A)", "=SUM('O''Neil'!A:A)"),
+        ("=SUM('O''Neil'!1:1)", "=SUM('O''Neil'!1:1)"),
+    ]
+    for formula, expected in cases:
+        assert normalize_excel_formula(formula, sheet) == expected
+
+
+def test_formula_normalizer_preserves_quoted_apostrophe_sheet_refs() -> None:
+    n = FormulaNormalizer({}, {})
+    assert n.normalize("='O''Neil'!A1*2", "O'Neil") == "='O''Neil'!A1*2"

@@ -10,7 +10,14 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from excel_grapher.core.address_keys import format_cell_key, quote_sheet_if_needed
+from excel_grapher.core.address_keys import (
+    format_cell_key,
+    quote_sheet_if_needed,
+    quoted_sheet_prefix_regex,
+    unescape_formula_sheet_name,
+)
+
+_QUOTED_SHEET_PREFIX = quoted_sheet_prefix_regex()
 
 _FUNC_LIKE = frozenset({"IF", "OR", "AND", "NOT", "SUM", "MAX", "MIN", "AVG"})
 _STRING_LITERAL_RE = re.compile(r'"(?:[^"]|"")*"')
@@ -94,10 +101,11 @@ def _normalize_whole_column_row_shorthand(formula: str, current_sheet: str) -> s
     result = formula
 
     def quoted_whole_col(m: re.Match[str]) -> str:
-        return _format_whole_column_ref(m.group("sheet"), m.group("col"))
+        sheet = unescape_formula_sheet_name(m.group("sheet"))
+        return _format_whole_column_ref(sheet, m.group("col"))
 
     result = re.sub(
-        r"'(?P<sheet>[^']+)'!\$?(?P<col>[A-Z]{1,3})\s*:\s*\$?(?P=col)\b",
+        _QUOTED_SHEET_PREFIX + r"\$?(?P<col>[A-Z]{1,3})\s*:\s*\$?(?P=col)\b",
         quoted_whole_col,
         result,
         flags=re.IGNORECASE,
@@ -127,10 +135,11 @@ def _normalize_whole_column_row_shorthand(formula: str, current_sheet: str) -> s
     )
 
     def quoted_whole_row(m: re.Match[str]) -> str:
-        return _format_whole_row_ref(m.group("sheet"), int(m.group("row")))
+        sheet = unescape_formula_sheet_name(m.group("sheet"))
+        return _format_whole_row_ref(sheet, int(m.group("row")))
 
     result = re.sub(
-        r"'(?P<sheet>[^']+)'!\$?(?P<row>\d+)\s*:\s*\$?(?P=row)\b",
+        _QUOTED_SHEET_PREFIX + r"\$?(?P<row>\d+)\s*:\s*\$?(?P=row)\b",
         quoted_whole_row,
         result,
     )
@@ -206,14 +215,15 @@ def _normalize_excel_formula_base(formula: str, current_sheet: str) -> str:
     result = _normalize_whole_column_row_shorthand(formula, current_sheet)
 
     def replace_quoted_range(m: re.Match[str]) -> str:
-        sheet = m.group("sheet")
+        sheet = unescape_formula_sheet_name(m.group("sheet"))
         c1, r1, c2, r2 = m.group("c1"), m.group("r1"), m.group("c2"), m.group("r2")
         a = format_cell_key(sheet, c1, int(r1))
         b = format_cell_key(sheet, c2, int(r2))
         return f"{a}:{b}"
 
     result = re.sub(
-        r"'(?P<sheet>[^']+)'!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)",
+        _QUOTED_SHEET_PREFIX
+        + r"\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)",
         replace_quoted_range,
         result,
     )
@@ -242,11 +252,12 @@ def _normalize_excel_formula_base(formula: str, current_sheet: str) -> str:
     )
 
     def replace_quoted_cell(m: re.Match[str]) -> str:
-        sheet, col, row = m.group("sheet"), m.group("col"), m.group("row")
+        sheet = unescape_formula_sheet_name(m.group("sheet"))
+        col, row = m.group("col"), m.group("row")
         return format_cell_key(sheet, col, int(row))
 
     result = re.sub(
-        r"'(?P<sheet>[^']+)'!\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)",
+        _QUOTED_SHEET_PREFIX + r"\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)",
         replace_quoted_cell,
         result,
     )

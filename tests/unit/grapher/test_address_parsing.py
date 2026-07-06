@@ -13,6 +13,7 @@ from excel_grapher.grapher.dynamic_refs import (
     _split_qualified_to_sheet_a1,
     expand_leaf_env_to_argument_env,
 )
+from excel_grapher.grapher.parser import parse_cell_refs
 from excel_grapher.grapher.validation import _sheet_name_from_key
 
 _APOSTROPHE_SHEET = "O'Neil"
@@ -99,3 +100,11 @@ def test_expand_leaf_env_passes_correct_sheet_for_apostrophe_sheet_names() -> No
     )
     assert seen_sheets == [_APOSTROPHE_SHEET]
     assert formula_cell in env
+
+
+def test_parse_cell_refs_handles_apostrophe_sheet_names() -> None:
+    refs = parse_cell_refs("='O''Neil'!A1*2")
+    assert len(refs) == 1
+    assert refs[0].sheet == _APOSTROPHE_SHEET
+    assert refs[0].column == "A"
+    assert refs[0].row == 1

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import typing
 
 from excel_grapher.core.address_keys import (
@@ -8,7 +9,9 @@ from excel_grapher.core.address_keys import (
     format_key,
     make_node_key_sort_key,
     normalize_key,
+    quoted_sheet_prefix_regex,
     sort_node_keys,
+    unescape_formula_sheet_name,
 )
 from excel_grapher.grapher.node import NodeKey
 
@@ -74,3 +77,15 @@ def test_make_node_key_sort_key_places_unknown_sheets_after_known() -> None:
     keys = ["Known!A1", "Other!A1", "Another!A1"]
 
     assert sorted(keys, key=key_fn) == ["Known!A1", "Another!A1", "Other!A1"]
+
+
+def test_quoted_sheet_prefix_regex_matches_doubled_apostrophe_escape() -> None:
+    pattern = quoted_sheet_prefix_regex()
+    match = re.match(pattern + r"A1", "'O''Neil'!A1")
+    assert match is not None
+    assert unescape_formula_sheet_name(match.group("sheet")) == "O'Neil"
+
+
+def test_unescape_formula_sheet_name() -> None:
+    assert unescape_formula_sheet_name("O''Neil") == "O'Neil"
+    assert unescape_formula_sheet_name("It''s Data") == "It's Data"
