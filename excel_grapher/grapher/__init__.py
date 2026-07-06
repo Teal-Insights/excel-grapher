@@ -52,6 +52,7 @@ from .guard import And, Compare, GuardExpr, Literal, Not, Or
 from .guard import CellRef as GuardCellRef
 from .node import Node, NodeKey
 from .parser import format_cell_key, format_key, needs_quoting
+from .preparsed_formulas import warm_preparsed_formulas
 from .range_compression import (
     CodegenPlan,
     TacoBuildConfig,
@@ -64,8 +65,6 @@ from .range_compression import (
     input_keys_from_ranges,
     setter_keys_from_bindings,
 )
-from .preparsed_formulas import warm_preparsed_formulas
-from .range_compression import TacoBuildConfig, TacoIndex, build_taco_index, input_keys_from_graph
 from .validation import ValidationResult, WorkbookCalcSettings, get_calc_settings, validate_graph
 
 __all__ = [
