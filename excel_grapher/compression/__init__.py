@@ -1,0 +1,34 @@
+"""Excel formula AST compression: structural rules, expansion, and parity.
+
+This package applies semantics-preserving compression to per-cell formula ASTs,
+producing mixed maps of plain ASTs, `_cse!` bindings, and artifact nodes
+(`ParallelFormulaNode`, `TacoPatternNode`). Use `expand_compressed_to_cells`
+to materialize artifacts back to per-cell ASTs for evaluation parity checks.
+"""
+
+from __future__ import annotations
+
+from .expand import expand_compressed_to_cells
+from .nodes import (
+    ColumnVarCellRefNode,
+    ParallelFormulaNode,
+    SubexpressionRefNode,
+    TacoPatternNode,
+)
+from .parity import assert_compression_parity
+from .rules import COMPRESSION_RULES, CompressionStats, RuleContribution, RuleSpec
+from .types import CompressedNode
+
+__all__ = [
+    "COMPRESSION_RULES",
+    "ColumnVarCellRefNode",
+    "CompressedNode",
+    "CompressionStats",
+    "ParallelFormulaNode",
+    "RuleContribution",
+    "RuleSpec",
+    "SubexpressionRefNode",
+    "TacoPatternNode",
+    "assert_compression_parity",
+    "expand_compressed_to_cells",
+]
