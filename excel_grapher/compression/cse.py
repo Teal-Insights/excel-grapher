@@ -16,7 +16,11 @@ from excel_grapher.core.formula_ast import (
     UnaryOpNode,
 )
 
+from .ast_utils import merge_compressed_map, partition_compressed_map
+from .constant_folding import fold_literals_in_ast
+from .stats import CompressionStats
 from .template_signature import TemplateSignature, template_signature
+from .types import CompressedNode
 
 SubtreePath: TypeAlias = tuple[str | int, ...]
 SubtreeSignature = TemplateSignature
@@ -33,9 +37,11 @@ __all__ = [
     "SubtreePath",
     "SubtreeSignature",
     "allocate_cse_key",
+    "apply_cell_cse",
     "apply_hoist",
     "enumerate_subtrees",
     "find_shared_subtrees",
+    "hoist_common_subexpressions_to_fixpoint",
     "hoist_one_subexpression",
     "net_ast_savings",
     "passes_cse_gates",
@@ -84,9 +90,12 @@ class CseCandidate:
 
     @classmethod
     def from_cell_map(cls, cell_map: Mapping[str, AstNode]) -> tuple[CseCandidate, ...]:
-        """Build hoist candidates from shared-subtree groups in `cell_map`."""
+        """Build hoist candidates from shared-subtree groups in formula cells."""
         candidates: list[CseCandidate] = []
-        for signature, occurrences in _group_occurrences(find_shared_subtrees(cell_map)).items():
+        formula_cells = _formula_cells(cell_map)
+        for signature, occurrences in _group_occurrences(
+            find_shared_subtrees(formula_cells)
+        ).items():
             candidates.append(
                 cls(
                     signature=signature,
@@ -173,7 +182,7 @@ def passes_cse_gates(candidate: CseCandidate, config: CseConfig) -> CseGateResul
 
 @dataclass
 class CseResult:
-    """Counters from one CSE hoist round."""
+    """Counters from one or more CSE hoist rounds."""
 
     binding_key: str | None = None
     hoisted: bool = False
@@ -181,6 +190,8 @@ class CseResult:
     redundant_evaluations_eliminated: int = 0
     ast_subnodes_saved: int = 0
     candidates_rejected: int = 0
+    cse_fixpoint_rounds: int = 0
+    post_cse_formula_folds: int = 0
 
 
 def allocate_cse_key(existing_keys: Collection[str]) -> str:
@@ -221,6 +232,8 @@ def hoist_one_subexpression(
 ) -> tuple[dict[str, AstNode], CseResult]:
     """Hoist the best gated shared subtree once, or return the input unchanged."""
     config = config or CseConfig()
+    bindings = _cse_bindings(cell_map)
+    formula_cells = _formula_cells(cell_map)
     candidates = CseCandidate.from_cell_map(cell_map)
     passing: list[CseCandidate] = []
     rejected = 0
@@ -234,8 +247,8 @@ def hoist_one_subexpression(
 
     best = max(passing, key=net_ast_savings)
     key = allocate_cse_key(cell_map)
-    updated = apply_hoist(cell_map, best, key)
-    return updated, CseResult(
+    updated_formulas = apply_hoist(formula_cells, best, key)
+    return {**bindings, **updated_formulas}, CseResult(
         binding_key=key,
         hoisted=True,
         binding_sites=1,
@@ -243,6 +256,60 @@ def hoist_one_subexpression(
         ast_subnodes_saved=net_ast_savings(best),
         candidates_rejected=rejected,
     )
+
+
+def hoist_common_subexpressions_to_fixpoint(
+    cell_map: Mapping[str, AstNode],
+    *,
+    config: CseConfig | None = None,
+) -> tuple[dict[str, AstNode], CseResult]:
+    """Repeatedly hoist shared subtrees until no gated candidate remains."""
+    config = config or CseConfig()
+    working = dict(cell_map)
+    total = CseResult()
+
+    while True:
+        working, round_result = hoist_one_subexpression(working, config=config)
+        total.candidates_rejected += round_result.candidates_rejected
+        if not round_result.hoisted:
+            break
+
+        total.hoisted = True
+        total.binding_key = round_result.binding_key
+        total.binding_sites += round_result.binding_sites
+        total.redundant_evaluations_eliminated += round_result.redundant_evaluations_eliminated
+        total.ast_subnodes_saved += round_result.ast_subnodes_saved
+        total.cse_fixpoint_rounds += 1
+
+        working, folds = _fold_cell_map(working)
+        total.post_cse_formula_folds += folds
+
+    return working, total
+
+
+def apply_cell_cse(
+    compressed_map: Mapping[str, CompressedNode],
+    stats: CompressionStats | None = None,
+) -> dict[str, CompressedNode]:
+    """Apply cell-level CSE to formula cells while preserving compressed artifacts."""
+    cell_map, artifacts = partition_compressed_map(compressed_map)
+    hoisted, cse_result = hoist_common_subexpressions_to_fixpoint(cell_map)
+
+    if stats is not None:
+        stats.cse_fixpoint_rounds = cse_result.cse_fixpoint_rounds
+        stats.binding_sites += cse_result.binding_sites
+        stats.redundant_evaluations_eliminated += cse_result.redundant_evaluations_eliminated
+        stats.ast_subnodes_saved += cse_result.ast_subnodes_saved
+        stats.post_cse_formula_folds += cse_result.post_cse_formula_folds
+        stats.contribution_for("common_subexpression").record(
+            binding_sites=cse_result.binding_sites,
+            redundant_evaluations_eliminated=cse_result.redundant_evaluations_eliminated,
+            ast_subnodes_saved=cse_result.ast_subnodes_saved,
+            candidates_rejected=cse_result.candidates_rejected,
+            cells_affected=_cells_changed(cell_map, hoisted),
+        )
+
+    return merge_compressed_map(artifacts, hoisted)
 
 
 def _replace_subtree_at_path(
@@ -273,6 +340,37 @@ def _replace_subtree_at_path(
         new_args[index] = _replace_subtree_at_path(new_args[index], inner_path, replacement)
         return FunctionCallNode(ast.name, new_args)
     raise ValueError(f"cannot follow path {path!r} in {type(ast).__name__}")
+
+
+def _fold_cell_map(cell_map: Mapping[str, AstNode]) -> tuple[dict[str, AstNode], int]:
+    folded_map: dict[str, AstNode] = {}
+    transforms = 0
+    for key, ast in cell_map.items():
+        folded = fold_literals_in_ast(ast)
+        folded_map[key] = folded
+        if folded != ast:
+            transforms += 1
+    return folded_map, transforms
+
+
+def _cells_changed(
+    before: Mapping[str, AstNode],
+    after: Mapping[str, AstNode],
+) -> int:
+    keys = set(before) | set(after)
+    return sum(1 for key in keys if before.get(key) != after.get(key))
+
+
+def _formula_cells(cell_map: Mapping[str, AstNode]) -> dict[str, AstNode]:
+    return {key: ast for key, ast in cell_map.items() if not _is_cse_binding_key(key)}
+
+
+def _cse_bindings(cell_map: Mapping[str, AstNode]) -> dict[str, AstNode]:
+    return {key: ast for key, ast in cell_map.items() if _is_cse_binding_key(key)}
+
+
+def _is_cse_binding_key(key: str) -> bool:
+    return key.startswith(_CSE_KEY_PREFIX)
 
 
 def _group_occurrences(

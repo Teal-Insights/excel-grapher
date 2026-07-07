@@ -16,10 +16,11 @@ from excel_grapher.core.formula_ast import CellRefNode, NumberNode
 from .conftest import parse_formula
 
 
-def test_get_rule_apply_wires_rules_one_two_and_three() -> None:
+def test_get_rule_apply_wires_rules_one_through_four() -> None:
     assert get_rule_apply("pass_through") is not None
     assert get_rule_apply("parallel_if_row") is not None
     assert get_rule_apply("constant_folding") is not None
+    assert get_rule_apply("common_subexpression") is not None
 
 
 def test_compression_rules_with_apply_populates_apply_fields() -> None:
@@ -27,9 +28,10 @@ def test_compression_rules_with_apply_populates_apply_fields() -> None:
     assert by_id["pass_through"].apply is not None
     assert by_id["parallel_if_row"].apply is not None
     assert by_id["constant_folding"].apply is not None
+    assert by_id["common_subexpression"].apply is not None
 
 
-def test_apply_compression_rules_runs_pass_through_parallel_then_constant_folding() -> None:
+def test_apply_compression_rules_runs_pass_through_parallel_folding_then_cse() -> None:
     original = {
         "Sheet1!A1": CellRefNode("Sheet1!B1"),
         "Sheet1!C1": parse_formula("=Sheet1!A1+10"),
@@ -43,8 +45,10 @@ def test_apply_compression_rules_runs_pass_through_parallel_then_constant_foldin
 
     pass_through = stats.contribution_for("pass_through")
     folding = stats.contribution_for("constant_folding")
+    cse = stats.contribution_for("common_subexpression")
     assert pass_through.in_place_transforms == 1
     assert folding.in_place_transforms == 1
+    assert cse.binding_sites == 0
 
 
 def test_apply_compression_rules_expand_and_parity() -> None:

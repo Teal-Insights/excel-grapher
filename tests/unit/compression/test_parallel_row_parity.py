@@ -42,7 +42,7 @@ def _combined_workbook_map():
     }
 
 
-def test_pipeline_default_order_runs_one_two_three() -> None:
+def test_pipeline_default_order_runs_one_through_four() -> None:
     stats = empty_compression_stats()
     compressed = apply_compression_rules(_combined_workbook_map(), stats=stats)
     assert compressed["Sheet1!C1"] == parse_formula("=Sheet1!B1+10")
@@ -53,6 +53,7 @@ def test_pipeline_default_order_runs_one_two_three() -> None:
     assert stats.contribution_for("pass_through").in_place_transforms == 1
     assert stats.contribution_for("parallel_if_row").cells_affected == 3
     assert stats.contribution_for("constant_folding").in_place_transforms == 2
+    assert stats.contribution_for("common_subexpression").binding_sites == 0
 
 
 def test_pipeline_rules_one_three_two_explicit_order() -> None:

@@ -38,6 +38,7 @@ def test_compression_rules_metadata_fields() -> None:
 
     assert get_rule_apply("constant_folding") is not None
     assert get_rule_apply("parallel_if_row") is not None
+    assert get_rule_apply("common_subexpression") is not None
 
 
 def test_empty_compression_stats_defaults() -> None:

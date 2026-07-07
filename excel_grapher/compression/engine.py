@@ -15,6 +15,7 @@ from .types import CompressedNode, normalize_compressed_key
 @lru_cache(maxsize=1)
 def _implemented_rule_appliers() -> dict[str, RuleApplyFn]:
     from .constant_folding import apply_constant_folding
+    from .cse import apply_cell_cse
     from .parallel_row import apply_parallel_row
     from .pass_through import apply_pass_through
 
@@ -22,6 +23,7 @@ def _implemented_rule_appliers() -> dict[str, RuleApplyFn]:
         "pass_through": apply_pass_through,
         "parallel_if_row": apply_parallel_row,
         "constant_folding": apply_constant_folding,
+        "common_subexpression": apply_cell_cse,
     }
 
 
