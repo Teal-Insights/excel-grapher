@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import TypeAlias
 
 from .excel_function_names import normalize_excel_function_name
 from .types import XlError
+
+_CSE_REF_KEY_RE = re.compile(r"^_cse!\d+$")
 
 
 class FormulaParseError(Exception):
@@ -85,6 +88,30 @@ class EmptyArgNode:
     pass
 
 
+@dataclass(frozen=True, slots=True)
+class ColumnVarCellRefNode:
+    """Column placeholder in a parallel row compression template."""
+
+    column_variable: str = "COL"
+    sheet: str | None = None
+    row: int | None = None
+
+    def __post_init__(self) -> None:
+        if not self.column_variable:
+            raise ValueError("column_variable must be a non-empty string")
+
+
+@dataclass(frozen=True, slots=True)
+class SubexpressionRefNode:
+    """Reference to a hoisted `_cse!` binding in a compressed formula map."""
+
+    ref_key: str
+
+    def __post_init__(self) -> None:
+        if not _CSE_REF_KEY_RE.fullmatch(self.ref_key):
+            raise ValueError(f"ref_key must match '_cse!<digits>' (got {self.ref_key!r})")
+
+
 AstNode: TypeAlias = (
     NumberNode
     | StringNode
@@ -98,6 +125,8 @@ AstNode: TypeAlias = (
     | BinaryOpNode
     | UnaryOpNode
     | EmptyArgNode
+    | ColumnVarCellRefNode
+    | SubexpressionRefNode
 )
 
 

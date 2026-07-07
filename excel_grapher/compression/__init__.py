@@ -17,12 +17,13 @@ from .nodes import (
 )
 from .parity import assert_compression_parity
 from .rules import COMPRESSION_RULES, CompressionStats, RuleContribution, RuleSpec
-from .types import CompressedNode
+from .types import CompressedNode, TemplateAstNode
 
 __all__ = [
     "COMPRESSION_RULES",
     "ColumnVarCellRefNode",
     "CompressedNode",
+    "TemplateAstNode",
     "CompressionStats",
     "ParallelFormulaNode",
     "RuleContribution",
