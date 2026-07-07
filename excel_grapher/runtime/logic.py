@@ -1,41 +1,21 @@
 from __future__ import annotations
 
-from excel_grapher.core import CellValue, XlError, get_error, to_bool, to_number
+from excel_grapher.core import CellValue, XlError, to_number
+from excel_grapher.core.logic_funcs import logical_and, logical_not, logical_or
 
 __all__ = ["xl_and", "xl_choose", "xl_ifna", "xl_not", "xl_or"]
 
 
 def xl_and(*args: CellValue) -> bool | XlError:
-    err = get_error(*args)
-    if err is not None:
-        return err
-    for a in args:
-        b = to_bool(a)
-        if isinstance(b, XlError):
-            return b
-        if not b:
-            return False
-    return True
+    return logical_and(*args)
 
 
 def xl_or(*args: CellValue) -> bool | XlError:
-    err = get_error(*args)
-    if err is not None:
-        return err
-    for a in args:
-        b = to_bool(a)
-        if isinstance(b, XlError):
-            return b
-        if b:
-            return True
-    return False
+    return logical_or(*args)
 
 
 def xl_not(arg: CellValue) -> bool | XlError:
-    b = to_bool(arg)
-    if isinstance(b, XlError):
-        return b
-    return not b
+    return logical_not(arg)
 
 
 def xl_choose(index_num: CellValue, *values: CellValue) -> CellValue:
