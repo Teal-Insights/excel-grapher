@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from typing import TypeAlias
@@ -12,6 +12,7 @@ from excel_grapher.core.formula_ast import (
     AstNode,
     BinaryOpNode,
     FunctionCallNode,
+    SubexpressionRefNode,
     UnaryOpNode,
 )
 
@@ -20,16 +21,22 @@ from .template_signature import TemplateSignature, template_signature
 SubtreePath: TypeAlias = tuple[str | int, ...]
 SubtreeSignature = TemplateSignature
 
+_CSE_KEY_PREFIX = "_cse!"
+
 __all__ = [
     "CseCandidate",
     "CseConfig",
     "CseGateRejection",
     "CseGateResult",
+    "CseResult",
     "SubtreeOccurrence",
     "SubtreePath",
     "SubtreeSignature",
+    "allocate_cse_key",
+    "apply_hoist",
     "enumerate_subtrees",
     "find_shared_subtrees",
+    "hoist_one_subexpression",
     "net_ast_savings",
     "passes_cse_gates",
     "subtree_node_count",
@@ -162,6 +169,110 @@ def passes_cse_gates(candidate: CseCandidate, config: CseConfig) -> CseGateResul
     if net_ast_savings(candidate) < config.min_net_ast_savings:
         return CseGateResult(False, CseGateRejection.INSUFFICIENT_NET_SAVINGS)
     return CseGateResult(True)
+
+
+@dataclass
+class CseResult:
+    """Counters from one CSE hoist round."""
+
+    binding_key: str | None = None
+    hoisted: bool = False
+    binding_sites: int = 0
+    redundant_evaluations_eliminated: int = 0
+    ast_subnodes_saved: int = 0
+    candidates_rejected: int = 0
+
+
+def allocate_cse_key(existing_keys: Collection[str]) -> str:
+    """Return the lowest unused `_cse!N` key not present in `existing_keys`."""
+    index = 0
+    while True:
+        key = f"{_CSE_KEY_PREFIX}{index}"
+        if key not in existing_keys:
+            return key
+        index += 1
+
+
+def apply_hoist(
+    cell_map: Mapping[str, AstNode],
+    candidate: CseCandidate,
+    key: str,
+) -> dict[str, AstNode]:
+    """Add a `_cse!` binding and replace all candidate occurrences with refs."""
+    ref = SubexpressionRefNode(key)
+    paths_by_cell: dict[str, list[SubtreePath]] = defaultdict(list)
+    for cell_key, path in candidate.occurrences:
+        paths_by_cell[cell_key].append(path)
+
+    updated = dict(cell_map)
+    for cell_key, paths in paths_by_cell.items():
+        ast = updated[cell_key]
+        for path in sorted(paths, key=len, reverse=True):
+            ast = _replace_subtree_at_path(ast, path, ref)
+        updated[cell_key] = ast
+    updated[key] = candidate.ast
+    return updated
+
+
+def hoist_one_subexpression(
+    cell_map: Mapping[str, AstNode],
+    *,
+    config: CseConfig | None = None,
+) -> tuple[dict[str, AstNode], CseResult]:
+    """Hoist the best gated shared subtree once, or return the input unchanged."""
+    config = config or CseConfig()
+    candidates = CseCandidate.from_cell_map(cell_map)
+    passing: list[CseCandidate] = []
+    rejected = 0
+    for candidate in candidates:
+        if passes_cse_gates(candidate, config).passes:
+            passing.append(candidate)
+        else:
+            rejected += 1
+    if not passing:
+        return dict(cell_map), CseResult(candidates_rejected=rejected)
+
+    best = max(passing, key=net_ast_savings)
+    key = allocate_cse_key(cell_map)
+    updated = apply_hoist(cell_map, best, key)
+    return updated, CseResult(
+        binding_key=key,
+        hoisted=True,
+        binding_sites=1,
+        redundant_evaluations_eliminated=best.occurrence_count - 1,
+        ast_subnodes_saved=net_ast_savings(best),
+        candidates_rejected=rejected,
+    )
+
+
+def _replace_subtree_at_path(
+    ast: AstNode,
+    path: SubtreePath,
+    replacement: AstNode,
+) -> AstNode:
+    if not path:
+        return replacement
+    step, *rest = path
+    tail = tuple(rest)
+    if step == "left" and isinstance(ast, BinaryOpNode):
+        return BinaryOpNode(
+            ast.op, _replace_subtree_at_path(ast.left, tail, replacement), ast.right
+        )
+    if step == "right" and isinstance(ast, BinaryOpNode):
+        return BinaryOpNode(
+            ast.op, ast.left, _replace_subtree_at_path(ast.right, tail, replacement)
+        )
+    if step == "operand" and isinstance(ast, UnaryOpNode):
+        return UnaryOpNode(ast.op, _replace_subtree_at_path(ast.operand, tail, replacement))
+    if step == "args" and isinstance(ast, FunctionCallNode) and rest:
+        index = rest[0]
+        if not isinstance(index, int):
+            raise ValueError(f"expected integer function-arg index in path {path!r}")
+        inner_path = tuple(rest[1:])
+        new_args = list(ast.args)
+        new_args[index] = _replace_subtree_at_path(new_args[index], inner_path, replacement)
+        return FunctionCallNode(ast.name, new_args)
+    raise ValueError(f"cannot follow path {path!r} in {type(ast).__name__}")
 
 
 def _group_occurrences(
