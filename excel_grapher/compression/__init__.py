@@ -8,7 +8,12 @@ to materialize artifacts back to per-cell ASTs for evaluation parity checks.
 
 from __future__ import annotations
 
-from .expand import expand_compressed_to_cells
+from .expand import (
+    expand_compressed_to_cells,
+    inline_subexpression_refs,
+    shift_ast_to_cell,
+    substitute_column_var,
+)
 from .nodes import (
     ColumnVarCellRefNode,
     ParallelFormulaNode,
@@ -16,7 +21,14 @@ from .nodes import (
     TacoPatternNode,
 )
 from .parity import assert_compression_parity
-from .rules import COMPRESSION_RULES, CompressionStats, RuleContribution, RuleSpec
+from .rules import (
+    COMPRESSION_RULES,
+    CompressionStats,
+    RuleContribution,
+    RuleSpec,
+    compression_rule_ids,
+    empty_compression_stats,
+)
 from .types import CompressedNode, TemplateAstNode
 
 __all__ = [
@@ -31,5 +43,10 @@ __all__ = [
     "SubexpressionRefNode",
     "TacoPatternNode",
     "assert_compression_parity",
+    "compression_rule_ids",
+    "empty_compression_stats",
     "expand_compressed_to_cells",
+    "inline_subexpression_refs",
+    "shift_ast_to_cell",
+    "substitute_column_var",
 ]

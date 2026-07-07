@@ -48,8 +48,10 @@ def test_compression_rules_lists_nine_rules_in_pipeline_order() -> None:
     ]
 
 
-def test_expand_and_parity_raise_not_implemented() -> None:
-    with pytest.raises(NotImplementedError):
-        expand_compressed_to_cells({})
+def test_expand_empty_map_returns_no_cells() -> None:
+    assert expand_compressed_to_cells({}) == {}
+
+
+def test_parity_raises_not_implemented() -> None:
     with pytest.raises(NotImplementedError):
         assert_compression_parity({}, {}, input_values={})
