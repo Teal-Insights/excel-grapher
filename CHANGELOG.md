@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.1.0 (2026-07-07)
+
+### Features
+
+- **export**: Raise-only boundary for embedded runtime helpers (#326)
+  ([#368](https://github.com/Teal-Insights/excel-grapher/pull/368),
+  [`c700b80`](https://github.com/Teal-Insights/excel-grapher/commit/c700b805d79327c9f9171d19af74c50fbae42617))
+
+- **export**: Wrap runtime calls with raise_if_sentinel at codegen boundary
+  ([#368](https://github.com/Teal-Insights/excel-grapher/pull/368),
+  [`c700b80`](https://github.com/Teal-Insights/excel-grapher/commit/c700b805d79327c9f9171d19af74c50fbae42617))
+
+### Refactoring
+
+- **export**: Use runtime boundary wrappers instead of codegen wrap
+  ([#368](https://github.com/Teal-Insights/excel-grapher/pull/368),
+  [`c700b80`](https://github.com/Teal-Insights/excel-grapher/commit/c700b805d79327c9f9171d19af74c50fbae42617))
+
+### Testing
+
+- **export**: Document shadowing invariants and expand boundary coverage
+  ([#368](https://github.com/Teal-Insights/excel-grapher/pull/368),
+  [`c700b80`](https://github.com/Teal-Insights/excel-grapher/commit/c700b805d79327c9f9171d19af74c50fbae42617))
+
+
 ## v3.0.1 (2026-07-06)
 
 ### Performance Improvements
