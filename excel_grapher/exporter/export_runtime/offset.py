@@ -8,14 +8,14 @@ import fastpyxl.utils.cell
 
 from excel_grapher.core import XlError, to_number
 from excel_grapher.core.address_keys import format_cell_key
-from excel_grapher.core.addressing import index_excel_range
+from excel_grapher.core.addressing import index_excel_range, offset_range
 from excel_grapher.core.types import XlErrorException
 from excel_grapher.runtime.cache import EvalContext, _parse_range_address, xl_cell
 
 from .ranges import Range
 from .values import CellValue, ExcelRange, as_scalar
 
-__all__ = ["xl_index_ref", "xl_offset", "xl_range", "xl_range_rows"]
+__all__ = ["xl_index_ref", "xl_offset", "xl_offset_ref", "xl_range", "xl_range_rows"]
 
 
 def _format_address(sheet: str, row: int, col: int) -> str:
@@ -80,6 +80,36 @@ def xl_index_ref(
     if out.start_row == out.end_row and out.start_col == out.end_col:
         return (out.sheet, out.start_row, out.start_col)
     return (out.sheet, out.start_row, out.start_col, out.end_row, out.end_col)
+
+
+def xl_offset_ref(
+    ref: ExcelRange | tuple[str, int, int] | tuple[str, int, int, int, int],
+    rows: CellValue,
+    cols: CellValue,
+    height: CellValue | None = None,
+    width: CellValue | None = None,
+) -> ExcelRange:
+    """Return OFFSET reference metadata, raising on Excel reference errors."""
+    base_range = _range_from_ref_info(ref)
+
+    class _UnboundedSheet:
+        sheet = base_range.sheet
+        min_row = 1
+        min_col = 1
+        max_row = 1_000_000_000
+        max_col = 1_000_000_000
+
+    out = offset_range(
+        cast("Any", base_range),
+        cast("Any", rows),
+        cast("Any", cols),
+        cast("Any", height),
+        cast("Any", width),
+        bounds=_UnboundedSheet(),
+    )
+    if isinstance(out, XlError):
+        raise XlErrorException(out)
+    return cast("ExcelRange", out)
 
 
 def xl_offset(

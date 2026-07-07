@@ -110,6 +110,17 @@ ignore = [
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
+[[tool.ty.overrides]]
+include = [
+    "excel_grapher/exporter/export_runtime/math.py",
+    "excel_grapher/exporter/export_runtime/text.py",
+    "excel_grapher/exporter/export_runtime/logic.py",
+    "excel_grapher/exporter/export_runtime/reference.py",
+]
+
+[tool.ty.overrides.rules]
+unresolved-reference = "ignore"
+
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
