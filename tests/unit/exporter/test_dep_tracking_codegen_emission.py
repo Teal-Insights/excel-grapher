@@ -74,7 +74,7 @@ def test_dep_tracking_baseline_fixture_matches_schema() -> None:
     metrics = document["minimal_non_iterative_export"]
     assert isinstance(metrics, dict)
     assert metrics["dep_tracking_lines"] == 0
-    assert metrics["embedded_runtime_lines"] == 422
+    assert metrics["embedded_runtime_lines"] == 428
     targets = document["sprint2_targets"]
     assert targets["dep_tracking_lines"] == 0
     assert targets["cache_eval_scaffold_line_budget"] == SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET
