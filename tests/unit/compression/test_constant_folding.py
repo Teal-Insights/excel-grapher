@@ -8,7 +8,7 @@ from excel_grapher.compression.constant_folding import (
     try_fold_ast,
 )
 from excel_grapher.compression.parity import assert_compression_parity
-from excel_grapher.compression.rules import empty_compression_stats
+from excel_grapher.compression.stats import empty_compression_stats
 from excel_grapher.core.formula_ast import (
     BinaryOpNode,
     CellRefNode,

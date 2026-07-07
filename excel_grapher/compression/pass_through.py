@@ -8,7 +8,7 @@ from excel_grapher.core.address_keys import normalize_key
 from excel_grapher.core.formula_ast import AstNode, CellRefNode, UnaryOpNode
 
 from .ast_utils import map_ast
-from .rules import CompressionStats
+from .stats import CompressionStats
 
 
 def singleton_cell_ref_target(ast: AstNode) -> str | None:
@@ -80,7 +80,7 @@ def apply_pass_through(
             result[normalized_key] = ast
             continue
         rewritten = replace_pass_through_refs(ast, pass_through)
-        if rewritten is not ast:
+        if rewritten != ast:
             transforms += 1
         result[normalized_key] = rewritten
 

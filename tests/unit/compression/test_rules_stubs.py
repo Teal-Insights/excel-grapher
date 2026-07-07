@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from excel_grapher.compression.engine import get_rule_apply
 from excel_grapher.compression.rules import (
     COMPRESSION_RULES,
-    RuleContribution,
     compression_rule_ids,
-    empty_compression_stats,
 )
+from excel_grapher.compression.stats import RuleContribution, empty_compression_stats
 
 
 def test_compression_rule_ids_match_pipeline_order() -> None:
@@ -34,6 +34,9 @@ def test_compression_rules_metadata_fields() -> None:
 
     pass_through = COMPRESSION_RULES[0]
     assert pass_through.reduces_emission_units is False
+    assert get_rule_apply("pass_through") is not None
+
+    assert get_rule_apply("constant_folding") is not None
 
 
 def test_empty_compression_stats_defaults() -> None:

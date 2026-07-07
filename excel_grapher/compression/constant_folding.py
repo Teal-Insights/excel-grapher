@@ -19,7 +19,7 @@ from excel_grapher.core.formula_ast import (
 from excel_grapher.core.types import CellValue, XlError
 
 from .ast_utils import is_literal_ast
-from .rules import CompressionStats
+from .stats import CompressionStats
 
 
 def try_fold_ast(ast: AstNode) -> AstNode | None:

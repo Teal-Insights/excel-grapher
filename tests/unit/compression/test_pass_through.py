@@ -10,7 +10,7 @@ from excel_grapher.compression.pass_through import (
     resolve_pass_through_chains,
     singleton_cell_ref_target,
 )
-from excel_grapher.compression.rules import empty_compression_stats
+from excel_grapher.compression.stats import empty_compression_stats
 from excel_grapher.core.address_keys import normalize_key
 from excel_grapher.core.formula_ast import CellRefNode
 
