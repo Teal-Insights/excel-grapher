@@ -46,6 +46,13 @@ from .pass_through import (
 )
 from .rules import COMPRESSION_RULES, RuleApplyFn, RuleSpec, compression_rule_ids
 from .stats import CompressionStats, RuleContribution, empty_compression_stats
+from .template_signature import (
+    TemplateSignature,
+    collect_cell_ref_addresses,
+    fixed_cell_refs_in_group,
+    template_signature,
+    with_column_variable,
+)
 from .types import CompressedNode, TemplateAstNode
 
 __all__ = [
@@ -61,17 +68,20 @@ __all__ = [
     "TacoPatternNode",
     "ParallelFormulaNode",
     "TemplateAstNode",
+    "TemplateSignature",
     "apply_compression_rules",
     "apply_constant_folding",
     "apply_pass_through",
     "assert_compression_parity",
     "ast_contains_refs",
+    "collect_cell_ref_addresses",
     "compare_compression_parity",
     "compression_rule_ids",
     "compression_rules_with_apply",
     "compression_values_equal",
     "empty_compression_stats",
     "expand_compressed_to_cells",
+    "fixed_cell_refs_in_group",
     "fold_literals_in_ast",
     "get_rule_apply",
     "identify_pass_through_cells",
@@ -83,5 +93,7 @@ __all__ = [
     "shift_ast_to_cell",
     "singleton_cell_ref_target",
     "substitute_column_var",
+    "template_signature",
     "try_fold_ast",
+    "with_column_variable",
 ]
