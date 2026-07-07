@@ -22,7 +22,7 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeGuard, cast
+from typing import TypeGuard
 
 from excel_grapher import create_dependency_graph
 from excel_grapher.compression import (
@@ -234,7 +234,7 @@ def _apply_pass_through_step(
 
     stats = stats_holder.stats
     assert isinstance(stats, CompressionStats)
-    return cast(dict[str, CompressedNode], apply_pass_through(ast_map, stats))
+    return apply_pass_through(ast_map, stats)
 
 
 def _apply_constant_folding_step(
@@ -245,7 +245,7 @@ def _apply_constant_folding_step(
 
     stats = stats_holder.stats
     assert isinstance(stats, CompressionStats)
-    return cast(dict[str, CompressedNode], apply_constant_folding(ast_map, stats))
+    return apply_constant_folding(ast_map, stats)
 
 
 def _illustrate_parallel_row(ast_map: Mapping[str, AstNode]) -> None:
@@ -508,8 +508,7 @@ def run_demo(*, check: bool) -> int:
         rule_id for rule_id in compression_rule_ids() if get_rule_apply(rule_id) is not None
     ]
     print(f"  active rule ids: {', '.join(implemented_ids)}")
-    print("  note: parallel_if_row runs before constant_folding in metadata order,")
-    print("        but only wired appliers execute (pass_through → constant_folding).")
+    print("  default pipeline order: pass_through → parallel_if_row → constant_folding")
     print()
     if check:
         try:

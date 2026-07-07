@@ -5,11 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
-from excel_grapher.core.formula_ast import AstNode
-
 from .stats import CompressionStats
+from .types import CompressedNode
 
-RuleApplyFn = Callable[[Mapping[str, AstNode], CompressionStats], dict[str, AstNode]]
+RuleApplyFn = Callable[[Mapping[str, CompressedNode], CompressionStats], dict[str, CompressedNode]]
 
 
 @dataclass(frozen=True, slots=True)

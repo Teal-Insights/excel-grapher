@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from excel_grapher.core.address_keys import normalize_key
 from excel_grapher.core.expr_eval import Unsupported, evaluate_expr
 from excel_grapher.core.formula_ast import (
     AstNode,
@@ -18,8 +17,9 @@ from excel_grapher.core.formula_ast import (
 )
 from excel_grapher.core.types import CellValue, XlError
 
-from .ast_utils import is_literal_ast
+from .ast_utils import is_literal_ast, merge_compressed_map, partition_compressed_map
 from .stats import CompressionStats
+from .types import CompressedNode
 
 
 def try_fold_ast(ast: AstNode) -> AstNode | None:
@@ -45,25 +45,26 @@ def fold_literals_in_ast(ast: AstNode) -> AstNode:
 
 
 def apply_constant_folding(
-    ast_map: Mapping[str, AstNode],
+    compressed_map: Mapping[str, CompressedNode],
     stats: CompressionStats | None = None,
-) -> dict[str, AstNode]:
-    """Apply constant folding to every formula in `ast_map`."""
+) -> dict[str, CompressedNode]:
+    """Apply constant folding to per-cell formulas in `compressed_map`."""
+    cell_map, artifacts = partition_compressed_map(compressed_map)
     result: dict[str, AstNode] = {}
     transforms = 0
 
-    for cell_key, ast in ast_map.items():
+    for cell_key, ast in cell_map.items():
         folded = fold_literals_in_ast(ast)
         if folded != ast:
             transforms += 1
-        result[normalize_key(cell_key)] = folded
+        result[cell_key] = folded
 
     if stats is not None:
         stats.contribution_for("constant_folding").record(
             in_place_transforms=transforms,
             cells_affected=transforms,
         )
-    return result
+    return merge_compressed_map(artifacts, result)
 
 
 def _fold_literals_once(ast: AstNode) -> AstNode:

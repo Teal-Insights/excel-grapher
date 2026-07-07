@@ -11,6 +11,7 @@ import fastpyxl.utils.cell
 from excel_grapher.core.address_keys import normalize_key, parse_address, quote_sheet_if_needed
 from excel_grapher.core.formula_ast import AstNode, FunctionCallNode
 
+from .ast_utils import partition_compressed_map
 from .nodes import ParallelFormulaNode
 from .stats import CompressionStats
 from .template_signature import TemplateSignature, template_signature, with_column_variable
@@ -229,7 +230,7 @@ def build_parallel_node(run: ParallelRun) -> ParallelFormulaNode:
 
 
 def apply_parallel_row(
-    ast_map: Mapping[str, AstNode],
+    compressed_map: Mapping[str, CompressedNode],
     stats: CompressionStats | None = None,
     *,
     min_run_length: int = 3,
@@ -237,7 +238,7 @@ def apply_parallel_row(
     """Merge parallel row runs into `ParallelFormulaNode` artifacts.
 
     Args:
-        ast_map: Per-cell formula AST map.
+        compressed_map: Mixed per-cell AST and artifact map.
         stats: Optional stats object for rule contribution counters.
         min_run_length: Minimum contiguous columns required to form a group.
 
@@ -245,12 +246,12 @@ def apply_parallel_row(
         Mixed compressed map with per-cell keys removed when absorbed into
         parallel artifacts.
     """
-    normalized = {normalize_key(cell_key): ast for cell_key, ast in ast_map.items()}
-    runs = find_parallel_runs_in_map(normalized, min_len=min_run_length)
+    cell_map, artifacts = partition_compressed_map(compressed_map)
+    runs = find_parallel_runs_in_map(cell_map, min_len=min_run_length)
     absorbed = {cell.key for run in runs for cell in run.cells}
 
     result: dict[str, CompressedNode] = {
-        key: ast for key, ast in normalized.items() if key not in absorbed
+        key: ast for key, ast in cell_map.items() if key not in absorbed
     }
     for run in runs:
         result[parallel_artifact_key(run)] = build_parallel_node(run)
@@ -260,7 +261,7 @@ def apply_parallel_row(
             cells_affected=sum(len(run.cells) for run in runs),
             emission_units_saved=sum(len(run.cells) - 1 for run in runs),
         )
-    return result
+    return {**artifacts, **result}
 
 
 def materialize_parallel_node(node: ParallelFormulaNode) -> dict[str, AstNode]:

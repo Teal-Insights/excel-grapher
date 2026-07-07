@@ -8,7 +8,13 @@ to materialize artifacts back to per-cell ASTs for evaluation parity checks.
 
 from __future__ import annotations
 
-from .ast_utils import ast_contains_refs, is_literal_ast, map_ast
+from .ast_utils import (
+    ast_contains_refs,
+    is_cell_ast,
+    is_literal_ast,
+    map_ast,
+    partition_compressed_map,
+)
 from .constant_folding import (
     apply_constant_folding,
     fold_literals_in_ast,
@@ -66,7 +72,12 @@ from .template_signature import (
     template_signature,
     with_column_variable,
 )
-from .types import CompressedNode, TemplateAstNode
+from .types import (
+    CompressedNode,
+    TemplateAstNode,
+    is_synthetic_compressed_key,
+    normalize_compressed_key,
+)
 
 __all__ = [
     "COMPRESSION_RULES",
@@ -106,11 +117,15 @@ __all__ = [
     "group_row_cells",
     "identify_pass_through_cells",
     "inline_subexpression_refs",
+    "is_cell_ast",
     "is_literal_ast",
+    "is_synthetic_compressed_key",
     "map_ast",
     "materialize_parallel_node",
     "merge_adjacent_runs",
+    "normalize_compressed_key",
     "parallel_artifact_key",
+    "partition_compressed_map",
     "replace_pass_through_refs",
     "resolve_pass_through_chains",
     "shift_ast_to_cell",

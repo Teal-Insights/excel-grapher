@@ -8,6 +8,7 @@ from excel_grapher.compression import (
     expand_compressed_to_cells,
     get_rule_apply,
 )
+from excel_grapher.compression.nodes import ParallelFormulaNode
 from excel_grapher.compression.parity import assert_compression_parity
 from excel_grapher.compression.stats import empty_compression_stats
 from excel_grapher.core.formula_ast import CellRefNode, NumberNode
@@ -15,20 +16,20 @@ from excel_grapher.core.formula_ast import CellRefNode, NumberNode
 from .conftest import parse_formula
 
 
-def test_get_rule_apply_wires_rules_one_and_three() -> None:
+def test_get_rule_apply_wires_rules_one_two_and_three() -> None:
     assert get_rule_apply("pass_through") is not None
+    assert get_rule_apply("parallel_if_row") is not None
     assert get_rule_apply("constant_folding") is not None
-    assert get_rule_apply("parallel_if_row") is None
 
 
 def test_compression_rules_with_apply_populates_apply_fields() -> None:
     by_id = {rule.rule_id: rule for rule in compression_rules_with_apply()}
     assert by_id["pass_through"].apply is not None
+    assert by_id["parallel_if_row"].apply is not None
     assert by_id["constant_folding"].apply is not None
-    assert by_id["parallel_if_row"].apply is None
 
 
-def test_apply_compression_rules_runs_pass_through_then_constant_folding() -> None:
+def test_apply_compression_rules_runs_pass_through_parallel_then_constant_folding() -> None:
     original = {
         "Sheet1!A1": CellRefNode("Sheet1!B1"),
         "Sheet1!C1": parse_formula("=Sheet1!A1+10"),
@@ -55,7 +56,9 @@ def test_apply_compression_rules_expand_and_parity() -> None:
     }
     compressed = apply_compression_rules(original)
     expanded = expand_compressed_to_cells(compressed)
-    assert expanded == compressed
+    assert expanded == {
+        key: node for key, node in compressed.items() if not isinstance(node, ParallelFormulaNode)
+    }
     assert_compression_parity(original, compressed, input_values=input_values)
 
 

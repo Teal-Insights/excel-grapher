@@ -5,20 +5,22 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from functools import lru_cache
 
-from excel_grapher.core.address_keys import normalize_key
 from excel_grapher.core.formula_ast import AstNode
 
 from .rules import COMPRESSION_RULES, RuleApplyFn, RuleSpec
 from .stats import CompressionStats, empty_compression_stats
+from .types import CompressedNode, normalize_compressed_key
 
 
 @lru_cache(maxsize=1)
 def _implemented_rule_appliers() -> dict[str, RuleApplyFn]:
     from .constant_folding import apply_constant_folding
+    from .parallel_row import apply_parallel_row
     from .pass_through import apply_pass_through
 
     return {
         "pass_through": apply_pass_through,
+        "parallel_if_row": apply_parallel_row,
         "constant_folding": apply_constant_folding,
     }
 
@@ -38,24 +40,27 @@ def compression_rules_with_apply() -> tuple[RuleSpec, ...]:
 
 
 def apply_compression_rules(
-    ast_map: Mapping[str, AstNode],
+    ast_map: Mapping[str, AstNode] | Mapping[str, CompressedNode],
     *,
     rule_ids: Sequence[str] | None = None,
     stats: CompressionStats | None = None,
-) -> dict[str, AstNode]:
+) -> dict[str, CompressedNode]:
     """Apply compression rules to a per-cell AST map in pipeline order.
 
     Args:
-        ast_map: Sheet-qualified cell keys mapped to formula ASTs.
+        ast_map: Sheet-qualified cell keys mapped to formula ASTs or compressed
+            nodes from an earlier pipeline stage.
         rule_ids: Rule ids to run, in the order given. Defaults to all
             implemented rules in pipeline order.
         stats: Optional stats object to accumulate rule contributions.
 
     Returns:
-        Updated per-cell AST map after the selected rules run.
+        Mixed compressed map after the selected rules run.
     """
     stats_obj = stats if stats is not None else empty_compression_stats()
-    working = {normalize_key(cell_key): ast for cell_key, ast in ast_map.items()}
+    working: dict[str, CompressedNode] = {
+        normalize_compressed_key(cell_key): node for cell_key, node in ast_map.items()
+    }
     appliers = _implemented_rule_appliers()
     selected_rule_ids = (
         list(rule_ids)

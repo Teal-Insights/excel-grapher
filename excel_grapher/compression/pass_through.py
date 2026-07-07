@@ -7,8 +7,9 @@ from collections.abc import Mapping
 from excel_grapher.core.address_keys import normalize_key
 from excel_grapher.core.formula_ast import AstNode, CellRefNode, UnaryOpNode
 
-from .ast_utils import map_ast
+from .ast_utils import map_ast, merge_compressed_map, partition_compressed_map
 from .stats import CompressionStats
+from .types import CompressedNode
 
 
 def singleton_cell_ref_target(ast: AstNode) -> str | None:
@@ -66,27 +67,27 @@ def replace_pass_through_refs(
 
 
 def apply_pass_through(
-    ast_map: Mapping[str, AstNode],
+    compressed_map: Mapping[str, CompressedNode],
     stats: CompressionStats | None = None,
-) -> dict[str, AstNode]:
-    """Apply pass-through elimination to a per-cell AST map."""
-    pass_through = resolve_pass_through_chains(identify_pass_through_cells(ast_map))
+) -> dict[str, CompressedNode]:
+    """Apply pass-through elimination to per-cell formulas in `compressed_map`."""
+    cell_map, artifacts = partition_compressed_map(compressed_map)
+    pass_through = resolve_pass_through_chains(identify_pass_through_cells(cell_map))
     result: dict[str, AstNode] = {}
     transforms = 0
 
-    for cell_key, ast in ast_map.items():
-        normalized_key = normalize_key(cell_key)
-        if normalized_key in pass_through:
-            result[normalized_key] = ast
+    for cell_key, ast in cell_map.items():
+        if cell_key in pass_through:
+            result[cell_key] = ast
             continue
         rewritten = replace_pass_through_refs(ast, pass_through)
         if rewritten != ast:
             transforms += 1
-        result[normalized_key] = rewritten
+        result[cell_key] = rewritten
 
     if stats is not None:
         stats.contribution_for("pass_through").record(
             in_place_transforms=transforms,
             cells_affected=transforms,
         )
-    return result
+    return merge_compressed_map(artifacts, result)
