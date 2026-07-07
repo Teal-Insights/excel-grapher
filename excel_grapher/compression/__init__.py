@@ -20,7 +20,12 @@ from .nodes import (
     SubexpressionRefNode,
     TacoPatternNode,
 )
-from .parity import assert_compression_parity
+from .parity import (
+    CompressionParityMismatch,
+    assert_compression_parity,
+    compare_compression_parity,
+    compression_values_equal,
+)
 from .rules import (
     COMPRESSION_RULES,
     CompressionStats,
@@ -35,6 +40,7 @@ __all__ = [
     "COMPRESSION_RULES",
     "ColumnVarCellRefNode",
     "CompressedNode",
+    "CompressionParityMismatch",
     "TemplateAstNode",
     "CompressionStats",
     "ParallelFormulaNode",
@@ -43,7 +49,9 @@ __all__ = [
     "SubexpressionRefNode",
     "TacoPatternNode",
     "assert_compression_parity",
+    "compare_compression_parity",
     "compression_rule_ids",
+    "compression_values_equal",
     "empty_compression_stats",
     "expand_compressed_to_cells",
     "inline_subexpression_refs",
