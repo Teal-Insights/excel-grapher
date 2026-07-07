@@ -227,11 +227,11 @@ class TestDirectCallBoundaryEquivalence:
         graph = _make_graph(*extra_nodes, _make_node("S!A1", formula, None))
         _assert_direct_call_matches_xl_eval(graph, "S!A1", expected)
 
-    def test_embedded_runtime_uses_sentinel_wrappers(self) -> None:
+    def test_embedded_runtime_uses_core_delegation_wrappers(self) -> None:
         graph = _make_graph(_make_node("S!A1", '=AVERAGEIF(S!B1:S!B2, ">5", S!C1:C3)', None))
         code = CodeGenerator(graph).generate(["S!A1"])
-        assert "def _sentinel_xl_averageif" in code
-        assert "_sentinel_xl_averageif" in code
+        assert "def averageif_cells(" in code
+        assert "averageif_cells(" in code
         assert "raise_if_sentinel_float(" in code
         assert "return xl_averageif(" in _cell_function_sources(code)["cell_s_a1"]
 

@@ -51,23 +51,36 @@ Export error-channel specifics:
   sentinel probe channel (`Range.value_at` / `Grid.at` convert raised errors
   back to sentinels for inspection without propagation).
 
-## Layered semantics: shared core vs export-owned runtime
+## Layered semantics: core, runtime, and export_runtime
 
-- **Shared semantics**: coercions, scalar operator semantics, and most
-  worksheet functions live in `excel_grapher/core/*` and
-  `excel_grapher/runtime/*`. The evaluator imports these directly.
-- **Export-owned semantics**: `excel_grapher/exporter/export_runtime/*` defines
-  the exported error channel (`XlErrorException`, `xl_raise`, thunked
-  error-consumers) and lazy-range consumers (operators, lookups, `SUMPRODUCT`,
-  `OFFSET`, `xl_range`). The operator/error/range layer is **not** a single
-  shared implementation anymore — divergence here is deliberate.
+Worksheet functions whose semantics are shared between evaluator and export, but
+whose **error channel** differs, use a three-layer layout:
+
+1. **`core/*_funcs.py`** — shared implementations (return `XlError` sentinels
+   internally where needed). Single source of truth for math, text, logic, and
+   reference helpers covered by this pattern.
+2. **`runtime/*`** — thin sentinel-returning wrappers (evaluator path). The
+   evaluator imports these directly.
+3. **`export_runtime/*`** — thin `raise_if_sentinel_*` wrappers (export path).
+   Delegates to the same `core/*_funcs` implementations.
+
+Criteria helpers (e.g. `_value_matches_criteria`) live in `core/` alongside
+their implementations, not duplicated across layers.
+
+- **Export-owned semantics** (not just error-channel differences):
+  `excel_grapher/exporter/export_runtime/*` also defines the exported error
+  channel (`XlErrorException`, `xl_raise`, thunked error-consumers) and
+  lazy-range consumers (operators, lookups, `SUMPRODUCT`, `OFFSET`, `xl_range`).
+  The operator/error/range layer is **not** a single shared implementation —
+  divergence here is deliberate.
 - **Embedding**: codegen embeds runtime code via
   `excel_grapher/exporter/embed.py::emit_runtime(...)`. Export-owned modules
-  register **last**, so their symbols override shared `core`/`runtime` symbols
-  in emitted code without changing what the evaluator imports.
+  register **last**, so their `xl_*` symbols override shared `runtime` wrappers
+  in emitted code without changing what the evaluator imports. Export wrappers
+  import shared logic from `core/*_funcs` directly.
 
 Do not introduce a *third* implementation of semantics elsewhere; put shared
-logic in `core`/`runtime` and export-specific behavior in `export_runtime`.
+logic in `core/*_funcs` and export-specific behavior in `export_runtime`.
 
 ## Tests that require Excel automation (run-if-available)
 
