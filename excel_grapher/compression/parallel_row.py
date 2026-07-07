@@ -8,18 +8,25 @@ from dataclasses import dataclass
 
 import fastpyxl.utils.cell
 
-from excel_grapher.core.address_keys import normalize_key, parse_address
-from excel_grapher.core.formula_ast import AstNode
+from excel_grapher.core.address_keys import normalize_key, parse_address, quote_sheet_if_needed
+from excel_grapher.core.formula_ast import AstNode, FunctionCallNode
 
+from .nodes import ParallelFormulaNode
+from .stats import CompressionStats
 from .template_signature import TemplateSignature, template_signature, with_column_variable
+from .types import CompressedNode
 
 __all__ = [
     "ParallelRun",
     "RowCell",
+    "apply_parallel_row",
+    "build_parallel_node",
     "find_parallel_runs",
     "find_parallel_runs_in_map",
     "group_row_cells",
+    "materialize_parallel_node",
     "merge_adjacent_runs",
+    "parallel_artifact_key",
     "split_contiguous_row_segments",
 ]
 
@@ -198,3 +205,78 @@ def _matching_run_signature(cells: Sequence[RowCell]) -> TemplateSignature | Non
     if any(signature != first for signature in signatures[1:]):
         return None
     return first
+
+
+def parallel_artifact_key(run: ParallelRun) -> str:
+    """Return a synthetic map key for a compressed parallel row artifact."""
+    return f"parallel:{quote_sheet_if_needed(run.sheet)}!{run.row}:{run.start_col}:{run.end_col}"
+
+
+def build_parallel_node(run: ParallelRun) -> ParallelFormulaNode:
+    """Build a `ParallelFormulaNode` artifact from a detected run."""
+    template = run.normalized_template()
+    condition, if_true, if_false = _if_projection(template)
+    return ParallelFormulaNode(
+        sheet=run.sheet,
+        template=template,
+        start_col=run.start_col,
+        end_col=run.end_col,
+        output_row=run.row,
+        condition=condition,
+        if_true=if_true,
+        if_false=if_false,
+    )
+
+
+def apply_parallel_row(
+    ast_map: Mapping[str, AstNode],
+    stats: CompressionStats | None = None,
+    *,
+    min_run_length: int = 3,
+) -> dict[str, CompressedNode]:
+    """Merge parallel row runs into `ParallelFormulaNode` artifacts.
+
+    Args:
+        ast_map: Per-cell formula AST map.
+        stats: Optional stats object for rule contribution counters.
+        min_run_length: Minimum contiguous columns required to form a group.
+
+    Returns:
+        Mixed compressed map with per-cell keys removed when absorbed into
+        parallel artifacts.
+    """
+    normalized = {normalize_key(cell_key): ast for cell_key, ast in ast_map.items()}
+    runs = find_parallel_runs_in_map(normalized, min_len=min_run_length)
+    absorbed = {cell.key for run in runs for cell in run.cells}
+
+    result: dict[str, CompressedNode] = {
+        key: ast for key, ast in normalized.items() if key not in absorbed
+    }
+    for run in runs:
+        result[parallel_artifact_key(run)] = build_parallel_node(run)
+
+    if stats is not None:
+        stats.contribution_for("parallel_if_row").record(
+            cells_affected=sum(len(run.cells) for run in runs),
+            emission_units_saved=sum(len(run.cells) - 1 for run in runs),
+        )
+    return result
+
+
+def materialize_parallel_node(node: ParallelFormulaNode) -> dict[str, AstNode]:
+    """Expand a `ParallelFormulaNode` to per-cell ASTs."""
+    from .expand import materialize_parallel_node as _materialize
+
+    return _materialize(node)
+
+
+def _if_projection(
+    template: AstNode,
+) -> tuple[AstNode | None, AstNode | None, AstNode | None]:
+    if (
+        isinstance(template, FunctionCallNode)
+        and template.name.upper() == "IF"
+        and len(template.args) == 3
+    ):
+        return template.args[0], template.args[1], template.args[2]
+    return None, None, None

@@ -156,6 +156,11 @@ def _expand_parallel_node(node: ParallelFormulaNode) -> dict[str, AstNode]:
     return expanded
 
 
+def materialize_parallel_node(node: ParallelFormulaNode) -> dict[str, AstNode]:
+    """Expand one `ParallelFormulaNode` to per-cell ASTs."""
+    return _expand_parallel_node(node)
+
+
 def _expand_taco_node(node: TacoPatternNode) -> dict[str, AstNode]:
     expanded: dict[str, AstNode] = {}
     for cell_key in _iter_range_cell_keys(

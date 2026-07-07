@@ -22,6 +22,7 @@ from .engine import (
 from .expand import (
     expand_compressed_to_cells,
     inline_subexpression_refs,
+    materialize_parallel_node,
     shift_ast_to_cell,
     substitute_column_var,
 )
@@ -34,10 +35,13 @@ from .nodes import (
 from .parallel_row import (
     ParallelRun,
     RowCell,
+    apply_parallel_row,
+    build_parallel_node,
     find_parallel_runs,
     find_parallel_runs_in_map,
     group_row_cells,
     merge_adjacent_runs,
+    parallel_artifact_key,
     split_contiguous_row_segments,
 )
 from .parity import (
@@ -82,9 +86,11 @@ __all__ = [
     "TemplateSignature",
     "apply_compression_rules",
     "apply_constant_folding",
+    "apply_parallel_row",
     "apply_pass_through",
     "assert_compression_parity",
     "ast_contains_refs",
+    "build_parallel_node",
     "collect_cell_ref_addresses",
     "compare_compression_parity",
     "compression_rule_ids",
@@ -102,7 +108,9 @@ __all__ = [
     "inline_subexpression_refs",
     "is_literal_ast",
     "map_ast",
+    "materialize_parallel_node",
     "merge_adjacent_runs",
+    "parallel_artifact_key",
     "replace_pass_through_refs",
     "resolve_pass_through_chains",
     "shift_ast_to_cell",
