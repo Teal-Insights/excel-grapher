@@ -14,6 +14,7 @@ def test_emit_runtime_includes_core_math_helpers() -> None:
     assert "def sum_cells(" in code
     assert "def averageif_cells(" in code
     assert "def xl_averageif(" in code
+    assert code.count("def xl_sum(") == 1
     assert "sum_cells(*args)" in code
     assert "raise_if_sentinel_float(" in code
     assert "averageif_cells(" in code
@@ -30,9 +31,9 @@ def test_emit_runtime_includes_core_abs_helper() -> None:
 def test_emit_runtime_includes_core_text_value_fallback() -> None:
     code = emit_runtime({"xl_value", "xl_numbervalue"}, include_offset_table=False)
     assert "def numbervalue_parse(" in code
+    assert "def value_from_text(" in code
     assert "def xl_value(" in code
-    assert "numbervalue_parse(text)" in code
-    assert "raise_if_sentinel_float(to_number(text))" in code
+    assert "raise_if_sentinel_float(value_from_text(text))" in code
 
 
 def test_core_averageif_returns_error_sentinel_without_raising() -> None:

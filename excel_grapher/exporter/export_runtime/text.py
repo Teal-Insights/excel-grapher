@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from excel_grapher.core import CellValue, XlError, to_number
+from excel_grapher.core import CellValue
 from excel_grapher.core.text_funcs import (
     concatenate_cells,
     left_chars,
@@ -11,6 +11,7 @@ from excel_grapher.core.text_funcs import (
     numbervalue_parse,
     right_chars,
     text_format,
+    value_from_text,
 )
 
 from .errors import raise_if_sentinel_float, raise_if_sentinel_str
@@ -68,7 +69,4 @@ def xl_lower(text: CellValue) -> str:
 
 def xl_value(text: CellValue) -> float:
     """Convert text to a number, preserving Excel ``VALUE`` fallback semantics."""
-    parsed = numbervalue_parse(text)
-    if parsed is XlError.VALUE and isinstance(text, str):
-        return raise_if_sentinel_float(to_number(text))
-    return raise_if_sentinel_float(parsed)
+    return raise_if_sentinel_float(value_from_text(text))

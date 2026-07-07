@@ -26,7 +26,7 @@ from .formula_ast import (
     StringNode,
     UnaryOpNode,
 )
-from .functions import xl_abs, xl_exp
+from .math_funcs import abs_number, exp_number
 from .operators import (
     xl_add,
     xl_concat,
@@ -328,11 +328,11 @@ def _fn_max(args: list[CellValue]) -> CellValue:
 
 
 def _fn_abs(args: list[CellValue]) -> CellValue:
-    return xl_abs(*args)
+    return abs_number(*args)
 
 
 def _fn_exp(args: list[CellValue]) -> CellValue:
-    return xl_exp(*args)
+    return exp_number(*args)
 
 
 def _fn_if(args: list[CellValue]) -> CellValue:

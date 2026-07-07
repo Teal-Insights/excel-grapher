@@ -67,6 +67,22 @@ whose **error channel** differs, use a three-layer layout:
 Criteria helpers (e.g. `_value_matches_criteria`) live in `core/` alongside
 their implementations, not duplicated across layers.
 
+### Naming in `core/*_funcs`
+
+Core helpers use descriptive snake_case names — never `xl_*` (that prefix is
+reserved for `runtime/` and `export_runtime/` wrappers). Patterns:
+
+| Pattern | When | Examples |
+| --- | --- | --- |
+| `{verb}_cells` | Aggregates over flattened cell inputs | `sum_cells`, `average_cells`, `countif_cells` |
+| `{operation}_{detail}` | Scalar transforms on one or two values | `round_number`, `abs_number`, `left_chars` |
+| `{source}_from_{target}` or `{target}_parse` | Parsing / conversion | `value_from_text`, `numbervalue_parse` |
+| `{domain}_{property}` | Reference introspection | `row_number`, `columns_count`, `address_string` |
+| `logical_{op}` | Boolean combinators | `logical_and`, `logical_or` |
+
+Private helpers shared within a module stay `_`-prefixed (e.g.
+`_value_matches_criteria`).
+
 - **Export-owned semantics** (not just error-channel differences):
   `excel_grapher/exporter/export_runtime/*` also defines the exported error
   channel (`XlErrorException`, `xl_raise`, thunked error-consumers) and

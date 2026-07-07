@@ -30,7 +30,6 @@ def _core_modules(*, include_operators_fastpath: bool) -> list[tuple[str, Path]]
         ("core.operators", _CORE_DIR / "operators.py"),
         ("core.sumproduct", _CORE_DIR / "sumproduct.py"),
         ("core.addressing", _CORE_DIR / "addressing.py"),
-        ("core.functions", _CORE_DIR / "functions.py"),
         ("core.logic_funcs", _CORE_DIR / "logic_funcs.py"),
         ("core.math_funcs", _CORE_DIR / "math_funcs.py"),
         ("core.text_funcs", _CORE_DIR / "text_funcs.py"),
