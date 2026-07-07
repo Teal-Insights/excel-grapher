@@ -110,11 +110,16 @@ ignore = [
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
-[tool.ruff.lint.per-file-ignores]
-"excel_grapher/exporter/export_runtime/math.py" = ["F821"]
-"excel_grapher/exporter/export_runtime/text.py" = ["F821"]
-"excel_grapher/exporter/export_runtime/logic.py" = ["F821"]
-"excel_grapher/exporter/export_runtime/reference.py" = ["F821"]
+[[tool.ty.overrides]]
+include = [
+    "excel_grapher/exporter/export_runtime/math.py",
+    "excel_grapher/exporter/export_runtime/text.py",
+    "excel_grapher/exporter/export_runtime/logic.py",
+    "excel_grapher/exporter/export_runtime/reference.py",
+]
+
+[tool.ty.overrides.rules]
+unresolved-reference = "ignore"
 
 
 [tool.pytest.ini_options]

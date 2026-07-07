@@ -389,6 +389,17 @@ def _register_runtime_symbol_maps(
     *,
     include_dep_tracking: bool,
 ) -> tuple[dict[str, ast.AST], dict[str, str]]:
+    """Build symbol lookup tables for ``emit_runtime``.
+
+    Modules register in ``_ALL_MODULES`` order; later modules override earlier
+    definitions with the same name. Export-runtime wrappers therefore replace
+    shared ``core``/``runtime`` symbols in emitted code while the evaluator
+    keeps importing the shared versions directly.
+
+    When a symbol is overridden, the prior implementation is preserved under
+    ``_sentinel_{name}`` so export wrappers can delegate to sentinel-returning
+    shared logic and still expose a raise-based public API (#326).
+    """
     symbol_to_node: dict[str, ast.AST] = {}
     symbol_to_module: dict[str, str] = {}
 
@@ -403,6 +414,7 @@ def _register_runtime_symbol_maps(
                 if mod == "cache_context" and name == _FULL_EVAL_CONTEXT_SYMBOL:
                     continue
             if name in symbol_to_node:
+                # Keep the displaced implementation for wrapper delegation.
                 sentinel_name = f"_sentinel_{name}"
                 symbol_to_node[sentinel_name] = symbol_to_node[name]
                 symbol_to_module[sentinel_name] = symbol_to_module[name]
@@ -413,7 +425,18 @@ def _register_runtime_symbol_maps(
 
 
 def _format_emitted_symbol_source(symbol: str, module_src: str, node: ast.AST) -> str:
-    """Extract runtime source for *symbol*, renaming shadowed sentinel implementations."""
+    """Extract runtime source for *symbol*, renaming shadowed sentinel implementations.
+
+    Invariants (see ``_register_runtime_symbol_maps``):
+
+    * Shadowed symbols use the ``_sentinel_{original}`` prefix assigned when an
+      export-runtime module overrides a shared definition.
+    * Shared implementations are plain top-level ``def {original}(...`` defs
+      without decorators. Renaming replaces only the first ``def {original}(``
+      occurrence so bodies extracted from shared modules keep calling the public
+      wrapper name where sibling delegation is intentional (for example
+      ``xl_value`` calling ``_sentinel_xl_numbervalue`` directly in source).
+    """
     segment = _extract_source_segment(module_src, node)
     if symbol.startswith("_sentinel_"):
         original = symbol.removeprefix("_sentinel_")

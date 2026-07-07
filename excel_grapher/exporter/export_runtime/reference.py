@@ -1,4 +1,8 @@
-"""Raise-only boundary wrappers for reference runtime helpers."""
+"""Raise-only boundary wrappers for reference runtime helpers.
+
+``_sentinel_xl_*`` names are bound at embed time; ``# noqa: F821`` marks those
+intentional forward references in wrapper source.
+"""
 
 from __future__ import annotations
 
@@ -18,20 +22,20 @@ def xl_address(
 ) -> str:
     """Build an A1-style address string, raising on Excel errors."""
     return raise_if_sentinel_str(
-        _sentinel_xl_address(row_num, column_num, abs_num, a1, sheet_text)
+        _sentinel_xl_address(row_num, column_num, abs_num, a1, sheet_text)  # noqa: F821
     )
 
 
 def xl_row(ref: CellValue) -> int:
     """Return the row number of a reference, raising on Excel errors."""
-    return raise_if_sentinel_int(_sentinel_xl_row(ref))
+    return raise_if_sentinel_int(_sentinel_xl_row(ref))  # noqa: F821
 
 
 def xl_column(ref: CellValue) -> int:
     """Return the column number of a reference, raising on Excel errors."""
-    return raise_if_sentinel_int(_sentinel_xl_column(ref))
+    return raise_if_sentinel_int(_sentinel_xl_column(ref))  # noqa: F821
 
 
 def xl_columns(ref: CellValue) -> int:
     """Return the column count of a reference, raising on Excel errors."""
-    return raise_if_sentinel_int(_sentinel_xl_columns(ref))
+    return raise_if_sentinel_int(_sentinel_xl_columns(ref))  # noqa: F821

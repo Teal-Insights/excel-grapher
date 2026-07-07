@@ -1,7 +1,8 @@
-"""Raise-based error channel for exported code (#315).
+"""Raise-based error channel for exported code (#315, #326).
 
 Exported code raises `XlErrorException` where Excel displays an error code;
 the evaluator keeps `XlError` sentinels. Parity is asserted on matching codes.
+Direct ``cell_*`` calls and ``xl_eval`` must agree on top-level runtime errors.
 """
 
 from __future__ import annotations
@@ -60,6 +61,41 @@ def _cell_function_sources(code: str) -> dict[str, str]:
             assert source is not None
             out[node.name] = source
     return out
+
+
+def _address_to_cell_fn(address: str) -> str:
+    name: list[str] = []
+    prev_underscore = False
+    for ch in address.lower():
+        if ch == "'":
+            continue
+        if "a" <= ch <= "z" or "0" <= ch <= "9":
+            name.append(ch)
+            prev_underscore = False
+        elif not prev_underscore:
+            name.append("_")
+            prev_underscore = True
+    base = "".join(name).strip("_")
+    return f"cell_{base}"
+
+
+def _assert_direct_call_matches_xl_eval(
+    graph: DependencyGraph,
+    target: str,
+    expected: XlError,
+) -> None:
+    code = CodeGenerator(graph).generate([target])
+    ns: dict[str, Any] = {}
+    exec(code, ns)
+    ctx = ns["make_context"]()
+    cell_fn = ns[_address_to_cell_fn(target)]
+    xl_error_exception = cast("type[BaseException]", ns["XlErrorException"])
+    with pytest.raises(xl_error_exception) as direct_exc:
+        cell_fn(ctx)
+    with pytest.raises(xl_error_exception) as eval_exc:
+        ns["xl_eval"](ctx, target, cell_fn)
+    assert cast(Any, direct_exc.value).code == expected
+    assert cast(Any, eval_exc.value).code == expected
 
 
 def _has_xlerror_isinstance(function_source: str) -> bool:
@@ -146,30 +182,57 @@ class TestGeneratedBoundaryInvariant:
 class TestDirectCallBoundaryEquivalence:
     """Direct ``cell_*`` calls match ``xl_eval`` for top-level runtime errors (#326)."""
 
-    def test_averageif_mismatched_ranges_raises_on_direct_call(self) -> None:
-        graph = _make_graph(
-            _make_node("S!B1", None, 1),
-            _make_node("S!B2", None, 2),
-            _make_node("S!C1", None, 10),
-            _make_node("S!C2", None, 20),
-            _make_node("S!C3", None, 30),
-            _make_node("S!A1", '=AVERAGEIF(S!B1:S!B2, ">5", S!C1:C3)', None),
-        )
-        compute_all, ns = _compute_all(graph, ["S!A1"])
-        ctx = ns["make_context"]()
-        xl_error_exception = cast("type[BaseException]", ns["XlErrorException"])
-        with pytest.raises(xl_error_exception) as direct_exc:
-            ns["cell_s_a1"](ctx)
-        with pytest.raises(xl_error_exception) as eval_exc:
-            ns["xl_eval"](ctx, "S!A1", ns["cell_s_a1"])
-        assert cast(Any, direct_exc.value).code == XlError.VALUE
-        assert cast(Any, eval_exc.value).code == XlError.VALUE
+    @pytest.mark.parametrize(
+        ("formula", "expected", "extra_nodes"),
+        [
+            (
+                '=AVERAGEIF(S!B1:S!B2, ">5", S!C1:C3)',
+                XlError.VALUE,
+                (
+                    _make_node("S!B1", None, 1),
+                    _make_node("S!B2", None, 2),
+                    _make_node("S!C1", None, 10),
+                    _make_node("S!C2", None, 20),
+                    _make_node("S!C3", None, 30),
+                ),
+            ),
+            (
+                "=SUM(S!B1:S!B3)",
+                XlError.DIV,
+                (
+                    _make_node("S!B1", None, 1),
+                    _make_node("S!B2", None, 2),
+                    _make_node("S!B3", "=1/0", None),
+                ),
+            ),
+            (
+                '=VALUE("not-a-number")',
+                XlError.VALUE,
+                (),
+            ),
+            (
+                "=OFFSET(S!B1, -5, 0)",
+                XlError.REF,
+                (_make_node("S!B1", None, 1),),
+            ),
+        ],
+        ids=["averageif", "sum", "value", "offset"],
+    )
+    def test_direct_call_matches_xl_eval(
+        self,
+        formula: str,
+        expected: XlError,
+        extra_nodes: tuple[Node, ...],
+    ) -> None:
+        graph = _make_graph(*extra_nodes, _make_node("S!A1", formula, None))
+        _assert_direct_call_matches_xl_eval(graph, "S!A1", expected)
 
     def test_embedded_runtime_uses_sentinel_wrappers(self) -> None:
         graph = _make_graph(_make_node("S!A1", '=AVERAGEIF(S!B1:S!B2, ">5", S!C1:C3)', None))
         code = CodeGenerator(graph).generate(["S!A1"])
         assert "def _sentinel_xl_averageif" in code
-        assert "raise_if_sentinel_float(_sentinel_xl_averageif" in code
+        assert "_sentinel_xl_averageif" in code
+        assert "raise_if_sentinel_float(" in code
         assert "return xl_averageif(" in _cell_function_sources(code)["cell_s_a1"]
 
 

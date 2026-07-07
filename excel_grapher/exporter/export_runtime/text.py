@@ -1,4 +1,8 @@
-"""Raise-only boundary wrappers for text runtime helpers."""
+"""Raise-only boundary wrappers for text runtime helpers.
+
+``_sentinel_xl_*`` names are bound at embed time; ``# noqa: F821`` marks those
+intentional forward references in wrapper source.
+"""
 
 from __future__ import annotations
 
@@ -20,27 +24,27 @@ __all__ = [
 
 def xl_left(text: CellValue, num_chars: CellValue = 1) -> str:
     """Return the leftmost characters of text, raising on Excel errors."""
-    return raise_if_sentinel_str(_sentinel_xl_left(text, num_chars))
+    return raise_if_sentinel_str(_sentinel_xl_left(text, num_chars))  # noqa: F821
 
 
 def xl_right(text: CellValue, num_chars: CellValue = 1) -> str:
     """Return the rightmost characters of text, raising on Excel errors."""
-    return raise_if_sentinel_str(_sentinel_xl_right(text, num_chars))
+    return raise_if_sentinel_str(_sentinel_xl_right(text, num_chars))  # noqa: F821
 
 
 def xl_mid(text: CellValue, start_num: CellValue, num_chars: CellValue) -> str:
     """Return characters from the middle of text, raising on Excel errors."""
-    return raise_if_sentinel_str(_sentinel_xl_mid(text, start_num, num_chars))
+    return raise_if_sentinel_str(_sentinel_xl_mid(text, start_num, num_chars))  # noqa: F821
 
 
 def xl_concatenate(*args: CellValue) -> str:
     """Concatenate text values, raising on Excel errors."""
-    return raise_if_sentinel_str(_sentinel_xl_concatenate(*args))
+    return raise_if_sentinel_str(_sentinel_xl_concatenate(*args))  # noqa: F821
 
 
 def xl_text(value: CellValue, format_text: CellValue) -> str:
     """Format a value as text, raising on Excel errors."""
-    return raise_if_sentinel_str(_sentinel_xl_text(value, format_text))
+    return raise_if_sentinel_str(_sentinel_xl_text(value, format_text))  # noqa: F821
 
 
 def xl_numbervalue(
@@ -50,18 +54,18 @@ def xl_numbervalue(
 ) -> float:
     """Convert text to a number, raising on Excel errors."""
     return raise_if_sentinel_float(
-        _sentinel_xl_numbervalue(text, decimal_separator, group_separator)
+        _sentinel_xl_numbervalue(text, decimal_separator, group_separator)  # noqa: F821
     )
 
 
 def xl_lower(text: CellValue) -> str:
     """Return lowercase text, raising on Excel errors."""
-    return raise_if_sentinel_str(_sentinel_xl_lower(text))
+    return raise_if_sentinel_str(_sentinel_xl_lower(text))  # noqa: F821
 
 
 def xl_value(text: CellValue) -> float:
     """Convert text to a number, preserving Excel ``VALUE`` fallback semantics."""
-    parsed = _sentinel_xl_numbervalue(text)
+    parsed = _sentinel_xl_numbervalue(text)  # noqa: F821
     if parsed is XlError.VALUE and isinstance(text, str):
         return raise_if_sentinel_float(to_number(text))
     return raise_if_sentinel_float(parsed)
