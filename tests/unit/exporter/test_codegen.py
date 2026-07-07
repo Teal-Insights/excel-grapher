@@ -249,7 +249,7 @@ class TestEmitAstFunctions:
     def test_emit_function_no_args(self, gen):
         """Function with no arguments."""
         node = FunctionCallNode("TODAY", [])
-        assert gen._emit_ast(node) == "raise_if_sentinel(xl_today())"
+        assert gen._emit_ast(node) == "xl_today()"
 
     def test_emit_na_raises_error_literal(self, gen):
         """NA() emits a raising error literal, not a sentinel-returning call."""
@@ -259,31 +259,28 @@ class TestEmitAstFunctions:
     def test_emit_function_one_arg(self, gen):
         """Function with one argument."""
         node = FunctionCallNode("ABS", [NumberNode(-5.0)])
-        assert gen._emit_ast(node) == "raise_if_sentinel(xl_abs(-5.0))"
+        assert gen._emit_ast(node) == "xl_abs(-5.0)"
 
     def test_emit_function_exp(self, gen):
         """EXP emits the shared runtime helper."""
         node = FunctionCallNode("EXP", [NumberNode(1.0)])
-        assert gen._emit_ast(node) == "raise_if_sentinel(xl_exp(1.0))"
+        assert gen._emit_ast(node) == "xl_exp(1.0)"
 
     def test_emit_function_multiple_args(self, gen):
         """Function with multiple arguments."""
         node = FunctionCallNode("SUM", [NumberNode(1.0), NumberNode(2.0), NumberNode(3.0)])
-        assert gen._emit_ast(node) == "raise_if_sentinel(xl_sum(1.0, 2.0, 3.0))"
+        assert gen._emit_ast(node) == "xl_sum(1.0, 2.0, 3.0)"
 
     def test_emit_function_nested(self, gen):
         """Nested function calls."""
         inner = FunctionCallNode("ABS", [NumberNode(-5.0)])
         outer = FunctionCallNode("SUM", [inner, NumberNode(10.0)])
-        assert gen._emit_ast(outer) == "raise_if_sentinel(xl_sum(raise_if_sentinel(xl_abs(-5.0)), 10.0))"
+        assert gen._emit_ast(outer) == "xl_sum(xl_abs(-5.0), 10.0)"
 
     def test_emit_function_with_cell_ref(self, gen):
         """Function with cell reference argument."""
         node = FunctionCallNode("SUM", [CellRefNode("Sheet1!A1"), CellRefNode("Sheet1!B1")])
-        assert (
-            gen._emit_ast(node)
-            == "raise_if_sentinel(xl_sum(xl_cell(ctx, 'Sheet1!A1'), xl_cell(ctx, 'Sheet1!B1')))"
-        )
+        assert gen._emit_ast(node) == "xl_sum(xl_cell(ctx, 'Sheet1!A1'), xl_cell(ctx, 'Sheet1!B1'))"
 
     def test_emit_function_if(self, gen):
         """IF function - emits as Python conditional for lazy evaluation."""

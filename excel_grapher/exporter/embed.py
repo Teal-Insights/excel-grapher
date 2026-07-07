@@ -46,6 +46,10 @@ _EXPORT_RUNTIME_MODULES: list[tuple[str, Path]] = [
     ("export_runtime.lookup", _EXPORT_RUNTIME_DIR / "lookup.py"),
     ("export_runtime.operators", _EXPORT_RUNTIME_DIR / "operators.py"),
     ("export_runtime.aggregates", _EXPORT_RUNTIME_DIR / "aggregates.py"),
+    ("export_runtime.math", _EXPORT_RUNTIME_DIR / "math.py"),
+    ("export_runtime.text", _EXPORT_RUNTIME_DIR / "text.py"),
+    ("export_runtime.logic", _EXPORT_RUNTIME_DIR / "logic.py"),
+    ("export_runtime.reference", _EXPORT_RUNTIME_DIR / "reference.py"),
     ("export_runtime.offset", _EXPORT_RUNTIME_DIR / "offset.py"),
     ("export_runtime.info", _EXPORT_RUNTIME_DIR / "info.py"),
     ("export_runtime.error_funcs", _EXPORT_RUNTIME_DIR / "error_funcs.py"),
@@ -398,10 +402,23 @@ def _register_runtime_symbol_maps(
                     continue
                 if mod == "cache_context" and name == _FULL_EVAL_CONTEXT_SYMBOL:
                     continue
+            if name in symbol_to_node:
+                sentinel_name = f"_sentinel_{name}"
+                symbol_to_node[sentinel_name] = symbol_to_node[name]
+                symbol_to_module[sentinel_name] = symbol_to_module[name]
             symbol_to_node[name] = node
             symbol_to_module[name] = mod
 
     return symbol_to_node, symbol_to_module
+
+
+def _format_emitted_symbol_source(symbol: str, module_src: str, node: ast.AST) -> str:
+    """Extract runtime source for *symbol*, renaming shadowed sentinel implementations."""
+    segment = _extract_source_segment(module_src, node)
+    if symbol.startswith("_sentinel_"):
+        original = symbol.removeprefix("_sentinel_")
+        segment = segment.replace(f"def {original}(", f"def {symbol}(", 1)
+    return segment
 
 
 def emit_runtime(
@@ -521,7 +538,7 @@ def emit_runtime(
     for s in ordered:
         mod = symbol_to_module[s]
         node = symbol_to_node[s]
-        out.append(_extract_source_segment(module_src[mod], node))
+        out.append(_format_emitted_symbol_source(s, module_src[mod], node))
         out.append("")
 
     return "\n".join(out).rstrip()

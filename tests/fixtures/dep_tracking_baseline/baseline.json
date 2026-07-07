@@ -1,10 +1,10 @@
 {
-  "version": 10,
+  "version": 9,
   "minimal_non_iterative_export": {
     "workload": "S!A1 leaf + S!B1 = S!A1+1",
-    "total_export_lines": 498,
-    "embedded_runtime_lines": 428,
-    "embedded_runtime_share_pct": 85.9,
+    "total_export_lines": 492,
+    "embedded_runtime_lines": 422,
+    "embedded_runtime_share_pct": 85.8,
     "cache_eval_scaffold_lines": 62,
     "dep_tracking_lines": 0
   },

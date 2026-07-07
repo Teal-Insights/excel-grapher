@@ -826,8 +826,6 @@ class CodeGenerator:
             names.add("xl_range")
         if "xl_raise(" in blob:
             names.add("xl_raise")
-        if "raise_if_sentinel(" in blob:
-            names.add("raise_if_sentinel")
         if "XlError" in blob:
             names.add("XlError")
         if "ExcelRange(" in blob:
@@ -1200,17 +1198,12 @@ class CodeGenerator:
         # IS functions must not propagate errors: the argument is passed as a
         # lazily-evaluated thunk so the runtime can catch raised Excel errors.
         if upper_name in _THUNK_ARG_FUNCTIONS and len(node.args) == 1:
-            arg_expr = self._wrap_raise_if_sentinel(self._emit_ast(node.args[0]))
+            arg_expr = self._emit_ast(node.args[0])
             return f"{func_name}(lambda: ({arg_expr}))"
 
         emitted_args = [self._emit_ast(arg) for arg in node.args]
         args = ", ".join(emitted_args)
-        return self._wrap_raise_if_sentinel(f"{func_name}({args})")
-
-    @staticmethod
-    def _wrap_raise_if_sentinel(expr: str) -> str:
-        """Wrap a runtime call so Excel error sentinels raise at the export boundary."""
-        return f"raise_if_sentinel({expr})"
+        return f"{func_name}({args})"
 
     def _next_temp_var(self) -> str:
         """Generate a unique temporary variable name."""
@@ -2533,7 +2526,6 @@ class CodeGenerator:
             "xl_cell",
             "xl_eval",
             "xl_raise",
-            "raise_if_sentinel",
             "XlError",
             "XlErrorException",
         }

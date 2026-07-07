@@ -111,12 +111,18 @@ class TestExportRuntimeBoundaryHelpers:
         assert cast(Any, exc_info.value).code == XlError.REF
 
     def test_averageif_raises_value_errors(self) -> None:
-        code = emit_runtime({"raise_if_sentinel", "xl_averageif"}, include_offset_table=False)
+        code = emit_runtime({"xl_averageif"}, include_offset_table=False)
         ns: dict[str, Any] = {}
         exec(code, ns)
         with pytest.raises(cast("type[BaseException]", ns["XlErrorException"])) as exc_info:
-            ns["raise_if_sentinel"](ns["xl_averageif"]([1, 2], ">5", [10, 20, 30]))
+            ns["xl_averageif"]([1, 2], ">5", [10, 20, 30])
         assert cast(Any, exc_info.value).code == XlError.VALUE
+
+    def test_value_preserves_iso_date_fallback(self) -> None:
+        code = emit_runtime({"xl_value"}, include_offset_table=False)
+        ns: dict[str, Any] = {}
+        exec(code, ns)
+        assert ns["xl_value"]("2018-03-15") == 43174.0
 
 
 class TestGeneratedBoundaryInvariant:
@@ -159,11 +165,12 @@ class TestDirectCallBoundaryEquivalence:
         assert cast(Any, direct_exc.value).code == XlError.VALUE
         assert cast(Any, eval_exc.value).code == XlError.VALUE
 
-    def test_embedded_runtime_uses_raise_if_sentinel_wrappers(self) -> None:
+    def test_embedded_runtime_uses_sentinel_wrappers(self) -> None:
         graph = _make_graph(_make_node("S!A1", '=AVERAGEIF(S!B1:S!B2, ">5", S!C1:C3)', None))
         code = CodeGenerator(graph).generate(["S!A1"])
-        assert "raise_if_sentinel(xl_averageif(" in code
-        assert "isinstance(" not in _cell_function_sources(code)["cell_s_a1"]
+        assert "def _sentinel_xl_averageif" in code
+        assert "raise_if_sentinel_float(_sentinel_xl_averageif" in code
+        assert "return xl_averageif(" in _cell_function_sources(code)["cell_s_a1"]
 
 
 class TestComputeAllRaises:
