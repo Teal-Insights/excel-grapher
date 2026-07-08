@@ -700,3 +700,28 @@ def test_schema_rejects_non_enum_datetime_tokens(
     assert errors
     with pytest.raises(SeriesBindingsSchemaError):
         validate_bindings_document(doc)
+
+
+def test_schema_accepts_input_mode_override() -> None:
+    doc = {
+        "schema_version": "1.6.0",
+        "series": [
+            {
+                "id": "formula_override",
+                "sheet": "Engine",
+                "data_range": "Engine!B1",
+                "layout": "scalar",
+                "input": {
+                    "mode": "override",
+                    "setter": {"name": "set_formula_override"},
+                },
+                "structure": {
+                    "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
+                    "dimensions": [],
+                },
+                "key": [],
+            }
+        ],
+    }
+    bindings = validate_bindings_document(doc)
+    assert bindings["series"][0]["input"]["mode"] == "override"

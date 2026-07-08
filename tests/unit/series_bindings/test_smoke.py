@@ -18,6 +18,11 @@ from excel_grapher.series_bindings.workflow import (
 )
 from tests.integration.user_flows.utils import write_ffv2_workbook
 from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
+from tests.unit.series_bindings.test_input_override import (
+    _manual_override_graph,
+    _override_bindings,
+    _write_override_workbook,
+)
 
 FFV2_BINDINGS = FIXTURES / "ffv2.yaml"
 BORVELIA_BINDINGS = FIXTURES / "borvelia_primary_balance.yaml"
@@ -93,6 +98,27 @@ def test_smoke_test_setters_positional_and_dataframe_inputs(tmp_path: Path) -> N
         workbook=workbook,
         module_dir=tmp_path / "bindings_module",
         package_name="bindings_module",
+    )
+
+
+def test_smoke_test_override_formula_setter(tmp_path: Path) -> None:
+    workbook = tmp_path / "formula_override.xlsx"
+    _write_override_workbook(workbook)
+    graph = _manual_override_graph()
+    bindings = _override_bindings()
+    files = generate_bindings_modules(
+        graph,
+        targets=["Output!C1", "Engine!B1"],
+        bindings=bindings,
+        workbook=workbook,
+    )
+    smoke_test_bindings_module(
+        files,
+        bindings=bindings,
+        graph=graph,
+        workbook=workbook,
+        module_dir=tmp_path / "bindings_override_module",
+        package_name="bindings_override_module",
     )
 
 
