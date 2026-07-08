@@ -90,8 +90,8 @@ def test_validate_reports_non_leaf_formula_cell(tmp_path: Path) -> None:
     )
     bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
     report = validate_series_bindings(graph, bindings, workbook=wb_path)
-    assert report["ok"] is True
-    assert not any(i["code"] == "not_a_leaf" for i in report["issues"])
+    assert report["ok"] is False
+    assert any(i["code"] == "non_leaf_input_overlap" for i in report["issues"])
 
 
 def test_validate_warns_when_measure_dtype_and_read_disagree(tmp_path: Path) -> None:

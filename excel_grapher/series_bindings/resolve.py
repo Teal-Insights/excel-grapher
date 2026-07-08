@@ -21,7 +21,12 @@ from excel_grapher.series_bindings.geometry import (
     expand_row_specs,
     parse_value_map,
 )
-from excel_grapher.series_bindings.normalize import has_input_direction, has_output_direction
+from excel_grapher.series_bindings.normalize import (
+    effective_validation,
+    has_input_direction,
+    has_output_direction,
+    input_mode,
+)
 from excel_grapher.series_bindings.ranges import expand_data_range_for_graph
 from excel_grapher.series_bindings.types import (
     LeafResolution,
@@ -468,6 +473,40 @@ def _normalize_export_addresses(export_addresses: Iterable[str] | None) -> froze
     return frozenset(normalize_address(addr) for addr in export_addresses)
 
 
+def _select_input_addresses(
+    graph: DependencyGraph,
+    expanded_addresses: list[str],
+    *,
+    mode: str,
+    validation: dict[str, Any],
+    series_id: str,
+    candidate_addresses: list[str] | None = None,
+) -> tuple[list[str], list[ResolutionIssue]]:
+    """Select input binding addresses and report skipped non-leaf cells."""
+    issues: list[ResolutionIssue] = []
+    pool = expanded_addresses if candidate_addresses is None else candidate_addresses
+    if mode == "override":
+        selected = [address for address in pool if _is_graph_node(graph, address)]
+    else:
+        intersect = bool(validation.get("intersect_graph_leaves", True))
+        if not intersect:
+            selected = list(pool)
+        else:
+            selected = [address for address in pool if _is_graph_leaf(graph, address)]
+    if mode != "override":
+        skipped = len(pool) - len(selected)
+        if skipped > 0 and bool(validation.get("warn_on_partial_overlap", True)):
+            issues.append(
+                make_issue(
+                    "warning",
+                    "partial_graph_overlap",
+                    f"Skipped {skipped} cell(s) in data_range not graph input leaf cells",
+                    series_id=series_id,
+                )
+            )
+    return selected, issues
+
+
 def _select_addresses(
     graph: DependencyGraph,
     expanded_addresses: list[str],
@@ -476,25 +515,27 @@ def _select_addresses(
     validation: dict[str, Any],
     series_id: str,
     export_addresses: frozenset[str] | None = None,
+    input_binding_mode: str = "leaf",
 ) -> tuple[list[str], list[ResolutionIssue]]:
     issues: list[ResolutionIssue] = []
     if export_addresses is not None:
         if direction == "input":
-            intersect_leaves = bool(validation.get("intersect_graph_leaves", True))
             exported_addresses = [
                 address for address in expanded_addresses if address in export_addresses
             ]
-            selected = [
-                address
-                for address in exported_addresses
-                if not intersect_leaves or _is_graph_leaf(graph, address)
-            ]
+            selected, overlap_issues = _select_input_addresses(
+                graph,
+                expanded_addresses,
+                mode=input_binding_mode,
+                validation=validation,
+                series_id=series_id,
+                candidate_addresses=exported_addresses,
+            )
+            issues.extend(overlap_issues)
             skipped_export = len(expanded_addresses) - len(exported_addresses)
-            skipped_non_leaf = len(exported_addresses) - len(selected)
         else:
             selected = [address for address in expanded_addresses if address in export_addresses]
             skipped_export = len(expanded_addresses) - len(selected)
-            skipped_non_leaf = 0
         if skipped_export > 0 and bool(validation.get("warn_on_partial_overlap", True)):
             issues.append(
                 make_issue(
@@ -504,34 +545,29 @@ def _select_addresses(
                     series_id=series_id,
                 )
             )
-        if skipped_non_leaf > 0 and bool(validation.get("warn_on_partial_overlap", True)):
-            issues.append(
-                make_issue(
-                    "warning",
-                    "partial_graph_overlap",
-                    f"Skipped {skipped_non_leaf} cell(s) in data_range not graph input leaf cells",
-                    series_id=series_id,
-                )
-            )
         return selected, issues
 
     if direction == "input":
-        intersect = bool(validation.get("intersect_graph_leaves", True))
-        if not intersect:
-            return expanded_addresses, issues
-        selected = [address for address in expanded_addresses if _is_graph_leaf(graph, address)]
-    else:
-        intersect = bool(validation.get("intersect_graph_nodes", True))
-        if not intersect:
-            return expanded_addresses, issues
-        selected = [address for address in expanded_addresses if _is_graph_node(graph, address)]
+        selected, overlap_issues = _select_input_addresses(
+            graph,
+            expanded_addresses,
+            mode=input_binding_mode,
+            validation=validation,
+            series_id=series_id,
+        )
+        issues.extend(overlap_issues)
+        return selected, issues
+
+    intersect = bool(validation.get("intersect_graph_nodes", True))
+    if not intersect:
+        return expanded_addresses, issues
+    selected = [address for address in expanded_addresses if _is_graph_node(graph, address)]
 
     skipped = len(expanded_addresses) - len(selected)
     if skipped > 0 and bool(validation.get("warn_on_partial_overlap", True)):
-        if direction == "input":
-            message = f"Skipped {skipped} cell(s) in data_range not graph input leaf cells"
-        else:
-            message = f"Skipped {skipped} cell(s) in data_range not present in graph for {direction} binding"
+        message = (
+            f"Skipped {skipped} cell(s) in data_range not present in graph for {direction} binding"
+        )
         issues.append(
             make_issue(
                 "warning",
@@ -584,7 +620,7 @@ def resolve_series_binding(
             "issues": [make_issue("error", "invalid_data_range", str(exc), series_id=series_id)],
         }
 
-    validation = series.get("validation") or {}
+    validation = effective_validation(series)
     export_set = _normalize_export_addresses(export_addresses)
     addresses, overlap_issues = _select_addresses(
         graph,
@@ -593,6 +629,7 @@ def resolve_series_binding(
         validation=validation,
         series_id=series_id,
         export_addresses=export_set,
+        input_binding_mode=input_mode(series) if direction == "input" else "leaf",
     )
     issues.extend(overlap_issues)
     if not addresses:

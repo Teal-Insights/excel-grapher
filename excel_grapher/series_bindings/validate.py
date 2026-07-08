@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.series_bindings.normalize import has_input_direction, input_mode
 from excel_grapher.series_bindings.ranges import expand_data_range_for_graph
 from excel_grapher.series_bindings.types import (
     ValidationIssue,
@@ -49,6 +50,53 @@ def _dimension_concepts(series: dict[str, Any]) -> set[str]:
 def _is_graph_leaf(graph: DependencyGraph, address: str) -> bool:
     node = graph.get_node(address) if address in graph else None
     return bool(node is not None and node.is_leaf)
+
+
+def _is_formula_graph_node(graph: DependencyGraph, address: str) -> bool:
+    node = graph.get_node(address) if address in graph else None
+    return bool(node is not None and node.formula is not None)
+
+
+def _validate_input_binding_overlap(
+    graph: DependencyGraph,
+    series: dict[str, Any],
+    addresses: list[str],
+) -> list[ValidationIssue]:
+    """Validate leaf vs override semantics for input binding data ranges."""
+    issues: list[ValidationIssue] = []
+    if not has_input_direction(series):
+        return issues
+
+    series_id = str(series.get("id", ""))
+    mode = input_mode(series)
+    graph_addresses = [address for address in addresses if address in graph]
+    non_leaf_graph_addresses = [
+        address for address in graph_addresses if not _is_graph_leaf(graph, address)
+    ]
+    formula_graph_addresses = [
+        address for address in graph_addresses if _is_formula_graph_node(graph, address)
+    ]
+
+    if mode == "leaf" and non_leaf_graph_addresses:
+        issues.append(
+            _issue(
+                "error",
+                "non_leaf_input_overlap",
+                "data_range includes non-leaf graph cells; declare input.mode: override "
+                "for user-editable formula cells",
+                series_id=series_id,
+            )
+        )
+    elif mode == "override" and not formula_graph_addresses:
+        issues.append(
+            _issue(
+                "error",
+                "no_formula_override_targets",
+                "input.mode override requires at least one formula cell in data_range",
+                series_id=series_id,
+            )
+        )
+    return issues
 
 
 def _validate_bind_smoke(bind: Any, *, series_id: str, context: str) -> list[ValidationIssue]:
@@ -436,11 +484,15 @@ def validate_series_bindings(
             )
             continue
 
+        issues.extend(_validate_input_binding_overlap(graph, series, addresses))
+
         graph_leaf_addresses = [
             address
             for address in addresses
             if not intersect_leaves or _is_graph_leaf(graph, address)
         ]
+        if input_mode(series) == "override":
+            graph_leaf_addresses = [address for address in addresses if address in graph]
 
         if require_unique_key:
             cell_scoped_keys = [

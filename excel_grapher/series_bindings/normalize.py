@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
+
+InputMode = Literal["leaf", "override"]
 
 _STRUCTURAL_FIELDS = frozenset(
     {
@@ -37,6 +39,30 @@ def _setter_block(series: dict[str, Any]) -> dict[str, Any] | None:
 
 def has_input_direction(series: dict[str, Any]) -> bool:
     return _setter_block(series) is not None
+
+
+def input_mode(series: dict[str, Any]) -> InputMode:
+    """Return the declared input binding mode (default ``leaf``)."""
+    input_block = series.get("input")
+    if not isinstance(input_block, dict):
+        return "leaf"
+    mode = input_block.get("mode", "leaf")
+    if mode in ("leaf", "override"):
+        return mode
+    return "leaf"
+
+
+def is_override_input(series: dict[str, Any]) -> bool:
+    """Return True when the series declares override input semantics."""
+    return input_mode(series) == "override"
+
+
+def effective_validation(series: dict[str, Any]) -> dict[str, Any]:
+    """Return series validation flags with override-mode defaults applied."""
+    validation = dict(series.get("validation") or {})
+    if is_override_input(series):
+        validation["intersect_graph_leaves"] = False
+    return validation
 
 
 def has_output_direction(series: dict[str, Any]) -> bool:
