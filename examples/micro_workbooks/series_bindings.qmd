@@ -409,6 +409,37 @@ print(records_markdown_table(records))
 
 After the setter runs, period **4** and **5** records reflect the updated input values (`7.5` and `8.0`) while still carrying dimensions such as `REF_AREA` and `UNIT_MEASURE` from the binding. Address-keyed `compute_all(ctx=ctx)` remains available for the full target map; `compute_borvelia_primary_balance` is the tabular, dimension-keyed view of this series only.
 
+## 02. Formula-cell override setters (`input.mode: override`)
+
+Some workbooks expose **user-editable formula cells**: the cell keeps a formula, but analysts can type a value that displaces the computed result for downstream evaluation (Excel's typed-over-formula pattern). Schema **1.6.0** adds `input.mode: override` for these cases.
+
+Example manifest: [formula_override.bindings.yaml](formula_override.bindings.yaml).
+
+```yaml
+schema_version: "1.6.0"
+workbook: formula_override.xlsx
+series:
+  - id: engine_override
+    sheet: Engine
+    data_range: Engine!B1
+    layout: scalar
+    input:
+      mode: override
+      setter:
+        name: set_engine_b1
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind: { kind: data_cell, read: float }
+      dimensions: []
+    key: []
+```
+
+**Leaf mode (default)** requires every bound cell to be a graph leaf. If `data_range` includes a formula cell, validation fails with `non_leaf_input_overlap` (older versions warned and silently dropped those cells).
+
+**Override mode** resolves graph nodes in `data_range`, requires at least one formula cell, and routes setter writes through `ctx.set_inputs` so downstream cells use the override value instead of re-evaluating the formula.
+
 ### Discovering the generated API
 
 The generated module also exposes two zero-argument discovery helpers, `list_setters()` and `list_computes()`. They return the names of the emitted `set_*` and `compute_*` functions, so tooling can enumerate the series API without parsing source:

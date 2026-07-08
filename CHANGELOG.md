@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## Unreleased
+
+### Features
+
+- **series_bindings**: Add `input.mode: override` (schema 1.6.0) for public setters on user-editable formula cells ([#371](https://github.com/Teal-Insights/excel-grapher/pull/371))
+
+### Changed
+
+- **series_bindings**: Leaf-mode input bindings now **error** on non-leaf `data_range` overlap (`non_leaf_input_overlap`) instead of warning and silently dropping formula cells. Manifests that relied on the old warn-and-drop behavior must either narrow `data_range` to graph leaves or declare `input.mode: override`.
+
 ## v3.1.0 (2026-07-07)
 
 ### Features

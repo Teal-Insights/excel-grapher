@@ -4,7 +4,12 @@ from pathlib import Path
 from typing import Any, Literal
 
 from excel_grapher.grapher.graph import DependencyGraph
-from excel_grapher.series_bindings.normalize import has_input_direction, input_mode
+from excel_grapher.series_bindings.normalize import (
+    effective_validation,
+    has_input_direction,
+    input_mode,
+    is_override_input,
+)
 from excel_grapher.series_bindings.ranges import expand_data_range_for_graph
 from excel_grapher.series_bindings.types import (
     ValidationIssue,
@@ -35,10 +40,42 @@ def _issue(
 
 
 def _series_validation_flags(series: dict[str, Any]) -> tuple[bool, bool]:
-    validation = series.get("validation") or {}
+    validation = effective_validation(series)
     intersect = validation.get("intersect_graph_leaves", True)
     unique_key = validation.get("require_unique_key", True)
     return bool(intersect), bool(unique_key)
+
+
+def _input_binding_addresses(
+    graph: DependencyGraph,
+    series: dict[str, Any],
+    addresses: list[str],
+) -> list[str]:
+    """Return addresses that participate in input binding resolution."""
+    if is_override_input(series):
+        return [address for address in addresses if address in graph]
+    validation = effective_validation(series)
+    if not validation.get("intersect_graph_leaves", True):
+        return list(addresses)
+    return [address for address in addresses if _is_graph_leaf(graph, address)]
+
+
+def _validate_input_mode(series: dict[str, Any]) -> list[ValidationIssue]:
+    input_block = series.get("input")
+    if not isinstance(input_block, dict):
+        return []
+    mode = input_block.get("mode")
+    if mode is None or mode in ("leaf", "override"):
+        return []
+    series_id = str(series.get("id", ""))
+    return [
+        _issue(
+            "error",
+            "invalid_input_mode",
+            f"input.mode must be 'leaf' or 'override', got {mode!r}",
+            series_id=series_id,
+        )
+    ]
 
 
 def _dimension_concepts(series: dict[str, Any]) -> set[str]:
@@ -455,7 +492,7 @@ def validate_series_bindings(
         if not isinstance(data_range, str):
             continue
 
-        intersect_leaves, require_unique_key = _series_validation_flags(series)
+        _, require_unique_key = _series_validation_flags(series)
         try:
             addresses = expand_data_range_for_graph(
                 graph,
@@ -484,15 +521,10 @@ def validate_series_bindings(
             )
             continue
 
+        issues.extend(_validate_input_mode(series))
         issues.extend(_validate_input_binding_overlap(graph, series, addresses))
 
-        graph_leaf_addresses = [
-            address
-            for address in addresses
-            if not intersect_leaves or _is_graph_leaf(graph, address)
-        ]
-        if input_mode(series) == "override":
-            graph_leaf_addresses = [address for address in addresses if address in graph]
+        graph_input_addresses = _input_binding_addresses(graph, series, addresses)
 
         if require_unique_key:
             cell_scoped_keys = [
@@ -504,7 +536,7 @@ def validate_series_bindings(
                     for d in (series.get("structure") or {}).get("dimensions") or []
                 )
             ]
-            if not graph_leaf_addresses:
+            if not graph_input_addresses:
                 continue
             if cell_scoped_keys and workbook is None:
                 issues.append(

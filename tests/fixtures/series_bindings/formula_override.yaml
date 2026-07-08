@@ -1,0 +1,20 @@
+schema_version: "1.6.0"
+workbook: formula_override.xlsx
+series:
+  - id: engine_override
+    sheet: Engine
+    data_range: Engine!B1
+    layout: scalar
+    input:
+      mode: override
+      setter:
+        name: set_engine_b1
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions: []
+    key: []

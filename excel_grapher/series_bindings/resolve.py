@@ -22,6 +22,7 @@ from excel_grapher.series_bindings.geometry import (
     parse_value_map,
 )
 from excel_grapher.series_bindings.normalize import (
+    InputMode,
     effective_validation,
     has_input_direction,
     has_output_direction,
@@ -477,7 +478,7 @@ def _select_input_addresses(
     graph: DependencyGraph,
     expanded_addresses: list[str],
     *,
-    mode: str,
+    mode: InputMode,
     validation: dict[str, Any],
     series_id: str,
     candidate_addresses: list[str] | None = None,
@@ -515,7 +516,7 @@ def _select_addresses(
     validation: dict[str, Any],
     series_id: str,
     export_addresses: frozenset[str] | None = None,
-    input_binding_mode: str = "leaf",
+    input_binding_mode: InputMode = "leaf",
 ) -> tuple[list[str], list[ResolutionIssue]]:
     issues: list[ResolutionIssue] = []
     if export_addresses is not None:

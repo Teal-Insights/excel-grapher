@@ -91,6 +91,43 @@ optional direction blocks:
 
 At least one of `input` or `output` is required per series (legacy top-level `setter` is normalized to `input.setter`; legacy `layout: row_series` is normalized to `series`).
 
+### Input mode: `leaf` vs `override` (schema 1.6.0+)
+
+By default, input bindings use **`input.mode: leaf`**: every cell in `data_range` must be a **graph leaf** (a value cell with no formula in the dependency graph). If `data_range` includes a formula cell, validation fails with `non_leaf_input_overlap` instead of silently skipping it.
+
+Use **`input.mode: override`** for the Excel **typed-over-formula** pattern: cells that keep a formula in the workbook but expose a public setter that displaces the computed value until changed. Override bindings:
+
+- Resolve **graph nodes** in `data_range` (formula cells and, when mixed, leaf cells too).
+- Require **at least one formula cell** in the range (`no_formula_override_targets` otherwise).
+- Write through generated `set_*` functions via `ctx.set_inputs`; the export runtime returns the override value before re-evaluating the cell formula.
+- Leave graph formulas and dependency edges unchanged (evaluation-time displacement only).
+
+```yaml
+schema_version: "1.6.0"
+series:
+  - id: productivity_turning_point
+    sheet: Productivity
+    data_range: Productivity!J21
+    layout: scalar
+    input:
+      mode: override
+      setter:
+        name: set_productivity_turning_point
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind: { kind: data_cell }
+      dimensions: []
+    key: []
+```
+
+Example manifest: [formula_override.bindings.yaml](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/formula_override.bindings.yaml).
+
+**Migration (all schema versions):** Leaf-mode bindings that accidentally included formula cells previously emitted a `partial_graph_overlap` warning and dropped those cells. They now **error** at validation. Either narrow `data_range` to leaves only or declare `input.mode: override`.
+
+**Evaluator note:** Durable override setters (this feature) differ from transient per-call overrides tracked in [issue #122](https://github.com/Teal-Insights/excel-grapher/issues/122). `FormulaEvaluator` does not yet expose equivalent durable setter semantics.
+
 ## `data_range` addressing
 
 Expansion uses the same path as graph **targets** (`expand_targets_to_roots`), including:

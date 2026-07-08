@@ -224,6 +224,73 @@ def test_validate_override_mode_accepts_mixed_leaf_and_formula_cells(tmp_path: P
     assert report["ok"] is True
 
 
+def test_resolve_input_override_mixed_range_includes_leaf_and_formula(tmp_path: Path) -> None:
+    wb_path = tmp_path / "mixed.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number("A1", 1)
+    ws.write_number("B1", 2)
+    ws.write_formula("C1", "=A1+1")
+    wb.close()
+
+    graph = create_dependency_graph(wb_path, ["Sheet1!A1", "Sheet1!C1"], load_values=True)
+    series = {
+        "id": "mixed_override",
+        "sheet": "Sheet1",
+        "data_range": "Sheet1!A1:C1",
+        "layout": "series",
+        "input": {"mode": "override", "setter": {"name": "set_mixed"}},
+        "structure": {
+            "measure": {"concept": "OBS_VALUE", "dtype": "float", "bind": {"kind": "data_cell"}},
+            "dimensions": [
+                {
+                    "concept": "IDX",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "column_header", "header_row": 1, "read": "int"},
+                }
+            ],
+        },
+        "key": ["IDX"],
+    }
+
+    resolved = resolve_series_binding(graph, wb_path, series, direction="input")
+
+    assert [leaf["address"] for leaf in resolved["leaves"]] == ["Sheet1!A1", "Sheet1!C1"]
+
+
+def test_validate_rejects_unknown_input_mode(tmp_path: Path) -> None:
+    wb_path = tmp_path / "override.xlsx"
+    _write_override_workbook(wb_path)
+    graph = _manual_override_graph()
+    series = _override_scalar_series()
+    series = dict(series)
+    series["input"] = {"mode": "replace", "setter": {"name": "set_engine_b1"}}
+
+    report = validate_series_bindings(graph, {"schema_version": "1.6.0", "series": [series]})
+
+    assert report["ok"] is False
+    assert any(i["code"] == "invalid_input_mode" for i in report["issues"])
+
+
+def test_resolve_input_override_respects_export_closure(tmp_path: Path) -> None:
+    wb_path = tmp_path / "override.xlsx"
+    _write_override_workbook(wb_path)
+    graph = _manual_override_graph()
+    series = _override_scalar_series()
+
+    resolved = resolve_series_binding(
+        graph,
+        wb_path,
+        series,
+        direction="input",
+        export_addresses=frozenset({"Output!C1"}),
+    )
+
+    assert resolved["leaves"] == []
+    assert any(i["code"] == "no_resolved_cells" for i in resolved["issues"])
+
+
 def test_derive_input_series_from_override_binding(tmp_path: Path) -> None:
     wb_path = tmp_path / "override.xlsx"
     _write_override_workbook(wb_path)
