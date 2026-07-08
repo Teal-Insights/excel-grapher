@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.2.0 (2026-07-08)
+
+### Documentation
+
+- **series_bindings**: Address PR 371 review feedback for input.mode override
+  ([#371](https://github.com/Teal-Insights/excel-grapher/pull/371),
+  [`db55ce6`](https://github.com/Teal-Insights/excel-grapher/commit/db55ce6907d932e88f742568c47de2cb0713d78e))
+
+### Features
+
+- **series_bindings**: Add input.mode override for formula cell setters
+  ([#371](https://github.com/Teal-Insights/excel-grapher/pull/371),
+  [`db55ce6`](https://github.com/Teal-Insights/excel-grapher/commit/db55ce6907d932e88f742568c47de2cb0713d78e))
+
+- **series_bindings**: Input.mode override for formula cell setters
+  ([#371](https://github.com/Teal-Insights/excel-grapher/pull/371),
+  [`db55ce6`](https://github.com/Teal-Insights/excel-grapher/commit/db55ce6907d932e88f742568c47de2cb0713d78e))
+
+### Refactoring
+
+- **export**: Address PR review nits for three-layer wrappers
+  ([#370](https://github.com/Teal-Insights/excel-grapher/pull/370),
+  [`74b447d`](https://github.com/Teal-Insights/excel-grapher/commit/74b447de01820bd7c463f2aa560c0ae1b0c25907))
+
+- **export**: Move worksheet functions to core with thin wrappers
+  ([#370](https://github.com/Teal-Insights/excel-grapher/pull/370),
+  [`74b447d`](https://github.com/Teal-Insights/excel-grapher/commit/74b447de01820bd7c463f2aa560c0ae1b0c25907))
+
+
 ## Unreleased
 
 ### Features
