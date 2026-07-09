@@ -283,3 +283,166 @@ def test_validate_internal_series_requires_formula_overlap(tmp_path: Path) -> No
     report = validate_series_bindings(graph, bindings, workbook=wb_path)
     codes = {issue["code"] for issue in report["issues"]}
     assert "no_formula_internal_targets" in codes
+
+
+def test_mcve_internal_document_validates_on_1_7_0() -> None:
+    """Positive MCVE from issue #372: internal-only series accepted at schema 1.7.0."""
+    doc = {
+        "schema_version": "1.7.0",
+        "concept_scheme": {
+            "id": "example_model",
+            "concepts": [
+                {"id": "TIME_PERIOD", "dtype": "int"},
+                {"id": "INDICATOR", "dtype": "string"},
+            ],
+        },
+        "series": [
+            {
+                "id": "engine_primary_balance",
+                "sheet": "Engine",
+                "data_range": "Engine!D22:F22",
+                "layout": "series",
+                "internal": {},
+                "structure": {
+                    "measure": {
+                        "concept": "OBS_VALUE",
+                        "dtype": "float",
+                        "bind": {"kind": "data_cell", "read": "float"},
+                    },
+                    "dimensions": [
+                        {
+                            "concept": "TIME_PERIOD",
+                            "role": "key",
+                            "scope": "cell",
+                            "bind": {
+                                "kind": "column_header",
+                                "header_row": 2,
+                                "read": "int",
+                            },
+                        }
+                    ],
+                },
+                "key": ["TIME_PERIOD"],
+                "series_context": {"INDICATOR": "Primary balance"},
+                "validation": {
+                    "intersect_graph_formulas": True,
+                    "require_unique_key": True,
+                },
+            }
+        ],
+    }
+    bindings = validate_bindings_document(doc)
+    assert has_internal_direction(bindings["series"][0])
+
+
+def test_schema_rejects_internal_with_legacy_setter() -> None:
+    doc = _internal_series_doc(
+        setter={"name": "set_engine_primary_balance"},
+    )
+    with pytest.raises(SeriesBindingsSchemaError):
+        validate_bindings_document(doc)
+
+
+def test_resolve_internal_series_warns_on_partial_formula_overlap(tmp_path: Path) -> None:
+    wb_path = tmp_path / "formula_override.xlsx"
+    _write_override_workbook(wb_path)
+    graph = create_dependency_graph(
+        wb_path,
+        ["Engine!B1", "Engine!B2", "Engine!C2", "Engine!D2"],
+        load_values=True,
+    )
+    series = _internal_series_doc(data_range="Engine!B1:B2")["series"][0]
+
+    resolved = resolve_series_binding(graph, wb_path, series, direction="internal")
+
+    assert [leaf["address"] for leaf in resolved["leaves"]] == ["Engine!B2"]
+    assert any(
+        issue["code"] == "partial_graph_overlap" and issue["level"] == "warning"
+        for issue in resolved["issues"]
+    )
+
+
+def test_resolve_internal_series_includes_constants_when_intersect_disabled(
+    tmp_path: Path,
+) -> None:
+    wb_path = tmp_path / "mixed.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Engine")
+    ws.write_number("A2", 10)
+    ws.write_formula("B2", "=A2+1")
+    wb.close()
+
+    graph = create_dependency_graph(wb_path, ["Engine!A2", "Engine!B2"], load_values=True)
+    series = _internal_series_doc(
+        data_range="Engine!A2:B2",
+        structure={
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "float",
+                "bind": {"kind": "data_cell", "read": "float"},
+            },
+            "dimensions": [
+                {
+                    "concept": "TIME_PERIOD",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "constant", "value": 1},
+                }
+            ],
+        },
+        validation={"intersect_graph_formulas": False, "require_unique_key": False},
+    )["series"][0]
+
+    resolved = resolve_series_binding(graph, wb_path, series, direction="internal")
+
+    assert [leaf["address"] for leaf in resolved["leaves"]] == ["Engine!A2", "Engine!B2"]
+
+
+def test_load_merged_input_and_internal_shards(tmp_path: Path) -> None:
+    shard_dir = tmp_path / "shards"
+    shard_dir.mkdir()
+    (shard_dir / "inputs.bindings.yaml").write_text(
+        """\
+schema_version: 1.7.0
+workbook: formula_override.xlsx
+series:
+  - id: engine_override
+    sheet: Engine
+    data_range: Engine!B1
+    layout: scalar
+    input:
+      mode: override
+      setter:
+        name: set_engine_b1
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind: { kind: data_cell, read: float }
+      dimensions: []
+    key: []
+""",
+        encoding="utf-8",
+    )
+    (shard_dir / "internals.bindings.yaml").write_text(
+        (FIXTURES / "internal_engine_row.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    bindings = load_series_bindings(shard_dir)
+    series_ids = {series["id"] for series in bindings["series"]}
+    assert series_ids == {"engine_override", "engine_primary_balance"}
+
+    wb_path = tmp_path / "formula_override.xlsx"
+    _write_override_workbook(wb_path)
+    graph = create_dependency_graph(
+        wb_path,
+        ["Engine!B1", "Engine!B2", "Engine!C2", "Engine!D2"],
+        load_values=True,
+    )
+
+    input_series = derive_input_series(graph, bindings, workbook=wb_path)
+    internal_series = derive_internal_series(graph, bindings, workbook=wb_path)
+
+    assert [series["id"] for series in input_series] == ["engine_override"]
+    assert [series["id"] for series in internal_series] == ["engine_primary_balance"]

@@ -3,15 +3,31 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.series_bindings.derive_common import derive_series_for_direction
 from excel_grapher.series_bindings.normalize import has_internal_direction
-from excel_grapher.series_bindings.resolve import resolve_series_bindings
 from excel_grapher.series_bindings.types import (
     InternalSeries,
     InternalSeriesCell,
+    SeriesResolution,
     WorkbookSeriesBindings,
 )
+
+
+def _build_internal_series(
+    resolved: SeriesResolution,
+    series: dict[str, Any],
+    cells: list[InternalSeriesCell],
+) -> InternalSeries:
+    return {
+        "id": resolved["series_id"],
+        "key_fields": [str(field) for field in (series.get("key") or [])],
+        "requires_address": resolved["requires_address"],
+        "cells": cells,
+        "issues": resolved["issues"],
+    }
 
 
 def derive_internal_series(
@@ -20,37 +36,17 @@ def derive_internal_series(
     *,
     workbook: Path | str,
 ) -> list[InternalSeries]:
-    """Return one internal series per binding entry with internal direction and graph overlap."""
-    report = resolve_series_bindings(graph, bindings, workbook=workbook, direction="internal")
-    series_by_id = {
-        str(series["id"]): series
-        for series in bindings.get("series", [])
-        if isinstance(series, dict) and "id" in series and has_internal_direction(series)
-    }
+    """Return internal series for formula-cell key triangulation without public I/O APIs.
 
-    internal_series: list[InternalSeries] = []
-    for resolved in report["series"]:
-        if not resolved["leaves"]:
-            continue
-        series = series_by_id.get(resolved["series_id"])
-        if series is None:
-            continue
-        cells: list[InternalSeriesCell] = [
-            {
-                "address": leaf["address"],
-                "coordinates": leaf["coordinates"],
-                "key": leaf["key"],
-                "record": leaf["record"],
-            }
-            for leaf in resolved["leaves"]
-        ]
-        internal_series.append(
-            {
-                "id": resolved["series_id"],
-                "key_fields": [str(field) for field in (series.get("key") or [])],
-                "requires_address": resolved["requires_address"],
-                "cells": cells,
-                "issues": resolved["issues"],
-            }
-        )
-    return internal_series
+    Each manifest `series[]` entry with `internal: {}` resolves to per-cell
+    `{address, key, record}` for formula nodes in `data_range`. No `set_*` or
+    `compute_*` codegen is emitted for these entries.
+    """
+    return derive_series_for_direction(
+        graph,
+        bindings,
+        workbook=workbook,
+        direction="internal",
+        has_direction=has_internal_direction,
+        build_series=_build_internal_series,
+    )
