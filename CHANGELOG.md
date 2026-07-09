@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.3.0 (2026-07-09)
+
+### Features
+
+- **bindings**: Support internal series declarations for formula-cell key triangulation
+  ([#373](https://github.com/Teal-Insights/excel-grapher/pull/373),
+  [`a8d1ae3`](https://github.com/Teal-Insights/excel-grapher/commit/a8d1ae309e4930b71f2d8bffcff044515bd658d7))
+
+### Refactoring
+
+- **series_bindings**: Dedupe derive helpers and document internal series
+  ([#373](https://github.com/Teal-Insights/excel-grapher/pull/373),
+  [`a8d1ae3`](https://github.com/Teal-Insights/excel-grapher/commit/a8d1ae309e4930b71f2d8bffcff044515bd658d7))
+
+
 ## v3.2.0 (2026-07-08)
 
 ### Documentation
