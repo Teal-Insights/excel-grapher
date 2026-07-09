@@ -21,10 +21,16 @@ from excel_grapher.series_bindings.geometry import (
     expand_row_specs,
     parse_value_map,
 )
+from excel_grapher.series_bindings.graph_predicates import (
+    is_graph_formula_node,
+    is_graph_leaf,
+    is_graph_node,
+)
 from excel_grapher.series_bindings.normalize import (
     InputMode,
     effective_validation,
     has_input_direction,
+    has_internal_direction,
     has_output_direction,
     input_mode,
 )
@@ -39,7 +45,7 @@ from excel_grapher.series_bindings.types import (
     make_issue,
 )
 
-BindingDirection = Literal["input", "output"]
+BindingDirection = Literal["input", "output", "internal"]
 
 _TRAILING_UNIT_RE = re.compile(r"\s*\([^)]*\)\s*$")
 
@@ -450,15 +456,6 @@ def _extract_key(coordinates: dict[str, Scalar], key_concepts: list[str]) -> dic
     return {concept: coordinates[concept] for concept in key_concepts if concept in coordinates}
 
 
-def _is_graph_leaf(graph: DependencyGraph, address: str) -> bool:
-    node = graph.get_node(address) if address in graph else None
-    return bool(node is not None and node.is_leaf)
-
-
-def _is_graph_node(graph: DependencyGraph, address: str) -> bool:
-    return address in graph
-
-
 def warn_series_resolution_issues(resolved: SeriesResolution, *, stacklevel: int = 3) -> None:
     """Emit Python warnings for partial-overlap issues on a binding resolution."""
     for issue in resolved["issues"]:
@@ -487,13 +484,13 @@ def _select_input_addresses(
     issues: list[ResolutionIssue] = []
     pool = expanded_addresses if candidate_addresses is None else candidate_addresses
     if mode == "override":
-        selected = [address for address in pool if _is_graph_node(graph, address)]
+        selected = [address for address in pool if is_graph_node(graph, address)]
     else:
         intersect = bool(validation.get("intersect_graph_leaves", True))
         if not intersect:
             selected = list(pool)
         else:
-            selected = [address for address in pool if _is_graph_leaf(graph, address)]
+            selected = [address for address in pool if is_graph_leaf(graph, address)]
     if mode != "override":
         skipped = len(pool) - len(selected)
         if skipped > 0 and bool(validation.get("warn_on_partial_overlap", True)):
@@ -505,6 +502,35 @@ def _select_input_addresses(
                     series_id=series_id,
                 )
             )
+    return selected, issues
+
+
+def _select_internal_addresses(
+    graph: DependencyGraph,
+    expanded_addresses: list[str],
+    *,
+    validation: dict[str, Any],
+    series_id: str,
+    candidate_addresses: list[str] | None = None,
+) -> tuple[list[str], list[ResolutionIssue]]:
+    """Select internal binding addresses and report skipped non-formula cells."""
+    issues: list[ResolutionIssue] = []
+    pool = expanded_addresses if candidate_addresses is None else candidate_addresses
+    intersect = bool(validation.get("intersect_graph_formulas", True))
+    if not intersect:
+        selected = list(pool)
+    else:
+        selected = [address for address in pool if is_graph_formula_node(graph, address)]
+    skipped = len(pool) - len(selected)
+    if skipped > 0 and bool(validation.get("warn_on_partial_overlap", True)):
+        issues.append(
+            make_issue(
+                "warning",
+                "partial_graph_overlap",
+                f"Skipped {skipped} cell(s) in data_range not graph formula cells",
+                series_id=series_id,
+            )
+        )
     return selected, issues
 
 
@@ -559,10 +585,20 @@ def _select_addresses(
         issues.extend(overlap_issues)
         return selected, issues
 
+    if direction == "internal":
+        selected, overlap_issues = _select_internal_addresses(
+            graph,
+            expanded_addresses,
+            validation=validation,
+            series_id=series_id,
+        )
+        issues.extend(overlap_issues)
+        return selected, issues
+
     intersect = bool(validation.get("intersect_graph_nodes", True))
     if not intersect:
         return expanded_addresses, issues
-    selected = [address for address in expanded_addresses if _is_graph_node(graph, address)]
+    selected = [address for address in expanded_addresses if is_graph_node(graph, address)]
 
     skipped = len(expanded_addresses) - len(selected)
     if skipped > 0 and bool(validation.get("warn_on_partial_overlap", True)):
@@ -796,6 +832,8 @@ def resolve_series_binding(
 def _series_supports_direction(series: dict[str, Any], direction: BindingDirection) -> bool:
     if direction == "input":
         return has_input_direction(series)
+    if direction == "internal":
+        return has_internal_direction(series)
     return has_output_direction(series)
 
 

@@ -22,6 +22,7 @@ _FIELD_HINTS: dict[str, str] = {
     "layout": "Optional layout intent: scalar, series, or matrix.",
     "input": "Add an input block with a setter for editable series.",
     "output": "Add an output block with a compute for derived series.",
+    "internal": "Add an internal block for non-I/O formula-cell key triangulation.",
 }
 
 

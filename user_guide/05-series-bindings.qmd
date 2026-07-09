@@ -71,6 +71,7 @@ lic_inputs.xlsx
 lic_inputs.bindings/
   Inputs.bindings.yaml
   Assumptions.bindings.yaml
+  internals.bindings.yaml   # optional non-I/O formula-cell triangulation
 ```
 
 Rules:
@@ -88,8 +89,9 @@ optional direction blocks:
 
 - **`input.setter`** — generated setter requires key dimensions plus `OBS_VALUE` on each incoming record.
 - **`output.compute`** — generated compute returns all declared dimensions plus computed `OBS_VALUE` per graph cell in `data_range`.
+- **`internal`** — resolve per-cell `{address, key, record}` for formula nodes without emitting `set_*` or `compute_*` APIs.
 
-At least one of `input` or `output` is required per series (legacy top-level `setter` is normalized to `input.setter`; legacy `layout: row_series` is normalized to `series`).
+At least one of `input`, `output`, or `internal` is required per series (legacy top-level `setter` is normalized to `input.setter`; legacy `layout: row_series` is normalized to `series`).
 
 ### Input mode: `leaf` vs `override` (schema 1.6.0+)
 
@@ -127,6 +129,50 @@ Example manifest: [formula_override.bindings.yaml](https://github.com/Teal-Insig
 **Migration (all schema versions):** Leaf-mode bindings that accidentally included formula cells previously emitted a `partial_graph_overlap` warning and dropped those cells. They now **error** at validation. Either narrow `data_range` to leaves only or declare `input.mode: override`.
 
 **Evaluator note:** Durable override setters (this feature) differ from transient per-call overrides tracked in [issue #122](https://github.com/Teal-Insights/excel-grapher/issues/122). `FormulaEvaluator` does not yet expose equivalent durable setter semantics.
+
+### Internal direction (schema 1.7.0+)
+
+Use **`internal: {}`** for formula cells that need the same dimensional key machinery as public I/O bindings but should **not** generate `set_*` or `compute_*` functions. Typical consumers are extraction pipelines that triangulate internal computation cells by concept keys (for example `ref_0[TIME_PERIOD, INDICATOR]`).
+
+Internal bindings:
+
+- Resolve **formula graph nodes** in `data_range` (not leaves).
+- Default to **`validation.intersect_graph_formulas: true`** so constants outside the formula graph are skipped; set `false` to include every expanded cell.
+- Require **at least one formula cell** in the range when intersection is enabled (`no_formula_internal_targets` otherwise).
+- Preserve **`validation.require_unique_key`** so each address is uniquely identified by its declared key concepts.
+- Emit **no codegen**; use `derive_internal_series()` after `validate_series_bindings()`.
+
+Pipelines can add `internals.bindings.yaml` alongside `inputs.bindings.yaml` and `outputs.bindings.yaml`; `load_series_bindings()` merges all `*.bindings.yaml` shards in a directory.
+
+```yaml
+schema_version: "1.7.0"
+series:
+  - id: engine_primary_balance
+    sheet: Engine
+    data_range: Engine!B2:D2
+    layout: series
+    internal: {}
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind: { kind: data_cell, read: float }
+      dimensions:
+        - concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind: { kind: column_header, header_row: 1, read: int }
+    key: [TIME_PERIOD]
+    series_context:
+      INDICATOR: Primary balance
+    validation:
+      intersect_graph_formulas: true
+      require_unique_key: true
+```
+
+Example fixture: [internal_engine_row.yaml](https://github.com/Teal-Insights/excel-grapher/blob/main/tests/fixtures/series_bindings/internal_engine_row.yaml).
+
+**Pipeline note:** `derive_*_series` omits series with zero resolved leaves. Call `validate_series_bindings()` first so hard errors such as `no_formula_internal_targets` surface before derive.
 
 ## `data_range` addressing
 
@@ -608,11 +654,13 @@ Generated code imports `datetime` and emits `datetime.datetime(...)` literals on
 | **1.3.0** | `row_series` renamed to `series` (no resolver/codegen change). Legacy `row_series` accepted at load time. |
 | **1.4.0** | `bool` and `datetime` read modes and dtypes; ISO date strings in manifest constants. |
 | **1.5.0** | Grouped-row matrix geometry: `skip`/`include`/`fill`/`missing` on `row_label` and `column_header` binds, the `value_map` bind kind, and series-level `exclude_rows`. |
+| **1.6.0** | `input.mode: override` for user-editable formula cells (non-leaf input setters). |
+| **1.7.0** | `internal` direction for non-I/O formula-cell key triangulation (`intersect_graph_formulas` validation). |
 
 ## Validation and codegen closure
 
 `validate_series_bindings()` and `derive_*_series` intersect bindings with the extracted graph (input:
-**leaves**; output: **any graph node**). **Codegen** intersects with the export closure from the current
+**leaves**; output: **any graph node**; internal: **formula nodes**). **Codegen** intersects with the export closure from the current
 `CodeGenerator` targets (formula cells, inputs, and dependencies actually emitted). Cells outside that
 closure are skipped; `validation.warn_on_partial_overlap` (default `true`) emits a warning when that
 happens.
@@ -626,6 +674,7 @@ from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings import (
     bindings_canonical_sha256,
     derive_input_series,
+    derive_internal_series,
     expand_data_range,
     load_series_bindings,
     validate_series_bindings,
@@ -647,6 +696,7 @@ assert report["ok"]
 
 bindings_canonical_sha256(bindings)
 input_series = derive_input_series(graph, bindings, workbook=workbook)
+internal_series = derive_internal_series(graph, bindings, workbook=workbook)
 
 with CodeGenerator(graph) as gen:
     code = gen.generate(

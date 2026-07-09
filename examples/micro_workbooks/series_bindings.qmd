@@ -16,6 +16,7 @@ import yaml
 from excel_grapher.grapher import create_dependency_graph, DependencyGraph
 from excel_grapher.series_bindings import (
     derive_input_series,
+    derive_internal_series,
     derive_output_series,
     expand_data_range,
     resolve_series_binding,
@@ -476,3 +477,68 @@ ctx = make_context()
 set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 4, "OBS_VALUE": 7.5}])
 records = compute_borvelia_primary_balance(ctx=ctx)
 ```
+
+## 03. Internal formula-cell triangulation (`internal: {}`)
+
+Schema **1.7.0** adds `internal: {}` for formula cells that need dimensional keys without public `set_*` or `compute_*` APIs. Pipelines can shard these as `internals.bindings.yaml` alongside input and output manifests.
+
+Example fixture: [internal_engine_row.yaml](../../tests/fixtures/series_bindings/internal_engine_row.yaml) (uses [formula_override.xlsx](formula_override.xlsx)).
+
+```yaml
+schema_version: "1.7.0"
+workbook: formula_override.xlsx
+series:
+  - id: engine_primary_balance
+    sheet: Engine
+    data_range: Engine!B2:D2
+    layout: series
+    internal: {}
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind: { kind: data_cell, read: float }
+      dimensions:
+        - concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind: { kind: column_header, header_row: 1, read: int }
+    key: [TIME_PERIOD]
+    series_context:
+      INDICATOR: Primary balance
+    validation:
+      intersect_graph_formulas: true
+      require_unique_key: true
+```
+
+```{python}
+from excel_grapher.series_bindings import load_series_bindings, validate_bindings_document
+
+internal_fixture = Path("../../tests/fixtures/series_bindings/internal_engine_row.yaml")
+internal_bindings = load_series_bindings(internal_fixture)
+validate_bindings_document(internal_bindings)
+
+override_graph = create_dependency_graph(
+    Path("formula_override.xlsx"),
+    ["Engine!B2", "Engine!C2", "Engine!D2"],
+    load_values=True,
+)
+internal_series = derive_internal_series(
+    override_graph,
+    internal_bindings,
+    workbook=Path("formula_override.xlsx"),
+)
+print(pformat(internal_series[0]["cells"][:2]))
+```
+
+Internal bindings intersect `data_range` with **formula graph nodes** (default). They emit **no codegen**; validate first, then derive:
+
+```python
+report = validate_series_bindings(
+    override_graph,
+    internal_bindings,
+    workbook=Path("formula_override.xlsx"),
+)
+assert report["ok"]
+```
+

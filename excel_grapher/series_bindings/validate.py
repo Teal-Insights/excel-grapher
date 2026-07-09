@@ -4,9 +4,11 @@ from pathlib import Path
 from typing import Any, Literal
 
 from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.series_bindings.graph_predicates import is_graph_formula_node, is_graph_leaf
 from excel_grapher.series_bindings.normalize import (
     effective_validation,
     has_input_direction,
+    has_internal_direction,
     input_mode,
     is_override_input,
 )
@@ -57,7 +59,7 @@ def _input_binding_addresses(
     validation = effective_validation(series)
     if not validation.get("intersect_graph_leaves", True):
         return list(addresses)
-    return [address for address in addresses if _is_graph_leaf(graph, address)]
+    return [address for address in addresses if is_graph_leaf(graph, address)]
 
 
 def _validate_input_mode(series: dict[str, Any]) -> list[ValidationIssue]:
@@ -84,16 +86,6 @@ def _dimension_concepts(series: dict[str, Any]) -> set[str]:
     return {str(d.get("concept")) for d in dims if isinstance(d, dict) and d.get("concept")}
 
 
-def _is_graph_leaf(graph: DependencyGraph, address: str) -> bool:
-    node = graph.get_node(address) if address in graph else None
-    return bool(node is not None and node.is_leaf)
-
-
-def _is_formula_graph_node(graph: DependencyGraph, address: str) -> bool:
-    node = graph.get_node(address) if address in graph else None
-    return bool(node is not None and node.formula is not None)
-
-
 def _validate_input_binding_overlap(
     graph: DependencyGraph,
     series: dict[str, Any],
@@ -108,10 +100,10 @@ def _validate_input_binding_overlap(
     mode = input_mode(series)
     graph_addresses = [address for address in addresses if address in graph]
     non_leaf_graph_addresses = [
-        address for address in graph_addresses if not _is_graph_leaf(graph, address)
+        address for address in graph_addresses if not is_graph_leaf(graph, address)
     ]
     formula_graph_addresses = [
-        address for address in graph_addresses if _is_formula_graph_node(graph, address)
+        address for address in graph_addresses if is_graph_formula_node(graph, address)
     ]
 
     if mode == "leaf" and non_leaf_graph_addresses:
@@ -130,6 +122,48 @@ def _validate_input_binding_overlap(
                 "error",
                 "no_formula_override_targets",
                 "input.mode override requires at least one formula cell in data_range",
+                series_id=series_id,
+            )
+        )
+    return issues
+
+
+def _internal_binding_addresses(
+    graph: DependencyGraph,
+    series: dict[str, Any],
+    addresses: list[str],
+) -> list[str]:
+    """Return addresses that participate in internal binding resolution."""
+    validation = effective_validation(series)
+    if not validation.get("intersect_graph_formulas", True):
+        return list(addresses)
+    return [address for address in addresses if is_graph_formula_node(graph, address)]
+
+
+def _validate_internal_binding_overlap(
+    graph: DependencyGraph,
+    series: dict[str, Any],
+    addresses: list[str],
+) -> list[ValidationIssue]:
+    """Validate formula-cell semantics for internal binding data ranges."""
+    issues: list[ValidationIssue] = []
+    if not has_internal_direction(series):
+        return issues
+
+    series_id = str(series.get("id", ""))
+    validation = effective_validation(series)
+    if not validation.get("intersect_graph_formulas", True):
+        return issues
+
+    formula_graph_addresses = [
+        address for address in addresses if is_graph_formula_node(graph, address)
+    ]
+    if not formula_graph_addresses:
+        issues.append(
+            _issue(
+                "error",
+                "no_formula_internal_targets",
+                "internal binding requires at least one formula cell in data_range",
                 series_id=series_id,
             )
         )
@@ -523,8 +557,10 @@ def validate_series_bindings(
 
         issues.extend(_validate_input_mode(series))
         issues.extend(_validate_input_binding_overlap(graph, series, addresses))
+        issues.extend(_validate_internal_binding_overlap(graph, series, addresses))
 
         graph_input_addresses = _input_binding_addresses(graph, series, addresses)
+        graph_internal_addresses = _internal_binding_addresses(graph, series, addresses)
 
         if require_unique_key:
             cell_scoped_keys = [
@@ -536,7 +572,12 @@ def validate_series_bindings(
                     for d in (series.get("structure") or {}).get("dimensions") or []
                 )
             ]
-            if not graph_input_addresses:
+            binding_addresses = (
+                graph_internal_addresses
+                if has_internal_direction(series)
+                else graph_input_addresses
+            )
+            if not binding_addresses:
                 continue
             if cell_scoped_keys and workbook is None:
                 issues.append(
@@ -551,7 +592,8 @@ def validate_series_bindings(
             elif workbook is not None:
                 from excel_grapher.series_bindings.resolve import resolve_series_binding
 
-                resolved = resolve_series_binding(graph, workbook, series, direction="input")
+                direction = "internal" if has_internal_direction(series) else "input"
+                resolved = resolve_series_binding(graph, workbook, series, direction=direction)
                 issues.extend(resolved["issues"])
                 if resolved["requires_address"]:
                     issues.append(

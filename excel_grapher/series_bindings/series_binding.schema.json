@@ -9,8 +9,8 @@
   "properties": {
     "schema_version": {
       "type": "string",
-      "enum": ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0"],
-      "description": "Schema version for tooling and migrations. 1.0.0–1.2.0: row_series and scalar (fully supported). 1.1.0: adds matrix layout (supported with explicit binds). 1.2.0: optional input/output direction blocks and output compute functions. 1.3.0: row_series renamed to series layout; load-time normalization accepts legacy row_series. 1.4.0: adds bool and datetime read modes and dtypes for dimensions and constants (ISO 8601 date strings in manifests). 1.5.0: grouped-row matrix geometry (skip/include/fill/missing on row_label and column_header binds, value_map bind kind, series-level exclude_rows) and optional view-level groups for export sequencing and documentation grouping. 1.6.0: input.mode override for user-editable formula cells (non-leaf input setters)."
+      "enum": ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"],
+      "description": "Schema version for tooling and migrations. 1.0.0–1.2.0: row_series and scalar (fully supported). 1.1.0: adds matrix layout (supported with explicit binds). 1.2.0: optional input/output direction blocks and output compute functions. 1.3.0: row_series renamed to series layout; load-time normalization accepts legacy row_series. 1.4.0: adds bool and datetime read modes and dtypes for dimensions and constants (ISO 8601 date strings in manifests). 1.5.0: grouped-row matrix geometry (skip/include/fill/missing on row_label and column_header binds, value_map bind kind, series-level exclude_rows) and optional view-level groups for export sequencing and documentation grouping. 1.6.0: input.mode override for user-editable formula cells (non-leaf input setters). 1.7.0: internal direction for non-I/O formula-cell key triangulation (intersect_graph_formulas validation)."
     },
     "workbook": {
       "type": "string",
@@ -392,6 +392,11 @@
         "compute": { "$ref": "#/$defs/Compute" }
       }
     },
+    "InternalDirection": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Marks a non-I/O binding for formula-cell key triangulation. No set_* or compute_* codegen is emitted."
+    },
     "Setter": {
       "type": "object",
       "additionalProperties": false,
@@ -465,6 +470,7 @@
         },
         "input": { "$ref": "#/$defs/InputDirection" },
         "output": { "$ref": "#/$defs/OutputDirection" },
+        "internal": { "$ref": "#/$defs/InternalDirection" },
         "setter": {
           "$ref": "#/$defs/Setter",
           "description": "Deprecated: use input.setter. Accepted for backward compatibility and normalized at load time."
@@ -516,6 +522,7 @@
       },
       "allOf": [
         { "$ref": "#/$defs/SeriesBindingDirectionRules" },
+        { "$ref": "#/$defs/SeriesBindingInternalExclusivity" },
         { "$ref": "#/$defs/SeriesBindingLayoutKeyRules" },
         { "$ref": "#/$defs/SeriesBindingMvpRules" },
         { "$ref": "#/$defs/SeriesBindingMatrixRules" }
@@ -549,12 +556,26 @@
       }
     },
     "SeriesBindingDirectionRules": {
-      "description": "Each series must declare at least one of input or output (legacy top-level setter counts as input).",
+      "description": "Each series must declare at least one of input, output, internal, or legacy setter.",
       "anyOf": [
         { "required": ["input"] },
         { "required": ["output"] },
+        { "required": ["internal"] },
         { "required": ["setter"] }
       ]
+    },
+    "SeriesBindingInternalExclusivity": {
+      "description": "internal direction is mutually exclusive with input, output, and legacy setter.",
+      "if": { "required": ["internal"] },
+      "then": {
+        "not": {
+          "anyOf": [
+            { "required": ["input"] },
+            { "required": ["output"] },
+            { "required": ["setter"] }
+          ]
+        }
+      }
     },
     "SeriesBindingMatrixRules": {
       "description": "Constraints for layout matrix (1.1.0).",
@@ -637,6 +658,11 @@
           "type": "boolean",
           "default": true,
           "description": "When true for output bindings, only cells present in the extracted graph are included."
+        },
+        "intersect_graph_formulas": {
+          "type": "boolean",
+          "default": true,
+          "description": "When true for internal bindings, only formula cells present in the extracted graph are included."
         }
       }
     }
