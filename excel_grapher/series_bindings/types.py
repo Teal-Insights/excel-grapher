@@ -102,3 +102,18 @@ class OutputSeries(TypedDict):
     key_fields: list[str]
     cells: list[OutputSeriesCell]
     issues: list[ResolutionIssue]
+
+
+class InternalSeriesCell(TypedDict):
+    address: str
+    coordinates: dict[str, Scalar]
+    key: dict[str, Scalar]
+    record: dict[str, Scalar]
+
+
+class InternalSeries(TypedDict):
+    id: str
+    key_fields: list[str]
+    requires_address: bool
+    cells: list[InternalSeriesCell]
+    issues: list[ResolutionIssue]

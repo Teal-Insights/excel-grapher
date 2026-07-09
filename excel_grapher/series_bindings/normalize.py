@@ -57,17 +57,24 @@ def is_override_input(series: dict[str, Any]) -> bool:
     return input_mode(series) == "override"
 
 
-def effective_validation(series: dict[str, Any]) -> dict[str, Any]:
-    """Return series validation flags with override-mode defaults applied."""
-    validation = dict(series.get("validation") or {})
-    if is_override_input(series):
-        validation["intersect_graph_leaves"] = False
-    return validation
-
-
 def has_output_direction(series: dict[str, Any]) -> bool:
     output = series.get("output")
     return isinstance(output, dict) and isinstance(output.get("compute"), dict)
+
+
+def has_internal_direction(series: dict[str, Any]) -> bool:
+    """Return True when the series declares internal (non-I/O) binding semantics."""
+    return "internal" in series and isinstance(series.get("internal"), dict)
+
+
+def effective_validation(series: dict[str, Any]) -> dict[str, Any]:
+    """Return series validation flags with direction-specific defaults applied."""
+    validation = dict(series.get("validation") or {})
+    if is_override_input(series):
+        validation["intersect_graph_leaves"] = False
+    if has_internal_direction(series) and "intersect_graph_formulas" not in validation:
+        validation["intersect_graph_formulas"] = True
+    return validation
 
 
 def normalize_series_entry(series: dict[str, Any]) -> dict[str, Any]:
@@ -132,7 +139,7 @@ def merge_series_entries(
         )
 
     merged = dict(left)
-    for direction in ("input", "output"):
+    for direction in ("input", "output", "internal"):
         if direction not in right:
             continue
         if direction in merged and merged[direction] != right[direction]:
