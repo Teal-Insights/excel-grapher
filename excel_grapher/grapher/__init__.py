@@ -55,10 +55,13 @@ from .node import (
     Node,
     NodeKey,
     NodeKind,
+    RangeLocation,
     find_row_nodes_covering,
     locate_cell,
+    locate_range,
     make_row_node,
     row_node_covers_cell,
+    row_node_covers_range,
 )
 from .parser import format_cell_key, format_key, needs_quoting
 from .preparsed_formulas import warm_preparsed_formulas
@@ -112,10 +115,13 @@ __all__ = [
     "NodeKey",
     "NodeKind",
     "CellLocation",
+    "RangeLocation",
     "make_row_node",
     "locate_cell",
+    "locate_range",
     "find_row_nodes_covering",
     "row_node_covers_cell",
+    "row_node_covers_range",
     "LightweightVizLocalEdges",
     "LightweightVizModule",
     "LightweightVizModuleEdge",

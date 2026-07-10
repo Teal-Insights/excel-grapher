@@ -8,10 +8,11 @@ from typing import Any, Protocol, TypeAlias
 
 import fastpyxl.utils.cell
 
-from excel_grapher.core.address_keys import NormalizedAddress
+from excel_grapher.core.address_keys import NormalizedAddress, ParsedRowKey
 from excel_grapher.core.address_keys import format_cell_key as _format_cell_key
 from excel_grapher.core.address_keys import format_row_key as _format_row_key
 from excel_grapher.core.address_keys import normalize_key as _normalize_key
+from excel_grapher.core.address_keys import normalize_row_key as _normalize_row_key
 from excel_grapher.core.address_keys import parse_address as _parse_address
 from excel_grapher.core.address_keys import parse_row_key as _parse_row_key
 
@@ -308,6 +309,27 @@ class CellLocation:
     column: str
 
 
+@dataclass(frozen=True, slots=True)
+class RangeLocation:
+    """Where a one-row range is represented in a dependency graph.
+
+    Attributes:
+        range_key: Canonical one-row query key (after column ordering).
+        kind: Owning node kind (`row` for exact or covering row nodes).
+        node_key: Graph key of the owning row node.
+        min_col: Query span left column.
+        max_col: Query span right column.
+        row: Query worksheet row.
+    """
+
+    range_key: NodeKey
+    kind: NodeKind
+    node_key: NodeKey
+    min_col: str
+    max_col: str
+    row: int
+
+
 def _require_single_cell_key(cell_key: str) -> tuple[NodeKey, str, str, int]:
     """Normalize `cell_key` and return `(canonical, sheet, column, row)`.
 
@@ -332,6 +354,45 @@ def _require_single_cell_key(cell_key: str) -> tuple[NodeKey, str, str, int]:
     return _format_cell_key(sheet, col_u, row_i), sheet, col_u, row_i
 
 
+def _require_one_row_key(range_key: str) -> tuple[NodeKey, ParsedRowKey]:
+    """Canonicalize a one-row range key and return `(canonical, parsed)`."""
+    canonical = _normalize_row_key(range_key)
+    return canonical, _parse_row_key(canonical)
+
+
+def _row_node_span_indices(
+    row_node: Node | NodeView,
+) -> tuple[str, int, int, int]:
+    """Return `(sheet, row, min_col_idx, max_col_idx)` for a row node."""
+    if row_node.kind is not NodeKind.row:
+        raise ValueError("Expected a row node")
+    if row_node.min_col is None or row_node.max_col is None or row_node.row is None:
+        raise ValueError("Row node is missing extent fields")
+    lo = fastpyxl.utils.cell.column_index_from_string(row_node.min_col)
+    hi = fastpyxl.utils.cell.column_index_from_string(row_node.max_col)
+    return row_node.sheet, row_node.row, lo, hi
+
+
+def _span_contains(
+    *,
+    owner_sheet: str,
+    owner_row: int,
+    owner_lo: int,
+    owner_hi: int,
+    sheet: str,
+    row: int,
+    min_col: str,
+    max_col: str,
+) -> bool:
+    if sheet != owner_sheet or row != owner_row:
+        return False
+    q_lo = fastpyxl.utils.cell.column_index_from_string(min_col)
+    q_hi = fastpyxl.utils.cell.column_index_from_string(max_col)
+    if q_lo > q_hi:
+        q_lo, q_hi = q_hi, q_lo
+    return owner_lo <= q_lo and q_hi <= owner_hi
+
+
 def row_node_covers_cell(row_node: Node | NodeView, cell_key: str) -> bool:
     """Return True if `cell_key` lies in `row_node`'s one-row column span.
 
@@ -339,18 +400,42 @@ def row_node_covers_cell(row_node: Node | NodeView, cell_key: str) -> bool:
         ValueError: If `row_node` is not a row node, or `cell_key` is not a
             single-cell address.
     """
-    if row_node.kind is not NodeKind.row:
-        raise ValueError("row_node_covers_cell requires a row node")
-    if row_node.min_col is None or row_node.max_col is None or row_node.row is None:
-        raise ValueError("Row node is missing extent fields")
-
+    sheet_o, row_o, lo, hi = _row_node_span_indices(row_node)
     _cell_key, sheet, col, row = _require_single_cell_key(cell_key)
-    if sheet != row_node.sheet or row != row_node.row:
-        return False
-    c = fastpyxl.utils.cell.column_index_from_string(col)
-    lo = fastpyxl.utils.cell.column_index_from_string(row_node.min_col)
-    hi = fastpyxl.utils.cell.column_index_from_string(row_node.max_col)
-    return lo <= c <= hi
+    return _span_contains(
+        owner_sheet=sheet_o,
+        owner_row=row_o,
+        owner_lo=lo,
+        owner_hi=hi,
+        sheet=sheet,
+        row=row,
+        min_col=col,
+        max_col=col,
+    )
+
+
+def row_node_covers_range(row_node: Node | NodeView, range_key: str) -> bool:
+    """Return True if one-row `range_key` is fully contained in `row_node`.
+
+    The query is canonicalized first (column order, `$` stripped, both-end sheet
+    forms collapsed). Partial overlaps return False.
+
+    Raises:
+        ValueError: If `row_node` is not a row node, or `range_key` is not a
+            valid one-row range.
+    """
+    sheet_o, row_o, lo, hi = _row_node_span_indices(row_node)
+    _canonical, parsed = _require_one_row_key(range_key)
+    return _span_contains(
+        owner_sheet=sheet_o,
+        owner_row=row_o,
+        owner_lo=lo,
+        owner_hi=hi,
+        sheet=parsed.sheet,
+        row=parsed.row,
+        min_col=parsed.min_col,
+        max_col=parsed.max_col,
+    )
 
 
 class _GraphNodeLookup(Protocol):
@@ -359,15 +444,51 @@ class _GraphNodeLookup(Protocol):
     def get_node(self, key: NodeKey) -> NodeView | None: ...
 
 
-def find_row_nodes_covering(graph: _GraphNodeLookup, cell_key: str) -> list[NodeKey]:
-    """Return row-node keys whose span includes `cell_key` (insertion order)."""
-    _require_single_cell_key(cell_key)
+def find_row_nodes_covering(graph: _GraphNodeLookup, address: str) -> list[NodeKey]:
+    """Return row-node keys that fully cover a cell or one-row subrange.
+
+    `address` is canonicalized first. For a one-row range, coverage means the
+    owner's span contains the query span (exact match included). For a cell,
+    coverage means the cell column lies in the owner's span.
+    """
+    try:
+        _canonical, parsed = _require_one_row_key(address)
+    except ValueError:
+        _cell_key, sheet, col, row = _require_single_cell_key(address)
+
+        def _covers(node: NodeView) -> bool:
+            sheet_o, row_o, lo, hi = _row_node_span_indices(node)
+            return _span_contains(
+                owner_sheet=sheet_o,
+                owner_row=row_o,
+                owner_lo=lo,
+                owner_hi=hi,
+                sheet=sheet,
+                row=row,
+                min_col=col,
+                max_col=col,
+            )
+    else:
+
+        def _covers(node: NodeView) -> bool:
+            sheet_o, row_o, lo, hi = _row_node_span_indices(node)
+            return _span_contains(
+                owner_sheet=sheet_o,
+                owner_row=row_o,
+                owner_lo=lo,
+                owner_hi=hi,
+                sheet=parsed.sheet,
+                row=parsed.row,
+                min_col=parsed.min_col,
+                max_col=parsed.max_col,
+            )
+
     out: list[NodeKey] = []
     for key in graph:
         node = graph.get_node(key)
         if node is None or node.kind is not NodeKind.row:
             continue
-        if row_node_covers_cell(node, cell_key):
+        if _covers(node):
             out.append(key)
     return out
 
@@ -416,5 +537,50 @@ def locate_cell(graph: _GraphNodeLookup, cell_key: str) -> CellLocation | None:
             kind=NodeKind.row,
             node_key=covering[0],
             column=column,
+        )
+    return None
+
+
+def locate_range(graph: _GraphNodeLookup, range_key: str) -> RangeLocation | None:
+    """Return where a one-row range is represented in `graph`.
+
+    The query is canonicalized via `normalize_row_key`. Resolution order:
+    1. Exact `kind=row` node at the canonical key.
+    2. Otherwise the unique row node whose span fully contains the query.
+
+    Returns:
+        `RangeLocation` when represented, else `None`.
+
+    Raises:
+        ValueError: If `range_key` is not a one-row range, or unique occupancy is
+            violated (multiple covering row nodes).
+    """
+    canonical, parsed = _require_one_row_key(range_key)
+    exact = graph.get_node(canonical)
+    if exact is not None and exact.kind is NodeKind.row:
+        return RangeLocation(
+            range_key=canonical,
+            kind=NodeKind.row,
+            node_key=canonical,
+            min_col=parsed.min_col,
+            max_col=parsed.max_col,
+            row=parsed.row,
+        )
+
+    covering = find_row_nodes_covering(graph, canonical)
+    if len(covering) > 1:
+        keys = ", ".join(covering)
+        raise ValueError(
+            f"Unique cell occupancy violated for {canonical}: "
+            f"covered by overlapping row nodes {keys}"
+        )
+    if len(covering) == 1:
+        return RangeLocation(
+            range_key=canonical,
+            kind=NodeKind.row,
+            node_key=covering[0],
+            min_col=parsed.min_col,
+            max_col=parsed.max_col,
+            row=parsed.row,
         )
     return None

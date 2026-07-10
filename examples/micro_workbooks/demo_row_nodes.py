@@ -18,6 +18,7 @@ from excel_grapher.grapher.node import (
     Node,
     NodeKind,
     locate_cell,
+    locate_range,
     make_row_node,
     row_member_keys,
 )
@@ -104,6 +105,18 @@ def main() -> None:
             print(f"  {probe} -> (not in graph)")
         else:
             print(f"  {probe} -> {loc.kind} node {loc.node_key} (column {loc.column})")
+    print()
+
+    print("Where does this subrange live?")
+    for probe in ("Sheet1!E63:G63", "Sheet1!G63:E63", "Sheet1!D63:Y63", "Sheet1!C63:E63"):
+        loc = locate_range(g, probe)
+        if loc is None:
+            print(f"  {probe} -> (not in graph)")
+        else:
+            print(
+                f"  {probe} -> {loc.kind} node {loc.node_key} "
+                f"(query {loc.min_col}{loc.row}:{loc.max_col}{loc.row})"
+            )
     print()
 
     print("Edges")
