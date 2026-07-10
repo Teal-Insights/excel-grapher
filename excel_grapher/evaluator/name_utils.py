@@ -65,6 +65,18 @@ def address_to_python_name(address: str) -> str:
     return f"cell_{combined}"
 
 
+def row_key_to_helper_name(row_key: str) -> str:
+    """Convert a one-row node key to a reserved `_row_*` helper name.
+
+    Examples:
+        'Sheet1!D63:E63' -> '_row_sheet1_d63_e63'
+    """
+    cell_name = address_to_python_name(row_key)
+    if not cell_name.startswith("cell_"):
+        raise ValueError(f"unexpected address_to_python_name result: {cell_name!r}")
+    return f"_row_{cell_name[len('cell_') :]}"
+
+
 def excel_func_to_python(name: str) -> str:
     """Convert an Excel function name to a Python function name.
 

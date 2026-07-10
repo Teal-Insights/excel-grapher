@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Hand-built DependencyGraph with first-class row nodes (issue #374).
+"""Hand-built DependencyGraph demos for first-class row nodes.
 
-`create_dependency_graph` still expands ranges to cell precedents. This script
-shows the storage/edges API: construct a one-row node, wire cell↔row edges,
-look up non-canonical keys, and print evaluation order + Mermaid.
+Part 1 (issue #374): storage + edges + locate helpers on a mixed graph.
+Part 2 (issue #377): executable stripe — evaluate members, show lazy
+caching, and emit a parameterized `_row_*` helper via codegen.
+
+`create_dependency_graph` still expands ranges to cell precedents; these graphs
+are constructed by hand.
 
 Run from the repo root::
 
@@ -12,6 +15,8 @@ Run from the repo root::
 
 from __future__ import annotations
 
+from excel_grapher.evaluator.evaluator import FormulaEvaluator
+from excel_grapher.exporter.codegen import CodeGenerator
 from excel_grapher.grapher.export import to_mermaid
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.node import (
@@ -49,7 +54,7 @@ def _formula(sheet: str, col: str, row: int, formula: str) -> Node:
     )
 
 
-def build_demo_graph() -> DependencyGraph:
+def build_storage_demo_graph() -> DependencyGraph:
     """Build a tiny mixed graph: total cell depends on a one-row input stripe."""
     g = DependencyGraph()
     g.sheet_order = ["Sheet1"]
@@ -68,12 +73,43 @@ def build_demo_graph() -> DependencyGraph:
     return g
 
 
-def main() -> None:
-    g = build_demo_graph()
+def build_demo_graph() -> DependencyGraph:
+    """one template row node, no member cell nodes.
+
+    Template `=Sheet1!D35*2` with `varying_ref_slots=(0,)` specializes per column
+    so `evaluate("Sheet1!E63")` rewrites the varying ref to `E35` and returns 10.
+    """
+    g = DependencyGraph()
+    g.sheet_order = ["Sheet1"]
+    d35 = _leaf("Sheet1", "D", 35, 3)
+    e35 = _leaf("Sheet1", "E", 35, 5)
+    row = make_row_node(
+        "Sheet1",
+        63,
+        "D",
+        "E",
+        formula="=Sheet1!D35*2",
+        normalized_formula="=Sheet1!D35*2",
+        varying_ref_slots=(0,),
+        is_leaf=False,
+        is_target=True,
+        metadata={"role": "demo-template"},
+    )
+    g.add_node(row)
+    g.add_node(d35)
+    g.add_node(e35)
+    g.add_edge(row.key, d35.key)
+    g.add_edge(row.key, e35.key)
+    return g
+
+
+def demo_storage_and_locate() -> None:
+    g = build_storage_demo_graph()
     row_key = "Sheet1!D63:Y63"
 
     view = g.get_node(row_key)
     assert view is not None
+    print("=== Part 1: storage + locate ===")
     print("Row node")
     print(f"  key:      {view.key}")
     print(f"  kind:     {view.kind}")
@@ -82,7 +118,6 @@ def main() -> None:
     print(f"  metadata: {dict(view.metadata)}")
     print()
 
-    # Non-canonical spellings resolve to the same node.
     aliases = [
         "Sheet1!Y63:D63",
         "Sheet1!D63:Sheet1!Y63",
@@ -136,6 +171,67 @@ def main() -> None:
 
     print("Mermaid")
     print(to_mermaid(g))
+    print()
+
+
+def demo_eval_and_codegen() -> None:
+    g = build_demo_graph()
+    row_key = "Sheet1!D63:E63"
+    row = g.get_node(row_key)
+    assert row is not None
+
+    print("=== Part 2: eval + codegen ===")
+    print("Row template")
+    print(f"  key:                 {row.key}")
+    print(f"  normalized_formula:  {row.normalized_formula}")
+    print(f"  varying_ref_slots:   {row.varying_ref_slots}")
+    print(f"  member cells:        {row_member_keys(row)}")
+    print(f"  cell nodes at D63/E63: {g.get_node('Sheet1!D63')}, {g.get_node('Sheet1!E63')}")
+    print()
+
+    with FormulaEvaluator(g) as ev:
+        print("evaluate(member) via locate_cell + specialize")
+        for member in ("Sheet1!D63", "Sheet1!E63"):
+            print(f"  {member} -> {ev.evaluate(member)}")
+        print(f"  cache after both: {sorted(ev._cache)}")
+        print()
+
+        ev.clear_caches()
+        print("Laziness: evaluate E63 only")
+        print(f"  E63 -> {ev.evaluate('Sheet1!E63')}")
+        print(f"  cache keys: {sorted(ev._cache)}")
+        print(f"  D63 cached? {'Sheet1!D63' in ev._cache}")
+        print()
+
+        try:
+            ev.evaluate(row_key)
+        except ValueError as exc:
+            print(f"Row-key eval rejected: {exc}")
+        print()
+
+    code = CodeGenerator(g).generate(["Sheet1!D63", "Sheet1!E63"])
+    print("Codegen excerpt (helpers + wrappers)")
+    for line in code.splitlines():
+        stripped = line.lstrip()
+        if (
+            stripped.startswith("def _row_")
+            or stripped.startswith("def cell_sheet1_")
+            or stripped.startswith("return _row_")
+            or 'f"Sheet1!{column}' in stripped
+        ):
+            print(f"  {line}")
+    print()
+
+    ns: dict[str, object] = {}
+    exec(code, ns)
+    compute_all = ns["compute_all"]
+    assert callable(compute_all)
+    print(f"compute_all() -> {compute_all()}")
+
+
+def main() -> None:
+    demo_storage_and_locate()
+    demo_eval_and_codegen()
 
 
 if __name__ == "__main__":

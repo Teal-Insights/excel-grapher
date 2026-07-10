@@ -12,19 +12,22 @@ from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
 import fastpyxl.utils.cell
 
 from excel_grapher.core.address_keys import (
-    normalize_key as normalize_address,
-)
-from excel_grapher.core.address_keys import (
+    format_cell_key,
     parse_address,
     quote_sheet_if_needed,
     sort_node_keys,
 )
+from excel_grapher.core.address_keys import (
+    normalize_key as normalize_address,
+)
+from excel_grapher.core.formula_normalization import normalize_excel_formula
 from excel_grapher.core.operators_fastpath import MIN_OPERATOR_FASTPATH_CELLS
 from excel_grapher.evaluator.errors import MissingNormalizedFormulaError
 from excel_grapher.evaluator.name_utils import (
     address_to_python_name,
     excel_func_to_python,
     normalize_excel_function_name,
+    row_key_to_helper_name,
 )
 from excel_grapher.evaluator.parser import (
     AstNode,
@@ -44,7 +47,9 @@ from excel_grapher.evaluator.types import XlError
 from excel_grapher.exporter.embed import emit_runtime
 from excel_grapher.grapher.blank_ranges import BlankRangeRect, normalize_blank_range_specs
 from excel_grapher.grapher.graph import CycleError
+from excel_grapher.grapher.node import NodeKind, locate_cell, row_member_keys
 from excel_grapher.grapher.parser import format_key
+from excel_grapher.grapher.specialize_template import walk_template_cell_refs
 from excel_grapher.grapher.target_expansion import (
     expand_targets_to_roots,
     split_range_target_on_colon,
@@ -139,6 +144,9 @@ class CodeGenerator:
         self._ast_cache: dict[str, AstNode] = {}
         self._used_graph_closure: bool = False
         self._formula_cell_address: str | None = None
+        # When emitting a `_row_*` helper, maps template cell addresses that should
+        # use the `column` parameter instead of a fixed column letter.
+        self._row_column_param_refs: dict[str, tuple[str, int]] | None = None
 
     def __enter__(self) -> CodeGenerator:
         return self
@@ -157,6 +165,7 @@ class CodeGenerator:
         self._ast_cache.clear()
         self._used_graph_closure = False
         self._formula_cell_address = None
+        self._row_column_param_refs = None
 
     def _include_dep_tracking(
         self,
@@ -346,6 +355,19 @@ class CodeGenerator:
         )
         return [normalize_address(format_key(sheet, a1)) for sheet, a1 in roots]
 
+    def _node_sheet(self, node: GraphNode) -> str:
+        sheet = getattr(node, "sheet", None)
+        if not isinstance(sheet, str) or not sheet:
+            raise ValueError("graph node is missing sheet name")
+        return sheet
+
+    def _try_locate_cell(self, address: str) -> Any:
+        """Locate a cell when the graph supports Option B row coverage."""
+        try:
+            return locate_cell(cast(Any, self.graph), address)
+        except (TypeError, ValueError):
+            return None
+
     def _get_or_parse_ast(self, address: str) -> AstNode | None:
         """Parse and cache the AST for a formula cell.
 
@@ -363,7 +385,10 @@ class CodeGenerator:
         nf = node.normalized_formula
         if nf is None or not isinstance(nf, str) or not nf.strip():
             raise MissingNormalizedFormulaError(normalized)
-        ast = parse(nf.strip())
+        formula = nf.strip()
+        if getattr(node, "kind", NodeKind.cell) is NodeKind.row:
+            formula = normalize_excel_formula(formula, self._node_sheet(node))
+        ast = parse(formula)
         self._ast_cache[normalized] = ast
         return ast
 
@@ -426,10 +451,21 @@ class CodeGenerator:
 
     def _emit_cell_eval(self, address: str) -> str:
         normalized = normalize_address(address)
+        if self._row_column_param_refs is not None and normalized in self._row_column_param_refs:
+            sheet, row = self._row_column_param_refs[normalized]
+            sheet_q = quote_sheet_if_needed(sheet)
+            return f'xl_cell(ctx, f"{sheet_q}!{{column}}{row}")'
         if self.graph is None:
             return f"xl_cell(ctx, {repr(normalized)})"
         node = self.graph.get_node(normalized)
         if node is not None and node.formula is not None:
+            if getattr(node, "kind", NodeKind.cell) is NodeKind.row:
+                # Row keys are template owners, not callable cell_* entrypoints.
+                return f"xl_cell(ctx, {repr(normalized)})"
+            func_name = address_to_python_name(normalized)
+            return f"xl_eval(ctx, {repr(normalized)}, {func_name})"
+        loc = self._try_locate_cell(normalized)
+        if loc is not None and loc.kind is NodeKind.row:
             func_name = address_to_python_name(normalized)
             return f"xl_eval(ctx, {repr(normalized)}, {func_name})"
         return f"xl_cell(ctx, {repr(normalized)})"
@@ -1751,6 +1787,10 @@ class CodeGenerator:
 
         if node is None or node.formula is None:
             raise ValueError(f"Not a formula cell: {normalized}")
+        if getattr(node, "kind", NodeKind.cell) is NodeKind.row:
+            raise ValueError(
+                f"Row node {normalized!r} must be emitted via _emit_row_helper, not _emit_cell"
+            )
 
         lines: list[str] = []
         lines.append(f"def {func_name}(ctx):")
@@ -1770,6 +1810,90 @@ class CodeGenerator:
             self._formula_cell_address = prev_cell
         lines.append(f"    return {expr}")
 
+        return "\n".join(lines)
+
+    def _row_varying_address_map(
+        self,
+        *,
+        sheet: str,
+        template: str,
+        varying_ref_slots: tuple[int, ...],
+    ) -> dict[str, tuple[str, int]]:
+        """Map normalized cell addresses that should use the `column` parameter."""
+        refs = walk_template_cell_refs(template)
+        out: dict[str, tuple[str, int]] = {}
+        for slot in varying_ref_slots:
+            if slot < 0 or slot >= len(refs):
+                raise ValueError(
+                    f"varying_ref_slots index {slot} out of range for template "
+                    f"with {len(refs)} cell ref(s)"
+                )
+            ref = refs[slot]
+            ref_sheet = ref.sheet if ref.sheet is not None else sheet
+            key = normalize_address(format_cell_key(ref_sheet, ref.column, ref.row))
+            out[key] = (ref_sheet, ref.row)
+        return out
+
+    def _emit_row_helper(self, row_key: str) -> str:
+        """Emit a parameterized `_row_*` helper for a templated row node."""
+        normalized = normalize_address(row_key)
+        node = self.graph.get_node(normalized)
+        if node is None or getattr(node, "kind", None) is not NodeKind.row:
+            raise ValueError(f"Not a row node: {normalized}")
+        nf = node.normalized_formula
+        if nf is None or not isinstance(nf, str) or not nf.strip():
+            raise MissingNormalizedFormulaError(normalized)
+        slots = getattr(node, "varying_ref_slots", None)
+        if slots is None:
+            raise ValueError(
+                f"Row node {normalized!r} is missing varying_ref_slots; "
+                "cannot emit parameterized helper"
+            )
+
+        helper_name = row_key_to_helper_name(normalized)
+        raw_template = nf.strip()
+        sheet = self._node_sheet(node)
+        parseable = normalize_excel_formula(raw_template, sheet)
+        varying_map = self._row_varying_address_map(
+            sheet=sheet,
+            template=raw_template,
+            varying_ref_slots=tuple(slots),
+        )
+        # Cache under a distinct key so cell AST cache is not polluted.
+        cache_key = f"__row_template__:{normalized}"
+        ast = self._ast_cache.get(cache_key)
+        if ast is None:
+            ast = parse(parseable)
+            self._ast_cache[cache_key] = ast
+
+        lines: list[str] = []
+        lines.append(f"def {helper_name}(ctx, *, column: str):")
+        doc = f"Row template for {normalized}".replace("'''", "\\'''")
+        if doc[-1] not in ".?!":
+            doc = f"{doc}."
+        lines.append(f"    '''{doc}'''")
+        self._temp_var_counter = 0
+        prev_cell = self._formula_cell_address
+        prev_varying = self._row_column_param_refs
+        self._formula_cell_address = normalized
+        self._row_column_param_refs = varying_map
+        try:
+            expr = self._emit_ast(ast)
+        finally:
+            self._formula_cell_address = prev_cell
+            self._row_column_param_refs = prev_varying
+        lines.append(f"    return {expr}")
+        return "\n".join(lines)
+
+    def _emit_row_member_wrapper(self, member_key: str, *, helper_name: str, column: str) -> str:
+        """Emit a thin `cell_*` wrapper that calls a `_row_*` helper."""
+        normalized = normalize_address(member_key)
+        func_name = address_to_python_name(normalized)
+        lines = [
+            f"def {func_name}(ctx):",
+            f"    '''Row member {normalized} via {helper_name}(column={column!r}).'''",
+            f"    return {helper_name}(ctx, column={column!r})",
+        ]
         return "\n".join(lines)
 
     @staticmethod
@@ -1845,7 +1969,25 @@ class CodeGenerator:
 
             node = self.graph.get_node(addr)
             if node is None:
+                loc = self._try_locate_cell(addr)
+                if loc is not None and loc.kind is NodeKind.row:
+                    visit(loc.node_key)
+                    in_progress.discard(addr)
+                    visited.add(addr)
+                    return
                 # Cell not in graph - still add to order so we generate a stub
+                order.append(addr)
+                in_progress.discard(addr)
+                visited.add(addr)
+                return
+
+            # Templated row nodes: walk template refs, do not treat as cell_* formulas.
+            if getattr(node, "kind", NodeKind.cell) is NodeKind.row:
+                if node.formula is not None:
+                    ast = self._get_or_parse_ast(addr)
+                    assert ast is not None
+                    for dep in self._extract_cell_refs(ast):
+                        visit(dep)
                 order.append(addr)
                 in_progress.discard(addr)
                 visited.add(addr)
@@ -2452,7 +2594,9 @@ class CodeGenerator:
         # as the single source of truth for the export surface area. This ensures the exported
         # package can evaluate the full excel_grapher dependency closure (for the workbook's
         # cached state) without missing-cell KeyErrors.
-        all_cells = self._collect_all_cells(normalized_dependency_targets)
+        all_cells, row_nodes_for_export, row_members_for_export = self._collect_export_surface(
+            normalized_dependency_targets
+        )
 
         # Generate formula cell functions and collect used xl_* functions
         self._emitted.clear()
@@ -2466,6 +2610,9 @@ class CodeGenerator:
                 return
             self._emitted.add(address)
             node = self.graph.get_node(address)
+            if node is not None and getattr(node, "kind", NodeKind.cell) is NodeKind.row:
+                # Templated row nodes are emitted as `_row_*` helpers, not `cell_*`.
+                return
             if node is not None and node.formula is not None:
                 normalized = normalize_address(address)
                 formula_emit_order.append(normalized)
@@ -2514,6 +2661,34 @@ class CodeGenerator:
             assert ast is not None
             self._note_operators_fastpath_from_ast(ast)
             used_xl_functions.update(self._extract_xl_functions(ast))
+
+        for row_key in self._workbook_sort_addresses(row_nodes_for_export):
+            helper_code = self._emit_row_helper(row_key)
+            cell_code_lines.append(helper_code)
+            cell_code_lines.append("")
+            cell_code_lines.append("")
+            helper_name = row_key_to_helper_name(row_key)
+            # Discover xl_* usage from the helper body AST (already cached).
+            cache_key = f"__row_template__:{normalize_address(row_key)}"
+            ast = self._ast_cache.get(cache_key) or self._get_or_parse_ast(row_key)
+            assert ast is not None
+            self._note_operators_fastpath_from_ast(ast)
+            used_xl_functions.update(self._extract_xl_functions(ast))
+            row_node = self.graph.get_node(row_key)
+            assert row_node is not None
+            for member in row_members_for_export[row_key]:
+                _sheet, cell = parse_address(member)
+                col_letters, _row = fastpyxl.utils.cell.coordinate_from_string(cell)
+                cell_code_lines.append(
+                    self._emit_row_member_wrapper(
+                        member,
+                        helper_name=helper_name,
+                        column=str(col_letters).upper(),
+                    )
+                )
+                cell_code_lines.append("")
+                cell_code_lines.append("")
+                formula_cells.add(member)
 
         self._assert_raise_only_cell_boundary(cell_code_lines)
 
@@ -2591,6 +2766,94 @@ class CodeGenerator:
                 "No export targets were provided and the graph has no target-marked nodes."
             )
         return [normalize_address(t) for t in inferred_targets]
+
+    def _collect_export_surface(
+        self, targets: list[str]
+    ) -> tuple[list[str], list[str], dict[str, tuple[str, ...]]]:
+        """Collect export closure plus Option B row helpers/wrappers to emit.
+
+        Member addresses are not graph nodes under Option B. They are resolved via
+        `locate_cell` to a covering row node, which seeds the dependency closure.
+        Wrappers are emitted for every column in each involved row span.
+        """
+        seeds: list[str] = []
+        row_keys: set[str] = set()
+        for target in targets:
+            loc = self._try_locate_cell(target)
+            if loc is None:
+                seeds.append(target)
+                continue
+            if loc.kind is NodeKind.row:
+                row_keys.add(loc.node_key)
+                seeds.append(loc.node_key)
+            else:
+                seeds.append(loc.cell_key)
+
+        all_cells = self._collect_all_cells(seeds)
+        for addr in all_cells:
+            node = self.graph.get_node(addr)
+            if node is None or getattr(node, "kind", None) is not NodeKind.row:
+                continue
+            if node.normalized_formula is None or getattr(node, "varying_ref_slots", None) is None:
+                continue
+            row_keys.add(normalize_address(addr))
+
+        members_by_row: dict[str, tuple[str, ...]] = {}
+        for row_key in row_keys:
+            row_node = self.graph.get_node(row_key)
+            if row_node is None:
+                continue
+            members_by_row[row_key] = tuple(row_member_keys(cast(Any, row_node)))
+
+        all_cells = self._expand_row_varying_member_leaves(list(row_keys), all_cells)
+        return all_cells, list(row_keys), members_by_row
+
+    def _expand_row_varying_member_leaves(
+        self, row_keys: list[str], all_cells: list[str]
+    ) -> list[str]:
+        """Include leaf precedents for every member column of varying template refs.
+
+        The shared template is anchored at the left column (e.g. `D35`). Specialized
+        helpers rewrite that slot to `E35`, `F35`, … so those leaves must be in the
+        export surface even when the template AST only mentions the anchor.
+        """
+        seen = set(all_cells)
+        extra: list[str] = []
+        for row_key in row_keys:
+            row_node = self.graph.get_node(row_key)
+            if row_node is None:
+                continue
+            nf = row_node.normalized_formula
+            slots = getattr(row_node, "varying_ref_slots", None)
+            min_col = getattr(row_node, "min_col", None)
+            max_col = getattr(row_node, "max_col", None)
+            if (
+                not isinstance(nf, str)
+                or not nf.strip()
+                or slots is None
+                or not isinstance(min_col, str)
+                or not isinstance(max_col, str)
+            ):
+                continue
+            sheet = self._node_sheet(row_node)
+            refs = walk_template_cell_refs(nf.strip())
+            start = fastpyxl.utils.cell.column_index_from_string(min_col)
+            end = fastpyxl.utils.cell.column_index_from_string(max_col)
+            for slot in slots:
+                if slot < 0 or slot >= len(refs):
+                    continue
+                ref = refs[slot]
+                ref_sheet = ref.sheet if ref.sheet is not None else sheet
+                for col_i in range(start, end + 1):
+                    col = fastpyxl.utils.cell.get_column_letter(col_i)
+                    key = normalize_address(format_cell_key(ref_sheet, col, ref.row))
+                    if key in seen or self.graph.get_node(key) is None:
+                        continue
+                    seen.add(key)
+                    extra.append(key)
+        if not extra:
+            return all_cells
+        return all_cells + extra
 
     def _collect_all_cells(self, targets: list[str]) -> list[str]:
         """Collect an ordered list of addresses to emit for the given targets.

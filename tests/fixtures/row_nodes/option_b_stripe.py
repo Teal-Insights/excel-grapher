@@ -137,3 +137,67 @@ def build_option_b_stripe_fixture() -> OptionBStripeFixture:
         template=OPTION_B_TEMPLATE,
         varying_ref_slots=OPTION_B_VARYING_REF_SLOTS,
     )
+
+
+def build_option_b_div_error_graph() -> DependencyGraph:
+    """Option B stripe whose specialized formula divides by zero (`#DIV/0!`)."""
+    g = DependencyGraph()
+    d35 = _leaf(OPTION_B_SHEET, "D", 35, 1)
+    e35 = _leaf(OPTION_B_SHEET, "E", 35, 1)
+    template = "=Sheet1!D35/0"
+    row = make_row_node(
+        OPTION_B_SHEET,
+        OPTION_B_ROW,
+        OPTION_B_MIN_COL,
+        OPTION_B_MAX_COL,
+        formula=template,
+        normalized_formula=template,
+        varying_ref_slots=(0,),
+        is_leaf=False,
+        is_target=True,
+    )
+    g.add_node(row)
+    g.add_node(d35)
+    g.add_node(e35)
+    g.add_edge(row.key, d35.key)
+    g.add_edge(row.key, e35.key)
+    return g
+
+
+def build_option_b_quoted_sheet_graph() -> DependencyGraph:
+    """Option B stripe on a quoted sheet with a static range + varying cell."""
+    sheet = "My Sheet"
+    g = DependencyGraph()
+    # Static range SUM(...) stays fixed; D1 varies by member column.
+    d35 = _leaf(sheet, "D", 35, 10)
+    e35 = _leaf(sheet, "E", 35, 20)
+    d1 = _leaf(sheet, "D", 1, 3)
+    e1 = _leaf(sheet, "E", 1, 4)
+    template = "='My Sheet'!D1+SUM('My Sheet'!D35:E35)"
+    row = make_row_node(
+        sheet,
+        2,
+        "D",
+        "E",
+        formula=template,
+        normalized_formula=template,
+        varying_ref_slots=(0,),
+        is_leaf=False,
+        is_target=True,
+    )
+    for node in (row, d35, e35, d1, e1):
+        g.add_node(node)
+    for dep in (d35, e35, d1, e1):
+        g.add_edge(row.key, dep.key)
+    return g
+
+
+def build_cell_only_regression_graph() -> DependencyGraph:
+    """Tiny cell-only graph (no row nodes) for codegen regression."""
+    g = DependencyGraph()
+    a1 = _leaf("Sheet1", "A", 1, 2)
+    b1 = _formula_cell("Sheet1", "B", 1, "=Sheet1!A1*3")
+    g.add_node(a1)
+    g.add_node(b1)
+    g.add_edge(b1.key, a1.key)
+    return g
