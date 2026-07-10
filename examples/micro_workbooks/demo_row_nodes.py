@@ -74,20 +74,22 @@ def build_storage_demo_graph() -> DependencyGraph:
 
 
 def build_demo_graph() -> DependencyGraph:
-    """one template row node, no member cell nodes.
+    """Build one template row node with no member cell nodes.
 
     Template `=Sheet1!D35*2` with `varying_ref_slots=(0,)` specializes per column
     so `evaluate("Sheet1!E63")` rewrites the varying ref to `E35` and returns 10.
+    Span is `D63:F63` so `evaluate_row` can show a subrange vs the full stripe.
     """
     g = DependencyGraph()
     g.sheet_order = ["Sheet1"]
-    d35 = _leaf("Sheet1", "D", 35, 3)
-    e35 = _leaf("Sheet1", "E", 35, 5)
+    leaves = (("D", 3), ("E", 5), ("F", 7))
+    for col, value in leaves:
+        g.add_node(_leaf("Sheet1", col, 35, value))
     row = make_row_node(
         "Sheet1",
         63,
         "D",
-        "E",
+        "F",
         formula="=Sheet1!D35*2",
         normalized_formula="=Sheet1!D35*2",
         varying_ref_slots=(0,),
@@ -96,10 +98,8 @@ def build_demo_graph() -> DependencyGraph:
         metadata={"role": "demo-template"},
     )
     g.add_node(row)
-    g.add_node(d35)
-    g.add_node(e35)
-    g.add_edge(row.key, d35.key)
-    g.add_edge(row.key, e35.key)
+    for col, _value in leaves:
+        g.add_edge(row.key, f"Sheet1!{col}35")
     return g
 
 
@@ -176,7 +176,7 @@ def demo_storage_and_locate() -> None:
 
 def demo_eval_and_codegen() -> None:
     g = build_demo_graph()
-    row_key = "Sheet1!D63:E63"
+    row_key = "Sheet1!D63:F63"
     row = g.get_node(row_key)
     assert row is not None
 
@@ -191,9 +191,9 @@ def demo_eval_and_codegen() -> None:
 
     with FormulaEvaluator(g) as ev:
         print("evaluate(member) via locate_cell + specialize")
-        for member in ("Sheet1!D63", "Sheet1!E63"):
+        for member in ("Sheet1!D63", "Sheet1!E63", "Sheet1!F63"):
             print(f"  {member} -> {ev.evaluate(member)}")
-        print(f"  cache after both: {sorted(ev._cache)}")
+        print(f"  cache after all members: {sorted(ev._cache)}")
         print()
 
         ev.clear_caches()
@@ -206,10 +206,19 @@ def demo_eval_and_codegen() -> None:
         try:
             ev.evaluate(row_key)
         except ValueError as exc:
-            print(f"Row-key eval rejected: {exc}")
+            print(f"Row-key evaluate() rejected: {exc}")
         print()
 
-    code = CodeGenerator(g).generate(["Sheet1!D63", "Sheet1!E63"])
+        ev.clear_caches()
+        print("evaluate_row (full stripe vs subrange)")
+        print(f"  evaluate_row({row_key!r}) -> {ev.evaluate_row(row_key)}")
+        ev.clear_caches()
+        print(f"  evaluate_row('Sheet1!E63:F63') -> {ev.evaluate_row('Sheet1!E63:F63')}")
+        print(f"  cache after subrange: {sorted(ev._cache)}")
+        print(f"  D63 cached? {'Sheet1!D63' in ev._cache}")
+        print()
+
+    code = CodeGenerator(g).generate(["Sheet1!D63", "Sheet1!E63", "Sheet1!F63"])
     print("Codegen excerpt (helpers + wrappers)")
     for line in code.splitlines():
         stripped = line.lstrip()

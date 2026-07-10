@@ -7,11 +7,12 @@ from typing import TYPE_CHECKING, overload
 import fastpyxl.utils.cell
 
 from excel_grapher.core.address_keys import (
-    normalize_key as normalize_address,
-)
-from excel_grapher.core.address_keys import (
+    format_cell_key,
     parse_address,
     parse_row_key,
+)
+from excel_grapher.core.address_keys import (
+    normalize_key as normalize_address,
 )
 from excel_grapher.core.addressing import index_excel_range
 from excel_grapher.core.excel_function_meta import numpy_array_arg_indices
@@ -26,7 +27,7 @@ from excel_grapher.grapher.blank_ranges import (
     address_in_blank_ranges,
     normalize_blank_range_specs,
 )
-from excel_grapher.grapher.node import NodeKind, locate_cell
+from excel_grapher.grapher.node import NodeKind, locate_cell, locate_range
 from excel_grapher.grapher.specialize_template import specialize_template
 from excel_grapher.runtime.cache import EvalContext, xl_circular_reference, xl_iterative_compute
 from excel_grapher.runtime.info import xl_isblank
@@ -212,6 +213,51 @@ class FormulaEvaluator:
             return next(iter(result.values())) if single else result
         results = {addr: self._evaluate_cell(addr) for addr in target_list}
         return next(iter(results.values())) if single else results
+
+    def evaluate_row(self, address: str) -> list[CellValue]:
+        """Evaluate a one-row span covered by a row node (subrange or full stripe).
+
+        Args:
+            address: One-row range key such as `Sheet1!D63:E63` (whole stripe) or
+                `Sheet1!E63:F63` (subrange). Single-cell addresses are rejected;
+                use `evaluate` for those.
+
+        Returns:
+            Member values in left-to-right column order. Each member is evaluated
+            through the existing Option B path (specialize + cache under the
+            member address), so columns outside the requested span stay lazy.
+
+        Raises:
+            ValueError: If `address` is not a one-row range.
+            KeyError: If no covering row node is found for the span.
+        """
+        # Validate one-row geometry up front (clearer than locate_range's errors).
+        try:
+            parse_row_key(address)
+        except ValueError as exc:
+            raise ValueError(
+                f"evaluate_row requires a one-row range address, got {address!r}"
+            ) from exc
+
+        if self.auto_detect_changes and self.eager_invalidation:
+            self._detect_and_invalidate_changed_leaves()
+
+        loc = locate_range(self.graph, address)
+        if loc is None:
+            raise KeyError(f"Row span {address} not found in graph")
+
+        row_node = self.graph.get_node(loc.node_key)
+        if row_node is None:
+            raise KeyError(f"Row node {loc.node_key} not found in graph")
+
+        start = fastpyxl.utils.cell.column_index_from_string(loc.min_col)
+        end = fastpyxl.utils.cell.column_index_from_string(loc.max_col)
+        values: list[CellValue] = []
+        for col_i in range(start, end + 1):
+            col = fastpyxl.utils.cell.get_column_letter(col_i)
+            member = format_cell_key(row_node.sheet, col, loc.row)
+            values.append(self._evaluate_cell(member))
+        return values
 
     def _detect_and_invalidate_changed_leaves(self) -> None:
         """Scan all leaves and invalidate any whose values have changed."""
