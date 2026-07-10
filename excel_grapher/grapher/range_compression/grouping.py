@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from excel_grapher.grapher.graph import DependencyGraph
-from excel_grapher.grapher.node import NodeKey
+from excel_grapher.grapher.node import NodeKey, NodeKind
 
 from .boundaries import dependent_may_compress
 from .config import TacoBuildConfig
@@ -27,6 +27,8 @@ def column_adjacent_groups(
     for key in graph:
         node = graph.get_node(key)
         if node is None or node.is_leaf or not node.formula:
+            continue
+        if node.kind is not NodeKind.cell or node.column is None:
             continue
         by_column[(node.sheet, node.column)].append(key)
 
@@ -82,4 +84,6 @@ def _flush_compressible_runs(
 
 def _node_row(graph: DependencyGraph, key: NodeKey) -> int:
     node = graph.get_node(key)
-    return node.row if node is not None else 0
+    if node is None or node.row is None:
+        return 0
+    return node.row
