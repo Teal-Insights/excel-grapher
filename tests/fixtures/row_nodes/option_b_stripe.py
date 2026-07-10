@@ -18,7 +18,7 @@ OPTION_B_SHEET = "Sheet1"
 OPTION_B_ROW = 63
 OPTION_B_MIN_COL = "D"
 OPTION_B_MAX_COL = "E"
-OPTION_B_TEMPLATE = "=D$35*2"
+OPTION_B_TEMPLATE = "=Sheet1!D35*2"
 OPTION_B_VARYING_REF_SLOTS: tuple[int, ...] = (0,)
 OPTION_B_ROW_KEY = "Sheet1!D63:E63"
 
@@ -79,7 +79,7 @@ def assert_unique_occupancy_for_row(graph: DependencyGraph, row_key: str) -> Non
 
 
 def build_option_b_product_graph() -> DependencyGraph:
-    """Build Option B graph: row template `=D$35*2` over `D63:E63`, no member cells.
+    """Build Option B graph: row template `=Sheet1!D35*2` over `D63:E63`, no member cells.
 
     Shared precedents `D35` / `E35` are leaf value nodes. The row node owns the
     template and `varying_ref_slots=(0,)`.
@@ -111,8 +111,8 @@ def build_cell_only_product_twin() -> DependencyGraph:
     g = DependencyGraph()
     d35 = _leaf(OPTION_B_SHEET, "D", 35, 3)
     e35 = _leaf(OPTION_B_SHEET, "E", 35, 5)
-    d63 = _formula_cell(OPTION_B_SHEET, "D", 63, "=D$35*2")
-    e63 = _formula_cell(OPTION_B_SHEET, "E", 63, "=E$35*2")
+    d63 = _formula_cell(OPTION_B_SHEET, "D", 63, "=Sheet1!D35*2")
+    e63 = _formula_cell(OPTION_B_SHEET, "E", 63, "=Sheet1!E35*2")
     g.add_node(d35)
     g.add_node(e35)
     g.add_node(d63)

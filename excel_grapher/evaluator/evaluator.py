@@ -11,9 +11,11 @@ from excel_grapher.core.address_keys import (
 )
 from excel_grapher.core.address_keys import (
     parse_address,
+    parse_row_key,
 )
 from excel_grapher.core.addressing import index_excel_range
 from excel_grapher.core.excel_function_meta import numpy_array_arg_indices
+from excel_grapher.core.formula_normalization import normalize_excel_formula
 from excel_grapher.core.range_shorthand import (
     SheetBounds,
     resolve_whole_column,
@@ -24,6 +26,8 @@ from excel_grapher.grapher.blank_ranges import (
     address_in_blank_ranges,
     normalize_blank_range_specs,
 )
+from excel_grapher.grapher.node import NodeKind, locate_cell
+from excel_grapher.grapher.specialize_template import specialize_template
 from excel_grapher.runtime.cache import EvalContext, xl_circular_reference, xl_iterative_compute
 from excel_grapher.runtime.info import xl_isblank
 
@@ -257,6 +261,11 @@ class FormulaEvaluator:
 
             node = self.graph.get_node(current)
             if node is None:
+                # Option B members are cached under cell keys with no cell node;
+                # still walk runtime deps recorded during specialization.
+                for dep in self._runtime_deps.get(current, set()):
+                    if dep not in visited:
+                        queue.append(dep)
                 continue
 
             if node.formula is None:
@@ -296,6 +305,24 @@ class FormulaEvaluator:
                 self.on_cell_evaluated(norm, None)
             return None
 
+        # MVP: row-node keys are template owners, not evaluable stripe values.
+        try:
+            parse_row_key(norm)
+        except ValueError:
+            pass
+        else:
+            raise ValueError(
+                f"Evaluating row-node key {norm!r} is not supported; "
+                "evaluate a member cell address instead (e.g. Sheet1!E63)"
+            )
+
+        loc = locate_cell(self.graph, norm)
+        if loc is None:
+            raise KeyError(f"Cell {address} not found in graph")
+
+        if loc.kind is NodeKind.row:
+            return self._evaluate_row_member(norm, loc.node_key, loc.column)
+
         node = self.graph.get_node(norm)
         if node is None:
             raise KeyError(f"Cell {address} not found in graph")
@@ -311,8 +338,35 @@ class FormulaEvaluator:
         if nf is None or not isinstance(nf, str) or not nf.strip():
             raise MissingNormalizedFormulaError(norm)
         formula = nf.strip()
+        return self._evaluate_formula_at(norm, formula)
 
-        self._call_stack.append(norm)
+    def _evaluate_row_member(self, member_key: str, row_key: str, column: str) -> CellValue:
+        """Specialize a row-node template for `column` and evaluate under `member_key`."""
+        row_node = self.graph.get_node(row_key)
+        if row_node is None:
+            raise KeyError(f"Row node {row_key} not found in graph")
+        nf = row_node.normalized_formula
+        if nf is None or not isinstance(nf, str) or not nf.strip():
+            raise MissingNormalizedFormulaError(row_key)
+        slots = row_node.varying_ref_slots
+        if slots is None:
+            raise ValueError(
+                f"Row node {row_key!r} is missing varying_ref_slots; "
+                "cannot specialize template for member evaluation"
+            )
+        specialized = specialize_template(
+            nf.strip(),
+            varying_ref_slots=slots,
+            column=column,
+        )
+        # specialize may preserve `$` markers; the AST parser expects
+        # FormulaNormalizer-style addresses.
+        formula = normalize_excel_formula(specialized, row_node.sheet)
+        return self._evaluate_formula_at(member_key, formula)
+
+    def _evaluate_formula_at(self, cache_key: str, formula: str) -> CellValue:
+        """Parse and evaluate `formula`, caching the result under `cache_key`."""
+        self._call_stack.append(cache_key)
         try:
             ast = self._parse_cached(formula)
             result = self._evaluate_ast(ast)
@@ -321,9 +375,9 @@ class FormulaEvaluator:
             # Excel treats formula results of None (empty cell reference) as 0
             if result is None:
                 result = 0
-            self._cache[norm] = result
+            self._cache[cache_key] = result
             if self.on_cell_evaluated is not None:
-                self.on_cell_evaluated(norm, result)
+                self.on_cell_evaluated(cache_key, result)
             return result
         finally:
             self._call_stack.pop()
