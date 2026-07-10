@@ -146,6 +146,11 @@ class DependencyGraph:
                 is_leaf=node.is_leaf,
                 is_target=node.is_target,
                 metadata=dict(node.metadata),
+                kind=node.kind,
+                min_col=node.min_col,
+                min_row=node.min_row,
+                max_col=node.max_col,
+                max_row=node.max_row,
             )
             for key, node in self._nodes.items()
         }
