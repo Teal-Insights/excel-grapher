@@ -50,7 +50,16 @@ from .export import (
 from .graph import CycleError, CycleReport, DependencyGraph, GraphReadView, NodeHook
 from .guard import And, Compare, GuardExpr, Literal, Not, Or
 from .guard import CellRef as GuardCellRef
-from .node import Node, NodeKey, NodeKind, make_row_node
+from .node import (
+    CellLocation,
+    Node,
+    NodeKey,
+    NodeKind,
+    find_row_nodes_covering,
+    locate_cell,
+    make_row_node,
+    row_node_covers_cell,
+)
 from .parser import format_cell_key, format_key, needs_quoting
 from .preparsed_formulas import warm_preparsed_formulas
 from .range_compression import TacoBuildConfig, TacoIndex, build_taco_index, input_keys_from_graph
@@ -102,7 +111,11 @@ __all__ = [
     "Node",
     "NodeKey",
     "NodeKind",
+    "CellLocation",
     "make_row_node",
+    "locate_cell",
+    "find_row_nodes_covering",
+    "row_node_covers_cell",
     "LightweightVizLocalEdges",
     "LightweightVizModule",
     "LightweightVizModuleEdge",

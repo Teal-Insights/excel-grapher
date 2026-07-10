@@ -1,16 +1,19 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Any, TypeAlias
+from typing import Any, Protocol, TypeAlias
 
 import fastpyxl.utils.cell
 
 from excel_grapher.core.address_keys import NormalizedAddress
 from excel_grapher.core.address_keys import format_cell_key as _format_cell_key
 from excel_grapher.core.address_keys import format_row_key as _format_row_key
+from excel_grapher.core.address_keys import normalize_key as _normalize_key
+from excel_grapher.core.address_keys import parse_address as _parse_address
+from excel_grapher.core.address_keys import parse_row_key as _parse_row_key
 
 # Graph node identity; same canonical form as NormalizedAddress (cell or row key).
 NodeKey: TypeAlias = NormalizedAddress
@@ -274,15 +277,144 @@ def members_differ_only_by_column(keys: Sequence[NodeKey]) -> bool:
     """Return True when every key shares sheet+row and columns are unique."""
     if not keys:
         return True
-    from excel_grapher.core.address_keys import parse_address
 
     sheets: set[str] = set()
     rows: set[int] = set()
     cols: set[str] = set()
     for key in keys:
-        sheet, coord = parse_address(key)
+        sheet, coord = _parse_address(key)
         col, row = fastpyxl.utils.cell.coordinate_from_string(coord)
         sheets.add(sheet)
         rows.add(int(row))
         cols.add(str(col).upper())
     return len(sheets) == 1 and len(rows) == 1 and len(cols) == len(keys)
+
+
+@dataclass(frozen=True, slots=True)
+class CellLocation:
+    """Where a single workbook cell is represented in a dependency graph.
+
+    Attributes:
+        cell_key: Canonical single-cell key that was queried.
+        kind: `cell` when the graph has a cell node; `row` when the cell lives
+            only inside a row node's span.
+        node_key: Graph key of the owning node (`Sheet1!E63` or `Sheet1!D63:Y63`).
+        column: Column letters of the queried cell.
+    """
+
+    cell_key: NodeKey
+    kind: NodeKind
+    node_key: NodeKey
+    column: str
+
+
+def _require_single_cell_key(cell_key: str) -> tuple[NodeKey, str, str, int]:
+    """Normalize `cell_key` and return `(canonical, sheet, column, row)`.
+
+    Raises:
+        ValueError: If `cell_key` is a range / row key rather than a single cell.
+    """
+    try:
+        _parse_row_key(cell_key)
+    except ValueError:
+        pass
+    else:
+        raise ValueError(f"Expected a single-cell key, got row/range key: {cell_key!r}")
+
+    try:
+        normalized = _normalize_key(cell_key)
+        sheet, coord = _parse_address(normalized)
+        col, row = fastpyxl.utils.cell.coordinate_from_string(coord.replace("$", ""))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Expected a single-cell key, got: {cell_key!r}") from exc
+    col_u = str(col).upper()
+    row_i = int(row)
+    return _format_cell_key(sheet, col_u, row_i), sheet, col_u, row_i
+
+
+def row_node_covers_cell(row_node: Node | NodeView, cell_key: str) -> bool:
+    """Return True if `cell_key` lies in `row_node`'s one-row column span.
+
+    Raises:
+        ValueError: If `row_node` is not a row node, or `cell_key` is not a
+            single-cell address.
+    """
+    if row_node.kind is not NodeKind.row:
+        raise ValueError("row_node_covers_cell requires a row node")
+    if row_node.min_col is None or row_node.max_col is None or row_node.row is None:
+        raise ValueError("Row node is missing extent fields")
+
+    _cell_key, sheet, col, row = _require_single_cell_key(cell_key)
+    if sheet != row_node.sheet or row != row_node.row:
+        return False
+    c = fastpyxl.utils.cell.column_index_from_string(col)
+    lo = fastpyxl.utils.cell.column_index_from_string(row_node.min_col)
+    hi = fastpyxl.utils.cell.column_index_from_string(row_node.max_col)
+    return lo <= c <= hi
+
+
+class _GraphNodeLookup(Protocol):
+    def __iter__(self) -> Iterator[NodeKey]: ...
+
+    def get_node(self, key: NodeKey) -> NodeView | None: ...
+
+
+def find_row_nodes_covering(graph: _GraphNodeLookup, cell_key: str) -> list[NodeKey]:
+    """Return row-node keys whose span includes `cell_key` (insertion order)."""
+    _require_single_cell_key(cell_key)
+    out: list[NodeKey] = []
+    for key in graph:
+        node = graph.get_node(key)
+        if node is None or node.kind is not NodeKind.row:
+            continue
+        if row_node_covers_cell(node, cell_key):
+            out.append(key)
+    return out
+
+
+def locate_cell(graph: _GraphNodeLookup, cell_key: str) -> CellLocation | None:
+    """Return where a single cell is represented in `graph`.
+
+    Resolution order:
+    1. Exact `kind=cell` node at `cell_key`.
+    2. Otherwise the unique covering row node, if any.
+
+    Returns:
+        `CellLocation` when the cell is represented, else `None`.
+
+    Raises:
+        ValueError: If `cell_key` is not a single cell, or unique cell occupancy
+            is violated (cell node plus covering row, or multiple covering rows).
+    """
+    canonical, _sheet, column, _row = _require_single_cell_key(cell_key)
+    cell_node = graph.get_node(canonical)
+    covering = find_row_nodes_covering(graph, canonical)
+
+    if cell_node is not None and cell_node.kind is NodeKind.cell:
+        if covering:
+            keys = ", ".join(covering)
+            raise ValueError(
+                f"Unique cell occupancy violated for {canonical}: "
+                f"cell node exists and is also covered by row node(s) {keys}"
+            )
+        return CellLocation(
+            cell_key=canonical,
+            kind=NodeKind.cell,
+            node_key=canonical,
+            column=column,
+        )
+
+    if len(covering) > 1:
+        keys = ", ".join(covering)
+        raise ValueError(
+            f"Unique cell occupancy violated for {canonical}: "
+            f"covered by overlapping row nodes {keys}"
+        )
+    if len(covering) == 1:
+        return CellLocation(
+            cell_key=canonical,
+            kind=NodeKind.row,
+            node_key=covering[0],
+            column=column,
+        )
+    return None
