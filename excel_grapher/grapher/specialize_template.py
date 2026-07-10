@@ -34,6 +34,39 @@ def walk_template_cell_refs(normalized_template: str) -> list[AbsCellRef]:
     return parse_cell_refs_with_abs(normalized_template, default_sheet="")
 
 
+def validate_varying_ref_slots(
+    normalized_template: str,
+    varying_ref_slots: tuple[int, ...],
+) -> tuple[int, ...]:
+    """Validate and canonicalize `varying_ref_slots` for a row template.
+
+    Args:
+        normalized_template: Shared formula for the row node.
+        varying_ref_slots: Indices into `walk_template_cell_refs`.
+
+    Returns:
+        Deduplicated slot indices (first-seen order preserved).
+
+    Raises:
+        ValueError: If a slot is out of range or points at an absolute-column ref.
+    """
+    slots = tuple(dict.fromkeys(varying_ref_slots))
+    refs = walk_template_cell_refs(normalized_template)
+    for slot in slots:
+        if slot < 0 or slot >= len(refs):
+            raise ValueError(
+                f"varying_ref_slots index {slot} out of range for template "
+                f"with {len(refs)} cell ref(s)"
+            )
+        if refs[slot].is_absolute_col:
+            raise ValueError(
+                f"varying ref slot {slot} has absolute column "
+                f"({normalized_template[refs[slot].span[0] : refs[slot].span[1]]!r}); "
+                "column must be relative"
+            )
+    return slots
+
+
 def specialize_template(
     normalized_template: str,
     *,
@@ -64,25 +97,7 @@ def specialize_template(
 
     member_col = _normalize_column(column)
     refs = walk_template_cell_refs(normalized_template)
-    if not refs and varying_ref_slots:
-        raise ValueError(
-            f"varying_ref_slots {varying_ref_slots!r} out of range for template with 0 cell refs"
-        )
-
-    # Deduplicate while preserving order for validation, then rewrite R→L.
-    unique_slots = tuple(dict.fromkeys(varying_ref_slots))
-    for slot in unique_slots:
-        if slot < 0 or slot >= len(refs):
-            raise ValueError(
-                f"varying_ref_slots index {slot} out of range for template "
-                f"with {len(refs)} cell ref(s)"
-            )
-        if refs[slot].is_absolute_col:
-            raise ValueError(
-                f"varying ref slot {slot} has absolute column "
-                f"({normalized_template[refs[slot].span[0] : refs[slot].span[1]]!r}); "
-                "column must be relative"
-            )
+    unique_slots = validate_varying_ref_slots(normalized_template, varying_ref_slots)
 
     parts: list[str] = []
     cursor = len(normalized_template)

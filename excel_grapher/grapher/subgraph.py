@@ -169,6 +169,7 @@ def _induced_dependency_subgraph(
                 min_row=node.min_row,
                 max_col=node.max_col,
                 max_row=node.max_row,
+                varying_ref_slots=node.varying_ref_slots,
             )
         )
 

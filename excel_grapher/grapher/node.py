@@ -35,6 +35,9 @@ class Node:
     (`kind=row`) represent a horizontal stripe on one worksheet row with column
     span `min_col`…`max_col` (`min_row == max_row == row`).
 
+    For executable row nodes, `normalized_formula` is the shared template and
+    `varying_ref_slots` lists cell-ref walk indices rewritten per member column.
+
     `is_leaf` is true when the node has no outgoing dependency edges (value-only
     cells and literal-only formulas such as `=1+1`).
     """
@@ -53,6 +56,7 @@ class Node:
     min_row: int | None = None
     max_col: str | None = None
     max_row: int | None = None
+    varying_ref_slots: tuple[int, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.kind is NodeKind.cell:
@@ -65,6 +69,8 @@ class Node:
     def _finalize_cell(self) -> None:
         if self.column is None or self.row is None:
             raise ValueError("Cell nodes require column and row")
+        if self.varying_ref_slots is not None:
+            raise ValueError("varying_ref_slots is only valid on row nodes")
         col = str(self.column).upper()
         row = int(self.row)
         self.column = col
@@ -112,6 +118,16 @@ class Node:
         self.max_col = max_col
         self.min_row = min_row
         self.max_row = max_row
+        if self.varying_ref_slots is not None:
+            if self.normalized_formula is None:
+                raise ValueError("varying_ref_slots requires normalized_formula")
+            # Lazy import: specialize_template -> range_compression pulls graph.
+            from excel_grapher.grapher.specialize_template import validate_varying_ref_slots
+
+            self.varying_ref_slots = validate_varying_ref_slots(
+                self.normalized_formula,
+                tuple(self.varying_ref_slots),
+            )
 
     @property
     def key(self) -> NodeKey:
@@ -160,6 +176,7 @@ class NodeView:
     min_row: int | None = None
     max_col: str | None = None
     max_row: int | None = None
+    varying_ref_slots: tuple[int, ...] | None = None
 
     @property
     def key(self) -> NodeKey:
@@ -201,6 +218,7 @@ def node_to_view(node: Node) -> NodeView:
         min_row=node.min_row,
         max_col=node.max_col,
         max_row=node.max_row,
+        varying_ref_slots=node.varying_ref_slots,
     )
 
 
@@ -216,6 +234,7 @@ def make_row_node(
     is_leaf: bool = True,
     is_target: bool = False,
     metadata: dict[str, Any] | None = None,
+    varying_ref_slots: tuple[int, ...] | None = None,
 ) -> Node:
     """Build a one-row graph node for `sheet!min_col{row}:max_col{row}`.
 
@@ -225,17 +244,20 @@ def make_row_node(
         min_col: Left column letters (ordered with `max_col` on construction).
         max_col: Right column letters.
         formula: Optional formula text stored on the node.
-        normalized_formula: Optional sheet-qualified formula text.
+        normalized_formula: Optional shared template / sheet-qualified formula.
         value: Optional cached value.
         is_leaf: Whether the node has no outgoing dependency edges.
         is_target: Whether the node is a graph target.
         metadata: Optional metadata dict (copied).
+        varying_ref_slots: Optional cell-ref walk indices rewritten per member
+            column. Requires `normalized_formula`.
 
     Returns:
         A `Node` with `kind=row` whose key is the canonical one-row span.
 
     Raises:
-        ValueError: If the resulting extent is not a single worksheet row.
+        ValueError: If the resulting extent is not a single worksheet row, or
+            template slots are invalid.
     """
     return Node(
         sheet=sheet,
@@ -252,6 +274,7 @@ def make_row_node(
         min_row=row,
         max_col=max_col,
         max_row=row,
+        varying_ref_slots=varying_ref_slots,
     )
 
 

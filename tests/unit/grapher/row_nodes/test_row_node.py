@@ -104,8 +104,9 @@ def test_node_to_view_preserves_row_fields() -> None:
         63,
         "D",
         "Y",
-        formula="=1",
-        normalized_formula="=1",
+        formula="=D$35",
+        normalized_formula="=D$35",
+        varying_ref_slots=(0,),
         value=None,
         is_leaf=False,
         metadata={"tag": "row"},
@@ -119,6 +120,7 @@ def test_node_to_view_preserves_row_fields() -> None:
     assert view.max_row == 63
     assert view.column is None
     assert view.row == 63
+    assert view.varying_ref_slots == (0,)
     assert view.metadata["tag"] == "row"
     assert view.address == "D63:Y63"
 
