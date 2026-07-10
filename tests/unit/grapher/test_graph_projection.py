@@ -508,6 +508,7 @@ def test_custom_collapse_projection_uses_public_primitives_without_forwarding() 
             projected = source.copy()
             node_b = projected.get_node("Sheet1!B1")
             assert node_b is not None
+            assert node_b.column is not None and node_b.row is not None
             snapshot = ProjectedNodeSnapshot(
                 address="Sheet1!B1",
                 sheet=node_b.sheet,

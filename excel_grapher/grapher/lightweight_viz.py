@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 from .formula_label import truncate_formula_display, validate_max_formula_length
 from .graph import DependencyGraph
-from .node import NodeKey
+from .node import NodeKey, NodeKind
 
 # --- Constants ----------------------------------------------------------------
 
@@ -927,8 +927,14 @@ def build_lightweight_viz_core(
     for k in keys:
         node = graph.get_node(k)
         assert node is not None
-        rows.append(node.row)
-        cols.append(node.column)
+        if node.kind is NodeKind.row:
+            assert node.row is not None and node.min_col is not None
+            rows.append(node.row)
+            cols.append(node.min_col)
+        else:
+            assert node.column is not None and node.row is not None
+            rows.append(node.row)
+            cols.append(node.column)
         sheet_ix.append(sheet_index_map[node.sheet])
         is_leaf.append(node.is_leaf)
         if include_formula_on_nodes and node.formula:
