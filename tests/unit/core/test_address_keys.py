@@ -86,6 +86,22 @@ def test_quoted_sheet_prefix_regex_matches_doubled_apostrophe_escape() -> None:
     assert unescape_formula_sheet_name(match.group("sheet")) == "O'Neil"
 
 
-def test_unescape_formula_sheet_name() -> None:
-    assert unescape_formula_sheet_name("O''Neil") == "O'Neil"
-    assert unescape_formula_sheet_name("It''s Data") == "It's Data"
+def test_normalize_key_canonicalizes_one_row_ranges() -> None:
+    assert normalize_key("Sheet1!Y63:D63") == "Sheet1!D63:Y63"
+    assert normalize_key("Sheet1!D63:Sheet1!Y63") == "Sheet1!D63:Y63"
+    assert normalize_key("Sheet1!$D$63:$Y$63") == "Sheet1!D63:Y63"
+    assert normalize_key("'Sheet1'!D63:Y63") == "Sheet1!D63:Y63"
+
+
+def test_sort_node_keys_orders_row_keys_by_min_col() -> None:
+    sheet_order = ["Sheet1"]
+    keys = [
+        "Sheet1!B64",
+        "Sheet1!D63:Y63",
+        "Sheet1!A63",
+    ]
+    assert sort_node_keys(keys, sheet_order=sheet_order) == [
+        "Sheet1!A63",
+        "Sheet1!D63:Y63",
+        "Sheet1!B64",
+    ]

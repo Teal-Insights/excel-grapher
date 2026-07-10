@@ -212,13 +212,23 @@ def normalize_key(key: str) -> NormalizedAddress:
 
     Unnecessary quoting is stripped; sheet names with spaces, hyphens, or
     apostrophes are quoted. For single cells, the result matches `Node.key`.
+    One-row range keys are canonicalized via `normalize_row_key` (ordered
+    columns, absolute markers stripped, both-end sheet forms collapsed).
 
     Examples:
         >>> normalize_key("'Sheet1'!A1")
         'Sheet1!A1'
         >>> normalize_key("'My Sheet'!B2")
         "'My Sheet'!B2"
+        >>> normalize_key("Sheet1!Y63:D63")
+        'Sheet1!D63:Y63'
     """
+    if _split_top_level_colon(key) is not None:
+        try:
+            return normalize_row_key(key)
+        except ValueError:
+            # Multi-row / non-row ranges keep the historical sheet+coord pass-through.
+            pass
     sheet, cell = parse_address(key)
     return format_key(sheet, cell)
 
@@ -231,7 +241,7 @@ def make_node_key_sort_key(
     Keys are ordered by:
     1) workbook sheet order (from `sheet_order`),
     2) row number,
-    3) column number.
+    3) column number (cell column, or row-node `min_col`).
 
     Sheets not present in `sheet_order` are placed after known sheets and
     sorted by sheet name.
@@ -240,6 +250,19 @@ def make_node_key_sort_key(
     fallback_rank = len(sheet_rank)
 
     def _sort_key(node_key: NormalizedAddress) -> tuple[int, str, int, int]:
+        if _split_top_level_colon(node_key) is not None:
+            try:
+                parsed = parse_row_key(node_key)
+            except ValueError:
+                parsed = None
+            if parsed is not None:
+                col = int(column_index_from_string(parsed.min_col))
+                return (
+                    sheet_rank.get(parsed.sheet, fallback_rank),
+                    parsed.sheet,
+                    parsed.row,
+                    col,
+                )
         sheet, cell = parse_address(node_key)
         col_letters, row = coordinate_from_string(cell.replace("$", ""))
         col = int(column_index_from_string(col_letters))
