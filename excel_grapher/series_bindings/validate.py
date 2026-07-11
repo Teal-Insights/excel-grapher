@@ -513,18 +513,32 @@ def _validate_dtype_read_consistency(
     for index, dim in enumerate(structure.get("dimensions") or []):
         if not isinstance(dim, dict):
             continue
-        concept = str(dim.get("concept", f"dimensions[{index}]"))
-        dtype = concept_dtypes.get(concept)
+        field_id = effective_dimension_id(dim) or f"dimensions[{index}]"
+        declared_dtype = dim.get("dtype")
+        dtype = (
+            str(declared_dtype)
+            if declared_dtype is not None
+            else concept_dtypes.get(str(dim.get("concept", "")))
+        )
         bind = dim.get("bind")
         if not isinstance(bind, dict) or dtype is None:
             continue
         read = str(bind.get("read", "auto"))
         if not _read_matches_dtype(read, dtype):
+            hint = (
+                ""
+                if declared_dtype is not None
+                else (
+                    "; declare a per-dimension dtype if this dimension's storage type "
+                    "intentionally differs from the concept, or use a separate concept"
+                )
+            )
             issues.append(
                 _issue(
                     "warning",
                     "dtype_read_mismatch",
-                    f"dimension {concept!r} dtype {dtype!r} does not match bind read {read!r}",
+                    f"dimension {field_id!r} dtype {dtype!r} does not match bind read "
+                    f"{read!r}{hint}",
                     series_id=series_id,
                 )
             )

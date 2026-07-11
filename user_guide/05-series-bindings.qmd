@@ -656,7 +656,7 @@ Generated code imports `datetime` and emits `datetime.datetime(...)` literals on
 | **1.5.0** | Grouped-row matrix geometry: `skip`/`include`/`fill`/`missing` on `row_label` and `column_header` binds, the `value_map` bind kind, and series-level `exclude_rows`. |
 | **1.6.0** | `input.mode: override` for user-editable formula cells (non-leaf input setters). |
 | **1.7.0** | `internal` direction for non-I/O formula-cell key triangulation (`intersect_graph_formulas` validation). |
-| **1.8.0** | Optional dimension/attribute `id` separating dimension identity from concept, so multiple dimensions can share one concept. |
+| **1.8.0** | Optional dimension/attribute `id` separating dimension identity from concept, so multiple dimensions can share one concept; optional per-dimension `dtype` for same-concept dimensions with differing storage types. |
 
 ## Dimension ids vs concepts (1.8.0)
 
@@ -686,6 +686,35 @@ must be used in `key` entries; effective ids must be unique within a series' str
 from `concept_scheme` (here `REFERENCE_TIME_PERIOD` inherits `TIME_PERIOD`'s `int` dtype) and
 docstring names. Attributes accept `id` the same way. Manifests without `id` are unchanged —
 the effective id defaults to the concept.
+
+### Per-dimension `dtype`
+
+Same-concept dimensions usually share the concept's storage type. When they genuinely differ —
+say an `int` projection axis and a calendar-date comparison period — first ask whether the two
+really share one concept: a calendar date and an integer offset under one `TIME_PERIOD` is often
+a semantic stretch, and splitting into separate concepts is the cleaner model. When they do
+belong together, declare a per-dimension `dtype` to override the concept-scheme dtype for that
+dimension only:
+
+```yaml
+dimensions:
+  - concept: TIME_PERIOD            # int, inherited from concept_scheme
+    role: key
+    scope: cell
+    bind: {kind: column_header, header_row: 1, read: int}
+  - id: REFERENCE_TIME_PERIOD
+    concept: TIME_PERIOD
+    dtype: datetime                 # this dimension stores a calendar date
+    role: key
+    scope: series
+    bind: {kind: cell, address: Inputs!C1}
+```
+
+The declared `dtype` drives value coercion when the bind has no explicit `read` (an explicit
+`read` still wins), flows into generated setter key coercion, and is reported in docstrings
+instead of the concept's dtype. Relying on a divergent `bind.read` alone (without `dtype`)
+triggers the `dtype_read_mismatch` warning, which nudges you to either declare the
+per-dimension `dtype` or split the concepts.
 
 ## Validation and codegen closure
 

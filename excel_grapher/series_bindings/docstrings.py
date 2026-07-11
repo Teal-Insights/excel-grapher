@@ -9,7 +9,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, runtime_checkable
 
 from excel_grapher.grapher.graph import DependencyGraph
-from excel_grapher.series_bindings.normalize import effective_dimension_id
+from excel_grapher.series_bindings.normalize import (
+    component_for_field,
+    concept_for_field,
+    effective_dimension_id,
+)
 from excel_grapher.series_bindings.types import SeriesResolution, WorkbookSeriesBindings
 
 if TYPE_CHECKING:
@@ -164,24 +168,6 @@ def _record_field_names(series: dict[str, Any]) -> list[str]:
     return _unique([*required, *dimensions, *attributes])
 
 
-def _concept_id_for_field(series: dict[str, Any], field_name: str) -> str:
-    """Map a record field name to the concept id used for scheme lookups."""
-    structure = series.get("structure") or {}
-    components = [
-        *(structure.get("dimensions") or []),
-        *(structure.get("attributes") or []),
-    ]
-    for component in components:
-        if not isinstance(component, dict):
-            continue
-        if effective_dimension_id(component) != field_name:
-            continue
-        concept = component.get("concept")
-        if concept:
-            return str(concept)
-    return field_name
-
-
 def _dimension_bind_read(series: dict[str, Any], field_name: str) -> str | None:
     for dimension in (series.get("structure") or {}).get("dimensions") or []:
         if not isinstance(dimension, dict):
@@ -208,7 +194,10 @@ def _field_dtype(
         if concept is not None and concept.get("dtype") is not None:
             return str(concept["dtype"])
         return None
-    concept = concepts.get(_concept_id_for_field(series, field_name))
+    component = component_for_field(series, field_name)
+    if component is not None and component.get("dtype") is not None:
+        return str(component["dtype"])
+    concept = concepts.get(concept_for_field(series, field_name))
     if concept is not None and concept.get("dtype") is not None:
         return str(concept["dtype"])
     bind_read = _dimension_bind_read(series, field_name)
@@ -244,7 +233,7 @@ def derive_doc_contract(
     expected_values = _expected_record_values(series)
     field_contracts: dict[str, FieldContract] = {}
     for field_name in _record_field_names(series):
-        concept = concepts.get(_concept_id_for_field(series, field_name))
+        concept = concepts.get(concept_for_field(series, field_name))
         concept_name = (
             str(concept["name"]) if concept is not None and concept.get("name") else field_name
         )

@@ -10,6 +10,7 @@ else `concept`); dtype inheritance from `concept_scheme` keys on `concept`.
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -26,7 +27,10 @@ from excel_grapher.series_bindings import (
 )
 from excel_grapher.series_bindings.docstrings import derive_doc_contract
 from excel_grapher.series_bindings.normalize import effective_dimension_id
-from excel_grapher.series_bindings.schema import validate_bindings_document
+from excel_grapher.series_bindings.schema import (
+    SeriesBindingsSchemaError,
+    validate_bindings_document,
+)
 from excel_grapher.series_bindings.setter_codegen import (
     emit_input_coerce_helpers,
     emit_setter_function,
@@ -41,6 +45,8 @@ def _write_reference_period_workbook(path: Path) -> None:
     wb = xlsxwriter.Workbook(path)
     ws = wb.add_worksheet("Inputs")
     ws.write_number("B1", 2019)
+    date_format = wb.add_format({"num_format": "yyyy-mm-dd"})
+    ws.write_datetime("C1", datetime(2019, 1, 15), date_format)
     ws.write("A2", "Borvelia")
     ws.write("A5", "GDP")
     for offset, year in enumerate([2020, 2021, 2022]):
@@ -315,3 +321,188 @@ def test_doc_contract_fields_use_dimension_id(tmp_path: Path) -> None:
     # dtype and human name resolve through the underlying TIME_PERIOD concept
     assert reference.dtype == "int"
     assert reference.concept_name == "Time period"
+
+
+# --- per-dimension dtype (same concept, different storage type) ---
+
+
+def _reference_date_series(**overrides: Any) -> dict[str, Any]:
+    """Same-concept dimensions with differing storage: int axis vs datetime cell."""
+    series = _reference_period_series(**overrides)
+    series["structure"]["dimensions"][1] = {
+        "id": "REFERENCE_TIME_PERIOD",
+        "concept": "TIME_PERIOD",
+        "dtype": "datetime",
+        "role": "key",
+        "scope": "series",
+        "bind": {"kind": "cell", "address": "Inputs!C1"},
+    }
+    return series
+
+
+def test_schema_accepts_dimension_dtype() -> None:
+    doc = _reference_period_document()
+    doc["series"][0] = _reference_date_series()
+    bindings = validate_bindings_document(doc)
+    assert bindings["series"][0]["structure"]["dimensions"][1]["dtype"] == "datetime"
+
+
+def test_schema_rejects_attribute_dtype() -> None:
+    doc = _reference_period_document()
+    doc["series"][0]["structure"]["attributes"] = [
+        {
+            "concept": "UNIT_MEASURE",
+            "role": "attribute",
+            "value": "PC_GDP",
+            "dtype": "string",
+        }
+    ]
+    with pytest.raises(SeriesBindingsSchemaError, match="dtype"):
+        validate_bindings_document(doc)
+
+
+def test_resolve_dimension_dtype_overrides_concept_dtype(tmp_path: Path) -> None:
+    wb_path, graph = _reference_period_graph(tmp_path)
+    doc = _reference_period_document()
+    doc["series"][0] = _reference_date_series()
+    bindings = validate_bindings_document(doc)
+    series = bindings["series"][0]
+
+    resolved = resolve_series_binding(
+        graph,
+        wb_path,
+        series,
+        concept_scheme=bindings.get("concept_scheme"),
+        direction="input",
+    )
+
+    assert resolved["ok"] is True, resolved["issues"]
+    leaf = resolved["leaves"][0]
+    # TIME_PERIOD still inherits int from the concept scheme; the reference
+    # dimension's declared dtype wins over the shared concept's int.
+    assert leaf["key"]["TIME_PERIOD"] == 2020
+    assert leaf["key"]["REFERENCE_TIME_PERIOD"] == datetime(2019, 1, 15)
+
+
+def test_resolve_series_context_uses_dimension_dtype(tmp_path: Path) -> None:
+    wb_path, graph = _reference_period_graph(tmp_path)
+    doc = _reference_period_document()
+    doc["series"][0] = _reference_date_series()
+    dim = doc["series"][0]["structure"]["dimensions"][1]
+    dim["include_in_record"] = False
+    doc["series"][0]["key"] = ["TIME_PERIOD"]
+    doc["series"][0]["series_context"] = {"REFERENCE_TIME_PERIOD": "2019-01-15"}
+    bindings = validate_bindings_document(doc)
+    series = bindings["series"][0]
+
+    resolved = resolve_series_binding(
+        graph,
+        wb_path,
+        series,
+        concept_scheme=bindings.get("concept_scheme"),
+        direction="input",
+    )
+
+    assert resolved["ok"] is True, resolved["issues"]
+    record = resolved["leaves"][0]["record"]
+    assert record["REFERENCE_TIME_PERIOD"] == datetime(2019, 1, 15)
+
+
+def test_emit_setter_key_dtypes_include_dimension_dtype(tmp_path: Path) -> None:
+    wb_path, graph = _reference_period_graph(tmp_path)
+    doc = _reference_period_document()
+    doc["series"][0] = _reference_date_series()
+    bindings = validate_bindings_document(doc)
+    series = bindings["series"][0]
+    resolved = resolve_series_binding(
+        graph,
+        wb_path,
+        series,
+        concept_scheme=bindings.get("concept_scheme"),
+        direction="input",
+    )
+    lines = emit_setter_function(series, resolved)
+    code = "\n".join(lines)
+    assert "'REFERENCE_TIME_PERIOD': 'datetime'" in code
+
+    ns = _exec_setters(lines)
+    setter = cast(
+        Callable[[EvalContext, list[dict[str, object]]], None],
+        ns["set_gdp_vs_reference"],
+    )
+    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
+    setter(
+        ctx,
+        [
+            {
+                "TIME_PERIOD": 2021,
+                "REFERENCE_TIME_PERIOD": datetime(2019, 1, 15),
+                "OBS_VALUE": 42.0,
+            }
+        ],
+    )
+    assert ctx.inputs["Inputs!G5"] == 42.0
+
+
+def test_doc_contract_reports_dimension_dtype(tmp_path: Path) -> None:
+    wb_path, graph = _reference_period_graph(tmp_path)
+    doc = _reference_period_document()
+    doc["series"][0] = _reference_date_series()
+    bindings = validate_bindings_document(doc)
+    series = bindings["series"][0]
+    resolved = resolve_series_binding(
+        graph,
+        wb_path,
+        series,
+        concept_scheme=bindings.get("concept_scheme"),
+        direction="input",
+    )
+
+    contract = derive_doc_contract(
+        series,
+        function_kind="setter",
+        function_name="set_gdp_vs_reference",
+        resolution=resolved,
+        bindings=bindings,
+    )
+
+    # declared per-dimension dtype wins over the shared concept's int dtype
+    assert contract.fields["REFERENCE_TIME_PERIOD"].dtype == "datetime"
+    assert contract.fields["TIME_PERIOD"].dtype == "int"
+
+
+def test_validate_warns_on_dimension_dtype_read_mismatch(tmp_path: Path) -> None:
+    wb_path, graph = _reference_period_graph(tmp_path)
+    doc = _reference_period_document()
+    doc["series"][0] = _reference_date_series()
+    dim = doc["series"][0]["structure"]["dimensions"][1]
+    dim["bind"]["read"] = "int"
+    bindings = validate_bindings_document(doc)
+    report = validate_series_bindings(graph, bindings, workbook=wb_path)
+    mismatches = [i for i in report["issues"] if i["code"] == "dtype_read_mismatch"]
+    assert mismatches
+    assert "REFERENCE_TIME_PERIOD" in mismatches[0]["message"]
+
+
+def test_validate_read_diverging_from_concept_suggests_dimension_dtype(tmp_path: Path) -> None:
+    """bind.read conflicting with inherited concept dtype nudges toward dtype or split."""
+    wb_path, graph = _reference_period_graph(tmp_path)
+    doc = _reference_period_document()
+    dim = doc["series"][0]["structure"]["dimensions"][1]
+    dim["bind"]["read"] = "datetime"
+    bindings = validate_bindings_document(doc)
+    report = validate_series_bindings(graph, bindings, workbook=wb_path)
+    mismatches = [i for i in report["issues"] if i["code"] == "dtype_read_mismatch"]
+    assert mismatches
+    assert "per-dimension dtype" in mismatches[0]["message"]
+
+
+def test_validate_dimension_dtype_without_read_is_clean(tmp_path: Path) -> None:
+    wb_path, graph = _reference_period_graph(tmp_path)
+    doc = _reference_period_document()
+    doc["series"][0] = _reference_date_series()
+    bindings = validate_bindings_document(doc)
+    report = validate_series_bindings(graph, bindings, workbook=wb_path)
+    codes = {issue["code"] for issue in report["issues"]}
+    assert "dtype_read_mismatch" not in codes
+    assert report["ok"] is True

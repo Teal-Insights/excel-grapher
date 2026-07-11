@@ -28,6 +28,7 @@ from excel_grapher.series_bindings.graph_predicates import (
 )
 from excel_grapher.series_bindings.normalize import (
     InputMode,
+    component_for_field,
     effective_dimension_id,
     effective_validation,
     has_input_direction,
@@ -105,27 +106,16 @@ def _lookup_concept_dtype(
     return None
 
 
-def _concept_for_field(series: dict[str, Any], field_name: str) -> str:
-    """Map a record field name to the concept id used for dtype lookup.
-
-    A dimension or attribute whose effective id matches `field_name` may
-    reference a different concept (schema 1.8.0); dtype inheritance from the
-    concept scheme keys on that concept.
-    """
-    structure = series.get("structure") or {}
-    components = [
-        *(structure.get("dimensions") or []),
-        *(structure.get("attributes") or []),
-    ]
-    for component in components:
-        if not isinstance(component, dict):
-            continue
-        if effective_dimension_id(component) != field_name:
-            continue
-        concept = component.get("concept")
-        if concept:
-            return str(concept)
-    return field_name
+def _component_dtype(
+    concept_scheme: dict[str, Any] | None,
+    series: dict[str, Any],
+    component: dict[str, Any],
+) -> str | None:
+    """Inferred dtype for a dimension or attribute: declared dtype, else concept scheme."""
+    dtype = component.get("dtype")
+    if dtype is not None:
+        return str(dtype)
+    return _lookup_concept_dtype(concept_scheme, series, str(component.get("concept", "")))
 
 
 def _effective_read_as(
@@ -392,9 +382,11 @@ def _coerce_series_context(
     result: dict[str, Scalar] = {}
     for context_field, value in raw.items():
         field_name = str(context_field)
-        inferred = _lookup_concept_dtype(
-            concept_scheme, series, _concept_for_field(series, field_name)
-        )
+        component = component_for_field(series, field_name)
+        if component is not None:
+            inferred = _component_dtype(concept_scheme, series, component)
+        else:
+            inferred = _lookup_concept_dtype(concept_scheme, series, field_name)
         read_as = _effective_read_as({"kind": "constant"}, inferred_dtype=inferred)
         try:
             result[field_name] = coerce_constant(value, read_as=read_as)
@@ -411,11 +403,11 @@ def _build_input_record(
     series_context: dict[str, Scalar],
 ) -> dict[str, Scalar]:
     record: dict[str, Scalar] = {}
-    key_concepts = [str(c) for c in (series.get("key") or [])]
+    key_fields = [str(c) for c in (series.get("key") or [])]
 
-    for concept in key_concepts:
-        if concept in coordinates:
-            record[concept] = coordinates[concept]
+    for field_name in key_fields:
+        if field_name in coordinates:
+            record[field_name] = coordinates[field_name]
 
     obs_value = coordinates.get(measure_concept)
     if obs_value is not None or measure_concept in coordinates:
@@ -478,8 +470,8 @@ def _build_output_record(
     return record
 
 
-def _extract_key(coordinates: dict[str, Scalar], key_concepts: list[str]) -> dict[str, Scalar]:
-    return {concept: coordinates[concept] for concept in key_concepts if concept in coordinates}
+def _extract_key(coordinates: dict[str, Scalar], key_fields: list[str]) -> dict[str, Scalar]:
+    return {field: coordinates[field] for field in key_fields if field in coordinates}
 
 
 def warn_series_resolution_issues(resolved: SeriesResolution, *, stacklevel: int = 3) -> None:
@@ -714,7 +706,7 @@ def resolve_series_binding(
     measure_bind = measure.get("bind") or {"kind": "data_cell"}
     measure_dtype = measure.get("dtype")
     measure_inferred_read = str(measure_dtype) if measure_dtype is not None else None
-    key_concepts = [str(c) for c in (series.get("key") or [])]
+    key_fields = [str(c) for c in (series.get("key") or [])]
     require_unique_key = bool(validation.get("require_unique_key", True))
 
     reader = _WorkbookValues(workbook)
@@ -765,9 +757,7 @@ def resolve_series_binding(
                 if scope == "series" and field_name in series_coordinates:
                     coordinates[field_name] = series_coordinates[field_name]
                     continue
-                inferred = _lookup_concept_dtype(
-                    concept_scheme, series, str(dim.get("concept", ""))
-                )
+                inferred = _component_dtype(concept_scheme, series, dim)
                 value = _execute_bind(
                     bind,
                     graph=graph,
@@ -786,9 +776,7 @@ def resolve_series_binding(
                 bind = _attribute_bind(attr)
                 if bind is None:
                     continue
-                inferred = _lookup_concept_dtype(
-                    concept_scheme, series, str(attr.get("concept", ""))
-                )
+                inferred = _component_dtype(concept_scheme, series, attr)
                 coordinates[field_name] = _execute_bind(
                     bind,
                     graph=graph,
@@ -800,7 +788,7 @@ def resolve_series_binding(
             bind_failures.setdefault(str(exc), []).append(address)
             continue
 
-        key = _extract_key(coordinates, key_concepts)
+        key = _extract_key(coordinates, key_fields)
         record = build_record(
             coordinates=coordinates,
             series=series,
@@ -816,7 +804,7 @@ def resolve_series_binding(
             }
         )
 
-        if require_unique_key and key_concepts:
+        if require_unique_key and key_fields:
             key_tuple = tuple(sorted(key.items()))
             if key_tuple in seen_keys:
                 requires_address = True
@@ -838,7 +826,7 @@ def resolve_series_binding(
     )
 
     layout = series.get("layout")
-    if layout == "scalar" and not key_concepts and len(leaves) > 1:
+    if layout == "scalar" and not key_fields and len(leaves) > 1:
         issues.append(
             make_issue(
                 "error",
