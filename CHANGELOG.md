@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.4.0 (2026-07-11)
+
+### Features
+
+- **series_bindings**: Per-dimension dtype for same-concept dimensions
+  ([#378](https://github.com/Teal-Insights/excel-grapher/pull/378),
+  [`829ac70`](https://github.com/Teal-Insights/excel-grapher/commit/829ac70e8146a372541e72450211e84b6560e125))
+
+- **series_bindings**: Separate dimension id from concept (schema 1.8.0)
+  ([#378](https://github.com/Teal-Insights/excel-grapher/pull/378),
+  [`829ac70`](https://github.com/Teal-Insights/excel-grapher/commit/829ac70e8146a372541e72450211e84b6560e125))
+
+
 ## v3.3.0 (2026-07-09)
 
 ### Features
