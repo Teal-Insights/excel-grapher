@@ -25,6 +25,46 @@ _STRUCTURAL_FIELDS = frozenset(
 )
 
 
+def effective_dimension_id(component: dict[str, Any]) -> str:
+    """Return the record-field identifier for a dimension or attribute.
+
+    Structure components may declare an `id` distinct from their `concept`
+    (schema 1.8.0), so two dimensions in one series can share a concept.
+    The effective id defaults to the concept when no `id` is declared.
+    """
+    return str(component.get("id") or component.get("concept") or "")
+
+
+def component_for_field(series: dict[str, Any], field_name: str) -> dict[str, Any] | None:
+    """Return the dimension or attribute whose effective id matches `field_name`."""
+    structure = series.get("structure") or {}
+    components = [
+        *(structure.get("dimensions") or []),
+        *(structure.get("attributes") or []),
+    ]
+    for component in components:
+        if not isinstance(component, dict):
+            continue
+        if effective_dimension_id(component) == field_name:
+            return component
+    return None
+
+
+def concept_for_field(series: dict[str, Any], field_name: str) -> str:
+    """Map a record field name to the concept id used for scheme lookups.
+
+    A dimension or attribute whose effective id matches `field_name` may
+    reference a different concept (schema 1.8.0); dtype inheritance from the
+    concept scheme keys on that concept.
+    """
+    component = component_for_field(series, field_name)
+    if component is not None:
+        concept = component.get("concept")
+        if concept:
+            return str(concept)
+    return field_name
+
+
 def _setter_block(series: dict[str, Any]) -> dict[str, Any] | None:
     input_block = series.get("input")
     if isinstance(input_block, dict):

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.series_bindings.normalize import effective_dimension_id
 from excel_grapher.series_bindings.resolve import resolve_series_binding
 from excel_grapher.series_bindings.setter_codegen import _canonical_key_order
 from excel_grapher.series_bindings.types import SeriesResolution, WorkbookSeriesBindings
@@ -23,15 +24,15 @@ class BindingsSmokeError(RuntimeError):
     """Raised when a generated setter or compute fails a smoke check."""
 
 
-def _key_concepts(series: dict[str, Any]) -> list[str]:
+def _key_fields(series: dict[str, Any]) -> list[str]:
     key = series.get("key")
     if isinstance(key, list):
         return [str(item) for item in key]
     dimensions = (series.get("structure") or {}).get("dimensions") or []
     return [
-        str(dim["concept"])
+        effective_dimension_id(dim)
         for dim in dimensions
-        if isinstance(dim, dict) and dim.get("role") == "key" and dim.get("concept")
+        if isinstance(dim, dict) and dim.get("role") == "key" and effective_dimension_id(dim)
     ]
 
 
@@ -110,7 +111,7 @@ def _find_single_key_setter_candidate(
         series = _series_for_setter(bindings, name)
         if str(series.get("layout") or "series") == "scalar":
             continue
-        key_fields = _key_concepts(series)
+        key_fields = _key_fields(series)
         if len(key_fields) != 1:
             continue
         resolved = resolve_series_binding(
@@ -140,7 +141,7 @@ def _find_matrix_setter_candidate(
         series = _series_for_setter(bindings, name)
         if str(series.get("layout") or "series") != "matrix":
             continue
-        key_fields = _key_concepts(series)
+        key_fields = _key_fields(series)
         if len(key_fields) < 2:
             continue
         resolved = resolve_series_binding(
@@ -165,7 +166,7 @@ def _smoke_setter_positional_input(
     make_context: Callable[[], Any],
 ) -> None:
     setter = cast(SetterFn, getattr(pkg, setter_name))
-    key_fields = _key_concepts(series)
+    key_fields = _key_fields(series)
     key_field = key_fields[0]
     measure = _measure_concept(series)
     leaves = sorted(resolved["leaves"], key=lambda leaf: leaf["key"][key_field])
@@ -196,7 +197,7 @@ def _smoke_setter_dataframe_input(
     import pandas as pd
 
     setter = cast(SetterFn, getattr(pkg, setter_name))
-    key_fields = _key_concepts(series)
+    key_fields = _key_fields(series)
     key_field = key_fields[0]
     measure = _measure_concept(series)
     leaves = sorted(resolved["leaves"], key=lambda leaf: leaf["key"][key_field])
@@ -225,7 +226,7 @@ def _smoke_setter_matrix_dataframe_input(
     import pandas as pd
 
     setter = cast(SetterFn, getattr(pkg, setter_name))
-    key_fields = _key_concepts(series)
+    key_fields = _key_fields(series)
     measure = _measure_concept(series)
     leaf = resolved["leaves"][0]
     bumped = _bump_value(leaf["record"][measure])
@@ -354,7 +355,7 @@ def smoke_test_computes(
         if not resolved["ok"]:
             raise BindingsSmokeError(f"Compute {name!r} resolution failed: {resolved['issues']}")
         expected_count = len(resolved["leaves"])
-        key_fields = _key_concepts(series)
+        key_fields = _key_fields(series)
         records = compute(ctx=ctx)
         if not isinstance(records, list):
             raise BindingsSmokeError(f"Compute {name!r} did not return a list")

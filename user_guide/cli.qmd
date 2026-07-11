@@ -141,7 +141,7 @@ validation runs:
 
 ```text
 Binding sidecar schema error:
-  series[8] "puka_week_1_fantasy_score": missing required field `key` — Add a key list naming the dimension concepts that identify each record.
+  series[8] "puka_week_1_fantasy_score": missing required field `key` — Add a key list naming the dimension ids that identify each record.
 ```
 
 Locations use the series index and `id` from the sidecar so you can jump straight to the offending

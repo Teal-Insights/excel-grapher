@@ -18,7 +18,7 @@ from excel_grapher.series_bindings.docstrings import (
     emit_docstring_literal,
     resolve_series_function_docstring,
 )
-from excel_grapher.series_bindings.normalize import has_input_direction
+from excel_grapher.series_bindings.normalize import effective_dimension_id, has_input_direction
 from excel_grapher.series_bindings.resolve import (
     resolve_series_bindings,
     warn_series_resolution_issues,
@@ -67,10 +67,10 @@ def _allowed_record_fields(
     fields.update(str(c) for c in (series.get("key") or []))
     for dim in (series.get("structure") or {}).get("dimensions") or []:
         if isinstance(dim, dict) and dim.get("include_in_record", True):
-            fields.add(str(dim.get("concept", "")))
+            fields.add(effective_dimension_id(dim))
     for attr in (series.get("structure") or {}).get("attributes") or []:
         if isinstance(attr, dict) and attr.get("include_in_record", False):
-            fields.add(str(attr.get("concept", "")))
+            fields.add(effective_dimension_id(attr))
     fields.update(str(c) for c in (series.get("series_context") or {}))
     if allow_address or requires_address:
         fields.update({"address", "cell_address"})
@@ -175,14 +175,14 @@ def _key_dtypes_for_codegen(series: dict[str, Any], key_fields: list[str]) -> di
     for dim in (series.get("structure") or {}).get("dimensions") or []:
         if not isinstance(dim, dict):
             continue
-        concept = str(dim.get("concept", ""))
-        if concept not in key_fields:
+        field_name = effective_dimension_id(dim)
+        if field_name not in key_fields:
             continue
         bind = dim.get("bind") if isinstance(dim.get("bind"), dict) else {}
         if "read" in bind:
-            dtypes[concept] = str(bind["read"])
+            dtypes[field_name] = str(bind["read"])
         elif dim.get("dtype") is not None:
-            dtypes[concept] = str(dim["dtype"])
+            dtypes[field_name] = str(dim["dtype"])
     return dtypes
 
 

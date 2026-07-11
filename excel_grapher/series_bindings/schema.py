@@ -16,7 +16,7 @@ from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 _REQUIRED_PROPERTY_RE = re.compile(r"'([^']+)' is a required property")
 _UNEXPECTED_PROPERTY_RE = re.compile(r"\('([^']+)' was unexpected\)")
 _FIELD_HINTS: dict[str, str] = {
-    "key": "Add a key list naming the dimension concepts that identify each record.",
+    "key": "Add a key list naming the dimension ids that identify each record.",
     "structure": "Add a structure block describing measure, dimensions, and attributes.",
     "data_range": "Add the Excel range this series covers (for example Sheet1!B3:Q3).",
     "layout": "Optional layout intent: scalar, series, or matrix.",
