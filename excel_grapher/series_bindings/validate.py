@@ -6,6 +6,7 @@ from typing import Any, Literal
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings.graph_predicates import is_graph_formula_node, is_graph_leaf
 from excel_grapher.series_bindings.normalize import (
+    effective_dimension_id,
     effective_validation,
     has_input_direction,
     has_internal_direction,
@@ -80,10 +81,13 @@ def _validate_input_mode(series: dict[str, Any]) -> list[ValidationIssue]:
     ]
 
 
-def _dimension_concepts(series: dict[str, Any]) -> set[str]:
+def _dimension_field_ids(series: dict[str, Any]) -> set[str]:
+    """Effective dimension ids (declared id, else concept) for key matching."""
     structure = series.get("structure") or {}
     dims = structure.get("dimensions") or []
-    return {str(d.get("concept")) for d in dims if isinstance(d, dict) and d.get("concept")}
+    return {
+        effective_dimension_id(d) for d in dims if isinstance(d, dict) and effective_dimension_id(d)
+    }
 
 
 def _validate_input_binding_overlap(
@@ -336,20 +340,63 @@ def _validate_series_structure(series: dict[str, Any]) -> list[ValidationIssue]:
                 )
             )
 
+    issues.extend(_validate_unique_dimension_ids(series))
+
     key = series.get("key")
     if isinstance(key, list):
-        dim_concepts = _dimension_concepts(series)
-        for concept in key:
-            if concept not in dim_concepts:
+        field_ids = _dimension_field_ids(series)
+        for entry in key:
+            if entry not in field_ids:
                 issues.append(
                     _issue(
                         "error",
                         "key_not_in_dimensions",
-                        f"key concept {concept!r} is not declared in structure.dimensions",
+                        f"key entry {entry!r} does not match any dimension id in "
+                        "structure.dimensions (dimension ids default to concept)",
                         series_id=series_id,
                     )
                 )
 
+    return issues
+
+
+def _validate_unique_dimension_ids(series: dict[str, Any]) -> list[ValidationIssue]:
+    """Effective ids must be unique across dimensions and attributes of one series."""
+    issues: list[ValidationIssue] = []
+    series_id = str(series.get("id", ""))
+    structure = series.get("structure")
+    if not isinstance(structure, dict):
+        return issues
+
+    seen: dict[str, str] = {}
+    components = [
+        *(
+            (f"dimensions[{i}]", dim)
+            for i, dim in enumerate(structure.get("dimensions") or [])
+            if isinstance(dim, dict)
+        ),
+        *(
+            (f"attributes[{i}]", attr)
+            for i, attr in enumerate(structure.get("attributes") or [])
+            if isinstance(attr, dict)
+        ),
+    ]
+    for label, component in components:
+        field_id = effective_dimension_id(component)
+        if not field_id:
+            continue
+        if field_id in seen:
+            issues.append(
+                _issue(
+                    "error",
+                    "duplicate_dimension_id",
+                    f"{label} effective id {field_id!r} duplicates {seen[field_id]}; "
+                    "declare a distinct id to disambiguate components sharing a concept",
+                    series_id=series_id,
+                )
+            )
+        else:
+            seen[field_id] = label
     return issues
 
 
@@ -566,9 +613,10 @@ def validate_series_bindings(
             cell_scoped_keys = [
                 str(c)
                 for c in (series.get("key") or [])
-                if c in _dimension_concepts(series)
-                and any(
-                    isinstance(d, dict) and d.get("concept") == c and d.get("scope") == "cell"
+                if any(
+                    isinstance(d, dict)
+                    and effective_dimension_id(d) == str(c)
+                    and d.get("scope") == "cell"
                     for d in (series.get("structure") or {}).get("dimensions") or []
                 )
             ]

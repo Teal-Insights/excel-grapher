@@ -28,6 +28,7 @@ from excel_grapher.series_bindings.graph_predicates import (
 )
 from excel_grapher.series_bindings.normalize import (
     InputMode,
+    effective_dimension_id,
     effective_validation,
     has_input_direction,
     has_internal_direction,
@@ -102,6 +103,29 @@ def _lookup_concept_dtype(
                 if dtype is not None:
                     return str(dtype)
     return None
+
+
+def _concept_for_field(series: dict[str, Any], field_name: str) -> str:
+    """Map a record field name to the concept id used for dtype lookup.
+
+    A dimension or attribute whose effective id matches `field_name` may
+    reference a different concept (schema 1.8.0); dtype inheritance from the
+    concept scheme keys on that concept.
+    """
+    structure = series.get("structure") or {}
+    components = [
+        *(structure.get("dimensions") or []),
+        *(structure.get("attributes") or []),
+    ]
+    for component in components:
+        if not isinstance(component, dict):
+            continue
+        if effective_dimension_id(component) != field_name:
+            continue
+        concept = component.get("concept")
+        if concept:
+            return str(concept)
+    return field_name
 
 
 def _effective_read_as(
@@ -366,14 +390,16 @@ def _coerce_series_context(
     if not isinstance(raw, dict):
         return {}
     result: dict[str, Scalar] = {}
-    for concept, value in raw.items():
-        concept_name = str(concept)
-        inferred = _lookup_concept_dtype(concept_scheme, series, concept_name)
+    for context_field, value in raw.items():
+        field_name = str(context_field)
+        inferred = _lookup_concept_dtype(
+            concept_scheme, series, _concept_for_field(series, field_name)
+        )
         read_as = _effective_read_as({"kind": "constant"}, inferred_dtype=inferred)
         try:
-            result[concept_name] = coerce_constant(value, read_as=read_as)
+            result[field_name] = coerce_constant(value, read_as=read_as)
         except (ValueError, TypeError) as exc:
-            raise ValueError(f"series_context[{concept_name!r}]: {exc}") from exc
+            raise ValueError(f"series_context[{field_name!r}]: {exc}") from exc
     return result
 
 
@@ -402,18 +428,18 @@ def _build_input_record(
     for dim in structure.get("dimensions") or []:
         if not isinstance(dim, dict):
             continue
-        concept = str(dim.get("concept", ""))
-        if _include_in_record(dim, default=True) and concept in coordinates:
-            record[concept] = coordinates[concept]
+        field_name = effective_dimension_id(dim)
+        if _include_in_record(dim, default=True) and field_name in coordinates:
+            record[field_name] = coordinates[field_name]
 
     for attr in structure.get("attributes") or []:
         if not isinstance(attr, dict):
             continue
-        concept = str(attr.get("concept", ""))
+        field_name = effective_dimension_id(attr)
         if not _include_in_record(attr, default=False):
             continue
-        if concept in coordinates:
-            record[concept] = coordinates[concept]
+        if field_name in coordinates:
+            record[field_name] = coordinates[field_name]
 
     return record
 
@@ -435,16 +461,16 @@ def _build_output_record(
     for dim in structure.get("dimensions") or []:
         if not isinstance(dim, dict):
             continue
-        concept = str(dim.get("concept", ""))
-        if concept in coordinates:
-            record[concept] = coordinates[concept]
+        field_name = effective_dimension_id(dim)
+        if field_name in coordinates:
+            record[field_name] = coordinates[field_name]
 
     for attr in structure.get("attributes") or []:
         if not isinstance(attr, dict):
             continue
-        concept = str(attr.get("concept", ""))
-        if concept in coordinates:
-            record[concept] = coordinates[concept]
+        field_name = effective_dimension_id(attr)
+        if field_name in coordinates:
+            record[field_name] = coordinates[field_name]
 
     if measure_concept not in record:
         record[measure_concept] = coordinates.get(measure_concept)
@@ -731,15 +757,17 @@ def resolve_series_binding(
             for dim in structure.get("dimensions") or []:
                 if not isinstance(dim, dict):
                     continue
-                concept = str(dim.get("concept", ""))
+                field_name = effective_dimension_id(dim)
                 bind = dim.get("bind")
                 if not isinstance(bind, dict):
                     continue
                 scope = dim.get("scope")
-                if scope == "series" and concept in series_coordinates:
-                    coordinates[concept] = series_coordinates[concept]
+                if scope == "series" and field_name in series_coordinates:
+                    coordinates[field_name] = series_coordinates[field_name]
                     continue
-                inferred = _lookup_concept_dtype(concept_scheme, series, concept)
+                inferred = _lookup_concept_dtype(
+                    concept_scheme, series, str(dim.get("concept", ""))
+                )
                 value = _execute_bind(
                     bind,
                     graph=graph,
@@ -747,19 +775,21 @@ def resolve_series_binding(
                     data_address=address,
                     inferred_read_as=inferred,
                 )
-                coordinates[concept] = value
+                coordinates[field_name] = value
                 if scope == "series":
-                    series_coordinates[concept] = value
+                    series_coordinates[field_name] = value
 
             for attr in structure.get("attributes") or []:
                 if not isinstance(attr, dict):
                     continue
-                concept = str(attr.get("concept", ""))
+                field_name = effective_dimension_id(attr)
                 bind = _attribute_bind(attr)
                 if bind is None:
                     continue
-                inferred = _lookup_concept_dtype(concept_scheme, series, concept)
-                coordinates[concept] = _execute_bind(
+                inferred = _lookup_concept_dtype(
+                    concept_scheme, series, str(attr.get("concept", ""))
+                )
+                coordinates[field_name] = _execute_bind(
                     bind,
                     graph=graph,
                     reader=reader,

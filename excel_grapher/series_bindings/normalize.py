@@ -25,6 +25,16 @@ _STRUCTURAL_FIELDS = frozenset(
 )
 
 
+def effective_dimension_id(component: dict[str, Any]) -> str:
+    """Return the record-field identifier for a dimension or attribute.
+
+    Structure components may declare an `id` distinct from their `concept`
+    (schema 1.8.0), so two dimensions in one series can share a concept.
+    The effective id defaults to the concept when no `id` is declared.
+    """
+    return str(component.get("id") or component.get("concept") or "")
+
+
 def _setter_block(series: dict[str, Any]) -> dict[str, Any] | None:
     input_block = series.get("input")
     if isinstance(input_block, dict):

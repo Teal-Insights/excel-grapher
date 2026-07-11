@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, runtime_checkable
 
 from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.series_bindings.normalize import effective_dimension_id
 from excel_grapher.series_bindings.types import SeriesResolution, WorkbookSeriesBindings
 
 if TYPE_CHECKING:
@@ -143,19 +144,19 @@ def _expected_record_values(series: dict[str, Any]) -> dict[str, object]:
     expected = dict(series.get("series_context") or {})
     for attribute in (series.get("structure") or {}).get("attributes") or []:
         if isinstance(attribute, dict) and "value" in attribute:
-            expected[str(attribute["concept"])] = attribute["value"]
+            expected[effective_dimension_id(attribute)] = attribute["value"]
     return expected
 
 
 def _record_field_names(series: dict[str, Any]) -> list[str]:
     measure = _measure_concept(series)
     dimensions = [
-        str(dimension["concept"])
+        effective_dimension_id(dimension)
         for dimension in (series.get("structure") or {}).get("dimensions") or []
         if isinstance(dimension, dict) and "concept" in dimension
     ]
     attributes = [
-        str(attribute["concept"])
+        effective_dimension_id(attribute)
         for attribute in (series.get("structure") or {}).get("attributes") or []
         if isinstance(attribute, dict) and "concept" in attribute
     ]
@@ -163,11 +164,29 @@ def _record_field_names(series: dict[str, Any]) -> list[str]:
     return _unique([*required, *dimensions, *attributes])
 
 
+def _concept_id_for_field(series: dict[str, Any], field_name: str) -> str:
+    """Map a record field name to the concept id used for scheme lookups."""
+    structure = series.get("structure") or {}
+    components = [
+        *(structure.get("dimensions") or []),
+        *(structure.get("attributes") or []),
+    ]
+    for component in components:
+        if not isinstance(component, dict):
+            continue
+        if effective_dimension_id(component) != field_name:
+            continue
+        concept = component.get("concept")
+        if concept:
+            return str(concept)
+    return field_name
+
+
 def _dimension_bind_read(series: dict[str, Any], field_name: str) -> str | None:
     for dimension in (series.get("structure") or {}).get("dimensions") or []:
         if not isinstance(dimension, dict):
             continue
-        if str(dimension.get("concept", "")) != field_name:
+        if effective_dimension_id(dimension) != field_name:
             continue
         bind = dimension.get("bind")
         if isinstance(bind, dict) and bind.get("read") is not None:
@@ -189,7 +208,7 @@ def _field_dtype(
         if concept is not None and concept.get("dtype") is not None:
             return str(concept["dtype"])
         return None
-    concept = concepts.get(field_name)
+    concept = concepts.get(_concept_id_for_field(series, field_name))
     if concept is not None and concept.get("dtype") is not None:
         return str(concept["dtype"])
     bind_read = _dimension_bind_read(series, field_name)
@@ -225,7 +244,7 @@ def derive_doc_contract(
     expected_values = _expected_record_values(series)
     field_contracts: dict[str, FieldContract] = {}
     for field_name in _record_field_names(series):
-        concept = concepts.get(field_name)
+        concept = concepts.get(_concept_id_for_field(series, field_name))
         concept_name = (
             str(concept["name"]) if concept is not None and concept.get("name") else field_name
         )
