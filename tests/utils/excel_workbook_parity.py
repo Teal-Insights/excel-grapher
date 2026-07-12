@@ -28,7 +28,6 @@ class ParityMismatchKind(Enum):
     NUMBER_VS_XL_ERROR = "number_vs_xl_error"
     EXCEPTION = "exception"
     NOT_IMPLEMENTED = "not_implemented"
-    NONE_RESULT = "none_result"
     TYPE_MISMATCH = "type_mismatch"
 
 
@@ -77,7 +76,10 @@ def compare_cached_to_evaluator(
     rtol: float = 1e-5,
     atol: float = 1e-9,
 ) -> ParityMismatchKind | None:
-    """Return a mismatch kind when Excel cached value differs from evaluator output."""
+    """Return a mismatch kind when Excel cached value differs from evaluator output.
+
+    Returns ``None`` when the cached value and evaluator result match.
+    """
     cached = _normalize_cached_excel_value(excel_cached)
 
     if isinstance(cached, XlError):

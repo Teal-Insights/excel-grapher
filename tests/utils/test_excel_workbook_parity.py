@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from excel_grapher import DependencyGraph, Node, XlError
+from pathlib import Path
+
+import pytest
+import xlsxwriter
+
+from excel_grapher import DependencyGraph, Node, XlError, create_dependency_graph
 from excel_grapher.core.address_keys import parse_address
 from tests.utils.excel_workbook_parity import (
     ParityMismatchKind,
@@ -49,6 +54,14 @@ def test_compare_cached_error_string_matches_xl_error() -> None:
     assert compare_cached_to_evaluator("#NUM!", XlError.NUM, rtol=1e-5, atol=1e-9) is None
 
 
+def test_compare_cached_error_string_normalizes_whitespace_and_case() -> None:
+    assert compare_cached_to_evaluator("  #num!  ", XlError.NUM, rtol=1e-5, atol=1e-9) is None
+
+
+def test_compare_cached_xl_error_sentinel_matches() -> None:
+    assert compare_cached_to_evaluator(XlError.DIV, XlError.DIV, rtol=1e-5, atol=1e-9) is None
+
+
 def test_compare_cached_error_code_mismatch() -> None:
     assert (
         compare_cached_to_evaluator("#NUM!", XlError.DIV, rtol=1e-5, atol=1e-9)
@@ -91,9 +104,16 @@ def test_compare_evaluator_to_excel_cache_number_vs_error() -> None:
 
 
 def test_compare_evaluator_to_excel_cache_error_vs_number() -> None:
-    graph = _make_graph(_make_node("S!A1", None, 1.0))
+    graph = _make_graph(_make_node("S!A1", "=1", "#NUM!"))
     mismatches = compare_evaluator_to_excel_cache(graph, ["S!A1"])
-    assert mismatches == []
+    assert len(mismatches) == 1
+    assert mismatches[0].kind == ParityMismatchKind.XL_ERROR_VS_NUMBER
+    assert mismatches[0].evaluator_result == 1.0
+
+
+def test_compare_evaluator_to_excel_cache_leaf_literal_matches_cached_number() -> None:
+    graph = _make_graph(_make_node("S!A1", None, 1.0))
+    assert compare_evaluator_to_excel_cache(graph, ["S!A1"]) == []
 
 
 def test_assert_workbook_parity_numeric_unchanged() -> None:
@@ -103,3 +123,24 @@ def test_assert_workbook_parity_numeric_unchanged() -> None:
     )
     graph.add_edge("S!B1", "S!A1")
     assert_workbook_parity(graph, ["S!B1"])
+
+
+def test_assert_workbook_parity_raises_on_error_code_mismatch() -> None:
+    graph = _make_graph(_make_node("S!A1", "=1/0", "#NUM!"))
+    with pytest.raises(AssertionError, match="xl_error_code_mismatch"):
+        assert_workbook_parity(graph, ["S!A1"])
+
+
+def test_workbook_parity_error_strings_from_xlsx(tmp_path: Path) -> None:
+    wb_path = tmp_path / "errors.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("S")
+    ws.write_formula(0, 0, "=1/0", None, "#DIV/0!")
+    wb.close()
+
+    graph = create_dependency_graph(wb_path, ["S!A1"], load_values=True)
+    node = graph.get_node("S!A1")
+    assert node is not None
+    assert node.value == "#DIV/0!"
+
+    assert compare_evaluator_to_excel_cache(graph, ["S!A1"]) == []
