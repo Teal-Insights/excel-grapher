@@ -23,6 +23,7 @@ class ParityMismatchKind(Enum):
     """High-level classification for workbook-vs-evaluator differences."""
 
     NUMERIC_DRIFT = "numeric_drift"
+    XL_ERROR_CODE_MISMATCH = "xl_error_code_mismatch"
     XL_ERROR_VS_NUMBER = "xl_error_vs_number"
     NUMBER_VS_XL_ERROR = "number_vs_xl_error"
     EXCEPTION = "exception"
@@ -61,6 +62,57 @@ def _numeric_close(a: float, b: float, *, rtol: float, atol: float) -> bool:
     return abs(a - b) <= max(atol, rtol * scale)
 
 
+def _normalize_cached_excel_value(raw: object) -> object:
+    if isinstance(raw, str):
+        err = XlError.from_text(raw)
+        if err is not None:
+            return err
+    return raw
+
+
+def compare_cached_to_evaluator(
+    excel_cached: object,
+    evaluator_result: object,
+    *,
+    rtol: float = 1e-5,
+    atol: float = 1e-9,
+) -> ParityMismatchKind | None:
+    """Return a mismatch kind when Excel cached value differs from evaluator output."""
+    cached = _normalize_cached_excel_value(excel_cached)
+
+    if isinstance(cached, XlError):
+        if isinstance(evaluator_result, XlError):
+            if cached == evaluator_result:
+                return None
+            return ParityMismatchKind.XL_ERROR_CODE_MISMATCH
+        return ParityMismatchKind.XL_ERROR_VS_NUMBER
+
+    if isinstance(evaluator_result, XlError):
+        return ParityMismatchKind.NUMBER_VS_XL_ERROR
+
+    if (
+        isinstance(cached, (int, float))
+        and not isinstance(cached, bool)
+        and isinstance(evaluator_result, (int, float))
+        and not isinstance(evaluator_result, bool)
+    ):
+        if _numeric_close(float(cached), float(evaluator_result), rtol=rtol, atol=atol):
+            return None
+        return ParityMismatchKind.NUMERIC_DRIFT
+
+    if cached == evaluator_result:
+        return None
+    return ParityMismatchKind.TYPE_MISMATCH
+
+
+def _is_comparable_cached_value(cached: object) -> bool:
+    if isinstance(cached, XlError):
+        return True
+    if isinstance(cached, (int, float)) and not isinstance(cached, bool):
+        return True
+    return isinstance(cached, str) and XlError.from_text(cached) is not None
+
+
 def compare_evaluator_to_excel_cache(
     graph: DependencyGraph,
     addresses: list[str],
@@ -71,7 +123,7 @@ def compare_evaluator_to_excel_cache(
 ) -> list[WorkbookParityMismatch]:
     """Evaluate each address and compare to the node's cached workbook value.
 
-    Only compares when the cached value is a finite float/int (non-bool).
+    Compares finite numeric cells and Excel error strings (e.g. ``'#NUM!'``).
     """
     mismatches: list[WorkbookParityMismatch] = []
 
@@ -90,8 +142,6 @@ def compare_evaluator_to_excel_cache(
             if node is None:
                 continue
             cached = node.value
-            if not isinstance(cached, (int, float)) or isinstance(cached, bool):
-                continue
             formula = _formula_for(addr)
             try:
                 computed = ev._evaluate_cell(addr)  # noqa: SLF001
@@ -122,52 +172,24 @@ def compare_evaluator_to_excel_cache(
                     return mismatches
                 continue
 
-            if isinstance(computed, XlError):
-                mismatches.append(
-                    WorkbookParityMismatch(
-                        address=addr,
-                        kind=ParityMismatchKind.XL_ERROR_VS_NUMBER,
-                        excel_cached=cached,
-                        evaluator_result=computed,
-                        formula=formula,
-                    )
-                )
-                if fail_fast:
-                    return mismatches
-                continue
-            if computed is None:
-                mismatches.append(
-                    WorkbookParityMismatch(
-                        address=addr,
-                        kind=ParityMismatchKind.NONE_RESULT,
-                        excel_cached=cached,
-                        evaluator_result=None,
-                        formula=formula,
-                    )
-                )
-                if fail_fast:
-                    return mismatches
-                continue
-            if isinstance(computed, (int, float)) and not isinstance(computed, bool):
-                if _numeric_close(float(cached), float(computed), rtol=rtol, atol=atol):
-                    continue
-                mismatches.append(
-                    WorkbookParityMismatch(
-                        address=addr,
-                        kind=ParityMismatchKind.NUMERIC_DRIFT,
-                        excel_cached=cached,
-                        evaluator_result=computed,
-                        formula=formula,
-                    )
-                )
-                if fail_fast:
-                    return mismatches
+            if computed is None and cached is None:
                 continue
 
+            if not _is_comparable_cached_value(cached):
+                continue
+
+            kind = compare_cached_to_evaluator(
+                cached,
+                computed,
+                rtol=rtol,
+                atol=atol,
+            )
+            if kind is None:
+                continue
             mismatches.append(
                 WorkbookParityMismatch(
                     address=addr,
-                    kind=ParityMismatchKind.TYPE_MISMATCH,
+                    kind=kind,
                     excel_cached=cached,
                     evaluator_result=computed,
                     formula=formula,
