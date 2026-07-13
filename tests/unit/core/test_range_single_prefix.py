@@ -140,8 +140,38 @@ def test_parse_standalone_cell_refs_masks_range_spans(formula: str) -> None:
 
 def test_local_cell_re_does_not_match_bare_range_endpoint() -> None:
     """Defense in depth: `:` blocks local-cell matching of range ends."""
-    refs = parse_cell_refs("=SUM(Sheet1!A1:A3)")
+    refs = parse_cell_refs("=SUM(Sheet1!A1:A3)", allow_unmasked_ranges=True)
     assert CellRef(sheet=None, column="A", row=3) not in refs
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
+        "=SUM(Sheet1!A1:A3)",
+        "=SUM(Sheet1!A1:Sheet1!A3)",
+        "=SUM(A1:A3)+B5",
+        "=SUM(Sheet1!A:A)",
+    ],
+)
+def test_parse_cell_refs_refuses_unmasked_ranges(formula: str) -> None:
+    with pytest.raises(ValueError, match="unmasked range|allow_unmasked_ranges"):
+        parse_cell_refs(formula)
+
+
+def test_parse_cell_refs_allows_unmasked_ranges_opt_in() -> None:
+    refs = parse_cell_refs("=SUM(Sheet1!A1:A3)+B5", allow_unmasked_ranges=True)
+    assert CellRef(sheet="Sheet1", column="A", row=1) in refs
+    assert CellRef(sheet=None, column="B", row=5) in refs
+
+
+def test_parse_cell_refs_accepts_masked_or_range_free_text() -> None:
+    assert parse_cell_refs("=Sheet1!A1+B5") == [
+        CellRef(sheet="Sheet1", column="A", row=1),
+        CellRef(sheet=None, column="B", row=5),
+    ]
+    assert parse_standalone_cell_refs("=SUM(Sheet1!A1:A3)+B5") == [
+        CellRef(sheet=None, column="B", row=5)
+    ]
 
 
 def test_format_missing_leaves_uses_single_prefix() -> None:
