@@ -132,9 +132,7 @@ def _reject_unmasked_ranges(formula: str, *, allow_unmasked_ranges: bool) -> Non
         )
 
 
-def parse_cell_refs(
-    formula: str, *, allow_unmasked_ranges: bool = False
-) -> list[CellRef]:
+def parse_cell_refs(formula: str, *, allow_unmasked_ranges: bool = False) -> list[CellRef]:
     """Extract single-cell references from a formula.
 
     This function does not expand ranges. Use parse_range_refs + expand_range.
