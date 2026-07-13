@@ -74,8 +74,10 @@ _SHEET_CELL_RE = re.compile(
 )
 # Do not treat `Col` in `Sheet!$Col$Row` as a local ref: the column letter can follow `!$`.
 # Sheet tokens may look like A1 (e.g. `S2` / `'S2'`); do not match those as local refs.
+# Exclude `:` so bare endpoints in single-prefix ranges (`Sheet1!A1:A3`) are not
+# treated as local cells; callers that also expand ranges should still mask spans.
 _LOCAL_CELL_RE = re.compile(
-    r"(?<![!A-Za-z0-9_])(?<!\$)\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)(?![A-Za-z0-9_!'])"
+    r"(?<![!A-Za-z0-9_:])(?<!\$)\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)(?![A-Za-z0-9_!'])"
 )
 
 _RANGE_QUOTED_RE = re.compile(
@@ -148,7 +150,8 @@ def parse_standalone_cell_refs(formula: str) -> list[CellRef]:
     """Extract cell refs after masking range spans.
 
     Prefer this over `parse_cell_refs` whenever ranges may appear in the same
-    text, so single-prefix forms like `Sheet1!A1:A3` do not yield a bare `A3`.
+    text, so single-prefix forms like `Sheet1!A1:A3` do not yield a bare `A3`
+    or double-count the range start as a sheet-qualified cell.
     """
     spans = [span for _start, _end, span in parse_range_refs_with_spans(formula)]
     return parse_cell_refs(mask_spans(formula, spans))
@@ -174,6 +177,18 @@ def parse_cell_refs_with_spans(formula: str) -> list[tuple[CellRef, tuple[int, i
         out.append((ref, m.span()))
 
     return out
+
+
+def parse_standalone_cell_refs_with_spans(
+    formula: str,
+) -> list[tuple[CellRef, tuple[int, int]]]:
+    """Like `parse_standalone_cell_refs`, but keep character spans in `formula`.
+
+    Spans remain valid in the original text because `mask_spans` only replaces
+    range characters with spaces of the same width.
+    """
+    spans = [span for _start, _end, span in parse_range_refs_with_spans(formula)]
+    return parse_cell_refs_with_spans(mask_spans(formula, spans))
 
 
 def parse_range_refs(formula: str) -> list[tuple[CellRef, CellRef]]:

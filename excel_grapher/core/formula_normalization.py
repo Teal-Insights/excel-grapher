@@ -322,11 +322,12 @@ def _normalize_excel_formula_base(formula: str, current_sheet: str) -> str:
 
 
 def _collapse_same_sheet_range_prefixes(formula: str) -> str:
-    """Collapse `Sheet!A1:Sheet!B2` to single-prefix `Sheet!A1:B2` when sheets match.
+    """Collapse same-sheet both-end ranges to single-prefix form.
 
-    Cell qualification may re-qualify a bare range endpoint after a single-prefix
-    range is emitted (`Sheet1!A1:A3` -> `Sheet1!A1:Sheet1!A3`). This pass restores
-    the canonical single-prefix form without changing cross-sheet ranges.
+    Earlier passes already emit single-prefix ranges and exclude `:` from local
+    cell lookbehinds. This pass is defense-in-depth for residual both-end forms
+    (for example after defined-name substitution) and leaves cross-sheet ranges
+    unchanged.
     """
 
     def replace_quoted(m: re.Match[str]) -> str:

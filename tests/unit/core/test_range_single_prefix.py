@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import fastpyxl
 import pytest
 
 from excel_grapher.core.address_keys import format_range_key, normalize_key
 from excel_grapher.core.formula_ast import RangeNode, parse
 from excel_grapher.exporter.codegen import CodeGenerator
-from excel_grapher.grapher.parser import FormulaNormalizer
+from excel_grapher.grapher.builder import _format_missing_leaves, create_dependency_graph
+from excel_grapher.grapher.parser import (
+    CellRef,
+    FormulaNormalizer,
+    parse_cell_refs,
+    parse_standalone_cell_refs,
+)
 
 
 @pytest.mark.parametrize(
@@ -100,3 +109,108 @@ def test_ast_and_codegen_emit_single_prefix_xl_range() -> None:
         gen._emit_ast(RangeNode("'My Sheet'!A1", "'My Sheet'!C1"))
         == "xl_range(ctx, \"'My Sheet'!A1:C1\")"
     )
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
+        "=SUM(A1:A3,B5)",
+        "=SUM(Sheet1!A1:A3,B5)",
+        "=SUM(Sheet1!A1:Sheet1!A3,B5)",
+        "=SUM('My Sheet'!A1:'My Sheet'!B2,C1)",
+    ],
+)
+def test_parse_standalone_cell_refs_masks_range_spans(formula: str) -> None:
+    """Bare range endpoints must not appear as standalone local cells."""
+    normalized = FormulaNormalizer().normalize(formula, "Sheet1")
+    if formula == "=SUM('My Sheet'!A1:'My Sheet'!B2,C1)":
+        normalized = FormulaNormalizer().normalize(formula, "Other")
+
+    standalone = parse_standalone_cell_refs(normalized)
+    assert all(
+        ref.sheet is not None or ref.column + str(ref.row) not in {"A3", "B2"} for ref in standalone
+    )
+    # Extra non-range cell still present.
+    assert any(
+        (ref.sheet is None and f"{ref.column}{ref.row}" in {"B5", "C1"})
+        or (ref.sheet is not None and f"{ref.column}{ref.row}" in {"B5", "C1"})
+        for ref in standalone
+    )
+
+
+def test_local_cell_re_does_not_match_bare_range_endpoint() -> None:
+    """Defense in depth: `:` blocks local-cell matching of range ends."""
+    refs = parse_cell_refs("=SUM(Sheet1!A1:A3)")
+    assert CellRef(sheet=None, column="A", row=3) not in refs
+
+
+def test_format_missing_leaves_uses_single_prefix() -> None:
+    assert _format_missing_leaves({"Sheet1!C4", "Sheet1!C5", "Sheet1!C6"}) == ["Sheet1!C4:C6"]
+    assert _format_missing_leaves({"S!AA100", "S!AB100", "S!AC100"}) == ["S!AA100:AC100"]
+    assert _format_missing_leaves({"S!AA10", "S!AA11", "S!AB10", "S!AB11"}) == ["S!AA10:AB11"]
+    assert _format_missing_leaves({"My Sheet!A1", "My Sheet!A2"}) == ["'My Sheet'!A1:A2"]
+
+
+def _write_cross_sheet_sum(path: Path, *, formula: str) -> None:
+    wb = fastpyxl.Workbook()
+    s1 = wb.active
+    assert s1 is not None
+    s1.title = "Sheet1"
+    s2 = wb.create_sheet("Sheet2")
+    s1["A1"].value = 1
+    s1["A2"].value = 2
+    s1["A3"].value = 3
+    s2["B1"].value = formula
+    s2["B2"].value = 9
+    wb.save(path)
+    wb.close()
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
+        "=SUM(Sheet1!A1:A3)+B2",
+        "=SUM(Sheet1!A1:Sheet1!A3)+B2",
+        "=SUM(A1:A3)+Sheet2!B2",  # written on Sheet1 in helper below
+    ],
+)
+def test_dep_extraction_single_prefix_matrix_no_phantom_sheet(tmp_path: Path, formula: str) -> None:
+    """Dep extraction expands interiors and never mis-sheets bare endpoints."""
+    path = tmp_path / "deps.xlsx"
+    if formula.startswith("=SUM(A1:A3)"):
+        wb = fastpyxl.Workbook()
+        s1 = wb.active
+        assert s1 is not None
+        s1.title = "Sheet1"
+        s2 = wb.create_sheet("Sheet2")
+        s1["A1"].value = 1
+        s1["A2"].value = 2
+        s1["A3"].value = 3
+        s2["B2"].value = 9
+        s1["B1"].value = formula
+        wb.save(path)
+        wb.close()
+        target = "Sheet1!B1"
+        expected = {"Sheet1!A1", "Sheet1!A2", "Sheet1!A3", "Sheet2!B2"}
+    else:
+        _write_cross_sheet_sum(path, formula=formula)
+        target = "Sheet2!B1"
+        expected = {"Sheet1!A1", "Sheet1!A2", "Sheet1!A3", "Sheet2!B2"}
+
+    graph = create_dependency_graph(path, [target], load_values=False)
+    assert graph.get_dependencies(target) == expected
+    assert "Sheet2!A3" not in graph.get_dependencies(target)
+
+
+def test_expand_ranges_false_does_not_mis_sheet_bare_endpoint(tmp_path: Path) -> None:
+    """With expand_ranges=False, bare range ends must not become local-sheet deps."""
+    path = tmp_path / "no_expand.xlsx"
+    _write_cross_sheet_sum(path, formula="=SUM(Sheet1!A1:A3)+B2")
+
+    graph = create_dependency_graph(path, ["Sheet2!B1"], load_values=False, expand_ranges=False)
+    deps = graph.get_dependencies("Sheet2!B1")
+    assert deps == {"Sheet2!B2"}
+    assert "Sheet2!A3" not in deps
+    assert "Sheet1!A1" not in deps
+    assert "Sheet1!A2" not in deps
+    assert "Sheet1!A3" not in deps

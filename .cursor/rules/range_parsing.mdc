@@ -10,7 +10,7 @@ alwaysApply: false
 - **Use parser utilities, never ad-hoc colon splitting for formulas.**  
   For formula text:
   - `parse_range_refs_with_spans(...)` returns (`start_ref`, `end_ref`, `span`), where `span` is the matched range's character offsets in the original formula as (`start`, `end`) (end-exclusive).
-  - Use spans when combining range parsing with single-cell parsing from raw formula text (mask spans first so range endpoints are not double-counted).
+  - Prefer `parse_standalone_cell_refs(...)` (or `parse_standalone_cell_refs_with_spans`) when combining range parsing with single-cell parsing so bare endpoints in single-prefix ranges are not double-counted or mis-sheeted. Mask spans first if calling `parse_cell_refs` directly.
   - `parse_range_refs(...)` returns (`start_ref`, `end_ref`) when spans are unnecessary.
   - `expand_range(...)` enumerates cells within a range.
 

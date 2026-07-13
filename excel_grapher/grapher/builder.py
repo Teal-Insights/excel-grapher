@@ -14,7 +14,7 @@ import fastpyxl.utils.cell
 from fastpyxl.worksheet.formula import ArrayFormula
 from fastpyxl.worksheet.worksheet import Worksheet
 
-from excel_grapher.core.address_keys import parse_address, sort_node_keys
+from excel_grapher.core.address_keys import format_range_key, parse_address, sort_node_keys
 from excel_grapher.core.cell_types import CellType, leaves_missing_cell_type_constraints
 
 from .blank_ranges import (
@@ -47,7 +47,6 @@ from .parser import (
     expand_range_ref,
     format_key,
     mask_spans,
-    parse_cell_refs,
     parse_dynamic_range_refs_with_spans,
     parse_guard_expr,
     parse_range_refs_with_spans,
@@ -211,11 +210,15 @@ def _format_missing_leaves(missing_leaves: set[str]) -> list[str]:
             c_end_letter = get_column_letter(c_last)
             for r1, r2 in ivals:
                 if c0 == c_last and r1 == r2:
-                    parts.append(f"{sheet}!{c_start_letter}{r1}")
-                elif c0 == c_last:
-                    parts.append(f"{sheet}!{c_start_letter}{r1}:{sheet}!{c_end_letter}{r2}")
+                    parts.append(format_key(sheet, f"{c_start_letter}{r1}"))
                 else:
-                    parts.append(f"{sheet}!{c_start_letter}{r1}:{sheet}!{c_end_letter}{r2}")
+                    parts.append(
+                        format_range_key(
+                            sheet,
+                            f"{c_start_letter}{r1}",
+                            f"{c_end_letter}{r2}",
+                        )
+                    )
             i = j
 
     parts.extend(sorted(others))
@@ -869,12 +872,11 @@ def create_dependency_graph(
                         )
             masked = mask_spans(masked, dyn_spans)
 
-            # 1) Expand ranges, then mask them so later cell-ref parsing doesn't
-            # misinterpret the range endpoint as a same-sheet ref.
+            # Expand ranges when requested, then always parse standalone cells
+            # (range spans masked) so bare endpoints in single-prefix forms are
+            # never attributed to the formula's local sheet.
             if expand_ranges:
-                spans: list[tuple[int, int]] = []
-                for start, end, span in parse_range_refs_with_spans(masked):
-                    spans.append(span)
+                for start, end, _span in parse_range_refs_with_spans(masked):
                     sheet = start.sheet if start.sheet is not None else current_sheet
                     _ensure_sheet_bounds(sheet)
                     deps.extend(
@@ -886,9 +888,8 @@ def create_dependency_graph(
                             sheet_bounds=sheet_bounds,
                         )
                     )
-                masked = mask_spans(masked, spans)
 
-            for ref in parse_cell_refs(masked):
+            for ref in parse_standalone_cell_refs(masked):
                 sh = ref.sheet if ref.sheet is not None else current_sheet
                 deps.append((sh, f"{ref.column}{ref.row}"))
 
