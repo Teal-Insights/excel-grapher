@@ -51,6 +51,7 @@ from .parser import (
     parse_dynamic_range_refs_with_spans,
     parse_guard_expr,
     parse_range_refs_with_spans,
+    parse_standalone_cell_refs,
     split_top_level_choose,
     split_top_level_if,
     split_top_level_ifs,
@@ -419,7 +420,7 @@ def create_dependency_graph(
             sheet_of_cell,
         )
         out: set[str] = set()
-        for ref in parse_cell_refs(normalized):
+        for ref in parse_standalone_cell_refs(normalized):
             sh = ref.sheet if ref.sheet is not None else sheet_of_cell
             out.add(format_key(sh, f"{ref.column}{ref.row}"))
         for start, end, _span in parse_range_refs_with_spans(normalized):
@@ -458,7 +459,7 @@ def create_dependency_graph(
             if _contains_volatile_function(expr):
                 return True
             normalized = normalizer.normalize(expr, current_sheet)
-            for ref in parse_cell_refs(normalized):
+            for ref in parse_standalone_cell_refs(normalized):
                 sh = ref.sheet if ref.sheet is not None else current_sheet
                 to_visit.add(format_key(sh, f"{ref.column}{ref.row}"))
 
@@ -681,7 +682,7 @@ def create_dependency_graph(
                                 # Static ranges are handled by infer_dynamic_index_targets (GH-156).
                                 if fn_name == "INDEX" and i == 0 and "(" not in normalized:
                                     continue
-                                for ref in parse_cell_refs(normalized):
+                                for ref in parse_standalone_cell_refs(normalized):
                                     sh = ref.sheet if ref.sheet is not None else current_sheet
                                     a1 = f"{ref.column}{ref.row}"
                                     deps.append((sh, a1))
@@ -722,7 +723,7 @@ def create_dependency_graph(
                             )
                             norm = normalizer.normalize(masked, sheet_of_cell)
                             out: set[str] = set()
-                            for ref in parse_cell_refs(norm):
+                            for ref in parse_standalone_cell_refs(norm):
                                 sh = ref.sheet if ref.sheet is not None else sheet_of_cell
                                 out.add(format_key(sh, f"{ref.column}{ref.row}"))
                             for start, end, _span in parse_range_refs_with_spans(norm):
@@ -1340,7 +1341,7 @@ def list_dynamic_ref_constraint_candidates(
             masked = mask_spans(f, spans)
             norm = normalizer.normalize(masked, sheet)
             out: set[str] = set()
-            for ref in parse_cell_refs(norm):
+            for ref in parse_standalone_cell_refs(norm):
                 sh = ref.sheet if ref.sheet is not None else sheet
                 out.add(format_key(sh, f"{ref.column}{ref.row}"))
             for start, end, _span in parse_range_refs_with_spans(norm):
@@ -1446,7 +1447,7 @@ def list_dynamic_ref_constraint_candidates(
                             or (fn_name == "INDEX" and i >= 1)
                         )
                         if is_variable:
-                            for ref in parse_cell_refs(normalized_arg):
+                            for ref in parse_standalone_cell_refs(normalized_arg):
                                 sh = ref.sheet if ref.sheet is not None else current_sheet
                                 argument_addrs.add(format_key(sh, f"{ref.column}{ref.row}"))
                             for start, end, _span in parse_range_refs_with_spans(normalized_arg):

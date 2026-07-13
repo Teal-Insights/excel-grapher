@@ -122,6 +122,9 @@ def parse_cell_refs(formula: str) -> list[CellRef]:
     """Extract single-cell references from a formula.
 
     This function does not expand ranges. Use parse_range_refs + expand_range.
+    Callers that also extract ranges should mask range spans first (via
+    `parse_standalone_cell_refs` or `mask_spans`) so bare range endpoints like
+    `A3` in `Sheet1!A1:A3` are not double-counted as local cells.
     """
     if not isinstance(formula, str) or not formula.startswith("="):
         return []
@@ -139,6 +142,16 @@ def parse_cell_refs(formula: str) -> list[CellRef]:
         out.append(CellRef(sheet=None, column=col, row=int(m.group("row"))))
 
     return out
+
+
+def parse_standalone_cell_refs(formula: str) -> list[CellRef]:
+    """Extract cell refs after masking range spans.
+
+    Prefer this over `parse_cell_refs` whenever ranges may appear in the same
+    text, so single-prefix forms like `Sheet1!A1:A3` do not yield a bare `A3`.
+    """
+    spans = [span for _start, _end, span in parse_range_refs_with_spans(formula)]
+    return parse_cell_refs(mask_spans(formula, spans))
 
 
 def parse_cell_refs_with_spans(formula: str) -> list[tuple[CellRef, tuple[int, int]]]:
@@ -1210,7 +1223,7 @@ def parse_dynamic_range_refs_with_spans(
                     "=" + arg,
                     current_sheet,
                 )
-                for ref in parse_cell_refs(normalized):
+                for ref in parse_standalone_cell_refs(normalized):
                     sheet = ref.sheet if ref.sheet is not None else current_sheet
                     arg_refs.append(
                         CellRef(

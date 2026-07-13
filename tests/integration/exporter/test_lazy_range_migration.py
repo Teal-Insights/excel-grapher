@@ -164,8 +164,8 @@ def test_range_target_boundary_is_materialized() -> None:
         _make_node("S!C1", "=S!A1*3", None),
     )
     generated_results, code, _ns = exec_generated_code(graph, ["S!B1", "S!C1"])
-    assert "'S!B1:S!C1': xl_range_rows" in code
-    value = generated_results["S!B1:S!C1"]
+    assert "'S!B1:C1': xl_range_rows" in code
+    value = generated_results["S!B1:C1"]
     assert isinstance(value, list)
     assert value == [[20.0, 30.0]]
 

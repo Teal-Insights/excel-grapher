@@ -149,7 +149,7 @@ class TestMissingCellReferences:
         code = gen.generate(["S!B1"])
 
         # Ranges resolve lazily; missing cells must still raise KeyError when reduced.
-        assert "xl_range(ctx, 'S!A1:S!A3')" in code
+        assert "xl_range(ctx, 'S!A1:A3')" in code
 
         namespace: dict = {}
         exec(code, namespace)
