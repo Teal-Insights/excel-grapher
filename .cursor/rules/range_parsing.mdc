@@ -5,7 +5,7 @@ alwaysApply: false
 ## Safe Range Parsing Rules
 
 - **Normalize first, parse second.**  
-  Always run formulas through `FormulaNormalizer.normalize(...)` before extracting refs, so `A1:A3`, `Sheet1!A1:A3`, and `Sheet1!A1:Sheet1!A3` converge to one canonical form.
+  Always run formulas through `FormulaNormalizer.normalize(...)` before extracting refs, so `A1:A3`, `Sheet1!A1:A3`, and `Sheet1!A1:Sheet1!A3` converge to one canonical form (`Sheet1!A1:A3` — single sheet prefix for same-sheet ranges). Cross-sheet ranges keep both endpoints qualified (`Sheet1!A1:Sheet2!D1`).
 
 - **Use parser utilities, never ad-hoc colon splitting for formulas.**  
   For formula text:

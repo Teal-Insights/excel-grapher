@@ -46,7 +46,8 @@ def expand_targets_to_roots(
 
     - Sheet-qualified single cells (`Sheet1!A1`, `'My Sheet'!A1`).
     - Sheet-qualified rectangular ranges (`Sheet1!A1:B2`,
-      `Sheet1!A1:Sheet1!B2`, `'My Sheet'!A1:B2`). Expansion follows
+      `Sheet1!A1:B2`, `'My Sheet'!A1:B2`; both-end forms like
+      `Sheet1!A1:Sheet1!B2` are also accepted). Expansion follows
       `expand_range` and `max_range_cells`.
     - Defined names (`MyCell`, `MyRange`) resolved against
       `named_ranges` (single cell) and `named_range_ranges` (rectangle).

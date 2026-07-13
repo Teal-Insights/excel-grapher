@@ -243,7 +243,7 @@ def create_dependency_graph(
 
     - sheet-qualified single cells (`"Sheet1!A1"`, `"'My Sheet'!B2"`);
     - sheet-qualified rectangular ranges (`"Sheet1!B12:F12"`,
-      `"Sheet1!A1:Sheet1!B2"`, `"'My Sheet'!A1:B2"`); and
+      `"Sheet1!A1:B2"`, `"'My Sheet'!A1:B2"`); and
     - defined names that resolve to a single cell or a rectangular range
       (`"MyInput"`, `"DataRange"`).
 
