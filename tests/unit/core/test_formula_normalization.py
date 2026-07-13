@@ -43,7 +43,7 @@ def test_normalize_excel_formula_preserves_quoted_apostrophe_sheet_refs() -> Non
     sheet = "O'Neil"
     cases = [
         ("='O''Neil'!A1*2", "='O''Neil'!A1*2"),
-        ("='O''Neil'!A1:'O''Neil'!B2", "='O''Neil'!A1:'O''Neil'!B2"),
+        ("='O''Neil'!A1:'O''Neil'!B2", "='O''Neil'!A1:B2"),
         ("=SUM('O''Neil'!A:A)", "=SUM('O''Neil'!A:A)"),
         ("=SUM('O''Neil'!1:1)", "=SUM('O''Neil'!1:1)"),
     ]

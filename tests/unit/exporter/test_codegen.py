@@ -143,17 +143,17 @@ class TestEmitAstReferences:
     def test_emit_range_1d_column(self, gen):
         """1D range (column) emits a lazy xl_range call."""
         result = gen._emit_ast(RangeNode("Sheet1!A1", "Sheet1!A3"))
-        assert result == "xl_range(ctx, 'Sheet1!A1:Sheet1!A3')"
+        assert result == "xl_range(ctx, 'Sheet1!A1:A3')"
 
     def test_emit_range_1d_row(self, gen):
         """1D range (row) emits a lazy xl_range call."""
         result = gen._emit_ast(RangeNode("Sheet1!A1", "Sheet1!C1"))
-        assert result == "xl_range(ctx, 'Sheet1!A1:Sheet1!C1')"
+        assert result == "xl_range(ctx, 'Sheet1!A1:C1')"
 
     def test_emit_range_2d(self, gen):
         """2D range emits a lazy xl_range call."""
         result = gen._emit_ast(RangeNode("Sheet1!A1", "Sheet1!B2"))
-        assert result == "xl_range(ctx, 'Sheet1!A1:Sheet1!B2')"
+        assert result == "xl_range(ctx, 'Sheet1!A1:B2')"
 
 
 class TestEmitAstOperators:
@@ -782,8 +782,8 @@ class TestCodeGeneratorContextManager:
         )
         gen = CodeGenerator(graph)
         code = gen.generate(["Sheet1!C1", "Sheet1!D1", "Sheet1!E1"])
-        assert "Sheet1!C1:Sheet1!E1" in code
-        assert "'Sheet1!C1:Sheet1!E1': xl_range" in code
+        assert "Sheet1!C1:E1" in code
+        assert "'Sheet1!C1:E1': xl_range_rows" in code
 
     def test_generate_deduplication(self):
         """Cells should only be emitted once even if referenced multiple times."""
@@ -828,7 +828,7 @@ class TestGenerateNamedRanges:
             _make_node("Sheet1!B3", None, 3.0),
         )
         code = CodeGenerator(graph).generate(["BeeCol"])
-        assert "'Sheet1!B1:Sheet1!B3': xl_range" in code
+        assert "'Sheet1!B1:B3': xl_range_rows" in code
 
     def test_generate_modules_expands_defined_name(self):
         graph = self._graph_with_named_ranges(
@@ -838,7 +838,7 @@ class TestGenerateNamedRanges:
         )
         files = CodeGenerator(graph).generate_modules(["BeeCol"])
         api_py = files["api.py"]
-        assert "'Sheet1!B1:Sheet1!B3': xl_range" in api_py
+        assert "'Sheet1!B1:B3': xl_range_rows" in api_py
 
     def test_generate_unknown_defined_name_raises(self):
         graph = self._graph_with_named_ranges(_make_node("Sheet1!A1", None, 1.0))
@@ -1039,7 +1039,7 @@ class TestGeneratedCodeExecution:
         exec(code, namespace)
         result = namespace["compute_all"]()
 
-        assert result["Sheet1!B1:Sheet1!C1"] == [[20.0, 30.0]]
+        assert result["Sheet1!B1:C1"] == [[20.0, 30.0]]
 
 
 class TestIndexPrunedRangeCodegen:

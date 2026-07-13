@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from excel_grapher.core.address_keys import (
     format_cell_key,
+    format_range_key,
     quote_sheet_if_needed,
     quoted_sheet_prefix_regex,
     unescape_formula_sheet_name,
@@ -60,9 +61,9 @@ def build_named_range_replacement_state(
         m_start = re.match(r"^([A-Z]{1,3})(\d+)$", start_a1)
         m_end = re.match(r"^([A-Z]{1,3})(\d+)$", end_a1)
         if m_start and m_end:
-            start_ref = format_cell_key(sheet, m_start.group(1), int(m_start.group(2)))
-            end_ref = format_cell_key(sheet, m_end.group(1), int(m_end.group(2)))
-            replacements[name] = f"{start_ref}:{end_ref}"
+            start_cell = f"{m_start.group(1)}{int(m_start.group(2))}"
+            end_cell = f"{m_end.group(1)}{int(m_end.group(2))}"
+            replacements[name] = format_range_key(sheet, start_cell, end_cell)
 
     if not replacements:
         return {}, None
@@ -214,12 +215,47 @@ def _normalize_excel_formula_base(formula: str, current_sheet: str) -> str:
     """Strip $ markers, qualify ranges and cells, without defined-name substitution."""
     result = _normalize_whole_column_row_shorthand(formula, current_sheet)
 
+    def replace_quoted_both_end_range(m: re.Match[str]) -> str:
+        sheet1 = unescape_formula_sheet_name(m.group("sheet1"))
+        sheet2 = unescape_formula_sheet_name(m.group("sheet2"))
+        c1, r1, c2, r2 = m.group("c1"), m.group("r1"), m.group("c2"), m.group("r2")
+        start_cell = f"{c1}{int(r1)}"
+        end_cell = f"{c2}{int(r2)}"
+        if sheet1 == sheet2:
+            return format_range_key(sheet1, start_cell, end_cell)
+        return f"{format_cell_key(sheet1, c1, int(r1))}:{format_cell_key(sheet2, c2, int(r2))}"
+
+    result = re.sub(
+        _QUOTED_SHEET_PREFIX.replace("?P<sheet>", "?P<sheet1>")
+        + r"\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*"
+        + _QUOTED_SHEET_PREFIX.replace("?P<sheet>", "?P<sheet2>")
+        + r"\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)",
+        replace_quoted_both_end_range,
+        result,
+    )
+
+    def replace_unquoted_both_end_range(m: re.Match[str]) -> str:
+        sheet1, sheet2 = m.group("sheet1"), m.group("sheet2")
+        c1, r1, c2, r2 = m.group("c1"), m.group("r1"), m.group("c2"), m.group("r2")
+        start_cell = f"{c1}{int(r1)}"
+        end_cell = f"{c2}{int(r2)}"
+        if sheet1 == sheet2:
+            return format_range_key(sheet1, start_cell, end_cell)
+        return f"{sheet1}!{start_cell}:{sheet2}!{end_cell}"
+
+    result = re.sub(
+        r"(?<![A-Za-z_'])(?P<sheet1>[A-Za-z][A-Za-z0-9_]*)!"
+        r"\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*"
+        r"(?P<sheet2>[A-Za-z][A-Za-z0-9_]*)!"
+        r"\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)",
+        replace_unquoted_both_end_range,
+        result,
+    )
+
     def replace_quoted_range(m: re.Match[str]) -> str:
         sheet = unescape_formula_sheet_name(m.group("sheet"))
         c1, r1, c2, r2 = m.group("c1"), m.group("r1"), m.group("c2"), m.group("r2")
-        a = format_cell_key(sheet, c1, int(r1))
-        b = format_cell_key(sheet, c2, int(r2))
-        return f"{a}:{b}"
+        return format_range_key(sheet, f"{c1}{int(r1)}", f"{c2}{int(r2)}")
 
     result = re.sub(
         _QUOTED_SHEET_PREFIX
@@ -231,7 +267,7 @@ def _normalize_excel_formula_base(formula: str, current_sheet: str) -> str:
     def replace_unquoted_range(m: re.Match[str]) -> str:
         sheet = m.group("sheet")
         c1, r1, c2, r2 = m.group("c1"), m.group("r1"), m.group("c2"), m.group("r2")
-        return f"{sheet}!{c1}{r1}:{sheet}!{c2}{r2}"
+        return format_range_key(sheet, f"{c1}{int(r1)}", f"{c2}{int(r2)}")
 
     result = re.sub(
         r"(?<![A-Za-z_'])(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)",
@@ -241,9 +277,7 @@ def _normalize_excel_formula_base(formula: str, current_sheet: str) -> str:
 
     def replace_local_range(m: re.Match[str]) -> str:
         c1, r1, c2, r2 = m.group("c1"), m.group("r1"), m.group("c2"), m.group("r2")
-        ref1 = format_cell_key(current_sheet, c1, int(r1))
-        ref2 = format_cell_key(current_sheet, c2, int(r2))
-        return f"{ref1}:{ref2}"
+        return format_range_key(current_sheet, f"{c1}{int(r1)}", f"{c2}{int(r2)}")
 
     result = re.sub(
         r"(?<![!A-Za-z0-9_])(?<!\$)\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)(?![A-Za-z0-9_])",
@@ -279,12 +313,57 @@ def _normalize_excel_formula_base(formula: str, current_sheet: str) -> str:
         return format_cell_key(current_sheet, col, int(row))
 
     result = re.sub(
-        r"(?<![!A-Za-z0-9_])(?<!\$)\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)(?![A-Za-z0-9_!'])",
+        r"(?<![!A-Za-z0-9_:])(?<!\$)\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)(?![A-Za-z0-9_!'])",
         replace_local_cell,
         result,
     )
 
-    return result
+    return _collapse_same_sheet_range_prefixes(result)
+
+
+def _collapse_same_sheet_range_prefixes(formula: str) -> str:
+    """Collapse same-sheet both-end ranges to single-prefix form.
+
+    Earlier passes already emit single-prefix ranges and exclude `:` from local
+    cell lookbehinds. This pass is defense-in-depth for residual both-end forms
+    (for example after defined-name substitution) and leaves cross-sheet ranges
+    unchanged.
+    """
+
+    def replace_quoted(m: re.Match[str]) -> str:
+        sheet1 = unescape_formula_sheet_name(m.group("sheet1"))
+        sheet2 = unescape_formula_sheet_name(m.group("sheet2"))
+        c1, r1, c2, r2 = m.group("c1"), m.group("r1"), m.group("c2"), m.group("r2")
+        if sheet1 != sheet2:
+            return m.group(0)
+        return format_range_key(sheet1, f"{c1}{int(r1)}", f"{c2}{int(r2)}")
+
+    result = re.sub(
+        quoted_sheet_prefix_regex(capture_group="sheet1")
+        + r"(?P<c1>[A-Z]{1,3})(?P<r1>\d+):"
+        + quoted_sheet_prefix_regex(capture_group="sheet2")
+        + r"(?P<c2>[A-Z]{1,3})(?P<r2>\d+)",
+        replace_quoted,
+        formula,
+        flags=re.IGNORECASE,
+    )
+
+    def replace_unquoted(m: re.Match[str]) -> str:
+        sheet1, sheet2 = m.group("sheet1"), m.group("sheet2")
+        c1, r1, c2, r2 = m.group("c1"), m.group("r1"), m.group("c2"), m.group("r2")
+        if sheet1 != sheet2:
+            return m.group(0)
+        return format_range_key(sheet1, f"{c1}{int(r1)}", f"{c2}{int(r2)}")
+
+    return re.sub(
+        r"(?<![A-Za-z_'])(?P<sheet1>[A-Za-z][A-Za-z0-9_]*)!"
+        r"(?P<c1>[A-Z]{1,3})(?P<r1>\d+):"
+        r"(?P<sheet2>[A-Za-z][A-Za-z0-9_]*)!"
+        r"(?P<c2>[A-Z]{1,3})(?P<r2>\d+)",
+        replace_unquoted,
+        result,
+        flags=re.IGNORECASE,
+    )
 
 
 def normalize_excel_formula_with_name_state(
@@ -300,6 +379,7 @@ def normalize_excel_formula_with_name_state(
     masked, literals = _mask_string_literals(formula)
     result = _normalize_excel_formula_base(masked, current_sheet)
     result = _apply_named_range_replacements(result, replacements, names_re)
+    result = _collapse_same_sheet_range_prefixes(result)
     return _unmask_string_literals(result, literals)
 
 
@@ -313,6 +393,8 @@ def normalize_excel_formula(
     """Normalize a formula string (`=...`) for transpilation and parsing.
 
     - Same-sheet refs (`A1`) become `Sheet!A1` using *current_sheet*.
+    - Same-sheet ranges become single-prefix (`Sheet!A1:A3`); cross-sheet
+      ranges keep both endpoints sheet-qualified.
     - Resolves defined names when maps are provided.
     - Strips `$` markers and qualifies range endpoints.
     """

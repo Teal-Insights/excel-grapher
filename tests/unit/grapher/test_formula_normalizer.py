@@ -32,7 +32,7 @@ class TestFormulaNormalizerBasicNormalization:
 
     def test_local_range_qualified(self) -> None:
         n = FormulaNormalizer()
-        assert n.normalize("=SUM(A1:A3)", "Sheet1") == "=SUM(Sheet1!A1:Sheet1!A3)"
+        assert n.normalize("=SUM(A1:A3)", "Sheet1") == "=SUM(Sheet1!A1:A3)"
 
     def test_non_formula_returned_unchanged(self) -> None:
         n = FormulaNormalizer()
@@ -51,7 +51,7 @@ class TestFormulaNormalizerNamedRanges:
     def test_range_named_range_resolved(self) -> None:
         named_range_ranges = {"MyTable": ("Sheet1", "A1", "B3")}
         n = FormulaNormalizer(named_range_ranges=named_range_ranges)
-        assert n.normalize("=SUM(MyTable)", "Sheet1") == "=SUM(Sheet1!A1:Sheet1!B3)"
+        assert n.normalize("=SUM(MyTable)", "Sheet1") == "=SUM(Sheet1!A1:B3)"
 
     def test_name_inside_sheet_ref_not_replaced(self) -> None:
         """Names appearing as sheet qualifiers (Foo!A1) must not be replaced."""

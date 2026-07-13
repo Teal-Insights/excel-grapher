@@ -84,7 +84,8 @@ another).
 `targets` accepts any mix of:
 
 - sheet-qualified single cells: `"Sheet1!A1"`, `"'My Sheet'!B2"`
-- sheet-qualified ranges: `"Sheet1!B12:F12"`, `"Sheet1!A1:Sheet1!B2"`,
+- sheet-qualified ranges: `"Sheet1!B12:F12"`, `"Sheet1!A1:B2"`
+  (both-end forms like `"Sheet1!A1:Sheet1!B2"` are also accepted),
   `"'My Sheet'!A1:B2"`
 - defined names that resolve to a single cell or rectangular range:
   `"MyInput"`, `"DataRange"`
