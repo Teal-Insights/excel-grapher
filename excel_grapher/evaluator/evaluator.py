@@ -24,7 +24,12 @@ from excel_grapher.grapher.blank_ranges import (
     address_in_blank_ranges,
     normalize_blank_range_specs,
 )
-from excel_grapher.runtime.cache import EvalContext, xl_circular_reference, xl_iterative_compute
+from excel_grapher.runtime.cache import (
+    EvalContext,
+    warn_circular_reference,
+    xl_circular_reference,
+    xl_iterative_compute,
+)
 from excel_grapher.runtime.info import xl_isblank
 
 from .ast_cache import DEFAULT_AST_CACHE_MAXSIZE, AstCache, AstCacheInfo
@@ -115,6 +120,7 @@ class FormulaEvaluator:
         # `EvalContext` runtime, keeping evaluator and export in parity.
         self._runtime_deps: dict[str, set[str]] = {}
         self._runtime_reverse_deps: dict[str, set[str]] = {}
+        self._circular_warning_roots: set[str] = set()
 
     def __enter__(self) -> FormulaEvaluator:
         return self
@@ -125,6 +131,7 @@ class FormulaEvaluator:
     def clear_caches(self) -> None:
         """Clear cached cell values and parsed formula ASTs."""
         self._cache.clear()
+        self._circular_warning_roots.clear()
         self._ast_cache.clear()
 
     def ast_cache_info(self) -> AstCacheInfo:
@@ -157,6 +164,7 @@ class FormulaEvaluator:
                 continue
             seen.add(addr)
             self._cache.pop(addr, None)
+            self._circular_warning_roots.discard(addr)
             to_visit.extend(self._runtime_reverse_deps.get(addr, set()))
             for dep in self._runtime_deps.get(addr, set()):
                 parents = self._runtime_reverse_deps.get(dep)
@@ -281,13 +289,19 @@ class FormulaEvaluator:
                     # Cache was invalidated, need to re-evaluate (fall through)
                     pass
                 else:
+                    if norm in self._circular_warning_roots:
+                        warn_circular_reference(stacklevel=3)
                     return self._cache[norm]
             else:
+                if norm in self._circular_warning_roots:
+                    warn_circular_reference(stacklevel=3)
                 return self._cache[norm]
 
         if norm in self._call_stack:
             if self.iterate_enabled:
                 return self._iteration_values.get(norm, 0)
+            root = self._call_stack[0]
+            self._circular_warning_roots.add(root)
             return xl_circular_reference()
 
         if self._blank_range_rects and address_in_blank_ranges(norm, self._blank_range_rects):
