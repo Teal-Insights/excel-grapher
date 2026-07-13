@@ -18,6 +18,7 @@ class EvalContextBase:
     resolver: Callable[[str], Callable[[EvalContext], CellValue] | None]
     cache: dict[str, CellValue] = field(default_factory=dict)
     computing: set[str] = field(default_factory=set)
+    circular_warning_roots: set[str] = field(default_factory=set)
     iterative_enabled: bool = False
     iterate_count: int = 100
     iterate_delta: float = 0.001
@@ -49,6 +50,7 @@ class EvalContext(EvalContextBase):
             seen.add(addr)
 
             self.cache.pop(addr, None)
+            self.circular_warning_roots.discard(addr)
             self.computing.discard(addr)
 
             dependents = list(self.reverse_deps.get(addr, set()))

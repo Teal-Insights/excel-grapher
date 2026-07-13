@@ -179,6 +179,42 @@ class TestSharedEvaluationPath:
         with pytest.warns(CircularReferenceWarning):
             assert evaluate(ctx, self_ref) == 0
 
+    @pytest.mark.parametrize(
+        ("evaluate", "setup"),
+        [
+            pytest.param(
+                lambda ctx, fn: xl_cell(ctx, _ADDR),
+                lambda fn: _ctx(resolver=lambda address: fn if address == _ADDR else None),
+                id="xl_cell",
+            ),
+            pytest.param(
+                lambda ctx, fn: xl_eval(ctx, _ADDR, fn),
+                lambda fn: _ctx(),
+                id="xl_eval",
+            ),
+        ],
+    )
+    def test_non_iterative_cycle_re_emits_warning_on_cache_hit(
+        self,
+        evaluate: Callable[[EvalContext, CellFn], CellValue],
+        setup: Callable[[CellFn], EvalContext],
+    ) -> None:
+        """Issue #130: memoized cycle results must re-emit diagnostics on re-read."""
+        import warnings
+
+        def self_ref(ctx: EvalContext) -> CellValue:
+            return evaluate(ctx, self_ref)
+
+        ctx = setup(self_ref)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            assert evaluate(ctx, self_ref) == 0
+            assert evaluate(ctx, self_ref) == 0
+
+        assert len(caught) == 2
+        assert all(w.category is CircularReferenceWarning for w in caught)
+
     @pytest.mark.parametrize("entrypoint", ["xl_cell", "xl_eval"])
     def test_iterative_mode_uses_iteration_values_while_computing(
         self,
