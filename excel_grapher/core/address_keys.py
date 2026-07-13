@@ -11,6 +11,7 @@ evaluator/exporter can import them without violating layering rules.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable, Sequence
 from typing import TypeAlias
 
@@ -18,6 +19,10 @@ from fastpyxl.utils.cell import column_index_from_string, coordinate_from_string
 
 # Canonical sheet-qualified cell (`Sheet1!B1`) or same-sheet range (`Sheet1!C4:D4`).
 NormalizedAddress: TypeAlias = str
+
+_A1_CELL_COORD_RE = re.compile(r"^\$?([A-Za-z]{1,3})\$?(\d+)$")
+_WHOLE_COL_COORD_RE = re.compile(r"^\$?([A-Za-z]{1,3})$")
+_WHOLE_ROW_COORD_RE = re.compile(r"^\$?(\d+)$")
 
 
 def needs_quoting(sheet: str) -> bool:
@@ -114,8 +119,30 @@ def format_range_key(sheet: str, start_cell: str, end_cell: str) -> NormalizedAd
     return f"{quote_sheet_if_needed(sheet)}!{start_cell}:{end_cell}"
 
 
-def _split_top_level_colon(address: str) -> tuple[str, str] | None:
-    """Split an address on the first colon outside quoted sheet names."""
+def canonical_cell_coord(cell: str) -> str:
+    """Canonicalize an A1 / whole-column / whole-row coordinate fragment.
+
+    Strips `$` markers, uppercases column letters, and normalizes row numbers
+    (`01` -> `1`). Non-matching fragments are returned unchanged.
+    """
+    m = _A1_CELL_COORD_RE.fullmatch(cell)
+    if m is not None:
+        return f"{m.group(1).upper()}{int(m.group(2))}"
+    m_col = _WHOLE_COL_COORD_RE.fullmatch(cell)
+    if m_col is not None:
+        return m_col.group(1).upper()
+    m_row = _WHOLE_ROW_COORD_RE.fullmatch(cell)
+    if m_row is not None:
+        return str(int(m_row.group(1)))
+    return cell
+
+
+def split_address_on_colon(address: str) -> tuple[str, str] | None:
+    """Split an address on the first colon outside quoted sheet names.
+
+    Handles colons embedded in quoted sheet names (`'A:B'!C1:D2`).
+    Returns `None` when there is no top-level colon.
+    """
     in_quote = False
     i = 0
     while i < len(address):
@@ -135,7 +162,8 @@ def normalize_key(key: str) -> NormalizedAddress:
     """Normalize an address to canonical :data:`NormalizedAddress` form.
 
     Unnecessary quoting is stripped; sheet names with spaces, hyphens, or
-    apostrophes are quoted. For single cells, the result matches `Node.key`.
+    apostrophes are quoted. Absolute markers (`$`) are stripped and column
+    letters are uppercased. For single cells, the result matches `Node.key`.
     Same-sheet ranges collapse to a single sheet prefix (`Sheet1!A1:B2`);
     cross-sheet ranges keep both endpoints sheet-qualified.
 
@@ -146,22 +174,26 @@ def normalize_key(key: str) -> NormalizedAddress:
         "'My Sheet'!B2"
         >>> normalize_key("Sheet1!A1:Sheet1!B2")
         'Sheet1!A1:B2'
+        >>> normalize_key("Sheet1!A1:$A$3")
+        'Sheet1!A1:A3'
     """
-    parts = _split_top_level_colon(key)
+    parts = split_address_on_colon(key)
     if parts is not None:
         start_raw, end_raw = parts
         start_sheet, start_cell = parse_address(start_raw)
+        start_cell = canonical_cell_coord(start_cell)
         if "!" in end_raw or end_raw.startswith("'"):
             end_sheet, end_cell = parse_address(end_raw)
+            end_cell = canonical_cell_coord(end_cell)
             if end_sheet == start_sheet:
                 return format_range_key(start_sheet, start_cell, end_cell)
             start_fmt = format_key(start_sheet, start_cell)
             end_fmt = format_key(end_sheet, end_cell)
             return f"{start_fmt}:{end_fmt}"
-        return format_range_key(start_sheet, start_cell, end_raw)
+        return format_range_key(start_sheet, start_cell, canonical_cell_coord(end_raw))
 
     sheet, cell = parse_address(key)
-    return format_key(sheet, cell)
+    return format_key(sheet, canonical_cell_coord(cell))
 
 
 def make_node_key_sort_key(

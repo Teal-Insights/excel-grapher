@@ -14,22 +14,10 @@ from .parser import expand_range, format_key
 def split_range_target_on_colon(t: str) -> tuple[str, str] | None:
     """Split a sheet-qualified range target into (start_addr, end_addr).
 
-    Handles colons embedded within quoted sheet names (`'It''s Data'!A1:B2`).
-    Returns `None` if the target contains no top-level colon.
+    Thin wrapper around `excel_grapher.core.address_keys.split_address_on_colon`
+    so callers that already import from this module keep working.
     """
-    in_quote = False
-    i = 0
-    while i < len(t):
-        ch = t[i]
-        if ch == "'":
-            if in_quote and i + 1 < len(t) and t[i + 1] == "'":
-                i += 2
-                continue
-            in_quote = not in_quote
-        elif ch == ":" and not in_quote:
-            return t[:i], t[i + 1 :]
-        i += 1
-    return None
+    return _address_keys.split_address_on_colon(t)
 
 
 def expand_targets_to_roots(
@@ -107,6 +95,7 @@ def expand_targets_to_roots(
                     sheet, start_a1 = _address_keys.parse_address(start_addr)
                 except ValueError as exc:
                     raise ValueError(f"Invalid target address: {t}") from exc
+                start_a1 = _address_keys.canonical_cell_coord(start_a1)
                 _require_sheet(sheet, target=t)
                 if "!" in end_addr:
                     try:
@@ -115,8 +104,9 @@ def expand_targets_to_roots(
                         raise ValueError(f"Invalid target address: {t}") from exc
                     if end_sheet != sheet:
                         raise ValueError(f"Range target spans multiple sheets: {t}")
+                    end_a1 = _address_keys.canonical_cell_coord(end_a1)
                 else:
-                    end_a1 = end_addr
+                    end_a1 = _address_keys.canonical_cell_coord(end_addr)
                 _expand_rect(sheet, start_a1, end_a1, target_label=t)
             else:
                 try:
@@ -124,7 +114,7 @@ def expand_targets_to_roots(
                 except ValueError as exc:
                     raise ValueError(f"Invalid target address: {t}") from exc
                 _require_sheet(sheet, target=t)
-                _emit(sheet, cell_part)
+                _emit(sheet, _address_keys.canonical_cell_coord(cell_part))
             continue
 
         cell_resolved = named_ranges.get(t)
