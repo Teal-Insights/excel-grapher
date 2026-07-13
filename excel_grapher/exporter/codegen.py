@@ -13,10 +13,12 @@ import fastpyxl.utils.cell
 
 from excel_grapher.core.address_keys import (
     format_range_key,
-    normalize_key as normalize_address,
     parse_address,
     quote_sheet_if_needed,
     sort_node_keys,
+)
+from excel_grapher.core.address_keys import (
+    normalize_key as normalize_address,
 )
 from excel_grapher.core.operators_fastpath import MIN_OPERATOR_FASTPATH_CELLS
 from excel_grapher.evaluator.errors import MissingNormalizedFormulaError
@@ -719,9 +721,7 @@ class CodeGenerator:
                     col_letter = fastpyxl.utils.cell.get_column_letter(col)
                     col_entries.append(
                         (
-                            format_range_key(
-                                sheet, f"{col_letter}{start}", f"{col_letter}{prev}"
-                            ),
+                            format_range_key(sheet, f"{col_letter}{start}", f"{col_letter}{prev}"),
                             "xl_range_rows",
                         )
                     )

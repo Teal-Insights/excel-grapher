@@ -223,10 +223,7 @@ def _normalize_excel_formula_base(formula: str, current_sheet: str) -> str:
         end_cell = f"{c2}{int(r2)}"
         if sheet1 == sheet2:
             return format_range_key(sheet1, start_cell, end_cell)
-        return (
-            f"{format_cell_key(sheet1, c1, int(r1))}:"
-            f"{format_cell_key(sheet2, c2, int(r2))}"
-        )
+        return f"{format_cell_key(sheet1, c1, int(r1))}:{format_cell_key(sheet2, c2, int(r2))}"
 
     result = re.sub(
         _QUOTED_SHEET_PREFIX.replace("?P<sheet>", "?P<sheet1>")
@@ -280,9 +277,7 @@ def _normalize_excel_formula_base(formula: str, current_sheet: str) -> str:
 
     def replace_local_range(m: re.Match[str]) -> str:
         c1, r1, c2, r2 = m.group("c1"), m.group("r1"), m.group("c2"), m.group("r2")
-        return format_range_key(
-            current_sheet, f"{c1}{int(r1)}", f"{c2}{int(r2)}"
-        )
+        return format_range_key(current_sheet, f"{c1}{int(r1)}", f"{c2}{int(r2)}")
 
     result = re.sub(
         r"(?<![!A-Za-z0-9_])(?<!\$)\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)(?![A-Za-z0-9_])",

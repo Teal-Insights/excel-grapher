@@ -42,9 +42,7 @@ def test_format_range_key_uses_single_prefix(
         ("Sheet1!A1:Sheet2!D1", "Sheet1!A1:Sheet2!D1"),
     ],
 )
-def test_normalize_key_collapses_same_sheet_range_to_single_prefix(
-    raw: str, expected: str
-) -> None:
+def test_normalize_key_collapses_same_sheet_range_to_single_prefix(raw: str, expected: str) -> None:
     assert normalize_key(raw) == expected
 
 
@@ -66,10 +64,7 @@ class TestFormulaNormalizerSinglePrefix:
     def test_quoted_sheet_local_and_both_end(self) -> None:
         n = FormulaNormalizer()
         assert n.normalize("=SUM(A1:B2)", "My Sheet") == "=SUM('My Sheet'!A1:B2)"
-        assert (
-            n.normalize("=SUM('My Sheet'!A1:'My Sheet'!B2)", "Other")
-            == "=SUM('My Sheet'!A1:B2)"
-        )
+        assert n.normalize("=SUM('My Sheet'!A1:'My Sheet'!B2)", "Other") == "=SUM('My Sheet'!A1:B2)"
 
     def test_cross_sheet_range_keeps_both_endpoints(self) -> None:
         n = FormulaNormalizer()
@@ -103,5 +98,5 @@ def test_ast_and_codegen_emit_single_prefix_xl_range() -> None:
     assert gen._emit_ast(RangeNode("Sheet1!A1", "Sheet1!B2")) == "xl_range(ctx, 'Sheet1!A1:B2')"
     assert (
         gen._emit_ast(RangeNode("'My Sheet'!A1", "'My Sheet'!C1"))
-        == 'xl_range(ctx, "\'My Sheet\'!A1:C1")'
+        == "xl_range(ctx, \"'My Sheet'!A1:C1\")"
     )
