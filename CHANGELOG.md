@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.4.1 (2026-07-13)
+
+### Bug Fixes
+
+- **evaluator**: Re-emit circular-reference warning on memoized re-evaluate
+  ([#381](https://github.com/Teal-Insights/excel-grapher/pull/381),
+  [`b14b682`](https://github.com/Teal-Insights/excel-grapher/commit/b14b6820e46a0b97114ffa4b2800f789565e1962))
+
+### Refactoring
+
+- **parity**: Dedupe live parity onto workbook compare helper
+  ([#380](https://github.com/Teal-Insights/excel-grapher/pull/380),
+  [`42e7085`](https://github.com/Teal-Insights/excel-grapher/commit/42e70856d278f7b156229d5680c27a15ffb69622))
+
+### Testing
+
+- **exporter**: Refresh dep-tracking baseline after circular-warning runtime
+  ([#381](https://github.com/Teal-Insights/excel-grapher/pull/381),
+  [`b14b682`](https://github.com/Teal-Insights/excel-grapher/commit/b14b6820e46a0b97114ffa4b2800f789565e1962))
+
+- **parity**: Assert Excel error codes in excel_workbook_parity
+  ([#380](https://github.com/Teal-Insights/excel-grapher/pull/380),
+  [`42e7085`](https://github.com/Teal-Insights/excel-grapher/commit/42e70856d278f7b156229d5680c27a15ffb69622))
+
+
 ## v3.4.0 (2026-07-11)
 
 ### Features
