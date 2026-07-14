@@ -9,7 +9,6 @@ import fastpyxl.utils.cell
 from excel_grapher.core import XlError, to_number
 from excel_grapher.core.address_keys import format_cell_key
 from excel_grapher.core.addressing import index_excel_range, offset_range
-from excel_grapher.core.types import CellValue as CoreCellValue
 from excel_grapher.core.types import XlErrorException
 from excel_grapher.runtime.cache import EvalContext, _parse_range_address, xl_cell
 
@@ -32,7 +31,9 @@ def _number_or_raise(value: CellValue) -> float:
 
 
 def _ctx_range(ctx: EvalContext, sheet: str, r1: int, c1: int, r2: int, c2: int) -> Range:
-    def resolve(address: str) -> CoreCellValue:
+    # Leave the resolver unannotated: embed strips `excel_grapher.core` imports, so
+    # aliases like `CellValue as CoreCellValue` never appear in generated runtime.py.
+    def resolve(address: str):
         return xl_cell(ctx, address)
 
     return Range(sheet, r1, c1, r2, c2, resolve)
