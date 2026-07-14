@@ -117,7 +117,7 @@ def exec_generated_code_with_cache(
     for target in targets:
         try:
             xl_cell(ctx, target)
-        except BaseException as exc:  # noqa: B036 (re-raised unless Excel error)
+        except BaseException as exc:
             if xl_error_exception is None or not isinstance(exc, xl_error_exception):
                 raise
             # The evaluation boundary caches the raising cell's error code.
@@ -278,7 +278,7 @@ DEP_TRACKING_CALL_MARKERS = frozenset(
 )
 
 # Baseline for non-iterative minimal export (S!A1 leaf + S!B1 formula).
-DEP_TRACKING_BASELINE_VERSION = 9
+DEP_TRACKING_BASELINE_VERSION = 10
 SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET = 62
 
 

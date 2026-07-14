@@ -15,8 +15,14 @@ import fastpyxl.utils.cell
 import pytest
 import xlsxwriter
 
-from excel_grapher import FormulaEvaluator, XlError, create_dependency_graph
+from excel_grapher import FormulaEvaluator, create_dependency_graph
 from excel_grapher.core.address_keys import normalize_key
+from tests.utils.excel_workbook_parity import (
+    ParityMismatchKind,
+)
+from tests.utils.excel_workbook_parity import (
+    compare_cached_to_evaluator as _compare_cached_to_evaluator,
+)
 from tests.utils.modify_and_recalculate import (
     ExcelRecalculationError,
     modify_and_recalculate_workbook,
@@ -35,9 +41,12 @@ class LiveExcelParityMismatchKind(Enum):
     NUMBER_VS_XL_ERROR = "number_vs_xl_error"
     EXCEPTION = "exception"
     NOT_IMPLEMENTED = "not_implemented"
-    NONE_RESULT = "none_result"
     TYPE_MISMATCH = "type_mismatch"
     MISSING_TARGET = "missing_target"
+
+
+def _workbook_kind_to_live(kind: ParityMismatchKind) -> LiveExcelParityMismatchKind:
+    return LiveExcelParityMismatchKind(kind.value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,21 +110,6 @@ def write_live_excel_workbook(
     wb.close()
 
 
-def _normalize_cached_excel_value(raw: object) -> object:
-    if isinstance(raw, str):
-        err = XlError.from_text(raw)
-        if err is not None:
-            return err
-    return raw
-
-
-def _numeric_close(a: float, b: float, *, rtol: float, atol: float) -> bool:
-    if a == b:
-        return True
-    scale = max(abs(a), abs(b), 1.0)
-    return abs(a - b) <= max(atol, rtol * scale)
-
-
 def compare_cached_to_evaluator(
     excel_cached: object,
     evaluator_result: object,
@@ -124,31 +118,15 @@ def compare_cached_to_evaluator(
     atol: float = 1e-9,
 ) -> LiveExcelParityMismatchKind | None:
     """Return a mismatch kind when Excel cached value differs from evaluator output."""
-    cached = _normalize_cached_excel_value(excel_cached)
-
-    if isinstance(cached, XlError):
-        if isinstance(evaluator_result, XlError):
-            if cached == evaluator_result:
-                return None
-            return LiveExcelParityMismatchKind.XL_ERROR_CODE_MISMATCH
-        return LiveExcelParityMismatchKind.XL_ERROR_VS_NUMBER
-
-    if isinstance(evaluator_result, XlError):
-        return LiveExcelParityMismatchKind.NUMBER_VS_XL_ERROR
-
-    if (
-        isinstance(cached, (int, float))
-        and not isinstance(cached, bool)
-        and isinstance(evaluator_result, (int, float))
-        and not isinstance(evaluator_result, bool)
-    ):
-        if _numeric_close(float(cached), float(evaluator_result), rtol=rtol, atol=atol):
-            return None
-        return LiveExcelParityMismatchKind.NUMERIC_DRIFT
-
-    if cached == evaluator_result:
+    kind = _compare_cached_to_evaluator(
+        excel_cached,
+        evaluator_result,
+        rtol=rtol,
+        atol=atol,
+    )
+    if kind is None:
         return None
-    return LiveExcelParityMismatchKind.TYPE_MISMATCH
+    return _workbook_kind_to_live(kind)
 
 
 def format_live_excel_parity_report(mismatches: list[LiveExcelParityMismatch]) -> str:
@@ -198,7 +176,7 @@ def compare_evaluator_to_live_excel(
 
             formula = _formula_for(addr)
             try:
-                computed = ev._evaluate_cell(addr)  # noqa: SLF001
+                computed = ev._evaluate_cell(addr)
             except NotImplementedError as exc:
                 mismatches.append(
                     LiveExcelParityMismatch(

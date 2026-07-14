@@ -18,6 +18,21 @@ This gives **fast, accurate, repeatable** execution for any given workbook, but 
 - Re-extract and re-run a computation whenever the workbook changes.
 - Keep a tight coupling to Excel while still running logic in Python.
 
+### Range operands
+
+Multi-cell range arguments are classified at resolve time:
+
+- Lookup consumers (`MATCH` / `VLOOKUP` / …) bind lazy `Range` from
+  `excel_grapher.core.grid` and evaluate only the cells they touch.
+- Full-scan reductions (`SUM` / `SUMPRODUCT` / …) still materialize where
+  `flatten` / vectorized fast paths need a dense buffer.
+- Other functions reject multi-cell ranges with `#VALUE!` (no object-repr leaks;
+  sibling cells stay unevaluated).
+
+Scalar coercions (`as_scalar`) reinforce the same boundary. AST error prechecks
+do not walk lazy ranges. Errors remain `XlError` sentinels (the evaluator never
+raises `XlErrorException`).
+
 ### Minimal evaluator example
 
 ```python

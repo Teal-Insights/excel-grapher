@@ -12,12 +12,13 @@ from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
 import fastpyxl.utils.cell
 
 from excel_grapher.core.address_keys import (
-    normalize_key as normalize_address,
-)
-from excel_grapher.core.address_keys import (
+    format_range_key,
     parse_address,
     quote_sheet_if_needed,
     sort_node_keys,
+)
+from excel_grapher.core.address_keys import (
+    normalize_key as normalize_address,
 )
 from excel_grapher.core.operators_fastpath import MIN_OPERATOR_FASTPATH_CELLS
 from excel_grapher.evaluator.errors import MissingNormalizedFormulaError
@@ -54,7 +55,7 @@ __all__ = ["CodeGenerator", "GraphLike", "GraphNode"]
 
 if TYPE_CHECKING:
     from excel_grapher.exporter.projection import ProjectionManifest
-    from excel_grapher.grapher import DependencyGraph  # noqa: F401
+    from excel_grapher.grapher import DependencyGraph
     from excel_grapher.series_bindings.docstring_renderers import SeriesDocstringRendererSpec
     from excel_grapher.series_bindings.docstrings import SeriesBindingDocstringCallbackSpec
     from excel_grapher.series_bindings.types import InputSeries, WorkbookSeriesBindings
@@ -412,7 +413,7 @@ class CodeGenerator:
     def _emit_range(self, node: RangeNode) -> str:
         """Emit a range as a lazy `Range` value resolved through the context.
 
-        For A1:B3, emits: xl_range(ctx, "S!A1:S!B3"). Consumers evaluate cells
+        For A1:B3, emits: xl_range(ctx, "S!A1:B3"). Consumers evaluate cells
         positionally; unused cells are never evaluated.
         """
         return self._emit_range_address(node.start, node.end)
@@ -420,9 +421,9 @@ class CodeGenerator:
     def _emit_range_address(self, start: str, end: str) -> str:
         """Emit an xl_range call for a normalized start/end address pair."""
         sheet, r1, c1, r2, c2 = self._range_coords(start, end)
-        start_addr = self._format_cell_address(sheet, r1, c1)
-        end_addr = self._format_cell_address(sheet, r2, c2)
-        return f"xl_range(ctx, {repr(f'{start_addr}:{end_addr}')})"
+        start_cell = f"{fastpyxl.utils.cell.get_column_letter(c1)}{r1}"
+        end_cell = f"{fastpyxl.utils.cell.get_column_letter(c2)}{r2}"
+        return f"xl_range(ctx, {repr(format_range_key(sheet, start_cell, end_cell))})"
 
     def _emit_cell_eval(self, address: str) -> str:
         normalized = normalize_address(address)
@@ -513,13 +514,14 @@ class CodeGenerator:
         return "\n".join(lines).rstrip() + "\n"
 
     _SERIES_HELPER_IMPORT_NAMES: tuple[str, ...] = (
+        "DataFrameInput",
         "EmptyMeasure",
         "Record",
         "Records",
         "Scalar",
+        "Sequence",
         "SeriesInput",
         "_apply_series_records",
-        "_coerce_records",
         "coerce_setter_input",
     )
 
@@ -671,19 +673,25 @@ class CodeGenerator:
                     if col == prev + 1:
                         prev = col
                         continue
-                    start_addr = self._format_cell_address(sheet, row, start)
-                    end_addr = self._format_cell_address(sheet, row, prev)
                     if start == prev:
-                        row_entries.append((start_addr, "xl_cell"))
+                        row_entries.append(
+                            (self._format_cell_address(sheet, row, start), "xl_cell")
+                        )
                     else:
-                        row_entries.append((f"{start_addr}:{end_addr}", "xl_range_rows"))
+                        start_cell = f"{fastpyxl.utils.cell.get_column_letter(start)}{row}"
+                        end_cell = f"{fastpyxl.utils.cell.get_column_letter(prev)}{row}"
+                        row_entries.append(
+                            (format_range_key(sheet, start_cell, end_cell), "xl_range_rows")
+                        )
                     start = prev = col
-                start_addr = self._format_cell_address(sheet, row, start)
-                end_addr = self._format_cell_address(sheet, row, prev)
                 if start == prev:
-                    row_entries.append((start_addr, "xl_cell"))
+                    row_entries.append((self._format_cell_address(sheet, row, start), "xl_cell"))
                 else:
-                    row_entries.append((f"{start_addr}:{end_addr}", "xl_range_rows"))
+                    start_cell = f"{fastpyxl.utils.cell.get_column_letter(start)}{row}"
+                    end_cell = f"{fastpyxl.utils.cell.get_column_letter(prev)}{row}"
+                    row_entries.append(
+                        (format_range_key(sheet, start_cell, end_cell), "xl_range_rows")
+                    )
 
             col_entries: list[tuple[str, str]] = []
             for col, rows in col_groups.items():
@@ -693,19 +701,31 @@ class CodeGenerator:
                     if row == prev + 1:
                         prev = row
                         continue
-                    start_addr = self._format_cell_address(sheet, start, col)
-                    end_addr = self._format_cell_address(sheet, prev, col)
                     if start == prev:
-                        col_entries.append((start_addr, "xl_cell"))
+                        col_entries.append(
+                            (self._format_cell_address(sheet, start, col), "xl_cell")
+                        )
                     else:
-                        col_entries.append((f"{start_addr}:{end_addr}", "xl_range_rows"))
+                        col_letter = fastpyxl.utils.cell.get_column_letter(col)
+                        col_entries.append(
+                            (
+                                format_range_key(
+                                    sheet, f"{col_letter}{start}", f"{col_letter}{prev}"
+                                ),
+                                "xl_range_rows",
+                            )
+                        )
                     start = prev = row
-                start_addr = self._format_cell_address(sheet, start, col)
-                end_addr = self._format_cell_address(sheet, prev, col)
                 if start == prev:
-                    col_entries.append((start_addr, "xl_cell"))
+                    col_entries.append((self._format_cell_address(sheet, start, col), "xl_cell"))
                 else:
-                    col_entries.append((f"{start_addr}:{end_addr}", "xl_range_rows"))
+                    col_letter = fastpyxl.utils.cell.get_column_letter(col)
+                    col_entries.append(
+                        (
+                            format_range_key(sheet, f"{col_letter}{start}", f"{col_letter}{prev}"),
+                            "xl_range_rows",
+                        )
+                    )
 
             entries.extend(row_entries if len(row_entries) <= len(col_entries) else col_entries)
 

@@ -11,6 +11,7 @@ evaluator/exporter can import them without violating layering rules.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -23,22 +24,12 @@ from fastpyxl.utils.cell import (
 )
 from fastpyxl.utils.exceptions import CellCoordinatesException
 
-# Canonical sheet-qualified cell (`Sheet1!B1`) or range (`Sheet1!C4:Sheet1!D4`).
+# Canonical sheet-qualified cell (`Sheet1!B1`) or same-sheet range (`Sheet1!C4:D4`).
 NormalizedAddress: TypeAlias = str
 
-
-@dataclass(frozen=True, slots=True)
-class ParsedRowKey:
-    """Parsed one-row node key (`Sheet1!D63:Y63`).
-
-    Columns are ordered so `min_col` <= `max_col` by index. `row` is the single
-    worksheet row for both endpoints.
-    """
-
-    sheet: str
-    row: int
-    min_col: str
-    max_col: str
+_A1_CELL_COORD_RE = re.compile(r"^\$?([A-Za-z]{1,3})\$?(\d+)$")
+_WHOLE_COL_COORD_RE = re.compile(r"^\$?([A-Za-z]{1,3})$")
+_WHOLE_ROW_COORD_RE = re.compile(r"^\$?(\d+)$")
 
 
 def needs_quoting(sheet: str) -> bool:
@@ -123,8 +114,42 @@ def format_cell_key(sheet: str, column: str, row: int) -> NormalizedAddress:
     return f"{quote_sheet_if_needed(sheet)}!{column}{row}"
 
 
-def _split_top_level_colon(address: str) -> tuple[str, str] | None:
-    """Split an address on the first colon outside quoted sheet names."""
+def format_range_key(sheet: str, start_cell: str, end_cell: str) -> NormalizedAddress:
+    """Format a same-sheet range as a single-prefix canonical address.
+
+    Examples:
+        >>> format_range_key("Sheet1", "A1", "A3")
+        'Sheet1!A1:A3'
+        >>> format_range_key("My Sheet", "A1", "B2")
+        "'My Sheet'!A1:B2"
+    """
+    return f"{quote_sheet_if_needed(sheet)}!{start_cell}:{end_cell}"
+
+
+def canonical_cell_coord(cell: str) -> str:
+    """Canonicalize an A1 / whole-column / whole-row coordinate fragment.
+
+    Strips `$` markers, uppercases column letters, and normalizes row numbers
+    (`01` -> `1`). Non-matching fragments are returned unchanged.
+    """
+    m = _A1_CELL_COORD_RE.fullmatch(cell)
+    if m is not None:
+        return f"{m.group(1).upper()}{int(m.group(2))}"
+    m_col = _WHOLE_COL_COORD_RE.fullmatch(cell)
+    if m_col is not None:
+        return m_col.group(1).upper()
+    m_row = _WHOLE_ROW_COORD_RE.fullmatch(cell)
+    if m_row is not None:
+        return str(int(m_row.group(1)))
+    return cell
+
+
+def split_address_on_colon(address: str) -> tuple[str, str] | None:
+    """Split an address on the first colon outside quoted sheet names.
+
+    Handles colons embedded in quoted sheet names (`'A:B'!C1:D2`).
+    Returns `None` when there is no top-level colon.
+    """
     in_quote = False
     i = 0
     while i < len(address):
@@ -138,6 +163,20 @@ def _split_top_level_colon(address: str) -> tuple[str, str] | None:
             return address[:i], address[i + 1 :]
         i += 1
     return None
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedRowKey:
+    """Parsed one-row node key (`Sheet1!D63:Y63`).
+
+    Columns are ordered so `min_col` <= `max_col` by index. `row` is the single
+    worksheet row for both endpoints.
+    """
+
+    sheet: str
+    row: int
+    min_col: str
+    max_col: str
 
 
 def _parse_a1_cell(coord: str) -> tuple[str, int]:
@@ -175,7 +214,7 @@ def parse_row_key(key: str) -> ParsedRowKey:
     sheets, and absolute markers (`$D$63`). Raises `ValueError` for cell-only
     keys, multi-row extents, or cross-sheet ranges.
     """
-    parts = _split_top_level_colon(key)
+    parts = split_address_on_colon(key)
     if parts is None:
         raise ValueError(f"Row key must be a one-row range (got cell-only key): {key!r}")
 
@@ -216,15 +255,37 @@ def normalize_row_key(key: str) -> NormalizedAddress:
     return format_row_key(parsed.sheet, parsed.min_col, parsed.row, parsed.max_col)
 
 
+def _split_top_level_comma(address: str) -> list[str]:
+    """Split an address on commas outside quoted sheet names."""
+    parts: list[str] = []
+    start = 0
+    in_quote = False
+    i = 0
+    while i < len(address):
+        ch = address[i]
+        if ch == "'":
+            if in_quote and i + 1 < len(address) and address[i + 1] == "'":
+                i += 2
+                continue
+            in_quote = not in_quote
+        elif ch == "," and not in_quote:
+            parts.append(address[start:i])
+            start = i + 1
+        i += 1
+    parts.append(address[start:])
+    return parts
+
+
 def normalize_key(key: str) -> NormalizedAddress:
     """Normalize an address to canonical :data:`NormalizedAddress` form.
 
     Unnecessary quoting is stripped; sheet names with spaces, hyphens, or
-    apostrophes are quoted. For single cells, the result matches `Node.key`.
+    apostrophes are quoted. Absolute markers (`$`) are stripped and column
+    letters are uppercased. For single cells, the result matches `Node.key`.
     One-row range keys are canonicalized via `normalize_row_key` (ordered
-    columns, absolute markers stripped, both-end sheet forms collapsed,
-    including 1x1 forms such as `Sheet1!D63:D63`). Multi-area and multi-row
-    keys are canonicalized via `parse_node_key`.
+    columns, including 1x1 forms such as `Sheet1!D63:D63`). Multi-area keys
+    use `parse_node_key`. Other ranges collapse via single-prefix
+    `format_range_key` (same-sheet) or keep both endpoints when sheets differ.
 
     Examples:
         >>> normalize_key("'Sheet1'!A1")
@@ -233,27 +294,44 @@ def normalize_key(key: str) -> NormalizedAddress:
         "'My Sheet'!B2"
         >>> normalize_key("Sheet1!Y63:D63")
         'Sheet1!D63:Y63'
+        >>> normalize_key("Sheet1!A1:Sheet1!B2")
+        'Sheet1!A1:B2'
+        >>> normalize_key("Sheet1!A1:$A$3")
+        'Sheet1!A1:A3'
         >>> normalize_key("Sheet1!E5,A1:D1")
         'Sheet1!A1:D1,E5'
     """
-    if len(_split_top_level_comma(key)) > 1:
+    if "," in key and len(_split_top_level_comma(key)) > 1:
         return str(parse_node_key(key))
-    if _split_top_level_colon(key) is not None:
+
+    parts = split_address_on_colon(key)
+    if parts is not None:
         try:
             return normalize_row_key(key)
         except ValueError:
-            try:
-                return str(parse_node_key(key))
-            except ValueError:
-                sheet, cell = parse_address(key)
-                return format_key(sheet, cell)
+            pass
+        try:
+            return str(parse_node_key(key))
+        except ValueError:
+            pass
+        start_raw, end_raw = parts
+        start_sheet, start_cell = parse_address(start_raw)
+        start_cell = canonical_cell_coord(start_cell)
+        if "!" in end_raw or end_raw.startswith("'"):
+            end_sheet, end_cell = parse_address(end_raw)
+            end_cell = canonical_cell_coord(end_cell)
+            if end_sheet == start_sheet:
+                return format_range_key(start_sheet, start_cell, end_cell)
+            start_fmt = format_key(start_sheet, start_cell)
+            end_fmt = format_key(end_sheet, end_cell)
+            return f"{start_fmt}:{end_fmt}"
+        return format_range_key(start_sheet, start_cell, canonical_cell_coord(end_raw))
+
     try:
         return str(parse_node_key(key))
     except ValueError:
-        # Preserve historical sheet+coord pass-through for non-A1 junk so callers
-        # can treat missing/invalid keys as absent rather than parse failures.
         sheet, cell = parse_address(key)
-        return format_key(sheet, cell)
+        return format_key(sheet, canonical_cell_coord(cell))
 
 
 def make_node_key_sort_key(
@@ -273,7 +351,7 @@ def make_node_key_sort_key(
     fallback_rank = len(sheet_rank)
 
     def _sort_key(node_key: NormalizedAddress) -> tuple[int, str, int, int]:
-        if _split_top_level_colon(node_key) is not None:
+        if split_address_on_colon(node_key) is not None:
             try:
                 parsed = parse_row_key(node_key)
             except ValueError:
@@ -384,7 +462,7 @@ class RangeKey(str):
         return None
 
     def _corners(self) -> tuple[str, str, int, str, int]:
-        parts = _split_top_level_colon(self)
+        parts = split_address_on_colon(self)
         if parts is None:
             raise ValueError(f"RangeKey requires a colon range: {self!r}")
         start_raw, end_raw = parts
@@ -415,27 +493,6 @@ class UnionKey(str):
 
 
 NodeKey: TypeAlias = CellKey | RangeKey | UnionKey
-
-
-def _split_top_level_comma(address: str) -> list[str]:
-    """Split an address on commas outside quoted sheet names."""
-    parts: list[str] = []
-    start = 0
-    in_quote = False
-    i = 0
-    while i < len(address):
-        ch = address[i]
-        if ch == "'":
-            if in_quote and i + 1 < len(address) and address[i + 1] == "'":
-                i += 2
-                continue
-            in_quote = not in_quote
-        elif ch == "," and not in_quote:
-            parts.append(address[start:i])
-            start = i + 1
-        i += 1
-    parts.append(address[start:])
-    return parts
 
 
 def _format_bare_area(area: CellKey | RangeKey) -> str:
@@ -498,7 +555,7 @@ def _parse_single_area(raw: str, *, default_sheet: str | None = None) -> CellKey
     if not text:
         raise ValueError("Empty address area")
 
-    parts = _split_top_level_colon(text)
+    parts = split_address_on_colon(text)
     if parts is None:
         if "!" in text or text.startswith("'"):
             sheet, cell = parse_address(text)

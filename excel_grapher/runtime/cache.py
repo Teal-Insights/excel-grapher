@@ -9,6 +9,7 @@ import fastpyxl.utils.cell
 
 from excel_grapher.core import CellValue, ExcelRange, XlError, XlErrorException
 from excel_grapher.core.addressing import split_sheet_qualified_address
+from excel_grapher.core.types import resolve_excel_range
 
 from .cache_context import EvalContext, EvalContextBase
 
@@ -18,6 +19,7 @@ __all__ = [
     "EvalContextBase",
     "circular_safe_cache",
     "coerce_inputs_dict",
+    "warn_circular_reference",
     "xl_cell",
     "xl_circular_reference",
     "xl_eval",
@@ -33,13 +35,18 @@ class CircularReferenceWarning(RuntimeWarning):
     """Warning emitted when a circular reference is encountered (default Excel mode)."""
 
 
-def xl_circular_reference() -> CellValue:
-    """Excel default behavior for circular references (non-iterative calculation)."""
+def warn_circular_reference(*, stacklevel: int = 2) -> None:
+    """Emit the standard circular-reference warning."""
     warnings.warn(
         "Circular reference detected; returning 0 (iterative calculation is disabled).",
         CircularReferenceWarning,
-        stacklevel=2,
+        stacklevel=stacklevel,
     )
+
+
+def xl_circular_reference() -> CellValue:
+    """Excel default behavior for circular references (non-iterative calculation)."""
+    warn_circular_reference(stacklevel=2)
     return 0
 
 
@@ -90,11 +97,15 @@ def _evaluate_address(
         ctx._record_dependency(ctx.stack[-1], address)
 
     if address in ctx.cache:
+        if address in ctx.circular_warning_roots:
+            warn_circular_reference(stacklevel=3)
         return _raise_if_error_value(ctx.cache[address])
 
     if address in ctx.computing:
         if ctx.iterative_enabled:
             return ctx.iteration_values.get(address, 0)
+        root = ctx.stack[0] if ctx.stack else address
+        ctx.circular_warning_roots.add(root)
         return xl_circular_reference()
 
     if address in ctx.inputs:
@@ -196,7 +207,7 @@ def xl_range(ctx: EvalContext, address: str) -> CellValue:
         start_col_idx, end_col_idx = end_col_idx, start_col_idx
 
     rng = ExcelRange(sheet, start_row, start_col_idx, end_row, end_col_idx)
-    return rng.resolve(lambda addr: xl_cell(ctx, addr))
+    return resolve_excel_range(rng, lambda addr: xl_cell(ctx, addr))
 
 
 def _convergence_delta(prev: CellValue, curr: CellValue) -> float:
@@ -259,6 +270,7 @@ def xl_iterative_compute(
     iterations = max(1, int(ctx.iterate_count))
     for _ in range(iterations):
         ctx.cache.clear()
+        ctx.circular_warning_roots.clear()
         ctx.computing.clear()
         ctx.stack.clear()
         ctx.iteration_values.clear()

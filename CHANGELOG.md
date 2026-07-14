@@ -7,6 +7,187 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.7.0 (2026-07-14)
+
+### Bug Fixes
+
+- **series-bindings**: Accept numpy scalars in measure dtype checks
+  ([#386](https://github.com/Teal-Insights/excel-grapher/pull/386),
+  [`c42017c`](https://github.com/Teal-Insights/excel-grapher/commit/c42017c47dbe3a4de0921f9be75cc36b5d9a71af))
+
+- **series-bindings**: Harden measure dtype enforcement and cleanup
+  ([#386](https://github.com/Teal-Insights/excel-grapher/pull/386),
+  [`c42017c`](https://github.com/Teal-Insights/excel-grapher/commit/c42017c47dbe3a4de0921f9be75cc36b5d9a71af))
+
+### Features
+
+- **series-bindings**: Enforce measure dtype in generated setters
+  ([#386](https://github.com/Teal-Insights/excel-grapher/pull/386),
+  [`c42017c`](https://github.com/Teal-Insights/excel-grapher/commit/c42017c47dbe3a4de0921f9be75cc36b5d9a71af))
+
+- **series-bindings**: Narrow setter input annotations by measure dtype
+  ([#386](https://github.com/Teal-Insights/excel-grapher/pull/386),
+  [`c42017c`](https://github.com/Teal-Insights/excel-grapher/commit/c42017c47dbe3a4de0921f9be75cc36b5d9a71af))
+
+
+## v3.6.0 (2026-07-14)
+
+### Bug Fixes
+
+- **evaluator**: Scalar boundary for lazy Range (#336 Phase 1)
+  ([#389](https://github.com/Teal-Insights/excel-grapher/pull/389),
+  [`0d63e45`](https://github.com/Teal-Insights/excel-grapher/commit/0d63e450d85ffc27c438f0afc8761b6ea6d1a9b9))
+
+### Features
+
+- **evaluator**: Lazy-by-default range resolution (#336 Phase 1)
+  ([#389](https://github.com/Teal-Insights/excel-grapher/pull/389),
+  [`0d63e45`](https://github.com/Teal-Insights/excel-grapher/commit/0d63e450d85ffc27c438f0afc8761b6ea6d1a9b9))
+
+### Refactoring
+
+- **evaluator**: Explicit eager/grid/VALUE range arg policy
+  ([#389](https://github.com/Teal-Insights/excel-grapher/pull/389),
+  [`0d63e45`](https://github.com/Teal-Insights/excel-grapher/commit/0d63e450d85ffc27c438f0afc8761b6ea6d1a9b9))
+
+
+## v3.5.0 (2026-07-14)
+
+### Bug Fixes
+
+- **evaluator**: Cast lazy Range and lookup returns for ty
+  ([#388](https://github.com/Teal-Insights/excel-grapher/pull/388),
+  [`c9925a0`](https://github.com/Teal-Insights/excel-grapher/commit/c9925a03324c8a46c6482315e3891e53f8c3c354))
+
+### Features
+
+- **evaluator**: Lazy Range for lookup consumers
+  ([#388](https://github.com/Teal-Insights/excel-grapher/pull/388),
+  [`c9925a0`](https://github.com/Teal-Insights/excel-grapher/commit/c9925a03324c8a46c6482315e3891e53f8c3c354))
+
+- **evaluator**: Lazy Range for lookup consumers (#336)
+  ([#388](https://github.com/Teal-Insights/excel-grapher/pull/388),
+  [`c9925a0`](https://github.com/Teal-Insights/excel-grapher/commit/c9925a03324c8a46c6482315e3891e53f8c3c354))
+
+### Refactoring
+
+- **core**: Unify ExcelRange as shared geometry type
+  ([#388](https://github.com/Teal-Insights/excel-grapher/pull/388),
+  [`c9925a0`](https://github.com/Teal-Insights/excel-grapher/commit/c9925a03324c8a46c6482315e3891e53f8c3c354))
+
+### Testing
+
+- **evaluator**: Budget and selective-access coverage for lazy lookups
+  ([#388](https://github.com/Teal-Insights/excel-grapher/pull/388),
+  [`c9925a0`](https://github.com/Teal-Insights/excel-grapher/commit/c9925a03324c8a46c6482315e3891e53f8c3c354))
+
+
+## v3.4.3 (2026-07-14)
+
+### Bug Fixes
+
+- **addressing**: Accept ExcelRangeGeometry protocol for export embed
+  ([#383](https://github.com/Teal-Insights/excel-grapher/pull/383),
+  [`454c25a`](https://github.com/Teal-Insights/excel-grapher/commit/454c25a3a6abc5d6a2ca32e7743c2b97386e7aa4))
+
+- **export_runtime**: Avoid CoreCellValue alias in embedded resolver
+  ([#383](https://github.com/Teal-Insights/excel-grapher/pull/383),
+  [`454c25a`](https://github.com/Teal-Insights/excel-grapher/commit/454c25a3a6abc5d6a2ca32e7743c2b97386e7aa4))
+
+### Refactoring
+
+- Remove dead type/lint suppressions and narrow export ExcelRange bridging
+  ([#383](https://github.com/Teal-Insights/excel-grapher/pull/383),
+  [`454c25a`](https://github.com/Teal-Insights/excel-grapher/commit/454c25a3a6abc5d6a2ca32e7743c2b97386e7aa4))
+
+- Typing audit — drop dead suppressions, narrow ExcelRange casts
+  ([#383](https://github.com/Teal-Insights/excel-grapher/pull/383),
+  [`454c25a`](https://github.com/Teal-Insights/excel-grapher/commit/454c25a3a6abc5d6a2ca32e7743c2b97386e7aa4))
+
+
+## v3.4.2 (2026-07-13)
+
+### Bug Fixes
+
+- **core**: Unify same-sheet range normalization on single sheet prefix
+  ([#382](https://github.com/Teal-Insights/excel-grapher/pull/382),
+  [`6442ade`](https://github.com/Teal-Insights/excel-grapher/commit/6442adef6561a9300da22325607c11c2d920edae))
+
+- **core**: Unify same-sheet ranges on single sheet prefix
+  ([#382](https://github.com/Teal-Insights/excel-grapher/pull/382),
+  [`6442ade`](https://github.com/Teal-Insights/excel-grapher/commit/6442adef6561a9300da22325607c11c2d920edae))
+
+- **grapher**: Harden single-prefix range dep extraction
+  ([#382](https://github.com/Teal-Insights/excel-grapher/pull/382),
+  [`6442ade`](https://github.com/Teal-Insights/excel-grapher/commit/6442adef6561a9300da22325607c11c2d920edae))
+
+- **grapher**: Mask range spans before cell-ref parse
+  ([#382](https://github.com/Teal-Insights/excel-grapher/pull/382),
+  [`6442ade`](https://github.com/Teal-Insights/excel-grapher/commit/6442adef6561a9300da22325607c11c2d920edae))
+
+- **grapher**: Refuse unmasked ranges in parse_cell_refs
+  ([#382](https://github.com/Teal-Insights/excel-grapher/pull/382),
+  [`6442ade`](https://github.com/Teal-Insights/excel-grapher/commit/6442adef6561a9300da22325607c11c2d920edae))
+
+- **test**: Silence ty invalid-argument for CodeGenerator(None)
+  ([#382](https://github.com/Teal-Insights/excel-grapher/pull/382),
+  [`6442ade`](https://github.com/Teal-Insights/excel-grapher/commit/6442adef6561a9300da22325607c11c2d920edae))
+
+### Code Style
+
+- Ruff format and import tidy for range single-prefix
+  ([#382](https://github.com/Teal-Insights/excel-grapher/pull/382),
+  [`6442ade`](https://github.com/Teal-Insights/excel-grapher/commit/6442adef6561a9300da22325607c11c2d920edae))
+
+- Ruff format parse_cell_refs signature
+  ([#382](https://github.com/Teal-Insights/excel-grapher/pull/382),
+  [`6442ade`](https://github.com/Teal-Insights/excel-grapher/commit/6442adef6561a9300da22325607c11c2d920edae))
+
+### Refactoring
+
+- **core**: Share colon split and canonicalize range ends
+  ([#382](https://github.com/Teal-Insights/excel-grapher/pull/382),
+  [`6442ade`](https://github.com/Teal-Insights/excel-grapher/commit/6442adef6561a9300da22325607c11c2d920edae))
+
+
+## v3.4.1 (2026-07-13)
+
+### Bug Fixes
+
+- **evaluator**: Re-emit circular-reference warning on memoized re-evaluate
+  ([#381](https://github.com/Teal-Insights/excel-grapher/pull/381),
+  [`b14b682`](https://github.com/Teal-Insights/excel-grapher/commit/b14b6820e46a0b97114ffa4b2800f789565e1962))
+
+### Refactoring
+
+- **parity**: Dedupe live parity onto workbook compare helper
+  ([#380](https://github.com/Teal-Insights/excel-grapher/pull/380),
+  [`42e7085`](https://github.com/Teal-Insights/excel-grapher/commit/42e70856d278f7b156229d5680c27a15ffb69622))
+
+### Testing
+
+- **exporter**: Refresh dep-tracking baseline after circular-warning runtime
+  ([#381](https://github.com/Teal-Insights/excel-grapher/pull/381),
+  [`b14b682`](https://github.com/Teal-Insights/excel-grapher/commit/b14b6820e46a0b97114ffa4b2800f789565e1962))
+
+- **parity**: Assert Excel error codes in excel_workbook_parity
+  ([#380](https://github.com/Teal-Insights/excel-grapher/pull/380),
+  [`42e7085`](https://github.com/Teal-Insights/excel-grapher/commit/42e70856d278f7b156229d5680c27a15ffb69622))
+
+
+## v3.4.0 (2026-07-11)
+
+### Features
+
+- **series_bindings**: Per-dimension dtype for same-concept dimensions
+  ([#378](https://github.com/Teal-Insights/excel-grapher/pull/378),
+  [`829ac70`](https://github.com/Teal-Insights/excel-grapher/commit/829ac70e8146a372541e72450211e84b6560e125))
+
+- **series_bindings**: Separate dimension id from concept (schema 1.8.0)
+  ([#378](https://github.com/Teal-Insights/excel-grapher/pull/378),
+  [`829ac70`](https://github.com/Teal-Insights/excel-grapher/commit/829ac70e8146a372541e72450211e84b6560e125))
+
+
 ## v3.3.0 (2026-07-09)
 
 ### Features

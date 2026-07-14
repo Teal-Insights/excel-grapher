@@ -156,4 +156,4 @@ def test_normalized_formula_resolves_range_named_range(tmp_path: Path) -> None:
     assert node is not None
     # Range-based name should be fully expanded in normalized_formula so that
     # downstream parsers never see a bare identifier like NumRange.
-    assert node.normalized_formula == "=VLOOKUP(Sheet1!A1, Sheet1!A1:Sheet1!B1, 2, FALSE())"
+    assert node.normalized_formula == "=VLOOKUP(Sheet1!A1, Sheet1!A1:B1, 2, FALSE())"

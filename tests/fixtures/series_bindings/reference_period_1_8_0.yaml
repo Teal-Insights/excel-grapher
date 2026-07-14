@@ -1,0 +1,45 @@
+schema_version: "1.8.0"
+workbook: reference_period.xlsx
+concept_scheme:
+  concepts:
+    - id: TIME_PERIOD
+      name: Time period
+      dtype: int
+series:
+  - id: gdp_vs_reference
+    sheet: Inputs
+    data_range: Inputs!F5:H5
+    layout: series
+    input:
+      setter:
+        name: set_gdp_vs_reference
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 1
+            read: int
+        # Comparison period: a second dimension referencing the same
+        # TIME_PERIOD concept, disambiguated by an explicit dimension id.
+        - id: REFERENCE_TIME_PERIOD
+          concept: TIME_PERIOD
+          role: key
+          scope: series
+          bind:
+            kind: cell
+            address: Inputs!B1
+    key:
+      - TIME_PERIOD
+      - REFERENCE_TIME_PERIOD
+    notes: >-
+      GDP by year compared against a reference year; both key dimensions share
+      the TIME_PERIOD concept and inherit its int dtype from the concept scheme.

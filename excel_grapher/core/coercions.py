@@ -4,13 +4,29 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
 from datetime import date, datetime
-from typing import Any
+from typing import TypeVar, cast
 
 import numpy as np
+
+# Imported for isinstance checks; stripped when coercions are embedded (Range is
+# already inlined from core.grid.ranges ahead of this module).
+from excel_grapher.core.grid.ranges import Range
 
 from .types import CellValue, ExcelRange, XlError
 
 _EXCEL_EPOCH = datetime(1899, 12, 30)
+T = TypeVar("T")
+
+
+def as_scalar(value: object) -> float | int | str | bool | XlError | None:
+    """Collapse range/array values to `#VALUE!` for scalar coercion contexts.
+
+    Lazy `Range`, unbound `ExcelRange`, nested lists, and ndarrays are not valid
+    scalar operands. Does not evaluate cells inside a `Range`.
+    """
+    if isinstance(value, (Range, ExcelRange, list, tuple, np.ndarray)):
+        return XlError.VALUE
+    return cast("float | int | str | bool | XlError | None", value)
 
 
 def datetime_to_excel_serial(value: datetime) -> float:
@@ -47,17 +63,21 @@ def try_coerce_string_to_float(text: str) -> float | None:
         return _try_parse_iso_date_serial(stripped)
 
 
-def to_native(value: Any) -> Any:
-    if hasattr(value, "item"):
-        return value.item()
+def to_native(value: T) -> T:
+    """Unwrap numpy scalars; otherwise return *value* unchanged."""
+    item = getattr(value, "item", None)
+    if callable(item):
+        return cast("T", item())
     return value
 
 
 def to_number(value: CellValue) -> float | XlError:
+    scalar = as_scalar(value)
+    if isinstance(scalar, XlError):
+        return scalar
+    value = cast(CellValue, scalar)
     if value is None:
         return 0.0
-    if isinstance(value, XlError):
-        return value
     if isinstance(value, bool):
         return 1.0 if value else 0.0
     if isinstance(value, (int, float)):
@@ -67,8 +87,6 @@ def to_number(value: CellValue) -> float | XlError:
         if number is None:
             return XlError.VALUE
         return number
-    if isinstance(value, ExcelRange):
-        return XlError.VALUE
     return XlError.VALUE
 
 
@@ -92,24 +110,28 @@ def _format_general_number(value: float | int) -> str:
 
 
 def to_string(value: CellValue) -> str:
+    scalar = as_scalar(value)
+    if isinstance(scalar, XlError):
+        return scalar.value
+    value = cast(CellValue, scalar)
     if value is None:
         return ""
     if isinstance(value, bool):
         return "TRUE" if value else "FALSE"
-    if isinstance(value, XlError):
-        return value.value
     if isinstance(value, (int, float)):
         return _format_general_number(float(value))
-    if isinstance(value, ExcelRange):
-        return XlError.VALUE.value
+    if isinstance(value, str):
+        return value
     return str(value)
 
 
 def to_bool(value: CellValue) -> bool | XlError:
+    scalar = as_scalar(value)
+    if isinstance(scalar, XlError):
+        return scalar
+    value = cast(CellValue, scalar)
     if value is None:
         return False
-    if isinstance(value, XlError):
-        return value
     if isinstance(value, bool):
         return value
     if isinstance(value, (int, float)):
@@ -123,8 +145,6 @@ def to_bool(value: CellValue) -> bool | XlError:
         if s == "FALSE":
             return False
         return XlError.VALUE
-    if isinstance(value, ExcelRange):
-        return XlError.VALUE
     return XlError.VALUE
 
 
@@ -132,7 +152,14 @@ def excel_casefold(value: str) -> str:
     return value.casefold()
 
 
-def flatten(*args: Any) -> Iterator[CellValue]:
+def flatten(*args: object) -> Iterator[CellValue]:
+    """Flatten nested lists and ndarrays; do not walk lazy `Range` values.
+
+    AST error prechecks (`get_error`) stay shallow for `Range` so selective
+    consumers are not forced to evaluate every cell. Full-scan reductions that
+    need cell-level traversal materialize (or, later, iterate `Range` inside the
+    aggregate) rather than relying on this helper.
+    """
     for arg in args:
         if isinstance(arg, np.ndarray):
             yield from (v for v in arg.flat)
@@ -140,10 +167,14 @@ def flatten(*args: Any) -> Iterator[CellValue]:
         if isinstance(arg, (list, tuple)):
             yield from flatten(*arg)
             continue
-        yield arg
+        yield cast("CellValue", arg)
 
 
-def get_error(*args: Any) -> XlError | None:
+def get_error(*args: object) -> XlError | None:
+    """Return the first top-level / flattened-list `XlError`, if any.
+
+    Does not evaluate cells inside a lazy `Range` (see `flatten`).
+    """
     for v in flatten(*args):
         if isinstance(v, XlError):
             return v

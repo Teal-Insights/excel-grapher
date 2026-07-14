@@ -175,7 +175,7 @@ class TestArrayOperatorOperandBinding:
         )
         # S!A1:A3 is used twice in the formula; without operand binding the
         # three-way guard duplicates it many times per nesting level.
-        assert body.count("xl_range(ctx, 'S!A1:S!A3')") == 2
+        assert body.count("xl_range(ctx, 'S!A1:A3')") == 2
 
     def test_nested_array_operator_code_size_stays_linear(self) -> None:
         depth1 = self._cell_body(

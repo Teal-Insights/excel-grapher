@@ -3,7 +3,8 @@
 The lazy range value is named `Range`. It stores rectangular worksheet geometry
 and a resolver callable with the shape `resolver(address: str) -> CellValue`.
 Range consumers in this package accept lazy ranges (and nested lists) instead
-of numpy object arrays.
+of numpy object arrays. Worksheet reference geometry uses the shared core
+`ExcelRange` type.
 
 Excel errors raise `XlErrorException` in exported code; error-consuming
 functions (`IFERROR`, `IS*`) receive lazily-evaluated thunks.

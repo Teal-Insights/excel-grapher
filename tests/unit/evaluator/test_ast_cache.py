@@ -123,13 +123,13 @@ def test_ast_cache_is_bounded() -> None:
 
     with FormulaEvaluator(graph, ast_cache_maxsize=2) as ev:
         ev.evaluate(["S!A1", "S!A2", "S!A3"])
-        assert len(ev._ast_cache) == 2  # noqa: SLF001
+        assert len(ev._ast_cache) == 2
 
         info_before = ev.ast_cache_info()
         assert info_before.currsize == 2
         assert info_before.maxsize == 2
 
-        ev._cache.pop("S!A1")  # noqa: SLF001 — force re-evaluation past value cache
+        ev._cache.pop("S!A1")
         ev.evaluate(["S!A1"])
         info_after = ev.ast_cache_info()
         assert info_after.misses == info_before.misses + 1
@@ -141,7 +141,7 @@ def test_parse_error_not_cached() -> None:
     with FormulaEvaluator(graph) as ev:
         with pytest.raises(ParseError):
             ev.evaluate(["S!A1"])
-        assert len(ev._ast_cache) == 0  # noqa: SLF001
+        assert len(ev._ast_cache) == 0
 
         with pytest.raises(ParseError):
             ev.evaluate(["S!A1"])
@@ -158,12 +158,12 @@ def test_clear_caches_clears_ast_and_value_caches() -> None:
 
     with FormulaEvaluator(graph) as ev:
         ev.evaluate(["S!B1"])
-        assert ev._cache  # noqa: SLF001
-        assert len(ev._ast_cache) == 1  # noqa: SLF001
+        assert ev._cache
+        assert len(ev._ast_cache) == 1
 
         ev.clear_caches()
-        assert ev._cache == {}  # noqa: SLF001
-        assert len(ev._ast_cache) == 0  # noqa: SLF001
+        assert ev._cache == {}
+        assert len(ev._ast_cache) == 0
 
 
 def test_ast_cache_default_maxsize() -> None:
@@ -219,6 +219,6 @@ def test_ast_cache_seed_respects_maxsize() -> None:
     )
 
     assert len(cache) == 2
-    assert "=1" not in cache._cache  # noqa: SLF001
-    assert "=2" in cache._cache  # noqa: SLF001
-    assert "=3" in cache._cache  # noqa: SLF001
+    assert "=1" not in cache._cache
+    assert "=2" in cache._cache
+    assert "=3" in cache._cache
