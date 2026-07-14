@@ -21,9 +21,12 @@ def _core_modules(*, include_operators_fastpath: bool) -> list[tuple[str, Path]]
         if include_operators_fastpath
         else _OPERATORS_FASTPATH_STUB_MODULE
     )
+    grid_dir = _CORE_DIR / "grid"
     return [
         ("core.address_keys", _CORE_DIR / "address_keys.py"),
         ("core.types", _CORE_DIR / "types.py"),
+        ("core.grid.ranges", grid_dir / "ranges.py"),
+        ("core.grid.grid", grid_dir / "grid.py"),
         ("core.coercions", _CORE_DIR / "coercions.py"),
         ("core.operators_reference", _CORE_DIR / "operators_reference.py"),
         ("core.operators_fastpath", fastpath_path),
@@ -34,6 +37,7 @@ def _core_modules(*, include_operators_fastpath: bool) -> list[tuple[str, Path]]
         ("core.math_funcs", _CORE_DIR / "math_funcs.py"),
         ("core.text_funcs", _CORE_DIR / "text_funcs.py"),
         ("core.reference_funcs", _CORE_DIR / "reference_funcs.py"),
+        ("core.lookup_funcs", _CORE_DIR / "lookup_funcs.py"),
     ]
 
 

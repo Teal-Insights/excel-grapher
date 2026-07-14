@@ -18,6 +18,15 @@ This gives **fast, accurate, repeatable** execution for any given workbook, but 
 - Re-extract and re-run a computation whenever the workbook changes.
 - Keep a tight coupling to Excel while still running logic in Python.
 
+### Range operands
+
+Lookup consumers (`MATCH`, `VLOOKUP`, `HLOOKUP`, `LOOKUP`, `XLOOKUP`) receive
+lazy `Range` values from `excel_grapher.core.grid` and evaluate only the cells
+they touch — matching the exported runtime. Full-scan reductions such as
+`SUMPRODUCT` still materialize ranges where vectorized fast paths need a dense
+buffer. Errors remain `XlError` sentinels (the evaluator never raises
+`XlErrorException`).
+
 ### Minimal evaluator example
 
 ```python

@@ -50,6 +50,8 @@ class XlErrorException(Exception):
 
 @dataclass(frozen=True, slots=True)
 class ExcelRange:
+    """Rectangular worksheet reference geometry for evaluator and export."""
+
     sheet: str
     start_row: int
     start_col: int
@@ -58,19 +60,32 @@ class ExcelRange:
 
     @property
     def shape(self) -> tuple[int, int]:
+        """The reference shape as `(rows, columns)`."""
         return (self.end_row - self.start_row + 1, self.end_col - self.start_col + 1)
 
     def cell_addresses(self) -> Iterator[str]:
+        """Yield row-major sheet-qualified addresses without evaluating cells."""
         for r in range(self.start_row, self.end_row + 1):
             for c in range(self.start_col, self.end_col + 1):
                 col = fastpyxl.utils.cell.get_column_letter(c)
                 yield format_key(self.sheet, f"{col}{r}")
 
-    def resolve(self, evaluate_fn: Callable[[str], CellValue]) -> np.ndarray:
-        values: list[CellValue] = [evaluate_fn(addr) for addr in self.cell_addresses()]
-        rows, cols = self.shape
-        return np.array(values, dtype=object).reshape((rows, cols))
+
+def resolve_excel_range(
+    rng: ExcelRange,
+    evaluate_fn: Callable[[str], CellValue],
+) -> np.ndarray:
+    """Eagerly materialize `rng` to an object-dtype ndarray via `evaluate_fn`.
+
+    Prefer lazy `Range` consumers when only a subset of cells is needed.
+    """
+    values: list[CellValue] = [evaluate_fn(addr) for addr in rng.cell_addresses()]
+    rows, cols = rng.shape
+    return np.array(values, dtype=object).reshape((rows, cols))
 
 
-# Scalar values, references, and object-dtype ndarrays of CellValue (e.g. OFFSET result).
+# Scalar values, references, and object-dtype ndarrays of CellValue (e.g. OFFSET /
+# SUMPRODUCT). Lazy `Range` values from `excel_grapher.core.grid` are also used as
+# function operands in the evaluator; they are not listed here to avoid a circular
+# import with `core.grid.ranges`.
 CellValue: TypeAlias = float | int | str | bool | XlError | ExcelRange | np.ndarray | None

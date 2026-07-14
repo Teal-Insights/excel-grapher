@@ -278,7 +278,7 @@ DEP_TRACKING_CALL_MARKERS = frozenset(
 )
 
 # Baseline for non-iterative minimal export (S!A1 leaf + S!B1 formula).
-DEP_TRACKING_BASELINE_VERSION = 9
+DEP_TRACKING_BASELINE_VERSION = 10
 SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET = 62
 
 

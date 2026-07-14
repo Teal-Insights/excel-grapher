@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, overload
+from typing import TYPE_CHECKING, cast, overload
 
 import fastpyxl.utils.cell
 
@@ -13,12 +13,17 @@ from excel_grapher.core.address_keys import (
     parse_address,
 )
 from excel_grapher.core.addressing import index_excel_range
-from excel_grapher.core.excel_function_meta import numpy_array_arg_indices
+from excel_grapher.core.excel_function_meta import (
+    lazy_range_arg_indices,
+    numpy_array_arg_indices,
+)
+from excel_grapher.core.grid import Range
 from excel_grapher.core.range_shorthand import (
     SheetBounds,
     resolve_whole_column,
     resolve_whole_row,
 )
+from excel_grapher.core.types import CellValue, ExcelRange, XlError, resolve_excel_range
 from excel_grapher.evaluator.name_utils import normalize_excel_function_name
 from excel_grapher.grapher.blank_ranges import (
     address_in_blank_ranges,
@@ -73,7 +78,6 @@ from .parser import (
     WholeRowNode,
     parse,
 )
-from .types import CellValue, ExcelRange, XlError
 
 _SKIP_ERROR_PRECHECK = {
     "LOOKUP",
@@ -411,7 +415,18 @@ class FormulaEvaluator:
         raise TypeError(f"Unknown AST node: {type(node)}")
 
     def _resolve_range(self, rng: ExcelRange) -> numpy.ndarray:
-        return rng.resolve(self._evaluate_cell)
+        return resolve_excel_range(rng, self._evaluate_cell)
+
+    def _as_lazy_range(self, rng: ExcelRange) -> Range:
+        """Bind an ``ExcelRange`` geometry to the evaluator cell resolver."""
+        return Range(
+            rng.sheet,
+            rng.start_row,
+            rng.start_col,
+            rng.end_row,
+            rng.end_col,
+            self._evaluate_cell,
+        )
 
     def _resolve_function_arg(
         self,
@@ -421,12 +436,17 @@ class FormulaEvaluator:
     ) -> CellValue:
         """Resolve ``ExcelRange`` arguments for runtime function calls.
 
-        Array/table parameters keep numpy arrays; single-cell references in value
-        contexts (e.g. ``TEXT(INDEX(...))``) promote to scalars so export parity
-        matches codegen's scalar ``INDEX`` handling.
+        Lookup table parameters stay as lazy ``Range`` values (selective access).
+        Full-scan reductions (e.g. ``SUMPRODUCT``) keep numpy arrays. Single-cell
+        references in value contexts (e.g. ``TEXT(INDEX(...))``) promote to
+        scalars so export parity matches codegen's scalar ``INDEX`` handling.
         """
         if not isinstance(value, ExcelRange):
             return value
+        if arg_index in lazy_range_arg_indices(func_name):
+            # Lazy Range is a legal function operand; omitted from CellValue to
+            # avoid a circular import with core.grid.
+            return cast(CellValue, self._as_lazy_range(value))
         if arg_index in numpy_array_arg_indices(func_name):
             return self._resolve_range(value)
         if value.start_row == value.end_row and value.start_col == value.end_col:
