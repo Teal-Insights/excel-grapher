@@ -455,3 +455,20 @@ def test_measure_dtype_allows_none_for_empty_measure_policy() -> None:
         **_SERIES_KWARGS,
     )
     assert result == []
+
+
+def test_measure_dtype_accepts_numpy_int_positional_array() -> None:
+    np = pytest.importorskip("numpy")
+    result = coerce_setter_input(
+        np.array([1, 2, 3, 4, 5]),
+        measure_dtype="float",
+        **_SERIES_KWARGS,
+    )
+    assert result == [
+        {"TIME_PERIOD": 1, "OBS_VALUE": 1.0},
+        {"TIME_PERIOD": 2, "OBS_VALUE": 2.0},
+        {"TIME_PERIOD": 3, "OBS_VALUE": 3.0},
+        {"TIME_PERIOD": 4, "OBS_VALUE": 4.0},
+        {"TIME_PERIOD": 5, "OBS_VALUE": 5.0},
+    ]
+    assert all(isinstance(record["OBS_VALUE"], float) for record in result)

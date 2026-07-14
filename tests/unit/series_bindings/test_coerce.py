@@ -176,3 +176,28 @@ def test_validate_binding_scalar_none_passthrough() -> None:
 
 def test_validate_binding_scalar_auto_passthrough() -> None:
     assert validate_binding_scalar("x", "auto") == "x"
+
+
+def test_validate_binding_scalar_accepts_numpy_numeric_scalars() -> None:
+    np = pytest.importorskip("numpy")
+    assert validate_binding_scalar(np.float64(1.5), "float") == 1.5
+    assert validate_binding_scalar(np.int64(3), "float") == 3.0
+    assert validate_binding_scalar(np.int64(3), "number") == 3
+    assert validate_binding_scalar(np.float64(3.5), "number") == 3.5
+    assert validate_binding_scalar(np.int64(3), "int") == 3
+    assert isinstance(validate_binding_scalar(np.int64(3), "int"), int)
+    assert validate_binding_scalar(np.bool_(True), "bool") is True
+
+
+def test_validate_binding_scalar_rejects_numpy_bool_for_numeric() -> None:
+    np = pytest.importorskip("numpy")
+    with pytest.raises(TypeError, match="float"):
+        validate_binding_scalar(np.bool_(True), "float")
+    with pytest.raises(TypeError, match="int"):
+        validate_binding_scalar(np.bool_(False), "int")
+
+
+def test_validate_binding_scalar_rejects_multi_element_numpy_array() -> None:
+    np = pytest.importorskip("numpy")
+    with pytest.raises(TypeError, match="float"):
+        validate_binding_scalar(np.array([1.0, 2.0]), "float")
