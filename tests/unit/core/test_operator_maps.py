@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+import pytest
+
 from excel_grapher.core import CellValue, XlError
 from excel_grapher.core.grid import Range
 from excel_grapher.core.operator_maps import (
@@ -69,3 +71,33 @@ def test_map_unary_over_lazy_range() -> None:
     rng = Range("S", 1, 1, 2, 1, lambda a: {"S!A1": 4, "S!A2": -6}[a])
     assert map_unary("-", rng) == [[-4], [6]]
     assert map_unary("%", [[50], [25]]) == [[0.5], [0.25]]
+
+
+def test_large_range_fastpath_miss_materializes_cells_only_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the vectorized fast path declines, reuse the materialized arrays."""
+    from excel_grapher.core import operators as operators_mod
+    from excel_grapher.core.operators_fastpath import MIN_OPERATOR_FASTPATH_CELLS
+
+    nrows = MIN_OPERATOR_FASTPATH_CELLS
+    calls: list[str] = []
+
+    def resolve(address: str) -> CellValue:
+        calls.append(address)
+        row = int(address.split("!")[1][1:])
+        return float(row)
+
+    monkeypatch.setattr(
+        operators_mod,
+        "try_fastpath_arithmetic_array",
+        lambda *_args, **_kwargs: None,
+    )
+
+    rng = Range("S", 1, 1, nrows, 1, resolve)
+    result = xl_mul(cast(CellValue, rng), 2.0)
+    expected = [[float(i) * 2.0] for i in range(1, nrows + 1)]
+    actual = cast(Any, result).tolist() if hasattr(result, "tolist") else result
+    assert actual == expected
+    assert len(calls) == nrows
+    assert calls == [f"S!A{i}" for i in range(1, nrows + 1)]

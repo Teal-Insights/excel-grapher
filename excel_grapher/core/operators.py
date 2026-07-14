@@ -6,8 +6,9 @@ arrays and failed guards use per-cell reference loops in ``operators_reference``
 Exponent (``^``) stays on a per-cell loop inside the fast path for parity.
 
 Lazy ``Range`` / nested-list operands use shared ``operator_maps`` (same loops as
-export ``xl_map_*``). Large grids may opt into the ndarray fast path after an
-explicit materialization at this boundary.
+export ``xl_map_*``). Large grids materialize once at this boundary and try
+``operators_fastpath``; on a miss the same arrays feed ``reference_*_array``
+rather than walking the ``Range`` a second time.
 """
 
 from __future__ import annotations
@@ -55,14 +56,20 @@ def _materialize_grid(grid: Grid) -> np.ndarray:
     )
 
 
-def _try_fastpath_from_grids(
+def _apply_large_grid_binary(
     op: str | None,
     left: object,
     right: object,
     *,
     kind: str,
 ) -> CellValue | None:
-    """Opt-in ndarray fast path when both sides fully materialize and size >= 64."""
+    """Materialize large grids once, then run fastpath or reference loops.
+
+    Returns `None` when operands are below ``MIN_OPERATOR_FASTPATH_CELLS`` (or
+    cannot form a grid pair) so the caller can use shared ``map_*`` loops.
+    When this path materializes, a fastpath miss reuses the same arrays via
+    ``reference_*_array`` — it does not fall through to a second Range walk.
+    """
     left_grid = Grid.wrap(left)
     right_grid = Grid.wrap(right)
     if left_grid is None and right_grid is None:
@@ -88,11 +95,20 @@ def _try_fastpath_from_grids(
 
     if kind == "compare":
         assert op is not None
-        return try_fastpath_compare_array(op, arr_left, arr_right)
+        fast = try_fastpath_compare_array(op, arr_left, arr_right)
+        if fast is not None:
+            return fast
+        return reference_compare_array(op, arr_left, arr_right)
     if kind == "concat":
-        return try_fastpath_concat_array(arr_left, arr_right)
+        fast = try_fastpath_concat_array(arr_left, arr_right)
+        if fast is not None:
+            return fast
+        return reference_concat_array(arr_left, arr_right)
     assert op is not None
-    return try_fastpath_arithmetic_array(op, arr_left, arr_right)
+    fast = try_fastpath_arithmetic_array(op, arr_left, arr_right)
+    if fast is not None:
+        return fast
+    return reference_arithmetic_array(op, arr_left, arr_right)
 
 
 def _compare_scalars(op: str, left: CellValue, right: CellValue) -> bool | XlError:
@@ -106,9 +122,9 @@ def _xl_compare(op: str, left: CellValue, right: CellValue) -> CellValue:
         return right
 
     if _is_range_or_list(left) or _is_range_or_list(right):
-        fast = _try_fastpath_from_grids(op, left, right, kind="compare")
-        if fast is not None:
-            return fast
+        large = _apply_large_grid_binary(op, left, right, kind="compare")
+        if large is not None:
+            return large
         return cast(CellValue, map_compare(op, left, right))
 
     if isinstance(left, np.ndarray) or isinstance(right, np.ndarray):
@@ -135,9 +151,9 @@ def _xl_arithmetic(
         return right
 
     if _is_range_or_list(left) or _is_range_or_list(right):
-        fast = _try_fastpath_from_grids(op, left, right, kind="arithmetic")
-        if fast is not None:
-            return fast
+        large = _apply_large_grid_binary(op, left, right, kind="arithmetic")
+        if large is not None:
+            return large
         return cast(CellValue, map_arithmetic(op, left, right))
 
     if isinstance(left, np.ndarray) or isinstance(right, np.ndarray):
@@ -170,9 +186,9 @@ def _xl_concat(left: CellValue, right: CellValue) -> CellValue:
         return right
 
     if _is_range_or_list(left) or _is_range_or_list(right):
-        fast = _try_fastpath_from_grids(None, left, right, kind="concat")
-        if fast is not None:
-            return fast
+        large = _apply_large_grid_binary(None, left, right, kind="concat")
+        if large is not None:
+            return large
         return cast(CellValue, map_concat(left, right))
 
     if isinstance(left, np.ndarray) or isinstance(right, np.ndarray):
