@@ -3,8 +3,9 @@
 Implementations return `XlError` sentinels. Runtime wrappers expose them to the
 evaluator; export_runtime wrappers raise `XlErrorException` at the boundary.
 
-Evaluator and export value vocabularies differ slightly (core vs export
-`ExcelRange`); shared traversal accepts opaque objects and narrows at use sites.
+Evaluator and export value vocabularies differ slightly (export `CellValue`
+also includes lazy `Range`); shared traversal accepts opaque objects and
+narrows at use sites.
 """
 
 from __future__ import annotations

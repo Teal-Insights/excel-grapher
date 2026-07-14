@@ -9,6 +9,7 @@ import fastpyxl.utils.cell
 
 from excel_grapher.core import CellValue, ExcelRange, XlError, XlErrorException
 from excel_grapher.core.addressing import split_sheet_qualified_address
+from excel_grapher.core.types import resolve_excel_range
 
 from .cache_context import EvalContext, EvalContextBase
 
@@ -206,7 +207,7 @@ def xl_range(ctx: EvalContext, address: str) -> CellValue:
         start_col_idx, end_col_idx = end_col_idx, start_col_idx
 
     rng = ExcelRange(sheet, start_row, start_col_idx, end_row, end_col_idx)
-    return rng.resolve(lambda addr: xl_cell(ctx, addr))
+    return resolve_excel_range(rng, lambda addr: xl_cell(ctx, addr))
 
 
 def _convergence_delta(prev: CellValue, curr: CellValue) -> float:

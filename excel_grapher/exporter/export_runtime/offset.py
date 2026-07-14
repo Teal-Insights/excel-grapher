@@ -174,8 +174,7 @@ def xl_offset(
 
     if h == 1 and w == 1:
         addr = _format_address(sheet, target_row, target_col)
-        # Core `CellValue` includes core `ExcelRange`; export `CellValue` uses the
-        # export-runtime geometry type. Scalar results are always assignable.
+        # Scalar OFFSET results are CellValue; multi-cell returns a lazy Range.
         return cast("CellValue", xl_cell(ctx, addr))
 
     return _ctx_range(ctx, sheet, target_row, target_col, target_row + h - 1, target_col + w - 1)

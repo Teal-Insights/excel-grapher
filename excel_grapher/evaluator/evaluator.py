@@ -23,6 +23,7 @@ from excel_grapher.core.range_shorthand import (
     resolve_whole_column,
     resolve_whole_row,
 )
+from excel_grapher.core.types import CellValue, ExcelRange, XlError, resolve_excel_range
 from excel_grapher.evaluator.name_utils import normalize_excel_function_name
 from excel_grapher.grapher.blank_ranges import (
     address_in_blank_ranges,
@@ -77,7 +78,6 @@ from .parser import (
     WholeRowNode,
     parse,
 )
-from .types import CellValue, ExcelRange, XlError
 
 _SKIP_ERROR_PRECHECK = {
     "LOOKUP",
@@ -415,7 +415,7 @@ class FormulaEvaluator:
         raise TypeError(f"Unknown AST node: {type(node)}")
 
     def _resolve_range(self, rng: ExcelRange) -> numpy.ndarray:
-        return rng.resolve(self._evaluate_cell)
+        return resolve_excel_range(rng, self._evaluate_cell)
 
     def _as_lazy_range(self, rng: ExcelRange) -> Range:
         """Bind an ``ExcelRange`` geometry to the evaluator cell resolver."""

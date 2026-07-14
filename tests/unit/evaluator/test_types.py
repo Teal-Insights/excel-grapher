@@ -1,6 +1,8 @@
 import numpy as np
 
-from excel_grapher.evaluator.types import ExcelRange
+from excel_grapher.core.types import ExcelRange, resolve_excel_range
+from excel_grapher.evaluator.types import ExcelRange as EvaluatorExcelRange
+from excel_grapher.exporter.export_runtime import ExcelRange as ExportExcelRange
 
 
 def test_excel_range_cell_addresses() -> None:
@@ -30,7 +32,16 @@ def test_excel_range_resolve_shapes_array() -> None:
         "S!C2": 6,
     }
 
-    arr = r.resolve(lambda addr: mapping.get(addr))
+    arr = resolve_excel_range(r, lambda addr: mapping.get(addr))
     assert isinstance(arr, np.ndarray)
     assert arr.shape == (2, 3)
     assert arr.tolist() == [[1, 2, 3], [4, 5, 6]]
+
+
+def test_excel_range_is_shared_across_evaluator_and_export() -> None:
+    """One ExcelRange type for geometry (no evaluator/export fork)."""
+    assert EvaluatorExcelRange is ExcelRange
+    assert ExportExcelRange is ExcelRange
+    rng = ExportExcelRange("S", 1, 1, 2, 2)
+    assert isinstance(rng, EvaluatorExcelRange)
+    assert rng.shape == (2, 2)

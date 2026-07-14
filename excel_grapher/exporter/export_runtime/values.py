@@ -3,36 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import dataclass
 from math import isfinite
 from typing import TypeAlias, cast
 
 from excel_grapher.core import XlError
 from excel_grapher.core.grid import Grid, Range, Scalar
-from excel_grapher.core.types import XlErrorException
+from excel_grapher.core.types import ExcelRange, XlErrorException
 
 __all__ = ["CellValue", "ExcelRange", "Grid", "Scalar", "as_scalar", "flatten"]
-
-
-@dataclass(frozen=True, slots=True)
-class ExcelRange:
-    """Rectangular worksheet reference geometry for exported code.
-
-    Unlike the evaluator's `ExcelRange`, this variant carries geometry only;
-    exported code resolves cell values through the lazy `Range` type instead
-    of eager array materialization.
-    """
-
-    sheet: str
-    start_row: int
-    start_col: int
-    end_row: int
-    end_col: int
-
-    @property
-    def shape(self) -> tuple[int, int]:
-        """The reference shape as `(rows, columns)`."""
-        return (self.end_row - self.start_row + 1, self.end_col - self.start_col + 1)
 
 
 CellValue: TypeAlias = Scalar | ExcelRange | Range | list["CellValue"]

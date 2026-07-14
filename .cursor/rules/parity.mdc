@@ -58,7 +58,10 @@ Export error-channel specifics:
 ## Shared lazy range / grid representation
 
 `excel_grapher.core.grid` (`Range`, `Grid`) is the shared rectangular value
-model:
+model, and `excel_grapher.core.types.ExcelRange` is the single shared geometry
+type (evaluator and export). Eager materialization uses
+`resolve_excel_range` when a consumer needs a dense ndarray; lookup consumers
+bind lazy `Range` instead.
 
 | Consumer | Error channel | How ranges are bound |
 | -------- | ------------- | -------------------- |

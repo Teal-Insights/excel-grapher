@@ -43,7 +43,7 @@ from .operators import (
     xl_pow,
     xl_sub,
 )
-from .types import CellValue, ExcelRange, XlError
+from .types import CellValue, ExcelRange, XlError, resolve_excel_range
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,7 +95,7 @@ def evaluate_expr(
     supports:
     - Literals (numbers, strings, booleans, Excel error literals)
     - Sheet-qualified cell refs (via get_cell_value)
-    - Simple ranges (resolved to numpy arrays via ExcelRange.resolve)
+    - Simple ranges (resolved to numpy arrays via resolve_excel_range)
     - A small function whitelist (SUM, MIN, MAX, ABS, IF, ROW, COLUMN)
     - Basic arithmetic/comparison/string operators
 
@@ -137,7 +137,7 @@ def _eval(
         excel_range = _range_node_to_excel_range(node)
         if excel_range is None:
             return Unsupported("multi-sheet or malformed range")
-        return excel_range.resolve(get_cell_value)
+        return resolve_excel_range(excel_range, get_cell_value)
 
     if isinstance(node, UnaryOpNode):
         value = _eval(
