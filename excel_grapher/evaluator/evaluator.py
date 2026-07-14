@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, overload
+from typing import TYPE_CHECKING, cast, overload
 
 import fastpyxl.utils.cell
 
@@ -444,7 +444,9 @@ class FormulaEvaluator:
         if not isinstance(value, ExcelRange):
             return value
         if arg_index in lazy_range_arg_indices(func_name):
-            return self._as_lazy_range(value)  # type: ignore[return-value]
+            # Lazy Range is a legal function operand; omitted from CellValue to
+            # avoid a circular import with core.grid.
+            return cast(CellValue, self._as_lazy_range(value))
         if arg_index in numpy_array_arg_indices(func_name):
             return self._resolve_range(value)
         if value.start_row == value.end_row and value.start_col == value.end_col:

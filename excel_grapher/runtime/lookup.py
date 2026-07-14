@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 import numpy as np
 
 from excel_grapher.core import CellValue, XlError, to_native, to_number
@@ -26,7 +28,7 @@ __all__ = [
 def _array_arg(value: object) -> object:
     """Materialize numpy arrays to nested lists for shared Grid consumers."""
     if isinstance(value, np.ndarray):
-        return value.tolist()
+        return cast(Any, value).tolist()
     return value
 
 
@@ -35,7 +37,10 @@ def xl_lookup(
     lookup_vector_or_array: object,
     result_vector: object = None,
 ) -> CellValue:
-    return lookup_cells(lookup_value, _array_arg(lookup_vector_or_array), _array_arg(result_vector))
+    return cast(
+        CellValue,
+        lookup_cells(lookup_value, _array_arg(lookup_vector_or_array), _array_arg(result_vector)),
+    )
 
 
 def xl_index(array: np.ndarray, row_num: CellValue, col_num: CellValue = None) -> CellValue:
@@ -115,7 +120,10 @@ def xl_vlookup(
     col_index_num: CellValue,
     range_lookup: CellValue = True,
 ) -> CellValue:
-    return vlookup_cells(lookup_value, _array_arg(table_array), col_index_num, range_lookup)
+    return cast(
+        CellValue,
+        vlookup_cells(lookup_value, _array_arg(table_array), col_index_num, range_lookup),
+    )
 
 
 def xl_hlookup(
@@ -124,7 +132,10 @@ def xl_hlookup(
     row_index_num: CellValue,
     range_lookup: CellValue = True,
 ) -> CellValue:
-    return hlookup_cells(lookup_value, _array_arg(table_array), row_index_num, range_lookup)
+    return cast(
+        CellValue,
+        hlookup_cells(lookup_value, _array_arg(table_array), row_index_num, range_lookup),
+    )
 
 
 def xl_xlookup(
@@ -135,11 +146,14 @@ def xl_xlookup(
     match_mode: CellValue = 0,
     search_mode: CellValue = 1,
 ) -> CellValue:
-    return xlookup_cells(
-        lookup_value,
-        _array_arg(lookup_array),
-        _array_arg(return_array),
-        if_not_found,
-        match_mode,
-        search_mode,
+    return cast(
+        CellValue,
+        xlookup_cells(
+            lookup_value,
+            _array_arg(lookup_array),
+            _array_arg(return_array),
+            if_not_found,
+            match_mode,
+            search_mode,
+        ),
     )
