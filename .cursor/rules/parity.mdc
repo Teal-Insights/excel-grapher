@@ -80,12 +80,16 @@ multi-cell args via `eager_materialize_arg_indices` / `grid_range_arg_indices`
 Lookup/reference algorithms (`INDEX`, `MATCH`, `VLOOKUP`, …) live in
 `excel_grapher.core.lookup_funcs` (sentinel returns). `runtime/lookup.py`
 exposes them to the evaluator; `export_runtime/lookup.py` raises at the wrapper
-boundary. Do not introduce a third traversal copy.
+boundary. Element-wise operators live in `excel_grapher.core.operator_maps`
+with the same adapter pattern (`core.operators` / `export_runtime.operators`).
+Do not introduce a third traversal copy.
 
 Behavioral parity (evaluator ↔ export ↔ Excel) is unchanged by representation
 convergence. Remaining eager numpy use in the evaluator hot path is confined to
-full-scan reductions / optional operator fast paths
-(`eager_materialize_arg_indices` plus `_resolve_binary_operand`).
+full-scan reductions via `eager_materialize_arg_indices` and optional operator
+fast paths (explicit materialization when a Grid binary op is large enough).
+Binary range operands bind lazy `Range` and share `core.operator_maps` with
+export `xl_map_*`.
 
 ## Layered semantics: core, runtime, and export_runtime
 

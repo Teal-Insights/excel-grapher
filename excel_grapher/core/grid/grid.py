@@ -13,6 +13,24 @@ __all__ = ["Grid", "Scalar"]
 Scalar: TypeAlias = float | int | str | bool | XlError | None
 
 
+def _as_nested_rows_from_ndarray(value: object) -> list[list[CellValue]] | None:
+    """Convert an ndarray-like value to nested lists without importing NumPy.
+
+    Duck-types via ``ndim`` / ``tolist`` so the grid module stays import-light
+    for standalone exports that must remain NumPy-free.
+    """
+    ndim = getattr(value, "ndim", None)
+    tolist = getattr(value, "tolist", None)
+    if not isinstance(ndim, int) or not callable(tolist):
+        return None
+    if ndim == 0:
+        return None
+    raw = tolist()
+    if ndim == 1:
+        return [[cast(CellValue, cell)] for cell in raw]
+    return cast("list[list[CellValue]]", raw)
+
+
 class Grid:
     """Positional raw-value access over a lazy `Range` or nested-list array."""
 
@@ -36,6 +54,11 @@ class Grid:
         if isinstance(value, Range):
             nrows, ncols = value.shape
             return Grid(nrows, ncols, value, None)
+        ndarray_rows = _as_nested_rows_from_ndarray(value)
+        if ndarray_rows is not None:
+            if not ndarray_rows:
+                ndarray_rows = [[None]]
+            return Grid(len(ndarray_rows), len(ndarray_rows[0]), None, ndarray_rows)
         if isinstance(value, (list, tuple)):
             rows = [
                 list(row) if isinstance(row, (list, tuple)) else [row]

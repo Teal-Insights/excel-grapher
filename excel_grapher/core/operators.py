@@ -4,6 +4,10 @@ Array operands try vectorized fast paths in ``operators_fastpath`` first when th
 broadcast array has at least ``MIN_OPERATOR_FASTPATH_CELLS`` (64) elements; smaller
 arrays and failed guards use per-cell reference loops in ``operators_reference``.
 Exponent (``^``) stays on a per-cell loop inside the fast path for parity.
+
+Lazy ``Range`` / nested-list operands use shared ``operator_maps`` (same loops as
+export ``xl_map_*``). Large grids may opt into the ndarray fast path after an
+explicit materialization at this boundary.
 """
 
 from __future__ import annotations
@@ -11,7 +15,10 @@ from __future__ import annotations
 import numpy as np
 
 from .coercions import to_number
+from .grid import Grid, Range
+from .operator_maps import map_arithmetic, map_compare, map_concat, map_unary
 from .operators_fastpath import (
+    MIN_OPERATOR_FASTPATH_CELLS,
     try_fastpath_arithmetic_array,
     try_fastpath_compare_array,
     try_fastpath_concat_array,
@@ -35,6 +42,57 @@ def _broadcast_pair(
     return broadcast_pair(left, right)
 
 
+def _is_range_or_list(value: object) -> bool:
+    return isinstance(value, (Range, list, tuple))
+
+
+def _materialize_grid(grid: Grid) -> np.ndarray:
+    return np.array(
+        [[grid.at(row0, col0) for col0 in range(grid.ncols)] for row0 in range(grid.nrows)],
+        dtype=object,
+    )
+
+
+def _try_fastpath_from_grids(
+    op: str | None,
+    left: object,
+    right: object,
+    *,
+    kind: str,
+) -> CellValue | None:
+    """Opt-in ndarray fast path when both sides fully materialize and size >= 64."""
+    left_grid = Grid.wrap(left)
+    right_grid = Grid.wrap(right)
+    if left_grid is None and right_grid is None:
+        return None
+    if left_grid is not None and right_grid is not None:
+        if (left_grid.nrows, left_grid.ncols) != (right_grid.nrows, right_grid.ncols):
+            return None
+        if left_grid.size < MIN_OPERATOR_FASTPATH_CELLS:
+            return None
+        arr_left = _materialize_grid(left_grid)
+        arr_right = _materialize_grid(right_grid)
+    elif left_grid is not None:
+        if left_grid.size < MIN_OPERATOR_FASTPATH_CELLS:
+            return None
+        arr_left = _materialize_grid(left_grid)
+        arr_right = np.full(arr_left.shape, right, dtype=object)
+    else:
+        assert right_grid is not None
+        if right_grid.size < MIN_OPERATOR_FASTPATH_CELLS:
+            return None
+        arr_right = _materialize_grid(right_grid)
+        arr_left = np.full(arr_right.shape, left, dtype=object)
+
+    if kind == "compare":
+        assert op is not None
+        return try_fastpath_compare_array(op, arr_left, arr_right)
+    if kind == "concat":
+        return try_fastpath_concat_array(arr_left, arr_right)
+    assert op is not None
+    return try_fastpath_arithmetic_array(op, arr_left, arr_right)
+
+
 def _compare_scalars(op: str, left: CellValue, right: CellValue) -> bool | XlError:
     return compare_scalars(op, left, right)
 
@@ -44,6 +102,12 @@ def _xl_compare(op: str, left: CellValue, right: CellValue) -> CellValue:
         return left
     if isinstance(right, XlError):
         return right
+
+    if _is_range_or_list(left) or _is_range_or_list(right):
+        fast = _try_fastpath_from_grids(op, left, right, kind="compare")
+        if fast is not None:
+            return fast
+        return map_compare(op, left, right)
 
     if isinstance(left, np.ndarray) or isinstance(right, np.ndarray):
         pair = _broadcast_pair(left, right)
@@ -67,6 +131,12 @@ def _xl_arithmetic(
         return left
     if isinstance(right, XlError):
         return right
+
+    if _is_range_or_list(left) or _is_range_or_list(right):
+        fast = _try_fastpath_from_grids(op, left, right, kind="arithmetic")
+        if fast is not None:
+            return fast
+        return map_arithmetic(op, left, right)
 
     if isinstance(left, np.ndarray) or isinstance(right, np.ndarray):
         pair = _broadcast_pair(left, right)
@@ -96,6 +166,12 @@ def _xl_concat(left: CellValue, right: CellValue) -> CellValue:
         return left
     if isinstance(right, XlError):
         return right
+
+    if _is_range_or_list(left) or _is_range_or_list(right):
+        fast = _try_fastpath_from_grids(None, left, right, kind="concat")
+        if fast is not None:
+            return fast
+        return map_concat(left, right)
 
     if isinstance(left, np.ndarray) or isinstance(right, np.ndarray):
         pair = _broadcast_pair(left, right)
@@ -164,29 +240,14 @@ def xl_pow(left: CellValue, right: CellValue) -> CellValue:
     return _xl_arithmetic("^", left, right)
 
 
-def xl_neg(value: CellValue) -> float | XlError:
-    if isinstance(value, XlError):
-        return value
-    n = to_number(value)
-    if isinstance(n, XlError):
-        return n
-    return -n
+def xl_neg(value: CellValue) -> CellValue:
+    return map_unary("-", value)
 
 
-def xl_pos(value: CellValue) -> float | XlError:
-    if isinstance(value, XlError):
-        return value
-    n = to_number(value)
-    if isinstance(n, XlError):
-        return n
-    return +n
+def xl_pos(value: CellValue) -> CellValue:
+    return map_unary("+", value)
 
 
-def xl_percent(value: CellValue) -> float | XlError:
+def xl_percent(value: CellValue) -> CellValue:
     """Excel postfix percent operator (%): divide a numeric value by 100."""
-    if isinstance(value, XlError):
-        return value
-    n = to_number(value)
-    if isinstance(n, XlError):
-        return n
-    return n / 100.0
+    return map_unary("%", value)
