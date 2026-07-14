@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.4.3 (2026-07-14)
+
+### Bug Fixes
+
+- **addressing**: Accept ExcelRangeGeometry protocol for export embed
+  ([#383](https://github.com/Teal-Insights/excel-grapher/pull/383),
+  [`454c25a`](https://github.com/Teal-Insights/excel-grapher/commit/454c25a3a6abc5d6a2ca32e7743c2b97386e7aa4))
+
+- **export_runtime**: Avoid CoreCellValue alias in embedded resolver
+  ([#383](https://github.com/Teal-Insights/excel-grapher/pull/383),
+  [`454c25a`](https://github.com/Teal-Insights/excel-grapher/commit/454c25a3a6abc5d6a2ca32e7743c2b97386e7aa4))
+
+### Refactoring
+
+- Remove dead type/lint suppressions and narrow export ExcelRange bridging
+  ([#383](https://github.com/Teal-Insights/excel-grapher/pull/383),
+  [`454c25a`](https://github.com/Teal-Insights/excel-grapher/commit/454c25a3a6abc5d6a2ca32e7743c2b97386e7aa4))
+
+- Typing audit — drop dead suppressions, narrow ExcelRange casts
+  ([#383](https://github.com/Teal-Insights/excel-grapher/pull/383),
+  [`454c25a`](https://github.com/Teal-Insights/excel-grapher/commit/454c25a3a6abc5d6a2ca32e7743c2b97386e7aa4))
+
+
 ## v3.4.2 (2026-07-13)
 
 ### Bug Fixes
