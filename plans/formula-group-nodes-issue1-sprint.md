@@ -126,7 +126,7 @@ row extent fields as the long-term model.
 
 ---
 
-### Sprint 3 — Graph storage, occupancy, edges, locate
+### Sprint 3 — Graph storage, occupancy, edges, locate ✅
 
 **Files:** `excel_grapher/grapher/graph.py` (+ node locate helpers if still in `node.py`)
 

@@ -664,8 +664,9 @@ def locate_cell(graph: _GraphNodeLookup, cell_key: str) -> CellLocation | None:
     """Return where a single cell is represented in `graph`.
 
     Resolution order:
-    1. Exact `kind=cell` node at `cell_key`.
-    2. Otherwise the unique covering multi-cell node (`row` or `union`), if any.
+    1. Occupancy index via `graph.cell_owner` when available (O(1)).
+    2. Exact `kind=cell` node at `cell_key`.
+    3. Otherwise the unique covering multi-cell node (`row` or `union`), if any.
 
     Returns:
         `CellLocation` when the cell is represented, else `None`.
@@ -675,6 +676,28 @@ def locate_cell(graph: _GraphNodeLookup, cell_key: str) -> CellLocation | None:
             is violated (cell node plus covering multi-cell, or multiple covers).
     """
     canonical, _sheet, column, _row = _require_single_cell_key(cell_key)
+
+    cell_owner_fn = getattr(graph, "cell_owner", None)
+    if callable(cell_owner_fn):
+        owner_key = cell_owner_fn(canonical)
+        if owner_key is None:
+            return None
+        owner = graph.get_node(owner_key)
+        if owner is None:
+            return None
+        cell_node = graph.get_node(canonical)
+        if cell_node is not None and cell_node.kind is NodeKind.cell and owner_key != canonical:
+            raise ValueError(
+                f"Unique cell occupancy violated for {canonical}: "
+                f"cell node exists and is also covered by node(s) {owner_key}"
+            )
+        return CellLocation(
+            cell_key=canonical,
+            kind=owner.kind,
+            node_key=owner_key,
+            column=column,
+        )
+
     cell_node = graph.get_node(canonical)
     covering = find_nodes_covering_cell(graph, canonical)
 
@@ -695,8 +718,7 @@ def locate_cell(graph: _GraphNodeLookup, cell_key: str) -> CellLocation | None:
     if len(covering) > 1:
         keys = ", ".join(covering)
         raise ValueError(
-            f"Unique cell occupancy violated for {canonical}: "
-            f"covered by overlapping nodes {keys}"
+            f"Unique cell occupancy violated for {canonical}: covered by overlapping nodes {keys}"
         )
     if len(covering) == 1:
         owner = graph.get_node(covering[0])

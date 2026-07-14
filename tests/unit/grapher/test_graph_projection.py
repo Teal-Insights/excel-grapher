@@ -602,6 +602,7 @@ def test_projection_copy_preserves_graph_metadata_fields() -> None:
         "_guards",
         "_edge_extra",
         "_hooks",
+        "_occupancy",
     }
     metadata_field_names = tuple(
         field.name for field in fields(DependencyGraph) if field.name not in graph_structure_fields

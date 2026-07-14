@@ -108,12 +108,8 @@ def test_locate_cell_rejects_duplicate_occupancy_cell_and_row() -> None:
         locate_cell(g, "Sheet1!E63")
 
 
-def test_locate_cell_rejects_overlapping_row_nodes() -> None:
+def test_add_node_rejects_overlapping_row_nodes() -> None:
     g = DependencyGraph()
     g.add_node(make_row_node("Sheet1", 63, "D", "M"))
-    g._nodes["Sheet1!E63:Y63"] = make_row_node("Sheet1", 63, "E", "Y")
-    g._edges.setdefault("Sheet1!E63:Y63", set())
-    g._reverse_edges.setdefault("Sheet1!E63:Y63", set())
-
-    with pytest.raises(ValueError, match="unique|occupancy|overlap|duplicate"):
-        locate_cell(g, "Sheet1!E63")
+    with pytest.raises(ValueError, match="occupancy|already|owned|conflict"):
+        g.add_node(make_row_node("Sheet1", 63, "E", "Y"))

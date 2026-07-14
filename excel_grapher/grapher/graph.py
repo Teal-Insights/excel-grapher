@@ -10,12 +10,17 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from .compression import IdentityTransitCompressionRecord, OptimalCompressionRecord
 
-from excel_grapher.core.address_keys import normalize_key, sort_node_keys
+from excel_grapher.core.address_keys import (
+    CellKey,
+    normalize_key,
+    parse_node_key,
+    sort_node_keys,
+)
 from excel_grapher.core.formula_ast import AstNode
 
 from .dependency_provenance import DependencyCause, EdgeProvenance, merge_edge_provenance
 from .guard import And, CellRef, Compare, GuardConstraints, GuardExpr, Not, Or, or_guard
-from .node import Node, NodeKey, NodeView, node_to_view
+from .node import Node, NodeKey, NodeView, member_keys, node_to_view
 
 NodeHook = Callable[[NodeKey, Node], None]
 
@@ -118,6 +123,8 @@ class DependencyGraph:
     _guards: dict[EdgeKey, GuardExpr] = field(default_factory=dict)
     _edge_extra: dict[EdgeKey, dict[str, Any]] = field(default_factory=dict)
     _hooks: list[NodeHook] = field(default_factory=list)
+    # Cell key -> owning node key (cell owns itself; multi-cell owns members).
+    _occupancy: dict[NodeKey, NodeKey] = field(default_factory=dict)
     leaf_classification: dict[str, str] | None = None
     sheet_order: list[str] | None = None
     sheet_bounds: dict[str, tuple[int, int]] | None = None
@@ -161,6 +168,7 @@ class DependencyGraph:
         }
         cloned._guards = dict(self._guards)
         cloned._edge_extra = {edge: dict(extra) for edge, extra in self._edge_extra.items()}
+        cloned._occupancy = dict(self._occupancy)
         cloned.leaf_classification = (
             dict(self.leaf_classification) if self.leaf_classification is not None else None
         )
@@ -177,13 +185,43 @@ class DependencyGraph:
 
     # ---- node insertion and iteration ---------------------------------------
 
+    def _clear_occupancy_for_node(self, node: Node) -> None:
+        owner = node.key
+        for cell in member_keys(node):
+            if self._occupancy.get(cell) == owner:
+                del self._occupancy[cell]
+
+    def _register_occupancy(self, node: Node) -> None:
+        owner = node.key
+        members = member_keys(node)
+        for cell in members:
+            existing = self._occupancy.get(cell)
+            if existing is not None and existing != owner:
+                raise ValueError(f"Cell occupancy conflict: {cell} is already owned by {existing}")
+        if owner in self._nodes:
+            self._clear_occupancy_for_node(self._nodes[owner])
+        for cell in members:
+            self._occupancy[cell] = owner
+
     def add_node(self, node: Node) -> None:
         key = node.key
+        self._register_occupancy(node)
         self._nodes[key] = node
         self._edges.setdefault(key, set())
         self._reverse_edges.setdefault(key, set())
         for hook in self._hooks:
             hook(key, node)
+
+    def cell_owner(self, cell_key: NodeKey) -> NodeKey | None:
+        """Return the owning node key for a single workbook cell, if any.
+
+        Cell nodes own themselves. Multi-cell nodes own each expanded member.
+        Raises `ValueError` when `cell_key` is not a single-cell address.
+        """
+        parsed = parse_node_key(cell_key)
+        if not isinstance(parsed, CellKey):
+            raise ValueError(f"Expected a single-cell key, got: {cell_key!r}")
+        return self._occupancy.get(str(parsed))
 
     def __contains__(self, key: NodeKey) -> bool:
         return normalize_key(key) in self._nodes
@@ -363,13 +401,26 @@ class DependencyGraph:
         Both outgoing dependency edges and incoming dependent edges are dropped,
         along with their guards and provenance. Dependent formulas are not
         rewritten; callers collapsing nodes must update dependents explicitly.
-        Node hooks are not invoked. No-op if the node is absent.
+        Node hooks are not invoked.
+
+        Removing a multi-cell node clears occupancy for every expanded member.
+        Removing a member cell while it is owned by a multi-cell node raises
+        `ValueError`. Absent keys that are not occupied members are a no-op.
         """
         nk = normalize_key(key)
+        if nk not in self._nodes:
+            owner = self._occupancy.get(nk)
+            if owner is not None and owner != nk:
+                raise ValueError(
+                    f"Cannot remove member cell {nk!r}; owned by multi-cell node {owner!r}"
+                )
+            return
+        node = self._nodes[nk]
         for dep in list(self._edges.get(nk, set())):
             self._remove_edge(nk, dep)
         for dependent in list(self._reverse_edges.get(nk, set())):
             self._remove_edge(dependent, nk)
+        self._clear_occupancy_for_node(node)
         self._nodes.pop(nk, None)
         self._edges.pop(nk, None)
         self._reverse_edges.pop(nk, None)
@@ -811,6 +862,21 @@ class DependencyGraph:
         self.named_ranges = dict(nr) if nr else None
         nrr = state.get("named_range_ranges")
         self.named_range_ranges = dict(nrr) if nrr else None
+        self._rebuild_occupancy()
+
+    def _rebuild_occupancy(self) -> None:
+        """Rebuild the cell→owner occupancy index from stored nodes."""
+        self._occupancy = {}
+        for node in self._nodes.values():
+            owner = node.key
+            for cell in member_keys(node):
+                existing = self._occupancy.get(cell)
+                if existing is not None and existing != owner:
+                    raise ValueError(
+                        f"Cell occupancy conflict while rebuilding: {cell} "
+                        f"owned by both {existing} and {owner}"
+                    )
+                self._occupancy[cell] = owner
 
     # ---- internal edge mutation --------------------------------------------
 

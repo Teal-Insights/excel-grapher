@@ -21,6 +21,7 @@ from fastpyxl.utils.cell import (
     coordinate_from_string,
     get_column_letter,
 )
+from fastpyxl.utils.exceptions import CellCoordinatesException
 
 # Canonical sheet-qualified cell (`Sheet1!B1`) or range (`Sheet1!C4:Sheet1!D4`).
 NormalizedAddress: TypeAlias = str
@@ -141,7 +142,10 @@ def _split_top_level_colon(address: str) -> tuple[str, str] | None:
 
 def _parse_a1_cell(coord: str) -> tuple[str, int]:
     """Parse an A1 coordinate into `(column_letters, row)`, stripping `$`."""
-    col, row = coordinate_from_string(coord.replace("$", ""))
+    try:
+        col, row = coordinate_from_string(coord.replace("$", ""))
+    except CellCoordinatesException as exc:
+        raise ValueError(f"Invalid A1 cell coordinate: {coord!r}") from exc
     return str(col).upper(), int(row)
 
 
@@ -218,8 +222,9 @@ def normalize_key(key: str) -> NormalizedAddress:
     Unnecessary quoting is stripped; sheet names with spaces, hyphens, or
     apostrophes are quoted. For single cells, the result matches `Node.key`.
     One-row range keys are canonicalized via `normalize_row_key` (ordered
-    columns, absolute markers stripped, both-end sheet forms collapsed).
-    Multi-area keys are canonicalized via `parse_node_key`.
+    columns, absolute markers stripped, both-end sheet forms collapsed,
+    including 1x1 forms such as `Sheet1!D63:D63`). Multi-area and multi-row
+    keys are canonicalized via `parse_node_key`.
 
     Examples:
         >>> normalize_key("'Sheet1'!A1")
@@ -237,10 +242,18 @@ def normalize_key(key: str) -> NormalizedAddress:
         try:
             return normalize_row_key(key)
         except ValueError:
-            # Multi-row / non-row ranges keep the historical sheet+coord pass-through.
-            pass
-    sheet, cell = parse_address(key)
-    return format_key(sheet, cell)
+            try:
+                return str(parse_node_key(key))
+            except ValueError:
+                sheet, cell = parse_address(key)
+                return format_key(sheet, cell)
+    try:
+        return str(parse_node_key(key))
+    except ValueError:
+        # Preserve historical sheet+coord pass-through for non-A1 junk so callers
+        # can treat missing/invalid keys as absent rather than parse failures.
+        sheet, cell = parse_address(key)
+        return format_key(sheet, cell)
 
 
 def make_node_key_sort_key(
