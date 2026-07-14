@@ -20,10 +20,11 @@ This gives **fast, accurate, repeatable** execution for any given workbook, but 
 
 ### Range operands
 
-Lookup consumers (`MATCH`, `VLOOKUP`, `HLOOKUP`, `LOOKUP`, `XLOOKUP`) receive
-lazy `Range` values from `excel_grapher.core.grid` and evaluate only the cells
-they touch — matching the exported runtime. Full-scan reductions such as
-`SUMPRODUCT` still materialize ranges where vectorized fast paths need a dense
+Multi-cell range operands default to lazy `Range` values from
+`excel_grapher.core.grid` and evaluate only the cells a consumer touches —
+matching the exported runtime (including `MATCH` / `VLOOKUP` / `INDEX` /
+`OFFSET` nesting). Full-scan reductions such as `SUM` and `SUMPRODUCT` still
+materialize ranges where `flatten` / vectorized fast paths need a dense
 buffer. Errors remain `XlError` sentinels (the evaluator never raises
 `XlErrorException`).
 

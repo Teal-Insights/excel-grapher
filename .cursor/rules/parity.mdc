@@ -25,11 +25,11 @@ The evaluator and the exported runtime use **different error channels** with the
 **same error codes**:
 
 - **Evaluator = literal Excel model.** Errors are `XlError` sentinel values.
-  The evaluator never raises `XlErrorException`. Lookup consumers (`MATCH`,
-  `VLOOKUP`, `HLOOKUP`, `LOOKUP`, `XLOOKUP`) receive lazy `Range` values from
-  `excel_grapher.core.grid` (shared with export); full-scan reductions such as
-  `SUMPRODUCT` still eager-materialize to numpy object arrays where needed for
-  optional fast paths.
+  The evaluator never raises `XlErrorException`. Multi-cell range operands
+  default to lazy `Range` values from `excel_grapher.core.grid` (shared with
+  export). Full-scan reductions (`SUM`, `SUMPRODUCT`, `COUNTIF`, …) listed in
+  `numpy_array_arg_indices` still eager-materialize to numpy object arrays
+  until Phase 3 migrates aggregates onto Grid.
 - **Export = Pythonic model.** Where Excel displays error code `E`, exported
   code **raises `XlErrorException(E)`** (a traceback, not a silently propagated
   sentinel). Ranges are the same lazy `Range` values; unused cells are never
@@ -59,22 +59,24 @@ Export error-channel specifics:
 
 `excel_grapher.core.grid` (`Range`, `Grid`) is the shared rectangular value
 model, and `excel_grapher.core.types.ExcelRange` is the single shared geometry
-type (evaluator and export). Eager materialization uses
-`resolve_excel_range` when a consumer needs a dense ndarray; lookup consumers
-bind lazy `Range` instead.
+type (evaluator and export). `FormulaEvaluator._resolve_function_arg` defaults
+to lazy `Range`; only functions in `numpy_array_arg_indices` call
+`resolve_excel_range` for dense ndarrays.
 
 | Consumer | Error channel | How ranges are bound |
 | -------- | ------------- | -------------------- |
-| **Evaluator** | `XlError` sentinels | `FormulaEvaluator._as_lazy_range` binds geometry to `_evaluate_cell` |
+| **Evaluator** | `XlError` sentinels | `_as_lazy_range` by default; eager ndarray only via `numpy_array_arg_indices` |
 | **Export** | `XlErrorException` | `xl_range` / codegen bind geometry to raise-on-error `xl_cell` |
 
-Lookup algorithms live in `excel_grapher.core.lookup_funcs` (sentinel returns).
-`runtime/lookup.py` exposes them to the evaluator; `export_runtime/lookup.py`
-raises at the wrapper boundary. Do not introduce a third traversal copy.
+Lookup/reference algorithms (`INDEX`, `MATCH`, `VLOOKUP`, …) live in
+`excel_grapher.core.lookup_funcs` (sentinel returns). `runtime/lookup.py`
+exposes them to the evaluator; `export_runtime/lookup.py` raises at the wrapper
+boundary. Do not introduce a third traversal copy.
 
 Behavioral parity (evaluator ↔ export ↔ Excel) is unchanged by representation
 convergence. Remaining eager numpy use in the evaluator hot path is confined to
-full-scan reductions (`SUMPRODUCT`, etc.) and optional operator fast paths.
+full-scan reductions / optional operator fast paths (`numpy_array_arg_indices`
+plus `_resolve_binary_operand`).
 
 ## Layered semantics: core, runtime, and export_runtime
 

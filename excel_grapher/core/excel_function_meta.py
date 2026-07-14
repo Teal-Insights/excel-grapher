@@ -15,6 +15,10 @@ from typing import Literal, TypeAlias
 
 ArgRole: TypeAlias = Literal["value", "ref_only"]
 
+# Sufficient for Excel varargs (SUM, SUMPRODUCT, AND, …) until Phase 3 drops
+# eager materialization for full-scan consumers.
+_ALL_ARGS: frozenset[int] = frozenset(range(32))
+
 
 @dataclass(frozen=True, slots=True)
 class ExcelFunctionMeta:
@@ -36,21 +40,31 @@ FUNCTION_META: dict[str, ExcelFunctionMeta] = {
     "CONCAT": ExcelFunctionMeta("CONCAT", ()),
 }
 
-# Functions whose range arguments must stay as object-dtype ndarrays (evaluator).
-# SUMPRODUCT (and similar full-scan reductions) still eager-materialize.
+# Full-scan reductions that still eager-materialize to object-dtype ndarrays
+# (evaluator bridge until Phase 3 teaches flatten / aggregates over Grid).
+# Selective consumers (lookups, INDEX geometry) are *not* listed — they receive
+# lazy `Range` by default in FormulaEvaluator._resolve_function_arg.
 NUMPY_ARRAY_ARG_INDICES: dict[str, frozenset[int]] = {
-    "INDEX": frozenset({0}),
-    "SUMPRODUCT": frozenset(range(10)),
+    "SUM": _ALL_ARGS,
+    "AVERAGE": _ALL_ARGS,
+    "MIN": _ALL_ARGS,
+    "MAX": _ALL_ARGS,
+    "COUNT": _ALL_ARGS,
+    "COUNTA": _ALL_ARGS,
+    "COUNTIF": frozenset({0}),
+    "AVERAGEIF": frozenset({0, 2}),
+    "STDEV": _ALL_ARGS,
+    "LARGE": frozenset({0}),
+    "NPV": frozenset(range(1, 32)),
+    "RANK": frozenset({1}),
+    "SUMPRODUCT": _ALL_ARGS,
+    "AND": _ALL_ARGS,
+    "OR": _ALL_ARGS,
 }
 
-# Lookup consumers that accept lazy `Range` arguments (selective cell access).
-LAZY_RANGE_ARG_INDICES: dict[str, frozenset[int]] = {
-    "LOOKUP": frozenset({1, 2}),
-    "VLOOKUP": frozenset({1}),
-    "HLOOKUP": frozenset({1}),
-    "MATCH": frozenset({1}),
-    "XLOOKUP": frozenset({1, 2}),
-}
+# Deprecated after Phase 1: range args default to lazy `Range`. Kept empty so
+# call sites remain valid until the helper is removed in Phase 4.
+LAZY_RANGE_ARG_INDICES: dict[str, frozenset[int]] = {}
 
 
 def numpy_array_arg_indices(function_name: str) -> frozenset[int]:
@@ -59,7 +73,11 @@ def numpy_array_arg_indices(function_name: str) -> frozenset[int]:
 
 
 def lazy_range_arg_indices(function_name: str) -> frozenset[int]:
-    """Return argument indices that keep lazy `Range` values for ``function_name``."""
+    """Return argument indices that keep lazy `Range` values for ``function_name``.
+
+    After Phase 1 this is always empty: multi-cell ranges default to lazy
+    `Range` unless listed in `NUMPY_ARRAY_ARG_INDICES`.
+    """
     return LAZY_RANGE_ARG_INDICES.get(function_name.upper(), frozenset())
 
 

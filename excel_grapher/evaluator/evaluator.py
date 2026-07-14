@@ -436,10 +436,11 @@ class FormulaEvaluator:
     ) -> CellValue:
         """Resolve ``ExcelRange`` arguments for runtime function calls.
 
-        Lookup table parameters stay as lazy ``Range`` values (selective access).
-        Full-scan reductions (e.g. ``SUMPRODUCT``) keep numpy arrays. Single-cell
-        references in value contexts (e.g. ``TEXT(INDEX(...))``) promote to
-        scalars so export parity matches codegen's scalar ``INDEX`` handling.
+        Multi-cell ranges default to lazy ``Range`` (selective access). Full-scan
+        reductions listed in ``numpy_array_arg_indices`` still eager-materialize
+        to numpy arrays. Single-cell references in value contexts (e.g.
+        ``TEXT(INDEX(...))``) promote to scalars so export parity matches
+        codegen's scalar ``INDEX`` handling.
         """
         if not isinstance(value, ExcelRange):
             return value
@@ -451,7 +452,7 @@ class FormulaEvaluator:
             return self._resolve_range(value)
         if value.start_row == value.end_row and value.start_col == value.end_col:
             return self._auto_resolve_single_cell(value)
-        return self._resolve_range(value)
+        return cast(CellValue, self._as_lazy_range(value))
 
     def _sheet_bounds(self) -> SheetBounds:
         bounds = getattr(self.graph, "sheet_bounds", None)

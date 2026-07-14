@@ -18,11 +18,86 @@ from excel_grapher.core.types import CellValue, XlError
 
 __all__ = [
     "hlookup_cells",
+    "index_cells",
     "lookup_cells",
     "match_cells",
     "vlookup_cells",
     "xlookup_cells",
 ]
+
+
+def index_cells(
+    array: object,
+    row_num: object = None,
+    col_num: object = None,
+) -> object:
+    """Excel INDEX over a lazy grid or nested-list array.
+
+    Returns a scalar cell value, or a row/column slice (`Range` or nested list)
+    when only one of `row_num` / `col_num` selects a vector.
+    """
+    grid = Grid.wrap(array)
+    if grid is None:
+        return XlError.VALUE
+    nrows, ncols = grid.nrows, grid.ncols
+    row_omitted = row_num is None
+    col_omitted = col_num is None
+
+    if row_omitted and col_omitted:
+        if nrows == 1 and ncols == 1:
+            return grid.at(0, 0)
+        if nrows == 1:
+            return grid.at(0, ncols - 1)
+        if ncols == 1:
+            return grid.at(nrows - 1, 0)
+        return XlError.VALUE
+
+    if row_omitted:
+        cn = to_number(cast(CellValue, col_num))
+        if isinstance(cn, XlError):
+            return cn
+        col = int(cn)
+        if col < 1 or col > ncols:
+            return XlError.REF
+        if nrows == 1:
+            return grid.at(0, col - 1)
+        return grid.col_slice(col - 1)
+
+    rn = to_number(cast(CellValue, row_num))
+    if isinstance(rn, XlError):
+        return rn
+    row = int(rn)
+
+    if col_omitted:
+        if nrows == 1:
+            if row < 1 or row > ncols:
+                return XlError.REF
+            return grid.at(0, row - 1)
+        if ncols == 1:
+            if row < 1 or row > nrows:
+                return XlError.REF
+            return grid.at(row - 1, 0)
+        if row < 1 or row > nrows:
+            return XlError.REF
+        return grid.row_slice(row - 1)
+
+    cn = to_number(cast(CellValue, col_num))
+    if isinstance(cn, XlError):
+        return cn
+    col = int(cn)
+    if nrows == 1:
+        if row < 1 or row > ncols:
+            return XlError.REF
+        return grid.at(0, row - 1)
+    if ncols == 1:
+        if row < 1 or row > nrows:
+            return XlError.REF
+        return grid.at(row - 1, 0)
+    if row < 1 or row > nrows:
+        return XlError.REF
+    if col < 1 or col > ncols:
+        return XlError.REF
+    return grid.at(row - 1, col - 1)
 
 
 def _as_scalar(value: object) -> Scalar:

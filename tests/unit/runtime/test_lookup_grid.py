@@ -1,0 +1,63 @@
+"""Grid-native INDEX and lookup wrappers for the evaluator runtime (#336 Phase 1)."""
+
+from __future__ import annotations
+
+from excel_grapher.core import CellValue, XlError
+from excel_grapher.core.excel_function_meta import (
+    lazy_range_arg_indices,
+    numpy_array_arg_indices,
+)
+from excel_grapher.core.grid import Range
+from excel_grapher.core.lookup_funcs import index_cells
+from excel_grapher.runtime.lookup import xl_index
+
+
+def test_index_not_in_numpy_array_arg_indices() -> None:
+    """INDEX uses lazy/geometry binding; it is not an eager ndarray consumer."""
+    assert 0 not in numpy_array_arg_indices("INDEX")
+    assert numpy_array_arg_indices("INDEX") == frozenset()
+
+
+def test_sumproduct_still_eager_materializes() -> None:
+    assert 0 in numpy_array_arg_indices("SUMPRODUCT")
+    assert 0 in numpy_array_arg_indices("SUM")
+
+
+def test_lazy_range_whitelist_empty_after_default_inversion() -> None:
+    """Default resolution is lazy; the Phase 0 whitelist is no longer required."""
+    assert lazy_range_arg_indices("MATCH") == frozenset()
+    assert lazy_range_arg_indices("VLOOKUP") == frozenset()
+
+
+def test_index_cells_over_lazy_range_is_selective() -> None:
+    calls: list[str] = []
+    values: dict[str, CellValue] = {
+        "S!A1": 10,
+        "S!A2": 20,
+        "S!A3": XlError.DIV,
+    }
+
+    def resolve(address: str) -> CellValue:
+        calls.append(address)
+        return values[address]
+
+    rng = Range("S", 1, 1, 3, 1, resolve)
+    assert index_cells(rng, 2, None) == 20
+    assert calls == ["S!A2"]
+
+
+def test_xl_index_over_lazy_range_agrees_with_nested_list() -> None:
+    values = {
+        "S!A1": 1,
+        "S!B1": 2,
+        "S!A2": 3,
+        "S!B2": 4,
+    }
+
+    def resolve(address: str) -> CellValue:
+        return values[address]
+
+    lazy = Range("S", 1, 1, 2, 2, resolve)
+    eager = [[1, 2], [3, 4]]
+    assert xl_index(lazy, 2, 1) == xl_index(eager, 2, 1) == 3
+    assert xl_index(lazy, 1, 2) == 2

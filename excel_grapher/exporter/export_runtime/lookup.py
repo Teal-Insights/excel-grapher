@@ -4,17 +4,17 @@ from __future__ import annotations
 
 from typing import cast
 
-from excel_grapher.core import XlError, to_number
 from excel_grapher.core.lookup_funcs import (
     hlookup_cells,
+    index_cells,
     lookup_cells,
     match_cells,
     vlookup_cells,
     xlookup_cells,
 )
-from excel_grapher.core.types import XlErrorException
+from excel_grapher.core.types import XlError, XlErrorException
 
-from .values import CellValue, Grid, Scalar, as_scalar
+from .values import CellValue
 
 __all__ = [
     "xl_hlookup",
@@ -24,21 +24,6 @@ __all__ = [
     "xl_vlookup",
     "xl_xlookup",
 ]
-
-
-def _number_arg(value: CellValue) -> float:
-    """Coerce a scalar function argument, raising on Excel coercion errors."""
-    number = to_number(as_scalar(value))
-    if isinstance(number, XlError):
-        raise XlErrorException(number)
-    return number
-
-
-def _result_or_raise(value: Scalar) -> Scalar:
-    """Return a lookup result cell, raising when it holds an error sentinel."""
-    if isinstance(value, XlError):
-        raise XlErrorException(value)
-    return value
 
 
 def _raise_if_error(value: object) -> CellValue:
@@ -55,63 +40,8 @@ def xl_lookup(
     return _raise_if_error(lookup_cells(lookup_value, lookup_vector_or_array, result_vector))
 
 
-def xl_index(array: CellValue, row_num: CellValue, col_num: CellValue = None) -> CellValue:
-    grid = Grid.wrap(array)
-    if grid is None:
-        raise XlErrorException(XlError.VALUE)
-    nrows, ncols = grid.nrows, grid.ncols
-    row_omitted = row_num is None
-    col_omitted = col_num is None
-
-    if row_omitted and col_omitted:
-        if nrows == 1 and ncols == 1:
-            return _result_or_raise(grid.at(0, 0))
-        if nrows == 1:
-            return _result_or_raise(grid.at(0, ncols - 1))
-        if ncols == 1:
-            return _result_or_raise(grid.at(nrows - 1, 0))
-        raise XlErrorException(XlError.VALUE)
-
-    if row_omitted:
-        cn = _number_arg(col_num)
-        col = int(cn)
-        if col < 1 or col > ncols:
-            raise XlErrorException(XlError.REF)
-        if nrows == 1:
-            return _result_or_raise(grid.at(0, col - 1))
-        return grid.col_slice(col - 1)
-
-    rn = _number_arg(row_num)
-    row = int(rn)
-
-    if col_omitted:
-        if nrows == 1:
-            if row < 1 or row > ncols:
-                raise XlErrorException(XlError.REF)
-            return _result_or_raise(grid.at(0, row - 1))
-        if ncols == 1:
-            if row < 1 or row > nrows:
-                raise XlErrorException(XlError.REF)
-            return _result_or_raise(grid.at(row - 1, 0))
-        if row < 1 or row > nrows:
-            raise XlErrorException(XlError.REF)
-        return grid.row_slice(row - 1)
-
-    cn = _number_arg(col_num)
-    col = int(cn)
-    if nrows == 1:
-        if row < 1 or row > ncols:
-            raise XlErrorException(XlError.REF)
-        return _result_or_raise(grid.at(0, row - 1))
-    if ncols == 1:
-        if row < 1 or row > nrows:
-            raise XlErrorException(XlError.REF)
-        return _result_or_raise(grid.at(row - 1, 0))
-    if row < 1 or row > nrows:
-        raise XlErrorException(XlError.REF)
-    if col < 1 or col > ncols:
-        raise XlErrorException(XlError.REF)
-    return _result_or_raise(grid.at(row - 1, col - 1))
+def xl_index(array: CellValue, row_num: CellValue = None, col_num: CellValue = None) -> CellValue:
+    return _raise_if_error(index_cells(array, row_num, col_num))
 
 
 def xl_match(lookup_value: CellValue, lookup_array: CellValue, match_type: CellValue = 1) -> int:
