@@ -20,11 +20,34 @@ from excel_grapher.evaluator.parser import (
     UnaryOpNode,
 )
 from excel_grapher.evaluator.types import XlError
-from excel_grapher.exporter.codegen import CodeGenerator
+from excel_grapher.exporter.codegen import CodeGenerator, GraphLike, GraphNode
 from tests.integration.utils.parity_harness import (
     CACHE_EVAL_SCAFFOLD_LINE_BUDGET,
     assert_cache_eval_scaffold_within_budget,
 )
+
+
+class _EmptyGraph:
+    """Minimal GraphLike for AST emission tests that never touch nodes."""
+
+    leaf_classification: dict[str, str] | None = None
+
+    def get_node(self, address: str) -> GraphNode | None:
+        return None
+
+    def leaf_keys(self) -> list[str]:
+        return []
+
+    def formula_keys(self) -> list[str]:
+        return []
+
+    def get_dependencies(self, address: str) -> frozenset[str]:
+        return frozenset()
+
+
+def _ast_only_generator() -> CodeGenerator:
+    graph: GraphLike = _EmptyGraph()
+    return CodeGenerator(graph)
 
 
 def _set_leaf_classification(graph: DependencyGraph, value: dict[str, str]) -> None:
@@ -44,7 +67,7 @@ class TestEmitAstLiterals:
     def gen(self):
         """Create a CodeGenerator with a mock graph."""
         # For _emit_ast tests, we don't need a real graph
-        return CodeGenerator(None)  # type: ignore
+        return _ast_only_generator()
 
     def test_emit_number_integer(self, gen):
         """Integer numbers should emit without decimal."""
@@ -104,7 +127,7 @@ class TestEmitAstEmptyArg:
 
     @pytest.fixture
     def gen(self):
-        return CodeGenerator(None)  # type: ignore
+        return _ast_only_generator()
 
     def test_emit_empty_arg(self, gen):
         """EmptyArgNode should emit None for omitted arguments."""
@@ -130,7 +153,7 @@ class TestEmitAstReferences:
 
     @pytest.fixture
     def gen(self):
-        return CodeGenerator(None)  # type: ignore
+        return _ast_only_generator()
 
     def test_emit_cell_ref_simple(self, gen):
         """Simple cell reference."""
@@ -161,7 +184,7 @@ class TestEmitAstOperators:
 
     @pytest.fixture
     def gen(self):
-        return CodeGenerator(None)  # type: ignore
+        return _ast_only_generator()
 
     def test_emit_binary_add(self, gen):
         """Addition inlines native + with xl_number coercion."""
@@ -244,7 +267,7 @@ class TestEmitAstFunctions:
 
     @pytest.fixture
     def gen(self):
-        return CodeGenerator(None)  # type: ignore
+        return _ast_only_generator()
 
     def test_emit_function_no_args(self, gen):
         """Function with no arguments."""

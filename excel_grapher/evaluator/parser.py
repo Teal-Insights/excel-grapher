@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: I001
-
 from excel_grapher.core.formula_ast import (
     AstNode,
     BinaryOpNode,
@@ -17,11 +15,12 @@ from excel_grapher.core.formula_ast import (
     UnaryOpNode,
     WholeColumnNode,
     WholeRowNode,
+)
+from excel_grapher.core.formula_ast import (
     parse as _core_parse,
 )
 
 from .errors import ParseError
-
 
 __all__ = [
     "AstNode",

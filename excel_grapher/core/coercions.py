@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
 from datetime import date, datetime
-from typing import Any
+from typing import TypeVar, cast
 
 import numpy as np
 
 from .types import CellValue, ExcelRange, XlError
 
 _EXCEL_EPOCH = datetime(1899, 12, 30)
+T = TypeVar("T")
 
 
 def datetime_to_excel_serial(value: datetime) -> float:
@@ -47,9 +48,11 @@ def try_coerce_string_to_float(text: str) -> float | None:
         return _try_parse_iso_date_serial(stripped)
 
 
-def to_native(value: Any) -> Any:
-    if hasattr(value, "item"):
-        return value.item()
+def to_native(value: T) -> T:
+    """Unwrap numpy scalars; otherwise return *value* unchanged."""
+    item = getattr(value, "item", None)
+    if callable(item):
+        return cast("T", item())
     return value
 
 
@@ -132,7 +135,7 @@ def excel_casefold(value: str) -> str:
     return value.casefold()
 
 
-def flatten(*args: Any) -> Iterator[CellValue]:
+def flatten(*args: object) -> Iterator[CellValue]:
     for arg in args:
         if isinstance(arg, np.ndarray):
             yield from (v for v in arg.flat)
@@ -140,10 +143,10 @@ def flatten(*args: Any) -> Iterator[CellValue]:
         if isinstance(arg, (list, tuple)):
             yield from flatten(*arg)
             continue
-        yield arg
+        yield cast("CellValue", arg)
 
 
-def get_error(*args: Any) -> XlError | None:
+def get_error(*args: object) -> XlError | None:
     for v in flatten(*args):
         if isinstance(v, XlError):
             return v

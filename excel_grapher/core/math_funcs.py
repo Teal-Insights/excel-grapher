@@ -189,13 +189,13 @@ def _criteria_compare(op: str, left: T, right: T) -> bool:
     if op == "<>":
         return left != right
     if op == ">":
-        return left > right  # type: ignore[operator]
+        return left > right
     if op == "<":
-        return left < right  # type: ignore[operator]
+        return left < right
     if op == ">=":
-        return left >= right  # type: ignore[operator]
+        return left >= right
     if op == "<=":
-        return left <= right  # type: ignore[operator]
+        return left <= right
     return False
 
 

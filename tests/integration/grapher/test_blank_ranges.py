@@ -50,7 +50,7 @@ def test_parse_blank_range_spec_quoted_sheet() -> None:
 
 def test_normalize_blank_range_specs_rejects_str() -> None:
     with pytest.raises(TypeError):
-        normalize_blank_range_specs("Sheet1!A1")  # type: ignore[arg-type]
+        normalize_blank_range_specs("Sheet1!A1")
 
 
 def test_cell_in_blank_ranges() -> None:
@@ -87,8 +87,8 @@ def test_create_dependency_graph_skips_blank_range_nodes(tmp_path: Path) -> None
     assert "Sheet1!E1" in graph
 
     with FormulaEvaluator(graph, blank_ranges=blank) as ev:
-        assert ev._evaluate_cell("Sheet1!D1") == 10  # noqa: SLF001
-        assert ev._evaluate_cell("Sheet1!E1") == 0  # noqa: SLF001
+        assert ev._evaluate_cell("Sheet1!D1") == 10
+        assert ev._evaluate_cell("Sheet1!E1") == 0
 
 
 def test_missing_cell_outside_declared_blank_still_keyerror() -> None:
@@ -96,10 +96,10 @@ def test_missing_cell_outside_declared_blank_still_keyerror() -> None:
     graph.add_node(_make_node("S!A1", "=S!Z99", None))
 
     with FormulaEvaluator(graph) as ev, pytest.raises(KeyError):
-        ev._evaluate_cell("S!A1")  # noqa: SLF001
+        ev._evaluate_cell("S!A1")
 
     with FormulaEvaluator(graph, blank_ranges=("S!Z99",)) as ev2:
-        assert ev2._evaluate_cell("S!A1") == 0  # noqa: SLF001
+        assert ev2._evaluate_cell("S!A1") == 0
 
 
 def test_blank_range_codegen_compact_and_parity(tmp_path: Path) -> None:

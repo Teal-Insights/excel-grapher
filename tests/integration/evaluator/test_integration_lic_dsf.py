@@ -121,7 +121,7 @@ def test_evaluate_formulas(graph: DependencyGraph) -> None:
             assert node is not None
             expected = node.value
             try:
-                computed = ev._evaluate_cell(addr)  # noqa: SLF001
+                computed = ev._evaluate_cell(addr)
             except NotImplementedError as e:
                 errors += 1
                 func_match = re.search(r"not implemented: (\w+)", str(e))

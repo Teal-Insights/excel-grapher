@@ -54,7 +54,7 @@ __all__ = ["CodeGenerator", "GraphLike", "GraphNode"]
 
 if TYPE_CHECKING:
     from excel_grapher.exporter.projection import ProjectionManifest
-    from excel_grapher.grapher import DependencyGraph  # noqa: F401
+    from excel_grapher.grapher import DependencyGraph
     from excel_grapher.series_bindings.docstring_renderers import SeriesDocstringRendererSpec
     from excel_grapher.series_bindings.docstrings import SeriesBindingDocstringCallbackSpec
     from excel_grapher.series_bindings.types import InputSeries, WorkbookSeriesBindings

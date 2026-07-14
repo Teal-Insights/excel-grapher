@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import cast
 
 import fastpyxl.utils.cell
 
 from excel_grapher.core import XlError, to_number
 from excel_grapher.core.address_keys import format_cell_key
 from excel_grapher.core.addressing import index_excel_range, offset_range
+from excel_grapher.core.types import CellValue as CoreCellValue
+from excel_grapher.core.types import ExcelRange as CoreExcelRange
 from excel_grapher.core.types import XlErrorException
 from excel_grapher.runtime.cache import EvalContext, _parse_range_address, xl_cell
 
 from .ranges import Range
-from .values import CellValue, ExcelRange, as_scalar
+from .values import CellValue, ExcelRange, Scalar, as_scalar
 
 __all__ = ["xl_index_ref", "xl_offset", "xl_offset_ref", "xl_range", "xl_range_rows"]
 
@@ -31,7 +33,7 @@ def _number_or_raise(value: CellValue) -> float:
 
 
 def _ctx_range(ctx: EvalContext, sheet: str, r1: int, c1: int, r2: int, c2: int) -> Range:
-    def resolve(address: str) -> Any:
+    def resolve(address: str) -> CoreCellValue:
         return xl_cell(ctx, address)
 
     return Range(sheet, r1, c1, r2, c2, resolve)
@@ -64,6 +66,35 @@ def _range_from_ref_info(
             raise XlErrorException(XlError.VALUE)
 
 
+def _to_core_range(rng: ExcelRange) -> CoreExcelRange:
+    """Copy export-runtime geometry into the core `ExcelRange` addressing type."""
+    return CoreExcelRange(
+        sheet=rng.sheet,
+        start_row=rng.start_row,
+        start_col=rng.start_col,
+        end_row=rng.end_row,
+        end_col=rng.end_col,
+    )
+
+
+def _from_core_range(rng: CoreExcelRange) -> ExcelRange:
+    """Copy core addressing geometry into the export-runtime `ExcelRange` type."""
+    return ExcelRange(
+        sheet=rng.sheet,
+        start_row=rng.start_row,
+        start_col=rng.start_col,
+        end_row=rng.end_row,
+        end_col=rng.end_col,
+    )
+
+
+def _as_addressing_scalar(value: CellValue | None) -> Scalar | None:
+    """Collapse export-runtime values to scalars for shared addressing helpers."""
+    if value is None:
+        return None
+    return as_scalar(value)
+
+
 def xl_index_ref(
     ref: ExcelRange | tuple[str, int, int] | tuple[str, int, int, int, int],
     row_num: CellValue | None,
@@ -71,9 +102,9 @@ def xl_index_ref(
 ) -> tuple[str, int, int] | tuple[str, int, int, int, int]:
     """Return INDEX reference metadata, raising on Excel reference errors."""
     out = index_excel_range(
-        cast("Any", _range_from_ref_info(ref)),
-        cast("Any", row_num),
-        cast("Any", col_num),
+        _to_core_range(_range_from_ref_info(ref)),
+        _as_addressing_scalar(row_num),
+        _as_addressing_scalar(col_num),
     )
     if isinstance(out, XlError):
         raise XlErrorException(out)
@@ -100,16 +131,16 @@ def xl_offset_ref(
         max_col = 1_000_000_000
 
     out = offset_range(
-        cast("Any", base_range),
-        cast("Any", rows),
-        cast("Any", cols),
-        cast("Any", height),
-        cast("Any", width),
+        _to_core_range(base_range),
+        as_scalar(rows),
+        as_scalar(cols),
+        _as_addressing_scalar(height),
+        _as_addressing_scalar(width),
         bounds=_UnboundedSheet(),
     )
     if isinstance(out, XlError):
         raise XlErrorException(out)
-    return cast("ExcelRange", out)
+    return _from_core_range(out)
 
 
 def xl_offset(
@@ -150,6 +181,8 @@ def xl_offset(
 
     if h == 1 and w == 1:
         addr = _format_address(sheet, target_row, target_col)
+        # Core `CellValue` includes core `ExcelRange`; export `CellValue` uses the
+        # export-runtime geometry type. Scalar results are always assignable.
         return cast("CellValue", xl_cell(ctx, addr))
 
     return _ctx_range(ctx, sheet, target_row, target_col, target_row + h - 1, target_col + w - 1)

@@ -176,7 +176,7 @@ def compare_evaluator_to_live_excel(
 
             formula = _formula_for(addr)
             try:
-                computed = ev._evaluate_cell(addr)  # noqa: SLF001
+                computed = ev._evaluate_cell(addr)
             except NotImplementedError as exc:
                 mismatches.append(
                     LiveExcelParityMismatch(

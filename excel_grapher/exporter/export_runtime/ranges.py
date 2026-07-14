@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import Any
 
 import fastpyxl.utils.cell
 
@@ -31,7 +30,7 @@ class Range:
     end_col: int
     # Resolvers may come from evaluation contexts with their own value
     # vocabulary; values are validated/coerced at consumption time.
-    _resolver: Callable[[str], Any] = field(repr=False, compare=False)
+    _resolver: Callable[[str], CellValue] = field(repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Validate the rectangular bounds."""

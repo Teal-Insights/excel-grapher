@@ -252,7 +252,7 @@ class TestComputeAllRaises:
         compute_all, ns = _compute_all(graph, ["S!A1"])
         try:
             compute_all()
-        except Exception as exc:  # noqa: BLE001 (asserting on exception shape)
+        except Exception as exc:
             assert type(exc).__name__ == XlErrorException.__name__
             assert str(exc) == "#DIV/0!"
         else:

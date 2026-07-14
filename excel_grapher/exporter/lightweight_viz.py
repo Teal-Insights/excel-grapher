@@ -283,7 +283,7 @@ def _module_assignment_directed_louvain(
     weight_attr: str | None,
 ) -> tuple[int, ...]:
     try:
-        import networkx as nx  # type: ignore[import-not-found]
+        import networkx as nx
     except Exception as e:  # pragma: no cover
         raise ImportError("networkx is required for to_web_viz_payload()") from e
 
@@ -392,7 +392,7 @@ def _layout_graph_from_networkx(
     include_guarded_edges: bool,
     weight_attr: str | None,
 ):
-    import networkx as nx  # type: ignore[import-not-found]
+    import networkx as nx
 
     work = nx.DiGraph()
     work.add_nodes_from(keys)
@@ -415,12 +415,12 @@ def _layout_graph_from_networkx(
 
 def _graphviz_layout_positions(work, prog: str) -> dict[str, tuple[float, float]]:
     try:
-        from networkx.drawing.nx_agraph import graphviz_layout  # type: ignore[import-not-found]
+        from networkx.drawing.nx_agraph import graphviz_layout
 
         raw_pos = graphviz_layout(work, prog=prog)
     except Exception:
         try:
-            from networkx.drawing.nx_pydot import graphviz_layout  # type: ignore[import-not-found]
+            from networkx.drawing.nx_pydot import graphviz_layout
 
             raw_pos = graphviz_layout(work, prog=prog)
         except Exception as e:
@@ -440,7 +440,7 @@ def _compute_networkx_layout_positions(
     seed: int,
     weight_attr: str | None,
 ) -> dict[str, tuple[float, float]]:
-    import networkx as nx  # type: ignore[import-not-found]
+    import networkx as nx
 
     if layout_mode == "spring":
         pos = nx.spring_layout(work, seed=seed, weight=weight_attr)
