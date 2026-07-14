@@ -82,7 +82,7 @@ def _compress_group(
     config: TacoBuildConfig,
 ) -> None:
     first = graph.get_node(group[0])
-    if first is None or not first.formula:
+    if first is None or not first.formula or first.sheet is None:
         return
     streams = parse_ref_streams(first.formula, default_sheet=first.sheet)
     if not streams:
@@ -129,7 +129,12 @@ def _collect_cell_stream(
         node = graph.get_node(dep_key)
         if node is None or not node.formula:
             return None
-        if node.shape is not NodeShape.cell or node.column is None or node.row is None:
+        if (
+            node.shape is not NodeShape.cell
+            or node.sheet is None
+            or node.column is None
+            or node.row is None
+        ):
             return None
         streams = parse_ref_streams(node.formula, default_sheet=node.sheet)
         if ref_idx >= len(streams):
@@ -226,7 +231,12 @@ def _collect_range_stream(
         node = graph.get_node(dep_key)
         if node is None or not node.formula:
             return None
-        if node.shape is not NodeShape.cell or node.column is None or node.row is None:
+        if (
+            node.shape is not NodeShape.cell
+            or node.sheet is None
+            or node.column is None
+            or node.row is None
+        ):
             return None
         streams = parse_ref_streams(node.formula, default_sheet=node.sheet)
         if ref_idx >= len(streams):

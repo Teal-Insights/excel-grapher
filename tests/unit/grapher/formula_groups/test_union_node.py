@@ -117,7 +117,7 @@ def test_node_from_address_kwarg() -> None:
         normalized_formula=None,
         value=None,
         is_leaf=True,
-        address="Sheet1!A1:D1,E5",
+        address=UnionKey("Sheet1!A1:D1,E5"),
     )
     assert isinstance(node.address, UnionKey)
     assert node.key == "Sheet1!A1:D1,E5"
