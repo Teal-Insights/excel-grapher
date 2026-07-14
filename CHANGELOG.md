@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.7.0 (2026-07-14)
+
+### Bug Fixes
+
+- **series-bindings**: Accept numpy scalars in measure dtype checks
+  ([#386](https://github.com/Teal-Insights/excel-grapher/pull/386),
+  [`c42017c`](https://github.com/Teal-Insights/excel-grapher/commit/c42017c47dbe3a4de0921f9be75cc36b5d9a71af))
+
+- **series-bindings**: Harden measure dtype enforcement and cleanup
+  ([#386](https://github.com/Teal-Insights/excel-grapher/pull/386),
+  [`c42017c`](https://github.com/Teal-Insights/excel-grapher/commit/c42017c47dbe3a4de0921f9be75cc36b5d9a71af))
+
+### Features
+
+- **series-bindings**: Enforce measure dtype in generated setters
+  ([#386](https://github.com/Teal-Insights/excel-grapher/pull/386),
+  [`c42017c`](https://github.com/Teal-Insights/excel-grapher/commit/c42017c47dbe3a4de0921f9be75cc36b5d9a71af))
+
+- **series-bindings**: Narrow setter input annotations by measure dtype
+  ([#386](https://github.com/Teal-Insights/excel-grapher/pull/386),
+  [`c42017c`](https://github.com/Teal-Insights/excel-grapher/commit/c42017c47dbe3a4de0921f9be75cc36b5d9a71af))
+
+
 ## v3.6.0 (2026-07-14)
 
 ### Bug Fixes
