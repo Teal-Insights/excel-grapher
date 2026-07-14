@@ -123,6 +123,78 @@ def test_vlookup_stops_before_trailing_unused_cells() -> None:
     assert "S!B3" not in seen
 
 
+def test_hlookup_stops_before_trailing_unused_cells() -> None:
+    """Exact HLOOKUP does not force evaluation past the matched column."""
+    graph = _make_graph(
+        _make_node("S!A1", None, "k1"),
+        _make_node("S!B1", None, "k2"),
+        _make_node("S!C1", "=1/0", None),
+        _make_node("S!A2", None, 100),
+        _make_node("S!B2", None, 200),
+        _make_node("S!C2", None, 300),
+        _make_node("S!D1", '=HLOOKUP("k1", S!A1:S!C2, 2, FALSE)', None),
+    )
+    seen: list[str] = []
+
+    def _track(address: str, _value: object) -> None:
+        seen.append(address)
+
+    with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
+        assert ev.evaluate(["S!D1"]) == {"S!D1": 100}
+        assert "S!C1" not in ev._cache
+        assert "S!C2" not in ev._cache
+    assert "S!C1" not in seen
+    assert "S!C2" not in seen
+
+
+def test_lookup_stops_before_trailing_unused_cells() -> None:
+    """Vector LOOKUP does not force evaluation past the matched position."""
+    graph = _make_graph(
+        _make_node("S!A1", None, 10),
+        _make_node("S!A2", None, 20),
+        _make_node("S!A3", "=1/0", None),
+        _make_node("S!B1", None, "ten"),
+        _make_node("S!B2", None, "twenty"),
+        _make_node("S!B3", None, "thirty"),
+        _make_node("S!C1", "=LOOKUP(10, S!A1:S!A3, S!B1:S!B3)", None),
+    )
+    seen: list[str] = []
+
+    def _track(address: str, _value: object) -> None:
+        seen.append(address)
+
+    with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
+        assert ev.evaluate(["S!C1"]) == {"S!C1": "ten"}
+        assert "S!A3" not in ev._cache
+        assert "S!B3" not in ev._cache
+    assert "S!A3" not in seen
+    assert "S!B3" not in seen
+
+
+def test_xlookup_stops_before_trailing_unused_cells() -> None:
+    """Exact XLOOKUP does not force evaluation past the matched key."""
+    graph = _make_graph(
+        _make_node("S!A1", None, "k1"),
+        _make_node("S!A2", None, "k2"),
+        _make_node("S!A3", "=1/0", None),
+        _make_node("S!B1", None, 100),
+        _make_node("S!B2", None, 200),
+        _make_node("S!B3", None, 300),
+        _make_node("S!C1", '=_xlfn.XLOOKUP("k1", S!A1:S!A3, S!B1:S!B3)', None),
+    )
+    seen: list[str] = []
+
+    def _track(address: str, _value: object) -> None:
+        seen.append(address)
+
+    with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
+        assert ev.evaluate(["S!C1"]) == {"S!C1": 100}
+        assert "S!A3" not in ev._cache
+        assert "S!B3" not in ev._cache
+    assert "S!A3" not in seen
+    assert "S!B3" not in seen
+
+
 def test_sum_over_range_with_error_produces_error_code() -> None:
     """SUM over a range containing an error surfaces the first error (reductions stay eager)."""
     graph = _make_graph(
