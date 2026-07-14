@@ -113,7 +113,7 @@ def test_evaluator_memoizes_cell_computation() -> None:
     with FormulaEvaluator(graph) as ev:
         assert ev.evaluate(["S!B1"]) == {"S!B1": 4.0}
         # A1 should be cached after evaluation
-        assert ev._cache["S!A1"] == 2  # noqa: SLF001
+        assert ev._cache["S!A1"] == 2
 
 
 def test_evaluator_detects_cycles() -> None:

@@ -95,7 +95,7 @@ def _print_codegen_example(graph: DependencyGraph, full_index: TacoIndex) -> Non
     print()
 
     namespace: dict[str, Any] = {}
-    exec(code, namespace)  # noqa: S102 — trusted local demo script
+    exec(code, namespace)
     results = namespace["compute_all"]()
     print("  compute_all() target blocks:")
     for key in sorted(results):

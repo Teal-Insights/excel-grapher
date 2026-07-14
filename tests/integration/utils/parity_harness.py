@@ -117,7 +117,7 @@ def exec_generated_code_with_cache(
     for target in targets:
         try:
             xl_cell(ctx, target)
-        except BaseException as exc:  # noqa: B036 (re-raised unless Excel error)
+        except BaseException as exc:
             if xl_error_exception is None or not isinstance(exc, xl_error_exception):
                 raise
             # The evaluation boundary caches the raising cell's error code.

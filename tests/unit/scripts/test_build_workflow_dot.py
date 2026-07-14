@@ -147,7 +147,7 @@ def test_render_dot_to_svg_invokes_graphviz(monkeypatch, tmp_path: Path) -> None
     class CompletedProcess:
         returncode = 0
 
-    def fake_run(cmd, capture_output, text, check):  # noqa: ANN001
+    def fake_run(cmd, capture_output, text, check):
         calls.append(cmd)
         return CompletedProcess()
 

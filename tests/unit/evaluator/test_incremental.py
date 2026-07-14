@@ -155,7 +155,7 @@ def test_eager_invalidation_checks_all_leaves_upfront() -> None:
         ev.evaluate(["S!B1"])
         # Eager mode checks all leaves up-front, so A2's change is observed
         # even though we only evaluate B1.
-        assert ev._cache.get("S!A2") in (None, 2)  # noqa: SLF001
+        assert ev._cache.get("S!A2") in (None, 2)
 
 
 def test_lazy_invalidation_only_checks_visited_leaves() -> None:
@@ -170,13 +170,13 @@ def test_lazy_invalidation_only_checks_visited_leaves() -> None:
 
     with FormulaEvaluator(graph, auto_detect_changes=True, eager_invalidation=False) as ev:
         ev.evaluate(["S!B1", "S!B2"])
-        assert ev._cache["S!B2"] == 15.0  # noqa: SLF001
+        assert ev._cache["S!B2"] == 15.0
 
         graph.set_node_value("S!A2", 100)
 
         ev.evaluate(["S!B1"])
         # B2's cached value should still be stale in lazy mode
-        assert ev._cache.get("S!B2") == 15.0  # noqa: SLF001
+        assert ev._cache.get("S!B2") == 15.0
 
 
 def test_lazy_invalidation_detects_changes_in_evaluation_path() -> None:

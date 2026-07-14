@@ -207,7 +207,7 @@ def test_dataframe_like_without_pandas_raises() -> None:
             return ["TIME_PERIOD", "OBS_VALUE"]
 
     fake = _FakePandasDataFrame()
-    type(fake).__name__ = "DataFrame"  # type: ignore[misc]
+    type(fake).__name__ = "DataFrame"
 
     with pytest.raises(ImportError, match="pandas"):
         coerce_setter_input(cast(Any, fake), **_SERIES_KWARGS)

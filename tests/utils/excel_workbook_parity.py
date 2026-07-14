@@ -146,7 +146,7 @@ def compare_evaluator_to_excel_cache(
             cached = node.value
             formula = _formula_for(addr)
             try:
-                computed = ev._evaluate_cell(addr)  # noqa: SLF001
+                computed = ev._evaluate_cell(addr)
             except NotImplementedError as e:
                 m = WorkbookParityMismatch(
                     address=addr,

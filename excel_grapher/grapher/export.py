@@ -77,7 +77,7 @@ def to_networkx(
     validate_max_formula_length(max_formula_length)
 
     try:
-        import networkx as nx  # type: ignore[import-not-found]
+        import networkx as nx
     except Exception as e:  # pragma: no cover
         raise ImportError("networkx is not installed; add it to use to_networkx()") from e
 
