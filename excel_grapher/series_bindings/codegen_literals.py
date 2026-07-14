@@ -12,10 +12,57 @@ __all__ = [
     "emit_compute_preamble_lines",
     "emit_setter_type_alias_lines",
     "py_scalar_literal",
+    "python_annotation_for_dtype",
     "resolution_includes_datetime",
     "resolutions_include_datetime",
+    "setter_input_annotation",
     "values_include_datetime",
 ]
+
+
+def python_annotation_for_dtype(dtype: str | None) -> str | None:
+    """Return a Python type-annotation fragment for a binding dtype.
+
+    Returns:
+        Annotation text such as `float` or `int | float`, or `None` when the dtype
+        is missing/`auto`/unknown.
+    """
+    if dtype is None or dtype == "auto":
+        return None
+    mapping = {
+        "float": "float",
+        "number": "int | float",
+        "int": "int",
+        "bool": "bool",
+        "string": "str",
+        "datetime": "datetime",
+    }
+    return mapping.get(dtype)
+
+
+def setter_input_annotation(
+    *,
+    layout: str,
+    measure_dtype: str | None,
+    scalar_shorthand: bool,
+) -> str:
+    """Return the parameter annotation for a generated setter input.
+
+    Scalar shorthand keeps a records union so dict/list inputs remain valid while
+    exposing the measure dtype on the bare-value arm. Series/matrix narrow the
+    positional measure sequence when a dtype is known.
+    """
+    measure_type = python_annotation_for_dtype(measure_dtype)
+    if scalar_shorthand:
+        if measure_type is None:
+            return "Records | Record | Scalar"
+        return f"Records | Record | {measure_type}"
+    if measure_type is None:
+        return "SeriesInput"
+    if layout == "matrix":
+        # Positional 1D measure iterables are not accepted for matrix setters.
+        return "Records | Record | DataFrameInput"
+    return f"Records | Record | Sequence[{measure_type}] | DataFrameInput"
 
 
 def values_include_datetime(*containers: Mapping[str, object] | None) -> bool:

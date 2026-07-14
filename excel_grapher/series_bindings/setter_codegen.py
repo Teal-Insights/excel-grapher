@@ -13,6 +13,7 @@ from excel_grapher.series_bindings.codegen_literals import (
     emit_setter_type_alias_lines,
     py_scalar_literal,
     resolutions_include_datetime,
+    setter_input_annotation,
 )
 from excel_grapher.series_bindings.docstrings import (
     emit_docstring_literal,
@@ -381,7 +382,15 @@ def emit_setter_function(
         lines.append("")
     lines.extend(_emit_key_order_constant(resolved, key_fields))
     scalar_shorthand = _accepts_scalar_shorthand(series, resolved)
-    input_type = "Records | Record | Scalar" if scalar_shorthand else "SeriesInput"
+    concept_scheme = bindings.get("concept_scheme") if bindings is not None else None
+    if not isinstance(concept_scheme, dict):
+        concept_scheme = None
+    measure_dtype = _measure_dtype_for_codegen(series, concept_scheme=concept_scheme)
+    input_type = setter_input_annotation(
+        layout=str(series.get("layout") or "series"),
+        measure_dtype=measure_dtype,
+        scalar_shorthand=scalar_shorthand,
+    )
     lines.append(f"def {fn_name}(")
     lines.append("    ctx: EvalContext,")
     lines.append(f"    records: {input_type},")
@@ -415,9 +424,6 @@ def emit_setter_function(
     if doc is not None:
         lines.extend(emit_docstring_literal(doc))
     leaf_index_arg = "{}" if requires_address else index_name
-    concept_scheme = bindings.get("concept_scheme") if bindings is not None else None
-    if not isinstance(concept_scheme, dict):
-        concept_scheme = None
     coerced_records = _coerce_setter_input_call(
         series,
         resolved,
@@ -471,7 +477,14 @@ def emit_setters_block(
         export_addresses=export_addresses,
     )
     lines: list[str] = ["# --- Series binding setters (Records API) ---", ""]
-    include_datetime = resolutions_include_datetime(report["series"])
+    concept_scheme = bindings.get("concept_scheme")
+    if not isinstance(concept_scheme, dict):
+        concept_scheme = None
+    include_datetime = resolutions_include_datetime(report["series"]) or any(
+        _measure_dtype_for_codegen(series, concept_scheme=concept_scheme) == "datetime"
+        for series in bindings.get("series", [])
+        if isinstance(series, dict) and has_input_direction(series)
+    )
     if include_helpers:
         lines.extend(emit_input_coerce_helpers())
         if include_type_aliases:

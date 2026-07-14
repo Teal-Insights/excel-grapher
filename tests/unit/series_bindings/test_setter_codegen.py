@@ -701,16 +701,46 @@ def test_emit_setters_block_calendar_year_setter_round_trips(tmp_path: Path) -> 
     assert ctx.inputs["Inputs!C2"] == 22.0
 
 
-def test_emit_setter_series_signature_uses_series_input(tmp_path: Path) -> None:
+def test_emit_setter_series_signature_narrows_measure_sequence(tmp_path: Path) -> None:
     wb_path = tmp_path / "lic_inputs.xlsx"
     _write_borvelia_workbook(wb_path)
     graph = create_dependency_graph(wb_path, expand_data_range("Inputs!F5:J5"), load_values=True)
     bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
     series = bindings["series"][0]
     resolved = resolve_series_binding(graph, wb_path, series)
-    code = "\n".join(emit_setter_function(series, resolved))
-    assert "records: SeriesInput," in code
+    code = "\n".join(emit_setter_function(series, resolved, bindings=bindings))
+    assert "records: Records | Record | Sequence[float] | DataFrameInput," in code
     assert 'empty_measure: EmptyMeasure = "write"' in code
+
+
+def test_emit_setter_scalar_signature_narrows_measure_dtype(tmp_path: Path) -> None:
+    wb_path = tmp_path / "rate.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Inputs")
+    ws.write_number("B2", 1.0)
+    wb.close()
+
+    graph = create_dependency_graph(wb_path, ["Inputs!B2"], load_values=True)
+    series = {
+        "id": "rate",
+        "sheet": "Inputs",
+        "data_range": "Inputs!B2",
+        "layout": "scalar",
+        "input": {"setter": {"name": "set_rate"}},
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "float",
+                "bind": {"kind": "data_cell", "read": "number"},
+            },
+            "dimensions": [],
+        },
+        "key": [],
+    }
+    resolved = resolve_series_binding(graph, wb_path, series)
+    code = "\n".join(emit_setter_function(series, resolved))
+    assert "records: Records | Record | float," in code
+    assert "Scalar," not in code.split("records:")[1].split("\n")[0]
 
 
 def test_emit_setter_scalar_omits_empty_measure_kwarg(tmp_path: Path) -> None:
@@ -1104,6 +1134,32 @@ def test_emit_setter_measure_dtype_from_concept_scheme(tmp_path: Path) -> None:
     ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
     with pytest.raises(TypeError, match="OBS_VALUE"):
         setter(ctx, "not-a-number")
+
+
+def test_emit_matrix_setter_signature_omits_positional_sequence(tmp_path: Path) -> None:
+    from tests.fixtures.series_bindings.matrix_helpers import (
+        MATRIX_EXPLICIT_BINDINGS,
+        write_matrix_explicit_workbook,
+    )
+
+    wb_path = tmp_path / "matrix_inputs.xlsx"
+    write_matrix_explicit_workbook(wb_path)
+    bindings = load_series_bindings(MATRIX_EXPLICIT_BINDINGS)
+    series = bindings["series"][0]
+    graph = create_dependency_graph(
+        wb_path,
+        expand_data_range(str(series["data_range"])),
+        load_values=True,
+    )
+    resolved = resolve_series_binding(
+        graph,
+        wb_path,
+        series,
+        concept_scheme=bindings.get("concept_scheme"),
+    )
+    code = "\n".join(emit_setter_function(series, resolved, bindings=bindings))
+    assert "records: Records | Record | DataFrameInput," in code
+    assert "Sequence[" not in code.split("def ")[1].split(") -> None:")[0]
 
 
 def test_emit_matrix_setter_rejects_measure_dtype_mismatch(tmp_path: Path) -> None:

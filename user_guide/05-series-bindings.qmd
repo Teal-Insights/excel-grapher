@@ -317,6 +317,10 @@ appropriate (for example `int` → `float`, `date` → `datetime`, and 0-d numpy
 fields still use soft `key_dtypes` coercion for leaf matching — they are not subject to the same
 strict isinstance checks as measures.
 
+Setter signatures also narrow from the measure dtype: scalar shorthand parameters are annotated
+`Records | Record | float` (for example), and series setters use `Sequence[float]` for positional
+measure iterables instead of a catch-all `Scalar` sequence when the dtype is known.
+
 **Key types must match resolved Python types.** Resolution coerces workbook and manifest values according to each bind’s `read` mode (and `concept_scheme` dtypes for constants and `series_context` entries). Generated setters index records by the same types — callers must not pass strings when resolution produced `datetime` or `bool` objects:
 
 | Binding | Resolved key type | Correct record value | Incorrect (will not match) |

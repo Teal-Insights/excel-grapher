@@ -514,10 +514,12 @@ class CodeGenerator:
         return "\n".join(lines).rstrip() + "\n"
 
     _SERIES_HELPER_IMPORT_NAMES: tuple[str, ...] = (
+        "DataFrameInput",
         "EmptyMeasure",
         "Record",
         "Records",
         "Scalar",
+        "Sequence",
         "SeriesInput",
         "_apply_series_records",
         "coerce_setter_input",
