@@ -205,3 +205,70 @@ def test_sum_over_range_with_error_produces_error_code() -> None:
     )
     with FormulaEvaluator(graph) as ev:
         assert ev.evaluate(["S!B1"]) == {"S!B1": XlError.DIV}
+
+
+def test_sum_still_evaluates_all_cells_in_range() -> None:
+    """Full-scan reductions still visit every cell (eager until Phase 3)."""
+    graph = _make_graph(
+        _make_node("S!A1", None, 1),
+        _make_node("S!A2", "=S!A1+1", None),
+        _make_node("S!A3", "=S!A1+2", None),
+        _make_node("S!B1", "=SUM(S!A1:S!A3)", None),
+    )
+    seen: list[str] = []
+
+    def _track(address: str, _value: object) -> None:
+        seen.append(address)
+
+    with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
+        assert ev.evaluate(["S!B1"]) == {"S!B1": 6}
+    assert "S!A1" in seen
+    assert "S!A2" in seen
+    assert "S!A3" in seen
+
+
+def test_match_over_offset_does_not_evaluate_trailing_unused_cells() -> None:
+    """OFFSET → MATCH stays selective under lazy-by-default range resolution."""
+    graph = _make_graph(
+        _make_node("S!A1", None, "x"),
+        _make_node("S!A2", None, "y"),
+        _make_node("S!A3", "=1/0", None),
+        _make_node("S!B1", '=MATCH("y", OFFSET(S!A1,0,0,3,1), 0)', None),
+    )
+    seen: list[str] = []
+
+    def _track(address: str, _value: object) -> None:
+        seen.append(address)
+
+    with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
+        assert ev.evaluate(["S!B1"]) == {"S!B1": 2}
+        assert "S!A3" not in ev._cache
+    assert "S!A3" not in seen
+
+
+def test_vlookup_over_offset_stops_before_trailing_unused_cells() -> None:
+    """OFFSET → VLOOKUP does not force evaluation past the matched row."""
+    graph = _make_graph(
+        _make_node("S!A1", None, "k1"),
+        _make_node("S!B1", None, 100),
+        _make_node("S!A2", None, "k2"),
+        _make_node("S!B2", None, 200),
+        _make_node("S!A3", "=1/0", None),
+        _make_node("S!B3", None, 300),
+        _make_node(
+            "S!C1",
+            '=VLOOKUP("k1", OFFSET(S!A1,0,0,3,2), 2, FALSE)',
+            None,
+        ),
+    )
+    seen: list[str] = []
+
+    def _track(address: str, _value: object) -> None:
+        seen.append(address)
+
+    with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
+        assert ev.evaluate(["S!C1"]) == {"S!C1": 100}
+        assert "S!A3" not in ev._cache
+        assert "S!B3" not in ev._cache
+    assert "S!A3" not in seen
+    assert "S!B3" not in seen

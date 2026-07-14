@@ -15,6 +15,10 @@ from typing import Literal, TypeAlias
 
 ArgRole: TypeAlias = Literal["value", "ref_only"]
 
+# Sufficient for Excel varargs (SUM, SUMPRODUCT, AND, …) until Phase 3 drops
+# eager materialization for full-scan consumers.
+_ALL_ARGS: frozenset[int] = frozenset(range(32))
+
 
 @dataclass(frozen=True, slots=True)
 class ExcelFunctionMeta:
@@ -36,15 +40,29 @@ FUNCTION_META: dict[str, ExcelFunctionMeta] = {
     "CONCAT": ExcelFunctionMeta("CONCAT", ()),
 }
 
-# Functions whose range arguments must stay as object-dtype ndarrays (evaluator).
-# SUMPRODUCT (and similar full-scan reductions) still eager-materialize.
-NUMPY_ARRAY_ARG_INDICES: dict[str, frozenset[int]] = {
-    "INDEX": frozenset({0}),
-    "SUMPRODUCT": frozenset(range(10)),
+# Full-scan reductions that still eager-materialize to object-dtype ndarrays
+# (bridge until Phase 3 teaches flatten / aggregates over Grid).
+EAGER_MATERIALIZE_ARG_INDICES: dict[str, frozenset[int]] = {
+    "SUM": _ALL_ARGS,
+    "AVERAGE": _ALL_ARGS,
+    "MIN": _ALL_ARGS,
+    "MAX": _ALL_ARGS,
+    "COUNT": _ALL_ARGS,
+    "COUNTA": _ALL_ARGS,
+    "COUNTIF": frozenset({0}),
+    "AVERAGEIF": frozenset({0, 2}),
+    "STDEV": _ALL_ARGS,
+    "LARGE": frozenset({0}),
+    "NPV": frozenset(range(1, 32)),
+    "RANK": frozenset({1}),
+    "SUMPRODUCT": _ALL_ARGS,
+    "AND": _ALL_ARGS,
+    "OR": _ALL_ARGS,
 }
 
-# Lookup consumers that accept lazy `Range` arguments (selective cell access).
-LAZY_RANGE_ARG_INDICES: dict[str, frozenset[int]] = {
+# Lookup / reference consumers that bind multi-cell args as lazy `Range`
+# (selective Grid access). Unlisted multi-cell args become `#VALUE!`.
+GRID_RANGE_ARG_INDICES: dict[str, frozenset[int]] = {
     "LOOKUP": frozenset({1, 2}),
     "VLOOKUP": frozenset({1}),
     "HLOOKUP": frozenset({1}),
@@ -53,14 +71,14 @@ LAZY_RANGE_ARG_INDICES: dict[str, frozenset[int]] = {
 }
 
 
-def numpy_array_arg_indices(function_name: str) -> frozenset[int]:
-    """Return argument indices that keep numpy arrays for ``function_name``."""
-    return NUMPY_ARRAY_ARG_INDICES.get(function_name.upper(), frozenset())
+def eager_materialize_arg_indices(function_name: str) -> frozenset[int]:
+    """Return argument indices that eager-materialize for ``function_name``."""
+    return EAGER_MATERIALIZE_ARG_INDICES.get(function_name.upper(), frozenset())
 
 
-def lazy_range_arg_indices(function_name: str) -> frozenset[int]:
-    """Return argument indices that keep lazy `Range` values for ``function_name``."""
-    return LAZY_RANGE_ARG_INDICES.get(function_name.upper(), frozenset())
+def grid_range_arg_indices(function_name: str) -> frozenset[int]:
+    """Return argument indices that keep lazy `Range` for ``function_name``."""
+    return GRID_RANGE_ARG_INDICES.get(function_name.upper(), frozenset())
 
 
 def is_ref_only_arg(function_name: str, arg_index: int) -> bool:

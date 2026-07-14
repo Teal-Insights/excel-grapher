@@ -6,9 +6,10 @@ from typing import Any, cast
 
 import numpy as np
 
-from excel_grapher.core import CellValue, XlError, to_native, to_number
+from excel_grapher.core import CellValue, XlError
 from excel_grapher.core.lookup_funcs import (
     hlookup_cells,
+    index_cells,
     lookup_cells,
     match_cells,
     vlookup_cells,
@@ -43,69 +44,9 @@ def xl_lookup(
     )
 
 
-def xl_index(array: np.ndarray, row_num: CellValue, col_num: CellValue = None) -> CellValue:
-    """INDEX over a materialized ndarray (legacy path; evaluator uses geometry)."""
-    if not isinstance(array, np.ndarray):
-        return XlError.VALUE
-    nrows, ncols = array.shape
-    row_omitted = row_num is None
-    col_omitted = col_num is None
-
-    if row_omitted and col_omitted:
-        if nrows == 1 and ncols == 1:
-            return to_native(array[0, 0])
-        if nrows == 1:
-            return to_native(array[0, ncols - 1])
-        if ncols == 1:
-            return to_native(array[nrows - 1, 0])
-        return XlError.VALUE
-
-    if row_omitted:
-        cn = to_number(col_num)
-        if isinstance(cn, XlError):
-            return cn
-        col = int(cn)
-        if col < 1 or col > ncols:
-            return XlError.REF
-        if nrows == 1:
-            return to_native(array[0, col - 1])
-        return array[:, col - 1 : col]
-
-    rn = to_number(row_num)
-    if isinstance(rn, XlError):
-        return rn
-    row = int(rn)
-
-    if col_omitted:
-        if nrows == 1:
-            if row < 1 or row > ncols:
-                return XlError.REF
-            return to_native(array[0, row - 1])
-        if ncols == 1:
-            if row < 1 or row > nrows:
-                return XlError.REF
-            return to_native(array[row - 1, 0])
-        if row < 1 or row > nrows:
-            return XlError.REF
-        return array[row - 1 : row, :]
-
-    cn = to_number(col_num)
-    if isinstance(cn, XlError):
-        return cn
-    col = int(cn)
-    if nrows == 1:
-        if row < 1 or row > ncols:
-            return XlError.REF
-        return to_native(array[0, row - 1])
-    if ncols == 1:
-        if row < 1 or row > nrows:
-            return XlError.REF
-        return to_native(array[row - 1, 0])
-    if row < 1 or row > nrows:
-        return XlError.REF
-    if col < 1 or col > ncols:
-        return XlError.REF
-    return to_native(array[row - 1, col - 1])
+def xl_index(array: object, row_num: CellValue = None, col_num: CellValue = None) -> CellValue:
+    """INDEX over a lazy `Range`, nested list, or transitional ndarray."""
+    return cast(CellValue, index_cells(_array_arg(array), row_num, col_num))
 
 
 def xl_match(

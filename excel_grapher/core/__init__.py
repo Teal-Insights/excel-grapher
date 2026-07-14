@@ -6,6 +6,7 @@ and the standalone export runtime.
 
 from .address_keys import NormalizedAddress
 from .coercions import (
+    as_scalar,
     excel_casefold,
     flatten,
     get_error,
@@ -44,6 +45,7 @@ __all__ = [
     "XlError",
     "XlErrorException",
     "resolve_excel_range",
+    "as_scalar",
     "excel_casefold",
     "flatten",
     "get_error",
