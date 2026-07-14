@@ -403,3 +403,84 @@ def test_requires_address_dataframe_rejected() -> None:
             **_SERIES_KWARGS,
             requires_address=True,
         )
+
+
+def test_measure_dtype_float_coerces_int_and_rejects_string() -> None:
+    result = coerce_setter_input(
+        [{"TIME_PERIOD": 4, "OBS_VALUE": 7}],
+        measure_dtype="float",
+        **_SERIES_KWARGS,
+    )
+    assert result == [{"TIME_PERIOD": 4, "OBS_VALUE": 7.0}]
+
+    with pytest.raises(TypeError, match="OBS_VALUE"):
+        coerce_setter_input(
+            [{"TIME_PERIOD": 4, "OBS_VALUE": "not-a-number"}],
+            measure_dtype="float",
+            **_SERIES_KWARGS,
+        )
+
+
+def test_measure_dtype_scalar_layout_rejects_wrong_type() -> None:
+    with pytest.raises(TypeError, match="OBS_VALUE"):
+        coerce_setter_input(
+            "not-a-number",
+            layout="scalar",
+            key_fields=(),
+            measure_field="OBS_VALUE",
+            key_order=None,
+            strict=True,
+            measure_dtype="float",
+        )
+
+
+def test_measure_dtype_scalar_layout_accepts_number() -> None:
+    result = coerce_setter_input(
+        1.25,
+        layout="scalar",
+        key_fields=(),
+        measure_field="OBS_VALUE",
+        key_order=None,
+        strict=True,
+        measure_dtype="number",
+    )
+    assert result == [{"OBS_VALUE": 1.25}]
+
+
+def test_measure_dtype_allows_none_for_empty_measure_policy() -> None:
+    result = coerce_setter_input(
+        [{"TIME_PERIOD": 4, "OBS_VALUE": None}],
+        measure_dtype="float",
+        empty_measure="skip",
+        **_SERIES_KWARGS,
+    )
+    assert result == []
+
+
+def test_measure_dtype_accepts_numpy_int_positional_array() -> None:
+    np = pytest.importorskip("numpy")
+    result = coerce_setter_input(
+        np.array([1, 2, 3, 4, 5]),
+        measure_dtype="float",
+        **_SERIES_KWARGS,
+    )
+    assert result == [
+        {"TIME_PERIOD": 1, "OBS_VALUE": 1.0},
+        {"TIME_PERIOD": 2, "OBS_VALUE": 2.0},
+        {"TIME_PERIOD": 3, "OBS_VALUE": 3.0},
+        {"TIME_PERIOD": 4, "OBS_VALUE": 4.0},
+        {"TIME_PERIOD": 5, "OBS_VALUE": 5.0},
+    ]
+    assert all(isinstance(record["OBS_VALUE"], float) for record in result)
+
+
+def test_measure_dtype_timezone_aware_datetime_includes_record_context() -> None:
+    from datetime import UTC, datetime
+
+    with pytest.raises(ValueError, match=r"record\[0\]: OBS_VALUE:.*Timezone-aware") as exc_info:
+        coerce_setter_input(
+            [{"TIME_PERIOD": 4, "OBS_VALUE": datetime(2024, 1, 1, tzinfo=UTC)}],
+            measure_dtype="datetime",
+            **_SERIES_KWARGS,
+        )
+    assert "Timezone-aware" in str(exc_info.value)

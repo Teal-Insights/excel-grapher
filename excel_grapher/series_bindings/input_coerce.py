@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, TypeGuard, cast
 
-from excel_grapher.series_bindings.coerce import coerce_scalar
+from excel_grapher.series_bindings.coerce import coerce_scalar, validate_binding_scalar
 from excel_grapher.series_bindings.setter_input_types import EmptyMeasure, Layout, SetterInput
 from excel_grapher.series_bindings.types import Record, Records
 
@@ -198,6 +198,39 @@ def _apply_key_dtypes(
     return coerced
 
 
+def _apply_measure_dtype(
+    records: Records,
+    *,
+    measure_field: str,
+    measure_dtype: str | None,
+) -> Records:
+    """Validate and coerce measure values against the binding measure dtype."""
+    if measure_dtype is None:
+        return records
+    validated: list[dict[str, object]] = []
+    for index, record in enumerate(records):
+        if measure_field not in record:
+            validated.append(record)
+            continue
+        raw = record[measure_field]
+        try:
+            value = validate_binding_scalar(raw, measure_dtype)
+        except TypeError as exc:
+            raise TypeError(
+                f"record[{index}]: {measure_field} must be {measure_dtype}, "
+                f"got {type(raw).__name__}: {raw!r}"
+            ) from exc
+        except ValueError as exc:
+            raise ValueError(f"record[{index}]: {measure_field}: {exc}") from exc
+        if value is raw:
+            validated.append(record)
+            continue
+        updated = dict(record)
+        updated[measure_field] = value
+        validated.append(updated)
+    return validated
+
+
 def _coerce_dataframe_records(
     data: object,
     *,
@@ -346,6 +379,7 @@ def coerce_setter_input(
     key_order: tuple[object, ...] | None,
     strict: bool,
     key_dtypes: Mapping[str, str] | None = None,
+    measure_dtype: str | None = None,
     empty_measure: EmptyMeasure = "write",
     requires_address: bool = False,
 ) -> Records:
@@ -359,6 +393,7 @@ def coerce_setter_input(
         key_order: Canonical key values for positional measure iterables.
         strict: When true, reject unknown DataFrame columns.
         key_dtypes: Optional read modes per key field applied to all input shapes.
+        measure_dtype: Optional binding dtype enforced for `measure_field` values.
         empty_measure: How to treat rows with missing/NaN measure values.
         requires_address: When true, reject DataFrame input (records must carry addresses).
 
@@ -367,13 +402,19 @@ def coerce_setter_input(
 
     Raises:
         ImportError: When a DataFrame-like value is passed but pandas/polars is missing.
-        TypeError: When the input shape is unsupported for the layout.
+        TypeError: When the input shape is unsupported for the layout, or a measure
+            value does not match `measure_dtype`.
         ValueError: When columns, keys, or positional lengths are invalid.
     """
     if layout == "scalar":
         if _is_tabular_dataframe(data):
             raise TypeError("scalar setters do not accept DataFrame input")
-        return _coerce_scalar_records(data, measure_field)
+        records = _coerce_scalar_records(data, measure_field)
+        return _apply_measure_dtype(
+            records,
+            measure_field=measure_field,
+            measure_dtype=measure_dtype,
+        )
 
     if requires_address and _is_tabular_dataframe(data):
         raise TypeError(
@@ -393,6 +434,11 @@ def coerce_setter_input(
         records,
         key_fields=key_fields,
         key_dtypes=key_dtypes,
+    )
+    records = _apply_measure_dtype(
+        records,
+        measure_field=measure_field,
+        measure_dtype=measure_dtype,
     )
     return _apply_empty_measure(
         records,
