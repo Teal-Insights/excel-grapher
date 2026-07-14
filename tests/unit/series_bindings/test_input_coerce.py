@@ -403,3 +403,55 @@ def test_requires_address_dataframe_rejected() -> None:
             **_SERIES_KWARGS,
             requires_address=True,
         )
+
+
+def test_measure_dtype_float_coerces_int_and_rejects_string() -> None:
+    result = coerce_setter_input(
+        [{"TIME_PERIOD": 4, "OBS_VALUE": 7}],
+        measure_dtype="float",
+        **_SERIES_KWARGS,
+    )
+    assert result == [{"TIME_PERIOD": 4, "OBS_VALUE": 7.0}]
+
+    with pytest.raises(TypeError, match="OBS_VALUE"):
+        coerce_setter_input(
+            [{"TIME_PERIOD": 4, "OBS_VALUE": "not-a-number"}],
+            measure_dtype="float",
+            **_SERIES_KWARGS,
+        )
+
+
+def test_measure_dtype_scalar_layout_rejects_wrong_type() -> None:
+    with pytest.raises(TypeError, match="OBS_VALUE"):
+        coerce_setter_input(
+            "not-a-number",
+            layout="scalar",
+            key_fields=(),
+            measure_field="OBS_VALUE",
+            key_order=None,
+            strict=True,
+            measure_dtype="float",
+        )
+
+
+def test_measure_dtype_scalar_layout_accepts_number() -> None:
+    result = coerce_setter_input(
+        1.25,
+        layout="scalar",
+        key_fields=(),
+        measure_field="OBS_VALUE",
+        key_order=None,
+        strict=True,
+        measure_dtype="number",
+    )
+    assert result == [{"OBS_VALUE": 1.25}]
+
+
+def test_measure_dtype_allows_none_for_empty_measure_policy() -> None:
+    result = coerce_setter_input(
+        [{"TIME_PERIOD": 4, "OBS_VALUE": None}],
+        measure_dtype="float",
+        empty_measure="skip",
+        **_SERIES_KWARGS,
+    )
+    assert result == []

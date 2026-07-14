@@ -45,6 +45,20 @@ def _measure_concept(series: dict[str, Any]) -> str:
     return str(measure.get("concept") or "OBS_VALUE")
 
 
+def _measure_dtype_for_codegen(series: dict[str, Any]) -> str | None:
+    """Return the measure dtype to enforce in generated setters, if any."""
+    measure = (series.get("structure") or {}).get("measure") or {}
+    dtype = measure.get("dtype")
+    if dtype is not None:
+        return str(dtype)
+    raw_bind = measure.get("bind")
+    bind: dict[str, Any] = raw_bind if isinstance(raw_bind, dict) else {}
+    read = bind.get("read")
+    if read is not None and read != "auto":
+        return str(read)
+    return None
+
+
 def _accepts_scalar_shorthand(
     series: dict[str, Any],
     resolved: SeriesResolution,
@@ -229,6 +243,7 @@ def _coerce_setter_input_call(
         _key_order_constant_name(resolved["series_id"]) if key_order is not None else "None"
     )
     key_dtypes = _key_dtypes_for_codegen(series, key_fields)
+    measure_dtype = _measure_dtype_for_codegen(series)
     parts = [
         "coerce_setter_input(",
         "            records,",
@@ -242,6 +257,8 @@ def _coerce_setter_input_call(
     ]
     if key_dtypes:
         parts.append(f"            key_dtypes={key_dtypes!r},")
+    if measure_dtype is not None:
+        parts.append(f"            measure_dtype={measure_dtype!r},")
     parts.append("        )")
     return "\n".join(parts)
 
@@ -395,7 +412,21 @@ def emit_setter_function(
         lines.extend(emit_docstring_literal(doc))
     leaf_index_arg = "{}" if requires_address else index_name
     if scalar_shorthand:
-        coerced_records = f"_coerce_records(records, {measure_concept!r}, allow_scalar=True)"
+        measure_dtype = _measure_dtype_for_codegen(series)
+        measure_dtype_arg = (
+            f",\n            measure_dtype={measure_dtype!r}" if measure_dtype is not None else ""
+        )
+        coerced_records = (
+            "coerce_setter_input(\n"
+            "            records,\n"
+            "            layout='scalar',\n"
+            "            key_fields=(),\n"
+            f"            measure_field={measure_concept!r},\n"
+            "            key_order=None,\n"
+            "            strict=strict"
+            f"{measure_dtype_arg},\n"
+            "        )"
+        )
     else:
         coerced_records = _coerce_setter_input_call(
             series,

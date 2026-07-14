@@ -975,3 +975,79 @@ def test_emit_setter_empty_measure_skip_drops_nan_rows(tmp_path: Path) -> None:
     setter(ctx, df, empty_measure="skip")
     assert ctx.inputs["Inputs!I5"] == 7.5
     assert ctx.inputs["Inputs!J5"] == 2.0
+
+
+def test_emit_setter_rejects_measure_dtype_mismatch(tmp_path: Path) -> None:
+    wb_path = tmp_path / "lic_inputs.xlsx"
+    _write_borvelia_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, expand_data_range("Inputs!F5:J5"), load_values=True)
+    bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
+    series = bindings["series"][0]
+    resolved = resolve_series_binding(graph, wb_path, series)
+    lines = emit_setter_function(series, resolved)
+    code = "\n".join(lines)
+    assert "measure_dtype='float'" in code or 'measure_dtype="float"' in code
+
+    ns = _exec_setters(lines)
+    setter = cast(
+        Callable[[EvalContext, list[dict[str, object]]], None],
+        ns["set_borvelia_primary_balance"],
+    )
+    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
+    with pytest.raises(TypeError, match="OBS_VALUE"):
+        setter(ctx, [{"TIME_PERIOD": 3, "OBS_VALUE": "not-a-number"}])
+
+
+def test_emit_setter_coerces_int_measure_to_float(tmp_path: Path) -> None:
+    wb_path = tmp_path / "lic_inputs.xlsx"
+    _write_borvelia_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, expand_data_range("Inputs!F5:J5"), load_values=True)
+    bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
+    series = bindings["series"][0]
+    resolved = resolve_series_binding(graph, wb_path, series)
+    ns = _exec_setters(emit_setter_function(series, resolved))
+    setter = cast(
+        Callable[[EvalContext, list[dict[str, object]]], None],
+        ns["set_borvelia_primary_balance"],
+    )
+    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
+    setter(ctx, [{"TIME_PERIOD": 3, "OBS_VALUE": 42}])
+    assert ctx.inputs["Inputs!H5"] == 42.0
+
+
+def test_emit_scalar_setter_rejects_measure_dtype_mismatch(tmp_path: Path) -> None:
+    wb_path = tmp_path / "rate.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Inputs")
+    ws.write_number("B2", 1.0)
+    wb.close()
+
+    graph = create_dependency_graph(wb_path, ["Inputs!B2"], load_values=True)
+    series = {
+        "id": "rate",
+        "sheet": "Inputs",
+        "data_range": "Inputs!B2",
+        "layout": "scalar",
+        "input": {"setter": {"name": "set_rate"}},
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "float",
+                "bind": {"kind": "data_cell", "read": "number"},
+            },
+            "dimensions": [],
+        },
+        "key": [],
+    }
+    resolved = resolve_series_binding(graph, wb_path, series)
+    lines = emit_setter_function(series, resolved)
+    code = "\n".join(lines)
+    assert "measure_dtype=" in code
+
+    ns = _exec_setters(lines)
+    setter = cast(Callable[..., None], ns["set_rate"])
+    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
+    with pytest.raises(TypeError, match="OBS_VALUE"):
+        setter(ctx, "not-a-number")
+    setter(ctx, 3)
+    assert ctx.inputs["Inputs!B2"] == 3.0

@@ -9,6 +9,7 @@ import pytest
 from excel_grapher.series_bindings.coerce import (
     coerce_constant,
     coerce_scalar,
+    validate_binding_scalar,
 )
 
 _EXCEL_EPOCH = datetime(1899, 12, 30)
@@ -118,3 +119,60 @@ def test_coerce_module_does_not_depend_on_codegen_literals() -> None:
     from excel_grapher.series_bindings import coerce as coerce_module
 
     assert "py_scalar_literal" not in coerce_module.__all__
+
+
+def test_validate_binding_scalar_float_accepts_int_and_float() -> None:
+    assert validate_binding_scalar(1.5, "float") == 1.5
+    assert validate_binding_scalar(2, "float") == 2.0
+
+
+def test_validate_binding_scalar_float_rejects_string() -> None:
+    with pytest.raises(TypeError, match="float"):
+        validate_binding_scalar("not-a-number", "float")
+
+
+def test_validate_binding_scalar_float_rejects_bool() -> None:
+    with pytest.raises(TypeError, match="float"):
+        validate_binding_scalar(True, "float")
+
+
+def test_validate_binding_scalar_number_preserves_int() -> None:
+    assert validate_binding_scalar(3, "number") == 3
+    assert validate_binding_scalar(3.5, "number") == 3.5
+
+
+def test_validate_binding_scalar_number_rejects_string() -> None:
+    with pytest.raises(TypeError, match="number"):
+        validate_binding_scalar("not-a-number", "number")
+
+
+def test_validate_binding_scalar_int_rejects_float() -> None:
+    with pytest.raises(TypeError, match="int"):
+        validate_binding_scalar(4.0, "int")
+
+
+def test_validate_binding_scalar_bool_rejects_int() -> None:
+    with pytest.raises(TypeError, match="bool"):
+        validate_binding_scalar(1, "bool")
+
+
+def test_validate_binding_scalar_string_rejects_int() -> None:
+    with pytest.raises(TypeError, match="string"):
+        validate_binding_scalar(1, "string")
+
+
+def test_validate_binding_scalar_datetime_accepts_date() -> None:
+    assert validate_binding_scalar(date(2024, 1, 15), "datetime") == datetime(2024, 1, 15)
+
+
+def test_validate_binding_scalar_datetime_rejects_string() -> None:
+    with pytest.raises(TypeError, match="datetime"):
+        validate_binding_scalar("2024-01-15", "datetime")
+
+
+def test_validate_binding_scalar_none_passthrough() -> None:
+    assert validate_binding_scalar(None, "float") is None
+
+
+def test_validate_binding_scalar_auto_passthrough() -> None:
+    assert validate_binding_scalar("x", "auto") == "x"
