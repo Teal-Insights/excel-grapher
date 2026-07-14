@@ -8,8 +8,18 @@ from . import CellValue, ExcelRange, XlError, to_number
 from .address_keys import parse_address
 
 
+class ExcelRangeGeometry(Protocol):
+    """Minimal rectangular geometry shared by core and export-runtime ranges."""
+
+    sheet: str
+    start_row: int
+    start_col: int
+    end_row: int
+    end_col: int
+
+
 def index_excel_range(
-    base: ExcelRange,
+    base: ExcelRangeGeometry,
     row_num: CellValue | None,
     col_num: CellValue | None,
 ) -> ExcelRange | XlError:
@@ -116,7 +126,7 @@ def split_sheet_qualified_address(address: str) -> tuple[str, str] | None:
 _split_sheet_qualified_address = split_sheet_qualified_address
 
 
-def _in_bounds(rng: ExcelRange, bounds: WorkbookBoundsProtocol) -> bool:
+def _in_bounds(rng: ExcelRangeGeometry, bounds: WorkbookBoundsProtocol) -> bool:
     if rng.sheet != bounds.sheet:
         return False
     return (
@@ -126,7 +136,7 @@ def _in_bounds(rng: ExcelRange, bounds: WorkbookBoundsProtocol) -> bool:
 
 
 def offset_range(
-    base: ExcelRange,
+    base: ExcelRangeGeometry,
     rows: CellValue,
     cols: CellValue,
     height: CellValue | None = None,

@@ -10,7 +10,6 @@ from excel_grapher.core import XlError, to_number
 from excel_grapher.core.address_keys import format_cell_key
 from excel_grapher.core.addressing import index_excel_range, offset_range
 from excel_grapher.core.types import CellValue as CoreCellValue
-from excel_grapher.core.types import ExcelRange as CoreExcelRange
 from excel_grapher.core.types import XlErrorException
 from excel_grapher.runtime.cache import EvalContext, _parse_range_address, xl_cell
 
@@ -66,33 +65,24 @@ def _range_from_ref_info(
             raise XlErrorException(XlError.VALUE)
 
 
-def _to_core_range(rng: ExcelRange) -> CoreExcelRange:
-    """Copy export-runtime geometry into the core `ExcelRange` addressing type."""
-    return CoreExcelRange(
-        sheet=rng.sheet,
-        start_row=rng.start_row,
-        start_col=rng.start_col,
-        end_row=rng.end_row,
-        end_col=rng.end_col,
-    )
-
-
-def _from_core_range(rng: CoreExcelRange) -> ExcelRange:
-    """Copy core addressing geometry into the export-runtime `ExcelRange` type."""
-    return ExcelRange(
-        sheet=rng.sheet,
-        start_row=rng.start_row,
-        start_col=rng.start_col,
-        end_row=rng.end_row,
-        end_col=rng.end_col,
-    )
-
-
 def _as_addressing_scalar(value: CellValue | None) -> Scalar | None:
     """Collapse export-runtime values to scalars for shared addressing helpers."""
     if value is None:
         return None
     return as_scalar(value)
+
+
+def _export_range_from_geometry(
+    sheet: str, start_row: int, start_col: int, end_row: int, end_col: int
+) -> ExcelRange:
+    """Build an export-runtime `ExcelRange` from absolute coordinates."""
+    return ExcelRange(
+        sheet=sheet,
+        start_row=start_row,
+        start_col=start_col,
+        end_row=end_row,
+        end_col=end_col,
+    )
 
 
 def xl_index_ref(
@@ -102,7 +92,7 @@ def xl_index_ref(
 ) -> tuple[str, int, int] | tuple[str, int, int, int, int]:
     """Return INDEX reference metadata, raising on Excel reference errors."""
     out = index_excel_range(
-        _to_core_range(_range_from_ref_info(ref)),
+        _range_from_ref_info(ref),
         _as_addressing_scalar(row_num),
         _as_addressing_scalar(col_num),
     )
@@ -131,7 +121,7 @@ def xl_offset_ref(
         max_col = 1_000_000_000
 
     out = offset_range(
-        _to_core_range(base_range),
+        base_range,
         as_scalar(rows),
         as_scalar(cols),
         _as_addressing_scalar(height),
@@ -140,7 +130,9 @@ def xl_offset_ref(
     )
     if isinstance(out, XlError):
         raise XlErrorException(out)
-    return _from_core_range(out)
+    return _export_range_from_geometry(
+        out.sheet, out.start_row, out.start_col, out.end_row, out.end_col
+    )
 
 
 def xl_offset(
