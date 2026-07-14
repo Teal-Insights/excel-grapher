@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 from excel_grapher.core import CellValue, XlError
 from excel_grapher.core.grid import Range
 from excel_grapher.core.operator_maps import (
@@ -40,7 +42,8 @@ def test_map_arithmetic_agrees_with_ndarray_xl_mul_when_fully_consumed() -> None
         np.array([[1.5], [2.5]], dtype=object),
         np.array([[3.0], [4.0]], dtype=object),
     )
-    assert mapped == arr.tolist()
+    assert isinstance(arr, np.ndarray)
+    assert mapped == cast(Any, arr).tolist()
 
 
 def test_map_arithmetic_shape_mismatch_returns_value_error() -> None:

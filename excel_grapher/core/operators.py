@@ -12,6 +12,8 @@ explicit materialization at this boundary.
 
 from __future__ import annotations
 
+from typing import cast
+
 import numpy as np
 
 from .coercions import to_number
@@ -107,7 +109,7 @@ def _xl_compare(op: str, left: CellValue, right: CellValue) -> CellValue:
         fast = _try_fastpath_from_grids(op, left, right, kind="compare")
         if fast is not None:
             return fast
-        return map_compare(op, left, right)
+        return cast(CellValue, map_compare(op, left, right))
 
     if isinstance(left, np.ndarray) or isinstance(right, np.ndarray):
         pair = _broadcast_pair(left, right)
@@ -136,7 +138,7 @@ def _xl_arithmetic(
         fast = _try_fastpath_from_grids(op, left, right, kind="arithmetic")
         if fast is not None:
             return fast
-        return map_arithmetic(op, left, right)
+        return cast(CellValue, map_arithmetic(op, left, right))
 
     if isinstance(left, np.ndarray) or isinstance(right, np.ndarray):
         pair = _broadcast_pair(left, right)
@@ -171,7 +173,7 @@ def _xl_concat(left: CellValue, right: CellValue) -> CellValue:
         fast = _try_fastpath_from_grids(None, left, right, kind="concat")
         if fast is not None:
             return fast
-        return map_concat(left, right)
+        return cast(CellValue, map_concat(left, right))
 
     if isinstance(left, np.ndarray) or isinstance(right, np.ndarray):
         pair = _broadcast_pair(left, right)
@@ -241,13 +243,13 @@ def xl_pow(left: CellValue, right: CellValue) -> CellValue:
 
 
 def xl_neg(value: CellValue) -> CellValue:
-    return map_unary("-", value)
+    return cast(CellValue, map_unary("-", value))
 
 
 def xl_pos(value: CellValue) -> CellValue:
-    return map_unary("+", value)
+    return cast(CellValue, map_unary("+", value))
 
 
 def xl_percent(value: CellValue) -> CellValue:
     """Excel postfix percent operator (%): divide a numeric value by 100."""
-    return map_unary("%", value)
+    return cast(CellValue, map_unary("%", value))

@@ -9,6 +9,8 @@ returns) and raise `XlErrorException` at this boundary.
 
 from __future__ import annotations
 
+from typing import cast
+
 from excel_grapher.core import XlError, to_bool, to_int, to_number
 from excel_grapher.core.operator_maps import (
     map_arithmetic,
@@ -44,7 +46,7 @@ def _raise_error(code: XlError) -> XlErrorException:
 def _raise_if_error(value: object) -> CellValue:
     if isinstance(value, XlError):
         raise _raise_error(value)
-    return value  # type: ignore[return-value]
+    return cast(CellValue, value)
 
 
 def xl_number(value: CellValue) -> float:

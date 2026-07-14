@@ -129,7 +129,8 @@ def test_large_in_memory_range_mul_matches_reference() -> None:
     left = np.array([[float(i % 7 + 1)] for i in range(1, 501)], dtype=object)
     right = np.array([[3.0] for _ in range(500)], dtype=object)
     expected = reference_arithmetic_array("*", left, right)
-    actual = result.tolist() if isinstance(result, np.ndarray) else result
+    assert isinstance(expected, np.ndarray)
+    actual = cast(Any, result).tolist() if isinstance(result, np.ndarray) else result
     assert actual == cast(Any, expected).tolist()
 
 

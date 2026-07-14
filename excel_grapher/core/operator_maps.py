@@ -2,9 +2,15 @@
 
 Implementations return `XlError` sentinels. Evaluator operators call these
 directly; `export_runtime.operators` wrappers raise `XlErrorException`.
+
+Evaluator and export value vocabularies differ slightly (export `CellValue`
+also includes nested lists); shared maps accept opaque objects and narrow at
+use sites — same pattern as `lookup_funcs`.
 """
 
 from __future__ import annotations
+
+from typing import cast
 
 from excel_grapher.core.coercions import to_number
 from excel_grapher.core.grid import Grid, Scalar
@@ -52,8 +58,8 @@ def _apply_arithmetic_cell(op: str, left: Scalar, right: Scalar) -> CellValue:
         return left
     if isinstance(right, XlError):
         return right
-    ln = to_number(left)
-    rn = to_number(right)
+    ln = to_number(cast(CellValue, left))
+    rn = to_number(cast(CellValue, right))
     if isinstance(ln, XlError):
         return ln
     if isinstance(rn, XlError):
@@ -61,13 +67,13 @@ def _apply_arithmetic_cell(op: str, left: Scalar, right: Scalar) -> CellValue:
     return apply_arithmetic(op, ln, rn)
 
 
-def map_arithmetic(op: str, left: object, right: object) -> CellValue:
+def map_arithmetic(op: str, left: object, right: object) -> object:
     """Element-wise arithmetic over scalar or broadcast array operands."""
     pair = _broadcast_grids(left, right)
     if isinstance(pair, XlError):
         return pair
     if pair is None:
-        return _apply_arithmetic_cell(op, left, right)  # type: ignore[arg-type]
+        return _apply_arithmetic_cell(op, cast(Scalar, left), cast(Scalar, right))
 
     arr_left, arr_right = pair
     result: list[list[CellValue]] = []
@@ -82,20 +88,24 @@ def map_arithmetic(op: str, left: object, right: object) -> CellValue:
     return result
 
 
-def map_compare(op: str, left: object, right: object) -> CellValue:
+def map_compare(op: str, left: object, right: object) -> object:
     """Element-wise comparison over scalar or broadcast array operands."""
     pair = _broadcast_grids(left, right)
     if isinstance(pair, XlError):
         return pair
     if pair is None:
-        return compare_scalars(op, left, right)  # type: ignore[arg-type]
+        return compare_scalars(op, cast(CellValue, left), cast(CellValue, right))
 
     arr_left, arr_right = pair
     result: list[list[CellValue]] = []
     for row0 in range(arr_left.nrows):
         out_row: list[CellValue] = []
         for col0 in range(arr_left.ncols):
-            cell = compare_scalars(op, arr_left.at(row0, col0), arr_right.at(row0, col0))
+            cell = compare_scalars(
+                op,
+                cast(CellValue, arr_left.at(row0, col0)),
+                cast(CellValue, arr_right.at(row0, col0)),
+            )
             if isinstance(cell, XlError):
                 return cell
             out_row.append(cell)
@@ -103,7 +113,7 @@ def map_compare(op: str, left: object, right: object) -> CellValue:
     return result
 
 
-def map_concat(left: object, right: object) -> CellValue:
+def map_concat(left: object, right: object) -> object:
     """Element-wise string concatenation over scalar or broadcast array operands."""
     pair = _broadcast_grids(left, right)
     if isinstance(pair, XlError):
@@ -113,7 +123,7 @@ def map_concat(left: object, right: object) -> CellValue:
             return left
         if isinstance(right, XlError):
             return right
-        return concat_scalars(left, right)  # type: ignore[arg-type]
+        return concat_scalars(cast(CellValue, left), cast(CellValue, right))
 
     arr_left, arr_right = pair
     result: list[list[CellValue]] = []
@@ -126,18 +136,18 @@ def map_concat(left: object, right: object) -> CellValue:
                 return lv
             if isinstance(rv, XlError):
                 return rv
-            out_row.append(concat_scalars(lv, rv))
+            out_row.append(concat_scalars(cast(CellValue, lv), cast(CellValue, rv)))
         result.append(out_row)
     return result
 
 
-def map_unary(op: str, value: object) -> CellValue:
+def map_unary(op: str, value: object) -> object:
     """Apply a unary Excel operator over scalar or array operands."""
     grid = Grid.wrap(value)
     if grid is None:
         if isinstance(value, XlError):
             return value
-        number = to_number(value)  # type: ignore[arg-type]
+        number = to_number(cast(CellValue, value))
         if isinstance(number, XlError):
             return number
         if op == "-":
@@ -155,7 +165,7 @@ def map_unary(op: str, value: object) -> CellValue:
             cell = grid.at(row0, col0)
             if isinstance(cell, XlError):
                 return cell
-            number = to_number(cell)
+            number = to_number(cast(CellValue, cell))
             if isinstance(number, XlError):
                 return number
             if op == "-":
