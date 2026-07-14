@@ -29,10 +29,10 @@ from .parser import (
     expand_range,
     format_key,
     mask_spans,
-    parse_cell_refs,
-    parse_cell_refs_with_spans,
     parse_dynamic_range_refs_with_spans,
     parse_range_refs_with_spans,
+    parse_standalone_cell_refs,
+    parse_standalone_cell_refs_with_spans,
     split_top_level_choose,
     split_top_level_if,
     split_top_level_ifs,
@@ -160,7 +160,7 @@ def _flat_provenance_one_string(
                             or (fn_name == "OFFSET" and i == 0 and "(" in norm_arg)
                             or fn_name == "INDIRECT"
                         )
-                        for ref in parse_cell_refs(norm_arg):
+                        for ref in parse_standalone_cell_refs(norm_arg):
                             sh = ref.sheet if ref.sheet is not None else current_sheet
                             a1 = f"{ref.column}{ref.row}"
                             k = format_key(sh, a1)
@@ -188,7 +188,7 @@ def _flat_provenance_one_string(
                     )
                     norm = normalizer.normalize(masked2, sheet_of_cell)
                     out: set[str] = set()
-                    for ref in parse_cell_refs(norm):
+                    for ref in parse_standalone_cell_refs(norm):
                         sh = ref.sheet if ref.sheet is not None else sheet_of_cell
                         out.add(format_key(sh, f"{ref.column}{ref.row}"))
                     for start, end, _span in parse_range_refs_with_spans(norm):
@@ -298,9 +298,7 @@ def _flat_provenance_one_string(
     masked = mask_spans(masked, dyn_spans)
 
     if expand_ranges:
-        spans: list[tuple[int, int]] = []
-        for start, end, span in parse_range_refs_with_spans(masked):
-            spans.append(span)
+        for start, end, _span in parse_range_refs_with_spans(masked):
             sheet = start.sheet if start.sheet is not None else current_sheet
             for dep_sheet, dep_a1 in expand_range(
                 sheet=sheet,
@@ -314,9 +312,8 @@ def _flat_provenance_one_string(
                 _merge_into(
                     acc, k, EdgeProvenance(causes=frozenset({DependencyCause.static_range}))
                 )
-        masked = mask_spans(masked, spans)
 
-    for ref, span in parse_cell_refs_with_spans(masked):
+    for ref, span in parse_standalone_cell_refs_with_spans(masked):
         sh = ref.sheet if ref.sheet is not None else current_sheet
         k = format_key(sh, f"{ref.column}{ref.row}")
         _merge_into(acc, k, _prov_with_direct_span(span, span_target=span_target))

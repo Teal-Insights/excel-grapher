@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.4.2 (2026-07-13)
+
+### Bug Fixes
+
+- **core**: Unify same-sheet range normalization on single sheet prefix
+  ([#382](https://github.com/Teal-Insights/excel-grapher/pull/382),
+  [`6442ade`](https://github.com/Teal-Insights/excel-grapher/commit/6442adef6561a9300da22325607c11c2d920edae))
+
+- **core**: Unify same-sheet ranges on single sheet prefix
+  ([#382](https://github.com/Teal-Insights/excel-grapher/pull/382),
+  [`6442ade`](https://github.com/Teal-Insights/excel-grapher/commit/6442adef6561a9300da22325607c11c2d920edae))
+
+- **grapher**: Harden single-prefix range dep extraction
+  ([#382](https://github.com/Teal-Insights/excel-grapher/pull/382),
+  [`6442ade`](https://github.com/Teal-Insights/excel-grapher/commit/6442adef6561a9300da22325607c11c2d920edae))
+
+- **grapher**: Mask range spans before cell-ref parse
+  ([#382](https://github.com/Teal-Insights/excel-grapher/pull/382),
+  [`6442ade`](https://github.com/Teal-Insights/excel-grapher/commit/6442adef6561a9300da22325607c11c2d920edae))
+
+- **grapher**: Refuse unmasked ranges in parse_cell_refs
+  ([#382](https://github.com/Teal-Insights/excel-grapher/pull/382),
+  [`6442ade`](https://github.com/Teal-Insights/excel-grapher/commit/6442adef6561a9300da22325607c11c2d920edae))
+
+- **test**: Silence ty invalid-argument for CodeGenerator(None)
+  ([#382](https://github.com/Teal-Insights/excel-grapher/pull/382),
+  [`6442ade`](https://github.com/Teal-Insights/excel-grapher/commit/6442adef6561a9300da22325607c11c2d920edae))
+
+### Code Style
+
+- Ruff format and import tidy for range single-prefix
+  ([#382](https://github.com/Teal-Insights/excel-grapher/pull/382),
+  [`6442ade`](https://github.com/Teal-Insights/excel-grapher/commit/6442adef6561a9300da22325607c11c2d920edae))
+
+- Ruff format parse_cell_refs signature
+  ([#382](https://github.com/Teal-Insights/excel-grapher/pull/382),
+  [`6442ade`](https://github.com/Teal-Insights/excel-grapher/commit/6442adef6561a9300da22325607c11c2d920edae))
+
+### Refactoring
+
+- **core**: Share colon split and canonicalize range ends
+  ([#382](https://github.com/Teal-Insights/excel-grapher/pull/382),
+  [`6442ade`](https://github.com/Teal-Insights/excel-grapher/commit/6442adef6561a9300da22325607c11c2d920edae))
+
+
 ## v3.4.1 (2026-07-13)
 
 ### Bug Fixes

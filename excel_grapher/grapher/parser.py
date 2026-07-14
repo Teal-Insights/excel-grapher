@@ -74,8 +74,10 @@ _SHEET_CELL_RE = re.compile(
 )
 # Do not treat `Col` in `Sheet!$Col$Row` as a local ref: the column letter can follow `!$`.
 # Sheet tokens may look like A1 (e.g. `S2` / `'S2'`); do not match those as local refs.
+# Exclude `:` so bare endpoints in single-prefix ranges (`Sheet1!A1:A3`) are not
+# treated as local cells; callers that also expand ranges should still mask spans.
 _LOCAL_CELL_RE = re.compile(
-    r"(?<![!A-Za-z0-9_])(?<!\$)\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)(?![A-Za-z0-9_!'])"
+    r"(?<![!A-Za-z0-9_:])(?<!\$)\$?(?P<col>[A-Z]{1,3})\$?(?P<row>\d+)(?![A-Za-z0-9_!'])"
 )
 
 _RANGE_QUOTED_RE = re.compile(
@@ -118,13 +120,31 @@ _RANGE_WHOLE_ROW_LOCAL_RE = re.compile(
 )
 
 
-def parse_cell_refs(formula: str) -> list[CellRef]:
+def _reject_unmasked_ranges(formula: str, *, allow_unmasked_ranges: bool) -> None:
+    """Raise if *formula* still contains range spans and opt-in was not given."""
+    if allow_unmasked_ranges:
+        return
+    if parse_range_refs_with_spans(formula):
+        raise ValueError(
+            "Formula text still contains unmasked range spans; "
+            "prefer parse_standalone_cell_refs (or mask_spans) so range endpoints "
+            "are not treated as standalone cells, or pass allow_unmasked_ranges=True"
+        )
+
+
+def parse_cell_refs(formula: str, *, allow_unmasked_ranges: bool = False) -> list[CellRef]:
     """Extract single-cell references from a formula.
 
     This function does not expand ranges. Use parse_range_refs + expand_range.
+    By default it refuses formula text that still contains range spans — prefer
+    `parse_standalone_cell_refs` (or mask spans yourself). Pass
+    `allow_unmasked_ranges=True` only when intentionally inspecting raw text
+    that may include ranges (for example lookbehind regression tests).
     """
     if not isinstance(formula, str) or not formula.startswith("="):
         return []
+
+    _reject_unmasked_ranges(formula, allow_unmasked_ranges=allow_unmasked_ranges)
 
     out: list[CellRef] = []
 
@@ -141,10 +161,25 @@ def parse_cell_refs(formula: str) -> list[CellRef]:
     return out
 
 
-def parse_cell_refs_with_spans(formula: str) -> list[tuple[CellRef, tuple[int, int]]]:
+def parse_standalone_cell_refs(formula: str) -> list[CellRef]:
+    """Extract cell refs after masking range spans.
+
+    Prefer this over `parse_cell_refs` whenever ranges may appear in the same
+    text, so single-prefix forms like `Sheet1!A1:A3` do not yield a bare `A3`
+    or double-count the range start as a sheet-qualified cell.
+    """
+    spans = [span for _start, _end, span in parse_range_refs_with_spans(formula)]
+    return parse_cell_refs(mask_spans(formula, spans))
+
+
+def parse_cell_refs_with_spans(
+    formula: str, *, allow_unmasked_ranges: bool = False
+) -> list[tuple[CellRef, tuple[int, int]]]:
     """Like parse_cell_refs, but returns (CellRef, (start, end)) span positions in `formula`."""
     if not isinstance(formula, str) or not formula.startswith("="):
         return []
+
+    _reject_unmasked_ranges(formula, allow_unmasked_ranges=allow_unmasked_ranges)
 
     out: list[tuple[CellRef, tuple[int, int]]] = []
 
@@ -161,6 +196,18 @@ def parse_cell_refs_with_spans(formula: str) -> list[tuple[CellRef, tuple[int, i
         out.append((ref, m.span()))
 
     return out
+
+
+def parse_standalone_cell_refs_with_spans(
+    formula: str,
+) -> list[tuple[CellRef, tuple[int, int]]]:
+    """Like `parse_standalone_cell_refs`, but keep character spans in `formula`.
+
+    Spans remain valid in the original text because `mask_spans` only replaces
+    range characters with spaces of the same width.
+    """
+    spans = [span for _start, _end, span in parse_range_refs_with_spans(formula)]
+    return parse_cell_refs_with_spans(mask_spans(formula, spans))
 
 
 def parse_range_refs(formula: str) -> list[tuple[CellRef, CellRef]]:
@@ -1210,7 +1257,7 @@ def parse_dynamic_range_refs_with_spans(
                     "=" + arg,
                     current_sheet,
                 )
-                for ref in parse_cell_refs(normalized):
+                for ref in parse_standalone_cell_refs(normalized):
                     sheet = ref.sheet if ref.sheet is not None else current_sheet
                     arg_refs.append(
                         CellRef(

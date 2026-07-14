@@ -834,8 +834,8 @@ def test_dynamic_ref_missing_multiple_leaves_raises_builder_aggregate_not_per_le
     assert "following leaf" in msg
     assert "have no constraint" in msg
     assert "Missing constraint for leaf" not in msg
-    # _format_missing_leaves may merge B1:D1 into one rectangle
-    assert "Sheet1!B1" in msg and "Sheet1!D1" in msg
+    # _format_missing_leaves may merge B1:D1 into one single-prefix rectangle
+    assert "Sheet1!B1:D1" in msg or ("Sheet1!B1" in msg and "Sheet1!D1" in msg)
 
 
 def test_expand_leaf_env_mutual_formula_refs_in_argument_subgraph_issue_54() -> None:
@@ -952,7 +952,7 @@ def test_indirect_does_not_raise_when_argument_is_intermediate_with_domain() -> 
 def test_format_missing_leaves_groups_contiguous_column_into_range() -> None:
     leaves = {"Sheet1!C4", "Sheet1!C5", "Sheet1!C6"}
     formatted = _format_missing_leaves(leaves)
-    assert formatted == ["Sheet1!C4:Sheet1!C6"]
+    assert formatted == ["Sheet1!C4:C6"]
 
 
 def test_format_missing_leaves_does_not_bridge_gaps() -> None:
@@ -964,7 +964,7 @@ def test_format_missing_leaves_does_not_bridge_gaps() -> None:
 def test_format_missing_leaves_merges_adjacent_columns_same_row() -> None:
     """Same row across consecutive columns → one horizontal range."""
     leaves = {"S!AA100", "S!AB100", "S!AC100"}
-    assert _format_missing_leaves(leaves) == ["S!AA100:S!AC100"]
+    assert _format_missing_leaves(leaves) == ["S!AA100:AC100"]
 
 
 def test_format_missing_leaves_merges_rectangle_when_row_runs_match() -> None:
@@ -975,7 +975,7 @@ def test_format_missing_leaves_merges_rectangle_when_row_runs_match() -> None:
         "S!AB10",
         "S!AB11",
     }
-    assert _format_missing_leaves(leaves) == ["S!AA10:S!AB11"]
+    assert _format_missing_leaves(leaves) == ["S!AA10:AB11"]
 
 
 def test_format_missing_leaves_does_not_merge_columns_with_different_row_patterns() -> None:
