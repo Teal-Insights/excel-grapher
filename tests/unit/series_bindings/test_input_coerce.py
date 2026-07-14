@@ -472,3 +472,15 @@ def test_measure_dtype_accepts_numpy_int_positional_array() -> None:
         {"TIME_PERIOD": 5, "OBS_VALUE": 5.0},
     ]
     assert all(isinstance(record["OBS_VALUE"], float) for record in result)
+
+
+def test_measure_dtype_timezone_aware_datetime_includes_record_context() -> None:
+    from datetime import UTC, datetime
+
+    with pytest.raises(ValueError, match=r"record\[0\]: OBS_VALUE:.*Timezone-aware") as exc_info:
+        coerce_setter_input(
+            [{"TIME_PERIOD": 4, "OBS_VALUE": datetime(2024, 1, 1, tzinfo=UTC)}],
+            measure_dtype="datetime",
+            **_SERIES_KWARGS,
+        )
+    assert "Timezone-aware" in str(exc_info.value)

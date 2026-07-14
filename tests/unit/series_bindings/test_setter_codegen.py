@@ -230,7 +230,7 @@ def test_emit_setters_block_emits_helpers_once(tmp_path: Path) -> None:
     code = "\n".join(emit_setters_block(graph, wb_path, bindings))
 
     assert code.count("def _apply_series_records(") == 1
-    assert code.count("def _coerce_records(") == 1
+    assert code.count("def _coerce_records(") == 0
     assert code.count("def coerce_setter_input(") == 1
     assert code.count("if TYPE_CHECKING:") == 1
     assert "SeriesInput: TypeAlias = Records | Record | Sequence[Scalar] | DataFrameInput" in code
@@ -1051,3 +1051,97 @@ def test_emit_scalar_setter_rejects_measure_dtype_mismatch(tmp_path: Path) -> No
         setter(ctx, "not-a-number")
     setter(ctx, 3)
     assert ctx.inputs["Inputs!B2"] == 3.0
+
+
+def test_emit_setter_measure_dtype_from_concept_scheme(tmp_path: Path) -> None:
+    wb_path = tmp_path / "rate.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Inputs")
+    ws.write_number("B2", 1.0)
+    wb.close()
+
+    graph = create_dependency_graph(wb_path, ["Inputs!B2"], load_values=True)
+    bindings: WorkbookSeriesBindings = {
+        "schema_version": "1.8.0",
+        "workbook": "rate.xlsx",
+        "concept_scheme": {
+            "id": "demo",
+            "concepts": [
+                {"id": "OBS_VALUE", "name": "Observation value", "dtype": "float"},
+            ],
+        },
+        "series": [
+            {
+                "id": "rate",
+                "sheet": "Inputs",
+                "data_range": "Inputs!B2",
+                "layout": "scalar",
+                "input": {"setter": {"name": "set_rate"}},
+                "structure": {
+                    "measure": {
+                        "concept": "OBS_VALUE",
+                        "bind": {"kind": "data_cell", "read": "auto"},
+                    },
+                    "dimensions": [],
+                },
+                "key": [],
+            }
+        ],
+    }
+    series = bindings["series"][0]
+    resolved = resolve_series_binding(
+        graph,
+        wb_path,
+        series,
+        concept_scheme=bindings.get("concept_scheme"),
+    )
+    lines = emit_setter_function(series, resolved, bindings=bindings)
+    code = "\n".join(lines)
+    assert "measure_dtype='float'" in code or 'measure_dtype="float"' in code
+
+    ns = _exec_setters(lines)
+    setter = cast(Callable[..., None], ns["set_rate"])
+    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
+    with pytest.raises(TypeError, match="OBS_VALUE"):
+        setter(ctx, "not-a-number")
+
+
+def test_emit_matrix_setter_rejects_measure_dtype_mismatch(tmp_path: Path) -> None:
+    from tests.fixtures.series_bindings.matrix_helpers import (
+        MATRIX_EXPLICIT_BINDINGS,
+        write_matrix_explicit_workbook,
+    )
+
+    wb_path = tmp_path / "matrix_inputs.xlsx"
+    write_matrix_explicit_workbook(wb_path)
+    bindings = load_series_bindings(MATRIX_EXPLICIT_BINDINGS)
+    series = bindings["series"][0]
+    graph = create_dependency_graph(
+        wb_path,
+        expand_data_range(str(series["data_range"])),
+        load_values=True,
+    )
+    resolved = resolve_series_binding(
+        graph,
+        wb_path,
+        series,
+        concept_scheme=bindings.get("concept_scheme"),
+    )
+    lines = emit_setter_function(series, resolved, bindings=bindings)
+    ns = _exec_setters(lines)
+    setter_name = str(((series.get("input") or {}).get("setter") or {}).get("name") or "")
+    if not setter_name:
+        setter_name = str((series.get("setter") or {}).get("name") or f"set_{series['id']}")
+    setter = cast(Callable[..., None], ns[setter_name])
+    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
+    with pytest.raises(TypeError, match="OBS_VALUE"):
+        setter(
+            ctx,
+            [
+                {
+                    "INDICATOR": "GDP growth",
+                    "TIME_PERIOD": 2025,
+                    "OBS_VALUE": "not-a-number",
+                }
+            ],
+        )

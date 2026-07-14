@@ -520,7 +520,6 @@ class CodeGenerator:
         "Scalar",
         "SeriesInput",
         "_apply_series_records",
-        "_coerce_records",
         "coerce_setter_input",
     )
 

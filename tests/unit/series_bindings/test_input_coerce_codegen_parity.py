@@ -65,7 +65,11 @@ def _borvelia_series_kwargs(tmp_path: Path) -> _SeriesCoerceKwargs:
     resolved = resolve_series_binding(graph, wb_path, series)
     key_fields = [str(c) for c in (series.get("key") or [])]
     key_dtypes = _key_dtypes_for_codegen(series, key_fields)
-    measure_dtype = _measure_dtype_for_codegen(series)
+    concept_scheme = bindings.get("concept_scheme")
+    measure_dtype = _measure_dtype_for_codegen(
+        series,
+        concept_scheme=concept_scheme if isinstance(concept_scheme, dict) else None,
+    )
     kwargs: _SeriesCoerceKwargs = {
         "layout": "series",
         "key_fields": tuple(key_fields),
@@ -119,7 +123,11 @@ def _macro_matrix_coerce_kwargs(tmp_path: Path) -> _SeriesCoerceKwargs:
     series = bindings["series"][0]
     key_fields = [str(c) for c in (series.get("key") or [])]
     key_dtypes = _key_dtypes_for_codegen(series, key_fields)
-    measure_dtype = _measure_dtype_for_codegen(series)
+    concept_scheme = bindings.get("concept_scheme")
+    measure_dtype = _measure_dtype_for_codegen(
+        series,
+        concept_scheme=concept_scheme if isinstance(concept_scheme, dict) else None,
+    )
     kwargs: _SeriesCoerceKwargs = {
         "layout": "matrix",
         "key_fields": tuple(key_fields),
@@ -165,7 +173,11 @@ def test_generated_setter_matches_library_coercion_for_positional_input(tmp_path
 
     key_fields = [str(c) for c in (series.get("key") or [])]
     key_dtypes = _key_dtypes_for_codegen(series, key_fields)
-    measure_dtype = _measure_dtype_for_codegen(series)
+    concept_scheme = bindings.get("concept_scheme")
+    measure_dtype = _measure_dtype_for_codegen(
+        series,
+        concept_scheme=concept_scheme if isinstance(concept_scheme, dict) else None,
+    )
     kwargs: dict[str, Any] = {
         "layout": "series",
         "key_fields": tuple(key_fields),

@@ -220,6 +220,8 @@ def _apply_measure_dtype(
                 f"record[{index}]: {measure_field} must be {measure_dtype}, "
                 f"got {type(raw).__name__}: {raw!r}"
             ) from exc
+        except ValueError as exc:
+            raise ValueError(f"record[{index}]: {measure_field}: {exc}") from exc
         if value is raw:
             validated.append(record)
             continue

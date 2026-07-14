@@ -20,6 +20,7 @@ from excel_grapher.series_bindings.docstrings import (
 )
 from excel_grapher.series_bindings.normalize import effective_dimension_id, has_input_direction
 from excel_grapher.series_bindings.resolve import (
+    _lookup_concept_dtype,
     resolve_series_bindings,
     warn_series_resolution_issues,
 )
@@ -45,12 +46,20 @@ def _measure_concept(series: dict[str, Any]) -> str:
     return str(measure.get("concept") or "OBS_VALUE")
 
 
-def _measure_dtype_for_codegen(series: dict[str, Any]) -> str | None:
-    """Return the measure dtype to enforce in generated setters, if any."""
+def _measure_dtype_for_codegen(
+    series: dict[str, Any],
+    concept_scheme: dict[str, Any] | None = None,
+) -> str | None:
+    """Return the measure dtype to enforce in generated setters, if any.
+
+    Precedence matches resolve/docstrings: explicit `structure.measure.dtype`, then
+    `concept_scheme` for the measure concept, then a non-`auto` measure `bind.read`.
+    """
     measure = (series.get("structure") or {}).get("measure") or {}
-    dtype = measure.get("dtype")
-    if dtype is not None:
-        return str(dtype)
+    concept_name = str(measure.get("concept") or "OBS_VALUE")
+    inferred = _lookup_concept_dtype(concept_scheme, series, concept_name)
+    if inferred is not None:
+        return inferred
     raw_bind = measure.get("bind")
     bind: dict[str, Any] = raw_bind if isinstance(raw_bind, dict) else {}
     read = bind.get("read")
@@ -234,8 +243,10 @@ def _coerce_setter_input_call(
     key_fields: list[str],
     measure_concept: str,
     strict_kwarg: str,
-    empty_measure_kwarg: str,
+    empty_measure_kwarg: str | None,
     requires_address: bool,
+    concept_scheme: dict[str, Any] | None = None,
+    emit_requires_address: bool = True,
 ) -> str:
     layout = str(series.get("layout") or "series")
     key_order = _canonical_key_order(resolved, key_fields)
@@ -243,7 +254,7 @@ def _coerce_setter_input_call(
         _key_order_constant_name(resolved["series_id"]) if key_order is not None else "None"
     )
     key_dtypes = _key_dtypes_for_codegen(series, key_fields)
-    measure_dtype = _measure_dtype_for_codegen(series)
+    measure_dtype = _measure_dtype_for_codegen(series, concept_scheme=concept_scheme)
     parts = [
         "coerce_setter_input(",
         "            records,",
@@ -252,9 +263,11 @@ def _coerce_setter_input_call(
         f"            measure_field={measure_concept!r},",
         f"            key_order={key_order_expr},",
         f"            strict={strict_kwarg},",
-        f"            empty_measure={empty_measure_kwarg},",
-        f"            requires_address={requires_address!r},",
     ]
+    if empty_measure_kwarg is not None:
+        parts.append(f"            empty_measure={empty_measure_kwarg},")
+    if emit_requires_address:
+        parts.append(f"            requires_address={requires_address!r},")
     if key_dtypes:
         parts.append(f"            key_dtypes={key_dtypes!r},")
     if measure_dtype is not None:
@@ -266,15 +279,6 @@ def _coerce_setter_input_call(
 def emit_setter_helpers() -> list[str]:
     """Emit shared private helpers used by generated `set_*` functions."""
     return [
-        "def _coerce_records(records, measure_field, *, allow_scalar=False) -> Records:",
-        "    if not allow_scalar:",
-        "        return records",
-        "    if not isinstance(records, list):",
-        "        if isinstance(records, dict):",
-        "            return [records]",
-        "        return [{measure_field: records}]",
-        "    return records",
-        "",
         "def _apply_series_records(",
         "    ctx,",
         "    records,",
@@ -411,32 +415,20 @@ def emit_setter_function(
     if doc is not None:
         lines.extend(emit_docstring_literal(doc))
     leaf_index_arg = "{}" if requires_address else index_name
-    if scalar_shorthand:
-        measure_dtype = _measure_dtype_for_codegen(series)
-        measure_dtype_arg = (
-            f",\n            measure_dtype={measure_dtype!r}" if measure_dtype is not None else ""
-        )
-        coerced_records = (
-            "coerce_setter_input(\n"
-            "            records,\n"
-            "            layout='scalar',\n"
-            "            key_fields=(),\n"
-            f"            measure_field={measure_concept!r},\n"
-            "            key_order=None,\n"
-            "            strict=strict"
-            f"{measure_dtype_arg},\n"
-            "        )"
-        )
-    else:
-        coerced_records = _coerce_setter_input_call(
-            series,
-            resolved,
-            key_fields=key_fields,
-            measure_concept=measure_concept,
-            strict_kwarg="strict",
-            empty_measure_kwarg="empty_measure",
-            requires_address=requires_address,
-        )
+    concept_scheme = bindings.get("concept_scheme") if bindings is not None else None
+    if not isinstance(concept_scheme, dict):
+        concept_scheme = None
+    coerced_records = _coerce_setter_input_call(
+        series,
+        resolved,
+        key_fields=key_fields,
+        measure_concept=measure_concept,
+        strict_kwarg="strict",
+        empty_measure_kwarg=None if scalar_shorthand else "empty_measure",
+        requires_address=requires_address,
+        concept_scheme=concept_scheme,
+        emit_requires_address=not scalar_shorthand,
+    )
     lines.append("    _apply_series_records(")
     lines.append("        ctx,")
     lines.append(f"        {coerced_records},")

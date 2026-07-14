@@ -309,6 +309,14 @@ Generated setters accept `empty_measure: Literal["skip", "write", "error"] = "wr
 Empty **key** fields always raise, regardless of `empty_measure`. A zero-row DataFrame with valid
 columns is a no-op (partial update with zero cells).
 
+**Measure `dtype` is enforced at runtime.** Generated setters validate each measure value against
+`structure.measure.dtype` (falling back to the measure concept’s `concept_scheme` dtype, then a
+non-`auto` measure `bind.read`). Mismatches raise `TypeError`. Safe coercions are applied where
+appropriate (for example `int` → `float`, `date` → `datetime`, and 0-d numpy numeric scalars via
+`.item()`). `None` and NaN remain subject to `empty_measure` rather than dtype rejection. Key
+fields still use soft `key_dtypes` coercion for leaf matching — they are not subject to the same
+strict isinstance checks as measures.
+
 **Key types must match resolved Python types.** Resolution coerces workbook and manifest values according to each bind’s `read` mode (and `concept_scheme` dtypes for constants and `series_context` entries). Generated setters index records by the same types — callers must not pass strings when resolution produced `datetime` or `bool` objects:
 
 | Binding | Resolved key type | Correct record value | Incorrect (will not match) |
