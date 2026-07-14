@@ -8,38 +8,70 @@ from typing import Any, Protocol, TypeAlias
 
 import fastpyxl.utils.cell
 
-from excel_grapher.core.address_keys import NormalizedAddress, ParsedRowKey
+from excel_grapher.core.address_keys import (
+    CellKey,
+    NodeShape,
+    ParsedRowKey,
+    RangeKey,
+    UnionKey,
+)
+from excel_grapher.core.address_keys import NodeKey as AddressKey
+from excel_grapher.core.address_keys import expand_node_cells as _expand_node_cells
 from excel_grapher.core.address_keys import format_cell_key as _format_cell_key
 from excel_grapher.core.address_keys import format_row_key as _format_row_key
-from excel_grapher.core.address_keys import normalize_key as _normalize_key
+from excel_grapher.core.address_keys import members_to_node_key as _members_to_node_key
 from excel_grapher.core.address_keys import normalize_row_key as _normalize_row_key
 from excel_grapher.core.address_keys import parse_address as _parse_address
+from excel_grapher.core.address_keys import parse_node_key as _parse_node_key
 from excel_grapher.core.address_keys import parse_row_key as _parse_row_key
 
-# Graph node identity; same canonical form as NormalizedAddress (cell or row key).
-NodeKey: TypeAlias = NormalizedAddress
+# Graph node identity; same canonical form as NormalizedAddress (cell / range / union).
+NodeKey: TypeAlias = str
 
 
 class NodeKind(StrEnum):
-    """Kind of dependency-graph node."""
+    """Compatibility kind for graph nodes.
+
+    Prefer `Node.shape` / `parse_node_key(node.address)`. `row` remains for one-row
+    `RangeKey` shims; other multi-cell nodes use `union`.
+    """
 
     cell = "cell"
     row = "row"
+    union = "union"
+
+
+def _kind_for_address(address: AddressKey) -> NodeKind:
+    if isinstance(address, CellKey):
+        return NodeKind.cell
+    if isinstance(address, RangeKey) and address.shape is NodeShape.row:
+        return NodeKind.row
+    return NodeKind.union
+
+
+def _coerce_address(value: str | AddressKey) -> AddressKey:
+    """Canonicalize `value`, preserving explicit 1x1 `RangeKey` row shims."""
+    if isinstance(value, RangeKey):
+        # Keep `Sheet1!D63:D63` distinct from `Sheet1!D63` for make_row_node shims.
+        return value
+    if isinstance(value, (CellKey, UnionKey)):
+        return _parse_node_key(str(value))
+    return _parse_node_key(value)
 
 
 @dataclass
 class Node:
-    """Workbook cell or one-row span in a dependency graph.
+    """Workbook cell or multi-cell span in a dependency graph.
 
-    Cell nodes (`kind=cell`) keep the historical single-cell shape. Row nodes
-    (`kind=row`) represent a horizontal stripe on one worksheet row with column
-    span `min_col`…`max_col` (`min_row == max_row == row`).
+    Canonical identity is `address` (`CellKey` / `RangeKey` / `UnionKey`). Legacy
+    constructors that pass `sheet`/`column`/`row` (or row extent fields) still
+    work and sync `address` in `__post_init__`.
 
     `is_leaf` is true when the node has no outgoing dependency edges (value-only
     cells and literal-only formulas such as `=1+1`).
     """
 
-    sheet: str
+    sheet: str | None
     column: str | None
     row: int | None
     formula: str | None
@@ -53,18 +85,76 @@ class Node:
     min_row: int | None = None
     max_col: str | None = None
     max_row: int | None = None
+    address: AddressKey | None = None
 
     def __post_init__(self) -> None:
-        if self.kind is NodeKind.cell:
-            self._finalize_cell()
-        elif self.kind is NodeKind.row:
-            self._finalize_row()
-        else:
-            raise ValueError(f"Unsupported node kind: {self.kind!r}")
+        if self.address is not None:
+            self.address = _coerce_address(self.address)
+            self._sync_fields_from_address()
+            return
 
-    def _finalize_cell(self) -> None:
-        if self.column is None or self.row is None:
-            raise ValueError("Cell nodes require column and row")
+        if self.kind is NodeKind.row or (
+            self.min_col is not None
+            and self.max_col is not None
+            and self.min_row is not None
+            and self.max_row is not None
+            and (self.column is None or self.kind is NodeKind.row)
+        ):
+            self._finalize_row_legacy()
+            assert self.min_col is not None and self.max_col is not None
+            assert self.min_row is not None and self.row is not None
+            assert self.sheet is not None
+            self.address = RangeKey(
+                _format_row_key(self.sheet, self.min_col, self.row, self.max_col)
+            )
+            self.kind = NodeKind.row
+            self.value = None
+            return
+
+        self._finalize_cell_legacy()
+        assert self.sheet is not None and self.column is not None and self.row is not None
+        self.address = CellKey(_format_cell_key(self.sheet, self.column, self.row))
+        self.kind = NodeKind.cell
+
+    def _sync_fields_from_address(self) -> None:
+        addr = self.address
+        assert addr is not None
+        self.kind = _kind_for_address(addr)
+        if isinstance(addr, CellKey):
+            self.sheet = addr.sheet
+            self.column = addr.column
+            self.row = addr.row
+            self.min_col = addr.column
+            self.max_col = addr.column
+            self.min_row = addr.row
+            self.max_row = addr.row
+            return
+
+        if isinstance(addr, RangeKey):
+            self.sheet = addr.sheet
+            self.min_col = addr.min_col
+            self.max_col = addr.max_col
+            self.min_row = addr.min_row
+            self.max_row = addr.max_row
+            self.column = addr.column
+            self.row = addr.row
+            self.value = None
+            return
+
+        # UnionKey
+        sheets = {m.sheet for m in addr.members}
+        self.sheet = next(iter(sheets)) if len(sheets) == 1 else None
+        self.column = None
+        self.row = None
+        self.min_col = None
+        self.max_col = None
+        self.min_row = None
+        self.max_row = None
+        self.value = None
+
+    def _finalize_cell_legacy(self) -> None:
+        if self.sheet is None or self.column is None or self.row is None:
+            raise ValueError("Cell nodes require sheet, column, and row")
         col = str(self.column).upper()
         row = int(self.row)
         self.column = col
@@ -82,7 +172,9 @@ class Node:
         self.min_row = int(self.min_row)
         self.max_row = int(self.max_row)
 
-    def _finalize_row(self) -> None:
+    def _finalize_row_legacy(self) -> None:
+        if self.sheet is None:
+            raise ValueError("Row nodes require sheet")
         if self.min_col is None or self.max_col is None:
             raise ValueError("Row nodes require min_col and max_col")
         if self.min_row is None or self.max_row is None:
@@ -112,22 +204,17 @@ class Node:
         self.max_col = max_col
         self.min_row = min_row
         self.max_row = max_row
+        self.kind = NodeKind.row
 
     @property
     def key(self) -> NodeKey:
-        if self.kind is NodeKind.row:
-            assert self.min_col is not None and self.max_col is not None and self.row is not None
-            return _format_row_key(self.sheet, self.min_col, self.row, self.max_col)
-        assert self.column is not None and self.row is not None
-        return _format_cell_key(self.sheet, self.column, self.row)
+        assert self.address is not None
+        return str(self.address)
 
     @property
-    def address(self) -> str:
-        if self.kind is NodeKind.row:
-            assert self.min_col is not None and self.max_col is not None and self.row is not None
-            return f"{self.min_col}{self.row}:{self.max_col}{self.row}"
-        assert self.column is not None and self.row is not None
-        return f"{self.column}{self.row}"
+    def shape(self) -> NodeShape:
+        assert self.address is not None
+        return self.address.shape
 
     @property
     def column_index(self) -> int:
@@ -146,7 +233,7 @@ class NodeView:
     `DependencyGraph.set_node_value(...)` and `set_node_metadata(...)`.
     """
 
-    sheet: str
+    sheet: str | None
     column: str | None
     row: int | None
     formula: str | None
@@ -160,22 +247,28 @@ class NodeView:
     min_row: int | None = None
     max_col: str | None = None
     max_row: int | None = None
+    address: AddressKey | None = None
 
     @property
     def key(self) -> NodeKey:
+        if self.address is not None:
+            return str(self.address)
         if self.kind is NodeKind.row:
+            assert self.sheet is not None
             assert self.min_col is not None and self.max_col is not None and self.row is not None
             return _format_row_key(self.sheet, self.min_col, self.row, self.max_col)
-        assert self.column is not None and self.row is not None
+        assert self.sheet is not None and self.column is not None and self.row is not None
         return _format_cell_key(self.sheet, self.column, self.row)
 
     @property
-    def address(self) -> str:
+    def shape(self) -> NodeShape:
+        if self.address is not None:
+            return self.address.shape
         if self.kind is NodeKind.row:
-            assert self.min_col is not None and self.max_col is not None and self.row is not None
-            return f"{self.min_col}{self.row}:{self.max_col}{self.row}"
-        assert self.column is not None and self.row is not None
-        return f"{self.column}{self.row}"
+            return NodeShape.row
+        if self.kind is NodeKind.union:
+            return NodeShape.union
+        return NodeShape.cell
 
     @property
     def column_index(self) -> int:
@@ -201,6 +294,79 @@ def node_to_view(node: Node) -> NodeView:
         min_row=node.min_row,
         max_col=node.max_col,
         max_row=node.max_row,
+        address=node.address,
+    )
+
+
+def make_cell_node(
+    sheet: str,
+    column: str,
+    row: int,
+    *,
+    formula: str | None = None,
+    normalized_formula: str | None = None,
+    value: Any = None,
+    is_leaf: bool = True,
+    is_target: bool = False,
+    metadata: dict[str, Any] | None = None,
+) -> Node:
+    """Build a single-cell graph node."""
+    return Node(
+        sheet=sheet,
+        column=column,
+        row=row,
+        formula=formula,
+        normalized_formula=normalized_formula,
+        value=value,
+        is_leaf=is_leaf,
+        is_target=is_target,
+        metadata=dict(metadata or {}),
+        kind=NodeKind.cell,
+    )
+
+
+def make_union_node(
+    members: Sequence[str | AddressKey],
+    *,
+    formula: str | None = None,
+    normalized_formula: str | None = None,
+    value: Any = None,
+    is_leaf: bool = True,
+    is_target: bool = False,
+    metadata: dict[str, Any] | None = None,
+) -> Node:
+    """Build a multi-cell node from cell members (or a cell node for one member).
+
+    `value` is ignored for multi-cell nodes (always stored as `None`). A single
+    member collapses to a cell node via `members_to_node_key`.
+    """
+    if not members:
+        raise ValueError("Cannot build node from empty member set")
+    address = _members_to_node_key(members)
+    if isinstance(address, CellKey):
+        return Node(
+            sheet=None,
+            column=None,
+            row=None,
+            formula=formula,
+            normalized_formula=normalized_formula,
+            value=value,
+            is_leaf=is_leaf,
+            is_target=is_target,
+            metadata=dict(metadata or {}),
+            address=address,
+        )
+    return Node(
+        sheet=None,
+        column=None,
+        row=None,
+        formula=formula,
+        normalized_formula=normalized_formula,
+        value=None,
+        is_leaf=is_leaf,
+        is_target=is_target,
+        metadata=dict(metadata or {}),
+        address=address,
     )
 
 
@@ -219,31 +385,20 @@ def make_row_node(
 ) -> Node:
     """Build a one-row graph node for `sheet!min_col{row}:max_col{row}`.
 
-    Args:
-        sheet: Worksheet name.
-        row: Worksheet row index (1-based); both endpoints use this row.
-        min_col: Left column letters (ordered with `max_col` on construction).
-        max_col: Right column letters.
-        formula: Optional formula text stored on the node.
-        normalized_formula: Optional sheet-qualified formula text.
-        value: Optional cached value.
-        is_leaf: Whether the node has no outgoing dependency edges.
-        is_target: Whether the node is a graph target.
-        metadata: Optional metadata dict (copied).
-
-    Returns:
-        A `Node` with `kind=row` whose key is the canonical one-row span.
+    Shim over a `RangeKey` address (including 1x1 `D63:D63`, distinct from a cell
+    node). Prefer `make_union_node` for new code.
 
     Raises:
         ValueError: If the resulting extent is not a single worksheet row.
     """
+    key = _format_row_key(sheet, min_col, row, max_col)
     return Node(
         sheet=sheet,
         column=None,
         row=row,
         formula=formula,
         normalized_formula=normalized_formula,
-        value=value,
+        value=None,
         is_leaf=is_leaf,
         is_target=is_target,
         metadata=dict(metadata or {}),
@@ -252,26 +407,26 @@ def make_row_node(
         min_row=row,
         max_col=max_col,
         max_row=row,
+        address=RangeKey(key),
     )
+
+
+def member_keys(node: Node | NodeView) -> list[NodeKey]:
+    """Return sheet-qualified cell keys owned by `node` (expansion of `address`)."""
+    if node.address is None:
+        raise ValueError("Node is missing address")
+    return [str(c) for c in _expand_node_cells(node.address)]
 
 
 def row_member_keys(node: Node | NodeView) -> list[NodeKey]:
     """Return sheet-qualified cell keys for each column in a row node's span.
 
     Members share sheet and row; only the column differs. Raises `ValueError`
-    when `node` is not a row node.
+    when `node` is not a one-row node.
     """
-    if node.kind is not NodeKind.row:
+    if node.kind is not NodeKind.row and node.shape is not NodeShape.row:
         raise ValueError("row_member_keys requires a row node")
-    if node.min_col is None or node.max_col is None or node.row is None:
-        raise ValueError("Row node is missing extent fields")
-    start = fastpyxl.utils.cell.column_index_from_string(node.min_col)
-    end = fastpyxl.utils.cell.column_index_from_string(node.max_col)
-    keys: list[NodeKey] = []
-    for col_idx in range(start, end + 1):
-        col = fastpyxl.utils.cell.get_column_letter(col_idx)
-        keys.append(_format_cell_key(node.sheet, col, node.row))
-    return keys
+    return member_keys(node)
 
 
 def members_differ_only_by_column(keys: Sequence[NodeKey]) -> bool:
@@ -297,9 +452,8 @@ class CellLocation:
 
     Attributes:
         cell_key: Canonical single-cell key that was queried.
-        kind: `cell` when the graph has a cell node; `row` when the cell lives
-            only inside a row node's span.
-        node_key: Graph key of the owning node (`Sheet1!E63` or `Sheet1!D63:Y63`).
+        kind: Owning node kind (`cell`, `row`, or `union`).
+        node_key: Graph key of the owning node.
         column: Column letters of the queried cell.
     """
 
@@ -337,21 +491,12 @@ def _require_single_cell_key(cell_key: str) -> tuple[NodeKey, str, str, int]:
         ValueError: If `cell_key` is a range / row key rather than a single cell.
     """
     try:
-        _parse_row_key(cell_key)
-    except ValueError:
-        pass
-    else:
-        raise ValueError(f"Expected a single-cell key, got row/range key: {cell_key!r}")
-
-    try:
-        normalized = _normalize_key(cell_key)
-        sheet, coord = _parse_address(normalized)
-        col, row = fastpyxl.utils.cell.coordinate_from_string(coord.replace("$", ""))
-    except (TypeError, ValueError) as exc:
+        parsed = _parse_node_key(cell_key)
+    except ValueError as exc:
         raise ValueError(f"Expected a single-cell key, got: {cell_key!r}") from exc
-    col_u = str(col).upper()
-    row_i = int(row)
-    return _format_cell_key(sheet, col_u, row_i), sheet, col_u, row_i
+    if not isinstance(parsed, CellKey):
+        raise ValueError(f"Expected a single-cell key, got range/union key: {cell_key!r}")
+    return str(parsed), parsed.sheet, parsed.column, parsed.row
 
 
 def _require_one_row_key(range_key: str) -> tuple[NodeKey, ParsedRowKey]:
@@ -364,9 +509,14 @@ def _row_node_span_indices(
     row_node: Node | NodeView,
 ) -> tuple[str, int, int, int]:
     """Return `(sheet, row, min_col_idx, max_col_idx)` for a row node."""
-    if row_node.kind is not NodeKind.row:
+    if row_node.kind is not NodeKind.row and row_node.shape is not NodeShape.row:
         raise ValueError("Expected a row node")
-    if row_node.min_col is None or row_node.max_col is None or row_node.row is None:
+    if (
+        row_node.sheet is None
+        or row_node.min_col is None
+        or row_node.max_col is None
+        or row_node.row is None
+    ):
         raise ValueError("Row node is missing extent fields")
     lo = fastpyxl.utils.cell.column_index_from_string(row_node.min_col)
     hi = fastpyxl.utils.cell.column_index_from_string(row_node.max_col)
@@ -444,6 +594,19 @@ class _GraphNodeLookup(Protocol):
     def get_node(self, key: NodeKey) -> NodeView | None: ...
 
 
+def find_nodes_covering_cell(graph: _GraphNodeLookup, cell_key: str) -> list[NodeKey]:
+    """Return multi-cell node keys that own `cell_key`."""
+    canonical, _sheet, _col, _row = _require_single_cell_key(cell_key)
+    out: list[NodeKey] = []
+    for key in graph:
+        node = graph.get_node(key)
+        if node is None or node.kind is NodeKind.cell or node.address is None:
+            continue
+        if canonical in member_keys(node):
+            out.append(key)
+    return out
+
+
 def find_row_nodes_covering(graph: _GraphNodeLookup, address: str) -> list[NodeKey]:
     """Return row-node keys that fully cover a cell or one-row subrange.
 
@@ -457,6 +620,8 @@ def find_row_nodes_covering(graph: _GraphNodeLookup, address: str) -> list[NodeK
         _cell_key, sheet, col, row = _require_single_cell_key(address)
 
         def _covers(node: NodeView) -> bool:
+            if node.kind is not NodeKind.row:
+                return False
             sheet_o, row_o, lo, hi = _row_node_span_indices(node)
             return _span_contains(
                 owner_sheet=sheet_o,
@@ -471,6 +636,8 @@ def find_row_nodes_covering(graph: _GraphNodeLookup, address: str) -> list[NodeK
     else:
 
         def _covers(node: NodeView) -> bool:
+            if node.kind is not NodeKind.row:
+                return False
             sheet_o, row_o, lo, hi = _row_node_span_indices(node)
             return _span_contains(
                 owner_sheet=sheet_o,
@@ -498,25 +665,25 @@ def locate_cell(graph: _GraphNodeLookup, cell_key: str) -> CellLocation | None:
 
     Resolution order:
     1. Exact `kind=cell` node at `cell_key`.
-    2. Otherwise the unique covering row node, if any.
+    2. Otherwise the unique covering multi-cell node (`row` or `union`), if any.
 
     Returns:
         `CellLocation` when the cell is represented, else `None`.
 
     Raises:
         ValueError: If `cell_key` is not a single cell, or unique cell occupancy
-            is violated (cell node plus covering row, or multiple covering rows).
+            is violated (cell node plus covering multi-cell, or multiple covers).
     """
     canonical, _sheet, column, _row = _require_single_cell_key(cell_key)
     cell_node = graph.get_node(canonical)
-    covering = find_row_nodes_covering(graph, canonical)
+    covering = find_nodes_covering_cell(graph, canonical)
 
     if cell_node is not None and cell_node.kind is NodeKind.cell:
         if covering:
             keys = ", ".join(covering)
             raise ValueError(
                 f"Unique cell occupancy violated for {canonical}: "
-                f"cell node exists and is also covered by row node(s) {keys}"
+                f"cell node exists and is also covered by node(s) {keys}"
             )
         return CellLocation(
             cell_key=canonical,
@@ -529,12 +696,14 @@ def locate_cell(graph: _GraphNodeLookup, cell_key: str) -> CellLocation | None:
         keys = ", ".join(covering)
         raise ValueError(
             f"Unique cell occupancy violated for {canonical}: "
-            f"covered by overlapping row nodes {keys}"
+            f"covered by overlapping nodes {keys}"
         )
     if len(covering) == 1:
+        owner = graph.get_node(covering[0])
+        assert owner is not None
         return CellLocation(
             cell_key=canonical,
-            kind=NodeKind.row,
+            kind=owner.kind,
             node_key=covering[0],
             column=column,
         )

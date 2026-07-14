@@ -23,7 +23,7 @@ def test_cell_node_backcompat_defaults_kind_and_bounds() -> None:
     assert node.min_row == 63
     assert node.max_row == 63
     assert node.key == "Sheet1!D63"
-    assert node.address == "D63"
+    assert node.address == "Sheet1!D63"
     assert node.column_index == 4
 
 
@@ -38,7 +38,7 @@ def test_make_row_node_sets_kind_and_extent() -> None:
     assert node.min_row == 63
     assert node.max_row == 63
     assert node.key == "Sheet1!D63:Y63"
-    assert node.address == "D63:Y63"
+    assert node.address == "Sheet1!D63:Y63"
     assert node.is_leaf is True
     assert node.formula is None
 
@@ -120,7 +120,7 @@ def test_node_to_view_preserves_row_fields() -> None:
     assert view.column is None
     assert view.row == 63
     assert view.metadata["tag"] == "row"
-    assert view.address == "D63:Y63"
+    assert view.address == "Sheet1!D63:Y63"
 
 
 def test_one_by_one_row_node_distinct_from_cell() -> None:

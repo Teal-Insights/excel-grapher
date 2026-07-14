@@ -104,7 +104,7 @@ it becomes unwieldy)
 
 ---
 
-### Sprint 2 — Address-centric `Node` + factories
+### Sprint 2 — Address-centric `Node` + factories ✅
 
 **Files:** `excel_grapher/grapher/node.py`, exports in `excel_grapher/grapher/__init__.py`
 

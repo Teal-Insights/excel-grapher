@@ -219,6 +219,7 @@ def normalize_key(key: str) -> NormalizedAddress:
     apostrophes are quoted. For single cells, the result matches `Node.key`.
     One-row range keys are canonicalized via `normalize_row_key` (ordered
     columns, absolute markers stripped, both-end sheet forms collapsed).
+    Multi-area keys are canonicalized via `parse_node_key`.
 
     Examples:
         >>> normalize_key("'Sheet1'!A1")
@@ -227,7 +228,11 @@ def normalize_key(key: str) -> NormalizedAddress:
         "'My Sheet'!B2"
         >>> normalize_key("Sheet1!Y63:D63")
         'Sheet1!D63:Y63'
+        >>> normalize_key("Sheet1!E5,A1:D1")
+        'Sheet1!A1:D1,E5'
     """
+    if len(_split_top_level_comma(key)) > 1:
+        return str(parse_node_key(key))
     if _split_top_level_colon(key) is not None:
         try:
             return normalize_row_key(key)
@@ -620,3 +625,29 @@ def members_to_node_key(members: Sequence[str | NodeKey]) -> NodeKey:
             )
 
     return _make_union_key(areas)
+
+
+def expand_node_cells(key: str | NodeKey) -> tuple[CellKey, ...]:
+    """Expand a cell, range, or union key into canonical member `CellKey`s.
+
+    Order is deterministic: sheet order as in the key, then row, then column.
+    """
+    parsed = parse_node_key(key)
+    if isinstance(parsed, CellKey):
+        return (parsed,)
+
+    cells: list[CellKey] = []
+    areas: Sequence[CellKey | RangeKey] = (
+        (parsed,) if isinstance(parsed, RangeKey) else parsed.members
+    )
+
+    for area in areas:
+        if isinstance(area, CellKey):
+            cells.append(area)
+            continue
+        min_c = column_index_from_string(area.min_col)
+        max_c = column_index_from_string(area.max_col)
+        for row in range(area.min_row, area.max_row + 1):
+            for col_i in range(min_c, max_c + 1):
+                cells.append(_make_cell_key(area.sheet, get_column_letter(col_i), row))
+    return tuple(cells)

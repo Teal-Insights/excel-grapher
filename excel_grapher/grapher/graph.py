@@ -151,6 +151,7 @@ class DependencyGraph:
                 min_row=node.min_row,
                 max_col=node.max_col,
                 max_row=node.max_row,
+                address=node.address,
             )
             for key, node in self._nodes.items()
         }
