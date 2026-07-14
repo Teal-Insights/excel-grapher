@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.5.0 (2026-07-14)
+
+### Bug Fixes
+
+- **evaluator**: Cast lazy Range and lookup returns for ty
+  ([#388](https://github.com/Teal-Insights/excel-grapher/pull/388),
+  [`c9925a0`](https://github.com/Teal-Insights/excel-grapher/commit/c9925a03324c8a46c6482315e3891e53f8c3c354))
+
+### Features
+
+- **evaluator**: Lazy Range for lookup consumers
+  ([#388](https://github.com/Teal-Insights/excel-grapher/pull/388),
+  [`c9925a0`](https://github.com/Teal-Insights/excel-grapher/commit/c9925a03324c8a46c6482315e3891e53f8c3c354))
+
+- **evaluator**: Lazy Range for lookup consumers (#336)
+  ([#388](https://github.com/Teal-Insights/excel-grapher/pull/388),
+  [`c9925a0`](https://github.com/Teal-Insights/excel-grapher/commit/c9925a03324c8a46c6482315e3891e53f8c3c354))
+
+### Refactoring
+
+- **core**: Unify ExcelRange as shared geometry type
+  ([#388](https://github.com/Teal-Insights/excel-grapher/pull/388),
+  [`c9925a0`](https://github.com/Teal-Insights/excel-grapher/commit/c9925a03324c8a46c6482315e3891e53f8c3c354))
+
+### Testing
+
+- **evaluator**: Budget and selective-access coverage for lazy lookups
+  ([#388](https://github.com/Teal-Insights/excel-grapher/pull/388),
+  [`c9925a0`](https://github.com/Teal-Insights/excel-grapher/commit/c9925a03324c8a46c6482315e3891e53f8c3c354))
+
+
 ## v3.4.3 (2026-07-14)
 
 ### Bug Fixes
