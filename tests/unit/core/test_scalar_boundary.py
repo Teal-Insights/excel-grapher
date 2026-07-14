@@ -82,6 +82,7 @@ def test_get_error_is_shallow_for_lazy_range() -> None:
 
 
 def test_abs_over_multi_cell_range_is_value_without_sibling_eval() -> None:
+    """Non-Grid consumers reject multi-cell ranges at resolve (#VALUE!)."""
     graph = _make_graph(
         _make_node("S!A1", None, 1),
         _make_node("S!A2", "=1/0", None),
@@ -95,8 +96,12 @@ def test_abs_over_multi_cell_range_is_value_without_sibling_eval() -> None:
 
     with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
         assert ev.evaluate(["S!B1"]) == {"S!B1": XlError.VALUE}
+        assert "S!A1" not in ev._cache
         assert "S!A2" not in ev._cache
+        assert "S!A3" not in ev._cache
+    assert "S!A1" not in seen
     assert "S!A2" not in seen
+    assert "S!A3" not in seen
 
 
 def test_text_over_multi_cell_range_is_value_not_repr() -> None:

@@ -14,8 +14,8 @@ from excel_grapher.core.address_keys import (
 )
 from excel_grapher.core.addressing import index_excel_range
 from excel_grapher.core.excel_function_meta import (
-    lazy_range_arg_indices,
-    numpy_array_arg_indices,
+    eager_materialize_arg_indices,
+    grid_range_arg_indices,
 )
 from excel_grapher.core.grid import Range
 from excel_grapher.core.range_shorthand import (
@@ -436,23 +436,27 @@ class FormulaEvaluator:
     ) -> CellValue:
         """Resolve ``ExcelRange`` arguments for runtime function calls.
 
-        Multi-cell ranges default to lazy ``Range`` (selective access). Full-scan
-        reductions listed in ``numpy_array_arg_indices`` still eager-materialize
-        to numpy arrays. Single-cell references in value contexts (e.g.
-        ``TEXT(INDEX(...))``) promote to scalars so export parity matches
-        codegen's scalar ``INDEX`` handling.
+        Policy (multi-cell):
+
+        - ``eager_materialize_arg_indices`` → dense ndarray (full-scan bridge)
+        - ``grid_range_arg_indices`` → lazy ``Range`` (selective Grid access)
+        - otherwise → ``#VALUE!`` (scalar / non-Grid consumers; no Range leak)
+
+        Single-cell references in value contexts (e.g. ``TEXT(INDEX(...))``)
+        promote to scalars so export parity matches codegen's scalar ``INDEX``
+        handling.
         """
         if not isinstance(value, ExcelRange):
             return value
-        if arg_index in lazy_range_arg_indices(func_name):
-            # Lazy Range is a legal function operand; omitted from CellValue to
-            # avoid a circular import with core.grid.
-            return cast(CellValue, self._as_lazy_range(value))
-        if arg_index in numpy_array_arg_indices(func_name):
+        if arg_index in eager_materialize_arg_indices(func_name):
             return self._resolve_range(value)
         if value.start_row == value.end_row and value.start_col == value.end_col:
             return self._auto_resolve_single_cell(value)
-        return cast(CellValue, self._as_lazy_range(value))
+        if arg_index in grid_range_arg_indices(func_name):
+            # Lazy Range is a legal function operand; omitted from CellValue to
+            # avoid a circular import with core.grid.
+            return cast(CellValue, self._as_lazy_range(value))
+        return XlError.VALUE
 
     def _sheet_bounds(self) -> SheetBounds:
         bounds = getattr(self.graph, "sheet_bounds", None)

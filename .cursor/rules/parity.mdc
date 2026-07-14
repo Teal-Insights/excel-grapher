@@ -25,15 +25,20 @@ The evaluator and the exported runtime use **different error channels** with the
 **same error codes**:
 
 - **Evaluator = literal Excel model.** Errors are `XlError` sentinel values.
-  The evaluator never raises `XlErrorException`. Multi-cell range operands
-  default to lazy `Range` values from `excel_grapher.core.grid` (shared with
-  export). Full-scan reductions (`SUM`, `SUMPRODUCT`, `COUNTIF`, …) listed in
-  `numpy_array_arg_indices` still eager-materialize to numpy object arrays
-  until Phase 3 migrates aggregates onto Grid. Scalar coercions
-  (`as_scalar` / `to_number` / `to_string` / `to_bool`) reject multi-cell
-  `Range` with `#VALUE!` without evaluating sibling cells. AST `get_error`
-  stays shallow for `Range` (does not walk cells) so selective consumers are
-  not forced full-scan.
+  The evaluator never raises `XlErrorException`. Multi-cell range operands are
+  bound by argument policy in `FormulaEvaluator._resolve_function_arg`:
+
+  - `eager_materialize_arg_indices` — full-scan reductions (`SUM`,
+    `SUMPRODUCT`, …) materialize to numpy object arrays (bridge until Phase 3)
+  - `grid_range_arg_indices` — lookup consumers bind lazy `Range` from
+    `excel_grapher.core.grid` (selective access)
+  - otherwise — `#VALUE!` without evaluating sibling cells (no Range leak into
+    scalar contexts)
+
+  Scalar coercions (`as_scalar` / `to_number` / `to_string` / `to_bool`) also
+  reject multi-cell `Range` with `#VALUE!`. AST `get_error` stays shallow for
+  `Range` (does not walk cells) so selective consumers are not forced
+  full-scan.
 - **Export = Pythonic model.** Where Excel displays error code `E`, exported
   code **raises `XlErrorException(E)`** (a traceback, not a silently propagated
   sentinel). Ranges are the same lazy `Range` values; unused cells are never
@@ -63,13 +68,13 @@ Export error-channel specifics:
 
 `excel_grapher.core.grid` (`Range`, `Grid`) is the shared rectangular value
 model, and `excel_grapher.core.types.ExcelRange` is the single shared geometry
-type (evaluator and export). `FormulaEvaluator._resolve_function_arg` defaults
-to lazy `Range`; only functions in `numpy_array_arg_indices` call
-`resolve_excel_range` for dense ndarrays.
+type (evaluator and export). `FormulaEvaluator._resolve_function_arg` classifies
+multi-cell args via `eager_materialize_arg_indices` / `grid_range_arg_indices`
+(else `#VALUE!`).
 
 | Consumer | Error channel | How ranges are bound |
 | -------- | ------------- | -------------------- |
-| **Evaluator** | `XlError` sentinels | `_as_lazy_range` by default; eager ndarray only via `numpy_array_arg_indices` |
+| **Evaluator** | `XlError` sentinels | Eager ndarray, lazy `Range`, or `#VALUE!` per arg meta |
 | **Export** | `XlErrorException` | `xl_range` / codegen bind geometry to raise-on-error `xl_cell` |
 
 Lookup/reference algorithms (`INDEX`, `MATCH`, `VLOOKUP`, …) live in
@@ -79,8 +84,8 @@ boundary. Do not introduce a third traversal copy.
 
 Behavioral parity (evaluator ↔ export ↔ Excel) is unchanged by representation
 convergence. Remaining eager numpy use in the evaluator hot path is confined to
-full-scan reductions / optional operator fast paths (`numpy_array_arg_indices`
-plus `_resolve_binary_operand`).
+full-scan reductions / optional operator fast paths
+(`eager_materialize_arg_indices` plus `_resolve_binary_operand`).
 
 ## Layered semantics: core, runtime, and export_runtime
 

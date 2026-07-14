@@ -20,15 +20,18 @@ This gives **fast, accurate, repeatable** execution for any given workbook, but 
 
 ### Range operands
 
-Multi-cell range operands default to lazy `Range` values from
-`excel_grapher.core.grid` and evaluate only the cells a consumer touches —
-matching the exported runtime (including `MATCH` / `VLOOKUP` / `INDEX` /
-`OFFSET` nesting). Full-scan reductions such as `SUM` and `SUMPRODUCT` still
-materialize ranges where `flatten` / vectorized fast paths need a dense
-buffer. Scalar coercions (`as_scalar`) reject multi-cell ranges with `#VALUE!`
-without evaluating siblings; AST error prechecks do not walk lazy ranges.
-Errors remain `XlError` sentinels (the evaluator never raises
-`XlErrorException`).
+Multi-cell range arguments are classified at resolve time:
+
+- Lookup consumers (`MATCH` / `VLOOKUP` / …) bind lazy `Range` from
+  `excel_grapher.core.grid` and evaluate only the cells they touch.
+- Full-scan reductions (`SUM` / `SUMPRODUCT` / …) still materialize where
+  `flatten` / vectorized fast paths need a dense buffer.
+- Other functions reject multi-cell ranges with `#VALUE!` (no object-repr leaks;
+  sibling cells stay unevaluated).
+
+Scalar coercions (`as_scalar`) reinforce the same boundary. AST error prechecks
+do not walk lazy ranges. Errors remain `XlError` sentinels (the evaluator never
+raises `XlErrorException`).
 
 ### Minimal evaluator example
 

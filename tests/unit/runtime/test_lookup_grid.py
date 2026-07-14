@@ -4,29 +4,29 @@ from __future__ import annotations
 
 from excel_grapher.core import CellValue, XlError
 from excel_grapher.core.excel_function_meta import (
-    lazy_range_arg_indices,
-    numpy_array_arg_indices,
+    eager_materialize_arg_indices,
+    grid_range_arg_indices,
 )
 from excel_grapher.core.grid import Range
 from excel_grapher.core.lookup_funcs import index_cells
 from excel_grapher.runtime.lookup import xl_index
 
 
-def test_index_not_in_numpy_array_arg_indices() -> None:
-    """INDEX uses lazy/geometry binding; it is not an eager ndarray consumer."""
-    assert 0 not in numpy_array_arg_indices("INDEX")
-    assert numpy_array_arg_indices("INDEX") == frozenset()
+def test_index_not_in_eager_materialize_arg_indices() -> None:
+    """INDEX uses geometry binding; it is not an eager ndarray consumer."""
+    assert eager_materialize_arg_indices("INDEX") == frozenset()
 
 
 def test_sumproduct_still_eager_materializes() -> None:
-    assert 0 in numpy_array_arg_indices("SUMPRODUCT")
-    assert 0 in numpy_array_arg_indices("SUM")
+    assert 0 in eager_materialize_arg_indices("SUMPRODUCT")
+    assert 0 in eager_materialize_arg_indices("SUM")
 
 
-def test_lazy_range_whitelist_empty_after_default_inversion() -> None:
-    """Default resolution is lazy; the Phase 0 whitelist is no longer required."""
-    assert lazy_range_arg_indices("MATCH") == frozenset()
-    assert lazy_range_arg_indices("VLOOKUP") == frozenset()
+def test_lookup_args_are_grid_range_bound() -> None:
+    """Lookup table args bind lazy Range; other args do not."""
+    assert 1 in grid_range_arg_indices("MATCH")
+    assert 1 in grid_range_arg_indices("VLOOKUP")
+    assert grid_range_arg_indices("ABS") == frozenset()
 
 
 def test_index_cells_over_lazy_range_is_selective() -> None:
