@@ -176,6 +176,16 @@ print(node.normalized_formula)  # Sheet-qualified for transpilation
 print(node.value)               # Cached value from Excel
 print(node.is_target)           # True if this node came from original targets
 
+## Multi-cell groups (formula-group / union nodes)
+## `get_node` is exact-key only. Member cells of a `RangeKey` / `UnionKey` node
+## are not stored under their own address — resolve via `locate_cell` first:
+from excel_grapher.grapher import locate_cell
+
+loc = locate_cell(graph, "Sheet1!E5")
+if loc is not None:
+    owner = graph.get_node(loc.node_key)  # the owning multi-cell (or cell) node
+    print(loc.cell_key, "owned by", loc.node_key)
+
 ## Iterate over formula cells
 for key, node in graph.formula_nodes():
     print(key, node.normalized_formula)
@@ -194,7 +204,8 @@ target_keys = graph.target_keys()
 
 | Method              | Returns                                 | Description                           |
 |---------------------|------------------------------------------|---------------------------------------|
-| `get_node(key)`     | `NodeView \| None`                       | O(1) immutable lookup by cell address |
+| `get_node(key)`     | `NodeView \| None`                       | O(1) exact-key lookup (not members of multi-cell nodes) |
+| `locate_cell(graph, key)` | `CellLocation \| None`              | Free function: resolve a workbook cell to its owning graph node |
 | `formula_nodes()`   | `Iterator[tuple[NodeKey, Node]]`         | Cells with formulas                   |
 | `leaf_node_items()` | `Iterator[tuple[NodeKey, Node]]`         | Leaf cells (no cell dependencies)     |
 | `formula_keys()`    | `list[NodeKey]`                          | Sorted keys for formula cells         |

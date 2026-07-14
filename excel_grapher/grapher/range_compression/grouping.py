@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from excel_grapher.core.address_keys import NodeShape
 from excel_grapher.grapher.graph import DependencyGraph
-from excel_grapher.grapher.node import NodeKey, NodeKind
+from excel_grapher.grapher.node import NodeKey
 
 from .boundaries import dependent_may_compress
 from .config import TacoBuildConfig
@@ -28,7 +29,7 @@ def column_adjacent_groups(
         node = graph.get_node(key)
         if node is None or node.is_leaf or not node.formula:
             continue
-        if node.kind is not NodeKind.cell or node.column is None:
+        if node.shape is not NodeShape.cell or node.sheet is None or node.column is None:
             continue
         by_column[(node.sheet, node.column)].append(key)
 

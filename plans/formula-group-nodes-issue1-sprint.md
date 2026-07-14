@@ -148,23 +148,22 @@ test removes then re-adds; Issue 1 only needs single-node add/remove correctness
 
 ---
 
-### Sprint 4 — Harden, migrate row tests, guards, docs
+### Sprint 4 — Harden, migrate row tests, guards, docs ✅
 
 | Task | Done when |
 | ---- | --------- |
-| Migrate `tests/unit/grapher/row_nodes/` | Re-express as `RangeKey`/`UnionKey` cases under `formula_groups/`; delete obsolete row-only APIs |
-| Scenario A | Outside cell formula depends on union; dependents / `evaluation_order` OK |
-| Scenario B | Cross-sheet union members; `locate_cell` each → same owner |
-| Scenario C | `create_dependency_graph` still emits only cells (range expansion unchanged) |
-| Scenario D | Hand-built union in graph: TACO + `OptimalCompression().project` skip / no crash |
-| Perf smoke | ~1000 member cells → build key + `locate_cell` interior member cheap (O(1) occupancy) |
-| Cell-only regression | Existing non-row grapher tests pass |
-| Docs blurb | Short note: `get_node` vs `locate_cell` (user guide or module docstring) |
-| Export shims gone | No required `NodeKind.row` / `make_row_node` in public API (or deprecated wrappers only) |
+| Migrate `tests/unit/grapher/row_nodes/` | ✅ under `formula_groups/`; `make_row_node` remains a deprecated shim |
+| Scenario A | ✅ Outside cell → union; dependents / `evaluation_order` |
+| Scenario B | ✅ Cross-sheet members → same owner |
+| Scenario C | ✅ Builder still emits only cells |
+| Scenario D | ✅ TACO + `OptimalCompression().project` skip / no crash |
+| Perf smoke | ✅ ~1000 members + `locate_cell` |
+| Cell-only regression | ✅ grapher suite |
+| Docs blurb | ✅ user guide + `get_node` / `locate_cell` / graph docstrings |
+| Export shims | ✅ `make_row_node` deprecated wrapper; guards use `shape == cell` |
 
-**Guard pattern for TACO / compression:** treat `node.shape == NodeShape.cell` (or
-`isinstance(parse_node_key(node.address), CellKey)`) as the only compressible /
-groupable cell units — same spirit as today’s `kind == cell` checks.
+**Guard pattern for TACO / compression:** treat `node.shape == NodeShape.cell` as the
+only compressible / groupable cell units.
 
 ---
 
@@ -187,42 +186,42 @@ tests/unit/grapher/formula_groups/
 
 **Keys**
 
-- [ ] Cell / range / union round-trip via `parse_node_key`
-- [ ] One-member union collapses; empty union errors
-- [ ] Order-independent cover `{A1,B1,C1,D1,E5}` → `Sheet1!A1:D1,E5`
-- [ ] Vertical merge filled block → single `RangeKey`
-- [ ] `Sheet1!D63:Y63` → `RangeKey`, `shape=row`
-- [ ] Quoted sheet + cross-sheet union formatting
-- [ ] `$` / inverted corners / spaces normalize
+- [x] Cell / range / union round-trip via `parse_node_key`
+- [x] One-member union collapses; empty union errors
+- [x] Order-independent cover `{A1,B1,C1,D1,E5}` → `Sheet1!A1:D1,E5`
+- [x] Vertical merge filled block → single `RangeKey`
+- [x] `Sheet1!D63:Y63` → `RangeKey`, `shape=row`
+- [x] Quoted sheet + cross-sheet union formatting
+- [x] `$` / inverted corners / spaces normalize
 
 **Node / graph**
 
-- [ ] Address-centric cell construction back-compat
-- [ ] `make_union_node` from non-contiguous + cross-sheet members
-- [ ] Occupancy conflict on overlapping add
-- [ ] `remove_node(union)` then re-add former member as cell succeeds
-- [ ] `remove_node(member)` while owned → error
-- [ ] Mixed edge kinds; pickle; projection/subgraph copy
-- [ ] `locate_cell` vs `get_node` behavior
+- [x] Address-centric cell construction back-compat
+- [x] `make_union_node` from non-contiguous + cross-sheet members
+- [x] Occupancy conflict on overlapping add
+- [x] `remove_node(union)` then re-add former member as cell succeeds
+- [x] `remove_node(member)` while owned → error
+- [x] Mixed edge kinds; pickle; projection/subgraph copy
+- [x] `locate_cell` vs `get_node` behavior
 
 **Integration**
 
-- [ ] Scenarios A–D
-- [ ] Builder still cell-only
-- [ ] 1000-member locate smoke
-- [ ] Cell-only + migrated former row tests green
+- [x] Scenarios A–D
+- [x] Builder still cell-only
+- [x] 1000-member locate smoke
+- [x] Cell-only + migrated former row tests green
 
 ---
 
 ## Success criteria (merge gate)
 
-- [ ] Cell-only graphs behave as today with no caller changes for pure cell APIs
-- [ ] `#375` address model is the key source of truth (`CellKey`/`RangeKey`/`UnionKey`)
-- [ ] Non-adjacent members supported; `NodeKind.row` not required
-- [ ] Occupancy + remove rules enforced
-- [ ] Pickle and projection copy preserve mixed graphs
-- [ ] Lookup story documented
-- [ ] No eval / codegen / detection required
+- [x] Cell-only graphs behave as today with no caller changes for pure cell APIs
+- [x] `#375` address model is the key source of truth (`CellKey`/`RangeKey`/`UnionKey`)
+- [x] Non-adjacent members supported; `NodeKind.row` not required
+- [x] Occupancy + remove rules enforced
+- [x] Pickle and projection copy preserve mixed graphs
+- [x] Lookup story documented
+- [x] No eval / codegen / detection required
 
 ---
 

@@ -117,6 +117,15 @@ class GraphReadView(Protocol):
 
 @dataclass
 class DependencyGraph:
+    """Mutable workbook dependency graph.
+
+    Node identity is the canonical address string (`CellKey` / `RangeKey` /
+    `UnionKey`). `get_node(key)` is exact-key only — a member cell of a
+    multi-cell node is not stored under its own key. Prefer `locate_cell` (or
+    `cell_owner`) when resolving a workbook cell that may belong to a group;
+    then call `get_node` on the returned `node_key`.
+    """
+
     _nodes: dict[NodeKey, Node] = field(default_factory=dict)
     _edges: dict[NodeKey, set[NodeKey]] = field(default_factory=dict)  # node -> deps
     _reverse_edges: dict[NodeKey, set[NodeKey]] = field(default_factory=dict)  # node -> dependents
@@ -309,7 +318,11 @@ class DependencyGraph:
     # ---- public read API ----------------------------------------------------
 
     def get_node(self, key: NodeKey) -> NodeView | None:
-        """Return an immutable `NodeView` snapshot, or `None` if missing."""
+        """Return an immutable `NodeView` snapshot, or `None` if missing.
+
+        Lookup is by exact graph key. Member cells of a multi-cell node are not
+        present as their own keys — use `locate_cell` / `cell_owner` first.
+        """
         node = self._nodes.get(normalize_key(key))
         if node is None:
             return None

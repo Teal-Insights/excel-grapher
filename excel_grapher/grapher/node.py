@@ -385,8 +385,9 @@ def make_row_node(
 ) -> Node:
     """Build a one-row graph node for `sheet!min_col{row}:max_col{row}`.
 
-    Shim over a `RangeKey` address (including 1x1 `D63:D63`, distinct from a cell
-    node). Prefer `make_union_node` for new code.
+    Deprecated compatibility shim over a `RangeKey` address (including 1x1
+    `D63:D63`, distinct from a cell node). Prefer `make_union_node` or
+    `Node(..., address=...)` for new code.
 
     Raises:
         ValueError: If the resulting extent is not a single worksheet row.
@@ -662,6 +663,10 @@ def find_row_nodes_covering(graph: _GraphNodeLookup, address: str) -> list[NodeK
 
 def locate_cell(graph: _GraphNodeLookup, cell_key: str) -> CellLocation | None:
     """Return where a single cell is represented in `graph`.
+
+    Prefer this over `DependencyGraph.get_node` when resolving a workbook cell
+    that may be a member of a multi-cell (`RangeKey` / `UnionKey`) node.
+    `get_node` is exact-key only and returns `None` for members.
 
     Resolution order:
     1. Occupancy index via `graph.cell_owner` when available (O(1)).

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import fastpyxl.utils.cell
 
-from excel_grapher.core.address_keys import parse_address
+from excel_grapher.core.address_keys import NodeShape, parse_address
 from excel_grapher.grapher.dependency_provenance import DependencyCause
 from excel_grapher.grapher.graph import DependencyGraph
-from excel_grapher.grapher.node import NodeKey, NodeKind
+from excel_grapher.grapher.node import NodeKey
 
 from .boundaries import (
     precedent_may_compress,
@@ -129,7 +129,7 @@ def _collect_cell_stream(
         node = graph.get_node(dep_key)
         if node is None or not node.formula:
             return None
-        if node.kind is not NodeKind.cell or node.column is None or node.row is None:
+        if node.shape is not NodeShape.cell or node.column is None or node.row is None:
             return None
         streams = parse_ref_streams(node.formula, default_sheet=node.sheet)
         if ref_idx >= len(streams):
@@ -226,7 +226,7 @@ def _collect_range_stream(
         node = graph.get_node(dep_key)
         if node is None or not node.formula:
             return None
-        if node.kind is not NodeKind.cell or node.column is None or node.row is None:
+        if node.shape is not NodeShape.cell or node.column is None or node.row is None:
             return None
         streams = parse_ref_streams(node.formula, default_sheet=node.sheet)
         if ref_idx >= len(streams):
