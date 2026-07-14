@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.6.0 (2026-07-14)
+
+### Bug Fixes
+
+- **evaluator**: Scalar boundary for lazy Range (#336 Phase 1)
+  ([#389](https://github.com/Teal-Insights/excel-grapher/pull/389),
+  [`0d63e45`](https://github.com/Teal-Insights/excel-grapher/commit/0d63e450d85ffc27c438f0afc8761b6ea6d1a9b9))
+
+### Features
+
+- **evaluator**: Lazy-by-default range resolution (#336 Phase 1)
+  ([#389](https://github.com/Teal-Insights/excel-grapher/pull/389),
+  [`0d63e45`](https://github.com/Teal-Insights/excel-grapher/commit/0d63e450d85ffc27c438f0afc8761b6ea6d1a9b9))
+
+### Refactoring
+
+- **evaluator**: Explicit eager/grid/VALUE range arg policy
+  ([#389](https://github.com/Teal-Insights/excel-grapher/pull/389),
+  [`0d63e45`](https://github.com/Teal-Insights/excel-grapher/commit/0d63e450d85ffc27c438f0afc8761b6ea6d1a9b9))
+
+
 ## v3.5.0 (2026-07-14)
 
 ### Bug Fixes
