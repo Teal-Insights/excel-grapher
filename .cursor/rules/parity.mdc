@@ -24,12 +24,16 @@ When both evaluator↔Excel and evaluator↔export hold for overlapping coverage
 The evaluator and the exported runtime use **different error channels** with the
 **same error codes**:
 
-- **Evaluator = literal Excel model.** Errors are `XlError` sentinel values;
-  ranges resolve to numpy object arrays. The evaluator never raises
-  `XlErrorException`.
+- **Evaluator = literal Excel model.** Errors are `XlError` sentinel values.
+  The evaluator never raises `XlErrorException`. Lookup consumers (`MATCH`,
+  `VLOOKUP`, `HLOOKUP`, `LOOKUP`, `XLOOKUP`) receive lazy `Range` values from
+  `excel_grapher.core.grid` (shared with export); full-scan reductions such as
+  `SUMPRODUCT` still eager-materialize to numpy object arrays where needed for
+  optional fast paths.
 - **Export = Pythonic model.** Where Excel displays error code `E`, exported
   code **raises `XlErrorException(E)`** (a traceback, not a silently propagated
-  sentinel). Ranges are lazy `Range` values; unused cells are never evaluated.
+  sentinel). Ranges are the same lazy `Range` values; unused cells are never
+  evaluated.
 
 Export-path parity is therefore asserted on **raised codes**: the parity
 harness catches `XlErrorException` per target and compares `exc.code` against
@@ -51,14 +55,32 @@ Export error-channel specifics:
   sentinel probe channel (`Range.value_at` / `Grid.at` convert raised errors
   back to sentinels for inspection without propagation).
 
+## Shared lazy range / grid representation
+
+`excel_grapher.core.grid` (`Range`, `Grid`) is the shared rectangular value
+model:
+
+| Consumer | Error channel | How ranges are bound |
+| -------- | ------------- | -------------------- |
+| **Evaluator** | `XlError` sentinels | `FormulaEvaluator._as_lazy_range` binds geometry to `_evaluate_cell` |
+| **Export** | `XlErrorException` | `xl_range` / codegen bind geometry to raise-on-error `xl_cell` |
+
+Lookup algorithms live in `excel_grapher.core.lookup_funcs` (sentinel returns).
+`runtime/lookup.py` exposes them to the evaluator; `export_runtime/lookup.py`
+raises at the wrapper boundary. Do not introduce a third traversal copy.
+
+Behavioral parity (evaluator ↔ export ↔ Excel) is unchanged by representation
+convergence. Remaining eager numpy use in the evaluator hot path is confined to
+full-scan reductions (`SUMPRODUCT`, etc.) and optional operator fast paths.
+
 ## Layered semantics: core, runtime, and export_runtime
 
 Worksheet functions whose semantics are shared between evaluator and export, but
 whose **error channel** differs, use a three-layer layout:
 
 1. **`core/*_funcs.py`** — shared implementations (return `XlError` sentinels
-   internally where needed). Single source of truth for math, text, logic, and
-   reference helpers covered by this pattern.
+   internally where needed). Single source of truth for math, text, logic,
+   reference helpers, and grid-based lookups covered by this pattern.
 2. **`runtime/*`** — thin sentinel-returning wrappers (evaluator path). The
    evaluator imports these directly.
 3. **`export_runtime/*`** — thin `raise_if_sentinel_*` wrappers (export path).
@@ -85,10 +107,10 @@ Private helpers shared within a module stay `_`-prefixed (e.g.
 
 - **Export-owned semantics** (not just error-channel differences):
   `excel_grapher/exporter/export_runtime/*` also defines the exported error
-  channel (`XlErrorException`, `xl_raise`, thunked error-consumers) and
-  lazy-range consumers (operators, lookups, `SUMPRODUCT`, `OFFSET`, `xl_range`).
-  The operator/error/range layer is **not** a single shared implementation —
-  divergence here is deliberate.
+  channel (`XlErrorException`, `xl_raise`, thunked error-consumers), operators
+  (`xl_map_*`), aggregates (`xl_sumproduct`), and OFFSET/`xl_range` helpers.
+  Lookup traversal is shared via `core/lookup_funcs` + `core.grid`; export
+  wrappers only adapt the error channel.
 - **Embedding**: codegen embeds runtime code via
   `excel_grapher/exporter/embed.py::emit_runtime(...)`. Export-owned modules
   register **last**, so their `xl_*` symbols override shared `runtime` wrappers

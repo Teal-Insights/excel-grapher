@@ -72,5 +72,8 @@ class ExcelRange:
         return np.array(values, dtype=object).reshape((rows, cols))
 
 
-# Scalar values, references, and object-dtype ndarrays of CellValue (e.g. OFFSET result).
+# Scalar values, references, and object-dtype ndarrays of CellValue (e.g. OFFSET /
+# SUMPRODUCT). Lazy `Range` values from `excel_grapher.core.grid` are also used as
+# function operands in the evaluator; they are not listed here to avoid a circular
+# import with `core.grid.ranges`.
 CellValue: TypeAlias = float | int | str | bool | XlError | ExcelRange | np.ndarray | None
