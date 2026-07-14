@@ -25,7 +25,9 @@ Multi-cell range operands default to lazy `Range` values from
 matching the exported runtime (including `MATCH` / `VLOOKUP` / `INDEX` /
 `OFFSET` nesting). Full-scan reductions such as `SUM` and `SUMPRODUCT` still
 materialize ranges where `flatten` / vectorized fast paths need a dense
-buffer. Errors remain `XlError` sentinels (the evaluator never raises
+buffer. Scalar coercions (`as_scalar`) reject multi-cell ranges with `#VALUE!`
+without evaluating siblings; AST error prechecks do not walk lazy ranges.
+Errors remain `XlError` sentinels (the evaluator never raises
 `XlErrorException`).
 
 ### Minimal evaluator example

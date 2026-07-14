@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from .coercions import to_number, to_string
+from typing import cast
+
+from .coercions import as_scalar, to_number, to_string
 from .types import CellValue, XlError
 
 __all__ = [
@@ -19,7 +21,10 @@ __all__ = [
 
 def left_chars(text: CellValue, num_chars: CellValue = 1) -> str | XlError:
     """Return the leftmost characters of text."""
-    s = to_string(text)
+    scalar = as_scalar(text)
+    if isinstance(scalar, XlError):
+        return scalar
+    s = to_string(cast(CellValue, scalar))
     n = to_number(num_chars)
     if isinstance(n, XlError):
         return n
@@ -31,7 +36,10 @@ def left_chars(text: CellValue, num_chars: CellValue = 1) -> str | XlError:
 
 def right_chars(text: CellValue, num_chars: CellValue = 1) -> str | XlError:
     """Return the rightmost characters of text."""
-    s = to_string(text)
+    scalar = as_scalar(text)
+    if isinstance(scalar, XlError):
+        return scalar
+    s = to_string(cast(CellValue, scalar))
     n = to_number(num_chars)
     if isinstance(n, XlError):
         return n
@@ -45,7 +53,10 @@ def right_chars(text: CellValue, num_chars: CellValue = 1) -> str | XlError:
 
 def mid_chars(text: CellValue, start_num: CellValue, num_chars: CellValue) -> str | XlError:
     """Return characters from the middle of text."""
-    s = to_string(text)
+    scalar = as_scalar(text)
+    if isinstance(scalar, XlError):
+        return scalar
+    s = to_string(cast(CellValue, scalar))
     start = to_number(start_num)
     if isinstance(start, XlError):
         return start
@@ -65,16 +76,22 @@ def concatenate_cells(*args: CellValue) -> str | XlError:
     for a in args:
         if isinstance(a, XlError):
             return a
-        parts.append(to_string(a))
+        scalar = as_scalar(a)
+        if isinstance(scalar, XlError):
+            return scalar
+        parts.append(to_string(cast(CellValue, scalar)))
     return "".join(parts)
 
 
 def text_format(value: CellValue, format_text: CellValue) -> str | XlError:
     """Format a value as text using a format string."""
+    scalar = as_scalar(value)
+    if isinstance(scalar, XlError):
+        return scalar
     fmt = to_string(format_text)
-    n = to_number(value)
+    n = to_number(cast(CellValue, scalar))
     if isinstance(n, XlError):
-        return to_string(value)
+        return to_string(cast(CellValue, scalar))
 
     if fmt == "0":
         return str(int(round(n)))

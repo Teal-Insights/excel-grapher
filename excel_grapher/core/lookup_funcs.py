@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import cast
 
-from excel_grapher.core.coercions import excel_casefold, to_number
+from excel_grapher.core.coercions import as_scalar, excel_casefold, to_number
 from excel_grapher.core.grid import Grid, Range, Scalar
 from excel_grapher.core.types import CellValue, XlError
 
@@ -53,7 +53,10 @@ def index_cells(
         return XlError.VALUE
 
     if row_omitted:
-        cn = to_number(cast(CellValue, col_num))
+        col_s = as_scalar(col_num)
+        if isinstance(col_s, XlError):
+            return col_s
+        cn = to_number(cast(CellValue, col_s))
         if isinstance(cn, XlError):
             return cn
         col = int(cn)
@@ -63,7 +66,10 @@ def index_cells(
             return grid.at(0, col - 1)
         return grid.col_slice(col - 1)
 
-    rn = to_number(cast(CellValue, row_num))
+    row_s = as_scalar(row_num)
+    if isinstance(row_s, XlError):
+        return row_s
+    rn = to_number(cast(CellValue, row_s))
     if isinstance(rn, XlError):
         return rn
     row = int(rn)
@@ -81,7 +87,10 @@ def index_cells(
             return XlError.REF
         return grid.row_slice(row - 1)
 
-    cn = to_number(cast(CellValue, col_num))
+    col_s = as_scalar(col_num)
+    if isinstance(col_s, XlError):
+        return col_s
+    cn = to_number(cast(CellValue, col_s))
     if isinstance(cn, XlError):
         return cn
     col = int(cn)

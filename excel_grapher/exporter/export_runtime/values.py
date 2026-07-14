@@ -17,7 +17,11 @@ CellValue: TypeAlias = Scalar | ExcelRange | Range | list["CellValue"]
 
 
 def as_scalar(value: CellValue) -> Scalar:
-    """Collapse range/array values to `#VALUE!` for scalar coercion contexts."""
+    """Collapse range/array values to `#VALUE!` for scalar coercion contexts.
+
+    Keep behavior aligned with `excel_grapher.core.coercions.as_scalar`. This
+    module is embedded into standalone exports and cannot import library code.
+    """
     if isinstance(value, (Range, ExcelRange, list, tuple)):
         return XlError.VALUE
     return value

@@ -29,7 +29,11 @@ The evaluator and the exported runtime use **different error channels** with the
   default to lazy `Range` values from `excel_grapher.core.grid` (shared with
   export). Full-scan reductions (`SUM`, `SUMPRODUCT`, `COUNTIF`, …) listed in
   `numpy_array_arg_indices` still eager-materialize to numpy object arrays
-  until Phase 3 migrates aggregates onto Grid.
+  until Phase 3 migrates aggregates onto Grid. Scalar coercions
+  (`as_scalar` / `to_number` / `to_string` / `to_bool`) reject multi-cell
+  `Range` with `#VALUE!` without evaluating sibling cells. AST `get_error`
+  stays shallow for `Range` (does not walk cells) so selective consumers are
+  not forced full-scan.
 - **Export = Pythonic model.** Where Excel displays error code `E`, exported
   code **raises `XlErrorException(E)`** (a traceback, not a silently propagated
   sentinel). Ranges are the same lazy `Range` values; unused cells are never
