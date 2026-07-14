@@ -24,6 +24,9 @@ Multi-cell range arguments are classified at resolve time:
 
 - Lookup consumers (`MATCH` / `VLOOKUP` / …) bind lazy `Range` from
   `excel_grapher.core.grid` and evaluate only the cells they touch.
+- Binary / unary operators bind the same lazy `Range` and map via shared
+  `core.operator_maps` (aligned with export `xl_map_*`). Large ops may opt into
+  the ndarray fast path after an explicit materialization.
 - Full-scan reductions (`SUM` / `SUMPRODUCT` / …) still materialize where
   `flatten` / vectorized fast paths need a dense buffer.
 - Other functions reject multi-cell ranges with `#VALUE!` (no object-repr leaks;

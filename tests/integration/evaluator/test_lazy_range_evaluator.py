@@ -6,6 +6,8 @@ unused sibling cells are never evaluated (via `on_cell_evaluated` / `_cache`).
 
 from __future__ import annotations
 
+import pytest
+
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.evaluator import FormulaEvaluator
@@ -268,6 +270,85 @@ def test_vlookup_over_offset_stops_before_trailing_unused_cells() -> None:
 
     with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
         assert ev.evaluate(["S!C1"]) == {"S!C1": 100}
+        assert "S!A3" not in ev._cache
+        assert "S!B3" not in ev._cache
+    assert "S!A3" not in seen
+    assert "S!B3" not in seen
+
+
+def test_binary_op_over_ranges_does_not_eager_resolve_excel_range(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Binary range ops bind lazy Range; resolve_excel_range is never called."""
+    from excel_grapher.core import types as core_types
+
+    def _boom(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("resolve_excel_range must not run for binary operands")
+
+    monkeypatch.setattr(core_types, "resolve_excel_range", _boom)
+    monkeypatch.setattr(
+        "excel_grapher.evaluator.evaluator.resolve_excel_range",
+        _boom,
+    )
+
+    graph = _make_graph(
+        _make_node("S!A1", None, "x"),
+        _make_node("S!A2", None, "y"),
+        _make_node("S!A3", None, "x"),
+        _make_node("S!B1", None, 10),
+        _make_node("S!B2", None, 20),
+        _make_node("S!B3", None, 30),
+        _make_node("S!C1", '=SUMPRODUCT((S!A1:S!A3="x")*S!B1:S!B3)', None),
+    )
+    with FormulaEvaluator(graph) as ev:
+        assert ev.evaluate(["S!C1"]) == {"S!C1": 40.0}
+
+
+def test_array_unary_negation_over_range() -> None:
+    """Unary minus over a multi-cell range maps element-wise (export parity)."""
+    graph = _make_graph(
+        _make_node("S!A1", None, 1),
+        _make_node("S!A2", None, 2),
+        _make_node("S!A3", None, 3),
+        _make_node("S!B1", "=SUM(-(S!A1:S!A3))", None),
+    )
+    with FormulaEvaluator(graph) as ev:
+        assert ev.evaluate(["S!B1"]) == {"S!B1": -6.0}
+
+
+def test_criteria_product_sum_parity_via_binary_ops() -> None:
+    """Criteria comparison * values reduces correctly via lazy Grid maps."""
+    graph = _make_graph(
+        _make_node("S!A1", None, "x"),
+        _make_node("S!A2", None, "y"),
+        _make_node("S!A3", None, "x"),
+        _make_node("S!B1", None, 10),
+        _make_node("S!B2", None, 20),
+        _make_node("S!B3", None, 30),
+        _make_node("S!C1", '=SUM((S!A1:S!A3="x")*S!B1:S!B3)', None),
+    )
+    with FormulaEvaluator(graph) as ev:
+        assert ev.evaluate(["S!C1"]) == {"S!C1": 40.0}
+
+
+def test_binary_op_fail_fast_does_not_evaluate_trailing_formula_cells() -> None:
+    """Array multiply stops at the first cell error; trailing formulas stay cold."""
+    graph = _make_graph(
+        _make_node("S!A1", None, 1),
+        _make_node("S!A2", "=1/0", None),
+        _make_node("S!A3", "=S!A1+99", None),
+        _make_node("S!B1", None, 2),
+        _make_node("S!B2", None, 3),
+        _make_node("S!B3", "=S!B1+99", None),
+        _make_node("S!C1", "=S!A1:S!A3*S!B1:S!B3", None),
+    )
+    seen: list[str] = []
+
+    def _track(address: str, _value: object) -> None:
+        seen.append(address)
+
+    with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
+        assert ev.evaluate(["S!C1"]) == {"S!C1": XlError.DIV}
         assert "S!A3" not in ev._cache
         assert "S!B3" not in ev._cache
     assert "S!A3" not in seen

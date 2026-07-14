@@ -56,6 +56,7 @@ from .helpers import (
     xl_lt,
     xl_mul,
     xl_ne,
+    xl_neg,
     xl_offset_ref,
     xl_percent,
     xl_pow,
@@ -481,9 +482,9 @@ class FormulaEvaluator:
         return value
 
     def _resolve_binary_operand(self, value: CellValue) -> CellValue:
-        """Resolve range references to arrays for element-wise binary operators."""
+        """Bind range geometry to a lazy `Range` for element-wise operators."""
         if isinstance(value, ExcelRange):
-            return self._resolve_range(value)
+            return cast(CellValue, self._as_lazy_range(value))
         return value
 
     def _eval_binary_op(self, node: BinaryOpNode) -> CellValue:
@@ -529,15 +530,12 @@ class FormulaEvaluator:
         raise ValueError(f"Unknown binary operator: {op}")
 
     def _eval_unary_op(self, node: UnaryOpNode) -> CellValue:
-        operand = self._evaluate_ast(node.operand)
+        operand = self._resolve_binary_operand(self._evaluate_ast(node.operand))
         if isinstance(operand, XlError):
             return operand
 
         if node.op == "-":
-            n = to_number(operand)
-            if isinstance(n, XlError):
-                return n
-            return -n
+            return xl_neg(operand)
 
         if node.op == "%":
             return xl_percent(operand)
