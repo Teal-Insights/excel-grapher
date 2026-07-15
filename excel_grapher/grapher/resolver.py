@@ -15,16 +15,19 @@ from excel_grapher.core.addressing import offset_range, split_sheet_qualified_ad
 from excel_grapher.core.coercions import to_number
 from excel_grapher.core.formula_ast import (
     AstNode,
+    BinaryOpNode,
     CellRefNode,
     FormulaParseError,
     FunctionCallNode,
     NumberNode,
     RangeNode,
+    UnaryOpNode,
 )
 from excel_grapher.core.formula_ast import (
     parse as parse_formula_ast,
 )
 from excel_grapher.core.formula_normalization import expand_whole_column_row_for_parse
+from excel_grapher.core.operators_reference import apply_arithmetic
 from excel_grapher.core.types import CellValue, ExcelRange, XlError
 
 from .parser import CellRef
@@ -112,20 +115,52 @@ def _base_node_to_excel_range(
     return None
 
 
+def _as_int_or_float(n: float) -> int | float:
+    """Return an int when *n* is integral, otherwise leave as float."""
+    return int(n) if n == int(n) else n
+
+
 def _eval_number_for_defined_name(
     node: AstNode,
     get_cell_value: Callable[[str], CellValue],
     bounds: dict[str, tuple[int, int]],
 ) -> int | float | None:
-    """Evaluate an AST node to a number for OFFSET args (rows, cols, height, width)."""
+    """Evaluate an AST node to a number for OFFSET args (rows, cols, height, width).
+
+    Supports literals, cell refs, bare `COUNTA(range)`, and arithmetic /
+    unary expressions over those (e.g. `COUNTA(A:A)+5`). Unsupported nodes
+    return `None` so callers can fail closed.
+    """
     if isinstance(node, NumberNode):
-        return int(node.value) if node.value == int(node.value) else node.value
+        return _as_int_or_float(node.value)
     if isinstance(node, CellRefNode):
         val = get_cell_value(node.address)
         n = to_number(val)
         if isinstance(n, XlError):
             return None
-        return int(n) if n == int(n) else float(n)
+        return _as_int_or_float(n)
+    if isinstance(node, UnaryOpNode):
+        inner = _eval_number_for_defined_name(node.operand, get_cell_value, bounds)
+        if inner is None:
+            return None
+        if node.op == "-":
+            return _as_int_or_float(-float(inner))
+        if node.op == "+":
+            return _as_int_or_float(float(inner))
+        if node.op == "%":
+            return float(inner) / 100.0
+        return None
+    if isinstance(node, BinaryOpNode):
+        if node.op not in {"+", "-", "*", "/", "^"}:
+            return None
+        left = _eval_number_for_defined_name(node.left, get_cell_value, bounds)
+        right = _eval_number_for_defined_name(node.right, get_cell_value, bounds)
+        if left is None or right is None:
+            return None
+        result = apply_arithmetic(node.op, float(left), float(right))
+        if isinstance(result, XlError):
+            return None
+        return _as_int_or_float(result)
     if isinstance(node, FunctionCallNode) and node.name.upper() == "COUNTA" and len(node.args) == 1:
         rng: ExcelRange | None = None
         if isinstance(node.args[0], RangeNode):
@@ -162,16 +197,22 @@ def _eval_offset_formula_to_range(
     cols = _eval_number_for_defined_name(node.args[2], get_cell_value, bounds)
     if rows is None or cols is None:
         return None
-    height = (
-        _eval_number_for_defined_name(node.args[3], get_cell_value, bounds)
-        if len(node.args) >= 4
-        else None
-    )
-    width = (
-        _eval_number_for_defined_name(node.args[4], get_cell_value, bounds)
-        if len(node.args) >= 5
-        else None
-    )
+    # Explicit height/width that fail to evaluate must not fall back to the base
+    # shape (which collapses cell-anchored OFFSETs to a poison 1x1 range).
+    height: int | float | None
+    if len(node.args) >= 4:
+        height = _eval_number_for_defined_name(node.args[3], get_cell_value, bounds)
+        if height is None:
+            return None
+    else:
+        height = None
+    width: int | float | None
+    if len(node.args) >= 5:
+        width = _eval_number_for_defined_name(node.args[4], get_cell_value, bounds)
+        if width is None:
+            return None
+    else:
+        width = None
     if height is not None and height <= 0:
         return None
     if width is not None and width <= 0:
