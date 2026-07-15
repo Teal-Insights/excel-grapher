@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.13.1 (2026-07-15)
+
+### Bug Fixes
+
+- **grapher**: Fail closed on non-arithmetic OFFSET extent ops
+  ([#411](https://github.com/Teal-Insights/excel-grapher/pull/411),
+  [`9a8ab6e`](https://github.com/Teal-Insights/excel-grapher/commit/9a8ab6ef172138008de5a579770880529c753d95))
+
+- **grapher**: OFFSET named ranges with COUNTA(...)+n no longer collapse to 1×1
+  ([#411](https://github.com/Teal-Insights/excel-grapher/pull/411),
+  [`9a8ab6e`](https://github.com/Teal-Insights/excel-grapher/commit/9a8ab6ef172138008de5a579770880529c753d95))
+
+- **grapher**: Resolve OFFSET named ranges with arithmetic extents
+  ([#411](https://github.com/Teal-Insights/excel-grapher/pull/411),
+  [`9a8ab6e`](https://github.com/Teal-Insights/excel-grapher/commit/9a8ab6ef172138008de5a579770880529c753d95))
+
+
 ## v3.13.0 (2026-07-15)
 
 ### Bug Fixes
