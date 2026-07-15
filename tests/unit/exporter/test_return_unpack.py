@@ -1,4 +1,4 @@
-"""Tests for optional return-line unpacking in codegen."""
+"""Tests for optional return-line unpacking during formula AST emission."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from typing import cast
 from excel_grapher import DependencyGraph, FormulaEvaluator, Node
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.exporter.codegen import CodeGenerator
-from excel_grapher.exporter.return_unpack import unpack_return_expression
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -33,84 +32,6 @@ def _make_graph(*nodes: Node) -> DependencyGraph:
     return graph
 
 
-class TestUnpackReturnExpression:
-    def test_no_nested_calls_unchanged(self) -> None:
-        expr = "xl_cell(ctx, 'Sheet1!A1')"
-        statements, return_expr, counter = unpack_return_expression(expr, 0)
-        assert statements == []
-        assert return_expr == expr
-        assert counter == 0
-
-    def test_single_nested_call(self) -> None:
-        expr = "xl_add(xl_eval(ctx, 'Sheet1!C5', cell_sheet1_c5), 1.0)"
-        statements, return_expr, counter = unpack_return_expression(expr, 0)
-        assert statements == ["_t1 = xl_eval(ctx, 'Sheet1!C5', cell_sheet1_c5)"]
-        assert return_expr == "xl_add(_t1, 1.0)"
-        assert counter == 1
-
-    def test_multiple_args_in_call_order(self) -> None:
-        expr = "xl_sum(xl_cell(ctx, 'Sheet1!A1'), xl_cell(ctx, 'Sheet1!A2'))"
-        statements, return_expr, counter = unpack_return_expression(expr, 0)
-        assert statements == [
-            "_t1 = xl_cell(ctx, 'Sheet1!A1')",
-            "_t2 = xl_cell(ctx, 'Sheet1!A2')",
-        ]
-        assert return_expr == "xl_sum(_t1, _t2)"
-        assert counter == 2
-
-    def test_deeply_nested_calls(self) -> None:
-        expr = "xl_foo(xl_bar(xl_baz()), xl_qux())"
-        statements, return_expr, counter = unpack_return_expression(expr, 0)
-        assert statements == [
-            "_t1 = xl_baz()",
-            "_t2 = xl_bar(_t1)",
-            "_t3 = xl_qux()",
-        ]
-        assert return_expr == "xl_foo(_t2, _t3)"
-        assert counter == 3
-
-    def test_respects_existing_temp_counter(self) -> None:
-        expr = "xl_add(xl_cell(ctx, 'Sheet1!A1'), 1.0)"
-        statements, return_expr, counter = unpack_return_expression(expr, 1)
-        assert statements == ["_t2 = xl_cell(ctx, 'Sheet1!A1')"]
-        assert return_expr == "xl_add(_t2, 1.0)"
-        assert counter == 2
-
-    def test_skips_calls_inside_lambda(self) -> None:
-        expr = "xl_iferror(lambda: (xl_foo()), lambda: (xl_bar()))"
-        statements, return_expr, counter = unpack_return_expression(expr, 0)
-        assert statements == []
-        assert "lambda:" in return_expr
-        assert "xl_foo()" in return_expr
-        assert "xl_bar()" in return_expr
-        assert counter == 0
-
-    def test_skips_calls_inside_ifexp_branches(self) -> None:
-        expr = "((xl_true()) if cond else (xl_false()))"
-        statements, return_expr, counter = unpack_return_expression(expr, 0)
-        assert statements == []
-        assert "xl_true()" in return_expr
-        assert "xl_false()" in return_expr
-        assert "if cond else" in return_expr
-        assert counter == 0
-
-    def test_hoists_calls_in_ifexp_test_only(self) -> None:
-        expr = "((xl_a()) if xl_bool(xl_cell(ctx, 'Sheet1!A1')) else (xl_b()))"
-        statements, return_expr, counter = unpack_return_expression(expr, 0)
-        assert statements == ["_t1 = xl_cell(ctx, 'Sheet1!A1')"]
-        assert "xl_a()" in return_expr
-        assert "xl_b()" in return_expr
-        assert "xl_bool(_t1)" in return_expr
-        assert counter == 1
-
-    def test_skips_calls_inside_boolop(self) -> None:
-        expr = "xl_guard(xl_a() or xl_b())"
-        statements, return_expr, counter = unpack_return_expression(expr, 0)
-        assert statements == []
-        assert return_expr == expr
-        assert counter == 0
-
-
 class TestEmitCellUnpackReturn:
     def test_disabled_by_default(self) -> None:
         graph = _make_graph(
@@ -130,7 +51,7 @@ class TestEmitCellUnpackReturn:
         gen = CodeGenerator(graph, unpack_return=True)
         code = gen._emit_cell("Sheet1!C5")
         assert "_t1 = xl_cell(ctx, 'Sheet1!B5')" in code
-        assert "return xl_number(_t1) + xl_number(1.0)" in code
+        assert "return (xl_number(_t1) + xl_number(1.0))" in code
         compile(code, "<string>", "exec")
 
     def test_cycle_cell_unpacks_xl_eval(self) -> None:
@@ -141,7 +62,19 @@ class TestEmitCellUnpackReturn:
         gen = CodeGenerator(graph, unpack_return=True)
         code_b5 = gen._emit_cell("Sheet1!B5")
         assert "_t1 = xl_eval(ctx, 'Sheet1!C5', cell_sheet1_c5)" in code_b5
-        assert "return xl_number(_t1) + xl_number(1.0)" in code_b5
+        assert "return (xl_number(_t1) + xl_number(1.0))" in code_b5
+
+    def test_sum_unpacks_both_cell_args(self) -> None:
+        graph = _make_graph(
+            _make_node("Sheet1!A1", None, 1.0),
+            _make_node("Sheet1!A2", None, 2.0),
+            _make_node("Sheet1!B1", "=SUM(Sheet1!A1, Sheet1!A2)", None),
+        )
+        gen = CodeGenerator(graph, unpack_return=True)
+        code = gen._emit_cell("Sheet1!B1")
+        assert "_t1 = xl_cell(ctx, 'Sheet1!A1')" in code
+        assert "_t2 = xl_cell(ctx, 'Sheet1!A2')" in code
+        assert "return xl_sum(_t1, _t2)" in code
 
     def test_if_branches_remain_lazy(self) -> None:
         graph = _make_graph(
@@ -152,6 +85,8 @@ class TestEmitCellUnpackReturn:
         )
         gen = CodeGenerator(graph, unpack_return=True)
         code = gen._emit_cell("Sheet1!B1")
+        assert "    _t2 = xl_cell(ctx, 'Sheet1!C1')" not in code
+        assert "    _t2 = xl_cell(ctx, 'Sheet1!D1')" not in code
         tree = ast.parse(code)
         cell_fn = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
         return_node = next(
@@ -162,6 +97,17 @@ class TestEmitCellUnpackReturn:
         assert "if (" in return_src
         assert "xl_cell(ctx, 'Sheet1!C1')" in return_src
         assert "xl_cell(ctx, 'Sheet1!D1')" in return_src
+
+    def test_iferror_args_remain_inside_lambda(self) -> None:
+        graph = _make_graph(
+            _make_node("Sheet1!A1", None, 1.0),
+            _make_node("Sheet1!B1", "=IFERROR(Sheet1!A1, Sheet1!C1)", None),
+            _make_node("Sheet1!C1", None, 99.0),
+        )
+        gen = CodeGenerator(graph, unpack_return=True)
+        code = gen._emit_cell("Sheet1!B1")
+        assert "    _t2 = xl_cell(ctx, 'Sheet1!C1')" not in code
+        assert "lambda: (xl_cell(ctx, 'Sheet1!C1'))" in code
 
 
 class TestGenerateUnpackReturnParity:
@@ -181,4 +127,18 @@ class TestGenerateUnpackReturnParity:
         compute_all = cast(object, ns["compute_all"])
         assert callable(compute_all)
         generated_results = compute_all()
+        assert generated_results == evaluator_results
+
+    def test_if_cycle_parity_with_unpack_return_enabled(self) -> None:
+        graph = _make_graph(
+            _make_node("S!A1", "=IF(S!B1, 0, 1)", None),
+            _make_node("S!B1", "=S!A1", None),
+        )
+        targets = ["S!A1"]
+        with FormulaEvaluator(graph) as ev:
+            evaluator_results = ev.evaluate(targets)
+        code = CodeGenerator(graph, unpack_return=True).generate(targets)
+        ns: dict[str, object] = {}
+        exec(code, ns)
+        generated_results = ns["compute_all"]()
         assert generated_results == evaluator_results
