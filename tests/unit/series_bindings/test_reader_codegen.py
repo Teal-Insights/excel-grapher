@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 import xlsxwriter
@@ -234,8 +234,6 @@ def test_emit_reader_range_returns_values(tmp_path: Path) -> None:
         "Inputs!J5": 2.0,
     }
     ctx = EvalContext(inputs=coerce_inputs_dict(values), resolver=lambda _a: None)
-    result = reader_range(ctx)
-    assert hasattr(result, "cell")
-    cell = cast(Callable[[int, int], object], getattr(result, "cell"))
-    assert cell(1, 1) == -2.0
-    assert cell(1, 5) == 2.0
+    result = cast(Any, reader_range(ctx))
+    assert result.cell(1, 1) == -2.0
+    assert result.cell(1, 5) == 2.0
