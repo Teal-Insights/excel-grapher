@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.12.0 (2026-07-15)
+
+### Bug Fixes
+
+- Type optional NumPy import for ty check
+  ([#408](https://github.com/Teal-Insights/excel-grapher/pull/408),
+  [`ffafd94`](https://github.com/Teal-Insights/excel-grapher/commit/ffafd94c32cb21e0ac8f65f4f4ed0f8c2b7cd6fa))
+
+### Documentation
+
+- **export**: Clarify INDEX/OFFSET ref vs value contract
+  ([#406](https://github.com/Teal-Insights/excel-grapher/pull/406),
+  [`b099df7`](https://github.com/Teal-Insights/excel-grapher/commit/b099df77d3e203a7e3bcab9576d9550179a76dde))
+
+### Features
+
+- Make NumPy an optional fast extra
+  ([#408](https://github.com/Teal-Insights/excel-grapher/pull/408),
+  [`ffafd94`](https://github.com/Teal-Insights/excel-grapher/commit/ffafd94c32cb21e0ac8f65f4f4ed0f8c2b7cd6fa))
+
+- Make NumPy an optional fast extra (#403)
+  ([#408](https://github.com/Teal-Insights/excel-grapher/pull/408),
+  [`ffafd94`](https://github.com/Teal-Insights/excel-grapher/commit/ffafd94c32cb21e0ac8f65f4f4ed0f8c2b7cd6fa))
+
+### Testing
+
+- Keep NumPy-free CI green without re-syncing ops
+  ([#408](https://github.com/Teal-Insights/excel-grapher/pull/408),
+  [`ffafd94`](https://github.com/Teal-Insights/excel-grapher/commit/ffafd94c32cb21e0ac8f65f4f4ed0f8c2b7cd6fa))
+
+
 ## v3.11.0 (2026-07-15)
 
 ### Bug Fixes
