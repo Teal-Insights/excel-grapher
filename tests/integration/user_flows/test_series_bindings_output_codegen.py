@@ -193,11 +193,13 @@ def test_generate_modules_exports_output_compute(
     )
     assert "def compute_borvelia_primary_balance(" in files["api.py"]
     assert "def read_borvelia_primary_balance(" in files["api.py"]
+    assert "def read_borvelia_primary_balance_range(" in files["api.py"]
     assert "def list_setters() -> list[str]:" in files["api.py"]
     assert "def list_readers() -> list[str]:" in files["api.py"]
     assert "def list_computes() -> list[str]:" in files["api.py"]
     assert "compute_borvelia_primary_balance" in files["__init__.py"]
     assert "read_borvelia_primary_balance" in files["__init__.py"]
+    assert "read_borvelia_primary_balance_range" in files["__init__.py"]
     assert "list_setters" in files["__init__.py"]
     assert "list_readers" in files["__init__.py"]
     assert "list_computes" in files["__init__.py"]

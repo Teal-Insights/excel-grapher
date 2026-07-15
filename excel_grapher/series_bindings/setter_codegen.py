@@ -255,8 +255,8 @@ def _reader_function_name(series: dict[str, Any], resolved: SeriesResolution) ->
 
 
 def _should_emit_reader(resolved: SeriesResolution) -> bool:
-    """Readers need a unique key→address leaf index (no duplicate-key address mode)."""
-    return bool(resolved["leaves"]) and not bool(resolved["requires_address"])
+    """Emit a reader whenever the setter has at least one resolved leaf."""
+    return bool(resolved["leaves"])
 
 
 def _should_emit_reader_range(series: dict[str, Any], resolved: SeriesResolution) -> bool:
@@ -266,6 +266,10 @@ def _should_emit_reader_range(series: dict[str, Any], resolved: SeriesResolution
     if series.get("layout") == "scalar":
         return False
     return len(resolved["leaves"]) > 1 or ":" in str(series.get("data_range") or "")
+
+
+def _reader_addresses_name(series_id: str) -> str:
+    return f"_READER_ADDRESSES_{series_id.upper()}"
 
 
 def _emit_key_order_constant(
@@ -506,9 +510,10 @@ def emit_reader_function(
 ) -> list[str]:
     """Emit a `read_*` dual that resolves domain keys via `_LEAF_INDEX_*`.
 
-    Expects the matching `_LEAF_INDEX_<ID>` constant to already be present in the
-    generated module (normally emitted by `emit_setter_function`). Returns an empty
-    list when the series has no unique leaf index (`requires_address`).
+    For uniquely keyed series, expects the matching `_LEAF_INDEX_<ID>` constant to
+    already be present (normally emitted by `emit_setter_function`). For duplicate-key
+    bindings (`requires_address`), emits an address-keyed reader validated against the
+    resolved leaf addresses — the inverse of the address-required setter path.
     """
     if not _should_emit_reader(resolved):
         return []
@@ -520,9 +525,16 @@ def emit_reader_function(
     # exported packages type-check without embedding CellValue in api.py.
     return_annotation = "object"
     key_dtypes = _key_dtypes_for_codegen(series, key_fields)
+    requires_address = bool(resolved["requires_address"])
 
     lines: list[str] = []
-    if key_fields:
+    if requires_address:
+        addresses_name = _reader_addresses_name(resolved["series_id"])
+        addr_inner = ", ".join(repr(leaf["address"]) for leaf in resolved["leaves"])
+        lines.append(f"{addresses_name} = frozenset({{{addr_inner}}})")
+        lines.append("")
+        lines.append(f"def {fn_name}(ctx: EvalContext, *, address: str) -> {return_annotation}:")
+    elif key_fields:
         lines.append(f"def {fn_name}(")
         lines.append("    ctx: EvalContext,")
         lines.append("    *,")
@@ -559,7 +571,17 @@ def emit_reader_function(
     if doc is not None:
         lines.extend(emit_docstring_literal(doc))
 
-    if key_fields:
+    if requires_address:
+        addresses_name = _reader_addresses_name(resolved["series_id"])
+        lines.append(f"    if address not in {addresses_name}:")
+        lines.append(
+            "        raise ValueError("
+            'f"address {address!r} is not a leaf of '
+            f"{resolved['series_id']!r}"
+            '")'
+        )
+        lines.append("    return xl_cell(ctx, address)")
+    elif key_fields:
         param_pairs = ", ".join(
             f"({repr(field)}, {dimension_id_to_param_name(field)})" for field in key_fields
         )
@@ -589,8 +611,8 @@ def emit_reader_range_function(
 ) -> list[str]:
     """Emit `read_<id>_range` for a binding-aligned multi-cell `data_range`.
 
-    Returns an empty list for scalar / single-leaf series and for duplicate-key
-    bindings that have no unique leaf index.
+    Returns an empty list for scalar / single-leaf series without a multi-cell
+    `data_range`.
     """
     if not _should_emit_reader_range(series, resolved):
         return []

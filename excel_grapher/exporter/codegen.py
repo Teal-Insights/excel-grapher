@@ -532,6 +532,33 @@ class CodeGenerator:
         )
 
     @staticmethod
+    def _series_bindings_may_emit_range_readers(bindings: WorkbookSeriesBindings) -> bool:
+        """Return True when input series may emit `read_*_range` helpers needing `xl_range`."""
+        from excel_grapher.series_bindings.normalize import has_input_direction
+
+        for series in bindings.get("series", []):
+            if not isinstance(series, dict) or not has_input_direction(series):
+                continue
+            if series.get("layout") == "scalar":
+                continue
+            data_range = series.get("data_range")
+            if isinstance(data_range, str) and ":" in data_range:
+                return True
+        return False
+
+    @staticmethod
+    def _series_binding_emitted_range_reader_names(lines: Sequence[str]) -> list[str]:
+        """Extract `read_*_range` function names from emitted bindings code."""
+        names: list[str] = []
+        for line in lines:
+            match = re.match(r"^def (read_[a-z0-9_]+_range)\(", line)
+            if match:
+                name = match.group(1)
+                if name not in names:
+                    names.append(name)
+        return names
+
+    @staticmethod
     def _emit_api_helpers_module() -> str:
         """Emit the `_api_helpers.py` module holding series-binding coercion helpers."""
         from excel_grapher.series_bindings.setter_codegen import (
@@ -2501,7 +2528,12 @@ class CodeGenerator:
                 series_reader_names,
                 series_compute_names,
             ) = self._series_binding_public_names(series_bindings)
+            series_range_reader_names = self._series_binding_emitted_range_reader_names(
+                setter_lines
+            )
             api_lines.append("")
+        else:
+            series_range_reader_names = []
         groups_manifest = self._series_binding_groups_manifest(series_bindings)
         api_lines.extend(
             self._emit_series_binding_discovery_lines(
@@ -2553,6 +2585,7 @@ class CodeGenerator:
             api_exports.append("list_groups")
         api_exports.extend(series_setter_names)
         api_exports.extend(series_reader_names)
+        api_exports.extend(series_range_reader_names)
         api_exports.extend(series_compute_names)
         api_imports = ", ".join(api_exports)
         all_exports = api_exports + ["DEFAULT_INPUTS"]
@@ -2704,6 +2737,12 @@ class CodeGenerator:
             for _, handler in self._targets_to_entries(normalized_targets)
         ):
             runtime_symbols.add("xl_range_rows")
+        # Binding-aligned `read_*_range` helpers call `xl_range` even when no formula
+        # AST or target-entry coalescing would otherwise pull it into the runtime.
+        if series_bindings is not None and self._series_bindings_may_emit_range_readers(
+            series_bindings
+        ):
+            runtime_symbols.add("xl_range")
         if self._iterate_enabled:
             runtime_symbols.add("xl_iterative_compute")
         include_dep_tracking = self._include_dep_tracking(series_bindings)
