@@ -58,11 +58,46 @@ def test_evaluation_order_follows_owner_when_edge_targets_member() -> None:
     )
     g.add_node(union)
     g.add_node(dependent)
-    # Edge names the member cell, not the union key (Issue 3 rewrite caveat).
+    # Edge names the member cell; add_edge rewrites to the occupancy owner.
     g.add_edge(dependent.key, "Sheet1!D63")
+
+    assert g.get_dependencies(dependent.key) == frozenset({union.key})
+    assert g.get_dependents(union.key) == frozenset({dependent.key})
+    assert g.get_dependents("Sheet1!D63") == frozenset({dependent.key})
+    assert "Sheet1!D63" not in g.get_dependencies(dependent.key)
 
     order = g.evaluation_order()
     assert order.index(union.key) < order.index(dependent.key)
+
+
+def test_add_edge_rewrites_member_from_and_to_endpoints() -> None:
+    g = DependencyGraph()
+    left = make_union_node(["Sheet1!A1", "Sheet1!B1"], is_leaf=False)
+    right = make_union_node(["Sheet1!D63", "Sheet1!Y63"], is_leaf=True)
+    g.add_node(left)
+    g.add_node(right)
+    g.add_edge("Sheet1!A1", "Sheet1!D63")
+
+    assert g.get_dependencies(left.key) == frozenset({right.key})
+    assert g.get_dependents(right.key) == frozenset({left.key})
+    attrs = g.get_edge_attrs("Sheet1!A1", "Sheet1!D63")
+    assert attrs.guard is None
+    assert g.get_edge_attrs(left.key, right.key).guard is None
+
+
+def test_to_networkx_has_no_dangling_member_endpoints() -> None:
+    from excel_grapher.grapher.export import to_networkx
+
+    g = DependencyGraph()
+    union = make_union_node(["Sheet1!D63", "Sheet1!E63"], is_leaf=True)
+    dependent = make_cell_node("Sheet1", "A", 1, formula="=D63", is_leaf=False)
+    g.add_node(union)
+    g.add_node(dependent)
+    g.add_edge(dependent.key, "Sheet1!D63")
+
+    nx_graph = to_networkx(g)
+    assert set(nx_graph.nodes) == {dependent.key, union.key}
+    assert list(nx_graph.edges) == [(dependent.key, union.key)]
 
 
 def test_locate_range_finds_union_owner_of_subspan() -> None:

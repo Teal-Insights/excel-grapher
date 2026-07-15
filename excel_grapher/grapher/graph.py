@@ -124,6 +124,11 @@ class DependencyGraph:
     multi-cell node is not stored under its own key. Prefer `locate_cell` (or
     `cell_owner`) when resolving a workbook cell that may belong to a group;
     then call `get_node` on the returned `node_key`.
+
+    Edge endpoints are occupancy-canonical: `add_edge` rewrites member-cell
+    endpoints to their owning graph key, and read APIs
+    (`get_dependencies` / `get_dependents` / `get_edge_attrs` /
+    `get_edge_guard`) resolve member lookups the same way.
     """
 
     _nodes: dict[NodeKey, Node] = field(default_factory=dict)
@@ -261,6 +266,19 @@ class DependencyGraph:
 
     # ---- edge insertion -----------------------------------------------------
 
+    def _canonicalize_edge_endpoint(self, key: NodeKey) -> NodeKey:
+        """Rewrite a member-cell endpoint to its occupancy owner when present.
+
+        Exact multi-cell keys and unknown (dangling) cell keys are returned
+        normalized and unchanged. Occupancy maps every owned cell — including
+        single-cell nodes that own themselves — to its stored graph key.
+        """
+        nk = normalize_key(key)
+        owner = self._occupancy.get(nk)
+        if owner is not None:
+            return owner
+        return nk
+
     def add_edge(
         self,
         from_key: NodeKey,
@@ -269,9 +287,13 @@ class DependencyGraph:
         guard: GuardExpr | None = None,
         **attrs: Any,
     ) -> None:
-        """Add edge: from_key depends on to_key (from_key -> to_key)."""
-        from_key = normalize_key(from_key)
-        to_key = normalize_key(to_key)
+        """Add edge: from_key depends on to_key (from_key -> to_key).
+
+        Member-cell endpoints are rewritten to their occupancy owners so stored
+        adjacency always names graph nodes (or deliberately dangling keys).
+        """
+        from_key = self._canonicalize_edge_endpoint(from_key)
+        to_key = self._canonicalize_edge_endpoint(to_key)
         unknown_attrs = [k for k in attrs if k != "provenance"]
         if unknown_attrs:
             names = ", ".join(sorted(unknown_attrs))
@@ -329,15 +351,21 @@ class DependencyGraph:
         return node_to_view(node)
 
     def get_dependencies(self, key: NodeKey) -> frozenset[NodeKey]:
-        """Return an immutable snapshot of `key`'s dependencies (cells it reads)."""
-        deps = self._edges.get(normalize_key(key))
+        """Return an immutable snapshot of `key`'s dependencies (cells it reads).
+
+        Member-cell keys resolve to their occupancy owner before lookup.
+        """
+        deps = self._edges.get(self._canonicalize_edge_endpoint(key))
         if not deps:
             return frozenset()
         return frozenset(deps)
 
     def get_dependents(self, key: NodeKey) -> frozenset[NodeKey]:
-        """Return an immutable snapshot of cells that depend on `key`."""
-        deps = self._reverse_edges.get(normalize_key(key))
+        """Return an immutable snapshot of cells that depend on `key`.
+
+        Member-cell keys resolve to their occupancy owner before lookup.
+        """
+        deps = self._reverse_edges.get(self._canonicalize_edge_endpoint(key))
         if not deps:
             return frozenset()
         return frozenset(deps)
@@ -345,11 +373,11 @@ class DependencyGraph:
     def get_edge_attrs(self, from_key: NodeKey, to_key: NodeKey) -> EdgeAttrs:
         """Return a typed snapshot of the attributes on edge `from_key -> to_key`.
 
-        When the edge does not exist, returns an `EdgeAttrs` with all fields
-        set to `None`.
+        Member-cell endpoints resolve to occupancy owners. When the edge does
+        not exist, returns an `EdgeAttrs` with all fields set to `None`.
         """
-        fk = normalize_key(from_key)
-        tk = normalize_key(to_key)
+        fk = self._canonicalize_edge_endpoint(from_key)
+        tk = self._canonicalize_edge_endpoint(to_key)
         if tk not in self._edges.get(fk, set()):
             return EdgeAttrs()
         extra = self._edge_extra.get((fk, tk), {})
@@ -360,9 +388,12 @@ class DependencyGraph:
         )
 
     def get_edge_guard(self, from_key: NodeKey, to_key: NodeKey) -> GuardExpr | None:
-        """Return the guard on edge `from_key -> to_key`, or `None` if none."""
-        fk = normalize_key(from_key)
-        tk = normalize_key(to_key)
+        """Return the guard on edge `from_key -> to_key`, or `None` if none.
+
+        Member-cell endpoints resolve to occupancy owners.
+        """
+        fk = self._canonicalize_edge_endpoint(from_key)
+        tk = self._canonicalize_edge_endpoint(to_key)
         v = self._guards.get((fk, tk))
         return v if isinstance(v, GuardExpr) else None
 
@@ -1318,10 +1349,13 @@ def _subgraph_has_feasible_cycle(graph: DependencyGraph, nodes: set[NodeKey]) ->
         visited.add(state)
         on_stack.add(v)
 
-        for w in graph._edges.get(v, ()):
-            if w not in nodes:
+        for raw_w in graph._edges.get(v, ()):
+            w = graph._resolve_graph_endpoint(raw_w)
+            if w is None or w not in nodes:
                 continue
-            guard = graph._guards.get((v, w))
+            guard = graph._guards.get((v, raw_w))
+            if guard is None:
+                guard = graph._guards.get((v, w))
             for c2 in _apply_guard_constraints(c, guard):
                 if w in on_stack:
                     return True
@@ -1349,10 +1383,13 @@ def _find_feasible_cycle_path(graph: DependencyGraph, nodes: set[NodeKey]) -> li
         stack.append(v)
         on_stack.add(v)
 
-        for w in graph._edges.get(v, ()):
-            if w not in nodes:
+        for raw_w in graph._edges.get(v, ()):
+            w = graph._resolve_graph_endpoint(raw_w)
+            if w is None or w not in nodes:
                 continue
-            guard = graph._guards.get((v, w))
+            guard = graph._guards.get((v, raw_w))
+            if guard is None:
+                guard = graph._guards.get((v, w))
             for c2 in _apply_guard_constraints(c, guard):
                 if w in on_stack:
                     i = stack.index(w)
