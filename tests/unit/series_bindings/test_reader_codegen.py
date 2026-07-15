@@ -236,5 +236,6 @@ def test_emit_reader_range_returns_values(tmp_path: Path) -> None:
     ctx = EvalContext(inputs=coerce_inputs_dict(values), resolver=lambda _a: None)
     result = reader_range(ctx)
     assert hasattr(result, "cell")
-    assert result.cell(1, 1) == -2.0
-    assert result.cell(1, 5) == 2.0
+    cell = cast(Callable[[int, int], object], getattr(result, "cell"))
+    assert cell(1, 1) == -2.0
+    assert cell(1, 5) == 2.0
