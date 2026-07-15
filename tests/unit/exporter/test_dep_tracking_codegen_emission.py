@@ -5,7 +5,7 @@ Non-iterative exports without input-direction series bindings omit ``deps`` /
 ``ctx._record_dependency`` call site in ``_evaluate_address``.
 Minimal non-iterative export baseline (``S!A1`` leaf + ``S!B1`` formula):
 
-- **511 total lines**; embedded runtime **441 lines** (~86% of export)
+- **516 total lines**; embedded runtime **441 lines** (~85.5% of export)
 - **0 dep-tracking lines**
 - **62 cache-eval scaffold lines** (``_evaluate_address``, ``xl_cell``, ``xl_eval``)
 
