@@ -1,5 +1,3 @@
-import numpy as np
-
 from excel_grapher.core.types import ExcelRange, resolve_excel_range
 from excel_grapher.evaluator.types import ExcelRange as EvaluatorExcelRange
 from excel_grapher.exporter.export_runtime import ExcelRange as ExportExcelRange
@@ -21,7 +19,7 @@ def test_excel_range_cell_addresses_quote_sheet_with_space() -> None:
     assert list(r.cell_addresses()) == ["'Imported data'!A126"]
 
 
-def test_excel_range_resolve_shapes_array() -> None:
+def test_excel_range_resolve_shapes_nested_grid() -> None:
     r = ExcelRange(sheet="S", start_row=1, start_col=1, end_row=2, end_col=3)
     mapping = {
         "S!A1": 1,
@@ -32,10 +30,11 @@ def test_excel_range_resolve_shapes_array() -> None:
         "S!C2": 6,
     }
 
-    arr = resolve_excel_range(r, lambda addr: mapping.get(addr))
-    assert isinstance(arr, np.ndarray)
-    assert arr.shape == (2, 3)
-    assert arr.tolist() == [[1, 2, 3], [4, 5, 6]]
+    grid = resolve_excel_range(r, lambda addr: mapping.get(addr))
+    assert isinstance(grid, list)
+    assert len(grid) == 2
+    assert len(grid[0]) == 3
+    assert grid == [[1, 2, 3], [4, 5, 6]]
 
 
 def test_excel_range_is_shared_across_evaluator_and_export() -> None:

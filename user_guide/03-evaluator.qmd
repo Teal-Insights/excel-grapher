@@ -26,16 +26,21 @@ Multi-cell range arguments are classified at resolve time:
   `excel_grapher.core.grid` and evaluate only the cells they touch.
 - Binary / unary operators bind the same lazy `Range` and map via shared
   `core.operator_maps` (aligned with export `xl_map_*`). Large ops may opt into
-  the ndarray fast path after an explicit materialization.
+  the ndarray fast path after an explicit materialization buffer (results are
+  nested lists at the `CellValue` boundary).
 - Full-scan reductions (`SUM` / `SUMPRODUCT` / `COUNTIF` / …) also bind lazy
   `Range` and walk cells in row-major order via `flatten` / Grid. `SUM` and
   friends fail-fast on the first cell error; `COUNTIF` / `AVERAGEIF` skip
   error cells in the criteria range (Excel). Large `SUMPRODUCT` may
-  materialize once for the NumPy fast path.
+  materialize once for the NumPy fast path (internal buffer only).
 - `AND` / `OR` still reject multi-cell ranges with `#VALUE!` until cell-wise
   range support lands.
 - Other functions reject multi-cell ranges with `#VALUE!` (no object-repr leaks;
   sibling cells stay unevaluated).
+
+`CellValue` in the evaluator path is scalar, reference geometry, or nested-list
+grid results — not persisted `np.ndarray` operands. NumPy remains available for
+optional operator / `SUMPRODUCT` fast paths.
 
 Scalar coercions (`as_scalar`) reinforce the same boundary. Lookups and
 full-scan reductions skip the AST error precheck so each consumer owns its

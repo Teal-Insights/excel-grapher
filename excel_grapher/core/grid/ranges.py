@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 import fastpyxl.utils.cell
 
 from excel_grapher.core.address_keys import format_cell_key
-from excel_grapher.core.types import CellValue, XlError, XlErrorException
+from excel_grapher.core.types import FormulaValue, XlError, XlErrorException
 
 __all__ = ["Range"]
 
@@ -28,7 +28,7 @@ class Range:
     end_col: int
     # Resolvers may come from evaluation contexts with their own value
     # vocabulary; values are validated/coerced at consumption time.
-    _resolver: Callable[[str], CellValue] = field(repr=False, compare=False)
+    _resolver: Callable[[str], FormulaValue] = field(repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Validate the rectangular bounds."""
@@ -48,7 +48,7 @@ class Range:
             for col in range(self.start_col, self.end_col + 1):
                 yield self._address(row, col)
 
-    def cell(self, row: int, col: int) -> CellValue:
+    def cell(self, row: int, col: int) -> FormulaValue:
         """Return a single relative cell value without evaluating siblings.
 
         Args:
@@ -117,7 +117,7 @@ class Range:
             self._resolver,
         )
 
-    def value_at(self, row: int, col: int) -> CellValue:
+    def value_at(self, row: int, col: int) -> FormulaValue:
         """Return a single relative cell value with errors as sentinels.
 
         Unlike `cell`, Excel errors surface as `XlError` sentinel values (raised
@@ -132,26 +132,26 @@ class Range:
         except XlErrorException as exc:
             return exc.code
 
-    def iter_raw(self) -> Iterator[CellValue]:
+    def iter_raw(self) -> Iterator[FormulaValue]:
         """Yield raw values (error sentinels included) in row-major order."""
         nrows, ncols = self.shape
         for row in range(1, nrows + 1):
             for col in range(1, ncols + 1):
                 yield self.value_at(row, col)
 
-    def rows_raw(self) -> list[list[CellValue]]:
+    def rows_raw(self) -> list[list[FormulaValue]]:
         """Materialize the range as nested row lists of raw values."""
         nrows, ncols = self.shape
         return [[self.value_at(r, c) for c in range(1, ncols + 1)] for r in range(1, nrows + 1)]
 
-    def iter_values(self) -> Iterator[CellValue]:
+    def iter_values(self) -> Iterator[FormulaValue]:
         """Yield values in deterministic row-major order."""
         nrows, ncols = self.shape
         for row in range(1, nrows + 1):
             for col in range(1, ncols + 1):
                 yield self.cell(row, col)
 
-    def __iter__(self) -> Iterator[CellValue]:
+    def __iter__(self) -> Iterator[FormulaValue]:
         """Yield values in deterministic row-major order."""
         return self.iter_values()
 
@@ -165,7 +165,7 @@ class Range:
             raise IndexError("Range cell is out of bounds")
 
     @staticmethod
-    def _raise_if_error(value: CellValue) -> CellValue:
+    def _raise_if_error(value: FormulaValue) -> FormulaValue:
         if isinstance(value, XlError):
             raise XlErrorException(value)
         return value

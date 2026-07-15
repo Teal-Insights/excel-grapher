@@ -3,18 +3,10 @@
 from __future__ import annotations
 
 from excel_grapher.core import CellValue, XlError
-from excel_grapher.core.excel_function_meta import (
-    eager_materialize_arg_indices,
-    grid_range_arg_indices,
-)
+from excel_grapher.core.excel_function_meta import grid_range_arg_indices
 from excel_grapher.core.grid import Range
 from excel_grapher.core.lookup_funcs import index_cells
 from excel_grapher.runtime.lookup import xl_index
-
-
-def test_index_not_in_eager_materialize_arg_indices() -> None:
-    """INDEX uses geometry binding; it is not an eager ndarray consumer."""
-    assert eager_materialize_arg_indices("INDEX") == frozenset()
 
 
 def test_lookup_args_are_grid_range_bound() -> None:

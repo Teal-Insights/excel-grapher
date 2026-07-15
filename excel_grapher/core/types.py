@@ -8,7 +8,6 @@ from enum import StrEnum
 from typing import TypeAlias
 
 import fastpyxl.utils.cell
-import numpy as np
 
 from excel_grapher.core.address_keys import format_key
 
@@ -74,18 +73,33 @@ class ExcelRange:
 def resolve_excel_range(
     rng: ExcelRange,
     evaluate_fn: Callable[[str], CellValue],
-) -> np.ndarray:
-    """Eagerly materialize `rng` to an object-dtype ndarray via `evaluate_fn`.
+) -> NestedGrid:
+    """Eagerly materialize `rng` to a nested list via `evaluate_fn`.
 
     Prefer lazy `Range` consumers when only a subset of cells is needed.
     """
     values: list[CellValue] = [evaluate_fn(addr) for addr in rng.cell_addresses()]
     rows, cols = rng.shape
-    return np.array(values, dtype=object).reshape((rows, cols))
+    grid: list[list[CellValue]] = []
+    index = 0
+    for _row in range(rows):
+        row_values: list[CellValue] = []
+        for _col in range(cols):
+            row_values.append(values[index])
+            index += 1
+        grid.append(row_values)
+    return grid
 
 
-# Scalar values, references, and object-dtype ndarrays of CellValue (e.g. OFFSET /
-# SUMPRODUCT). Lazy `Range` values from `excel_grapher.core.grid` are also used as
-# function operands in the evaluator; they are not listed here to avoid a circular
-# import with `core.grid.ranges`.
-CellValue: TypeAlias = float | int | str | bool | XlError | ExcelRange | np.ndarray | None
+# Scalar values and references. Lazy `Range` / nested-list grids from
+# `excel_grapher.core.grid` are used as function operands in the evaluator;
+# omitted here to avoid a circular import with `core.grid.ranges`. NumPy
+# object ndarrays are confined to fast-path materialization buffers, not this
+# alias.
+CellValue: TypeAlias = float | int | str | bool | XlError | ExcelRange | None
+
+# Row-major nested-list grid of evaluated cells (formula / operator results).
+NestedGrid: TypeAlias = list[list[CellValue]]
+
+# Evaluator cell results and multi-cell operands (excludes lazy `Range`).
+FormulaValue: TypeAlias = CellValue | NestedGrid

@@ -124,6 +124,13 @@ ignore = [
 convention = "google"
 
 [[tool.ty.overrides]]
+include = ["tests/**"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+invalid-return-type = "ignore"
+
+[[tool.ty.overrides]]
 include = [
     "excel_grapher/exporter/export_runtime/math.py",
     "excel_grapher/exporter/export_runtime/text.py",

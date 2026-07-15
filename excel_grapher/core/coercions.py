@@ -12,7 +12,7 @@ import numpy as np
 # already inlined from core.grid.ranges ahead of this module).
 from excel_grapher.core.grid.ranges import Range
 
-from .types import CellValue, ExcelRange, XlError
+from .types import CellValue, ExcelRange, FormulaValue, XlError
 
 _EXCEL_EPOCH = datetime(1899, 12, 30)
 T = TypeVar("T")
@@ -21,8 +21,9 @@ T = TypeVar("T")
 def as_scalar(value: object) -> float | int | str | bool | XlError | None:
     """Collapse range/array values to `#VALUE!` for scalar coercion contexts.
 
-    Lazy `Range`, unbound `ExcelRange`, nested lists, and ndarrays are not valid
-    scalar operands. Does not evaluate cells inside a `Range`.
+    Lazy `Range`, unbound `ExcelRange`, and nested lists are not valid scalar
+    operands. Materialized ndarray buffers (fast-path internals) also collapse
+    to `#VALUE!`. Does not evaluate cells inside a `Range`.
     """
     if isinstance(value, (Range, ExcelRange, list, tuple, np.ndarray)):
         return XlError.VALUE
@@ -71,7 +72,7 @@ def to_native(value: T) -> T:
     return value
 
 
-def to_number(value: CellValue) -> float | XlError:
+def to_number(value: FormulaValue) -> float | XlError:
     scalar = as_scalar(value)
     if isinstance(scalar, XlError):
         return scalar
@@ -90,7 +91,7 @@ def to_number(value: CellValue) -> float | XlError:
     return XlError.VALUE
 
 
-def to_int(value: CellValue) -> int | XlError:
+def to_int(value: FormulaValue) -> int | XlError:
     """Coerce a CellValue to an integer using Excel-style numeric coercion.
 
     For functions that operate on integer indices (e.g. CHOOSE/INDEX/MATCH)
@@ -109,7 +110,7 @@ def _format_general_number(value: float | int) -> str:
     return str(f)
 
 
-def to_string(value: CellValue) -> str:
+def to_string(value: FormulaValue) -> str:
     scalar = as_scalar(value)
     if isinstance(scalar, XlError):
         return scalar.value
@@ -125,7 +126,7 @@ def to_string(value: CellValue) -> str:
     return str(value)
 
 
-def to_bool(value: CellValue) -> bool | XlError:
+def to_bool(value: FormulaValue) -> bool | XlError:
     scalar = as_scalar(value)
     if isinstance(scalar, XlError):
         return scalar
@@ -152,13 +153,14 @@ def excel_casefold(value: str) -> str:
     return value.casefold()
 
 
-def flatten(*args: object) -> Iterator[CellValue]:
-    """Flatten nested lists, ndarrays, and lazy `Range` values in row-major order.
+def flatten(*args: object) -> Iterator[FormulaValue]:
+    """Flatten nested lists, lazy `Range` values, and ndarray buffers in row-major order.
 
     Full-scan reductions (`SUM`, `COUNTIF`, …) and generic-function error
     prechecks (`get_error`) use this helper to walk multi-cell args. Selective
     consumers (`INDEX`, `MATCH`, lookups) skip `get_error` so they are not
-    forced to evaluate sibling cells.
+    forced to evaluate sibling cells. Ndarray inputs are supported only for
+    fast-path materialization buffers, not as persisted `CellValue` results.
     """
     for arg in args:
         if isinstance(arg, np.ndarray):
@@ -185,7 +187,7 @@ def get_error(*args: object) -> XlError | None:
     return None
 
 
-def numeric_values(values: Iterable[CellValue]) -> tuple[list[float], XlError | None]:
+def numeric_values(values: Iterable[FormulaValue]) -> tuple[list[float], XlError | None]:
     nums: list[float] = []
     for v in values:
         n = to_number(v)

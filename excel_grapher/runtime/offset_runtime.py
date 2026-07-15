@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from typing import cast
+
 import fastpyxl.utils.cell
-import numpy as np
 
 from excel_grapher.core import CellValue, ExcelRange, XlError, to_number
 from excel_grapher.core.addressing import index_excel_range, offset_range
@@ -161,4 +162,4 @@ def xl_offset(
             addr = _format_address(sheet, r, c)
             row_values.append(xl_cell(ctx, addr))
         result.append(row_values)
-    return np.array(result, dtype=object)
+    return cast(CellValue, result)

@@ -39,7 +39,7 @@ def test_sumproduct_fastpath_matches_reference_on_criteria_chain() -> None:
     categories = category_column(LARGE_SHAPE, seed=61)
     values = numeric_column(LARGE_SHAPE, seed=62)
     criteria = xl_mul(xl_eq(categories, "Software"), values)
-    assert isinstance(criteria, np.ndarray)
+    assert isinstance(criteria, (np.ndarray, list))
     assert_sumproduct_matches_reference(criteria)
 
 
