@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import numpy as np
+import numbers
 
 from excel_grapher.core import CellValue, XlError
 
@@ -8,7 +8,7 @@ __all__ = ["xl_isblank", "xl_iserror", "xl_isna", "xl_isnumber", "xl_istext", "x
 
 
 def xl_isnumber(value: CellValue) -> bool:
-    return not isinstance(value, bool) and isinstance(value, (int, float, np.integer, np.floating))
+    return not isinstance(value, bool) and isinstance(value, numbers.Real)
 
 
 def xl_istext(value: CellValue) -> bool:

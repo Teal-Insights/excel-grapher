@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import numpy as np
+import numbers
 
 from excel_grapher.core import CellValue, XlError, flatten
 from excel_grapher.core.grid import Grid
@@ -21,12 +21,15 @@ from excel_grapher.core.math_funcs import (
     stdev_cells,
     sum_cells,
 )
-from excel_grapher.core.operators_fastpath import (
-    MIN_OPERATOR_FASTPATH_CELLS,
-    try_fastpath_sumproduct,
-)
+from excel_grapher.core.numpy_support import np
+from excel_grapher.core.operator_thresholds import MIN_OPERATOR_FASTPATH_CELLS
 from excel_grapher.core.operators_reference import reference_sumproduct_arrays
 from excel_grapher.core.sumproduct import sumproduct_cells
+
+if np is not None:
+    from excel_grapher.core.operators_fastpath import try_fastpath_sumproduct
+else:  # pragma: no cover - exercised when the `fast` extra is absent
+    from excel_grapher.core.operators_fastpath_stub import try_fastpath_sumproduct
 
 __all__ = [
     "xl_abs",
@@ -69,7 +72,7 @@ def xl_max(*args: CellValue) -> float | XlError:
 def xl_count(*args: CellValue) -> int:
     count = 0
     for v in flatten(*args):
-        if isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, bool):
+        if isinstance(v, numbers.Real) and not isinstance(v, bool):
             count += 1
     return count
 
@@ -154,7 +157,7 @@ def xl_sumproduct(*args: CellValue) -> float | XlError:
         if (grid.nrows, grid.ncols) != shape:
             return XlError.VALUE
 
-    if grids[0].size >= MIN_OPERATOR_FASTPATH_CELLS:
+    if np is not None and grids[0].size >= MIN_OPERATOR_FASTPATH_CELLS:
         arrays = [
             np.array(
                 [[grid.at(row0, col0) for col0 in range(grid.ncols)] for row0 in range(grid.nrows)],

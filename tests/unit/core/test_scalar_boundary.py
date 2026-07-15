@@ -1,10 +1,13 @@
 """Scalar boundary and shallow get_error for lazy Range (#336 Phase 1)."""
 
+# ruff: noqa: E402
 from __future__ import annotations
 
 from typing import cast
 
-import numpy as np
+import pytest
+
+np = pytest.importorskip("numpy")
 
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core import CellValue, XlError, as_scalar, get_error, to_number, to_string

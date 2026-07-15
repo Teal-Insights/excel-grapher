@@ -1,5 +1,7 @@
-import numpy as np
+# ruff: noqa: E402
 import pytest
+
+np = pytest.importorskip("numpy")
 
 from excel_grapher.evaluator.helpers import (
     to_bool,

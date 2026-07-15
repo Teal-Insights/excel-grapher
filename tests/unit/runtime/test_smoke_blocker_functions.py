@@ -1,11 +1,13 @@
 """Unit tests for smoke-blocker runtime functions."""
 
+# ruff: noqa: E402
 from __future__ import annotations
 
 from datetime import datetime
 
-import numpy as np
 import pytest
+
+np = pytest.importorskip("numpy")
 
 from excel_grapher.core.coercions import datetime_to_excel_serial, to_number
 from excel_grapher.core.types import XlError

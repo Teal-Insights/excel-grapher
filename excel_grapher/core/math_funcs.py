@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import math
+import numbers
 import re
 from collections.abc import Iterator
 from typing import TypeVar, cast
-
-import numpy as np
 
 from .coercions import (
     excel_casefold,
@@ -341,10 +340,7 @@ def large_kth(array: CellValue, k: CellValue) -> float | XlError:
             return v
         if v is None or isinstance(v, bool):
             continue
-        if isinstance(v, (int, float)) and not isinstance(v, bool):
-            nums.append(float(v))
-            continue
-        if isinstance(v, (np.integer, np.floating)):
+        if isinstance(v, numbers.Real) and not isinstance(v, bool):
             nums.append(float(v))
     if kth > len(nums):
         return XlError.NUM
@@ -367,10 +363,7 @@ def rank_number(number: CellValue, ref: CellValue, order: CellValue = 0) -> int 
             return v
         if v is None or isinstance(v, bool):
             continue
-        if isinstance(v, (int, float)) and not isinstance(v, bool):
-            nums.append(float(v))
-            continue
-        if isinstance(v, (np.integer, np.floating)):
+        if isinstance(v, numbers.Real) and not isinstance(v, bool):
             nums.append(float(v))
     if ascending:
         return 1 + sum(1 for v in nums if v < nn)

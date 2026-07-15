@@ -30,6 +30,7 @@ def test_map_arithmetic_over_lazy_range_visits_each_cell_once() -> None:
 
 
 def test_map_arithmetic_agrees_with_ndarray_xl_mul_when_fully_consumed() -> None:
+    np = pytest.importorskip("numpy")
     values = {"S!A1": 1.5, "S!A2": 2.5, "S!B1": 3.0, "S!B2": 4.0}
 
     def resolve(address: str) -> CellValue:
@@ -38,7 +39,6 @@ def test_map_arithmetic_agrees_with_ndarray_xl_mul_when_fully_consumed() -> None
     left = Range("S", 1, 1, 2, 1, resolve)
     right = Range("S", 1, 2, 2, 2, resolve)
     mapped = map_arithmetic("*", left, right)
-    import numpy as np
 
     arr = xl_mul(
         np.array([[1.5], [2.5]], dtype=object),
@@ -77,8 +77,9 @@ def test_large_range_fastpath_miss_materializes_cells_only_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When the vectorized fast path declines, reuse the materialized arrays."""
+    pytest.importorskip("numpy")
     from excel_grapher.core import operators as operators_mod
-    from excel_grapher.core.operators_fastpath import MIN_OPERATOR_FASTPATH_CELLS
+    from excel_grapher.core.operator_thresholds import MIN_OPERATOR_FASTPATH_CELLS
 
     nrows = MIN_OPERATOR_FASTPATH_CELLS
     calls: list[str] = []

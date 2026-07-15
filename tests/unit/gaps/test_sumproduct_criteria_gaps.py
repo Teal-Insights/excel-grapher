@@ -4,13 +4,15 @@ Regression coverage for element-wise range comparisons and products inside
 ``SUMPRODUCT``, e.g. ``(range="label")*values`` and ``(range>threshold)*1``.
 """
 
+# ruff: noqa: E402
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, cast
 
-import numpy as np
 import pytest
+
+np = pytest.importorskip("numpy")
 
 from excel_grapher import DependencyGraph, FormulaEvaluator, Node, create_dependency_graph
 from excel_grapher.core.address_keys import parse_address

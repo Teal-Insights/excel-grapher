@@ -685,7 +685,6 @@ source = { editable = "." }
 dependencies = [
     { name = "fastpyxl" },
     { name = "jsonschema" },
-    { name = "numpy" },
     { name = "pyyaml" },
 ]
 
@@ -693,6 +692,10 @@ dependencies = [
 all = [
     { name = "graphviz" },
     { name = "networkx" },
+    { name = "numpy" },
+]
+fast = [
+    { name = "numpy" },
 ]
 networkx = [
     { name = "networkx" },
@@ -721,6 +724,12 @@ dev = [
     { name = "xlsxwriter" },
     { name = "xlwings" },
 ]
+test-core = [
+    { name = "pytest" },
+    { name = "ruff" },
+    { name = "ty" },
+    { name = "xlsxwriter" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -730,10 +739,11 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "networkx", marker = "extra == 'all'", specifier = ">=3.0" },
     { name = "networkx", marker = "extra == 'networkx'", specifier = ">=3.0" },
-    { name = "numpy", specifier = ">=1.24" },
+    { name = "numpy", marker = "extra == 'all'", specifier = ">=1.24" },
+    { name = "numpy", marker = "extra == 'fast'", specifier = ">=1.24" },
     { name = "pyyaml", specifier = ">=6.0.3" },
 ]
-provides-extras = ["networkx", "viz", "all"]
+provides-extras = ["fast", "networkx", "viz", "all"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -754,6 +764,12 @@ dev = [
     { name = "ty", specifier = ">=0.0.9" },
     { name = "xlsxwriter", specifier = ">=3.2.0" },
     { name = "xlwings", specifier = ">=0.34.0" },
+]
+test-core = [
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "ruff", specifier = ">=0.14.0" },
+    { name = "ty", specifier = ">=0.0.9" },
+    { name = "xlsxwriter", specifier = ">=3.2.0" },
 ]
 
 [[package]]

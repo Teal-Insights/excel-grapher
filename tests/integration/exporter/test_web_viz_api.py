@@ -173,7 +173,7 @@ def test_write_web_viz_html_writes_html_file(tmp_path: Path) -> None:
 
 def test_write_web_viz_html_accepts_custom_template(tmp_path: Path) -> None:
     g = _build_two_component_digraph()
-    p = to_web_viz_payload(g, seed=1, layout="spring")
+    p = to_web_viz_payload(g, seed=1, layout="stratified_multipartite")
     pkg = "excel_grapher.grapher"
     ref = importlib.resources.files(pkg).joinpath("lightweight_viz_template.html")
     tpl = tmp_path / "tpl.html"
@@ -195,6 +195,8 @@ def test_write_web_viz_html_accepts_custom_template(tmp_path: Path) -> None:
     ("spring", "forceatlas2", "multipartite"),
 )
 def test_to_web_viz_payload_supports_networkx_layouts(layout: str) -> None:
+    # NetworkX spring/multipartite layouts import NumPy internally.
+    pytest.importorskip("numpy")
     g = _build_two_component_digraph()
     payload = to_web_viz_payload(g, layout=layout, seed=11)
     flat = lightweight_viz_flat(payload)
@@ -213,6 +215,8 @@ def test_to_web_viz_stratified_has_distinct_scc_ranks() -> None:
 
 
 def test_to_web_viz_payload_can_omit_module_overlay() -> None:
+    # Without module overlay, stratified fallback uses NetworkX multipartite (needs NumPy).
+    pytest.importorskip("numpy")
     g = _build_two_component_digraph()
     payload = to_web_viz_payload(g, include_module_overlay=False, seed=1)
     assert payload.overlays == ()

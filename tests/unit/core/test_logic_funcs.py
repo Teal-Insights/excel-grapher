@@ -1,10 +1,13 @@
 """Unit tests for cell-wise AND/OR over lazy Range (#397)."""
 
+# ruff: noqa: E402
 from __future__ import annotations
 
 from typing import cast
 
-import numpy as np
+import pytest
+
+np = pytest.importorskip("numpy")
 
 from excel_grapher.core import CellValue, XlError
 from excel_grapher.core.excel_function_meta import grid_range_arg_indices
