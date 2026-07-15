@@ -165,7 +165,7 @@ def flatten(*args: object) -> Iterator[CellValue]:
             yield from (v for v in arg.flat)
             continue
         if isinstance(arg, Range):
-            yield from (cast("CellValue", v) for v in arg.iter_raw())
+            yield from arg.iter_raw()
             continue
         if isinstance(arg, (list, tuple)):
             yield from flatten(*arg)
