@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.14.1 (2026-07-15)
+
+### Bug Fixes
+
+- Canonicalize multi-cell edge endpoints and cache schema
+  ([`367b510`](https://github.com/Teal-Insights/excel-grapher/commit/367b51082b43fab5bb8aa749573feab428cac89a))
+
+### Code Style
+
+- Ruff format node extent constructor
+  ([`367b510`](https://github.com/Teal-Insights/excel-grapher/commit/367b51082b43fab5bb8aa749573feab428cac89a))
+
+### Refactoring
+
+- Drop unused UnionKey import after row-shim removal
+  ([`367b510`](https://github.com/Teal-Insights/excel-grapher/commit/367b51082b43fab5bb8aa749573feab428cac89a))
+
+### Testing
+
+- Migrate row-node tests to union nodes
+  ([`367b510`](https://github.com/Teal-Insights/excel-grapher/commit/367b51082b43fab5bb8aa749573feab428cac89a))
+
+
 ## v3.14.0 (2026-07-15)
 
 ### Bug Fixes
