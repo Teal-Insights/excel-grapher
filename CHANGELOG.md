@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.14.0 (2026-07-15)
+
+### Bug Fixes
+
+- **series-bindings**: Treat overlapping data_ranges as ambiguous
+  ([#412](https://github.com/Teal-Insights/excel-grapher/pull/412),
+  [`5333fbf`](https://github.com/Teal-Insights/excel-grapher/commit/5333fbf4a21d8c5fae7111bb6ac36b45fbb41efa))
+
+### Features
+
+- **series-bindings**: Reverse address map for reader call forms
+  ([#412](https://github.com/Teal-Insights/excel-grapher/pull/412),
+  [`5333fbf`](https://github.com/Teal-Insights/excel-grapher/commit/5333fbf4a21d8c5fae7111bb6ac36b45fbb41efa))
+
+- **series-bindings**: Reverse address map for reader call forms (#409)
+  ([#412](https://github.com/Teal-Insights/excel-grapher/pull/412),
+  [`5333fbf`](https://github.com/Teal-Insights/excel-grapher/commit/5333fbf4a21d8c5fae7111bb6ac36b45fbb41efa))
+
+
 ## v3.13.1 (2026-07-15)
 
 ### Bug Fixes

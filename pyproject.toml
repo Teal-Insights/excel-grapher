@@ -1,6 +1,6 @@
 [project]
 name = "excel-grapher"
-version = "3.13.1"
+version = "3.14.0"
 
 description = "Build and analyze dependency graphs from Excel workbooks"
 readme = "README.md"
@@ -50,6 +50,7 @@ Repository = "https://github.com/Teal-Insights/excel-grapher"
 
 [project.scripts]
 excel-grapher = "excel_grapher.cli:main"
+
 
 
 
@@ -239,6 +240,7 @@ insecure = false
 [tool.semantic_release.publish]
 dist_glob_patterns = ["dist/*"]
 upload_to_vcs_release = false
+
 
 
 
