@@ -53,7 +53,11 @@ class ReaderRangeEntry(TypedDict):
 
 
 class ReaderIndex(TypedDict):
-    """Machine-readable reverse map from Excel geometry to reader call forms."""
+    """Machine-readable reverse map from Excel geometry to reader call forms.
+
+    `ambiguous` holds normalized cell addresses and/or `data_range` strings that
+    are claimed by more than one input series (resolve falls back to `xl_*`).
+    """
 
     leaves: dict[str, ReaderLeafEntry]
     ranges: dict[str, ReaderRangeEntry]
@@ -126,7 +130,9 @@ def _leaf_entry(
         kwargs = {}
         call_form = format_reader_call_form(reader)
     else:
-        kwargs = {dimension_id_to_param_name(field): keys[field] for field in key_fields}
+        kwargs = {
+            dimension_id_to_param_name(field): keys[field] for field in key_fields if field in keys
+        }
         call_form = format_reader_call_form(reader, kwargs=kwargs)
     return {
         "series_id": series_id,
@@ -147,10 +153,10 @@ def build_reader_index(
 ) -> ReaderIndex:
     """Build reverse address/range indexes from Phase 1 leaf resolution.
 
-    Leaves owned by more than one input series are recorded in `ambiguous` and
-    omitted from `leaves` so consumers fall back to `xl_cell` with a clear
-    reason. Range entries are emitted only when codegen would emit
-    `read_<id>_range`.
+    Leaves or binding-aligned `data_range`s owned by more than one input series
+    are recorded in `ambiguous` and omitted from `leaves` / `ranges` so
+    consumers fall back to `xl_cell` / `xl_range` with reason `ambiguous_owner`.
+    Range entries are emitted only when codegen would emit `read_<id>_range`.
     """
     report = resolve_series_bindings(
         graph,
@@ -165,8 +171,8 @@ def build_reader_index(
         if isinstance(s, dict) and has_input_direction(s)
     }
 
-    owners: dict[str, list[ReaderLeafEntry]] = {}
-    ranges: dict[str, ReaderRangeEntry] = {}
+    leaf_owners: dict[str, list[ReaderLeafEntry]] = {}
+    range_owners: dict[str, list[ReaderRangeEntry]] = {}
 
     for resolved in report["series"]:
         series = by_id.get(resolved["series_id"])
@@ -185,29 +191,38 @@ def build_reader_index(
                 key_fields=key_fields,
                 kind=kind,
             )
-            owners.setdefault(address, []).append(entry)
+            leaf_owners.setdefault(address, []).append(entry)
 
         if _should_emit_reader_range(series, resolved):
             data_range = series.get("data_range")
             if isinstance(data_range, str) and data_range:
                 normalized_range = normalize_key(data_range)
                 range_reader = f"{reader}_range"
-                ranges[normalized_range] = {
-                    "series_id": resolved["series_id"],
-                    "reader": range_reader,
-                    "data_range": normalized_range,
-                    "call_form": format_reader_call_form(range_reader, range_reader=True),
-                }
+                range_owners.setdefault(normalized_range, []).append(
+                    {
+                        "series_id": resolved["series_id"],
+                        "reader": range_reader,
+                        "data_range": normalized_range,
+                        "call_form": format_reader_call_form(range_reader, range_reader=True),
+                    }
+                )
 
     leaves: dict[str, ReaderLeafEntry] = {}
+    ranges: dict[str, ReaderRangeEntry] = {}
     ambiguous: list[str] = []
-    for address, entries in sorted(owners.items()):
+    for address, entries in sorted(leaf_owners.items()):
         # Distinct series ids — duplicate identical entries from one series are fine.
         series_ids = {entry["series_id"] for entry in entries}
         if len(series_ids) != 1:
             ambiguous.append(address)
             continue
         leaves[address] = entries[0]
+    for data_range, entries in sorted(range_owners.items()):
+        series_ids = {entry["series_id"] for entry in entries}
+        if len(series_ids) != 1:
+            ambiguous.append(data_range)
+            continue
+        ranges[data_range] = entries[0]
 
     return {
         "leaves": leaves,
@@ -247,6 +262,14 @@ def resolve_reader_ref(
 
     normalized = normalize_key(ref)
     if _is_range_ref(normalized):
+        if normalized in index["ambiguous"]:
+            return {
+                "mode": "xl_range",
+                "call_form": f"xl_range(ctx, {normalized!r})",
+                "reason": "ambiguous_owner",
+                "series_id": None,
+                "reader": None,
+            }
         range_entry = index["ranges"].get(normalized)
         if range_entry is not None:
             return {

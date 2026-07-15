@@ -449,3 +449,168 @@ def test_generated_modules_emit_list_reader_leaves(tmp_path: Path) -> None:
         for name in list(sys.modules):
             if name == "exported_readers" or name.startswith("exported_readers."):
                 sys.modules.pop(name, None)
+
+
+def test_resolve_reader_name_override(tmp_path: Path) -> None:
+    wb_path = tmp_path / "scalar.xlsx"
+    _write_scalar_workbook(wb_path)
+    bindings = validate_bindings_document(
+        {
+            "schema_version": "1.9.0",
+            "series": [
+                {
+                    "id": "country_name",
+                    "sheet": "Inputs",
+                    "data_range": "Inputs!B5",
+                    "layout": "scalar",
+                    "input": {
+                        "setter": {"name": "set_country_name"},
+                        "reader": {"name": "read_custom_country"},
+                    },
+                    "structure": {
+                        "measure": {
+                            "concept": "OBS_VALUE",
+                            "dtype": "string",
+                            "bind": {"kind": "data_cell", "read": "string"},
+                        },
+                        "dimensions": [],
+                    },
+                    "key": [],
+                }
+            ],
+        }
+    )
+    graph = create_dependency_graph(wb_path, ["Inputs!B5"], load_values=True)
+
+    result = resolve_reader_ref(
+        "Inputs!B5",
+        graph=graph,
+        bindings=bindings,
+        workbook=wb_path,
+    )
+
+    assert result["mode"] == "reader"
+    assert result["reader"] == "read_custom_country"
+    assert result["call_form"] == "read_custom_country(ctx)"
+
+
+def test_resolve_multi_key_leaf_call_form(tmp_path: Path) -> None:
+    from tests.fixtures.series_bindings.matrix_helpers import write_matrix_explicit_workbook
+
+    wb_path = tmp_path / "matrix_inputs.xlsx"
+    write_matrix_explicit_workbook(wb_path)
+    bindings = load_series_bindings(FIXTURES / "matrix_explicit_1_4_0.yaml")
+    graph = create_dependency_graph(wb_path, expand_data_range("Inputs!B3:D5"), load_values=True)
+
+    result = resolve_reader_ref(
+        "Inputs!C3",
+        graph=graph,
+        bindings=bindings,
+        workbook=wb_path,
+    )
+
+    assert result["mode"] == "reader"
+    assert result["keys"] == {"INDICATOR": "GDP growth", "TIME_PERIOD": 2025}
+    assert result["kwargs"] == {"indicator": "GDP growth", "time_period": 2025}
+    assert result["call_form"] == (
+        "read_macro_matrix(ctx, indicator='GDP growth', time_period=2025)"
+    )
+
+
+def test_resolve_ambiguous_overlapping_range_falls_back(tmp_path: Path) -> None:
+    wb_path = tmp_path / "overlap_range.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Inputs")
+    for col, year in enumerate([1, 2], start=0):
+        ws.write(0, col, year)
+        ws.write_number(1, col, float(year))
+    wb.close()
+
+    bindings = validate_bindings_document(
+        {
+            "schema_version": "1.3.0",
+            "series": [
+                {
+                    "id": "a",
+                    "sheet": "Inputs",
+                    "data_range": "Inputs!A2:B2",
+                    "layout": "series",
+                    "setter": {"name": "set_a"},
+                    "structure": {
+                        "measure": {
+                            "concept": "OBS_VALUE",
+                            "dtype": "float",
+                            "bind": {"kind": "data_cell", "read": "float"},
+                        },
+                        "dimensions": [
+                            {
+                                "concept": "TIME_PERIOD",
+                                "role": "key",
+                                "scope": "cell",
+                                "bind": {
+                                    "kind": "column_header",
+                                    "header_row": 1,
+                                    "read": "int",
+                                },
+                            }
+                        ],
+                    },
+                    "key": ["TIME_PERIOD"],
+                    "validation": {"require_unique_key": True},
+                },
+                {
+                    "id": "b",
+                    "sheet": "Inputs",
+                    "data_range": "Inputs!A2:B2",
+                    "layout": "series",
+                    "setter": {"name": "set_b"},
+                    "structure": {
+                        "measure": {
+                            "concept": "OBS_VALUE",
+                            "dtype": "float",
+                            "bind": {"kind": "data_cell", "read": "float"},
+                        },
+                        "dimensions": [
+                            {
+                                "concept": "TIME_PERIOD",
+                                "role": "key",
+                                "scope": "cell",
+                                "bind": {
+                                    "kind": "column_header",
+                                    "header_row": 1,
+                                    "read": "int",
+                                },
+                            }
+                        ],
+                    },
+                    "key": ["TIME_PERIOD"],
+                    "validation": {"require_unique_key": True},
+                },
+            ],
+        }
+    )
+    graph = create_dependency_graph(wb_path, ["Inputs!A2", "Inputs!B2"], load_values=True)
+    index = build_reader_index(graph, bindings, workbook=wb_path)
+
+    assert "Inputs!A2:B2" not in index["ranges"]
+    assert "Inputs!A2:B2" in index["ambiguous"]
+
+    result = resolve_reader_ref("Inputs!A2:B2", index=index)
+    assert result["mode"] == "xl_range"
+    assert result["reason"] == "ambiguous_owner"
+    assert result["call_form"] == "xl_range(ctx, 'Inputs!A2:B2')"
+
+
+def test_single_file_generate_emits_reader_discovery(tmp_path: Path) -> None:
+    wb_path = tmp_path / "lic_inputs.xlsx"
+    _write_borvelia_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, expand_data_range("Inputs!F5:J5"), load_values=True)
+    bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
+    source = CodeGenerator(graph).generate(
+        expand_data_range("Inputs!F5:J5"),
+        series_bindings=bindings,
+        bindings_workbook=wb_path,
+    )
+    assert "def list_reader_leaves(" in source
+    assert "def list_reader_ranges(" in source
+    assert "read_borvelia_primary_balance(ctx, time_period=3)" in source
