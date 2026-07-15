@@ -22,7 +22,7 @@ from excel_grapher.core.address_keys import (
 from excel_grapher.core.address_keys import (
     normalize_key as normalize_address,
 )
-from excel_grapher.core.operators_fastpath import MIN_OPERATOR_FASTPATH_CELLS
+from excel_grapher.core.operator_thresholds import MIN_OPERATOR_FASTPATH_CELLS
 from excel_grapher.evaluator.errors import MissingNormalizedFormulaError
 from excel_grapher.evaluator.name_utils import (
     address_to_python_name,

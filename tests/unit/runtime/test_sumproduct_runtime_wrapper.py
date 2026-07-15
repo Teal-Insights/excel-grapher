@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import cast
 
-import numpy as np
 import pytest
+
+np = pytest.importorskip("numpy")
 
 from excel_grapher.core import CellValue, XlError
 from excel_grapher.core.grid import Range

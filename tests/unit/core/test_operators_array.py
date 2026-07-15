@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
+
+np = pytest.importorskip("numpy")
 
 from excel_grapher.core.operators import xl_concat, xl_eq, xl_mul, xl_pow
 from excel_grapher.core.types import XlError

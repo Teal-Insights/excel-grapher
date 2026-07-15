@@ -6,16 +6,28 @@ from collections.abc import Iterable, Iterator
 from datetime import date, datetime
 from typing import TypeVar, cast
 
-import numpy as np
-
 # Imported for isinstance checks; stripped when coercions are embedded (Range is
 # already inlined from core.grid.ranges ahead of this module).
+from excel_grapher.core.grid.grid import _as_nested_rows_from_ndarray
 from excel_grapher.core.grid.ranges import Range
 
 from .types import CellValue, ExcelRange, FormulaValue, XlError
 
 _EXCEL_EPOCH = datetime(1899, 12, 30)
 T = TypeVar("T")
+
+
+def _is_ndarray_like(value: object) -> bool:
+    """Duck-type NumPy ndarrays without importing NumPy.
+
+    Fast-path materialization buffers expose ``ndim`` / ``flat`` / ``tolist``.
+    Matches `Grid.wrap` / `_as_nested_rows_from_ndarray` so coercions stay
+    import-light for NumPy-free installs and exports.
+    """
+    if _as_nested_rows_from_ndarray(value) is not None:
+        return True
+    ndim = getattr(value, "ndim", None)
+    return isinstance(ndim, int) and ndim >= 1 and hasattr(value, "flat")
 
 
 def as_scalar(value: object) -> float | int | str | bool | XlError | None:
@@ -25,7 +37,7 @@ def as_scalar(value: object) -> float | int | str | bool | XlError | None:
     operands. Materialized ndarray buffers (fast-path internals) also collapse
     to `#VALUE!`. Does not evaluate cells inside a `Range`.
     """
-    if isinstance(value, (Range, ExcelRange, list, tuple, np.ndarray)):
+    if isinstance(value, (Range, ExcelRange, list, tuple)) or _is_ndarray_like(value):
         return XlError.VALUE
     return cast("float | int | str | bool | XlError | None", value)
 
@@ -163,8 +175,14 @@ def flatten(*args: object) -> Iterator[FormulaValue]:
     fast-path materialization buffers, not as persisted `CellValue` results.
     """
     for arg in args:
-        if isinstance(arg, np.ndarray):
-            yield from (v for v in arg.flat)
+        if _is_ndarray_like(arg):
+            flat = getattr(arg, "flat", None)
+            if flat is not None:
+                yield from (cast("FormulaValue", v) for v in flat)
+            else:
+                rows = _as_nested_rows_from_ndarray(arg)
+                assert rows is not None
+                yield from flatten(*rows)
             continue
         if isinstance(arg, Range):
             yield from arg.iter_raw()

@@ -13,9 +13,9 @@ from dataclasses import dataclass
 import numpy as np
 
 from .coercions import excel_casefold, to_number, to_string, try_coerce_string_to_float
+from .operator_thresholds import MIN_OPERATOR_FASTPATH_CELLS
 from .types import XlError
 
-MIN_OPERATOR_FASTPATH_CELLS = 64
 _NUMERIC_CELL_TYPES = (int, float, np.integer, np.floating)
 _CASEFOLD_UFUNC = np.frompyfunc(excel_casefold, 1, 1)
 _TO_STRING_UFUNC = np.frompyfunc(to_string, 1, 1)

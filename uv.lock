@@ -685,7 +685,6 @@ source = { editable = "." }
 dependencies = [
     { name = "fastpyxl" },
     { name = "jsonschema" },
-    { name = "numpy" },
     { name = "pyyaml" },
 ]
 
@@ -693,6 +692,10 @@ dependencies = [
 all = [
     { name = "graphviz" },
     { name = "networkx" },
+    { name = "numpy" },
+]
+fast = [
+    { name = "numpy" },
 ]
 networkx = [
     { name = "networkx" },
@@ -730,10 +733,11 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "networkx", marker = "extra == 'all'", specifier = ">=3.0" },
     { name = "networkx", marker = "extra == 'networkx'", specifier = ">=3.0" },
-    { name = "numpy", specifier = ">=1.24" },
+    { name = "numpy", marker = "extra == 'all'", specifier = ">=1.24" },
+    { name = "numpy", marker = "extra == 'fast'", specifier = ">=1.24" },
     { name = "pyyaml", specifier = ">=6.0.3" },
 ]
-provides-extras = ["networkx", "viz", "all"]
+provides-extras = ["fast", "networkx", "viz", "all"]
 
 [package.metadata.requires-dev]
 dev = [

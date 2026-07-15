@@ -5,7 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, cast
 
-import numpy as np
+import pytest
+
+np = pytest.importorskip("numpy")
 
 from excel_grapher.core.operators import (
     xl_add,

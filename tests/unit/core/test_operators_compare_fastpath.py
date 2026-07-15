@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 import pytest
+
+np = pytest.importorskip("numpy")
 
 from excel_grapher import create_dependency_graph
 from excel_grapher.core.operators import xl_eq

@@ -28,6 +28,7 @@ def _core_modules(*, include_operators_fastpath: bool) -> list[tuple[str, Path]]
         ("core.grid.ranges", grid_dir / "ranges.py"),
         ("core.grid.grid", grid_dir / "grid.py"),
         ("core.coercions", _CORE_DIR / "coercions.py"),
+        ("core.operator_thresholds", _CORE_DIR / "operator_thresholds.py"),
         ("core.operators_reference", _CORE_DIR / "operators_reference.py"),
         ("core.operators_fastpath", fastpath_path),
         ("core.operator_maps", _CORE_DIR / "operator_maps.py"),

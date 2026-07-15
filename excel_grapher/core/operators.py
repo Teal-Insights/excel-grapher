@@ -9,24 +9,20 @@ Lazy ``Range`` / nested-list operands use shared ``operator_maps`` (same loops a
 export ``xl_map_*``). Large grids materialize once at this boundary and try
 ``operators_fastpath``; on a miss the same arrays feed ``reference_*_array``
 rather than walking the ``Range`` a second time.
+
+When the optional ``fast`` extra (NumPy) is not installed, large-grid
+materialization is skipped and callers fall through to ``operator_maps``.
 """
 
 from __future__ import annotations
 
-from typing import cast
-
-import numpy as np
+from typing import Any, cast
 
 from .coercions import to_number
 from .grid import Grid
 from .grid.grid import _as_nested_rows_from_ndarray
 from .operator_maps import map_arithmetic, map_compare, map_concat, map_unary
-from .operators_fastpath import (
-    MIN_OPERATOR_FASTPATH_CELLS,
-    try_fastpath_arithmetic_array,
-    try_fastpath_compare_array,
-    try_fastpath_concat_array,
-)
+from .operator_thresholds import MIN_OPERATOR_FASTPATH_CELLS
 from .operators_reference import (
     apply_arithmetic,
     compare_scalars,
@@ -36,6 +32,24 @@ from .operators_reference import (
     reference_concat_array,
 )
 from .types import CellValue, FormulaValue, XlError
+
+try:
+    import numpy as np
+except ImportError:  # pragma: no cover - exercised when the `fast` extra is absent
+    np = None  # type: ignore[assignment]
+
+if np is not None:
+    from .operators_fastpath import (
+        try_fastpath_arithmetic_array,
+        try_fastpath_compare_array,
+        try_fastpath_concat_array,
+    )
+else:  # pragma: no cover - exercised when the `fast` extra is absent
+    from .operators_fastpath_stub import (
+        try_fastpath_arithmetic_array,
+        try_fastpath_compare_array,
+        try_fastpath_concat_array,
+    )
 
 
 def _is_grid_operand(value: object) -> bool:
@@ -50,7 +64,8 @@ def _as_cell_result(value: object) -> FormulaValue:
     return cast(FormulaValue, value)
 
 
-def _materialize_grid(grid: Grid) -> np.ndarray:
+def _materialize_grid(grid: Grid) -> Any:
+    assert np is not None
     return np.array(
         [[grid.at(row0, col0) for col0 in range(grid.ncols)] for row0 in range(grid.nrows)],
         dtype=object,
@@ -70,7 +85,13 @@ def _apply_large_grid_binary(
     cannot form a grid pair) so the caller can use shared ``map_*`` loops.
     When this path materializes, a fastpath miss reuses the same arrays via
     ``reference_*_array`` — it does not fall through to a second Range walk.
+
+    Without NumPy (`fast` extra), always returns `None` so callers use
+    ``operator_maps``.
     """
+    if np is None:
+        return None
+
     left_grid = Grid.wrap(left)
     right_grid = Grid.wrap(right)
     if left_grid is None and right_grid is None:

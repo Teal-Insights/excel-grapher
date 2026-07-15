@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import cast
 
-import numpy as np
+import pytest
+
+np = pytest.importorskip("numpy")
 
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core import CellValue, XlError, as_scalar, get_error, to_number, to_string
