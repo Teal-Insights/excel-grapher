@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import cast
+from typing import TypeAlias, cast
 
 import fastpyxl.utils.cell
 
@@ -15,7 +15,18 @@ from excel_grapher.runtime.cache import EvalContext, _parse_range_address, xl_ce
 from .ranges import Range
 from .values import CellValue, ExcelRange, Scalar, as_scalar
 
-__all__ = ["xl_index_ref", "xl_offset", "xl_offset_ref", "xl_range", "xl_range_rows"]
+__all__ = [
+    "OffsetRefInfo",
+    "xl_index_ref",
+    "xl_offset",
+    "xl_offset_ref",
+    "xl_range",
+    "xl_range_rows",
+]
+
+# Address metadata for the INDEX/OFFSET reference pair, not a worksheet value.
+# Single-cell: (sheet, row, col). Rectangle: (sheet, r1, c1, r2, c2).
+OffsetRefInfo: TypeAlias = tuple[str, int, int] | tuple[str, int, int, int, int]
 
 
 def _format_address(sheet: str, row: int, col: int) -> str:
@@ -39,9 +50,7 @@ def _ctx_range(ctx: EvalContext, sheet: str, r1: int, c1: int, r2: int, c2: int)
     return Range(sheet, r1, c1, r2, c2, resolve)
 
 
-def _range_from_ref_info(
-    ref: ExcelRange | tuple[str, int, int] | tuple[str, int, int, int, int],
-) -> ExcelRange:
+def _range_from_ref_info(ref: ExcelRange | OffsetRefInfo) -> ExcelRange:
     """Normalize generated reference metadata into an `ExcelRange`."""
     if isinstance(ref, ExcelRange):
         return ref
@@ -87,11 +96,18 @@ def _export_range_from_geometry(
 
 
 def xl_index_ref(
-    ref: ExcelRange | tuple[str, int, int] | tuple[str, int, int, int, int],
+    ref: ExcelRange | OffsetRefInfo,
     row_num: CellValue | None,
     col_num: CellValue | None,
-) -> tuple[str, int, int] | tuple[str, int, int, int, int]:
-    """Return INDEX reference metadata, raising on Excel reference errors."""
+) -> OffsetRefInfo:
+    """Return INDEX address metadata for OFFSET, not a cell value.
+
+    Pass the result to `xl_offset` (or `xl_offset_ref`). Scalar INDEX reads are
+    emitted as `xl_offset(ctx, xl_index_ref(...), 0, 0)`.
+
+    Raises:
+        XlErrorException: On Excel reference errors such as `#REF!`.
+    """
     out = index_excel_range(
         _range_from_ref_info(ref),
         _as_addressing_scalar(row_num),
@@ -105,13 +121,21 @@ def xl_index_ref(
 
 
 def xl_offset_ref(
-    ref: ExcelRange | tuple[str, int, int] | tuple[str, int, int, int, int],
+    ref: ExcelRange | OffsetRefInfo,
     rows: CellValue,
     cols: CellValue,
     height: CellValue | None = None,
     width: CellValue | None = None,
 ) -> ExcelRange:
-    """Return OFFSET reference metadata, raising on Excel reference errors."""
+    """Return OFFSET address metadata, raising on Excel reference errors.
+
+    Unlike `xl_offset`, this does not evaluate cells — it only relocates the
+    reference rectangle. `ref` is typically an `OffsetRefInfo` from
+    `xl_index_ref` or a literal range tuple.
+
+    Raises:
+        XlErrorException: On Excel reference errors such as `#REF!`.
+    """
     base_range = _range_from_ref_info(ref)
 
     class _UnboundedSheet:
@@ -138,17 +162,22 @@ def xl_offset_ref(
 
 def xl_offset(
     ctx: EvalContext,
-    ref_info: tuple[str, int, int] | tuple[str, int, int, int, int] | XlError,
+    ref_info: OffsetRefInfo,
     rows: CellValue,
     cols: CellValue,
     height: CellValue | None = None,
     width: CellValue | None = None,
 ) -> CellValue:
+    """Evaluate OFFSET from `ref_info`, returning a cell value or range.
+
+    `ref_info` is typically produced by `xl_index_ref`. For a scalar INDEX
+    result use `rows=0`, `cols=0`.
+
+    Raises:
+        XlErrorException: On Excel reference or coercion errors.
+    """
     rr = _number_or_raise(rows)
     cc = _number_or_raise(cols)
-
-    if isinstance(ref_info, XlError):
-        raise XlErrorException(ref_info)
 
     match ref_info:
         case (sheet, base_row, base_col):
