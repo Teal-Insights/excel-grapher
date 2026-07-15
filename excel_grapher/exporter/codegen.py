@@ -6,6 +6,8 @@ import ast as py_ast
 import json
 import re
 from collections.abc import Iterable, Mapping, Sequence, Set
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
 
@@ -104,6 +106,30 @@ _ARITHMETIC_OPS = frozenset({"+", "-", "*", "/", "^"})
 # AST-level special cases; other IS functions propagate argument errors there.
 _THUNK_ARG_FUNCTIONS = frozenset({"ISERROR", "ISNA", "ISBLANK"})
 
+# Return unpacking hoists substantive ``xl_*`` runtime calls into statement-level
+# temporaries. Coercion helpers and error literals stay inline because they are
+# cheap and wrapping them would add noise without aiding debugging.
+_RETURN_UNPACK_NON_HOISTABLE = frozenset(
+    {
+        "xl_number",
+        "xl_bool",
+        "xl_int",
+        "xl_raise",
+        "to_string",
+    }
+)
+
+
+@dataclass
+class _ReturnUnpackState:
+    statements: list[str]
+
+
+@dataclass
+class _ReturnUnpackFrame:
+    lazy: bool = False
+    nested: bool = False
+
 
 class CodeGenerator:
     """Generates Python code from Excel formulas."""
@@ -115,6 +141,7 @@ class CodeGenerator:
         iterate_enabled: bool | None = None,
         iterate_count: int = 100,
         iterate_delta: float = 0.001,
+        unpack_return: bool = False,
     ) -> None:
         """Initialize the code generator.
 
@@ -126,9 +153,12 @@ class CodeGenerator:
                 this check (default).
             iterate_count: Maximum iterations when iterative calculation is enabled.
             iterate_delta: Convergence threshold when iterative calculation is enabled.
+            unpack_return: When True, hoist nested runtime calls in each formula
+                cell's return expression into statement-level temporaries.
         """
         self.graph = graph
         self._iterate_enabled = iterate_enabled
+        self._unpack_return = unpack_return
         self._iterate_count = iterate_count
         self._iterate_delta = iterate_delta
         self._emitted: set[str] = set()
@@ -140,6 +170,8 @@ class CodeGenerator:
         self._ast_cache: dict[str, AstNode] = {}
         self._used_graph_closure: bool = False
         self._formula_cell_address: str | None = None
+        self._return_unpack_state: _ReturnUnpackState | None = None
+        self._return_unpack_stack: list[_ReturnUnpackFrame] = []
 
     def __enter__(self) -> CodeGenerator:
         return self
@@ -158,6 +190,8 @@ class CodeGenerator:
         self._ast_cache.clear()
         self._used_graph_closure = False
         self._formula_cell_address = None
+        self._return_unpack_state = None
+        self._return_unpack_stack = []
 
     def _include_dep_tracking(
         self,
@@ -264,25 +298,24 @@ class CodeGenerator:
         lines = ["# --- Projection public address aliases ---", ""]
         for public_addr, replacement in sorted(alias_map.items()):
             public_fn = address_to_python_name(public_addr)
-            replacement_node = self.graph.get_node(replacement)
-            if replacement_node is not None and replacement_node.formula is not None:
-                replacement_fn = address_to_python_name(replacement)
-                lines.extend(
-                    [
-                        f"def {public_fn}(ctx):",
-                        f"    return xl_eval(ctx, {repr(replacement)}, {replacement_fn})",
-                        "",
-                    ]
-                )
-            else:
-                lines.extend(
-                    [
-                        f"def {public_fn}(ctx):",
-                        f"    return xl_cell(ctx, {repr(replacement)})",
-                        "",
-                    ]
-                )
+            lines.append(f"def {public_fn}(ctx):")
+            lines.extend(self._emit_projection_alias_body(replacement))
+            lines.append("")
         return lines
+
+    def _emit_projection_alias_body(self, replacement: str) -> list[str]:
+        """Emit the body lines for a projected public-address alias wrapper."""
+        replacement_node = self.graph.get_node(replacement)
+        if replacement_node is not None and replacement_node.formula is not None:
+            ast = self._get_or_parse_ast(replacement)
+            assert ast is not None
+            return self._emit_formula_body_lines(ast)
+        unpack_stmts = self._start_return_unpack()
+        try:
+            expr = self._emit_cell_eval(replacement)
+        finally:
+            self._stop_return_unpack()
+        return self._format_return_lines(unpack_stmts, expr)
 
     def _graph_sheetnames(self, *, targets: Sequence[str] | None = None) -> list[str]:
         sheet_order = getattr(self.graph, "sheet_order", None)
@@ -423,17 +456,21 @@ class CodeGenerator:
         sheet, r1, c1, r2, c2 = self._range_coords(start, end)
         start_cell = f"{fastpyxl.utils.cell.get_column_letter(c1)}{r1}"
         end_cell = f"{fastpyxl.utils.cell.get_column_letter(c2)}{r2}"
-        return f"xl_range(ctx, {repr(format_range_key(sheet, start_cell, end_cell))})"
+        expr = f"xl_range(ctx, {repr(format_range_key(sheet, start_cell, end_cell))})"
+        return self._hoist_return_expr(expr)
 
     def _emit_cell_eval(self, address: str) -> str:
         normalized = normalize_address(address)
         if self.graph is None:
-            return f"xl_cell(ctx, {repr(normalized)})"
-        node = self.graph.get_node(normalized)
-        if node is not None and node.formula is not None:
-            func_name = address_to_python_name(normalized)
-            return f"xl_eval(ctx, {repr(normalized)}, {func_name})"
-        return f"xl_cell(ctx, {repr(normalized)})"
+            expr = f"xl_cell(ctx, {repr(normalized)})"
+        else:
+            node = self.graph.get_node(normalized)
+            if node is not None and node.formula is not None:
+                func_name = address_to_python_name(normalized)
+                expr = f"xl_eval(ctx, {repr(normalized)}, {func_name})"
+            else:
+                expr = f"xl_cell(ctx, {repr(normalized)})"
+        return self._hoist_return_expr(expr)
 
     @staticmethod
     def _py_literal(value: Any) -> str:
@@ -1116,8 +1153,8 @@ class CodeGenerator:
         a lambda so each is evaluated once, keeping generated code linear in the
         operator-tree depth instead of tripling per nesting level.
         """
-        left = self._emit_ast(node.left)
-        right = self._emit_ast(node.right)
+        left = self._emit_ast_child(node.left)
+        right = self._emit_ast_child(node.right)
         op = node.op
 
         if not self._ast_needs_array_operator_branch(node):
@@ -1145,7 +1182,7 @@ class CodeGenerator:
         Like `_emit_binary_op`, the operand is bound once when an array branch
         is possible so the operand is not re-emitted across guard branches.
         """
-        operand = self._emit_ast(node.operand)
+        operand = self._emit_ast_child(node.operand)
         op = node.op
 
         if not self._ast_needs_array_operator_branch(node):
@@ -1218,17 +1255,67 @@ class CodeGenerator:
         # IS functions must not propagate errors: the argument is passed as a
         # lazily-evaluated thunk so the runtime can catch raised Excel errors.
         if upper_name in _THUNK_ARG_FUNCTIONS and len(node.args) == 1:
-            arg_expr = self._emit_ast(node.args[0])
+            with self._return_unpack_lazy():
+                arg_expr = self._emit_ast_child(node.args[0])
             return f"{func_name}(lambda: ({arg_expr}))"
 
-        emitted_args = [self._emit_ast(arg) for arg in node.args]
+        emitted_args = [self._emit_ast_child(arg) for arg in node.args]
         args = ", ".join(emitted_args)
-        return f"{func_name}({args})"
+        expr = f"{func_name}({args})"
+        if self._is_hoistable_runtime_func(func_name):
+            return self._hoist_return_expr(expr)
+        return expr
 
     def _next_temp_var(self) -> str:
         """Generate a unique temporary variable name."""
         self._temp_var_counter += 1
         return f"_t{self._temp_var_counter}"
+
+    @staticmethod
+    def _is_hoistable_runtime_func(name: str) -> bool:
+        return name not in _RETURN_UNPACK_NON_HOISTABLE and (
+            name.startswith("xl_") or name == "ExcelRange"
+        )
+
+    def _hoist_return_expr(self, expr: str, *, hoistable: bool = True) -> str:
+        """Assign a nested runtime expression to a return-level temporary."""
+        if (
+            not self._unpack_return
+            or self._return_unpack_state is None
+            or not self._return_unpack_stack
+            or self._return_unpack_stack[-1].lazy
+            or not self._return_unpack_stack[-1].nested
+            or not hoistable
+        ):
+            return expr
+        name = self._next_temp_var()
+        self._return_unpack_state.statements.append(f"{name} = {expr}")
+        return name
+
+    @contextmanager
+    def _return_unpack_lazy(self):
+        if not self._return_unpack_stack:
+            yield
+            return
+        frame = self._return_unpack_stack[-1]
+        prev_lazy = frame.lazy
+        frame.lazy = True
+        try:
+            yield
+        finally:
+            frame.lazy = prev_lazy
+
+    def _emit_ast_child(self, node: AstNode) -> str:
+        """Emit a nested formula operand while optionally unpacking return temps."""
+        if not self._return_unpack_stack:
+            return self._emit_ast(node)
+        self._return_unpack_stack.append(
+            _ReturnUnpackFrame(lazy=self._return_unpack_stack[-1].lazy, nested=True)
+        )
+        try:
+            return self._emit_ast(node)
+        finally:
+            self._return_unpack_stack.pop()
 
     def _emit_lazy_error_fallback(self, node: FunctionCallNode, name: str) -> str:
         """Emit IFERROR/IFNA as thunked runtime calls with try/except semantics.
@@ -1241,8 +1328,9 @@ class CodeGenerator:
         if len(node.args) < 2:
             return "xl_raise(XlError.VALUE)"
 
-        value_expr = self._emit_ast(node.args[0])
-        fallback_expr = self._emit_ast(node.args[1])
+        with self._return_unpack_lazy():
+            value_expr = self._emit_ast_child(node.args[0])
+            fallback_expr = self._emit_ast_child(node.args[1])
 
         if name == "IFERROR":
             func = "xl_iferror"
@@ -1251,7 +1339,8 @@ class CodeGenerator:
         else:
             raise ValueError(f"Unsupported lazy error fallback function: {name!r}")
 
-        return f"{func}(lambda: ({value_expr}), lambda: ({fallback_expr}))"
+        expr = f"{func}(lambda: ({value_expr}), lambda: ({fallback_expr}))"
+        return self._hoist_return_expr(expr)
 
     def _emit_if(self, node: FunctionCallNode) -> str:
         """Emit IF as a Python conditional expression for lazy evaluation.
@@ -1268,9 +1357,10 @@ class CodeGenerator:
         if len(node.args) < 2:
             return "xl_raise(XlError.VALUE)"
 
-        cond_expr = self._emit_ast(node.args[0])
-        true_expr = self._emit_ast(node.args[1])
-        false_expr = self._emit_ast(node.args[2]) if len(node.args) > 2 else "False"
+        cond_expr = self._emit_ast_child(node.args[0])
+        with self._return_unpack_lazy():
+            true_expr = self._emit_ast_child(node.args[1])
+            false_expr = self._emit_ast_child(node.args[2]) if len(node.args) > 2 else "False"
 
         # Excel-style boolean coercion is not Python truthiness:
         # - "FALSE" should behave like False
@@ -1301,7 +1391,7 @@ class CodeGenerator:
         if isinstance(arg, FunctionCallNode) and arg.name.upper() == "OFFSET":
             return f"xl_row({self._emit_offset_ref(arg)})"
 
-        return f"xl_row({self._emit_ast(arg)})"
+        return f"xl_row({self._emit_ast_child(arg)})"
 
     def _emit_column(self, node: FunctionCallNode) -> str:
         if not node.args or (len(node.args) == 1 and isinstance(node.args[0], EmptyArgNode)):
@@ -1326,7 +1416,7 @@ class CodeGenerator:
         if isinstance(arg, FunctionCallNode) and arg.name.upper() == "OFFSET":
             return f"xl_column({self._emit_offset_ref(arg)})"
 
-        return f"xl_column({self._emit_ast(arg)})"
+        return f"xl_column({self._emit_ast_child(arg)})"
 
     def _emit_columns(self, node: FunctionCallNode) -> str:
         if len(node.args) < 1:
@@ -1344,7 +1434,7 @@ class CodeGenerator:
         if isinstance(arg, FunctionCallNode) and arg.name.upper() == "OFFSET":
             return f"xl_columns({self._emit_offset_ref(arg)})"
 
-        return f"xl_columns({self._emit_ast(arg)})"
+        return f"xl_columns({self._emit_ast_child(arg)})"
 
     def _emit_choose(self, node: FunctionCallNode) -> str:
         """Emit CHOOSE as chained conditionals for lazy evaluation.
@@ -1358,8 +1448,9 @@ class CodeGenerator:
         if len(node.args) < 2:
             return "xl_raise(XlError.VALUE)"
 
-        index_expr = self._emit_ast(node.args[0])
-        value_exprs = [self._emit_ast(arg) for arg in node.args[1:]]
+        index_expr = self._emit_ast_child(node.args[0])
+        with self._return_unpack_lazy():
+            value_exprs = [self._emit_ast_child(arg) for arg in node.args[1:]]
 
         # Store index in a temp var to avoid evaluating twice and to keep typing clean.
         # `xl_int` performs Excel-style numeric coercion and raises on errors.
@@ -1519,16 +1610,17 @@ class CodeGenerator:
         row_expr = (
             "None"
             if len(node.args) < 2 or isinstance(node.args[1], EmptyArgNode)
-            else self._emit_ast(node.args[1])
+            else self._emit_ast_child(node.args[1])
         )
         col_expr = (
             "None"
             if len(node.args) < 3 or isinstance(node.args[2], EmptyArgNode)
-            else self._emit_ast(node.args[2])
+            else self._emit_ast_child(node.args[2])
         )
         self._needs_offset_runtime = True
         self._needs_index_ref_runtime = True
-        return f"xl_offset(ctx, xl_index_ref({base_ref_info}, {row_expr}, {col_expr}), 0.0, 0.0)"
+        expr = f"xl_offset(ctx, xl_index_ref({base_ref_info}, {row_expr}, {col_expr}), 0.0, 0.0)"
+        return self._hoist_return_expr(expr)
 
     def _range_coords(self, start: str, end: str) -> tuple[str, int, int, int, int]:
         """Parse a range into (sheet, start_row, start_col, end_row, end_col).
@@ -1681,12 +1773,12 @@ class CodeGenerator:
             row_expr = (
                 "None"
                 if len(ref_node.args) < 2 or isinstance(ref_node.args[1], EmptyArgNode)
-                else self._emit_ast(ref_node.args[1])
+                else self._emit_ast_child(ref_node.args[1])
             )
             col_expr = (
                 "None"
                 if len(ref_node.args) < 3 or isinstance(ref_node.args[2], EmptyArgNode)
-                else self._emit_ast(ref_node.args[2])
+                else self._emit_ast_child(ref_node.args[2])
             )
             self._needs_index_ref_runtime = True
             ref_info = f"xl_index_ref({base_ref_info}, {row_expr}, {col_expr})"
@@ -1694,12 +1786,13 @@ class CodeGenerator:
             # If reference is not a simple cell, we can't handle it
             return "xl_raise(XlError.REF)"
 
-        rows_expr = self._emit_ast(rows_node)
-        cols_expr = self._emit_ast(cols_node)
-        height_expr = "None" if height_node is None else self._emit_ast(height_node)
-        width_expr = "None" if width_node is None else self._emit_ast(width_node)
+        rows_expr = self._emit_ast_child(rows_node)
+        cols_expr = self._emit_ast_child(cols_node)
+        height_expr = "None" if height_node is None else self._emit_ast_child(height_node)
+        width_expr = "None" if width_node is None else self._emit_ast_child(width_node)
 
-        return f"xl_offset(ctx, {ref_info}, {rows_expr}, {cols_expr}, {height_expr}, {width_expr})"
+        expr = f"xl_offset(ctx, {ref_info}, {rows_expr}, {cols_expr}, {height_expr}, {width_expr})"
+        return self._hoist_return_expr(expr)
 
     def _emit_offset_ref(self, node: FunctionCallNode) -> str:
         if len(node.args) < 3:
@@ -1737,24 +1830,51 @@ class CodeGenerator:
             row_expr = (
                 "None"
                 if len(ref_node.args) < 2 or isinstance(ref_node.args[1], EmptyArgNode)
-                else self._emit_ast(ref_node.args[1])
+                else self._emit_ast_child(ref_node.args[1])
             )
             col_expr = (
                 "None"
                 if len(ref_node.args) < 3 or isinstance(ref_node.args[2], EmptyArgNode)
-                else self._emit_ast(ref_node.args[2])
+                else self._emit_ast_child(ref_node.args[2])
             )
             self._needs_index_ref_runtime = True
             ref_info = f"xl_index_ref({base_ref_info}, {row_expr}, {col_expr})"
         else:
             return "xl_raise(XlError.REF)"
 
-        rows_expr = self._emit_ast(rows_node)
-        cols_expr = self._emit_ast(cols_node)
-        height_expr = "None" if height_node is None else self._emit_ast(height_node)
-        width_expr = "None" if width_node is None else self._emit_ast(width_node)
+        rows_expr = self._emit_ast_child(rows_node)
+        cols_expr = self._emit_ast_child(cols_node)
+        height_expr = "None" if height_node is None else self._emit_ast_child(height_node)
+        width_expr = "None" if width_node is None else self._emit_ast_child(width_node)
 
-        return f"xl_offset_ref({ref_info}, {rows_expr}, {cols_expr}, {height_expr}, {width_expr})"
+        expr = f"xl_offset_ref({ref_info}, {rows_expr}, {cols_expr}, {height_expr}, {width_expr})"
+        return self._hoist_return_expr(expr)
+
+    def _start_return_unpack(self) -> list[str]:
+        if not self._unpack_return:
+            return []
+        self._return_unpack_state = _ReturnUnpackState(statements=[])
+        self._return_unpack_stack = [_ReturnUnpackFrame(lazy=False, nested=False)]
+        return self._return_unpack_state.statements
+
+    def _stop_return_unpack(self) -> None:
+        self._return_unpack_state = None
+        self._return_unpack_stack = []
+
+    @staticmethod
+    def _format_return_lines(unpack_stmts: list[str], expr: str) -> list[str]:
+        lines = [f"    {stmt}" for stmt in unpack_stmts]
+        lines.append(f"    return {expr}")
+        return lines
+
+    def _emit_formula_body_lines(self, ast: AstNode) -> list[str]:
+        """Emit statement/return lines for a formula cell or alias body."""
+        unpack_stmts = self._start_return_unpack()
+        try:
+            expr = self._emit_ast(ast)
+        finally:
+            self._stop_return_unpack()
+        return self._format_return_lines(unpack_stmts, expr)
 
     def _emit_cell(self, address: str) -> str:
         """Emit a Python function for a single formula cell.
@@ -1785,10 +1905,9 @@ class CodeGenerator:
         prev_cell = self._formula_cell_address
         self._formula_cell_address = normalized
         try:
-            expr = self._emit_ast(ast)
+            lines.extend(self._emit_formula_body_lines(ast))
         finally:
             self._formula_cell_address = prev_cell
-        lines.append(f"    return {expr}")
 
         return "\n".join(lines)
 
