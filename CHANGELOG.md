@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.11.0 (2026-07-15)
+
+### Bug Fixes
+
+- **test**: Satisfy ty check for compute_all calls in unpack tests
+  ([#402](https://github.com/Teal-Insights/excel-grapher/pull/402),
+  [`2e53f32`](https://github.com/Teal-Insights/excel-grapher/commit/2e53f32abcf59b2c92d6cb3d47af88fe494855ad))
+
+### Features
+
+- **exporter**: Optional return-line unpacking in codegen
+  ([#402](https://github.com/Teal-Insights/excel-grapher/pull/402),
+  [`2e53f32`](https://github.com/Teal-Insights/excel-grapher/commit/2e53f32abcf59b2c92d6cb3d47af88fe494855ad))
+
+### Refactoring
+
+- **evaluator**: Lazy range cleanup (#336 Phase 4)
+  ([#401](https://github.com/Teal-Insights/excel-grapher/pull/401),
+  [`cd88838`](https://github.com/Teal-Insights/excel-grapher/commit/cd88838a8cccaf6c6a9237b40405f93a7749f651))
+
+- **exporter**: Hoist return temps during formula AST emission
+  ([#402](https://github.com/Teal-Insights/excel-grapher/pull/402),
+  [`2e53f32`](https://github.com/Teal-Insights/excel-grapher/commit/2e53f32abcf59b2c92d6cb3d47af88fe494855ad))
+
+### Testing
+
+- **exporter**: Broaden unpack_return coverage and docs
+  ([#402](https://github.com/Teal-Insights/excel-grapher/pull/402),
+  [`2e53f32`](https://github.com/Teal-Insights/excel-grapher/commit/2e53f32abcf59b2c92d6cb3d47af88fe494855ad))
+
+
 ## v3.10.1 (2026-07-15)
 
 ### Performance Improvements
