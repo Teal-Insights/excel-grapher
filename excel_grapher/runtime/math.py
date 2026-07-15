@@ -21,14 +21,10 @@ from excel_grapher.core.math_funcs import (
     stdev_cells,
     sum_cells,
 )
+from excel_grapher.core.numpy_support import np
 from excel_grapher.core.operator_thresholds import MIN_OPERATOR_FASTPATH_CELLS
 from excel_grapher.core.operators_reference import reference_sumproduct_arrays
 from excel_grapher.core.sumproduct import sumproduct_cells
-
-try:
-    import numpy as np
-except ImportError:  # pragma: no cover - exercised when the `fast` extra is absent
-    np = None  # type: ignore[assignment]
 
 if np is not None:
     from excel_grapher.core.operators_fastpath import try_fastpath_sumproduct

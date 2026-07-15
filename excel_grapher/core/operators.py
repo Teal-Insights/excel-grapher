@@ -21,6 +21,7 @@ from typing import Any, cast
 from .coercions import to_number
 from .grid import Grid
 from .grid.grid import _as_nested_rows_from_ndarray
+from .numpy_support import np
 from .operator_maps import map_arithmetic, map_compare, map_concat, map_unary
 from .operator_thresholds import MIN_OPERATOR_FASTPATH_CELLS
 from .operators_reference import (
@@ -32,11 +33,6 @@ from .operators_reference import (
     reference_concat_array,
 )
 from .types import CellValue, FormulaValue, XlError
-
-try:
-    import numpy as np
-except ImportError:  # pragma: no cover - exercised when the `fast` extra is absent
-    np = None  # type: ignore[assignment]
 
 if np is not None:
     from .operators_fastpath import (
