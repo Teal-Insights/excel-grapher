@@ -157,3 +157,127 @@ def test_normalized_formula_resolves_range_named_range(tmp_path: Path) -> None:
     # Range-based name should be fully expanded in normalized_formula so that
     # downstream parsers never see a bare identifier like NumRange.
     assert node.normalized_formula == "=VLOOKUP(Sheet1!A1, Sheet1!A1:B1, 2, FALSE())"
+
+
+def test_named_range_map_resolves_offset_counta_plus_literal(tmp_path: Path) -> None:
+    """OFFSET height/width with COUNTA(...)+n (LIC-DSF DSF__DATA_* pattern) resolve to padded ranges."""
+    excel_path = tmp_path / "offset_counta_plus.xlsx"
+    wb = _new_workbook()
+    wb.create_sheet("CPIA")
+    cpia = wb["CPIA"]
+    # Two non-blank rows in col A, three non-blank header cells → COUNTA+5 => h=7, w=8
+    cpia["A1"].value = "Database"
+    cpia["B1"].value = "Code"
+    cpia["C1"].value = "Year"
+    cpia["A2"].value = "book.xlsx"
+    cpia["B2"].value = 652
+    cpia["C2"].value = 3.5
+    attr = "OFFSET(CPIA!$A$1,0,0,COUNTA(CPIA!$A:$A)+5,COUNTA(CPIA!$1:$1)+5)"
+    wb.defined_names.add(DefinedName("DSF__DATA_CPIA", attr_text=attr))
+    wb.save(excel_path)
+
+    maps = build_named_range_map(
+        fastpyxl.load_workbook(excel_path, data_only=False, read_only=True)
+    )
+    assert "DSF__DATA_CPIA" in maps.range_map
+    sheet, start, end = maps.range_map["DSF__DATA_CPIA"]
+    assert sheet == "CPIA"
+    assert start == "A1"
+    # Must not collapse to the 1x1 anchor A1:A1 (issue #410).
+    assert end != "A1"
+    assert end == "H7"
+
+
+def test_named_range_map_resolves_offset_counta_minus_literal(tmp_path: Path) -> None:
+    """OFFSET height with COUNTA(...)-n resolves without collapsing to the anchor."""
+    excel_path = tmp_path / "offset_counta_minus.xlsx"
+    wb = _new_workbook()
+    wb.create_sheet("lookup")
+    lookup = wb["lookup"]
+    lookup["AX4"].value = "a"
+    lookup["AX5"].value = "b"
+    lookup["AX6"].value = "c"
+    attr = "OFFSET(lookup!$AX$4,0,0,COUNTA(lookup!$AX:$AX)-1,1)"
+    wb.defined_names.add(DefinedName("SHEETS_TO_HIDE", attr_text=attr))
+    wb.save(excel_path)
+
+    maps = build_named_range_map(
+        fastpyxl.load_workbook(excel_path, data_only=False, read_only=True)
+    )
+    assert "SHEETS_TO_HIDE" in maps.range_map
+    sheet, start, end = maps.range_map["SHEETS_TO_HIDE"]
+    assert sheet == "lookup"
+    assert start == "AX4"
+    # COUNTA(AX4:AX6)=3 → height 2 → AX4:AX5
+    assert end == "AX5"
+
+
+def test_named_range_map_omits_offset_when_counta_minus_nonpositive(
+    tmp_path: Path,
+) -> None:
+    """COUNTA(...)-n that yields a non-positive height must not register a poison 1x1."""
+    excel_path = tmp_path / "offset_counta_nonpositive.xlsx"
+    wb = _new_workbook()
+    wb.create_sheet("lookup")
+    lookup = wb["lookup"]
+    lookup["AX4"].value = "only"
+    attr = "OFFSET(lookup!$AX$4,0,0,COUNTA(lookup!$AX:$AX)-1,1)"
+    wb.defined_names.add(DefinedName("SHEETS_TO_HIDE", attr_text=attr))
+    wb.save(excel_path)
+
+    maps = build_named_range_map(
+        fastpyxl.load_workbook(excel_path, data_only=False, read_only=True)
+    )
+    assert "SHEETS_TO_HIDE" not in maps.range_map
+    assert "SHEETS_TO_HIDE" not in maps.cell_map
+
+
+def test_named_range_map_omits_offset_with_unevaluable_extent(tmp_path: Path) -> None:
+    """Explicit height using unsupported COUNTIF must not collapse to the 1x1 anchor."""
+    excel_path = tmp_path / "offset_countif_extent.xlsx"
+    wb = _new_workbook()
+    wb.create_sheet("lookup")
+    lookup = wb["lookup"]
+    lookup["AY4"].value = "x"
+    lookup["AY5"].value = "y"
+    attr = 'OFFSET(lookup!$AY$4,0,0,COUNTIF(lookup!$AY:$AY,"?*")-1,1)'
+    wb.defined_names.add(DefinedName("COUNTRY_DROP_DOWN", attr_text=attr))
+    wb.save(excel_path)
+
+    maps = build_named_range_map(
+        fastpyxl.load_workbook(excel_path, data_only=False, read_only=True)
+    )
+    assert "COUNTRY_DROP_DOWN" not in maps.range_map
+    assert "COUNTRY_DROP_DOWN" not in maps.cell_map
+
+
+def test_dependency_graph_expands_offset_counta_plus_named_range(tmp_path: Path) -> None:
+    """INDEX over a COUNTA+n named range expands to the padded table, not A1:A1."""
+    excel_path = tmp_path / "graph_offset_counta_plus.xlsx"
+    wb = _new_workbook()
+    wb.create_sheet("CPIA")
+    cpia = wb["CPIA"]
+    cpia["A1"].value = "hdr"
+    cpia["B1"].value = "code"
+    cpia["C1"].value = "year"
+    cpia["A2"].value = "row"
+    cpia["B2"].value = 652
+    cpia["C2"].value = 3.5
+    wb.defined_names.add(
+        DefinedName(
+            "DSF__DATA_CPIA",
+            attr_text="OFFSET(CPIA!$A$1,0,0,COUNTA(CPIA!$A:$A)+5,COUNTA(CPIA!$1:$1)+5)",
+        )
+    )
+    ws = wb["Sheet1"]
+    ws["D1"].value = "=INDEX(DSF__DATA_CPIA,2,3)"
+    wb.save(excel_path)
+
+    graph = create_dependency_graph(excel_path, ["Sheet1!D1"], load_values=False)
+    node = graph.get_node("Sheet1!D1")
+    assert node is not None
+    assert node.normalized_formula is not None
+    assert "CPIA!A1:A1" not in node.normalized_formula
+    assert "CPIA!A1:H7" in node.normalized_formula
+    deps = graph.get_dependencies("Sheet1!D1")
+    assert "CPIA!C2" in deps
