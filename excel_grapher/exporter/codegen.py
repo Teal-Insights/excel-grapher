@@ -649,11 +649,43 @@ class CodeGenerator:
         return dict(group_manifest(bindings))
 
     @staticmethod
+    def _series_binding_reader_discovery(
+        graph: DependencyGraph,
+        bindings: WorkbookSeriesBindings | None,
+        *,
+        workbook: Path | str | None,
+        export_addresses: Iterable[str] | None = None,
+    ) -> tuple[dict[str, dict[str, object]] | None, dict[str, dict[str, object]] | None]:
+        """Return discovery payloads for `list_reader_leaves` / `list_reader_ranges`."""
+        if bindings is None or workbook is None:
+            return None, None
+        from excel_grapher.series_bindings.normalize import has_input_direction
+        from excel_grapher.series_bindings.reader_index import (
+            build_reader_index,
+            reader_index_as_discovery_dicts,
+        )
+
+        if not any(
+            isinstance(series, dict) and has_input_direction(series)
+            for series in bindings.get("series", [])
+        ):
+            return None, None
+        index = build_reader_index(
+            graph,
+            bindings,
+            workbook=workbook,
+            export_addresses=export_addresses,
+        )
+        return reader_index_as_discovery_dicts(index)
+
+    @staticmethod
     def _emit_series_binding_discovery_lines(
         setter_names: Sequence[str],
         compute_names: Sequence[str],
         groups_manifest: Mapping[str, Any] | None = None,
         reader_names: Sequence[str] | None = None,
+        reader_leaves: Mapping[str, Mapping[str, object]] | None = None,
+        reader_ranges: Mapping[str, Mapping[str, object]] | None = None,
     ) -> list[str]:
         """Emit generated-code helpers that list public series-binding functions."""
         lines = [
@@ -671,6 +703,26 @@ class CodeGenerator:
             '    """Return generated series-binding compute function names."""',
             f"    return {list(compute_names)!r}",
         ]
+        if reader_leaves is not None:
+            lines.extend(
+                [
+                    "",
+                    "",
+                    "def list_reader_leaves() -> dict[str, dict[str, object]]:",
+                    '    """Return address → semantic reader call metadata."""',
+                    f"    return {dict(reader_leaves)!r}",
+                ]
+            )
+        if reader_ranges is not None:
+            lines.extend(
+                [
+                    "",
+                    "",
+                    "def list_reader_ranges() -> dict[str, dict[str, object]]:",
+                    '    """Return binding-aligned data_range → range-reader metadata."""',
+                    f"    return {dict(reader_ranges)!r}",
+                ]
+            )
         if groups_manifest is not None:
             lines.extend(
                 [
@@ -2317,6 +2369,8 @@ class CodeGenerator:
         series_setter_names: list[str] = []
         series_reader_names: list[str] = []
         series_compute_names: list[str] = []
+        reader_leaves: dict[str, dict[str, object]] | None = None
+        reader_ranges: dict[str, dict[str, object]] | None = None
         if series_bindings is not None:
             if bindings_workbook is None:
                 raise ValueError("bindings_workbook is required when series_bindings is set")
@@ -2336,12 +2390,20 @@ class CodeGenerator:
                 )
             )
             lines.append("")
+            reader_leaves, reader_ranges = self._series_binding_reader_discovery(
+                cast("DependencyGraph", self._public_graph()),
+                series_bindings,
+                workbook=bindings_workbook,
+                export_addresses=_all_cells,
+            )
         lines.extend(
             self._emit_series_binding_discovery_lines(
                 series_setter_names,
                 series_compute_names,
                 self._series_binding_groups_manifest(series_bindings),
                 reader_names=series_reader_names,
+                reader_leaves=reader_leaves,
+                reader_ranges=reader_ranges,
             )
         )
         lines.append("")
@@ -2496,6 +2558,8 @@ class CodeGenerator:
         series_setter_names: list[str] = []
         series_reader_names: list[str] = []
         series_compute_names: list[str] = []
+        reader_leaves: dict[str, dict[str, object]] | None = None
+        reader_ranges: dict[str, dict[str, object]] | None = None
         api_helpers_py: str | None = None
         if series_bindings is not None:
             if bindings_workbook is None:
@@ -2531,6 +2595,12 @@ class CodeGenerator:
             series_range_reader_names = self._series_binding_emitted_range_reader_names(
                 setter_lines
             )
+            reader_leaves, reader_ranges = self._series_binding_reader_discovery(
+                cast("DependencyGraph", self._public_graph()),
+                series_bindings,
+                workbook=bindings_workbook,
+                export_addresses=_all_cells,
+            )
             api_lines.append("")
         else:
             series_range_reader_names = []
@@ -2541,6 +2611,8 @@ class CodeGenerator:
                 series_compute_names,
                 groups_manifest,
                 reader_names=series_reader_names,
+                reader_leaves=reader_leaves,
+                reader_ranges=reader_ranges,
             )
         )
         api_lines.append("")
@@ -2581,6 +2653,10 @@ class CodeGenerator:
             "list_readers",
             "list_computes",
         ]
+        if reader_leaves is not None:
+            api_exports.append("list_reader_leaves")
+        if reader_ranges is not None:
+            api_exports.append("list_reader_ranges")
         if groups_manifest is not None:
             api_exports.append("list_groups")
         api_exports.extend(series_setter_names)
