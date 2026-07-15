@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from excel_grapher.core.address_keys import CellKey, NodeShape, RangeKey, UnionKey
+from excel_grapher.core.address_keys import CellKey, NodeShape, RangeKey, UnionKey, parse_node_key
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.node import (
     Node,
     NodeKind,
     locate_cell,
     make_cell_node,
-    make_row_node,
     make_union_node,
     member_keys,
     node_to_view,
@@ -40,8 +39,6 @@ def test_make_cell_node() -> None:
 def test_make_union_node_from_scattered_members() -> None:
     node = make_union_node(
         ["Sheet1!E5", "Sheet1!A1", "Sheet1!C1", "Sheet1!B1", "Sheet1!D1"],
-        formula="=1",
-        normalized_formula="=1",
         is_leaf=False,
     )
     assert isinstance(node.address, UnionKey)
@@ -50,7 +47,8 @@ def test_make_union_node_from_scattered_members() -> None:
     assert node.shape is NodeShape.union
     assert node.kind is NodeKind.union
     assert node.value is None
-    assert node.formula == "=1"
+    assert node.formula is None
+    assert node.normalized_formula is None
     assert set(member_keys(node)) == {
         "Sheet1!A1",
         "Sheet1!B1",
@@ -96,12 +94,26 @@ def test_make_union_node_single_cell_prefers_cell_node() -> None:
     assert node.address == "Sheet1!E63"
 
 
-def test_make_row_node_shim_uses_range_address() -> None:
-    node = make_row_node("Sheet1", 63, "D", "Y")
+def test_make_union_node_rejects_formula_for_multi_cell() -> None:
+    with pytest.raises(ValueError, match="Multi-cell nodes cannot have formula"):
+        make_union_node(["Sheet1!D63", "Sheet1!Y63"], formula="=SUM(D63:Y63)")
+
+
+def test_node_from_one_row_address_kwarg_uses_union_kind() -> None:
+    node = Node(
+        sheet=None,
+        column=None,
+        row=None,
+        formula=None,
+        normalized_formula=None,
+        value=None,
+        is_leaf=True,
+        address=parse_node_key("Sheet1!D63:Y63"),
+    )
     assert isinstance(node.address, RangeKey)
     assert node.address == "Sheet1!D63:Y63"
     assert node.shape is NodeShape.row
-    assert node.kind is NodeKind.row
+    assert node.kind is NodeKind.union
     assert node.column is None
     assert node.row == 63
     assert node.min_col == "D"

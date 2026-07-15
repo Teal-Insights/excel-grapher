@@ -100,8 +100,6 @@ def test_scenario_d_taco_and_optimal_skip_hand_built_union() -> None:
     g = DependencyGraph()
     union = make_union_node(
         ["Sheet1!Z1", "Sheet1!Z2", "Sheet1!Z9"],
-        formula="=1",
-        normalized_formula="=1",
         is_leaf=False,
     )
     a1 = _formula_cell("Sheet1", "A", 1, "=1")

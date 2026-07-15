@@ -98,6 +98,10 @@ class GraphReadView(Protocol):
 
     def get_dependents(self, address: NodeKey) -> frozenset[NodeKey]: ...
 
+    def resolve_endpoint(self, address: NodeKey) -> NodeKey | None: ...
+
+    def get_dependency_nodes(self, address: NodeKey) -> frozenset[NodeKey]: ...
+
     def get_edge_attrs(self, from_key: NodeKey, to_key: NodeKey) -> EdgeAttrs: ...
 
     def get_edge_guard(self, from_key: NodeKey, to_key: NodeKey) -> GuardExpr | None: ...
@@ -125,10 +129,10 @@ class DependencyGraph:
     `cell_owner`) when resolving a workbook cell that may belong to a group;
     then call `get_node` on the returned `node_key`.
 
-    Edge endpoints are occupancy-canonical: `add_edge` rewrites member-cell
-    endpoints to their owning graph key, and read APIs
-    (`get_dependencies` / `get_dependents` / `get_edge_attrs` /
-    `get_edge_guard`) resolve member lookups the same way.
+    Edge endpoints may name member cells. `get_dependencies` /
+    `get_dependents` / `get_edge_attrs` keep those raw keys so member-level
+    provenance is preserved. Use `resolve_endpoint` or `get_dependency_nodes`
+    when a stored graph node is required (evaluation order, export, codegen).
     """
 
     _nodes: dict[NodeKey, Node] = field(default_factory=dict)
@@ -266,19 +270,6 @@ class DependencyGraph:
 
     # ---- edge insertion -----------------------------------------------------
 
-    def _canonicalize_edge_endpoint(self, key: NodeKey) -> NodeKey:
-        """Rewrite a member-cell endpoint to its occupancy owner when present.
-
-        Exact multi-cell keys and unknown (dangling) cell keys are returned
-        normalized and unchanged. Occupancy maps every owned cell — including
-        single-cell nodes that own themselves — to its stored graph key.
-        """
-        nk = normalize_key(key)
-        owner = self._occupancy.get(nk)
-        if owner is not None:
-            return owner
-        return nk
-
     def add_edge(
         self,
         from_key: NodeKey,
@@ -289,11 +280,12 @@ class DependencyGraph:
     ) -> None:
         """Add edge: from_key depends on to_key (from_key -> to_key).
 
-        Member-cell endpoints are rewritten to their occupancy owners so stored
-        adjacency always names graph nodes (or deliberately dangling keys).
+        Endpoints are stored as given (after `normalize_key`). Member-cell
+        keys are allowed; callers that need owner nodes should resolve via
+        `resolve_endpoint` / `get_dependency_nodes`.
         """
-        from_key = self._canonicalize_edge_endpoint(from_key)
-        to_key = self._canonicalize_edge_endpoint(to_key)
+        from_key = normalize_key(from_key)
+        to_key = normalize_key(to_key)
         unknown_attrs = [k for k in attrs if k != "provenance"]
         if unknown_attrs:
             names = ", ".join(sorted(unknown_attrs))
@@ -353,9 +345,10 @@ class DependencyGraph:
     def get_dependencies(self, key: NodeKey) -> frozenset[NodeKey]:
         """Return an immutable snapshot of `key`'s dependencies (cells it reads).
 
-        Member-cell keys resolve to their occupancy owner before lookup.
+        Endpoints are returned exactly as stored (member cells are not rewritten).
+        Use `get_dependency_nodes` when owner graph keys are required.
         """
-        deps = self._edges.get(self._canonicalize_edge_endpoint(key))
+        deps = self._edges.get(normalize_key(key))
         if not deps:
             return frozenset()
         return frozenset(deps)
@@ -363,21 +356,42 @@ class DependencyGraph:
     def get_dependents(self, key: NodeKey) -> frozenset[NodeKey]:
         """Return an immutable snapshot of cells that depend on `key`.
 
-        Member-cell keys resolve to their occupancy owner before lookup.
+        Endpoints are returned exactly as stored (member cells are not rewritten).
         """
-        deps = self._reverse_edges.get(self._canonicalize_edge_endpoint(key))
+        deps = self._reverse_edges.get(normalize_key(key))
         if not deps:
             return frozenset()
         return frozenset(deps)
 
+    def resolve_endpoint(self, key: NodeKey) -> NodeKey | None:
+        """Map an edge endpoint to a stored node key (exact or occupancy owner).
+
+        Returns `None` when the key is neither a graph node nor an occupied
+        member cell.
+        """
+        return self._resolve_graph_endpoint(key)
+
+    def get_dependency_nodes(self, key: NodeKey) -> frozenset[NodeKey]:
+        """Return dependencies resolved to stored graph node keys.
+
+        Member-cell endpoints map to their occupancy owners. Unresolvable
+        dangling endpoints are omitted.
+        """
+        out: set[NodeKey] = set()
+        for dep in self.get_dependencies(key):
+            resolved = self.resolve_endpoint(dep)
+            if resolved is not None:
+                out.add(resolved)
+        return frozenset(out)
+
     def get_edge_attrs(self, from_key: NodeKey, to_key: NodeKey) -> EdgeAttrs:
         """Return a typed snapshot of the attributes on edge `from_key -> to_key`.
 
-        Member-cell endpoints resolve to occupancy owners. When the edge does
-        not exist, returns an `EdgeAttrs` with all fields set to `None`.
+        Lookup uses exact stored endpoints (no occupancy rewrite). When the edge
+        does not exist, returns an `EdgeAttrs` with all fields set to `None`.
         """
-        fk = self._canonicalize_edge_endpoint(from_key)
-        tk = self._canonicalize_edge_endpoint(to_key)
+        fk = normalize_key(from_key)
+        tk = normalize_key(to_key)
         if tk not in self._edges.get(fk, set()):
             return EdgeAttrs()
         extra = self._edge_extra.get((fk, tk), {})
@@ -390,10 +404,10 @@ class DependencyGraph:
     def get_edge_guard(self, from_key: NodeKey, to_key: NodeKey) -> GuardExpr | None:
         """Return the guard on edge `from_key -> to_key`, or `None` if none.
 
-        Member-cell endpoints resolve to occupancy owners.
+        Lookup uses exact stored endpoints (no occupancy rewrite).
         """
-        fk = self._canonicalize_edge_endpoint(from_key)
-        tk = self._canonicalize_edge_endpoint(to_key)
+        fk = normalize_key(from_key)
+        tk = normalize_key(to_key)
         v = self._guards.get((fk, tk))
         return v if isinstance(v, GuardExpr) else None
 

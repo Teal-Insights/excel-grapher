@@ -1,67 +1,40 @@
-"""Unit tests for one-row subrange location within row nodes."""
+"""Unit tests for locating one-row ranges within graph nodes."""
 
 from __future__ import annotations
 
 import pytest
 
+from excel_grapher.core.address_keys import parse_node_key
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.node import (
     Node,
     NodeKind,
     RangeLocation,
-    find_row_nodes_covering,
     locate_range,
-    make_row_node,
-    row_node_covers_range,
 )
 
 
-def _cell(sheet: str, col: str, row: int) -> Node:
-    return Node(sheet, col, row, None, None, 0, True)
+def _row_span(start: str = "D", end: str = "Y", row: int = 63) -> Node:
+    return Node(
+        sheet=None,
+        column=None,
+        row=None,
+        formula=None,
+        normalized_formula=None,
+        value=None,
+        is_leaf=True,
+        address=parse_node_key(f"Sheet1!{start}{row}:{end}{row}"),
+    )
 
 
-def test_row_node_covers_range_subspan() -> None:
-    row = make_row_node("Sheet1", 63, "D", "Y")
-    assert row_node_covers_range(row, "Sheet1!E63:G63")
-    assert row_node_covers_range(row, "Sheet1!D63:Y63")  # exact
-    assert row_node_covers_range(row, "Sheet1!Y63:E63")  # inverted -> canonicalized
-    assert row_node_covers_range(row, "Sheet1!D63:Sheet1!F63")
-    assert row_node_covers_range(row, "Sheet1!$E$63:$G$63")
-
-
-def test_row_node_covers_range_rejects_partial_or_outside() -> None:
-    row = make_row_node("Sheet1", 63, "D", "Y")
-    assert not row_node_covers_range(row, "Sheet1!C63:E63")  # starts outside
-    assert not row_node_covers_range(row, "Sheet1!X63:Z63")  # ends outside
-    assert not row_node_covers_range(row, "Sheet1!E64:G64")  # wrong row
-    assert not row_node_covers_range(row, "Other!E63:G63")
-
-
-def test_row_node_covers_range_rejects_multi_row() -> None:
-    row = make_row_node("Sheet1", 63, "D", "Y")
-    with pytest.raises(ValueError, match="one-row|same row"):
-        row_node_covers_range(row, "Sheet1!D63:Y64")
-
-
-def test_find_row_nodes_covering_accepts_subrange() -> None:
+def test_locate_range_exact_one_row_union_node() -> None:
     g = DependencyGraph()
-    g.add_node(make_row_node("Sheet1", 63, "D", "Y"))
-    g.add_node(make_row_node("Sheet1", 64, "D", "Y"))
-
-    assert find_row_nodes_covering(g, "Sheet1!E63:G63") == ["Sheet1!D63:Y63"]
-    assert find_row_nodes_covering(g, "Sheet1!G63:E63") == ["Sheet1!D63:Y63"]
-    assert find_row_nodes_covering(g, "Sheet1!E64:G64") == ["Sheet1!D64:Y64"]
-    assert find_row_nodes_covering(g, "Sheet1!C63:E63") == []
-
-
-def test_locate_range_exact_row_node() -> None:
-    g = DependencyGraph()
-    g.add_node(make_row_node("Sheet1", 63, "D", "Y"))
+    g.add_node(_row_span())
 
     loc = locate_range(g, "Sheet1!Y63:D63")
     assert loc == RangeLocation(
         range_key="Sheet1!D63:Y63",
-        kind=NodeKind.row,
+        kind=NodeKind.union,
         node_key="Sheet1!D63:Y63",
         min_col="D",
         max_col="Y",
@@ -69,14 +42,14 @@ def test_locate_range_exact_row_node() -> None:
     )
 
 
-def test_locate_range_subspan_inside_row_node() -> None:
+def test_locate_range_subspan_inside_one_row_union_node() -> None:
     g = DependencyGraph()
-    g.add_node(make_row_node("Sheet1", 63, "D", "Y"))
+    g.add_node(_row_span())
 
     loc = locate_range(g, "Sheet1!E63:G63")
     assert loc == RangeLocation(
         range_key="Sheet1!E63:G63",
-        kind=NodeKind.row,
+        kind=NodeKind.union,
         node_key="Sheet1!D63:Y63",
         min_col="E",
         max_col="G",
@@ -86,21 +59,22 @@ def test_locate_range_subspan_inside_row_node() -> None:
 
 def test_locate_range_missing() -> None:
     g = DependencyGraph()
-    g.add_node(make_row_node("Sheet1", 63, "D", "Y"))
+    g.add_node(_row_span())
     assert locate_range(g, "Sheet1!C63:E63") is None
 
 
-def test_locate_range_rejects_cell_key() -> None:
+def test_locate_range_rejects_cell_or_collapsed_one_by_one_key() -> None:
     g = DependencyGraph()
-    g.add_node(make_row_node("Sheet1", 63, "D", "Y"))
-    with pytest.raises(ValueError, match="one-row|range"):
-        locate_range(g, "Sheet1!E63")
+    g.add_node(_row_span())
+    for key in ("Sheet1!E63", "Sheet1!E63:E63"):
+        with pytest.raises(ValueError, match="one-row|range"):
+            locate_range(g, key)
 
 
 def test_locate_range_rejects_overlapping_owners() -> None:
     g = DependencyGraph()
-    g.add_node(make_row_node("Sheet1", 63, "D", "M"))
-    g._nodes["Sheet1!E63:Y63"] = make_row_node("Sheet1", 63, "E", "Y")
+    g.add_node(_row_span("D", "M"))
+    g._nodes["Sheet1!E63:Y63"] = _row_span("E", "Y")
     g._edges.setdefault("Sheet1!E63:Y63", set())
     g._reverse_edges.setdefault("Sheet1!E63:Y63", set())
 

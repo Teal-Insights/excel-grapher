@@ -58,19 +58,20 @@ def test_evaluation_order_follows_owner_when_edge_targets_member() -> None:
     )
     g.add_node(union)
     g.add_node(dependent)
-    # Edge names the member cell; add_edge rewrites to the occupancy owner.
+    # Edge names the member cell; owner resolution is explicit at read time.
     g.add_edge(dependent.key, "Sheet1!D63")
 
-    assert g.get_dependencies(dependent.key) == frozenset({union.key})
-    assert g.get_dependents(union.key) == frozenset({dependent.key})
+    assert g.get_dependencies(dependent.key) == frozenset({"Sheet1!D63"})
+    assert g.get_dependency_nodes(dependent.key) == frozenset({union.key})
+    assert g.resolve_endpoint("Sheet1!D63") == union.key
+    assert g.get_dependents(union.key) == frozenset()
     assert g.get_dependents("Sheet1!D63") == frozenset({dependent.key})
-    assert "Sheet1!D63" not in g.get_dependencies(dependent.key)
 
     order = g.evaluation_order()
     assert order.index(union.key) < order.index(dependent.key)
 
 
-def test_add_edge_rewrites_member_from_and_to_endpoints() -> None:
+def test_add_edge_keeps_raw_member_endpoints_and_resolves_dependencies() -> None:
     g = DependencyGraph()
     left = make_union_node(["Sheet1!A1", "Sheet1!B1"], is_leaf=False)
     right = make_union_node(["Sheet1!D63", "Sheet1!Y63"], is_leaf=True)
@@ -78,10 +79,15 @@ def test_add_edge_rewrites_member_from_and_to_endpoints() -> None:
     g.add_node(right)
     g.add_edge("Sheet1!A1", "Sheet1!D63")
 
-    assert g.get_dependencies(left.key) == frozenset({right.key})
-    assert g.get_dependents(right.key) == frozenset({left.key})
+    assert g.get_dependencies(left.key) == frozenset()
+    assert g.get_dependencies("Sheet1!A1") == frozenset({"Sheet1!D63"})
+    assert g.get_dependency_nodes("Sheet1!A1") == frozenset({right.key})
+    assert g.get_dependents(right.key) == frozenset()
+    assert g.get_dependents("Sheet1!D63") == frozenset({"Sheet1!A1"})
     attrs = g.get_edge_attrs("Sheet1!A1", "Sheet1!D63")
     assert attrs.guard is None
+    assert g.resolve_endpoint("Sheet1!A1") == left.key
+    assert g.resolve_endpoint("Sheet1!D63") == right.key
     assert g.get_edge_attrs(left.key, right.key).guard is None
 
 

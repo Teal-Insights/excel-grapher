@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Hand-built DependencyGraph with first-class row nodes (issue #374).
+"""Hand-built DependencyGraph with a one-row union node.
 
 `create_dependency_graph` still expands ranges to cell precedents. This script
-shows the storage/edges API: construct a one-row node, wire cell↔row edges,
+shows the storage/edges API: construct a one-row union, wire cell/union edges,
 look up non-canonical keys, and print evaluation order + Mermaid.
 
 Run from the repo root::
@@ -19,8 +19,8 @@ from excel_grapher.grapher.node import (
     NodeKind,
     locate_cell,
     locate_range,
-    make_row_node,
-    row_member_keys,
+    make_union_node,
+    member_keys,
 )
 
 
@@ -55,7 +55,10 @@ def build_demo_graph() -> DependencyGraph:
     g.sheet_order = ["Sheet1"]
 
     # One-row precedent spanning D63:Y63 (hand-inserted; not from the builder).
-    inputs = make_row_node("Sheet1", 63, "D", "Y", metadata={"role": "inputs"})
+    inputs = make_union_node(
+        [f"Sheet1!{chr(col)}63" for col in range(ord("D"), ord("Y") + 1)],
+        metadata={"role": "inputs"},
+    )
     total = _formula("Sheet1", "A", 63, "=SUM(D63:Y63)")
     flag = _leaf("Sheet1", "C", 1, value=True)
 
@@ -74,9 +77,10 @@ def main() -> None:
 
     view = g.get_node(row_key)
     assert view is not None
-    print("Row node")
+    print("One-row union node")
     print(f"  key:      {view.key}")
     print(f"  kind:     {view.kind}")
+    print(f"  shape:    {view.shape}")
     print(f"  address:  {view.address}")
     print(f"  extent:   {view.min_col}{view.row}:{view.max_col}{view.row}")
     print(f"  metadata: {dict(view.metadata)}")
@@ -94,8 +98,8 @@ def main() -> None:
         print(f"  {alias!r:30} -> {None if found is None else found.key}")
     print()
 
-    members = row_member_keys(view)
-    print(f"Member cell keys ({len(members)}): {members[0]} … {members[-1]}")
+    members = member_keys(view)
+    print(f"Member cell keys ({len(members)}): {members[0]} ... {members[-1]}")
     print()
 
     print("Where does this cell live?")
@@ -124,7 +128,7 @@ def main() -> None:
         deps = sorted(g.get_dependencies(key))
         if deps:
             print(f"  {key} depends on {deps}")
-    print(f"  dependents of row: {sorted(g.get_dependents(row_key))}")
+    print(f"  dependents of union: {sorted(g.get_dependents(row_key))}")
     print()
 
     print("Evaluation order")

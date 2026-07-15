@@ -6,6 +6,7 @@ import pickle
 
 import pytest
 
+from excel_grapher.core.address_keys import parse_node_key
 from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.guard import CellRef, Compare, Literal
@@ -14,7 +15,6 @@ from excel_grapher.grapher.node import (
     NodeKind,
     locate_cell,
     make_cell_node,
-    make_row_node,
     make_union_node,
 )
 from excel_grapher.grapher.subgraph import _induced_dependency_subgraph
@@ -115,7 +115,7 @@ def test_cell_to_union_edge() -> None:
 
 def test_union_to_cell_edge() -> None:
     g = DependencyGraph()
-    union = make_union_node(["Sheet1!A1", "Sheet1!E5"], formula="=Z1")
+    union = make_union_node(["Sheet1!A1", "Sheet1!E5"], is_leaf=False)
     cell = _cell("Sheet1", "Z", 1)
     g.add_node(union)
     g.add_node(cell)
@@ -194,7 +194,16 @@ def test_pickle_roundtrip_mixed_union_graph() -> None:
         ["Sheet1!A1", "Sheet1!B1", "Sheet1!E5"],
         metadata={"tag": "group"},
     )
-    other = make_row_node("Sheet1", 64, "D", "Y")
+    other = Node(
+        sheet=None,
+        column=None,
+        row=None,
+        formula=None,
+        normalized_formula=None,
+        value=None,
+        is_leaf=True,
+        address=parse_node_key("Sheet1!D64:Y64"),
+    )
     g.add_node(cell)
     g.add_node(union)
     g.add_node(other)
@@ -250,9 +259,20 @@ def test_induce_subgraph_rebuilds_occupancy() -> None:
     assert locate_cell(sub, "Sheet1!E5") is not None
 
 
-def test_row_node_still_registers_occupancy() -> None:
+def test_one_row_union_registers_occupancy() -> None:
     g = DependencyGraph()
-    g.add_node(make_row_node("Sheet1", 63, "D", "Y"))
+    g.add_node(
+        Node(
+            sheet=None,
+            column=None,
+            row=None,
+            formula=None,
+            normalized_formula=None,
+            value=None,
+            is_leaf=True,
+            address=parse_node_key("Sheet1!D63:Y63"),
+        )
+    )
     assert g.cell_owner("Sheet1!E63") == "Sheet1!D63:Y63"
     with pytest.raises(ValueError, match="occupancy|already|owned"):
         g.add_node(_cell("Sheet1", "E", 63))

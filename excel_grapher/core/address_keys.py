@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
 from enum import StrEnum
 from typing import TypeAlias
 
@@ -144,6 +143,24 @@ def canonical_cell_coord(cell: str) -> str:
     return cell
 
 
+def _parse_a1_cell(cell: str) -> tuple[str, int]:
+    """Parse an A1 cell coordinate into uppercase column letters and row."""
+    try:
+        column, row = coordinate_from_string(canonical_cell_coord(cell))
+    except CellCoordinatesException as exc:
+        raise ValueError(f"Expected A1 cell coordinate, got: {cell!r}") from exc
+    return str(column).upper(), int(row)
+
+
+def _ordered_columns(left: str, right: str) -> tuple[str, str]:
+    """Return two column letters ordered from left to right."""
+    left_u = left.upper()
+    right_u = right.upper()
+    if column_index_from_string(left_u) <= column_index_from_string(right_u):
+        return left_u, right_u
+    return right_u, left_u
+
+
 def split_address_on_colon(address: str) -> tuple[str, str] | None:
     """Split an address on the first colon outside quoted sheet names.
 
@@ -163,96 +180,6 @@ def split_address_on_colon(address: str) -> tuple[str, str] | None:
             return address[:i], address[i + 1 :]
         i += 1
     return None
-
-
-@dataclass(frozen=True, slots=True)
-class ParsedRowKey:
-    """Parsed one-row node key (`Sheet1!D63:Y63`).
-
-    Columns are ordered so `min_col` <= `max_col` by index. `row` is the single
-    worksheet row for both endpoints.
-    """
-
-    sheet: str
-    row: int
-    min_col: str
-    max_col: str
-
-
-def _parse_a1_cell(coord: str) -> tuple[str, int]:
-    """Parse an A1 coordinate into `(column_letters, row)`, stripping `$`."""
-    try:
-        col, row = coordinate_from_string(coord.replace("$", ""))
-    except CellCoordinatesException as exc:
-        raise ValueError(f"Invalid A1 cell coordinate: {coord!r}") from exc
-    return str(col).upper(), int(row)
-
-
-def _ordered_columns(col_a: str, col_b: str) -> tuple[str, str]:
-    """Return `(min_col, max_col)` ordered by column index."""
-    a = column_index_from_string(col_a)
-    b = column_index_from_string(col_b)
-    if a <= b:
-        return col_a, col_b
-    return col_b, col_a
-
-
-def format_row_key(sheet: str, min_col: str, row: int, max_col: str) -> NormalizedAddress:
-    """Format a one-row span as a canonical row-node key.
-
-    Columns are ordered so the left endpoint is the lesser column index
-    (e.g. `Y, D` becomes `Sheet1!D63:Y63`).
-    """
-    left, right = _ordered_columns(min_col.upper(), max_col.upper())
-    return f"{quote_sheet_if_needed(sheet)}!{left}{row}:{right}{row}"
-
-
-def parse_row_key(key: str) -> ParsedRowKey:
-    """Parse a sheet-qualified one-row key into sheet, row, and column span.
-
-    Accepts `Sheet1!D63:Y63`, both-end forms (`Sheet1!D63:Sheet1!Y63`), quoted
-    sheets, and absolute markers (`$D$63`). Raises `ValueError` for cell-only
-    keys, multi-row extents, or cross-sheet ranges.
-    """
-    parts = split_address_on_colon(key)
-    if parts is None:
-        raise ValueError(f"Row key must be a one-row range (got cell-only key): {key!r}")
-
-    start_raw, end_raw = parts
-    start_sheet, start_coord = parse_address(start_raw)
-
-    if "!" in end_raw or end_raw.startswith("'"):
-        end_sheet, end_coord = parse_address(end_raw)
-        if end_sheet != start_sheet:
-            raise ValueError(
-                f"Row key endpoints must share the same sheet: {key!r} "
-                f"({start_sheet!r} vs {end_sheet!r})"
-            )
-    else:
-        end_coord = end_raw
-
-    start_col, start_row = _parse_a1_cell(start_coord)
-    end_col, end_row = _parse_a1_cell(end_coord)
-    if start_row != end_row:
-        raise ValueError(f"Row key must be a one-row extent (same row on both ends): {key!r}")
-
-    min_col, max_col = _ordered_columns(start_col, end_col)
-    return ParsedRowKey(
-        sheet=start_sheet,
-        row=start_row,
-        min_col=min_col,
-        max_col=max_col,
-    )
-
-
-def normalize_row_key(key: str) -> NormalizedAddress:
-    """Normalize a one-row key to canonical :data:`NormalizedAddress` form.
-
-    Unnecessary sheet quoting is stripped, columns are ordered, absolute markers
-    are removed, and both-end sheet qualification collapses to a single prefix.
-    """
-    parsed = parse_row_key(key)
-    return format_row_key(parsed.sheet, parsed.min_col, parsed.row, parsed.max_col)
 
 
 def _split_top_level_comma(address: str) -> list[str]:
@@ -282,10 +209,9 @@ def normalize_key(key: str) -> NormalizedAddress:
     Unnecessary quoting is stripped; sheet names with spaces, hyphens, or
     apostrophes are quoted. Absolute markers (`$`) are stripped and column
     letters are uppercased. For single cells, the result matches `Node.key`.
-    One-row range keys are canonicalized via `normalize_row_key` (ordered
-    columns, including 1x1 forms such as `Sheet1!D63:D63`). Multi-area keys
-    use `parse_node_key`. Other ranges collapse via single-prefix
-    `format_range_key` (same-sheet) or keep both endpoints when sheets differ.
+    Ranges and unions use `parse_node_key` (1x1 ranges collapse to cells).
+    Non-parseable colon forms fall back to `format_range_key` for same-sheet
+    ranges or keep both sheet-qualified endpoints when sheets differ.
 
     Examples:
         >>> normalize_key("'Sheet1'!A1")
@@ -300,16 +226,14 @@ def normalize_key(key: str) -> NormalizedAddress:
         'Sheet1!A1:A3'
         >>> normalize_key("Sheet1!E5,A1:D1")
         'Sheet1!A1:D1,E5'
+        >>> normalize_key("Sheet1!D63:D63")
+        'Sheet1!D63'
     """
     if "," in key and len(_split_top_level_comma(key)) > 1:
         return str(parse_node_key(key))
 
     parts = split_address_on_colon(key)
     if parts is not None:
-        try:
-            return normalize_row_key(key)
-        except ValueError:
-            pass
         try:
             return str(parse_node_key(key))
         except ValueError:

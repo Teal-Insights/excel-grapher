@@ -9,13 +9,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal, TypedDict, cast
 
-from excel_grapher.core.address_keys import (
-    NodeKey as AddressNodeKey,
-)
-from excel_grapher.core.address_keys import (
-    RangeKey,
-    parse_node_key,
-)
+from excel_grapher.core.address_keys import parse_node_key
 
 from .dependency_provenance import DependencyCause, EdgeProvenance
 from .graph import DependencyGraph
@@ -23,19 +17,7 @@ from .guard import And, CellRef, Compare, GuardExpr, Not, Or
 from .guard import Literal as GuardLiteral
 from .node import Node, NodeKey
 
-
-def _node_address_from_json(address: str, kind: str | None) -> AddressNodeKey:
-    """Rebuild a typed address, preserving 1x1 `RangeKey` row shims.
-
-    `parse_node_key` collapses `Sheet1!D63:D63` to a cell; stored `kind=row`
-    means the address must remain a `RangeKey`.
-    """
-    if kind == "row":
-        return RangeKey(address)
-    return parse_node_key(address)
-
-
-GRAPH_CACHE_SCHEMA_VERSION = 2
+GRAPH_CACHE_SCHEMA_VERSION = 3
 
 
 class GraphCacheMeta(TypedDict):
@@ -435,7 +417,6 @@ def dependency_graph_from_json(payload: dict[str, Any]) -> DependencyGraph:
         is_target = bool(n.get("is_target", False))
         metadata = cast(dict[str, Any], n.get("metadata", {}))
         if address is not None:
-            kind = cast(str | None, n.get("kind"))
             node = Node(
                 sheet=cast(str | None, n.get("sheet")),
                 column=cast(str | None, n.get("column")),
@@ -446,7 +427,7 @@ def dependency_graph_from_json(payload: dict[str, Any]) -> DependencyGraph:
                 is_leaf=is_leaf,
                 is_target=is_target,
                 metadata=metadata,
-                address=_node_address_from_json(cast(str, address), kind),
+                address=parse_node_key(cast(str, address)),
             )
         else:
             node = Node(
