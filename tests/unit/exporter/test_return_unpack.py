@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from collections.abc import Callable
 from typing import cast
 
 from excel_grapher import DependencyGraph, FormulaEvaluator, Node
@@ -154,8 +155,7 @@ class TestGenerateUnpackReturnParity:
         code = CodeGenerator(graph, unpack_return=True).generate(targets)
         ns: dict[str, object] = {}
         exec(code, ns)
-        compute_all = cast(object, ns["compute_all"])
-        assert callable(compute_all)
+        compute_all = cast(Callable[[], dict[str, object]], ns["compute_all"])
         generated_results = compute_all()
         assert generated_results == evaluator_results
 
@@ -168,7 +168,8 @@ class TestGenerateUnpackReturnParity:
         with FormulaEvaluator(graph) as ev:
             evaluator_results = ev.evaluate(targets)
         code = CodeGenerator(graph, unpack_return=True).generate(targets)
-        ns: dict[str, object] = {}
+        ns = {}
         exec(code, ns)
-        generated_results = ns["compute_all"]()
+        compute_all = cast(Callable[[], dict[str, object]], ns["compute_all"])
+        generated_results = compute_all()
         assert generated_results == evaluator_results
