@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.10.1 (2026-07-15)
+
+### Performance Improvements
+
+- **runtime**: Stream AVERAGEIF via Grid.at_flat pairing
+  ([#399](https://github.com/Teal-Insights/excel-grapher/pull/399),
+  [`36d0ce6`](https://github.com/Teal-Insights/excel-grapher/commit/36d0ce6823f605fbba6a1754ad967c912fb3419e))
+
+
 ## v3.10.0 (2026-07-15)
 
 ### Features
