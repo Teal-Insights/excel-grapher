@@ -68,6 +68,8 @@ from excel_grapher.series_bindings.schema import (
     validate_bindings_document,
 )
 from excel_grapher.series_bindings.setter_codegen import (
+    emit_reader_function,
+    emit_reader_range_function,
     emit_setter_function,
     emit_setter_helpers,
     emit_setters_block,
@@ -173,6 +175,8 @@ __all__ = [
     "emit_compute_function",
     "emit_computes_block",
     "emit_series_bindings_block",
+    "emit_reader_function",
+    "emit_reader_range_function",
     "emit_setter_function",
     "emit_setter_helpers",
     "emit_setters_block",

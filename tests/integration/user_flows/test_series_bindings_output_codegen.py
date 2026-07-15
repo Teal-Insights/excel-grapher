@@ -110,7 +110,9 @@ def test_codegen_includes_output_compute_and_setter(workbook: Path) -> None:
 
     assert "def set_borvelia_primary_balance(" in code
     assert "def compute_borvelia_primary_balance(" in code
+    assert "def read_borvelia_primary_balance(" in code
     assert "def list_setters() -> list[str]:" in code
+    assert "def list_readers() -> list[str]:" in code
     assert "def list_computes() -> list[str]:" in code
     assert "Record = dict[str, object]" in code
     assert "-> Records:" in code
@@ -119,17 +121,21 @@ def test_codegen_includes_output_compute_and_setter(workbook: Path) -> None:
     exec(code, ns)
     make_context = cast(Callable[[], Any], ns["make_context"])
     list_setters = cast(Callable[[], list[str]], ns["list_setters"])
+    list_readers = cast(Callable[[], list[str]], ns["list_readers"])
     list_computes = cast(Callable[[], list[str]], ns["list_computes"])
     setter = cast(
         Callable[[Any, list[dict[str, object]]], None], ns["set_borvelia_primary_balance"]
     )
+    reader = cast(Callable[..., object], ns["read_borvelia_primary_balance"])
     compute = cast(Callable[..., list[dict[str, object]]], ns["compute_borvelia_primary_balance"])
 
     assert list_setters() == ["set_borvelia_primary_balance"]
+    assert list_readers() == ["read_borvelia_primary_balance"]
     assert list_computes() == ["compute_borvelia_primary_balance"]
 
     ctx = make_context()
     setter(ctx, [{"TIME_PERIOD": 4, "OBS_VALUE": 7.5}])
+    assert reader(ctx, time_period=4) == 7.5
     records = compute(ctx=ctx)
     by_period = {cast(int, r["TIME_PERIOD"]): r for r in records}
     assert by_period[4]["OBS_VALUE"] == 7.5
@@ -186,10 +192,16 @@ def test_generate_modules_exports_output_compute(
         bindings_workbook=workbook,
     )
     assert "def compute_borvelia_primary_balance(" in files["api.py"]
+    assert "def read_borvelia_primary_balance(" in files["api.py"]
+    assert "def read_borvelia_primary_balance_range(" in files["api.py"]
     assert "def list_setters() -> list[str]:" in files["api.py"]
+    assert "def list_readers() -> list[str]:" in files["api.py"]
     assert "def list_computes() -> list[str]:" in files["api.py"]
     assert "compute_borvelia_primary_balance" in files["__init__.py"]
+    assert "read_borvelia_primary_balance" in files["__init__.py"]
+    assert "read_borvelia_primary_balance_range" in files["__init__.py"]
     assert "list_setters" in files["__init__.py"]
+    assert "list_readers" in files["__init__.py"]
     assert "list_computes" in files["__init__.py"]
     assert "Record" in files["api.py"]
 
@@ -203,6 +215,7 @@ def test_generate_modules_exports_output_compute(
         pkg = importlib.import_module("exported_series_output")
         ctx = pkg.make_context()
         assert pkg.list_setters() == ["set_borvelia_primary_balance"]
+        assert pkg.list_readers() == ["read_borvelia_primary_balance"]
         assert pkg.list_computes() == ["compute_borvelia_primary_balance"]
         records = pkg.compute_borvelia_primary_balance(ctx=ctx)
         assert len(records) == 5

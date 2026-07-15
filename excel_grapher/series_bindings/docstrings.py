@@ -19,7 +19,7 @@ from excel_grapher.series_bindings.types import SeriesResolution, WorkbookSeries
 if TYPE_CHECKING:
     from excel_grapher.series_bindings.docstring_renderers import SeriesDocstringRendererSpec
 
-SeriesFunctionKind = Literal["setter", "compute"]
+SeriesFunctionKind = Literal["setter", "compute", "reader"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,6 +277,8 @@ def _default_docstring(
         return str(notes)
     if function_kind == "setter":
         return f"Apply records for {series_id}."
+    if function_kind == "reader":
+        return f"Read the value for {series_id}."
     return f"Compute records for {series_id}."
 
 

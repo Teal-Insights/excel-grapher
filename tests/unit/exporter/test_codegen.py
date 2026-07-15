@@ -781,9 +781,11 @@ class TestCodeGeneratorContextManager:
         namespace: dict[str, object] = {}
         exec(code, namespace)
         list_setters = cast(Callable[[], list[str]], namespace["list_setters"])
+        list_readers = cast(Callable[[], list[str]], namespace["list_readers"])
         list_computes = cast(Callable[[], list[str]], namespace["list_computes"])
 
         assert list_setters() == []
+        assert list_readers() == []
         assert list_computes() == []
 
     def test_generate_entrypoint_uses_target_map(self):
