@@ -198,7 +198,7 @@ def test_xlookup_stops_before_trailing_unused_cells() -> None:
 
 
 def test_sum_over_range_with_error_produces_error_code() -> None:
-    """SUM over a range containing an error surfaces the first error (reductions stay eager)."""
+    """SUM over a range containing an error surfaces the first error's code."""
     graph = _make_graph(
         _make_node("S!A1", None, 1),
         _make_node("S!A2", "=1/0", None),
@@ -210,7 +210,7 @@ def test_sum_over_range_with_error_produces_error_code() -> None:
 
 
 def test_sum_still_evaluates_all_cells_in_range() -> None:
-    """Full-scan reductions still visit every cell (eager until Phase 3)."""
+    """Full-scan reductions visit every cell when no embedded error stops them."""
     graph = _make_graph(
         _make_node("S!A1", None, 1),
         _make_node("S!A2", "=S!A1+1", None),
@@ -227,6 +227,113 @@ def test_sum_still_evaluates_all_cells_in_range() -> None:
     assert "S!A1" in seen
     assert "S!A2" in seen
     assert "S!A3" in seen
+
+
+def test_sum_over_ranges_does_not_eager_resolve_excel_range(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SUM binds lazy Range; resolve_excel_range is never called."""
+    from excel_grapher.core import types as core_types
+
+    def _boom(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("resolve_excel_range must not run for SUM args")
+
+    monkeypatch.setattr(core_types, "resolve_excel_range", _boom)
+    monkeypatch.setattr(
+        "excel_grapher.evaluator.evaluator.resolve_excel_range",
+        _boom,
+    )
+
+    graph = _make_graph(
+        _make_node("S!A1", None, 1),
+        _make_node("S!A2", None, 2),
+        _make_node("S!A3", None, 3),
+        _make_node("S!B1", "=SUM(S!A1:S!A3)", None),
+    )
+    with FormulaEvaluator(graph) as ev:
+        assert ev.evaluate(["S!B1"]) == {"S!B1": 6.0}
+
+
+def test_sum_fail_fast_does_not_evaluate_trailing_formula_cells() -> None:
+    """SUM stops at the first cell error; trailing formulas stay cold."""
+    graph = _make_graph(
+        _make_node("S!A1", None, 1),
+        _make_node("S!A2", "=1/0", None),
+        _make_node("S!A3", "=S!A1+99", None),
+        _make_node("S!B1", "=SUM(S!A1:S!A3)", None),
+    )
+    seen: list[str] = []
+
+    def _track(address: str, _value: object) -> None:
+        seen.append(address)
+
+    with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
+        assert ev.evaluate(["S!B1"]) == {"S!B1": XlError.DIV}
+        assert "S!A3" not in ev._cache
+    assert "S!A3" not in seen
+
+
+def test_countif_over_lazy_range_parity() -> None:
+    """COUNTIF binds lazy Range and counts matching cells."""
+    graph = _make_graph(
+        _make_node("S!A1", None, 10),
+        _make_node("S!A2", None, 3),
+        _make_node("S!A3", None, 20),
+        _make_node("S!B1", '=COUNTIF(S!A1:S!A3, ">5")', None),
+    )
+    with FormulaEvaluator(graph) as ev:
+        assert ev.evaluate(["S!B1"]) == {"S!B1": 2}
+
+
+def test_countif_skips_error_cells_in_range() -> None:
+    """COUNTIF skips error cells (Excel semantics; no AST error precheck)."""
+    graph = _make_graph(
+        _make_node("S!A1", None, 10),
+        _make_node("S!A2", "=1/0", None),
+        _make_node("S!A3", None, 20),
+        _make_node("S!B1", '=COUNTIF(S!A1:S!A3, ">5")', None),
+    )
+    with FormulaEvaluator(graph) as ev:
+        assert ev.evaluate(["S!B1"]) == {"S!B1": 2}
+
+
+def test_and_or_reject_multi_cell_range_without_sibling_eval() -> None:
+    """AND/OR stay off the Grid bind list until cell-wise semantics (#397)."""
+    graph = _make_graph(
+        _make_node("S!A1", None, True),
+        _make_node("S!A2", "=1/0", None),
+        _make_node("S!A3", None, True),
+        _make_node("S!B1", "=AND(S!A1:S!A3)", None),
+    )
+    seen: list[str] = []
+
+    def _track(address: str, _value: object) -> None:
+        seen.append(address)
+
+    with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
+        assert ev.evaluate(["S!B1"]) == {"S!B1": XlError.VALUE}
+        assert "S!A1" not in ev._cache
+        assert "S!A2" not in ev._cache
+    assert "S!A2" not in seen
+
+
+def test_sum_does_not_double_evaluate_via_ast_precheck() -> None:
+    """Full-scan SUM skips AST get_error; each leaf is evaluated once."""
+    graph = _make_graph(
+        _make_node("S!A1", None, 1),
+        _make_node("S!A2", "=S!A1+1", None),
+        _make_node("S!A3", "=S!A1+2", None),
+        _make_node("S!B1", "=SUM(S!A1:S!A3)", None),
+    )
+    seen: list[str] = []
+
+    def _track(address: str, _value: object) -> None:
+        seen.append(address)
+
+    with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
+        assert ev.evaluate(["S!B1"]) == {"S!B1": 6}
+    assert seen.count("S!A2") == 1
+    assert seen.count("S!A3") == 1
 
 
 def test_match_over_offset_does_not_evaluate_trailing_unused_cells() -> None:

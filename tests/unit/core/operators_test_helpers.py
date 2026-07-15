@@ -28,7 +28,7 @@ from excel_grapher.core.operators_reference import (
     reference_concat_array,
     reference_sumproduct_arrays,
 )
-from excel_grapher.core.sumproduct import xl_sumproduct
+from excel_grapher.core.sumproduct import sumproduct_cells as xl_sumproduct
 from excel_grapher.core.types import CellValue, XlError
 
 COMPARE_OPS = ("=", "<>", "<", ">", "<=", ">=")

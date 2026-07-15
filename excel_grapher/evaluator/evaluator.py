@@ -81,12 +81,28 @@ from .parser import (
 )
 
 _SKIP_ERROR_PRECHECK = {
+    # Selective Grid consumers: AST precheck must not force a full scan.
     "LOOKUP",
     "VLOOKUP",
     "HLOOKUP",
     "INDEX",
     "MATCH",
     "XLOOKUP",
+    # Full-scan reductions that fail-fast (or Excel-skip) internally.
+    "SUM",
+    "AVERAGE",
+    "MIN",
+    "MAX",
+    "STDEV",
+    "NPV",
+    "SUMPRODUCT",
+    "LARGE",
+    "RANK",
+    "COUNT",
+    "COUNTA",
+    # Criteria consumers: Excel skips error cells in the criteria range.
+    "COUNTIF",
+    "AVERAGEIF",
 }
 
 if TYPE_CHECKING:
@@ -439,8 +455,10 @@ class FormulaEvaluator:
 
         Policy (multi-cell):
 
-        - ``eager_materialize_arg_indices`` → dense ndarray (full-scan bridge)
-        - ``grid_range_arg_indices`` → lazy ``Range`` (selective Grid access)
+        - ``grid_range_arg_indices`` → lazy ``Range`` (lookups + full-scan
+          reductions); consumers walk cells via ``flatten`` / ``Grid``
+        - ``eager_materialize_arg_indices`` → dense ndarray (empty after
+          Phase 3; retained until Phase 4 cleanup)
         - otherwise → ``#VALUE!`` (scalar / non-Grid consumers; no Range leak)
 
         Single-cell references in value contexts (e.g. ``TEXT(INDEX(...))``)

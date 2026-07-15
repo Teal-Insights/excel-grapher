@@ -153,16 +153,19 @@ def excel_casefold(value: str) -> str:
 
 
 def flatten(*args: object) -> Iterator[CellValue]:
-    """Flatten nested lists and ndarrays; do not walk lazy `Range` values.
+    """Flatten nested lists, ndarrays, and lazy `Range` values in row-major order.
 
-    AST error prechecks (`get_error`) stay shallow for `Range` so selective
-    consumers are not forced to evaluate every cell. Full-scan reductions that
-    need cell-level traversal materialize (or, later, iterate `Range` inside the
-    aggregate) rather than relying on this helper.
+    Full-scan reductions (`SUM`, `COUNTIF`, …) and generic-function error
+    prechecks (`get_error`) use this helper to walk multi-cell args. Selective
+    consumers (`INDEX`, `MATCH`, lookups) skip `get_error` so they are not
+    forced to evaluate sibling cells.
     """
     for arg in args:
         if isinstance(arg, np.ndarray):
             yield from (v for v in arg.flat)
+            continue
+        if isinstance(arg, Range):
+            yield from arg.iter_raw()
             continue
         if isinstance(arg, (list, tuple)):
             yield from flatten(*arg)
@@ -171,9 +174,10 @@ def flatten(*args: object) -> Iterator[CellValue]:
 
 
 def get_error(*args: object) -> XlError | None:
-    """Return the first top-level / flattened-list `XlError`, if any.
+    """Return the first flattened `XlError`, if any.
 
-    Does not evaluate cells inside a lazy `Range` (see `flatten`).
+    Walks ndarrays, nested lists, and lazy `Range` cells via `flatten`. Lookup
+    functions skip this precheck so selective Grid access stays consumer-driven.
     """
     for v in flatten(*args):
         if isinstance(v, XlError):

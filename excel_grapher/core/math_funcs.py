@@ -4,18 +4,19 @@ from __future__ import annotations
 
 import math
 import re
-from typing import TypeVar
+from collections.abc import Iterator
+from typing import TypeVar, cast
 
 import numpy as np
 
 from .coercions import (
     excel_casefold,
     flatten,
-    numeric_values,
     to_bool,
     to_number,
     to_string,
 )
+from .grid import Grid
 from .types import CellValue, XlError
 
 T = TypeVar("T", str, float)
@@ -41,44 +42,62 @@ __all__ = [
 
 def sum_cells(*args: CellValue) -> float | XlError:
     """Return the sum of numeric cells."""
-    values = list(flatten(*args))
-    nums, err = numeric_values(values)
-    if err is not None:
-        return err
-    return float(sum(nums))
+    total = 0.0
+    for v in flatten(*args):
+        n = to_number(v)
+        if isinstance(n, XlError):
+            return n
+        total += float(n)
+    return total
 
 
 def average_cells(*args: CellValue) -> float | XlError:
     """Return the average of numeric cells."""
-    values = list(flatten(*args))
-    nums, err = numeric_values(values)
-    if err is not None:
-        return err
-    if len(nums) == 0:
+    total = 0.0
+    count = 0
+    for v in flatten(*args):
+        n = to_number(v)
+        if isinstance(n, XlError):
+            return n
+        total += float(n)
+        count += 1
+    if count == 0:
         return XlError.DIV
-    return float(sum(nums) / len(nums))
+    return float(total / count)
 
 
 def min_cells(*args: CellValue) -> float | XlError:
     """Return the minimum of numeric cells."""
-    values = list(flatten(*args))
-    nums, err = numeric_values(values)
-    if err is not None:
-        return err
-    if len(nums) == 0:
+    found = False
+    current = 0.0
+    for v in flatten(*args):
+        n = to_number(v)
+        if isinstance(n, XlError):
+            return n
+        value = float(n)
+        if not found or value < current:
+            current = value
+            found = True
+    if not found:
         return 0.0
-    return float(min(nums))
+    return current
 
 
 def max_cells(*args: CellValue) -> float | XlError:
     """Return the maximum of numeric cells."""
-    values = list(flatten(*args))
-    nums, err = numeric_values(values)
-    if err is not None:
-        return err
-    if len(nums) == 0:
+    found = False
+    current = 0.0
+    for v in flatten(*args):
+        n = to_number(v)
+        if isinstance(n, XlError):
+            return n
+        value = float(n)
+        if not found or value > current:
+            current = value
+            found = True
+    if not found:
         return 0.0
-    return float(max(nums))
+    return current
 
 
 def round_number(number: CellValue, num_digits: CellValue) -> float | XlError:
@@ -112,47 +131,32 @@ def npv_cells(rate: CellValue, *values: CellValue) -> float | XlError:
     r = to_number(rate)
     if isinstance(r, XlError):
         return r
-    all_values = list(flatten(*values))
-    nums, err = numeric_values(all_values)
-    if err is not None:
-        return err
-    if len(nums) == 0:
-        return XlError.VALUE
     result = 0.0
-    for i, val in enumerate(nums):
-        result += val / ((1 + r) ** (i + 1))
+    count = 0
+    for v in flatten(*values):
+        n = to_number(v)
+        if isinstance(n, XlError):
+            return n
+        count += 1
+        result += float(n) / ((1 + r) ** count)
+    if count == 0:
+        return XlError.VALUE
     return result
 
 
 def stdev_cells(*args: CellValue) -> float | XlError:
     """Return sample standard deviation of numeric cells."""
-    values = list(flatten(*args))
-    nums, err = numeric_values(values)
-    if err is not None:
-        return err
+    nums: list[float] = []
+    for v in flatten(*args):
+        n = to_number(v)
+        if isinstance(n, XlError):
+            return n
+        nums.append(float(n))
     if len(nums) < 2:
         return XlError.DIV
     mean = sum(nums) / len(nums)
     variance = sum((x - mean) ** 2 for x in nums) / (len(nums) - 1)
     return float(variance**0.5)
-
-
-def _iter_numeric_cells(values: list[CellValue]) -> tuple[list[float], XlError | None]:
-    nums: list[float] = []
-    for v in values:
-        if isinstance(v, XlError):
-            return ([], v)
-        if v is None:
-            continue
-        if isinstance(v, bool):
-            continue
-        if isinstance(v, (int, float)) and not isinstance(v, bool):
-            nums.append(float(v))
-            continue
-        if isinstance(v, (np.integer, np.floating)):
-            nums.append(float(v))
-            continue
-    return (nums, None)
 
 
 def _wildcard_to_regex(pattern: str) -> re.Pattern[str]:
@@ -240,12 +244,30 @@ def _value_matches_criteria(cell_value: CellValue, criteria: CellValue) -> bool:
     return _criteria_compare(op, excel_casefold(to_string(cell_value)), excel_casefold(rhs))
 
 
+def _iter_arg_cells(value: CellValue) -> Iterator[CellValue]:
+    """Yield cells from a range/array arg without raising on error sentinels.
+
+    Prefer this over `flatten` for criteria consumers (`COUNTIF` / `AVERAGEIF`)
+    so embedded exports still skip Excel error cells when `export_runtime.values.flatten`
+    raises at the shared `flatten` name.
+    """
+    grid = Grid.wrap(value)
+    if grid is not None:
+        for cell in grid.iter_raw():
+            yield cast(CellValue, cell)
+        return
+    yield value
+
+
 def countif_cells(range_values: CellValue, criteria: CellValue) -> int | XlError:
-    """Count cells matching criteria."""
+    """Count cells matching criteria.
+
+    Error cells in the range are skipped (Excel COUNTIF semantics), not
+    propagated. Criteria that are themselves an `XlError` propagate.
+    """
     if isinstance(criteria, XlError):
         return criteria
-    values = list(flatten(range_values))
-    return sum(1 for v in values if _value_matches_criteria(v, criteria))
+    return sum(1 for v in _iter_arg_cells(range_values) if _value_matches_criteria(v, criteria))
 
 
 def averageif_cells(
@@ -253,11 +275,16 @@ def averageif_cells(
     criteria: CellValue,
     average_range: CellValue | None = None,
 ) -> float | XlError:
-    """Return the average of cells matching criteria."""
+    """Return the average of cells matching criteria.
+
+    Error cells in the criteria range are skipped (Excel AVERAGEIF semantics).
+    Matched average-range errors still propagate via `to_number`.
+    """
     if isinstance(criteria, XlError):
         return criteria
-    crit_vals = list(flatten(range_values))
-    avg_vals = list(flatten(average_range if average_range is not None else range_values))
+    crit_vals = list(_iter_arg_cells(range_values))
+    avg_source = average_range if average_range is not None else range_values
+    avg_vals = list(_iter_arg_cells(avg_source))
     if len(crit_vals) != len(avg_vals):
         return XlError.VALUE
     matched: list[float] = []
@@ -281,10 +308,17 @@ def large_kth(array: CellValue, k: CellValue) -> float | XlError:
     kth = int(kk)
     if kth < 1:
         return XlError.NUM
-    values = list(flatten(array))
-    nums, err = _iter_numeric_cells(values)
-    if err is not None:
-        return err
+    nums: list[float] = []
+    for v in flatten(array):
+        if isinstance(v, XlError):
+            return v
+        if v is None or isinstance(v, bool):
+            continue
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            nums.append(float(v))
+            continue
+        if isinstance(v, (np.integer, np.floating)):
+            nums.append(float(v))
     if kth > len(nums):
         return XlError.NUM
     nums.sort(reverse=True)
@@ -300,10 +334,17 @@ def rank_number(number: CellValue, ref: CellValue, order: CellValue = 0) -> int 
     if isinstance(oo, XlError):
         return oo
     ascending = int(oo) != 0
-    values = list(flatten(ref))
-    nums, err = _iter_numeric_cells(values)
-    if err is not None:
-        return err
+    nums: list[float] = []
+    for v in flatten(ref):
+        if isinstance(v, XlError):
+            return v
+        if v is None or isinstance(v, bool):
+            continue
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            nums.append(float(v))
+            continue
+        if isinstance(v, (np.integer, np.floating)):
+            nums.append(float(v))
     if ascending:
         return 1 + sum(1 for v in nums if v < nn)
     return 1 + sum(1 for v in nums if v > nn)
