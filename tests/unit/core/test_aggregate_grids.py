@@ -17,13 +17,15 @@ from excel_grapher.core.sumproduct import sumproduct_cells
 
 
 def test_full_scan_aggregates_bind_lazy_ranges_not_eager_ndarrays() -> None:
-    """Phase 3 drops eager materialization for SUM / SUMPRODUCT / COUNTIF."""
+    """Phase 3 drops eager materialization for SUM / SUMPRODUCT / COUNTIF / AND / OR."""
     assert eager_materialize_arg_indices("SUM") == frozenset()
     assert eager_materialize_arg_indices("SUMPRODUCT") == frozenset()
     assert eager_materialize_arg_indices("COUNTIF") == frozenset()
     assert 0 in grid_range_arg_indices("SUM")
     assert 0 in grid_range_arg_indices("SUMPRODUCT")
     assert 0 in grid_range_arg_indices("COUNTIF")
+    assert 0 in grid_range_arg_indices("AND")
+    assert 0 in grid_range_arg_indices("OR")
 
 
 def test_flatten_walks_lazy_range_in_row_major_order() -> None:

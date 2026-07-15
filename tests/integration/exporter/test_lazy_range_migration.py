@@ -100,6 +100,20 @@ def test_sum_over_range_with_error_produces_error_code() -> None:
     assert result.generated_results["S!B1"] == XlError.DIV
 
 
+def test_and_or_over_lazy_range_codegen_parity() -> None:
+    """AND/OR over ranges stay aligned between evaluator and exported code."""
+    graph = _make_graph(
+        _make_node("S!A1", None, True),
+        _make_node("S!A2", None, False),
+        _make_node("S!A3", None, True),
+        _make_node("S!B1", "=AND(S!A1:S!A3)", None),
+        _make_node("S!B2", "=OR(S!A1:S!A3)", None),
+    )
+    result = assert_codegen_matches_evaluator(graph, ["S!B1", "S!B2"])
+    assert result.generated_results["S!B1"] is False
+    assert result.generated_results["S!B2"] is True
+
+
 def test_dynamic_offset_range_consumed_by_sum() -> None:
     """Dynamic OFFSET returns a lazy range consumed by SUM."""
     graph = _make_graph(
