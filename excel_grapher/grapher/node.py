@@ -12,7 +12,6 @@ from excel_grapher.core.address_keys import (
     CellKey,
     NodeShape,
     RangeKey,
-    UnionKey,
 )
 from excel_grapher.core.address_keys import NodeKey as AddressKey
 from excel_grapher.core.address_keys import expand_node_cells as _expand_node_cells
