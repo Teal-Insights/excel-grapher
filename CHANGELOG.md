@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.8.0 (2026-07-15)
+
+### Bug Fixes
+
+- **evaluator**: Reuse materialized arrays on operator fastpath miss
+  ([#394](https://github.com/Teal-Insights/excel-grapher/pull/394),
+  [`e7a5c0f`](https://github.com/Teal-Insights/excel-grapher/commit/e7a5c0fcacc2e65f79c669c56ee6a0c85fb1c7f9))
+
+- **evaluator**: Type/embed polish for Phase 2 operator maps
+  ([#394](https://github.com/Teal-Insights/excel-grapher/pull/394),
+  [`e7a5c0f`](https://github.com/Teal-Insights/excel-grapher/commit/e7a5c0fcacc2e65f79c669c56ee6a0c85fb1c7f9))
+
+### Features
+
+- **evaluator**: Lazy Grid maps for binary/unary operators (#336 Phase 2)
+  ([#394](https://github.com/Teal-Insights/excel-grapher/pull/394),
+  [`e7a5c0f`](https://github.com/Teal-Insights/excel-grapher/commit/e7a5c0fcacc2e65f79c669c56ee6a0c85fb1c7f9))
+
+- **evaluator**: Route binary ops through shared Grid maps (#336 Phase 2)
+  ([#394](https://github.com/Teal-Insights/excel-grapher/pull/394),
+  [`e7a5c0f`](https://github.com/Teal-Insights/excel-grapher/commit/e7a5c0fcacc2e65f79c669c56ee6a0c85fb1c7f9))
+
+
 ## v3.7.0 (2026-07-14)
 
 ### Bug Fixes
