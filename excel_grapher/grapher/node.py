@@ -97,9 +97,9 @@ class Node:
             lo_row, hi_row = sorted((int(self.min_row), int(self.max_row)))
             left = str(self.min_col).upper()
             right = str(self.max_col).upper()
-            if fastpyxl.utils.cell.column_index_from_string(left) > fastpyxl.utils.cell.column_index_from_string(
-                right
-            ):
+            if fastpyxl.utils.cell.column_index_from_string(
+                left
+            ) > fastpyxl.utils.cell.column_index_from_string(right):
                 left, right = right, left
             text = f"{_quote_sheet(self.sheet)}!{left}{lo_row}:{right}{hi_row}"
             self.address = _coerce_address(text)
