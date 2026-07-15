@@ -63,8 +63,7 @@ GRID_RANGE_ARG_INDICES: dict[str, frozenset[int]] = {
     "NPV": frozenset(range(1, 32)),
     "RANK": frozenset({1}),
     "SUMPRODUCT": _ALL_ARGS,
-    "AND": _ALL_ARGS,
-    "OR": _ALL_ARGS,
+    # AND/OR stay scalar until cell-wise range semantics land (see #397).
 }
 
 

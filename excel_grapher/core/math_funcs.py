@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import math
 import re
-from typing import TypeVar
+from collections.abc import Iterator
+from typing import TypeVar, cast
 
 import numpy as np
 
@@ -15,6 +16,7 @@ from .coercions import (
     to_number,
     to_string,
 )
+from .grid import Grid
 from .types import CellValue, XlError
 
 T = TypeVar("T", str, float)
@@ -242,17 +244,30 @@ def _value_matches_criteria(cell_value: CellValue, criteria: CellValue) -> bool:
     return _criteria_compare(op, excel_casefold(to_string(cell_value)), excel_casefold(rhs))
 
 
+def _iter_arg_cells(value: CellValue) -> Iterator[CellValue]:
+    """Yield cells from a range/array arg without raising on error sentinels.
+
+    Prefer this over `flatten` for criteria consumers (`COUNTIF` / `AVERAGEIF`)
+    so embedded exports still skip Excel error cells when `export_runtime.values.flatten`
+    raises at the shared `flatten` name.
+    """
+    grid = Grid.wrap(value)
+    if grid is not None:
+        for cell in grid.iter_raw():
+            yield cast(CellValue, cell)
+        return
+    yield value
+
+
 def countif_cells(range_values: CellValue, criteria: CellValue) -> int | XlError:
-    """Count cells matching criteria."""
+    """Count cells matching criteria.
+
+    Error cells in the range are skipped (Excel COUNTIF semantics), not
+    propagated. Criteria that are themselves an `XlError` propagate.
+    """
     if isinstance(criteria, XlError):
         return criteria
-    count = 0
-    for v in flatten(range_values):
-        if isinstance(v, XlError):
-            return v
-        if _value_matches_criteria(v, criteria):
-            count += 1
-    return count
+    return sum(1 for v in _iter_arg_cells(range_values) if _value_matches_criteria(v, criteria))
 
 
 def averageif_cells(
@@ -260,17 +275,20 @@ def averageif_cells(
     criteria: CellValue,
     average_range: CellValue | None = None,
 ) -> float | XlError:
-    """Return the average of cells matching criteria."""
+    """Return the average of cells matching criteria.
+
+    Error cells in the criteria range are skipped (Excel AVERAGEIF semantics).
+    Matched average-range errors still propagate via `to_number`.
+    """
     if isinstance(criteria, XlError):
         return criteria
-    crit_vals = list(flatten(range_values))
-    avg_vals = list(flatten(average_range if average_range is not None else range_values))
+    crit_vals = list(_iter_arg_cells(range_values))
+    avg_source = average_range if average_range is not None else range_values
+    avg_vals = list(_iter_arg_cells(avg_source))
     if len(crit_vals) != len(avg_vals):
         return XlError.VALUE
     matched: list[float] = []
     for crit_val, avg_val in zip(crit_vals, avg_vals, strict=True):
-        if isinstance(crit_val, XlError):
-            return crit_val
         if not _value_matches_criteria(crit_val, criteria):
             continue
         n = to_number(avg_val)

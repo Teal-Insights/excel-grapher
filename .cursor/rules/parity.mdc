@@ -37,9 +37,11 @@ The evaluator and the exported runtime use **different error channels** with the
     scalar contexts)
 
   Scalar coercions (`as_scalar` / `to_number` / `to_string` / `to_bool`) also
-  reject multi-cell `Range` with `#VALUE!`. AST `get_error` walks `Range`
-  cells for generic functions (first-error fail-fast); lookup/reference
-  functions skip that precheck so selective Grid access stays consumer-driven.
+  reject multi-cell `Range` with `#VALUE!`. Lookup/reference functions and
+  full-scan reductions that handle errors internally (`SUM` fail-fast,
+  `COUNTIF` Excel skip, …) are listed in `FormulaEvaluator._SKIP_ERROR_PRECHECK`
+  so AST `get_error` does not double-walk range cells. Other generic functions
+  still run `get_error` over flattened args (including lazy `Range` cells).
 - **Export = Pythonic model.** Where Excel displays error code `E`, exported
   code **raises `XlErrorException(E)`** (a traceback, not a silently propagated
   sentinel). Ranges are the same lazy `Range` values; unused cells are never
@@ -61,9 +63,12 @@ Export error-channel specifics:
   thunked and propagate argument errors like any generic worksheet function.
 - `compute_all` raises by default. Multi-cell range targets materialize as
   nested lists with per-cell sentinel codes (grid display semantics).
-- Lookup scans and criteria matching keep Excel **skip semantics** through the
-  sentinel probe channel (`Range.value_at` / `Grid.at` convert raised errors
-  back to sentinels for inspection without propagation).
+- Lookup scans keep Excel **skip semantics** through the sentinel probe channel
+(`Range.value_at` / `Grid.at` convert raised errors back to sentinels for
+inspection without propagation). Criteria consumers (`COUNTIF` / `AVERAGEIF`)
+also skip error cells in the criteria range (Excel behavior); they are exempt
+from AST `get_error` and walk via Grid so embedded export `flatten` (raise-
+channel) cannot override that skip.
 
 ## Shared lazy range / grid representation
 
@@ -83,9 +88,15 @@ Lookup/reference algorithms (`INDEX`, `MATCH`, `VLOOKUP`, …) live in
 exposes them to the evaluator; `export_runtime/lookup.py` raises at the wrapper
 boundary. Element-wise operators live in `excel_grapher.core.operator_maps`
 with the same adapter pattern (`core.operators` / `export_runtime.operators`).
-Full-scan reductions share `core.coercions.flatten` and `core.sumproduct.sumproduct_cells`
-(`runtime/math` may optionally materialize large SUMPRODUCT args for NumPy
-fastpath; export stays on the Grid loop). Do not introduce a third traversal copy.
+Full-scan reductions share `core.coercions.flatten` (fail-fast reductions) and
+`core.sumproduct.sumproduct_cells` (`runtime/math` may optionally materialize
+large SUMPRODUCT args for NumPy fastpath; export stays on the Grid loop).
+`COUNTIF` / `AVERAGEIF` walk via Grid rather than `flatten` so error-cell skip
+survives export embedding. Do not introduce a third traversal copy.
+
+`AND` / `OR` are **not** on the Grid bind list yet — multi-cell args return
+`#VALUE!` without evaluating siblings until cell-wise range semantics land
+(#397).
 
 Behavioral parity (evaluator ↔ export ↔ Excel) is unchanged by representation
 convergence. Remaining NumPy use in the evaluator hot path is confined to

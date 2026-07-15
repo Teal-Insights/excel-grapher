@@ -415,8 +415,8 @@ class TestErrorCodeParity:
         result = assert_codegen_matches_evaluator(graph, ["S!A1"])
         assert result.generated_results["S!A1"] == 3
 
-    def test_countif_over_error_range_matches_evaluator_precheck(self) -> None:
-        """Generic functions propagate range argument errors like the evaluator."""
+    def test_countif_over_error_range_skips_error_cells(self) -> None:
+        """COUNTIF matches Excel: error cells in the range are skipped, not propagated."""
         graph = _make_graph(
             _make_node("S!B1", None, 10),
             _make_node("S!B2", "=1/0", None),
@@ -424,7 +424,7 @@ class TestErrorCodeParity:
             _make_node("S!A1", '=COUNTIF(S!B1:S!B3, ">5")', None),
         )
         result = assert_codegen_matches_evaluator(graph, ["S!A1"])
-        assert result.generated_results["S!A1"] == XlError.DIV
+        assert result.generated_results["S!A1"] == 2
 
     def test_countif_text_cells_do_not_raise_on_numeric_criteria(self) -> None:
         """Criteria coercion failures skip cells rather than raising."""

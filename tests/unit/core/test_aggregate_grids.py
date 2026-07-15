@@ -114,3 +114,16 @@ def test_countif_over_lazy_range() -> None:
         lambda a: {"S!A1": 10, "S!A2": 3, "S!A3": 20}[a],
     )
     assert countif_cells(cast(CellValue, rng), ">5") == 2
+
+
+def test_countif_skips_error_cells_in_lazy_range() -> None:
+    """Excel COUNTIF ignores error cells; it does not propagate them."""
+    calls: list[str] = []
+
+    def resolve(address: str) -> CellValue:
+        calls.append(address)
+        return {"S!A1": 10, "S!A2": XlError.DIV, "S!A3": 20}[address]
+
+    rng = Range("S", 1, 1, 3, 1, resolve)
+    assert countif_cells(cast(CellValue, rng), ">5") == 2
+    assert calls == ["S!A1", "S!A2", "S!A3"]

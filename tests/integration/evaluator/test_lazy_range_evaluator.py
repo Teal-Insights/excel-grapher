@@ -285,6 +285,57 @@ def test_countif_over_lazy_range_parity() -> None:
         assert ev.evaluate(["S!B1"]) == {"S!B1": 2}
 
 
+def test_countif_skips_error_cells_in_range() -> None:
+    """COUNTIF skips error cells (Excel semantics; no AST error precheck)."""
+    graph = _make_graph(
+        _make_node("S!A1", None, 10),
+        _make_node("S!A2", "=1/0", None),
+        _make_node("S!A3", None, 20),
+        _make_node("S!B1", '=COUNTIF(S!A1:S!A3, ">5")', None),
+    )
+    with FormulaEvaluator(graph) as ev:
+        assert ev.evaluate(["S!B1"]) == {"S!B1": 2}
+
+
+def test_and_or_reject_multi_cell_range_without_sibling_eval() -> None:
+    """AND/OR stay off the Grid bind list until cell-wise semantics (#397)."""
+    graph = _make_graph(
+        _make_node("S!A1", None, True),
+        _make_node("S!A2", "=1/0", None),
+        _make_node("S!A3", None, True),
+        _make_node("S!B1", "=AND(S!A1:S!A3)", None),
+    )
+    seen: list[str] = []
+
+    def _track(address: str, _value: object) -> None:
+        seen.append(address)
+
+    with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
+        assert ev.evaluate(["S!B1"]) == {"S!B1": XlError.VALUE}
+        assert "S!A1" not in ev._cache
+        assert "S!A2" not in ev._cache
+    assert "S!A2" not in seen
+
+
+def test_sum_does_not_double_evaluate_via_ast_precheck() -> None:
+    """Full-scan SUM skips AST get_error; each leaf is evaluated once."""
+    graph = _make_graph(
+        _make_node("S!A1", None, 1),
+        _make_node("S!A2", "=S!A1+1", None),
+        _make_node("S!A3", "=S!A1+2", None),
+        _make_node("S!B1", "=SUM(S!A1:S!A3)", None),
+    )
+    seen: list[str] = []
+
+    def _track(address: str, _value: object) -> None:
+        seen.append(address)
+
+    with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
+        assert ev.evaluate(["S!B1"]) == {"S!B1": 6}
+    assert seen.count("S!A2") == 1
+    assert seen.count("S!A3") == 1
+
+
 def test_match_over_offset_does_not_evaluate_trailing_unused_cells() -> None:
     """OFFSET → MATCH stays selective under lazy-by-default range resolution."""
     graph = _make_graph(
