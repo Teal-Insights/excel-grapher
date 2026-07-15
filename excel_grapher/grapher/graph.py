@@ -499,23 +499,35 @@ class DependencyGraph:
 
     # ---- adjacency helpers for cycle/order analysis ------------------------
 
+    def _resolve_graph_endpoint(self, key: NodeKey) -> NodeKey | None:
+        """Map an edge endpoint to a stored node key (exact or occupancy owner)."""
+        nk = normalize_key(key)
+        if nk in self._nodes:
+            return nk
+        # Member cell of a multi-cell node → owning graph key.
+        owner = self._occupancy.get(nk)
+        if owner is not None and owner in self._nodes:
+            return owner
+        return None
+
     def _unconditional_adjacency(self) -> dict[NodeKey, set[NodeKey]]:
         out: dict[NodeKey, set[NodeKey]] = {k: set() for k in self._nodes}
         for k in self._nodes:
             for dep in self._edges.get(k, ()):
-                if dep not in self._nodes:
+                if (k, dep) in self._guards:
                     continue
-                if (k, dep) not in self._guards:
-                    out[k].add(dep)
+                resolved = self._resolve_graph_endpoint(dep)
+                if resolved is not None:
+                    out[k].add(resolved)
         return out
 
     def _all_adjacency(self) -> dict[NodeKey, set[NodeKey]]:
         out: dict[NodeKey, set[NodeKey]] = {k: set() for k in self._nodes}
         for k in self._nodes:
             for dep in self._edges.get(k, ()):
-                if dep not in self._nodes:
-                    continue
-                out[k].add(dep)
+                resolved = self._resolve_graph_endpoint(dep)
+                if resolved is not None:
+                    out[k].add(resolved)
         return out
 
     def cycle_report(self) -> CycleReport:

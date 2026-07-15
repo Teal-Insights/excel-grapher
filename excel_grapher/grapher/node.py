@@ -608,57 +608,116 @@ def find_nodes_covering_cell(graph: _GraphNodeLookup, cell_key: str) -> list[Nod
     return out
 
 
+def _one_row_query_cells(sheet: str, row: int, min_col: str, max_col: str) -> list[NodeKey]:
+    lo = fastpyxl.utils.cell.column_index_from_string(min_col)
+    hi = fastpyxl.utils.cell.column_index_from_string(max_col)
+    if lo > hi:
+        lo, hi = hi, lo
+    return [
+        _format_cell_key(sheet, fastpyxl.utils.cell.get_column_letter(c), row)
+        for c in range(lo, hi + 1)
+    ]
+
+
+def _multi_cell_covers_one_row(
+    node: Node | NodeView, sheet: str, row: int, min_col: str, max_col: str
+) -> bool:
+    """Return True if every cell in the one-row query is a member of `node`."""
+    if node.kind is NodeKind.cell or node.address is None:
+        return False
+    if node.kind is NodeKind.row:
+        sheet_o, row_o, lo, hi = _row_node_span_indices(node)
+        return _span_contains(
+            owner_sheet=sheet_o,
+            owner_row=row_o,
+            owner_lo=lo,
+            owner_hi=hi,
+            sheet=sheet,
+            row=row,
+            min_col=min_col,
+            max_col=max_col,
+        )
+    members = set(member_keys(node))
+    return all(c in members for c in _one_row_query_cells(sheet, row, min_col, max_col))
+
+
 def find_row_nodes_covering(graph: _GraphNodeLookup, address: str) -> list[NodeKey]:
-    """Return row-node keys that fully cover a cell or one-row subrange.
+    """Return multi-cell node keys that fully cover a cell or one-row subrange.
+
+    Includes one-row `RangeKey` nodes (`kind=row`) and any `union`/`range`
+    owner whose expanded members contain every cell of the query.
 
     `address` is canonicalized first. For a one-row range, coverage means the
-    owner's span contains the query span (exact match included). For a cell,
-    coverage means the cell column lies in the owner's span.
+    owner contains the query span. For a cell, coverage means the cell lies in
+    the owner.
     """
     try:
         _canonical, parsed = _require_one_row_key(address)
+        sheet, row, min_col, max_col = (
+            parsed.sheet,
+            parsed.row,
+            parsed.min_col,
+            parsed.max_col,
+        )
     except ValueError:
         _cell_key, sheet, col, row = _require_single_cell_key(address)
-
-        def _covers(node: NodeView) -> bool:
-            if node.kind is not NodeKind.row:
-                return False
-            sheet_o, row_o, lo, hi = _row_node_span_indices(node)
-            return _span_contains(
-                owner_sheet=sheet_o,
-                owner_row=row_o,
-                owner_lo=lo,
-                owner_hi=hi,
-                sheet=sheet,
-                row=row,
-                min_col=col,
-                max_col=col,
-            )
-    else:
-
-        def _covers(node: NodeView) -> bool:
-            if node.kind is not NodeKind.row:
-                return False
-            sheet_o, row_o, lo, hi = _row_node_span_indices(node)
-            return _span_contains(
-                owner_sheet=sheet_o,
-                owner_row=row_o,
-                owner_lo=lo,
-                owner_hi=hi,
-                sheet=parsed.sheet,
-                row=parsed.row,
-                min_col=parsed.min_col,
-                max_col=parsed.max_col,
-            )
+        min_col = max_col = col
 
     out: list[NodeKey] = []
     for key in graph:
         node = graph.get_node(key)
-        if node is None or node.kind is not NodeKind.row:
+        if node is None or node.kind is NodeKind.cell:
             continue
-        if _covers(node):
+        if _multi_cell_covers_one_row(node, sheet, row, min_col, max_col):
             out.append(key)
     return out
+
+
+def locate_range(graph: _GraphNodeLookup, range_key: str) -> RangeLocation | None:
+    """Return where a one-row range is represented in `graph`.
+
+    The query is canonicalized via `normalize_row_key`. Resolution order:
+    1. Exact multi-cell node at the canonical key (`row` stripe or other).
+    2. Otherwise the unique multi-cell node whose members fully contain the query
+       (row span or union/range membership).
+
+    Returns:
+        `RangeLocation` when represented, else `None`.
+
+    Raises:
+        ValueError: If `range_key` is not a one-row range, or unique occupancy is
+            violated (multiple covering nodes).
+    """
+    canonical, parsed = _require_one_row_key(range_key)
+    exact = graph.get_node(canonical)
+    if exact is not None and exact.kind is not NodeKind.cell:
+        return RangeLocation(
+            range_key=canonical,
+            kind=exact.kind,
+            node_key=canonical,
+            min_col=parsed.min_col,
+            max_col=parsed.max_col,
+            row=parsed.row,
+        )
+
+    covering = find_row_nodes_covering(graph, canonical)
+    if len(covering) > 1:
+        keys = ", ".join(covering)
+        raise ValueError(
+            f"Unique cell occupancy violated for {canonical}: covered by overlapping nodes {keys}"
+        )
+    if len(covering) == 1:
+        owner = graph.get_node(covering[0])
+        assert owner is not None
+        return RangeLocation(
+            range_key=canonical,
+            kind=owner.kind,
+            node_key=covering[0],
+            min_col=parsed.min_col,
+            max_col=parsed.max_col,
+            row=parsed.row,
+        )
+    return None
 
 
 def locate_cell(graph: _GraphNodeLookup, cell_key: str) -> CellLocation | None:
@@ -733,50 +792,5 @@ def locate_cell(graph: _GraphNodeLookup, cell_key: str) -> CellLocation | None:
             kind=owner.kind,
             node_key=covering[0],
             column=column,
-        )
-    return None
-
-
-def locate_range(graph: _GraphNodeLookup, range_key: str) -> RangeLocation | None:
-    """Return where a one-row range is represented in `graph`.
-
-    The query is canonicalized via `normalize_row_key`. Resolution order:
-    1. Exact `kind=row` node at the canonical key.
-    2. Otherwise the unique row node whose span fully contains the query.
-
-    Returns:
-        `RangeLocation` when represented, else `None`.
-
-    Raises:
-        ValueError: If `range_key` is not a one-row range, or unique occupancy is
-            violated (multiple covering row nodes).
-    """
-    canonical, parsed = _require_one_row_key(range_key)
-    exact = graph.get_node(canonical)
-    if exact is not None and exact.kind is NodeKind.row:
-        return RangeLocation(
-            range_key=canonical,
-            kind=NodeKind.row,
-            node_key=canonical,
-            min_col=parsed.min_col,
-            max_col=parsed.max_col,
-            row=parsed.row,
-        )
-
-    covering = find_row_nodes_covering(graph, canonical)
-    if len(covering) > 1:
-        keys = ", ".join(covering)
-        raise ValueError(
-            f"Unique cell occupancy violated for {canonical}: "
-            f"covered by overlapping row nodes {keys}"
-        )
-    if len(covering) == 1:
-        return RangeLocation(
-            range_key=canonical,
-            kind=NodeKind.row,
-            node_key=covering[0],
-            min_col=parsed.min_col,
-            max_col=parsed.max_col,
-            row=parsed.row,
         )
     return None

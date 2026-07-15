@@ -341,33 +341,52 @@ def make_node_key_sort_key(
 
     Keys are ordered by:
     1) workbook sheet order (from `sheet_order`),
-    2) row number,
-    3) column number (cell column, or row-node `min_col`).
+    2) top-left row (cell row, or range/union min_row),
+    3) top-left column (cell column, or range/union min_col).
 
     Sheets not present in `sheet_order` are placed after known sheets and
-    sorted by sheet name.
+    sorted by sheet name. Cross-sheet unions sort by their first canonical
+    member's sheet.
     """
     sheet_rank = {name: idx for idx, name in enumerate(sheet_order)}
     fallback_rank = len(sheet_rank)
 
+    def _anchor(node_key: NormalizedAddress) -> tuple[str, int, int]:
+        try:
+            parsed = parse_node_key(node_key)
+        except ValueError:
+            # Non-canonical junk (e.g. whole-column refs): sort late, stably.
+            return ("\uffff", 10**9, 10**9)
+
+        if isinstance(parsed, CellKey):
+            return (
+                parsed.sheet,
+                parsed.row,
+                int(column_index_from_string(parsed.column)),
+            )
+        if isinstance(parsed, RangeKey):
+            return (
+                parsed.sheet,
+                parsed.min_row,
+                int(column_index_from_string(parsed.min_col)),
+            )
+        # UnionKey — first member after canonical sort
+        first = parsed.members[0]
+        if isinstance(first, CellKey):
+            return (
+                first.sheet,
+                first.row,
+                int(column_index_from_string(first.column)),
+            )
+        return (
+            first.sheet,
+            first.min_row,
+            int(column_index_from_string(first.min_col)),
+        )
+
     def _sort_key(node_key: NormalizedAddress) -> tuple[int, str, int, int]:
-        if split_address_on_colon(node_key) is not None:
-            try:
-                parsed = parse_row_key(node_key)
-            except ValueError:
-                parsed = None
-            if parsed is not None:
-                col = int(column_index_from_string(parsed.min_col))
-                return (
-                    sheet_rank.get(parsed.sheet, fallback_rank),
-                    parsed.sheet,
-                    parsed.row,
-                    col,
-                )
-        sheet, cell = parse_address(node_key)
-        col_letters, row = coordinate_from_string(cell.replace("$", ""))
-        col = int(column_index_from_string(col_letters))
-        return (sheet_rank.get(sheet, fallback_rank), sheet, int(row), col)
+        sheet, row, col = _anchor(node_key)
+        return (sheet_rank.get(sheet, fallback_rank), sheet, row, col)
 
     return _sort_key
 
