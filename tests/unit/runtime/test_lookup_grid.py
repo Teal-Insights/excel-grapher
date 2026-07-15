@@ -17,11 +17,6 @@ def test_index_not_in_eager_materialize_arg_indices() -> None:
     assert eager_materialize_arg_indices("INDEX") == frozenset()
 
 
-def test_sumproduct_still_eager_materializes() -> None:
-    assert 0 in eager_materialize_arg_indices("SUMPRODUCT")
-    assert 0 in eager_materialize_arg_indices("SUM")
-
-
 def test_lookup_args_are_grid_range_bound() -> None:
     """Lookup table args bind lazy Range; other args do not."""
     assert 1 in grid_range_arg_indices("MATCH")

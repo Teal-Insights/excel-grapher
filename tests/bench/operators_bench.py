@@ -14,7 +14,7 @@ import numpy as np
 
 from excel_grapher.core.coercions import datetime_to_excel_serial
 from excel_grapher.core.operators import xl_concat, xl_eq, xl_gt, xl_mul
-from excel_grapher.core.sumproduct import xl_sumproduct
+from excel_grapher.core.sumproduct import sumproduct_cells as xl_sumproduct
 
 BASELINE_VERSION = 1
 DEFAULT_WARMUP_ROUNDS = 2

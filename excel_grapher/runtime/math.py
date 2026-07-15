@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from excel_grapher.core import CellValue, XlError, flatten
+from excel_grapher.core.grid import Grid
 from excel_grapher.core.math_funcs import (
     abs_number,
     average_cells,
@@ -20,7 +21,12 @@ from excel_grapher.core.math_funcs import (
     stdev_cells,
     sum_cells,
 )
-from excel_grapher.core.sumproduct import xl_sumproduct
+from excel_grapher.core.operators_fastpath import (
+    MIN_OPERATOR_FASTPATH_CELLS,
+    try_fastpath_sumproduct,
+)
+from excel_grapher.core.operators_reference import reference_sumproduct_arrays
+from excel_grapher.core.sumproduct import sumproduct_cells
 
 __all__ = [
     "xl_abs",
@@ -127,3 +133,38 @@ def xl_abs(*args: CellValue) -> float | XlError:
 
 def xl_exp(*args: CellValue) -> float | XlError:
     return exp_number(*args)
+
+
+def xl_sumproduct(*args: CellValue) -> float | XlError:
+    """SUMPRODUCT with optional NumPy acceleration for large fully-consumed grids."""
+    if len(args) == 0:
+        return 0.0
+
+    grids: list[Grid] = []
+    for arg in args:
+        grid = Grid.wrap(arg)
+        if grid is None:
+            scalar = Grid.wrap([[arg]])
+            assert scalar is not None
+            grid = scalar
+        grids.append(grid)
+
+    shape = (grids[0].nrows, grids[0].ncols)
+    for grid in grids[1:]:
+        if (grid.nrows, grid.ncols) != shape:
+            return XlError.VALUE
+
+    if grids[0].size >= MIN_OPERATOR_FASTPATH_CELLS:
+        arrays = [
+            np.array(
+                [[grid.at(row0, col0) for col0 in range(grid.ncols)] for row0 in range(grid.nrows)],
+                dtype=object,
+            )
+            for grid in grids
+        ]
+        fast = try_fastpath_sumproduct(arrays)
+        if fast is not None:
+            return fast
+        return reference_sumproduct_arrays(arrays)
+
+    return sumproduct_cells(*args)

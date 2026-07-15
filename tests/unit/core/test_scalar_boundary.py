@@ -67,8 +67,8 @@ def test_to_string_does_not_leak_range_repr() -> None:
     assert "Range(" not in text
 
 
-def test_get_error_is_shallow_for_lazy_range() -> None:
-    """AST precheck must not force evaluation of cells inside a Range."""
+def test_get_error_walks_lazy_range_for_full_scan_precheck() -> None:
+    """Generic-function precheck walks Range; lookups skip get_error instead."""
     calls: list[str] = []
     values: dict[str, CellValue] = {"S!A1": 1, "S!A2": XlError.DIV}
 
@@ -77,8 +77,8 @@ def test_get_error_is_shallow_for_lazy_range() -> None:
         return values[address]
 
     rng = Range("S", 1, 1, 2, 1, resolve)
-    assert get_error(rng) is None
-    assert calls == []
+    assert get_error(rng) == XlError.DIV
+    assert calls == ["S!A1", "S!A2"]
 
 
 def test_abs_over_multi_cell_range_is_value_without_sibling_eval() -> None:

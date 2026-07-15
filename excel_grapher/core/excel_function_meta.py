@@ -15,8 +15,7 @@ from typing import Literal, TypeAlias
 
 ArgRole: TypeAlias = Literal["value", "ref_only"]
 
-# Sufficient for Excel varargs (SUM, SUMPRODUCT, AND, …) until Phase 3 drops
-# eager materialization for full-scan consumers.
+# Sufficient for Excel varargs (SUM, SUMPRODUCT, AND, …).
 _ALL_ARGS: frozenset[int] = frozenset(range(32))
 
 
@@ -40,9 +39,17 @@ FUNCTION_META: dict[str, ExcelFunctionMeta] = {
     "CONCAT": ExcelFunctionMeta("CONCAT", ()),
 }
 
-# Full-scan reductions that still eager-materialize to object-dtype ndarrays
-# (bridge until Phase 3 teaches flatten / aggregates over Grid).
-EAGER_MATERIALIZE_ARG_INDICES: dict[str, frozenset[int]] = {
+# Remaining eager-ndarray bridge (empty after Phase 3; kept for Phase 4 rename).
+EAGER_MATERIALIZE_ARG_INDICES: dict[str, frozenset[int]] = {}
+
+# Multi-cell args bound as lazy `Range` (selective or full-scan Grid consumers).
+# Unlisted multi-cell args become `#VALUE!`.
+GRID_RANGE_ARG_INDICES: dict[str, frozenset[int]] = {
+    "LOOKUP": frozenset({1, 2}),
+    "VLOOKUP": frozenset({1}),
+    "HLOOKUP": frozenset({1}),
+    "MATCH": frozenset({1}),
+    "XLOOKUP": frozenset({1, 2}),
     "SUM": _ALL_ARGS,
     "AVERAGE": _ALL_ARGS,
     "MIN": _ALL_ARGS,
@@ -58,16 +65,6 @@ EAGER_MATERIALIZE_ARG_INDICES: dict[str, frozenset[int]] = {
     "SUMPRODUCT": _ALL_ARGS,
     "AND": _ALL_ARGS,
     "OR": _ALL_ARGS,
-}
-
-# Lookup / reference consumers that bind multi-cell args as lazy `Range`
-# (selective Grid access). Unlisted multi-cell args become `#VALUE!`.
-GRID_RANGE_ARG_INDICES: dict[str, frozenset[int]] = {
-    "LOOKUP": frozenset({1, 2}),
-    "VLOOKUP": frozenset({1}),
-    "HLOOKUP": frozenset({1}),
-    "MATCH": frozenset({1}),
-    "XLOOKUP": frozenset({1, 2}),
 }
 
 

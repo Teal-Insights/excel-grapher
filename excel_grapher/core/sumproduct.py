@@ -1,37 +1,45 @@
-"""SUMPRODUCT over aligned cell-value arrays (representation-agnostic)."""
+"""SUMPRODUCT over aligned Grid / nested-list / scalar arguments.
+
+Shared Grid traversal for evaluator and export. Optional NumPy acceleration
+lives in `runtime.math.xl_sumproduct` (evaluator only) so exported runtimes
+stay NumPy-free.
+"""
 
 from __future__ import annotations
 
-import numpy as np
+from typing import cast
 
+from .coercions import to_number
 from .grid import Grid
-from .operators_fastpath import try_fastpath_sumproduct
-from .operators_reference import reference_sumproduct_arrays
 from .types import CellValue, XlError
 
 
-def _as_object_array(arg: CellValue) -> np.ndarray:
-    if isinstance(arg, np.ndarray):
-        return arg
+def _as_grid(arg: CellValue) -> Grid:
     grid = Grid.wrap(arg)
     if grid is not None:
-        return np.array(
-            [[grid.at(row0, col0) for col0 in range(grid.ncols)] for row0 in range(grid.nrows)],
-            dtype=object,
-        )
-    return np.array([[arg]], dtype=object)
+        return grid
+    scalar = Grid.wrap([[arg]])
+    assert scalar is not None
+    return scalar
 
 
-def xl_sumproduct(*args: CellValue) -> float | XlError:
+def sumproduct_cells(*args: CellValue) -> float | XlError:
+    """Return the sum of element-wise products across aligned array arguments."""
     if len(args) == 0:
         return 0.0
-    arrays: list[np.ndarray] = [_as_object_array(arg) for arg in args]
-    shape = arrays[0].shape
-    for arr in arrays[1:]:
-        if arr.shape != shape:
+    grids = [_as_grid(arg) for arg in args]
+    shape = (grids[0].nrows, grids[0].ncols)
+    for grid in grids[1:]:
+        if (grid.nrows, grid.ncols) != shape:
             return XlError.VALUE
 
-    fast = try_fastpath_sumproduct(arrays)
-    if fast is not None:
-        return fast
-    return reference_sumproduct_arrays(arrays)
+    result = 0.0
+    for index0 in range(grids[0].size):
+        product = 1.0
+        for grid in grids:
+            number = to_number(cast(CellValue, grid.at_flat(index0)))
+            if isinstance(number, XlError):
+                return number
+            product *= number
+        result += product
+    return result
