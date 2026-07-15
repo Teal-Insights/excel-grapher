@@ -724,6 +724,12 @@ dev = [
     { name = "xlsxwriter" },
     { name = "xlwings" },
 ]
+test-core = [
+    { name = "pytest" },
+    { name = "ruff" },
+    { name = "ty" },
+    { name = "xlsxwriter" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -758,6 +764,12 @@ dev = [
     { name = "ty", specifier = ">=0.0.9" },
     { name = "xlsxwriter", specifier = ">=3.2.0" },
     { name = "xlwings", specifier = ">=0.34.0" },
+]
+test-core = [
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "ruff", specifier = ">=0.14.0" },
+    { name = "ty", specifier = ">=0.0.9" },
+    { name = "xlsxwriter", specifier = ">=3.2.0" },
 ]
 
 [[package]]

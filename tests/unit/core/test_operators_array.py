@@ -1,5 +1,6 @@
 """Element-wise array semantics for shared Excel operators."""
 
+# ruff: noqa: E402
 from __future__ import annotations
 
 import pytest

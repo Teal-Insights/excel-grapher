@@ -4,6 +4,7 @@ Regression coverage for element-wise range comparisons and products inside
 ``SUMPRODUCT``, e.g. ``(range="label")*values`` and ``(range>threshold)*1``.
 """
 
+# ruff: noqa: E402
 from __future__ import annotations
 
 from pathlib import Path

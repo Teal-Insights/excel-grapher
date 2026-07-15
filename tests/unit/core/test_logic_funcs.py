@@ -1,5 +1,6 @@
 """Unit tests for cell-wise AND/OR over lazy Range (#397)."""
 
+# ruff: noqa: E402
 from __future__ import annotations
 
 from typing import cast

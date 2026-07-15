@@ -29,9 +29,12 @@ def _top_level_numpy_imports(path: Path) -> list[str]:
             for alias in node.names:
                 if alias.name == "numpy" or alias.name.startswith("numpy."):
                     found.append(alias.name)
-        elif isinstance(node, ast.ImportFrom) and node.module is not None:
-            if node.module == "numpy" or node.module.startswith("numpy."):
-                found.append(node.module)
+        elif (
+            isinstance(node, ast.ImportFrom)
+            and node.module is not None
+            and (node.module == "numpy" or node.module.startswith("numpy."))
+        ):
+            found.append(node.module)
     return found
 
 
@@ -77,12 +80,11 @@ def test_coercions_flatten_and_as_scalar_accept_ndarray_like_without_numpy() -> 
     assert list(flatten(FakeArray())) == [1, 2, 3, 4]
 
 
-def test_has_numpy_flag_matches_import() -> None:
-    from excel_grapher.core.numpy_support import HAS_NUMPY
+def test_has_numpy_flag_matches_find_spec() -> None:
+    import importlib.util
 
-    try:
-        import numpy  # noqa: F401
-    except ImportError:
-        assert HAS_NUMPY is False
-    else:
-        assert HAS_NUMPY is True
+    from excel_grapher.core import numpy_support
+
+    present = importlib.util.find_spec("numpy") is not None
+    assert numpy_support.HAS_NUMPY is present
+    assert (numpy_support.np is not None) is present

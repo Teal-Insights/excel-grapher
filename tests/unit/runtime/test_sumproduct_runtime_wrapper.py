@@ -1,5 +1,6 @@
 """Evaluator ``xl_sumproduct`` wrapper materializes large grids for NumPy fastpath."""
 
+# ruff: noqa: E402
 from __future__ import annotations
 
 from typing import cast

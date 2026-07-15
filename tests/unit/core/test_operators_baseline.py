@@ -21,6 +21,7 @@ multiply workloads while keeping gap-sized (~15 cell) paths within ~5% of this
 baseline.
 """
 
+# ruff: noqa: E402
 from __future__ import annotations
 
 import pytest

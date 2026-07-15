@@ -1,5 +1,6 @@
 """Scalar boundary and shallow get_error for lazy Range (#336 Phase 1)."""
 
+# ruff: noqa: E402
 from __future__ import annotations
 
 from typing import cast

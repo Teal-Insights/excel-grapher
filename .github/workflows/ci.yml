@@ -43,6 +43,9 @@ jobs:
   test-no-numpy:
     name: Test without NumPy (default install)
     runs-on: ubuntu-latest
+    env:
+      # Isolate from the default venv so pandas/matplotlib (dev) cannot pull NumPy back in.
+      UV_PROJECT_ENVIRONMENT: .venv-no-numpy
 
     steps:
       - uses: actions/checkout@v4
@@ -57,13 +60,13 @@ jobs:
         with:
           python-version-file: pyproject.toml
 
-      - name: Install dependencies without fast extra
-        # Default package path: no NumPy. Keep other optional extras available for
-        # graph/viz tests that are independent of the operator accelerator.
-        run: uv sync --dev --extra networkx --extra viz
+      - name: Install package without NumPy
+        # Default install path: no `fast` / no NumPy-pulling packages (pandas, matplotlib).
+        # `--no-dev` alone is not enough: `uv run` would re-sync the default `dev` group.
+        run: uv sync --no-dev --group test-core --extra networkx --extra viz
 
       - name: Verify NumPy is not installed
-        run: uv run python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('numpy') is None else 1)"
+        run: uv run --no-sync python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('numpy') is None else 1)"
 
       - name: Run correctness suite without NumPy
-        run: uv run pytest
+        run: uv run --no-sync pytest

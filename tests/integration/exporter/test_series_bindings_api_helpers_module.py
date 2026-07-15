@@ -173,6 +173,9 @@ def test_helpers_module_is_ruff_clean_and_package_type_checks(
     split introduces); whole-package raw-Ruff hygiene (e.g. `api.py` import ordering) is
     tracked separately by issues #252/#253 and is intentionally not asserted here.
     """
+    # Generated helpers TYPE_CHECKING-import pandas/polars; ty needs them installed.
+    pytest.importorskip("pandas")
+    pytest.importorskip("polars")
     repo_root = Path(__file__).resolve().parents[3]
     files = _generate(workbook)
     pkg_root = tmp_path / "exported"
@@ -183,13 +186,14 @@ def test_helpers_module_is_ruff_clean_and_package_type_checks(
     def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
         return subprocess.run(cmd, cwd=str(repo_root), capture_output=True, text=True, check=False)
 
-    ruff = _run(["uv", "run", "ruff", "check", str(pkg_root / "_api_helpers.py")])
+    ruff = _run(["uv", "run", "--no-sync", "ruff", "check", str(pkg_root / "_api_helpers.py")])
     assert ruff.returncode == 0, f"_api_helpers.py is not Ruff-clean:\n{ruff.stdout}\n{ruff.stderr}"
 
     ty = _run(
         [
             "uv",
             "run",
+            "--no-sync",
             "ty",
             "check",
             "--project",

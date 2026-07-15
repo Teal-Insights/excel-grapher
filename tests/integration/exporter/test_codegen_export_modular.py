@@ -179,7 +179,7 @@ def test_codegen_generate_modules_has_no_ty_or_ruff_diagnostics(tmp_path: Path) 
         (pkg_root / filename).write_text(content, encoding="utf-8")
 
     ruff_fix = _run(
-        ["uv", "run", "ruff", "check", "--fix", str(pkg_root)],
+        ["uv", "run", "--no-sync", "ruff", "check", "--fix", str(pkg_root)],
         cwd=repo_root,
     )
     assert ruff_fix.returncode == 0, f"ruff --fix failed:\n{ruff_fix.stdout}\n{ruff_fix.stderr}"
@@ -188,6 +188,7 @@ def test_codegen_generate_modules_has_no_ty_or_ruff_diagnostics(tmp_path: Path) 
         [
             "uv",
             "run",
+            "--no-sync",
             "ty",
             "check",
             "--project",
@@ -201,7 +202,7 @@ def test_codegen_generate_modules_has_no_ty_or_ruff_diagnostics(tmp_path: Path) 
     assert ty.returncode == 0, f"ty failed:\n{ty.stdout}\n{ty.stderr}"
     assert ty.stderr.strip() == ""
 
-    ruff = _run(["uv", "run", "ruff", "check", str(pkg_root)], cwd=repo_root)
+    ruff = _run(["uv", "run", "--no-sync", "ruff", "check", str(pkg_root)], cwd=repo_root)
     assert ruff.returncode == 0, f"ruff failed after --fix:\n{ruff.stdout}\n{ruff.stderr}"
     assert ruff.stderr.strip() == ""
 
@@ -230,6 +231,7 @@ def test_codegen_generate_modules_has_no_ty_diagnostics_for_xlookup(tmp_path: Pa
         [
             "uv",
             "run",
+            "--no-sync",
             "ty",
             "check",
             "--project",
@@ -274,6 +276,7 @@ def test_codegen_generate_modules_has_no_ty_diagnostics_for_xludf_xlookup(
         [
             "uv",
             "run",
+            "--no-sync",
             "ty",
             "check",
             "--project",

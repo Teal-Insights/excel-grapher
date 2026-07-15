@@ -61,7 +61,16 @@ def test_ty_check_generated_sum_range_has_no_diagnostics(tmp_path: Path) -> None
 
     try:
         ty = _run(
-            ["uv", "run", "ty", "check", "--project", str(repo_root), str(export_file)],
+            [
+                "uv",
+                "run",
+                "--no-sync",
+                "ty",
+                "check",
+                "--project",
+                str(repo_root),
+                str(export_file),
+            ],
             cwd=repo_root,
         )
         assert ty.returncode == 0, f"ty failed:\n{ty.stdout}\n{ty.stderr}"

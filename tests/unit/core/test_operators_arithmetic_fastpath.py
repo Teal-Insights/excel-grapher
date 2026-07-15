@@ -1,5 +1,6 @@
 """Vectorized numeric arithmetic fast path for binary operators."""
 
+# ruff: noqa: E402
 from __future__ import annotations
 
 from pathlib import Path

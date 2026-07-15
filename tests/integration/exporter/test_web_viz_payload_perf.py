@@ -26,6 +26,10 @@ def _chain_graph(n: int) -> nx.DiGraph:
 
 
 def test_to_web_viz_payload_100_node_chain_completes_under_time_budget() -> None:
+    # NetworkX multipartite layout imports NumPy internally.
+    import pytest
+
+    pytest.importorskip("numpy")
     g = _chain_graph(100)
     t0 = time.perf_counter()
     p = to_web_viz_payload(

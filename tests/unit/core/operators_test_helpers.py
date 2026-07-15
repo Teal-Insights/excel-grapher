@@ -1,5 +1,6 @@
 """Shared helpers for operator semantics and fast-path parity tests."""
 
+# ruff: noqa: E402
 from __future__ import annotations
 
 from collections.abc import Callable
