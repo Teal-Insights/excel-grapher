@@ -1,4 +1,4 @@
-"""Emit generated input setters and output compute functions from series bindings."""
+"""Emit generated input setters/readers and output compute functions from series bindings."""
 
 from __future__ import annotations
 
@@ -28,10 +28,10 @@ def emit_series_bindings_block(
     series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
     docstring_renderer: SeriesDocstringRendererSpec = "google",
 ) -> list[str]:
-    """Emit setter and/or output compute functions for a binding manifest.
+    """Emit setter, reader, and/or output compute functions for a binding manifest.
 
     When `include_helpers` is true the coercion helpers and type aliases are inlined
-    (single-file export). When false only the public setter/compute functions are
+    (single-file export). When false only the public setter/reader/compute functions are
     emitted; the helpers and aliases are expected to be importable from a separate
     module (the multi-module export's `_api_helpers`).
     """

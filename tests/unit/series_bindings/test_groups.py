@@ -182,9 +182,23 @@ def test_group_manifest_nests_children_and_lists_members() -> None:
     assert [child["label"] for child in climate["children"]] == ["Paris", "Hot"]
     paris = climate["children"][0]
     assert paris["path"] == ["Climate scenarios", "Paris"]
-    assert paris["members"] == [{"id": "paris", "setter": "set_paris", "compute": None, "order": 1}]
+    assert paris["members"] == [
+        {
+            "id": "paris",
+            "setter": "set_paris",
+            "reader": "read_paris",
+            "compute": None,
+            "order": 1,
+        }
+    ]
     assert manifest["ungrouped"] == [
-        {"id": "loose", "setter": "set_loose", "compute": None, "order": None}
+        {
+            "id": "loose",
+            "setter": "set_loose",
+            "reader": "read_loose",
+            "compute": None,
+            "order": None,
+        }
     ]
 
 
@@ -196,7 +210,13 @@ def test_group_manifest_records_multi_membership_in_every_group() -> None:
     group_a, group_b = manifest["groups"]
     assert [m["id"] for m in group_a["members"]] == ["multi"]
     assert group_b["members"] == [
-        {"id": "multi", "setter": "set_multi", "compute": None, "order": 5}
+        {
+            "id": "multi",
+            "setter": "set_multi",
+            "reader": "read_multi",
+            "compute": None,
+            "order": 5,
+        }
     ]
 
 
@@ -206,5 +226,11 @@ def test_group_manifest_includes_compute_names() -> None:
     entry["output"] = {"compute": {"name": "compute_outputs_debt"}}
     manifest = group_manifest(_doc(entry))
     assert manifest["groups"][0]["members"] == [
-        {"id": "outputs_debt", "setter": None, "compute": "compute_outputs_debt", "order": None}
+        {
+            "id": "outputs_debt",
+            "setter": None,
+            "reader": None,
+            "compute": "compute_outputs_debt",
+            "order": None,
+        }
     ]

@@ -105,8 +105,10 @@ def test_codegen_generate_modules_emits_empty_discovery_helpers(tmp_path: Path) 
     api_py = files["api.py"]
     init_py = files["__init__.py"]
     assert "def list_setters() -> list[str]:" in api_py
+    assert "def list_readers() -> list[str]:" in api_py
     assert "def list_computes() -> list[str]:" in api_py
     assert "list_setters" in init_py
+    assert "list_readers" in init_py
     assert "list_computes" in init_py
 
     pkg_dir = tmp_path / "exported_discovery"
@@ -118,6 +120,7 @@ def test_codegen_generate_modules_emits_empty_discovery_helpers(tmp_path: Path) 
     try:
         pkg = importlib.import_module("exported_discovery")
         assert pkg.list_setters() == []
+        assert pkg.list_readers() == []
         assert pkg.list_computes() == []
     finally:
         sys.path.remove(str(tmp_path))

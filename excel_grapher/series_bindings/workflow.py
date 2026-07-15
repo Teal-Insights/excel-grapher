@@ -30,6 +30,7 @@ class BindingsCheckResult(TypedDict):
     report: ValidationReport
     canonical_sha256: str
     setters: list[str]
+    readers: list[str]
     computes: list[str]
     input_series: list[InputSeries]
     generated_files: NotRequired[dict[str, str]]
@@ -43,6 +44,30 @@ def setter_names(bindings: WorkbookSeriesBindings) -> list[str]:
         setter = input_block.get("setter") or series.get("setter")
         if isinstance(setter, dict) and setter.get("name"):
             names.append(str(setter["name"]))
+    return sorted(set(names))
+
+
+def reader_names(bindings: WorkbookSeriesBindings) -> list[str]:
+    """Return sorted unique input reader function names (duals of setters).
+
+    Every input series that declares a setter gets a `read_<series_id>` dual
+    (or an explicit `input.reader.name` override). Range duals
+    (`read_<id>_range`) are omitted from this list; they are auxiliary helpers.
+    """
+    names: list[str] = []
+    for series in bindings["series"]:
+        input_block = series.get("input") or {}
+        setter = input_block.get("setter") or series.get("setter")
+        if not isinstance(setter, dict) or not setter.get("name"):
+            continue
+        series_id = series.get("id")
+        if not series_id:
+            continue
+        reader = input_block.get("reader")
+        if isinstance(reader, dict) and reader.get("name"):
+            names.append(str(reader["name"]))
+        else:
+            names.append(f"read_{series_id}")
     return sorted(set(names))
 
 
@@ -135,6 +160,7 @@ def validate_bindings_workbook(
         "report": report,
         "canonical_sha256": bindings_canonical_sha256(bindings),
         "setters": setter_names(bindings),
+        "readers": reader_names(bindings),
         "computes": compute_names(bindings),
         "input_series": derive_input_series(graph, bindings, workbook=workbook),
     }

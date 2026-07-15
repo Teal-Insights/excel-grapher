@@ -588,8 +588,8 @@ class CodeGenerator:
     @staticmethod
     def _series_binding_public_names(
         bindings: WorkbookSeriesBindings,
-    ) -> tuple[list[str], list[str]]:
-        """Return declared public setter and compute function names.
+    ) -> tuple[list[str], list[str], list[str]]:
+        """Return declared public setter, reader, and compute function names.
 
         Without groups the names sort alphabetically (flat export); with
         view-level groups they follow the grouped export order.
@@ -598,11 +598,15 @@ class CodeGenerator:
             bindings_have_groups,
             grouped_public_names,
         )
-        from excel_grapher.series_bindings.workflow import compute_names, setter_names
+        from excel_grapher.series_bindings.workflow import (
+            compute_names,
+            reader_names,
+            setter_names,
+        )
 
         if bindings_have_groups(bindings):
             return grouped_public_names(bindings)
-        return setter_names(bindings), compute_names(bindings)
+        return setter_names(bindings), reader_names(bindings), compute_names(bindings)
 
     @staticmethod
     def _series_binding_groups_manifest(
@@ -622,12 +626,18 @@ class CodeGenerator:
         setter_names: Sequence[str],
         compute_names: Sequence[str],
         groups_manifest: Mapping[str, Any] | None = None,
+        reader_names: Sequence[str] | None = None,
     ) -> list[str]:
         """Emit generated-code helpers that list public series-binding functions."""
         lines = [
             "def list_setters() -> list[str]:",
             '    """Return generated series-binding setter function names."""',
             f"    return {list(setter_names)!r}",
+            "",
+            "",
+            "def list_readers() -> list[str]:",
+            '    """Return generated series-binding reader function names."""',
+            f"    return {list(reader_names or ())!r}",
             "",
             "",
             "def list_computes() -> list[str]:",
@@ -2278,13 +2288,16 @@ class CodeGenerator:
         lines.append("")
         lines.append("")
         series_setter_names: list[str] = []
+        series_reader_names: list[str] = []
         series_compute_names: list[str] = []
         if series_bindings is not None:
             if bindings_workbook is None:
                 raise ValueError("bindings_workbook is required when series_bindings is set")
-            series_setter_names, series_compute_names = self._series_binding_public_names(
-                series_bindings
-            )
+            (
+                series_setter_names,
+                series_reader_names,
+                series_compute_names,
+            ) = self._series_binding_public_names(series_bindings)
             lines.extend(
                 self._emit_series_binding_setters(
                     series_bindings,
@@ -2301,6 +2314,7 @@ class CodeGenerator:
                 series_setter_names,
                 series_compute_names,
                 self._series_binding_groups_manifest(series_bindings),
+                reader_names=series_reader_names,
             )
         )
         lines.append("")
@@ -2453,6 +2467,7 @@ class CodeGenerator:
             "",
         ]
         series_setter_names: list[str] = []
+        series_reader_names: list[str] = []
         series_compute_names: list[str] = []
         api_helpers_py: str | None = None
         if series_bindings is not None:
@@ -2470,15 +2485,22 @@ class CodeGenerator:
                 series_docstring_callback=series_docstring_callback,
                 docstring_renderer=docstring_renderer,
             )
+            if "xl_range(" in "\n".join(setter_lines):
+                runtime_entry_names.append("xl_range")
+                runtime_entry_names.sort()
+                runtime_imports = self._format_from_runtime_import(runtime_entry_names)
+                api_lines[4] = runtime_imports
             if emit_input:
                 api_helpers_py = self._emit_api_helpers_module()
                 helper_imports = self._series_helper_imports(setter_lines)
                 if helper_imports:
                     api_lines.insert(4, f"from ._api_helpers import {', '.join(helper_imports)}")
             api_lines.extend(setter_lines)
-            series_setter_names, series_compute_names = self._series_binding_public_names(
-                series_bindings
-            )
+            (
+                series_setter_names,
+                series_reader_names,
+                series_compute_names,
+            ) = self._series_binding_public_names(series_bindings)
             api_lines.append("")
         groups_manifest = self._series_binding_groups_manifest(series_bindings)
         api_lines.extend(
@@ -2486,6 +2508,7 @@ class CodeGenerator:
                 series_setter_names,
                 series_compute_names,
                 groups_manifest,
+                reader_names=series_reader_names,
             )
         )
         api_lines.append("")
@@ -2519,10 +2542,17 @@ class CodeGenerator:
         )
         api_py = "\n".join(api_lines)
 
-        api_exports = ["compute_all", "make_context", "list_setters", "list_computes"]
+        api_exports = [
+            "compute_all",
+            "make_context",
+            "list_setters",
+            "list_readers",
+            "list_computes",
+        ]
         if groups_manifest is not None:
             api_exports.append("list_groups")
         api_exports.extend(series_setter_names)
+        api_exports.extend(series_reader_names)
         api_exports.extend(series_compute_names)
         api_imports = ", ".join(api_exports)
         all_exports = api_exports + ["DEFAULT_INPUTS"]

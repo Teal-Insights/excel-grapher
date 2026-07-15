@@ -98,23 +98,31 @@ def test_codegen_includes_setters_and_updates_inputs(workbook: Path) -> None:
         )
 
     assert "def set_borvelia_primary_balance(" in code
+    assert "def read_borvelia_primary_balance(" in code
 
     ns: dict[str, object] = {}
     exec(code, ns)
     make_context = cast(Callable[[], Any], ns["make_context"])
     list_setters = cast(Callable[[], list[str]], ns["list_setters"])
+    list_readers = cast(Callable[[], list[str]], ns["list_readers"])
     list_computes = cast(Callable[[], list[str]], ns["list_computes"])
     set_borvelia_primary_balance = cast(
         Callable[[Any, list[dict[str, object]]], None],
         ns["set_borvelia_primary_balance"],
     )
+    read_borvelia_primary_balance = cast(
+        Callable[..., object],
+        ns["read_borvelia_primary_balance"],
+    )
 
     assert list_setters() == ["set_borvelia_primary_balance"]
+    assert list_readers() == ["read_borvelia_primary_balance"]
     assert list_computes() == []
 
     ctx = make_context()
     set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 4, "OBS_VALUE": 7.5}])
     assert ctx.inputs["Sheet1!I5"] == 7.5
+    assert read_borvelia_primary_balance(ctx, time_period=4) == 7.5
 
 
 def test_generate_applies_series_docstring_callback(workbook: Path) -> None:
