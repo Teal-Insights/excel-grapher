@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.10.0 (2026-07-15)
+
+### Features
+
+- **evaluator**: Cell-wise AND/OR over lazy Range (#397)
+  ([#400](https://github.com/Teal-Insights/excel-grapher/pull/400),
+  [`74e4252`](https://github.com/Teal-Insights/excel-grapher/commit/74e425211d8dd8b2eceac32cc1ef14993808397c))
+
+
 ## v3.9.0 (2026-07-15)
 
 ### Bug Fixes
