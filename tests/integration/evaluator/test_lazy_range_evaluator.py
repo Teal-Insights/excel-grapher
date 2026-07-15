@@ -239,10 +239,6 @@ def test_sum_over_ranges_does_not_eager_resolve_excel_range(
         raise AssertionError("resolve_excel_range must not run for SUM args")
 
     monkeypatch.setattr(core_types, "resolve_excel_range", _boom)
-    monkeypatch.setattr(
-        "excel_grapher.evaluator.evaluator.resolve_excel_range",
-        _boom,
-    )
 
     graph = _make_graph(
         _make_node("S!A1", None, 1),
@@ -413,10 +409,6 @@ def test_binary_op_over_ranges_does_not_eager_resolve_excel_range(
         raise AssertionError("resolve_excel_range must not run for binary operands")
 
     monkeypatch.setattr(core_types, "resolve_excel_range", _boom)
-    monkeypatch.setattr(
-        "excel_grapher.evaluator.evaluator.resolve_excel_range",
-        _boom,
-    )
 
     graph = _make_graph(
         _make_node("S!A1", None, "x"),

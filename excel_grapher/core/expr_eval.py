@@ -11,6 +11,7 @@ from fastpyxl.utils.cell import (
 )
 
 from excel_grapher.core.address_keys import parse_address
+from excel_grapher.core.grid import Range
 
 from .coercions import flatten, numeric_values, to_bool, to_string
 from .excel_function_names import normalize_excel_function_name
@@ -43,7 +44,7 @@ from .operators import (
     xl_pow,
     xl_sub,
 )
-from .types import CellValue, ExcelRange, XlError, resolve_excel_range
+from .types import CellValue, ExcelRange, FormulaValue, XlError
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,7 +54,7 @@ class Unsupported:
     reason: str | None = None
 
 
-_FunctionsMapping = Mapping[str, Callable[[list[CellValue]], CellValue]]
+_FunctionsMapping = Mapping[str, Callable[[list[CellValue]], FormulaValue]]
 
 
 def _cell_part_from_address(addr: str) -> str:
@@ -88,14 +89,14 @@ def evaluate_expr(
     functions: _FunctionsMapping | None = None,
     max_depth: int = 10,
     context: EvalContext | None = None,
-) -> CellValue | XlError | Unsupported:
+) -> FormulaValue | XlError | Unsupported:
     """Evaluate a restricted Excel expression AST against a cell-value callback.
 
     This evaluator is intentionally small and representation-agnostic. It
     supports:
     - Literals (numbers, strings, booleans, Excel error literals)
     - Sheet-qualified cell refs (via get_cell_value)
-    - Simple ranges (resolved to numpy arrays via resolve_excel_range)
+    - Simple ranges (bound as lazy `Range` from `excel_grapher.core.grid`)
     - A small function whitelist (SUM, MIN, MAX, ABS, IF, ROW, COLUMN)
     - Basic arithmetic/comparison/string operators
 
@@ -114,7 +115,7 @@ def _eval(
     *,
     context: EvalContext,
     depth: int,
-) -> CellValue | XlError | Unsupported:
+) -> FormulaValue | XlError | Unsupported:
     if depth > max_depth:
         return Unsupported("max_depth exceeded")
 
@@ -137,7 +138,17 @@ def _eval(
         excel_range = _range_node_to_excel_range(node)
         if excel_range is None:
             return Unsupported("multi-sheet or malformed range")
-        return resolve_excel_range(excel_range, get_cell_value)
+        return cast(
+            CellValue,
+            Range(
+                excel_range.sheet,
+                excel_range.start_row,
+                excel_range.start_col,
+                excel_range.end_row,
+                excel_range.end_col,
+                get_cell_value,
+            ),
+        )
 
     if isinstance(node, UnaryOpNode):
         value = _eval(
@@ -251,7 +262,7 @@ def _eval(
                 )
             return False
 
-        args: list[CellValue | XlError | Unsupported] = [
+        args: list[FormulaValue | XlError | Unsupported] = [
             _eval(arg, get_cell_value, functions, max_depth, context=context, depth=depth + 1)
             for arg in node.args
         ]

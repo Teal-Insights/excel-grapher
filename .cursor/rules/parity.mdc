@@ -31,8 +31,6 @@ The evaluator and the exported runtime use **different error channels** with the
   - `grid_range_arg_indices` — lookups and full-scan reductions (`SUM`,
     `SUMPRODUCT`, `COUNTIF`, …) bind lazy `Range` from
     `excel_grapher.core.grid`; consumers walk cells via `flatten` / `Grid`
-  - `eager_materialize_arg_indices` — empty after Phase 3 (retained until
-    Phase 4 cleanup)
   - otherwise — `#VALUE!` without evaluating sibling cells (no Range leak into
     scalar contexts)
 
@@ -75,8 +73,7 @@ channel) cannot override that skip.
 `excel_grapher.core.grid` (`Range`, `Grid`) is the shared rectangular value
 model, and `excel_grapher.core.types.ExcelRange` is the single shared geometry
 type (evaluator and export). `FormulaEvaluator._resolve_function_arg` classifies
-multi-cell args via `grid_range_arg_indices` (else `#VALUE!`;
-`eager_materialize_arg_indices` is empty after Phase 3).
+multi-cell args via `grid_range_arg_indices` (else `#VALUE!`).
 
 | Consumer | Error channel | How ranges are bound |
 | -------- | ------------- | -------------------- |

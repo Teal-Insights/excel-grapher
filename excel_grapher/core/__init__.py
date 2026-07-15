@@ -36,11 +36,21 @@ from .operators import (
     xl_pow,
     xl_sub,
 )
-from .types import CellValue, ExcelRange, XlError, XlErrorException, resolve_excel_range
+from .types import (
+    CellValue,
+    ExcelRange,
+    FormulaValue,
+    NestedGrid,
+    XlError,
+    XlErrorException,
+    resolve_excel_range,
+)
 
 __all__ = [
     "NormalizedAddress",
     "CellValue",
+    "FormulaValue",
+    "NestedGrid",
     "ExcelRange",
     "XlError",
     "XlErrorException",

@@ -188,7 +188,7 @@ def _parse_range_address(address: str) -> tuple[str, str, str] | XlError:
 
 
 def xl_range(ctx: EvalContext, address: str) -> CellValue:
-    """Evaluate a sheet-qualified range and return a 2D numpy array of values."""
+    """Evaluate a sheet-qualified range and return a nested list of values."""
     parsed = _parse_range_address(address)
     if isinstance(parsed, XlError):
         return parsed
@@ -207,7 +207,7 @@ def xl_range(ctx: EvalContext, address: str) -> CellValue:
         start_col_idx, end_col_idx = end_col_idx, start_col_idx
 
     rng = ExcelRange(sheet, start_row, start_col_idx, end_row, end_col_idx)
-    return resolve_excel_range(rng, lambda addr: xl_cell(ctx, addr))
+    return cast(CellValue, resolve_excel_range(rng, lambda addr: xl_cell(ctx, addr)))
 
 
 def _convergence_delta(prev: CellValue, curr: CellValue) -> float:

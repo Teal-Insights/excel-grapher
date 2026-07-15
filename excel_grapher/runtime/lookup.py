@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
-
-import numpy as np
+from typing import cast
 
 from excel_grapher.core import CellValue, XlError
 from excel_grapher.core.lookup_funcs import (
@@ -26,13 +24,6 @@ __all__ = [
 ]
 
 
-def _array_arg(value: object) -> object:
-    """Materialize numpy arrays to nested lists for shared Grid consumers."""
-    if isinstance(value, np.ndarray):
-        return cast(Any, value).tolist()
-    return value
-
-
 def xl_lookup(
     lookup_value: CellValue,
     lookup_vector_or_array: object,
@@ -40,19 +31,19 @@ def xl_lookup(
 ) -> CellValue:
     return cast(
         CellValue,
-        lookup_cells(lookup_value, _array_arg(lookup_vector_or_array), _array_arg(result_vector)),
+        lookup_cells(lookup_value, lookup_vector_or_array, result_vector),
     )
 
 
 def xl_index(array: object, row_num: CellValue = None, col_num: CellValue = None) -> CellValue:
-    """INDEX over a lazy `Range`, nested list, or transitional ndarray."""
-    return cast(CellValue, index_cells(_array_arg(array), row_num, col_num))
+    """INDEX over a lazy `Range`, nested list, or materialized grid."""
+    return cast(CellValue, index_cells(array, row_num, col_num))
 
 
 def xl_match(
     lookup_value: CellValue, lookup_array: object, match_type: CellValue = 1
 ) -> int | XlError:
-    return match_cells(lookup_value, _array_arg(lookup_array), match_type)
+    return match_cells(lookup_value, lookup_array, match_type)
 
 
 def xl_vlookup(
@@ -63,7 +54,7 @@ def xl_vlookup(
 ) -> CellValue:
     return cast(
         CellValue,
-        vlookup_cells(lookup_value, _array_arg(table_array), col_index_num, range_lookup),
+        vlookup_cells(lookup_value, table_array, col_index_num, range_lookup),
     )
 
 
@@ -75,7 +66,7 @@ def xl_hlookup(
 ) -> CellValue:
     return cast(
         CellValue,
-        hlookup_cells(lookup_value, _array_arg(table_array), row_index_num, range_lookup),
+        hlookup_cells(lookup_value, table_array, row_index_num, range_lookup),
     )
 
 
@@ -91,8 +82,8 @@ def xl_xlookup(
         CellValue,
         xlookup_cells(
             lookup_value,
-            _array_arg(lookup_array),
-            _array_arg(return_array),
+            lookup_array,
+            return_array,
             if_not_found,
             match_mode,
             search_mode,

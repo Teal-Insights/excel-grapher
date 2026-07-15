@@ -132,10 +132,6 @@ def map_concat(left: object, right: object) -> object:
         for col0 in range(arr_left.ncols):
             lv = arr_left.at(row0, col0)
             rv = arr_right.at(row0, col0)
-            if isinstance(lv, XlError):
-                return lv
-            if isinstance(rv, XlError):
-                return rv
             out_row.append(concat_scalars(cast(CellValue, lv), cast(CellValue, rv)))
         result.append(out_row)
     return result

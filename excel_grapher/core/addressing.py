@@ -4,7 +4,7 @@ from typing import Protocol
 
 import fastpyxl.utils.cell
 
-from . import CellValue, ExcelRange, XlError, to_number
+from . import ExcelRange, FormulaValue, XlError, to_number
 from .address_keys import parse_address
 
 
@@ -20,8 +20,8 @@ class ExcelRangeGeometry(Protocol):
 
 def index_excel_range(
     base: ExcelRangeGeometry,
-    row_num: CellValue | None,
-    col_num: CellValue | None,
+    row_num: FormulaValue | None,
+    col_num: FormulaValue | None,
 ) -> ExcelRange | XlError:
     """Map INDEX(row,col) over *base* to an absolute range (single cell or slice).
 
@@ -137,10 +137,10 @@ def _in_bounds(rng: ExcelRangeGeometry, bounds: WorkbookBoundsProtocol) -> bool:
 
 def offset_range(
     base: ExcelRangeGeometry,
-    rows: CellValue,
-    cols: CellValue,
-    height: CellValue | None = None,
-    width: CellValue | None = None,
+    rows: FormulaValue,
+    cols: FormulaValue,
+    height: FormulaValue | None = None,
+    width: FormulaValue | None = None,
     *,
     bounds: WorkbookBoundsProtocol,
 ) -> ExcelRange | XlError:

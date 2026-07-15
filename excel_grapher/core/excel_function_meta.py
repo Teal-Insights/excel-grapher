@@ -39,9 +39,6 @@ FUNCTION_META: dict[str, ExcelFunctionMeta] = {
     "CONCAT": ExcelFunctionMeta("CONCAT", ()),
 }
 
-# Remaining eager-ndarray bridge (empty after Phase 3; kept for Phase 4 rename).
-EAGER_MATERIALIZE_ARG_INDICES: dict[str, frozenset[int]] = {}
-
 # Multi-cell args bound as lazy `Range` (selective or full-scan Grid consumers).
 # Unlisted multi-cell args become `#VALUE!`.
 GRID_RANGE_ARG_INDICES: dict[str, frozenset[int]] = {
@@ -66,11 +63,6 @@ GRID_RANGE_ARG_INDICES: dict[str, frozenset[int]] = {
     "AND": _ALL_ARGS,
     "OR": _ALL_ARGS,
 }
-
-
-def eager_materialize_arg_indices(function_name: str) -> frozenset[int]:
-    """Return argument indices that eager-materialize for ``function_name``."""
-    return EAGER_MATERIALIZE_ARG_INDICES.get(function_name.upper(), frozenset())
 
 
 def grid_range_arg_indices(function_name: str) -> frozenset[int]:

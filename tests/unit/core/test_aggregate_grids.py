@@ -4,23 +4,15 @@ from __future__ import annotations
 
 from typing import cast
 
-import numpy as np
-
-from excel_grapher.core import CellValue, XlError, flatten, get_error
-from excel_grapher.core.excel_function_meta import (
-    eager_materialize_arg_indices,
-    grid_range_arg_indices,
-)
+from excel_grapher.core import CellValue, FormulaValue, XlError, flatten, get_error
+from excel_grapher.core.excel_function_meta import grid_range_arg_indices
 from excel_grapher.core.grid import Range
 from excel_grapher.core.math_funcs import averageif_cells, countif_cells, sum_cells
 from excel_grapher.core.sumproduct import sumproduct_cells
 
 
-def test_full_scan_aggregates_bind_lazy_ranges_not_eager_ndarrays() -> None:
-    """Phase 3 drops eager materialization for SUM / SUMPRODUCT / COUNTIF / AND / OR."""
-    assert eager_materialize_arg_indices("SUM") == frozenset()
-    assert eager_materialize_arg_indices("SUMPRODUCT") == frozenset()
-    assert eager_materialize_arg_indices("COUNTIF") == frozenset()
+def test_full_scan_aggregates_bind_lazy_ranges() -> None:
+    """SUM / SUMPRODUCT / COUNTIF / AND / OR bind lazy Range via grid_range_arg_indices."""
     assert 0 in grid_range_arg_indices("SUM")
     assert 0 in grid_range_arg_indices("SUMPRODUCT")
     assert 0 in grid_range_arg_indices("COUNTIF")
@@ -79,8 +71,8 @@ def test_sum_cells_over_lazy_range_agrees_with_ndarray() -> None:
         return values[address]
 
     lazy = Range("S", 1, 1, 3, 1, resolve)
-    eager = np.array([[1.5], [2.5], [3.5]], dtype=object)
-    assert sum_cells(cast(CellValue, lazy)) == sum_cells(eager) == 7.5
+    eager = [[1.5], [2.5], [3.5]]
+    assert sum_cells(cast(FormulaValue, lazy)) == sum_cells(eager) == 7.5
 
 
 def test_sum_cells_fail_fast_on_embedded_error() -> None:

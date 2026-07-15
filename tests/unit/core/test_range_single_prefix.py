@@ -102,7 +102,7 @@ def test_ast_and_codegen_emit_single_prefix_xl_range() -> None:
     assert parse("=Sheet1!A1:A3") == RangeNode("Sheet1!A1", "Sheet1!A3")
     assert parse("=Sheet1!A1:Sheet1!A3") == RangeNode("Sheet1!A1", "Sheet1!A3")
 
-    gen = CodeGenerator(None)  # type: ignore
+    gen = CodeGenerator(None)
     assert gen._emit_ast(RangeNode("Sheet1!A1", "Sheet1!A3")) == "xl_range(ctx, 'Sheet1!A1:A3')"
     assert gen._emit_ast(RangeNode("Sheet1!A1", "Sheet1!B2")) == "xl_range(ctx, 'Sheet1!A1:B2')"
     assert (

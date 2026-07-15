@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 
 from .coercions import excel_casefold, to_number, to_string
-from .types import CellValue, XlError
+from .types import CellValue, FormulaValue, XlError
 
 
 def broadcast_pair(
@@ -32,7 +32,7 @@ def broadcast_pair(
     raise TypeError("expected at least one ndarray operand")
 
 
-def compare_scalars(op: str, left: CellValue, right: CellValue) -> bool | XlError:
+def compare_scalars(op: str, left: FormulaValue, right: FormulaValue) -> bool | XlError:
     """Compare two scalar cell values using Excel coercion rules."""
     if isinstance(left, XlError):
         return left

@@ -483,6 +483,8 @@ def emit_runtime(
         "XlError",
         "ExcelRange",
         "CellValue",
+        "NestedGrid",
+        "FormulaValue",
         "NormalizedAddress",
     }
 
