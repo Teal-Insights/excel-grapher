@@ -43,6 +43,7 @@ from excel_grapher.evaluator.parser import (
 )
 from excel_grapher.evaluator.types import XlError
 from excel_grapher.exporter.embed import emit_runtime
+from excel_grapher.exporter.return_unpack import unpack_return_expression
 from excel_grapher.grapher.blank_ranges import BlankRangeRect, normalize_blank_range_specs
 from excel_grapher.grapher.graph import CycleError
 from excel_grapher.grapher.parser import format_key
@@ -115,6 +116,7 @@ class CodeGenerator:
         iterate_enabled: bool | None = None,
         iterate_count: int = 100,
         iterate_delta: float = 0.001,
+        unpack_return: bool = False,
     ) -> None:
         """Initialize the code generator.
 
@@ -126,9 +128,12 @@ class CodeGenerator:
                 this check (default).
             iterate_count: Maximum iterations when iterative calculation is enabled.
             iterate_delta: Convergence threshold when iterative calculation is enabled.
+            unpack_return: When True, hoist nested runtime calls in each formula
+                cell's return expression into statement-level temporaries.
         """
         self.graph = graph
         self._iterate_enabled = iterate_enabled
+        self._unpack_return = unpack_return
         self._iterate_count = iterate_count
         self._iterate_delta = iterate_delta
         self._emitted: set[str] = set()
@@ -1788,6 +1793,12 @@ class CodeGenerator:
             expr = self._emit_ast(ast)
         finally:
             self._formula_cell_address = prev_cell
+        if self._unpack_return:
+            stmt_lines, expr, self._temp_var_counter = unpack_return_expression(
+                expr,
+                self._temp_var_counter,
+            )
+            lines.extend(f"    {line}" for line in stmt_lines)
         lines.append(f"    return {expr}")
 
         return "\n".join(lines)
