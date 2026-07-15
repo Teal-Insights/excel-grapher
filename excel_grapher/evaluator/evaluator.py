@@ -103,6 +103,9 @@ _SKIP_ERROR_PRECHECK = {
     # Criteria consumers: Excel skips error cells in the criteria range.
     "COUNTIF",
     "AVERAGEIF",
+    # Logical reductions: short-circuit and fail-fast over lazy ranges.
+    "AND",
+    "OR",
 }
 
 if TYPE_CHECKING:

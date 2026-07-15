@@ -97,9 +97,8 @@ survives export embedding. Do not introduce a third traversal copy.
 materialization). Bare `Grid` values are **not** unwrapped by `flatten` — use
 `_iter_arg_cells` / `Grid.wrap` for selective cell walks (decision A in #398).
 
-`AND` / `OR` are **not** on the Grid bind list yet — multi-cell args return
-`#VALUE!` without evaluating siblings until cell-wise range semantics land
-(#397).
+`AND` / `OR` walk cells via `Grid` with blank skip, first-error propagation,
+and short-circuit semantics (#397).
 
 Behavioral parity (evaluator ↔ export ↔ Excel) is unchanged by representation
 convergence. Remaining NumPy use in the evaluator hot path is confined to

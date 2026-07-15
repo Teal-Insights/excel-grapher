@@ -297,13 +297,18 @@ def test_countif_skips_error_cells_in_range() -> None:
         assert ev.evaluate(["S!B1"]) == {"S!B1": 2}
 
 
-def test_and_or_reject_multi_cell_range_without_sibling_eval() -> None:
-    """AND/OR stay off the Grid bind list until cell-wise semantics (#397)."""
+def test_and_or_over_lazy_range_with_short_circuit_and_error() -> None:
+    """AND/OR bind lazy Range and short-circuit without evaluating trailing cells."""
     graph = _make_graph(
         _make_node("S!A1", None, True),
         _make_node("S!A2", "=1/0", None),
-        _make_node("S!A3", None, True),
+        _make_node("S!A3", None, False),
         _make_node("S!B1", "=AND(S!A1:S!A3)", None),
+        _make_node("S!B2", "=OR(S!A1:S!A3)", None),
+        _make_node("S!C1", None, False),
+        _make_node("S!C2", "=1/0", None),
+        _make_node("S!C3", None, True),
+        _make_node("S!D1", "=OR(S!C1:S!C3)", None),
     )
     seen: list[str] = []
 
@@ -311,10 +316,25 @@ def test_and_or_reject_multi_cell_range_without_sibling_eval() -> None:
         seen.append(address)
 
     with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
-        assert ev.evaluate(["S!B1"]) == {"S!B1": XlError.VALUE}
-        assert "S!A1" not in ev._cache
-        assert "S!A2" not in ev._cache
-    assert "S!A2" not in seen
+        assert ev.evaluate(["S!B1", "S!B2", "S!D1"]) == {
+            "S!B1": XlError.DIV,
+            "S!B2": True,
+            "S!D1": XlError.DIV,
+        }
+    assert "S!A3" not in seen
+    assert "S!C3" not in seen
+
+
+def test_and_or_skip_blanks_in_range() -> None:
+    graph = _make_graph(
+        _make_node("S!A1", None, None),
+        _make_node("S!A2", None, True),
+        _make_node("S!A3", None, None),
+        _make_node("S!B1", "=AND(S!A1:S!A3)", None),
+        _make_node("S!B2", "=OR(S!A1:S!A3)", None),
+    )
+    with FormulaEvaluator(graph) as ev:
+        assert ev.evaluate(["S!B1", "S!B2"]) == {"S!B1": True, "S!B2": True}
 
 
 def test_sum_does_not_double_evaluate_via_ast_precheck() -> None:

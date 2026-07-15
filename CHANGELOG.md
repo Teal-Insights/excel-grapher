@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.9.0 (2026-07-15)
+
+### Bug Fixes
+
+- **core**: Drop redundant cast in Range flatten walk
+  ([#396](https://github.com/Teal-Insights/excel-grapher/pull/396),
+  [`c07b157`](https://github.com/Teal-Insights/excel-grapher/commit/c07b157297592b8f6dccd54f8f95229ee285c29b))
+
+- **evaluator**: Excel COUNTIF skip, AST precheck exemptions, demote AND/OR
+  ([#396](https://github.com/Teal-Insights/excel-grapher/pull/396),
+  [`c07b157`](https://github.com/Teal-Insights/excel-grapher/commit/c07b157297592b8f6dccd54f8f95229ee285c29b))
+
+### Features
+
+- **evaluator**: Lazy Grid aggregates for SUM/SUMPRODUCT (#336 Phase 3)
+  ([#396](https://github.com/Teal-Insights/excel-grapher/pull/396),
+  [`c07b157`](https://github.com/Teal-Insights/excel-grapher/commit/c07b157297592b8f6dccd54f8f95229ee285c29b))
+
+
 ## v3.8.0 (2026-07-15)
 
 ### Bug Fixes
