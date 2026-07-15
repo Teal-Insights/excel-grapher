@@ -12,7 +12,7 @@ from excel_grapher.core.excel_function_meta import (
     grid_range_arg_indices,
 )
 from excel_grapher.core.grid import Range
-from excel_grapher.core.math_funcs import countif_cells, sum_cells
+from excel_grapher.core.math_funcs import averageif_cells, countif_cells, sum_cells
 from excel_grapher.core.sumproduct import sumproduct_cells
 
 
@@ -24,6 +24,7 @@ def test_full_scan_aggregates_bind_lazy_ranges_not_eager_ndarrays() -> None:
     assert 0 in grid_range_arg_indices("SUM")
     assert 0 in grid_range_arg_indices("SUMPRODUCT")
     assert 0 in grid_range_arg_indices("COUNTIF")
+    assert 0 in grid_range_arg_indices("AVERAGEIF")
     assert 0 in grid_range_arg_indices("AND")
     assert 0 in grid_range_arg_indices("OR")
 
@@ -129,3 +130,68 @@ def test_countif_skips_error_cells_in_lazy_range() -> None:
     rng = Range("S", 1, 1, 3, 1, resolve)
     assert countif_cells(cast(CellValue, rng), ">5") == 2
     assert calls == ["S!A1", "S!A2", "S!A3"]
+
+
+def test_averageif_over_lazy_range() -> None:
+    crit = Range(
+        "S",
+        1,
+        1,
+        3,
+        1,
+        lambda a: {"S!A1": "A", "S!A2": "B", "S!A3": "A"}[a],
+    )
+    avg = Range(
+        "S",
+        1,
+        2,
+        3,
+        2,
+        lambda a: {"S!B1": 10.0, "S!B2": 20.0, "S!B3": 30.0}[a],
+    )
+    assert averageif_cells(cast(CellValue, crit), "A", cast(CellValue, avg)) == 20.0
+
+
+def test_averageif_shared_range_not_walked_twice() -> None:
+    """Omitted average_range must not materialize the criteria range twice."""
+    calls: list[str] = []
+
+    def resolve(address: str) -> CellValue:
+        calls.append(address)
+        return {"S!A1": 10, "S!A2": 3, "S!A3": 20}[address]
+
+    rng = Range("S", 1, 1, 3, 1, resolve)
+    assert averageif_cells(cast(CellValue, rng), ">5") == 15.0
+    assert calls == ["S!A1", "S!A2", "S!A3"]
+
+
+def test_averageif_skips_error_cells_in_criteria_range() -> None:
+    crit = Range(
+        "S",
+        1,
+        1,
+        3,
+        1,
+        lambda a: {"S!A1": 10, "S!A2": XlError.DIV, "S!A3": 20}[a],
+    )
+    avg = Range("S", 1, 2, 3, 2, lambda a: {"S!B1": 1.0, "S!B2": 2.0, "S!B3": 3.0}[a])
+    assert averageif_cells(cast(CellValue, crit), ">5", cast(CellValue, avg)) == 2.0
+
+
+def test_averageif_propagates_error_in_average_range_for_match() -> None:
+    crit = Range("S", 1, 1, 2, 1, lambda a: {"S!A1": 10, "S!A2": 20}[a])
+    avg = Range(
+        "S",
+        1,
+        2,
+        2,
+        2,
+        lambda a: {"S!B1": XlError.DIV, "S!B2": 100.0}[a],
+    )
+    assert averageif_cells(cast(CellValue, crit), ">5", cast(CellValue, avg)) == XlError.DIV
+
+
+def test_averageif_length_mismatch_returns_value_error() -> None:
+    crit = Range("S", 1, 1, 2, 1, lambda _a: 1)
+    avg = Range("S", 1, 1, 3, 1, lambda _a: 1)
+    assert averageif_cells(cast(CellValue, crit), ">0", cast(CellValue, avg)) == XlError.VALUE

@@ -282,8 +282,35 @@ def averageif_cells(
     """
     if isinstance(criteria, XlError):
         return criteria
-    crit_vals = list(_iter_arg_cells(range_values))
     avg_source = average_range if average_range is not None else range_values
+    crit_grid = Grid.wrap(range_values)
+    avg_grid = Grid.wrap(avg_source)
+    if crit_grid is not None and avg_grid is not None:
+        if crit_grid.size != avg_grid.size:
+            return XlError.VALUE
+        paired_same_source = avg_source is range_values
+        total = 0.0
+        count = 0
+        for index0 in range(crit_grid.size):
+            if paired_same_source:
+                cell = cast(CellValue, crit_grid.at_flat(index0))
+                if not _value_matches_criteria(cell, criteria):
+                    continue
+                n = to_number(cell)
+            else:
+                crit_val = cast(CellValue, crit_grid.at_flat(index0))
+                if not _value_matches_criteria(crit_val, criteria):
+                    continue
+                n = to_number(cast(CellValue, avg_grid.at_flat(index0)))
+            if isinstance(n, XlError):
+                return n
+            total += float(n)
+            count += 1
+        if count == 0:
+            return XlError.DIV
+        return total / count
+
+    crit_vals = list(_iter_arg_cells(range_values))
     avg_vals = list(_iter_arg_cells(avg_source))
     if len(crit_vals) != len(avg_vals):
         return XlError.VALUE
