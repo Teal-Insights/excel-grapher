@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.13.0 (2026-07-15)
+
+### Bug Fixes
+
+- **series-bindings**: Align read_* emission with discovery exports
+  ([#407](https://github.com/Teal-Insights/excel-grapher/pull/407),
+  [`17de304`](https://github.com/Teal-Insights/excel-grapher/commit/17de304d09ffc6be451c0fa20bff416f52d7c52b))
+
+- **test**: Avoid ruff B009 in reader range assertion
+  ([#407](https://github.com/Teal-Insights/excel-grapher/pull/407),
+  [`17de304`](https://github.com/Teal-Insights/excel-grapher/commit/17de304d09ffc6be451c0fa20bff416f52d7c52b))
+
+- **test**: Silence ty on xl_range.cell access in reader tests
+  ([#407](https://github.com/Teal-Insights/excel-grapher/pull/407),
+  [`17de304`](https://github.com/Teal-Insights/excel-grapher/commit/17de304d09ffc6be451c0fa20bff416f52d7c52b))
+
+### Features
+
+- **series-bindings**: Emit read_* duals of set_* setters
+  ([#407](https://github.com/Teal-Insights/excel-grapher/pull/407),
+  [`17de304`](https://github.com/Teal-Insights/excel-grapher/commit/17de304d09ffc6be451c0fa20bff416f52d7c52b))
+
+- **series-bindings**: Emit read_* duals of set_* setters (#404)
+  ([#407](https://github.com/Teal-Insights/excel-grapher/pull/407),
+  [`17de304`](https://github.com/Teal-Insights/excel-grapher/commit/17de304d09ffc6be451c0fa20bff416f52d7c52b))
+
+### Testing
+
+- **exporter**: Bump dep-tracking baseline for list_readers discovery
+  ([#407](https://github.com/Teal-Insights/excel-grapher/pull/407),
+  [`17de304`](https://github.com/Teal-Insights/excel-grapher/commit/17de304d09ffc6be451c0fa20bff416f52d7c52b))
+
+
 ## v3.12.0 (2026-07-15)
 
 ### Bug Fixes
