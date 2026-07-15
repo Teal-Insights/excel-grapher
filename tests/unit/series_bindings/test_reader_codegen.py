@@ -46,6 +46,7 @@ def _exec_readers(
         "EvalContext": EvalContext,
         "coerce_inputs_dict": coerce_inputs_dict,
         "xl_cell": xl_cell,
+        "CellValue": object,
     }
     if extra:
         namespace.update(extra)
@@ -151,7 +152,7 @@ def test_emit_reader_keyless_scalar(tmp_path: Path) -> None:
     )
     assert reader(ctx) == "Litellia"
     source = "\n".join(lines)
-    assert "def read_country_name(ctx: EvalContext) -> object:" in source or (
+    assert "def read_country_name(ctx: EvalContext) -> CellValue:" in source or (
         "def read_country_name(" in source and "time_period" not in source
     )
 
@@ -194,7 +195,7 @@ def test_emit_reader_requires_address_uses_address_kwarg(tmp_path: Path) -> None
     assert resolved["requires_address"] is True
     lines = emit_setter_function(series, resolved) + emit_reader_function(series, resolved)
     source = "\n".join(lines)
-    assert "def read_dup_headers(ctx: EvalContext, *, address: str) -> object:" in source
+    assert "def read_dup_headers(ctx: EvalContext, *, address: str) -> CellValue:" in source
     assert "_READER_ADDRESSES_DUP_HEADERS" in source
 
     ns = _exec_readers(lines)
@@ -272,7 +273,9 @@ def test_generate_modules_exports_requires_address_reader(tmp_path: Path) -> Non
         series_bindings=bindings,
         bindings_workbook=wb_path,
     )
-    assert "def read_dup_headers(" in files["api.py"]
+    assert "_readers.py" in files
+    assert "def read_dup_headers(" in files["_readers.py"]
+    assert "from ._readers import" in files["api.py"]
     assert "read_dup_headers" in files["__init__.py"]
     assert "read_dup_headers_range" in files["__init__.py"]
 

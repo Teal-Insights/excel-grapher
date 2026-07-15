@@ -1,7 +1,7 @@
 """View-level series binding groups: export sequencing and group manifest.
 
-Groups are a presentation concern of the generated `set_*`/`compute_*` API.
-They sequence code export and feed documentation tooling; they never affect
+Groups are a presentation concern of the generated `set_*`/`compute_*`/`read_*` API.
+They sequence code export and power `list_groups()` discovery; they never affect
 graph extraction, binding resolution, or record semantics.
 """
 
@@ -35,7 +35,7 @@ class GroupNode(TypedDict):
 
 
 class GroupsManifest(TypedDict):
-    """Machine-readable group structure for documentation tooling."""
+    """Machine-readable group structure returned by generated `list_groups()`."""
 
     groups: list[GroupNode]
     ungrouped: list[GroupMember]
@@ -225,7 +225,7 @@ def _manifest_node(node: _TreeNode) -> GroupNode:
 def group_manifest(
     bindings: WorkbookSeriesBindings | dict[str, Any],
 ) -> GroupsManifest:
-    """Build the nested group manifest consumed by documentation tooling.
+    """Build the nested group manifest returned by generated `list_groups()`.
 
     Unlike `bindings_export_order`, a multi-membership binding appears under
     every group it references.
