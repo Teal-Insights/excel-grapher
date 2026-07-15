@@ -106,6 +106,9 @@ _ARITHMETIC_OPS = frozenset({"+", "-", "*", "/", "^"})
 # AST-level special cases; other IS functions propagate argument errors there.
 _THUNK_ARG_FUNCTIONS = frozenset({"ISERROR", "ISNA", "ISBLANK"})
 
+# Return unpacking hoists substantive ``xl_*`` runtime calls into statement-level
+# temporaries. Coercion helpers and error literals stay inline because they are
+# cheap and wrapping them would add noise without aiding debugging.
 _RETURN_UNPACK_NON_HOISTABLE = frozenset(
     {
         "xl_number",
@@ -295,25 +298,24 @@ class CodeGenerator:
         lines = ["# --- Projection public address aliases ---", ""]
         for public_addr, replacement in sorted(alias_map.items()):
             public_fn = address_to_python_name(public_addr)
-            replacement_node = self.graph.get_node(replacement)
-            if replacement_node is not None and replacement_node.formula is not None:
-                replacement_fn = address_to_python_name(replacement)
-                lines.extend(
-                    [
-                        f"def {public_fn}(ctx):",
-                        f"    return xl_eval(ctx, {repr(replacement)}, {replacement_fn})",
-                        "",
-                    ]
-                )
-            else:
-                lines.extend(
-                    [
-                        f"def {public_fn}(ctx):",
-                        f"    return xl_cell(ctx, {repr(replacement)})",
-                        "",
-                    ]
-                )
+            lines.append(f"def {public_fn}(ctx):")
+            lines.extend(self._emit_projection_alias_body(replacement))
+            lines.append("")
         return lines
+
+    def _emit_projection_alias_body(self, replacement: str) -> list[str]:
+        """Emit the body lines for a projected public-address alias wrapper."""
+        replacement_node = self.graph.get_node(replacement)
+        if replacement_node is not None and replacement_node.formula is not None:
+            ast = self._get_or_parse_ast(replacement)
+            assert ast is not None
+            return self._emit_formula_body_lines(ast)
+        unpack_stmts = self._start_return_unpack()
+        try:
+            expr = self._emit_cell_eval(replacement)
+        finally:
+            self._stop_return_unpack()
+        return self._format_return_lines(unpack_stmts, expr)
 
     def _graph_sheetnames(self, *, targets: Sequence[str] | None = None) -> list[str]:
         sheet_order = getattr(self.graph, "sheet_order", None)
@@ -1337,7 +1339,8 @@ class CodeGenerator:
         else:
             raise ValueError(f"Unsupported lazy error fallback function: {name!r}")
 
-        return f"{func}(lambda: ({value_expr}), lambda: ({fallback_expr}))"
+        expr = f"{func}(lambda: ({value_expr}), lambda: ({fallback_expr}))"
+        return self._hoist_return_expr(expr)
 
     def _emit_if(self, node: FunctionCallNode) -> str:
         """Emit IF as a Python conditional expression for lazy evaluation.
@@ -1847,6 +1850,32 @@ class CodeGenerator:
         expr = f"xl_offset_ref({ref_info}, {rows_expr}, {cols_expr}, {height_expr}, {width_expr})"
         return self._hoist_return_expr(expr)
 
+    def _start_return_unpack(self) -> list[str]:
+        if not self._unpack_return:
+            return []
+        self._return_unpack_state = _ReturnUnpackState(statements=[])
+        self._return_unpack_stack = [_ReturnUnpackFrame(lazy=False, nested=False)]
+        return self._return_unpack_state.statements
+
+    def _stop_return_unpack(self) -> None:
+        self._return_unpack_state = None
+        self._return_unpack_stack = []
+
+    @staticmethod
+    def _format_return_lines(unpack_stmts: list[str], expr: str) -> list[str]:
+        lines = [f"    {stmt}" for stmt in unpack_stmts]
+        lines.append(f"    return {expr}")
+        return lines
+
+    def _emit_formula_body_lines(self, ast: AstNode) -> list[str]:
+        """Emit statement/return lines for a formula cell or alias body."""
+        unpack_stmts = self._start_return_unpack()
+        try:
+            expr = self._emit_ast(ast)
+        finally:
+            self._stop_return_unpack()
+        return self._format_return_lines(unpack_stmts, expr)
+
     def _emit_cell(self, address: str) -> str:
         """Emit a Python function for a single formula cell.
 
@@ -1875,18 +1904,10 @@ class CodeGenerator:
         assert ast is not None
         prev_cell = self._formula_cell_address
         self._formula_cell_address = normalized
-        unpack_stmts: list[str] = []
-        if self._unpack_return:
-            self._return_unpack_state = _ReturnUnpackState(statements=unpack_stmts)
-            self._return_unpack_stack = [_ReturnUnpackFrame(lazy=False, nested=False)]
         try:
-            expr = self._emit_ast(ast)
+            lines.extend(self._emit_formula_body_lines(ast))
         finally:
             self._formula_cell_address = prev_cell
-            self._return_unpack_state = None
-            self._return_unpack_stack = []
-        lines.extend(f"    {line}" for line in unpack_stmts)
-        lines.append(f"    return {expr}")
 
         return "\n".join(lines)
 

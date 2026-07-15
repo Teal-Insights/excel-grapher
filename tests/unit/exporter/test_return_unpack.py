@@ -32,6 +32,14 @@ def _make_graph(*nodes: Node) -> DependencyGraph:
     return graph
 
 
+def _array_graph(formula: str) -> DependencyGraph:
+    nodes = [_make_node("S!Z1", formula, None)]
+    for col in "AB":
+        for row in (1, 2, 3):
+            nodes.append(_make_node(f"S!{col}{row}", None, float(row)))
+    return _make_graph(*nodes)
+
+
 class TestEmitCellUnpackReturn:
     def test_disabled_by_default(self) -> None:
         graph = _make_graph(
@@ -108,6 +116,28 @@ class TestEmitCellUnpackReturn:
         code = gen._emit_cell("Sheet1!B1")
         assert "    _t2 = xl_cell(ctx, 'Sheet1!C1')" not in code
         assert "lambda: (xl_cell(ctx, 'Sheet1!C1'))" in code
+
+    def test_nested_iferror_inside_sum_hoists_call(self) -> None:
+        graph = _make_graph(
+            _make_node("Sheet1!A1", "=1/0", None),
+            _make_node("Sheet1!B1", None, 5.0),
+            _make_node("Sheet1!C1", "=SUM(IFERROR(Sheet1!A1, Sheet1!B1))", None),
+        )
+        gen = CodeGenerator(graph, unpack_return=True)
+        code = gen._emit_cell("Sheet1!C1")
+        assert "_t1 = xl_iferror(" in code
+        assert "return xl_sum(_t1)" in code
+
+    def test_array_operator_hoists_range_operands(self) -> None:
+        graph = _array_graph("=S!A1:A3+S!B1:B3")
+        gen = CodeGenerator(graph, unpack_return=True)
+        code = gen._emit_cell("S!Z1")
+        assert "_t1 = xl_range(ctx, 'S!A1:A3')" in code
+        assert "_t2 = xl_range(ctx, 'S!B1:B3')" in code
+        assert "xl_map_arithmetic(" in code
+        assert "xl_is_array(" in code
+        assert "(_t1, _t2)" in code
+        compile(code, "<string>", "exec")
 
 
 class TestGenerateUnpackReturnParity:
