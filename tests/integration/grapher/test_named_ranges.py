@@ -251,6 +251,24 @@ def test_named_range_map_omits_offset_with_unevaluable_extent(tmp_path: Path) ->
     assert "COUNTRY_DROP_DOWN" not in maps.cell_map
 
 
+def test_named_range_map_omits_offset_with_non_arithmetic_binary_extent(
+    tmp_path: Path,
+) -> None:
+    """Concat/comparison binary ops in extents must omit the name, not raise."""
+    excel_path = tmp_path / "offset_concat_extent.xlsx"
+    wb = _new_workbook()
+    wb.create_sheet("S")
+    wb["S"]["A1"].value = 1
+    wb.defined_names.add(DefinedName("BadConcat", attr_text="OFFSET(S!$A$1,0,0,1&2,1)"))
+    wb.save(excel_path)
+
+    maps = build_named_range_map(
+        fastpyxl.load_workbook(excel_path, data_only=False, read_only=True)
+    )
+    assert "BadConcat" not in maps.range_map
+    assert "BadConcat" not in maps.cell_map
+
+
 def test_dependency_graph_expands_offset_counta_plus_named_range(tmp_path: Path) -> None:
     """INDEX over a COUNTA+n named range expands to the padded table, not A1:A1."""
     excel_path = tmp_path / "graph_offset_counta_plus.xlsx"

@@ -151,6 +151,8 @@ def _eval_number_for_defined_name(
             return float(inner) / 100.0
         return None
     if isinstance(node, BinaryOpNode):
+        if node.op not in {"+", "-", "*", "/", "^"}:
+            return None
         left = _eval_number_for_defined_name(node.left, get_cell_value, bounds)
         right = _eval_number_for_defined_name(node.right, get_cell_value, bounds)
         if left is None or right is None:

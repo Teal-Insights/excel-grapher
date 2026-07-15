@@ -11,6 +11,7 @@ from pathlib import Path
 
 import fastpyxl
 import pytest
+from fastpyxl.utils.cell import coordinate_from_string
 
 from excel_grapher import FormulaEvaluator, XlError, create_dependency_graph
 from excel_grapher.grapher.resolver import build_named_range_map
@@ -55,10 +56,9 @@ def test_lic_dsf_arith_offset_names_resolve_to_multicell_tables() -> None:
         sheet, start, end = maps.range_map[name]
         assert start == "A1", f"{name}: unexpected start {start}"
         assert end != "A1", f"{name} collapsed to 1x1 anchor on {sheet} ({start}:{end})"
-        # Padded COUNTA+n tables span multiple columns (headers + year field).
-        assert end[0].isalpha() and not (end.startswith("A") and end[1:].isdigit()), (
-            f"{name}: expected multi-column end, got {end}"
-        )
+        # These padded COUNTA+n tables always span multiple columns (headers + years).
+        end_col, _end_row = coordinate_from_string(end)
+        assert end_col != "A", f"{name}: expected multi-column end, got {end}"
 
 
 @pytest.mark.slow
