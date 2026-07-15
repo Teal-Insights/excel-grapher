@@ -361,7 +361,7 @@ def main() -> None:
     sheets: dict[str, int] = {}
     for key in graph:
         node = graph.get_node(key)
-        if node:
+        if node and node.sheet is not None:
             sheets[node.sheet] = sheets.get(node.sheet, 0) + 1
 
     print("\n   Nodes by sheet:")

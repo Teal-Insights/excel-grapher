@@ -511,6 +511,12 @@ class ProjectionResult:
     def get_dependents(self, address: NodeKey) -> frozenset[NodeKey]:
         return self.projected_graph.get_dependents(address)
 
+    def resolve_endpoint(self, address: NodeKey) -> NodeKey | None:
+        return self.projected_graph.resolve_endpoint(address)
+
+    def get_dependency_nodes(self, address: NodeKey) -> frozenset[NodeKey]:
+        return self.projected_graph.get_dependency_nodes(address)
+
     def get_edge_attrs(self, from_key: NodeKey, to_key: NodeKey):
         return self.projected_graph.get_edge_attrs(from_key, to_key)
 

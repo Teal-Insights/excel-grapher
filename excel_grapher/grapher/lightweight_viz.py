@@ -11,9 +11,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from excel_grapher.core.address_keys import (
+    CellKey,
+    RangeKey,
+    UnionKey,
+    normalize_key,
+    parse_node_key,
+)
+
 from .formula_label import truncate_formula_display, validate_max_formula_length
 from .graph import DependencyGraph
-from .node import NodeKey
+from .node import NodeKey, NodeView
 
 # --- Constants ----------------------------------------------------------------
 
@@ -30,6 +38,42 @@ BFS_HORIZONTAL_MIN_SLOT_GAP = 1.0
 # --- CSR / edge extraction ----------------------------------------------------
 
 
+def _resolve_viz_endpoint(graph: DependencyGraph, dep: NodeKey) -> NodeKey | None:
+    """Map an edge endpoint to a stored graph key (exact or occupancy owner)."""
+    nk = normalize_key(dep)
+    if nk in graph:
+        return nk
+    try:
+        return graph.cell_owner(nk)
+    except ValueError:
+        return None
+
+
+def _viz_label_geometry(node: NodeView) -> tuple[str, int, str]:
+    """Return `(sheet, row, column)` used as the viz node label anchor.
+
+    Multi-cell nodes use top-left / first-canonical-member geometry so unions
+    and non-row ranges never require scalar `Node.column` / `Node.row`.
+    """
+    parsed = parse_node_key(node.key)
+    if isinstance(parsed, CellKey):
+        return parsed.sheet, parsed.row, parsed.column
+    if isinstance(parsed, RangeKey):
+        return parsed.sheet, parsed.min_row, parsed.min_col
+    assert isinstance(parsed, UnionKey)
+    first = parsed.members[0]
+    if isinstance(first, CellKey):
+        return first.sheet, first.row, first.column
+    return first.sheet, first.min_row, first.min_col
+
+
+def _node_sheets(node: NodeView) -> set[str]:
+    parsed = parse_node_key(node.key)
+    if isinstance(parsed, (CellKey, RangeKey)):
+        return {parsed.sheet}
+    return {m.sheet for m in parsed.members}
+
+
 def _build_int_adjacencies(
     graph: DependencyGraph, keys: list[NodeKey], key_id: dict[NodeKey, int]
 ) -> tuple[list[list[int]], list[list[int]]]:
@@ -38,7 +82,8 @@ def _build_int_adjacencies(
     all_e: list[list[int]] = [[] for _ in range(n)]
     for i, fk in enumerate(keys):
         for tk in graph.keys(order="workbook", source=graph.get_dependencies(fk)):
-            tid = key_id.get(tk)
+            resolved = _resolve_viz_endpoint(graph, tk)
+            tid = None if resolved is None else key_id.get(resolved)
             if tid is None:
                 continue
             all_e[i].append(tid)
@@ -68,7 +113,8 @@ def _edge_list_filtered(
     for fk in keys:
         fi = key_id[fk]
         for tk in graph.keys(order="workbook", source=graph.get_dependencies(fk)):
-            ti = key_id.get(tk)
+            resolved = _resolve_viz_endpoint(graph, tk)
+            ti = None if resolved is None else key_id.get(resolved)
             if ti is None:
                 continue
             g = graph.get_edge_guard(fk, tk) is not None
@@ -213,7 +259,8 @@ def _build_out_adj_guarded(
     for fk in keys:
         fi = key_id[fk]
         for tk in graph.keys(order="workbook", source=graph.get_dependencies(fk)):
-            ti = key_id.get(tk)
+            resolved = _resolve_viz_endpoint(graph, tk)
+            ti = None if resolved is None else key_id.get(resolved)
             if ti is None:
                 continue
             guarded = graph.get_edge_guard(fk, tk) is not None
@@ -737,13 +784,14 @@ def _induced_dependency_subgraph(
         sub.add_node(node)
     for fk in graph.keys(order="workbook", source=keep_keys):
         for tk in graph.keys(order="workbook", source=graph.get_dependencies(fk)):
-            if tk not in keep_keys:
+            resolved = _resolve_viz_endpoint(graph, tk)
+            if resolved is None or resolved not in keep_keys:
                 continue
             edge = graph.get_edge_attrs(fk, tk)
             edge_kwargs: dict[str, Any] = {}
             if edge.provenance is not None:
                 edge_kwargs["provenance"] = edge.provenance
-            sub.add_edge(fk, tk, guard=edge.guard, **edge_kwargs)
+            sub.add_edge(fk, resolved, guard=edge.guard, **edge_kwargs)
     return sub
 
 
@@ -797,7 +845,11 @@ def build_lightweight_viz_core(
         )
 
     key_id = {k: i for i, k in enumerate(keys)}
-    present_sheets = {node.sheet for k in keys if (node := graph.get_node(k)) is not None}
+    present_sheets: set[str] = set()
+    for k in keys:
+        node = graph.get_node(k)
+        if node is not None:
+            present_sheets.update(_node_sheets(node))
     if graph.sheet_order is not None:
         sheets_sorted = [sheet for sheet in graph.sheet_order if sheet in present_sheets]
         unknown_sheets = sorted(present_sheets - set(sheets_sorted))
@@ -927,9 +979,10 @@ def build_lightweight_viz_core(
     for k in keys:
         node = graph.get_node(k)
         assert node is not None
-        rows.append(node.row)
-        cols.append(node.column)
-        sheet_ix.append(sheet_index_map[node.sheet])
+        sheet, row, col = _viz_label_geometry(node)
+        rows.append(row)
+        cols.append(col)
+        sheet_ix.append(sheet_index_map[sheet])
         is_leaf.append(node.is_leaf)
         if include_formula_on_nodes and node.formula:
             formulas.append(truncate_formula_display(node.formula, max_formula_length))

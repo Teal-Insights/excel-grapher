@@ -10,12 +10,17 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from .compression import IdentityTransitCompressionRecord, OptimalCompressionRecord
 
-from excel_grapher.core.address_keys import normalize_key, sort_node_keys
+from excel_grapher.core.address_keys import (
+    CellKey,
+    normalize_key,
+    parse_node_key,
+    sort_node_keys,
+)
 from excel_grapher.core.formula_ast import AstNode
 
 from .dependency_provenance import DependencyCause, EdgeProvenance, merge_edge_provenance
 from .guard import And, CellRef, Compare, GuardConstraints, GuardExpr, Not, Or, or_guard
-from .node import Node, NodeKey, NodeView, node_to_view
+from .node import Node, NodeKey, NodeView, member_keys, node_to_view
 
 NodeHook = Callable[[NodeKey, Node], None]
 
@@ -93,6 +98,10 @@ class GraphReadView(Protocol):
 
     def get_dependents(self, address: NodeKey) -> frozenset[NodeKey]: ...
 
+    def resolve_endpoint(self, address: NodeKey) -> NodeKey | None: ...
+
+    def get_dependency_nodes(self, address: NodeKey) -> frozenset[NodeKey]: ...
+
     def get_edge_attrs(self, from_key: NodeKey, to_key: NodeKey) -> EdgeAttrs: ...
 
     def get_edge_guard(self, from_key: NodeKey, to_key: NodeKey) -> GuardExpr | None: ...
@@ -112,12 +121,28 @@ class GraphReadView(Protocol):
 
 @dataclass
 class DependencyGraph:
+    """Mutable workbook dependency graph.
+
+    Node identity is the canonical address string (`CellKey` / `RangeKey` /
+    `UnionKey`). `get_node(key)` is exact-key only — a member cell of a
+    multi-cell node is not stored under its own key. Prefer `locate_cell` (or
+    `cell_owner`) when resolving a workbook cell that may belong to a group;
+    then call `get_node` on the returned `node_key`.
+
+    Edge endpoints may name member cells. `get_dependencies` /
+    `get_dependents` / `get_edge_attrs` keep those raw keys so member-level
+    provenance is preserved. Use `resolve_endpoint` or `get_dependency_nodes`
+    when a stored graph node is required (evaluation order, export, codegen).
+    """
+
     _nodes: dict[NodeKey, Node] = field(default_factory=dict)
     _edges: dict[NodeKey, set[NodeKey]] = field(default_factory=dict)  # node -> deps
     _reverse_edges: dict[NodeKey, set[NodeKey]] = field(default_factory=dict)  # node -> dependents
     _guards: dict[EdgeKey, GuardExpr] = field(default_factory=dict)
     _edge_extra: dict[EdgeKey, dict[str, Any]] = field(default_factory=dict)
     _hooks: list[NodeHook] = field(default_factory=list)
+    # Cell key -> owning node key (cell owns itself; multi-cell owns members).
+    _occupancy: dict[NodeKey, NodeKey] = field(default_factory=dict)
     leaf_classification: dict[str, str] | None = None
     sheet_order: list[str] | None = None
     sheet_bounds: dict[str, tuple[int, int]] | None = None
@@ -146,6 +171,12 @@ class DependencyGraph:
                 is_leaf=node.is_leaf,
                 is_target=node.is_target,
                 metadata=dict(node.metadata),
+                kind=node.kind,
+                min_col=node.min_col,
+                min_row=node.min_row,
+                max_col=node.max_col,
+                max_row=node.max_row,
+                address=node.address,
             )
             for key, node in self._nodes.items()
         }
@@ -155,6 +186,7 @@ class DependencyGraph:
         }
         cloned._guards = dict(self._guards)
         cloned._edge_extra = {edge: dict(extra) for edge, extra in self._edge_extra.items()}
+        cloned._occupancy = dict(self._occupancy)
         cloned.leaf_classification = (
             dict(self.leaf_classification) if self.leaf_classification is not None else None
         )
@@ -171,13 +203,43 @@ class DependencyGraph:
 
     # ---- node insertion and iteration ---------------------------------------
 
+    def _clear_occupancy_for_node(self, node: Node) -> None:
+        owner = node.key
+        for cell in member_keys(node):
+            if self._occupancy.get(cell) == owner:
+                del self._occupancy[cell]
+
+    def _register_occupancy(self, node: Node) -> None:
+        owner = node.key
+        members = member_keys(node)
+        for cell in members:
+            existing = self._occupancy.get(cell)
+            if existing is not None and existing != owner:
+                raise ValueError(f"Cell occupancy conflict: {cell} is already owned by {existing}")
+        if owner in self._nodes:
+            self._clear_occupancy_for_node(self._nodes[owner])
+        for cell in members:
+            self._occupancy[cell] = owner
+
     def add_node(self, node: Node) -> None:
         key = node.key
+        self._register_occupancy(node)
         self._nodes[key] = node
         self._edges.setdefault(key, set())
         self._reverse_edges.setdefault(key, set())
         for hook in self._hooks:
             hook(key, node)
+
+    def cell_owner(self, cell_key: NodeKey) -> NodeKey | None:
+        """Return the owning node key for a single workbook cell, if any.
+
+        Cell nodes own themselves. Multi-cell nodes own each expanded member.
+        Raises `ValueError` when `cell_key` is not a single-cell address.
+        """
+        parsed = parse_node_key(cell_key)
+        if not isinstance(parsed, CellKey):
+            raise ValueError(f"Expected a single-cell key, got: {cell_key!r}")
+        return self._occupancy.get(str(parsed))
 
     def __contains__(self, key: NodeKey) -> bool:
         return normalize_key(key) in self._nodes
@@ -216,7 +278,12 @@ class DependencyGraph:
         guard: GuardExpr | None = None,
         **attrs: Any,
     ) -> None:
-        """Add edge: from_key depends on to_key (from_key -> to_key)."""
+        """Add edge: from_key depends on to_key (from_key -> to_key).
+
+        Endpoints are stored as given (after `normalize_key`). Member-cell
+        keys are allowed; callers that need owner nodes should resolve via
+        `resolve_endpoint` / `get_dependency_nodes`.
+        """
         from_key = normalize_key(from_key)
         to_key = normalize_key(to_key)
         unknown_attrs = [k for k in attrs if k != "provenance"]
@@ -265,31 +332,63 @@ class DependencyGraph:
     # ---- public read API ----------------------------------------------------
 
     def get_node(self, key: NodeKey) -> NodeView | None:
-        """Return an immutable `NodeView` snapshot, or `None` if missing."""
+        """Return an immutable `NodeView` snapshot, or `None` if missing.
+
+        Lookup is by exact graph key. Member cells of a multi-cell node are not
+        present as their own keys — use `locate_cell` / `cell_owner` first.
+        """
         node = self._nodes.get(normalize_key(key))
         if node is None:
             return None
         return node_to_view(node)
 
     def get_dependencies(self, key: NodeKey) -> frozenset[NodeKey]:
-        """Return an immutable snapshot of `key`'s dependencies (cells it reads)."""
+        """Return an immutable snapshot of `key`'s dependencies (cells it reads).
+
+        Endpoints are returned exactly as stored (member cells are not rewritten).
+        Use `get_dependency_nodes` when owner graph keys are required.
+        """
         deps = self._edges.get(normalize_key(key))
         if not deps:
             return frozenset()
         return frozenset(deps)
 
     def get_dependents(self, key: NodeKey) -> frozenset[NodeKey]:
-        """Return an immutable snapshot of cells that depend on `key`."""
+        """Return an immutable snapshot of cells that depend on `key`.
+
+        Endpoints are returned exactly as stored (member cells are not rewritten).
+        """
         deps = self._reverse_edges.get(normalize_key(key))
         if not deps:
             return frozenset()
         return frozenset(deps)
 
+    def resolve_endpoint(self, key: NodeKey) -> NodeKey | None:
+        """Map an edge endpoint to a stored node key (exact or occupancy owner).
+
+        Returns `None` when the key is neither a graph node nor an occupied
+        member cell.
+        """
+        return self._resolve_graph_endpoint(key)
+
+    def get_dependency_nodes(self, key: NodeKey) -> frozenset[NodeKey]:
+        """Return dependencies resolved to stored graph node keys.
+
+        Member-cell endpoints map to their occupancy owners. Unresolvable
+        dangling endpoints are omitted.
+        """
+        out: set[NodeKey] = set()
+        for dep in self.get_dependencies(key):
+            resolved = self.resolve_endpoint(dep)
+            if resolved is not None:
+                out.add(resolved)
+        return frozenset(out)
+
     def get_edge_attrs(self, from_key: NodeKey, to_key: NodeKey) -> EdgeAttrs:
         """Return a typed snapshot of the attributes on edge `from_key -> to_key`.
 
-        When the edge does not exist, returns an `EdgeAttrs` with all fields
-        set to `None`.
+        Lookup uses exact stored endpoints (no occupancy rewrite). When the edge
+        does not exist, returns an `EdgeAttrs` with all fields set to `None`.
         """
         fk = normalize_key(from_key)
         tk = normalize_key(to_key)
@@ -303,7 +402,10 @@ class DependencyGraph:
         )
 
     def get_edge_guard(self, from_key: NodeKey, to_key: NodeKey) -> GuardExpr | None:
-        """Return the guard on edge `from_key -> to_key`, or `None` if none."""
+        """Return the guard on edge `from_key -> to_key`, or `None` if none.
+
+        Lookup uses exact stored endpoints (no occupancy rewrite).
+        """
         fk = normalize_key(from_key)
         tk = normalize_key(to_key)
         v = self._guards.get((fk, tk))
@@ -357,13 +459,26 @@ class DependencyGraph:
         Both outgoing dependency edges and incoming dependent edges are dropped,
         along with their guards and provenance. Dependent formulas are not
         rewritten; callers collapsing nodes must update dependents explicitly.
-        Node hooks are not invoked. No-op if the node is absent.
+        Node hooks are not invoked.
+
+        Removing a multi-cell node clears occupancy for every expanded member.
+        Removing a member cell while it is owned by a multi-cell node raises
+        `ValueError`. Absent keys that are not occupied members are a no-op.
         """
         nk = normalize_key(key)
+        if nk not in self._nodes:
+            owner = self._occupancy.get(nk)
+            if owner is not None and owner != nk:
+                raise ValueError(
+                    f"Cannot remove member cell {nk!r}; owned by multi-cell node {owner!r}"
+                )
+            return
+        node = self._nodes[nk]
         for dep in list(self._edges.get(nk, set())):
             self._remove_edge(nk, dep)
         for dependent in list(self._reverse_edges.get(nk, set())):
             self._remove_edge(dependent, nk)
+        self._clear_occupancy_for_node(node)
         self._nodes.pop(nk, None)
         self._edges.pop(nk, None)
         self._reverse_edges.pop(nk, None)
@@ -429,23 +544,35 @@ class DependencyGraph:
 
     # ---- adjacency helpers for cycle/order analysis ------------------------
 
+    def _resolve_graph_endpoint(self, key: NodeKey) -> NodeKey | None:
+        """Map an edge endpoint to a stored node key (exact or occupancy owner)."""
+        nk = normalize_key(key)
+        if nk in self._nodes:
+            return nk
+        # Member cell of a multi-cell node → owning graph key.
+        owner = self._occupancy.get(nk)
+        if owner is not None and owner in self._nodes:
+            return owner
+        return None
+
     def _unconditional_adjacency(self) -> dict[NodeKey, set[NodeKey]]:
         out: dict[NodeKey, set[NodeKey]] = {k: set() for k in self._nodes}
         for k in self._nodes:
             for dep in self._edges.get(k, ()):
-                if dep not in self._nodes:
+                if (k, dep) in self._guards:
                     continue
-                if (k, dep) not in self._guards:
-                    out[k].add(dep)
+                resolved = self._resolve_graph_endpoint(dep)
+                if resolved is not None:
+                    out[k].add(resolved)
         return out
 
     def _all_adjacency(self) -> dict[NodeKey, set[NodeKey]]:
         out: dict[NodeKey, set[NodeKey]] = {k: set() for k in self._nodes}
         for k in self._nodes:
             for dep in self._edges.get(k, ()):
-                if dep not in self._nodes:
-                    continue
-                out[k].add(dep)
+                resolved = self._resolve_graph_endpoint(dep)
+                if resolved is not None:
+                    out[k].add(resolved)
         return out
 
     def cycle_report(self) -> CycleReport:
@@ -805,6 +932,21 @@ class DependencyGraph:
         self.named_ranges = dict(nr) if nr else None
         nrr = state.get("named_range_ranges")
         self.named_range_ranges = dict(nrr) if nrr else None
+        self._rebuild_occupancy()
+
+    def _rebuild_occupancy(self) -> None:
+        """Rebuild the cell→owner occupancy index from stored nodes."""
+        self._occupancy = {}
+        for node in self._nodes.values():
+            owner = node.key
+            for cell in member_keys(node):
+                existing = self._occupancy.get(cell)
+                if existing is not None and existing != owner:
+                    raise ValueError(
+                        f"Cell occupancy conflict while rebuilding: {cell} "
+                        f"owned by both {existing} and {owner}"
+                    )
+                self._occupancy[cell] = owner
 
     # ---- internal edge mutation --------------------------------------------
 
@@ -1221,10 +1363,13 @@ def _subgraph_has_feasible_cycle(graph: DependencyGraph, nodes: set[NodeKey]) ->
         visited.add(state)
         on_stack.add(v)
 
-        for w in graph._edges.get(v, ()):
-            if w not in nodes:
+        for raw_w in graph._edges.get(v, ()):
+            w = graph._resolve_graph_endpoint(raw_w)
+            if w is None or w not in nodes:
                 continue
-            guard = graph._guards.get((v, w))
+            guard = graph._guards.get((v, raw_w))
+            if guard is None:
+                guard = graph._guards.get((v, w))
             for c2 in _apply_guard_constraints(c, guard):
                 if w in on_stack:
                     return True
@@ -1252,10 +1397,13 @@ def _find_feasible_cycle_path(graph: DependencyGraph, nodes: set[NodeKey]) -> li
         stack.append(v)
         on_stack.add(v)
 
-        for w in graph._edges.get(v, ()):
-            if w not in nodes:
+        for raw_w in graph._edges.get(v, ()):
+            w = graph._resolve_graph_endpoint(raw_w)
+            if w is None or w not in nodes:
                 continue
-            guard = graph._guards.get((v, w))
+            guard = graph._guards.get((v, raw_w))
+            if guard is None:
+                guard = graph._guards.get((v, w))
             for c2 in _apply_guard_constraints(c, guard):
                 if w in on_stack:
                     i = stack.index(w)

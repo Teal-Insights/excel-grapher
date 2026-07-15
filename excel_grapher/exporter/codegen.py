@@ -2909,8 +2909,14 @@ class CodeGenerator:
                 closure.add(addr)
                 for dep in self.graph.get_dependencies(addr):
                     dep_n = normalize_address(dep)
-                    if dep_n not in closure and self.graph.get_node(dep_n) is not None:
-                        stack.append(dep_n)
+                    resolved = None
+                    resolve = getattr(self.graph, "resolve_endpoint", None)
+                    if callable(resolve):
+                        resolved = resolve(dep_n)
+                    owner = resolved if resolved is not None else dep_n
+                    owner_n = normalize_address(owner)
+                    if owner_n not in closure and self.graph.get_node(owner_n) is not None:
+                        stack.append(owner_n)
 
             if self._iterate_enabled:
                 ordered = []

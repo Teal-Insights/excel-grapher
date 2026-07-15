@@ -13,9 +13,15 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable, Sequence
+from enum import StrEnum
 from typing import TypeAlias
 
-from fastpyxl.utils.cell import column_index_from_string, coordinate_from_string
+from fastpyxl.utils.cell import (
+    column_index_from_string,
+    coordinate_from_string,
+    get_column_letter,
+)
+from fastpyxl.utils.exceptions import CellCoordinatesException
 
 # Canonical sheet-qualified cell (`Sheet1!B1`) or same-sheet range (`Sheet1!C4:D4`).
 NormalizedAddress: TypeAlias = str
@@ -137,6 +143,24 @@ def canonical_cell_coord(cell: str) -> str:
     return cell
 
 
+def _parse_a1_cell(cell: str) -> tuple[str, int]:
+    """Parse an A1 cell coordinate into uppercase column letters and row."""
+    try:
+        column, row = coordinate_from_string(canonical_cell_coord(cell))
+    except CellCoordinatesException as exc:
+        raise ValueError(f"Expected A1 cell coordinate, got: {cell!r}") from exc
+    return str(column).upper(), int(row)
+
+
+def _ordered_columns(left: str, right: str) -> tuple[str, str]:
+    """Return two column letters ordered from left to right."""
+    left_u = left.upper()
+    right_u = right.upper()
+    if column_index_from_string(left_u) <= column_index_from_string(right_u):
+        return left_u, right_u
+    return right_u, left_u
+
+
 def split_address_on_colon(address: str) -> tuple[str, str] | None:
     """Split an address on the first colon outside quoted sheet names.
 
@@ -158,27 +182,62 @@ def split_address_on_colon(address: str) -> tuple[str, str] | None:
     return None
 
 
+def _split_top_level_comma(address: str) -> list[str]:
+    """Split an address on commas outside quoted sheet names."""
+    parts: list[str] = []
+    start = 0
+    in_quote = False
+    i = 0
+    while i < len(address):
+        ch = address[i]
+        if ch == "'":
+            if in_quote and i + 1 < len(address) and address[i + 1] == "'":
+                i += 2
+                continue
+            in_quote = not in_quote
+        elif ch == "," and not in_quote:
+            parts.append(address[start:i])
+            start = i + 1
+        i += 1
+    parts.append(address[start:])
+    return parts
+
+
 def normalize_key(key: str) -> NormalizedAddress:
     """Normalize an address to canonical :data:`NormalizedAddress` form.
 
     Unnecessary quoting is stripped; sheet names with spaces, hyphens, or
     apostrophes are quoted. Absolute markers (`$`) are stripped and column
     letters are uppercased. For single cells, the result matches `Node.key`.
-    Same-sheet ranges collapse to a single sheet prefix (`Sheet1!A1:B2`);
-    cross-sheet ranges keep both endpoints sheet-qualified.
+    Ranges and unions use `parse_node_key` (1x1 ranges collapse to cells).
+    Non-parseable colon forms fall back to `format_range_key` for same-sheet
+    ranges or keep both sheet-qualified endpoints when sheets differ.
 
     Examples:
         >>> normalize_key("'Sheet1'!A1")
         'Sheet1!A1'
         >>> normalize_key("'My Sheet'!B2")
         "'My Sheet'!B2"
+        >>> normalize_key("Sheet1!Y63:D63")
+        'Sheet1!D63:Y63'
         >>> normalize_key("Sheet1!A1:Sheet1!B2")
         'Sheet1!A1:B2'
         >>> normalize_key("Sheet1!A1:$A$3")
         'Sheet1!A1:A3'
+        >>> normalize_key("Sheet1!E5,A1:D1")
+        'Sheet1!A1:D1,E5'
+        >>> normalize_key("Sheet1!D63:D63")
+        'Sheet1!D63'
     """
+    if "," in key and len(_split_top_level_comma(key)) > 1:
+        return str(parse_node_key(key))
+
     parts = split_address_on_colon(key)
     if parts is not None:
+        try:
+            return str(parse_node_key(key))
+        except ValueError:
+            pass
         start_raw, end_raw = parts
         start_sheet, start_cell = parse_address(start_raw)
         start_cell = canonical_cell_coord(start_cell)
@@ -192,8 +251,11 @@ def normalize_key(key: str) -> NormalizedAddress:
             return f"{start_fmt}:{end_fmt}"
         return format_range_key(start_sheet, start_cell, canonical_cell_coord(end_raw))
 
-    sheet, cell = parse_address(key)
-    return format_key(sheet, canonical_cell_coord(cell))
+    try:
+        return str(parse_node_key(key))
+    except ValueError:
+        sheet, cell = parse_address(key)
+        return format_key(sheet, canonical_cell_coord(cell))
 
 
 def make_node_key_sort_key(
@@ -203,20 +265,52 @@ def make_node_key_sort_key(
 
     Keys are ordered by:
     1) workbook sheet order (from `sheet_order`),
-    2) row number,
-    3) column number.
+    2) top-left row (cell row, or range/union min_row),
+    3) top-left column (cell column, or range/union min_col).
 
     Sheets not present in `sheet_order` are placed after known sheets and
-    sorted by sheet name.
+    sorted by sheet name. Cross-sheet unions sort by their first canonical
+    member's sheet.
     """
     sheet_rank = {name: idx for idx, name in enumerate(sheet_order)}
     fallback_rank = len(sheet_rank)
 
+    def _anchor(node_key: NormalizedAddress) -> tuple[str, int, int]:
+        try:
+            parsed = parse_node_key(node_key)
+        except ValueError:
+            # Non-canonical junk (e.g. whole-column refs): sort late, stably.
+            return ("\uffff", 10**9, 10**9)
+
+        if isinstance(parsed, CellKey):
+            return (
+                parsed.sheet,
+                parsed.row,
+                int(column_index_from_string(parsed.column)),
+            )
+        if isinstance(parsed, RangeKey):
+            return (
+                parsed.sheet,
+                parsed.min_row,
+                int(column_index_from_string(parsed.min_col)),
+            )
+        # UnionKey — first member after canonical sort
+        first = parsed.members[0]
+        if isinstance(first, CellKey):
+            return (
+                first.sheet,
+                first.row,
+                int(column_index_from_string(first.column)),
+            )
+        return (
+            first.sheet,
+            first.min_row,
+            int(column_index_from_string(first.min_col)),
+        )
+
     def _sort_key(node_key: NormalizedAddress) -> tuple[int, str, int, int]:
-        sheet, cell = parse_address(node_key)
-        col_letters, row = coordinate_from_string(cell.replace("$", ""))
-        col = int(column_index_from_string(col_letters))
-        return (sheet_rank.get(sheet, fallback_rank), sheet, int(row), col)
+        sheet, row, col = _anchor(node_key)
+        return (sheet_rank.get(sheet, fallback_rank), sheet, row, col)
 
     return _sort_key
 
@@ -226,3 +320,347 @@ def sort_node_keys(
 ) -> list[NormalizedAddress]:
     """Return `node_keys` sorted by workbook sheet order, then row, then column."""
     return sorted(node_keys, key=make_node_key_sort_key(sheet_order))
+
+
+# ---------------------------------------------------------------------------
+# Node key model (CellKey / RangeKey / UnionKey) — formula-group Issue 1 sprint 1
+# ---------------------------------------------------------------------------
+
+
+class NodeShape(StrEnum):
+    """Geometry kind inferred from a canonical node key."""
+
+    cell = "cell"
+    row = "row"
+    column = "column"
+    range = "range"
+    union = "union"
+
+
+class CellKey(str):
+    """Canonical sheet-qualified single-cell key (`Sheet1!E63`)."""
+
+    @property
+    def shape(self) -> NodeShape:
+        return NodeShape.cell
+
+    @property
+    def sheet(self) -> str:
+        return parse_address(self)[0]
+
+    @property
+    def column(self) -> str:
+        _sheet, cell = parse_address(self)
+        col, _row = _parse_a1_cell(cell)
+        return col
+
+    @property
+    def row(self) -> int:
+        _sheet, cell = parse_address(self)
+        _col, row = _parse_a1_cell(cell)
+        return row
+
+
+class RangeKey(str):
+    """Canonical sheet-qualified rectangle (`Sheet1!D63:Y63`, `Sheet1!E4:I18`)."""
+
+    @property
+    def shape(self) -> NodeShape:
+        if self.min_row == self.max_row:
+            return NodeShape.row
+        if self.min_col == self.max_col:
+            return NodeShape.column
+        return NodeShape.range
+
+    @property
+    def sheet(self) -> str:
+        return self._corners()[0]
+
+    @property
+    def min_col(self) -> str:
+        return self._corners()[1]
+
+    @property
+    def max_col(self) -> str:
+        return self._corners()[3]
+
+    @property
+    def min_row(self) -> int:
+        return self._corners()[2]
+
+    @property
+    def max_row(self) -> int:
+        return self._corners()[4]
+
+    @property
+    def column(self) -> str | None:
+        if self.min_col == self.max_col:
+            return self.min_col
+        return None
+
+    @property
+    def row(self) -> int | None:
+        if self.min_row == self.max_row:
+            return self.min_row
+        return None
+
+    def _corners(self) -> tuple[str, str, int, str, int]:
+        parts = split_address_on_colon(self)
+        if parts is None:
+            raise ValueError(f"RangeKey requires a colon range: {self!r}")
+        start_raw, end_raw = parts
+        sheet, start_coord = parse_address(start_raw)
+        if "!" in end_raw or end_raw.startswith("'"):
+            end_sheet, end_coord = parse_address(end_raw)
+            if end_sheet != sheet:
+                raise ValueError(f"Range endpoints must share the same sheet: {self!r}")
+        else:
+            end_coord = end_raw
+        start_col, start_row = _parse_a1_cell(start_coord)
+        end_col, end_row = _parse_a1_cell(end_coord)
+        min_col, max_col = _ordered_columns(start_col, end_col)
+        min_row, max_row = sorted((start_row, end_row))
+        return sheet, min_col, min_row, max_col, max_row
+
+
+class UnionKey(str):
+    """Canonical multi-area key (`Sheet1!A1:D1,E5` or `Sheet1!A1,Sheet2!B2`)."""
+
+    @property
+    def shape(self) -> NodeShape:
+        return NodeShape.union
+
+    @property
+    def members(self) -> tuple[CellKey | RangeKey, ...]:
+        return tuple(_parse_union_member_areas(self))
+
+
+NodeKey: TypeAlias = CellKey | RangeKey | UnionKey
+
+
+def _format_bare_area(area: CellKey | RangeKey) -> str:
+    """Format an area without the leading `Sheet!` prefix."""
+    if isinstance(area, CellKey):
+        return f"{area.column}{area.row}"
+    if area.min_col == area.max_col and area.min_row == area.max_row:
+        return f"{area.min_col}{area.min_row}"
+    return f"{area.min_col}{area.min_row}:{area.max_col}{area.max_row}"
+
+
+def _area_sort_key(area: CellKey | RangeKey) -> tuple[str, int, int, int, int]:
+    if isinstance(area, CellKey):
+        col = int(column_index_from_string(area.column))
+        return (area.sheet, area.row, col, area.row, col)
+    return (
+        area.sheet,
+        area.min_row,
+        int(column_index_from_string(area.min_col)),
+        area.max_row,
+        int(column_index_from_string(area.max_col)),
+    )
+
+
+def _make_cell_key(sheet: str, column: str, row: int) -> CellKey:
+    return CellKey(format_cell_key(sheet, column.upper(), int(row)))
+
+
+def _make_range_or_cell_key(
+    sheet: str, min_col: str, min_row: int, max_col: str, max_row: int
+) -> CellKey | RangeKey:
+    min_col_u, max_col_u = _ordered_columns(min_col.upper(), max_col.upper())
+    lo_row, hi_row = sorted((int(min_row), int(max_row)))
+    if min_col_u == max_col_u and lo_row == hi_row:
+        return _make_cell_key(sheet, min_col_u, lo_row)
+    text = f"{quote_sheet_if_needed(sheet)}!{min_col_u}{lo_row}:{max_col_u}{hi_row}"
+    return RangeKey(text)
+
+
+def _make_union_key(areas: Sequence[CellKey | RangeKey]) -> NodeKey:
+    if not areas:
+        raise ValueError("Union key cannot be empty")
+    unique: dict[str, CellKey | RangeKey] = {}
+    for area in areas:
+        unique[str(area)] = area
+    ordered = sorted(unique.values(), key=_area_sort_key)
+    if len(ordered) == 1:
+        return ordered[0]
+    sheets = {a.sheet for a in ordered}
+    if len(sheets) == 1:
+        sheet = next(iter(sheets))
+        bare = ",".join(_format_bare_area(a) for a in ordered)
+        return UnionKey(f"{quote_sheet_if_needed(sheet)}!{bare}")
+    return UnionKey(",".join(str(a) for a in ordered))
+
+
+def _parse_single_area(raw: str, *, default_sheet: str | None = None) -> CellKey | RangeKey:
+    """Parse one cell or range area into a canonical `CellKey` or `RangeKey`."""
+    text = raw.strip()
+    if not text:
+        raise ValueError("Empty address area")
+
+    parts = split_address_on_colon(text)
+    if parts is None:
+        if "!" in text or text.startswith("'"):
+            sheet, cell = parse_address(text)
+        else:
+            if default_sheet is None:
+                raise ValueError(f"Address must be sheet-qualified: {text!r}")
+            sheet, cell = default_sheet, text
+        col, row = _parse_a1_cell(cell)
+        return _make_cell_key(sheet, col, row)
+
+    start_raw, end_raw = parts
+    if "!" in start_raw or start_raw.startswith("'"):
+        start_sheet, start_coord = parse_address(start_raw)
+    else:
+        if default_sheet is None:
+            raise ValueError(f"Address must be sheet-qualified: {text!r}")
+        start_sheet, start_coord = default_sheet, start_raw
+
+    if "!" in end_raw or end_raw.startswith("'"):
+        end_sheet, end_coord = parse_address(end_raw)
+        if end_sheet != start_sheet:
+            raise ValueError(
+                f"Range endpoints must share the same sheet: {text!r} "
+                f"({start_sheet!r} vs {end_sheet!r})"
+            )
+    else:
+        end_coord = end_raw
+
+    start_col, start_row = _parse_a1_cell(start_coord)
+    end_col, end_row = _parse_a1_cell(end_coord)
+    return _make_range_or_cell_key(start_sheet, start_col, start_row, end_col, end_row)
+
+
+def _parse_union_member_areas(key: str) -> list[CellKey | RangeKey]:
+    chunks = [p.strip() for p in _split_top_level_comma(key)]
+    if not chunks or all(c == "" for c in chunks):
+        raise ValueError(f"Empty union key: {key!r}")
+    if any(c == "" for c in chunks):
+        raise ValueError(f"Empty union area in key: {key!r}")
+
+    areas: list[CellKey | RangeKey] = []
+    inherited_sheet: str | None = None
+    for chunk in chunks:
+        area = _parse_single_area(chunk, default_sheet=inherited_sheet)
+        inherited_sheet = area.sheet
+        areas.append(area)
+    return areas
+
+
+def parse_node_key(value: str | NodeKey) -> NodeKey:
+    """Canonicalize `value` into a `CellKey`, `RangeKey`, or `UnionKey`.
+
+    Strips `$`, orders range corners, sorts/dedupes union members, collapses
+    one-member unions, and formats same-sheet unions with a single sheet prefix.
+    """
+    text = str(value) if isinstance(value, (CellKey, RangeKey, UnionKey)) else str(value).strip()
+    if not text:
+        raise ValueError("Empty node key")
+
+    chunks = [p.strip() for p in _split_top_level_comma(text)]
+    if len(chunks) > 1:
+        return _make_union_key(_parse_union_member_areas(text))
+
+    area_raw = chunks[0]
+    if not area_raw or area_raw.endswith("!"):
+        raise ValueError(f"Empty union key: {text!r}")
+    return _parse_single_area(area_raw)
+
+
+def members_to_node_key(members: Sequence[str | NodeKey]) -> NodeKey:
+    """Build a canonical node key that exactly covers the given cell members.
+
+    Uses sheet partition, sort by `(row, col)`, greedy horizontal runs, then
+    greedy vertical merge of equal-width runs. Same member set always yields
+    the same key regardless of input order.
+    """
+    if not members:
+        raise ValueError("Cannot build node key from empty member set")
+
+    cells: dict[tuple[str, int, int], tuple[str, str, int]] = {}
+    for raw in members:
+        parsed = parse_node_key(raw)
+        if not isinstance(parsed, CellKey):
+            raise ValueError(
+                f"members_to_node_key requires cell members; got {type(parsed).__name__}: {raw!r}"
+            )
+        col_i = int(column_index_from_string(parsed.column))
+        cells[(parsed.sheet, parsed.row, col_i)] = (parsed.sheet, parsed.column, parsed.row)
+
+    if not cells:
+        raise ValueError("Cannot build node key from empty member set")
+
+    by_sheet: dict[str, list[tuple[int, int, str]]] = {}
+    for sheet, row, col_i in cells:
+        _sheet, col_letters, _row = cells[(sheet, row, col_i)]
+        by_sheet.setdefault(sheet, []).append((row, col_i, col_letters))
+
+    areas: list[CellKey | RangeKey] = []
+    for sheet, items in by_sheet.items():
+        items.sort(key=lambda t: (t[0], t[1]))
+        # Horizontal runs: (row, min_col_i, max_col_i, min_col_letters, max_col_letters)
+        runs: list[tuple[int, int, int]] = []
+        for row, col_i, _col_letters in items:
+            if runs and runs[-1][0] == row and col_i == runs[-1][2] + 1:
+                prev = runs[-1]
+                runs[-1] = (prev[0], prev[1], col_i)
+            else:
+                runs.append((row, col_i, col_i))
+
+        # Vertical merge: (min_col_i, max_col_i, min_row, max_row)
+        rects: list[tuple[int, int, int, int]] = [
+            (min_c, max_c, row, row) for row, min_c, max_c in runs
+        ]
+        rects.sort(key=lambda r: (r[0], r[1], r[2]))
+        merged: list[tuple[int, int, int, int]] = []
+        for min_c, max_c, min_r, max_r in rects:
+            if (
+                merged
+                and merged[-1][0] == min_c
+                and merged[-1][1] == max_c
+                and min_r == merged[-1][3] + 1
+            ):
+                prev = merged[-1]
+                merged[-1] = (prev[0], prev[1], prev[2], max_r)
+            else:
+                merged.append((min_c, max_c, min_r, max_r))
+
+        for min_c, max_c, min_r, max_r in merged:
+            areas.append(
+                _make_range_or_cell_key(
+                    sheet,
+                    get_column_letter(min_c),
+                    min_r,
+                    get_column_letter(max_c),
+                    max_r,
+                )
+            )
+
+    return _make_union_key(areas)
+
+
+def expand_node_cells(key: str | NodeKey) -> tuple[CellKey, ...]:
+    """Expand a cell, range, or union key into canonical member `CellKey`s.
+
+    Order is deterministic: sheet order as in the key, then row, then column.
+    """
+    parsed = parse_node_key(key)
+    if isinstance(parsed, CellKey):
+        return (parsed,)
+
+    cells: list[CellKey] = []
+    areas: Sequence[CellKey | RangeKey] = (
+        (parsed,) if isinstance(parsed, RangeKey) else parsed.members
+    )
+
+    for area in areas:
+        if isinstance(area, CellKey):
+            cells.append(area)
+            continue
+        min_c = column_index_from_string(area.min_col)
+        max_c = column_index_from_string(area.max_col)
+        for row in range(area.min_row, area.max_row + 1):
+            for col_i in range(min_c, max_c + 1):
+                cells.append(_make_cell_key(area.sheet, get_column_letter(col_i), row))
+    return tuple(cells)

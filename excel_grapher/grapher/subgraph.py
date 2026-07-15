@@ -6,7 +6,7 @@ from collections.abc import Iterable, Sequence
 from excel_grapher.core.address_keys import normalize_key
 
 from .graph import DependencyGraph
-from .node import Node, NodeKey
+from .node import Node, NodeKey, NodeKind, member_keys
 
 
 def select_path_induced_subgraph(
@@ -103,15 +103,17 @@ def _collect_path_nodes(
         if current in target_set:
             add_path_nodes(path)
 
-        for dep in graph.keys(order="workbook", source=graph.get_dependencies(current)):
-            if dep in visited:
+        for raw_dep in graph.get_dependencies(current):
+            dep = graph.resolve_endpoint(raw_dep)
+            if dep is None or dep in visited:
                 continue
 
             next_depth = len(path)
             if max_path_length is not None and next_depth > max_path_length:
                 if dep in can_reach_target:
                     raise ValueError(
-                        f"max_path_length limit exceeded while collecting source->target paths: {max_path_length}"
+                        f"max_path_length limit exceeded while collecting "
+                        f"source->target paths: {max_path_length}"
                     )
                 continue
 
@@ -126,6 +128,15 @@ def _collect_path_nodes(
     return path_nodes
 
 
+def _endpoint_aliases(graph: DependencyGraph, key: NodeKey) -> list[NodeKey]:
+    """Return stored keys that refer to the same occupancy as `key`."""
+    aliases = [key]
+    node = graph.get_node(key)
+    if node is not None and node.kind is not NodeKind.cell and node.address is not None:
+        aliases.extend(member_keys(node))
+    return aliases
+
+
 def _reverse_reachable_nodes(graph: DependencyGraph, seeds: Iterable[NodeKey]) -> set[NodeKey]:
     seen: set[NodeKey] = set()
     q = deque(seeds)
@@ -134,9 +145,11 @@ def _reverse_reachable_nodes(graph: DependencyGraph, seeds: Iterable[NodeKey]) -
         if node in seen:
             continue
         seen.add(node)
-        for dep in graph.get_dependents(node):
-            if dep not in seen:
-                q.append(dep)
+        for alias in _endpoint_aliases(graph, node):
+            for dependent in graph.get_dependents(alias):
+                resolved = graph.resolve_endpoint(dependent) or dependent
+                if resolved not in seen:
+                    q.append(resolved)
     return seen
 
 
@@ -162,13 +175,21 @@ def _induced_dependency_subgraph(
                 normalized_formula=node.normalized_formula,
                 value=node.value,
                 is_leaf=node.is_leaf,
+                is_target=node.is_target,
                 metadata=dict(node.metadata),
+                kind=node.kind,
+                min_col=node.min_col,
+                min_row=node.min_row,
+                max_col=node.max_col,
+                max_row=node.max_row,
+                address=node.address,
             )
         )
 
     for from_key in graph.keys(order="workbook", source=keep_keys):
-        for to_key in graph.keys(order="workbook", source=graph.get_dependencies(from_key)):
-            if to_key not in keep_keys:
+        for to_key in graph.get_dependencies(from_key):
+            resolved = graph.resolve_endpoint(to_key)
+            if to_key not in keep_keys and (resolved is None or resolved not in keep_keys):
                 continue
             attrs = graph.get_edge_attrs(from_key, to_key)
             edge_kwargs = {}
