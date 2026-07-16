@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.15.1 (2026-07-16)
+
+### Bug Fixes
+
+- **series-bindings**: Share workbook reader across validate/resolve
+  ([#417](https://github.com/Teal-Insights/excel-grapher/pull/417),
+  [`6ea8062`](https://github.com/Teal-Insights/excel-grapher/commit/6ea806238e788425b21062c36692ad6490c8a0ca))
+
+- **series-bindings**: Share workbook reader across validate/resolve (#416)
+  ([#417](https://github.com/Teal-Insights/excel-grapher/pull/417),
+  [`6ea8062`](https://github.com/Teal-Insights/excel-grapher/commit/6ea806238e788425b21062c36692ad6490c8a0ca))
+
+### Testing
+
+- **series-bindings**: Include schema_version in load-count fixtures
+  ([#417](https://github.com/Teal-Insights/excel-grapher/pull/417),
+  [`6ea8062`](https://github.com/Teal-Insights/excel-grapher/commit/6ea806238e788425b21062c36692ad6490c8a0ca))
+
+
 ## v3.15.0 (2026-07-16)
 
 ### Bug Fixes
