@@ -169,4 +169,6 @@ def test_readers_module_is_ruff_clean(workbook: Path, tmp_path: Path) -> None:
         capture_output=True,
         text=True,
     )
-    assert ruff.returncode == 0, f"generated package is not Ruff-clean:\n{ruff.stdout}\n{ruff.stderr}"
+    assert ruff.returncode == 0, (
+        f"generated package is not Ruff-clean:\n{ruff.stdout}\n{ruff.stderr}"
+    )
