@@ -192,8 +192,10 @@ def test_generate_modules_exports_output_compute(
         bindings_workbook=workbook,
     )
     assert "def compute_borvelia_primary_balance(" in files["api.py"]
-    assert "def read_borvelia_primary_balance(" in files["api.py"]
-    assert "def read_borvelia_primary_balance_range(" in files["api.py"]
+    assert "_readers.py" in files
+    assert "def read_borvelia_primary_balance(" in files["_readers.py"]
+    assert "def read_borvelia_primary_balance_range(" in files["_readers.py"]
+    assert "from ._readers import" in files["api.py"]
     assert "def list_setters() -> list[str]:" in files["api.py"]
     assert "def list_readers() -> list[str]:" in files["api.py"]
     assert "def list_computes() -> list[str]:" in files["api.py"]
@@ -203,7 +205,7 @@ def test_generate_modules_exports_output_compute(
     assert "list_setters" in files["__init__.py"]
     assert "list_readers" in files["__init__.py"]
     assert "list_computes" in files["__init__.py"]
-    assert "Record" in files["api.py"]
+    assert "Record" in files["api.py"] or "Record" in files.get("_api_helpers.py", "")
 
     pkg_dir = tmp_path / "exported_series_output"
     for filename, content in files.items():

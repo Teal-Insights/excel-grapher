@@ -88,7 +88,7 @@ def test_optimal_projected_generate_modules_package_runs_and_matches_evaluator(
         bindings_workbook=workbook_path,
     )
 
-    assert "xl_eval" in files["internals.py"]
+    assert "xl_cell" in files["internals.py"]
     assert "def compute_baseline(" in files["api.py"]
 
     pkg_dir = tmp_path / _PACKAGE

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, cast
@@ -96,17 +95,12 @@ def test_grouped_export_sequences_definitions_and_all(workbook: Path) -> None:
     assert all_line.index("set_gdp_growth") < all_line.index("set_interest_rate")
 
 
-def test_grouped_export_emits_manifest_file_and_discovery(workbook: Path) -> None:
+def test_grouped_export_emits_list_groups_discovery(workbook: Path) -> None:
     modules = _generate_modules(workbook)
 
-    manifest = json.loads(modules["groups.json"])
-    assert [g["label"] for g in manifest["groups"]] == ["Fiscal", "Macro"]
-    macro = manifest["groups"][1]
-    assert [child["label"] for child in macro["children"]] == ["Growth"]
-    assert macro["children"][0]["members"][0]["setter"] == "set_gdp_growth"
-    assert [m["id"] for m in manifest["ungrouped"]] == ["interest_rate"]
-
+    assert "groups.json" not in modules
     assert "def list_groups(" in modules["api.py"]
+    assert "list_groups" in modules["__init__.py"]
 
 
 def test_grouped_export_preserves_setter_semantics(workbook: Path, tmp_path: Path) -> None:

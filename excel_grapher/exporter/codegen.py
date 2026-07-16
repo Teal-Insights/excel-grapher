@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast as py_ast
-import json
 import re
 from collections.abc import Iterable, Mapping, Sequence, Set
 from contextlib import contextmanager
@@ -60,6 +59,7 @@ if TYPE_CHECKING:
     from excel_grapher.grapher import DependencyGraph
     from excel_grapher.series_bindings.docstring_renderers import SeriesDocstringRendererSpec
     from excel_grapher.series_bindings.docstrings import SeriesBindingDocstringCallbackSpec
+    from excel_grapher.series_bindings.reader_index import ReaderIndex
     from excel_grapher.series_bindings.types import InputSeries, WorkbookSeriesBindings
 
 
@@ -172,6 +172,8 @@ class CodeGenerator:
         self._formula_cell_address: str | None = None
         self._return_unpack_state: _ReturnUnpackState | None = None
         self._return_unpack_stack: list[_ReturnUnpackFrame] = []
+        self._reader_index: ReaderIndex | None = None
+        self._used_readers: set[str] = set()
 
     def __enter__(self) -> CodeGenerator:
         return self
@@ -192,6 +194,8 @@ class CodeGenerator:
         self._formula_cell_address = None
         self._return_unpack_state = None
         self._return_unpack_stack = []
+        self._reader_index = None
+        self._used_readers.clear()
 
     def _include_dep_tracking(
         self,
@@ -452,11 +456,20 @@ class CodeGenerator:
         return self._emit_range_address(node.start, node.end)
 
     def _emit_range_address(self, start: str, end: str) -> str:
-        """Emit an xl_range call for a normalized start/end address pair."""
+        """Emit an xl_range or binding-aligned read_*_range call for a start/end pair."""
         sheet, r1, c1, r2, c2 = self._range_coords(start, end)
         start_cell = f"{fastpyxl.utils.cell.get_column_letter(c1)}{r1}"
         end_cell = f"{fastpyxl.utils.cell.get_column_letter(c2)}{r2}"
-        expr = f"xl_range(ctx, {repr(format_range_key(sheet, start_cell, end_cell))})"
+        range_key = format_range_key(sheet, start_cell, end_cell)
+        if self._reader_index is not None:
+            from excel_grapher.series_bindings.reader_index import resolve_reader_ref
+
+            resolved = resolve_reader_ref(range_key, index=self._reader_index)
+            if resolved["reader"] is not None:
+                self._used_readers.add(resolved["reader"])
+            expr = resolved["call_form"]
+        else:
+            expr = f"xl_range(ctx, {repr(range_key)})"
         return self._hoist_return_expr(expr)
 
     def _emit_cell_eval(self, address: str) -> str:
@@ -468,6 +481,13 @@ class CodeGenerator:
             if node is not None and node.formula is not None:
                 func_name = address_to_python_name(normalized)
                 expr = f"xl_eval(ctx, {repr(normalized)}, {func_name})"
+            elif self._reader_index is not None:
+                from excel_grapher.series_bindings.reader_index import resolve_reader_ref
+
+                resolved = resolve_reader_ref(normalized, index=self._reader_index)
+                if resolved["reader"] is not None:
+                    self._used_readers.add(resolved["reader"])
+                expr = resolved["call_form"]
             else:
                 expr = f"xl_cell(ctx, {repr(normalized)})"
         return self._hoist_return_expr(expr)
@@ -503,6 +523,8 @@ class CodeGenerator:
         export_addresses: Iterable[str],
         public_addresses: Iterable[str],
         include_helpers: bool = True,
+        include_readers: bool = True,
+        include_leaf_indexes: bool = True,
         series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
         docstring_renderer: SeriesDocstringRendererSpec = "google",
     ) -> list[str]:
@@ -517,6 +539,8 @@ class CodeGenerator:
                 public_addresses,
             ),
             include_helpers=include_helpers,
+            include_readers=include_readers,
+            include_leaf_indexes=include_leaf_indexes,
             series_docstring_callback=series_docstring_callback,
             docstring_renderer=docstring_renderer,
         )
@@ -576,6 +600,67 @@ class CodeGenerator:
             *emit_series_helpers_definitions(),
         ]
         return "\n".join(lines).rstrip() + "\n"
+
+    @staticmethod
+    def _emit_readers_module(reader_lines: Sequence[str]) -> str:
+        """Emit the `_readers.py` module holding leaf maps and read_* duals."""
+        text = "\n".join(reader_lines)
+        runtime_names = ["CellValue", "EvalContext", "xl_cell"]
+        if "xl_range(" in text:
+            runtime_names.append("xl_range")
+        runtime_import = CodeGenerator._format_from_runtime_import(runtime_names)
+        lines: list[str] = [
+            "from __future__ import annotations",
+            "",
+            runtime_import,
+            "",
+            *reader_lines,
+        ]
+        return "\n".join(lines).rstrip() + "\n"
+
+    @staticmethod
+    def _series_reader_leaf_index_imports(lines: Sequence[str]) -> list[str]:
+        """Return `_LEAF_INDEX_*` symbols that setters in `api.py` need to import."""
+        names: list[str] = []
+        for line in lines:
+            match = re.match(r"^(_LEAF_INDEX_[A-Z0-9_]+) =", line)
+            if match:
+                name = match.group(1)
+                if name not in names:
+                    names.append(name)
+        return names
+
+    @staticmethod
+    def _series_reader_public_imports(lines: Sequence[str]) -> list[str]:
+        """Return public `read_*` symbols defined in `_readers` for package re-export."""
+        names: list[str] = []
+        for line in lines:
+            match = re.match(r"^def (read_[a-z0-9_]+)\(", line)
+            if match:
+                name = match.group(1)
+                if name not in names:
+                    names.append(name)
+        return names
+
+    @staticmethod
+    def _format_from_module_import(
+        module: str,
+        names: list[str],
+        *,
+        noqa: str | None = None,
+    ) -> str:
+        """Format a relative `from .<module> import ...` statement."""
+        if not names:
+            return ""
+        joined = ", ".join(names)
+        prefix = f"from .{module} import "
+        suffix = f"  # noqa: {noqa}" if noqa else ""
+        if len(prefix) + len(joined) + len(suffix) <= 88:
+            return prefix + joined + suffix
+        inner = ",\n    ".join(names)
+        if noqa:
+            return f"{prefix}(  # noqa: {noqa}\n    {inner},\n)"
+        return f"{prefix}(\n    {inner},\n)"
 
     _SERIES_HELPER_IMPORT_NAMES: tuple[str, ...] = (
         "DataFrameInput",
@@ -967,15 +1052,14 @@ class CodeGenerator:
         if "def " not in blob:
             return []
         names = set(used_xl_functions)
-        names.update({"xl_cell", "xl_eval"})
-        if "xl_range(" in blob:
-            names.add("xl_range")
-        if "xl_raise(" in blob:
-            names.add("xl_raise")
-        if "XlError" in blob:
-            names.add("XlError")
-        if "ExcelRange(" in blob:
-            names.add("ExcelRange")
+        # Only pull symbols that appear in emitted bodies. After Phase 2, bound
+        # leaves may use `read_*` exclusively, so `xl_cell` is not always needed.
+        for symbol in ("xl_cell", "xl_eval", "xl_range", "xl_raise", "XlError", "ExcelRange"):
+            if symbol == "XlError":
+                if "XlError" in blob:
+                    names.add(symbol)
+            elif f"{symbol}(" in blob:
+                names.add(symbol)
         return sorted(names)
 
     @staticmethod
@@ -2318,6 +2402,7 @@ class CodeGenerator:
             input_ranges=input_ranges,
             blank_ranges=blank_ranges,
             series_bindings=series_bindings,
+            bindings_workbook=bindings_workbook,
         )
         runtime_code = parts["runtime_code"]
         cell_code_lines = parts["cell_code_lines"]
@@ -2390,12 +2475,19 @@ class CodeGenerator:
                 )
             )
             lines.append("")
-            reader_leaves, reader_ranges = self._series_binding_reader_discovery(
-                cast("DependencyGraph", self._public_graph()),
-                series_bindings,
-                workbook=bindings_workbook,
-                export_addresses=_all_cells,
-            )
+            if self._reader_index is not None:
+                from excel_grapher.series_bindings.reader_index import (
+                    reader_index_as_discovery_dicts,
+                )
+
+                reader_leaves, reader_ranges = reader_index_as_discovery_dicts(self._reader_index)
+            else:
+                reader_leaves, reader_ranges = self._series_binding_reader_discovery(
+                    cast("DependencyGraph", self._public_graph()),
+                    series_bindings,
+                    workbook=bindings_workbook,
+                    export_addresses=_all_cells,
+                )
         lines.extend(
             self._emit_series_binding_discovery_lines(
                 series_setter_names,
@@ -2462,6 +2554,10 @@ class CodeGenerator:
         - data.py: DEFAULT_INPUTS and CONSTANTS
         - runtime.py: embedded Excel runtime (emit_runtime)
         - internals.py: formula cell functions + resolver dispatch
+
+        When series bindings declare input series, the package also includes:
+        - `_readers.py`: leaf maps and `read_*` duals (imported by `api` and `internals`)
+        - `_api_helpers.py`: coercion helpers for setters
         """
         normalized_targets = self._resolve_targets(targets)
 
@@ -2474,6 +2570,7 @@ class CodeGenerator:
             input_ranges=input_ranges,
             blank_ranges=blank_ranges,
             series_bindings=series_bindings,
+            bindings_workbook=bindings_workbook,
         )
         runtime_code = parts["runtime_code"]
         cell_code_lines = parts["cell_code_lines"]
@@ -2511,8 +2608,12 @@ class CodeGenerator:
         )
         runtime_import_block = self._format_from_runtime_import(internals_import_names)
         internals_lines: list[str] = ["from __future__ import annotations", ""]
+        used_readers = sorted(self._used_readers)
+        if used_readers:
+            internals_lines.append(self._format_from_module_import("_readers", used_readers))
         if runtime_import_block:
             internals_lines.append(runtime_import_block)
+        if used_readers or runtime_import_block:
             internals_lines.append("")
         internals_lines.append("# --- Formula cell functions ---\n")
         internals_lines.extend(cell_code_lines)
@@ -2522,23 +2623,89 @@ class CodeGenerator:
         )
         internals_py = "\n".join(internals_lines).rstrip() + "\n"
 
-        runtime_entry_names = ["EvalContext", "coerce_inputs_dict", "xl_cell"]
-        if needs_range_helper:
-            runtime_entry_names.append("xl_range_rows")
-        if self._iterate_enabled:
-            runtime_entry_names.append("xl_iterative_compute")
-        runtime_entry_names.sort()
-        runtime_imports = self._format_from_runtime_import(runtime_entry_names)
+        series_setter_names: list[str] = []
+        series_reader_names: list[str] = []
+        series_compute_names: list[str] = []
+        series_range_reader_names: list[str] = []
+        reader_leaves: dict[str, dict[str, object]] | None = None
+        reader_ranges: dict[str, dict[str, object]] | None = None
+        api_helpers_py: str | None = None
+        readers_py: str | None = None
+        reader_lines: list[str] = []
+        setter_lines: list[str] = []
+        leaf_index_imports: list[str] = []
+        helper_imports: list[str] = []
+        public_reader_imports: list[str] = []
+        if series_bindings is not None:
+            if bindings_workbook is None:
+                raise ValueError("bindings_workbook is required when series_bindings is set")
+            # Route coercion helpers to `_api_helpers` and leaf maps / readers to
+            # `_readers` so `api.py` stays focused on the public surface and
+            # `internals.py` can call `read_*` without an import cycle.
+            emit_input = self._series_bindings_have_input(series_bindings)
+            if emit_input:
+                from excel_grapher.series_bindings.setter_codegen import emit_readers_block
 
-        api_lines: list[str] = [
-            "from __future__ import annotations",
-            "",
-            "from .data import CONSTANTS, DEFAULT_INPUTS",
-            "from .internals import _resolve_formula",
-            runtime_imports,
-            "import warnings",
-            "",
-            "",
+                reader_lines = emit_readers_block(
+                    cast("DependencyGraph", self._public_graph()),
+                    bindings_workbook,
+                    series_bindings,
+                    export_addresses=self._export_addresses_with_aliases(
+                        _all_cells,
+                        series_public_addresses,
+                    ),
+                    series_docstring_callback=series_docstring_callback,
+                    docstring_renderer=docstring_renderer,
+                )
+                readers_py = self._emit_readers_module(reader_lines)
+                leaf_index_imports = self._series_reader_leaf_index_imports(reader_lines)
+                public_reader_imports = self._series_reader_public_imports(reader_lines)
+            setter_lines = self._emit_series_binding_setters(
+                series_bindings,
+                bindings_workbook,
+                export_addresses=_all_cells,
+                public_addresses=series_public_addresses,
+                include_helpers=not emit_input,
+                include_readers=not emit_input,
+                include_leaf_indexes=not emit_input,
+                series_docstring_callback=series_docstring_callback,
+                docstring_renderer=docstring_renderer,
+            )
+            if emit_input:
+                api_helpers_py = self._emit_api_helpers_module()
+                helper_imports = self._series_helper_imports(setter_lines)
+            (
+                series_setter_names,
+                series_reader_names,
+                series_compute_names,
+            ) = self._series_binding_public_names(series_bindings)
+            series_range_reader_names = self._series_binding_emitted_range_reader_names(
+                reader_lines if reader_lines else setter_lines
+            )
+            if self._reader_index is not None:
+                from excel_grapher.series_bindings.reader_index import (
+                    reader_index_as_discovery_dicts,
+                )
+
+                reader_leaves, reader_ranges = reader_index_as_discovery_dicts(self._reader_index)
+            else:
+                reader_leaves, reader_ranges = self._series_binding_reader_discovery(
+                    cast("DependencyGraph", self._public_graph()),
+                    series_bindings,
+                    workbook=bindings_workbook,
+                    export_addresses=_all_cells,
+                )
+
+        groups_manifest = self._series_binding_groups_manifest(series_bindings)
+        discovery_lines = self._emit_series_binding_discovery_lines(
+            series_setter_names,
+            series_compute_names,
+            groups_manifest,
+            reader_names=series_reader_names,
+            reader_leaves=reader_leaves,
+            reader_ranges=reader_ranges,
+        )
+        api_body_lines: list[str] = [
             "def make_context(inputs: dict[str, object] | None = None) -> EvalContext:",
             '    """Create an EvalContext with merged inputs."""',
             "    merged: dict[str, object] = dict(DEFAULT_INPUTS)",
@@ -2554,98 +2721,71 @@ class CodeGenerator:
             ),
             "",
             "",
-        ]
-        series_setter_names: list[str] = []
-        series_reader_names: list[str] = []
-        series_compute_names: list[str] = []
-        reader_leaves: dict[str, dict[str, object]] | None = None
-        reader_ranges: dict[str, dict[str, object]] | None = None
-        api_helpers_py: str | None = None
-        if series_bindings is not None:
-            if bindings_workbook is None:
-                raise ValueError("bindings_workbook is required when series_bindings is set")
-            # Route the verbose input-coercion helpers to a private `_api_helpers`
-            # module so `api.py` stays focused on the public surface.
-            emit_input = self._series_bindings_have_input(series_bindings)
-            setter_lines = self._emit_series_binding_setters(
-                series_bindings,
-                bindings_workbook,
-                export_addresses=_all_cells,
-                public_addresses=series_public_addresses,
-                include_helpers=not emit_input,
-                series_docstring_callback=series_docstring_callback,
-                docstring_renderer=docstring_renderer,
-            )
-            if "xl_range(" in "\n".join(setter_lines):
-                runtime_entry_names.append("xl_range")
-                runtime_entry_names.sort()
-                runtime_imports = self._format_from_runtime_import(runtime_entry_names)
-                api_lines[4] = runtime_imports
-            if emit_input:
-                api_helpers_py = self._emit_api_helpers_module()
-                helper_imports = self._series_helper_imports(setter_lines)
-                if helper_imports:
-                    api_lines.insert(4, f"from ._api_helpers import {', '.join(helper_imports)}")
-            api_lines.extend(setter_lines)
+            *setter_lines,
+            *([] if not setter_lines else [""]),
+            *discovery_lines,
+            "",
+            "",
+            "TARGETS = {",
+            *[f"    {repr(target)}: {handler}," for target, handler in targets_entries],
+            "}",
+            "",
+            "",
+            "def compute_all(ctx: EvalContext | None = None, *, "
+            "inputs: dict[str, object] | None = None) -> dict[str, object]:",
+            '    """Compute all target cells and return results."""',
+            "    if ctx is None:",
+            "        ctx = make_context(inputs)",
+            "    elif inputs is not None:",
+            "        warnings.warn(",
+            '            "inputs will be ignored because ctx was provided",',
+            "            UserWarning,",
+            "            stacklevel=2,",
+            "        )",
             (
-                series_setter_names,
-                series_reader_names,
-                series_compute_names,
-            ) = self._series_binding_public_names(series_bindings)
-            series_range_reader_names = self._series_binding_emitted_range_reader_names(
-                setter_lines
-            )
-            reader_leaves, reader_ranges = self._series_binding_reader_discovery(
-                cast("DependencyGraph", self._public_graph()),
-                series_bindings,
-                workbook=bindings_workbook,
-                export_addresses=_all_cells,
-            )
-            api_lines.append("")
-        else:
-            series_range_reader_names = []
-        groups_manifest = self._series_binding_groups_manifest(series_bindings)
-        api_lines.extend(
-            self._emit_series_binding_discovery_lines(
-                series_setter_names,
-                series_compute_names,
-                groups_manifest,
-                reader_names=series_reader_names,
-                reader_leaves=reader_leaves,
-                reader_ranges=reader_ranges,
-            )
-        )
-        api_lines.append("")
-        api_lines.append("")
-        api_lines.append("TARGETS = {")
-        for target, handler in targets_entries:
-            api_lines.append(f"    {repr(target)}: {handler},")
-        api_lines.extend(
+                "    return xl_iterative_compute(ctx, TARGETS)"
+                if self._iterate_enabled
+                else "    return {target: handler(ctx, target) for target, handler in TARGETS.items()}"
+            ),
+            "",
+        ]
+        api_body_text = "\n".join(api_body_lines)
+        runtime_entry_names = ["EvalContext", "coerce_inputs_dict"]
+        # TARGETS may reference handlers by name (`xl_cell`, `xl_range_rows`) without a call.
+        if re.search(r"\bxl_cell\b", api_body_text):
+            runtime_entry_names.append("xl_cell")
+        if re.search(r"\bxl_range\b", api_body_text):
+            runtime_entry_names.append("xl_range")
+        if needs_range_helper or re.search(r"\bxl_range_rows\b", api_body_text):
+            runtime_entry_names.append("xl_range_rows")
+        if self._iterate_enabled:
+            runtime_entry_names.append("xl_iterative_compute")
+        runtime_entry_names = sorted(set(runtime_entry_names))
+        runtime_imports = self._format_from_runtime_import(runtime_entry_names)
+
+        api_import_lines: list[str] = [
+            "from __future__ import annotations",
+            "",
+            "import warnings",
+            "",
+        ]
+        if helper_imports:
+            api_import_lines.append(self._format_from_module_import("_api_helpers", helper_imports))
+        if leaf_index_imports:
+            api_import_lines.append(self._format_from_module_import("_readers", leaf_index_imports))
+        api_import_lines.extend(
             [
-                "}",
+                "from .data import CONSTANTS, DEFAULT_INPUTS",
+                "from .internals import _resolve_formula",
+                runtime_imports,
                 "",
-                "",
-                "def compute_all(ctx: EvalContext | None = None, *, "
-                "inputs: dict[str, object] | None = None) -> dict[str, object]:",
-                '    """Compute all target cells and return results."""',
-                "    if ctx is None:",
-                "        ctx = make_context(inputs)",
-                "    elif inputs is not None:",
-                "        warnings.warn(",
-                '            "inputs will be ignored because ctx was provided",',
-                "            UserWarning,",
-                "            stacklevel=2,",
-                "        )",
-                (
-                    "    return xl_iterative_compute(ctx, TARGETS)"
-                    if self._iterate_enabled
-                    else "    return {target: handler(ctx, target) for target, handler in TARGETS.items()}"
-                ),
                 "",
             ]
         )
-        api_py = "\n".join(api_lines)
+        api_py = "\n".join([*api_import_lines, *api_body_lines])
 
+        # Symbols defined in `api.py` (readers live in `_readers` and are imported
+        # separately into `__init__.py` for the public package surface).
         api_exports = [
             "compute_all",
             "make_context",
@@ -2660,22 +2800,50 @@ class CodeGenerator:
         if groups_manifest is not None:
             api_exports.append("list_groups")
         api_exports.extend(series_setter_names)
-        api_exports.extend(series_reader_names)
-        api_exports.extend(series_range_reader_names)
         api_exports.extend(series_compute_names)
-        api_imports = ", ".join(api_exports)
-        all_exports = api_exports + ["DEFAULT_INPUTS"]
-        init_py = "\n".join(
+
+        # Package `__all__` keeps prior discovery → setters → readers → computes order.
+        all_exports = [
+            "compute_all",
+            "make_context",
+            "list_setters",
+            "list_readers",
+            "list_computes",
+        ]
+        if reader_leaves is not None:
+            all_exports.append("list_reader_leaves")
+        if reader_ranges is not None:
+            all_exports.append("list_reader_ranges")
+        if groups_manifest is not None:
+            all_exports.append("list_groups")
+        all_exports.extend(series_setter_names)
+        all_exports.extend(series_reader_names)
+        all_exports.extend(series_range_reader_names)
+        all_exports.extend(series_compute_names)
+        all_exports.append("DEFAULT_INPUTS")
+        init_lines = [
+            "from __future__ import annotations",
+            "",
+        ]
+        if public_reader_imports:
+            init_lines.append(
+                self._format_from_module_import(
+                    "_readers",
+                    public_reader_imports,
+                    noqa="F401",
+                )
+            )
+        # Import names are sorted for isort; `__all__` keeps the deliberate public order.
+        init_lines.append(self._format_from_module_import("api", sorted(api_exports), noqa="F401"))
+        init_lines.extend(
             [
-                "from __future__ import annotations",
-                "",
-                f"from .api import {api_imports}  # noqa: F401",
                 "from .data import DEFAULT_INPUTS  # noqa: F401",
                 "",
                 f"__all__ = {all_exports!r}",
                 "",
             ]
         )
+        init_py = "\n".join(init_lines)
 
         modules = {
             "__init__.py": init_py,
@@ -2686,8 +2854,8 @@ class CodeGenerator:
         }
         if api_helpers_py is not None:
             modules["_api_helpers.py"] = api_helpers_py
-        if groups_manifest is not None:
-            modules["groups.json"] = json.dumps(groups_manifest, indent=2) + "\n"
+        if readers_py is not None:
+            modules["_readers.py"] = readers_py
         return modules
 
     def _workbook_sort_addresses(self, addresses: Iterable[str]) -> list[str]:
@@ -2711,6 +2879,7 @@ class CodeGenerator:
         input_ranges: Sequence[str] | None = None,
         blank_ranges: Sequence[str] | None = None,
         series_bindings: WorkbookSeriesBindings | None = None,
+        bindings_workbook: Path | str | None = None,
     ) -> GenerationParts:
         """Generate shared intermediate artifacts for single-file and modular exports."""
         self._reset_transient_state()
@@ -2782,6 +2951,34 @@ class CodeGenerator:
                     _track_cell(address)
                     all_cells.append(address)
 
+        # Build the reader index after the export surface is final (including any
+        # OFFSET widening) so discovery and body rewrite share one map. Clear
+        # `_used_readers` first: the probe `_emit_ast` pass above may have
+        # touched the (previously unset) index without contributing to emit.
+        self._used_readers.clear()
+        if (
+            series_bindings is not None
+            and bindings_workbook is not None
+            and self._series_bindings_have_input(series_bindings)
+        ):
+            from excel_grapher.series_bindings.reader_index import build_reader_index
+
+            series_public = self._series_binding_public_addresses(
+                series_bindings,
+                bindings_workbook,
+            )
+            self._reader_index = build_reader_index(
+                cast("DependencyGraph", self._public_graph()),
+                series_bindings,
+                workbook=bindings_workbook,
+                export_addresses=self._export_addresses_with_aliases(
+                    all_cells,
+                    series_public,
+                ),
+            )
+        else:
+            self._reader_index = None
+
         for address in self._workbook_sort_addresses(formula_emit_order):
             formula_cells.add(address)
             cell_code_lines.append(self._emit_cell(address))
@@ -2819,6 +3016,9 @@ class CodeGenerator:
             series_bindings
         ):
             runtime_symbols.add("xl_range")
+        if series_bindings is not None and self._series_bindings_have_input(series_bindings):
+            # Generated `read_*` annotations return `CellValue`.
+            runtime_symbols.add("CellValue")
         if self._iterate_enabled:
             runtime_symbols.add("xl_iterative_compute")
         include_dep_tracking = self._include_dep_tracking(series_bindings)

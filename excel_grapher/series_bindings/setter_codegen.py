@@ -28,6 +28,7 @@ from excel_grapher.series_bindings.resolve import (
     warn_series_resolution_issues,
 )
 from excel_grapher.series_bindings.types import (
+    ResolutionReport,
     SeriesResolution,
     WorkbookSeriesBindings,
 )
@@ -231,6 +232,21 @@ def _leaf_index_name(series_id: str) -> str:
     return f"_LEAF_INDEX_{series_id.upper()}"
 
 
+def emit_leaf_index_lines(series: dict[str, Any], resolved: SeriesResolution) -> list[str]:
+    """Emit the `_LEAF_INDEX_<ID>` constant shared by a setter/reader dual."""
+    if resolved["requires_address"]:
+        return []
+    key_fields = [str(c) for c in (series.get("key") or [])]
+    index_name = _leaf_index_name(resolved["series_id"])
+    lines = [f"{index_name} = {{"]
+    for leaf in resolved["leaves"]:
+        key_tuple_src = _key_tuple_literal(key_fields, leaf["key"])
+        lines.append(f"    {key_tuple_src}: {repr(leaf['address'])},")
+    lines.append("}")
+    lines.append("")
+    return lines
+
+
 def dimension_id_to_param_name(field: str) -> str:
     """Convert an SDMX / effective dimension id to a Python keyword parameter name.
 
@@ -395,6 +411,7 @@ def emit_setter_function(
     bindings: WorkbookSeriesBindings | None = None,
     series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
     docstring_renderer: SeriesDocstringRendererSpec = "google",
+    include_leaf_index: bool = True,
 ) -> list[str]:
     """Emit Python source lines for one series binding setter."""
     if not resolved["leaves"]:
@@ -420,13 +437,8 @@ def emit_setter_function(
     index_name = _leaf_index_name(resolved["series_id"])
 
     lines: list[str] = []
-    if not requires_address:
-        lines.append(f"{index_name} = {{")
-        for leaf in resolved["leaves"]:
-            key_tuple_src = _key_tuple_literal(key_fields, leaf["key"])
-            lines.append(f"    {key_tuple_src}: {repr(leaf['address'])},")
-        lines.append("}")
-        lines.append("")
+    if include_leaf_index and not requires_address:
+        lines.extend(emit_leaf_index_lines(series, resolved))
     lines.extend(_emit_key_order_constant(resolved, key_fields))
     scalar_shorthand = _accepts_scalar_shorthand(series, resolved)
     concept_scheme = bindings.get("concept_scheme") if bindings is not None else None
@@ -511,7 +523,8 @@ def emit_reader_function(
     """Emit a `read_*` dual that resolves domain keys via `_LEAF_INDEX_*`.
 
     For uniquely keyed series, expects the matching `_LEAF_INDEX_<ID>` constant to
-    already be present (normally emitted by `emit_setter_function`). For duplicate-key
+    already be present (emitted by `emit_leaf_index_lines` / `emit_readers_block`, or
+    co-emitted by `emit_setter_function` in single-file mode). For duplicate-key
     bindings (`requires_address`), emits an address-keyed reader validated against the
     resolved leaf addresses — the inverse of the address-required setter path.
     """
@@ -521,9 +534,9 @@ def emit_reader_function(
     key_fields = [str(c) for c in (series.get("key") or [])]
     fn_name = _reader_function_name(series, resolved)
     index_name = _leaf_index_name(resolved["series_id"])
-    # `xl_cell` returns the full CellValue union; keep the annotation wide so
-    # exported packages type-check without embedding CellValue in api.py.
-    return_annotation = "object"
+    # Readers live in `_readers.py` (modular) or alongside the runtime embed
+    # (single-file), both of which expose `CellValue`.
+    return_annotation = "CellValue"
     key_dtypes = _key_dtypes_for_codegen(series, key_fields)
     requires_address = bool(resolved["requires_address"])
 
@@ -623,7 +636,7 @@ def emit_reader_range_function(
 
     reader_name = _reader_function_name(series, resolved)
     fn_name = f"{reader_name}_range"
-    lines: list[str] = [f"def {fn_name}(ctx: EvalContext) -> object:"]
+    lines: list[str] = [f"def {fn_name}(ctx: EvalContext) -> CellValue:"]
     if series_docstring_callback is not None and (
         graph is None or workbook is None or bindings is None
     ):
@@ -649,24 +662,14 @@ def emit_reader_range_function(
     return lines
 
 
-def emit_setters_block(
+def _iter_input_resolutions(
     graph: DependencyGraph,
     workbook: Path | str,
     bindings: WorkbookSeriesBindings,
     *,
     export_addresses: Iterable[str] | None = None,
-    include_type_aliases: bool = True,
-    include_helpers: bool = True,
-    series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
-    docstring_renderer: SeriesDocstringRendererSpec = "google",
-) -> list[str]:
-    """Emit all series setter and reader functions for a validated binding manifest.
-
-    When `include_helpers` is true the coercion/record-apply helpers and type aliases
-    are inlined alongside the setters (single-file export). When false only the setter
-    and reader functions are emitted and callers must supply the helpers separately, e.g. via a
-    dedicated `_api_helpers` module in the multi-module export.
-    """
+) -> tuple[list[tuple[dict[str, Any], SeriesResolution]], list[str], ResolutionReport]:
+    """Resolve input series and return (pairs, failed ids, report)."""
     report = resolve_series_bindings(
         graph,
         bindings,
@@ -674,27 +677,12 @@ def emit_setters_block(
         direction="input",
         export_addresses=export_addresses,
     )
-    lines: list[str] = ["# --- Series binding setters (Records API) ---", ""]
-    concept_scheme = bindings.get("concept_scheme")
-    if not isinstance(concept_scheme, dict):
-        concept_scheme = None
-    include_datetime = resolutions_include_datetime(report["series"]) or any(
-        _measure_dtype_for_codegen(series, concept_scheme=concept_scheme) == "datetime"
-        for series in bindings.get("series", [])
-        if isinstance(series, dict) and has_input_direction(series)
-    )
-    if include_helpers:
-        lines.extend(emit_input_coerce_helpers())
-        if include_type_aliases:
-            lines.extend(emit_setter_type_alias_lines(include_datetime=include_datetime))
-        lines.extend(emit_setter_helpers())
-    elif include_datetime:
-        lines.extend(["from datetime import datetime", ""])
     by_id = {
         s["id"]: s
         for s in bindings.get("series", [])
         if isinstance(s, dict) and has_input_direction(s)
     }
+    pairs: list[tuple[dict[str, Any], SeriesResolution]] = []
     failed: list[str] = []
     for resolved in report["series"]:
         if not resolved["ok"] and not resolved["requires_address"]:
@@ -711,17 +699,45 @@ def emit_setters_block(
         series = by_id.get(resolved["series_id"])
         if series is None:
             continue
-        lines.extend(
-            emit_setter_function(
-                series,
-                resolved,
-                graph=graph,
-                workbook=workbook,
-                bindings=bindings,
-                series_docstring_callback=series_docstring_callback,
-                docstring_renderer=docstring_renderer,
-            )
-        )
+        pairs.append((series, resolved))
+    return pairs, failed, report
+
+
+def emit_readers_block(
+    graph: DependencyGraph,
+    workbook: Path | str,
+    bindings: WorkbookSeriesBindings,
+    *,
+    export_addresses: Iterable[str] | None = None,
+    series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
+    docstring_renderer: SeriesDocstringRendererSpec = "google",
+    include_leaf_indexes: bool = True,
+) -> list[str]:
+    """Emit `_LEAF_INDEX_*` maps and `read_*` / `read_*_range` functions.
+
+    Used by the modular export's private `_readers.py` module so formula bodies
+    can call readers without importing the public `api` module.
+    """
+    pairs, failed, report = _iter_input_resolutions(
+        graph,
+        workbook,
+        bindings,
+        export_addresses=export_addresses,
+    )
+    lines: list[str] = ["# --- Series binding readers ---", ""]
+    concept_scheme = bindings.get("concept_scheme")
+    if not isinstance(concept_scheme, dict):
+        concept_scheme = None
+    include_datetime = resolutions_include_datetime(report["series"]) or any(
+        _measure_dtype_for_codegen(series, concept_scheme=concept_scheme) == "datetime"
+        for series in bindings.get("series", [])
+        if isinstance(series, dict) and has_input_direction(series)
+    )
+    if include_datetime:
+        lines.extend(["from datetime import datetime", ""])
+    for series, resolved in pairs:
+        if include_leaf_indexes:
+            lines.extend(emit_leaf_index_lines(series, resolved))
         lines.extend(
             emit_reader_function(
                 series,
@@ -744,6 +760,92 @@ def emit_setters_block(
                 docstring_renderer=docstring_renderer,
             )
         )
+    if failed:
+        raise ValueError(f"Cannot codegen readers: resolution failed for {failed!r}")
+    return lines
+
+
+def emit_setters_block(
+    graph: DependencyGraph,
+    workbook: Path | str,
+    bindings: WorkbookSeriesBindings,
+    *,
+    export_addresses: Iterable[str] | None = None,
+    include_type_aliases: bool = True,
+    include_helpers: bool = True,
+    include_readers: bool = True,
+    include_leaf_indexes: bool = True,
+    series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
+    docstring_renderer: SeriesDocstringRendererSpec = "google",
+) -> list[str]:
+    """Emit all series setter and reader functions for a validated binding manifest.
+
+    When `include_helpers` is true the coercion/record-apply helpers and type aliases
+    are inlined alongside the setters (single-file export). When false only the setter
+    and reader functions are emitted and callers must supply the helpers separately, e.g. via a
+    dedicated `_api_helpers` module in the multi-module export.
+
+    When `include_readers` / `include_leaf_indexes` are false, readers and leaf maps
+    are omitted so a separate `_readers` module can own them.
+    """
+    pairs, failed, report = _iter_input_resolutions(
+        graph,
+        workbook,
+        bindings,
+        export_addresses=export_addresses,
+    )
+    lines: list[str] = ["# --- Series binding setters (Records API) ---", ""]
+    concept_scheme = bindings.get("concept_scheme")
+    if not isinstance(concept_scheme, dict):
+        concept_scheme = None
+    include_datetime = resolutions_include_datetime(report["series"]) or any(
+        _measure_dtype_for_codegen(series, concept_scheme=concept_scheme) == "datetime"
+        for series in bindings.get("series", [])
+        if isinstance(series, dict) and has_input_direction(series)
+    )
+    if include_helpers:
+        lines.extend(emit_input_coerce_helpers())
+        if include_type_aliases:
+            lines.extend(emit_setter_type_alias_lines(include_datetime=include_datetime))
+        lines.extend(emit_setter_helpers())
+    elif include_datetime:
+        lines.extend(["from datetime import datetime", ""])
+    for series, resolved in pairs:
+        lines.extend(
+            emit_setter_function(
+                series,
+                resolved,
+                graph=graph,
+                workbook=workbook,
+                bindings=bindings,
+                series_docstring_callback=series_docstring_callback,
+                docstring_renderer=docstring_renderer,
+                include_leaf_index=include_leaf_indexes,
+            )
+        )
+        if include_readers:
+            lines.extend(
+                emit_reader_function(
+                    series,
+                    resolved,
+                    graph=graph,
+                    workbook=workbook,
+                    bindings=bindings,
+                    series_docstring_callback=series_docstring_callback,
+                    docstring_renderer=docstring_renderer,
+                )
+            )
+            lines.extend(
+                emit_reader_range_function(
+                    series,
+                    resolved,
+                    graph=graph,
+                    workbook=workbook,
+                    bindings=bindings,
+                    series_docstring_callback=series_docstring_callback,
+                    docstring_renderer=docstring_renderer,
+                )
+            )
     if failed:
         raise ValueError(f"Cannot codegen setters: resolution failed for {failed!r}")
     return lines
