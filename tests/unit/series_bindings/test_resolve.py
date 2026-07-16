@@ -254,6 +254,7 @@ def test_resolve_series_bindings_loads_workbook_once(tmp_path: Path) -> None:
         }
 
     bindings: WorkbookSeriesBindings = {
+        "schema_version": "1.4.0",
         "workbook": wb_path.name,
         "series": [series("s2", 2), series("s3", 3)],
     }

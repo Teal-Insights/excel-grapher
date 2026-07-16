@@ -442,7 +442,11 @@ def test_validate_series_bindings_loads_workbook_once(tmp_path: Path) -> None:
     wb_path = tmp_path / "demo.xlsx"
     graph = _write_matrix_demo_workbook(wb_path)
     series_list = [_matrix_row_series(f"s{row}", row) for row in (2, 3, 4)]
-    bindings: WorkbookSeriesBindings = {"workbook": wb_path.name, "series": series_list}
+    bindings: WorkbookSeriesBindings = {
+        "schema_version": "1.4.0",
+        "workbook": wb_path.name,
+        "series": series_list,
+    }
 
     calls: list[dict] = []
     real_load = fastpyxl.load_workbook
