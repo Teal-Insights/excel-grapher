@@ -129,7 +129,9 @@ def test_projected_generate_modules_emits_alias_resolver(tmp_path: Path) -> None
     internals = modules["internals.py"]
     api = modules["api.py"]
     assert "def compute_baseline(" in api
-    assert "xl_eval" in internals
+    # Projected leaf aliases resolve through `xl_cell`; formula→formula `xl_eval`
+    # is only imported when a body actually references another formula cell.
+    assert "xl_cell" in internals
     assert "Outputs!B12" in internals or "outputs_b12" in internals.lower()
 
 
