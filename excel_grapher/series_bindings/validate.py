@@ -571,101 +571,114 @@ def validate_series_bindings(
     workbook: Path | str | None = None,
 ) -> ValidationReport:
     """Validate binding manifests against an extracted dependency graph."""
+    from excel_grapher.series_bindings.resolve import _WorkbookValues, resolve_series_binding
+
     issues: list[ValidationIssue] = []
     concept_dtypes = _concept_dtype_map(bindings)
+    shared_reader: _WorkbookValues | None = None
 
-    for series in bindings.get("series", []):
-        if not isinstance(series, dict):
-            continue
-        series_id = str(series.get("id", ""))
-        issues.extend(_validate_series_structure(series))
-        issues.extend(_validate_layout_intent(series))
-        issues.extend(_validate_implementation_support(series))
-        issues.extend(_validate_dtype_read_consistency(series, concept_dtypes=concept_dtypes))
-
-        data_range = series.get("data_range")
-        if not isinstance(data_range, str):
-            continue
-
-        _, require_unique_key = _series_validation_flags(series)
-        try:
-            addresses = expand_data_range_for_graph(
-                graph,
-                data_range,
-                workbook=workbook,
-            )
-        except (ValueError, TypeError) as exc:
-            issues.append(
-                _issue(
-                    "error",
-                    "invalid_data_range",
-                    str(exc),
-                    series_id=series_id,
-                )
-            )
-            continue
-
-        if not addresses:
-            issues.append(
-                _issue(
-                    "error",
-                    "empty_data_range",
-                    "data_range expands to zero cells",
-                    series_id=series_id,
-                )
-            )
-            continue
-
-        issues.extend(_validate_input_mode(series))
-        issues.extend(_validate_input_binding_overlap(graph, series, addresses))
-        issues.extend(_validate_internal_binding_overlap(graph, series, addresses))
-
-        graph_input_addresses = _input_binding_addresses(graph, series, addresses)
-        graph_internal_addresses = _internal_binding_addresses(graph, series, addresses)
-
-        if require_unique_key:
-            cell_scoped_keys = [
-                str(c)
-                for c in (series.get("key") or [])
-                if any(
-                    isinstance(d, dict)
-                    and effective_dimension_id(d) == str(c)
-                    and d.get("scope") == "cell"
-                    for d in (series.get("structure") or {}).get("dimensions") or []
-                )
-            ]
-            binding_addresses = (
-                graph_internal_addresses
-                if has_internal_direction(series)
-                else graph_input_addresses
-            )
-            if not binding_addresses:
+    try:
+        for series in bindings.get("series", []):
+            if not isinstance(series, dict):
                 continue
-            if cell_scoped_keys and workbook is None:
+            series_id = str(series.get("id", ""))
+            issues.extend(_validate_series_structure(series))
+            issues.extend(_validate_layout_intent(series))
+            issues.extend(_validate_implementation_support(series))
+            issues.extend(_validate_dtype_read_consistency(series, concept_dtypes=concept_dtypes))
+
+            data_range = series.get("data_range")
+            if not isinstance(data_range, str):
+                continue
+
+            _, require_unique_key = _series_validation_flags(series)
+            try:
+                addresses = expand_data_range_for_graph(
+                    graph,
+                    data_range,
+                    workbook=workbook,
+                )
+            except (ValueError, TypeError) as exc:
                 issues.append(
                     _issue(
-                        "warning",
-                        "unique_key_deferred",
-                        "require_unique_key is set but coordinate resolution is not implemented yet "
-                        f"(cell-scoped key dimensions: {cell_scoped_keys})",
+                        "error",
+                        "invalid_data_range",
+                        str(exc),
                         series_id=series_id,
                     )
                 )
-            elif workbook is not None:
-                from excel_grapher.series_bindings.resolve import resolve_series_binding
+                continue
 
-                direction = "internal" if has_internal_direction(series) else "input"
-                resolved = resolve_series_binding(graph, workbook, series, direction=direction)
-                issues.extend(resolved["issues"])
-                if resolved["requires_address"]:
+            if not addresses:
+                issues.append(
+                    _issue(
+                        "error",
+                        "empty_data_range",
+                        "data_range expands to zero cells",
+                        series_id=series_id,
+                    )
+                )
+                continue
+
+            issues.extend(_validate_input_mode(series))
+            issues.extend(_validate_input_binding_overlap(graph, series, addresses))
+            issues.extend(_validate_internal_binding_overlap(graph, series, addresses))
+
+            graph_input_addresses = _input_binding_addresses(graph, series, addresses)
+            graph_internal_addresses = _internal_binding_addresses(graph, series, addresses)
+
+            if require_unique_key:
+                cell_scoped_keys = [
+                    str(c)
+                    for c in (series.get("key") or [])
+                    if any(
+                        isinstance(d, dict)
+                        and effective_dimension_id(d) == str(c)
+                        and d.get("scope") == "cell"
+                        for d in (series.get("structure") or {}).get("dimensions") or []
+                    )
+                ]
+                binding_addresses = (
+                    graph_internal_addresses
+                    if has_internal_direction(series)
+                    else graph_input_addresses
+                )
+                if not binding_addresses:
+                    continue
+                if cell_scoped_keys and workbook is None:
                     issues.append(
                         _issue(
                             "warning",
-                            "requires_address",
-                            "Duplicate or ambiguous record keys require address disambiguation",
+                            "unique_key_deferred",
+                            "require_unique_key is set but coordinate resolution is not implemented yet "
+                            f"(cell-scoped key dimensions: {cell_scoped_keys})",
                             series_id=series_id,
                         )
                     )
+                elif workbook is not None:
+                    if shared_reader is None:
+                        shared_reader = _WorkbookValues(workbook)
+                    direction = "internal" if has_internal_direction(series) else "input"
+                    resolved = resolve_series_binding(
+                        graph,
+                        workbook,
+                        series,
+                        direction=direction,
+                        reader=shared_reader,
+                    )
+                    issues.extend(resolved["issues"])
+                    if resolved["requires_address"]:
+                        issues.append(
+                            _issue(
+                                "warning",
+                                "requires_address",
+                                "Duplicate or ambiguous record keys require address disambiguation",
+                                series_id=series_id,
+                            )
+                        )
+    finally:
+        if shared_reader is not None:
+            shared_reader.close()
 
     ok = not any(i["level"] == "error" for i in issues)
     return {"ok": ok, "issues": issues}

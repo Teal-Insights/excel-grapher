@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
+import fastpyxl
 import xlsxwriter
 
-from excel_grapher.grapher import create_dependency_graph
+from excel_grapher.grapher import DependencyGraph, Node, create_dependency_graph
 from excel_grapher.series_bindings import (
     expand_data_range,
     load_series_bindings,
@@ -357,3 +359,102 @@ def test_validate_series_layout_requires_cell_scoped_dimension(tmp_path: Path) -
         issue["code"] == "layout_constraint_violation" and "cell-scoped" in issue["message"]
         for issue in report["issues"]
     )
+
+
+def _matrix_row_series(series_id: str, row: int) -> dict:
+    return {
+        "id": series_id,
+        "sheet": "S",
+        "layout": "matrix",
+        "data_range": f"S!B{row}:C{row}",
+        "key": ["INDICATOR", "TIME_PERIOD"],
+        "input": {"mode": "leaf"},
+        "structure": {
+            "dimensions": [
+                {
+                    "id": "INDICATOR",
+                    "concept": "INDICATOR",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {
+                        "kind": "row_label",
+                        "label_column": "A",
+                        "fill": True,
+                        "read": "string",
+                    },
+                },
+                {
+                    "id": "TIME_PERIOD",
+                    "concept": "TIME_PERIOD",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "column_header", "header_row": 1, "read": "int"},
+                },
+            ],
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "float",
+                "bind": {"kind": "data_cell", "read": "float"},
+            },
+        },
+        "validation": {"require_unique_key": True},
+    }
+
+
+def _write_matrix_demo_workbook(path: Path) -> DependencyGraph:
+    wb = fastpyxl.Workbook()
+    ws = wb.active
+    ws.title = "S"
+    ws["A1"] = "label"
+    ws["B1"] = 2020
+    ws["C1"] = 2021
+    for row, label, b, c in [(2, "x", 1.0, 2.0), (3, "y", 3.0, 4.0), (4, "z", 5.0, 6.0)]:
+        ws[f"A{row}"] = label
+        ws[f"B{row}"] = b
+        ws[f"C{row}"] = c
+    wb.save(path)
+
+    graph = DependencyGraph()
+    for col, row, val in [
+        ("B", 2, 1.0),
+        ("C", 2, 2.0),
+        ("B", 3, 3.0),
+        ("C", 3, 4.0),
+        ("B", 4, 5.0),
+        ("C", 4, 6.0),
+    ]:
+        graph.add_node(
+            Node(
+                sheet="S",
+                column=col,
+                row=row,
+                formula=None,
+                normalized_formula=None,
+                value=val,
+                is_leaf=True,
+            )
+        )
+    return graph
+
+
+def test_validate_series_bindings_loads_workbook_once(tmp_path: Path) -> None:
+    """Validate should share one workbook reader across series (issue #416)."""
+    wb_path = tmp_path / "demo.xlsx"
+    graph = _write_matrix_demo_workbook(wb_path)
+    series_list = [_matrix_row_series(f"s{row}", row) for row in (2, 3, 4)]
+    bindings: WorkbookSeriesBindings = {"workbook": wb_path.name, "series": series_list}
+
+    calls: list[dict] = []
+    real_load = fastpyxl.load_workbook
+
+    def wrapped(*args, **kwargs):
+        calls.append(dict(kwargs))
+        return real_load(*args, **kwargs)
+
+    with patch("fastpyxl.load_workbook", side_effect=wrapped):
+        report = validate_series_bindings(graph, bindings, workbook=wb_path)
+
+    assert report["ok"] is True
+    assert len(calls) == 1
+    assert calls[0].get("data_only") is True
+    assert calls[0].get("read_only") is False

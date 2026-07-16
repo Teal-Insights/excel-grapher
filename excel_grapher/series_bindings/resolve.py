@@ -53,7 +53,11 @@ _TRAILING_UNIT_RE = re.compile(r"\s*\([^)]*\)\s*$")
 
 
 class _WorkbookValues:
-    """Lazy cached value reader for bind cells outside the dependency graph."""
+    """Lazy cached value reader for bind cells outside the dependency graph.
+
+    Opens the workbook with `read_only=False` because label and header binds
+    perform random cell access, which is inefficient in read-only mode.
+    """
 
     def __init__(self, path: Path | str) -> None:
         self._path = Path(path)
@@ -66,7 +70,7 @@ class _WorkbookValues:
         self._workbook_cache = fastpyxl.load_workbook(
             self._path,
             data_only=True,
-            read_only=True,
+            read_only=False,
             keep_vba=keep_vba,
         )
         return self._workbook_cache
@@ -77,6 +81,18 @@ class _WorkbookValues:
         if sheet not in wb.sheetnames:
             raise KeyError(f"Sheet {sheet!r} not found in workbook")
         return wb[sheet][coord].value
+
+    def close(self) -> None:
+        """Close the cached workbook, if open."""
+        if self._workbook_cache is not None:
+            self._workbook_cache.close()
+            self._workbook_cache = None
+
+    def __enter__(self) -> _WorkbookValues:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
 
 
 def _read_cell_value(graph: DependencyGraph, reader: _WorkbookValues, address: str) -> Any:
@@ -642,8 +658,13 @@ def resolve_series_binding(
     direction: BindingDirection = "input",
     export_addresses: Iterable[str] | None = None,
     concept_scheme: dict[str, Any] | None = None,
+    reader: _WorkbookValues | None = None,
 ) -> SeriesResolution:
-    """Resolve each participating cell in a series binding to coordinates and record fields."""
+    """Resolve each participating cell in a series binding to coordinates and record fields.
+
+    Pass `reader` to reuse a shared `_WorkbookValues` across multiple series;
+    when omitted, a reader is created for this call and closed before returning.
+    """
     series_id = str(series.get("id", ""))
     issues: list[ResolutionIssue] = []
     leaves: list[LeafResolution] = []
@@ -709,142 +730,150 @@ def resolve_series_binding(
     key_fields = [str(c) for c in (series.get("key") or [])]
     require_unique_key = bool(validation.get("require_unique_key", True))
 
-    reader = _WorkbookValues(workbook)
-    series_coordinates: dict[str, Scalar] = {}
-    seen_keys: dict[tuple[tuple[str, Scalar], ...], str] = {}
+    owns_reader = reader is None
+    if owns_reader:
+        reader = _WorkbookValues(workbook)
+    active_reader = reader
 
     try:
-        coerced_series_context = _coerce_series_context(series, concept_scheme=concept_scheme)
-    except ValueError as exc:
-        return {
-            "series_id": series_id,
-            "ok": False,
-            "requires_address": True,
-            "leaves": [],
-            "issues": [
-                make_issue(
-                    "error",
-                    "series_context_coercion_failed",
-                    str(exc),
-                    series_id=series_id,
-                )
-            ],
-        }
+        series_coordinates: dict[str, Scalar] = {}
+        seen_keys: dict[tuple[tuple[str, Scalar], ...], str] = {}
 
-    build_record = _build_input_record if direction == "input" else _build_output_record
-
-    bind_failures: dict[str, list[str]] = {}
-    for address in addresses:
-        coordinates: dict[str, Scalar] = {}
         try:
-            if direction == "input":
-                coordinates[measure_concept] = _execute_bind(
-                    measure_bind if isinstance(measure_bind, dict) else {"kind": "data_cell"},
-                    graph=graph,
-                    reader=reader,
-                    data_address=address,
-                    inferred_read_as=measure_inferred_read,
-                )
-
-            for dim in structure.get("dimensions") or []:
-                if not isinstance(dim, dict):
-                    continue
-                field_name = effective_dimension_id(dim)
-                bind = dim.get("bind")
-                if not isinstance(bind, dict):
-                    continue
-                scope = dim.get("scope")
-                if scope == "series" and field_name in series_coordinates:
-                    coordinates[field_name] = series_coordinates[field_name]
-                    continue
-                inferred = _component_dtype(concept_scheme, series, dim)
-                value = _execute_bind(
-                    bind,
-                    graph=graph,
-                    reader=reader,
-                    data_address=address,
-                    inferred_read_as=inferred,
-                )
-                coordinates[field_name] = value
-                if scope == "series":
-                    series_coordinates[field_name] = value
-
-            for attr in structure.get("attributes") or []:
-                if not isinstance(attr, dict):
-                    continue
-                field_name = effective_dimension_id(attr)
-                bind = _attribute_bind(attr)
-                if bind is None:
-                    continue
-                inferred = _component_dtype(concept_scheme, series, attr)
-                coordinates[field_name] = _execute_bind(
-                    bind,
-                    graph=graph,
-                    reader=reader,
-                    data_address=address,
-                    inferred_read_as=inferred,
-                )
-        except (KeyError, ValueError, TypeError) as exc:
-            bind_failures.setdefault(str(exc), []).append(address)
-            continue
-
-        key = _extract_key(coordinates, key_fields)
-        record = build_record(
-            coordinates=coordinates,
-            series=series,
-            measure_concept=measure_concept,
-            series_context=coerced_series_context,
-        )
-        leaves.append(
-            {
-                "address": address,
-                "coordinates": coordinates,
-                "key": key,
-                "record": record,
-            }
-        )
-
-        if require_unique_key and key_fields:
-            key_tuple = tuple(sorted(key.items()))
-            if key_tuple in seen_keys:
-                requires_address = True
-                issues.append(
+            coerced_series_context = _coerce_series_context(series, concept_scheme=concept_scheme)
+        except ValueError as exc:
+            return {
+                "series_id": series_id,
+                "ok": False,
+                "requires_address": True,
+                "leaves": [],
+                "issues": [
                     make_issue(
                         "error",
-                        "duplicate_key",
-                        f"Duplicate key {dict(key_tuple)!r} at {address} "
-                        f"(first seen at {seen_keys[key_tuple]})",
+                        "series_context_coercion_failed",
+                        str(exc),
                         series_id=series_id,
-                        address=address,
                     )
-                )
-            else:
-                seen_keys[key_tuple] = address
+                ],
+            }
 
-    issues.extend(
-        _bind_resolution_issues(bind_failures, series_id=series_id),
-    )
+        build_record = _build_input_record if direction == "input" else _build_output_record
 
-    layout = series.get("layout")
-    if layout == "scalar" and not key_fields and len(leaves) > 1:
-        issues.append(
-            make_issue(
-                "error",
-                "keyless_scalar_ambiguous",
-                "Keyless scalar binding must resolve to exactly one leaf; "
-                f"got {len(leaves)} leaves in data_range",
-                series_id=series_id,
+        bind_failures: dict[str, list[str]] = {}
+        for address in addresses:
+            coordinates: dict[str, Scalar] = {}
+            try:
+                if direction == "input":
+                    coordinates[measure_concept] = _execute_bind(
+                        measure_bind if isinstance(measure_bind, dict) else {"kind": "data_cell"},
+                        graph=graph,
+                        reader=active_reader,
+                        data_address=address,
+                        inferred_read_as=measure_inferred_read,
+                    )
+
+                for dim in structure.get("dimensions") or []:
+                    if not isinstance(dim, dict):
+                        continue
+                    field_name = effective_dimension_id(dim)
+                    bind = dim.get("bind")
+                    if not isinstance(bind, dict):
+                        continue
+                    scope = dim.get("scope")
+                    if scope == "series" and field_name in series_coordinates:
+                        coordinates[field_name] = series_coordinates[field_name]
+                        continue
+                    inferred = _component_dtype(concept_scheme, series, dim)
+                    value = _execute_bind(
+                        bind,
+                        graph=graph,
+                        reader=active_reader,
+                        data_address=address,
+                        inferred_read_as=inferred,
+                    )
+                    coordinates[field_name] = value
+                    if scope == "series":
+                        series_coordinates[field_name] = value
+
+                for attr in structure.get("attributes") or []:
+                    if not isinstance(attr, dict):
+                        continue
+                    field_name = effective_dimension_id(attr)
+                    bind = _attribute_bind(attr)
+                    if bind is None:
+                        continue
+                    inferred = _component_dtype(concept_scheme, series, attr)
+                    coordinates[field_name] = _execute_bind(
+                        bind,
+                        graph=graph,
+                        reader=active_reader,
+                        data_address=address,
+                        inferred_read_as=inferred,
+                    )
+            except (KeyError, ValueError, TypeError) as exc:
+                bind_failures.setdefault(str(exc), []).append(address)
+                continue
+
+            key = _extract_key(coordinates, key_fields)
+            record = build_record(
+                coordinates=coordinates,
+                series=series,
+                measure_concept=measure_concept,
+                series_context=coerced_series_context,
             )
+            leaves.append(
+                {
+                    "address": address,
+                    "coordinates": coordinates,
+                    "key": key,
+                    "record": record,
+                }
+            )
+
+            if require_unique_key and key_fields:
+                key_tuple = tuple(sorted(key.items()))
+                if key_tuple in seen_keys:
+                    requires_address = True
+                    issues.append(
+                        make_issue(
+                            "error",
+                            "duplicate_key",
+                            f"Duplicate key {dict(key_tuple)!r} at {address} "
+                            f"(first seen at {seen_keys[key_tuple]})",
+                            series_id=series_id,
+                            address=address,
+                        )
+                    )
+                else:
+                    seen_keys[key_tuple] = address
+
+        issues.extend(
+            _bind_resolution_issues(bind_failures, series_id=series_id),
         )
 
-    ok = not any(i["level"] == "error" for i in issues)
-    return {
-        "series_id": series_id,
-        "ok": ok,
-        "requires_address": requires_address,
-        "leaves": leaves,
-        "issues": issues,
-    }
+        layout = series.get("layout")
+        if layout == "scalar" and not key_fields and len(leaves) > 1:
+            issues.append(
+                make_issue(
+                    "error",
+                    "keyless_scalar_ambiguous",
+                    "Keyless scalar binding must resolve to exactly one leaf; "
+                    f"got {len(leaves)} leaves in data_range",
+                    series_id=series_id,
+                )
+            )
+
+        ok = not any(i["level"] == "error" for i in issues)
+        return {
+            "series_id": series_id,
+            "ok": ok,
+            "requires_address": requires_address,
+            "leaves": leaves,
+            "issues": issues,
+        }
+    finally:
+        if owns_reader:
+            active_reader.close()
 
 
 def _series_supports_direction(series: dict[str, Any], direction: BindingDirection) -> bool:
@@ -882,21 +911,23 @@ def resolve_series_bindings(
     concept_scheme = bindings.get("concept_scheme")
     if not isinstance(concept_scheme, dict):
         concept_scheme = None
-    for series in bindings.get("series", []):
-        if not isinstance(series, dict):
-            continue
-        if not _series_supports_direction(series, direction):
-            continue
-        result = resolve_series_binding(
-            graph,
-            workbook,
-            series,
-            direction=direction,
-            export_addresses=export_addresses,
-            concept_scheme=concept_scheme,
-        )
-        series_results.append(result)
-        all_issues.extend(result["issues"])
+    with _WorkbookValues(workbook) as reader:
+        for series in bindings.get("series", []):
+            if not isinstance(series, dict):
+                continue
+            if not _series_supports_direction(series, direction):
+                continue
+            result = resolve_series_binding(
+                graph,
+                workbook,
+                series,
+                direction=direction,
+                export_addresses=export_addresses,
+                concept_scheme=concept_scheme,
+                reader=reader,
+            )
+            series_results.append(result)
+            all_issues.extend(result["issues"])
 
     ok = all(r["ok"] for r in series_results) and not any(i["level"] == "error" for i in all_issues)
     return {"ok": ok, "series": series_results, "issues": all_issues}
