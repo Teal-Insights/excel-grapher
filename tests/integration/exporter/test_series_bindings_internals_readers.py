@@ -135,3 +135,29 @@ def test_groups_json_is_not_emitted(workbook: Path) -> None:
     """Sanity: unrelated bindings without groups still omit groups.json."""
     files = _generate(workbook)
     assert "groups.json" not in files
+
+
+def test_single_file_generate_rewrites_bound_leaves(workbook: Path) -> None:
+    """Single-file export shares the Phase 2 rewrite (not only modular internals)."""
+    bindings = validate_bindings_document(deepcopy(BINDINGS_DOCUMENT))
+    targets = ["Calc!A1", "Calc!B1", "Calc!C1", "Calc!D1"] + expand_data_range(
+        "Inputs!F5:J5", workbook=workbook
+    )
+    graph = create_dependency_graph(workbook, targets, load_values=True)
+    with CodeGenerator(graph) as gen:
+        code = gen.generate(
+            targets,
+            series_bindings=bindings,
+            bindings_workbook=workbook,
+        )
+
+    formula_section = code.split("# --- Formula cell functions ---", 1)[1].split(
+        "def make_context", 1
+    )[0]
+    assert "read_borvelia_primary_balance(ctx, time_period=3)" in formula_section
+    assert "xl_cell(ctx, 'Inputs!H5')" not in formula_section
+    assert "read_borvelia_primary_balance_range(ctx)" in formula_section
+    assert "xl_cell(ctx, 'Inputs!A1')" in formula_section
+    assert "xl_range(ctx, 'Inputs!F5:H5')" in formula_section
+    # Discovery metadata uses the same reader index as body rewrite.
+    assert "read_borvelia_primary_balance(ctx, time_period=3)" in code

@@ -247,11 +247,6 @@ def emit_leaf_index_lines(series: dict[str, Any], resolved: SeriesResolution) ->
     return lines
 
 
-def leaf_index_symbol_name(series_id: str) -> str:
-    """Return the generated `_LEAF_INDEX_<ID>` symbol for a series id."""
-    return _leaf_index_name(series_id)
-
-
 def dimension_id_to_param_name(field: str) -> str:
     """Convert an SDMX / effective dimension id to a Python keyword parameter name.
 
@@ -528,7 +523,8 @@ def emit_reader_function(
     """Emit a `read_*` dual that resolves domain keys via `_LEAF_INDEX_*`.
 
     For uniquely keyed series, expects the matching `_LEAF_INDEX_<ID>` constant to
-    already be present (normally emitted by `emit_setter_function`). For duplicate-key
+    already be present (emitted by `emit_leaf_index_lines` / `emit_readers_block`, or
+    co-emitted by `emit_setter_function` in single-file mode). For duplicate-key
     bindings (`requires_address`), emits an address-keyed reader validated against the
     resolved leaf addresses — the inverse of the address-required setter path.
     """

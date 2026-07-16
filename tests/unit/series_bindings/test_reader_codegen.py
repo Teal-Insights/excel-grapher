@@ -275,7 +275,7 @@ def test_generate_modules_exports_requires_address_reader(tmp_path: Path) -> Non
     )
     assert "_readers.py" in files
     assert "def read_dup_headers(" in files["_readers.py"]
-    assert "from ._readers import" in files["api.py"]
+    assert "from ._readers import" in files["__init__.py"]
     assert "read_dup_headers" in files["__init__.py"]
     assert "read_dup_headers_range" in files["__init__.py"]
 

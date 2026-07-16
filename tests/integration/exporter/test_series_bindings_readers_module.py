@@ -114,13 +114,15 @@ def test_modular_export_emits_private_readers_module(workbook: Path) -> None:
 
     api = files["api.py"]
     assert "from ._readers import" in api
+    assert "_LEAF_INDEX_BORVELIA_PRIMARY_BALANCE" in api
     assert "def read_borvelia_primary_balance(" not in api
     assert "def set_borvelia_primary_balance(" in api
-    assert "_LEAF_INDEX_BORVELIA_PRIMARY_BALANCE" not in api or (
-        "from ._readers import" in api and "_LEAF_INDEX_BORVELIA_PRIMARY_BALANCE" in api
-    )
+    # Public readers are re-exported from `_readers` (not via unused api imports).
+    assert "read_borvelia_primary_balance" not in api.split("def set_borvelia_primary_balance")[0]
 
-    assert "read_borvelia_primary_balance" in files["__init__.py"]
+    init = files["__init__.py"]
+    assert "from ._readers import" in init
+    assert "read_borvelia_primary_balance" in init
 
 
 def test_modular_readers_module_is_importable_and_usable(
@@ -154,10 +156,17 @@ def test_readers_module_is_ruff_clean(workbook: Path, tmp_path: Path) -> None:
     for filename, content in files.items():
         (pkg_root / filename).write_text(content, encoding="utf-8")
 
+    # Scope to modules this PR owns. `internals.py` still uses legacy `'''Formula'''`
+    # docstrings (D300) outside this change.
+    targets = [
+        pkg_root / "_readers.py",
+        pkg_root / "api.py",
+        pkg_root / "__init__.py",
+    ]
     ruff = subprocess.run(
-        ["uv", "run", "--no-sync", "ruff", "check", str(pkg_root / "_readers.py")],
+        ["uv", "run", "--no-sync", "ruff", "check", *[str(p) for p in targets]],
         check=False,
         capture_output=True,
         text=True,
     )
-    assert ruff.returncode == 0, f"_readers.py is not Ruff-clean:\n{ruff.stdout}\n{ruff.stderr}"
+    assert ruff.returncode == 0, f"generated package is not Ruff-clean:\n{ruff.stdout}\n{ruff.stderr}"
