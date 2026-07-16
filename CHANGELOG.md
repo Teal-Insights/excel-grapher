@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.15.0 (2026-07-16)
+
+### Bug Fixes
+
+- **series-bindings**: Tighten reader export parity after review
+  ([#413](https://github.com/Teal-Insights/excel-grapher/pull/413),
+  [`a997795`](https://github.com/Teal-Insights/excel-grapher/commit/a997795b63aaf1c4301b821ecb5b665a2998a7bd))
+
+### Code Style
+
+- Ruff-format series bindings readers module test
+  ([#413](https://github.com/Teal-Insights/excel-grapher/pull/413),
+  [`a997795`](https://github.com/Teal-Insights/excel-grapher/commit/a997795b63aaf1c4301b821ecb5b665a2998a7bd))
+
+### Features
+
+- **series-bindings**: Migrate formula bodies onto read_* via _readers
+  ([#413](https://github.com/Teal-Insights/excel-grapher/pull/413),
+  [`a997795`](https://github.com/Teal-Insights/excel-grapher/commit/a997795b63aaf1c4301b821ecb5b665a2998a7bd))
+
+### Testing
+
+- **exporter**: Stop requiring unused xl_eval in projected internals
+  ([#413](https://github.com/Teal-Insights/excel-grapher/pull/413),
+  [`a997795`](https://github.com/Teal-Insights/excel-grapher/commit/a997795b63aaf1c4301b821ecb5b665a2998a7bd))
+
+
 ## v3.14.1 (2026-07-15)
 
 ### Bug Fixes
