@@ -39,14 +39,39 @@ __all__ = [
 ]
 
 
+def _iter_aggregate_numbers(*args: CellValue) -> Iterator[float | XlError]:
+    """Yield numbers for SUM/AVERAGE/MIN/MAX/STDEV with Excel arg semantics.
+
+    Range/array arguments keep only numeric cells: blanks, text, and booleans
+    are skipped; `XlError` values propagate. Literal scalar arguments still
+    coerce via `to_number` (so `SUM(1, "2", TRUE)` is 4).
+    """
+    for arg in args:
+        grid = Grid.wrap(arg)
+        if grid is not None:
+            for cell in grid.iter_raw():
+                if isinstance(cell, XlError):
+                    yield cell
+                    return
+                if cell is None or isinstance(cell, (bool, str)):
+                    continue
+                if isinstance(cell, numbers.Real):
+                    yield float(cell)
+            continue
+        number = to_number(arg)
+        if isinstance(number, XlError):
+            yield number
+            return
+        yield float(number)
+
+
 def sum_cells(*args: CellValue) -> float | XlError:
     """Return the sum of numeric cells."""
     total = 0.0
-    for v in flatten(*args):
-        n = to_number(v)
-        if isinstance(n, XlError):
-            return n
-        total += float(n)
+    for value in _iter_aggregate_numbers(*args):
+        if isinstance(value, XlError):
+            return value
+        total += value
     return total
 
 
@@ -54,11 +79,10 @@ def average_cells(*args: CellValue) -> float | XlError:
     """Return the average of numeric cells."""
     total = 0.0
     count = 0
-    for v in flatten(*args):
-        n = to_number(v)
-        if isinstance(n, XlError):
-            return n
-        total += float(n)
+    for value in _iter_aggregate_numbers(*args):
+        if isinstance(value, XlError):
+            return value
+        total += value
         count += 1
     if count == 0:
         return XlError.DIV
@@ -69,11 +93,9 @@ def min_cells(*args: CellValue) -> float | XlError:
     """Return the minimum of numeric cells."""
     found = False
     current = 0.0
-    for v in flatten(*args):
-        n = to_number(v)
-        if isinstance(n, XlError):
-            return n
-        value = float(n)
+    for value in _iter_aggregate_numbers(*args):
+        if isinstance(value, XlError):
+            return value
         if not found or value < current:
             current = value
             found = True
@@ -86,11 +108,9 @@ def max_cells(*args: CellValue) -> float | XlError:
     """Return the maximum of numeric cells."""
     found = False
     current = 0.0
-    for v in flatten(*args):
-        n = to_number(v)
-        if isinstance(n, XlError):
-            return n
-        value = float(n)
+    for value in _iter_aggregate_numbers(*args):
+        if isinstance(value, XlError):
+            return value
         if not found or value > current:
             current = value
             found = True
@@ -146,11 +166,10 @@ def npv_cells(rate: CellValue, *values: CellValue) -> float | XlError:
 def stdev_cells(*args: CellValue) -> float | XlError:
     """Return sample standard deviation of numeric cells."""
     nums: list[float] = []
-    for v in flatten(*args):
-        n = to_number(v)
-        if isinstance(n, XlError):
-            return n
-        nums.append(float(n))
+    for value in _iter_aggregate_numbers(*args):
+        if isinstance(value, XlError):
+            return value
+        nums.append(value)
     if len(nums) < 2:
         return XlError.DIV
     mean = sum(nums) / len(nums)
