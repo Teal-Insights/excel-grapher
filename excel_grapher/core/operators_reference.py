@@ -189,7 +189,11 @@ def reference_concat_array(
 
 
 def reference_sumproduct_arrays(arrays: list[Any]) -> float | XlError:
-    """Element-wise product reduction (C-order, fail-fast on ``to_number`` errors)."""
+    """Element-wise product reduction (C-order, fail-fast on ``XlError``).
+
+    Non-numeric text is treated as 0 (Excel SUMPRODUCT). `XlError` is a
+    `StrEnum`, so error sentinels are checked before the text branch.
+    """
     import numpy as np
 
     if not arrays:
@@ -199,9 +203,15 @@ def reference_sumproduct_arrays(arrays: list[Any]) -> float | XlError:
     for indices in np.ndindex(shape):
         product = 1.0
         for arr in arrays:
-            number = to_number(arr[indices])
-            if isinstance(number, XlError):
-                return number
+            cell = arr[indices]
+            if isinstance(cell, XlError):
+                return cell
+            if isinstance(cell, str):
+                number = 0.0
+            else:
+                number = to_number(cell)
+                if isinstance(number, XlError):
+                    return number
             product *= number
         result += product
     return result

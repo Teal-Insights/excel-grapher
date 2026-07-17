@@ -39,14 +39,33 @@ __all__ = [
 ]
 
 
+def _numeric_for_aggregate(value: object) -> float | XlError | None:
+    """Coerce one aggregate cell; skip text (`None`), propagate `XlError`.
+
+    Excel full-scan aggregates (`SUM`, `AVERAGE`, `MIN`, `MAX`, `STDEV`) ignore
+    text — including empty guard results — rather than raising `#VALUE!`.
+    `XlError` is a `StrEnum`, so error sentinels must be checked before `str`.
+    """
+    if isinstance(value, XlError):
+        return value
+    if isinstance(value, str):
+        return None
+    number = to_number(cast(CellValue, value))
+    if isinstance(number, XlError):
+        return number
+    return float(number)
+
+
 def sum_cells(*args: CellValue) -> float | XlError:
     """Return the sum of numeric cells."""
     total = 0.0
     for v in flatten(*args):
-        n = to_number(v)
+        n = _numeric_for_aggregate(v)
+        if n is None:
+            continue
         if isinstance(n, XlError):
             return n
-        total += float(n)
+        total += n
     return total
 
 
@@ -55,10 +74,12 @@ def average_cells(*args: CellValue) -> float | XlError:
     total = 0.0
     count = 0
     for v in flatten(*args):
-        n = to_number(v)
+        n = _numeric_for_aggregate(v)
+        if n is None:
+            continue
         if isinstance(n, XlError):
             return n
-        total += float(n)
+        total += n
         count += 1
     if count == 0:
         return XlError.DIV
@@ -70,12 +91,13 @@ def min_cells(*args: CellValue) -> float | XlError:
     found = False
     current = 0.0
     for v in flatten(*args):
-        n = to_number(v)
+        n = _numeric_for_aggregate(v)
+        if n is None:
+            continue
         if isinstance(n, XlError):
             return n
-        value = float(n)
-        if not found or value < current:
-            current = value
+        if not found or n < current:
+            current = n
             found = True
     if not found:
         return 0.0
@@ -87,12 +109,13 @@ def max_cells(*args: CellValue) -> float | XlError:
     found = False
     current = 0.0
     for v in flatten(*args):
-        n = to_number(v)
+        n = _numeric_for_aggregate(v)
+        if n is None:
+            continue
         if isinstance(n, XlError):
             return n
-        value = float(n)
-        if not found or value > current:
-            current = value
+        if not found or n > current:
+            current = n
             found = True
     if not found:
         return 0.0
@@ -133,11 +156,13 @@ def npv_cells(rate: CellValue, *values: CellValue) -> float | XlError:
     result = 0.0
     count = 0
     for v in flatten(*values):
-        n = to_number(v)
+        n = _numeric_for_aggregate(v)
+        if n is None:
+            continue
         if isinstance(n, XlError):
             return n
         count += 1
-        result += float(n) / ((1 + r) ** count)
+        result += n / ((1 + r) ** count)
     if count == 0:
         return XlError.VALUE
     return result
@@ -147,10 +172,12 @@ def stdev_cells(*args: CellValue) -> float | XlError:
     """Return sample standard deviation of numeric cells."""
     nums: list[float] = []
     for v in flatten(*args):
-        n = to_number(v)
+        n = _numeric_for_aggregate(v)
+        if n is None:
+            continue
         if isinstance(n, XlError):
             return n
-        nums.append(float(n))
+        nums.append(n)
     if len(nums) < 2:
         return XlError.DIV
     mean = sum(nums) / len(nums)

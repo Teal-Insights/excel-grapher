@@ -37,9 +37,17 @@ def sumproduct_cells(*args: CellValue) -> float | XlError:
     for index0 in range(grids[0].size):
         product = 1.0
         for grid in grids:
-            number = to_number(cast(CellValue, grid.at_flat(index0)))
-            if isinstance(number, XlError):
-                return number
+            cell = cast(CellValue, grid.at_flat(index0))
+            # Excel SUMPRODUCT treats non-numeric text as 0 (not `#VALUE!`).
+            # `XlError` is a `StrEnum` — check errors before the `str` branch.
+            if isinstance(cell, XlError):
+                return cell
+            if isinstance(cell, str):
+                number = 0.0
+            else:
+                number = to_number(cell)
+                if isinstance(number, XlError):
+                    return number
             product *= number
         result += product
     return result

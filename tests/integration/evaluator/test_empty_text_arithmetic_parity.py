@@ -38,8 +38,7 @@ def test_empty_text_arithmetic_parity_matches_excel_error_classes() -> None:
     graph = _make_graph(
         _make_node("S!A1", None, 1),
         _make_node("S!A2", '=IF(TRUE,"",0)', None),
-        # A3 intentionally absent from the graph as a true blank leaf via formula
-        # that yields None would also coerce; use an explicit blank leaf value.
+        # Blank leaf (`None`) still coerces to 0 in arithmetic.
         _make_node("S!A3", None, None),
         _make_node("S!B1", "=S!A1/S!A2", None),
         _make_node("S!B2", "=S!A1/S!A3", None),
@@ -50,3 +49,18 @@ def test_empty_text_arithmetic_parity_matches_excel_error_classes() -> None:
     assert result.evaluator_results["S!B1"] == XlError.VALUE
     assert result.evaluator_results["S!B2"] == XlError.DIV
     assert result.evaluator_results["S!B3"] == XlError.VALUE
+
+
+def test_sum_skips_empty_text_while_arithmetic_rejects_it() -> None:
+    """SUM ignores guard empty text; `+` still raises `#VALUE!` (parity)."""
+    graph = _make_graph(
+        _make_node("S!A1", None, 1),
+        _make_node("S!A2", '=IF(TRUE,"",0)', None),
+        _make_node("S!A3", None, 2),
+        _make_node("S!B1", "=SUM(S!A1:S!A3)", None),
+        _make_node("S!B2", "=S!A1+S!A2", None),
+    )
+
+    result = assert_codegen_matches_evaluator(graph, ["S!B1", "S!B2"])
+    assert result.evaluator_results["S!B1"] == 3.0
+    assert result.evaluator_results["S!B2"] == XlError.VALUE
