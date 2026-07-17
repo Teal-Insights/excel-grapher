@@ -22,6 +22,8 @@ from excel_grapher.series_bindings.docstring_renderers import (
     NumpySeriesDocstringRenderer,
     PlainSeriesDocstringRenderer,
     RstSeriesDocstringRenderer,
+    _render_example_call,
+    _render_positional_example,
     resolve_series_docstring_renderer,
 )
 from excel_grapher.series_bindings.docstrings import (
@@ -39,6 +41,7 @@ from excel_grapher.series_bindings.docstrings import (
     run_series_docstring_callback,
     unregister_series_docstring_callback,
 )
+from excel_grapher.series_bindings.setter_codegen import _canonical_key_order
 from excel_grapher.series_bindings.types import SeriesResolution, WorkbookSeriesBindings
 from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
@@ -483,11 +486,14 @@ def _series_contract_and_doc(
     *,
     layout: str = "series",
     keys: tuple[str, ...] = ("COUNTRY",),
+    positional_example_values: tuple[object, ...] | None = (60.0, 80.0),
 ) -> tuple[SeriesBindingDocstringContract, SeriesFunctionDoc]:
     example_records: list[dict[str, object]] = [
         {**{key: country for key in keys}, "OBS_VALUE": value}
         for country, value in (("Borvelia", 60.0), ("Litellia", 80.0))
     ]
+    if len(keys) != 1 or layout != "series":
+        positional_example_values = None
     contract = SeriesBindingDocstringContract(
         series_id="country_initial_debt",
         function_name="set_country_initial_debt",
@@ -515,6 +521,7 @@ def _series_contract_and_doc(
         },
         example_records=tuple(example_records),
         notes="",
+        positional_example_values=positional_example_values,
     )
     doc = SeriesFunctionDoc(
         summary="Set country initial debt.",
@@ -548,6 +555,69 @@ def test_series_setter_docstring_describes_series_shapes() -> None:
     assert "empty_measure" in rendered
     assert "set_country_initial_debt(ctx, [" in rendered
     assert "set_country_initial_debt(ctx, [60.0, 80.0])" in rendered
+
+
+def test_render_positional_example_uses_full_key_order_values() -> None:
+    contract, _doc = _series_contract_and_doc(
+        positional_example_values=(60.0, 80.0, 100.0),
+    )
+    assert _render_positional_example(contract) == [
+        "set_country_initial_debt(ctx, [60.0, 80.0, 100.0])"
+    ]
+
+
+def test_render_positional_example_omitted_without_full_values() -> None:
+    """Partial example_records must not advertise an invalid positional call."""
+    contract, _doc = _series_contract_and_doc(positional_example_values=None)
+    assert _render_positional_example(contract) == []
+    example_call = "\n".join(_render_example_call(contract))
+    assert "set_country_initial_debt(ctx, [" in example_call
+    assert "set_country_initial_debt(ctx, [60.0, 80.0])" not in example_call
+
+
+def test_derive_doc_contract_positional_values_match_key_order(tmp_path: Path) -> None:
+    wb_path = tmp_path / "lic_inputs.xlsx"
+    _write_borvelia_workbook(wb_path)
+    graph = create_dependency_graph(
+        wb_path,
+        expand_data_range("Inputs!F5:J5"),
+        load_values=True,
+    )
+    bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
+    series = bindings["series"][0]
+    resolved = resolve_series_binding(graph, wb_path, series)
+    key_fields = [str(field) for field in (series.get("key") or [])]
+    key_order = _canonical_key_order(resolved, key_fields)
+    assert key_order is not None
+    assert len(key_order) == 5
+
+    contract = derive_doc_contract(
+        series,
+        function_kind="setter",
+        function_name="set_borvelia_primary_balance",
+        resolution=resolved,
+        bindings=bindings,
+    )
+
+    assert len(contract.example_records) == 2
+    assert contract.positional_example_values == (-2.0, -1.0, 0.0, 1.0, 2.0)
+    assert len(contract.positional_example_values) == len(key_order)
+
+    rendered = GoogleSeriesDocstringRenderer().render(
+        contract,
+        SeriesFunctionDoc(
+            summary="Set borvelia_primary_balance.",
+            purpose="Updates workbook inputs from Records.",
+            record_matching="Records match cells by key fields.",
+            field_descriptions={
+                field: FieldDoc(description=f"Value for {field}.")
+                for field in contract.required_fields
+            },
+        ),
+        series=series,
+    )
+    assert "set_borvelia_primary_balance(ctx, [-2.0, -1.0, 0.0, 1.0, 2.0])" in rendered
+    assert "set_borvelia_primary_balance(ctx, [-2.0, -1.0])" not in rendered
 
 
 def test_series_multi_key_setter_omits_positional_shape() -> None:
