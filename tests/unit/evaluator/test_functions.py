@@ -166,6 +166,32 @@ def test_min_max() -> None:
         assert result["S!A2"] == 3.0
 
 
+def test_range_aggregates_ignore_blanks_text_and_booleans() -> None:
+    """Range args ignore blanks/text/bools; only numbers participate (#419)."""
+    graph = _make_graph(
+        _make_node("S!A1", None, -0.2),
+        _make_node("S!A2", None, -0.3),
+        _make_node("S!A3", None, ""),
+        _make_node("S!A4", None, None),
+        _make_node("S!A5", None, "n.a."),
+        _make_node("S!A6", None, True),
+        _make_node("S!B1", "=AVERAGE(S!A1:A6)", None),
+        _make_node("S!B2", "=SUM(S!A1:A6)", None),
+        _make_node("S!B3", "=MIN(S!A1:A6)", None),
+        _make_node("S!B4", "=MAX(S!A1:A6)", None),
+        _make_node("S!B5", "=STDEV(S!A1:A6)", None),
+        _make_node("S!B6", "=AVERAGE(S!A1:A4)", None),
+    )
+    with FormulaEvaluator(graph) as ev:
+        result = ev.evaluate([f"S!B{i}" for i in range(1, 7)])
+        assert result["S!B1"] == -0.25
+        assert result["S!B2"] == -0.5
+        assert result["S!B3"] == -0.3
+        assert result["S!B4"] == -0.2
+        assert result["S!B5"] == pytest.approx(0.0707106781)
+        assert result["S!B6"] == -0.25
+
+
 def test_abs() -> None:
     """Test ABS function."""
     graph = _make_graph(
