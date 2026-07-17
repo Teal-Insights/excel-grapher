@@ -12,7 +12,7 @@ np = pytest.importorskip("numpy")
 from excel_grapher.core.coercions import datetime_to_excel_serial, to_number
 from excel_grapher.core.types import XlError
 from excel_grapher.runtime.datetime import xl_today
-from excel_grapher.runtime.info import xl_iserror, xl_isna
+from excel_grapher.runtime.info import xl_iserror, xl_isna, xl_isnumber, xl_istext
 from excel_grapher.runtime.math import xl_averageif, xl_countif
 from excel_grapher.runtime.text import xl_lower, xl_value
 
@@ -22,6 +22,15 @@ def test_xl_iserror_and_isna() -> None:
     assert xl_iserror(1) is False
     assert xl_isna(XlError.NA) is True
     assert xl_isna(XlError.DIV) is False
+
+
+def test_xl_isnumber_and_istext_reject_errors() -> None:
+    """ISNUMBER/ISTEXT return False for XlError (errors are not numbers or text)."""
+    assert xl_isnumber(XlError.DIV) is False
+    assert xl_isnumber(3) is True
+    assert xl_istext(XlError.NA) is False
+    assert xl_istext("hello") is True
+    assert xl_istext(123) is False
 
 
 def test_xl_lower_and_value() -> None:

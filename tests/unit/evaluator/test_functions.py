@@ -311,6 +311,31 @@ def test_isnumber() -> None:
         assert result["S!A3"] is False  # TRUE is a boolean, not a number
 
 
+def test_isnumber_error_args_return_false() -> None:
+    """ISNUMBER treats error values as ordinary arguments (Excel IS semantics)."""
+    graph = _make_graph(
+        _make_node("S!A1", "=ISNUMBER(1/0)", None),
+        _make_node("S!A2", "=ISNUMBER(NA())", None),
+        _make_node("S!A3", "=ISNUMBER(#VALUE!)", None),
+    )
+    with FormulaEvaluator(graph) as ev:
+        result = ev.evaluate(["S!A1", "S!A2", "S!A3"])
+        assert result["S!A1"] is False
+        assert result["S!A2"] is False
+        assert result["S!A3"] is False
+
+
+def test_isnumber_guard_collapses_div_zero() -> None:
+    """IF(ISNUMBER(x/y), x/y, 0) returns the fallback when the division errors."""
+    graph = _make_graph(
+        _make_node("S!A1", None, 0),
+        _make_node("S!A2", None, 0),
+        _make_node("S!B1", "=IF(ISNUMBER(S!A1/S!A2),S!A1/S!A2,0)", None),
+    )
+    with FormulaEvaluator(graph) as ev:
+        assert ev.evaluate(["S!B1"])["S!B1"] == 0
+
+
 def test_istext() -> None:
     """Test ISTEXT function."""
     graph = _make_graph(
@@ -321,6 +346,20 @@ def test_istext() -> None:
         result = ev.evaluate(["S!A1", "S!A2"])
         assert result["S!A1"] is True
         assert result["S!A2"] is False
+
+
+def test_istext_error_args_return_false() -> None:
+    """ISTEXT returns FALSE for errors; XlError must not count as text."""
+    graph = _make_graph(
+        _make_node("S!A1", "=ISTEXT(1/0)", None),
+        _make_node("S!A2", "=ISTEXT(NA())", None),
+        _make_node("S!A3", "=ISTEXT(#N/A)", None),
+    )
+    with FormulaEvaluator(graph) as ev:
+        result = ev.evaluate(["S!A1", "S!A2", "S!A3"])
+        assert result["S!A1"] is False
+        assert result["S!A2"] is False
+        assert result["S!A3"] is False
 
 
 def test_isblank() -> None:

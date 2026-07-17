@@ -104,7 +104,7 @@ _ARITHMETIC_OPS = frozenset({"+", "-", "*", "/", "^"})
 # Functions whose single argument is emitted as a lazily-evaluated thunk so the
 # exported runtime can catch raised Excel errors. Mirrors the evaluator's
 # AST-level special cases; other IS functions propagate argument errors there.
-_THUNK_ARG_FUNCTIONS = frozenset({"ISERROR", "ISNA", "ISBLANK"})
+_THUNK_ARG_FUNCTIONS = frozenset({"ISERROR", "ISNA", "ISBLANK", "ISNUMBER", "ISTEXT"})
 
 # Return unpacking hoists substantive ``xl_*`` runtime calls into statement-level
 # temporaries. Coercion helpers and error literals stay inline because they are
