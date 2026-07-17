@@ -104,6 +104,11 @@ _SKIP_ERROR_PRECHECK = {
     # Logical reductions: short-circuit and fail-fast over lazy ranges.
     "AND",
     "OR",
+    # IS-family type predicates: Excel passes error values through; the
+    # callables return FALSE (they are not numbers/text). ISERROR/ISNA/ISBLANK
+    # are AST-special-cased above and never reach this generic path.
+    "ISNUMBER",
+    "ISTEXT",
 }
 
 if TYPE_CHECKING:

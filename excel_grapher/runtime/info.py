@@ -12,7 +12,8 @@ def xl_isnumber(value: CellValue) -> bool:
 
 
 def xl_istext(value: CellValue) -> bool:
-    return isinstance(value, str)
+    # XlError subclasses str; Excel ISTEXT returns FALSE for error values.
+    return isinstance(value, str) and not isinstance(value, XlError)
 
 
 def xl_isblank(value: CellValue) -> bool:
