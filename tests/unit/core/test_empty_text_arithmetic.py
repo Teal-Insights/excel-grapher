@@ -60,9 +60,7 @@ def test_scalar_arithmetic_rejects_empty_text(op, left, right) -> None:
         (xl_sub, 3, None, 3.0),
     ],
 )
-def test_scalar_arithmetic_blank_none_still_coerces_to_zero(
-    op, left, right, expected
-) -> None:
+def test_scalar_arithmetic_blank_none_still_coerces_to_zero(op, left, right, expected) -> None:
     assert op(left, right) == expected
 
 

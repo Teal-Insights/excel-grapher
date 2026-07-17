@@ -1,7 +1,7 @@
 """Empty text vs blank arithmetic: evaluator ↔ export parity (#420).
 
-Guard formulas often return `\"\"`. Excel raises `#VALUE!` for arithmetic on
-empty text, while blank cells still coerce to 0 (`#DIV/0!` for division).
+Guard formulas often return empty text. Excel raises `#VALUE!` for arithmetic
+on empty text, while blank cells still coerce to 0 (`#DIV/0!` for division).
 """
 
 from __future__ import annotations
