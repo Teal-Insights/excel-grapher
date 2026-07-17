@@ -126,9 +126,11 @@ def _render_scalar_example(contract: SeriesBindingDocstringContract) -> list[str
 
 
 def _render_positional_example(contract: SeriesBindingDocstringContract) -> list[str]:
-    measure = _measure_field(contract)
-    values = [record.get(measure) for record in contract.example_records]
-    return [f"{contract.function_name}(ctx, {values!r})"]
+    """Render a positional measure example only when full key arity is known."""
+    values = contract.positional_example_values
+    if not values:
+        return []
+    return [f"{contract.function_name}(ctx, {list(values)!r})"]
 
 
 def _render_example_call(contract: SeriesBindingDocstringContract) -> list[str]:
@@ -138,7 +140,9 @@ def _render_example_call(contract: SeriesBindingDocstringContract) -> list[str]:
         return _render_scalar_example(contract)
     blocks = [_render_records_example(contract)]
     if contract.layout == "series" and _is_single_key(contract):
-        blocks.append(_render_positional_example(contract))
+        positional = _render_positional_example(contract)
+        if positional:
+            blocks.append(positional)
     lines: list[str] = []
     for index, block in enumerate(blocks):
         if index:
