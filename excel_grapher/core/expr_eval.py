@@ -13,7 +13,7 @@ from fastpyxl.utils.cell import (
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.core.grid import Range
 
-from .coercions import flatten, numeric_values, to_bool, to_string
+from .coercions import flatten, to_bool, to_string
 from .excel_function_names import normalize_excel_function_name
 from .formula_ast import (
     AstNode,
@@ -27,7 +27,7 @@ from .formula_ast import (
     StringNode,
     UnaryOpNode,
 )
-from .math_funcs import abs_number, exp_number
+from .math_funcs import abs_number, exp_number, max_cells, min_cells, sum_cells
 from .operators import (
     xl_add,
     xl_concat,
@@ -314,28 +314,15 @@ def _range_node_to_excel_range(node: RangeNode) -> ExcelRange | None:
 
 
 def _fn_sum(args: list[CellValue]) -> CellValue:
-    nums, err = numeric_values(flatten(*args))
-    if err is not None:
-        return err
-    return float(sum(nums))
+    return sum_cells(*args)
 
 
 def _fn_min(args: list[CellValue]) -> CellValue:
-    nums, err = numeric_values(flatten(*args))
-    if err is not None:
-        return err
-    if not nums:
-        return XlError.VALUE
-    return float(min(nums))
+    return min_cells(*args)
 
 
 def _fn_max(args: list[CellValue]) -> CellValue:
-    nums, err = numeric_values(flatten(*args))
-    if err is not None:
-        return err
-    if not nums:
-        return XlError.VALUE
-    return float(max(nums))
+    return max_cells(*args)
 
 
 def _fn_abs(args: list[CellValue]) -> CellValue:

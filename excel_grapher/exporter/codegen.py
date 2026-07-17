@@ -104,7 +104,7 @@ _ARITHMETIC_OPS = frozenset({"+", "-", "*", "/", "^"})
 # Functions whose single argument is emitted as a lazily-evaluated thunk so the
 # exported runtime can catch raised Excel errors. Mirrors the evaluator's
 # AST-level special cases; other IS functions propagate argument errors there.
-_THUNK_ARG_FUNCTIONS = frozenset({"ISERROR", "ISNA", "ISBLANK"})
+_THUNK_ARG_FUNCTIONS = frozenset({"ISERROR", "ISNA", "ISBLANK", "ISNUMBER", "ISTEXT"})
 
 # Return unpacking hoists substantive ``xl_*`` runtime calls into statement-level
 # temporaries. Coercion helpers and error literals stay inline because they are
@@ -452,7 +452,12 @@ class CodeGenerator:
 
         For A1:B3, emits: xl_range(ctx, "S!A1:B3"). Consumers evaluate cells
         positionally; unused cells are never evaluated.
+
+        A 1x1 range collapses to a scalar cell read so binary/unary operators
+        match Excel and the evaluator (issue #421).
         """
+        if self._range_node_is_single_cell(node):
+            return self._emit_cell_eval(node.start)
         return self._emit_range_address(node.start, node.end)
 
     def _emit_range_address(self, start: str, end: str) -> str:
@@ -1813,6 +1818,11 @@ class CodeGenerator:
         c1, c2 = (start_col, end_col) if start_col <= end_col else (end_col, start_col)
         return (start_sheet, r1, c1, r2, c2)
 
+    def _range_node_is_single_cell(self, node: RangeNode) -> bool:
+        """True when `node` spans exactly one cell (e.g. `A1:A1`)."""
+        _, r1, c1, r2, c2 = self._range_coords(node.start, node.end)
+        return r1 == r2 and c1 == c2
+
     def _range_cell_count(self, start: str, end: str) -> int:
         _, r1, c1, r2, c2 = self._range_coords(start, end)
         return (r2 - r1 + 1) * (c2 - c1 + 1)
@@ -1843,10 +1853,11 @@ class CodeGenerator:
         functions (`IF`/`IFERROR`/`IFNA`/`CHOOSE`) when a returned branch is
         itself an array. Scalar-returning functions (e.g. `SUM`, `MATCH`,
         `VLOOKUP`) never yield arrays even when their arguments contain ranges,
-        so they take the inlined scalar path without a guard.
+        so they take the inlined scalar path without a guard. A 1x1 range is a
+        scalar cell read, not an array producer.
         """
         if isinstance(node, RangeNode):
-            return True
+            return not self._range_node_is_single_cell(node)
         if isinstance(node, BinaryOpNode):
             return self._ast_needs_array_operator_branch(
                 node.left
@@ -2253,8 +2264,10 @@ class CodeGenerator:
             funcs.add("XlError")
             funcs.add("xl_raise")
         elif isinstance(node, RangeNode):
-            # Ranges emit lazy xl_range(ctx, ...) calls
-            funcs.add("xl_range")
+            # Multi-cell ranges emit lazy xl_range(ctx, ...); 1x1 collapses to
+            # a cell read (xl_cell / xl_eval), discovered from emitted bodies.
+            if not self._range_node_is_single_cell(node):
+                funcs.add("xl_range")
         elif isinstance(node, FunctionCallNode):
             upper_name = normalize_excel_function_name(node.name)
 
