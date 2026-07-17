@@ -507,8 +507,15 @@ class FormulaEvaluator:
         return resolve_whole_row(sheet, row, self._sheet_bounds())
 
     def _resolve_binary_operand(self, value: FormulaValue) -> FormulaValue:
-        """Bind range geometry to a lazy `Range` for element-wise operators."""
+        """Bind range geometry for element-wise operators.
+
+        Single-cell references (including 1x1 results from `INDEX`) resolve to
+        their scalar value so comparisons and concatenation match Excel scalar
+        context. Multi-cell ranges stay as lazy `Range` for broadcast ops.
+        """
         if isinstance(value, ExcelRange):
+            if value.start_row == value.end_row and value.start_col == value.end_col:
+                return self._auto_resolve_single_cell(value)
             return cast(FormulaValue, self._as_lazy_range(value))
         return value
 

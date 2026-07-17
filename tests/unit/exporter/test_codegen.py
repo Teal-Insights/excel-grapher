@@ -178,6 +178,14 @@ class TestEmitAstReferences:
         result = gen._emit_ast(RangeNode("Sheet1!A1", "Sheet1!B2"))
         assert result == "xl_range(ctx, 'Sheet1!A1:B2')"
 
+    def test_emit_range_1x1_as_scalar_cell(self, gen):
+        """1x1 ranges emit a scalar cell read (issue #421 / evaluator parity)."""
+        assert gen._emit_ast(RangeNode("Sheet1!A1", "Sheet1!A1")) == "xl_cell(ctx, 'Sheet1!A1')"
+        assert (
+            gen._emit_ast(RangeNode("'My Sheet'!B2", "'My Sheet'!B2"))
+            == "xl_cell(ctx, \"'My Sheet'!B2\")"
+        )
+
 
 class TestEmitAstOperators:
     """Tests for _emit_ast with operators."""
@@ -260,6 +268,23 @@ class TestEmitAstOperators:
         outer = BinaryOpNode("*", inner, NumberNode(3.0))
         inner_code = gen._emit_ast(inner)
         assert gen._emit_ast(outer) == f"(xl_number({inner_code}) * xl_number(3.0))"
+
+    def test_emit_binary_with_1x1_range_uses_scalar_path(self, gen):
+        """1x1 range operands take the inlined scalar operator path."""
+        node = BinaryOpNode("=", RangeNode("Sheet1!A1", "Sheet1!A1"), StringNode("Yes"))
+        code = gen._emit_ast(node)
+        assert code == "xl_compare('=', xl_cell(ctx, 'Sheet1!A1'), 'Yes')"
+        assert "xl_is_array" not in code
+        assert "xl_map_compare" not in code
+        assert "xl_range" not in code
+
+    def test_emit_unary_with_1x1_range_uses_scalar_path(self, gen):
+        """Unary ops over 1x1 ranges negate the scalar cell value."""
+        node = UnaryOpNode("-", RangeNode("Sheet1!A4", "Sheet1!A4"))
+        code = gen._emit_ast(node)
+        assert code == "(-xl_number(xl_cell(ctx, 'Sheet1!A4')))"
+        assert "xl_map_unary" not in code
+        assert "xl_range" not in code
 
 
 class TestEmitAstFunctions:
