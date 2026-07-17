@@ -2,8 +2,8 @@
 
 Excel collapses a single-cell reference (including INDEX returning one cell)
 to its value in scalar context. Materializing 1x1 ranges as arrays makes
-``IF(INDEX(...)=\"Yes\", ...)`` return ``#VALUE!``, and ``IFERROR`` then
-silently substitutes the fallback.
+`IF(INDEX(...)="Yes", ...)` return `#VALUE!`, and `IFERROR` then silently
+substitutes the fallback.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def _make_graph(*nodes: Node) -> DependencyGraph:
 
 
 def test_if_index_equality_uses_scalar_condition() -> None:
-    """``IF(INDEX(...)=\"Yes\", 1, 2)`` returns 1, not ``#VALUE!``."""
+    """`IF(INDEX(...)="Yes", 1, 2)` returns 1, not `#VALUE!`."""
     graph = _make_graph(
         _make_node("S!A1", None, "Yes"),
         _make_node("S!A2", None, "No"),
@@ -50,7 +50,7 @@ def test_if_index_equality_uses_scalar_condition() -> None:
 
 
 def test_iferror_index_flag_does_not_take_fallback() -> None:
-    """``IFERROR(IF(INDEX(...)=\"Yes\", ...), fallback)`` keeps the true branch."""
+    """`IFERROR(IF(INDEX(...)="Yes", ...), fallback)` keeps the true branch."""
     graph = _make_graph(
         _make_node("S!A1", None, "Yes"),
         _make_node("S!A2", None, "No"),
