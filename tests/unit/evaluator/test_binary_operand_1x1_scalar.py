@@ -65,7 +65,7 @@ def test_iferror_index_flag_does_not_take_fallback() -> None:
 
 
 def test_index_concat_returns_scalar_string() -> None:
-    """``INDEX(...)&INDEX(...)`` concatenates cell values into one string."""
+    """`INDEX(...)&INDEX(...)` concatenates cell values into one string."""
     graph = _make_graph(
         _make_node("S!A1", None, "Yes"),
         _make_node("S!A2", None, "No"),
@@ -73,6 +73,40 @@ def test_index_concat_returns_scalar_string() -> None:
     )
     with FormulaEvaluator(graph) as evaluator:
         assert evaluator.evaluate("S!B3") == "NoYes"
+
+
+def test_literal_1x1_range_if_equality() -> None:
+    """`IF(A1:A1="Yes", 1, 2)` treats the 1x1 range as a scalar."""
+    graph = _make_graph(
+        _make_node("S!A1", None, "Yes"),
+        _make_node("S!B1", '=IF(S!A1:S!A1="Yes",1,2)', None),
+    )
+    with FormulaEvaluator(graph) as evaluator:
+        assert evaluator.evaluate("S!B1") == 1
+
+
+def test_literal_1x1_range_unary_and_broadcast_parity() -> None:
+    """Evaluator and export agree on literal 1x1 range operator formulas."""
+    graph = _make_graph(
+        _make_node("S!A1", None, "Yes"),
+        _make_node("S!A2", None, "x"),
+        _make_node("S!A3", None, "y"),
+        _make_node("S!A4", None, 5),
+        _make_node("S!B1", None, 10),
+        _make_node("S!B2", None, 20),
+        _make_node("S!B3", None, 30),
+        _make_node("S!C1", '=IF(S!A1:S!A1="Yes",1,2)', None),
+        _make_node("S!C2", '=SUM((S!A1:S!A1="x")*S!B1:S!B3)', None),
+        _make_node("S!C3", "=-(S!A4:S!A4)", None),
+        _make_node("S!C4", '=SUM((S!A1:S!A1="Yes")*S!B1:S!B3)', None),
+    )
+    result = assert_codegen_matches_evaluator(graph, ["S!C1", "S!C2", "S!C3", "S!C4"])
+    assert result.evaluator_results == {
+        "S!C1": 1,
+        "S!C2": 0.0,
+        "S!C3": -5.0,
+        "S!C4": 60.0,
+    }
 
 
 def test_index_binary_ops_eval_codegen_parity(tmp_path) -> None:
