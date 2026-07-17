@@ -447,13 +447,23 @@ def try_fastpath_concat_array(
 
 
 def try_fastpath_sumproduct(arrays: list[np.ndarray]) -> float | None:
-    """Sum element-wise products when every array batch-coerces to float64."""
+    """Sum element-wise products when every array batch-coerces to float64.
+
+    Arrays containing plain text fall back to the reference path so SUMPRODUCT
+    can treat text as 0 (Excel). `batch_coerce_to_float64` would otherwise
+    parse numeric strings, which diverges from range-text semantics.
+    """
     if not arrays:
         return 0.0
     if arrays[0].size < MIN_OPERATOR_FASTPATH_CELLS:
         return None
     coerced: list[np.ndarray] = []
     for arr in arrays:
+        flat = arr.ravel()
+        for value in flat:
+            # `XlError` is a `StrEnum`; plain text must not use numeric coerce.
+            if isinstance(value, str) and not isinstance(value, XlError):
+                return None
         batch = batch_coerce_to_float64(arr)
         if batch is None:
             return None

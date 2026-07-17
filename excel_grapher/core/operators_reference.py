@@ -78,6 +78,12 @@ def compare_scalars(op: str, left: FormulaValue, right: FormulaValue) -> bool | 
     if isinstance(left, str) and isinstance(right, str):
         return _cmp_str(excel_casefold(left), excel_casefold(right))
 
+    # Exact empty text compares as 0 (Excel); whitespace-only does not coerce.
+    if isinstance(left, str) and left == "":
+        left = 0.0
+    if isinstance(right, str) and right == "":
+        right = 0.0
+
     ln = to_number(left)
     rn = to_number(right)
     if isinstance(ln, XlError) or isinstance(rn, XlError):
@@ -183,7 +189,11 @@ def reference_concat_array(
 
 
 def reference_sumproduct_arrays(arrays: list[Any]) -> float | XlError:
-    """Element-wise product reduction (C-order, fail-fast on ``to_number`` errors)."""
+    """Element-wise product reduction (C-order, fail-fast on ``XlError``).
+
+    Non-numeric text is treated as 0 (Excel SUMPRODUCT). `XlError` is a
+    `StrEnum`, so error sentinels are checked before the text branch.
+    """
     import numpy as np
 
     if not arrays:
@@ -193,9 +203,15 @@ def reference_sumproduct_arrays(arrays: list[Any]) -> float | XlError:
     for indices in np.ndindex(shape):
         product = 1.0
         for arr in arrays:
-            number = to_number(arr[indices])
-            if isinstance(number, XlError):
-                return number
+            cell = arr[indices]
+            if isinstance(cell, XlError):
+                return cell
+            if isinstance(cell, str):
+                number = 0.0
+            else:
+                number = to_number(cell)
+                if isinstance(number, XlError):
+                    return number
             product *= number
         result += product
     return result
