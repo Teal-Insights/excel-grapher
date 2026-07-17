@@ -23,7 +23,7 @@ from excel_grapher.core.math_funcs import (
 
 
 def _mcve_range() -> Range:
-    """Synthetic range matching issue #419: numbers, \"\", blank, text, bool."""
+    """Synthetic range matching issue #419: numbers, empty text, blank, text, bool."""
     values: dict[str, CellValue] = {
         "S!A1": -0.2,
         "S!A2": -0.3,
