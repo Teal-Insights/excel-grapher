@@ -66,10 +66,14 @@ def _try_parse_iso_date_serial(text: str) -> float | None:
 
 
 def try_coerce_string_to_float(text: str) -> float | None:
-    """Parse one Excel numeric string, or return None when coercion fails."""
+    """Parse one Excel numeric string, or return None when coercion fails.
+
+    Empty and whitespace-only text do not coerce (Excel arithmetic raises
+    `#VALUE!` for empty text, unlike blank cells which coerce to 0 via `None`).
+    """
     stripped = text.strip()
     if stripped == "":
-        return 0.0
+        return None
     try:
         return float(stripped)
     except ValueError:

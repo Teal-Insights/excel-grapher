@@ -78,6 +78,12 @@ def compare_scalars(op: str, left: FormulaValue, right: FormulaValue) -> bool | 
     if isinstance(left, str) and isinstance(right, str):
         return _cmp_str(excel_casefold(left), excel_casefold(right))
 
+    # Exact empty text compares as 0 (Excel); whitespace-only does not coerce.
+    if isinstance(left, str) and left == "":
+        left = 0.0
+    if isinstance(right, str) and right == "":
+        right = 0.0
+
     ln = to_number(left)
     rn = to_number(right)
     if isinstance(ln, XlError) or isinstance(rn, XlError):
