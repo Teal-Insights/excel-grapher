@@ -99,7 +99,15 @@ _ALL_MODULE_NAMES: list[str] = [name for name, _ in _ALL_MODULES]
 
 # Top-level names that are stdlib so emitted "import X" order satisfies ruff isort (I001).
 _ISORT_STDLIB: frozenset[str] = frozenset(
-    {"collections", "dataclasses", "enum", "typing", "warnings"}
+    {
+        "collections",
+        "dataclasses",
+        "enum",
+        "functools",
+        "inspect",
+        "typing",
+        "warnings",
+    }
 )
 
 

@@ -81,6 +81,14 @@ def test_emit_runtime_operator_symbols_resolve_to_export_runtime() -> None:
         assert "class Range" in code
 
 
+def test_emit_runtime_includes_xl_helper_and_xl_memoize_when_referenced() -> None:
+    code = emit_runtime({"xl_helper", "xl_memoize"}, include_offset_table=False)
+    assert "def xl_helper(" in code
+    assert "def xl_memoize(" in code
+    assert "helper_cache" in code
+    assert "helper_computing" in code
+
+
 def test_emit_runtime_includes_export_runtime_primitives() -> None:
     code = emit_runtime({"Range"}, include_offset_table=False)
     assert "class XlErrorException" in code
