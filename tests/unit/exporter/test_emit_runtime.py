@@ -89,6 +89,17 @@ def test_emit_runtime_includes_xl_helper_and_xl_memoize_when_referenced() -> Non
     assert "helper_computing" in code
 
 
+def test_emit_runtime_defines_helper_cache_key_with_eval_context() -> None:
+    """Field annotations reference `HelperCacheKey`; the alias must be embedded."""
+    code = emit_runtime(
+        runtime_cache_seed_symbols(include_dep_tracking=False),
+        include_offset_table=False,
+        include_dep_tracking=False,
+    )
+    assert "HelperCacheKey: TypeAlias =" in code
+    assert "helper_cache: dict[HelperCacheKey, CellValue]" in code
+
+
 def test_emit_runtime_includes_export_runtime_primitives() -> None:
     code = emit_runtime({"Range"}, include_offset_table=False)
     assert "class XlErrorException" in code

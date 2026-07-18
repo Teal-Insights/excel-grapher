@@ -488,6 +488,13 @@ def emit_runtime(
         refs = _referenced_names(node)
         symbol_deps[name] = {r for r in refs if r in symbol_to_node and r != name}
 
+    # `HelperCacheKey` is only named in `EvalContextBase` field annotations.
+    # Annotation identifiers are ignored by `_RuntimeNameCollector` (avoids an
+    # `EvalContext` ↔ `EvalContextBase` cycle via the resolver annotation), so
+    # wire the alias explicitly whenever the context base is emitted.
+    if "EvalContextBase" in symbol_deps and "HelperCacheKey" in symbol_to_node:
+        symbol_deps["EvalContextBase"].add("HelperCacheKey")
+
     seed = set(required_symbols) | {
         "XlError",
         "ExcelRange",

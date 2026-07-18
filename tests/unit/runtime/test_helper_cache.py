@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 from excel_grapher.core import XlError, XlErrorException
@@ -124,7 +126,7 @@ class TestXlMemoizeBinding:
             calls["n"] += 1
             if time_period <= 1:
                 return 1
-            return xl_helper(ctx, body, time_period=time_period - 1) + 1
+            return cast(int, xl_helper(ctx, body, time_period=time_period - 1)) + 1
 
         memoized = xl_memoize(body)
         ctx = _ctx()
