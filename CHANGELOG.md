@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.15.2 (2026-07-18)
+
+### Bug Fixes
+
+- **ci**: Avoid orphan release tags when main push races
+  ([#429](https://github.com/Teal-Insights/excel-grapher/pull/429),
+  [`34b4d0b`](https://github.com/Teal-Insights/excel-grapher/commit/34b4d0b9f994ae2c92d040bc25e46cbc7111dee5))
+
+- **coercions**: Reject empty text in numeric coercion
+  ([#426](https://github.com/Teal-Insights/excel-grapher/pull/426),
+  [`e009de4`](https://github.com/Teal-Insights/excel-grapher/commit/e009de42c2c5f621eb36b7f0386d9113177ef899))
+
+- **coercions**: Reject empty text in numeric coercion (#420)
+  ([#426](https://github.com/Teal-Insights/excel-grapher/pull/426),
+  [`e009de4`](https://github.com/Teal-Insights/excel-grapher/commit/e009de42c2c5f621eb36b7f0386d9113177ef899))
+
+- **evaluator**: Ignore blanks/text/bools in range aggregates
+  ([#425](https://github.com/Teal-Insights/excel-grapher/pull/425),
+  [`199bd60`](https://github.com/Teal-Insights/excel-grapher/commit/199bd608dfb804edf1a944f3a404bb980bee967f))
+
+- **evaluator**: Ignore blanks/text/bools in range aggregates (#419)
+  ([#425](https://github.com/Teal-Insights/excel-grapher/pull/425),
+  [`199bd60`](https://github.com/Teal-Insights/excel-grapher/commit/199bd608dfb804edf1a944f3a404bb980bee967f))
+
+- **evaluator**: Scalarize 1x1 binary operands (INDEX gates)
+  ([#424](https://github.com/Teal-Insights/excel-grapher/pull/424),
+  [`83d1cb2`](https://github.com/Teal-Insights/excel-grapher/commit/83d1cb22b3bb70aaf6a7fb29b5b1c771df08a3ba))
+
+- **evaluator**: Scalarize 1x1 ranges in binary operands
+  ([#424](https://github.com/Teal-Insights/excel-grapher/pull/424),
+  [`83d1cb2`](https://github.com/Teal-Insights/excel-grapher/commit/83d1cb22b3bb70aaf6a7fb29b5b1c771df08a3ba))
+
+- **evaluator**: Stop propagating errors through ISNUMBER/ISTEXT
+  ([#423](https://github.com/Teal-Insights/excel-grapher/pull/423),
+  [`d5ce6c4`](https://github.com/Teal-Insights/excel-grapher/commit/d5ce6c4819f7f61145db2f24483c4df77f8c6ef6))
+
+- **exporter**: Emit 1x1 ranges as scalar cell reads
+  ([#424](https://github.com/Teal-Insights/excel-grapher/pull/424),
+  [`83d1cb2`](https://github.com/Teal-Insights/excel-grapher/commit/83d1cb22b3bb70aaf6a7fb29b5b1c771df08a3ba))
+
+- **math**: Skip non-numeric text in aggregates
+  ([#426](https://github.com/Teal-Insights/excel-grapher/pull/426),
+  [`e009de4`](https://github.com/Teal-Insights/excel-grapher/commit/e009de42c2c5f621eb36b7f0386d9113177ef899))
+
+- **series-bindings**: Emit full-arity positional docstring examples
+  ([#427](https://github.com/Teal-Insights/excel-grapher/pull/427),
+  [`ef8fdc7`](https://github.com/Teal-Insights/excel-grapher/commit/ef8fdc722d4d2088c6845507df467452eed89b01))
+
+### Code Style
+
+- Keep coercion docstring one-line for export baseline
+  ([#426](https://github.com/Teal-Insights/excel-grapher/pull/426),
+  [`e009de4`](https://github.com/Teal-Insights/excel-grapher/commit/e009de42c2c5f621eb36b7f0386d9113177ef899))
+
+- **tests**: Clarify range-aggregate MCVE helper docstring
+  ([#425](https://github.com/Teal-Insights/excel-grapher/pull/425),
+  [`199bd60`](https://github.com/Teal-Insights/excel-grapher/commit/199bd608dfb804edf1a944f3a404bb980bee967f))
+
+- **tests**: Drop escaped quotes in #421 docstrings
+  ([#424](https://github.com/Teal-Insights/excel-grapher/pull/424),
+  [`83d1cb2`](https://github.com/Teal-Insights/excel-grapher/commit/83d1cb22b3bb70aaf6a7fb29b5b1c771df08a3ba))
+
+- **tests**: Ruff-format golden parity SUM comment line
+  ([#425](https://github.com/Teal-Insights/excel-grapher/pull/425),
+  [`199bd60`](https://github.com/Teal-Insights/excel-grapher/commit/199bd608dfb804edf1a944f3a404bb980bee967f))
+
+### Testing
+
+- **exporter**: Align golden SUM range expectation with Excel
+  ([#425](https://github.com/Teal-Insights/excel-grapher/pull/425),
+  [`199bd60`](https://github.com/Teal-Insights/excel-grapher/commit/199bd608dfb804edf1a944f3a404bb980bee967f))
+
+
 ## v3.15.1 (2026-07-16)
 
 ### Bug Fixes
