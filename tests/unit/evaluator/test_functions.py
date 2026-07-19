@@ -59,6 +59,26 @@ def test_true_false_as_function_calls() -> None:
         assert result["S!A4"] == "found"
 
 
+def test_if_empty_vs_omitted_branches() -> None:
+    """Empty IF branches are 0; omitted else is FALSE (Excel semantics)."""
+    graph = _make_graph(
+        _make_node("S!A1", "=IF(FALSE,1)", None),
+        _make_node("S!A2", "=IF(FALSE,1,)", None),
+        _make_node("S!A3", "=IF(TRUE,,5)", None),
+        _make_node("S!A4", "=IF(FALSE,,5)", None),
+        _make_node("S!A5", "=1+IF(FALSE,1,)", None),
+        _make_node("S!A6", "=ISBLANK(IF(FALSE,1,))", None),
+    )
+    with FormulaEvaluator(graph) as ev:
+        result = ev.evaluate(["S!A1", "S!A2", "S!A3", "S!A4", "S!A5", "S!A6"])
+        assert result["S!A1"] is False
+        assert result["S!A2"] == 0
+        assert result["S!A3"] == 0
+        assert result["S!A4"] == 5
+        assert result["S!A5"] == 1
+        assert result["S!A6"] is False
+
+
 def test_iserror() -> None:
     """Test ISERROR function."""
     graph = _make_graph(

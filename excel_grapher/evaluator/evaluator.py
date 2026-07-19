@@ -574,6 +574,17 @@ class FormulaEvaluator:
 
         raise ValueError(f"Unknown unary operator: {node.op}")
 
+    def _eval_if_branch(self, arg: AstNode) -> FormulaValue:
+        """Evaluate an IF then/else branch.
+
+        An empty argument (`IF(cond, a,)` / `IF(cond, , b)`) is Excel blank,
+        which IF materializes as `0`. A truly omitted else (`IF(cond, a)`) is
+        handled by the caller and yields `FALSE`.
+        """
+        if isinstance(arg, EmptyArgNode):
+            return 0
+        return self._evaluate_ast(arg)
+
     def _eval_if(self, args: list[AstNode]) -> FormulaValue:
         if len(args) < 2:
             raise ParseError("IF(...)", "IF requires at least 2 arguments")
@@ -582,9 +593,9 @@ class FormulaEvaluator:
         if isinstance(b, XlError):
             return b
         if b:
-            return self._evaluate_ast(args[1])
+            return self._eval_if_branch(args[1])
         if len(args) >= 3:
-            return self._evaluate_ast(args[2])
+            return self._eval_if_branch(args[2])
         return False
 
     def _eval_iferror(self, args: list[AstNode]) -> FormulaValue:

@@ -350,6 +350,32 @@ class TestEmitAstFunctions:
         assert "xl_bool(" in result
         assert "if (_t1 :=" in result
 
+    def test_emit_if_empty_else_emits_zero(self, gen):
+        """Empty IF else branch (trailing comma) emits 0, not None."""
+        node = FunctionCallNode(
+            "IF",
+            [BoolNode(False), NumberNode(1.0), EmptyArgNode()],
+        )
+        result = gen._emit_ast(node)
+        assert "None" not in result
+        assert "else (0)" in result
+
+    def test_emit_if_empty_then_emits_zero(self, gen):
+        """Empty IF then branch emits 0, not None."""
+        node = FunctionCallNode(
+            "IF",
+            [BoolNode(True), EmptyArgNode(), NumberNode(5.0)],
+        )
+        result = gen._emit_ast(node)
+        assert "None" not in result
+        assert "(0) if" in result
+
+    def test_emit_if_omitted_else_emits_false(self, gen):
+        """Omitted IF else branch emits False (Excel default)."""
+        node = FunctionCallNode("IF", [BoolNode(False), NumberNode(1.0)])
+        result = gen._emit_ast(node)
+        assert "else (False)" in result
+
     def test_emit_function_vlookup(self, gen):
         """VLOOKUP function."""
         node = FunctionCallNode(
