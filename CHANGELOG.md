@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.16.0 (2026-07-19)
+
+### Bug Fixes
+
+- **runtime**: Emit HelperCacheKey with EvalContextBase
+  ([#430](https://github.com/Teal-Insights/excel-grapher/pull/430),
+  [`a9746f7`](https://github.com/Teal-Insights/excel-grapher/commit/a9746f71b939eb905146acb5559225c86f5ca833))
+
+### Features
+
+- **runtime**: Memoize parameterized helpers via xl_helper
+  ([#430](https://github.com/Teal-Insights/excel-grapher/pull/430),
+  [`a9746f7`](https://github.com/Teal-Insights/excel-grapher/commit/a9746f71b939eb905146acb5559225c86f5ca833))
+
+- **runtime**: Memoize parameterized helpers via xl_helper / xl_memoize
+  ([#430](https://github.com/Teal-Insights/excel-grapher/pull/430),
+  [`a9746f7`](https://github.com/Teal-Insights/excel-grapher/commit/a9746f71b939eb905146acb5559225c86f5ca833))
+
+
 ## v3.15.3 (2026-07-19)
 
 ### Bug Fixes
