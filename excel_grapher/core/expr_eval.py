@@ -20,6 +20,7 @@ from .formula_ast import (
     BinaryOpNode,
     BoolNode,
     CellRefNode,
+    EmptyArgNode,
     ErrorNode,
     FunctionCallNode,
     NumberNode,
@@ -229,6 +230,8 @@ def _eval(
             return Unsupported("COLUMN expects no argument or a single cell reference")
 
         # IF: evaluate lazily so dead branches are never executed.
+        # Empty branches (`IF(cond, a,)` / `IF(cond, , b)`) are Excel blank -> 0.
+        # A truly omitted else (`IF(cond, a)`) defaults to FALSE.
         if name == "IF":
             if len(node.args) < 2:
                 return XlError.VALUE
@@ -243,8 +246,11 @@ def _eval(
             if isinstance(cond_bool, XlError):
                 return cond_bool
             if cond_bool:
+                branch = node.args[1]
+                if isinstance(branch, EmptyArgNode):
+                    return 0
                 return _eval(
-                    node.args[1],
+                    branch,
                     get_cell_value,
                     functions,
                     max_depth,
@@ -252,8 +258,11 @@ def _eval(
                     depth=depth + 1,
                 )
             if len(node.args) >= 3:
+                branch = node.args[2]
+                if isinstance(branch, EmptyArgNode):
+                    return 0
                 return _eval(
-                    node.args[2],
+                    branch,
                     get_cell_value,
                     functions,
                     max_depth,

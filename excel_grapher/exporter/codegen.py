@@ -1537,8 +1537,21 @@ class CodeGenerator:
 
         cond_expr = self._emit_ast_child(node.args[0])
         with self._return_unpack_lazy():
-            true_expr = self._emit_ast_child(node.args[1])
-            false_expr = self._emit_ast_child(node.args[2]) if len(node.args) > 2 else "False"
+            # Empty IF branches (trailing/interior commas) are Excel blank -> 0.
+            # A truly omitted else (`IF(cond, a)`) defaults to FALSE.
+            true_expr = (
+                "0"
+                if isinstance(node.args[1], EmptyArgNode)
+                else self._emit_ast_child(node.args[1])
+            )
+            if len(node.args) > 2:
+                false_expr = (
+                    "0"
+                    if isinstance(node.args[2], EmptyArgNode)
+                    else self._emit_ast_child(node.args[2])
+                )
+            else:
+                false_expr = "False"
 
         # Excel-style boolean coercion is not Python truthiness:
         # - "FALSE" should behave like False
