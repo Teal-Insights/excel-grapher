@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.15.3 (2026-07-19)
+
+### Bug Fixes
+
+- **evaluator**: Lower empty IF branches to 0 instead of None
+  ([#433](https://github.com/Teal-Insights/excel-grapher/pull/433),
+  [`94d0fff`](https://github.com/Teal-Insights/excel-grapher/commit/94d0fff720b60e61a6f533e99c00b7c192e13a97))
+
+
 ## v3.15.2 (2026-07-18)
 
 ### Bug Fixes
