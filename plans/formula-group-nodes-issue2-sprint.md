@@ -221,19 +221,19 @@ that assumed `str`.
 
 ---
 
-### Sprint 5 — Parity, errors, cell-only regression
+### Sprint 5 — Parity, errors, cell-only regression ✅
 
 **Files:** integration / parity tests under `tests/integration/` + fixtures
 
 | Task | Done when |
 | ---- | --------- |
-| Twin parity | `evaluate(member)` equals cell-only twin for that address alone |
-| Export ↔ evaluator | `assert_codegen_matches_evaluator` (values + error **codes**) |
-| Error channels | Evaluator sentinels vs export `XlErrorException` — same codes |
-| Non-contiguous / cross-sheet | Fixtures from Sprint 2 pass eval + export |
-| Group-key eval | Rejected consistently in evaluator (and not silently codegen’d as a target) |
-| Cell-only regression | Existing evaluator + codegen suites green with no multi-cell nodes |
-| Occupancy | Fixtures still unique-occupancy; no member cell nodes |
+| Twin parity | ✅ `evaluate(member)` equals cell-only twin for that address alone |
+| Export ↔ evaluator | ✅ `assert_codegen_matches_evaluator` (values + error **codes**) |
+| Error channels | ✅ Evaluator sentinels vs export `XlErrorException` — same codes |
+| Non-contiguous / cross-sheet | ✅ Fixtures from Sprint 2 pass eval + export |
+| Group-key eval | ✅ Rejected in evaluator and codegen (`FormulaGroupKeyError`) |
+| Cell-only regression | ✅ Twin codegen has no `_group_*`; existing suites stay green |
+| Occupancy | ✅ Fixtures still unique-occupancy; no member cell nodes |
 
 Prefer cache-based / in-process parity on Linux CI; live Excel remains
 run-if-available (`pytest.skip` when automation missing).
@@ -265,42 +265,42 @@ tests/integration/...                     # parity harness cases
 
 **Fingerprint / specialize**
 
-- [ ] Fingerprint ignores concrete addresses; distinguishes literals / ops / fns
-- [ ] Same leaf-kind holes at the same walk indices ⇒ same fingerprint
-- [ ] Specialize fills holes in walk order
-- [ ] Rejects kind mismatch and arity mismatch
+- [x] Fingerprint ignores concrete addresses; distinguishes literals / ops / fns
+- [x] Same leaf-kind holes at the same walk indices ⇒ same fingerprint
+- [x] Specialize fills holes in walk order
+- [x] Rejects kind mismatch and arity mismatch
 
 **Node / fixtures**
 
-- [ ] Option B fixture: no member cell nodes; occupancy unique
-- [ ] Non-contiguous + cross-sheet members supported
-- [ ] Cell-only twin exists for parity
-- [ ] Template fields pickle / copy with the graph
+- [x] Option B fixture: no member cell nodes; occupancy unique
+- [x] Non-contiguous + cross-sheet members supported
+- [x] Cell-only twin exists for parity
+- [x] Template fields pickle / copy with the graph
 
 **Evaluator**
 
-- [ ] `evaluate(member)` matches twin for that address alone
-- [ ] Sibling members not cached when one member is evaluated
-- [ ] Group key evaluation rejected with a clear error
-- [ ] Cell-only graphs unchanged
+- [x] `evaluate(member)` matches twin for that address alone
+- [x] Sibling members not cached when one member is evaluated
+- [x] Group key evaluation rejected with a clear error
+- [x] Cell-only graphs unchanged
 
 **Codegen / projection**
 
-- [ ] One `_group_*` helper per group; wrappers pass correct bindings
-- [ ] `map_to_projected(member)` → owning address + parameters
-- [ ] Codegen ↔ evaluator parity (values + error codes)
-- [ ] Cell-only codegen unchanged when no groups present
+- [x] One `_group_*` helper per group; wrappers pass correct bindings
+- [x] `map_to_projected(member)` → owning address + parameters
+- [x] Codegen ↔ evaluator parity (values + error codes)
+- [x] Cell-only codegen unchanged when no groups present
 
 ---
 
 ## Success criteria (merge gate)
 
-- [ ] Member eval equals cell-only twin; lazy; non-contiguous / cross-sheet work
-- [ ] Export matches evaluator; fixtures obey unique occupancy
-- [ ] Shared `specialize_group` used by evaluator and codegen
-- [ ] `ProjectedAddress` is the projection map result type
-- [ ] No detection / coalesce / builder flag required
-- [ ] No row/column-only specialize API
+- [x] Member eval equals cell-only twin; lazy; non-contiguous / cross-sheet work
+- [x] Export matches evaluator; fixtures obey unique occupancy
+- [x] Shared `specialize_group` used by evaluator and codegen
+- [x] `ProjectedAddress` is the projection map result type
+- [x] No detection / coalesce / builder flag required
+- [x] No row/column-only specialize API
 
 ---
 

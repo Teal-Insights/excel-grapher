@@ -25,7 +25,7 @@ from excel_grapher.core.formula_ast import (
     AddressLeafKind,
 )
 from excel_grapher.core.operators_fastpath import MIN_OPERATOR_FASTPATH_CELLS
-from excel_grapher.evaluator.errors import MissingNormalizedFormulaError
+from excel_grapher.evaluator.errors import FormulaGroupKeyError, MissingNormalizedFormulaError
 from excel_grapher.evaluator.name_utils import (
     address_to_python_name,
     excel_func_to_python,
@@ -383,6 +383,8 @@ class CodeGenerator:
         return named_ranges, named_range_ranges
 
     def _expand_target_tokens(self, targets: Sequence[str]) -> list[str]:
+        for raw in targets:
+            self._reject_formula_group_key_target(raw)
         named_ranges, named_range_ranges = self._named_range_maps()
         roots = expand_targets_to_roots(
             targets,
@@ -391,6 +393,23 @@ class CodeGenerator:
             named_range_ranges=named_range_ranges,
         )
         return [normalize_address(format_key(sheet, a1)) for sheet, a1 in roots]
+
+    def _reject_formula_group_key_target(self, address: str) -> None:
+        """Reject multi-cell formula-group keys as export targets (Option B).
+
+        Public export targets must be member cell addresses (or ordinary ranges of
+        cell nodes). A `RangeKey` / `UnionKey` that owns a formula-group template
+        is not a supported target — matching `FormulaEvaluator`.
+
+        Bare defined-name tokens are left for `expand_targets_to_roots`.
+        """
+        try:
+            normalized = normalize_address(address)
+        except ValueError:
+            return
+        node = self.graph.get_node(normalized)
+        if node is not None and getattr(node, "skeleton", None) is not None:
+            raise FormulaGroupKeyError(normalized)
 
     def _get_or_parse_ast(self, address: str) -> AstNode | None:
         """Parse and cache the AST for a formula cell.

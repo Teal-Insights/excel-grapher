@@ -13,6 +13,7 @@ from excel_grapher.core.formula_ast import (
     AddressHoleNode,
     AddressLeafKind,
     AstNode,
+    BinaryOpNode,
     CellRefNode,
     FunctionCallNode,
     NumberNode,
@@ -188,8 +189,11 @@ def build_row_stripe_cell_only_twin() -> DependencyGraph:
             is_leaf=False,
         )
         g.add_node(node)
-        for dep in ("Sheet1!D40", "Sheet1!AJ40", "Sheet1!AJ50", lookup):
-            g.add_edge(member, dep)
+        # Mirror Option B: every shared leaf is a precedent (export closure).
+        for key in list(g.keys()):
+            leaf = g.get_node(key)
+            if leaf is not None and leaf.is_leaf:
+                g.add_edge(member, key)
     return g
 
 
@@ -216,8 +220,10 @@ def build_cross_sheet_cell_only_twin() -> DependencyGraph:
                 is_leaf=False,
             )
         )
-        for dep in ("Sheet1!D40", "Sheet1!AJ40", "Sheet1!AJ50", lookup):
-            g.add_edge(member, dep)
+        for key in list(g.keys()):
+            leaf = g.get_node(key)
+            if leaf is not None and leaf.is_leaf:
+                g.add_edge(member, key)
     return g
 
 
@@ -228,3 +234,63 @@ def assert_option_b_occupancy(group: Node) -> None:
     assert group.shape_fingerprint is not None
     owned = set(member_keys(group))
     assert owned == set(group.member_bindings)
+
+
+def build_div_zero_option_b() -> OptionBFixture:
+    """Option B group whose specialized body is `1 / <cell>` (error-channel fixture)."""
+    members = ("Sheet1!A1", "Sheet1!B1")
+    skeleton = BinaryOpNode(
+        op="/",
+        left=NumberNode(value=1.0),
+        right=AddressHoleNode(kind=AddressLeafKind.cell, slot=0),
+    )
+    fp = shape_fingerprint(skeleton)
+    bindings = {
+        "Sheet1!A1": (CellRefNode(address="Sheet1!Z1"),),
+        "Sheet1!B1": (CellRefNode(address="Sheet1!Z2"),),
+    }
+    group = make_union_node(
+        members,
+        is_leaf=False,
+        shape_fingerprint=fp,
+        skeleton=skeleton,
+        member_bindings=bindings,
+    )
+    g = DependencyGraph()
+    g.sheet_order = ["Sheet1"]
+    g.add_node(make_cell_node("Sheet1", "Z", 1, value=0.0, is_leaf=True))
+    g.add_node(make_cell_node("Sheet1", "Z", 2, value=2.0, is_leaf=True))
+    g.add_node(group)
+    g.add_edge(group.key, "Sheet1!Z1")
+    g.add_edge(group.key, "Sheet1!Z2")
+    for m in members:
+        assert g.get_node(m) is None
+        assert g.cell_owner(m) == group.key
+    return OptionBFixture(graph=g, group_key=group.key, members=members)
+
+
+def build_div_zero_cell_only_twin() -> DependencyGraph:
+    """Cell-only twin of `build_div_zero_option_b`."""
+    g = DependencyGraph()
+    g.sheet_order = ["Sheet1"]
+    g.add_node(make_cell_node("Sheet1", "Z", 1, value=0.0, is_leaf=True))
+    g.add_node(make_cell_node("Sheet1", "Z", 2, value=2.0, is_leaf=True))
+    for member, denom, formula in (
+        ("Sheet1!A1", "Sheet1!Z1", "=1/Sheet1!Z1"),
+        ("Sheet1!B1", "Sheet1!Z2", "=1/Sheet1!Z2"),
+    ):
+        sheet, cell = member.split("!")
+        col = "".join(ch for ch in cell if ch.isalpha())
+        row = int("".join(ch for ch in cell if ch.isdigit()))
+        g.add_node(
+            make_cell_node(
+                sheet,
+                col,
+                row,
+                formula=formula,
+                normalized_formula=formula,
+                is_leaf=False,
+            )
+        )
+        g.add_edge(member, denom)
+    return g
