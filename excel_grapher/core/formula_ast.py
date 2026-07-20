@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import TypeAlias
 
 from .excel_function_names import normalize_excel_function_name
@@ -14,6 +15,15 @@ class FormulaParseError(Exception):
         super().__init__(f"Parse error: {message}. Formula: {formula!r}")
         self.formula = formula
         self.message = message
+
+
+class AddressLeafKind(StrEnum):
+    """Kind of address-bearing leaf for formula-group holes / fingerprints."""
+
+    cell = "cell"
+    range = "range"
+    whole_column = "whole_column"
+    whole_row = "whole_row"
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +95,18 @@ class EmptyArgNode:
     pass
 
 
+@dataclass(frozen=True, slots=True)
+class AddressHoleNode:
+    """Placeholder address leaf in a formula-group skeleton AST.
+
+    Not produced by `parse`; only used in programmatic skeletons that
+    `specialize_group` fills before evaluation.
+    """
+
+    kind: AddressLeafKind
+    slot: int
+
+
 AstNode: TypeAlias = (
     NumberNode
     | StringNode
@@ -98,6 +120,7 @@ AstNode: TypeAlias = (
     | BinaryOpNode
     | UnaryOpNode
     | EmptyArgNode
+    | AddressHoleNode
 )
 
 
