@@ -1,14 +1,15 @@
 """Formula-group shape fingerprinting and skeleton specialization (Issue 2).
 
-Sprint 1: fingerprint + `specialize_group` only. Evaluator and codegen wire-up
-come in later sprints.
+Provides `shape_fingerprint`, `specialize_group`, and template-field validation
+used by hand-built Option B group nodes (evaluator/codegen wire-up later).
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import TypeAlias
 
+from excel_grapher.core.address_keys import CellKey, parse_node_key
 from excel_grapher.core.formula_ast import (
     AddressHoleNode,
     AddressLeafKind,
@@ -66,6 +67,72 @@ def shape_fingerprint(ast: AstNode) -> str:
     parts: list[str] = []
     _append_fingerprint(ast, parts)
     return "".join(parts)
+
+
+def collect_holes(skeleton: AstNode) -> list[AddressHoleNode]:
+    """Return `AddressHoleNode`s in `skeleton` in preorder walk order."""
+    return _collect_holes(skeleton)
+
+
+def validate_group_template(
+    *,
+    members: Sequence[str],
+    skeleton: AstNode,
+    member_bindings: Mapping[str, Sequence[AddressLeaf]],
+    shape_fingerprint_value: str,
+) -> dict[str, tuple[AddressLeaf, ...]]:
+    """Validate and canonicalize formula-group template fields.
+
+    Args:
+        members: Canonical member cell keys owned by the group.
+        skeleton: Template AST with typed address holes.
+        member_bindings: Per-member binding sequences (hole walk order).
+        shape_fingerprint_value: Expected fingerprint for `skeleton`.
+
+    Returns:
+        Normalized `member_bindings` with canonical cell keys and tuples.
+
+    Raises:
+        ValueError: If fingerprint, membership, arity, or kinds are invalid.
+    """
+    expected_fp = shape_fingerprint(skeleton)
+    if shape_fingerprint_value != expected_fp:
+        raise ValueError(
+            "shape_fingerprint does not match skeleton: "
+            f"got {shape_fingerprint_value!r}, expected {expected_fp!r}"
+        )
+
+    member_set: set[str] = set()
+    ordered_members: list[str] = []
+    for raw in members:
+        parsed = parse_node_key(raw)
+        if not isinstance(parsed, CellKey):
+            raise ValueError(f"Group members must be single cells; got {raw!r}")
+        key = str(parsed)
+        if key not in member_set:
+            member_set.add(key)
+            ordered_members.append(key)
+
+    normalized: dict[str, tuple[AddressLeaf, ...]] = {}
+    for raw_key, bindings in member_bindings.items():
+        parsed = parse_node_key(raw_key)
+        if not isinstance(parsed, CellKey):
+            raise ValueError(f"Binding keys must be single cells; got {raw_key!r}")
+        key = str(parsed)
+        if key not in member_set:
+            raise ValueError(f"Binding for non-member cell {key!r}")
+        binding_tuple = tuple(bindings)
+        try:
+            specialize_group(skeleton, binding_tuple)
+        except SpecializeError as exc:
+            raise ValueError(f"Invalid bindings for {key}: {exc}") from exc
+        normalized[key] = binding_tuple
+
+    missing = [m for m in ordered_members if m not in normalized]
+    if missing:
+        raise ValueError(f"Missing member_bindings for: {', '.join(missing)}")
+
+    return normalized
 
 
 def specialize_group(skeleton: AstNode, bindings: Sequence[AddressLeaf]) -> AstNode:

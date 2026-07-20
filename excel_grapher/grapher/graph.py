@@ -168,6 +168,13 @@ class DependencyGraph:
                 max_col=node.max_col,
                 max_row=node.max_row,
                 address=node.address,
+                shape_fingerprint=node.shape_fingerprint,
+                skeleton=node.skeleton,
+                member_bindings=(
+                    None
+                    if node.member_bindings is None
+                    else {k: tuple(v) for k, v in node.member_bindings.items()}
+                ),
             )
             for key, node in self._nodes.items()
         }

@@ -1,0 +1,1 @@
+"""Formula-group test fixtures."""

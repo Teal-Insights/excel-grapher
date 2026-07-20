@@ -24,6 +24,8 @@ from excel_grapher.core.address_keys import normalize_row_key as _normalize_row_
 from excel_grapher.core.address_keys import parse_address as _parse_address
 from excel_grapher.core.address_keys import parse_node_key as _parse_node_key
 from excel_grapher.core.address_keys import parse_row_key as _parse_row_key
+from excel_grapher.core.formula_ast import AstNode
+from excel_grapher.grapher.formula_groups import AddressLeaf, validate_group_template
 
 # Graph node identity; same canonical form as NormalizedAddress (cell / range / union).
 NodeKey: TypeAlias = str
@@ -86,11 +88,15 @@ class Node:
     max_col: str | None = None
     max_row: int | None = None
     address: AddressKey | None = None
+    shape_fingerprint: str | None = None
+    skeleton: AstNode | None = None
+    member_bindings: dict[str, tuple[AddressLeaf, ...]] | None = None
 
     def __post_init__(self) -> None:
         if self.address is not None:
             self.address = _coerce_address(self.address)
             self._sync_fields_from_address()
+            self._finalize_template_fields()
             return
 
         if self.kind is NodeKind.row or (
@@ -109,12 +115,45 @@ class Node:
             )
             self.kind = NodeKind.row
             self.value = None
+            self._finalize_template_fields()
             return
 
         self._finalize_cell_legacy()
         assert self.sheet is not None and self.column is not None and self.row is not None
         self.address = CellKey(_format_cell_key(self.sheet, self.column, self.row))
         self.kind = NodeKind.cell
+        self._finalize_template_fields()
+
+    def _finalize_template_fields(self) -> None:
+        """Validate or clear formula-group template fields after address sync."""
+        has_any = (
+            self.shape_fingerprint is not None
+            or self.skeleton is not None
+            or self.member_bindings is not None
+        )
+        if not has_any:
+            self.shape_fingerprint = None
+            self.skeleton = None
+            self.member_bindings = None
+            return
+
+        if self.kind is NodeKind.cell or (
+            self.address is not None and self.address.shape is NodeShape.cell
+        ):
+            raise ValueError("Formula-group template fields are only allowed on multi-cell nodes")
+
+        if self.skeleton is None or self.member_bindings is None or self.shape_fingerprint is None:
+            raise ValueError(
+                "Formula-group template requires shape_fingerprint, skeleton, and member_bindings"
+            )
+
+        members = member_keys(self)
+        self.member_bindings = validate_group_template(
+            members=members,
+            skeleton=self.skeleton,
+            member_bindings=self.member_bindings,
+            shape_fingerprint_value=self.shape_fingerprint,
+        )
 
     def _sync_fields_from_address(self) -> None:
         addr = self.address
@@ -248,6 +287,9 @@ class NodeView:
     max_col: str | None = None
     max_row: int | None = None
     address: AddressKey | None = None
+    shape_fingerprint: str | None = None
+    skeleton: AstNode | None = None
+    member_bindings: Mapping[str, tuple[AddressLeaf, ...]] | None = None
 
     @property
     def key(self) -> NodeKey:
@@ -279,6 +321,11 @@ class NodeView:
 
 def node_to_view(node: Node) -> NodeView:
     """Build an immutable `NodeView` snapshot from a stored `Node`."""
+    bindings: Mapping[str, tuple[AddressLeaf, ...]] | None
+    if node.member_bindings is None:
+        bindings = None
+    else:
+        bindings = MappingProxyType(dict(node.member_bindings))
     return NodeView(
         sheet=node.sheet,
         column=node.column,
@@ -295,6 +342,9 @@ def node_to_view(node: Node) -> NodeView:
         max_col=node.max_col,
         max_row=node.max_row,
         address=node.address,
+        shape_fingerprint=node.shape_fingerprint,
+        skeleton=node.skeleton,
+        member_bindings=bindings,
     )
 
 
@@ -334,16 +384,31 @@ def make_union_node(
     is_leaf: bool = True,
     is_target: bool = False,
     metadata: dict[str, Any] | None = None,
+    shape_fingerprint: str | None = None,
+    skeleton: AstNode | None = None,
+    member_bindings: Mapping[str, Sequence[AddressLeaf]] | None = None,
 ) -> Node:
     """Build a multi-cell node from cell members (or a cell node for one member).
 
     `value` is ignored for multi-cell nodes (always stored as `None`). A single
     member collapses to a cell node via `members_to_node_key`.
+
+    Optional formula-group template fields (`shape_fingerprint`, `skeleton`,
+    `member_bindings`) are validated together and only allowed on multi-cell
+    nodes.
     """
     if not members:
         raise ValueError("Cannot build node from empty member set")
     address = _members_to_node_key(members)
+    bindings_dict: dict[str, tuple[AddressLeaf, ...]] | None
+    if member_bindings is None:
+        bindings_dict = None
+    else:
+        bindings_dict = {str(k): tuple(v) for k, v in member_bindings.items()}
+
     if isinstance(address, CellKey):
+        if shape_fingerprint is not None or skeleton is not None or bindings_dict is not None:
+            raise ValueError("Formula-group template fields are only allowed on multi-cell nodes")
         return Node(
             sheet=None,
             column=None,
@@ -367,6 +432,9 @@ def make_union_node(
         is_target=is_target,
         metadata=dict(metadata or {}),
         address=address,
+        shape_fingerprint=shape_fingerprint,
+        skeleton=skeleton,
+        member_bindings=bindings_dict,
     )
 
 

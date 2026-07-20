@@ -130,22 +130,22 @@ Sprints 3–4 may overlap after Sprint 2 fixtures exist; keep
 
 ---
 
-### Sprint 2 — Template fields on `Node` + Option B fixtures
+### Sprint 2 — Template fields on `Node` + Option B fixtures ✅
 
 **Files:** `excel_grapher/grapher/node.py`, `make_union_node` / helpers,
 `tests/fixtures/formula_groups/`, unit fixture builders
 
 | Task | Done when |
 | ---- | --------- |
-| Fields on multi-cell `Node` | `shape_fingerprint`, `skeleton: AstNode \| None`, `member_bindings` |
-| Cell nodes | Template fields stay `None` / empty; no behavior change |
-| Attach validation | Binding arity == hole count; kinds align; every member has an entry |
-| `make_union_node(..., skeleton=..., member_bindings=..., shape_fingerprint=...)` | Builds Option B group; `value=None` |
-| Fixture: contiguous one-row stripe | e.g. `Sheet1!D63:Y63` with INDEX/MATCH template |
-| Fixture: non-contiguous / cross-sheet union | Members on two sheets; unique occupancy |
-| Cell-only twin | Same public formulas as discrete cell nodes (no multi-cell node) |
-| Pickle / projection copy | Preserve template fields |
-| Unit tests | `tests/unit/grapher/formula_groups/test_group_node_template.py` |
+| Fields on multi-cell `Node` | ✅ `shape_fingerprint`, `skeleton`, `member_bindings` |
+| Cell nodes | ✅ Template fields stay `None`; no behavior change |
+| Attach validation | ✅ Binding arity == hole count; kinds align; every member has an entry |
+| `make_union_node(..., skeleton=..., member_bindings=..., shape_fingerprint=...)` | ✅ Builds Option B group; `value=None` |
+| Fixture: contiguous one-row stripe | ✅ `Sheet1!D63:F63` with INDEX/MATCH template |
+| Fixture: non-contiguous / cross-sheet union | ✅ `Sheet1!D63` + `Sheet2!B10` |
+| Cell-only twin | ✅ Same public formulas as discrete cell nodes |
+| Pickle / projection copy | ✅ Preserve template fields |
+| Unit tests | ✅ `tests/unit/grapher/formula_groups/test_group_node_template.py` |
 
 **Fixture invariant:** graph contains the group node **and** its precedents as
 cells (or other groups), but **no** cell node whose key is a member of the
