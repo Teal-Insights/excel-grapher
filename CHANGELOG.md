@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.17.1 (2026-07-20)
+
+### Bug Fixes
+
+- **series-bindings**: Align reader Google/Numpy docstrings with signatures
+  ([#440](https://github.com/Teal-Insights/excel-grapher/pull/440),
+  [`768cda6`](https://github.com/Teal-Insights/excel-grapher/commit/768cda6920cc87361f0e8343ada9b3303def6774))
+
+
 ## v3.17.0 (2026-07-20)
 
 ### Features
