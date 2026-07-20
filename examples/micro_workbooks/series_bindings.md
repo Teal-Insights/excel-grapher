@@ -543,11 +543,22 @@ records = compute_borvelia_primary_balance(ctx=ctx)
 print(tabulate(records, headers='keys', tablefmt='pipe'))
 ```
 
-The compute function evaluates each bound cell via `xl_cell`. Excel errors
+The compute function evaluates each bound cell via `xl_cell` by default.
+When `output.compute.helper` names a parameterized internals helper (for example
+after a cluster-collapse refactor), `compute_*` calls that helper from the
+static record dims instead — for example
+`scenario_primary_expenditure_pct_gdp_hot(ctx, time_period=static_record['TIME_PERIOD'])`.
+Leaves without a helper mapping still use `xl_cell`. Excel errors
 (`#VALUE!`, `#DIV/0!`, and so on) are captured into the measure field as
 `XlError` values so a mixed numeric/error horizon still returns a full
 `Records` list; non-Excel exceptions still abort. Callers do not pass sheet
 addresses unless `include_address: true` is set on `output.compute`.
+
+In modular exports, `_OUTPUT_LEAVES_*` tables live in `_output_leaves.py` (imported
+by `api.py`), analogous to how `_LEAF_INDEX_*` / `read_*` live in `_readers.py`.
+Consumers that previously assumed every published output address kept a `cell_*`
+projection alias in `internals.py` can drop those aliases once a helper covers
+the full published span.
 
 | INDICATOR       | REF_AREA | TIME_PERIOD | UNIT_MEASURE | OBS_VALUE |
 |-----------------|----------|-------------|--------------|-----------|

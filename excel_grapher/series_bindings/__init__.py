@@ -7,6 +7,7 @@ from excel_grapher.series_bindings.canonical import bindings_canonical_sha256
 from excel_grapher.series_bindings.compute_codegen import (
     emit_compute_function,
     emit_computes_block,
+    emit_output_leaves_block,
     generate_computes_module,
 )
 from excel_grapher.series_bindings.docstring_renderers import (
@@ -58,6 +59,17 @@ from excel_grapher.series_bindings.normalize import (
     merge_series_entries,
     normalize_bindings_document,
     normalize_series_entry,
+)
+from excel_grapher.series_bindings.output_helper_index import (
+    OutputHelperCallResolution,
+    OutputHelperIndex,
+    OutputHelperLeafEntry,
+    OutputHelperSpec,
+    build_output_helper_index,
+    format_output_helper_call_form,
+    helper_spec_from_series,
+    output_helper_names,
+    resolve_output_helper_ref,
 )
 from excel_grapher.series_bindings.output_series import derive_output_series
 from excel_grapher.series_bindings.ranges import expand_data_range, expand_data_range_for_graph
@@ -135,6 +147,10 @@ __all__ = [
     "InternalSeriesCell",
     "OutputSeries",
     "OutputSeriesCell",
+    "OutputHelperCallResolution",
+    "OutputHelperIndex",
+    "OutputHelperLeafEntry",
+    "OutputHelperSpec",
     "ReaderCallResolution",
     "ReaderIndex",
     "ReaderLeafEntry",
@@ -176,6 +192,7 @@ __all__ = [
     "bindings_canonical_sha256",
     "bindings_export_order",
     "bindings_have_groups",
+    "build_output_helper_index",
     "build_reader_index",
     "group_manifest",
     "group_slug",
@@ -186,9 +203,11 @@ __all__ = [
     "derive_input_series",
     "derive_internal_series",
     "derive_output_series",
+    "format_output_helper_call_form",
     "format_reader_call_form",
     "emit_compute_function",
     "emit_computes_block",
+    "emit_output_leaves_block",
     "emit_series_bindings_block",
     "emit_reader_function",
     "emit_reader_range_function",
@@ -199,6 +218,7 @@ __all__ = [
     "has_input_direction",
     "has_internal_direction",
     "has_output_direction",
+    "helper_spec_from_series",
     "merge_series_entries",
     "normalize_bindings_document",
     "normalize_series_entry",
@@ -209,10 +229,12 @@ __all__ = [
     "list_series_docstring_callbacks",
     "load_series_bindings",
     "merge_series_binding_documents",
+    "output_helper_names",
     "parse_bindings_file",
     "register_series_docstring_callback",
     "resolve_series_docstring_callback",
     "unregister_series_docstring_callback",
+    "resolve_output_helper_ref",
     "resolve_reader_ref",
     "resolve_series_binding",
     "resolve_series_bindings",

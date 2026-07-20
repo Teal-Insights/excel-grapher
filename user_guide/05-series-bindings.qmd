@@ -224,8 +224,16 @@ Offset projection years (1..5) vs calendar years (1999..2000) are distinguished 
 2. Declare `data_range`, `layout`, `structure.measure`, `structure.dimensions`, and `key` (input matching uses `key` only).
 3. Add dimension binds (`column_header`, `row_label`, `cell`, `constant`, …). Use `bind.kind: constant` for fixed dimensions such as `FREQUENCY: A`.
 4. Add `output.compute.name` (e.g. `compute_borvelia_primary_balance`) to emit a records-shaped `compute_*` function.
-5. Optionally add `input.setter` in the same series or a mergeable shard for symmetric input APIs.
-6. Pass `series_bindings` and `bindings_workbook` to `CodeGenerator.generate()`; call the generated `compute_*` function to obtain `Records` with `OBS_VALUE` and dimensions.
+5. Optionally set `output.compute.helper` (`name`, optional `dims`) so `compute_*` calls a parameterized internals helper from record dims instead of `xl_cell(address)`. Omit it (or leave leaves uncovered) to keep the `xl_cell` path.
+6. Optionally add `input.setter` in the same series or a mergeable shard for symmetric input APIs.
+7. Pass `series_bindings` and `bindings_workbook` to `CodeGenerator.generate()` / `generate_modules()`; call the generated `compute_*` function to obtain `Records` with `OBS_VALUE` and dimensions.
+
+### Upgrade notes (1.10.0): helper-backed compute
+
+- **Default unchanged:** without `output.compute.helper` (and without an address overlay passed to `generate_modules(..., address_helpers=...)`), `compute_*` still fills measures via `xl_cell(ctx, address)`.
+- **Helper coverage:** when a helper covers the published leaves, codegen emits dim-keyed calls such as `helper(ctx, time_period=static_record['TIME_PERIOD'])`. Provide that callable in `internals` (post-refactor). Partial coverage keeps `xl_cell` for uncovered leaves.
+- **Leaf tables:** modular packages emit `_OUTPUT_LEAVES_*` in `_output_leaves.py` rather than inlining them in `api.py`.
+- **Projection aliases:** once a helper covers a full published span, per-address `cell_*` projection aliases for those leaves are no longer required for the Records API path.
 
 ## Records contract
 
@@ -669,6 +677,8 @@ Generated code imports `datetime` and emits `datetime.datetime(...)` literals on
 | **1.6.0** | `input.mode: override` for user-editable formula cells (non-leaf input setters). |
 | **1.7.0** | `internal` direction for non-I/O formula-cell key triangulation (`intersect_graph_formulas` validation). |
 | **1.8.0** | Optional dimension/attribute `id` separating dimension identity from concept, so multiple dimensions can share one concept; optional per-dimension `dtype` for same-concept dimensions with differing storage types. |
+| **1.9.0** | Optional `input.reader` name override for generated `read_*` duals. |
+| **1.10.0** | Optional `output.compute.helper` so `compute_*` can call parameterized helpers from record dims (with `xl_cell` fallback). Modular exports place `_OUTPUT_LEAVES_*` in `_output_leaves.py`. |
 
 ## Dimension ids vs concepts (1.8.0)
 

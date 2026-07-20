@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -16,6 +16,10 @@ from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 if TYPE_CHECKING:
     from excel_grapher.series_bindings.docstring_renderers import SeriesDocstringRendererSpec
     from excel_grapher.series_bindings.docstrings import SeriesBindingDocstringCallbackSpec
+    from excel_grapher.series_bindings.output_helper_index import (
+        OutputHelperIndex,
+        OutputHelperSpec,
+    )
 
 
 def emit_series_bindings_block(
@@ -27,8 +31,11 @@ def emit_series_bindings_block(
     include_helpers: bool = True,
     include_readers: bool = True,
     include_leaf_indexes: bool = True,
+    include_leaves_tables: bool = True,
     series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
     docstring_renderer: SeriesDocstringRendererSpec = "google",
+    helper_index: OutputHelperIndex | None = None,
+    address_helpers: Mapping[str, OutputHelperSpec] | None = None,
 ) -> list[str]:
     """Emit setter, reader, and/or output compute functions for a binding manifest.
 
@@ -39,6 +46,9 @@ def emit_series_bindings_block(
 
     When `include_readers` / `include_leaf_indexes` are false, those symbols are omitted
     so a dedicated `_readers` module can own them (modular export).
+
+    When `include_leaves_tables` is false, `_OUTPUT_LEAVES_*` tables are omitted so a
+    dedicated `_output_leaves` module can own them (modular export).
     """
     series_list = bindings_export_order(bindings)
     emit_input = any(has_input_direction(s) for s in series_list)
@@ -73,8 +83,11 @@ def emit_series_bindings_block(
                 bindings,
                 export_addresses=export_addresses,
                 include_type_aliases=include_aliases,
+                include_leaves_tables=include_leaves_tables,
                 series_docstring_callback=series_docstring_callback,
                 docstring_renderer=docstring_renderer,
+                helper_index=helper_index,
+                address_helpers=address_helpers,
             )
         )
     return lines
