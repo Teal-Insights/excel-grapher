@@ -31,7 +31,7 @@ class FormulaGroupKeyError(FormulaExpanderError):
     def __init__(self, group_key: str) -> None:
         super().__init__(
             f"Cannot evaluate multi-cell group key {group_key!r}; "
-            "evaluate a member cell address instead (Option B)."
+            "evaluate a member cell address instead."
         )
         self.group_key = group_key
 

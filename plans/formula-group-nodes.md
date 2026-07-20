@@ -7,7 +7,7 @@ pull later work forward.
 | ----- | ----- | -------- | ----- |
 | 1 | Address model + storage | [#374](https://github.com/Teal-Insights/excel-grapher/issues/374) / retarget [PR #375](https://github.com/Teal-Insights/excel-grapher/pull/375) | `CellKey`/`RangeKey`/`UnionKey`, occupancy, mixed edges, `locate_cell` |
 | 2 | Eval + codegen | [#377](https://github.com/Teal-Insights/excel-grapher/issues/377) | Skeleton, bindings, fingerprint, `specialize_group`, `ProjectedAddress`, evaluator, export |
-| 3 | Detection + coalesce | (open new issue) | `coalesce_formula_groups`, fingerprint families, Option B rewrite, `formula_groups=` flag |
+| 3 | Detection + coalesce | (open new issue) | `coalesce_formula_groups`, fingerprint families, formula-group rewrite, `formula_groups=` flag |
 
 **Origin:** [PR #375](https://github.com/Teal-Insights/excel-grapher/pull/375) is the open PR for
 [#374](https://github.com/Teal-Insights/excel-grapher/issues/374) (“row nodes”: `NodeKind.row`,
@@ -35,7 +35,7 @@ flowchart LR
 
 ## Shared locked decisions (all issues)
 
-- **Unique occupancy (Option B):** a workbook cell appears in the graph at most
+- **Unique occupancy:** a workbook cell appears in the graph at most
   once — either as a `CellKey` node or as a member of exactly one
   `RangeKey`/`UnionKey` node — never both, never two multi-cell nodes.
 - **Eval entrypoint:** `evaluate("Sheet1!E63")` (member / public cell address) →
@@ -286,7 +286,7 @@ TACO/compression guards as needed.
 
 **Depends on:** Issue 1 merged (or stacked).  
 **Branch:** `issue-377-formula-groups-eval-codegen`  
-**Goal:** Hand-built Option B groups evaluate and export with evaluator↔export
+**Goal:** Hand-built formula groups evaluate and export with evaluator↔export
 parity (lazy per member).  
 **Does not ship:** detection, coalesce, builder `formula_groups=`.
 
@@ -329,7 +329,7 @@ fields. Occupancy stays as Issue 1.
   **same leaf kind** at each hole.
 - Every member’s bindings length == hole count; kinds align.
 
-## Entrypoint (Option B)
+## Entrypoint
 
 ```text
 evaluate("Sheet1!E63")
@@ -373,7 +373,7 @@ work beyond not crashing.
 ## Implementation sprints (TDD)
 
 1. Fingerprint + `specialize_group` (`excel_grapher/grapher/formula_groups.py`)
-2. Template fields on `Node` + Option B fixtures (incl. non-contiguous/cross-sheet)
+2. Template fields on `Node` + hand-built group fixtures (incl. non-contiguous/cross-sheet)
    + cell-only twin
 3. Evaluator `locate_cell` group path; reject group-key eval; lazy cache
 4. Codegen `_group_*` + wrappers
@@ -391,7 +391,7 @@ Sprints 3–4 may overlap after fixtures exist; keep specialize shared.
 
 - [ ] Fingerprint ignores addresses; distinguishes literals/ops
 - [ ] Specialize fills holes; rejects kind/arity mismatch
-- [ ] Option B fixture: no member cell nodes; non-contiguous/cross-sheet eval
+- [ ] Formula-group fixture: no member cell nodes; non-contiguous/cross-sheet eval
 - [ ] `evaluate(member)` matches twin; siblings not cached; group key rejected
 - [ ] One `_group_*` helper; wrappers pass correct bindings
 - [ ] Codegen ↔ evaluator parity (values + error codes)
@@ -407,12 +407,12 @@ Sprints 3–4 may overlap after fixtures exist; keep specialize shared.
 
 # Issue 3 — Detection + coalesce
 
-**Depends on:** Issues 1–2 merged (fingerprint, `specialize_group`, Option B
+**Depends on:** Issues 1–2 merged (fingerprint, `specialize_group`, unique-occupancy
 eval/codegen already work on hand-built groups).  
 **Branch:** `issue-formula-groups-detection` (open a new GitHub issue; do not
 overload #374/#377).  
 **Goal:** Opt-in batch pass that finds same-shape formula families on a
-**cell-only** graph and rewrites them into Issue 2–compatible Option B group
+**cell-only** graph and rewrites them into Issue 2–compatible formula-group
 nodes — so evaluator and codegen need no second entrypoint model.  
 **Does not ship:** vector eval of multi-area keys; fuzzy/near-miss matching;
 OptimalCompression/TACO features for groups beyond `shape != cell` guards;
@@ -425,7 +425,7 @@ flowchart TD
   cluster[Cluster by equal fingerprint]
   filter[Filter families: size, intra-edges, parse]
   skeleton[Build skeleton plus bindings]
-  coalesce[Coalesce Option B + edge rewrite]
+  coalesce[Coalesce formula groups + edge rewrite]
   ready[Graph ready for eval/codegen]
   cellGraph --> fp --> cluster --> filter --> skeleton --> coalesce --> ready
 ```
@@ -441,7 +441,7 @@ def coalesce_formula_groups(
     *,
     min_family_size: int = 2,
 ) -> CoalesceReport:
-    """In-place: replace same-shape cell families with Option B group nodes.
+    """In-place: replace same-shape cell families with formula-group nodes.
 
     No-op families are left as cells. Mutates `graph`. Returns a report of
     created group keys, skipped families, and reasons.
@@ -686,7 +686,7 @@ Practice RED → GREEN → refactor. Keep pure detection separate from graph mut
 | Occupancy | `locate_cell` for each former member; overlap errors impossible if order correct |
 | `target_members` + `target_keys()` | Former target members still listed as member addresses |
 | `CoalesceReport` | Created + skipped with reasons |
-| Unit tests | Twin cell graph → Option B; inbound/outbound edge merge; targets preserved; second pass idempotent |
+| Unit tests | Twin cell graph → formula group; inbound/outbound edge merge; targets preserved; second pass idempotent |
 
 ### Sprint 3 — Builder wiring + fixtures
 
@@ -697,7 +697,7 @@ Practice RED → GREEN → refactor. Keep pure detection separate from graph mut
 | `formula_groups: bool = False` | When True, run coalesce at end of build |
 | Default off | Existing builder tests unchanged |
 | Fixture workbook / micro graph | Non-contiguous + cross-sheet same-shape pair |
-| Docs | Short note in user guide: opt-in flag + Option B semantics |
+| Docs | Short note in user guide: opt-in flag + unique-occupancy / member-address semantics |
 
 ### Sprint 4 — Parity + harden
 
@@ -746,14 +746,14 @@ Practice RED → GREEN → refactor. Keep pure detection separate from graph mut
 **Wiring + parity**
 
 - [ ] `create_dependency_graph(..., formula_groups=False)` unchanged
-- [ ] `formula_groups=True` produces Option B groups on fixture
+- [ ] `formula_groups=True` produces formula groups on fixture
 - [ ] `evaluate(member)` equals pre-coalesce cell-only twin
 - [ ] Codegen ↔ evaluator parity on coalesced graph
 - [ ] OptimalCompression/TACO do not crash on coalesced graph
 
 ## Success criteria (Issue 3)
 
-- [ ] Opt-in detection emits Issue 2–compatible Option B groups
+- [ ] Opt-in detection emits Issue 2–compatible formula groups
 - [ ] Default builder path remains cell-only
 - [ ] Intra-family families are skipped safely (no `G→G` footgun)
 - [ ] Targets remain addressable as member keys via `target_keys()`

@@ -1,4 +1,4 @@
-"""Hand-built Option B formula-group fixtures (Issue 2 sprint 2).
+"""Hand-built formula-group fixtures (Issue 2).
 
 Graphs contain a multi-cell group node plus leaf precedents. Member cells are
 owned by the group (no member cell nodes). Cell-only twins mirror the same
@@ -92,8 +92,8 @@ def _add_shared_precedents(graph: DependencyGraph) -> None:
 
 
 @dataclass(frozen=True)
-class OptionBFixture:
-    """Option B graph plus the owning group node key."""
+class FormulaGroupFixture:
+    """Formula-group graph plus the owning group node key."""
 
     graph: DependencyGraph
     group_key: str
@@ -111,7 +111,7 @@ def _wire_group_precedent_edges(graph: DependencyGraph, group_key: str) -> None:
         graph.add_edge(group_key, key)
 
 
-def build_row_stripe_option_b() -> OptionBFixture:
+def build_row_stripe_group() -> FormulaGroupFixture:
     """Contiguous one-row stripe `Sheet1!D63:F63` with INDEX/MATCH template."""
     members = ("Sheet1!D63", "Sheet1!E63", "Sheet1!F63")
     skeleton = index_match_skeleton()
@@ -136,10 +136,10 @@ def build_row_stripe_option_b() -> OptionBFixture:
     for m in members:
         assert g.get_node(m) is None
         assert g.cell_owner(m) == group.key
-    return OptionBFixture(graph=g, group_key=group.key, members=members)
+    return FormulaGroupFixture(graph=g, group_key=group.key, members=members)
 
 
-def build_cross_sheet_union_option_b() -> OptionBFixture:
+def build_cross_sheet_union_group() -> FormulaGroupFixture:
     """Non-contiguous cross-sheet union with the same INDEX/MATCH template."""
     members = ("Sheet1!D63", "Sheet2!B10")
     skeleton = index_match_skeleton()
@@ -163,11 +163,11 @@ def build_cross_sheet_union_option_b() -> OptionBFixture:
     for m in members:
         assert g.get_node(m) is None
         assert g.cell_owner(m) == group.key
-    return OptionBFixture(graph=g, group_key=group.key, members=members)
+    return FormulaGroupFixture(graph=g, group_key=group.key, members=members)
 
 
 def build_row_stripe_cell_only_twin() -> DependencyGraph:
-    """Cell-only twin of `build_row_stripe_option_b` (no multi-cell node)."""
+    """Cell-only twin of `build_row_stripe_group` (no multi-cell node)."""
     g = DependencyGraph()
     g.sheet_order = ["Sheet1", "Sheet2"]
     _add_shared_precedents(g)
@@ -189,7 +189,7 @@ def build_row_stripe_cell_only_twin() -> DependencyGraph:
             is_leaf=False,
         )
         g.add_node(node)
-        # Mirror Option B: every shared leaf is a precedent (export closure).
+        # Mirror the group fixture: every shared leaf is a precedent (export closure).
         for key in list(g.keys()):
             leaf = g.get_node(key)
             if leaf is not None and leaf.is_leaf:
@@ -198,7 +198,7 @@ def build_row_stripe_cell_only_twin() -> DependencyGraph:
 
 
 def build_cross_sheet_cell_only_twin() -> DependencyGraph:
-    """Cell-only twin of `build_cross_sheet_union_option_b`."""
+    """Cell-only twin of `build_cross_sheet_union_group`."""
     g = DependencyGraph()
     g.sheet_order = ["Sheet1", "Sheet2"]
     _add_shared_precedents(g)
@@ -227,7 +227,7 @@ def build_cross_sheet_cell_only_twin() -> DependencyGraph:
     return g
 
 
-def assert_option_b_occupancy(group: Node) -> None:
+def assert_formula_group_occupancy(group: Node) -> None:
     """Assert group owns its members and has a validated template."""
     assert group.skeleton is not None
     assert group.member_bindings is not None
@@ -236,8 +236,8 @@ def assert_option_b_occupancy(group: Node) -> None:
     assert owned == set(group.member_bindings)
 
 
-def build_div_zero_option_b() -> OptionBFixture:
-    """Option B group whose specialized body is `1 / <cell>` (error-channel fixture)."""
+def build_div_zero_group() -> FormulaGroupFixture:
+    """Formula group whose specialized body is `1 / <cell>` (error-channel fixture)."""
     members = ("Sheet1!A1", "Sheet1!B1")
     skeleton = BinaryOpNode(
         op="/",
@@ -266,11 +266,11 @@ def build_div_zero_option_b() -> OptionBFixture:
     for m in members:
         assert g.get_node(m) is None
         assert g.cell_owner(m) == group.key
-    return OptionBFixture(graph=g, group_key=group.key, members=members)
+    return FormulaGroupFixture(graph=g, group_key=group.key, members=members)
 
 
 def build_div_zero_cell_only_twin() -> DependencyGraph:
-    """Cell-only twin of `build_div_zero_option_b`."""
+    """Cell-only twin of `build_div_zero_group`."""
     g = DependencyGraph()
     g.sheet_order = ["Sheet1"]
     g.add_node(make_cell_node("Sheet1", "Z", 1, value=0.0, is_leaf=True))

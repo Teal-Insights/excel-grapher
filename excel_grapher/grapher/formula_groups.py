@@ -1,7 +1,7 @@
 """Formula-group shape fingerprinting and skeleton specialization (Issue 2).
 
 Provides `shape_fingerprint`, `specialize_group`, and template-field validation
-used by hand-built Option B group nodes (evaluator/codegen wire-up later).
+used by hand-built formula-group nodes (evaluator/codegen wire-up later).
 """
 
 from __future__ import annotations

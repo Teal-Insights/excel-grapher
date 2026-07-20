@@ -204,7 +204,7 @@ class CodeGenerator:
         else:
             projected = manifest.map_to_projected(normalized)
 
-        # Overlay Option B formula-group ownership (hand-built or coalesced).
+        # Overlay formula-group ownership (hand-built or coalesced).
         # GraphLike test doubles may lack occupancy / iteration; skip overlay then.
         locate_graph = self._public_graph()
         try:
@@ -395,7 +395,7 @@ class CodeGenerator:
         return [normalize_address(format_key(sheet, a1)) for sheet, a1 in roots]
 
     def _reject_formula_group_key_target(self, address: str) -> None:
-        """Reject multi-cell formula-group keys as export targets (Option B).
+        """Reject multi-cell formula-group keys as export targets.
 
         Public export targets must be member cell addresses (or ordinary ranges of
         cell nodes). A `RangeKey` / `UnionKey` that owns a formula-group template

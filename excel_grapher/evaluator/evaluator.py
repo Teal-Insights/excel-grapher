@@ -300,7 +300,7 @@ class FormulaEvaluator:
         else:
             norm = str(parsed)
 
-        # Public API is member/cell addresses only (Option B).
+        # Public API is member/cell addresses only (unique occupancy).
         if parsed is not None and not isinstance(parsed, CellKey):
             raise FormulaGroupKeyError(norm)
         if parsed is None:

@@ -1,4 +1,4 @@
-"""Unit tests for Option B formula-group evaluation (Issue 2 sprint 3)."""
+"""Unit tests for formula-group evaluation (Issue 2 sprint 3)."""
 
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ from excel_grapher.evaluator.evaluator import FormulaEvaluator
 from excel_grapher.grapher.formula_groups import shape_fingerprint
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.node import make_cell_node, make_union_node
-from tests.fixtures.formula_groups.option_b import (
+from tests.fixtures.formula_groups.hand_built import (
     build_cross_sheet_cell_only_twin,
-    build_cross_sheet_union_option_b,
+    build_cross_sheet_union_group,
     build_row_stripe_cell_only_twin,
-    build_row_stripe_option_b,
+    build_row_stripe_group,
 )
 
 
@@ -95,7 +95,7 @@ def test_evaluate_rejects_group_key() -> None:
 
 
 def test_evaluate_rejects_union_key_string() -> None:
-    fx = build_cross_sheet_union_option_b()
+    fx = build_cross_sheet_union_group()
     with (
         FormulaEvaluator(fx.graph) as ev,
         pytest.raises(FormulaGroupKeyError, match="multi-cell"),
@@ -122,8 +122,8 @@ def test_cell_only_path_unchanged() -> None:
         assert ev.evaluate("Sheet1!Z1") == 10.0
 
 
-def test_row_stripe_option_b_eval_matches_twin() -> None:
-    fx = build_row_stripe_option_b()
+def test_row_stripe_group_eval_matches_twin() -> None:
+    fx = build_row_stripe_group()
     twin = build_row_stripe_cell_only_twin()
     with FormulaEvaluator(fx.graph) as ev_g, FormulaEvaluator(twin) as ev_t:
         with pytest.raises(FormulaGroupKeyError):
@@ -138,8 +138,8 @@ def test_row_stripe_option_b_eval_matches_twin() -> None:
         assert "Sheet1!F63" not in ev_g._cache
 
 
-def test_cross_sheet_option_b_eval_matches_twin() -> None:
-    fx = build_cross_sheet_union_option_b()
+def test_cross_sheet_group_eval_matches_twin() -> None:
+    fx = build_cross_sheet_union_group()
     twin = build_cross_sheet_cell_only_twin()
     with FormulaEvaluator(fx.graph) as ev_g, FormulaEvaluator(twin) as ev_t:
         with pytest.raises(FormulaGroupKeyError):

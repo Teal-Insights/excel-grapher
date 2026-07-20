@@ -5,15 +5,15 @@ from __future__ import annotations
 from excel_grapher.evaluator.evaluator import FormulaEvaluator
 from excel_grapher.exporter.codegen import CodeGenerator
 from excel_grapher.exporter.projection import ProjectedAddress
-from tests.fixtures.formula_groups.option_b import (
-    build_cross_sheet_union_option_b,
+from tests.fixtures.formula_groups.hand_built import (
+    build_cross_sheet_union_group,
     build_row_stripe_cell_only_twin,
-    build_row_stripe_option_b,
+    build_row_stripe_group,
 )
 
 
 def test_map_address_to_projected_attaches_group_bindings() -> None:
-    fx = build_row_stripe_option_b()
+    fx = build_row_stripe_group()
     with CodeGenerator(fx.graph) as gen:
         projected = gen._map_address_to_projected("Sheet1!E63")
     assert isinstance(projected, ProjectedAddress)
@@ -24,7 +24,7 @@ def test_map_address_to_projected_attaches_group_bindings() -> None:
 
 
 def test_codegen_emits_one_group_helper_and_member_wrappers() -> None:
-    fx = build_row_stripe_option_b()
+    fx = build_row_stripe_group()
     with CodeGenerator(fx.graph) as gen:
         code = gen.generate(targets=list(fx.members))
     helper = gen._group_helper_name(fx.group_key)
@@ -37,7 +37,7 @@ def test_codegen_emits_one_group_helper_and_member_wrappers() -> None:
 
 
 def test_codegen_group_member_matches_evaluator() -> None:
-    fx = build_row_stripe_option_b()
+    fx = build_row_stripe_group()
     twin = build_row_stripe_cell_only_twin()
     with FormulaEvaluator(fx.graph) as ev, CodeGenerator(fx.graph) as gen:
         code = gen.generate(targets=["Sheet1!E63"])
@@ -55,7 +55,7 @@ def test_codegen_group_member_matches_evaluator() -> None:
 
 
 def test_codegen_cross_sheet_member_wrapper() -> None:
-    fx = build_cross_sheet_union_option_b()
+    fx = build_cross_sheet_union_group()
     with CodeGenerator(fx.graph) as gen:
         code = gen.generate(targets=list(fx.members))
     assert "def cell_sheet2_b10(ctx):" in code

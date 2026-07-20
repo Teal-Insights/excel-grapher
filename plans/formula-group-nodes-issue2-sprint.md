@@ -15,7 +15,7 @@ row-only wording)
 
 ## Goal
 
-Make **hand-built Option B** multi-cell nodes (`RangeKey` / `UnionKey`)
+Make **hand-built** multi-cell formula-group nodes (`RangeKey` / `UnionKey`)
 executable end-to-end with **evaluator ↔ export parity** (lazy per member):
 
 - Shape fingerprint + `specialize_group` (shared by eval and codegen)
@@ -40,7 +40,7 @@ APIs.
 
 | Topic | Decision |
 | ----- | -------- |
-| Occupancy | Option B — no member cell nodes; public API is the member address |
+| Occupancy | no member cell nodes; public API is the member address |
 | Eval entry | `evaluate(member_cell)` → scalar; `evaluate(group_key)` → clear error |
 | Laziness | Evaluating one member must **not** eagerly evaluate siblings |
 | Shape | Fingerprint ignores concrete addresses; ops / fns / literals / leaf **kinds** fixed |
@@ -78,7 +78,7 @@ APIs.
 - Template fields + validation on `Node`
 - Evaluator `locate_cell` group dispatch + member-key cache
 - `ProjectedAddress` + codegen `_group_*` helpers
-- Hand-built Option B fixtures + cell-only twins
+- Hand-built formula-group fixtures + cell-only twins
 
 ---
 
@@ -90,7 +90,7 @@ Run: `uv run pytest` on the touched test path after each sprint.
 ```text
 Sprint 1 (fingerprint + specialize)
   → Sprint 2 (Node template fields + fixtures)
-  → Sprint 3 (evaluator Option B path)
+  → Sprint 3 (evaluator group path)
   → Sprint 4 (ProjectedAddress + codegen)
   → Sprint 5 (parity / errors / cell-only regression)
 ```
@@ -130,7 +130,7 @@ Sprints 3–4 may overlap after Sprint 2 fixtures exist; keep
 
 ---
 
-### Sprint 2 — Template fields on `Node` + Option B fixtures ✅
+### Sprint 2 — Template fields on `Node` + hand-built group fixtures ✅
 
 **Files:** `excel_grapher/grapher/node.py`, `make_union_node` / helpers,
 `tests/fixtures/formula_groups/`, unit fixture builders
@@ -140,7 +140,7 @@ Sprints 3–4 may overlap after Sprint 2 fixtures exist; keep
 | Fields on multi-cell `Node` | ✅ `shape_fingerprint`, `skeleton`, `member_bindings` |
 | Cell nodes | ✅ Template fields stay `None`; no behavior change |
 | Attach validation | ✅ Binding arity == hole count; kinds align; every member has an entry |
-| `make_union_node(..., skeleton=..., member_bindings=..., shape_fingerprint=...)` | ✅ Builds Option B group; `value=None` |
+| `make_union_node(..., skeleton=..., member_bindings=..., shape_fingerprint=...)` | ✅ Builds formula group; `value=None` |
 | Fixture: contiguous one-row stripe | ✅ `Sheet1!D63:F63` with INDEX/MATCH template |
 | Fixture: non-contiguous / cross-sheet union | ✅ `Sheet1!D63` + `Sheet2!B10` |
 | Cell-only twin | ✅ Same public formulas as discrete cell nodes |
@@ -156,7 +156,7 @@ need as stubs.
 
 ---
 
-### Sprint 3 — Evaluator Option B path ✅
+### Sprint 3 — Evaluator group path ✅
 
 **Files:** `excel_grapher/evaluator/evaluator.py`, `excel_grapher/evaluator/errors.py`
 
@@ -249,7 +249,7 @@ excel_grapher/grapher/node.py             # template fields + validation
 excel_grapher/evaluator/evaluator.py      # locate_cell group path
 excel_grapher/exporter/projection.py     # ProjectedAddress
 excel_grapher/exporter/codegen.py         # _group_* + wrappers
-tests/fixtures/formula_groups/            # hand-built Option B + twins
+tests/fixtures/formula_groups/            # hand-built groups + twins
 tests/unit/grapher/formula_groups/
   test_fingerprint.py
   test_specialize.py
@@ -272,7 +272,7 @@ tests/integration/...                     # parity harness cases
 
 **Node / fixtures**
 
-- [x] Option B fixture: no member cell nodes; occupancy unique
+- [x] Formula-group fixture: no member cell nodes; occupancy unique
 - [x] Non-contiguous + cross-sheet members supported
 - [x] Cell-only twin exists for parity
 - [x] Template fields pickle / copy with the graph

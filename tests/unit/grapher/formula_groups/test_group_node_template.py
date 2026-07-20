@@ -20,12 +20,12 @@ from excel_grapher.grapher.node import (
     make_union_node,
     member_keys,
 )
-from tests.fixtures.formula_groups.option_b import (
-    assert_option_b_occupancy,
+from tests.fixtures.formula_groups.hand_built import (
+    assert_formula_group_occupancy,
     build_cross_sheet_cell_only_twin,
-    build_cross_sheet_union_option_b,
+    build_cross_sheet_union_group,
     build_row_stripe_cell_only_twin,
-    build_row_stripe_option_b,
+    build_row_stripe_group,
     index_match_fingerprint,
     index_match_skeleton,
 )
@@ -120,8 +120,8 @@ def test_cell_nodes_keep_template_fields_none() -> None:
     assert node.member_bindings is None
 
 
-def test_row_stripe_option_b_fixture() -> None:
-    fx = build_row_stripe_option_b()
+def test_row_stripe_group_fixture() -> None:
+    fx = build_row_stripe_group()
     group = fx.graph.get_node(fx.group_key)
     assert group is not None
     assert group.shape_fingerprint == index_match_fingerprint()
@@ -134,11 +134,11 @@ def test_row_stripe_option_b_fixture() -> None:
         assert fx.graph.cell_owner(m) == fx.group_key
     internal = fx.graph._get_internal_node(fx.group_key)
     assert internal is not None
-    assert_option_b_occupancy(internal)
+    assert_formula_group_occupancy(internal)
 
 
-def test_cross_sheet_option_b_fixture() -> None:
-    fx = build_cross_sheet_union_option_b()
+def test_cross_sheet_group_fixture() -> None:
+    fx = build_cross_sheet_union_group()
     group = fx.graph.get_node(fx.group_key)
     assert group is not None
     assert group.member_bindings is not None
@@ -165,7 +165,7 @@ def test_cell_only_twins_have_member_cells_not_groups() -> None:
 
 
 def test_pickle_preserves_template_fields() -> None:
-    fx = build_row_stripe_option_b()
+    fx = build_row_stripe_group()
     restored: DependencyGraph = pickle.loads(pickle.dumps(fx.graph))
     view = restored.get_node(fx.group_key)
     assert view is not None
@@ -177,7 +177,7 @@ def test_pickle_preserves_template_fields() -> None:
 
 
 def test_copy_for_projection_preserves_template_fields() -> None:
-    fx = build_cross_sheet_union_option_b()
+    fx = build_cross_sheet_union_group()
     cloned = fx.graph._copy_for_projection()
     view = cloned.get_node(fx.group_key)
     assert view is not None
