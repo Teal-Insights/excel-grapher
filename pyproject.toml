@@ -1,6 +1,6 @@
 [project]
 name = "excel-grapher"
-version = "3.3.0"
+version = "3.16.0"
 
 description = "Build and analyze dependency graphs from Excel workbooks"
 readme = "README.md"
@@ -25,11 +25,13 @@ classifiers = [
 dependencies = [
     "fastpyxl",
     "jsonschema>=4.26.0",
-    "numpy>=1.24",
     "pyyaml>=6.0.3",
 ]
 
 [project.optional-dependencies]
+fast = [
+    "numpy>=1.24",
+]
 networkx = [
     "networkx>=3.0",
 ]
@@ -37,6 +39,7 @@ viz = [
     "graphviz>=0.20",
 ]
 all = [
+    "numpy>=1.24",
     "networkx>=3.0",
     "graphviz>=0.20",
 ]
@@ -47,6 +50,25 @@ Repository = "https://github.com/Teal-Insights/excel-grapher"
 
 [project.scripts]
 excel-grapher = "excel_grapher.cli:main"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -112,6 +134,13 @@ ignore = [
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
+
+[[tool.ty.overrides]]
+include = ["tests/**"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+invalid-return-type = "ignore"
 
 [[tool.ty.overrides]]
 include = [
@@ -236,7 +265,34 @@ upload_to_vcs_release = false
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 [dependency-groups]
+# Minimal test runner for the default (NumPy-free) install CI job.
+# Intentionally excludes pandas/matplotlib/jupyter so NumPy is not pulled transitively.
+test-core = [
+    "pytest>=9.0.2",
+    "ruff>=0.14.0",
+    "ty>=0.0.9",
+    "xlsxwriter>=3.2.0",
+]
 dev = [
     "graphviz>=0.21",
     "great-docs>=0.13.0",

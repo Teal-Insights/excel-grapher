@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import fastpyxl
 import pytest
@@ -68,3 +69,16 @@ def test_expand_data_range_for_graph_uses_graph_named_ranges(tmp_path: Path) -> 
 
     graph = create_dependency_graph(path, ["Inputs!F5"], load_values=True)
     assert expand_data_range_for_graph(graph, "CellOne") == ["Inputs!F5"]
+
+
+def test_expand_sheet_qualified_range_skips_workbook_load(tmp_path: Path) -> None:
+    path = tmp_path / "demo.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    wb.add_worksheet("S")
+    wb.close()
+
+    with patch("excel_grapher.series_bindings.ranges.fastpyxl.load_workbook") as load_wb:
+        addresses = expand_data_range("S!B2:C2", workbook=path)
+
+    assert addresses == ["S!B2", "S!C2"]
+    load_wb.assert_not_called()

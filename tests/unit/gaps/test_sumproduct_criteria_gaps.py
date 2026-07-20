@@ -4,13 +4,15 @@ Regression coverage for element-wise range comparisons and products inside
 ``SUMPRODUCT``, e.g. ``(range="label")*values`` and ``(range>threshold)*1``.
 """
 
+# ruff: noqa: E402
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
-import numpy as np
 import pytest
+
+np = pytest.importorskip("numpy")
 
 from excel_grapher import DependencyGraph, FormulaEvaluator, Node, create_dependency_graph
 from excel_grapher.core.address_keys import parse_address
@@ -84,7 +86,7 @@ def test_sumproduct_price_threshold_count_k24(tmp_path: Path) -> None:
 
 
 def test_standalone_range_comparison_returns_elementwise_array() -> None:
-    """Multi-cell range compares at formula top level return ndarrays (not a single scalar)."""
+    """Multi-cell range compares at formula top level return element-wise arrays."""
     graph = DependencyGraph()
     for row, category in enumerate(["Software", "Hardware", "Software"], start=5):
         graph.add_node(_make_node(f"PL!C{row}", None, category))
@@ -93,8 +95,8 @@ def test_standalone_range_comparison_returns_elementwise_array() -> None:
     )
     with FormulaEvaluator(graph) as evaluator:
         result = evaluator.evaluate("PL!D10")
-    assert isinstance(result, np.ndarray)
-    assert cast(np.ndarray, result).tolist() == [[True], [False], [True]]
+    actual = cast(Any, result).tolist() if isinstance(result, np.ndarray) else result
+    assert actual == [[True], [False], [True]]
 
 
 def test_sumproduct_criteria_evaluator_matches_excel_cached_values(tmp_path: Path) -> None:

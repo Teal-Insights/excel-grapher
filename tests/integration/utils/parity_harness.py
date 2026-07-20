@@ -78,9 +78,13 @@ def exec_generated_code(
     *,
     namespace_seed: dict[str, object] | None = None,
     blank_ranges: list[str] | tuple[str, ...] | None = None,
+    unpack_return: bool = False,
 ) -> tuple[dict[str, object], str, dict[str, object]]:
     """Generate + exec code for targets and return (results, code, namespace)."""
-    code = CodeGenerator(graph).generate(targets, blank_ranges=blank_ranges)
+    code = CodeGenerator(graph, unpack_return=unpack_return).generate(
+        targets,
+        blank_ranges=blank_ranges,
+    )
     ns: dict[str, object] = dict(namespace_seed or {})
     exec(code, ns)
     compute_all = ns["compute_all"]
@@ -97,6 +101,7 @@ def exec_generated_code_with_cache(
     *,
     namespace_seed: dict[str, object] | None = None,
     blank_ranges: list[str] | tuple[str, ...] | None = None,
+    unpack_return: bool = False,
 ) -> tuple[dict[str, object], str, dict[str, object]]:
     """Generate + exec code for targets and return (cache, code, namespace).
 
@@ -104,7 +109,10 @@ def exec_generated_code_with_cache(
     codes are recorded in the returned cache as `XlError` sentinel values so
     they compare directly against evaluator results.
     """
-    code = CodeGenerator(graph).generate(targets, blank_ranges=blank_ranges)
+    code = CodeGenerator(graph, unpack_return=unpack_return).generate(
+        targets,
+        blank_ranges=blank_ranges,
+    )
     ns: dict[str, object] = dict(namespace_seed or {})
     exec(code, ns)
     merged = dict(cast(dict[str, object], ns["DEFAULT_INPUTS"]))
@@ -117,7 +125,7 @@ def exec_generated_code_with_cache(
     for target in targets:
         try:
             xl_cell(ctx, target)
-        except BaseException as exc:  # noqa: B036 (re-raised unless Excel error)
+        except BaseException as exc:
             if xl_error_exception is None or not isinstance(exc, xl_error_exception):
                 raise
             # The evaluation boundary caches the raising cell's error code.
@@ -134,6 +142,7 @@ def assert_codegen_matches_evaluator(
     dependency_order: bool = False,
     fail_fast: bool = False,
     blank_ranges: tuple[str, ...] | None = None,
+    unpack_return: bool = False,
 ) -> ParityResult:
     """Assert evaluator results match generated code for the given targets."""
     compare_targets = _dependency_order(graph, targets) if dependency_order else list(targets)
@@ -146,7 +155,10 @@ def assert_codegen_matches_evaluator(
         evaluator_results = cast(dict[str, object], ev.evaluate(targets))
 
     generated_cache, code, _ns = exec_generated_code_with_cache(
-        graph, targets, blank_ranges=blank_ranges
+        graph,
+        targets,
+        blank_ranges=blank_ranges,
+        unpack_return=unpack_return,
     )
     generated_results = {t: generated_cache[t] for t in targets}
 
@@ -278,7 +290,7 @@ DEP_TRACKING_CALL_MARKERS = frozenset(
 )
 
 # Baseline for non-iterative minimal export (S!A1 leaf + S!B1 formula).
-DEP_TRACKING_BASELINE_VERSION = 9
+DEP_TRACKING_BASELINE_VERSION = 14
 SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET = 62
 
 

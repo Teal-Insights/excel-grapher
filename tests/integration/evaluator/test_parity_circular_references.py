@@ -70,7 +70,10 @@ def test_parity_indirect_cycle_returns_zero() -> None:
     assert any(wi.category.__name__ == "CircularReferenceWarning" for wi in w)
 
     assert evaluator_result == {"S!A1": 0, "S!B1": 0}
-    if "S!A1:S!B1" in generated_result:
+    if "S!A1:B1" in generated_result:
+        result = cast("list[list[float]]", generated_result["S!A1:B1"])
+        assert result == [[0, 0]]
+    elif "S!A1:S!B1" in generated_result:
         result = cast("list[list[float]]", generated_result["S!A1:S!B1"])
         assert result == [[0, 0]]
     else:
@@ -114,7 +117,10 @@ def test_iterative_mutual_cycle_converges_with_parity() -> None:
     exec(generated_code, ns)
     compute_all = cast(Callable[[], dict[str, Any]], ns["compute_all"])
     generated_raw = compute_all()
-    if "S!A1:S!B1" in generated_raw:
+    if "S!A1:B1" in generated_raw:
+        result = cast("list[list[float]]", generated_raw["S!A1:B1"])
+        generated_result = {"S!A1": result[0][0], "S!B1": result[0][1]}
+    elif "S!A1:S!B1" in generated_raw:
         result = cast("list[list[float]]", generated_raw["S!A1:S!B1"])
         generated_result = {"S!A1": result[0][0], "S!B1": result[0][1]}
     else:

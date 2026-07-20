@@ -9,7 +9,9 @@ from excel_grapher.series_bindings.codegen_literals import (
     emit_compute_preamble_lines,
     emit_setter_type_alias_lines,
     py_scalar_literal,
+    python_annotation_for_dtype,
     resolution_includes_datetime,
+    setter_input_annotation,
 )
 from excel_grapher.series_bindings.types import SeriesResolution
 
@@ -50,6 +52,49 @@ def test_emit_compute_preamble_lines_include_datetime_when_needed() -> None:
     lines = emit_compute_preamble_lines(include_datetime=True)
     assert lines[0] == "import datetime"
     assert lines[-1] == ""
+
+
+def test_python_annotation_for_dtype() -> None:
+    assert python_annotation_for_dtype("float") == "float"
+    assert python_annotation_for_dtype("number") == "int | float"
+    assert python_annotation_for_dtype("datetime") == "datetime"
+    assert python_annotation_for_dtype("auto") is None
+    assert python_annotation_for_dtype(None) is None
+
+
+def test_setter_input_annotation_narrows_by_layout_and_dtype() -> None:
+    assert (
+        setter_input_annotation(
+            layout="scalar",
+            measure_dtype="float",
+            scalar_shorthand=True,
+        )
+        == "Records | Record | float"
+    )
+    assert (
+        setter_input_annotation(
+            layout="series",
+            measure_dtype="float",
+            scalar_shorthand=False,
+        )
+        == "Records | Record | Sequence[float] | DataFrameInput"
+    )
+    assert (
+        setter_input_annotation(
+            layout="matrix",
+            measure_dtype="float",
+            scalar_shorthand=False,
+        )
+        == "Records | Record | DataFrameInput"
+    )
+    assert (
+        setter_input_annotation(
+            layout="series",
+            measure_dtype=None,
+            scalar_shorthand=False,
+        )
+        == "SeriesInput"
+    )
 
 
 def test_resolution_includes_datetime() -> None:

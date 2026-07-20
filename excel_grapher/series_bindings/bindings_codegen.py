@@ -1,4 +1,4 @@
-"""Emit generated input setters and output compute functions from series bindings."""
+"""Emit generated input setters/readers and output compute functions from series bindings."""
 
 from __future__ import annotations
 
@@ -25,15 +25,20 @@ def emit_series_bindings_block(
     *,
     export_addresses: Iterable[str] | None = None,
     include_helpers: bool = True,
+    include_readers: bool = True,
+    include_leaf_indexes: bool = True,
     series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
     docstring_renderer: SeriesDocstringRendererSpec = "google",
 ) -> list[str]:
-    """Emit setter and/or output compute functions for a binding manifest.
+    """Emit setter, reader, and/or output compute functions for a binding manifest.
 
     When `include_helpers` is true the coercion helpers and type aliases are inlined
-    (single-file export). When false only the public setter/compute functions are
+    (single-file export). When false only the public setter/reader/compute functions are
     emitted; the helpers and aliases are expected to be importable from a separate
     module (the multi-module export's `_api_helpers`).
+
+    When `include_readers` / `include_leaf_indexes` are false, those symbols are omitted
+    so a dedicated `_readers` module can own them (modular export).
     """
     series_list = bindings_export_order(bindings)
     emit_input = any(has_input_direction(s) for s in series_list)
@@ -53,6 +58,8 @@ def emit_series_bindings_block(
                 export_addresses=export_addresses,
                 include_type_aliases=include_aliases,
                 include_helpers=include_helpers,
+                include_readers=include_readers,
+                include_leaf_indexes=include_leaf_indexes,
                 series_docstring_callback=series_docstring_callback,
                 docstring_renderer=docstring_renderer,
             )

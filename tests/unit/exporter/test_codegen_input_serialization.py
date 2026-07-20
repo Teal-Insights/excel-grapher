@@ -29,7 +29,7 @@ class _FakeGraph:
         self._nodes = nodes
         self._deps = deps or {}
 
-    def get_node(self, address: str) -> _Node | None:  # noqa: D401
+    def get_node(self, address: str) -> _Node | None:
         return self._nodes.get(address)
 
     def leaf_keys(self) -> list[str]:

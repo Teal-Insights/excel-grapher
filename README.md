@@ -42,13 +42,16 @@ Released under the [MIT license](LICENSE). Install from GitHub:
 **Using `uv` (recommended):**
 
 ```bash
-# Basic install
+# Basic install (NumPy-free)
 uv add git+https://github.com/Teal-Insights/excel-grapher
+
+# With vectorized operator / SUMPRODUCT acceleration
+uv add "excel-grapher[fast] @ git+https://github.com/Teal-Insights/excel-grapher"
 
 # With NetworkX support
 uv add "excel-grapher[networkx] @ git+https://github.com/Teal-Insights/excel-grapher"
 
-# With all optional dependencies
+# With all optional dependencies (includes `fast`)
 uv add "excel-grapher[all] @ git+https://github.com/Teal-Insights/excel-grapher"
 ```
 
@@ -58,8 +61,14 @@ uv add "excel-grapher[all] @ git+https://github.com/Teal-Insights/excel-grapher"
 pip install git+https://github.com/Teal-Insights/excel-grapher
 
 # With extras:
+pip install "excel-grapher[fast] @ git+https://github.com/Teal-Insights/excel-grapher"
 pip install "excel-grapher[networkx] @ git+https://github.com/Teal-Insights/excel-grapher"
+pip install "excel-grapher[all] @ git+https://github.com/Teal-Insights/excel-grapher"
 ```
+
+The default install is correct without NumPy. Install the **`fast`** extra when
+evaluating large workbooks and you want vectorized operator / `SUMPRODUCT`
+acceleration. Exported standalone code stays NumPy-free either way.
 
 ---
 

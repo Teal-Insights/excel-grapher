@@ -75,10 +75,12 @@ def expand_data_range(
     """Expand a binding `data_range` to canonical sheet-qualified cell addresses.
 
     Uses the same target expansion as `create_dependency_graph` (including
-    both-end sheet-qualified ranges like `Sheet1!A1:Sheet1!B2` and defined names).
+    both-end sheet-qualified ranges like `Sheet1!A1:Sheet1!B2`, which collapse
+    to single-prefix form, and defined names).
     """
+    # Sheet-qualified targets do not need named-range maps; skip the workbook open.
     nr, nrr, wb_sheets = _resolve_named_range_maps(
-        workbook=workbook,
+        workbook=None if "!" in data_range else workbook,
         named_ranges=named_ranges,
         named_range_ranges=named_range_ranges,
     )

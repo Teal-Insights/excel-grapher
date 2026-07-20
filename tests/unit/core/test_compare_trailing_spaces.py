@@ -7,16 +7,18 @@ trailing spaces as significant. These tests lock the Excel-aligned behavior
 so that incorrect "fix" does not land later.
 """
 
+# ruff: noqa: E402
 from __future__ import annotations
 
-import numpy as np
 import pytest
+
+np = pytest.importorskip("numpy")
 
 from excel_grapher.core.operators import xl_eq, xl_ne
 from excel_grapher.core.operators_reference import compare_scalars
 from excel_grapher.core.types import XlError
 from excel_grapher.runtime.lookup import xl_match
-from tests.unit.core.operators_test_helpers import as_ndarray
+from tests.unit.core.operators_test_helpers import array_tolist
 
 
 @pytest.mark.parametrize(
@@ -49,7 +51,7 @@ def test_xl_eq_and_xl_ne_preserve_trailing_spaces() -> None:
 def test_array_compare_preserves_trailing_spaces() -> None:
     left = np.array([["High", "High "], [" High", "high"]], dtype=object)
     right = np.array([["High ", "High "], ["High", "HIGH"]], dtype=object)
-    assert as_ndarray(xl_eq(left, right)).tolist() == [[False, True], [False, True]]
+    assert array_tolist(xl_eq(left, right)) == [[False, True], [False, True]]
 
 
 def test_match_exact_treats_trailing_spaces_as_significant() -> None:

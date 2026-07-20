@@ -15,7 +15,7 @@ _BOOL_FALSE = frozenset({"false", "0", "no"})
 _DATETIME_CLS = datetime
 _DATE_CLS = date
 
-__all__ = ["coerce_constant", "coerce_scalar"]
+__all__ = ["coerce_constant", "coerce_scalar", "validate_binding_scalar"]
 
 
 def _ensure_naive_datetime(value: datetime) -> datetime:
@@ -116,3 +116,82 @@ def coerce_scalar(raw: Any, read_as: str) -> Scalar:
 def coerce_constant(value: Any, *, read_as: str) -> Scalar:
     """Coerce a manifest constant using the effective read mode."""
     return coerce_scalar(value, read_as)
+
+
+def _type_error(dtype: str, raw: Any) -> TypeError:
+    return TypeError(f"expected {dtype}, got {type(raw).__name__}: {raw!r}")
+
+
+def _as_builtin_scalar(raw: Any) -> Any:
+    """Unwrap 0-d array-like scalars (e.g. numpy) to Python builtins via `.item()`.
+
+    Does not import numpy. Multi-element arrays keep their original value so later
+    isinstance checks reject them.
+    """
+    if raw is None or isinstance(
+        raw, (str, bytes, bytearray, bool, int, float, _DATETIME_CLS, _DATE_CLS)
+    ):
+        return raw
+    item = getattr(raw, "item", None)
+    if not callable(item):
+        return raw
+    try:
+        converted = item()
+    except (ValueError, TypeError, RuntimeError):
+        return raw
+    if converted is None or isinstance(
+        converted, (str, bool, int, float, _DATETIME_CLS, _DATE_CLS)
+    ):
+        return converted
+    return raw
+
+
+def validate_binding_scalar(raw: Any, dtype: str) -> Scalar:
+    """Validate a setter input value against a binding dtype.
+
+    Unlike `coerce_scalar`, this rejects values that are not already the expected
+    Python type (with limited safe coercions such as `int` -> `float`). Numpy
+    0-d numeric/bool scalars are accepted after conversion to builtins.
+
+    Args:
+        raw: Caller-supplied measure or field value.
+        dtype: Binding dtype (`string`, `int`, `float`, `number`, `bool`, `datetime`,
+            or `auto`).
+
+    Returns:
+        The validated scalar, possibly after a safe coercion.
+
+    Raises:
+        TypeError: When `raw` does not match `dtype`.
+        ValueError: When a datetime value is timezone-aware or `dtype` is unknown.
+    """
+    if raw is None or dtype == "auto":
+        return raw
+    raw = _as_builtin_scalar(raw)
+    if dtype == "float":
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            raise _type_error(dtype, raw)
+        return float(raw)
+    if dtype == "number":
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            raise _type_error(dtype, raw)
+        return raw
+    if dtype == "int":
+        if isinstance(raw, bool) or not isinstance(raw, int):
+            raise _type_error(dtype, raw)
+        return raw
+    if dtype == "bool":
+        if not isinstance(raw, bool):
+            raise _type_error(dtype, raw)
+        return raw
+    if dtype == "string":
+        if not isinstance(raw, str):
+            raise _type_error(dtype, raw)
+        return raw
+    if dtype == "datetime":
+        if isinstance(raw, _DATETIME_CLS):
+            return _ensure_naive_datetime(raw)
+        if isinstance(raw, _DATE_CLS):
+            return _normalize_date(raw)
+        raise _type_error(dtype, raw)
+    raise ValueError(f"Unknown binding dtype: {dtype!r}")

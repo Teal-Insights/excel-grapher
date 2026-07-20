@@ -1,29 +1,38 @@
 from __future__ import annotations
 
+import inspect
 import warnings
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
+from functools import wraps
 from math import isfinite
-from typing import cast
+from typing import Any, TypeVar, cast
 
 import fastpyxl.utils.cell
 
 from excel_grapher.core import CellValue, ExcelRange, XlError, XlErrorException
 from excel_grapher.core.addressing import split_sheet_qualified_address
+from excel_grapher.core.types import resolve_excel_range
 
-from .cache_context import EvalContext, EvalContextBase
+from .cache_context import EvalContext, EvalContextBase, HelperCacheKey
 
 __all__ = [
     "CircularReferenceWarning",
     "EvalContext",
     "EvalContextBase",
+    "HelperCacheKey",
     "circular_safe_cache",
     "coerce_inputs_dict",
+    "warn_circular_reference",
     "xl_cell",
     "xl_circular_reference",
     "xl_eval",
+    "xl_helper",
     "xl_iterative_compute",
+    "xl_memoize",
     "xl_range",
 ]
+
+_F = TypeVar("_F", bound=Callable[..., CellValue])
 
 _cell_cache: dict[Callable[[], CellValue], CellValue] = {}
 _computing: set[Callable[[], CellValue]] = set()
@@ -33,13 +42,18 @@ class CircularReferenceWarning(RuntimeWarning):
     """Warning emitted when a circular reference is encountered (default Excel mode)."""
 
 
-def xl_circular_reference() -> CellValue:
-    """Excel default behavior for circular references (non-iterative calculation)."""
+def warn_circular_reference(*, stacklevel: int = 2) -> None:
+    """Emit the standard circular-reference warning."""
     warnings.warn(
         "Circular reference detected; returning 0 (iterative calculation is disabled).",
         CircularReferenceWarning,
-        stacklevel=2,
+        stacklevel=stacklevel,
     )
+
+
+def xl_circular_reference() -> CellValue:
+    """Excel default behavior for circular references (non-iterative calculation)."""
+    warn_circular_reference(stacklevel=2)
     return 0
 
 
@@ -90,11 +104,15 @@ def _evaluate_address(
         ctx._record_dependency(ctx.stack[-1], address)
 
     if address in ctx.cache:
+        if address in ctx.circular_warning_roots:
+            warn_circular_reference(stacklevel=3)
         return _raise_if_error_value(ctx.cache[address])
 
     if address in ctx.computing:
         if ctx.iterative_enabled:
             return ctx.iteration_values.get(address, 0)
+        root = ctx.stack[0] if ctx.stack else address
+        ctx.circular_warning_roots.add(root)
         return xl_circular_reference()
 
     if address in ctx.inputs:
@@ -152,6 +170,84 @@ def xl_eval(
     return _evaluate_address(ctx, address, lambda: fn, preserve_structural_blank=False)
 
 
+def _freeze_helper_kwargs(kwargs: Mapping[str, Any]) -> tuple[tuple[str, Hashable], ...]:
+    """Freeze helper kwargs into a hashable, order-independent key fragment."""
+    frozen = tuple(sorted(kwargs.items()))
+    try:
+        hash(frozen)
+    except TypeError as exc:
+        raise TypeError(
+            f"xl_helper kwargs must be hashable for memoization (got {sorted(kwargs)!r})"
+        ) from exc
+    return cast(tuple[tuple[str, Hashable], ...], frozen)
+
+
+def _bound_helper_kwargs(
+    fn: Callable[..., CellValue],
+    ctx: EvalContextBase,
+    *args: Any,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Bind positional/keyword helper args after `ctx` into a kwargs dict."""
+    signature = inspect.signature(fn)
+    bound = signature.bind(ctx, *args, **kwargs)
+    bound.apply_defaults()
+    arguments = dict(bound.arguments)
+    ctx_param = next(iter(signature.parameters))
+    del arguments[ctx_param]
+    return arguments
+
+
+def xl_helper(ctx: EvalContextBase, fn: Callable[..., CellValue], /, **kwargs: Any) -> CellValue:
+    """Evaluate a parameterized helper under `ctx`, memoized by `(fn, kwargs)`.
+
+    Cache hits return or re-raise cached `XlError` values like `_evaluate_address`.
+    Re-entrant evaluation of an identical key returns `xl_circular_reference()`.
+
+    Args:
+        ctx: Per-run evaluation context holding `helper_cache`.
+        fn: Helper callable of the form `(ctx, **params) -> CellValue`.
+        **kwargs: Hashable helper parameters (fail loud if not hashable).
+
+    Returns:
+        The helper result for this `(fn, kwargs)` key.
+    """
+    key: HelperCacheKey = (fn, _freeze_helper_kwargs(kwargs))
+
+    if key in ctx.helper_cache:
+        return _raise_if_error_value(ctx.helper_cache[key])
+
+    if key in ctx.helper_computing:
+        return xl_circular_reference()
+
+    ctx.helper_computing.add(key)
+    try:
+        try:
+            value = fn(ctx, **kwargs)
+        except XlErrorException as exc:
+            ctx.helper_cache[key] = exc.code
+            raise
+        ctx.helper_cache[key] = value
+        return _raise_if_error_value(value)
+    finally:
+        ctx.helper_computing.discard(key)
+
+
+def xl_memoize(fn: _F) -> _F:
+    """Memoize a `(ctx, **params)` helper via `xl_helper`.
+
+    Recursive and cross-helper calls that invoke the decorated name share the
+    same `ctx.helper_cache` entries. Positional arguments after `ctx` are bound
+    through `inspect.signature(fn).bind(...)`.
+    """
+
+    @wraps(fn)
+    def wrapper(ctx: EvalContextBase, /, *args: Any, **kwargs: Any) -> CellValue:
+        return xl_helper(ctx, fn, **_bound_helper_kwargs(fn, ctx, *args, **kwargs))
+
+    return cast(_F, wrapper)
+
+
 def _parse_sheet_address(address: str) -> tuple[str, str] | None:
     return split_sheet_qualified_address(address)
 
@@ -177,7 +273,7 @@ def _parse_range_address(address: str) -> tuple[str, str, str] | XlError:
 
 
 def xl_range(ctx: EvalContext, address: str) -> CellValue:
-    """Evaluate a sheet-qualified range and return a 2D numpy array of values."""
+    """Evaluate a sheet-qualified range and return a nested list of values."""
     parsed = _parse_range_address(address)
     if isinstance(parsed, XlError):
         return parsed
@@ -196,7 +292,7 @@ def xl_range(ctx: EvalContext, address: str) -> CellValue:
         start_col_idx, end_col_idx = end_col_idx, start_col_idx
 
     rng = ExcelRange(sheet, start_row, start_col_idx, end_row, end_col_idx)
-    return rng.resolve(lambda addr: xl_cell(ctx, addr))
+    return cast(CellValue, resolve_excel_range(rng, lambda addr: xl_cell(ctx, addr)))
 
 
 def _convergence_delta(prev: CellValue, curr: CellValue) -> float:
@@ -259,6 +355,9 @@ def xl_iterative_compute(
     iterations = max(1, int(ctx.iterate_count))
     for _ in range(iterations):
         ctx.cache.clear()
+        ctx.helper_cache.clear()
+        ctx.helper_computing.clear()
+        ctx.circular_warning_roots.clear()
         ctx.computing.clear()
         ctx.stack.clear()
         ctx.iteration_values.clear()

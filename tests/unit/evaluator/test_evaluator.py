@@ -113,7 +113,7 @@ def test_evaluator_memoizes_cell_computation() -> None:
     with FormulaEvaluator(graph) as ev:
         assert ev.evaluate(["S!B1"]) == {"S!B1": 4.0}
         # A1 should be cached after evaluation
-        assert ev._cache["S!A1"] == 2  # noqa: SLF001
+        assert ev._cache["S!A1"] == 2
 
 
 def test_evaluator_detects_cycles() -> None:
@@ -123,6 +123,24 @@ def test_evaluator_detects_cycles() -> None:
     )
     with FormulaEvaluator(graph) as ev, pytest.warns(CircularReferenceWarning):
         assert ev.evaluate(["S!A1"]) == {"S!A1": 0}
+
+
+def test_evaluator_re_emits_circular_reference_warning_on_memoized_re_evaluate() -> None:
+    """Issue #130: repeated root evaluation must not silently drop cycle diagnostics."""
+    graph = _make_graph(
+        _make_node("S!A1", "=S!B1", None),
+        _make_node("S!B1", "=S!A1", None),
+    )
+    import warnings
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with FormulaEvaluator(graph) as evaluator:
+            evaluator.evaluate("S!A1")
+            evaluator.evaluate("S!A1")
+
+    assert len(caught) == 2
+    assert all(w.category is CircularReferenceWarning for w in caught)
 
 
 def test_evaluator_raises_for_unimplemented_function() -> None:

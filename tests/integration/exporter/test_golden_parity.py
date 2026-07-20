@@ -46,7 +46,9 @@ def test_golden_parity_mixed_features_small_graph() -> None:
         _make_node("S!B2", "=IF(S!A3,1,2)", None),  # 2 via Excel boolean coercion
         _make_node("S!B3", "=IFERROR(1/0,99)", None),  # 99 (DIV/0! caught)
         _make_node("S!B4", "=SUM(S!B2,S!B3)", None),  # 101
-        _make_node("S!C1", "=SUM(S!B1:S!B4)", None),  # includes boolean -> 1 + 2 + 99 + 101 = 203
+        _make_node(
+            "S!C1", "=SUM(S!B1:S!B4)", None
+        ),  # boolean in range ignored -> 2 + 99 + 101 = 202
     )
 
     targets = ["S!B1", "S!B2", "S!B3", "S!B4", "S!C1"]
@@ -56,7 +58,7 @@ def test_golden_parity_mixed_features_small_graph() -> None:
     assert result.generated_results["S!B2"] == 2
     assert result.generated_results["S!B3"] == 99
     assert result.generated_results["S!B4"] == 101.0
-    assert result.generated_results["S!C1"] == 203.0
+    assert result.generated_results["S!C1"] == 202.0
 
     # No OFFSET in this scenario, so dynamic OFFSET runtime should not be included.
     assert "_CELL_TABLE = {" not in result.generated_code

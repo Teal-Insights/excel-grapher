@@ -4,14 +4,24 @@ from typing import Protocol
 
 import fastpyxl.utils.cell
 
-from . import CellValue, ExcelRange, XlError, to_number
+from . import ExcelRange, FormulaValue, XlError, to_number
 from .address_keys import parse_address
 
 
+class ExcelRangeGeometry(Protocol):
+    """Minimal rectangular geometry shared by core and export-runtime ranges."""
+
+    sheet: str
+    start_row: int
+    start_col: int
+    end_row: int
+    end_col: int
+
+
 def index_excel_range(
-    base: ExcelRange,
-    row_num: CellValue | None,
-    col_num: CellValue | None,
+    base: ExcelRangeGeometry,
+    row_num: FormulaValue | None,
+    col_num: FormulaValue | None,
 ) -> ExcelRange | XlError:
     """Map INDEX(row,col) over *base* to an absolute range (single cell or slice).
 
@@ -116,7 +126,7 @@ def split_sheet_qualified_address(address: str) -> tuple[str, str] | None:
 _split_sheet_qualified_address = split_sheet_qualified_address
 
 
-def _in_bounds(rng: ExcelRange, bounds: WorkbookBoundsProtocol) -> bool:
+def _in_bounds(rng: ExcelRangeGeometry, bounds: WorkbookBoundsProtocol) -> bool:
     if rng.sheet != bounds.sheet:
         return False
     return (
@@ -126,11 +136,11 @@ def _in_bounds(rng: ExcelRange, bounds: WorkbookBoundsProtocol) -> bool:
 
 
 def offset_range(
-    base: ExcelRange,
-    rows: CellValue,
-    cols: CellValue,
-    height: CellValue | None = None,
-    width: CellValue | None = None,
+    base: ExcelRangeGeometry,
+    rows: FormulaValue,
+    cols: FormulaValue,
+    height: FormulaValue | None = None,
+    width: FormulaValue | None = None,
     *,
     bounds: WorkbookBoundsProtocol,
 ) -> ExcelRange | XlError:

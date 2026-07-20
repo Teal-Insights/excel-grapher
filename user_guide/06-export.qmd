@@ -21,6 +21,28 @@ with CodeGenerator(graph) as gen:
 
 If neither explicit targets nor target-marked nodes are available, code generation raises a `ValueError`.
 
+## Return-line unpacking
+
+By default, each formula cell function returns a single nested expression. For easier
+debugging of generated exports, you can hoist nested runtime calls into statement-level
+temporaries in evaluation order:
+
+```python
+code = CodeGenerator(graph, unpack_return=True).generate(targets)
+```
+
+With unpacking enabled, a cell like `=C5+1` that depends on a formula neighbour may emit:
+
+```python
+def cell_sheet1_c5(ctx):
+    _t1 = xl_eval(ctx, "Sheet1!B5", cell_sheet1_b5)
+    return xl_number(_t1) + xl_number(1.0)
+```
+
+Unpacking is conservative: `IF`/`CHOOSE` branches, `IFERROR`/`IFNA` thunks, and `IS*`
+argument lambdas stay lazy. Coercion helpers such as `xl_number` remain inline. The flag
+applies to formula cells and projected public-address alias wrappers.
+
 For a multi-file package, `generate_modules()` returns a `dict[str, str]` keyed by module filename
 (`__init__.py`, `api.py`, `data.py`, `runtime.py`, `internals.py`). Write those files into a package
 directory of your choice, then import the package as usual.

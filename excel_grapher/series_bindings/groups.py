@@ -1,7 +1,7 @@
 """View-level series binding groups: export sequencing and group manifest.
 
-Groups are a presentation concern of the generated `set_*`/`compute_*` API.
-They sequence code export and feed documentation tooling; they never affect
+Groups are a presentation concern of the generated `set_*`/`compute_*`/`read_*` API.
+They sequence code export and power `list_groups()` discovery; they never affect
 graph extraction, binding resolution, or record semantics.
 """
 
@@ -19,6 +19,7 @@ class GroupMember(TypedDict):
 
     id: str
     setter: str | None
+    reader: str | None
     compute: str | None
     order: int | None
 
@@ -34,7 +35,7 @@ class GroupNode(TypedDict):
 
 
 class GroupsManifest(TypedDict):
-    """Machine-readable group structure for documentation tooling."""
+    """Machine-readable group structure returned by generated `list_groups()`."""
 
     groups: list[GroupNode]
     ungrouped: list[GroupMember]
@@ -75,6 +76,21 @@ def _setter_name(series: dict[str, Any]) -> str | None:
     return None
 
 
+def _reader_name(series: dict[str, Any]) -> str | None:
+    normalized = normalize_series_entry(series)
+    input_block = normalized.get("input") or {}
+    setter = input_block.get("setter")
+    if not isinstance(setter, dict) or not setter.get("name"):
+        return None
+    reader = input_block.get("reader")
+    if isinstance(reader, dict) and reader.get("name"):
+        return str(reader["name"])
+    series_id = series.get("id")
+    if not series_id:
+        return None
+    return f"read_{series_id}"
+
+
 def _compute_name(series: dict[str, Any]) -> str | None:
     compute = (series.get("output") or {}).get("compute")
     if isinstance(compute, dict) and compute.get("name"):
@@ -86,6 +102,7 @@ def _member(series: dict[str, Any], order: int | None) -> GroupMember:
     return {
         "id": str(series.get("id", "")),
         "setter": _setter_name(series),
+        "reader": _reader_name(series),
         "compute": _compute_name(series),
         "order": order,
     }
@@ -177,18 +194,22 @@ def bindings_export_order(
 
 def grouped_public_names(
     bindings: WorkbookSeriesBindings | dict[str, Any],
-) -> tuple[list[str], list[str]]:
-    """Return unique setter and compute names in grouped export order."""
+) -> tuple[list[str], list[str], list[str]]:
+    """Return unique setter, reader, and compute names in grouped export order."""
     setters: list[str] = []
+    readers: list[str] = []
     computes: list[str] = []
     for series in bindings_export_order(bindings):
         setter = _setter_name(series)
         if setter is not None and setter not in setters:
             setters.append(setter)
+        reader = _reader_name(series)
+        if reader is not None and reader not in readers:
+            readers.append(reader)
         compute = _compute_name(series)
         if compute is not None and compute not in computes:
             computes.append(compute)
-    return setters, computes
+    return setters, readers, computes
 
 
 def _manifest_node(node: _TreeNode) -> GroupNode:
@@ -204,7 +225,7 @@ def _manifest_node(node: _TreeNode) -> GroupNode:
 def group_manifest(
     bindings: WorkbookSeriesBindings | dict[str, Any],
 ) -> GroupsManifest:
-    """Build the nested group manifest consumed by documentation tooling.
+    """Build the nested group manifest returned by generated `list_groups()`.
 
     Unlike `bindings_export_order`, a multi-membership binding appears under
     every group it references.

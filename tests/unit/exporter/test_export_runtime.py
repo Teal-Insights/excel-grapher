@@ -4,6 +4,8 @@ import pytest
 
 from excel_grapher.core import CellValue, XlError
 from excel_grapher.exporter.export_runtime import Range, XlErrorException
+from excel_grapher.exporter.export_runtime.error_funcs import xl_isnumber, xl_istext
+from excel_grapher.exporter.export_runtime.errors import xl_raise
 
 
 def test_xl_error_exception_carries_excel_error_code() -> None:
@@ -77,3 +79,14 @@ def test_range_row_and_column_views_preserve_laziness() -> None:
     assert rng.column(1).shape == (3, 1)
     assert rng.column(1).cell(3, 1) == "S!A3"
     assert calls == ["S!C2", "S!A3"]
+
+
+def test_xl_isnumber_istext_thunks_return_false_for_errors() -> None:
+    """Thunked ISNUMBER/ISTEXT catch raised errors and reject XlError sentinels."""
+    assert xl_isnumber(lambda: xl_raise(XlError.DIV)) is False
+    assert xl_isnumber(lambda: XlError.NA) is False
+    assert xl_isnumber(lambda: 2) is True
+    assert xl_istext(lambda: xl_raise(XlError.NA)) is False
+    assert xl_istext(lambda: XlError.DIV) is False
+    assert xl_istext(lambda: "hello") is True
+    assert xl_istext(lambda: 123) is False

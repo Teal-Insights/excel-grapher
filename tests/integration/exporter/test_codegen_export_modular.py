@@ -105,8 +105,10 @@ def test_codegen_generate_modules_emits_empty_discovery_helpers(tmp_path: Path) 
     api_py = files["api.py"]
     init_py = files["__init__.py"]
     assert "def list_setters() -> list[str]:" in api_py
+    assert "def list_readers() -> list[str]:" in api_py
     assert "def list_computes() -> list[str]:" in api_py
     assert "list_setters" in init_py
+    assert "list_readers" in init_py
     assert "list_computes" in init_py
 
     pkg_dir = tmp_path / "exported_discovery"
@@ -118,6 +120,7 @@ def test_codegen_generate_modules_emits_empty_discovery_helpers(tmp_path: Path) 
     try:
         pkg = importlib.import_module("exported_discovery")
         assert pkg.list_setters() == []
+        assert pkg.list_readers() == []
         assert pkg.list_computes() == []
     finally:
         sys.path.remove(str(tmp_path))
@@ -179,7 +182,7 @@ def test_codegen_generate_modules_has_no_ty_or_ruff_diagnostics(tmp_path: Path) 
         (pkg_root / filename).write_text(content, encoding="utf-8")
 
     ruff_fix = _run(
-        ["uv", "run", "ruff", "check", "--fix", str(pkg_root)],
+        ["uv", "run", "--no-sync", "ruff", "check", "--fix", str(pkg_root)],
         cwd=repo_root,
     )
     assert ruff_fix.returncode == 0, f"ruff --fix failed:\n{ruff_fix.stdout}\n{ruff_fix.stderr}"
@@ -188,6 +191,7 @@ def test_codegen_generate_modules_has_no_ty_or_ruff_diagnostics(tmp_path: Path) 
         [
             "uv",
             "run",
+            "--no-sync",
             "ty",
             "check",
             "--project",
@@ -201,7 +205,7 @@ def test_codegen_generate_modules_has_no_ty_or_ruff_diagnostics(tmp_path: Path) 
     assert ty.returncode == 0, f"ty failed:\n{ty.stdout}\n{ty.stderr}"
     assert ty.stderr.strip() == ""
 
-    ruff = _run(["uv", "run", "ruff", "check", str(pkg_root)], cwd=repo_root)
+    ruff = _run(["uv", "run", "--no-sync", "ruff", "check", str(pkg_root)], cwd=repo_root)
     assert ruff.returncode == 0, f"ruff failed after --fix:\n{ruff.stdout}\n{ruff.stderr}"
     assert ruff.stderr.strip() == ""
 
@@ -230,6 +234,7 @@ def test_codegen_generate_modules_has_no_ty_diagnostics_for_xlookup(tmp_path: Pa
         [
             "uv",
             "run",
+            "--no-sync",
             "ty",
             "check",
             "--project",
@@ -274,6 +279,7 @@ def test_codegen_generate_modules_has_no_ty_diagnostics_for_xludf_xlookup(
         [
             "uv",
             "run",
+            "--no-sync",
             "ty",
             "check",
             "--project",

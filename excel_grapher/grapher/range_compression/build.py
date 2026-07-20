@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import fastpyxl.utils.cell
 
-from excel_grapher.core.address_keys import parse_address
+from excel_grapher.core.address_keys import NodeShape, parse_address
 from excel_grapher.grapher.dependency_provenance import DependencyCause
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.node import NodeKey
@@ -82,7 +82,7 @@ def _compress_group(
     config: TacoBuildConfig,
 ) -> None:
     first = graph.get_node(group[0])
-    if first is None or not first.formula:
+    if first is None or not first.formula or first.sheet is None:
         return
     streams = parse_ref_streams(first.formula, default_sheet=first.sheet)
     if not streams:
@@ -128,6 +128,13 @@ def _collect_cell_stream(
     for dep_key in group:
         node = graph.get_node(dep_key)
         if node is None or not node.formula:
+            return None
+        if (
+            node.shape is not NodeShape.cell
+            or node.sheet is None
+            or node.column is None
+            or node.row is None
+        ):
             return None
         streams = parse_ref_streams(node.formula, default_sheet=node.sheet)
         if ref_idx >= len(streams):
@@ -223,6 +230,13 @@ def _collect_range_stream(
     for dep_key in group:
         node = graph.get_node(dep_key)
         if node is None or not node.formula:
+            return None
+        if (
+            node.shape is not NodeShape.cell
+            or node.sheet is None
+            or node.column is None
+            or node.row is None
+        ):
             return None
         streams = parse_ref_streams(node.formula, default_sheet=node.sheet)
         if ref_idx >= len(streams):

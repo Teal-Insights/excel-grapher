@@ -21,10 +21,12 @@ multiply workloads while keeping gap-sized (~15 cell) paths within ~5% of this
 baseline.
 """
 
+# ruff: noqa: E402
 from __future__ import annotations
 
-import numpy as np
 import pytest
+
+np = pytest.importorskip("numpy")
 
 from excel_grapher.core.operators import xl_concat, xl_div, xl_eq, xl_mul
 from excel_grapher.core.types import XlError
@@ -39,7 +41,7 @@ from tests.unit.core.operators_test_helpers import (
     ARITHMETIC_DISPATCH,
     COMPARE_DISPATCH,
     COMPARE_OPS,
-    as_ndarray,
+    array_tolist,
     assert_cellvalue_equal,
     reference_arithmetic,
     reference_compare,
@@ -121,7 +123,7 @@ def test_top_level_error_propagates_before_array_compare() -> None:
 def test_string_compare_uses_casefolded_fallback_when_numeric_coercion_fails() -> None:
     left = np.array([["TRUE", "AbC"]], dtype=object)
     right = np.array([[True, "aBc"]], dtype=object)
-    assert as_ndarray(xl_eq(left, right)).tolist() == [[True, True]]
+    assert array_tolist(xl_eq(left, right)) == [[True, True]]
 
 
 def test_baseline_fixture_exists_and_matches_schema() -> None:

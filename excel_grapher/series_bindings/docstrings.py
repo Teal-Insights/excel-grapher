@@ -19,7 +19,7 @@ from excel_grapher.series_bindings.types import SeriesResolution, WorkbookSeries
 if TYPE_CHECKING:
     from excel_grapher.series_bindings.docstring_renderers import SeriesDocstringRendererSpec
 
-SeriesFunctionKind = Literal["setter", "compute"]
+SeriesFunctionKind = Literal["setter", "compute", "reader"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +42,7 @@ class SeriesBindingDocstringContract:
     fields: Mapping[str, FieldContract]
     example_records: tuple[Mapping[str, object], ...]
     notes: str
+    positional_example_values: tuple[object, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,6 +220,29 @@ def _example_records_from_resolution(
     return tuple(examples)
 
 
+def _positional_example_values_from_resolution(
+    series: dict[str, Any],
+    resolution: SeriesResolution,
+) -> tuple[object, ...] | None:
+    """Return full-arity measure values for positional setter examples.
+
+    Positional coercion requires `len(values) == len(key_order)`. Keyed record
+    examples may stay partial, so this samples every leaf in canonical key order
+    rather than reusing the capped `example_records` list.
+    """
+    if str(series.get("layout", "")) != "series":
+        return None
+    key_fields = [str(field) for field in (series.get("key") or [])]
+    if len(key_fields) != 1 or resolution["requires_address"]:
+        return None
+    key_field = key_fields[0]
+    measure = _measure_concept(series)
+    leaves = sorted(resolution["leaves"], key=lambda leaf: leaf["key"][key_field])
+    if not leaves:
+        return None
+    return tuple(leaf["record"][measure] for leaf in leaves)
+
+
 def derive_doc_contract(
     series: dict[str, Any],
     *,
@@ -255,6 +279,7 @@ def derive_doc_contract(
         fields=field_contracts,
         example_records=_example_records_from_resolution(resolution, required_fields),
         notes=str(series.get("notes") or series.get("sdmx_notes") or ""),
+        positional_example_values=_positional_example_values_from_resolution(series, resolution),
     )
 
 
@@ -277,6 +302,8 @@ def _default_docstring(
         return str(notes)
     if function_kind == "setter":
         return f"Apply records for {series_id}."
+    if function_kind == "reader":
+        return f"Read the value for {series_id}."
     return f"Compute records for {series_id}."
 
 

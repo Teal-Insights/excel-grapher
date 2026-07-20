@@ -1,11 +1,14 @@
 """Shared helpers for operator semantics and fast-path parity tests."""
 
+# ruff: noqa: E402
 from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any, cast
 
-import numpy as np
+import pytest
+
+np = pytest.importorskip("numpy")
 
 from excel_grapher.core.operators import (
     xl_add,
@@ -28,12 +31,12 @@ from excel_grapher.core.operators_reference import (
     reference_concat_array,
     reference_sumproduct_arrays,
 )
-from excel_grapher.core.sumproduct import xl_sumproduct
-from excel_grapher.core.types import CellValue, XlError
+from excel_grapher.core.sumproduct import sumproduct_cells as xl_sumproduct
+from excel_grapher.core.types import CellValue, FormulaValue, XlError
 
 COMPARE_OPS = ("=", "<>", "<", ">", "<=", ">=")
 
-COMPARE_DISPATCH: dict[str, Callable[[CellValue, CellValue], CellValue]] = {
+COMPARE_DISPATCH: dict[str, Callable[[FormulaValue, FormulaValue], FormulaValue]] = {
     "=": xl_eq,
     "<>": xl_ne,
     "<": xl_lt,
@@ -42,7 +45,7 @@ COMPARE_DISPATCH: dict[str, Callable[[CellValue, CellValue], CellValue]] = {
     ">=": xl_ge,
 }
 
-ARITHMETIC_DISPATCH: dict[str, Callable[[CellValue, CellValue], CellValue]] = {
+ARITHMETIC_DISPATCH: dict[str, Callable[[FormulaValue, FormulaValue], FormulaValue]] = {
     "+": xl_add,
     "-": xl_sub,
     "*": xl_mul,
@@ -51,17 +54,27 @@ ARITHMETIC_DISPATCH: dict[str, Callable[[CellValue, CellValue], CellValue]] = {
 }
 
 
-def as_ndarray(value: object) -> np.ndarray:
-    assert isinstance(value, np.ndarray)
-    return cast(np.ndarray, value)
+def _to_nested_rows(value: object) -> object:
+    if isinstance(value, np.ndarray):
+        return cast(Any, value).tolist()
+    return value
+
+
+def array_tolist(value: object) -> list[list[object]]:
+    """Normalize operator array results (ndarray or nested list) for assertions."""
+    if isinstance(value, np.ndarray):
+        return cast(Any, value).tolist()
+    if isinstance(value, list):
+        return cast("list[list[object]]", value)
+    raise AssertionError(f"expected array result, got {type(value)!r}")
+
+
+def as_ndarray(value: object) -> np.ndarray | list[list[object]]:
+    return array_tolist(value)
 
 
 def assert_cellvalue_equal(actual: object, expected: object) -> None:
-    if isinstance(actual, np.ndarray) and isinstance(expected, np.ndarray):
-        assert actual.shape == expected.shape
-        assert cast(Any, actual).tolist() == cast(Any, expected).tolist()
-        return
-    assert actual == expected
+    assert _to_nested_rows(actual) == _to_nested_rows(expected)
 
 
 def reference_compare(op: str, left: CellValue, right: CellValue) -> object:
@@ -95,7 +108,7 @@ def _assert_public_matches_reference(
     if isinstance(expected, XlError):
         assert actual == expected
         return
-    assert isinstance(actual, np.ndarray)
+    assert isinstance(actual, (np.ndarray, list))
     assert_cellvalue_equal(actual, expected)
 
 
@@ -120,7 +133,7 @@ def assert_concat_matches_reference(left: CellValue, right: CellValue) -> None:
     assert not isinstance(pair, XlError)
     expected = reference_concat_array(pair[0], pair[1])
     actual = xl_concat(left, right)
-    assert isinstance(actual, np.ndarray)
+    assert isinstance(actual, (np.ndarray, list))
     assert_cellvalue_equal(actual, expected)
 
 

@@ -5,18 +5,21 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
+import fastpyxl
 import pytest
 import xlsxwriter
 
 from excel_grapher.grapher import create_dependency_graph
-from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.grapher.graph import DependencyGraph, Node
 from excel_grapher.series_bindings import (
     expand_data_range,
     load_series_bindings,
     resolve_series_binding,
     resolve_series_bindings,
 )
+from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
 
@@ -181,6 +184,95 @@ def test_resolve_series_bindings_workbook(tmp_path: Path) -> None:
     assert report["ok"] is True
     assert len(report["series"]) == 1
     assert report["series"][0]["requires_address"] is False
+
+
+def test_resolve_series_bindings_loads_workbook_once(tmp_path: Path) -> None:
+    """Multi-series resolve should share one workbook reader (issue #416)."""
+    wb_path = tmp_path / "demo.xlsx"
+    wb = fastpyxl.Workbook()
+    ws = wb.active
+    ws.title = "S"
+    ws["A1"] = "label"
+    ws["B1"] = 2020
+    ws["C1"] = 2021
+    for row, label, b, c in [(2, "x", 1.0, 2.0), (3, "y", 3.0, 4.0)]:
+        ws[f"A{row}"] = label
+        ws[f"B{row}"] = b
+        ws[f"C{row}"] = c
+    wb.save(wb_path)
+
+    graph = DependencyGraph()
+    for col, row, val in [("B", 2, 1.0), ("C", 2, 2.0), ("B", 3, 3.0), ("C", 3, 4.0)]:
+        graph.add_node(
+            Node(
+                sheet="S",
+                column=col,
+                row=row,
+                formula=None,
+                normalized_formula=None,
+                value=val,
+                is_leaf=True,
+            )
+        )
+
+    def series(series_id: str, row: int) -> dict[str, Any]:
+        return {
+            "id": series_id,
+            "sheet": "S",
+            "layout": "matrix",
+            "data_range": f"S!B{row}:C{row}",
+            "key": ["INDICATOR", "TIME_PERIOD"],
+            "input": {"mode": "leaf", "setter": {"name": f"set_{series_id}"}},
+            "structure": {
+                "dimensions": [
+                    {
+                        "id": "INDICATOR",
+                        "concept": "INDICATOR",
+                        "role": "key",
+                        "scope": "cell",
+                        "bind": {
+                            "kind": "row_label",
+                            "label_column": "A",
+                            "fill": True,
+                            "read": "string",
+                        },
+                    },
+                    {
+                        "id": "TIME_PERIOD",
+                        "concept": "TIME_PERIOD",
+                        "role": "key",
+                        "scope": "cell",
+                        "bind": {"kind": "column_header", "header_row": 1, "read": "int"},
+                    },
+                ],
+                "measure": {
+                    "concept": "OBS_VALUE",
+                    "dtype": "float",
+                    "bind": {"kind": "data_cell", "read": "float"},
+                },
+            },
+        }
+
+    bindings: WorkbookSeriesBindings = {
+        "schema_version": "1.4.0",
+        "workbook": wb_path.name,
+        "series": [series("s2", 2), series("s3", 3)],
+    }
+    calls: list[dict[str, Any]] = []
+    real_load = fastpyxl.load_workbook
+
+    def wrapped(*args: Any, **kwargs: Any):
+        calls.append(dict(kwargs))
+        return real_load(*args, **kwargs)
+
+    with patch("fastpyxl.load_workbook", side_effect=wrapped):
+        report = resolve_series_bindings(graph, bindings, workbook=wb_path)
+
+    assert report["ok"] is True
+    assert len(report["series"]) == 2
+    assert len(calls) == 1
+    assert calls[0].get("data_only") is True
+    assert calls[0].get("read_only") is False
 
 
 def _write_bool_workbook(path: Path) -> None:

@@ -3,17 +3,22 @@ from __future__ import annotations
 import re
 import typing
 
+import pytest
+
 from excel_grapher.core.address_keys import (
     NormalizedAddress,
+    canonical_cell_coord,
     format_cell_key,
     format_key,
     make_node_key_sort_key,
     normalize_key,
     quoted_sheet_prefix_regex,
     sort_node_keys,
+    split_address_on_colon,
     unescape_formula_sheet_name,
 )
 from excel_grapher.grapher.node import NodeKey
+from excel_grapher.grapher.target_expansion import split_range_target_on_colon
 
 
 def test_normalized_address_is_str_type_alias() -> None:
@@ -25,6 +30,66 @@ def test_normalize_key_returns_normalized_address() -> None:
     assert hints["return"] is NormalizedAddress
     result: NormalizedAddress = normalize_key("'Sheet1'!A1")
     assert result == "Sheet1!A1"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("Sheet1!$A$1", "Sheet1!A1"),
+        ("Sheet1!a1", "Sheet1!A1"),
+        ("Sheet1!A1:$A$3", "Sheet1!A1:A3"),
+        ("Sheet1!$A$1:$B$2", "Sheet1!A1:B2"),
+        ("Sheet1!A1:Sheet1!$A$3", "Sheet1!A1:A3"),
+        ("Sheet1!a1:b2", "Sheet1!A1:B2"),
+        ("Sheet1!$A:$A", "Sheet1!A:A"),
+        ("Sheet1!$1:$1", "Sheet1!1:1"),
+        ("Sheet1!$A$1:Sheet2!$B$2", "Sheet1!A1:Sheet2!B2"),
+    ],
+)
+def test_normalize_key_canonicalizes_cell_coords(raw: str, expected: str) -> None:
+    assert normalize_key(raw) == expected
+
+
+@pytest.mark.parametrize(
+    ("cell", "expected"),
+    [
+        ("A1", "A1"),
+        ("$A$1", "A1"),
+        ("a1", "A1"),
+        ("$b$10", "B10"),
+        ("A", "A"),
+        ("$A", "A"),
+        ("a", "A"),
+        ("1", "1"),
+        ("$1", "1"),
+        ("01", "1"),
+    ],
+)
+def test_canonical_cell_coord(cell: str, expected: str) -> None:
+    assert canonical_cell_coord(cell) == expected
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "Sheet1!A1:A3",
+        "Sheet1!A1:Sheet1!A3",
+        "'My Sheet'!A1:B2",
+        "'A:B'!A1",
+        "'O''Neil'!A1:B2",
+        "Sheet1!A1",
+    ],
+)
+def test_split_range_target_on_colon_delegates_to_split_address_on_colon(
+    address: str,
+) -> None:
+    assert split_range_target_on_colon(address) == split_address_on_colon(address)
+
+
+def test_split_address_on_colon_ignores_colon_inside_quoted_sheet() -> None:
+    assert split_address_on_colon("'A:B'!C1") is None
+    assert split_address_on_colon("'A:B'!C1:D2") == ("'A:B'!C1", "D2")
+    assert split_address_on_colon("'O''Neil'!A1:B2") == ("'O''Neil'!A1", "B2")
 
 
 def test_format_helpers_return_normalized_address() -> None:
@@ -86,6 +151,22 @@ def test_quoted_sheet_prefix_regex_matches_doubled_apostrophe_escape() -> None:
     assert unescape_formula_sheet_name(match.group("sheet")) == "O'Neil"
 
 
-def test_unescape_formula_sheet_name() -> None:
-    assert unescape_formula_sheet_name("O''Neil") == "O'Neil"
-    assert unescape_formula_sheet_name("It''s Data") == "It's Data"
+def test_normalize_key_canonicalizes_one_row_ranges() -> None:
+    assert normalize_key("Sheet1!Y63:D63") == "Sheet1!D63:Y63"
+    assert normalize_key("Sheet1!D63:Sheet1!Y63") == "Sheet1!D63:Y63"
+    assert normalize_key("Sheet1!$D$63:$Y$63") == "Sheet1!D63:Y63"
+    assert normalize_key("'Sheet1'!D63:Y63") == "Sheet1!D63:Y63"
+
+
+def test_sort_node_keys_orders_row_keys_by_min_col() -> None:
+    sheet_order = ["Sheet1"]
+    keys = [
+        "Sheet1!B64",
+        "Sheet1!D63:Y63",
+        "Sheet1!A63",
+    ]
+    assert sort_node_keys(keys, sheet_order=sheet_order) == [
+        "Sheet1!A63",
+        "Sheet1!D63:Y63",
+        "Sheet1!B64",
+    ]

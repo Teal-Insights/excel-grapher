@@ -23,6 +23,8 @@ __all__ = [
     "xl_isblank",
     "xl_iserror",
     "xl_isna",
+    "xl_isnumber",
+    "xl_istext",
 ]
 
 
@@ -89,3 +91,24 @@ def xl_isblank(value_fn: Callable[[], CellValue]) -> bool:
             return False
         value = value.value_at(1, 1)
     return value is None
+
+
+def xl_isnumber(value_fn: Callable[[], CellValue]) -> bool:
+    """Excel ISNUMBER: False for errors; True only for non-bool numbers."""
+    try:
+        value = _resolve_scalar(value_fn)
+    except XlErrorException:
+        return False
+    if isinstance(value, XlError):
+        return False
+    return not isinstance(value, bool) and isinstance(value, (int, float))
+
+
+def xl_istext(value_fn: Callable[[], CellValue]) -> bool:
+    """Excel ISTEXT: False for errors; True only for non-error strings."""
+    try:
+        value = _resolve_scalar(value_fn)
+    except XlErrorException:
+        return False
+    # XlError subclasses str; Excel ISTEXT returns FALSE for error values.
+    return isinstance(value, str) and not isinstance(value, XlError)

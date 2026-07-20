@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Hashable, Iterable
 from dataclasses import dataclass, field
+from typing import TypeAlias
 
 from excel_grapher.core import CellValue
 
-__all__ = ["EvalContext", "EvalContextBase"]
+__all__ = ["EvalContext", "EvalContextBase", "HelperCacheKey"]
+
+HelperCacheKey: TypeAlias = tuple[Hashable, tuple[tuple[str, Hashable], ...]]
 
 
 @dataclass(slots=True)
@@ -18,6 +21,9 @@ class EvalContextBase:
     resolver: Callable[[str], Callable[[EvalContext], CellValue] | None]
     cache: dict[str, CellValue] = field(default_factory=dict)
     computing: set[str] = field(default_factory=set)
+    circular_warning_roots: set[str] = field(default_factory=set)
+    helper_cache: dict[HelperCacheKey, CellValue] = field(default_factory=dict)
+    helper_computing: set[HelperCacheKey] = field(default_factory=set)
     iterative_enabled: bool = False
     iterate_count: int = 100
     iterate_delta: float = 0.001
@@ -39,7 +45,14 @@ class EvalContext(EvalContextBase):
         self.reverse_deps.setdefault(child, set()).add(parent)
 
     def invalidate(self, addresses: Iterable[str]) -> None:
-        """Invalidate cached values for the given addresses and their dependents."""
+        """Invalidate cached values for the given addresses and their dependents.
+
+        Helper memos are not address-dep-tracked, so any address invalidation
+        clears `helper_cache` and `helper_computing` entirely.
+        """
+        self.helper_cache.clear()
+        self.helper_computing.clear()
+
         to_visit = list(addresses)
         seen: set[str] = set()
         while to_visit:
@@ -49,6 +62,7 @@ class EvalContext(EvalContextBase):
             seen.add(addr)
 
             self.cache.pop(addr, None)
+            self.circular_warning_roots.discard(addr)
             self.computing.discard(addr)
 
             dependents = list(self.reverse_deps.get(addr, set()))

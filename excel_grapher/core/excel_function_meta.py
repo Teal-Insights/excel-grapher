@@ -15,6 +15,9 @@ from typing import Literal, TypeAlias
 
 ArgRole: TypeAlias = Literal["value", "ref_only"]
 
+# Sufficient for Excel varargs (SUM, SUMPRODUCT, AND, …).
+_ALL_ARGS: frozenset[int] = frozenset(range(32))
+
 
 @dataclass(frozen=True, slots=True)
 class ExcelFunctionMeta:
@@ -36,20 +39,35 @@ FUNCTION_META: dict[str, ExcelFunctionMeta] = {
     "CONCAT": ExcelFunctionMeta("CONCAT", ()),
 }
 
-# Functions whose range arguments must stay as object-dtype ndarrays (evaluator + codegen).
-NUMPY_ARRAY_ARG_INDICES: dict[str, frozenset[int]] = {
+# Multi-cell args bound as lazy `Range` (selective or full-scan Grid consumers).
+# Unlisted multi-cell args become `#VALUE!`.
+GRID_RANGE_ARG_INDICES: dict[str, frozenset[int]] = {
     "LOOKUP": frozenset({1, 2}),
     "VLOOKUP": frozenset({1}),
     "HLOOKUP": frozenset({1}),
-    "INDEX": frozenset({0}),
     "MATCH": frozenset({1}),
-    "SUMPRODUCT": frozenset(range(10)),
+    "XLOOKUP": frozenset({1, 2}),
+    "SUM": _ALL_ARGS,
+    "AVERAGE": _ALL_ARGS,
+    "MIN": _ALL_ARGS,
+    "MAX": _ALL_ARGS,
+    "COUNT": _ALL_ARGS,
+    "COUNTA": _ALL_ARGS,
+    "COUNTIF": frozenset({0}),
+    "AVERAGEIF": frozenset({0, 2}),
+    "STDEV": _ALL_ARGS,
+    "LARGE": frozenset({0}),
+    "NPV": frozenset(range(1, 32)),
+    "RANK": frozenset({1}),
+    "SUMPRODUCT": _ALL_ARGS,
+    "AND": _ALL_ARGS,
+    "OR": _ALL_ARGS,
 }
 
 
-def numpy_array_arg_indices(function_name: str) -> frozenset[int]:
-    """Return argument indices that keep numpy arrays for ``function_name``."""
-    return NUMPY_ARRAY_ARG_INDICES.get(function_name.upper(), frozenset())
+def grid_range_arg_indices(function_name: str) -> frozenset[int]:
+    """Return argument indices that keep lazy `Range` for ``function_name``."""
+    return GRID_RANGE_ARG_INDICES.get(function_name.upper(), frozenset())
 
 
 def is_ref_only_arg(function_name: str, arg_index: int) -> bool:

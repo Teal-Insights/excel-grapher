@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from excel_grapher.core.address_keys import NodeShape
 from excel_grapher.core.formula_ast import (
     CellRefNode,
     FormulaParseError,
@@ -329,6 +330,13 @@ def snapshot_transit_node(graph: DependencyGraph, key: NodeKey) -> ProjectedNode
     node = graph.get_node(key)
     if node is None:
         raise KeyError(key)
+    if (
+        node.shape is not NodeShape.cell
+        or node.sheet is None
+        or node.column is None
+        or node.row is None
+    ):
+        raise ValueError(f"ProjectedNodeSnapshot requires a cell node: {key}")
     return ProjectedNodeSnapshot(
         address=key,
         sheet=node.sheet,

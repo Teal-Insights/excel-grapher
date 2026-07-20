@@ -177,4 +177,4 @@ def test_keyless_scalar_codegen_signature_uses_scalar_alias(tmp_path: Path) -> N
 
     assert "Scalar: TypeAlias = str | int | float | bool | None" in code
     assert "Scalar: TypeAlias = str | int | float | bool | datetime | None" not in code
-    assert "records: Records | Record | Scalar," in code
+    assert "records: Records | Record | str," in code

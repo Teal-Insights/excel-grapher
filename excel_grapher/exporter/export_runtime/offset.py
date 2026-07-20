@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import TypeAlias, cast
 
 import fastpyxl.utils.cell
 
@@ -13,9 +13,20 @@ from excel_grapher.core.types import XlErrorException
 from excel_grapher.runtime.cache import EvalContext, _parse_range_address, xl_cell
 
 from .ranges import Range
-from .values import CellValue, ExcelRange, as_scalar
+from .values import CellValue, ExcelRange, Scalar, as_scalar
 
-__all__ = ["xl_index_ref", "xl_offset", "xl_offset_ref", "xl_range", "xl_range_rows"]
+__all__ = [
+    "OffsetRefInfo",
+    "xl_index_ref",
+    "xl_offset",
+    "xl_offset_ref",
+    "xl_range",
+    "xl_range_rows",
+]
+
+# Address metadata for the INDEX/OFFSET reference pair, not a worksheet value.
+# Single-cell: (sheet, row, col). Rectangle: (sheet, r1, c1, r2, c2).
+OffsetRefInfo: TypeAlias = tuple[str, int, int] | tuple[str, int, int, int, int]
 
 
 def _format_address(sheet: str, row: int, col: int) -> str:
@@ -31,15 +42,15 @@ def _number_or_raise(value: CellValue) -> float:
 
 
 def _ctx_range(ctx: EvalContext, sheet: str, r1: int, c1: int, r2: int, c2: int) -> Range:
-    def resolve(address: str) -> Any:
+    # Leave the resolver unannotated: embed strips `excel_grapher.core` imports, so
+    # aliases like `CellValue as CoreCellValue` never appear in generated runtime.py.
+    def resolve(address: str):
         return xl_cell(ctx, address)
 
     return Range(sheet, r1, c1, r2, c2, resolve)
 
 
-def _range_from_ref_info(
-    ref: ExcelRange | tuple[str, int, int] | tuple[str, int, int, int, int],
-) -> ExcelRange:
+def _range_from_ref_info(ref: ExcelRange | OffsetRefInfo) -> ExcelRange:
     """Normalize generated reference metadata into an `ExcelRange`."""
     if isinstance(ref, ExcelRange):
         return ref
@@ -64,16 +75,43 @@ def _range_from_ref_info(
             raise XlErrorException(XlError.VALUE)
 
 
+def _as_addressing_scalar(value: CellValue | None) -> Scalar | None:
+    """Collapse export-runtime values to scalars for shared addressing helpers."""
+    if value is None:
+        return None
+    return as_scalar(value)
+
+
+def _export_range_from_geometry(
+    sheet: str, start_row: int, start_col: int, end_row: int, end_col: int
+) -> ExcelRange:
+    """Build an export-runtime `ExcelRange` from absolute coordinates."""
+    return ExcelRange(
+        sheet=sheet,
+        start_row=start_row,
+        start_col=start_col,
+        end_row=end_row,
+        end_col=end_col,
+    )
+
+
 def xl_index_ref(
-    ref: ExcelRange | tuple[str, int, int] | tuple[str, int, int, int, int],
+    ref: ExcelRange | OffsetRefInfo,
     row_num: CellValue | None,
     col_num: CellValue | None,
-) -> tuple[str, int, int] | tuple[str, int, int, int, int]:
-    """Return INDEX reference metadata, raising on Excel reference errors."""
+) -> OffsetRefInfo:
+    """Return INDEX address metadata for OFFSET, not a cell value.
+
+    Pass the result to `xl_offset` (or `xl_offset_ref`). Scalar INDEX reads are
+    emitted as `xl_offset(ctx, xl_index_ref(...), 0, 0)`.
+
+    Raises:
+        XlErrorException: On Excel reference errors such as `#REF!`.
+    """
     out = index_excel_range(
-        cast("Any", _range_from_ref_info(ref)),
-        cast("Any", row_num),
-        cast("Any", col_num),
+        _range_from_ref_info(ref),
+        _as_addressing_scalar(row_num),
+        _as_addressing_scalar(col_num),
     )
     if isinstance(out, XlError):
         raise XlErrorException(out)
@@ -83,13 +121,21 @@ def xl_index_ref(
 
 
 def xl_offset_ref(
-    ref: ExcelRange | tuple[str, int, int] | tuple[str, int, int, int, int],
+    ref: ExcelRange | OffsetRefInfo,
     rows: CellValue,
     cols: CellValue,
     height: CellValue | None = None,
     width: CellValue | None = None,
 ) -> ExcelRange:
-    """Return OFFSET reference metadata, raising on Excel reference errors."""
+    """Return OFFSET address metadata, raising on Excel reference errors.
+
+    Unlike `xl_offset`, this does not evaluate cells — it only relocates the
+    reference rectangle. `ref` is typically an `OffsetRefInfo` from
+    `xl_index_ref` or a literal range tuple.
+
+    Raises:
+        XlErrorException: On Excel reference errors such as `#REF!`.
+    """
     base_range = _range_from_ref_info(ref)
 
     class _UnboundedSheet:
@@ -100,31 +146,38 @@ def xl_offset_ref(
         max_col = 1_000_000_000
 
     out = offset_range(
-        cast("Any", base_range),
-        cast("Any", rows),
-        cast("Any", cols),
-        cast("Any", height),
-        cast("Any", width),
+        base_range,
+        as_scalar(rows),
+        as_scalar(cols),
+        _as_addressing_scalar(height),
+        _as_addressing_scalar(width),
         bounds=_UnboundedSheet(),
     )
     if isinstance(out, XlError):
         raise XlErrorException(out)
-    return cast("ExcelRange", out)
+    return _export_range_from_geometry(
+        out.sheet, out.start_row, out.start_col, out.end_row, out.end_col
+    )
 
 
 def xl_offset(
     ctx: EvalContext,
-    ref_info: tuple[str, int, int] | tuple[str, int, int, int, int] | XlError,
+    ref_info: OffsetRefInfo,
     rows: CellValue,
     cols: CellValue,
     height: CellValue | None = None,
     width: CellValue | None = None,
 ) -> CellValue:
+    """Evaluate OFFSET from `ref_info`, returning a cell value or range.
+
+    `ref_info` is typically produced by `xl_index_ref`. For a scalar INDEX
+    result use `rows=0`, `cols=0`.
+
+    Raises:
+        XlErrorException: On Excel reference or coercion errors.
+    """
     rr = _number_or_raise(rows)
     cc = _number_or_raise(cols)
-
-    if isinstance(ref_info, XlError):
-        raise XlErrorException(ref_info)
 
     match ref_info:
         case (sheet, base_row, base_col):
@@ -150,6 +203,7 @@ def xl_offset(
 
     if h == 1 and w == 1:
         addr = _format_address(sheet, target_row, target_col)
+        # Scalar OFFSET results are CellValue; multi-cell returns a lazy Range.
         return cast("CellValue", xl_cell(ctx, addr))
 
     return _ctx_range(ctx, sheet, target_row, target_col, target_row + h - 1, target_col + w - 1)

@@ -1,15 +1,18 @@
 """Vectorized ``xl_sumproduct`` fast path."""
 
+# ruff: noqa: E402
 from __future__ import annotations
 
-import numpy as np
+import pytest
+
+np = pytest.importorskip("numpy")
 
 from excel_grapher.core.operators import xl_eq, xl_mul
 from excel_grapher.core.operators_fastpath import (
     MIN_OPERATOR_FASTPATH_CELLS,
     try_fastpath_sumproduct,
 )
-from excel_grapher.core.sumproduct import xl_sumproduct
+from excel_grapher.core.sumproduct import sumproduct_cells as xl_sumproduct
 from excel_grapher.core.types import XlError
 from tests.bench.operators_bench import category_column, numeric_column, numeric_string_column
 from tests.unit.core.operators_test_helpers import assert_sumproduct_matches_reference
@@ -39,7 +42,7 @@ def test_sumproduct_fastpath_matches_reference_on_criteria_chain() -> None:
     categories = category_column(LARGE_SHAPE, seed=61)
     values = numeric_column(LARGE_SHAPE, seed=62)
     criteria = xl_mul(xl_eq(categories, "Software"), values)
-    assert isinstance(criteria, np.ndarray)
+    assert isinstance(criteria, (np.ndarray, list))
     assert_sumproduct_matches_reference(criteria)
 
 

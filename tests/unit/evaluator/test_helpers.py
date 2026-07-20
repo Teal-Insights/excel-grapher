@@ -1,5 +1,7 @@
-import numpy as np
+# ruff: noqa: E402
 import pytest
+
+np = pytest.importorskip("numpy")
 
 from excel_grapher.evaluator.helpers import (
     to_bool,
@@ -21,7 +23,8 @@ def test_to_number_basic_types() -> None:
     assert to_number(False) == 0.0
     assert to_number(3) == 3.0
     assert to_number(3.5) == 3.5
-    assert to_number("  ") == 0.0
+    assert to_number("") == XlError.VALUE
+    assert to_number("  ") == XlError.VALUE
     assert to_number("2") == 2.0
     assert to_number("2.5") == 2.5
     assert to_number("abc") == XlError.VALUE
@@ -63,7 +66,7 @@ def test_helpers_accept_numpy_scalars() -> None:
         # --- Numeric-string coercion (matches FormulaEvaluator behavior) ---
         ("0", 0, True),
         ("  2.0 ", 2, True),
-        ("", 0, True),  # empty string coerces to 0.0 via to_number
+        ("", 0, True),  # exact empty text compares as 0 (Excel); not via to_number
         (None, 0, True),  # None coerces to 0.0 via to_number
         # --- Non-numeric strings fall back to case-insensitive string comparison ---
         ("TRUE", True, True),  # to_number("TRUE") fails -> compare to_string values

@@ -26,7 +26,7 @@ class TestDynamicRefTraceEvent:
     def test_frozen(self) -> None:
         event = DynamicRefTraceEvent(kind="infer", name="test", elapsed_s=0.0, detail={})
         with pytest.raises(AttributeError):
-            event.kind = "other"  # type: ignore[misc]  # ty: ignore[invalid-assignment]
+            event.kind = "other"  # ty: ignore[invalid-assignment]
 
     def test_defaults(self) -> None:
         event = DynamicRefTraceEvent(kind="infer", name="test", elapsed_s=0.0)

@@ -41,7 +41,7 @@ def test_g3_g10_match_workbook_cached_values(formula_graph: DependencyGraph) -> 
     """G3:G10 evaluate to the values saved in formula_test_cases.xlsx."""
     with FormulaEvaluator(formula_graph) as ev:
         for address, expected in EXPECTED.items():
-            computed = ev._evaluate_cell(address)  # noqa: SLF001
+            computed = ev._evaluate_cell(address)
             if isinstance(expected, (int, float)) and isinstance(computed, (int, float)):
                 assert computed == pytest.approx(expected), address
             else:

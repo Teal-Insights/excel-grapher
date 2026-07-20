@@ -21,12 +21,17 @@ def _core_modules(*, include_operators_fastpath: bool) -> list[tuple[str, Path]]
         if include_operators_fastpath
         else _OPERATORS_FASTPATH_STUB_MODULE
     )
+    grid_dir = _CORE_DIR / "grid"
     return [
         ("core.address_keys", _CORE_DIR / "address_keys.py"),
         ("core.types", _CORE_DIR / "types.py"),
+        ("core.grid.ranges", grid_dir / "ranges.py"),
+        ("core.grid.grid", grid_dir / "grid.py"),
         ("core.coercions", _CORE_DIR / "coercions.py"),
+        ("core.operator_thresholds", _CORE_DIR / "operator_thresholds.py"),
         ("core.operators_reference", _CORE_DIR / "operators_reference.py"),
         ("core.operators_fastpath", fastpath_path),
+        ("core.operator_maps", _CORE_DIR / "operator_maps.py"),
         ("core.operators", _CORE_DIR / "operators.py"),
         ("core.sumproduct", _CORE_DIR / "sumproduct.py"),
         ("core.addressing", _CORE_DIR / "addressing.py"),
@@ -34,6 +39,7 @@ def _core_modules(*, include_operators_fastpath: bool) -> list[tuple[str, Path]]
         ("core.math_funcs", _CORE_DIR / "math_funcs.py"),
         ("core.text_funcs", _CORE_DIR / "text_funcs.py"),
         ("core.reference_funcs", _CORE_DIR / "reference_funcs.py"),
+        ("core.lookup_funcs", _CORE_DIR / "lookup_funcs.py"),
     ]
 
 
@@ -93,7 +99,15 @@ _ALL_MODULE_NAMES: list[str] = [name for name, _ in _ALL_MODULES]
 
 # Top-level names that are stdlib so emitted "import X" order satisfies ruff isort (I001).
 _ISORT_STDLIB: frozenset[str] = frozenset(
-    {"collections", "dataclasses", "enum", "typing", "warnings"}
+    {
+        "collections",
+        "dataclasses",
+        "enum",
+        "functools",
+        "inspect",
+        "typing",
+        "warnings",
+    }
 )
 
 
@@ -103,13 +117,13 @@ class _RuntimeNameCollector(ast.NodeVisitor):
     def __init__(self) -> None:
         self.names: set[str] = set()
 
-    def visit_Name(self, node: ast.Name) -> None:  # noqa: N802
+    def visit_Name(self, node: ast.Name) -> None:
         self.names.add(node.id)
 
-    def visit_arg(self, node: ast.arg) -> None:  # noqa: N802
+    def visit_arg(self, node: ast.arg) -> None:
         return
 
-    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:  # noqa: N802
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         if node.value is not None:
             self.visit(node.value)
 
@@ -124,13 +138,13 @@ class _RuntimeNameCollector(ast.NodeVisitor):
         for stmt in node.body:
             self.visit(stmt)
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self._visit_function_like(node)
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # noqa: N802
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         self._visit_function_like(node)
 
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
         for base in node.bases:
             self.visit(base)
         for kw in node.keywords:
@@ -306,7 +320,7 @@ class _AllNameCollector(ast.NodeVisitor):
     def __init__(self) -> None:
         self.names: set[str] = set()
 
-    def visit_Name(self, node: ast.Name) -> None:  # noqa: N802
+    def visit_Name(self, node: ast.Name) -> None:
         self.names.add(node.id)
 
 
@@ -474,10 +488,19 @@ def emit_runtime(
         refs = _referenced_names(node)
         symbol_deps[name] = {r for r in refs if r in symbol_to_node and r != name}
 
+    # `HelperCacheKey` is only named in `EvalContextBase` field annotations.
+    # Annotation identifiers are ignored by `_RuntimeNameCollector` (avoids an
+    # `EvalContext` ↔ `EvalContextBase` cycle via the resolver annotation), so
+    # wire the alias explicitly whenever the context base is emitted.
+    if "EvalContextBase" in symbol_deps and "HelperCacheKey" in symbol_to_node:
+        symbol_deps["EvalContextBase"].add("HelperCacheKey")
+
     seed = set(required_symbols) | {
         "XlError",
         "ExcelRange",
         "CellValue",
+        "NestedGrid",
+        "FormulaValue",
         "NormalizedAddress",
     }
 

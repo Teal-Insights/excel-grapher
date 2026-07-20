@@ -77,7 +77,7 @@ def to_networkx(
     validate_max_formula_length(max_formula_length)
 
     try:
-        import networkx as nx  # type: ignore[import-not-found]
+        import networkx as nx
     except Exception as e:  # pragma: no cover
         raise ImportError("networkx is not installed; add it to use to_networkx()") from e
 
@@ -109,12 +109,15 @@ def to_networkx(
     for key in graph:
         for dep in graph.get_dependencies(key):
             edge = graph.get_edge_attrs(key, dep)
+            resolved = graph.resolve_endpoint(dep)
+            if resolved is None:
+                continue
             edge_kwargs: dict[str, Any] = {}
             if edge.guard is not None:
                 edge_kwargs["guard"] = edge.guard
             if edge.provenance is not None:
                 edge_kwargs["provenance"] = edge.provenance
-            G.add_edge(key, dep, **edge_kwargs)
+            G.add_edge(key, resolved, **edge_kwargs)
 
     return G
 
@@ -151,13 +154,16 @@ def to_graphviz(
         lines.append(f'  "{_dot_escape(key)}" [label="{label}" shape={shape}{style}];')
 
     for key in graph.keys(order="workbook"):
-        for dep in graph.keys(order="workbook", source=graph.get_dependencies(key)):
+        for dep in graph.get_dependencies(key):
+            resolved = graph.resolve_endpoint(dep)
+            if resolved is None or resolved not in graph:
+                continue
             guard = graph.get_edge_guard(key, dep)
             if guard is None:
-                lines.append(f'  "{_dot_escape(key)}" -> "{_dot_escape(dep)}";')
+                lines.append(f'  "{_dot_escape(key)}" -> "{_dot_escape(resolved)}";')
             else:
                 lines.append(
-                    f'  "{_dot_escape(key)}" -> "{_dot_escape(dep)}"'
+                    f'  "{_dot_escape(key)}" -> "{_dot_escape(resolved)}"'
                     f' [style=dashed label="{_guard_label(guard)}"];'
                 )
 
@@ -216,15 +222,16 @@ def to_mermaid(
 
     node_set = set(node_keys)
     for key in node_keys:
-        for dep in graph.keys(order="workbook", source=graph.get_dependencies(key)):
-            if dep not in node_set:
+        for dep in graph.get_dependencies(key):
+            resolved = graph.resolve_endpoint(dep)
+            if resolved is None or resolved not in node_set:
                 continue
             guard = graph.get_edge_guard(key, dep)
             if guard is None:
-                lines.append(f"  {safe_id(key)} --> {safe_id(dep)}")
+                lines.append(f"  {safe_id(key)} --> {safe_id(resolved)}")
             else:
                 guard_label = escape_mermaid_label(str(guard))
-                lines.append(f'  {safe_id(key)} -.->|"{guard_label}"| {safe_id(dep)}')
+                lines.append(f'  {safe_id(key)} -.->|"{guard_label}"| {safe_id(resolved)}')
 
     return "\n".join(lines)
 

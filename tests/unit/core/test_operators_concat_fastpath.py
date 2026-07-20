@@ -1,9 +1,11 @@
 """Vectorized concat fast path for binary operators."""
 
+# ruff: noqa: E402
 from __future__ import annotations
 
-import numpy as np
 import pytest
+
+np = pytest.importorskip("numpy")
 
 from excel_grapher.core.operators import xl_concat
 from excel_grapher.core.types import XlError
@@ -14,7 +16,7 @@ from tests.bench.operators_bench import (
     load_baseline_document,
     string_prefix_column,
 )
-from tests.unit.core.operators_test_helpers import as_ndarray, assert_concat_matches_reference
+from tests.unit.core.operators_test_helpers import array_tolist, assert_concat_matches_reference
 from tests.unit.core.test_operators_baseline import BASELINE_PATH
 
 LARGE_SHAPE = (1_000, 1)
@@ -59,7 +61,7 @@ def test_concat_fastpath_falls_back_on_mixed_type_column() -> None:
 def test_concat_fastpath_embedded_error_becomes_string() -> None:
     left = np.array([[XlError.NA, "a"]], dtype=object)
     right = np.array([["!", "b"]], dtype=object)
-    assert as_ndarray(xl_concat(left, right)).tolist() == [["#N/A!", "ab"]]
+    assert array_tolist(xl_concat(left, right)) == [["#N/A!", "ab"]]
 
 
 def test_concat_scalar_path_unchanged() -> None:

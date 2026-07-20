@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Literal, Protocol, TypeAlias, cast, runtime_checkable
 
+from excel_grapher.series_bindings.codegen_literals import setter_input_annotation
 from excel_grapher.series_bindings.docstrings import (
     FieldContract,
     SeriesBindingDocstringContract,
@@ -76,16 +77,14 @@ def _is_single_key(contract: SeriesBindingDocstringContract) -> bool:
     return len(contract.required_fields) == 2
 
 
-_SETTER_INPUT_TYPE_NAMES: dict[str, str] = {
-    "scalar": "Scalar | Record | Records",
-    "series": "SeriesInput",
-    "matrix": "SeriesInput",
-}
-
-
 def _setter_input_type_name(contract: SeriesBindingDocstringContract) -> str:
-    """Return the type-alias name advertised by the generated setter signature."""
-    return _SETTER_INPUT_TYPE_NAMES.get(contract.layout, "SeriesInput")
+    """Return the input type text advertised in generated setter docstrings."""
+    scalar_shorthand = contract.layout == "scalar" and len(contract.required_fields) <= 1
+    return setter_input_annotation(
+        layout=contract.layout,
+        measure_dtype=contract.value_type,
+        scalar_shorthand=scalar_shorthand,
+    )
 
 
 def _setter_input_description(contract: SeriesBindingDocstringContract) -> str:
@@ -127,9 +126,11 @@ def _render_scalar_example(contract: SeriesBindingDocstringContract) -> list[str
 
 
 def _render_positional_example(contract: SeriesBindingDocstringContract) -> list[str]:
-    measure = _measure_field(contract)
-    values = [record.get(measure) for record in contract.example_records]
-    return [f"{contract.function_name}(ctx, {values!r})"]
+    """Render a positional measure example only when full key arity is known."""
+    values = contract.positional_example_values
+    if not values:
+        return []
+    return [f"{contract.function_name}(ctx, {list(values)!r})"]
 
 
 def _render_example_call(contract: SeriesBindingDocstringContract) -> list[str]:
@@ -139,7 +140,9 @@ def _render_example_call(contract: SeriesBindingDocstringContract) -> list[str]:
         return _render_scalar_example(contract)
     blocks = [_render_records_example(contract)]
     if contract.layout == "series" and _is_single_key(contract):
-        blocks.append(_render_positional_example(contract))
+        positional = _render_positional_example(contract)
+        if positional:
+            blocks.append(positional)
     lines: list[str] = []
     for index, block in enumerate(blocks):
         if index:

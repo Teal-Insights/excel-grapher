@@ -1,11 +1,13 @@
 """Vectorized comparison fast paths for binary operators."""
 
+# ruff: noqa: E402
 from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 import pytest
+
+np = pytest.importorskip("numpy")
 
 from excel_grapher import create_dependency_graph
 from excel_grapher.core.operators import xl_eq
@@ -23,7 +25,7 @@ from tests.bench.operators_bench import (
 from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
 from tests.unit.core.operators_test_helpers import (
     COMPARE_OPS,
-    as_ndarray,
+    array_tolist,
     assert_compare_matches_reference,
 )
 from tests.unit.core.test_operators_baseline import BASELINE_PATH
@@ -50,8 +52,7 @@ def test_compare_fastpath_matches_reference_on_large_numeric_threshold(op: str) 
 
 def test_compare_fastpath_string_equality_is_case_insensitive_at_scale() -> None:
     labels = np.array([["software", "SOFTWARE", "Software"]], dtype=object)
-    result = as_ndarray(xl_eq(labels, "software"))
-    assert result.tolist() == [[True, True, True]]
+    assert array_tolist(xl_eq(labels, "software")) == [[True, True, True]]
 
 
 def test_compare_fastpath_matches_reference_with_numeric_strings() -> None:

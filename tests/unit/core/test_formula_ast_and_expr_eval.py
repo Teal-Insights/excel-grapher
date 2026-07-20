@@ -82,6 +82,25 @@ def test_core_expr_eval_basic_functions_over_integers() -> None:
     assert evaluate_expr(ast, get_cell_value=get_cell_value) == 2.0
 
 
+def test_core_expr_eval_if_empty_vs_omitted_branches() -> None:
+    """Empty IF branches evaluate to 0; omitted else is FALSE."""
+
+    def get_cell_value(addr: str) -> int:
+        return 0
+
+    ast = parse("=IF(FALSE, 1)")
+    assert evaluate_expr(ast, get_cell_value=get_cell_value) is False
+
+    ast = parse("=IF(FALSE, 1,)")
+    assert evaluate_expr(ast, get_cell_value=get_cell_value) == 0
+
+    ast = parse("=IF(TRUE, , 5)")
+    assert evaluate_expr(ast, get_cell_value=get_cell_value) == 0
+
+    ast = parse("=IF(FALSE, , 5)")
+    assert evaluate_expr(ast, get_cell_value=get_cell_value) == 5.0
+
+
 def test_core_expr_eval_unsupported_function_returns_sentinel() -> None:
     ast = parse("=FOO(1, 2)")
     result = evaluate_expr(ast, get_cell_value=lambda addr: 0)

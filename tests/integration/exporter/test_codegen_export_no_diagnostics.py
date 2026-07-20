@@ -61,19 +61,28 @@ def test_codegen_export_has_no_ty_or_ruff_diagnostics(tmp_path: Path) -> None:
 
     try:
         ruff_fix = _run(
-            ["uv", "run", "ruff", "check", "--fix", str(export_file)],
+            ["uv", "run", "--no-sync", "ruff", "check", "--fix", str(export_file)],
             cwd=repo_root,
         )
         assert ruff_fix.returncode == 0, f"ruff --fix failed:\n{ruff_fix.stdout}\n{ruff_fix.stderr}"
 
         ty = _run(
-            ["uv", "run", "ty", "check", "--project", str(repo_root), str(export_file)],
+            [
+                "uv",
+                "run",
+                "--no-sync",
+                "ty",
+                "check",
+                "--project",
+                str(repo_root),
+                str(export_file),
+            ],
             cwd=repo_root,
         )
         assert ty.returncode == 0, f"ty failed:\n{ty.stdout}\n{ty.stderr}"
         assert ty.stderr.strip() == ""
 
-        ruff = _run(["uv", "run", "ruff", "check", str(export_file)], cwd=repo_root)
+        ruff = _run(["uv", "run", "--no-sync", "ruff", "check", str(export_file)], cwd=repo_root)
         assert ruff.returncode == 0, f"ruff failed after --fix:\n{ruff.stdout}\n{ruff.stderr}"
         assert ruff.stderr.strip() == ""
     finally:
@@ -95,7 +104,7 @@ def test_codegen_export_is_ruff_clean_without_fix(tmp_path: Path) -> None:
     export_file.write_text(code, encoding="utf-8")
 
     try:
-        ruff = _run(["uv", "run", "ruff", "check", str(export_file)], cwd=repo_root)
+        ruff = _run(["uv", "run", "--no-sync", "ruff", "check", str(export_file)], cwd=repo_root)
         assert ruff.returncode == 0, f"ruff failed:\n{ruff.stdout}\n{ruff.stderr}"
         assert ruff.stderr.strip() == ""
     finally:
@@ -118,7 +127,7 @@ def test_codegen_export_is_ruff_format_clean_without_fix(tmp_path: Path) -> None
 
     try:
         ruff_format = _run(
-            ["uv", "run", "ruff", "format", "--check", str(export_file)],
+            ["uv", "run", "--no-sync", "ruff", "format", "--check", str(export_file)],
             cwd=repo_root,
         )
         assert ruff_format.returncode == 0, (

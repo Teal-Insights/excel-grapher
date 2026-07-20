@@ -4,13 +4,42 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
 from datetime import date, datetime
-from typing import Any
+from typing import TypeVar, cast
 
-import numpy as np
+# Imported for isinstance checks; stripped when coercions are embedded (Range is
+# already inlined from core.grid.ranges ahead of this module).
+from excel_grapher.core.grid.grid import _as_nested_rows_from_ndarray
+from excel_grapher.core.grid.ranges import Range
 
-from .types import CellValue, ExcelRange, XlError
+from .types import CellValue, ExcelRange, FormulaValue, XlError
 
 _EXCEL_EPOCH = datetime(1899, 12, 30)
+T = TypeVar("T")
+
+
+def _is_ndarray_like(value: object) -> bool:
+    """Duck-type NumPy ndarrays without importing NumPy.
+
+    Fast-path materialization buffers expose ``ndim`` / ``flat`` / ``tolist``.
+    Matches `Grid.wrap` / `_as_nested_rows_from_ndarray` so coercions stay
+    import-light for NumPy-free installs and exports.
+    """
+    if _as_nested_rows_from_ndarray(value) is not None:
+        return True
+    ndim = getattr(value, "ndim", None)
+    return isinstance(ndim, int) and ndim >= 1 and hasattr(value, "flat")
+
+
+def as_scalar(value: object) -> float | int | str | bool | XlError | None:
+    """Collapse range/array values to `#VALUE!` for scalar coercion contexts.
+
+    Lazy `Range`, unbound `ExcelRange`, and nested lists are not valid scalar
+    operands. Materialized ndarray buffers (fast-path internals) also collapse
+    to `#VALUE!`. Does not evaluate cells inside a `Range`.
+    """
+    if isinstance(value, (Range, ExcelRange, list, tuple)) or _is_ndarray_like(value):
+        return XlError.VALUE
+    return cast("float | int | str | bool | XlError | None", value)
 
 
 def datetime_to_excel_serial(value: datetime) -> float:
@@ -37,27 +66,31 @@ def _try_parse_iso_date_serial(text: str) -> float | None:
 
 
 def try_coerce_string_to_float(text: str) -> float | None:
-    """Parse one Excel numeric string, or return None when coercion fails."""
+    """Parse one Excel numeric string; empty/whitespace text fails (`None`)."""
     stripped = text.strip()
     if stripped == "":
-        return 0.0
+        return None
     try:
         return float(stripped)
     except ValueError:
         return _try_parse_iso_date_serial(stripped)
 
 
-def to_native(value: Any) -> Any:
-    if hasattr(value, "item"):
-        return value.item()
+def to_native(value: T) -> T:
+    """Unwrap numpy scalars; otherwise return *value* unchanged."""
+    item = getattr(value, "item", None)
+    if callable(item):
+        return cast("T", item())
     return value
 
 
-def to_number(value: CellValue) -> float | XlError:
+def to_number(value: FormulaValue) -> float | XlError:
+    scalar = as_scalar(value)
+    if isinstance(scalar, XlError):
+        return scalar
+    value = cast(CellValue, scalar)
     if value is None:
         return 0.0
-    if isinstance(value, XlError):
-        return value
     if isinstance(value, bool):
         return 1.0 if value else 0.0
     if isinstance(value, (int, float)):
@@ -67,12 +100,10 @@ def to_number(value: CellValue) -> float | XlError:
         if number is None:
             return XlError.VALUE
         return number
-    if isinstance(value, ExcelRange):
-        return XlError.VALUE
     return XlError.VALUE
 
 
-def to_int(value: CellValue) -> int | XlError:
+def to_int(value: FormulaValue) -> int | XlError:
     """Coerce a CellValue to an integer using Excel-style numeric coercion.
 
     For functions that operate on integer indices (e.g. CHOOSE/INDEX/MATCH)
@@ -91,25 +122,29 @@ def _format_general_number(value: float | int) -> str:
     return str(f)
 
 
-def to_string(value: CellValue) -> str:
+def to_string(value: FormulaValue) -> str:
+    scalar = as_scalar(value)
+    if isinstance(scalar, XlError):
+        return scalar.value
+    value = cast(CellValue, scalar)
     if value is None:
         return ""
     if isinstance(value, bool):
         return "TRUE" if value else "FALSE"
-    if isinstance(value, XlError):
-        return value.value
     if isinstance(value, (int, float)):
         return _format_general_number(float(value))
-    if isinstance(value, ExcelRange):
-        return XlError.VALUE.value
+    if isinstance(value, str):
+        return value
     return str(value)
 
 
-def to_bool(value: CellValue) -> bool | XlError:
+def to_bool(value: FormulaValue) -> bool | XlError:
+    scalar = as_scalar(value)
+    if isinstance(scalar, XlError):
+        return scalar
+    value = cast(CellValue, scalar)
     if value is None:
         return False
-    if isinstance(value, XlError):
-        return value
     if isinstance(value, bool):
         return value
     if isinstance(value, (int, float)):
@@ -123,8 +158,6 @@ def to_bool(value: CellValue) -> bool | XlError:
         if s == "FALSE":
             return False
         return XlError.VALUE
-    if isinstance(value, ExcelRange):
-        return XlError.VALUE
     return XlError.VALUE
 
 
@@ -132,25 +165,47 @@ def excel_casefold(value: str) -> str:
     return value.casefold()
 
 
-def flatten(*args: Any) -> Iterator[CellValue]:
+def flatten(*args: object) -> Iterator[FormulaValue]:
+    """Flatten nested lists, lazy `Range` values, and ndarray buffers in row-major order.
+
+    Full-scan reductions (`SUM`, `COUNTIF`, …) and generic-function error
+    prechecks (`get_error`) use this helper to walk multi-cell args. Selective
+    consumers (`INDEX`, `MATCH`, lookups) skip `get_error` so they are not
+    forced to evaluate sibling cells. Ndarray inputs are supported only for
+    fast-path materialization buffers, not as persisted `CellValue` results.
+    """
     for arg in args:
-        if isinstance(arg, np.ndarray):
-            yield from (v for v in arg.flat)
+        if _is_ndarray_like(arg):
+            flat = getattr(arg, "flat", None)
+            if flat is not None:
+                yield from (cast("FormulaValue", v) for v in flat)
+            else:
+                rows = _as_nested_rows_from_ndarray(arg)
+                assert rows is not None
+                yield from flatten(*rows)
+            continue
+        if isinstance(arg, Range):
+            yield from arg.iter_raw()
             continue
         if isinstance(arg, (list, tuple)):
             yield from flatten(*arg)
             continue
-        yield arg
+        yield cast("CellValue", arg)
 
 
-def get_error(*args: Any) -> XlError | None:
+def get_error(*args: object) -> XlError | None:
+    """Return the first flattened `XlError`, if any.
+
+    Walks ndarrays, nested lists, and lazy `Range` cells via `flatten`. Lookup
+    functions skip this precheck so selective Grid access stays consumer-driven.
+    """
     for v in flatten(*args):
         if isinstance(v, XlError):
             return v
     return None
 
 
-def numeric_values(values: Iterable[CellValue]) -> tuple[list[float], XlError | None]:
+def numeric_values(values: Iterable[FormulaValue]) -> tuple[list[float], XlError | None]:
     nums: list[float] = []
     for v in values:
         n = to_number(v)

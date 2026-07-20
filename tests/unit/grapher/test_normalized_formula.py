@@ -85,7 +85,7 @@ def test_normalized_formula_qualifies_range_endpoints(tmp_path: Path) -> None:
     node = graph.get_node("Sheet1!A4")
     assert node is not None
     assert node.formula == "=SUM(A1:A3)"
-    assert node.normalized_formula == "=SUM(Sheet1!A1:Sheet1!A3)"
+    assert node.normalized_formula == "=SUM(Sheet1!A1:A3)"
 
 
 def test_normalized_formula_preserves_cross_sheet_refs(tmp_path: Path) -> None:

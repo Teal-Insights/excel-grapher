@@ -6,6 +6,7 @@ and the standalone export runtime.
 
 from .address_keys import NormalizedAddress
 from .coercions import (
+    as_scalar,
     excel_casefold,
     flatten,
     get_error,
@@ -35,14 +36,26 @@ from .operators import (
     xl_pow,
     xl_sub,
 )
-from .types import CellValue, ExcelRange, XlError, XlErrorException
+from .types import (
+    CellValue,
+    ExcelRange,
+    FormulaValue,
+    NestedGrid,
+    XlError,
+    XlErrorException,
+    resolve_excel_range,
+)
 
 __all__ = [
     "NormalizedAddress",
     "CellValue",
+    "FormulaValue",
+    "NestedGrid",
     "ExcelRange",
     "XlError",
     "XlErrorException",
+    "resolve_excel_range",
+    "as_scalar",
     "excel_casefold",
     "flatten",
     "get_error",

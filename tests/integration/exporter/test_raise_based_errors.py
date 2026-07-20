@@ -252,7 +252,7 @@ class TestComputeAllRaises:
         compute_all, ns = _compute_all(graph, ["S!A1"])
         try:
             compute_all()
-        except Exception as exc:  # noqa: BLE001 (asserting on exception shape)
+        except Exception as exc:
             assert type(exc).__name__ == XlErrorException.__name__
             assert str(exc) == "#DIV/0!"
         else:
@@ -343,31 +343,32 @@ class TestErrorConsumers:
         assert result.generated_results["S!A1"] is True
         assert result.generated_results["S!A2"] is False
 
-    def test_isnumber_propagates_argument_errors_like_evaluator(self) -> None:
-        """Generic IS functions follow the evaluator's argument error precheck."""
+    def test_isnumber_error_args_return_false(self) -> None:
+        """ISNUMBER returns FALSE for error arguments (Excel IS semantics)."""
         graph = _make_graph(
             _make_node("S!A1", "=ISNUMBER(1/0)", None),
             _make_node("S!A2", "=ISNUMBER(2)", None),
         )
         result = assert_codegen_matches_evaluator(graph, ["S!A1", "S!A2"])
-        assert result.generated_results["S!A1"] == XlError.DIV
+        assert result.generated_results["S!A1"] is False
         assert result.generated_results["S!A2"] is True
 
-    def test_generic_functions_propagate_error_returning_argument(self) -> None:
-        """`NA()` returns an error sentinel; a generic consumer must propagate it.
+    def test_is_family_error_args_return_false(self) -> None:
+        """ISNUMBER/ISTEXT do not propagate error arguments; both return FALSE.
 
-        Unlike `1/0` (which raises), an error-returning function yields an
-        `XlError` sentinel. A non-thunked generic function such as `ISNUMBER`
-        or `ISTEXT` must not swallow it: the evaluator's argument error
-        precheck returns the error, so the export path must too.
+        Covers both raised errors (`1/0`) and error-returning helpers (`NA()`).
         """
         graph = _make_graph(
             _make_node("S!A1", "=ISNUMBER(NA())", None),
             _make_node("S!A2", "=ISTEXT(NA())", None),
+            _make_node("S!A3", "=ISTEXT(1/0)", None),
+            _make_node("S!A4", "=IF(ISNUMBER(1/0), 1, 0)", None),
         )
-        result = assert_codegen_matches_evaluator(graph, ["S!A1", "S!A2"])
-        assert result.generated_results["S!A1"] == XlError.NA
-        assert result.generated_results["S!A2"] == XlError.NA
+        result = assert_codegen_matches_evaluator(graph, ["S!A1", "S!A2", "S!A3", "S!A4"])
+        assert result.generated_results["S!A1"] is False
+        assert result.generated_results["S!A2"] is False
+        assert result.generated_results["S!A3"] is False
+        assert result.generated_results["S!A4"] == 0
 
     def test_if_with_erroring_condition_propagates(self) -> None:
         graph = _make_graph(_make_node("S!A1", "=IF(1/0, 1, 2)", None))
@@ -415,8 +416,8 @@ class TestErrorCodeParity:
         result = assert_codegen_matches_evaluator(graph, ["S!A1"])
         assert result.generated_results["S!A1"] == 3
 
-    def test_countif_over_error_range_matches_evaluator_precheck(self) -> None:
-        """Generic functions propagate range argument errors like the evaluator."""
+    def test_countif_over_error_range_skips_error_cells(self) -> None:
+        """COUNTIF matches Excel: error cells in the range are skipped, not propagated."""
         graph = _make_graph(
             _make_node("S!B1", None, 10),
             _make_node("S!B2", "=1/0", None),
@@ -424,7 +425,7 @@ class TestErrorCodeParity:
             _make_node("S!A1", '=COUNTIF(S!B1:S!B3, ">5")', None),
         )
         result = assert_codegen_matches_evaluator(graph, ["S!A1"])
-        assert result.generated_results["S!A1"] == XlError.DIV
+        assert result.generated_results["S!A1"] == 2
 
     def test_countif_text_cells_do_not_raise_on_numeric_criteria(self) -> None:
         """Criteria coercion failures skip cells rather than raising."""

@@ -2,29 +2,37 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, overload
+from typing import TYPE_CHECKING, cast, overload
 
 import fastpyxl.utils.cell
 
 from excel_grapher.core.address_keys import (
-    normalize_key as normalize_address,
-)
-from excel_grapher.core.address_keys import (
+    format_key,
     parse_address,
 )
+from excel_grapher.core.address_keys import (
+    normalize_key as normalize_address,
+)
 from excel_grapher.core.addressing import index_excel_range
-from excel_grapher.core.excel_function_meta import numpy_array_arg_indices
+from excel_grapher.core.excel_function_meta import grid_range_arg_indices
+from excel_grapher.core.grid import Range
 from excel_grapher.core.range_shorthand import (
     SheetBounds,
     resolve_whole_column,
     resolve_whole_row,
 )
+from excel_grapher.core.types import CellValue, ExcelRange, FormulaValue, XlError
 from excel_grapher.evaluator.name_utils import normalize_excel_function_name
 from excel_grapher.grapher.blank_ranges import (
     address_in_blank_ranges,
     normalize_blank_range_specs,
 )
-from excel_grapher.runtime.cache import EvalContext, xl_circular_reference, xl_iterative_compute
+from excel_grapher.runtime.cache import (
+    EvalContext,
+    warn_circular_reference,
+    xl_circular_reference,
+    xl_iterative_compute,
+)
 from excel_grapher.runtime.info import xl_isblank
 
 from .ast_cache import DEFAULT_AST_CACHE_MAXSIZE, AstCache, AstCacheInfo
@@ -46,6 +54,7 @@ from .helpers import (
     xl_lt,
     xl_mul,
     xl_ne,
+    xl_neg,
     xl_offset_ref,
     xl_percent,
     xl_pow,
@@ -68,20 +77,41 @@ from .parser import (
     WholeRowNode,
     parse,
 )
-from .types import CellValue, ExcelRange, XlError
 
 _SKIP_ERROR_PRECHECK = {
+    # Selective Grid consumers: AST precheck must not force a full scan.
     "LOOKUP",
     "VLOOKUP",
     "HLOOKUP",
     "INDEX",
     "MATCH",
     "XLOOKUP",
+    # Full-scan reductions that fail-fast (or Excel-skip) internally.
+    "SUM",
+    "AVERAGE",
+    "MIN",
+    "MAX",
+    "STDEV",
+    "NPV",
+    "SUMPRODUCT",
+    "LARGE",
+    "RANK",
+    "COUNT",
+    "COUNTA",
+    # Criteria consumers: Excel skips error cells in the criteria range.
+    "COUNTIF",
+    "AVERAGEIF",
+    # Logical reductions: short-circuit and fail-fast over lazy ranges.
+    "AND",
+    "OR",
+    # IS-family type predicates: Excel passes error values through; the
+    # callables return FALSE (they are not numbers/text). ISERROR/ISNA/ISBLANK
+    # are AST-special-cased above and never reach this generic path.
+    "ISNUMBER",
+    "ISTEXT",
 }
 
 if TYPE_CHECKING:
-    import numpy
-
     from excel_grapher.grapher import DependencyGraph
 
 
@@ -90,7 +120,7 @@ class FormulaEvaluator:
     graph: DependencyGraph
     auto_detect_changes: bool = True
     eager_invalidation: bool = True
-    on_cell_evaluated: Callable[[str, CellValue], None] | None = None
+    on_cell_evaluated: Callable[[str, FormulaValue], None] | None = None
     iterate_enabled: bool = False
     iterate_count: int = 100
     iterate_delta: float = 0.001
@@ -98,14 +128,14 @@ class FormulaEvaluator:
     ast_cache_maxsize: int = DEFAULT_AST_CACHE_MAXSIZE
 
     def __post_init__(self) -> None:
-        self._cache: dict[str, CellValue] = {}
+        self._cache: dict[str, FormulaValue] = {}
         self._ast_cache = AstCache(maxsize=self.ast_cache_maxsize)
         preparsed = self.graph.preparsed_formulas
         if preparsed:
             self._ast_cache.seed(preparsed)
         self._call_stack: list[str] = []
-        self._leaf_values: dict[str, CellValue] = {}  # For auto-detection
-        self._iteration_values: dict[str, CellValue] = {}
+        self._leaf_values: dict[str, FormulaValue] = {}  # For auto-detection
+        self._iteration_values: dict[str, FormulaValue] = {}
         self._blank_range_rects = normalize_blank_range_specs(self.blank_ranges)
         # Runtime dependency edges recorded as cells are evaluated. Unlike the
         # static graph edges (which freeze the build-time resolution of dynamic
@@ -115,6 +145,7 @@ class FormulaEvaluator:
         # `EvalContext` runtime, keeping evaluator and export in parity.
         self._runtime_deps: dict[str, set[str]] = {}
         self._runtime_reverse_deps: dict[str, set[str]] = {}
+        self._circular_warning_roots: set[str] = set()
 
     def __enter__(self) -> FormulaEvaluator:
         return self
@@ -125,6 +156,7 @@ class FormulaEvaluator:
     def clear_caches(self) -> None:
         """Clear cached cell values and parsed formula ASTs."""
         self._cache.clear()
+        self._circular_warning_roots.clear()
         self._ast_cache.clear()
 
     def ast_cache_info(self) -> AstCacheInfo:
@@ -157,6 +189,7 @@ class FormulaEvaluator:
                 continue
             seen.add(addr)
             self._cache.pop(addr, None)
+            self._circular_warning_roots.discard(addr)
             to_visit.extend(self._runtime_reverse_deps.get(addr, set()))
             for dep in self._runtime_deps.get(addr, set()):
                 parents = self._runtime_reverse_deps.get(dep)
@@ -167,19 +200,19 @@ class FormulaEvaluator:
             self._runtime_deps.pop(addr, None)
             self._runtime_reverse_deps.pop(addr, None)
 
-    def _iterative_target_handler(self, addr: str) -> Callable[[EvalContext, str], CellValue]:
-        def handler(_ctx: EvalContext, _target: str) -> CellValue:
+    def _iterative_target_handler(self, addr: str) -> Callable[[EvalContext, str], FormulaValue]:
+        def handler(_ctx: EvalContext, _target: str) -> FormulaValue:
             return self._evaluate_cell(addr)
 
         return handler
 
     @overload
-    def evaluate(self, targets: str) -> CellValue: ...
+    def evaluate(self, targets: str) -> FormulaValue: ...
 
     @overload
-    def evaluate(self, targets: Sequence[str]) -> dict[str, CellValue]: ...
+    def evaluate(self, targets: Sequence[str]) -> dict[str, FormulaValue]: ...
 
-    def evaluate(self, targets: str | Sequence[str]) -> CellValue | dict[str, CellValue]:
+    def evaluate(self, targets: str | Sequence[str]) -> FormulaValue | dict[str, FormulaValue]:
         if isinstance(targets, str):
             single = True
             target_list: list[str] = [targets]
@@ -190,22 +223,30 @@ class FormulaEvaluator:
         if self.auto_detect_changes and self.eager_invalidation:
             self._detect_and_invalidate_changed_leaves()
         if self.iterate_enabled:
-            target_handlers: dict[str, Callable[[EvalContext, str], CellValue]] = {
+            target_handlers: dict[str, Callable[[EvalContext, str], FormulaValue]] = {
                 addr: self._iterative_target_handler(addr) for addr in target_list
             }
             ctx = EvalContext(
                 inputs={},
                 resolver=lambda _addr: None,
-                cache=self._cache,
+                cache=cast(dict[str, CellValue], self._cache),
                 computing=set(self._call_stack),
                 iterative_enabled=True,
                 iterate_count=self.iterate_count,
                 iterate_delta=self.iterate_delta,
-                iteration_values=self._iteration_values,
+                iteration_values=cast(dict[str, CellValue], self._iteration_values),
             )
-            result = xl_iterative_compute(ctx, target_handlers)
-            self._iteration_values = ctx.iteration_values
-            return next(iter(result.values())) if single else result
+            result = xl_iterative_compute(
+                ctx,
+                cast(
+                    dict[str, Callable[[EvalContext, str], CellValue]],
+                    target_handlers,
+                ),
+            )
+            self._iteration_values = cast(dict[str, FormulaValue], ctx.iteration_values)
+            if single:
+                return cast(FormulaValue, next(iter(result.values())))
+            return cast(dict[str, FormulaValue], result)
         results = {addr: self._evaluate_cell(addr) for addr in target_list}
         return next(iter(results.values())) if single else results
 
@@ -270,7 +311,7 @@ class FormulaEvaluator:
 
         return leaves
 
-    def _evaluate_cell(self, address: str) -> CellValue:
+    def _evaluate_cell(self, address: str) -> FormulaValue:
         norm = normalize_address(address)
         if self._call_stack:
             self._record_runtime_dependency(self._call_stack[-1], norm)
@@ -281,13 +322,19 @@ class FormulaEvaluator:
                     # Cache was invalidated, need to re-evaluate (fall through)
                     pass
                 else:
+                    if norm in self._circular_warning_roots:
+                        warn_circular_reference(stacklevel=3)
                     return self._cache[norm]
             else:
+                if norm in self._circular_warning_roots:
+                    warn_circular_reference(stacklevel=3)
                 return self._cache[norm]
 
         if norm in self._call_stack:
             if self.iterate_enabled:
                 return self._iteration_values.get(norm, 0)
+            root = self._call_stack[0]
+            self._circular_warning_roots.add(root)
             return xl_circular_reference()
 
         if self._blank_range_rects and address_in_blank_ranges(norm, self._blank_range_rects):
@@ -328,7 +375,7 @@ class FormulaEvaluator:
         finally:
             self._call_stack.pop()
 
-    def _evaluate_ast(self, node: AstNode) -> CellValue:
+    def _evaluate_ast(self, node: AstNode) -> FormulaValue:
         if isinstance(node, EmptyArgNode):
             return None
         if isinstance(node, NumberNode):
@@ -396,28 +443,58 @@ class FormulaEvaluator:
 
         raise TypeError(f"Unknown AST node: {type(node)}")
 
-    def _resolve_range(self, rng: ExcelRange) -> numpy.ndarray:
-        return rng.resolve(self._evaluate_cell)
+    def _as_lazy_range(self, rng: ExcelRange) -> Range:
+        """Bind an ``ExcelRange`` geometry to the evaluator cell resolver."""
+        return Range(
+            rng.sheet,
+            rng.start_row,
+            rng.start_col,
+            rng.end_row,
+            rng.end_col,
+            self._evaluate_cell,
+        )
 
     def _resolve_function_arg(
         self,
-        value: CellValue,
+        value: FormulaValue,
         func_name: str,
         arg_index: int,
-    ) -> CellValue:
+    ) -> FormulaValue:
         """Resolve ``ExcelRange`` arguments for runtime function calls.
 
-        Array/table parameters keep numpy arrays; single-cell references in value
-        contexts (e.g. ``TEXT(INDEX(...))``) promote to scalars so export parity
-        matches codegen's scalar ``INDEX`` handling.
+        Policy (multi-cell):
+
+        - ``grid_range_arg_indices`` → lazy ``Range`` (lookups + full-scan
+          reductions); consumers walk cells via ``flatten`` / ``Grid``
+        - otherwise → ``#VALUE!`` (scalar / non-Grid consumers; no Range leak)
+
+        Single-cell references in value contexts (e.g. ``TEXT(INDEX(...))``)
+        promote to scalars so export parity matches codegen's scalar ``INDEX``
+        handling.
         """
         if not isinstance(value, ExcelRange):
             return value
-        if arg_index in numpy_array_arg_indices(func_name):
-            return self._resolve_range(value)
         if value.start_row == value.end_row and value.start_col == value.end_col:
             return self._auto_resolve_single_cell(value)
-        return self._resolve_range(value)
+        if arg_index in grid_range_arg_indices(func_name):
+            # Lazy Range is a legal function operand; omitted from CellValue to
+            # avoid a circular import with core.grid.
+            return cast(FormulaValue, self._as_lazy_range(value))
+        return XlError.VALUE
+
+    def _single_cell_address(self, rng: ExcelRange) -> str:
+        col = fastpyxl.utils.cell.get_column_letter(rng.start_col)
+        return format_key(rng.sheet, f"{col}{rng.start_row}")
+
+    def _auto_resolve_single_cell(self, value: FormulaValue) -> FormulaValue:
+        """If value is a 1x1 ExcelRange, resolve it to its single cell value."""
+        if (
+            isinstance(value, ExcelRange)
+            and value.start_row == value.end_row
+            and value.start_col == value.end_col
+        ):
+            return self._evaluate_cell(self._single_cell_address(value))
+        return value
 
     def _sheet_bounds(self) -> SheetBounds:
         bounds = getattr(self.graph, "sheet_bounds", None)
@@ -429,25 +506,20 @@ class FormulaEvaluator:
     def _resolve_whole_row(self, sheet: str, row: int) -> ExcelRange:
         return resolve_whole_row(sheet, row, self._sheet_bounds())
 
-    def _auto_resolve_single_cell(self, value: CellValue) -> CellValue:
-        """If value is a 1x1 ExcelRange, resolve it to its single cell value."""
-        if (
-            isinstance(value, ExcelRange)
-            and value.start_row == value.end_row
-            and value.start_col == value.end_col
-        ):
-            # 1x1 range - resolve to single value
-            arr = self._resolve_range(value)
-            return arr[0, 0]
-        return value
+    def _resolve_binary_operand(self, value: FormulaValue) -> FormulaValue:
+        """Bind range geometry for element-wise operators.
 
-    def _resolve_binary_operand(self, value: CellValue) -> CellValue:
-        """Resolve range references to arrays for element-wise binary operators."""
+        Single-cell references (including 1x1 results from `INDEX`) resolve to
+        their scalar value so comparisons and concatenation match Excel scalar
+        context. Multi-cell ranges stay as lazy `Range` for broadcast ops.
+        """
         if isinstance(value, ExcelRange):
-            return self._resolve_range(value)
+            if value.start_row == value.end_row and value.start_col == value.end_col:
+                return self._auto_resolve_single_cell(value)
+            return cast(FormulaValue, self._as_lazy_range(value))
         return value
 
-    def _eval_binary_op(self, node: BinaryOpNode) -> CellValue:
+    def _eval_binary_op(self, node: BinaryOpNode) -> FormulaValue:
         left = self._resolve_binary_operand(self._evaluate_ast(node.left))
         right = self._resolve_binary_operand(self._evaluate_ast(node.right))
 
@@ -489,23 +561,31 @@ class FormulaEvaluator:
 
         raise ValueError(f"Unknown binary operator: {op}")
 
-    def _eval_unary_op(self, node: UnaryOpNode) -> CellValue:
-        operand = self._evaluate_ast(node.operand)
+    def _eval_unary_op(self, node: UnaryOpNode) -> FormulaValue:
+        operand = self._resolve_binary_operand(self._evaluate_ast(node.operand))
         if isinstance(operand, XlError):
             return operand
 
         if node.op == "-":
-            n = to_number(operand)
-            if isinstance(n, XlError):
-                return n
-            return -n
+            return xl_neg(operand)
 
         if node.op == "%":
             return xl_percent(operand)
 
         raise ValueError(f"Unknown unary operator: {node.op}")
 
-    def _eval_if(self, args: list[AstNode]) -> CellValue:
+    def _eval_if_branch(self, arg: AstNode) -> FormulaValue:
+        """Evaluate an IF then/else branch.
+
+        An empty argument (`IF(cond, a,)` / `IF(cond, , b)`) is Excel blank,
+        which IF materializes as `0`. A truly omitted else (`IF(cond, a)`) is
+        handled by the caller and yields `FALSE`.
+        """
+        if isinstance(arg, EmptyArgNode):
+            return 0
+        return self._evaluate_ast(arg)
+
+    def _eval_if(self, args: list[AstNode]) -> FormulaValue:
         if len(args) < 2:
             raise ParseError("IF(...)", "IF requires at least 2 arguments")
         cond = self._evaluate_ast(args[0])
@@ -513,12 +593,12 @@ class FormulaEvaluator:
         if isinstance(b, XlError):
             return b
         if b:
-            return self._evaluate_ast(args[1])
+            return self._eval_if_branch(args[1])
         if len(args) >= 3:
-            return self._evaluate_ast(args[2])
+            return self._eval_if_branch(args[2])
         return False
 
-    def _eval_iferror(self, args: list[AstNode]) -> CellValue:
+    def _eval_iferror(self, args: list[AstNode]) -> FormulaValue:
         if len(args) < 2:
             raise ParseError("IFERROR(...)", "IFERROR requires 2 arguments")
         v = self._evaluate_ast(args[0])
@@ -526,7 +606,7 @@ class FormulaEvaluator:
             return self._evaluate_ast(args[1])
         return v
 
-    def _eval_ifna(self, args: list[AstNode]) -> CellValue:
+    def _eval_ifna(self, args: list[AstNode]) -> FormulaValue:
         if len(args) < 2:
             raise ParseError("IFNA(...)", "IFNA requires 2 arguments")
         v = self._evaluate_ast(args[0])
@@ -553,10 +633,10 @@ class FormulaEvaluator:
         if isinstance(v, ExcelRange):
             if v.start_row != v.end_row or v.start_col != v.end_col:
                 return False
-            v = self._resolve_range(v)[0, 0]
-        return xl_isblank(v)
+            v = self._evaluate_cell(self._single_cell_address(v))
+        return xl_isblank(cast(CellValue, v))
 
-    def _eval_choose(self, args: list[AstNode]) -> CellValue:
+    def _eval_choose(self, args: list[AstNode]) -> FormulaValue:
         if len(args) < 2:
             raise ParseError("CHOOSE(...)", "CHOOSE requires at least 2 arguments")
         index_val = self._evaluate_ast(args[0])
@@ -571,7 +651,7 @@ class FormulaEvaluator:
         # Only evaluate the selected choice (lazy)
         return self._evaluate_ast(args[idx])
 
-    def _eval_offset(self, args: list[AstNode]) -> CellValue:
+    def _eval_offset(self, args: list[AstNode]) -> FormulaValue:
         if len(args) < 3:
             raise ParseError("OFFSET(...)", "OFFSET requires at least 3 arguments")
 
@@ -593,7 +673,13 @@ class FormulaEvaluator:
         if isinstance(width_val, XlError):
             return width_val
 
-        return xl_offset_ref(base, rows_val, cols_val, height_val, width_val)
+        return xl_offset_ref(
+            base,
+            cast(CellValue, rows_val),
+            cast(CellValue, cols_val),
+            cast(CellValue, height_val) if height_val is not None else None,
+            cast(CellValue, width_val) if width_val is not None else None,
+        )
 
     def _current_formula_row_col(self) -> tuple[int, int] | None:
         if not self._call_stack:
@@ -630,7 +716,7 @@ class FormulaEvaluator:
             return ref
         return xl_columns(ref)
 
-    def _eval_index(self, args: list[AstNode]) -> CellValue:
+    def _eval_index(self, args: list[AstNode]) -> FormulaValue:
         node = FunctionCallNode(name="INDEX", args=args)
         ref = self._index_call_to_range(node)
         if isinstance(ref, XlError):

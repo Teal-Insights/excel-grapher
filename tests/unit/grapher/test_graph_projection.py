@@ -23,9 +23,12 @@ from excel_grapher.exporter.projection import (
     unregister_projection_manifest,
 )
 from excel_grapher.grapher import create_dependency_graph
-from excel_grapher.grapher.compression import CompressionProvenanceRequiredError
+from excel_grapher.grapher.compression import (
+    CompressionProvenanceRequiredError,
+    snapshot_transit_node,
+)
 from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
-from excel_grapher.grapher.node import Node
+from excel_grapher.grapher.node import Node, make_union_node
 from excel_grapher.series_bindings import WorkbookSeriesBindings, resolve_series_bindings
 
 
@@ -508,6 +511,8 @@ def test_custom_collapse_projection_uses_public_primitives_without_forwarding() 
             projected = source.copy()
             node_b = projected.get_node("Sheet1!B1")
             assert node_b is not None
+            assert node_b.sheet is not None
+            assert node_b.column is not None and node_b.row is not None
             snapshot = ProjectedNodeSnapshot(
                 address="Sheet1!B1",
                 sheet=node_b.sheet,
@@ -601,6 +606,7 @@ def test_projection_copy_preserves_graph_metadata_fields() -> None:
         "_guards",
         "_edge_extra",
         "_hooks",
+        "_occupancy",
     }
     metadata_field_names = tuple(
         field.name for field in fields(DependencyGraph) if field.name not in graph_structure_fields
@@ -709,3 +715,36 @@ def test_set_node_formula_updates_normalized_formula() -> None:
     assert cleared is not None
     assert cleared.formula is None
     assert cleared.normalized_formula is None
+
+
+def test_optimal_projection_keeps_multi_cell_node_with_member_dependent() -> None:
+    from excel_grapher.grapher.graph import DependencyGraph
+
+    graph = DependencyGraph()
+    union = make_union_node(["Sheet1!D63", "Sheet1!E63", "Sheet1!Y63"], is_leaf=True)
+    dependent = _make_node("Sheet1!A1", "=Sheet1!D63", "=Sheet1!D63", is_target=True)
+    graph.add_node(union)
+    graph.add_node(dependent)
+    graph.add_edge(
+        dependent.key,
+        "Sheet1!D63",
+        provenance=EdgeProvenance(causes=frozenset({DependencyCause.direct_ref})),
+    )
+
+    projection = OptimalCompression().project(graph)
+
+    assert union.key in projection.projected_graph
+    assert projection.projected_graph.get_node(union.key) is not None
+    assert projection.projected_graph.get_dependencies(dependent.key) == frozenset({"Sheet1!D63"})
+    assert projection.projected_graph.get_dependency_nodes(dependent.key) == frozenset({union.key})
+
+
+def test_snapshot_transit_node_rejects_multi_cell_node() -> None:
+    from excel_grapher.grapher.graph import DependencyGraph
+
+    graph = DependencyGraph()
+    union = make_union_node(["Sheet1!D63", "Sheet1!E63"], is_leaf=True)
+    graph.add_node(union)
+
+    with pytest.raises(ValueError, match="cell node"):
+        snapshot_transit_node(graph, union.key)
