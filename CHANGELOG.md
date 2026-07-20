@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.17.0 (2026-07-20)
+
+### Features
+
+- **series-bindings**: Soft-capture XlErrorException in compute_* measures
+  ([#438](https://github.com/Teal-Insights/excel-grapher/pull/438),
+  [`7e713e2`](https://github.com/Teal-Insights/excel-grapher/commit/7e713e2a62914d9cac148784b6deaaf2799f5b09))
+
+### Testing
+
+- Lock Excel trailing-space compare semantics (#434)
+  ([#437](https://github.com/Teal-Insights/excel-grapher/pull/437),
+  [`5a769ca`](https://github.com/Teal-Insights/excel-grapher/commit/5a769ca1f137bcd8fbc3ae642c4716ecf0c6fb48))
+
+
 ## v3.16.0 (2026-07-19)
 
 ### Bug Fixes
