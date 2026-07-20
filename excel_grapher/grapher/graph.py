@@ -20,7 +20,7 @@ from excel_grapher.core.formula_ast import AstNode
 
 from .dependency_provenance import DependencyCause, EdgeProvenance, merge_edge_provenance
 from .guard import And, CellRef, Compare, GuardConstraints, GuardExpr, Not, Or, or_guard
-from .node import Node, NodeKey, NodeView, member_keys, node_to_view
+from .node import Node, NodeKey, NodeKind, NodeView, member_keys, node_to_view
 
 NodeHook = Callable[[NodeKey, Node], None]
 
@@ -494,10 +494,30 @@ class DependencyGraph:
         )
 
     def target_keys(self) -> list[NodeKey]:
-        """Return sorted list of keys marked as original build targets."""
-        return self.keys(
-            order="workbook", source=(k for k, node in self._nodes.items() if node.is_target)
-        )
+        """Return workbook-ordered public target addresses.
+
+        Includes `CellKey` nodes with `is_target`, plus member addresses listed
+        in each multi-cell group's `metadata["target_members"]` (not the group
+        key itself).
+        """
+        from excel_grapher.grapher.formula_groups import TARGET_MEMBERS_METADATA_KEY
+
+        keys: list[NodeKey] = []
+        seen: set[NodeKey] = set()
+        for key, node in self._nodes.items():
+            if node.kind is NodeKind.cell:
+                if node.is_target and key not in seen:
+                    keys.append(key)
+                    seen.add(key)
+                continue
+            raw = node.metadata.get(TARGET_MEMBERS_METADATA_KEY)
+            if isinstance(raw, (list, tuple)):
+                for member in raw:
+                    member_key = normalize_key(str(member))
+                    if member_key not in seen:
+                        keys.append(member_key)
+                        seen.add(member_key)
+        return self.keys(order="workbook", source=keys)
 
     def roots(self) -> Iterator[NodeKey]:
         for key in self._nodes:

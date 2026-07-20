@@ -14,6 +14,7 @@ from typing import Literal, Protocol, TypeAlias
 from excel_grapher.core.address_keys import (
     CellKey,
     format_range_key,
+    members_to_node_key,
     parse_address,
     parse_node_key,
     sort_node_keys,
@@ -46,6 +47,9 @@ SkipReason: TypeAlias = Literal[
     "kind_mismatch",
 ]
 
+# Stored on multi-cell group `metadata` so `target_keys()` can list member addresses.
+TARGET_MEMBERS_METADATA_KEY = "target_members"
+
 
 class _FamilyGraph(Protocol):
     """Minimal graph surface for formula-family discovery."""
@@ -62,6 +66,27 @@ class _FamilyGraph(Protocol):
     def get_node(self, address: str) -> object | None: ...
 
     def get_dependencies(self, address: str) -> frozenset[str]: ...
+
+
+class _CoalesceGraph(_FamilyGraph, Protocol):
+    """Graph surface required to mutate families into formula-group nodes."""
+
+    def get_dependents(self, address: str) -> frozenset[str]: ...
+
+    def get_edge_attrs(self, from_key: str, to_key: str) -> object: ...
+
+    def add_node(self, node: object) -> None: ...
+
+    def remove_node(self, key: str) -> None: ...
+
+    def add_edge(
+        self,
+        from_key: str,
+        to_key: str,
+        *,
+        guard: object | None = None,
+        **attrs: object,
+    ) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +115,14 @@ class SkippedFamily:
     fingerprint: str
     members: tuple[str, ...]
     reason: SkipReason
+
+
+@dataclass(frozen=True, slots=True)
+class CoalesceReport:
+    """Result of `coalesce_formula_groups`."""
+
+    created_groups: tuple[str, ...]
+    skipped_families: tuple[SkippedFamily, ...]
 
 
 class SpecializeError(ValueError):
@@ -484,6 +517,117 @@ def _has_intra_family_edge(graph: _FamilyGraph, members: Sequence[str]) -> bool:
             if dep in member_set:
                 return True
     return False
+
+
+def coalesce_formula_groups(
+    graph: _CoalesceGraph,
+    *,
+    min_family_size: int = 2,
+) -> CoalesceReport:
+    """Replace same-shape cell families with formula-group nodes (in place).
+
+    Discovery uses `iter_formula_families`. Ready families are rewritten via:
+
+    1. Snapshot inbound/outbound edges (and target flags) for members
+    2. `remove_node` each member
+    3. `add_node` the group (`make_union_node` + Issue 2 template fields)
+    4. Re-add edges onto the group key (guards/provenance merge via `add_edge`)
+
+    Args:
+        graph: Mutable dependency graph.
+        min_family_size: Minimum cluster size to coalesce (default 2).
+
+    Returns:
+        Report of created group keys and skipped families.
+    """
+    created: list[str] = []
+    skipped: list[SkippedFamily] = []
+    for item in iter_formula_families(graph, min_family_size=min_family_size):
+        if isinstance(item, SkippedFamily):
+            skipped.append(item)
+            continue
+        created.append(_coalesce_ready_family(graph, item))
+    return CoalesceReport(created_groups=tuple(created), skipped_families=tuple(skipped))
+
+
+def _coalesce_ready_family(graph: _CoalesceGraph, family: ReadyFamily) -> str:
+    # Lazy import avoids circular import with node.py → formula_groups.
+    from excel_grapher.grapher.node import make_union_node
+
+    members = family.members
+    member_set = set(members)
+
+    outbound: list[tuple[str, str, object | None, object | None]] = []
+    inbound: list[tuple[str, str, object | None, object | None]] = []
+    target_members: list[str] = []
+
+    for member in members:
+        node = graph.get_node(member)
+        if node is not None and bool(getattr(node, "is_target", False)):
+            target_members.append(member)
+        for dep in graph.get_dependencies(member):
+            if dep in member_set:
+                continue
+            attrs = graph.get_edge_attrs(member, dep)
+            outbound.append(
+                (
+                    member,
+                    dep,
+                    getattr(attrs, "guard", None),
+                    getattr(attrs, "provenance", None),
+                )
+            )
+        for dependent in graph.get_dependents(member):
+            if dependent in member_set:
+                continue
+            attrs = graph.get_edge_attrs(dependent, member)
+            inbound.append(
+                (
+                    dependent,
+                    member,
+                    getattr(attrs, "guard", None),
+                    getattr(attrs, "provenance", None),
+                )
+            )
+
+    for member in members:
+        graph.remove_node(member)
+
+    metadata: dict[str, object] = {}
+    if target_members:
+        metadata[TARGET_MEMBERS_METADATA_KEY] = tuple(target_members)
+
+    group_key = str(members_to_node_key(members))
+    has_outbound = bool(outbound)
+    group = make_union_node(
+        members,
+        formula=None,
+        normalized_formula=None,
+        value=None,
+        is_leaf=not has_outbound,
+        is_target=bool(target_members),
+        metadata=metadata,
+        shape_fingerprint=family.fingerprint,
+        skeleton=family.skeleton,
+        member_bindings=dict(family.member_bindings),
+    )
+    if group.key != group_key:
+        raise RuntimeError(f"group key mismatch: {group.key!r} != {group_key!r}")
+    graph.add_node(group)
+
+    for _member, dep, guard, provenance in outbound:
+        kwargs: dict[str, object] = {}
+        if provenance is not None:
+            kwargs["provenance"] = provenance
+        graph.add_edge(group_key, dep, guard=guard, **kwargs)
+
+    for dependent, _member, guard, provenance in inbound:
+        kwargs = {}
+        if provenance is not None:
+            kwargs["provenance"] = provenance
+        graph.add_edge(dependent, group_key, guard=guard, **kwargs)
+
+    return group_key
 
 
 def _collect_holes(node: AstNode) -> list[AddressHoleNode]:

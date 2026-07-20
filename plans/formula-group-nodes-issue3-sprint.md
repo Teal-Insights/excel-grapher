@@ -129,7 +129,7 @@ groups under evaluator + codegen.
 
 ---
 
-### Sprint 2 — Coalesce transform + targets
+### Sprint 2 — Coalesce transform + targets ✅
 
 **Files:** `formula_groups.py` (coalesce), `graph.py` (`target_keys`),
 `node.py` if `target_members` becomes a real field (else metadata convention —
@@ -137,17 +137,17 @@ pick one and stick to it).
 
 | Task | Done when |
 | ---- | --------- |
-| `CoalesceReport` / `SkippedFamily` | Created group keys + skipped families with reasons |
-| `coalesce_formula_groups(graph)` | In-place mutate; returns report |
-| Transaction order | Snapshot → `remove_node(m)` for each member → `add_node(G)` → re-add edges |
-| Group construction | `make_union_node` + Issue 2 template fields + `members_to_node_key` |
-| Inbound edges | `d → m` rewritten to `d → G`; guards/provenance via existing merge |
-| Outbound edges | `m → dep` rewritten to `G → dep`; union of member deps |
-| Occupancy | No member `CellKey` nodes; `locate_cell(m)` → group for all `m ∈ M` |
-| `target_members` | Members that had `is_target` recorded on the group |
-| `target_keys()` | Lists those member addresses (not the multi-area group key) |
-| Idempotency | Second call creates no duplicate groups |
-| Unit tests | `tests/unit/grapher/formula_groups/test_coalesce.py` |
+| `CoalesceReport` / `SkippedFamily` | ✅ Created group keys + skipped families with reasons |
+| `coalesce_formula_groups(graph)` | ✅ In-place mutate; returns report |
+| Transaction order | ✅ Snapshot → `remove_node(m)` for each member → `add_node(G)` → re-add edges |
+| Group construction | ✅ `make_union_node` + Issue 2 template fields + `members_to_node_key` |
+| Inbound edges | ✅ `d → m` rewritten to `d → G`; guards/provenance via existing merge |
+| Outbound edges | ✅ `m → dep` rewritten to `G → dep`; union of member deps |
+| Occupancy | ✅ No member `CellKey` nodes; `locate_cell(m)` → group for all `m ∈ M` |
+| `target_members` | ✅ Stored in `metadata["target_members"]` |
+| `target_keys()` | ✅ Lists those member addresses (not the multi-area group key) |
+| Idempotency | ✅ Second call creates no duplicate groups |
+| Unit tests | ✅ `tests/unit/grapher/formula_groups/test_coalesce.py` |
 
 **Field merge (locked for this sprint)**
 
