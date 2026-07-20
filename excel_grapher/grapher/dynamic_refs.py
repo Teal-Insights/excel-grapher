@@ -74,16 +74,19 @@ class DynamicRefTraceEvent:
     """A single trace event emitted during dynamic-ref inference.
 
     Attributes:
-        kind: Event type (`"infer"`, `"expand-env"`, `"build-domains"`,
+        kind: Event type (`"infer"`, `"infer-call-start"`, `"infer-call-done"`,
+            `"expand-env"`, `"cell-type-start"`, `"cell-type-done"`,
+            `"cell-type-cycle"`, `"cell-type-cache-hit"`, `"build-domains"`,
             `"build-value-domains"`, `"offset-scalar-fallback"`,
-            `"offset-scalar-wide"`, plus `"-error"` variants).
+            `"offset-scalar-wide"`, `"dynamic-ref-cell-start"`,
+            `"dynamic-ref-cell-done"`, plus `"-error"` variants).
         name: Function that emitted the event.
         elapsed_s: Wall-clock seconds spent in the traced operation.  Defaults
             to `0.0` for structural events (e.g. `"index-abstract"`,
-            `"index-enumerated"`) that report *what* happened rather than
-            how long it took.
+            `"index-enumerated"`, `"cell-type-start"`, `"infer-call-start"`)
+            that report *what* happened rather than how long it took.
         detail: Flexible per-event payload (target counts, branch estimates,
-            expressions, etc.).
+            expressions, nested address/depth, etc.).
     """
 
     kind: str
@@ -546,6 +549,17 @@ def expand_leaf_env_to_argument_env(
             _propagate_consumed_leaves_to_ancestors(addr)
             return cache[addr]
         if addr in in_progress:
+            _emit_trace(
+                DynamicRefTraceEvent(
+                    kind="cell-type-cycle",
+                    name="cell_type_for",
+                    detail={
+                        "address": addr,
+                        "depth": len(_analysis_stack),
+                        "in_progress": sorted(in_progress),
+                    },
+                )
+            )
             return CellType(kind=CellKind.ANY)
         ct_resolved = _lookup_cell_type(leaf_env, addr)
         if ct_resolved is not None:
@@ -558,6 +572,8 @@ def expand_leaf_env_to_argument_env(
             return cache[addr]
         in_progress.add(addr)
         formula = get_cell_formula(addr)
+        analysis_started = False
+        t0 = time.perf_counter()
         try:
             if formula is None:
                 raise DynamicRefError(
@@ -572,8 +588,33 @@ def expand_leaf_env_to_argument_env(
                 _consumed_leaves[addr] = set(cached_consumed)
                 _loaded_from_persistent.add(addr)
                 _propagate_consumed_leaves_to_ancestors(addr)
+                _emit_trace(
+                    DynamicRefTraceEvent(
+                        kind="cell-type-cache-hit",
+                        name="cell_type_for",
+                        detail={
+                            "address": addr,
+                            "depth": len(_analysis_stack) + 1,
+                            "formula": formula,
+                            "source": "persistent",
+                            "kind": cached_ct.kind.value,
+                        },
+                    )
+                )
                 return cache[addr]
             _analysis_stack.append(addr)
+            analysis_started = True
+            _emit_trace(
+                DynamicRefTraceEvent(
+                    kind="cell-type-start",
+                    name="cell_type_for",
+                    detail={
+                        "address": addr,
+                        "depth": len(_analysis_stack),
+                        "formula": formula,
+                    },
+                )
+            )
             refs = get_refs_from_formula(formula, _sheet_from_addr(addr))
             try:
                 formula_parse = _formula_to_parse(formula)
@@ -724,6 +765,22 @@ def expand_leaf_env_to_argument_env(
             return cache[addr]
         finally:
             in_progress.discard(addr)
+            if analysis_started:
+                done_detail: dict[str, Any] = {
+                    "address": addr,
+                    "depth": len(_analysis_stack),
+                    "formula": formula,
+                }
+                if addr in cache:
+                    done_detail["kind"] = cache[addr].kind.value
+                _emit_trace(
+                    DynamicRefTraceEvent(
+                        kind="cell-type-done",
+                        name="cell_type_for",
+                        elapsed_s=time.perf_counter() - t0,
+                        detail=done_detail,
+                    )
+                )
             if _analysis_stack and _analysis_stack[-1] == addr:
                 _analysis_stack.pop()
                 # Propagate this cell's consumed leaves to the parent on the
@@ -807,16 +864,58 @@ def infer_dynamic_offset_targets(
     for fn, inner, _span in calls:
         if fn != "OFFSET":
             continue
-        targets = _infer_single_offset_call(
-            inner,
-            current_sheet=current_sheet,
-            cell_type_env=cell_type_env,
-            limits=lim,
-            bounds=bounds,
-            named_ranges=named_ranges,
-            named_range_ranges=named_range_ranges,
-            current_row=current_row,
-            current_col=current_col,
+        _emit_trace(
+            DynamicRefTraceEvent(
+                kind="infer-call-start",
+                name="_infer_single_offset_call",
+                detail={
+                    "function": "OFFSET",
+                    "args": inner,
+                    "current_sheet": current_sheet,
+                    "formula": formula,
+                },
+            )
+        )
+        t_call = time.perf_counter()
+        try:
+            targets = _infer_single_offset_call(
+                inner,
+                current_sheet=current_sheet,
+                cell_type_env=cell_type_env,
+                limits=lim,
+                bounds=bounds,
+                named_ranges=named_ranges,
+                named_range_ranges=named_range_ranges,
+                current_row=current_row,
+                current_col=current_col,
+            )
+        except Exception:
+            _emit_trace(
+                DynamicRefTraceEvent(
+                    kind="infer-call-done",
+                    name="_infer_single_offset_call",
+                    elapsed_s=time.perf_counter() - t_call,
+                    detail={
+                        "function": "OFFSET",
+                        "args": inner,
+                        "current_sheet": current_sheet,
+                        "error": True,
+                    },
+                )
+            )
+            raise
+        _emit_trace(
+            DynamicRefTraceEvent(
+                kind="infer-call-done",
+                name="_infer_single_offset_call",
+                elapsed_s=time.perf_counter() - t_call,
+                detail={
+                    "function": "OFFSET",
+                    "args": inner,
+                    "current_sheet": current_sheet,
+                    "targets": len(targets),
+                },
+            )
         )
         out |= targets
         if len(out) > lim.max_cells:
@@ -880,15 +979,57 @@ def infer_dynamic_index_targets(
             continue
         if span in nested_index_spans:
             continue
-        targets = _infer_single_index_call(
-            inner,
-            current_sheet=current_sheet,
-            cell_type_env=cell_type_env,
-            limits=lim,
-            named_ranges=named_ranges,
-            named_range_ranges=named_range_ranges,
-            current_row=current_row,
-            current_col=current_col,
+        _emit_trace(
+            DynamicRefTraceEvent(
+                kind="infer-call-start",
+                name="_infer_single_index_call",
+                detail={
+                    "function": "INDEX",
+                    "args": inner,
+                    "current_sheet": current_sheet,
+                    "formula": formula,
+                },
+            )
+        )
+        t_call = time.perf_counter()
+        try:
+            targets = _infer_single_index_call(
+                inner,
+                current_sheet=current_sheet,
+                cell_type_env=cell_type_env,
+                limits=lim,
+                named_ranges=named_ranges,
+                named_range_ranges=named_range_ranges,
+                current_row=current_row,
+                current_col=current_col,
+            )
+        except Exception:
+            _emit_trace(
+                DynamicRefTraceEvent(
+                    kind="infer-call-done",
+                    name="_infer_single_index_call",
+                    elapsed_s=time.perf_counter() - t_call,
+                    detail={
+                        "function": "INDEX",
+                        "args": inner,
+                        "current_sheet": current_sheet,
+                        "error": True,
+                    },
+                )
+            )
+            raise
+        _emit_trace(
+            DynamicRefTraceEvent(
+                kind="infer-call-done",
+                name="_infer_single_index_call",
+                elapsed_s=time.perf_counter() - t_call,
+                detail={
+                    "function": "INDEX",
+                    "args": inner,
+                    "current_sheet": current_sheet,
+                    "targets": len(targets),
+                },
+            )
         )
         out |= targets
         if len(out) > lim.max_cells:
@@ -1215,14 +1356,56 @@ def _resolve_offset_base(
             if current_row is not None and current_col is not None
             else None
         )
-        addr_set = _infer_index_targets_core(
-            array_range,
-            row_ast,
-            col_ast,
-            cell_type_env,
-            limits,
-            eval_context,
-            current_sheet=current_sheet,
+        _emit_trace(
+            DynamicRefTraceEvent(
+                kind="infer-call-start",
+                name="_resolve_offset_base",
+                detail={
+                    "function": "INDEX",
+                    "nested_in": "OFFSET",
+                    "current_sheet": current_sheet,
+                    "array": str(array_range),
+                },
+            )
+        )
+        t_call = time.perf_counter()
+        try:
+            addr_set = _infer_index_targets_core(
+                array_range,
+                row_ast,
+                col_ast,
+                cell_type_env,
+                limits,
+                eval_context,
+                current_sheet=current_sheet,
+            )
+        except Exception:
+            _emit_trace(
+                DynamicRefTraceEvent(
+                    kind="infer-call-done",
+                    name="_resolve_offset_base",
+                    elapsed_s=time.perf_counter() - t_call,
+                    detail={
+                        "function": "INDEX",
+                        "nested_in": "OFFSET",
+                        "current_sheet": current_sheet,
+                        "error": True,
+                    },
+                )
+            )
+            raise
+        _emit_trace(
+            DynamicRefTraceEvent(
+                kind="infer-call-done",
+                name="_resolve_offset_base",
+                elapsed_s=time.perf_counter() - t_call,
+                detail={
+                    "function": "INDEX",
+                    "nested_in": "OFFSET",
+                    "current_sheet": current_sheet,
+                    "targets": len(addr_set),
+                },
+            )
         )
         bases: list[ExcelRange] = []
         for addr in addr_set:
@@ -3478,14 +3661,56 @@ def infer_dynamic_indirect_targets(
     for fn, inner, _span in calls:
         if fn != "INDIRECT":
             continue
-        targets = _infer_single_indirect_call(
-            inner,
-            current_sheet=current_sheet,
-            cell_type_env=cell_type_env,
-            limits=lim,
-            bounds=bounds,
-            named_ranges=named_ranges,
-            named_range_ranges=named_range_ranges,
+        _emit_trace(
+            DynamicRefTraceEvent(
+                kind="infer-call-start",
+                name="_infer_single_indirect_call",
+                detail={
+                    "function": "INDIRECT",
+                    "args": inner,
+                    "current_sheet": current_sheet,
+                    "formula": formula,
+                },
+            )
+        )
+        t_call = time.perf_counter()
+        try:
+            targets = _infer_single_indirect_call(
+                inner,
+                current_sheet=current_sheet,
+                cell_type_env=cell_type_env,
+                limits=lim,
+                bounds=bounds,
+                named_ranges=named_ranges,
+                named_range_ranges=named_range_ranges,
+            )
+        except Exception:
+            _emit_trace(
+                DynamicRefTraceEvent(
+                    kind="infer-call-done",
+                    name="_infer_single_indirect_call",
+                    elapsed_s=time.perf_counter() - t_call,
+                    detail={
+                        "function": "INDIRECT",
+                        "args": inner,
+                        "current_sheet": current_sheet,
+                        "error": True,
+                    },
+                )
+            )
+            raise
+        _emit_trace(
+            DynamicRefTraceEvent(
+                kind="infer-call-done",
+                name="_infer_single_indirect_call",
+                elapsed_s=time.perf_counter() - t_call,
+                detail={
+                    "function": "INDIRECT",
+                    "args": inner,
+                    "current_sheet": current_sheet,
+                    "targets": len(targets),
+                },
+            )
         )
         out |= targets
         if len(out) > lim.max_cells:

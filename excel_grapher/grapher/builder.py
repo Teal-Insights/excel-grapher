@@ -794,6 +794,18 @@ def create_dependency_graph(
                             _dyn_stats["cache_hits"] += 1
                         else:
                             _dyn_stats["infer_calls"] += 1
+                            _cell_key = format_key(current_sheet, current_a1)
+                            _emit_trace(
+                                DynamicRefTraceEvent(
+                                    kind="dynamic-ref-cell-start",
+                                    name="extract_expr_deps",
+                                    detail={
+                                        "address": _cell_key,
+                                        "formula": formula_for_infer,
+                                    },
+                                )
+                            )
+                            _cell_t0 = time.perf_counter()
 
                             def _get_cell_formula(addr: str) -> str | None:
                                 sh, a1 = parse_address(addr)
@@ -804,57 +816,86 @@ def create_dependency_graph(
                                     return None
                                 return normalizer.normalize(v, sh)
 
-                            expanded_env = expand_leaf_env_to_argument_env(
-                                all_refs,
-                                _get_cell_formula,
-                                _refs_in_formula_without_dynamic,
-                                dynamic_refs.cell_type_env,
-                                dynamic_refs.limits,
-                                named_ranges=named_ranges,
-                                named_range_ranges=named_range_ranges,
-                                max_range_cells=max_range_cells,
-                                shared_cell_type_cache=_shared_cell_type_cache,
-                                type_analysis_cache=type_analysis_cache,
-                                workbook_sha256=_wb_sha256,
-                            )
                             try:
-                                offset_targets = infer_dynamic_offset_targets(
-                                    formula_for_infer,
-                                    current_sheet=current_sheet,
-                                    cell_type_env=expanded_env,
-                                    limits=dynamic_refs.limits,
-                                    bounds=bounds,
+                                expanded_env = expand_leaf_env_to_argument_env(
+                                    all_refs,
+                                    _get_cell_formula,
+                                    _refs_in_formula_without_dynamic,
+                                    dynamic_refs.cell_type_env,
+                                    dynamic_refs.limits,
                                     named_ranges=named_ranges,
                                     named_range_ranges=named_range_ranges,
-                                    current_row=_current_row,
-                                    current_col=_current_col,
+                                    max_range_cells=max_range_cells,
+                                    shared_cell_type_cache=_shared_cell_type_cache,
+                                    type_analysis_cache=type_analysis_cache,
+                                    workbook_sha256=_wb_sha256,
                                 )
-                                indirect_targets = infer_dynamic_indirect_targets(
-                                    formula_for_infer,
-                                    current_sheet=current_sheet,
-                                    cell_type_env=expanded_env,
-                                    limits=dynamic_refs.limits,
-                                    bounds=bounds,
-                                    named_ranges=named_ranges,
-                                    named_range_ranges=named_range_ranges,
+                                try:
+                                    offset_targets = infer_dynamic_offset_targets(
+                                        formula_for_infer,
+                                        current_sheet=current_sheet,
+                                        cell_type_env=expanded_env,
+                                        limits=dynamic_refs.limits,
+                                        bounds=bounds,
+                                        named_ranges=named_ranges,
+                                        named_range_ranges=named_range_ranges,
+                                        current_row=_current_row,
+                                        current_col=_current_col,
+                                    )
+                                    indirect_targets = infer_dynamic_indirect_targets(
+                                        formula_for_infer,
+                                        current_sheet=current_sheet,
+                                        cell_type_env=expanded_env,
+                                        limits=dynamic_refs.limits,
+                                        bounds=bounds,
+                                        named_ranges=named_ranges,
+                                        named_range_ranges=named_range_ranges,
+                                    )
+                                    index_targets = infer_dynamic_index_targets(
+                                        formula_for_infer,
+                                        current_sheet=current_sheet,
+                                        cell_type_env=expanded_env,
+                                        limits=dynamic_refs.limits,
+                                        bounds=bounds,
+                                        named_ranges=named_ranges,
+                                        named_range_ranges=named_range_ranges,
+                                        current_row=_current_row,
+                                        current_col=_current_col,
+                                    )
+                                except DynamicRefError as exc:
+                                    cell_key = format_key(current_sheet, current_a1)
+                                    raise DynamicRefError(
+                                        f"{exc} (while analyzing dynamic OFFSET/INDIRECT/INDEX for {cell_key}; "
+                                        f"normalized formula {formula_for_infer!r})"
+                                    ) from exc
+                            except Exception:
+                                _emit_trace(
+                                    DynamicRefTraceEvent(
+                                        kind="dynamic-ref-cell-done",
+                                        name="extract_expr_deps",
+                                        elapsed_s=time.perf_counter() - _cell_t0,
+                                        detail={
+                                            "address": _cell_key,
+                                            "formula": formula_for_infer,
+                                            "error": True,
+                                        },
+                                    )
                                 )
-                                index_targets = infer_dynamic_index_targets(
-                                    formula_for_infer,
-                                    current_sheet=current_sheet,
-                                    cell_type_env=expanded_env,
-                                    limits=dynamic_refs.limits,
-                                    bounds=bounds,
-                                    named_ranges=named_ranges,
-                                    named_range_ranges=named_range_ranges,
-                                    current_row=_current_row,
-                                    current_col=_current_col,
+                                raise
+                            _emit_trace(
+                                DynamicRefTraceEvent(
+                                    kind="dynamic-ref-cell-done",
+                                    name="extract_expr_deps",
+                                    elapsed_s=time.perf_counter() - _cell_t0,
+                                    detail={
+                                        "address": _cell_key,
+                                        "formula": formula_for_infer,
+                                        "offset_targets": len(offset_targets),
+                                        "indirect_targets": len(indirect_targets),
+                                        "index_targets": len(index_targets),
+                                    },
                                 )
-                            except DynamicRefError as exc:
-                                cell_key = format_key(current_sheet, current_a1)
-                                raise DynamicRefError(
-                                    f"{exc} (while analyzing dynamic OFFSET/INDIRECT/INDEX for {cell_key}; "
-                                    f"normalized formula {formula_for_infer!r})"
-                                ) from exc
+                            )
                             _dyn_cache[_cache_key] = (
                                 offset_targets,
                                 indirect_targets,
