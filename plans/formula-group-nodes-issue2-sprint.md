@@ -156,20 +156,20 @@ need as stubs.
 
 ---
 
-### Sprint 3 — Evaluator Option B path
+### Sprint 3 — Evaluator Option B path ✅
 
-**Files:** `excel_grapher/evaluator/evaluator.py` (+ thin helpers if needed)
+**Files:** `excel_grapher/evaluator/evaluator.py`, `excel_grapher/evaluator/errors.py`
 
 | Task | Done when |
 | ---- | --------- |
-| Member dispatch | `evaluate(member)` → `locate_cell` → owner with `shape != cell` |
-| Specialize then eval | `specialize_group(owner.skeleton, owner.member_bindings[member])` → `_evaluate_ast` |
-| Cache key | Result cached under **member** address, not the group key |
-| Laziness | Evaluating member A does not populate cache for sibling B |
-| Missing template | Clear error if group lacks skeleton/bindings for the member |
-| Reject group key | `evaluate("Sheet1!D63:Y63")` / union key → dedicated error (not KeyError ambiguity) |
-| Cell-only path | Unchanged when `locate_cell` returns a cell node |
-| Unit tests | `tests/unit/evaluator/test_formula_group_eval.py` (or under `formula_groups/`) |
+| Member dispatch | ✅ `evaluate(member)` → `locate_cell` → owner with `shape != cell` |
+| Specialize then eval | ✅ `specialize_group(owner.skeleton, owner.member_bindings[member])` → `_evaluate_ast` |
+| Cache key | ✅ Result cached under **member** address, not the group key |
+| Laziness | ✅ Evaluating member A does not populate cache for sibling B |
+| Missing template | ✅ `MissingGroupTemplateError` if group lacks skeleton/bindings |
+| Reject group key | ✅ `FormulaGroupKeyError` for multi-cell keys |
+| Cell-only path | ✅ Unchanged when `locate_cell` returns a cell node |
+| Unit tests | ✅ `tests/unit/evaluator/test_formula_group_eval.py` |
 
 **Entrypoint (locked)**
 

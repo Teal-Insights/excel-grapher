@@ -7,10 +7,12 @@ from typing import TYPE_CHECKING, cast, overload
 import fastpyxl.utils.cell
 
 from excel_grapher.core.address_keys import (
-    normalize_key as normalize_address,
+    CellKey,
+    parse_address,
+    parse_node_key,
 )
 from excel_grapher.core.address_keys import (
-    parse_address,
+    normalize_key as normalize_address,
 )
 from excel_grapher.core.addressing import index_excel_range
 from excel_grapher.core.excel_function_meta import (
@@ -29,6 +31,8 @@ from excel_grapher.grapher.blank_ranges import (
     address_in_blank_ranges,
     normalize_blank_range_specs,
 )
+from excel_grapher.grapher.formula_groups import specialize_group
+from excel_grapher.grapher.node import NodeKind, NodeView, locate_cell
 from excel_grapher.runtime.cache import (
     EvalContext,
     warn_circular_reference,
@@ -38,7 +42,12 @@ from excel_grapher.runtime.cache import (
 from excel_grapher.runtime.info import xl_isblank
 
 from .ast_cache import DEFAULT_AST_CACHE_MAXSIZE, AstCache, AstCacheInfo
-from .errors import MissingNormalizedFormulaError, ParseError
+from .errors import (
+    FormulaGroupKeyError,
+    MissingGroupTemplateError,
+    MissingNormalizedFormulaError,
+    ParseError,
+)
 from .functions import FUNCTIONS
 from .helpers import (
     get_error,
@@ -283,7 +292,27 @@ class FormulaEvaluator:
         return leaves
 
     def _evaluate_cell(self, address: str) -> CellValue:
-        norm = normalize_address(address)
+        try:
+            parsed = parse_node_key(address)
+        except ValueError:
+            parsed = None
+            norm = normalize_address(address)
+        else:
+            norm = str(parsed)
+
+        # Public API is member/cell addresses only (Option B).
+        if parsed is not None and not isinstance(parsed, CellKey):
+            raise FormulaGroupKeyError(norm)
+        if parsed is None:
+            try:
+                reparsed = parse_node_key(norm)
+            except ValueError:
+                reparsed = None
+            if reparsed is not None and not isinstance(reparsed, CellKey):
+                raise FormulaGroupKeyError(norm)
+            if reparsed is not None:
+                norm = str(reparsed)
+
         if self._call_stack:
             self._record_runtime_dependency(self._call_stack[-1], norm)
         if norm in self._cache:
@@ -314,9 +343,16 @@ class FormulaEvaluator:
                 self.on_cell_evaluated(norm, None)
             return None
 
-        node = self.graph.get_node(norm)
+        location = locate_cell(self.graph, norm)
+        if location is None:
+            raise KeyError(f"Cell {address} not found in graph")
+
+        node = self.graph.get_node(location.node_key)
         if node is None:
             raise KeyError(f"Cell {address} not found in graph")
+
+        if location.kind is not NodeKind.cell:
+            return self._evaluate_group_member(norm, location.node_key, node)
 
         if node.formula is None:
             self._cache[norm] = node.value
@@ -342,6 +378,32 @@ class FormulaEvaluator:
             self._cache[norm] = result
             if self.on_cell_evaluated is not None:
                 self.on_cell_evaluated(norm, result)
+            return result
+        finally:
+            self._call_stack.pop()
+
+    def _evaluate_group_member(self, member_key: str, group_key: str, node: NodeView) -> CellValue:
+        """Specialize a formula-group template for `member_key` and evaluate it.
+
+        Results are cached under the **member** address so sibling members stay
+        lazy.
+        """
+        if node.skeleton is None or node.member_bindings is None:
+            raise MissingGroupTemplateError(group_key, member_key)
+        bindings = node.member_bindings.get(member_key)
+        if bindings is None:
+            raise MissingGroupTemplateError(group_key, member_key)
+
+        self._call_stack.append(member_key)
+        try:
+            ast = specialize_group(node.skeleton, bindings)
+            result = self._evaluate_ast(ast)
+            result = self._auto_resolve_single_cell(result)
+            if result is None:
+                result = 0
+            self._cache[member_key] = result
+            if self.on_cell_evaluated is not None:
+                self.on_cell_evaluated(member_key, result)
             return result
         finally:
             self._call_stack.pop()

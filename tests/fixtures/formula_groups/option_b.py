@@ -62,22 +62,32 @@ def specialized_index_match_formula(lookup_cell: str) -> str:
 
 
 def _add_shared_precedents(graph: DependencyGraph) -> None:
-    """Add leaf cells referenced by the INDEX/MATCH template ranges."""
-    # Minimal leaves so occupancy/edges are realistic without filling whole blocks.
-    for key, value in (
-        ("Sheet1!D40", 10.0),
-        ("Sheet1!AJ40", 1.0),
-        ("Sheet1!AJ50", 1.0),
-        ("Sheet1!D35", "D"),
-        ("Sheet1!E35", "E"),
-        ("Sheet1!F35", "F"),
-        ("Sheet1!Y35", "Y"),
-        ("Sheet2!Z9", "Z"),
-    ):
-        sheet, cell = key.split("!")
-        col = "".join(ch for ch in cell if ch.isalpha())
-        row = int("".join(ch for ch in cell if ch.isdigit()))
-        graph.add_node(make_cell_node(sheet, col, row, value=value, is_leaf=True))
+    """Add leaf cells so INDEX/MATCH over the template ranges can resolve."""
+    import fastpyxl.utils.cell
+
+    def _leaf(sheet: str, col: str, row: int, value: object) -> None:
+        key = f"{sheet}!{col}{row}"
+        if graph.get_node(key) is None:
+            graph.add_node(make_cell_node(sheet, col, row, value=value, is_leaf=True))
+
+    # Header row scanned by MATCH(..., D35:Y35, 0)
+    d_idx = fastpyxl.utils.cell.column_index_from_string("D")
+    y_idx = fastpyxl.utils.cell.column_index_from_string("Y")
+    for col_i in range(d_idx, y_idx + 1):
+        col = fastpyxl.utils.cell.get_column_letter(col_i)
+        _leaf("Sheet1", col, 35, col)
+
+    # Row-match column: AJ40 = 1 (first match); other AJ rows distinct
+    for row in range(40, 51):
+        _leaf("Sheet1", "AJ", row, 1.0 if row == 40 else 0.0)
+
+    # INDEX result row (row 1 of D40:AJ50) for D/E/F columns used by fixtures
+    _leaf("Sheet1", "D", 40, 10.0)
+    _leaf("Sheet1", "E", 40, 11.0)
+    _leaf("Sheet1", "F", 40, 12.0)
+
+    # Cross-sheet lookup value used by Sheet2!B10 bindings
+    _leaf("Sheet2", "Z", 9, "D")
 
 
 @dataclass(frozen=True)
@@ -132,7 +142,7 @@ def build_cross_sheet_union_option_b() -> OptionBFixture:
     fp = shape_fingerprint(skeleton)
     bindings = {
         "Sheet1!D63": (CellRefNode(address="Sheet1!D35"),),
-        "Sheet2!B10": (CellRefNode(address="Sheet2!Z9"),),
+        "Sheet2!B10": (CellRefNode(address="Sheet2!Z9"),),  # value "D" -> col D -> 10.0
     }
     group = make_union_node(
         members,
