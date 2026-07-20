@@ -725,3 +725,66 @@ def test_schema_accepts_input_mode_override() -> None:
     }
     bindings = validate_bindings_document(doc)
     assert bindings["series"][0]["input"]["mode"] == "override"
+
+
+def test_schema_accepts_output_compute_helper() -> None:
+    doc = {
+        "schema_version": "1.10.0",
+        "series": [
+            {
+                "id": "scaled_output",
+                "sheet": "Sheet1",
+                "data_range": "Sheet1!C2",
+                "layout": "scalar",
+                "output": {
+                    "compute": {
+                        "name": "compute_scaled_output",
+                        "helper": {"name": "scaled_output_hot", "dims": ["LABEL"]},
+                    }
+                },
+                "structure": {
+                    "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
+                    "dimensions": [
+                        {
+                            "concept": "LABEL",
+                            "role": "key",
+                            "scope": "series",
+                            "bind": {"kind": "constant", "value": "scaled"},
+                        }
+                    ],
+                },
+                "key": ["LABEL"],
+            }
+        ],
+    }
+    bindings = validate_bindings_document(doc)
+    helper = bindings["series"][0]["output"]["compute"]["helper"]
+    assert helper["name"] == "scaled_output_hot"
+    assert helper["dims"] == ["LABEL"]
+
+
+def test_schema_rejects_bad_compute_helper_name() -> None:
+    doc = {
+        "schema_version": "1.10.0",
+        "series": [
+            {
+                "id": "scaled_output",
+                "sheet": "Sheet1",
+                "data_range": "Sheet1!C2",
+                "layout": "scalar",
+                "output": {
+                    "compute": {
+                        "name": "compute_scaled_output",
+                        "helper": {"name": "ScaledOutputHot"},
+                    }
+                },
+                "structure": {
+                    "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
+                    "dimensions": [],
+                },
+                "key": [],
+            }
+        ],
+    }
+    with pytest.raises(SeriesBindingsSchemaError):
+        validate_bindings_document(doc)

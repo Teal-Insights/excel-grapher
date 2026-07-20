@@ -59,6 +59,10 @@ if TYPE_CHECKING:
     from excel_grapher.grapher import DependencyGraph
     from excel_grapher.series_bindings.docstring_renderers import SeriesDocstringRendererSpec
     from excel_grapher.series_bindings.docstrings import SeriesBindingDocstringCallbackSpec
+    from excel_grapher.series_bindings.output_helper_index import (
+        OutputHelperIndex,
+        OutputHelperSpec,
+    )
     from excel_grapher.series_bindings.reader_index import ReaderIndex
     from excel_grapher.series_bindings.types import InputSeries, WorkbookSeriesBindings
 
@@ -530,8 +534,11 @@ class CodeGenerator:
         include_helpers: bool = True,
         include_readers: bool = True,
         include_leaf_indexes: bool = True,
+        include_leaves_tables: bool = True,
         series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
         docstring_renderer: SeriesDocstringRendererSpec = "google",
+        helper_index: OutputHelperIndex | None = None,
+        address_helpers: Mapping[str, OutputHelperSpec] | None = None,
     ) -> list[str]:
         from excel_grapher.series_bindings.bindings_codegen import emit_series_bindings_block
 
@@ -546,8 +553,11 @@ class CodeGenerator:
             include_helpers=include_helpers,
             include_readers=include_readers,
             include_leaf_indexes=include_leaf_indexes,
+            include_leaves_tables=include_leaves_tables,
             series_docstring_callback=series_docstring_callback,
             docstring_renderer=docstring_renderer,
+            helper_index=helper_index,
+            address_helpers=address_helpers,
         )
 
     @staticmethod
@@ -557,6 +567,16 @@ class CodeGenerator:
 
         return any(
             isinstance(series, dict) and has_input_direction(series)
+            for series in bindings.get("series", [])
+        )
+
+    @staticmethod
+    def _series_bindings_have_output(bindings: WorkbookSeriesBindings) -> bool:
+        """Return True when any series declares an output (compute) direction."""
+        from excel_grapher.series_bindings.normalize import has_output_direction
+
+        return any(
+            isinstance(series, dict) and has_output_direction(series)
             for series in bindings.get("series", [])
         )
 
@@ -605,6 +625,28 @@ class CodeGenerator:
             *emit_series_helpers_definitions(),
         ]
         return "\n".join(lines).rstrip() + "\n"
+
+    @staticmethod
+    def _emit_output_leaves_module(leaf_lines: Sequence[str]) -> str:
+        """Emit the `_output_leaves.py` module holding `_OUTPUT_LEAVES_*` tables."""
+        lines: list[str] = [
+            "from __future__ import annotations",
+            "",
+            *leaf_lines,
+        ]
+        return "\n".join(lines).rstrip() + "\n"
+
+    @staticmethod
+    def _series_output_leaves_imports(lines: Sequence[str]) -> list[str]:
+        """Return `_OUTPUT_LEAVES_*` symbols that `api.py` needs to import."""
+        names: list[str] = []
+        for line in lines:
+            match = re.match(r"^(_OUTPUT_LEAVES_[A-Z0-9_]+):", line)
+            if match:
+                name = match.group(1)
+                if name not in names:
+                    names.append(name)
+        return names
 
     @staticmethod
     def _emit_readers_module(reader_lines: Sequence[str]) -> str:
@@ -2568,6 +2610,7 @@ class CodeGenerator:
         bindings_workbook: Path | str | None = None,
         series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
         docstring_renderer: SeriesDocstringRendererSpec = "google",
+        address_helpers: Mapping[str, OutputHelperSpec] | None = None,
     ) -> dict[str, str]:
         """Generate a multi-module Python package for target cells.
 
@@ -2584,6 +2627,9 @@ class CodeGenerator:
         When series bindings declare input series, the package also includes:
         - `_readers.py`: leaf maps and `read_*` duals (imported by `api` and `internals`)
         - `_api_helpers.py`: coercion helpers for setters
+
+        When series bindings declare output series, the package also includes:
+        - `_output_leaves.py`: `_OUTPUT_LEAVES_*` tables imported by `api`
         """
         normalized_targets = self._resolve_targets(targets)
 
@@ -2657,18 +2703,52 @@ class CodeGenerator:
         reader_ranges: dict[str, dict[str, object]] | None = None
         api_helpers_py: str | None = None
         readers_py: str | None = None
+        output_leaves_py: str | None = None
         reader_lines: list[str] = []
+        output_leaf_lines: list[str] = []
         setter_lines: list[str] = []
         leaf_index_imports: list[str] = []
+        output_leaves_imports: list[str] = []
         helper_imports: list[str] = []
         public_reader_imports: list[str] = []
+        output_helper_imports: list[str] = []
         if series_bindings is not None:
             if bindings_workbook is None:
                 raise ValueError("bindings_workbook is required when series_bindings is set")
-            # Route coercion helpers to `_api_helpers` and leaf maps / readers to
-            # `_readers` so `api.py` stays focused on the public surface and
-            # `internals.py` can call `read_*` without an import cycle.
+            # Route coercion helpers to `_api_helpers`, input leaf maps / readers to
+            # `_readers`, and output leaf tables to `_output_leaves` so `api.py`
+            # stays focused on the public surface.
             emit_input = self._series_bindings_have_input(series_bindings)
+            emit_output = self._series_bindings_have_output(series_bindings)
+            export_with_aliases = self._export_addresses_with_aliases(
+                _all_cells,
+                series_public_addresses,
+            )
+            from excel_grapher.series_bindings.output_helper_index import (
+                build_output_helper_index,
+                output_helper_names,
+            )
+
+            output_helper_index = None
+            if emit_output:
+                output_helper_index = build_output_helper_index(
+                    cast("DependencyGraph", self._public_graph()),
+                    series_bindings,
+                    workbook=bindings_workbook,
+                    export_addresses=export_with_aliases,
+                    address_helpers=address_helpers,
+                )
+                output_helper_imports = output_helper_names(output_helper_index)
+                from excel_grapher.series_bindings.compute_codegen import emit_output_leaves_block
+
+                output_leaf_lines = emit_output_leaves_block(
+                    cast("DependencyGraph", self._public_graph()),
+                    bindings_workbook,
+                    series_bindings,
+                    export_addresses=export_with_aliases,
+                )
+                output_leaves_py = self._emit_output_leaves_module(output_leaf_lines)
+                output_leaves_imports = self._series_output_leaves_imports(output_leaf_lines)
             if emit_input:
                 from excel_grapher.series_bindings.setter_codegen import emit_readers_block
 
@@ -2676,10 +2756,7 @@ class CodeGenerator:
                     cast("DependencyGraph", self._public_graph()),
                     bindings_workbook,
                     series_bindings,
-                    export_addresses=self._export_addresses_with_aliases(
-                        _all_cells,
-                        series_public_addresses,
-                    ),
+                    export_addresses=export_with_aliases,
                     series_docstring_callback=series_docstring_callback,
                     docstring_renderer=docstring_renderer,
                 )
@@ -2694,8 +2771,11 @@ class CodeGenerator:
                 include_helpers=not emit_input,
                 include_readers=not emit_input,
                 include_leaf_indexes=not emit_input,
+                include_leaves_tables=not emit_output,
                 series_docstring_callback=series_docstring_callback,
                 docstring_renderer=docstring_renderer,
+                helper_index=output_helper_index,
+                address_helpers=address_helpers,
             )
             if emit_input:
                 api_helpers_py = self._emit_api_helpers_module()
@@ -2801,10 +2881,15 @@ class CodeGenerator:
             api_import_lines.append(self._format_from_module_import("_api_helpers", helper_imports))
         if leaf_index_imports:
             api_import_lines.append(self._format_from_module_import("_readers", leaf_index_imports))
+        if output_leaves_imports:
+            api_import_lines.append(
+                self._format_from_module_import("_output_leaves", output_leaves_imports)
+            )
+        internals_api_imports = ["_resolve_formula", *output_helper_imports]
         api_import_lines.extend(
             [
                 "from .data import CONSTANTS, DEFAULT_INPUTS",
-                "from .internals import _resolve_formula",
+                self._format_from_module_import("internals", internals_api_imports),
                 runtime_imports,
                 "",
                 "",
@@ -2884,6 +2969,8 @@ class CodeGenerator:
             modules["_api_helpers.py"] = api_helpers_py
         if readers_py is not None:
             modules["_readers.py"] = readers_py
+        if output_leaves_py is not None:
+            modules["_output_leaves.py"] = output_leaves_py
         return modules
 
     def _workbook_sort_addresses(self, addresses: Iterable[str]) -> list[str]:

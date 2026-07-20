@@ -725,6 +725,283 @@ def test_emit_compute_matrix_evaluates_formula_outputs(tmp_path: Path) -> None:
     assert by_key[("Debt", 2026)] == pytest.approx(107.6)
 
 
+def test_emit_compute_uses_helper_from_bindings_dims(tmp_path: Path) -> None:
+    wb_path = tmp_path / "helper_series.xlsx"
+    _write_mixed_error_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, ["Sheet1!C2", "Sheet1!D2"], load_values=True)
+    series = {
+        "id": "scaled_output",
+        "sheet": "Sheet1",
+        "data_range": "Sheet1!C2:D2",
+        "layout": "series",
+        "output": {
+            "compute": {
+                "name": "compute_scaled_output",
+                "helper": {"name": "scaled_output_hot", "dims": ["TIME_PERIOD"]},
+            }
+        },
+        "structure": {
+            "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
+            "dimensions": [
+                {
+                    "concept": "TIME_PERIOD",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "column_header", "header_row": 1, "read": "int"},
+                }
+            ],
+        },
+        "key": ["TIME_PERIOD"],
+    }
+    resolved = resolve_series_binding(graph, wb_path, series, direction="output")
+    lines = [
+        "Record = dict[str, object]",
+        "Records = list[Record]",
+        "",
+        *emit_compute_function(series, resolved),
+    ]
+    code = "\n".join(lines)
+    assert "xl_cell(ctx, address)" not in code
+    assert "scaled_output_hot(ctx, time_period=static_record['TIME_PERIOD'])" in code
+    assert "except XlErrorException as err:" in code
+
+    def scaled_output_hot(ctx, *, time_period: int):
+        return float(time_period) * 10.0
+
+    ns = _exec_compute(lines, resolver=lambda _address: None)
+    ns["scaled_output_hot"] = scaled_output_hot
+    compute = cast(Callable[..., Records], ns["compute_scaled_output"])
+    records = compute()
+    by_period = {cast(int, r["TIME_PERIOD"]): r["OBS_VALUE"] for r in records}
+    assert by_period[2020] == 20200.0
+    assert by_period[2021] == 20210.0
+
+
+def test_emit_compute_helper_falls_back_to_xl_cell_for_uncovered_leaves(
+    tmp_path: Path,
+) -> None:
+    from excel_grapher.series_bindings.output_helper_index import OutputHelperIndex
+
+    wb_path = tmp_path / "helper_partial.xlsx"
+    _write_mixed_error_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, ["Sheet1!C2", "Sheet1!D2"], load_values=True)
+    series = _mixed_error_series()
+    resolved = resolve_series_binding(graph, wb_path, series, direction="output")
+    helper_index: OutputHelperIndex = {
+        "leaves": {
+            "Sheet1!C2": {
+                "series_id": "mixed_output",
+                "helper": "mixed_helper",
+                "dims": ["TIME_PERIOD"],
+                "keys": {"TIME_PERIOD": 2020},
+                "kwargs": {"time_period": 2020},
+                "call_form": "mixed_helper(ctx, time_period=static_record['TIME_PERIOD'])",
+            }
+        }
+    }
+    lines = [
+        "Record = dict[str, object]",
+        "Records = list[Record]",
+        "",
+        *emit_compute_function(series, resolved, helper_index=helper_index),
+    ]
+    code = "\n".join(lines)
+    assert "mixed_helper(ctx, time_period=static_record['TIME_PERIOD'])" in code
+    assert "xl_cell(ctx, address)" in code
+
+    def mixed_helper(ctx, *, time_period: int):
+        return float(time_period)
+
+    def resolver(address: str):
+        if address == "Sheet1!D2":
+            return lambda ctx: 99.0
+        return None
+
+    ns = _exec_compute(lines, resolver=resolver)
+    ns["mixed_helper"] = mixed_helper
+    compute = cast(Callable[..., Records], ns["compute_mixed_output"])
+    records = compute()
+    by_period = {cast(int, r["TIME_PERIOD"]): r["OBS_VALUE"] for r in records}
+    assert by_period[2020] == 2020.0
+    assert by_period[2021] == 99.0
+
+
+def test_emit_compute_helper_preserves_include_address(tmp_path: Path) -> None:
+    wb_path = tmp_path / "helper_addr.xlsx"
+    _write_mixed_error_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, ["Sheet1!C2", "Sheet1!D2"], load_values=True)
+    series = {
+        "id": "scaled_output",
+        "sheet": "Sheet1",
+        "data_range": "Sheet1!C2:D2",
+        "layout": "series",
+        "output": {
+            "compute": {
+                "name": "compute_scaled_output",
+                "include_address": True,
+                "helper": {"name": "scaled_output_hot", "dims": ["TIME_PERIOD"]},
+            }
+        },
+        "structure": {
+            "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
+            "dimensions": [
+                {
+                    "concept": "TIME_PERIOD",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "column_header", "header_row": 1, "read": "int"},
+                }
+            ],
+        },
+        "key": ["TIME_PERIOD"],
+    }
+    resolved = resolve_series_binding(graph, wb_path, series, direction="output")
+    lines = [
+        "Record = dict[str, object]",
+        "Records = list[Record]",
+        "",
+        *emit_compute_function(series, resolved),
+    ]
+
+    def scaled_output_hot(ctx, *, time_period: int):
+        return float(time_period)
+
+    ns = _exec_compute(lines, resolver=lambda _address: None)
+    ns["scaled_output_hot"] = scaled_output_hot
+    compute = cast(Callable[..., Records], ns["compute_scaled_output"])
+    records = compute()
+    by_period = {cast(int, r["TIME_PERIOD"]): r for r in records}
+    assert by_period[2020]["address"] == "Sheet1!C2"
+    assert by_period[2021]["address"] == "Sheet1!D2"
+
+
+def test_emit_compute_matrix_helper_passes_multi_dims(tmp_path: Path) -> None:
+    from tests.fixtures.series_bindings.matrix_helpers import (
+        macro_matrix_bindings_document,
+        write_matrix_explicit_workbook,
+    )
+
+    wb_path = tmp_path / "matrix_helper.xlsx"
+    write_matrix_explicit_workbook(wb_path, use_formulas=True)
+    bindings_doc = macro_matrix_bindings_document(direction="output", workbook="matrix_helper.xlsx")
+    series = bindings_doc["series"][0]
+    series["output"]["compute"]["helper"] = {
+        "name": "macro_matrix_helper",
+        "dims": ["INDICATOR", "TIME_PERIOD"],
+    }
+    bindings = validate_bindings_document(bindings_doc)
+    series = bindings["series"][0]
+    targets = expand_data_range("Inputs!B3:D5", workbook=wb_path)
+    graph = create_dependency_graph(wb_path, targets, load_values=True)
+    resolved = resolve_series_binding(graph, wb_path, series, direction="output")
+    lines = [
+        "Record = dict[str, object]",
+        "Records = list[Record]",
+        "",
+        *emit_compute_function(series, resolved),
+    ]
+    code = "\n".join(lines)
+    assert (
+        "macro_matrix_helper(ctx, indicator=static_record['INDICATOR'], "
+        "time_period=static_record['TIME_PERIOD'])" in code
+    )
+    assert "xl_cell(ctx, address)" not in code
+
+    def macro_matrix_helper(ctx, *, indicator: str, time_period: int):
+        return f"{indicator}:{time_period}"
+
+    ns = _exec_compute(lines, resolver=lambda _address: None)
+    ns["macro_matrix_helper"] = macro_matrix_helper
+    compute = cast(Callable[..., Records], ns["compute_macro_matrix"])
+    records = compute()
+    assert len(records) == 9
+    sample = next(r for r in records if r["INDICATOR"] == "GDP growth" and r["TIME_PERIOD"] == 2024)
+    assert sample["OBS_VALUE"] == "GDP growth:2024"
+
+
+def test_emit_output_leaves_block_emits_tables_without_compute(tmp_path: Path) -> None:
+    from excel_grapher.series_bindings.compute_codegen import emit_output_leaves_block
+
+    wb_path = tmp_path / "formula.xlsx"
+    _write_formula_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, ["Sheet1!C2"], load_values=True)
+    bindings = cast(
+        WorkbookSeriesBindings,
+        {
+            "schema_version": "1.10.0",
+            "workbook": "formula.xlsx",
+            "series": [
+                {
+                    "id": "scaled_output",
+                    "sheet": "Sheet1",
+                    "data_range": "Sheet1!C2",
+                    "layout": "scalar",
+                    "output": {"compute": {"name": "compute_scaled_output"}},
+                    "structure": {
+                        "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
+                        "dimensions": [
+                            {
+                                "concept": "LABEL",
+                                "role": "key",
+                                "scope": "series",
+                                "bind": {"kind": "constant", "value": "scaled"},
+                            }
+                        ],
+                    },
+                    "key": ["LABEL"],
+                }
+            ],
+        },
+    )
+    lines = emit_output_leaves_block(graph, wb_path, bindings)
+    code = "\n".join(lines)
+    assert "_OUTPUT_LEAVES_SCALED_OUTPUT" in code
+    assert "def compute_scaled_output(" not in code
+
+
+def test_emit_computes_block_can_omit_leaf_tables(tmp_path: Path) -> None:
+    wb_path = tmp_path / "formula.xlsx"
+    _write_formula_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, ["Sheet1!C2"], load_values=True)
+    bindings = cast(
+        WorkbookSeriesBindings,
+        {
+            "schema_version": "1.10.0",
+            "workbook": "formula.xlsx",
+            "series": [
+                {
+                    "id": "scaled_output",
+                    "sheet": "Sheet1",
+                    "data_range": "Sheet1!C2",
+                    "layout": "scalar",
+                    "output": {"compute": {"name": "compute_scaled_output"}},
+                    "structure": {
+                        "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
+                        "dimensions": [
+                            {
+                                "concept": "LABEL",
+                                "role": "key",
+                                "scope": "series",
+                                "bind": {"kind": "constant", "value": "scaled"},
+                            }
+                        ],
+                    },
+                    "key": ["LABEL"],
+                }
+            ],
+        },
+    )
+    lines = emit_computes_block(graph, wb_path, bindings, include_leaves_tables=False)
+    code = "\n".join(lines)
+    assert "def compute_scaled_output(" in code
+    assert not any(
+        line.startswith("_OUTPUT_LEAVES_SCALED_OUTPUT:")
+        or line.startswith("_OUTPUT_LEAVES_SCALED_OUTPUT =")
+        for line in code.splitlines()
+    )
+    assert "for address, static_record in _OUTPUT_LEAVES_SCALED_OUTPUT:" in code
+
+
 def test_emit_compute_matrix_bindings_module_smoke(tmp_path: Path) -> None:
     from excel_grapher.series_bindings.smoke import smoke_test_bindings_module
     from excel_grapher.series_bindings.validate import validate_series_bindings
