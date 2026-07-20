@@ -543,9 +543,11 @@ records = compute_borvelia_primary_balance(ctx=ctx)
 print(tabulate(records, headers='keys', tablefmt='pipe'))
 ```
 
-The compute function evaluates each bound cell via `xl_cell` and does
-not require callers to pass sheet addresses unless
-`include_address: true` is set on `output.compute`.
+The compute function evaluates each bound cell via `xl_cell`. Excel errors
+(`#VALUE!`, `#DIV/0!`, and so on) are captured into the measure field as
+`XlError` values so a mixed numeric/error horizon still returns a full
+`Records` list; non-Excel exceptions still abort. Callers do not pass sheet
+addresses unless `include_address: true` is set on `output.compute`.
 
 | INDICATOR       | REF_AREA | TIME_PERIOD | UNIT_MEASURE | OBS_VALUE |
 |-----------------|----------|-------------|--------------|-----------|

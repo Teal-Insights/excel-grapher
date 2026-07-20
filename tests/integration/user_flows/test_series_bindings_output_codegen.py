@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import re
 import sys
 from collections.abc import Callable
 from copy import deepcopy
@@ -196,6 +197,13 @@ def test_generate_modules_exports_output_compute(
     assert "def read_borvelia_primary_balance(" in files["_readers.py"]
     assert "def read_borvelia_primary_balance_range(" in files["_readers.py"]
     assert "from ._readers import" in files["api.py"]
+    assert "XlErrorException" in files["api.py"]
+    assert "from .runtime import" in files["api.py"]
+    assert re.search(
+        r"from \.runtime import[\s\S]*?\bXlErrorException\b",
+        files["api.py"],
+    )
+    assert "except XlErrorException as err:" in files["api.py"]
     assert "def list_setters() -> list[str]:" in files["api.py"]
     assert "def list_readers() -> list[str]:" in files["api.py"]
     assert "def list_computes() -> list[str]:" in files["api.py"]

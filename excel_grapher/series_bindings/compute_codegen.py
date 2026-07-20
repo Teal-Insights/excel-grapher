@@ -54,7 +54,12 @@ def emit_compute_function(
     docstring_renderer: SeriesDocstringRendererSpec = "google",
     include_datetime_import: bool = True,
 ) -> list[str]:
-    """Emit Python source lines for one series binding output compute function."""
+    """Emit Python source lines for one series binding output compute function.
+
+    Generated measure evaluation catches `XlErrorException` from `xl_cell`, stores
+    the `XlError` code on the measure field, and continues the series. Non-Excel
+    exceptions still propagate.
+    """
     if not resolved["leaves"]:
         raise ValueError(
             f"Cannot codegen compute for {resolved['series_id']!r}: no resolved output cells"
@@ -118,7 +123,10 @@ def emit_compute_function(
     lines.append("    records: Records = []")
     lines.append(f"    for address, static_record in {leaves_name}:")
     lines.append("        record = dict(static_record)")
-    lines.append("        record[measure_field] = xl_cell(ctx, address)")
+    lines.append("        try:")
+    lines.append("            record[measure_field] = xl_cell(ctx, address)")
+    lines.append("        except XlErrorException as err:")
+    lines.append("            record[measure_field] = err.code")
     lines.append("        if include_address:")
     lines.append('            record["address"] = address')
     lines.append("        records.append(record)")
@@ -204,6 +212,7 @@ def generate_computes_module(
     header = [
         "import warnings",
         "",
+        "from excel_grapher.core.types import XlErrorException",
         "from excel_grapher.runtime.cache import EvalContext, xl_cell",
         "",
     ]

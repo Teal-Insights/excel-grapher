@@ -9,6 +9,7 @@ from typing import Any, cast
 import pytest
 import xlsxwriter
 
+from excel_grapher.core.types import XlError, XlErrorException
 from excel_grapher.exporter import CodeGenerator
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.runtime.cache import EvalContext, coerce_inputs_dict, xl_cell
@@ -37,6 +38,39 @@ def _write_formula_workbook(path: Path) -> None:
     wb.close()
 
 
+def _write_mixed_error_workbook(path: Path) -> None:
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(0, 2, 2020)
+    ws.write_number(0, 3, 2021)
+    ws.write_number("B2", 5.0)
+    ws.write_formula("C2", "=B2*2")
+    ws.write_formula("D2", "=1/0")
+    wb.close()
+
+
+def _mixed_error_series() -> dict[str, Any]:
+    return {
+        "id": "mixed_output",
+        "sheet": "Sheet1",
+        "data_range": "Sheet1!C2:D2",
+        "layout": "series",
+        "output": {"compute": {"name": "compute_mixed_output"}},
+        "structure": {
+            "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
+            "dimensions": [
+                {
+                    "concept": "TIME_PERIOD",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "column_header", "header_row": 1, "read": "int"},
+                }
+            ],
+        },
+        "key": ["TIME_PERIOD"],
+    }
+
+
 def _exec_compute(
     lines: list[str],
     *,
@@ -48,6 +82,7 @@ def _exec_compute(
         "EvalContext": EvalContext,
         "coerce_inputs_dict": coerce_inputs_dict,
         "xl_cell": xl_cell,
+        "XlErrorException": XlErrorException,
         "warnings": warnings,
         "make_context": lambda inputs=None: EvalContext(
             inputs=coerce_inputs_dict(inputs or {}),
@@ -56,6 +91,65 @@ def _exec_compute(
     }
     exec("\n".join(lines), namespace)
     return namespace
+
+
+def test_emit_compute_captures_xl_error_in_measure_and_continues(tmp_path: Path) -> None:
+    wb_path = tmp_path / "mixed_error.xlsx"
+    _write_mixed_error_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, ["Sheet1!C2", "Sheet1!D2"], load_values=True)
+    series = _mixed_error_series()
+    resolved = resolve_series_binding(graph, wb_path, series, direction="output")
+    lines = [
+        "Record = dict[str, object]",
+        "Records = list[Record]",
+        "",
+        *emit_compute_function(series, resolved),
+    ]
+    code = "\n".join(lines)
+    assert "except XlErrorException as err:" in code
+    assert "record[measure_field] = err.code" in code
+
+    def resolver(address: str):
+        if address == "Sheet1!C2":
+            return lambda ctx: 10.0
+        if address == "Sheet1!D2":
+            return lambda ctx: XlError.DIV
+        return None
+
+    ns = _exec_compute(lines, resolver=resolver)
+    compute = cast(Callable[..., Records], ns["compute_mixed_output"])
+    records = compute()
+    assert len(records) == 2
+    by_period = {cast(int, r["TIME_PERIOD"]): r for r in records}
+    assert by_period[2020]["OBS_VALUE"] == 10.0
+    assert by_period[2021]["OBS_VALUE"] == XlError.DIV
+    assert by_period[2021]["OBS_VALUE"] == "#DIV/0!"
+
+
+def test_emit_compute_propagates_non_excel_exceptions(tmp_path: Path) -> None:
+    wb_path = tmp_path / "mixed_error.xlsx"
+    _write_mixed_error_workbook(wb_path)
+    graph = create_dependency_graph(wb_path, ["Sheet1!C2", "Sheet1!D2"], load_values=True)
+    series = _mixed_error_series()
+    resolved = resolve_series_binding(graph, wb_path, series, direction="output")
+    lines = [
+        "Record = dict[str, object]",
+        "Records = list[Record]",
+        "",
+        *emit_compute_function(series, resolved),
+    ]
+
+    def resolver(address: str):
+        if address == "Sheet1!C2":
+            return lambda ctx: (_ for _ in ()).throw(RuntimeError("boom"))
+        if address == "Sheet1!D2":
+            return lambda ctx: 1.0
+        return None
+
+    ns = _exec_compute(lines, resolver=resolver)
+    compute = cast(Callable[..., Records], ns["compute_mixed_output"])
+    with pytest.raises(RuntimeError, match="boom"):
+        compute()
 
 
 def test_emit_compute_returns_records_with_obs_value(tmp_path: Path) -> None:
