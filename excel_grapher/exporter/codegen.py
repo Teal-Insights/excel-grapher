@@ -2786,6 +2786,8 @@ class CodeGenerator:
             runtime_entry_names.append("xl_range_rows")
         if self._iterate_enabled:
             runtime_entry_names.append("xl_iterative_compute")
+        if re.search(r"\bXlErrorException\b", api_body_text):
+            runtime_entry_names.append("XlErrorException")
         runtime_entry_names = sorted(set(runtime_entry_names))
         runtime_imports = self._format_from_runtime_import(runtime_entry_names)
 
