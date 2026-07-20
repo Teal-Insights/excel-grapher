@@ -146,7 +146,7 @@ def test_projected_codegen_omits_unrelated_public_aliases_outside_export_closure
         capture_dependency_provenance=True,
     )
     projection = IdentityTransitCompression().project(graph)
-    assert projection.manifest.map_to_projected("Other!B1") == "Engine!C7"
+    assert projection.manifest.map_to_projected("Other!B1").address == "Engine!C7"
 
     code = CodeGenerator(projection).generate(["Outputs!B12"])
 
@@ -166,7 +166,7 @@ def test_projected_codegen_omits_internal_aliases_inside_export_closure(tmp_path
         capture_dependency_provenance=True,
     )
     projection = IdentityTransitCompression().project(graph)
-    assert projection.manifest.map_to_projected("Outputs!B12") == "Engine!C6"
+    assert projection.manifest.map_to_projected("Outputs!B12").address == "Engine!C6"
 
     code = CodeGenerator(projection).generate(["Outputs!B14"])
 

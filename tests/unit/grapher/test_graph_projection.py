@@ -15,6 +15,7 @@ from excel_grapher.exporter.projection import (
     CompositeProjectionManifest,
     IdentityTransitCompression,
     OptimalCompression,
+    ProjectedAddress,
     ProjectedNodeSnapshot,
     ProjectionResult,
     apply_projection,
@@ -259,8 +260,8 @@ def test_apply_projection_preserves_manifest_from_earlier_steps() -> None:
         [IdentityTransitCompression(), IdentityTransitCompression()],
     )
 
-    assert projection.manifest.map_to_projected("Sheet1!B1") == "Sheet1!D1"
-    assert projection.manifest.map_to_projected("Sheet1!C1") == "Sheet1!D1"
+    assert projection.manifest.map_to_projected("Sheet1!B1").address == "Sheet1!D1"
+    assert projection.manifest.map_to_projected("Sheet1!C1").address == "Sheet1!D1"
 
 
 def test_apply_projection_composes_heterogeneous_kinds() -> None:
@@ -301,7 +302,7 @@ def test_apply_projection_composes_heterogeneous_kinds() -> None:
     projection = apply_projection(graph, [IdentityTransitCompression(), TagProjection()])
 
     assert isinstance(projection.manifest, CompositeProjectionManifest)
-    assert projection.manifest.map_to_projected("Sheet1!B1") == "Sheet1!C1"
+    assert projection.manifest.map_to_projected("Sheet1!B1").address == "Sheet1!C1"
     assert [step.kind for step in projection.manifest.steps] == ["identity_transit", "custom_tag"]
 
     register_projection_manifest("custom_tag", BaseProjectionManifest.from_dict)
@@ -318,15 +319,16 @@ def test_composite_projection_uses_manifest_protocol_for_mapping() -> None:
     class MapOnlyManifest:
         kind = "map_only"
 
-        def map_to_projected(self, address: str) -> str:
-            return "Sheet1!C1" if address == "Sheet1!B1" else address
+        def map_to_projected(self, address: str) -> ProjectedAddress:
+            mapped = "Sheet1!C1" if address == "Sheet1!B1" else address
+            return ProjectedAddress(address=mapped, parameters=None)
 
         def to_dict(self) -> dict[str, object]:
             return {"kind": self.kind}
 
     manifest = CompositeProjectionManifest(forwarding_map={}, steps=(MapOnlyManifest(),))
 
-    assert manifest.map_to_projected("Sheet1!B1") == "Sheet1!C1"
+    assert manifest.map_to_projected("Sheet1!B1").address == "Sheet1!C1"
     assert manifest.forwarding_map == {}
 
 
@@ -436,7 +438,7 @@ def test_static_range_blocks_projection(tmp_path: Path) -> None:
     )
     projection = IdentityTransitCompression().project(graph)
     assert "Sheet1!B1" in projection
-    assert projection.manifest.map_to_projected("Sheet1!B1") == "Sheet1!B1"
+    assert projection.manifest.map_to_projected("Sheet1!B1").address == "Sheet1!B1"
 
 
 @pytest.mark.parametrize(
@@ -483,7 +485,7 @@ def test_projection_respects_compression_safety(test_name: str) -> None:
 
     projection = IdentityTransitCompression().project(graph)
     assert "Sheet1!B1" in projection
-    assert projection.manifest.map_to_projected("Sheet1!B1") == "Sheet1!B1"
+    assert projection.manifest.map_to_projected("Sheet1!B1").address == "Sheet1!B1"
 
 
 def test_custom_collapse_projection_uses_public_primitives_without_forwarding() -> None:
@@ -545,7 +547,7 @@ def test_custom_collapse_projection_uses_public_primitives_without_forwarding() 
     assert "Sheet1!B1" in graph
     assert "Sheet1!B1" not in projection
     assert projection.get_dependencies("Sheet1!A1") == frozenset({"Sheet1!D1"})
-    assert projection.manifest.map_to_projected("Sheet1!B1") == "Sheet1!B1"
+    assert projection.manifest.map_to_projected("Sheet1!B1").address == "Sheet1!B1"
 
     assert isinstance(projection.manifest, BaseProjectionManifest)
     snapshot = projection.manifest.removed_node_snapshots["Sheet1!B1"]

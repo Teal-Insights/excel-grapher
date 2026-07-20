@@ -42,6 +42,7 @@ __all__ = [
     "FormulaRewrite",
     "IdentityTransitCompression",
     "OptimalCompression",
+    "ProjectedAddress",
     "ProjectedNodeSnapshot",
     "ProjectionManifest",
     "ProjectionResult",
@@ -55,6 +56,20 @@ __all__ = [
     "resolve_projection_manifest",
     "unregister_projection_manifest",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectedAddress:
+    """Projected computation address plus optional export parameters.
+
+    For ordinary forwarding, `parameters` is `None` and `address` is the retained
+    graph key. For formula-group members, `address` is the owning multi-cell key
+    and `parameters` carries member identity plus serializable bindings for
+    `_group_*` wrappers.
+    """
+
+    address: str
+    parameters: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -98,14 +113,14 @@ class ProjectionManifest(Protocol):
 
     kind: str
 
-    def map_to_projected(self, address: str) -> str: ...
+    def map_to_projected(self, address: str) -> ProjectedAddress: ...
 
     def to_dict(self) -> dict[str, Any]: ...
 
 
-def _map_to_projected(forwarding_map: Mapping[str, str], address: str) -> str:
+def _map_to_projected(forwarding_map: Mapping[str, str], address: str) -> ProjectedAddress:
     normalized = normalize_key(address)
-    return forwarding_map.get(normalized, normalized)
+    return ProjectedAddress(address=forwarding_map.get(normalized, normalized), parameters=None)
 
 
 @dataclass(frozen=True)
@@ -137,7 +152,7 @@ class BaseProjectionManifest:
             collapsed_groups=(),
         )
 
-    def map_to_projected(self, address: str) -> str:
+    def map_to_projected(self, address: str) -> ProjectedAddress:
         """Return the projected computation address for a workbook address."""
         return _map_to_projected(self.forwarding_map, address)
 
@@ -194,11 +209,15 @@ class CompositeProjectionManifest:
     steps: tuple[ProjectionManifest, ...]
     kind: str = "composite"
 
-    def map_to_projected(self, address: str) -> str:
+    def map_to_projected(self, address: str) -> ProjectedAddress:
         """Return the projected computation address for a workbook address."""
-        projected = normalize_key(address)
+        projected = ProjectedAddress(address=normalize_key(address), parameters=None)
         for step in self.steps:
-            projected = step.map_to_projected(projected)
+            nxt = step.map_to_projected(projected.address)
+            projected = ProjectedAddress(
+                address=nxt.address,
+                parameters=(nxt.parameters if nxt.parameters is not None else projected.parameters),
+            )
         return projected
 
     def to_dict(self) -> dict[str, Any]:
@@ -538,7 +557,7 @@ class ProjectionResult:
     def cycle_report(self) -> CycleReport:
         return self.projected_graph.cycle_report()
 
-    def map_to_projected(self, address: str) -> str:
+    def map_to_projected(self, address: str) -> ProjectedAddress:
         """Map a canonical workbook address to its projected computation address."""
         return self.manifest.map_to_projected(address)
 
@@ -586,7 +605,7 @@ def _chain_forwarding_maps(manifests: list[ProjectionManifest]) -> dict[str, str
         for removed, replacement in forwarding_map.items():
             final = replacement
             for following in later:
-                final = following.map_to_projected(final)
+                final = following.map_to_projected(final).address
             composed[removed] = final
     return composed
 

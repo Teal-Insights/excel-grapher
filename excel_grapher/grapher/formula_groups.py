@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import TypeAlias
 
-from excel_grapher.core.address_keys import CellKey, parse_node_key
+from excel_grapher.core.address_keys import CellKey, format_range_key, parse_address, parse_node_key
 from excel_grapher.core.formula_ast import (
     AddressHoleNode,
     AddressLeafKind,
@@ -29,6 +29,25 @@ from excel_grapher.core.formula_ast import (
 )
 
 AddressLeaf: TypeAlias = CellRefNode | RangeNode | WholeColumnNode | WholeRowNode
+
+
+def serialize_address_leaf(leaf: AddressLeaf) -> str:
+    """Serialize an address leaf to a canonical address string for export wrappers.
+
+    Cell refs become `Sheet!A1`. Ranges become a single-prefix range key
+    (`Sheet!A1:B2`). Whole-column / whole-row refs use `Sheet!A:A` / `Sheet!1:1`.
+    """
+    if isinstance(leaf, CellRefNode):
+        return leaf.address
+    if isinstance(leaf, RangeNode):
+        start_sheet, start_cell = parse_address(leaf.start)
+        end_sheet, end_cell = parse_address(leaf.end)
+        if start_sheet != end_sheet:
+            return f"{leaf.start}:{leaf.end}"
+        return format_range_key(start_sheet, start_cell, end_cell)
+    if isinstance(leaf, WholeColumnNode):
+        return f"{leaf.sheet}!{leaf.column}:{leaf.column}"
+    return f"{leaf.sheet}!{leaf.row}:{leaf.row}"
 
 
 class SpecializeError(ValueError):

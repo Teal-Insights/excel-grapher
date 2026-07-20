@@ -20,6 +20,10 @@ from excel_grapher.core.address_keys import (
 from excel_grapher.core.address_keys import (
     normalize_key as normalize_address,
 )
+from excel_grapher.core.formula_ast import (
+    AddressHoleNode,
+    AddressLeafKind,
+)
 from excel_grapher.core.operators_fastpath import MIN_OPERATOR_FASTPATH_CELLS
 from excel_grapher.evaluator.errors import MissingNormalizedFormulaError
 from excel_grapher.evaluator.name_utils import (
@@ -43,8 +47,11 @@ from excel_grapher.evaluator.parser import (
 )
 from excel_grapher.evaluator.types import XlError
 from excel_grapher.exporter.embed import emit_runtime
+from excel_grapher.exporter.projection import ProjectedAddress
 from excel_grapher.grapher.blank_ranges import BlankRangeRect, normalize_blank_range_specs
+from excel_grapher.grapher.formula_groups import collect_holes, serialize_address_leaf
 from excel_grapher.grapher.graph import CycleError
+from excel_grapher.grapher.node import NodeKind, locate_cell
 from excel_grapher.grapher.parser import format_key
 from excel_grapher.grapher.target_expansion import (
     expand_targets_to_roots,
@@ -140,6 +147,9 @@ class CodeGenerator:
         self._ast_cache: dict[str, AstNode] = {}
         self._used_graph_closure: bool = False
         self._formula_cell_address: str | None = None
+        self._hole_param_by_slot: dict[int, str] | None = None
+        # member address -> ProjectedAddress with group key + binding params
+        self._group_member_exports: dict[str, ProjectedAddress] = {}
 
     def __enter__(self) -> CodeGenerator:
         return self
@@ -158,6 +168,8 @@ class CodeGenerator:
         self._ast_cache.clear()
         self._used_graph_closure = False
         self._formula_cell_address = None
+        self._hole_param_by_slot = None
+        self._group_member_exports.clear()
 
     def _include_dep_tracking(
         self,
@@ -183,26 +195,59 @@ class CodeGenerator:
     def _projection_manifest(self) -> ProjectionManifest | None:
         return getattr(self.graph, "manifest", None)
 
-    def _map_address_to_projected(self, address: str) -> str:
-        manifest = self._projection_manifest()
+    def _map_address_to_projected(self, address: str) -> ProjectedAddress:
+        """Map a public address through projection, then formula-group occupancy."""
         normalized = normalize_address(address)
+        manifest = self._projection_manifest()
         if manifest is None:
-            return normalized
-        return manifest.map_to_projected(normalized)
+            projected = ProjectedAddress(address=normalized, parameters=None)
+        else:
+            projected = manifest.map_to_projected(normalized)
+
+        # Overlay Option B formula-group ownership (hand-built or coalesced).
+        # GraphLike test doubles may lack occupancy / iteration; skip overlay then.
+        locate_graph = self._public_graph()
+        try:
+            location = locate_cell(cast(Any, locate_graph), normalized)
+        except (TypeError, ValueError):
+            location = None
+        if location is None or location.kind is NodeKind.cell:
+            return projected
+
+        owner = locate_graph.get_node(location.node_key)
+        if owner is None:
+            return ProjectedAddress(address=location.node_key, parameters=None)
+        skeleton = getattr(owner, "skeleton", None)
+        member_bindings = getattr(owner, "member_bindings", None)
+        if skeleton is None or member_bindings is None:
+            return ProjectedAddress(address=location.node_key, parameters=None)
+
+        bindings = member_bindings.get(normalized)
+        if bindings is None:
+            return ProjectedAddress(address=location.node_key, parameters=None)
+
+        return ProjectedAddress(
+            address=location.node_key,
+            parameters={
+                "member": normalized,
+                "bindings": tuple(serialize_address_leaf(b) for b in bindings),
+            },
+        )
 
     def _projection_alias_map(
         self,
         public_addresses: Iterable[str],
         export_addresses: Iterable[str],
     ) -> dict[str, str]:
-        manifest = self._projection_manifest()
-        if manifest is None:
-            return {}
         exported = frozenset(normalize_address(addr) for addr in export_addresses)
         aliases: dict[str, str] = {}
         for address in public_addresses:
             public_addr = normalize_address(address)
-            projected_addr = normalize_address(manifest.map_to_projected(public_addr))
+            projected = self._map_address_to_projected(public_addr)
+            projected_addr = normalize_address(projected.address)
+            # Formula-group members get dedicated wrappers; skip alias map.
+            if projected.parameters is not None:
+                continue
             if projected_addr != public_addr and projected_addr in exported:
                 aliases[public_addr] = projected_addr
         return aliases
@@ -407,6 +452,22 @@ class CodeGenerator:
 
         if isinstance(node, FunctionCallNode):
             return self._emit_function_call(node)
+
+        if isinstance(node, AddressHoleNode):
+            if self._hole_param_by_slot is None:
+                raise ValueError("AddressHoleNode outside formula-group helper emission")
+            param = self._hole_param_by_slot.get(node.slot)
+            if param is None:
+                raise ValueError(f"Missing binding parameter for hole slot {node.slot}")
+            if node.kind is AddressLeafKind.cell:
+                return f"xl_cell(ctx, {param})"
+            if node.kind is AddressLeafKind.range:
+                return f"xl_range(ctx, {param})"
+            if node.kind is AddressLeafKind.whole_column:
+                return f"xl_range(ctx, {param})"
+            if node.kind is AddressLeafKind.whole_row:
+                return f"xl_range(ctx, {param})"
+            raise ValueError(f"Unsupported address hole kind: {node.kind!r}")
 
         raise ValueError(f"Unknown AST node type: {type(node)}")
 
@@ -1756,6 +1817,60 @@ class CodeGenerator:
 
         return f"xl_offset_ref({ref_info}, {rows_expr}, {cols_expr}, {height_expr}, {width_expr})"
 
+    def _group_helper_name(self, group_key: str) -> str:
+        base = address_to_python_name(normalize_address(group_key))
+        if base.startswith("cell_"):
+            base = base[len("cell_") :]
+        return f"_group_{base}"
+
+    def _emit_group_helper(self, group_key: str) -> str:
+        """Emit one parameterized `_group_*` helper for a formula-group node."""
+        normalized = normalize_address(group_key)
+        node = self.graph.get_node(normalized)
+        skeleton = None if node is None else getattr(node, "skeleton", None)
+        if skeleton is None:
+            raise ValueError(f"Not a formula-group node: {normalized}")
+
+        holes = collect_holes(skeleton)
+        helper = self._group_helper_name(normalized)
+        params = ", ".join(["ctx", *[f"b{i}" for i in range(len(holes))]])
+        lines = [f"def {helper}({params}):"]
+        doc = f"Formula group: {normalized}".replace("'''", "\\'''")
+        lines.append(f"    '''{doc}.'''")
+        self._temp_var_counter = 0
+        prev_holes = self._hole_param_by_slot
+        self._hole_param_by_slot = {hole.slot: f"b{i}" for i, hole in enumerate(holes)}
+        prev_cell = self._formula_cell_address
+        self._formula_cell_address = normalized
+        try:
+            expr = self._emit_ast(skeleton)
+        finally:
+            self._hole_param_by_slot = prev_holes
+            self._formula_cell_address = prev_cell
+        lines.append(f"    return {expr}")
+        return "\n".join(lines)
+
+    def _emit_group_member_wrapper_lines(self) -> list[str]:
+        """Emit thin `cell_*` wrappers that call `_group_*` with member bindings."""
+        if not self._group_member_exports:
+            return []
+        lines = ["# --- Formula-group member wrappers ---", ""]
+        for member, projected in sorted(self._group_member_exports.items()):
+            params = projected.parameters or {}
+            bindings = params.get("bindings") or ()
+            helper = self._group_helper_name(projected.address)
+            wrapper = address_to_python_name(member)
+            args = ", ".join([repr(b) for b in bindings])
+            call = f"{helper}(ctx)" if not args else f"{helper}(ctx, {args})"
+            lines.extend(
+                [
+                    f"def {wrapper}(ctx):",
+                    f"    return {call}",
+                    "",
+                ]
+            )
+        return lines
+
     def _emit_cell(self, address: str) -> str:
         """Emit a Python function for a single formula cell.
 
@@ -2059,6 +2174,11 @@ class CodeGenerator:
                 funcs.add("xl_is_array")
                 funcs.add("xl_map_unary")
             funcs.update(self._extract_xl_functions(node.operand))
+        elif isinstance(node, AddressHoleNode):
+            if node.kind is AddressLeafKind.cell:
+                funcs.add("xl_cell")
+            else:
+                funcs.add("xl_range")
 
         return funcs
 
@@ -2135,6 +2255,12 @@ class CodeGenerator:
         # Export formula cell implementations and a resolver.
         lines.append("# --- Formula cell functions ---\n")
         lines.extend(cell_code_lines)
+        for addr in public_addresses:
+            projected = self._map_address_to_projected(addr)
+            if projected.parameters is not None:
+                member = str(projected.parameters.get("member") or normalize_address(addr))
+                self._group_member_exports[member] = projected
+        lines.extend(self._emit_group_member_wrapper_lines())
         alias_lines = self._emit_projection_alias_lines(_all_cells, public_addresses)
         lines.extend(alias_lines)
         lines.extend(
@@ -2284,8 +2410,14 @@ class CodeGenerator:
         runtime_py = runtime_code.rstrip() + "\n"
 
         alias_lines = self._emit_projection_alias_lines(_all_cells, public_addresses)
+        for addr in public_addresses:
+            projected = self._map_address_to_projected(addr)
+            if projected.parameters is not None:
+                member = str(projected.parameters.get("member") or normalize_address(addr))
+                self._group_member_exports[member] = projected
+        group_wrapper_lines = self._emit_group_member_wrapper_lines()
         internals_import_names = self._internals_runtime_import_names(
-            parts["used_xl_functions"], cell_code_lines + alias_lines
+            parts["used_xl_functions"], cell_code_lines + group_wrapper_lines + alias_lines
         )
         runtime_import_block = self._format_from_runtime_import(internals_import_names)
         internals_lines: list[str] = ["from __future__ import annotations", ""]
@@ -2294,6 +2426,7 @@ class CodeGenerator:
             internals_lines.append("")
         internals_lines.append("# --- Formula cell functions ---\n")
         internals_lines.extend(cell_code_lines)
+        internals_lines.extend(group_wrapper_lines)
         internals_lines.extend(alias_lines)
         internals_lines.extend(
             self._emit_resolver_lines(parts["blank_rects"] if parts["blank_rects"] else None)
@@ -2486,6 +2619,10 @@ class CodeGenerator:
                 return
             self._emitted.add(address)
             node = self.graph.get_node(address)
+            if node is not None and getattr(node, "skeleton", None) is not None:
+                normalized = normalize_address(address)
+                formula_emit_order.append(normalized)
+                return
             if node is not None and node.formula is not None:
                 normalized = normalize_address(address)
                 formula_emit_order.append(normalized)
@@ -2526,6 +2663,22 @@ class CodeGenerator:
 
         for address in self._workbook_sort_addresses(formula_emit_order):
             formula_cells.add(address)
+            node = self.graph.get_node(address)
+            skeleton = None if node is None else getattr(node, "skeleton", None)
+            if skeleton is not None:
+                cell_code_lines.append(self._emit_group_helper(address))
+                cell_code_lines.append("")
+                cell_code_lines.append("")
+                prev_holes = self._hole_param_by_slot
+                holes = collect_holes(skeleton)
+                self._hole_param_by_slot = {h.slot: f"b{i}" for i, h in enumerate(holes)}
+                try:
+                    self._note_operators_fastpath_from_ast(skeleton)
+                    used_xl_functions.update(self._extract_xl_functions(skeleton))
+                finally:
+                    self._hole_param_by_slot = prev_holes
+                continue
+
             cell_code_lines.append(self._emit_cell(address))
             cell_code_lines.append("")
             cell_code_lines.append("")
@@ -2619,7 +2772,13 @@ class CodeGenerator:
         evaluation order as the export closure. For other GraphLike implementations, it falls
         back to the CodeGenerator AST-based dependency walk.
         """
-        projected_targets = [self._map_address_to_projected(t) for t in targets]
+        projected_targets = []
+        for t in targets:
+            projected = self._map_address_to_projected(t)
+            projected_targets.append(projected.address)
+            if projected.parameters is not None:
+                member = str(projected.parameters.get("member") or normalize_address(t))
+                self._group_member_exports[member] = projected
         # Prefer graph-driven closure when excel_grapher provides an evaluation order AND
         # has dependency edges populated. Many unit tests build a DependencyGraph with nodes
         # only (no edges); for those we must fall back to AST-based dependency discovery.
@@ -2678,7 +2837,14 @@ class CodeGenerator:
         out: list[str] = []
         seen: set[str] = set()
         for target in targets:
-            deps = self._collect_dependencies(target)
+            node = self.graph.get_node(normalize_address(target))
+            if node is not None and getattr(node, "skeleton", None) is not None:
+                # Formula-group: use graph edges when present; otherwise the group key alone.
+                deps = [normalize_address(target)]
+                for dep in self.graph.get_dependencies(normalize_address(target)):
+                    deps.append(normalize_address(dep))
+            else:
+                deps = self._collect_dependencies(target)
             for dep in deps:
                 dep_n = normalize_address(dep)
                 if dep_n not in seen:

@@ -99,6 +99,17 @@ class OptionBFixture:
     members: tuple[str, ...]
 
 
+def _wire_group_precedent_edges(graph: DependencyGraph, group_key: str) -> None:
+    """Connect the group to every leaf currently in the graph (fixture precedents)."""
+    for key in list(graph.keys()):
+        node = graph.get_node(key)
+        if node is None or not node.is_leaf:
+            continue
+        if key == group_key:
+            continue
+        graph.add_edge(group_key, key)
+
+
 def build_row_stripe_option_b() -> OptionBFixture:
     """Contiguous one-row stripe `Sheet1!D63:F63` with INDEX/MATCH template."""
     members = ("Sheet1!D63", "Sheet1!E63", "Sheet1!F63")
@@ -120,15 +131,7 @@ def build_row_stripe_option_b() -> OptionBFixture:
     g.sheet_order = ["Sheet1", "Sheet2"]
     _add_shared_precedents(g)
     g.add_node(group)
-    for dep in (
-        "Sheet1!D40",
-        "Sheet1!AJ40",
-        "Sheet1!AJ50",
-        "Sheet1!D35",
-        "Sheet1!E35",
-        "Sheet1!F35",
-    ):
-        g.add_edge(group.key, dep)
+    _wire_group_precedent_edges(g, group.key)
     for m in members:
         assert g.get_node(m) is None
         assert g.cell_owner(m) == group.key
@@ -155,8 +158,7 @@ def build_cross_sheet_union_option_b() -> OptionBFixture:
     g.sheet_order = ["Sheet1", "Sheet2"]
     _add_shared_precedents(g)
     g.add_node(group)
-    for dep in ("Sheet1!D40", "Sheet1!AJ40", "Sheet1!AJ50", "Sheet1!D35", "Sheet2!Z9"):
-        g.add_edge(group.key, dep)
+    _wire_group_precedent_edges(g, group.key)
     for m in members:
         assert g.get_node(m) is None
         assert g.cell_owner(m) == group.key

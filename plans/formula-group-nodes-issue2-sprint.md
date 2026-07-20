@@ -186,37 +186,38 @@ absence as an error.
 
 ---
 
-### Sprint 4 — `ProjectedAddress` + codegen `_group_*`
+### Sprint 4 — `ProjectedAddress` + codegen `_group_*` ✅
 
 **Files:** `excel_grapher/exporter/projection.py`, `codegen.py`,
 callers of `map_to_projected`
 
 | Task | Done when |
 | ---- | --------- |
-| `ProjectedAddress` | `address: NodeKey`, `parameters: Mapping[str, Any] \| None` |
-| Protocol update | `map_to_projected(cell) -> ProjectedAddress` (greenfield break OK) |
-| Identity / cell maps | `parameters is None`; `address` is the cell or forwarded key |
-| Group maps | Public member → owning group key + binding parameters for wrappers |
-| Codegen helper | One `_group_<stable_id>(...)` per group node; body from specialized skeleton pattern |
-| Wrappers | Per-member entries in `_RESOLVED_FORMULAS` calling the helper with that member’s bindings |
-| Wrappers ≠ nodes | No member cell nodes added to the graph |
-| Shared specialize | Codegen uses the same `specialize_group` (or emits equivalent closed-over constants) |
-| Unit / smoke | `tests/unit/exporter/test_formula_group_codegen.py` |
+| `ProjectedAddress` | ✅ `address: NodeKey`, `parameters: Mapping[str, Any] \| None` |
+| Protocol update | ✅ `map_to_projected(cell) -> ProjectedAddress` (greenfield break OK) |
+| Identity / cell maps | ✅ `parameters is None`; `address` is the cell or forwarded key |
+| Group maps | ✅ Public member → owning group key + binding parameters for wrappers |
+| Codegen helper | ✅ One `_group_<stable_id>(...)` per group node; body emits skeleton with `AddressHoleNode` → `bN` params |
+| Wrappers | ✅ Per-member `cell_*` wrappers calling the helper with serialized binding strings |
+| Wrappers ≠ nodes | ✅ No member cell nodes added to the graph |
+| Shared specialize | ✅ Holes filled at call sites via address strings (`serialize_address_leaf`); same hole walk as `specialize_group` |
+| Unit / smoke | ✅ `tests/unit/exporter/test_formula_group_codegen.py` |
 
-**Parameter shape (suggested lock for MVP):**
+**Parameter shape (locked for MVP):**
 
 ```python
 parameters = {
     "member": "Sheet1!E63",
-    "bindings": (...),  # same tuple as member_bindings[member], serializable
+    "bindings": ("Sheet1!E35", ...),  # serialize_address_leaf strings
 }
 ```
 
-Exact serialization may use address strings rather than live AST nodes in the
-exported module — document the chosen encoding in the Sprint 4 PR.
+Binding leaves are exported as canonical address strings (`Sheet!A1`,
+`Sheet!A1:B2`, `Sheet!A:A`, `Sheet!1:1`), not live AST nodes. Helpers take
+those strings as `b0`, `b1`, … and resolve via `xl_cell` / `xl_range`.
 
-**Compat:** Update every in-repo `map_to_projected` implementer and test that
-assumes `str`. Prefer a short migration in the same PR over a dual API.
+**Compat:** ✅ Updated every in-repo `map_to_projected` implementer and test
+that assumed `str`.
 
 ---
 

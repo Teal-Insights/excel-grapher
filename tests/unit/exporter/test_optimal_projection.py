@@ -117,7 +117,7 @@ def test_optimal_projection_manifest_kind_and_forwarding() -> None:
     projection = OptimalCompression().project(graph)
     assert isinstance(manifest, BaseProjectionManifest)
     assert manifest.kind == "optimal_compression"
-    assert manifest.map_to_projected("Sheet1!B1") == "Sheet1!C1"
+    assert manifest.map_to_projected("Sheet1!B1").address == "Sheet1!C1"
     assert "Sheet1!C1" in projection
 
 
@@ -133,7 +133,7 @@ def test_optimal_projection_inline_lineage_without_forwarding() -> None:
 
     manifest = OptimalCompression().project(graph).manifest
     assert isinstance(manifest, BaseProjectionManifest)
-    assert manifest.map_to_projected("Sheet1!B1") == "Sheet1!B1"
+    assert manifest.map_to_projected("Sheet1!B1").address == "Sheet1!B1"
     assert manifest.retained_to_collapsed_sources["Sheet1!A1"] == ("Sheet1!B1",)
     assert "Sheet1!B1" in manifest.removed_node_snapshots
 
