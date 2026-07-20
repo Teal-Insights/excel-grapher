@@ -161,17 +161,17 @@ pick one and stick to it).
 
 ---
 
-### Sprint 3 — Builder wiring + fixtures + docs
+### Sprint 3 — Builder wiring + fixtures + docs ✅
 
 **Files:** `excel_grapher/grapher/builder.py`, fixtures, `user_guide/01-dependency-graphs.qmd`.
 
 | Task | Done when |
 | ---- | --------- |
-| `formula_groups: bool = False` | Default off; existing builder tests green unchanged |
-| Flag on | When True, run `coalesce_formula_groups` at end of build |
-| Cell-only fixture | Same-shape pair (non-contiguous and/or cross-sheet) ready to coalesce |
-| Docs | Short user-guide note: opt-in flag + unique occupancy / member-address API |
-| Demo (optional) | Extend or add micro_workbooks script showing coalesce → eval/codegen |
+| `formula_groups: bool = False` | ✅ Default off; existing builder tests green unchanged |
+| Flag on | ✅ When True, run `coalesce_formula_groups` at end of build |
+| Cell-only fixture | ✅ Cross-sheet same-shape pair (`tests/fixtures/formula_groups/cell_only.py`) |
+| Docs | ✅ User-guide note: opt-in flag + unique occupancy / member-address API |
+| Demo (optional) | ✅ `examples/micro_workbooks/demo_formula_groups.py` Issue 3 section |
 
 CLI: mirror the flag only if a graph-build CLI already exists; otherwise
 Python API + user guide is enough.

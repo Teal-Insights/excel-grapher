@@ -240,6 +240,7 @@ def create_dependency_graph(
     blank_ranges: Iterable[str] | None = None,
     type_analysis_cache: TypeAnalysisCache | None = None,
     warm_ast_cache: bool = False,
+    formula_groups: bool = False,
 ) -> DependencyGraph:
     r"""Build a dependency graph starting from target cells.
 
@@ -292,6 +293,12 @@ def create_dependency_graph(
     (oldest warmed entries may be evicted). `preparsed_formulas` is not stored
     in JSON graph caches; call `warm_preparsed_formulas` after cache load or
     formula mutation.
+
+    When `formula_groups` is True, run `coalesce_formula_groups` after the cell
+    graph is built. Same-shape formula families become multi-cell group nodes
+    (unique occupancy: member cells are not stored as their own nodes; evaluate
+    / export still use member addresses via `locate_cell`). Default is False so
+    existing cell-only builds are unchanged.
 
     **Cost model**: constraint-based dynamic-ref expansion (`dynamic_refs` set,
     `use_cached_dynamic_refs=False`) runs `expand_leaf_env_to_argument_env`
@@ -1282,6 +1289,10 @@ def create_dependency_graph(
         from .preparsed_formulas import warm_preparsed_formulas
 
         graph.preparsed_formulas = warm_preparsed_formulas(graph)
+    if formula_groups:
+        from excel_grapher.grapher.formula_groups import coalesce_formula_groups
+
+        coalesce_formula_groups(graph)
     return graph
 
 

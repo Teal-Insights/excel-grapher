@@ -187,6 +187,15 @@ if loc is not None:
     owner = graph.get_node(loc.node_key)  # the owning multi-cell (or cell) node
     print(loc.cell_key, "owned by", loc.node_key)
 
+## Opt-in detection: coalesce same-shape formula cells into groups after build.
+## Default remains cell-only (`formula_groups=False`). When enabled, public
+## evaluate/export targets stay member addresses (`target_keys()` / `locate_cell`).
+# graph = create_dependency_graph(
+#     Path("model.xlsx"),
+#     targets,
+#     formula_groups=True,
+# )
+
 ## Iterate over formula cells
 for key, node in graph.formula_nodes():
     print(key, node.normalized_formula)
@@ -211,7 +220,7 @@ target_keys = graph.target_keys()
 | `leaf_node_items()` | `Iterator[tuple[NodeKey, Node]]`         | Leaf cells (no cell dependencies)     |
 | `formula_keys()`    | `list[NodeKey]`                          | Sorted keys for formula cells         |
 | `leaf_keys()`       | `list[NodeKey]`                          | Sorted keys for leaf cells            |
-| `target_keys()`     | `list[NodeKey]`                          | Sorted keys marked as original targets |
+| `target_keys()`     | `list[NodeKey]`                          | Original targets: cell keys with `is_target`, or member addresses from coalesced groups |
 
 #### `Node` fields
 
