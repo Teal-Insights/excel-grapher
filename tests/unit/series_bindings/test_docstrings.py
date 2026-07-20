@@ -641,6 +641,113 @@ def test_matrix_setter_docstring_describes_matrix_shapes() -> None:
     assert "set_country_initial_debt(ctx, [" in rendered
 
 
+def test_google_reader_docstring_matches_reader_signature() -> None:
+    """Readers are `(ctx: EvalContext) -> CellValue`, not compute-style inputs/Records."""
+    contract = SeriesBindingDocstringContract(
+        series_id="country",
+        function_name="read_country",
+        function_kind="reader",
+        data_range="Dashboard!C12",
+        layout="scalar",
+        value_type="string",
+        required_fields=("OBS_VALUE",),
+        fields={
+            "OBS_VALUE": FieldContract(
+                concept_name="Country",
+                dtype="string",
+                required=True,
+                expected_value=None,
+            ),
+        },
+        example_records=({"OBS_VALUE": "France"},),
+        notes="",
+    )
+    doc = SeriesFunctionDoc(
+        summary="Read the selected country.",
+        purpose="Returns the country name from the Dashboard.",
+        record_matching="Scalar cell.",
+        field_descriptions={"OBS_VALUE": FieldDoc(description="Country name")},
+    )
+    text = GoogleSeriesDocstringRenderer().render(contract, doc)
+
+    assert "inputs" not in text
+    assert "Records" not in text
+    assert "ctx (EvalContext):" in text
+    assert "EvalContext | None" not in text
+    assert "CellValue" in text
+    assert "read_country(ctx=ctx)" in text
+
+
+def test_numpy_reader_docstring_matches_reader_signature() -> None:
+    """Numpy reader docs must mirror the Google reader signature contract."""
+    contract = SeriesBindingDocstringContract(
+        series_id="country",
+        function_name="read_country",
+        function_kind="reader",
+        data_range="Dashboard!C12",
+        layout="scalar",
+        value_type="string",
+        required_fields=("OBS_VALUE",),
+        fields={
+            "OBS_VALUE": FieldContract(
+                concept_name="Country",
+                dtype="string",
+                required=True,
+                expected_value=None,
+            ),
+        },
+        example_records=({"OBS_VALUE": "France"},),
+        notes="",
+    )
+    doc = SeriesFunctionDoc(
+        summary="Read the selected country.",
+        purpose="Returns the country name from the Dashboard.",
+        record_matching="Scalar cell.",
+        field_descriptions={"OBS_VALUE": FieldDoc(description="Country name")},
+    )
+    text = NumpySeriesDocstringRenderer().render(contract, doc)
+
+    assert "inputs" not in text
+    assert "Records" not in text
+    assert "ctx : EvalContext" in text
+    assert "EvalContext | None" not in text
+    assert "CellValue" in text
+
+
+def test_google_compute_docstring_keeps_inputs_and_records() -> None:
+    """Compute functions still advertise optional ctx/inputs -> Records."""
+    contract = SeriesBindingDocstringContract(
+        series_id="country",
+        function_name="compute_country",
+        function_kind="compute",
+        data_range="Dashboard!C12",
+        layout="scalar",
+        value_type="string",
+        required_fields=("OBS_VALUE",),
+        fields={
+            "OBS_VALUE": FieldContract(
+                concept_name="Country",
+                dtype="string",
+                required=True,
+                expected_value=None,
+            ),
+        },
+        example_records=({"OBS_VALUE": "France"},),
+        notes="",
+    )
+    doc = SeriesFunctionDoc(
+        summary="Compute the selected country.",
+        purpose="Returns country records.",
+        record_matching="Scalar cell.",
+        field_descriptions={"OBS_VALUE": FieldDoc(description="Country name")},
+    )
+    text = GoogleSeriesDocstringRenderer().render(contract, doc)
+
+    assert "inputs (dict[str, object] | None)" in text
+    assert "ctx (EvalContext | None)" in text
+    assert "Records: Computed output records." in text
+
+
 @pytest.mark.parametrize(
     "renderer_cls",
     [
