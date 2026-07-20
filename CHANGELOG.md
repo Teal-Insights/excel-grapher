@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.18.0 (2026-07-20)
+
+### Code Style
+
+- Format test_versions schema version set
+  ([#441](https://github.com/Teal-Insights/excel-grapher/pull/441),
+  [`7780a20`](https://github.com/Teal-Insights/excel-grapher/commit/7780a20b78a6946c2b1fa234328fb3065c415287))
+
+### Features
+
+- **series-bindings**: Call compute helpers by dims; move output leaves
+  ([#441](https://github.com/Teal-Insights/excel-grapher/pull/441),
+  [`7780a20`](https://github.com/Teal-Insights/excel-grapher/commit/7780a20b78a6946c2b1fa234328fb3065c415287))
+
+- **series-bindings**: Call compute helpers by dims; move output leaves (#435)
+  ([#441](https://github.com/Teal-Insights/excel-grapher/pull/441),
+  [`7780a20`](https://github.com/Teal-Insights/excel-grapher/commit/7780a20b78a6946c2b1fa234328fb3065c415287))
+
+
 ## v3.17.1 (2026-07-20)
 
 ### Bug Fixes
