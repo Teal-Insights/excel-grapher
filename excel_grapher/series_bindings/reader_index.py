@@ -13,7 +13,7 @@ from typing import Literal, NotRequired, TypedDict
 
 from excel_grapher.core.address_keys import normalize_key, split_address_on_colon
 from excel_grapher.grapher.graph import DependencyGraph
-from excel_grapher.series_bindings.normalize import has_input_direction
+from excel_grapher.series_bindings.normalize import has_constant_direction, has_input_direction
 from excel_grapher.series_bindings.resolve import resolve_series_bindings
 from excel_grapher.series_bindings.setter_codegen import (
     _reader_function_name,
@@ -153,59 +153,64 @@ def build_reader_index(
 ) -> ReaderIndex:
     """Build reverse address/range indexes from Phase 1 leaf resolution.
 
-    Leaves or binding-aligned `data_range`s owned by more than one input series
-    are recorded in `ambiguous` and omitted from `leaves` / `ranges` so
-    consumers fall back to `xl_cell` / `xl_range` with reason `ambiguous_owner`.
-    Range entries are emitted only when codegen would emit `read_<id>_range`.
+    Leaves or binding-aligned `data_range`s owned by more than one input or
+    constant series are recorded in `ambiguous` and omitted from `leaves` /
+    `ranges` so consumers fall back to `xl_cell` / `xl_range` with reason
+    `ambiguous_owner`. Range entries are emitted only when codegen would emit
+    `read_<id>_range`.
     """
-    report = resolve_series_bindings(
-        graph,
-        bindings,
-        workbook=workbook,
-        direction="input",
-        export_addresses=export_addresses,
-    )
-    by_id = {
-        s["id"]: s
-        for s in bindings.get("series", [])
-        if isinstance(s, dict) and has_input_direction(s)
-    }
-
     leaf_owners: dict[str, list[ReaderLeafEntry]] = {}
     range_owners: dict[str, list[ReaderRangeEntry]] = {}
 
-    for resolved in report["series"]:
-        series = by_id.get(resolved["series_id"])
-        if series is None or not _should_emit_reader(resolved):
-            continue
-        reader = _reader_function_name(series, resolved)
-        key_fields = [str(field) for field in (series.get("key") or [])]
-        kind = _leaf_kind(resolved, key_fields)
-        for leaf in resolved["leaves"]:
-            address = normalize_key(leaf["address"])
-            entry = _leaf_entry(
-                series_id=resolved["series_id"],
-                reader=reader,
-                address=address,
-                key=leaf["key"],
-                key_fields=key_fields,
-                kind=kind,
-            )
-            leaf_owners.setdefault(address, []).append(entry)
+    for direction, has_direction in (
+        ("input", has_input_direction),
+        ("constant", has_constant_direction),
+    ):
+        report = resolve_series_bindings(
+            graph,
+            bindings,
+            workbook=workbook,
+            direction=direction,
+            export_addresses=export_addresses,
+        )
+        by_id = {
+            s["id"]: s
+            for s in bindings.get("series", [])
+            if isinstance(s, dict) and has_direction(s)
+        }
 
-        if _should_emit_reader_range(series, resolved):
-            data_range = series.get("data_range")
-            if isinstance(data_range, str) and data_range:
-                normalized_range = normalize_key(data_range)
-                range_reader = f"{reader}_range"
-                range_owners.setdefault(normalized_range, []).append(
-                    {
-                        "series_id": resolved["series_id"],
-                        "reader": range_reader,
-                        "data_range": normalized_range,
-                        "call_form": format_reader_call_form(range_reader, range_reader=True),
-                    }
+        for resolved in report["series"]:
+            series = by_id.get(resolved["series_id"])
+            if series is None or not _should_emit_reader(resolved):
+                continue
+            reader = _reader_function_name(series, resolved)
+            key_fields = [str(field) for field in (series.get("key") or [])]
+            kind = _leaf_kind(resolved, key_fields)
+            for leaf in resolved["leaves"]:
+                address = normalize_key(leaf["address"])
+                entry = _leaf_entry(
+                    series_id=resolved["series_id"],
+                    reader=reader,
+                    address=address,
+                    key=leaf["key"],
+                    key_fields=key_fields,
+                    kind=kind,
                 )
+                leaf_owners.setdefault(address, []).append(entry)
+
+            if _should_emit_reader_range(series, resolved):
+                data_range = series.get("data_range")
+                if isinstance(data_range, str) and data_range:
+                    normalized_range = normalize_key(data_range)
+                    range_reader = f"{reader}_range"
+                    range_owners.setdefault(normalized_range, []).append(
+                        {
+                            "series_id": resolved["series_id"],
+                            "reader": range_reader,
+                            "data_range": normalized_range,
+                            "call_form": format_reader_call_form(range_reader, range_reader=True),
+                        }
+                    )
 
     leaves: dict[str, ReaderLeafEntry] = {}
     ranges: dict[str, ReaderRangeEntry] = {}

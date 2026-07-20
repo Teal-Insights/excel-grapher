@@ -80,15 +80,23 @@ def _reader_name(series: dict[str, Any]) -> str | None:
     normalized = normalize_series_entry(series)
     input_block = normalized.get("input") or {}
     setter = input_block.get("setter")
-    if not isinstance(setter, dict) or not setter.get("name"):
-        return None
-    reader = input_block.get("reader")
-    if isinstance(reader, dict) and reader.get("name"):
-        return str(reader["name"])
+    constant_block = normalized.get("constant")
     series_id = series.get("id")
-    if not series_id:
-        return None
-    return f"read_{series_id}"
+    if isinstance(setter, dict) and setter.get("name"):
+        reader = input_block.get("reader")
+        if isinstance(reader, dict) and reader.get("name"):
+            return str(reader["name"])
+        if not series_id:
+            return None
+        return f"read_{series_id}"
+    if isinstance(constant_block, dict):
+        reader = constant_block.get("reader")
+        if isinstance(reader, dict) and reader.get("name"):
+            return str(reader["name"])
+        if not series_id:
+            return None
+        return f"read_{series_id}"
+    return None
 
 
 def _compute_name(series: dict[str, Any]) -> str | None:

@@ -107,6 +107,16 @@ def has_internal_direction(series: dict[str, Any]) -> bool:
     return "internal" in series and isinstance(series.get("internal"), dict)
 
 
+def has_constant_direction(series: dict[str, Any]) -> bool:
+    """Return True when the series declares constant (reader-only leaf) semantics."""
+    return "constant" in series and isinstance(series.get("constant"), dict)
+
+
+def has_reader_direction(series: dict[str, Any]) -> bool:
+    """Return True when the series emits a public `read_*` (input or constant)."""
+    return has_input_direction(series) or has_constant_direction(series)
+
+
 def effective_validation(series: dict[str, Any]) -> dict[str, Any]:
     """Return series validation flags with direction-specific defaults applied."""
     validation = dict(series.get("validation") or {})
@@ -114,6 +124,8 @@ def effective_validation(series: dict[str, Any]) -> dict[str, Any]:
         validation["intersect_graph_leaves"] = False
     if has_internal_direction(series) and "intersect_graph_formulas" not in validation:
         validation["intersect_graph_formulas"] = True
+    if has_constant_direction(series) and "intersect_graph_leaves" not in validation:
+        validation["intersect_graph_leaves"] = True
     return validation
 
 
@@ -179,7 +191,7 @@ def merge_series_entries(
         )
 
     merged = dict(left)
-    for direction in ("input", "output", "internal"):
+    for direction in ("input", "output", "internal", "constant"):
         if direction not in right:
             continue
         if direction in merged and merged[direction] != right[direction]:

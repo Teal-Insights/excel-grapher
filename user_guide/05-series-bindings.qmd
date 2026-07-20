@@ -90,8 +90,9 @@ optional direction blocks:
 - **`input.setter`** — generated setter requires key dimensions plus `OBS_VALUE` on each incoming record.
 - **`output.compute`** — generated compute returns all declared dimensions plus computed `OBS_VALUE` per graph cell in `data_range`.
 - **`internal`** — resolve per-cell `{address, key, record}` for formula nodes without emitting `set_*` or `compute_*` APIs.
+- **`constant`** — bind graph **leaves** (fixed parameters / scenario knobs / lookup seeds) for semantic `read_*` codegen and Phase 2 formula-body rewrite, without a public `set_*` or `compute_*`.
 
-At least one of `input`, `output`, or `internal` is required per series (legacy top-level `setter` is normalized to `input.setter`; legacy `layout: row_series` is normalized to `series`).
+At least one of `input`, `output`, `internal`, or `constant` is required per series (legacy top-level `setter` is normalized to `input.setter`; legacy `layout: row_series` is normalized to `series`).
 
 ### Input mode: `leaf` vs `override` (schema 1.6.0+)
 
@@ -163,16 +164,57 @@ series:
           scope: cell
           bind: { kind: column_header, header_row: 1, read: int }
     key: [TIME_PERIOD]
-    series_context:
-      INDICATOR: Primary balance
-    validation:
-      intersect_graph_formulas: true
-      require_unique_key: true
 ```
 
-Example fixture: [internal_engine_row.yaml](https://github.com/Teal-Insights/excel-grapher/blob/main/tests/fixtures/series_bindings/internal_engine_row.yaml).
+### Constant direction (schema 1.11.0+)
 
-**Pipeline note:** `derive_*_series` omits series with zero resolved leaves. Call `validate_series_bindings()` first so hard errors such as `no_formula_internal_targets` surface before derive.
+Use **`constant: {}`** for graph **leaves** that participate in formulas as fixed parameters,
+scenario knobs, or lookup seeds, but should **not** appear as user-editable Records API
+inputs (`set_*`) or published outputs (`compute_*`). Without a constant binding, those leaves
+fall back to bare `xl_cell(ctx, 'Sheet!A1')` in generated formula bodies even when the domain
+model already names them.
+
+Constant bindings:
+
+- Resolve **graph leaves** in `data_range` (the inverse of `internal`, which requires formula nodes).
+- Default to **`validation.intersect_graph_leaves: true`**; non-leaf / formula cells in the
+  range fail validation (`non_leaf_constant_overlap`), and a range with no leaf overlap fails
+  with `no_leaf_constant_targets`.
+- Are mutually exclusive with `input`, `output`, and `internal`.
+- Emit **`read_*`** (optional `constant.reader.name` override) plus leaf-index /
+  `list_readers` / Phase 2 body rewrite — the same semantic read path as input duals.
+- Emit **no** `set_*` or `compute_*`; `list_setters()` stays empty for these series.
+- Values still live in the export `CONSTANTS` / `ctx.inputs` merge (same as unclassified
+  constant leaves); there is no public Records write surface unless you also declare an
+  `input` binding instead.
+
+```yaml
+schema_version: "1.11.0"
+series:
+  - id: shock_year_anchor
+    sheet: Engine
+    data_range: Engine!C5
+    layout: scalar
+    constant: {}
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind: { kind: data_cell, read: float }
+      dimensions: []
+    key: []
+```
+
+After export, formula cells that referenced `Engine!C5` rewrite to
+`read_shock_year_anchor(ctx)` instead of `xl_cell(ctx, 'Engine!C5')`.
+
+**Do not confuse** the `constant` **direction** with bind kind `constant` (a fixed dimension /
+attribute value in `structure`). The direction binds a spreadsheet leaf; the bind kind fills a
+coordinate without reading a cell.
+
+Example fixture for internals: [internal_engine_row.yaml](https://github.com/Teal-Insights/excel-grapher/blob/main/tests/fixtures/series_bindings/internal_engine_row.yaml).
+
+**Pipeline note:** `derive_*_series` omits series with zero resolved leaves. Call `validate_series_bindings()` first so hard errors such as `no_formula_internal_targets` or `no_leaf_constant_targets` surface before derive.
 
 ## `data_range` addressing
 
@@ -679,6 +721,7 @@ Generated code imports `datetime` and emits `datetime.datetime(...)` literals on
 | **1.8.0** | Optional dimension/attribute `id` separating dimension identity from concept, so multiple dimensions can share one concept; optional per-dimension `dtype` for same-concept dimensions with differing storage types. |
 | **1.9.0** | Optional `input.reader` name override for generated `read_*` duals. |
 | **1.10.0** | Optional `output.compute.helper` so `compute_*` can call parameterized helpers from record dims (with `xl_cell` fallback). Modular exports place `_OUTPUT_LEAVES_*` in `_output_leaves.py`. |
+| **1.11.0** | `constant` direction for non-I/O graph-leaf bindings: emit `read_*` and Phase 2 body rewrite without `set_*` / `compute_*`. |
 
 ## Dimension ids vs concepts (1.8.0)
 

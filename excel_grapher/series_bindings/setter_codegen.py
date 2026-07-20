@@ -7,7 +7,7 @@ import re
 import warnings
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings.codegen_literals import (
@@ -21,7 +21,11 @@ from excel_grapher.series_bindings.docstrings import (
     emit_docstring_literal,
     resolve_series_function_docstring,
 )
-from excel_grapher.series_bindings.normalize import effective_dimension_id, has_input_direction
+from excel_grapher.series_bindings.normalize import (
+    effective_dimension_id,
+    has_constant_direction,
+    has_input_direction,
+)
 from excel_grapher.series_bindings.resolve import (
     _lookup_concept_dtype,
     resolve_series_bindings,
@@ -263,10 +267,12 @@ def dimension_id_to_param_name(field: str) -> str:
 
 
 def _reader_function_name(series: dict[str, Any], resolved: SeriesResolution) -> str:
-    input_block = series.get("input") or {}
-    reader = input_block.get("reader")
-    if isinstance(reader, dict) and reader.get("name"):
-        return str(reader["name"])
+    for block_key in ("input", "constant"):
+        block = series.get(block_key) or {}
+        if isinstance(block, dict):
+            reader = block.get("reader")
+            if isinstance(reader, dict) and reader.get("name"):
+                return str(reader["name"])
     return f"read_{resolved['series_id']}"
 
 
@@ -662,25 +668,26 @@ def emit_reader_range_function(
     return lines
 
 
-def _iter_input_resolutions(
+def _iter_resolutions_for_direction(
     graph: DependencyGraph,
     workbook: Path | str,
     bindings: WorkbookSeriesBindings,
     *,
+    direction: Literal["input", "constant"],
+    has_direction: Any,
+    empty_warning: str,
     export_addresses: Iterable[str] | None = None,
 ) -> tuple[list[tuple[dict[str, Any], SeriesResolution]], list[str], ResolutionReport]:
-    """Resolve input series and return (pairs, failed ids, report)."""
+    """Resolve series for a reader-capable direction and return (pairs, failed, report)."""
     report = resolve_series_bindings(
         graph,
         bindings,
         workbook=workbook,
-        direction="input",
+        direction=direction,
         export_addresses=export_addresses,
     )
     by_id = {
-        s["id"]: s
-        for s in bindings.get("series", [])
-        if isinstance(s, dict) and has_input_direction(s)
+        s["id"]: s for s in bindings.get("series", []) if isinstance(s, dict) and has_direction(s)
     }
     pairs: list[tuple[dict[str, Any], SeriesResolution]] = []
     failed: list[str] = []
@@ -690,9 +697,9 @@ def _iter_input_resolutions(
             continue
         if not resolved["leaves"]:
             warnings.warn(
-                f"No resolved input cells for series {resolved['series_id']!r}; skipping setter emission",
+                empty_warning.format(series_id=resolved["series_id"]),
                 UserWarning,
-                stacklevel=2,
+                stacklevel=3,
             )
             continue
         warn_series_resolution_issues(resolved)
@@ -701,6 +708,75 @@ def _iter_input_resolutions(
             continue
         pairs.append((series, resolved))
     return pairs, failed, report
+
+
+def _iter_input_resolutions(
+    graph: DependencyGraph,
+    workbook: Path | str,
+    bindings: WorkbookSeriesBindings,
+    *,
+    export_addresses: Iterable[str] | None = None,
+) -> tuple[list[tuple[dict[str, Any], SeriesResolution]], list[str], ResolutionReport]:
+    """Resolve input series and return (pairs, failed ids, report)."""
+    return _iter_resolutions_for_direction(
+        graph,
+        workbook,
+        bindings,
+        direction="input",
+        has_direction=has_input_direction,
+        empty_warning=(
+            "No resolved input cells for series {series_id!r}; skipping setter emission"
+        ),
+        export_addresses=export_addresses,
+    )
+
+
+def _iter_constant_resolutions(
+    graph: DependencyGraph,
+    workbook: Path | str,
+    bindings: WorkbookSeriesBindings,
+    *,
+    export_addresses: Iterable[str] | None = None,
+) -> tuple[list[tuple[dict[str, Any], SeriesResolution]], list[str], ResolutionReport]:
+    """Resolve constant series and return (pairs, failed ids, report)."""
+    return _iter_resolutions_for_direction(
+        graph,
+        workbook,
+        bindings,
+        direction="constant",
+        has_direction=has_constant_direction,
+        empty_warning=(
+            "No resolved constant cells for series {series_id!r}; skipping reader emission"
+        ),
+        export_addresses=export_addresses,
+    )
+
+
+def _iter_reader_resolutions(
+    graph: DependencyGraph,
+    workbook: Path | str,
+    bindings: WorkbookSeriesBindings,
+    *,
+    export_addresses: Iterable[str] | None = None,
+    directions: tuple[Literal["input", "constant"], ...] = ("input", "constant"),
+) -> tuple[list[tuple[dict[str, Any], SeriesResolution]], list[str], list[SeriesResolution]]:
+    """Resolve input and/or constant series for reader codegen."""
+    pairs: list[tuple[dict[str, Any], SeriesResolution]] = []
+    failed: list[str] = []
+    all_resolved: list[SeriesResolution] = []
+    for direction in directions:
+        if direction == "input":
+            direction_pairs, direction_failed, report = _iter_input_resolutions(
+                graph, workbook, bindings, export_addresses=export_addresses
+            )
+        else:
+            direction_pairs, direction_failed, report = _iter_constant_resolutions(
+                graph, workbook, bindings, export_addresses=export_addresses
+            )
+        pairs.extend(direction_pairs)
+        failed.extend(direction_failed)
+        all_resolved.extend(report["series"])
+    return pairs, failed, all_resolved
 
 
 def emit_readers_block(
@@ -712,26 +788,36 @@ def emit_readers_block(
     series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
     docstring_renderer: SeriesDocstringRendererSpec = "google",
     include_leaf_indexes: bool = True,
+    directions: tuple[Literal["input", "constant"], ...] = ("input", "constant"),
 ) -> list[str]:
     """Emit `_LEAF_INDEX_*` maps and `read_*` / `read_*_range` functions.
 
     Used by the modular export's private `_readers.py` module so formula bodies
-    can call readers without importing the public `api` module.
+    can call readers without importing the public `api` module. Includes both
+    input duals and constant (reader-only) bindings unless `directions` narrows
+    the set.
     """
-    pairs, failed, report = _iter_input_resolutions(
+    pairs, failed, resolved_series = _iter_reader_resolutions(
         graph,
         workbook,
         bindings,
         export_addresses=export_addresses,
+        directions=directions,
     )
     lines: list[str] = ["# --- Series binding readers ---", ""]
     concept_scheme = bindings.get("concept_scheme")
     if not isinstance(concept_scheme, dict):
         concept_scheme = None
-    include_datetime = resolutions_include_datetime(report["series"]) or any(
+
+    def _series_emits_reader(series: dict[str, Any]) -> bool:
+        if "input" in directions and has_input_direction(series):
+            return True
+        return "constant" in directions and has_constant_direction(series)
+
+    include_datetime = resolutions_include_datetime(resolved_series) or any(
         _measure_dtype_for_codegen(series, concept_scheme=concept_scheme) == "datetime"
         for series in bindings.get("series", [])
-        if isinstance(series, dict) and has_input_direction(series)
+        if isinstance(series, dict) and _series_emits_reader(series)
     )
     if include_datetime:
         lines.extend(["from datetime import datetime", ""])
