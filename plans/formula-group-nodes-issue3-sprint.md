@@ -178,20 +178,20 @@ Python API + user guide is enough.
 
 ---
 
-### Sprint 4 — Parity, skips, cell-only regression
+### Sprint 4 — Parity, skips, cell-only regression ✅
 
-**Files:** integration / parity tests under `tests/integration/` + unit harden.
+**Files:** `tests/integration/exporter/test_formula_group_coalesce_parity.py`.
 
 | Task | Done when |
 | ---- | --------- |
-| Eval twin | `evaluate(member)` on coalesced graph equals pre-coalesce cell graph |
-| Export twin | `assert_codegen_matches_evaluator` on coalesced graph |
-| Hand-built parity | Coalesced result matches Issue 2 hand-built group for the same family |
-| Intra-family skip | Family with member→member edge remains cells; report reason |
-| Min size | Lone formula cell never becomes a 1-member group |
-| Cell-only regression | `formula_groups=False` path identical to pre-Issue-3 |
-| TACO / OptimalCompression | Coalesced graph: `shape != cell` guards / no crash |
-| Dependent formulas | Still name member addresses after coalesce |
+| Eval twin | ✅ `evaluate(member)` on coalesced graph equals pre-coalesce cell graph |
+| Export twin | ✅ `assert_codegen_matches_evaluator` on coalesced graph |
+| Hand-built parity | ✅ Coalesced result matches Issue 2 hand-built group for the same family |
+| Intra-family skip | ✅ Family with member→member edge remains cells; report reason |
+| Min size | ✅ Lone formula cell never becomes a 1-member group |
+| Cell-only regression | ✅ `formula_groups=False` path identical to pre-Issue-3 |
+| TACO / OptimalCompression | ✅ Coalesced graph: `shape != cell` guards / no crash |
+| Dependent formulas | ✅ Still name member addresses after coalesce |
 
 Prefer cache-based / in-process parity on Linux CI; live Excel remains
 run-if-available (`pytest.skip` when automation missing).
@@ -209,7 +209,8 @@ tests/fixtures/formula_groups/            # cell-only families + expected groups
 tests/unit/grapher/formula_groups/
   test_detect.py
   test_coalesce.py
-tests/integration/...                     # parity on coalesced graphs
+tests/integration/exporter/
+  test_formula_group_coalesce_parity.py   # Sprint 4 parity / skips / regression
 user_guide/01-dependency-graphs.qmd       # opt-in note
 ```
 
@@ -219,41 +220,41 @@ user_guide/01-dependency-graphs.qmd       # opt-in note
 
 **Discovery**
 
-- [ ] Two identical-shape formulas cluster; `A1+1` vs `A1+2` do not
-- [ ] Cross-sheet / non-contiguous cells in one family
-- [ ] Aligned walk: shared refs baked; differing refs → holes + bindings
-- [ ] Intra-family edge → skip whole family + report `intra_family_edge`
-- [ ] `len < 2` → `below_min_size`
-- [ ] Unparseable formula omitted from clusters
+- [x] Two identical-shape formulas cluster; `A1+1` vs `A1+2` do not
+- [x] Cross-sheet / non-contiguous cells in one family
+- [x] Aligned walk: shared refs baked; differing refs → holes + bindings
+- [x] Intra-family edge → skip whole family + report `intra_family_edge`
+- [x] `len < 2` → `below_min_size`
+- [x] Unparseable formula omitted from clusters
 
 **Coalesce**
 
-- [ ] After pass: no member `CellKey` nodes; `locate_cell` → group
-- [ ] Group key == `members_to_node_key(M)`
-- [ ] Inbound edges merged onto group (guards/provenance via existing merge)
-- [ ] Outbound deps = union of member deps
-- [ ] Dependent formulas **unchanged** (still name member addresses)
-- [ ] `target_keys()` lists former target **member** addresses
-- [ ] Second `coalesce_formula_groups` is idempotent (no duplicate groups)
-- [ ] Evaluation order on coalesced graph does not crash / includes group node
+- [x] After pass: no member `CellKey` nodes; `locate_cell` → group
+- [x] Group key == `members_to_node_key(M)`
+- [x] Inbound edges merged onto group (guards/provenance via existing merge)
+- [x] Outbound deps = union of member deps
+- [x] Dependent formulas **unchanged** (still name member addresses)
+- [x] `target_keys()` lists former target **member** addresses
+- [x] Second `coalesce_formula_groups` is idempotent (no duplicate groups)
+- [x] Evaluation order on coalesced graph does not crash / includes group node
 
 **Wiring + parity**
 
-- [ ] `create_dependency_graph(..., formula_groups=False)` unchanged
-- [ ] `formula_groups=True` produces formula groups on fixture
-- [ ] `evaluate(member)` equals pre-coalesce cell-only twin
-- [ ] Codegen ↔ evaluator parity on coalesced graph
-- [ ] OptimalCompression/TACO do not crash on coalesced graph
+- [x] `create_dependency_graph(..., formula_groups=False)` unchanged
+- [x] `formula_groups=True` produces formula groups on fixture
+- [x] `evaluate(member)` equals pre-coalesce cell-only twin
+- [x] Codegen ↔ evaluator parity on coalesced graph
+- [x] OptimalCompression/TACO do not crash on coalesced graph
 
 ---
 
 ## Success criteria (merge gate)
 
-- [ ] Opt-in detection emits Issue 2–compatible formula groups
-- [ ] Default builder path remains cell-only
-- [ ] Intra-family families are skipped safely (no `G→G` footgun)
-- [ ] Targets remain addressable as member keys via `target_keys()`
-- [ ] No new eval entrypoint; no fuzzy matching; no default-on coalesce
+- [x] Opt-in detection emits Issue 2–compatible formula groups
+- [x] Default builder path remains cell-only
+- [x] Intra-family families are skipped safely (no `G→G` footgun)
+- [x] Targets remain addressable as member keys via `target_keys()`
+- [x] No new eval entrypoint; no fuzzy matching; no default-on coalesce
 
 ---
 
