@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Hand-built and coalesced formula-group nodes — Issues 1–3 demo.
+"""Workbook → graph → coalesce → eval / codegen for mixed formula groups.
 
-Issue 1 (address model): multi-cell nodes keyed by `RangeKey` / `UnionKey`,
-unique occupancy (no member cell nodes), `locate_cell` ownership lookup.
+Writes a spreadsheet with:
 
-Issue 2 (evaluator + codegen): shared skeleton + per-member bindings,
-`specialize_group`, lazy member eval, one `_group_*` helper in export.
+- a **row** of same-shape formulas (coalesce → `Sheet1!B2:D2`, `NodeKind.row`)
+- a **column** of same-shape formulas (coalesce → `Sheet1!B3:B5`, column shape)
+- **individual** formula cells that stay as cells (`below_min_size` / unique shape)
 
-Issue 3 (detection): `coalesce_formula_groups` / builder `formula_groups=True`
-rewrite same-shape cell families into those groups.
+Then builds with `create_dependency_graph`, runs `coalesce_formula_groups`,
+and checks that evaluator and codegen agree with and without coalescing on
+**all** formula targets (row members, column members, and leftover cells).
 
 Run from the repo root::
 
@@ -17,199 +18,117 @@ Run from the repo root::
 
 from __future__ import annotations
 
-from excel_grapher.core.address_keys import (
-    members_to_node_key,
-    parse_node_key,
-)
-from excel_grapher.core.formula_ast import (
-    AddressHoleNode,
-    AddressLeafKind,
-    BinaryOpNode,
-    CellRefNode,
-    NumberNode,
-)
-from excel_grapher.evaluator.errors import FormulaGroupKeyError
+from pathlib import Path
+from typing import Any, cast
+
+import xlsxwriter
+
+from excel_grapher.core.address_keys import NodeShape
 from excel_grapher.evaluator.evaluator import FormulaEvaluator
 from excel_grapher.evaluator.name_utils import address_to_python_name
 from excel_grapher.exporter.codegen import CodeGenerator
-from excel_grapher.grapher.formula_groups import (
-    coalesce_formula_groups,
-    shape_fingerprint,
-    specialize_group,
-)
+from excel_grapher.grapher.builder import create_dependency_graph
+from excel_grapher.grapher.export import to_mermaid
+from excel_grapher.grapher.formula_groups import coalesce_formula_groups, specialize_group
 from excel_grapher.grapher.graph import DependencyGraph
-from excel_grapher.grapher.node import (
-    locate_cell,
-    make_cell_node,
-    make_union_node,
-    member_keys,
-)
+from excel_grapher.grapher.node import NodeKind, locate_cell, member_keys
+
+WORKBOOK = Path(__file__).with_name("demo_formula_groups.xlsx")
+
+# Contiguous row family: =leaf*10 → Sheet1!B2:D2
+ROW_MEMBERS = ("Sheet1!B2", "Sheet1!C2", "Sheet1!D2")
+# Contiguous column family: =leaf+5 → Sheet1!B3:B5
+COL_MEMBERS = ("Sheet1!B3", "Sheet1!B4", "Sheet1!B5")
+# Stay as individual cells after coalesce.
+CELL_TARGETS = ("Sheet1!F2", "Sheet1!G2", "Sheet1!H2")
+
+TARGETS = (*ROW_MEMBERS, *COL_MEMBERS, *CELL_TARGETS)
 
 
-def _scale_skeleton() -> BinaryOpNode:
-    """Shared template: `<CELL hole> * 10`."""
-    return BinaryOpNode(
-        op="*",
-        left=AddressHoleNode(kind=AddressLeafKind.cell, slot=0),
-        right=NumberNode(value=10.0),
+def write_demo_workbook(path: Path) -> Path:
+    """Write inputs + row / column / individual formula patterns."""
+    path = Path(path)
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+
+    # Row inputs B1:D1 and column inputs A3:A5; lone input F1.
+    ws.write_number("B1", 1.0)
+    ws.write_number("C1", 2.0)
+    ws.write_number("D1", 3.0)
+    ws.write_number("A3", 10.0)
+    ws.write_number("A4", 20.0)
+    ws.write_number("A5", 30.0)
+    ws.write_number("F1", 7.0)
+
+    # Row formula group (fingerprint *10).
+    ws.write_formula("B2", "=Sheet1!B1*10", None, 10.0)
+    ws.write_formula("C2", "=Sheet1!C1*10", None, 20.0)
+    ws.write_formula("D2", "=Sheet1!D1*10", None, 30.0)
+
+    # Column formula group (different fingerprint +5 so it does not merge with the row).
+    ws.write_formula("B3", "=Sheet1!A3+5", None, 15.0)
+    ws.write_formula("B4", "=Sheet1!A4+5", None, 25.0)
+    ws.write_formula("B5", "=Sheet1!A5+5", None, 35.0)
+
+    # Individual formula cells (unique / singleton families stay as cells).
+    ws.write_formula("F2", "=Sheet1!F1*2", None, 14.0)
+    ws.write_formula("G2", "=ABS(Sheet1!F1)", None, 7.0)
+    ws.write_formula("H2", "=SUM(B2:D2)", None, 60.0)
+
+    wb.close()
+    return path
+
+
+def build_cell_only_graph(workbook: Path) -> DependencyGraph:
+    return create_dependency_graph(
+        workbook,
+        list(TARGETS),
+        load_values=True,
+        use_cached_dynamic_refs=True,
+        formula_groups=False,
     )
 
 
-def build_row_stripe_group() -> tuple[DependencyGraph, str, tuple[str, ...]]:
-    """Contiguous one-row formula group `Sheet1!D63:F63`."""
-    members = ("Sheet1!D63", "Sheet1!E63", "Sheet1!F63")
-    skeleton = _scale_skeleton()
-    bindings = {
-        "Sheet1!D63": (CellRefNode(address="Sheet1!D1"),),
-        "Sheet1!E63": (CellRefNode(address="Sheet1!E1"),),
-        "Sheet1!F63": (CellRefNode(address="Sheet1!F1"),),
+def evaluate_targets(graph: DependencyGraph, targets: tuple[str, ...]) -> dict[str, object]:
+    with FormulaEvaluator(graph) as ev:
+        return {t: ev.evaluate(t) for t in targets}
+
+
+def codegen_targets(
+    graph: DependencyGraph, targets: tuple[str, ...]
+) -> tuple[dict[str, object], str]:
+    code = CodeGenerator(graph).generate(targets=list(targets))
+    ns: dict[str, object] = {}
+    exec(code, ns)
+    compute_all = ns["compute_all"]
+    assert callable(compute_all)
+    results = cast(dict[str, object], compute_all())
+    if all(t in results for t in targets):
+        return {t: results[t] for t in targets}, code
+    by_wrapper = {
+        t: cast(Any, ns[address_to_python_name(t)])(cast(Any, ns["make_context"])())
+        for t in targets
     }
-    group = make_union_node(
-        members,
-        is_leaf=False,
-        shape_fingerprint=shape_fingerprint(skeleton),
-        skeleton=skeleton,
-        member_bindings=bindings,
-        metadata={"role": "scaled-inputs"},
-    )
-    g = DependencyGraph()
-    g.sheet_order = ["Sheet1", "Sheet2"]
-    g.add_node(make_cell_node("Sheet1", "D", 1, value=1.0, is_leaf=True))
-    g.add_node(make_cell_node("Sheet1", "E", 1, value=2.0, is_leaf=True))
-    g.add_node(make_cell_node("Sheet1", "F", 1, value=3.0, is_leaf=True))
-    g.add_node(group)
-    for leaf in ("Sheet1!D1", "Sheet1!E1", "Sheet1!F1"):
-        g.add_edge(group.key, leaf)
-    return g, group.key, members
+    return by_wrapper, code
 
 
-def build_cross_sheet_union() -> tuple[DependencyGraph, str, tuple[str, ...]]:
-    """Non-contiguous cross-sheet union with the same scale template."""
-    members = ("Sheet1!D63", "Sheet2!B10")
-    skeleton = _scale_skeleton()
-    bindings = {
-        "Sheet1!D63": (CellRefNode(address="Sheet1!D1"),),
-        "Sheet2!B10": (CellRefNode(address="Sheet2!Z9"),),
-    }
-    group = make_union_node(
-        members,
-        is_leaf=False,
-        shape_fingerprint=shape_fingerprint(skeleton),
-        skeleton=skeleton,
-        member_bindings=bindings,
-        metadata={"role": "cross-sheet"},
-    )
-    g = DependencyGraph()
-    g.sheet_order = ["Sheet1", "Sheet2"]
-    g.add_node(make_cell_node("Sheet1", "D", 1, value=4.0, is_leaf=True))
-    g.add_node(make_cell_node("Sheet2", "Z", 9, value=5.0, is_leaf=True))
-    g.add_node(group)
-    g.add_edge(group.key, "Sheet1!D1")
-    g.add_edge(group.key, "Sheet2!Z9")
-    return g, group.key, members
+def _assert_maps_equal(
+    label: str,
+    left: dict[str, object],
+    right: dict[str, object],
+    *,
+    left_name: str,
+    right_name: str,
+) -> None:
+    for key in sorted(set(left) | set(right)):
+        if left.get(key) != right.get(key):
+            raise AssertionError(
+                f"{label}: {key}: {left_name}={left.get(key)!r} != {right_name}={right.get(key)!r}"
+            )
 
 
-def demo_issue1_address_model() -> None:
-    print("=" * 72)
-    print("Issue 1 — Address model + storage + locate")
-    print("=" * 72)
-    print()
-
-    print("Node key types (parse_node_key / members_to_node_key)")
-    samples = (
-        "Sheet1!E63",
-        "Sheet1!D63:F63",
-        "Sheet1!D63,Sheet2!B10",
-    )
-    for raw in samples:
-        parsed = parse_node_key(raw)
-        kind = type(parsed).__name__
-        print(f"  {raw!r:32} -> {kind}")
-    packed = members_to_node_key(["Sheet1!F63", "Sheet1!D63", "Sheet1!E63"])
-    print(f"  members_to_node_key(F,D,E)     -> {packed!r} ({type(packed).__name__})")
-    print()
-
-    g, group_key, members = build_row_stripe_group()
-    view = g.get_node(group_key)
-    assert view is not None
-    print("Hand-built contiguous group")
-    print(f"  key:        {view.key}")
-    print(f"  kind:       {view.kind}")
-    print(f"  address:    {view.address!r} ({type(view.address).__name__})")
-    print(f"  members:    {tuple(member_keys(view))}")
-    print(f"  metadata:   {dict(view.metadata)}")
-    print()
-
-    print("Unique occupancy — member cells are not nodes")
-    for m in members:
-        print(f"  get_node({m!r}) -> {g.get_node(m)}")
-        print(f"  cell_owner({m!r}) -> {g.cell_owner(m)!r}")
-    print()
-
-    print("locate_cell resolves members to the owning group")
-    for probe in (*members, "Sheet1!D1", "Sheet1!Z99"):
-        loc = locate_cell(g, probe)
-        if loc is None:
-            print(f"  {probe} -> (not in graph)")
-        else:
-            print(f"  {probe} -> {loc.kind} node {loc.node_key}")
-    print()
-
-    _, union_key, union_members = build_cross_sheet_union()
-    print("Cross-sheet UnionKey (non-contiguous cover)")
-    print(f"  key:     {union_key}")
-    print(f"  parsed:  {type(parse_node_key(union_key)).__name__}")
-    print(f"  members: {union_members}")
-    print()
-
-
-def demo_issue2_eval_codegen() -> None:
-    print("=" * 72)
-    print("Issue 2 — Template, specialize, evaluate, codegen")
-    print("=" * 72)
-    print()
-
-    g, group_key, members = build_row_stripe_group()
-    view = g.get_node(group_key)
-    assert view is not None
-    assert view.skeleton is not None
-    assert view.member_bindings is not None
-
-    print("Template fields on the group node")
-    print(f"  shape_fingerprint: {view.shape_fingerprint}")
-    print(f"  skeleton:          {view.skeleton!r}")
-    print("  member_bindings:")
-    for member, binds in view.member_bindings.items():
-        print(f"    {member} -> {binds}")
-    print()
-
-    print("specialize_group fills holes for one member (shared by eval + codegen)")
-    for member in members:
-        specialized = specialize_group(view.skeleton, view.member_bindings[member])
-        print(f"  {member}: {specialized!r}")
-    print()
-
-    print("FormulaEvaluator — public API is the member address")
-    with FormulaEvaluator(g) as ev:
-        for member in members:
-            print(f"  evaluate({member!r}) -> {ev.evaluate(member)}")
-        ev.clear_caches()
-        _ = ev.evaluate("Sheet1!E63")
-        print(f"  after evaluating E63 only, cache keys: {sorted(ev._cache)}")
-        try:
-            ev.evaluate(group_key)
-        except FormulaGroupKeyError as exc:
-            print(f"  evaluate(group_key) raises {type(exc).__name__}: {exc}")
-    print()
-
-    print("CodeGenerator — one _group_* helper + thin member wrappers")
-    with CodeGenerator(g) as gen:
-        code = gen.generate(targets=list(members))
-        projected = gen._map_address_to_projected("Sheet1!E63")
-    print(f"  map_to_projected(E63) -> address={projected.address!r}")
-    print(f"                          parameters={projected.parameters}")
-    print()
-    # Print the interesting emitted defs only.
+def _print_codegen_highlights(label: str, code: str) -> None:
+    print(f"{label} — emitted defs of interest")
     interesting = [
         line
         for line in code.splitlines()
@@ -218,81 +137,142 @@ def demo_issue2_eval_codegen() -> None:
         or line.startswith("    return _group_")
         or line.startswith("    '''Formula group")
     ]
+    if not interesting:
+        print("  (no group helpers / thin wrappers)")
+        return
     for line in interesting:
         print(f"  {line}")
     print()
 
-    print("Exported wrappers match evaluator")
-    ns: dict[str, object] = {}
-    exec(code, ns)
-    make_context = ns["make_context"]
-    assert callable(make_context)
-    ctx = make_context()
-    with FormulaEvaluator(g) as ev:
-        for member in members:
-            wrapper = ns[address_to_python_name(member)]
-            assert callable(wrapper)
-            exported = wrapper(ctx)
-            evaluated = ev.evaluate(member)
-            print(f"  {member}: export={exported}  eval={evaluated}")
-    print()
 
-
-def demo_issue3_coalesce() -> None:
-    print("=" * 72)
-    print("Issue 3 — Detect + coalesce (cell-only → group)")
-    print("=" * 72)
-    print()
-
-    g = DependencyGraph()
-    g.sheet_order = ["Sheet1", "Sheet2"]
-    g.add_node(make_cell_node("Sheet1", "A", 1, value=1.0, is_leaf=True))
-    g.add_node(make_cell_node("Sheet2", "A", 1, value=2.0, is_leaf=True))
-    for member, leaf, sheet, col, formula in (
-        ("Sheet1!B1", "Sheet1!A1", "Sheet1", "B", "=Sheet1!A1*10"),
-        ("Sheet2!B1", "Sheet2!A1", "Sheet2", "B", "=Sheet2!A1*10"),
-    ):
-        g.add_node(
-            make_cell_node(
-                sheet,
-                col,
-                1,
-                formula=formula,
-                normalized_formula=formula,
-                is_leaf=False,
-                is_target=True,
-            )
-        )
-        g.add_edge(member, leaf)
-
-    print("Before coalesce (cell-only)")
-    print(f"  nodes: {g.keys(order='workbook')}")
-    print(f"  target_keys: {g.target_keys()}")
-    print()
-
-    report = coalesce_formula_groups(g)
-    print("After coalesce_formula_groups")
-    print(f"  created_groups: {report.created_groups}")
-    print(f"  skipped: {[(s.reason, s.members) for s in report.skipped_families]}")
-    print(f"  nodes: {g.keys(order='workbook')}")
-    print(f"  target_keys (still member addresses): {g.target_keys()}")
-    for member in ("Sheet1!B1", "Sheet2!B1"):
-        loc = locate_cell(g, member)
-        print(f"  locate_cell({member}) -> {None if loc is None else loc.node_key}")
-    with FormulaEvaluator(g) as ev:
-        print(f"  evaluate(Sheet1!B1) -> {ev.evaluate('Sheet1!B1')}")
-        print(f"  evaluate(Sheet2!B1) -> {ev.evaluate('Sheet2!B1')}")
-    print()
+def _describe_groups(graph: DependencyGraph, report_keys: tuple[str, ...]) -> None:
+    for key in report_keys:
+        node = graph.get_node(key)
+        assert node is not None
+        print(f"  {key}")
+        print(f"    kind / shape: {node.kind} / {node.shape}")
+        print(f"    members:      {tuple(member_keys(node))}")
+        print(f"    fingerprint:  {node.shape_fingerprint}")
+        print(f"    skeleton:     {node.skeleton!r}")
+        if node.skeleton is not None and node.member_bindings is not None:
+            for member in member_keys(node):
+                specialized = specialize_group(node.skeleton, node.member_bindings[member])
+                print(f"    specialize({member}) -> {specialized!r}")
 
 
 def main() -> None:
     print()
-    print("Formula-group nodes demo (Issues #391 / #392 / #393)")
-    print("Unique occupancy: members are addresses, not cell nodes.")
+    print("Formula-group demo — row + column + individual cells")
+    print("workbook → create_dependency_graph → coalesce → eval / codegen")
     print()
-    demo_issue1_address_model()
-    demo_issue2_eval_codegen()
-    demo_issue3_coalesce()
+
+    workbook = write_demo_workbook(WORKBOOK)
+    print(f"Wrote {workbook}")
+    print(f"  row members:    {list(ROW_MEMBERS)}")
+    print(f"  column members: {list(COL_MEMBERS)}")
+    print(f"  cell targets:   {list(CELL_TARGETS)}")
+    print()
+
+    cell_graph = build_cell_only_graph(workbook)
+    print("create_dependency_graph(..., formula_groups=False)")
+    print(f"  nodes: {cell_graph.keys(order='workbook')}")
+    print(f"  target_keys: {cell_graph.target_keys()}")
+    print()
+
+    group_graph = build_cell_only_graph(workbook)
+    report = coalesce_formula_groups(group_graph)
+    print("coalesce_formula_groups")
+    print(f"  created_groups: {report.created_groups}")
+    print(f"  skipped: {[(s.reason, s.members) for s in report.skipped_families]}")
+    print(f"  nodes: {group_graph.keys(order='workbook')}")
+    print(f"  target_keys (still member addresses): {group_graph.target_keys()}")
+    print()
+
+    assert len(report.created_groups) == 2, report.created_groups
+    row_key, col_key = report.created_groups
+    row_node = group_graph.get_node(row_key)
+    col_node = group_graph.get_node(col_key)
+    assert row_node is not None and col_node is not None
+    # Contiguous row cover vs column cover (column RangeKeys use NodeKind.union).
+    if row_node.shape is not NodeShape.row:
+        row_key, col_key = col_key, row_key
+        row_node, col_node = col_node, row_node
+    assert row_node.kind is NodeKind.row and row_node.shape is NodeShape.row
+    assert col_node.shape is NodeShape.column
+    assert tuple(member_keys(row_node)) == ROW_MEMBERS
+    assert tuple(member_keys(col_node)) == COL_MEMBERS
+    for cell in CELL_TARGETS:
+        node = group_graph.get_node(cell)
+        assert node is not None and node.kind is NodeKind.cell
+
+    print("Created groups")
+    _describe_groups(group_graph, (row_key, col_key))
+    print()
+    print("Individual cells (unchanged occupancy)")
+    for cell in CELL_TARGETS:
+        loc = locate_cell(group_graph, cell)
+        print(f"  {cell}: kind={group_graph.get_node(cell).kind} locate={loc.node_key if loc else None}")
+    print()
+
+    cell_eval = evaluate_targets(cell_graph, TARGETS)
+    group_eval = evaluate_targets(group_graph, TARGETS)
+    print("Evaluator (all targets)")
+    for t in TARGETS:
+        print(f"  {t}: cell-only={cell_eval[t]!r}  coalesced={group_eval[t]!r}")
+    _assert_maps_equal(
+        "evaluator cell-only vs coalesced",
+        cell_eval,
+        group_eval,
+        left_name="cell-only",
+        right_name="coalesced",
+    )
+    print("  ✓ evaluator matches with and without coalesce")
+    print()
+
+    cell_codegen, cell_code = codegen_targets(cell_graph, TARGETS)
+    group_codegen, group_code = codegen_targets(group_graph, TARGETS)
+    print("Codegen (all targets in one generate() call)")
+    for t in TARGETS:
+        print(f"  {t}: cell-only={cell_codegen[t]!r}  coalesced={group_codegen[t]!r}")
+    _assert_maps_equal(
+        "codegen cell-only vs coalesced",
+        cell_codegen,
+        group_codegen,
+        left_name="cell-only",
+        right_name="coalesced",
+    )
+    print("  ✓ codegen matches with and without coalesce")
+    print()
+
+    _assert_maps_equal(
+        "cell-only eval vs codegen",
+        cell_eval,
+        cell_codegen,
+        left_name="eval",
+        right_name="codegen",
+    )
+    _assert_maps_equal(
+        "coalesced eval vs codegen",
+        group_eval,
+        group_codegen,
+        left_name="eval",
+        right_name="codegen",
+    )
+    print("Parity")
+    print("  ✓ cell-only: evaluator ↔ codegen")
+    print("  ✓ coalesced: evaluator ↔ codegen")
+    print()
+
+    _print_codegen_highlights("Cell-only codegen", cell_code)
+    _print_codegen_highlights("Coalesced codegen", group_code)
+    group_helpers = [line for line in group_code.splitlines() if line.startswith("def _group_")]
+    assert len(group_helpers) == 2, group_helpers
+    assert "def _group_" not in cell_code
+
+    print("Mermaid (coalesced — mixture of cells, row group, column group)")
+    print(to_mermaid(group_graph))
+    print()
+    print("All checks passed.")
 
 
 if __name__ == "__main__":
