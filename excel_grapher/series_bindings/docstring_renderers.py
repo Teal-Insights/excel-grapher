@@ -338,6 +338,8 @@ class GoogleSeriesDocstringRenderer:
                 optional=optional,
                 indent="        ",
             )
+        elif contract.function_kind == "reader":
+            lines.append("    ctx (EvalContext): Evaluation context.")
         else:
             lines.append("    ctx (EvalContext | None): Existing evaluation context, if available.")
             lines.append(
@@ -347,6 +349,8 @@ class GoogleSeriesDocstringRenderer:
         lines.append("Returns:")
         if contract.function_kind == "setter":
             lines.append("    None: Applies the input updates to ctx.")
+        elif contract.function_kind == "reader":
+            lines.append("    CellValue: Value read from the bound cell or range.")
         else:
             lines.append("    Records: Computed output records.")
             _append_field_bullets(
@@ -396,6 +400,9 @@ class NumpySeriesDocstringRenderer:
                 optional=optional,
                 indent="    ",
             )
+        elif contract.function_kind == "reader":
+            lines.append("ctx : EvalContext")
+            lines.append("    Evaluation context.")
         else:
             lines.append("ctx : EvalContext | None, optional")
             lines.append("    Existing evaluation context.")
@@ -405,6 +412,9 @@ class NumpySeriesDocstringRenderer:
         if contract.function_kind == "setter":
             lines.append("None")
             lines.append("    Applies the input updates to ctx.")
+        elif contract.function_kind == "reader":
+            lines.append("CellValue")
+            lines.append("    Value read from the bound cell or range.")
         else:
             lines.append("Records")
             lines.append("    Computed output records.")
