@@ -225,6 +225,7 @@ def _dependency_graph_from_networkx(nx_graph: Any) -> DependencyGraph:
         "normalized_formula",
         "value",
         "is_leaf",
+        "is_target",
         "label",
         "value_type",
     }
@@ -242,6 +243,7 @@ def _dependency_graph_from_networkx(nx_graph: Any) -> DependencyGraph:
         if normalized_formula is None and isinstance(formula, str):
             normalized_formula = formula
         is_leaf = bool(attrs.get("is_leaf", nx_graph.out_degree(raw_key) == 0))
+        is_target = bool(attrs.get("is_target", False))
         metadata = {k: v for k, v in attrs.items() if k not in reserved_node_fields}
         dep_graph.add_node(
             Node(
@@ -254,6 +256,7 @@ def _dependency_graph_from_networkx(nx_graph: Any) -> DependencyGraph:
                 else None,
                 value=attrs.get("value"),
                 is_leaf=is_leaf,
+                is_target=is_target,
                 metadata=metadata,
             )
         )
@@ -480,6 +483,7 @@ def _apply_networkx_layout_to_core(
         row=nodes.row,
         column=nodes.column,
         is_leaf=nodes.is_leaf,
+        is_target=nodes.is_target,
         formula=nodes.formula,
         in_degree=nodes.in_degree,
         out_degree=nodes.out_degree,

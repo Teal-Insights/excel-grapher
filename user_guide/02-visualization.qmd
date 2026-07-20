@@ -102,8 +102,9 @@ write_web_viz_html(payload, "model-web.html", data_mode="auto")
 This layout is partly intended to inform refactoring and modularization of generated code. Interpret the viewer with this mental model:
 
 - **Position**: `x`/`y` - SCC-rank vertical strata and Louvain-based horizontal ordering.
-- **Color**: node color maps to `module_id` (partition/community id). With no module overlay, all nodes are one module color.
-- **Edges**: overview prefers node-level `local_edges`; if unavailable, it falls back to module-centroid edges.
+- **Color**: primary hue maps to `module_id` (partition/community id). Formula cells stay saturated; leaf/value cells are muted; extraction `is_target` nodes are brightened. With no module overlay, all nodes share one module hue.
+- **Edges**: overview prefers node-level `local_edges`; if unavailable, it falls back to module-centroid edges. Guarded edges are dashed and amber; unguarded edges are solid blue.
+- **Selection**: clicking a node dims everything outside its one-hop neighborhood and brightens neighborhood nodes/edges.
 - **Label `Module edges` / `Graph edges`**: reflects which edge set is currently drawn in overview.
 - **Rank** in tooltip is node rank metadata and may differ from visual layering for force-directed layouts.
 

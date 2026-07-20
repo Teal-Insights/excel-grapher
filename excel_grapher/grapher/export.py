@@ -95,6 +95,7 @@ def to_networkx(
             "value": node.value,
             "value_type": _networkx_value_type(node),
             "is_leaf": node.is_leaf,
+            "is_target": node.is_target,
             "label": _node_display_label(
                 key,
                 node,

@@ -227,6 +227,7 @@ class LightweightVizCoreNodeColumns:
     row: tuple[int, ...]
     column: tuple[str, ...]
     is_leaf: tuple[bool, ...]
+    is_target: tuple[bool, ...]
     formula: tuple[str | None, ...]
     in_degree: tuple[int, ...]
     out_degree: tuple[int, ...]
@@ -826,6 +827,7 @@ def build_lightweight_viz_core(
                 row=tuple(),
                 column=tuple(),
                 is_leaf=tuple(),
+                is_target=tuple(),
                 formula=tuple(),
                 in_degree=tuple(),
                 out_degree=tuple(),
@@ -975,6 +977,7 @@ def build_lightweight_viz_core(
     cols: list[str] = []
     sheet_ix: list[int] = []
     is_leaf: list[bool] = []
+    is_target: list[bool] = []
     formulas: list[str | None] = []
     for k in keys:
         node = graph.get_node(k)
@@ -984,6 +987,7 @@ def build_lightweight_viz_core(
         cols.append(col)
         sheet_ix.append(sheet_index_map[sheet])
         is_leaf.append(node.is_leaf)
+        is_target.append(node.is_target)
         if include_formula_on_nodes and node.formula:
             formulas.append(truncate_formula_display(node.formula, max_formula_length))
         else:
@@ -1001,6 +1005,7 @@ def build_lightweight_viz_core(
         row=tuple(rows),
         column=tuple(cols),
         is_leaf=tuple(is_leaf),
+        is_target=tuple(is_target),
         formula=tuple(formulas),
         in_degree=tuple(in_deg),
         out_degree=tuple(out_deg),
@@ -1086,6 +1091,7 @@ class LightweightVizNodeColumns:
     row: tuple[int, ...]
     column: tuple[str, ...]
     is_leaf: tuple[bool, ...]
+    is_target: tuple[bool, ...]
     formula: tuple[str | None, ...]
     in_degree: tuple[int, ...]
     out_degree: tuple[int, ...]
@@ -1250,6 +1256,7 @@ def lightweight_viz_flat(payload: LightweightVizPayload) -> LightweightVizFlat:
         row=core.nodes.row,
         column=core.nodes.column,
         is_leaf=core.nodes.is_leaf,
+        is_target=core.nodes.is_target,
         formula=core.nodes.formula,
         in_degree=core.nodes.in_degree,
         out_degree=core.nodes.out_degree,
@@ -1305,6 +1312,7 @@ def _core_to_jsonable(c: LightweightVizCore) -> dict[str, Any]:
             "row": list(nc.row),
             "column": list(nc.column),
             "is_leaf": list(nc.is_leaf),
+            "is_target": list(nc.is_target),
             "formula": list(nc.formula),
             "in_degree": list(nc.in_degree),
             "out_degree": list(nc.out_degree),
@@ -1341,7 +1349,7 @@ def estimate_serialized_json_bytes(payload: LightweightVizPayload) -> int:
     n = payload.core.stats.node_count
     e_loc = payload.core.stats.local_edge_count
     est = 4000
-    est += n * (6 * 11 + 12 * 2 + 5 + 8 * 4)
+    est += n * (6 * 11 + 12 * 2 + 5 + 8 * 4 + 6)
     est += e_loc * 12
     est += sum(len(o.data.get("module_edges", ())) for o in payload.overlays) * 40
     est += sum(len(o.data.get("modules", ())) for o in payload.overlays) * 60

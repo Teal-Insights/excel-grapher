@@ -66,6 +66,27 @@
     return hslToRgb(h / 360, s / 100, l / 100);
   }
 
+  function nodeBaseColor(mid, nMod, isFormula, isTarget) {
+    let rgb = moduleColor(mid, nMod);
+    if (!isFormula) {
+      // Mute leaf/value cells relative to formula cells while keeping module hue.
+      rgb = [
+        Math.round(rgb[0] * 0.62 + 190 * 0.38),
+        Math.round(rgb[1] * 0.62 + 190 * 0.38),
+        Math.round(rgb[2] * 0.62 + 190 * 0.38)
+      ];
+    }
+    if (isTarget) {
+      // Brighten extraction targets without replacing the module color.
+      rgb = [
+        Math.min(255, Math.round(rgb[0] * 1.18 + 28)),
+        Math.min(255, Math.round(rgb[1] * 1.12 + 18)),
+        Math.min(255, Math.round(rgb[2] * 1.05 + 8))
+      ];
+    }
+    return rgb;
+  }
+
   function hslToRgb(h, s, l) {
     let r, g, b;
     if (s === 0) { r = g = b = l; }
@@ -326,6 +347,13 @@
     return out;
   }
 
+  function nodeBoolColumn(col, n, defaultValue) {
+    if (col && col.length === n) return col;
+    var out = [];
+    for (var i = 0; i < n; i++) out.push(defaultValue);
+    return out;
+  }
+
   function lightweightVizFlat(raw) {
     /* Legacy flat snapshot (historical exporter output): one object with stats/nodes/modules. */
     if (raw.version === 1 && raw.core === undefined && raw.stats != null && raw.sheets) {
@@ -366,7 +394,8 @@
         sheet_index: core.nodes.sheet_index,
         row: core.nodes.row,
         column: core.nodes.column,
-        is_leaf: core.nodes.is_leaf,
+        is_leaf: nodeBoolColumn(core.nodes.is_leaf, n, false),
+        is_target: nodeBoolColumn(core.nodes.is_target, n, false),
         formula: nodeFormulaColumn(core, n),
         in_degree: core.nodes.in_degree,
         out_degree: core.nodes.out_degree,
@@ -395,7 +424,8 @@
         sheet_index: core.nodes.sheet_index,
         row: core.nodes.row,
         column: core.nodes.column,
-        is_leaf: core.nodes.is_leaf,
+        is_leaf: nodeBoolColumn(core.nodes.is_leaf, n, false),
+        is_target: nodeBoolColumn(core.nodes.is_target, n, false),
         formula: nodeFormulaColumn(core, n),
         in_degree: core.nodes.in_degree,
         out_degree: core.nodes.out_degree,
@@ -479,7 +509,9 @@
     for (let i = 0; i < n; i++) {
       positions[i * 2] = data.nodes.x[i];
       positions[i * 2 + 1] = data.nodes.y[i];
-      const rgb = moduleColor(data.nodes.module_id[i], data.stats.module_count);
+      const isLeaf = !!(data.nodes.is_leaf && data.nodes.is_leaf[i]);
+      const isTarget = !!(data.nodes.is_target && data.nodes.is_target[i]);
+      const rgb = nodeBaseColor(data.nodes.module_id[i], data.stats.module_count, !isLeaf, isTarget);
       baseColors[i * 3] = rgb[0] / 255;
       baseColors[i * 3 + 1] = rgb[1] / 255;
       baseColors[i * 3 + 2] = rgb[2] / 255;
@@ -595,11 +627,44 @@
         if (f !== null && data.nodes.module_id[i] !== f) dim = 0.48;
         if (neigh && !neigh.has(i)) dim = 0.38;
         if (pinnedId === i || hoverId === i) dim = 1;
-        colors[i * 3] = baseColors[i * 3] * dim;
-        colors[i * 3 + 1] = baseColors[i * 3 + 1] * dim;
-        colors[i * 3 + 2] = baseColors[i * 3 + 2] * dim;
+        let boost = 1;
+        if (pinnedId === i) boost = 1.22;
+        else if (neigh && neigh.has(i)) boost = 1.08;
+        colors[i * 3] = Math.min(1, baseColors[i * 3] * dim * boost);
+        colors[i * 3 + 1] = Math.min(1, baseColors[i * 3 + 1] * dim * boost);
+        colors[i * 3 + 2] = Math.min(1, baseColors[i * 3 + 2] * dim * boost);
       }
       colBuf.subdata(colors);
+    }
+
+    function drawLocalEdges(edges, styleFor) {
+      const unguardedEdges = [];
+      const guardedEdges = [];
+      for (let e = 0; e < edges.length; e++) {
+        const ed = edges[e];
+        if (ed.guarded) guardedEdges.push(ed);
+        else unguardedEdges.push(ed);
+      }
+      const passes = [
+        { list: unguardedEdges, guarded: false },
+        { list: guardedEdges, guarded: true }
+      ];
+      for (let p = 0; p < passes.length; p++) {
+        const pass = passes[p];
+        if (!pass.list.length) continue;
+        const style = styleFor(pass.guarded);
+        ctx2.lineWidth = style.lineWidth;
+        ctx2.strokeStyle = style.strokeStyle;
+        ctx2.setLineDash(style.dash);
+        for (let e = 0; e < pass.list.length; e++) {
+          const ed = pass.list[e];
+          const x1 = data.nodes.x[ed.source] * view.scale + view.tx;
+          const y1 = data.nodes.y[ed.source] * view.scale + view.ty;
+          const x2 = data.nodes.x[ed.target] * view.scale + view.tx;
+          const y2 = data.nodes.y[ed.target] * view.scale + view.ty;
+          ctx2.beginPath(); ctx2.moveTo(x1, y1); ctx2.lineTo(x2, y2); ctx2.stroke();
+        }
+      }
     }
 
     function drawOverlay() {
@@ -608,34 +673,64 @@
       if (!document.getElementById('showModEdges').checked) return;
       if (!overviewEdges.edges.length) return;
 
+      const neigh = highlight;
       ctx2.save();
       ctx2.globalCompositeOperation = 'source-over';
       if (overviewEdges.mode === 'module') {
-        ctx2.lineWidth = 1.2;
-        ctx2.strokeStyle = 'rgba(20, 75, 170, 0.16)';
-        ctx2.setLineDash([]);
+        const unguardedMod = [];
+        const guardedMod = [];
         for (let e = 0; e < overviewEdges.edges.length; e++) {
           const ed = overviewEdges.edges[e];
-          const a = data.modules[ed.source_module_id];
-          const b = data.modules[ed.target_module_id];
-          const x1 = a.centroid_x * view.scale + view.tx;
-          const y1 = a.centroid_y * view.scale + view.ty;
-          const x2 = b.centroid_x * view.scale + view.tx;
-          const y2 = b.centroid_y * view.scale + view.ty;
-          ctx2.beginPath(); ctx2.moveTo(x1, y1); ctx2.lineTo(x2, y2); ctx2.stroke();
+          if (ed.guarded_weight > 0 && ed.unconditional_weight <= 0) guardedMod.push(ed);
+          else unguardedMod.push(ed);
         }
+        const modPasses = [
+          { list: unguardedMod, guarded: false },
+          { list: guardedMod, guarded: true }
+        ];
+        for (let p = 0; p < modPasses.length; p++) {
+          const pass = modPasses[p];
+          if (!pass.list.length) continue;
+          ctx2.lineWidth = pass.guarded ? 1.35 : 1.2;
+          ctx2.strokeStyle = pass.guarded
+            ? 'rgba(180, 90, 20, 0.22)'
+            : 'rgba(20, 75, 170, 0.16)';
+          ctx2.setLineDash(pass.guarded ? [5, 4] : []);
+          for (let e = 0; e < pass.list.length; e++) {
+            const ed = pass.list[e];
+            const a = data.modules[ed.source_module_id];
+            const b = data.modules[ed.target_module_id];
+            const x1 = a.centroid_x * view.scale + view.tx;
+            const y1 = a.centroid_y * view.scale + view.ty;
+            const x2 = b.centroid_x * view.scale + view.tx;
+            const y2 = b.centroid_y * view.scale + view.ty;
+            ctx2.beginPath(); ctx2.moveTo(x1, y1); ctx2.lineTo(x2, y2); ctx2.stroke();
+          }
+        }
+      } else if (neigh) {
+        const neighEdges = [];
+        const otherEdges = [];
+        for (let e = 0; e < overviewEdges.edges.length; e++) {
+          const ed = overviewEdges.edges[e];
+          if (neigh.has(ed.source) && neigh.has(ed.target)) neighEdges.push(ed);
+          else otherEdges.push(ed);
+        }
+        drawLocalEdges(otherEdges, function (guarded) {
+          return guarded
+            ? { lineWidth: 0.5, strokeStyle: 'rgba(180, 90, 20, 0.04)', dash: [4, 3] }
+            : { lineWidth: 0.5, strokeStyle: 'rgba(20, 75, 170, 0.03)', dash: [] };
+        });
+        drawLocalEdges(neighEdges, function (guarded) {
+          return guarded
+            ? { lineWidth: 1.6, strokeStyle: 'rgba(200, 100, 20, 0.55)', dash: [4, 3] }
+            : { lineWidth: 1.5, strokeStyle: 'rgba(20, 90, 200, 0.45)', dash: [] };
+        });
       } else {
-        ctx2.lineWidth = 0.6;
-        ctx2.strokeStyle = 'rgba(20, 75, 170, 0.09)';
-        ctx2.setLineDash([]);
-        for (let e = 0; e < overviewEdges.edges.length; e++) {
-          const ed = overviewEdges.edges[e];
-          const x1 = data.nodes.x[ed.source] * view.scale + view.tx;
-          const y1 = data.nodes.y[ed.source] * view.scale + view.ty;
-          const x2 = data.nodes.x[ed.target] * view.scale + view.tx;
-          const y2 = data.nodes.y[ed.target] * view.scale + view.ty;
-          ctx2.beginPath(); ctx2.moveTo(x1, y1); ctx2.lineTo(x2, y2); ctx2.stroke();
-        }
+        drawLocalEdges(overviewEdges.edges, function (guarded) {
+          return guarded
+            ? { lineWidth: 0.75, strokeStyle: 'rgba(180, 90, 20, 0.16)', dash: [4, 3] }
+            : { lineWidth: 0.6, strokeStyle: 'rgba(20, 75, 170, 0.09)', dash: [] };
+        });
       }
       ctx2.restore();
     }
@@ -683,8 +778,13 @@
         if (disp) {
           fLine = '<br/>formula ' + escapeHtml(disp);
         }
+        var roleBits = [];
+        if (data.nodes.is_leaf && data.nodes.is_leaf[id]) roleBits.push('leaf');
+        else roleBits.push('formula');
+        if (data.nodes.is_target && data.nodes.is_target[id]) roleBits.push('target');
         tip.innerHTML =
           '<b>' + fmtAddr(data, id) + '</b>' + fLine + '<br/>' +
+          roleBits.join(' · ') + '<br/>' +
           'module ' + data.nodes.module_id[id] + ' · rank ' + data.nodes.rank[id] + '<br/>' +
           'in ' + data.nodes.in_degree[id] + ' / out ' + data.nodes.out_degree[id] + '<br/>' +
           'guarded out (exported) ' + gu + ' / ' + gn;
