@@ -10,6 +10,7 @@ from excel_grapher.series_bindings.compute_codegen import (
     emit_output_leaves_block,
     generate_computes_module,
 )
+from excel_grapher.series_bindings.constant_series import derive_constant_series
 from excel_grapher.series_bindings.docstring_renderers import (
     GoogleSeriesDocstringRenderer,
     NumpySeriesDocstringRenderer,
@@ -53,9 +54,11 @@ from excel_grapher.series_bindings.load import (
     parse_bindings_file,
 )
 from excel_grapher.series_bindings.normalize import (
+    has_constant_direction,
     has_input_direction,
     has_internal_direction,
     has_output_direction,
+    has_reader_direction,
     merge_series_entries,
     normalize_bindings_document,
     normalize_series_entry,
@@ -91,6 +94,7 @@ from excel_grapher.series_bindings.schema import (
 from excel_grapher.series_bindings.setter_codegen import (
     emit_reader_function,
     emit_reader_range_function,
+    emit_readers_block,
     emit_setter_function,
     emit_setter_helpers,
     emit_setters_block,
@@ -98,6 +102,8 @@ from excel_grapher.series_bindings.setter_codegen import (
 )
 from excel_grapher.series_bindings.setter_input_types import Layout, SeriesInput
 from excel_grapher.series_bindings.types import (
+    ConstantSeries,
+    ConstantSeriesCell,
     InputSeries,
     InputSeriesCell,
     InternalSeries,
@@ -141,6 +147,8 @@ def __getattr__(name: str):
 
 
 __all__ = [
+    "ConstantSeries",
+    "ConstantSeriesCell",
     "InputSeries",
     "InputSeriesCell",
     "InternalSeries",
@@ -200,6 +208,7 @@ __all__ = [
     "Layout",
     "SeriesInput",
     "coerce_setter_input",
+    "derive_constant_series",
     "derive_input_series",
     "derive_internal_series",
     "derive_output_series",
@@ -211,13 +220,16 @@ __all__ = [
     "emit_series_bindings_block",
     "emit_reader_function",
     "emit_reader_range_function",
+    "emit_readers_block",
     "emit_setter_function",
     "emit_setter_helpers",
     "emit_setters_block",
     "generate_computes_module",
+    "has_constant_direction",
     "has_input_direction",
     "has_internal_direction",
     "has_output_direction",
+    "has_reader_direction",
     "helper_spec_from_series",
     "merge_series_entries",
     "normalize_bindings_document",

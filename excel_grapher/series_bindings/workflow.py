@@ -48,26 +48,34 @@ def setter_names(bindings: WorkbookSeriesBindings) -> list[str]:
 
 
 def reader_names(bindings: WorkbookSeriesBindings) -> list[str]:
-    """Return sorted unique input reader function names (duals of setters).
+    """Return sorted unique reader function names for input and constant series.
 
     Every input series that declares a setter gets a `read_<series_id>` dual
-    (or an explicit `input.reader.name` override). Range duals
-    (`read_<id>_range`) are omitted from this list; they are auxiliary helpers.
+    (or an explicit `input.reader.name` override). Constant series emit the same
+    reader surface without a setter (`constant.reader.name` or `read_<series_id>`).
+    Range duals (`read_<id>_range`) are omitted from this list; they are
+    auxiliary helpers.
     """
     names: list[str] = []
     for series in bindings["series"]:
-        input_block = series.get("input") or {}
-        setter = input_block.get("setter") or series.get("setter")
-        if not isinstance(setter, dict) or not setter.get("name"):
-            continue
         series_id = series.get("id")
         if not series_id:
             continue
-        reader = input_block.get("reader")
-        if isinstance(reader, dict) and reader.get("name"):
-            names.append(str(reader["name"]))
-        else:
-            names.append(f"read_{series_id}")
+        input_block = series.get("input") or {}
+        setter = input_block.get("setter") or series.get("setter")
+        constant_block = series.get("constant")
+        if isinstance(setter, dict) and setter.get("name"):
+            reader = input_block.get("reader")
+            if isinstance(reader, dict) and reader.get("name"):
+                names.append(str(reader["name"]))
+            else:
+                names.append(f"read_{series_id}")
+        elif isinstance(constant_block, dict):
+            reader = constant_block.get("reader")
+            if isinstance(reader, dict) and reader.get("name"):
+                names.append(str(reader["name"]))
+            else:
+                names.append(f"read_{series_id}")
     return sorted(set(names))
 
 

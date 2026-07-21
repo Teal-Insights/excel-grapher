@@ -117,3 +117,19 @@ class InternalSeries(TypedDict):
     requires_address: bool
     cells: list[InternalSeriesCell]
     issues: list[ResolutionIssue]
+
+
+class ConstantSeriesCell(TypedDict):
+    address: str
+    coordinates: dict[str, Scalar]
+    key: dict[str, Scalar]
+    record: dict[str, Scalar]
+
+
+class ConstantSeries(TypedDict):
+    id: str
+    reader_name: str
+    key_fields: list[str]
+    requires_address: bool
+    cells: list[ConstantSeriesCell]
+    issues: list[ResolutionIssue]

@@ -31,6 +31,7 @@ from excel_grapher.series_bindings.normalize import (
     component_for_field,
     effective_dimension_id,
     effective_validation,
+    has_constant_direction,
     has_input_direction,
     has_internal_direction,
     has_output_direction,
@@ -47,7 +48,7 @@ from excel_grapher.series_bindings.types import (
     make_issue,
 )
 
-BindingDirection = Literal["input", "output", "internal"]
+BindingDirection = Literal["input", "output", "internal", "constant"]
 
 _TRAILING_UNIT_RE = re.compile(r"\s*\([^)]*\)\s*$")
 
@@ -580,14 +581,14 @@ def _select_addresses(
 ) -> tuple[list[str], list[ResolutionIssue]]:
     issues: list[ResolutionIssue] = []
     if export_addresses is not None:
-        if direction == "input":
+        if direction in ("input", "constant"):
             exported_addresses = [
                 address for address in expanded_addresses if address in export_addresses
             ]
             selected, overlap_issues = _select_input_addresses(
                 graph,
                 expanded_addresses,
-                mode=input_binding_mode,
+                mode=input_binding_mode if direction == "input" else "leaf",
                 validation=validation,
                 series_id=series_id,
                 candidate_addresses=exported_addresses,
@@ -613,6 +614,17 @@ def _select_addresses(
             graph,
             expanded_addresses,
             mode=input_binding_mode,
+            validation=validation,
+            series_id=series_id,
+        )
+        issues.extend(overlap_issues)
+        return selected, issues
+
+    if direction == "constant":
+        selected, overlap_issues = _select_input_addresses(
+            graph,
+            expanded_addresses,
+            mode="leaf",
             validation=validation,
             series_id=series_id,
         )
@@ -881,6 +893,8 @@ def _series_supports_direction(series: dict[str, Any], direction: BindingDirecti
         return has_input_direction(series)
     if direction == "internal":
         return has_internal_direction(series)
+    if direction == "constant":
+        return has_constant_direction(series)
     return has_output_direction(series)
 
 

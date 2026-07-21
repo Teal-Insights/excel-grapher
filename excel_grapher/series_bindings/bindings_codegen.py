@@ -9,8 +9,12 @@ from typing import TYPE_CHECKING, cast
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings.compute_codegen import emit_computes_block
 from excel_grapher.series_bindings.groups import bindings_export_order
-from excel_grapher.series_bindings.normalize import has_input_direction, has_output_direction
-from excel_grapher.series_bindings.setter_codegen import emit_setters_block
+from excel_grapher.series_bindings.normalize import (
+    has_constant_direction,
+    has_input_direction,
+    has_output_direction,
+)
+from excel_grapher.series_bindings.setter_codegen import emit_readers_block, emit_setters_block
 from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 
 if TYPE_CHECKING:
@@ -52,8 +56,9 @@ def emit_series_bindings_block(
     """
     series_list = bindings_export_order(bindings)
     emit_input = any(has_input_direction(s) for s in series_list)
+    emit_constant = any(has_constant_direction(s) for s in series_list)
     emit_output = any(has_output_direction(s) for s in series_list)
-    if not emit_input and not emit_output:
+    if not emit_input and not emit_output and not emit_constant:
         return []
     bindings = cast(WorkbookSeriesBindings, {**bindings, "series": series_list})
 
@@ -75,6 +80,21 @@ def emit_series_bindings_block(
             )
         )
         include_aliases = False
+    if emit_constant and include_readers:
+        # Input readers (when any) are emitted by emit_setters_block above or by
+        # the modular `_readers` path; here emit constant readers only.
+        lines.extend(
+            emit_readers_block(
+                graph,
+                workbook,
+                bindings,
+                export_addresses=export_addresses,
+                series_docstring_callback=series_docstring_callback,
+                docstring_renderer=docstring_renderer,
+                include_leaf_indexes=include_leaf_indexes,
+                directions=("constant",),
+            )
+        )
     if emit_output:
         lines.extend(
             emit_computes_block(

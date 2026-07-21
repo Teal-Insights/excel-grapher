@@ -571,6 +571,16 @@ class CodeGenerator:
         )
 
     @staticmethod
+    def _series_bindings_have_readers(bindings: WorkbookSeriesBindings) -> bool:
+        """Return True when any series emits a public `read_*` (input or constant)."""
+        from excel_grapher.series_bindings.normalize import has_reader_direction
+
+        return any(
+            isinstance(series, dict) and has_reader_direction(series)
+            for series in bindings.get("series", [])
+        )
+
+    @staticmethod
     def _series_bindings_have_output(bindings: WorkbookSeriesBindings) -> bool:
         """Return True when any series declares an output (compute) direction."""
         from excel_grapher.series_bindings.normalize import has_output_direction
@@ -582,11 +592,11 @@ class CodeGenerator:
 
     @staticmethod
     def _series_bindings_may_emit_range_readers(bindings: WorkbookSeriesBindings) -> bool:
-        """Return True when input series may emit `read_*_range` helpers needing `xl_range`."""
-        from excel_grapher.series_bindings.normalize import has_input_direction
+        """Return True when reader series may emit `read_*_range` helpers needing `xl_range`."""
+        from excel_grapher.series_bindings.normalize import has_reader_direction
 
         for series in bindings.get("series", []):
-            if not isinstance(series, dict) or not has_input_direction(series):
+            if not isinstance(series, dict) or not has_reader_direction(series):
                 continue
             if series.get("layout") == "scalar":
                 continue
@@ -791,14 +801,14 @@ class CodeGenerator:
         """Return discovery payloads for `list_reader_leaves` / `list_reader_ranges`."""
         if bindings is None or workbook is None:
             return None, None
-        from excel_grapher.series_bindings.normalize import has_input_direction
+        from excel_grapher.series_bindings.normalize import has_reader_direction
         from excel_grapher.series_bindings.reader_index import (
             build_reader_index,
             reader_index_as_discovery_dicts,
         )
 
         if not any(
-            isinstance(series, dict) and has_input_direction(series)
+            isinstance(series, dict) and has_reader_direction(series)
             for series in bindings.get("series", [])
         ):
             return None, None
@@ -2719,6 +2729,7 @@ class CodeGenerator:
             # `_readers`, and output leaf tables to `_output_leaves` so `api.py`
             # stays focused on the public surface.
             emit_input = self._series_bindings_have_input(series_bindings)
+            emit_readers = self._series_bindings_have_readers(series_bindings)
             emit_output = self._series_bindings_have_output(series_bindings)
             export_with_aliases = self._export_addresses_with_aliases(
                 _all_cells,
@@ -2749,7 +2760,7 @@ class CodeGenerator:
                 )
                 output_leaves_py = self._emit_output_leaves_module(output_leaf_lines)
                 output_leaves_imports = self._series_output_leaves_imports(output_leaf_lines)
-            if emit_input:
+            if emit_readers:
                 from excel_grapher.series_bindings.setter_codegen import emit_readers_block
 
                 reader_lines = emit_readers_block(
@@ -2769,8 +2780,8 @@ class CodeGenerator:
                 export_addresses=_all_cells,
                 public_addresses=series_public_addresses,
                 include_helpers=not emit_input,
-                include_readers=not emit_input,
-                include_leaf_indexes=not emit_input,
+                include_readers=not emit_readers,
+                include_leaf_indexes=not emit_readers,
                 include_leaves_tables=not emit_output,
                 series_docstring_callback=series_docstring_callback,
                 docstring_renderer=docstring_renderer,
@@ -3074,7 +3085,7 @@ class CodeGenerator:
         if (
             series_bindings is not None
             and bindings_workbook is not None
-            and self._series_bindings_have_input(series_bindings)
+            and self._series_bindings_have_readers(series_bindings)
         ):
             from excel_grapher.series_bindings.reader_index import build_reader_index
 
@@ -3131,7 +3142,7 @@ class CodeGenerator:
             series_bindings
         ):
             runtime_symbols.add("xl_range")
-        if series_bindings is not None and self._series_bindings_have_input(series_bindings):
+        if series_bindings is not None and self._series_bindings_have_readers(series_bindings):
             # Generated `read_*` annotations return `CellValue`.
             runtime_symbols.add("CellValue")
         if self._iterate_enabled:

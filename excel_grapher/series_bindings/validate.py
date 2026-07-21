@@ -8,6 +8,7 @@ from excel_grapher.series_bindings.graph_predicates import is_graph_formula_node
 from excel_grapher.series_bindings.normalize import (
     effective_dimension_id,
     effective_validation,
+    has_constant_direction,
     has_input_direction,
     has_internal_direction,
     input_mode,
@@ -168,6 +169,59 @@ def _validate_internal_binding_overlap(
                 "error",
                 "no_formula_internal_targets",
                 "internal binding requires at least one formula cell in data_range",
+                series_id=series_id,
+            )
+        )
+    return issues
+
+
+def _constant_binding_addresses(
+    graph: DependencyGraph,
+    series: dict[str, Any],
+    addresses: list[str],
+) -> list[str]:
+    """Return addresses that participate in constant binding resolution."""
+    validation = effective_validation(series)
+    if not validation.get("intersect_graph_leaves", True):
+        return list(addresses)
+    return [address for address in addresses if is_graph_leaf(graph, address)]
+
+
+def _validate_constant_binding_overlap(
+    graph: DependencyGraph,
+    series: dict[str, Any],
+    addresses: list[str],
+) -> list[ValidationIssue]:
+    """Validate leaf-only semantics for constant binding data ranges."""
+    issues: list[ValidationIssue] = []
+    if not has_constant_direction(series):
+        return issues
+
+    series_id = str(series.get("id", ""))
+    validation = effective_validation(series)
+    graph_addresses = [address for address in addresses if address in graph]
+    non_leaf_graph_addresses = [
+        address for address in graph_addresses if not is_graph_leaf(graph, address)
+    ]
+    leaf_graph_addresses = [address for address in graph_addresses if is_graph_leaf(graph, address)]
+
+    if validation.get("intersect_graph_leaves", True) and non_leaf_graph_addresses:
+        issues.append(
+            _issue(
+                "error",
+                "non_leaf_constant_overlap",
+                "constant binding data_range includes non-leaf graph cells; "
+                "use input.mode: override for editable formula cells or internal for "
+                "formula-cell triangulation",
+                series_id=series_id,
+            )
+        )
+    if validation.get("intersect_graph_leaves", True) and not leaf_graph_addresses:
+        issues.append(
+            _issue(
+                "error",
+                "no_leaf_constant_targets",
+                "constant binding requires at least one graph leaf in data_range",
                 series_id=series_id,
             )
         )
@@ -623,9 +677,11 @@ def validate_series_bindings(
             issues.extend(_validate_input_mode(series))
             issues.extend(_validate_input_binding_overlap(graph, series, addresses))
             issues.extend(_validate_internal_binding_overlap(graph, series, addresses))
+            issues.extend(_validate_constant_binding_overlap(graph, series, addresses))
 
             graph_input_addresses = _input_binding_addresses(graph, series, addresses)
             graph_internal_addresses = _internal_binding_addresses(graph, series, addresses)
+            graph_constant_addresses = _constant_binding_addresses(graph, series, addresses)
 
             if require_unique_key:
                 cell_scoped_keys = [
@@ -638,11 +694,15 @@ def validate_series_bindings(
                         for d in (series.get("structure") or {}).get("dimensions") or []
                     )
                 ]
-                binding_addresses = (
-                    graph_internal_addresses
-                    if has_internal_direction(series)
-                    else graph_input_addresses
-                )
+                if has_internal_direction(series):
+                    binding_addresses = graph_internal_addresses
+                    direction: Literal["input", "output", "internal", "constant"] = "internal"
+                elif has_constant_direction(series):
+                    binding_addresses = graph_constant_addresses
+                    direction = "constant"
+                else:
+                    binding_addresses = graph_input_addresses
+                    direction = "input"
                 if not binding_addresses:
                     continue
                 if cell_scoped_keys and workbook is None:
@@ -658,7 +718,6 @@ def validate_series_bindings(
                 elif workbook is not None:
                     if shared_reader is None:
                         shared_reader = _WorkbookValues(workbook)
-                    direction = "internal" if has_internal_direction(series) else "input"
                     resolved = resolve_series_binding(
                         graph,
                         workbook,
