@@ -294,3 +294,55 @@ def build_div_zero_cell_only_twin() -> DependencyGraph:
         )
         g.add_edge(member, denom)
     return g
+
+
+def row_self_skeleton() -> AstNode:
+    """Shared template: bare `ROW()` (member-context row number)."""
+    return FunctionCallNode(name="ROW", args=[])
+
+
+def column_self_skeleton() -> AstNode:
+    """Shared template: bare `COLUMN()` (member-context column number)."""
+    return FunctionCallNode(name="COLUMN", args=[])
+
+
+def build_row_self_group() -> FormulaGroupFixture:
+    """Column stripe `Sheet1!B10:B12` whose body is bare `ROW()`."""
+    members = ("Sheet1!B10", "Sheet1!B11", "Sheet1!B12")
+    skeleton = row_self_skeleton()
+    bindings = {m: () for m in members}
+    group = make_union_node(
+        members,
+        is_leaf=True,
+        shape_fingerprint=shape_fingerprint(skeleton),
+        skeleton=skeleton,
+        member_bindings=bindings,
+    )
+    g = DependencyGraph()
+    g.sheet_order = ["Sheet1"]
+    g.add_node(group)
+    for m in members:
+        assert g.get_node(m) is None
+        assert g.cell_owner(m) == group.key
+    return FormulaGroupFixture(graph=g, group_key=group.key, members=members)
+
+
+def build_column_self_group() -> FormulaGroupFixture:
+    """Row stripe `Sheet1!D5:F5` whose body is bare `COLUMN()`."""
+    members = ("Sheet1!D5", "Sheet1!E5", "Sheet1!F5")
+    skeleton = column_self_skeleton()
+    bindings = {m: () for m in members}
+    group = make_union_node(
+        members,
+        is_leaf=True,
+        shape_fingerprint=shape_fingerprint(skeleton),
+        skeleton=skeleton,
+        member_bindings=bindings,
+    )
+    g = DependencyGraph()
+    g.sheet_order = ["Sheet1"]
+    g.add_node(group)
+    for m in members:
+        assert g.get_node(m) is None
+        assert g.cell_owner(m) == group.key
+    return FormulaGroupFixture(graph=g, group_key=group.key, members=members)
