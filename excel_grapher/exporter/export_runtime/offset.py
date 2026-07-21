@@ -15,11 +15,56 @@ from excel_grapher.runtime.cache import EvalContext, _parse_range_address, xl_ce
 from .ranges import Range
 from .values import CellValue, ExcelRange, Scalar, as_scalar
 
-__all__ = ["xl_index_ref", "xl_offset", "xl_offset_ref", "xl_range", "xl_range_rows"]
+__all__ = [
+    "xl_address_ref_info",
+    "xl_index_ref",
+    "xl_offset",
+    "xl_offset_ref",
+    "xl_range",
+    "xl_range_rows",
+]
 
 
 def _format_address(sheet: str, row: int, col: int) -> str:
     return format_cell_key(sheet, fastpyxl.utils.cell.get_column_letter(col), row)
+
+
+def xl_address_ref_info(
+    address: str,
+) -> tuple[str, int, int] | tuple[str, int, int, int, int]:
+    """Parse a sheet-qualified A1 cell/range into ``xl_offset`` ref_info.
+
+    Used when formula-group helpers bind OFFSET's base reference as an address
+    hole (string parameter) instead of a compile-time cell/range literal.
+    """
+    local = address.split("!", 1)[-1]
+    if ":" in local:
+        parsed = _parse_range_address(address)
+        if isinstance(parsed, XlError):
+            raise XlErrorException(parsed)
+        sheet, start_cell, end_cell = parsed
+        try:
+            start_col, start_row = fastpyxl.utils.cell.coordinate_from_string(start_cell)
+            end_col, end_row = fastpyxl.utils.cell.coordinate_from_string(end_cell)
+            start_col_idx = fastpyxl.utils.cell.column_index_from_string(start_col)
+            end_col_idx = fastpyxl.utils.cell.column_index_from_string(end_col)
+        except ValueError:
+            raise XlErrorException(XlError.REF) from None
+        if start_row > end_row:
+            start_row, end_row = end_row, start_row
+        if start_col_idx > end_col_idx:
+            start_col_idx, end_col_idx = end_col_idx, start_col_idx
+        return (sheet, start_row, start_col_idx, end_row, end_col_idx)
+
+    try:
+        from excel_grapher.core.address_keys import parse_address
+
+        sheet, cell = parse_address(address)
+        col_str, row = fastpyxl.utils.cell.coordinate_from_string(cell)
+        col = fastpyxl.utils.cell.column_index_from_string(col_str)
+    except (TypeError, ValueError):
+        raise XlErrorException(XlError.REF) from None
+    return (sheet, row, col)
 
 
 def _number_or_raise(value: CellValue) -> float:

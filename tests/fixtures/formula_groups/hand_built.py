@@ -362,8 +362,7 @@ def build_sum_over_constant_group() -> FormulaGroupFixture:
 
     After coalesce, ``A1:A2`` are group members (no cell nodes). Only ``B1`` is a
     generate target. Exported ``xl_range`` must still resolve ``A1`` and ``A2`` via
-    member wrappers — today codegen registers wrappers only for public targets,
-    so ``compute_all`` raises ``KeyError: Cell 'Sheet1!A1' not found in graph``.
+    member wrappers (otherwise ``KeyError: Cell … not found in graph``).
     """
     members = ("Sheet1!A1", "Sheet1!A2")
     skeleton = NumberNode(value=10.0)
@@ -399,3 +398,103 @@ def build_sum_over_constant_group() -> FormulaGroupFixture:
         members=members,
         dependent=dependent,
     )
+
+
+def build_chart_data_threshold_sum_group() -> FormulaGroupFixture:
+    """Chart Data ``D74 = SUM(D67:E67)`` over coalesced IF-threshold members.
+
+    Mirrors ``lic_dsf_2025_08_12_formula_groups``::
+
+        cell_chart_data_d74 → xl_sum(xl_range(..., D67:N67))
+
+    where ``D67`` is a formula-group member (``=IF(D61>D66,1,0)``), not a generate
+    target. Without member wrappers, export raises
+    ``KeyError: Cell 'Chart Data'!D67 not found in graph``.
+    """
+    members = ("Sheet1!D67", "Sheet1!E67")
+    skeleton = FunctionCallNode(
+        name="IF",
+        args=[
+            BinaryOpNode(
+                op=">",
+                left=CellRefNode(address="Sheet1!D61"),
+                right=CellRefNode(address="Sheet1!D66"),
+            ),
+            NumberNode(value=1.0),
+            NumberNode(value=0.0),
+        ],
+    )
+    bindings = {m: () for m in members}
+    group = make_union_node(
+        members,
+        is_leaf=False,
+        shape_fingerprint=shape_fingerprint(skeleton),
+        skeleton=skeleton,
+        member_bindings=bindings,
+    )
+    dependent = "Sheet1!D74"
+    g = DependencyGraph()
+    g.sheet_order = ["Sheet1"]
+    g.add_node(make_cell_node("Sheet1", "D", 61, value=2.0, is_leaf=True))
+    g.add_node(make_cell_node("Sheet1", "D", 66, value=1.0, is_leaf=True))
+    g.add_node(group)
+    g.add_edge(group.key, "Sheet1!D61")
+    g.add_edge(group.key, "Sheet1!D66")
+    g.add_node(
+        make_cell_node(
+            "Sheet1",
+            "D",
+            74,
+            formula="=SUM(D67:E67)",
+            normalized_formula="=SUM(Sheet1!D67:E67)",
+            is_leaf=False,
+        )
+    )
+    g.add_edge(dependent, group.key)
+    for m in members:
+        assert g.get_node(m) is None
+        assert g.cell_owner(m) == group.key
+    return FormulaGroupFixture(
+        graph=g,
+        group_key=group.key,
+        members=members,
+        dependent=dependent,
+    )
+
+
+def build_offset_address_hole_group() -> FormulaGroupFixture:
+    """LIC-DSF OFFSET translation cells: ``OFFSET(hole, 0, 0)`` in a shared helper.
+
+    Without hole-aware OFFSET emission, group helpers return ``xl_raise(#REF!)``.
+    """
+    members = ("Sheet1!A12", "Sheet1!A13")
+    skeleton = FunctionCallNode(
+        name="OFFSET",
+        args=[
+            AddressHoleNode(kind=AddressLeafKind.cell, slot=0),
+            NumberNode(value=0.0),
+            NumberNode(value=0.0),
+        ],
+    )
+    bindings = {
+        "Sheet1!A12": (CellRefNode(address="Sheet1!Z10"),),
+        "Sheet1!A13": (CellRefNode(address="Sheet1!Z11"),),
+    }
+    group = make_union_node(
+        members,
+        is_leaf=False,
+        shape_fingerprint=shape_fingerprint(skeleton),
+        skeleton=skeleton,
+        member_bindings=bindings,
+    )
+    g = DependencyGraph()
+    g.sheet_order = ["Sheet1"]
+    g.add_node(make_cell_node("Sheet1", "Z", 10, value="alpha", is_leaf=True))
+    g.add_node(make_cell_node("Sheet1", "Z", 11, value="beta", is_leaf=True))
+    g.add_node(group)
+    g.add_edge(group.key, "Sheet1!Z10")
+    g.add_edge(group.key, "Sheet1!Z11")
+    for m in members:
+        assert g.get_node(m) is None
+        assert g.cell_owner(m) == group.key
+    return FormulaGroupFixture(graph=g, group_key=group.key, members=members)

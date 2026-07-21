@@ -49,9 +49,13 @@ def sum_cells(*args: CellValue) -> float | XlError:
 
 
 def average_cells(*args: CellValue) -> float | XlError:
-    """Return the average of numeric cells."""
+    """Return the average of numeric cells.
+
+    Matches Excel range ``AVERAGE`` semantics: blank cells (``None``), text
+    (including ``""``), and logical values are ignored; only numbers participate.
+    """
     values = list(flatten(*args))
-    nums, err = numeric_values(values)
+    nums, err = _iter_numeric_cells(values)
     if err is not None:
         return err
     if len(nums) == 0:
@@ -125,9 +129,12 @@ def npv_cells(rate: CellValue, *values: CellValue) -> float | XlError:
 
 
 def stdev_cells(*args: CellValue) -> float | XlError:
-    """Return sample standard deviation of numeric cells."""
+    """Return sample standard deviation of numeric cells.
+
+    Same blank/text/logical skipping rules as ``average_cells`` (Excel ``STDEV``).
+    """
     values = list(flatten(*args))
-    nums, err = numeric_values(values)
+    nums, err = _iter_numeric_cells(values)
     if err is not None:
         return err
     if len(nums) < 2:
@@ -138,6 +145,11 @@ def stdev_cells(*args: CellValue) -> float | XlError:
 
 
 def _iter_numeric_cells(values: list[CellValue]) -> tuple[list[float], XlError | None]:
+    """Collect numbers for range-style aggregates (AVERAGE, STDEV, LARGE, RANK).
+
+    Skips blanks (``None``), text (including ``""``), and logicals. Propagates
+    the first ``XlError``. Does not coerce text or blanks to zero.
+    """
     nums: list[float] = []
     for v in values:
         if isinstance(v, XlError):
@@ -145,6 +157,8 @@ def _iter_numeric_cells(values: list[CellValue]) -> tuple[list[float], XlError |
         if v is None:
             continue
         if isinstance(v, bool):
+            continue
+        if isinstance(v, str):
             continue
         if isinstance(v, (int, float)) and not isinstance(v, bool):
             nums.append(float(v))

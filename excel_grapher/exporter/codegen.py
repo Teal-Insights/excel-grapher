@@ -51,7 +51,7 @@ from excel_grapher.exporter.projection import ProjectedAddress
 from excel_grapher.grapher.blank_ranges import BlankRangeRect, normalize_blank_range_specs
 from excel_grapher.grapher.formula_groups import collect_holes, serialize_address_leaf
 from excel_grapher.grapher.graph import CycleError
-from excel_grapher.grapher.node import NodeKind, locate_cell
+from excel_grapher.grapher.node import NodeKind, locate_cell, member_keys
 from excel_grapher.grapher.parser import format_key
 from excel_grapher.grapher.target_expansion import (
     expand_targets_to_roots,
@@ -1777,6 +1777,20 @@ class CodeGenerator:
             )
             self._needs_index_ref_runtime = True
             ref_info = f"xl_index_ref({base_ref_info}, {row_expr}, {col_expr})"
+        elif isinstance(ref_node, AddressHoleNode):
+            if self._hole_param_by_slot is None:
+                return "xl_raise(XlError.REF)"
+            param = self._hole_param_by_slot.get(ref_node.slot)
+            if param is None:
+                return "xl_raise(XlError.REF)"
+            if ref_node.kind not in (
+                AddressLeafKind.cell,
+                AddressLeafKind.range,
+                AddressLeafKind.whole_column,
+                AddressLeafKind.whole_row,
+            ):
+                return "xl_raise(XlError.REF)"
+            ref_info = f"xl_address_ref_info({param})"
         else:
             # If reference is not a simple cell, we can't handle it
             return "xl_raise(XlError.REF)"
@@ -1833,6 +1847,20 @@ class CodeGenerator:
             )
             self._needs_index_ref_runtime = True
             ref_info = f"xl_index_ref({base_ref_info}, {row_expr}, {col_expr})"
+        elif isinstance(ref_node, AddressHoleNode):
+            if self._hole_param_by_slot is None:
+                return "xl_raise(XlError.REF)"
+            param = self._hole_param_by_slot.get(ref_node.slot)
+            if param is None:
+                return "xl_raise(XlError.REF)"
+            if ref_node.kind not in (
+                AddressLeafKind.cell,
+                AddressLeafKind.range,
+                AddressLeafKind.whole_column,
+                AddressLeafKind.whole_row,
+            ):
+                return "xl_raise(XlError.REF)"
+            ref_info = f"xl_address_ref_info({param})"
         else:
             return "xl_raise(XlError.REF)"
 
@@ -1878,6 +1906,41 @@ class CodeGenerator:
             self._group_member_param = prev_member
         lines.append(f"    return {expr}")
         return "\n".join(lines)
+
+    def _register_group_member_exports(self, addresses: Iterable[str]) -> None:
+        """Register resolver wrappers for formula-group members under `addresses`.
+
+        Public targets alone are not enough: exported ``xl_range`` / ``xl_cell``
+        walks may resolve sibling members that were never generate targets
+        (LIC-DSF ``KeyError: Cell … not found in graph``). For every group node
+        in the export closure, register **all** ``member_keys``.
+        """
+        seen_groups: set[str] = set()
+        for addr in addresses:
+            normalized = normalize_address(addr)
+            projected = self._map_address_to_projected(normalized)
+            if projected.parameters is not None:
+                member = str(projected.parameters.get("member") or normalized)
+                self._group_member_exports[member] = projected
+                group_key = normalize_address(projected.address)
+            else:
+                node = self.graph.get_node(normalized)
+                if node is None or getattr(node, "skeleton", None) is None:
+                    continue
+                group_key = normalized
+
+            if group_key in seen_groups:
+                continue
+            seen_groups.add(group_key)
+            owner = self.graph.get_node(group_key)
+            if owner is None or getattr(owner, "skeleton", None) is None:
+                continue
+            for member in member_keys(owner):
+                member_projected = self._map_address_to_projected(member)
+                if member_projected.parameters is None:
+                    continue
+                m = str(member_projected.parameters.get("member") or normalize_address(member))
+                self._group_member_exports[m] = member_projected
 
     def _emit_group_member_wrapper_lines(self) -> list[str]:
         """Emit thin `cell_*` wrappers that call `_group_*` with member bindings."""
@@ -2170,6 +2233,8 @@ class CodeGenerator:
             elif upper_name == "OFFSET":
                 if not self._can_offset_be_static(node):
                     funcs.add("xl_offset")
+                    if node.args and isinstance(node.args[0], AddressHoleNode):
+                        funcs.add("xl_address_ref_info")
                 elif self._static_offset_is_multicell(node):
                     funcs.add("xl_range")
             elif (
@@ -2303,11 +2368,7 @@ class CodeGenerator:
         # Export formula cell implementations and a resolver.
         lines.append("# --- Formula cell functions ---\n")
         lines.extend(cell_code_lines)
-        for addr in public_addresses:
-            projected = self._map_address_to_projected(addr)
-            if projected.parameters is not None:
-                member = str(projected.parameters.get("member") or normalize_address(addr))
-                self._group_member_exports[member] = projected
+        self._register_group_member_exports([*_all_cells, *public_addresses])
         lines.extend(self._emit_group_member_wrapper_lines())
         alias_lines = self._emit_projection_alias_lines(_all_cells, public_addresses)
         lines.extend(alias_lines)
@@ -2458,11 +2519,7 @@ class CodeGenerator:
         runtime_py = runtime_code.rstrip() + "\n"
 
         alias_lines = self._emit_projection_alias_lines(_all_cells, public_addresses)
-        for addr in public_addresses:
-            projected = self._map_address_to_projected(addr)
-            if projected.parameters is not None:
-                member = str(projected.parameters.get("member") or normalize_address(addr))
-                self._group_member_exports[member] = projected
+        self._register_group_member_exports([*_all_cells, *public_addresses])
         group_wrapper_lines = self._emit_group_member_wrapper_lines()
         internals_import_names = self._internals_runtime_import_names(
             parts["used_xl_functions"], cell_code_lines + group_wrapper_lines + alias_lines

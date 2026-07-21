@@ -14,7 +14,7 @@ from .aggregates import xl_sumproduct
 from .error_funcs import xl_iferror, xl_ifna, xl_isblank, xl_iserror, xl_isna
 from .errors import XlErrorException, xl_raise
 from .lookup import xl_hlookup, xl_index, xl_lookup, xl_match, xl_vlookup, xl_xlookup
-from .offset import xl_offset, xl_range, xl_range_rows
+from .offset import xl_address_ref_info, xl_offset, xl_range, xl_range_rows
 from .operators import (
     xl_bool,
     xl_compare,
@@ -54,6 +54,7 @@ __all__ = [
     "xl_map_unary",
     "xl_match",
     "xl_number",
+    "xl_address_ref_info",
     "xl_offset",
     "xl_pow_numbers",
     "xl_raise",
