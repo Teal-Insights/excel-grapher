@@ -28,3 +28,7 @@ _great_docs_build/
 
 # Examples
 sandbox/
+
+# Generated LIC-DSF / local codegen packages (scripts under local-testing/ may be tracked)
+local-testing/*/
+local-testing/**/__pycache__/
