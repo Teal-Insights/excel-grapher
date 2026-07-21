@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.19.0 (2026-07-21)
+
+### Features
+
+- **series-bindings**: Add constant direction for reader-only graph leaves
+  ([#442](https://github.com/Teal-Insights/excel-grapher/pull/442),
+  [`f38fc10`](https://github.com/Teal-Insights/excel-grapher/commit/f38fc104bc78dbdbdacd102fdee43e843362b1ff))
+
+
 ## v3.18.0 (2026-07-20)
 
 ### Code Style
