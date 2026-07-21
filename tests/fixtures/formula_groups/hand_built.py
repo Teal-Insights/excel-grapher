@@ -93,11 +93,20 @@ def _add_shared_precedents(graph: DependencyGraph) -> None:
 
 @dataclass(frozen=True)
 class FormulaGroupFixture:
-    """Formula-group graph plus the owning group node key."""
+    """Formula-group graph plus the owning group node key.
+
+    Args:
+        graph: Dependency graph containing the group (and optional dependents).
+        group_key: Multi-cell key of the formula-group node.
+        members: Member cell addresses owned by the group.
+        dependent: Optional non-member formula that references the group
+            (e.g. ``Sheet1!B1`` when only the dependent is a codegen target).
+    """
 
     graph: DependencyGraph
     group_key: str
     members: tuple[str, ...]
+    dependent: str | None = None
 
 
 def _wire_group_precedent_edges(graph: DependencyGraph, group_key: str) -> None:
@@ -346,3 +355,47 @@ def build_column_self_group() -> FormulaGroupFixture:
         assert g.get_node(m) is None
         assert g.cell_owner(m) == group.key
     return FormulaGroupFixture(graph=g, group_key=group.key, members=members)
+
+
+def build_sum_over_constant_group() -> FormulaGroupFixture:
+    """Minimal LIC-DSF repro: ``SUM`` over a group whose members are not targets.
+
+    After coalesce, ``A1:A2`` are group members (no cell nodes). Only ``B1`` is a
+    generate target. Exported ``xl_range`` must still resolve ``A1`` and ``A2`` via
+    member wrappers — today codegen registers wrappers only for public targets,
+    so ``compute_all`` raises ``KeyError: Cell 'Sheet1!A1' not found in graph``.
+    """
+    members = ("Sheet1!A1", "Sheet1!A2")
+    skeleton = NumberNode(value=10.0)
+    bindings = {m: () for m in members}
+    group = make_union_node(
+        members,
+        is_leaf=True,
+        shape_fingerprint=shape_fingerprint(skeleton),
+        skeleton=skeleton,
+        member_bindings=bindings,
+    )
+    dependent = "Sheet1!B1"
+    g = DependencyGraph()
+    g.sheet_order = ["Sheet1"]
+    g.add_node(group)
+    g.add_node(
+        make_cell_node(
+            "Sheet1",
+            "B",
+            1,
+            formula="=SUM(Sheet1!A1:A2)",
+            normalized_formula="=SUM(Sheet1!A1:A2)",
+            is_leaf=False,
+        )
+    )
+    g.add_edge(dependent, group.key)
+    for m in members:
+        assert g.get_node(m) is None
+        assert g.cell_owner(m) == group.key
+    return FormulaGroupFixture(
+        graph=g,
+        group_key=group.key,
+        members=members,
+        dependent=dependent,
+    )

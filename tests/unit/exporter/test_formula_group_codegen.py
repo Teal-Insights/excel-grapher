@@ -11,6 +11,7 @@ from tests.fixtures.formula_groups.hand_built import (
     build_row_self_group,
     build_row_stripe_cell_only_twin,
     build_row_stripe_group,
+    build_sum_over_constant_group,
 )
 
 
@@ -123,3 +124,34 @@ def test_codegen_group_no_arg_column_matches_evaluator() -> None:
         wrapper = ns[address_to_python_name(member)]
         assert callable(wrapper)
         assert wrapper(ctx) == want
+
+
+def test_codegen_emits_wrappers_for_non_target_group_members() -> None:
+    """LIC-DSF: range walk needs wrappers for members that are not generate targets."""
+    fx = build_sum_over_constant_group()
+    assert fx.dependent == "Sheet1!B1"
+    with CodeGenerator(fx.graph) as gen:
+        code = gen.generate(targets=[fx.dependent])
+    assert "def cell_sheet1_b1(ctx):" in code
+    assert "def cell_sheet1_a1(ctx):" in code
+    assert "def cell_sheet1_a2(ctx):" in code
+
+
+def test_codegen_sum_over_non_target_group_members_matches_evaluator() -> None:
+    """Exported SUM over a coalesced group must match evaluator (LIC-DSF KeyError repro)."""
+    fx = build_sum_over_constant_group()
+    assert fx.dependent is not None
+    with FormulaEvaluator(fx.graph) as ev:
+        expected = ev.evaluate(fx.dependent)
+    assert expected == 20.0
+
+    with CodeGenerator(fx.graph) as gen:
+        code = gen.generate(targets=[fx.dependent])
+    ns: dict[str, object] = {}
+    exec(code, ns)
+    make_context = ns["make_context"]
+    compute_all = ns["compute_all"]
+    assert callable(make_context) and callable(compute_all)
+    exported = compute_all(ctx=make_context())
+    assert isinstance(exported, dict)
+    assert exported[fx.dependent] == expected
