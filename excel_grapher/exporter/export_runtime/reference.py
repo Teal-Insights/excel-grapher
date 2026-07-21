@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import fastpyxl.utils.cell
+
 from excel_grapher.core import CellValue
 from excel_grapher.core.reference_funcs import (
     address_string,
@@ -12,7 +14,14 @@ from excel_grapher.core.reference_funcs import (
 
 from .errors import raise_if_sentinel_int, raise_if_sentinel_str
 
-__all__ = ["xl_address", "xl_column", "xl_columns", "xl_row"]
+__all__ = [
+    "xl_address",
+    "xl_column",
+    "xl_columns",
+    "xl_formula_column",
+    "xl_formula_row",
+    "xl_row",
+]
 
 
 def xl_address(
@@ -39,3 +48,19 @@ def xl_column(ref: CellValue) -> int:
 def xl_columns(ref: CellValue) -> int:
     """Return the column count of a reference, raising on Excel errors."""
     return raise_if_sentinel_int(columns_count(ref))
+
+
+def xl_formula_row(address: str) -> int:
+    """Row of a sheet-qualified formula cell (no-arg ``ROW()`` in a group helper)."""
+    _sheet, cell = address.rsplit("!", 1)
+    cell = cell.replace("$", "")
+    _col_str, row = fastpyxl.utils.cell.coordinate_from_string(cell)
+    return int(row)
+
+
+def xl_formula_column(address: str) -> int:
+    """Column of a sheet-qualified formula cell (no-arg ``COLUMN()`` in a group helper)."""
+    _sheet, cell = address.rsplit("!", 1)
+    cell = cell.replace("$", "")
+    col_str, _row = fastpyxl.utils.cell.coordinate_from_string(cell)
+    return int(fastpyxl.utils.cell.column_index_from_string(col_str))

@@ -147,6 +147,8 @@ class CodeGenerator:
         self._ast_cache: dict[str, AstNode] = {}
         self._used_graph_closure: bool = False
         self._formula_cell_address: str | None = None
+        # When emitting a `_group_*` helper, no-arg ROW/COLUMN use this param name.
+        self._group_member_param: str | None = None
         self._hole_param_by_slot: dict[int, str] | None = None
         # member address -> ProjectedAddress with group key + binding params
         self._group_member_exports: dict[str, ProjectedAddress] = {}
@@ -168,6 +170,7 @@ class CodeGenerator:
         self._ast_cache.clear()
         self._used_graph_closure = False
         self._formula_cell_address = None
+        self._group_member_param = None
         self._hole_param_by_slot = None
         self._group_member_exports.clear()
 
@@ -1361,6 +1364,8 @@ class CodeGenerator:
 
     def _emit_row(self, node: FunctionCallNode) -> str:
         if not node.args or (len(node.args) == 1 and isinstance(node.args[0], EmptyArgNode)):
+            if self._group_member_param is not None:
+                return f"xl_formula_row({self._group_member_param})"
             addr = self._formula_cell_address
             if addr is None:
                 return "xl_raise(XlError.VALUE)"
@@ -1385,6 +1390,8 @@ class CodeGenerator:
 
     def _emit_column(self, node: FunctionCallNode) -> str:
         if not node.args or (len(node.args) == 1 and isinstance(node.args[0], EmptyArgNode)):
+            if self._group_member_param is not None:
+                return f"xl_formula_column({self._group_member_param})"
             addr = self._formula_cell_address
             if addr is None:
                 return "xl_raise(XlError.VALUE)"
@@ -1852,7 +1859,7 @@ class CodeGenerator:
 
         holes = collect_holes(skeleton)
         helper = self._group_helper_name(normalized)
-        params = ", ".join(["ctx", *[f"b{i}" for i in range(len(holes))]])
+        params = ", ".join(["ctx", "member", *[f"b{i}" for i in range(len(holes))]])
         lines = [f"def {helper}({params}):"]
         doc = f"Formula group: {normalized}".replace("'''", "\\'''")
         lines.append(f"    '''{doc}.'''")
@@ -1860,12 +1867,15 @@ class CodeGenerator:
         prev_holes = self._hole_param_by_slot
         self._hole_param_by_slot = {hole.slot: f"b{i}" for i, hole in enumerate(holes)}
         prev_cell = self._formula_cell_address
+        prev_member = self._group_member_param
         self._formula_cell_address = normalized
+        self._group_member_param = "member"
         try:
             expr = self._emit_ast(skeleton)
         finally:
             self._hole_param_by_slot = prev_holes
             self._formula_cell_address = prev_cell
+            self._group_member_param = prev_member
         lines.append(f"    return {expr}")
         return "\n".join(lines)
 
@@ -1879,8 +1889,8 @@ class CodeGenerator:
             bindings = params.get("bindings") or ()
             helper = self._group_helper_name(projected.address)
             wrapper = address_to_python_name(member)
-            args = ", ".join([repr(b) for b in bindings])
-            call = f"{helper}(ctx)" if not args else f"{helper}(ctx, {args})"
+            call_args = ", ".join([repr(member), *[repr(b) for b in bindings]])
+            call = f"{helper}(ctx, {call_args})"
             lines.extend(
                 [
                     f"def {wrapper}(ctx):",
@@ -2118,8 +2128,13 @@ class CodeGenerator:
                 funcs.add("xl_int")
                 funcs.add("xl_raise")
             elif upper_name == "ROW":
-                funcs.add("xl_row")
-                if node.args:
+                if not node.args or (
+                    len(node.args) == 1 and isinstance(node.args[0], EmptyArgNode)
+                ):
+                    # Group helpers resolve no-arg ROW via xl_formula_row(member).
+                    funcs.add("xl_formula_row")
+                else:
+                    funcs.add("xl_row")
                     ref = node.args[0]
                     if isinstance(ref, FunctionCallNode) and ref.name.upper() == "OFFSET":
                         funcs.add("xl_offset_ref")
@@ -2127,8 +2142,22 @@ class CodeGenerator:
                             funcs.update(self._extract_xl_functions(off_arg))
                     else:
                         funcs.update(self._extract_xl_functions(ref))
-            elif upper_name in {"COLUMN", "COLUMNS"}:
-                funcs.add("xl_column" if upper_name == "COLUMN" else "xl_columns")
+            elif upper_name == "COLUMN":
+                if not node.args or (
+                    len(node.args) == 1 and isinstance(node.args[0], EmptyArgNode)
+                ):
+                    funcs.add("xl_formula_column")
+                else:
+                    funcs.add("xl_column")
+                    ref = node.args[0]
+                    if isinstance(ref, FunctionCallNode) and ref.name.upper() == "OFFSET":
+                        funcs.add("xl_offset_ref")
+                        for off_arg in ref.args:
+                            funcs.update(self._extract_xl_functions(off_arg))
+                    else:
+                        funcs.update(self._extract_xl_functions(ref))
+            elif upper_name == "COLUMNS":
+                funcs.add("xl_columns")
                 if node.args:
                     ref = node.args[0]
                     if isinstance(ref, FunctionCallNode) and ref.name.upper() == "OFFSET":
