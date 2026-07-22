@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from excel_grapher.evaluator.evaluator import FormulaEvaluator
 from excel_grapher.exporter.codegen import CodeGenerator
 from excel_grapher.exporter.projection import ProjectedAddress
@@ -30,12 +32,28 @@ def test_codegen_emits_one_group_helper_and_member_wrappers() -> None:
     fx = build_row_stripe_group()
     with CodeGenerator(fx.graph) as gen:
         code = gen.generate(targets=list(fx.members))
-    helper = gen._group_helper_name(fx.group_key)
+        helper = gen._group_helper_name(fx.group_key)
+    assert helper.startswith("_group_")
+    assert not re.fullmatch(r"_group_[0-9a-f]{12}", helper)
     assert f"def {helper}(ctx, member, b0):" in code
     assert "Formula-group member wrappers" in code
     assert "def cell_sheet1_e63(ctx):" in code
     assert f"return {helper}(ctx, 'Sheet1!E63', 'Sheet1!E35')" in code
     # One helper, not one specialized body per member
+    assert code.count(f"def {helper}(") == 1
+
+
+def test_codegen_hashed_group_helper_names_are_short_and_deterministic() -> None:
+    fx = build_row_stripe_group()
+    with CodeGenerator(fx.graph, hash_group_helper_names=True) as gen:
+        code = gen.generate(targets=list(fx.members))
+        helper = gen._group_helper_name(fx.group_key)
+    assert re.fullmatch(r"_group_[0-9a-f]{12}", helper)
+    assert len(helper) < 32
+    with CodeGenerator(fx.graph, hash_group_helper_names=True) as gen2:
+        assert gen2._group_helper_name(fx.group_key) == helper
+    assert f"def {helper}(ctx, member, b0):" in code
+    assert f"return {helper}(ctx, 'Sheet1!E63', 'Sheet1!E35')" in code
     assert code.count(f"def {helper}(") == 1
 
 
