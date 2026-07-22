@@ -275,25 +275,13 @@ class CodeGenerator:
             return frozenset()
         if workbook is None:
             raise ValueError("bindings_workbook is required when series_bindings is set")
-        from excel_grapher.series_bindings.ranges import expand_data_range_for_graph
+        from excel_grapher.series_bindings.workflow import series_binding_public_addresses
 
-        public_graph = cast("DependencyGraph", self._public_graph())
-        addresses: set[str] = set()
-        for series in bindings.get("series", []):
-            if not isinstance(series, dict):
-                continue
-            data_range = series.get("data_range")
-            if not isinstance(data_range, str):
-                continue
-            addresses.update(
-                normalize_address(addr)
-                for addr in expand_data_range_for_graph(
-                    public_graph,
-                    data_range,
-                    workbook=workbook,
-                )
-            )
-        return frozenset(addresses)
+        return series_binding_public_addresses(
+            cast("DependencyGraph", self._public_graph()),
+            bindings,
+            workbook=workbook,
+        )
 
     def _emit_projection_alias_lines(
         self,
@@ -312,12 +300,12 @@ class CodeGenerator:
         return lines
 
     def _emit_projection_alias_body(self, replacement: str) -> list[str]:
-        """Emit the body lines for a projected public-address alias wrapper."""
-        replacement_node = self.graph.get_node(replacement)
-        if replacement_node is not None and replacement_node.formula is not None:
-            ast = self._get_or_parse_ast(replacement)
-            assert ast is not None
-            return self._emit_formula_body_lines(ast)
+        """Emit the body lines for a projected public-address alias wrapper.
+
+        Always delegate to the retained target's exported evaluation path so the
+        alias shares memoization with other callers instead of duplicating its
+        formula body.
+        """
         unpack_stmts = self._start_return_unpack()
         try:
             expr = self._emit_cell_eval(replacement)

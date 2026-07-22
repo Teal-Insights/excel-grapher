@@ -5,11 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, TypedDict
 
+from excel_grapher.core.address_keys import normalize_key as normalize_address
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings.canonical import bindings_canonical_sha256
 from excel_grapher.series_bindings.input_series import derive_input_series
 from excel_grapher.series_bindings.load import SeriesBindingsLoadError, load_series_bindings
-from excel_grapher.series_bindings.ranges import expand_data_range
+from excel_grapher.series_bindings.ranges import expand_data_range, expand_data_range_for_graph
 from excel_grapher.series_bindings.types import (
     InputSeries,
     ValidationReport,
@@ -102,6 +103,36 @@ def all_series_targets(
         if isinstance(data_range, str):
             targets.extend(expand_data_range(data_range, workbook=workbook))
     return sorted(set(targets))
+
+
+def series_binding_public_addresses(
+    graph: DependencyGraph,
+    bindings: WorkbookSeriesBindings,
+    *,
+    workbook: Path | str,
+) -> frozenset[str]:
+    """Return normalized addresses published by series binding `data_range`s.
+
+    Use this set (unioned with export targets) as `preserve` for
+    `OptimalCompression` / `compress_optimal` so series-bound leaves are not
+    collapsed out of the projected graph.
+    """
+    addresses: set[str] = set()
+    for series in bindings.get("series", []):
+        if not isinstance(series, dict):
+            continue
+        data_range = series.get("data_range")
+        if not isinstance(data_range, str):
+            continue
+        addresses.update(
+            normalize_address(addr)
+            for addr in expand_data_range_for_graph(
+                graph,
+                data_range,
+                workbook=workbook,
+            )
+        )
+    return frozenset(addresses)
 
 
 def _explicit_bindings_candidates(workbook: Path, bindings: Path) -> list[Path]:

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import cast
+
 import pytest
+import xlsxwriter
 
 from excel_grapher.core.formula_ast import parse
 from excel_grapher.exporter.projection import (
@@ -14,6 +18,7 @@ from excel_grapher.exporter.projection import (
     build_optimal_projection_manifest,
     resolve_projection_manifest,
 )
+from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.grapher.compression import (
     IdentityTransitCompressionRecord,
     OptimalCompressionRecord,
@@ -22,6 +27,7 @@ from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgePro
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.guard import CellRef, Compare, Literal
 from excel_grapher.grapher.node import Node
+from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 
 
 def _make_node(
@@ -119,6 +125,79 @@ def test_optimal_projection_manifest_kind_and_forwarding() -> None:
     assert manifest.kind == "optimal_compression"
     assert manifest.map_to_projected("Sheet1!B1") == "Sheet1!C1"
     assert "Sheet1!C1" in projection
+
+
+def test_optimal_projection_keeps_target_identity_transit() -> None:
+    graph = DependencyGraph()
+    c = _make_node("Sheet1!C1", None, None, is_leaf=True)
+    b = _make_node("Sheet1!B1", "=Sheet1!C1", "=Sheet1!C1", is_target=True)
+    a = _make_node("Sheet1!A1", "=Sheet1!B1", "=Sheet1!B1")
+    for n in (c, b, a):
+        graph.add_node(n)
+    _direct_edge(graph, "Sheet1!B1", "Sheet1!C1")
+    _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
+
+    projection = OptimalCompression().project(graph)
+    assert "Sheet1!B1" in projection
+    assert projection.manifest.map_to_projected("Sheet1!B1") == "Sheet1!B1"
+
+
+def test_optimal_projection_preserves_series_bound_non_target(
+    tmp_path: Path,
+) -> None:
+    workbook_path = tmp_path / "series_bound.xlsx"
+    wb = xlsxwriter.Workbook(workbook_path)
+    engine = wb.add_worksheet("Engine")
+    engine.write_number("C6", 10)
+    out = wb.add_worksheet("Outputs")
+    out.write_formula("B12", "=Engine!C6", None, 10)
+    out.write_formula("B14", "=Outputs!B12+1", None, 11)
+    wb.close()
+
+    # Only B14 is an export target; B12 is published solely via series bindings.
+    graph = create_dependency_graph(
+        workbook_path,
+        ["Outputs!B14"],
+        load_values=True,
+        capture_dependency_provenance=True,
+    )
+    bindings = cast(
+        WorkbookSeriesBindings,
+        {
+            "schema_version": "1.2.0",
+            "workbook": str(workbook_path),
+            "series": [
+                {
+                    "id": "baseline",
+                    "data_range": "Outputs!B12",
+                    "layout": "scalar",
+                    "output": {"compute": {"name": "compute_baseline"}},
+                    "structure": {
+                        "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
+                        "dimensions": [
+                            {
+                                "concept": "LABEL",
+                                "role": "key",
+                                "scope": "series",
+                                "bind": {"kind": "constant", "value": "baseline"},
+                            }
+                        ],
+                    },
+                    "key": ["LABEL"],
+                }
+            ],
+        },
+    )
+
+    without_preserve = OptimalCompression().project(graph)
+    assert "Outputs!B12" not in without_preserve
+
+    projection = OptimalCompression(
+        series_bindings=bindings,
+        bindings_workbook=workbook_path,
+    ).project(graph)
+    assert "Outputs!B12" in projection
+    assert projection.manifest.map_to_projected("Outputs!B12") == "Outputs!B12"
 
 
 def test_optimal_projection_inline_lineage_without_forwarding() -> None:

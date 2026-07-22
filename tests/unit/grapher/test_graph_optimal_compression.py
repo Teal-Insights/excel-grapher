@@ -346,6 +346,23 @@ def test_optimal_preserve_blocks_inline() -> None:
     assert "Sheet1!B1" in graph
 
 
+def test_optimal_preserve_blocks_identity_transit() -> None:
+    graph = DependencyGraph()
+    c = _make_node("Sheet1!C1", None, None, is_leaf=True)
+    object.__setattr__(c, "value", 42)
+    b = _make_node("Sheet1!B1", "=Sheet1!C1", "=Sheet1!C1", is_target=True)
+    a = _make_node("Sheet1!A1", "=Sheet1!B1", "=Sheet1!B1")
+    for n in (c, b, a):
+        graph.add_node(n)
+    _direct_edge(graph, "Sheet1!B1", "Sheet1!C1")
+    _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
+
+    removed = graph.compress_optimal()
+    assert "Sheet1!B1" not in removed
+    assert "Sheet1!B1" in graph
+    assert graph.get_dependencies("Sheet1!A1") == frozenset({"Sheet1!B1"})
+
+
 def test_optimal_explicit_preserve_protects_public_cell() -> None:
     graph = DependencyGraph()
     d = _make_node("Sheet1!D1", None, None, is_leaf=True)
@@ -358,6 +375,38 @@ def test_optimal_explicit_preserve_protects_public_cell() -> None:
 
     removed = graph.compress_optimal(preserve={"Sheet1!B1"})
     assert "Sheet1!B1" not in removed
+
+
+def test_optimal_explicit_preserve_blocks_identity_transit() -> None:
+    graph = DependencyGraph()
+    c = _make_node("Sheet1!C1", None, None, is_leaf=True)
+    object.__setattr__(c, "value", 42)
+    b = _make_node("Sheet1!B1", "=Sheet1!C1", "=Sheet1!C1")
+    a = _make_node("Sheet1!A1", "=Sheet1!B1", "=Sheet1!B1")
+    for n in (c, b, a):
+        graph.add_node(n)
+    _direct_edge(graph, "Sheet1!B1", "Sheet1!C1")
+    _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
+
+    removed = graph.compress_optimal(preserve={"Sheet1!B1"})
+    assert "Sheet1!B1" not in removed
+    assert "Sheet1!B1" in graph
+
+
+def test_optimal_is_target_protected_even_with_unrelated_preserve() -> None:
+    graph = DependencyGraph()
+    c = _make_node("Sheet1!C1", None, None, is_leaf=True)
+    object.__setattr__(c, "value", 42)
+    b = _make_node("Sheet1!B1", "=Sheet1!C1", "=Sheet1!C1", is_target=True)
+    a = _make_node("Sheet1!A1", "=Sheet1!B1", "=Sheet1!B1")
+    for n in (c, b, a):
+        graph.add_node(n)
+    _direct_edge(graph, "Sheet1!B1", "Sheet1!C1")
+    _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
+
+    removed = graph.compress_optimal(preserve={"Sheet1!Z99"})
+    assert "Sheet1!B1" not in removed
+    assert "Sheet1!B1" in graph
 
 
 def test_optimal_identity_replacement_protected_from_later_inline() -> None:

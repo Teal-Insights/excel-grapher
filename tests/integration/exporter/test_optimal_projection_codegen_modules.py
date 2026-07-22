@@ -80,7 +80,9 @@ def test_optimal_projected_generate_modules_package_runs_and_matches_evaluator(
     bindings = _baseline_bindings(workbook_path)
 
     projection = OptimalCompression().project(graph)
-    assert "Outputs!B12" not in projection
+    # Target / series-bound public addresses must remain in the projection so
+    # series helpers see the full published leaf set (no alias patch-up).
+    assert "Outputs!B12" in projection
 
     files = CodeGenerator(projection).generate_modules(
         targets,
@@ -90,6 +92,7 @@ def test_optimal_projected_generate_modules_package_runs_and_matches_evaluator(
 
     assert "xl_cell" in files["internals.py"]
     assert "def compute_baseline(" in files["api.py"]
+    assert "# --- Projection public address aliases ---" not in files["internals.py"]
 
     pkg_dir = tmp_path / _PACKAGE
     for filename, content in files.items():
