@@ -12,6 +12,7 @@ _STRUCTURAL_FIELDS = frozenset(
         "sheet",
         "data_range",
         "exclude_rows",
+        "exclude_columns",
         "layout",
         "structure",
         "key",

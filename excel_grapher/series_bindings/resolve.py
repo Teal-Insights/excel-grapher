@@ -371,6 +371,19 @@ def _apply_exclude_rows(addresses: list[str], series: dict[str, Any]) -> list[st
     return [address for address in addresses if _parse_data_cell(address)[2] not in excluded]
 
 
+def _apply_exclude_columns(addresses: list[str], series: dict[str, Any]) -> list[str]:
+    """Drop addresses in columns the series declares as never-data via `exclude_columns`."""
+    specs = series.get("exclude_columns")
+    if not specs:
+        return addresses
+    excluded = expand_column_specs(specs)
+    return [
+        address
+        for address in addresses
+        if column_index_from_string(_parse_data_cell(address)[1]) not in excluded
+    ]
+
+
 def _include_in_record(field: dict[str, Any], default: bool) -> bool:
     if "include_in_record" in field:
         return bool(field["include_in_record"])
@@ -699,6 +712,7 @@ def resolve_series_binding(
     try:
         expanded_addresses = expand_data_range_for_graph(graph, data_range, workbook=workbook)
         expanded_addresses = _apply_exclude_rows(expanded_addresses, series)
+        expanded_addresses = _apply_exclude_columns(expanded_addresses, series)
     except (ValueError, TypeError) as exc:
         return {
             "series_id": series_id,

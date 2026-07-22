@@ -583,20 +583,29 @@ For the simpler sparse/merged variant — group labels in their own column, blan
 on sub-rows — `fill: true` alone suffices; no `skip`/`include` lists are needed because emptiness
 already identifies the non-source rows.
 
-### Data membership: `exclude_rows`
+### Data membership: `exclude_rows` / `exclude_columns`
 
-Which rows count as **data** is a series-level concern, separate from label geometry. By default
-resolution keeps cells that are graph input leaves, so unreferenced decorative rows drop out
-automatically. But a formula spanning the block (a `SUM` or a lookup table array) makes embedded
-blank rows graph leaves too. `exclude_rows` force-drops rows that are never data:
+Which cells count as **data** is a series-level concern, separate from label geometry. By default
+resolution keeps cells that are graph input leaves, so unreferenced decorative rows or columns
+drop out automatically. But a formula spanning the block (a `SUM` or a lookup table array) makes
+embedded blank rows or milestone columns graph leaves too. Series-level membership filters
+force-drop addresses that are never data for this series:
 
-- In the example, rows 2 and 6 (band headers) and row 5 (separator) are excluded even though the
-  block-wide `SUM` references them.
-- Excluded rows can still serve as **label sources** — `SCENARIO` reads its band labels from
-  excluded rows 2 and 6. Label reads go through the workbook, not the graph.
-- Without `exclude_rows`, an unlabeled row fails resolution loudly under `missing: error` (the
-  `SHOCK_TYPE` bind cannot label it) instead of mis-keying a record — configure nothing and you
-  get an error, not corruption.
+- **`exclude_rows`** — rows that are never data. In the example, rows 2 and 6 (band headers) and
+  row 5 (separator) are excluded even though the block-wide `SUM` references them. Excluded rows
+  can still serve as **label sources** — `SCENARIO` reads its band labels from excluded rows 2
+  and 6. Label reads go through the workbook, not the graph. Without `exclude_rows`, an unlabeled
+  row fails resolution loudly under `missing: error` (the `SHOCK_TYPE` bind cannot label it)
+  instead of mis-keying a record — configure nothing and you get an error, not corruption.
+- **`exclude_columns`** (schema **1.12.0+**) — columns that are never data for this series
+  (single letters or inclusive `"C:D"` ranges). Typical use: an annual matrix that keeps milestone
+  years on-sheet for formula refs / a separate summary series, while this binding publishes every
+  year *except* those columns. Applied after `data_range` expansion alongside `exclude_rows`,
+  before graph intersection and label binding.
+
+`column_header.skip` / `include` (and the row-label equivalents) remain **label-source** filters
+only — they do not remove data cells from the series. Use `exclude_columns` / `exclude_rows` when
+the cells themselves must not become resolved leaves.
 
 ### Hardcoded keys: `value_map`
 
@@ -629,6 +638,7 @@ dtypes) like `constant` values; keys within one bind must share one scalar type.
 | Group headers interleaved with sub-labels in one column | `skip`/`include` + `fill: true` |
 | Labels absent from the sheet | `value_map` |
 | Referenced non-data rows (headers, separators, subtotals) | `exclude_rows` |
+| Referenced non-data columns (milestones, summary years) | `exclude_columns` |
 
 ## Boolean and datetime types (1.4.0)
 
@@ -722,6 +732,7 @@ Generated code imports `datetime` and emits `datetime.datetime(...)` literals on
 | **1.9.0** | Optional `input.reader` name override for generated `read_*` duals. |
 | **1.10.0** | Optional `output.compute.helper` so `compute_*` can call parameterized helpers from record dims (with `xl_cell` fallback). Modular exports place `_OUTPUT_LEAVES_*` in `_output_leaves.py`. |
 | **1.11.0** | `constant` direction for non-I/O graph-leaf bindings: emit `read_*` and Phase 2 body rewrite without `set_*` / `compute_*`. |
+| **1.12.0** | Series-level `exclude_columns` (`ColumnSpec`) symmetric with `exclude_rows` for carving non-data columns out of an expanded `data_range`. |
 
 ## Dimension ids vs concepts (1.8.0)
 
