@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.19.1 (2026-07-22)
+
+### Bug Fixes
+
+- **exporter**: Keep public cells out of OptimalCompression
+  ([#449](https://github.com/Teal-Insights/excel-grapher/pull/449),
+  [`09738ec`](https://github.com/Teal-Insights/excel-grapher/commit/09738ece9ef8ffa203a74f9d7e2dd4be425ad177))
+
+- **exporter**: Keep public/series-bound cells out of OptimalCompression
+  ([#449](https://github.com/Teal-Insights/excel-grapher/pull/449),
+  [`09738ec`](https://github.com/Teal-Insights/excel-grapher/commit/09738ece9ef8ffa203a74f9d7e2dd4be425ad177))
+
+### Documentation
+
+- Clarify OptimalCompression preserve contract
+  ([#449](https://github.com/Teal-Insights/excel-grapher/pull/449),
+  [`09738ec`](https://github.com/Teal-Insights/excel-grapher/commit/09738ece9ef8ffa203a74f9d7e2dd4be425ad177))
+
+
 ## v3.19.0 (2026-07-21)
 
 ### Features
