@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast as py_ast
+import hashlib
 import json
 import re
 from collections.abc import Iterable, Mapping, Sequence, Set
@@ -122,6 +123,7 @@ class CodeGenerator:
         iterate_enabled: bool | None = None,
         iterate_count: int = 100,
         iterate_delta: float = 0.001,
+        hash_group_helper_names: bool = False,
     ) -> None:
         """Initialize the code generator.
 
@@ -133,11 +135,16 @@ class CodeGenerator:
                 this check (default).
             iterate_count: Maximum iterations when iterative calculation is enabled.
             iterate_delta: Convergence threshold when iterative calculation is enabled.
+            hash_group_helper_names: If True, emit compact `_group_<sha1[:12]>` helper
+                names instead of mangling the full multi-area group key. Prefer for
+                large packages where long identifiers dominate size; default keeps
+                address-derived names for readability.
         """
         self.graph = graph
         self._iterate_enabled = iterate_enabled
         self._iterate_count = iterate_count
         self._iterate_delta = iterate_delta
+        self._hash_group_helper_names = hash_group_helper_names
         self._emitted: set[str] = set()
         self._needs_offset_runtime = False  # Set to True if dynamic OFFSET is used
         self._needs_index_ref_runtime = False  # OFFSET(INDEX(...), ...) requires xl_index_ref
@@ -152,6 +159,8 @@ class CodeGenerator:
         self._hole_param_by_slot: dict[int, str] | None = None
         # member address -> ProjectedAddress with group key + binding params
         self._group_member_exports: dict[str, ProjectedAddress] = {}
+        # hashed `_group_*` helper name -> normalized group key (collision guard)
+        self._group_helper_keys: dict[str, str] = {}
 
     def __enter__(self) -> CodeGenerator:
         return self
@@ -173,6 +182,7 @@ class CodeGenerator:
         self._group_member_param = None
         self._hole_param_by_slot = None
         self._group_member_exports.clear()
+        self._group_helper_keys.clear()
 
     def _include_dep_tracking(
         self,
@@ -1872,10 +1882,32 @@ class CodeGenerator:
         return f"xl_offset_ref({ref_info}, {rows_expr}, {cols_expr}, {height_expr}, {width_expr})"
 
     def _group_helper_name(self, group_key: str) -> str:
-        base = address_to_python_name(normalize_address(group_key))
-        if base.startswith("cell_"):
-            base = base[len("cell_") :]
-        return f"_group_{base}"
+        """Return a `_group_*` name for a formula-group key.
+
+        By default mangles the normalized multi-area group key via
+        `address_to_python_name`. With `hash_group_helper_names=True`, uses the
+        first 12 hex chars of SHA-1 so repeated wrapper call sites stay compact.
+        Hashed mode tracks digest -> key during a generate pass and raises on
+        collision.
+        """
+        key = normalize_address(group_key)
+        if not self._hash_group_helper_names:
+            base = address_to_python_name(key)
+            if base.startswith("cell_"):
+                base = base[len("cell_") :]
+            return f"_group_{base}"
+
+        digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
+        helper = f"_group_{digest}"
+        existing = self._group_helper_keys.get(helper)
+        if existing is None:
+            self._group_helper_keys[helper] = key
+        elif existing != key:
+            raise ValueError(
+                f"Formula-group helper name collision for {helper!r}: "
+                f"{existing!r} vs {key!r}"
+            )
+        return helper
 
     def _emit_group_helper(self, group_key: str) -> str:
         """Emit one parameterized `_group_*` helper for a formula-group node."""
