@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.20.0 (2026-07-22)
+
+### Features
+
+- **series-bindings**: Add series-level exclude_columns
+  ([#450](https://github.com/Teal-Insights/excel-grapher/pull/450),
+  [`b495238`](https://github.com/Teal-Insights/excel-grapher/commit/b495238b1a1c657c8e62f266588320a3991d0c8e))
+
+
 ## v3.19.1 (2026-07-22)
 
 ### Bug Fixes
