@@ -1,9 +1,9 @@
 """Row and column geometry specs for series-binding label binds.
 
 Specs appear in bind-level `skip`/`include` lists, series-level
-`exclude_rows`, and `value_map` values. A row spec is a 1-based integer or an
-inclusive `"first:last"` string; a column spec is a column letter or an
-inclusive `"C:D"` string.
+`exclude_rows` / `exclude_columns`, and `value_map` values. A row spec is a
+1-based integer or an inclusive `"first:last"` string; a column spec is a
+column letter or an inclusive `"C:D"` string.
 """
 
 from __future__ import annotations

@@ -358,6 +358,22 @@ def _validate_series_structure(series: dict[str, Any]) -> list[ValidationIssue]:
                 )
             )
 
+    exclude_columns = series.get("exclude_columns")
+    if exclude_columns is not None:
+        from excel_grapher.series_bindings.geometry import expand_column_specs
+
+        try:
+            expand_column_specs(exclude_columns)
+        except ValueError as exc:
+            issues.append(
+                _issue(
+                    "error",
+                    "invalid_bind_geometry",
+                    f"exclude_columns: {exc}",
+                    series_id=series_id,
+                )
+            )
+
     structure = series.get("structure")
     if not isinstance(structure, dict):
         return issues
