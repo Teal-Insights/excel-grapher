@@ -252,3 +252,44 @@ def test_projected_codegen_matches_evaluator_with_unpack_return(tmp_path: Path) 
     generated_results = {target: xl_cell(ctx, target) for target in targets}
 
     assert generated_results == evaluator_results
+
+
+def _write_identity_workbook_formula_target(workbook_path: Path) -> None:
+    import xlsxwriter
+
+    wb = xlsxwriter.Workbook(workbook_path)
+    engine = wb.add_worksheet("Engine")
+    engine.write_number("C5", 5)
+    engine.write_formula("C6", "=Engine!C5*2", None, 10)
+    out = wb.add_worksheet("Outputs")
+    out.write_formula("B12", "=Engine!C6", None, 10)
+    out.write_formula("B14", "=Outputs!B12+1", None, 11)
+    wb.close()
+
+
+def test_projected_codegen_alias_delegates_to_retained_formula(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "identity_formula_target.xlsx"
+    _write_identity_workbook_formula_target(workbook_path)
+
+    graph = create_dependency_graph(
+        workbook_path,
+        ["Outputs!B12", "Outputs!B14"],
+        load_values=True,
+        capture_dependency_provenance=True,
+    )
+    projection = IdentityTransitCompression().project(graph)
+    assert projection.manifest.map_to_projected("Outputs!B12") == "Engine!C6"
+
+    code = CodeGenerator(projection).generate(["Outputs!B12", "Outputs!B14"])
+    assert "# --- Projection public address aliases ---" in code
+    alias_start = code.index("# --- Projection public address aliases ---")
+    alias_section = code[alias_start:]
+    assert "def cell_outputs_b12(ctx):" in alias_section
+    assert "xl_eval(ctx, 'Engine!C6', cell_engine_c6)" in alias_section
+    assert "xl_number(xl_cell(ctx, 'Engine!C5'))" not in alias_section
+
+    ns = _exec_generated(code)
+    ctx_factory = cast(Callable[..., object], ns["make_context"])
+    xl_cell = cast(Callable[..., object], ns["xl_cell"])
+    ctx = ctx_factory()
+    assert xl_cell(ctx, "Outputs!B12") == 10

@@ -22,7 +22,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from excel_grapher.core.address_keys import normalize_key
 from excel_grapher.grapher.compression import (
@@ -34,6 +35,9 @@ from excel_grapher.grapher.compression import (
 from excel_grapher.grapher.graph import CycleError, CycleReport, DependencyGraph, NodeKey
 from excel_grapher.grapher.guard import GuardExpr
 from excel_grapher.grapher.node import NodeView
+
+if TYPE_CHECKING:
+    from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 
 __all__ = [
     "BaseProjectionManifest",
@@ -448,7 +452,11 @@ def project_optimal(
     *,
     preserve: set[str] | None = None,
 ) -> tuple[DependencyGraph, BaseProjectionManifest]:
-    """Return a projected copy of `graph` with optimal compression applied."""
+    """Return a projected copy of `graph` with optimal compression applied.
+
+    `preserve` keys (and all `is_target` nodes) are ineligible for both identity
+    transit forwarding and formula inlining.
+    """
     projected = graph._copy_for_projection()
     record = OptimalCompressionRecord()
     projected.compress_optimal(preserve=preserve, record=record)
@@ -563,14 +571,44 @@ class IdentityTransitCompression:
 
 
 class OptimalCompression:
-    """Collapse identity transits and safely inlinable formula nodes."""
+    """Collapse identity transits and safely inlinable formula nodes.
 
-    def __init__(self, *, preserve: set[str] | None = None) -> None:
+    Target-marked cells and keys in `preserve` are ineligible for both identity
+    transit forwarding and formula inlining. Pass series-bound public addresses
+    via `preserve` (see `series_binding_public_addresses`) or via
+    `series_bindings` / `bindings_workbook` so published leaves stay in the
+    projected graph for downstream series helpers.
+    """
+
+    def __init__(
+        self,
+        *,
+        preserve: set[str] | None = None,
+        series_bindings: WorkbookSeriesBindings | None = None,
+        bindings_workbook: Path | str | None = None,
+    ) -> None:
+        if series_bindings is not None and bindings_workbook is None:
+            raise ValueError("bindings_workbook is required when series_bindings is set")
         self._preserve = preserve
+        self._series_bindings = series_bindings
+        self._bindings_workbook = bindings_workbook
 
     def project(self, graph: DependencyGraph) -> ProjectionResult:
         """Build a non-mutating optimal-compression projection for export artifacts."""
-        projected, manifest = project_optimal(graph, preserve=self._preserve)
+        preserve = set(self._preserve) if self._preserve is not None else set()
+        if self._series_bindings is not None:
+            from excel_grapher.series_bindings.workflow import series_binding_public_addresses
+
+            assert self._bindings_workbook is not None
+            preserve |= series_binding_public_addresses(
+                graph,
+                self._series_bindings,
+                workbook=self._bindings_workbook,
+            )
+        projected, manifest = project_optimal(
+            graph,
+            preserve=preserve if preserve or self._preserve is not None else None,
+        )
         return ProjectionResult(
             original_graph=graph,
             projected_graph=projected,

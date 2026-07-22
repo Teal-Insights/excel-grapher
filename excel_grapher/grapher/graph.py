@@ -773,13 +773,14 @@ class DependencyGraph:
     ) -> list[NodeKey]:
         """Remove identity transits and inline single-call-site formula nodes.
 
-        Collapses nodes with exactly one dependent when substitution is safe.
-        Identity transit forwarding is always attempted; formula inlining respects
-        `preserve` (defaults to target-marked nodes) and protects forwarding targets
-        from later inlining.
+        Collapses nodes when substitution is safe. Both identity-transit forwarding
+        and formula inlining skip `is_target` nodes and any keys in `preserve`
+        (external consumers such as series-bound public addresses). Forwarding
+        targets are also protected from later inlining.
 
         Args:
-            preserve: Node keys that must not be inlined into their dependent.
+            preserve: Node keys that must not be collapsed (forwarded or inlined).
+                Always unioned with `target_keys()` so marked targets stay public.
             record: When provided, populate with removal lineage for projection.
 
         Returns:
@@ -797,10 +798,9 @@ class DependencyGraph:
             snapshot_transit_node,
         )
 
-        if preserve is None:
-            inline_preserve = frozenset(self.target_keys())
-        else:
-            inline_preserve = frozenset(normalize_key(key) for key in preserve)
+        collapse_preserve = frozenset(self.target_keys())
+        if preserve is not None:
+            collapse_preserve |= frozenset(normalize_key(key) for key in preserve)
         forwarding_protected: set[NodeKey] = set()
 
         require_compression_provenance(self)
@@ -812,6 +812,8 @@ class DependencyGraph:
             while heap:
                 t_key = heapq.heappop(heap)
                 if t_key not in self._nodes:
+                    continue
+                if t_key in collapse_preserve:
                     continue
 
                 r_key = is_identity_transit(self, t_key)
@@ -846,7 +848,7 @@ class DependencyGraph:
                 t_node = self.get_node(t_key)
                 if t_node is None or t_node.is_leaf or t_node.formula is None:
                     continue
-                if t_key in inline_preserve or t_key in forwarding_protected:
+                if t_key in forwarding_protected:
                     continue
 
                 dependents_t = self._reverse_edges.get(t_key, set())

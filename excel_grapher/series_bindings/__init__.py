@@ -134,6 +134,7 @@ from excel_grapher.series_bindings.versions import (
 _LAZY_WORKFLOW_EXPORTS = {
     "BindingsCheckResult",
     "run_binding_checks",
+    "series_binding_public_addresses",
     "validate_bindings_workbook",
 }
 
@@ -252,6 +253,7 @@ __all__ = [
     "resolve_series_bindings",
     "resolve_series_docstring_renderer",
     "run_binding_checks",
+    "series_binding_public_addresses",
     "validate_bindings_document",
     "validate_bindings_workbook",
     "validate_series_bindings",
