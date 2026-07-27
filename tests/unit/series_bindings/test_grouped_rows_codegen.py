@@ -6,6 +6,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
+import pytest
+
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.runtime.cache import EvalContext, coerce_inputs_dict
 from excel_grapher.series_bindings import (
@@ -50,8 +52,10 @@ def test_grouped_rows_matrix_setter_round_trip(tmp_path: Path) -> None:
     resolved = resolve_series_binding(graph, wb_path, series)
     assert resolved["ok"] is True, resolved["issues"]
 
-    code = "\n".join(emit_setters_block(graph, wb_path, bindings))
+    with pytest.warns(UserWarning, match="read_discrete_risks_range"):
+        code = "\n".join(emit_setters_block(graph, wb_path, bindings))
     assert code.count("def set_discrete_risks(") == 1
+    assert "def read_discrete_risks_range(" not in code
 
     ns = _exec_setters(emit_setter_function(series, resolved))
     setter = cast(
