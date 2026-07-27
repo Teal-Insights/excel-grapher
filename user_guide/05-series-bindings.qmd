@@ -733,6 +733,36 @@ Generated code imports `datetime` and emits `datetime.datetime(...)` literals on
 | **1.10.0** | Optional `output.compute.helper` so `compute_*` can call parameterized helpers from record dims (with `xl_cell` fallback). Modular exports place `_OUTPUT_LEAVES_*` in `_output_leaves.py`. |
 | **1.11.0** | `constant` direction for non-I/O graph-leaf bindings: emit `read_*` and Phase 2 body rewrite without `set_*` / `compute_*`. |
 | **1.12.0** | Series-level `exclude_columns` (`ColumnSpec`) symmetric with `exclude_rows` for carving non-data columns out of an expanded `data_range`. |
+| **1.13.0** | Optional `input.domain` so generated `set_*` setters reject out-of-domain measure values (`enum`, `between`, `real_between`). |
+
+## Input domains (1.13.0)
+
+Declare an allowed measure domain on an input binding so generated setters fail at the
+call site instead of accepting bad values and surfacing Excel errors later in `compute_*`:
+
+```yaml
+input:
+  setter: {name: set_country}
+  domain:
+    enum: [Alpha, Beta, "High "]   # exact match; trailing spaces preserved
+```
+
+```yaml
+input:
+  setter: {name: set_interest_rate}
+  domain:
+    real_between: {min: 0, max: 300}   # inclusive
+```
+
+```yaml
+input:
+  setter: {name: set_projection_years}
+  domain:
+    between: {min: 0, max: 100}   # inclusive integers
+```
+
+Domain checks run after dtype coercion on every measure value in the setter batch
+(scalar shorthand, records, positional series values, and DataFrame columns).
 
 ## Dimension ids vs concepts (1.8.0)
 
