@@ -1,13 +1,14 @@
 """Modular export routes readers and leaf maps into `_readers.py`.
 
-Public `read_*` names stay re-exported through `api.py` / `__init__.py` so the
-package surface is unchanged, while formula bodies in `internals.py` can import
-readers without forming an `api` ↔ `internals` cycle.
+Public `read_*` names are re-exported through `api.py` (with `__all__`) and the
+package `__init__.py`, while formula bodies in `internals.py` import readers
+from `_readers` so there is no `api` ↔ `internals` cycle.
 """
 
 from __future__ import annotations
 
 import importlib
+import re
 import subprocess
 import sys
 from copy import deepcopy
@@ -117,12 +118,24 @@ def test_modular_export_emits_private_readers_module(workbook: Path) -> None:
     assert "_LEAF_INDEX_BORVELIA_PRIMARY_BALANCE" in api
     assert "def read_borvelia_primary_balance(" not in api
     assert "def set_borvelia_primary_balance(" in api
-    # Public readers are re-exported from `_readers` (not via unused api imports).
-    assert "read_borvelia_primary_balance" not in api.split("def set_borvelia_primary_balance")[0]
+    # Public readers are imported from `_readers` (not only named in discovery strings).
+    reader_imports = {
+        name
+        for block in re.findall(r"from \._readers import \(([^)]*)\)", api, re.S)
+        for name in re.findall(r"\bread_\w+", block)
+    }
+    for line in re.findall(r"^from \._readers import ([^\n(]+)$", api, re.M):
+        reader_imports.update(re.findall(r"\bread_\w+", line))
+    assert "read_borvelia_primary_balance" in reader_imports
+    assert "read_borvelia_primary_balance_range" in reader_imports
+    assert "__all__" in api
+    api_all = api.split("__all__ =", 1)[1]
+    assert "read_borvelia_primary_balance" in api_all
+    assert "read_borvelia_primary_balance_range" in api_all
 
     init = files["__init__.py"]
-    assert "from ._readers import" in init
     assert "read_borvelia_primary_balance" in init
+    assert "read_borvelia_primary_balance_range" in init
 
 
 def test_modular_readers_module_is_importable_and_usable(
@@ -138,9 +151,14 @@ def test_modular_readers_module_is_importable_and_usable(
     sys.path.insert(0, str(tmp_path))
     try:
         pkg = importlib.import_module("readers_pkg")
+        api = importlib.import_module("readers_pkg.api")
         ctx = pkg.make_context()
         pkg.set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 1, "OBS_VALUE": 9.5}])
         assert pkg.read_borvelia_primary_balance(ctx, time_period=1) == 9.5
+        assert api.read_borvelia_primary_balance(ctx, time_period=1) == 9.5
+        assert api.read_borvelia_primary_balance_range(ctx) is not None
+        assert "read_borvelia_primary_balance" in api.__all__
+        assert "read_borvelia_primary_balance_range" in api.__all__
         assert pkg.list_readers() == ["read_borvelia_primary_balance"]
     finally:
         sys.path.remove(str(tmp_path))
