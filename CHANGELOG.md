@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.20.1 (2026-07-27)
+
+### Bug Fixes
+
+- **exporter**: Re-export public read_* helpers from generated api.py (#454)
+  ([#455](https://github.com/Teal-Insights/excel-grapher/pull/455),
+  [`7a1af13`](https://github.com/Teal-Insights/excel-grapher/commit/7a1af13cb38dca375925194bd105291e20ed1788))
+
+- **exporter**: Re-export read_* helpers from generated api.py
+  ([#455](https://github.com/Teal-Insights/excel-grapher/pull/455),
+  [`7a1af13`](https://github.com/Teal-Insights/excel-grapher/commit/7a1af13cb38dca375925194bd105291e20ed1788))
+
+### Code Style
+
+- **exporter**: Format api readers import wrapping
+  ([#455](https://github.com/Teal-Insights/excel-grapher/pull/455),
+  [`7a1af13`](https://github.com/Teal-Insights/excel-grapher/commit/7a1af13cb38dca375925194bd105291e20ed1788))
+
+
 ## v3.20.0 (2026-07-22)
 
 ### Features
