@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.20.2 (2026-07-27)
+
+### Bug Fixes
+
+- **series-bindings**: Honour exclude_rows/columns in read_*_range
+  ([#456](https://github.com/Teal-Insights/excel-grapher/pull/456),
+  [`98e3e09`](https://github.com/Teal-Insights/excel-grapher/commit/98e3e0904b9cbb3bd0d9a6ab86549377521d8406))
+
+- **series-bindings**: Honour exclude_rows/columns in read_*_range (#453)
+  ([#456](https://github.com/Teal-Insights/excel-grapher/pull/456),
+  [`98e3e09`](https://github.com/Teal-Insights/excel-grapher/commit/98e3e0904b9cbb3bd0d9a6ab86549377521d8406))
+
+### Code Style
+
+- **series-bindings**: Format exclude-aware range reader tests
+  ([#456](https://github.com/Teal-Insights/excel-grapher/pull/456),
+  [`98e3e09`](https://github.com/Teal-Insights/excel-grapher/commit/98e3e0904b9cbb3bd0d9a6ab86549377521d8406))
+
+
 ## v3.20.1 (2026-07-27)
 
 ### Bug Fixes
