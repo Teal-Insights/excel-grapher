@@ -8,7 +8,7 @@ import json
 import re
 from collections.abc import Iterable, Mapping, Sequence, Set
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, cast
 
 import fastpyxl.utils.cell
 
@@ -113,6 +113,9 @@ _ARITHMETIC_OPS = frozenset({"+", "-", "*", "/", "^"})
 _THUNK_ARG_FUNCTIONS = frozenset({"ISERROR", "ISNA", "ISBLANK"})
 
 
+GroupMemberExport = Literal["wrappers", "dispatch"]
+
+
 class CodeGenerator:
     """Generates Python code from Excel formulas."""
 
@@ -124,6 +127,7 @@ class CodeGenerator:
         iterate_count: int = 100,
         iterate_delta: float = 0.001,
         hash_group_helper_names: bool = False,
+        group_member_export: GroupMemberExport = "wrappers",
     ) -> None:
         """Initialize the code generator.
 
@@ -139,12 +143,22 @@ class CodeGenerator:
                 names instead of mangling the full multi-area group key. Prefer for
                 large packages where long identifiers dominate size; default keeps
                 address-derived names for readability.
+            group_member_export: How formula-group members are exposed in generated
+                code. `wrappers` (default) emits one thin `cell_*` per exported
+                member. `dispatch` emits `_GROUP_MEMBER_DISPATCH` plus
+                `_resolve_group_member`, with thin wrappers only for public
+                targets — preferred for large coalesced graphs.
         """
+        if group_member_export not in ("wrappers", "dispatch"):
+            raise ValueError(
+                f"group_member_export must be 'wrappers' or 'dispatch', got {group_member_export!r}"
+            )
         self.graph = graph
         self._iterate_enabled = iterate_enabled
         self._iterate_count = iterate_count
         self._iterate_delta = iterate_delta
         self._hash_group_helper_names = hash_group_helper_names
+        self._group_member_export: GroupMemberExport = group_member_export
         self._emitted: set[str] = set()
         self._needs_offset_runtime = False  # Set to True if dynamic OFFSET is used
         self._needs_index_ref_runtime = False  # OFFSET(INDEX(...), ...) requires xl_index_ref
@@ -875,13 +889,12 @@ class CodeGenerator:
             "",
         ]
 
-    @classmethod
     def _emit_resolver_lines(
-        cls, blank_rects: tuple[BlankRangeRect, ...] | None = None
+        self, blank_rects: tuple[BlankRangeRect, ...] | None = None
     ) -> list[str]:
         prefix: list[str] = []
         if blank_rects:
-            prefix = cls._emit_blank_range_lines(blank_rects)
+            prefix = self._emit_blank_range_lines(blank_rects)
         resolve_head = [
             "# --- Formula resolver ---",
             "_RESOLVED_FORMULAS = {}",
@@ -915,6 +928,20 @@ class CodeGenerator:
                 "    fn = _RESOLVED_FORMULAS.get(address)",
                 "    if fn is not None:",
                 "        return fn",
+            ]
+        )
+        if self._group_member_export == "dispatch":
+            resolve_head.extend(
+                [
+                    "    if address in _GROUP_MEMBER_DISPATCH:",
+                    "        def _fn(ctx, _address=address):",
+                    "            return _resolve_group_member(ctx, _address)",
+                    "        _RESOLVED_FORMULAS[address] = _fn",
+                    "        return _fn",
+                ]
+            )
+        resolve_head.extend(
+            [
                 "    name = _address_to_func_name(address)",
                 "    fn = globals().get(name)",
                 "    if fn is not None:",
@@ -1904,8 +1931,7 @@ class CodeGenerator:
             self._group_helper_keys[helper] = key
         elif existing != key:
             raise ValueError(
-                f"Formula-group helper name collision for {helper!r}: "
-                f"{existing!r} vs {key!r}"
+                f"Formula-group helper name collision for {helper!r}: {existing!r} vs {key!r}"
             )
         return helper
 
@@ -1939,13 +1965,25 @@ class CodeGenerator:
         lines.append(f"    return {expr}")
         return "\n".join(lines)
 
-    def _register_group_member_exports(self, addresses: Iterable[str]) -> None:
-        """Register resolver wrappers for formula-group members under `addresses`.
+    def _register_group_member_exports(
+        self,
+        addresses: Iterable[str],
+        *,
+        include_sibling_members: bool = True,
+    ) -> None:
+        """Populate `_group_member_exports` for formula-group members.
 
         Public targets alone are not enough: exported ``xl_range`` / ``xl_cell``
         walks may resolve sibling members that were never generate targets
-        (LIC-DSF ``KeyError: Cell … not found in graph``). For every group node
-        in the export closure, register **all** ``member_keys``.
+        (LIC-DSF ``KeyError: Cell … not found in graph``). When
+        ``include_sibling_members`` is True (default), register **all**
+        ``member_keys`` for every touched group. Dispatch mode still emits
+        thin ``cell_*`` wrappers only for public targets.
+
+        Args:
+            addresses: Seed addresses (targets, series cells, and/or export closure).
+            include_sibling_members: When True, also register every member of each
+                touched group.
         """
         seen_groups: set[str] = set()
         for addr in addresses:
@@ -1961,12 +1999,24 @@ class CodeGenerator:
                     continue
                 group_key = normalized
 
+            if not include_sibling_members:
+                continue
             if group_key in seen_groups:
                 continue
             seen_groups.add(group_key)
             owner = self.graph.get_node(group_key)
             if owner is None or getattr(owner, "skeleton", None) is None:
-                continue
+                # Fall back to occupancy lookup on the public graph.
+                locate_graph = self._public_graph()
+                try:
+                    location = locate_cell(cast(Any, locate_graph), normalized)
+                except (TypeError, ValueError):
+                    location = None
+                if location is None or location.kind is NodeKind.cell:
+                    continue
+                owner = locate_graph.get_node(location.node_key)
+                if owner is None or getattr(owner, "skeleton", None) is None:
+                    continue
             for member in member_keys(owner):
                 member_projected = self._map_address_to_projected(member)
                 if member_projected.parameters is None:
@@ -1994,6 +2044,45 @@ class CodeGenerator:
                 ]
             )
         return lines
+
+    def _emit_group_member_dispatch_lines(self, *, public_addresses: frozenset[str]) -> list[str]:
+        """Emit `_GROUP_MEMBER_DISPATCH` plus target-only thin wrappers."""
+        if not self._group_member_exports:
+            return []
+        lines = ["# --- Formula-group member dispatch ---", "", "_GROUP_MEMBER_DISPATCH = {"]
+        for member, projected in sorted(self._group_member_exports.items()):
+            params = projected.parameters or {}
+            bindings = params.get("bindings") or ()
+            helper = self._group_helper_name(projected.address)
+            bind_repr = ", ".join(repr(b) for b in bindings)
+            entry = f"({helper}, ({bind_repr},))" if bindings else f"({helper}, ())"
+            lines.append(f"    {member!r}: {entry},")
+        lines.extend(
+            [
+                "}",
+                "",
+                "def _resolve_group_member(ctx, address):",
+                "    helper, bindings = _GROUP_MEMBER_DISPATCH[address]",
+                "    return helper(ctx, address, *bindings)",
+                "",
+            ]
+        )
+        for member in sorted(public_addresses & self._group_member_exports.keys()):
+            wrapper = address_to_python_name(member)
+            lines.extend(
+                [
+                    f"def {wrapper}(ctx):",
+                    f"    return _resolve_group_member(ctx, {member!r})",
+                    "",
+                ]
+            )
+        return lines
+
+    def _emit_group_member_export_lines(self, *, public_addresses: frozenset[str]) -> list[str]:
+        """Emit wrappers or dispatch for registered formula-group members."""
+        if self._group_member_export == "dispatch":
+            return self._emit_group_member_dispatch_lines(public_addresses=public_addresses)
+        return self._emit_group_member_wrapper_lines()
 
     def _emit_cell(self, address: str) -> str:
         """Emit a Python function for a single formula cell.
@@ -2400,8 +2489,11 @@ class CodeGenerator:
         # Export formula cell implementations and a resolver.
         lines.append("# --- Formula cell functions ---\n")
         lines.extend(cell_code_lines)
+        self._group_member_exports.clear()
         self._register_group_member_exports([*_all_cells, *public_addresses])
-        lines.extend(self._emit_group_member_wrapper_lines())
+        lines.extend(
+            self._emit_group_member_export_lines(public_addresses=frozenset(public_addresses))
+        )
         alias_lines = self._emit_projection_alias_lines(_all_cells, public_addresses)
         lines.extend(alias_lines)
         lines.extend(
@@ -2551,10 +2643,13 @@ class CodeGenerator:
         runtime_py = runtime_code.rstrip() + "\n"
 
         alias_lines = self._emit_projection_alias_lines(_all_cells, public_addresses)
+        self._group_member_exports.clear()
         self._register_group_member_exports([*_all_cells, *public_addresses])
-        group_wrapper_lines = self._emit_group_member_wrapper_lines()
+        group_export_lines = self._emit_group_member_export_lines(
+            public_addresses=frozenset(public_addresses)
+        )
         internals_import_names = self._internals_runtime_import_names(
-            parts["used_xl_functions"], cell_code_lines + group_wrapper_lines + alias_lines
+            parts["used_xl_functions"], cell_code_lines + group_export_lines + alias_lines
         )
         runtime_import_block = self._format_from_runtime_import(internals_import_names)
         internals_lines: list[str] = ["from __future__ import annotations", ""]
@@ -2563,7 +2658,7 @@ class CodeGenerator:
             internals_lines.append("")
         internals_lines.append("# --- Formula cell functions ---\n")
         internals_lines.extend(cell_code_lines)
-        internals_lines.extend(group_wrapper_lines)
+        internals_lines.extend(group_export_lines)
         internals_lines.extend(alias_lines)
         internals_lines.extend(
             self._emit_resolver_lines(parts["blank_rects"] if parts["blank_rects"] else None)
