@@ -1,0 +1,399 @@
+"""Schema, coercion, and codegen tests for `input.domain` (schema 1.13.0)."""
+
+from __future__ import annotations
+
+import importlib
+import sys
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any, cast
+
+import pytest
+import xlsxwriter
+
+from excel_grapher.exporter import CodeGenerator
+from excel_grapher.grapher import create_dependency_graph
+from excel_grapher.runtime.cache import EvalContext, coerce_inputs_dict
+from excel_grapher.series_bindings import (
+    expand_data_range,
+    load_series_bindings,
+    resolve_series_binding,
+)
+from excel_grapher.series_bindings.input_coerce import coerce_setter_input
+from excel_grapher.series_bindings.schema import (
+    SeriesBindingsSchemaError,
+    validate_bindings_document,
+)
+from excel_grapher.series_bindings.setter_codegen import (
+    emit_input_coerce_helpers,
+    emit_setter_function,
+    emit_setter_helpers,
+)
+from excel_grapher.series_bindings.versions import SUPPORTED_SCHEMA_VERSIONS
+
+
+def _scalar_string_doc(*, domain: dict[str, Any] | None = None) -> dict[str, Any]:
+    input_block: dict[str, Any] = {"setter": {"name": "set_country"}}
+    if domain is not None:
+        input_block["domain"] = domain
+    return {
+        "schema_version": "1.13.0",
+        "series": [
+            {
+                "id": "country",
+                "sheet": "Dash",
+                "data_range": "Dash!B1",
+                "layout": "scalar",
+                "input": input_block,
+                "structure": {
+                    "measure": {
+                        "concept": "OBS_VALUE",
+                        "dtype": "string",
+                        "bind": {"kind": "data_cell", "read": "string"},
+                    },
+                    "dimensions": [],
+                },
+                "key": [],
+            }
+        ],
+    }
+
+
+def _scalar_float_doc(*, domain: dict[str, Any] | None = None) -> dict[str, Any]:
+    input_block: dict[str, Any] = {"setter": {"name": "set_rate"}}
+    if domain is not None:
+        input_block["domain"] = domain
+    return {
+        "schema_version": "1.13.0",
+        "series": [
+            {
+                "id": "rate",
+                "sheet": "Dash",
+                "data_range": "Dash!C1",
+                "layout": "scalar",
+                "input": input_block,
+                "structure": {
+                    "measure": {
+                        "concept": "OBS_VALUE",
+                        "dtype": "float",
+                        "bind": {"kind": "data_cell", "read": "float"},
+                    },
+                    "dimensions": [],
+                },
+                "key": [],
+            }
+        ],
+    }
+
+
+def _exec_setters(lines: list[str]) -> dict[str, object]:
+    namespace: dict[str, object] = {
+        "EvalContext": EvalContext,
+        "coerce_inputs_dict": coerce_inputs_dict,
+    }
+    source = emit_input_coerce_helpers() + emit_setter_helpers() + lines
+    exec("\n".join(source), namespace)
+    return namespace
+
+
+def test_schema_version_1_13_0_supported() -> None:
+    assert "1.13.0" in SUPPORTED_SCHEMA_VERSIONS
+
+
+def test_schema_accepts_enum_between_and_real_between_domains() -> None:
+    for domain in (
+        {"enum": ["Alpha", "Beta", "High "]},
+        {"between": {"min": 0, "max": 100}},
+        {"between": {"min": 0}},
+        {"real_between": {"min": 0.0, "max": 300.0}},
+        {"real_between": {"max": 1}},
+    ):
+        doc = (
+            _scalar_string_doc(domain=domain)
+            if "enum" in domain
+            else _scalar_float_doc(domain=domain)
+        )
+        if "between" in domain:
+            doc = {
+                "schema_version": "1.13.0",
+                "series": [
+                    {
+                        "id": "years",
+                        "sheet": "Dash",
+                        "data_range": "Dash!D1",
+                        "layout": "scalar",
+                        "input": {
+                            "setter": {"name": "set_years"},
+                            "domain": domain,
+                        },
+                        "structure": {
+                            "measure": {
+                                "concept": "OBS_VALUE",
+                                "dtype": "int",
+                                "bind": {"kind": "data_cell", "read": "int"},
+                            },
+                            "dimensions": [],
+                        },
+                        "key": [],
+                    }
+                ],
+            }
+        bindings = validate_bindings_document(doc)
+        assert bindings["series"][0]["input"]["domain"] == domain
+
+
+def test_schema_rejects_empty_enum_and_mixed_domain_keys() -> None:
+    with pytest.raises(SeriesBindingsSchemaError):
+        validate_bindings_document(_scalar_string_doc(domain={"enum": []}))
+    with pytest.raises(SeriesBindingsSchemaError):
+        validate_bindings_document(
+            _scalar_float_doc(domain={"enum": ["a"], "real_between": {"min": 0}})
+        )
+    with pytest.raises(SeriesBindingsSchemaError):
+        validate_bindings_document(_scalar_float_doc(domain={"real_between": {}}))
+
+
+def test_coerce_enum_domain_rejects_and_accepts() -> None:
+    domain = {"enum": frozenset({"Alpha", "Beta", "High "})}
+    assert coerce_setter_input(
+        "Beta",
+        layout="scalar",
+        key_fields=(),
+        measure_field="OBS_VALUE",
+        key_order=None,
+        strict=True,
+        measure_dtype="string",
+        measure_domain=domain,
+    ) == [{"OBS_VALUE": "Beta"}]
+    assert coerce_setter_input(
+        "High ",
+        layout="scalar",
+        key_fields=(),
+        measure_field="OBS_VALUE",
+        key_order=None,
+        strict=True,
+        measure_dtype="string",
+        measure_domain=domain,
+    ) == [{"OBS_VALUE": "High "}]
+    with pytest.raises(ValueError, match="out of domain"):
+        coerce_setter_input(
+            "Nonexistent",
+            layout="scalar",
+            key_fields=(),
+            measure_field="OBS_VALUE",
+            key_order=None,
+            strict=True,
+            measure_dtype="string",
+            measure_domain=domain,
+        )
+    with pytest.raises(ValueError, match="out of domain"):
+        coerce_setter_input(
+            "High",
+            layout="scalar",
+            key_fields=(),
+            measure_field="OBS_VALUE",
+            key_order=None,
+            strict=True,
+            measure_dtype="string",
+            measure_domain=domain,
+        )
+
+
+def test_coerce_real_between_domain_inclusive_bounds() -> None:
+    domain = {"real_between": {"min": 0.0, "max": 300.0}}
+    assert coerce_setter_input(
+        0,
+        layout="scalar",
+        key_fields=(),
+        measure_field="OBS_VALUE",
+        key_order=None,
+        strict=True,
+        measure_dtype="float",
+        measure_domain=domain,
+    ) == [{"OBS_VALUE": 0.0}]
+    assert coerce_setter_input(
+        300,
+        layout="scalar",
+        key_fields=(),
+        measure_field="OBS_VALUE",
+        key_order=None,
+        strict=True,
+        measure_dtype="float",
+        measure_domain=domain,
+    ) == [{"OBS_VALUE": 300.0}]
+    with pytest.raises(ValueError, match="out of domain"):
+        coerce_setter_input(
+            301,
+            layout="scalar",
+            key_fields=(),
+            measure_field="OBS_VALUE",
+            key_order=None,
+            strict=True,
+            measure_dtype="float",
+            measure_domain=domain,
+        )
+
+
+def test_coerce_between_domain_rejects_out_of_range_int() -> None:
+    domain = {"between": {"min": 0, "max": 100}}
+    with pytest.raises(ValueError, match="out of domain"):
+        coerce_setter_input(
+            -1,
+            layout="scalar",
+            key_fields=(),
+            measure_field="OBS_VALUE",
+            key_order=None,
+            strict=True,
+            measure_dtype="int",
+            measure_domain=domain,
+        )
+
+
+def test_coerce_series_domain_checks_each_record() -> None:
+    domain = {"real_between": {"min": -20.0, "max": 20.0}}
+    with pytest.raises(ValueError, match=r"record\[1\].*out of domain"):
+        coerce_setter_input(
+            [
+                {"TIME_PERIOD": 1, "OBS_VALUE": 1.0},
+                {"TIME_PERIOD": 2, "OBS_VALUE": 21.0},
+            ],
+            layout="series",
+            key_fields=("TIME_PERIOD",),
+            measure_field="OBS_VALUE",
+            key_order=(1, 2),
+            strict=True,
+            measure_dtype="float",
+            measure_domain=domain,
+        )
+
+
+def test_emit_scalar_setter_rejects_out_of_enum_domain(tmp_path: Path) -> None:
+    wb_path = tmp_path / "country.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Dash")
+    ws.write("B1", "Alpha")
+    wb.close()
+
+    doc = _scalar_string_doc(domain={"enum": ["Alpha", "Beta", "High "]})
+    bindings = validate_bindings_document(doc)
+    series = bindings["series"][0]
+    graph = create_dependency_graph(wb_path, ["Dash!B1"], load_values=True)
+    resolved = resolve_series_binding(graph, wb_path, series)
+    lines = emit_setter_function(series, resolved, bindings=bindings)
+    code = "\n".join(lines)
+    assert "measure_domain=" in code
+
+    ns = _exec_setters(lines)
+    setter = cast(Callable[..., None], ns["set_country"])
+    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
+    setter(ctx, "Beta")
+    assert ctx.inputs["Dash!B1"] == "Beta"
+    setter(ctx, "High ")
+    assert ctx.inputs["Dash!B1"] == "High "
+    with pytest.raises(ValueError, match="out of domain"):
+        setter(ctx, "Nonexistent")
+
+
+def test_emit_scalar_setter_rejects_out_of_real_between_domain(tmp_path: Path) -> None:
+    wb_path = tmp_path / "rate.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    ws = wb.add_worksheet("Dash")
+    ws.write_number("C1", 1.0)
+    wb.close()
+
+    doc = _scalar_float_doc(domain={"real_between": {"min": 0, "max": 300}})
+    bindings = validate_bindings_document(doc)
+    series = bindings["series"][0]
+    graph = create_dependency_graph(wb_path, ["Dash!C1"], load_values=True)
+    resolved = resolve_series_binding(graph, wb_path, series)
+    lines = emit_setter_function(series, resolved, bindings=bindings)
+    ns = _exec_setters(lines)
+    setter = cast(Callable[..., None], ns["set_rate"])
+    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
+    setter(ctx, 0)
+    setter(ctx, 300)
+    with pytest.raises(ValueError, match="out of domain"):
+        setter(ctx, 301)
+
+
+def test_generate_modules_enum_domain_fails_before_compute(tmp_path: Path) -> None:
+    """Issue #458 MCVE: invalid setter input raises; valid path still computes."""
+    wb_path = tmp_path / "m.xlsx"
+    wb = xlsxwriter.Workbook(wb_path)
+    dash = wb.add_worksheet("Dash")
+    dash.write("B1", "Alpha")
+    data = wb.add_worksheet("Data")
+    for row, (name, val) in enumerate([("Alpha", 10.0), ("Beta", 20.0)], start=0):
+        data.write(row, 0, name)
+        data.write_number(row, 1, val)
+    out = wb.add_worksheet("Out")
+    for col in range(1, 4):
+        out.write_formula(0, col, "=VLOOKUP(Dash!B1,Data!A1:B2,2,FALSE)")
+        out.write_number(1, col, 2028 + col + 1)
+    wb.close()
+
+    bindings_text = """\
+schema_version: 1.13.0
+concept_scheme:
+  id: mcve
+  concepts:
+  - {id: OBS_VALUE, name: v, dtype: number}
+  - {id: TIME_PERIOD, name: t, dtype: int}
+series:
+- id: country
+  sheet: Dash
+  data_range: Dash!B1:B1
+  layout: scalar
+  input:
+    setter: {name: set_country}
+    domain:
+      enum: [Alpha, Beta]
+  structure:
+    measure: {concept: OBS_VALUE, dtype: string, bind: {kind: data_cell, read: string}}
+    dimensions: []
+  key: []
+- id: out_series
+  sheet: Out
+  data_range: Out!B1:D1
+  layout: series
+  output: {compute: {name: compute_out_series}}
+  structure:
+    measure: {concept: OBS_VALUE, dtype: float, bind: {kind: data_cell, read: float}}
+    dimensions:
+    - {id: TIME_PERIOD, concept: TIME_PERIOD, role: key, scope: cell,
+       bind: {kind: column_header, header_row: 2, read: int}}
+  key: [TIME_PERIOD]
+"""
+    yaml_path = tmp_path / "m.yaml"
+    yaml_path.write_text(bindings_text, encoding="utf-8")
+    bindings = load_series_bindings(yaml_path)
+
+    targets = expand_data_range("Out!B1:D1", workbook=wb_path)
+    graph = create_dependency_graph(wb_path, targets, load_values=True)
+    modules = CodeGenerator(graph).generate_modules(
+        targets,
+        series_bindings=bindings,
+        bindings_workbook=wb_path,
+    )
+
+    pkg = tmp_path / "gen"
+    pkg.mkdir()
+    for name, text in modules.items():
+        (pkg / name).write_text(text, encoding="utf-8")
+
+    sys.path.insert(0, str(tmp_path))
+    try:
+        gen = importlib.import_module("gen")
+        ctx = gen.make_context()
+        gen.set_country(ctx, "Beta")
+        result = gen.compute_out_series(ctx=ctx)
+        assert all(record["OBS_VALUE"] == 20 for record in result)
+
+        ctx2 = gen.make_context()
+        with pytest.raises(ValueError, match="out of domain"):
+            gen.set_country(ctx2, "Nonexistent")
+    finally:
+        sys.path.remove(str(tmp_path))
+        for name in list(sys.modules):
+            if name == "gen" or name.startswith("gen."):
+                sys.modules.pop(name, None)

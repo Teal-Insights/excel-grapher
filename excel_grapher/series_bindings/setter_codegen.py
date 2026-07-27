@@ -77,6 +77,32 @@ def _measure_dtype_for_codegen(
     return None
 
 
+def _measure_domain_for_codegen(series: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize `input.domain` for emitted `coerce_setter_input` calls."""
+    input_block = series.get("input")
+    if not isinstance(input_block, dict):
+        return None
+    domain = input_block.get("domain")
+    if not isinstance(domain, dict):
+        return None
+    if "enum" in domain:
+        values = domain["enum"]
+        if not isinstance(values, (list, tuple, set, frozenset)):
+            return None
+        return {"enum": frozenset(values)}
+    if "between" in domain:
+        bounds = domain["between"]
+        if not isinstance(bounds, dict):
+            return None
+        return {"between": dict(bounds)}
+    if "real_between" in domain:
+        bounds = domain["real_between"]
+        if not isinstance(bounds, dict):
+            return None
+        return {"real_between": dict(bounds)}
+    return None
+
+
 def _accepts_scalar_shorthand(
     series: dict[str, Any],
     resolved: SeriesResolution,
@@ -338,6 +364,7 @@ def _coerce_setter_input_call(
     )
     key_dtypes = _key_dtypes_for_codegen(series, key_fields)
     measure_dtype = _measure_dtype_for_codegen(series, concept_scheme=concept_scheme)
+    measure_domain = _measure_domain_for_codegen(series)
     parts = [
         "coerce_setter_input(",
         "            records,",
@@ -355,6 +382,8 @@ def _coerce_setter_input_call(
         parts.append(f"            key_dtypes={key_dtypes!r},")
     if measure_dtype is not None:
         parts.append(f"            measure_dtype={measure_dtype!r},")
+    if measure_domain is not None:
+        parts.append(f"            measure_domain={measure_domain!r},")
     parts.append("        )")
     return "\n".join(parts)
 

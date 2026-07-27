@@ -231,6 +231,66 @@ def _apply_measure_dtype(
     return validated
 
 
+def _format_measure_domain(domain: Mapping[str, Any]) -> str:
+    """Render a measure domain for error messages."""
+    if "enum" in domain:
+        values = domain["enum"]
+        rendered = ", ".join(repr(value) for value in sorted(values, key=repr))
+        return f"{{{rendered}}}"
+    if "between" in domain:
+        bounds = domain["between"]
+        return f"between(min={bounds.get('min')!r}, max={bounds.get('max')!r})"
+    if "real_between" in domain:
+        bounds = domain["real_between"]
+        return f"real_between(min={bounds.get('min')!r}, max={bounds.get('max')!r})"
+    return repr(dict(domain))
+
+
+def _in_closed_bounds(value: int | float, bounds: Mapping[str, Any]) -> bool:
+    """Return whether `value` lies in an inclusive min/max interval."""
+    lo = bounds.get("min")
+    hi = bounds.get("max")
+    return (lo is None or value >= lo) and (hi is None or value <= hi)
+
+
+def _value_in_measure_domain(value: object, domain: Mapping[str, Any]) -> bool:
+    """Return whether `value` is inside a measure domain declaration."""
+    if "enum" in domain:
+        return value in domain["enum"]
+    if "between" in domain:
+        if isinstance(value, bool) or not isinstance(value, int):
+            return False
+        return _in_closed_bounds(value, domain["between"])
+    if "real_between" in domain:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return False
+        return _in_closed_bounds(value, domain["real_between"])
+    return True
+
+
+def _apply_measure_domain(
+    records: Records,
+    *,
+    measure_field: str,
+    measure_domain: Mapping[str, Any] | None,
+) -> Records:
+    """Reject measure values outside an optional `input.domain` declaration."""
+    if measure_domain is None:
+        return records
+    for index, record in enumerate(records):
+        if measure_field not in record:
+            continue
+        value = record[measure_field]
+        if value is None:
+            continue
+        if not _value_in_measure_domain(value, measure_domain):
+            raise ValueError(
+                f"record[{index}]: {measure_field} out of domain: "
+                f"{value!r} not in {_format_measure_domain(measure_domain)}"
+            )
+    return records
+
+
 def _coerce_dataframe_records(
     data: object,
     *,
@@ -380,6 +440,7 @@ def coerce_setter_input(
     strict: bool,
     key_dtypes: Mapping[str, str] | None = None,
     measure_dtype: str | None = None,
+    measure_domain: Mapping[str, Any] | None = None,
     empty_measure: EmptyMeasure = "write",
     requires_address: bool = False,
 ) -> Records:
@@ -394,6 +455,8 @@ def coerce_setter_input(
         strict: When true, reject unknown DataFrame columns.
         key_dtypes: Optional read modes per key field applied to all input shapes.
         measure_dtype: Optional binding dtype enforced for `measure_field` values.
+        measure_domain: Optional `input.domain` (`enum` / `between` / `real_between`)
+            enforced after dtype coercion.
         empty_measure: How to treat rows with missing/NaN measure values.
         requires_address: When true, reject DataFrame input (records must carry addresses).
 
@@ -404,16 +467,21 @@ def coerce_setter_input(
         ImportError: When a DataFrame-like value is passed but pandas/polars is missing.
         TypeError: When the input shape is unsupported for the layout, or a measure
             value does not match `measure_dtype`.
-        ValueError: When columns, keys, or positional lengths are invalid.
+        ValueError: When columns, keys, positional lengths, or domains are invalid.
     """
     if layout == "scalar":
         if _is_tabular_dataframe(data):
             raise TypeError("scalar setters do not accept DataFrame input")
         records = _coerce_scalar_records(data, measure_field)
-        return _apply_measure_dtype(
+        records = _apply_measure_dtype(
             records,
             measure_field=measure_field,
             measure_dtype=measure_dtype,
+        )
+        return _apply_measure_domain(
+            records,
+            measure_field=measure_field,
+            measure_domain=measure_domain,
         )
 
     if requires_address and _is_tabular_dataframe(data):
@@ -439,6 +507,11 @@ def coerce_setter_input(
         records,
         measure_field=measure_field,
         measure_dtype=measure_dtype,
+    )
+    records = _apply_measure_domain(
+        records,
+        measure_field=measure_field,
+        measure_domain=measure_domain,
     )
     return _apply_empty_measure(
         records,
