@@ -198,9 +198,7 @@ def test_interleaved_exclude_rows_omits_misleading_range_readers(tmp_path: Path)
 def test_contiguous_exclude_rows_emits_narrowed_range(tmp_path: Path) -> None:
     wb_path = tmp_path / "trim.xlsx"
     _write_edge_trim_workbook(wb_path)
-    bindings = validate_bindings_document(
-        _matrix_series(exclude_rows=[5], data_range="Demo!B2:D5")
-    )
+    bindings = validate_bindings_document(_matrix_series(exclude_rows=[5], data_range="Demo!B2:D5"))
     graph = create_dependency_graph(wb_path, expand_data_range("Demo!B2:D5"), load_values=True)
     series = bindings["series"][0]
     resolved = resolve_series_binding(graph, wb_path, series)
@@ -229,9 +227,7 @@ def test_hole_exclude_rows_omits_range_reader(tmp_path: Path) -> None:
     """Excluding a middle row leaves a non-rectangular selection — no *_range helper."""
     wb_path = tmp_path / "hole.xlsx"
     _write_edge_trim_workbook(wb_path)
-    bindings = validate_bindings_document(
-        _matrix_series(exclude_rows=[3], data_range="Demo!B2:D5")
-    )
+    bindings = validate_bindings_document(_matrix_series(exclude_rows=[3], data_range="Demo!B2:D5"))
     graph = create_dependency_graph(wb_path, expand_data_range("Demo!B2:D5"), load_values=True)
     series = bindings["series"][0]
     resolved = resolve_series_binding(graph, wb_path, series)

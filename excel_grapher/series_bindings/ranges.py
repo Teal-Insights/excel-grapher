@@ -7,7 +7,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import fastpyxl
-from fastpyxl.utils.cell import column_index_from_string, get_column_letter
+from fastpyxl.utils.cell import (
+    column_index_from_string,
+    coordinate_from_string,
+    get_column_letter,
+)
 
 from excel_grapher.core.address_keys import format_range_key, parse_address
 from excel_grapher.grapher.parser import format_key
@@ -128,7 +132,7 @@ def expand_data_range_for_graph(
 
 def _parse_cell_rc(address: str) -> tuple[str, int, int]:
     sheet, coord = parse_address(address)
-    col_letters, row = fastpyxl.utils.cell.coordinate_from_string(coord)
+    col_letters, row = coordinate_from_string(coord)
     return sheet, int(row), column_index_from_string(col_letters)
 
 
