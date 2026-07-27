@@ -14,6 +14,7 @@ from typing import Literal, NotRequired, TypedDict
 from excel_grapher.core.address_keys import normalize_key, split_address_on_colon
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings.normalize import has_constant_direction, has_input_direction
+from excel_grapher.series_bindings.ranges import effective_reader_range_address
 from excel_grapher.series_bindings.resolve import resolve_series_bindings
 from excel_grapher.series_bindings.setter_codegen import (
     _reader_function_name,
@@ -198,10 +199,10 @@ def build_reader_index(
                 )
                 leaf_owners.setdefault(address, []).append(entry)
 
-            if _should_emit_reader_range(series, resolved):
-                data_range = series.get("data_range")
-                if isinstance(data_range, str) and data_range:
-                    normalized_range = normalize_key(data_range)
+            if _should_emit_reader_range(series, resolved, workbook=workbook):
+                range_address = effective_reader_range_address(series, workbook=workbook)
+                if range_address is not None:
+                    normalized_range = normalize_key(range_address)
                     range_reader = f"{reader}_range"
                     range_owners.setdefault(normalized_range, []).append(
                         {

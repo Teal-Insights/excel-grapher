@@ -26,6 +26,7 @@ from excel_grapher.series_bindings.normalize import (
     has_constant_direction,
     has_input_direction,
 )
+from excel_grapher.series_bindings.ranges import effective_reader_range_address
 from excel_grapher.series_bindings.resolve import (
     _lookup_concept_dtype,
     resolve_series_bindings,
@@ -281,13 +282,25 @@ def _should_emit_reader(resolved: SeriesResolution) -> bool:
     return bool(resolved["leaves"])
 
 
-def _should_emit_reader_range(series: dict[str, Any], resolved: SeriesResolution) -> bool:
-    """Emit a range reader when the series data_range is multi-cell / non-scalar."""
+def _should_emit_reader_range(
+    series: dict[str, Any],
+    resolved: SeriesResolution,
+    *,
+    workbook: Path | str | None = None,
+) -> bool:
+    """Emit a range reader when the series data membership is one contiguous rectangle.
+
+    Multi-cell `data_range` series normally qualify. When `exclude_rows` /
+    `exclude_columns` carve the block, emit only if the remainder is still a
+    single solid rectangle expressible as one `xl_range` address.
+    """
     if not _should_emit_reader(resolved):
         return False
     if series.get("layout") == "scalar":
         return False
-    return len(resolved["leaves"]) > 1 or ":" in str(series.get("data_range") or "")
+    if not (len(resolved["leaves"]) > 1 or ":" in str(series.get("data_range") or "")):
+        return False
+    return effective_reader_range_address(series, workbook=workbook) is not None
 
 
 def _reader_addresses_name(series_id: str) -> str:
@@ -631,13 +644,14 @@ def emit_reader_range_function(
     """Emit `read_<id>_range` for a binding-aligned multi-cell `data_range`.
 
     Returns an empty list for scalar / single-leaf series without a multi-cell
-    `data_range`.
+    `data_range`, and when `exclude_rows` / `exclude_columns` leave a selection
+    that cannot be expressed as one contiguous `xl_range`.
     """
-    if not _should_emit_reader_range(series, resolved):
+    if not _should_emit_reader_range(series, resolved, workbook=workbook):
         return []
 
-    data_range = series.get("data_range")
-    if not isinstance(data_range, str) or not data_range:
+    range_address = effective_reader_range_address(series, workbook=workbook)
+    if range_address is None:
         return []
 
     reader_name = _reader_function_name(series, resolved)
@@ -663,7 +677,7 @@ def emit_reader_range_function(
         doc = f"Read the binding-aligned range for {resolved['series_id']}."
     if doc is not None:
         lines.extend(emit_docstring_literal(doc))
-    lines.append(f"    return xl_range(ctx, {data_range!r})")
+    lines.append(f"    return xl_range(ctx, {range_address!r})")
     lines.append("")
     return lines
 
