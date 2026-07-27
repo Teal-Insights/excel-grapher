@@ -35,7 +35,9 @@ from excel_grapher.series_bindings.resolve import (
 from excel_grapher.series_bindings.types import (
     ResolutionReport,
     SeriesResolution,
+    ValidationIssue,
     WorkbookSeriesBindings,
+    make_issue,
 )
 
 if TYPE_CHECKING:
@@ -308,6 +310,19 @@ def _should_emit_reader(resolved: SeriesResolution) -> bool:
     return bool(resolved["leaves"])
 
 
+def _qualifies_for_reader_range(series: dict[str, Any], resolved: SeriesResolution) -> bool:
+    """Return True when a series is a candidate for a `read_*_range` helper.
+
+    Candidates still need a contiguous effective rectangle (see
+    `effective_reader_range_address`) before codegen emits the helper.
+    """
+    if not _should_emit_reader(resolved):
+        return False
+    if series.get("layout") == "scalar":
+        return False
+    return bool(len(resolved["leaves"]) > 1 or ":" in str(series.get("data_range") or ""))
+
+
 def _should_emit_reader_range(
     series: dict[str, Any],
     resolved: SeriesResolution,
@@ -320,13 +335,60 @@ def _should_emit_reader_range(
     `exclude_columns` carve the block, emit only if the remainder is still a
     single solid rectangle expressible as one `xl_range` address.
     """
-    if not _should_emit_reader(resolved):
-        return False
-    if series.get("layout") == "scalar":
-        return False
-    if not (len(resolved["leaves"]) > 1 or ":" in str(series.get("data_range") or "")):
+    if not _qualifies_for_reader_range(series, resolved):
         return False
     return effective_reader_range_address(series, workbook=workbook) is not None
+
+
+def reader_range_omission_issue(
+    series: dict[str, Any],
+    resolved: SeriesResolution,
+    *,
+    workbook: Path | str | None = None,
+) -> ValidationIssue | None:
+    """Return a warning issue when `read_*_range` is omitted as non-contiguous.
+
+    Series that never qualify for a range dual (scalars, single-leaf without a
+    multi-cell `data_range`) yield `None`. Contiguous narrowed selections also
+    yield `None` because the helper is still emitted.
+    """
+    if not _qualifies_for_reader_range(series, resolved):
+        return None
+    if effective_reader_range_address(series, workbook=workbook) is not None:
+        return None
+    reader_name = _reader_function_name(series, resolved)
+    fn_name = f"{reader_name}_range"
+    series_id = resolved["series_id"]
+    return make_issue(
+        "warning",
+        "noncontiguous_reader_range",
+        (
+            f"Omitting {fn_name}: exclude_rows/exclude_columns leave a "
+            f"non-contiguous selection for series {series_id!r} that cannot be "
+            f"expressed as one xl_range"
+        ),
+        series_id=series_id,
+        address=str(series.get("data_range") or "") or None,
+    )
+
+
+def warn_reader_range_omission(
+    series: dict[str, Any],
+    resolved: SeriesResolution,
+    *,
+    workbook: Path | str | None = None,
+    stacklevel: int = 3,
+) -> ValidationIssue | None:
+    """Warn when a candidate `read_*_range` helper is omitted as non-contiguous.
+
+    Returns:
+        The omission issue when one was emitted, otherwise `None`.
+    """
+    issue = reader_range_omission_issue(series, resolved, workbook=workbook)
+    if issue is None:
+        return None
+    warnings.warn(issue["message"], UserWarning, stacklevel=stacklevel)
+    return issue
 
 
 def _reader_addresses_name(series_id: str) -> str:
@@ -674,13 +736,16 @@ def emit_reader_range_function(
 
     Returns an empty list for scalar / single-leaf series without a multi-cell
     `data_range`, and when `exclude_rows` / `exclude_columns` leave a selection
-    that cannot be expressed as one contiguous `xl_range`.
+    that cannot be expressed as one contiguous `xl_range`. In the latter case a
+    `UserWarning` names the omitted helper and series id (see
+    `collect_reader_range_omissions` for a queryable report).
     """
-    if not _should_emit_reader_range(series, resolved, workbook=workbook):
+    if not _qualifies_for_reader_range(series, resolved):
         return []
 
     range_address = effective_reader_range_address(series, workbook=workbook)
     if range_address is None:
+        warn_reader_range_omission(series, resolved, workbook=workbook, stacklevel=3)
         return []
 
     reader_name = _reader_function_name(series, resolved)
@@ -820,6 +885,34 @@ def _iter_reader_resolutions(
         failed.extend(direction_failed)
         all_resolved.extend(report["series"])
     return pairs, failed, all_resolved
+
+
+def collect_reader_range_omissions(
+    graph: DependencyGraph,
+    workbook: Path | str,
+    bindings: WorkbookSeriesBindings,
+    *,
+    export_addresses: Iterable[str] | None = None,
+    directions: tuple[Literal["input", "constant"], ...] = ("input", "constant"),
+) -> list[ValidationIssue]:
+    """Return warning issues for `read_*_range` helpers omitted as non-contiguous.
+
+    Use this in CI to assert that a binding still emits (or intentionally omits)
+    range duals without scraping `UserWarning`s from codegen.
+    """
+    pairs, _failed, _resolved = _iter_reader_resolutions(
+        graph,
+        workbook,
+        bindings,
+        export_addresses=export_addresses,
+        directions=directions,
+    )
+    issues: list[ValidationIssue] = []
+    for series, resolved in pairs:
+        issue = reader_range_omission_issue(series, resolved, workbook=workbook)
+        if issue is not None:
+            issues.append(issue)
+    return issues
 
 
 def emit_readers_block(

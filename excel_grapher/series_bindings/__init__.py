@@ -92,6 +92,7 @@ from excel_grapher.series_bindings.schema import (
     validate_bindings_document,
 )
 from excel_grapher.series_bindings.setter_codegen import (
+    collect_reader_range_omissions,
     emit_reader_function,
     emit_reader_range_function,
     emit_readers_block,
@@ -99,6 +100,7 @@ from excel_grapher.series_bindings.setter_codegen import (
     emit_setter_helpers,
     emit_setters_block,
     generate_setters_module,
+    reader_range_omission_issue,
 )
 from excel_grapher.series_bindings.setter_input_types import Layout, SeriesInput
 from excel_grapher.series_bindings.types import (
@@ -219,6 +221,7 @@ __all__ = [
     "emit_computes_block",
     "emit_output_leaves_block",
     "emit_series_bindings_block",
+    "collect_reader_range_omissions",
     "emit_reader_function",
     "emit_reader_range_function",
     "emit_readers_block",
@@ -226,6 +229,7 @@ __all__ = [
     "emit_setter_helpers",
     "emit_setters_block",
     "generate_computes_module",
+    "reader_range_omission_issue",
     "has_constant_direction",
     "has_input_direction",
     "has_internal_direction",
