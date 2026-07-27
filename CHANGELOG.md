@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.21.0 (2026-07-27)
+
+### Features
+
+- **exporter**: Omit compute_all when output bindings cover targets
+  ([#461](https://github.com/Teal-Insights/excel-grapher/pull/461),
+  [`3b78ee8`](https://github.com/Teal-Insights/excel-grapher/commit/3b78ee83f11b7cce3645f3d38125d4c1efe5bc82))
+
+- **series-bindings**: Enforce input.domain on generated setters
+  ([#462](https://github.com/Teal-Insights/excel-grapher/pull/462),
+  [`c7c6d0a`](https://github.com/Teal-Insights/excel-grapher/commit/c7c6d0ac1e978015a2d53a7dc31a4c1498b11de9))
+
+- **series-bindings**: Signal when read_*_range is omitted (#459)
+  ([#460](https://github.com/Teal-Insights/excel-grapher/pull/460),
+  [`8939626`](https://github.com/Teal-Insights/excel-grapher/commit/8939626bcc3057635a18fd71c230de90aae810d4))
+
+- **series-bindings**: Warn when read_*_range omitted for non-contiguous selection
+  ([#460](https://github.com/Teal-Insights/excel-grapher/pull/460),
+  [`8939626`](https://github.com/Teal-Insights/excel-grapher/commit/8939626bcc3057635a18fd71c230de90aae810d4))
+
+### Testing
+
+- **series-bindings**: Expect omitted range warning for grouped matrix
+  ([#460](https://github.com/Teal-Insights/excel-grapher/pull/460),
+  [`8939626`](https://github.com/Teal-Insights/excel-grapher/commit/8939626bcc3057635a18fd71c230de90aae810d4))
+
+
 ## v3.20.2 (2026-07-27)
 
 ### Bug Fixes
