@@ -190,8 +190,10 @@ code = CodeGenerator(graph).generate(["S!B1"])
 The exported module opens with the embedded `xl_*` runtime (a few hundred lines, elided here).
 The workbook-specific tail below shows the shape of the output: leaf cells become `DEFAULT_INPUTS`
 data, formula cells become `ctx`-taking functions dispatched through a `TARGETS` map, and the public
-entry points are `make_context`, `compute_all`, and the series-binding discovery helpers
-`list_setters` / `list_computes`:
+entry points are `make_context`, `compute_all`, and (when series bindings are supplied) the
+discovery helpers `list_setters` / `list_computes`. When every export target is covered by an
+output series binding, `compute_all` / `TARGETS` are omitted by default; pass
+`include_compute_all=True` to keep them:
 
 ```{python}
 # | echo: false

@@ -3,7 +3,8 @@
 The series-binding setter machinery (input coercion, record-apply helpers, and the
 type aliases they need) is verbose. In the multi-module export it is routed to a
 dedicated private `_api_helpers` module so that `api.py` contains only the public
-surface (``make_context``, ``compute_all``, and generated ``set_*`` / ``compute_*``).
+surface (``make_context``, generated ``set_*`` / ``compute_*``, and ``compute_all``
+only when requested or when targets are not fully covered by output bindings).
 """
 
 from __future__ import annotations
@@ -128,7 +129,8 @@ def test_coercion_helpers_live_in_dedicated_module(workbook: Path) -> None:
     assert "def make_context(" in api
     assert "def set_borvelia_primary_balance(" in api
     assert "def compute_borvelia_primary_balance(" in api
-    assert "def compute_all(" in api
+    # Output bindings cover every target, so address-keyed compute_all is omitted.
+    assert "def compute_all(" not in api
 
 
 def test_api_module_is_smaller_than_helper_module(workbook: Path) -> None:

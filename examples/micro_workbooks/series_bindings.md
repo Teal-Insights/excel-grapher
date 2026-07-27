@@ -570,10 +570,12 @@ the full published span.
 
 After the setter runs, period **4** and **5** records reflect the
 updated input values (`7.5` and `8.0`) while still carrying dimensions
-such as `REF_AREA` and `UNIT_MEASURE` from the binding. Address-keyed
-`compute_all(ctx=ctx)` remains available for the full target map;
+such as `REF_AREA` and `UNIT_MEASURE` from the binding. Because the
+output binding covers every export target, address-keyed `compute_all`
+is omitted from the public API by default;
 `compute_borvelia_primary_balance` is the tabular, dimension-keyed view
-of this series only.
+of this series. Pass `include_compute_all=True` to `generate` /
+`generate_modules` if you still want the address-keyed map.
 
 ### Discovering the generated API
 
@@ -599,7 +601,7 @@ list_computes(): ['compute_borvelia_primary_balance']
 For package-style exports, generated series setters and output compute
 functions are emitted from the package entrypoint and re-exported from
 the package root. This keeps the callable surface next to `make_context`
-and `compute_all`:
+(and `compute_all` when it is emitted):
 
 ``` python
 from exported_series import (
