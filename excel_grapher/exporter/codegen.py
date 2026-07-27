@@ -2617,7 +2617,7 @@ class CodeGenerator:
 
         The generated package has five flat files:
         - __init__.py: exports compute_all and DEFAULT_INPUTS
-        - api.py: compute_all, make_context, and series-binding set_* / compute_* functions
+        - api.py: compute_all, make_context, and series-binding set_* / read_* / compute_*
         - data.py: DEFAULT_INPUTS and CONSTANTS
         - runtime.py: embedded Excel runtime (emit_runtime)
         - internals.py: formula cell functions + resolver dispatch
@@ -2628,6 +2628,9 @@ class CodeGenerator:
 
         When series bindings declare output series, the package also includes:
         - `_output_leaves.py`: `_OUTPUT_LEAVES_*` tables imported by `api`
+
+        Public `read_*` helpers are defined in `_readers.py` and re-exported from
+        `api.py` (via `__all__`) so `from <pkg>.api import read_foo` works.
         """
         normalized_targets = self._resolve_targets(targets)
 
@@ -2878,8 +2881,10 @@ class CodeGenerator:
         ]
         if helper_imports:
             api_import_lines.append(self._format_from_module_import("_api_helpers", helper_imports))
-        if leaf_index_imports:
-            api_import_lines.append(self._format_from_module_import("_readers", leaf_index_imports))
+        readers_api_imports = sorted({*leaf_index_imports, *public_reader_imports})
+        if readers_api_imports:
+            # Leaf indexes are used by setters; public readers are re-exported via `__all__`.
+            api_import_lines.append(self._format_from_module_import("_readers", readers_api_imports))
         if output_leaves_imports:
             api_import_lines.append(
                 self._format_from_module_import("_output_leaves", output_leaves_imports)
@@ -2894,10 +2899,9 @@ class CodeGenerator:
                 "",
             ]
         )
-        api_py = "\n".join([*api_import_lines, *api_body_lines])
 
-        # Symbols defined in `api.py` (readers live in `_readers` and are imported
-        # separately into `__init__.py` for the public package surface).
+        # Public surface on `api.py`: discovery → setters → readers → computes.
+        # Readers are defined in `_readers.py` and re-exported here.
         api_exports = [
             "compute_all",
             "make_context",
@@ -2912,39 +2916,24 @@ class CodeGenerator:
         if groups_manifest is not None:
             api_exports.append("list_groups")
         api_exports.extend(series_setter_names)
+        api_exports.extend(series_reader_names)
+        api_exports.extend(series_range_reader_names)
         api_exports.extend(series_compute_names)
+        api_py = "\n".join(
+            [
+                *api_import_lines,
+                *api_body_lines,
+                f"__all__ = {api_exports!r}",
+                "",
+            ]
+        )
 
-        # Package `__all__` keeps prior discovery → setters → readers → computes order.
-        all_exports = [
-            "compute_all",
-            "make_context",
-            "list_setters",
-            "list_readers",
-            "list_computes",
-        ]
-        if reader_leaves is not None:
-            all_exports.append("list_reader_leaves")
-        if reader_ranges is not None:
-            all_exports.append("list_reader_ranges")
-        if groups_manifest is not None:
-            all_exports.append("list_groups")
-        all_exports.extend(series_setter_names)
-        all_exports.extend(series_reader_names)
-        all_exports.extend(series_range_reader_names)
-        all_exports.extend(series_compute_names)
-        all_exports.append("DEFAULT_INPUTS")
+        # Package `__all__` mirrors `api` plus `DEFAULT_INPUTS`.
+        all_exports = [*api_exports, "DEFAULT_INPUTS"]
         init_lines = [
             "from __future__ import annotations",
             "",
         ]
-        if public_reader_imports:
-            init_lines.append(
-                self._format_from_module_import(
-                    "_readers",
-                    public_reader_imports,
-                    noqa="F401",
-                )
-            )
         # Import names are sorted for isort; `__all__` keeps the deliberate public order.
         init_lines.append(self._format_from_module_import("api", sorted(api_exports), noqa="F401"))
         init_lines.extend(
