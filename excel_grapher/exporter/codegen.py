@@ -2884,7 +2884,9 @@ class CodeGenerator:
         readers_api_imports = sorted({*leaf_index_imports, *public_reader_imports})
         if readers_api_imports:
             # Leaf indexes are used by setters; public readers are re-exported via `__all__`.
-            api_import_lines.append(self._format_from_module_import("_readers", readers_api_imports))
+            api_import_lines.append(
+                self._format_from_module_import("_readers", readers_api_imports)
+            )
         if output_leaves_imports:
             api_import_lines.append(
                 self._format_from_module_import("_output_leaves", output_leaves_imports)
