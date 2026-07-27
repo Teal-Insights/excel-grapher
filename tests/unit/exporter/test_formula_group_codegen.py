@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
 from excel_grapher.evaluator.evaluator import FormulaEvaluator
+from excel_grapher.evaluator.name_utils import address_to_python_name
 from excel_grapher.exporter.codegen import CodeGenerator
 from excel_grapher.exporter.projection import ProjectedAddress
 from tests.fixtures.formula_groups.hand_built import (
@@ -67,8 +70,6 @@ def test_codegen_cross_sheet_member_wrapper() -> None:
 
 def test_codegen_group_no_arg_row_matches_evaluator() -> None:
     """Bare ROW() in a shared group helper must use the member address, not the group key."""
-    from excel_grapher.evaluator.name_utils import address_to_python_name
-
     fx = build_row_self_group()
     with FormulaEvaluator(fx.graph) as ev:
         expected = {m: ev.evaluate(m) for m in fx.members}
@@ -97,8 +98,6 @@ def test_codegen_group_no_arg_row_matches_evaluator() -> None:
 
 
 def test_codegen_group_no_arg_column_matches_evaluator() -> None:
-    from excel_grapher.evaluator.name_utils import address_to_python_name
-
     fx = build_column_self_group()
     with FormulaEvaluator(fx.graph) as ev:
         expected = {m: ev.evaluate(m) for m in fx.members}
@@ -123,3 +122,96 @@ def test_codegen_group_no_arg_column_matches_evaluator() -> None:
         wrapper = ns[address_to_python_name(member)]
         assert callable(wrapper)
         assert wrapper(ctx) == want
+
+
+def test_group_member_export_rejects_invalid_mode() -> None:
+    fx = build_row_stripe_group()
+    with pytest.raises(ValueError, match="group_member_export"):
+        CodeGenerator(fx.graph, group_member_export="table")  # type: ignore[arg-type]
+
+
+def test_dispatch_emits_table_without_non_target_wrappers() -> None:
+    fx = build_row_stripe_group()
+    # Only E63 is a public target; siblings must resolve via dispatch.
+    with CodeGenerator(fx.graph, group_member_export="dispatch") as gen:
+        code = gen.generate(targets=["Sheet1!E63"])
+        helper = gen._group_helper_name(fx.group_key)
+
+    assert "_GROUP_MEMBER_DISPATCH" in code
+    assert "def _resolve_group_member(ctx, address):" in code
+    assert f"{helper}" in code
+    assert "'Sheet1!E63'" in code
+    assert "'Sheet1!D63'" in code  # sibling registered for xl_cell walks
+    assert "'Sheet1!F63'" in code
+    assert "def cell_sheet1_e63(ctx):" in code  # target wrapper kept
+    assert "def cell_sheet1_d63(ctx):" not in code
+    assert "def cell_sheet1_f63(ctx):" not in code
+    assert "Formula-group member wrappers" not in code
+    assert "Formula-group member dispatch" in code
+
+
+def test_wrappers_mode_default_unchanged() -> None:
+    fx = build_row_stripe_group()
+    with CodeGenerator(fx.graph) as gen:
+        code = gen.generate(targets=list(fx.members))
+    assert "Formula-group member wrappers" in code
+    assert "_GROUP_MEMBER_DISPATCH" not in code
+    assert "def cell_sheet1_d63(ctx):" in code
+    assert "def cell_sheet1_e63(ctx):" in code
+    assert "def cell_sheet1_f63(ctx):" in code
+
+
+def test_dispatch_group_member_matches_evaluator() -> None:
+    fx = build_row_stripe_group()
+    twin = build_row_stripe_cell_only_twin()
+    with (
+        FormulaEvaluator(fx.graph) as ev,
+        CodeGenerator(fx.graph, group_member_export="dispatch") as gen,
+    ):
+        code = gen.generate(targets=["Sheet1!E63"])
+        ns: dict[str, object] = {}
+        exec(code, ns)
+        make_context = ns["make_context"]
+        compute_all = ns["compute_all"]
+        assert callable(make_context) and callable(compute_all)
+        ctx = make_context()
+        exported = compute_all(ctx=ctx)
+        assert isinstance(exported, dict)
+        assert exported["Sheet1!E63"] == ev.evaluate("Sheet1!E63")
+        with FormulaEvaluator(twin) as ev_t:
+            assert exported["Sheet1!E63"] == ev_t.evaluate("Sheet1!E63")
+        # Sibling members resolve through the dispatch table (no cell_* defs).
+        resolve = ns["_resolve_formula"]
+        assert callable(resolve)
+        sibling_fn = resolve("Sheet1!D63")
+        assert callable(sibling_fn)
+        assert sibling_fn(ctx) == ev.evaluate("Sheet1!D63")
+
+
+def test_dispatch_row_self_matches_evaluator_via_resolver() -> None:
+    fx = build_row_self_group()
+    with FormulaEvaluator(fx.graph) as ev:
+        expected = {m: ev.evaluate(m) for m in fx.members}
+
+    with CodeGenerator(fx.graph, group_member_export="dispatch") as gen:
+        code = gen.generate(targets=[fx.members[0]])
+    ns: dict[str, object] = {}
+    exec(code, ns)
+    ctx = ns["make_context"]()  # type: ignore[operator]
+    resolve = ns["_resolve_formula"]
+    assert callable(resolve)
+    for member, want in expected.items():
+        fn = resolve(member)
+        assert callable(fn)
+        assert fn(ctx) == want
+
+
+def test_dispatch_generate_modules_includes_dispatch() -> None:
+    fx = build_row_stripe_group()
+    with CodeGenerator(fx.graph, group_member_export="dispatch") as gen:
+        modules = gen.generate_modules(targets=["Sheet1!E63"])
+    internals = modules["internals.py"]
+    assert "_GROUP_MEMBER_DISPATCH" in internals
+    assert "def cell_sheet1_e63(ctx):" in internals
+    assert "def cell_sheet1_d63(ctx):" not in internals
+    assert "_GROUP_MEMBER_DISPATCH" in modules.get("internals.py", "")
