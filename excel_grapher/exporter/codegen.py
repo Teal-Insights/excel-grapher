@@ -283,6 +283,71 @@ class CodeGenerator:
             workbook=workbook,
         )
 
+    def _should_emit_compute_all(
+        self,
+        targets: Sequence[str],
+        *,
+        series_bindings: WorkbookSeriesBindings | None,
+        bindings_workbook: Path | str | None,
+        export_addresses: Iterable[str] | None,
+        include_compute_all: bool | None,
+    ) -> bool:
+        """Return whether public `compute_all` / `TARGETS` should be emitted."""
+        from excel_grapher.series_bindings.workflow import (
+            output_binding_covered_addresses,
+            should_emit_compute_all,
+        )
+
+        covered: frozenset[str] = frozenset()
+        if series_bindings is not None:
+            if bindings_workbook is None:
+                raise ValueError("bindings_workbook is required when series_bindings is set")
+            covered = output_binding_covered_addresses(
+                cast("DependencyGraph", self._public_graph()),
+                series_bindings,
+                workbook=bindings_workbook,
+                export_addresses=export_addresses,
+            )
+        return should_emit_compute_all(
+            targets,
+            covered_by_output=covered,
+            include_compute_all=include_compute_all,
+        )
+
+    def _emit_compute_all_block(self, targets: Sequence[str]) -> list[str]:
+        """Emit `TARGETS` map and public `compute_all` entry point."""
+        lines = [
+            "TARGETS = {",
+            *[
+                f"    {repr(target)}: {handler},"
+                for target, handler in self._targets_to_entries(targets)
+            ],
+            "}",
+            "",
+            "",
+            (
+                "def compute_all(ctx: EvalContext | None = None, *, "
+                "inputs: dict[str, object] | None = None) -> dict[str, object]:"
+            ),
+            '    """Compute all target cells and return results."""',
+            "    if ctx is None:",
+            "        ctx = make_context(inputs)",
+            "    elif inputs is not None:",
+            (
+                "        warnings.warn("
+                '"inputs will be ignored because ctx was provided", '
+                "UserWarning, stacklevel=2)"
+            ),
+        ]
+        if self._iterate_enabled:
+            lines.append("    return xl_iterative_compute(ctx, TARGETS)")
+        else:
+            lines.append(
+                "    return {target: handler(ctx, target) for target, handler in TARGETS.items()}"
+            )
+        lines.append("")
+        return lines
+
     def _emit_projection_alias_lines(
         self,
         export_addresses: Iterable[str],
@@ -2433,6 +2498,7 @@ class CodeGenerator:
         bindings_workbook: Path | str | None = None,
         series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
         docstring_renderer: SeriesDocstringRendererSpec = "google",
+        include_compute_all: bool | None = None,
     ) -> str:
         """Generate standalone Python code for target cells.
 
@@ -2453,6 +2519,9 @@ class CodeGenerator:
             docstring_renderer: Built-in renderer name or custom renderer object/callable
                 for structured series-binding docstrings (`plain`, `rst`,
                 `google`, `numpy`).
+            include_compute_all: Control emission of public `compute_all`. `True` always
+                emits it, `False` never emits it, and `None` (default) omits it when
+                every export target is covered by an output series binding.
 
         Returns:
             Standalone Python source code as a string.
@@ -2564,34 +2633,17 @@ class CodeGenerator:
                 reader_ranges=reader_ranges,
             )
         )
-        lines.append("")
-        lines.append("")
-        lines.append("TARGETS = {")
-        for target, handler in self._targets_to_entries(normalized_targets):
-            lines.append(f"    {repr(target)}: {handler},")
-        lines.append("}")
-        lines.append("")
-        lines.append("")
-        lines.append(
-            "def compute_all(ctx: EvalContext | None = None, *, "
-            "inputs: dict[str, object] | None = None) -> dict[str, object]:"
+        emit_compute_all = self._should_emit_compute_all(
+            normalized_targets,
+            series_bindings=series_bindings,
+            bindings_workbook=bindings_workbook,
+            export_addresses=_all_cells,
+            include_compute_all=include_compute_all,
         )
-        lines.append('    """Compute all target cells and return results."""')
-        lines.append("    if ctx is None:")
-        lines.append("        ctx = make_context(inputs)")
-        lines.append("    elif inputs is not None:")
-        lines.append(
-            "        warnings.warn("
-            '"inputs will be ignored because ctx was provided", '
-            "UserWarning, stacklevel=2)"
-        )
-        if self._iterate_enabled:
-            lines.append("    return xl_iterative_compute(ctx, TARGETS)")
-        else:
-            lines.append(
-                "    return {target: handler(ctx, target) for target, handler in TARGETS.items()}"
-            )
-        lines.append("")
+        if emit_compute_all:
+            lines.append("")
+            lines.append("")
+            lines.extend(self._emit_compute_all_block(normalized_targets))
 
         return "\n".join(lines)
 
@@ -2609,6 +2661,7 @@ class CodeGenerator:
         series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
         docstring_renderer: SeriesDocstringRendererSpec = "google",
         address_helpers: Mapping[str, OutputHelperSpec] | None = None,
+        include_compute_all: bool | None = None,
     ) -> dict[str, str]:
         """Generate a multi-module Python package for target cells.
 
@@ -2616,8 +2669,8 @@ class CodeGenerator:
         lay out files on disk (e.g. a package directory).
 
         The generated package has five flat files:
-        - __init__.py: exports compute_all and DEFAULT_INPUTS
-        - api.py: compute_all, make_context, and series-binding set_* / read_* / compute_*
+        - __init__.py: exports public API names and DEFAULT_INPUTS
+        - api.py: make_context, optional compute_all, and series-binding set_* / read_* / compute_*
         - data.py: DEFAULT_INPUTS and CONSTANTS
         - runtime.py: embedded Excel runtime (emit_runtime)
         - internals.py: formula cell functions + resolver dispatch
@@ -2631,6 +2684,10 @@ class CodeGenerator:
 
         Public `read_*` helpers are defined in `_readers.py` and re-exported from
         `api.py` (via `__all__`) so `from <pkg>.api import read_foo` works.
+
+        `compute_all` is omitted by default when every export target is covered by an
+        output series binding. Pass `include_compute_all=True` to keep it, or
+        `include_compute_all=False` to omit it unconditionally.
         """
         normalized_targets = self._resolve_targets(targets)
 
@@ -2655,9 +2712,6 @@ class CodeGenerator:
             bindings_workbook,
         )
         public_addresses = frozenset(normalized_targets) | series_public_addresses
-
-        targets_entries = self._targets_to_entries(normalized_targets)
-        needs_range_helper = any(handler == "xl_range_rows" for _, handler in targets_entries)
 
         data_lines_out: list[str] = [
             "from __future__ import annotations",
@@ -2813,6 +2867,21 @@ class CodeGenerator:
             reader_leaves=reader_leaves,
             reader_ranges=reader_ranges,
         )
+        coverage_export_addresses = (
+            self._export_addresses_with_aliases(_all_cells, series_public_addresses)
+            if series_bindings is not None
+            else _all_cells
+        )
+        emit_compute_all = self._should_emit_compute_all(
+            normalized_targets,
+            series_bindings=series_bindings,
+            bindings_workbook=bindings_workbook,
+            export_addresses=coverage_export_addresses,
+            include_compute_all=include_compute_all,
+        )
+        compute_all_lines = (
+            self._emit_compute_all_block(normalized_targets) if emit_compute_all else []
+        )
         api_body_lines: list[str] = [
             "def make_context(inputs: dict[str, object] | None = None) -> EvalContext:",
             '    """Create an EvalContext with merged inputs."""',
@@ -2832,30 +2901,8 @@ class CodeGenerator:
             *setter_lines,
             *([] if not setter_lines else [""]),
             *discovery_lines,
-            "",
-            "",
-            "TARGETS = {",
-            *[f"    {repr(target)}: {handler}," for target, handler in targets_entries],
-            "}",
-            "",
-            "",
-            "def compute_all(ctx: EvalContext | None = None, *, "
-            "inputs: dict[str, object] | None = None) -> dict[str, object]:",
-            '    """Compute all target cells and return results."""',
-            "    if ctx is None:",
-            "        ctx = make_context(inputs)",
-            "    elif inputs is not None:",
-            "        warnings.warn(",
-            '            "inputs will be ignored because ctx was provided",',
-            "            UserWarning,",
-            "            stacklevel=2,",
-            "        )",
-            (
-                "    return xl_iterative_compute(ctx, TARGETS)"
-                if self._iterate_enabled
-                else "    return {target: handler(ctx, target) for target, handler in TARGETS.items()}"
-            ),
-            "",
+            *(["", ""] if compute_all_lines else []),
+            *compute_all_lines,
         ]
         api_body_text = "\n".join(api_body_lines)
         runtime_entry_names = ["EvalContext", "coerce_inputs_dict"]
@@ -2864,9 +2911,9 @@ class CodeGenerator:
             runtime_entry_names.append("xl_cell")
         if re.search(r"\bxl_range\b", api_body_text):
             runtime_entry_names.append("xl_range")
-        if needs_range_helper or re.search(r"\bxl_range_rows\b", api_body_text):
+        if re.search(r"\bxl_range_rows\b", api_body_text):
             runtime_entry_names.append("xl_range_rows")
-        if self._iterate_enabled:
+        if emit_compute_all and self._iterate_enabled:
             runtime_entry_names.append("xl_iterative_compute")
         if re.search(r"\bXlErrorException\b", api_body_text):
             runtime_entry_names.append("XlErrorException")
@@ -2876,9 +2923,9 @@ class CodeGenerator:
         api_import_lines: list[str] = [
             "from __future__ import annotations",
             "",
-            "import warnings",
-            "",
         ]
+        if "warnings." in api_body_text:
+            api_import_lines.extend(["import warnings", ""])
         if helper_imports:
             api_import_lines.append(self._format_from_module_import("_api_helpers", helper_imports))
         readers_api_imports = sorted({*leaf_index_imports, *public_reader_imports})
@@ -2905,7 +2952,7 @@ class CodeGenerator:
         # Public surface on `api.py`: discovery → setters → readers → computes.
         # Readers are defined in `_readers.py` and re-exported here.
         api_exports = [
-            "compute_all",
+            *(["compute_all"] if emit_compute_all else []),
             "make_context",
             "list_setters",
             "list_readers",

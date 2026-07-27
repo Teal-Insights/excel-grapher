@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, TypedDict
 
@@ -11,6 +12,7 @@ from excel_grapher.series_bindings.canonical import bindings_canonical_sha256
 from excel_grapher.series_bindings.input_series import derive_input_series
 from excel_grapher.series_bindings.load import SeriesBindingsLoadError, load_series_bindings
 from excel_grapher.series_bindings.ranges import expand_data_range, expand_data_range_for_graph
+from excel_grapher.series_bindings.resolve import resolve_series_bindings
 from excel_grapher.series_bindings.types import (
     InputSeries,
     ValidationReport,
@@ -134,6 +136,62 @@ def series_binding_public_addresses(
             )
         )
     return frozenset(addresses)
+
+
+def output_binding_covered_addresses(
+    graph: DependencyGraph,
+    bindings: WorkbookSeriesBindings,
+    *,
+    workbook: Path | str,
+    export_addresses: Iterable[str] | None = None,
+) -> frozenset[str]:
+    """Return addresses covered by successfully resolved output computes.
+
+    Uses the same resolution path as compute codegen (including `exclude_rows` /
+    `exclude_columns` and optional export-closure intersection), so coverage
+    matches the addresses semantic `compute_*` functions actually return.
+    """
+    report = resolve_series_bindings(
+        graph,
+        bindings,
+        workbook=workbook,
+        direction="output",
+        export_addresses=export_addresses,
+    )
+    addresses: set[str] = set()
+    for resolved in report["series"]:
+        if not resolved["ok"]:
+            continue
+        for leaf in resolved["leaves"]:
+            addresses.add(normalize_address(leaf["address"]))
+    return frozenset(addresses)
+
+
+def should_emit_compute_all(
+    targets: Sequence[str],
+    *,
+    covered_by_output: frozenset[str],
+    include_compute_all: bool | None = None,
+) -> bool:
+    """Decide whether generated exports should include public `compute_all`.
+
+    Args:
+        targets: Normalized export target cell addresses.
+        covered_by_output: Addresses covered by resolved output series computes.
+        include_compute_all: Explicit override. `True` always emits, `False`
+            never emits, and `None` (default) omits only when every target is
+            covered by an output binding.
+
+    Returns:
+        True when `compute_all` should be part of the generated public API.
+    """
+    if include_compute_all is True:
+        return True
+    if include_compute_all is False:
+        return False
+    if not targets:
+        return True
+    return not all(normalize_address(target) in covered_by_output for target in targets)
 
 
 def _explicit_bindings_candidates(workbook: Path, bindings: Path) -> list[Path]:

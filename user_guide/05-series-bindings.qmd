@@ -846,8 +846,13 @@ After export:
 ```python
 ctx = make_context()
 set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 3, "OBS_VALUE": -0.5}])
-results = compute_all(ctx=ctx)
+records = compute_borvelia_primary_balance(ctx=ctx)
 ```
+
+When every export target is covered by an output series binding, address-keyed
+`compute_all` is omitted from the public API (prefer the semantic `compute_*`
+functions). Pass `include_compute_all=True` to `generate` / `generate_modules`
+to keep it anyway.
 
 The generated module also exposes two zero-argument discovery helpers for enumerating the series
 API without parsing source:
@@ -857,7 +862,7 @@ list_setters()   # ["set_borvelia_primary_balance"]
 list_computes()  # ["compute_borvelia_primary_balance"]
 ```
 
-For modular package exports, generated series setters and output compute functions are emitted from the package entrypoint and re-exported from the package root, alongside `make_context`, `compute_all`, `list_setters`, and `list_computes`.
+For modular package exports, generated series setters and output compute functions are emitted from the package entrypoint and re-exported from the package root, alongside `make_context`, `list_setters`, and `list_computes` (and `compute_all` when emitted).
 
 ## Command-line validation
 
