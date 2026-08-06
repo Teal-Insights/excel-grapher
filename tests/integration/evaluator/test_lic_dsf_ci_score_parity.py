@@ -17,7 +17,7 @@ from excel_grapher import FormulaEvaluator, XlError, create_dependency_graph
 from excel_grapher.grapher.resolver import build_named_range_map
 from tests.utils.excel_workbook_parity import assert_workbook_parity
 
-WORKBOOK_PATH = Path("examples/lic_dsf/data/lic-dsf-template-2025-08-12.xlsm")
+WORKBOOK_PATH = Path("tests/fixtures/lic_dsf/lic-dsf-template-2025-08-12.xlsm")
 
 # Direct consumers of the arithmetic-OFFSET data tables + CI Summary mirrors.
 _CI_CHAIN_TARGETS: list[str] = [
