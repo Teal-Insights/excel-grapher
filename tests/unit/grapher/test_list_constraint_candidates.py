@@ -400,3 +400,88 @@ def test_candidates_unknown_name_raises_clear_error(tmp_path: Path) -> None:
     with pytest.raises(ValueError) as exc:
         list_dynamic_ref_constraint_candidates(path, ["MysteryName"])
     assert "MysteryName" in str(exc.value)
+
+
+def _build_shared_intermediate_offset_workbook(path: Path, n_rows: int = 20) -> None:
+    """Many OFFSET formulas whose argument subgraphs share intermediate `B1`.
+
+    Layout on 'Sheet1':
+      - C1 is a leaf constant; B1 = `=Sheet1!C1+1` is a shared intermediate.
+      - For each row `r` in `[2, 2+n_rows)`:
+        - D<r> is a leaf column-offset constant.
+        - F<r> = `=OFFSET(Sheet1!$A$1, Sheet1!$B$1, Sheet1!D<r>)`.
+    """
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+
+    ws.write_number(0, 0, 1)  # A1 base
+    ws.write_formula(0, 1, "=Sheet1!C1+1", None, 3)  # B1 intermediate
+    ws.write_number(0, 2, 2)  # C1 leaf
+
+    for i in range(n_rows):
+        row = 1 + i
+        ws.write_number(row, 3, (i % 5) + 1)  # D<row+1> leaf
+        ws.write_formula(
+            row,
+            5,
+            f"=OFFSET(Sheet1!$A$1,Sheet1!$B$1,Sheet1!D{row + 1})",
+            None,
+            42,
+        )
+    wb.close()
+
+
+def test_candidates_reuse_shared_cell_type_cache(tmp_path: Path) -> None:
+    """list_dynamic_ref_constraint_candidates must reuse env expansion across call sites.
+
+    Regression guard for issue #463: unlike `create_dependency_graph`, this
+    function did not pass `shared_cell_type_cache=`, so the shared intermediate
+    `B1` was re-inferred once per dynamic-ref formula.
+    """
+    from unittest.mock import patch
+
+    from excel_grapher.grapher.builder import expand_leaf_env_to_argument_env
+
+    n_rows = 20
+    path = tmp_path / "candidates_shared_intermediate.xlsx"
+    _build_shared_intermediate_offset_workbook(path, n_rows=n_rows)
+
+    env: CellTypeEnv = {
+        "Sheet1!C1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=10))
+    }
+    for i in range(n_rows):
+        env[f"Sheet1!D{2 + i}"] = CellType(
+            kind=CellKind.NUMBER,
+            interval=IntervalDomain(min=1, max=5),
+        )
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+
+    total_calls = 0
+    passed_a_shared_cache = 0
+    b1_cache_hits = 0
+
+    def tracking_expand(*args, **kwargs):
+        nonlocal total_calls, passed_a_shared_cache, b1_cache_hits
+        total_calls += 1
+        shared_cache = kwargs.get("shared_cell_type_cache")
+        if shared_cache is not None:
+            passed_a_shared_cache += 1
+            if "Sheet1!B1" in shared_cache:
+                b1_cache_hits += 1
+        return expand_leaf_env_to_argument_env(*args, **kwargs)
+
+    with patch(
+        "excel_grapher.grapher.builder.expand_leaf_env_to_argument_env",
+        side_effect=tracking_expand,
+    ):
+        list_dynamic_ref_constraint_candidates(path, ["Sheet1!F2"], dynamic_refs=config)
+
+    assert total_calls > 1, "fixture should exercise multiple dynamic-ref call sites"
+    assert passed_a_shared_cache == total_calls, (
+        "list_dynamic_ref_constraint_candidates must pass shared_cell_type_cache= "
+        f"on every expand call, got {passed_a_shared_cache}/{total_calls}"
+    )
+    assert b1_cache_hits == total_calls - 1, (
+        f"Expected B1 to be a cache hit on {total_calls - 1} of {total_calls} calls, "
+        f"but got {b1_cache_hits}. shared_cell_type_cache is not being reused."
+    )

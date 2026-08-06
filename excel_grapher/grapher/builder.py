@@ -1326,6 +1326,10 @@ def list_dynamic_ref_constraint_candidates(
         with open(workbook, "rb") as _f:
             _wb_sha256_cand = hashlib.file_digest(_f, "sha256").hexdigest()
 
+    # Shared across every dynamic-ref call site so intermediates in overlapping
+    # argument subgraphs are inferred once, as in `create_dependency_graph`.
+    _shared_cell_type_cache_cand: dict[str, CellType] = {}
+
     try:
         named_range_maps = build_named_range_map(wb_formulas)
         named_ranges = named_range_maps.cell_map
@@ -1521,6 +1525,7 @@ def list_dynamic_ref_constraint_candidates(
                             named_ranges=named_ranges,
                             named_range_ranges=named_range_ranges,
                             max_range_cells=max_range_cells,
+                            shared_cell_type_cache=_shared_cell_type_cache_cand,
                             type_analysis_cache=type_analysis_cache,
                             workbook_sha256=_wb_sha256_cand,
                         )
