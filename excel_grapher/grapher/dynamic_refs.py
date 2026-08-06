@@ -119,6 +119,23 @@ def _emit_trace(event: DynamicRefTraceEvent) -> None:
         tracer(event)
 
 
+_EXPAND_PROGRESS_INTERVAL = 50_000
+"""Emit an `expand-env-progress` trace every N `cell_type_for` entries.
+
+Argument-env expansion over a large workbook can run for minutes inside a
+single call; without periodic progress the caller sees nothing between
+`workbook-loaded` and the terminal `expand-env` event.
+"""
+
+_MAX_ANALYSIS_DEPTH = 600
+"""Max nested `cell_type_for` frames before raising `DynamicRefError`.
+
+Each analysis level costs roughly one Python frame, so this trips well inside
+CPython's default 1000-frame recursion limit: a pathologically deep argument
+chain fails with an actionable error instead of a bare `RecursionError`.
+"""
+
+
 class DynamicRefError(ValueError):
     """Raised when dynamic reference analysis cannot proceed.
 
@@ -450,12 +467,20 @@ def expand_leaf_env_to_argument_env(
         else None
     )
     _limits_fp = _compute_limits_fingerprint(limits) if _tac else ""
-    # Track which leaf_env keys each formula cell consumes during analysis
+    # Track which leaf_env keys each formula cell consumes during analysis.
+    # Only `_persist_result` ever reads this, so skip the bookkeeping entirely
+    # when there is no persistent cache to write to: maintaining it costs
+    # O(stack_depth x consumed_leaves) per cache hit (issue #463).
+    _track_consumed = _tac is not None
     _consumed_leaves: dict[str, set[str]] = {}
     # Addresses loaded from persistent cache (skip re-persisting in finally block)
     _loaded_from_persistent: set[str] = set()
     # Stack of formula cells being analysed (for recording consumed leaves)
     _analysis_stack: list[str] = []
+    # Progress accounting for `expand-env-progress` traces
+    t0 = time.perf_counter()
+    _calls = 0
+    _next_progress = _EXPAND_PROGRESS_INTERVAL
 
     def _formula_to_parse(raw: str) -> str:
         body = raw[1:] if raw.startswith("=") else raw
@@ -489,7 +514,11 @@ def expand_leaf_env_to_argument_env(
         A leaf referenced by a child formula transitively affects every
         ancestor on the stack, so all of them must include that leaf in
         their fingerprint for correct cache invalidation.
+
+        No-op without a persistent cache, which is the only consumer.
         """
+        if not _track_consumed:
+            return
         for ancestor in _analysis_stack:
             _consumed_leaves.setdefault(ancestor, set()).add(leaf_addr)
 
@@ -535,13 +564,34 @@ def expand_leaf_env_to_argument_env(
         Called when `addr` is served from the in-memory cache so that
         ancestors still record its transitive leaf dependencies even though
         `_record_consumed_leaf` won't fire for the cached cell's refs.
+
+        No-op without a persistent cache, which is the only consumer.
         """
+        if not _track_consumed:
+            return
         child_leaves = _consumed_leaves.get(addr)
         if child_leaves:
             for ancestor in _analysis_stack:
                 _consumed_leaves.setdefault(ancestor, set()).update(child_leaves)
 
     def cell_type_for(addr: str) -> CellType:
+        nonlocal _calls, _next_progress
+        _calls += 1
+        if _calls >= _next_progress:
+            _next_progress = _calls + _EXPAND_PROGRESS_INTERVAL
+            _emit_trace(
+                DynamicRefTraceEvent(
+                    kind="expand-env-progress",
+                    name="expand_leaf_env_to_argument_env",
+                    elapsed_s=time.perf_counter() - t0,
+                    detail={
+                        "calls": _calls,
+                        "cache_size": len(cache),
+                        "stack_depth": len(_analysis_stack),
+                        "last": addr,
+                    },
+                )
+            )
         if addr in cache:
             _propagate_consumed_leaves_to_ancestors(addr)
             return cache[addr]
@@ -550,11 +600,12 @@ def expand_leaf_env_to_argument_env(
         ct_resolved = _lookup_cell_type(leaf_env, addr)
         if ct_resolved is not None:
             cache[addr] = ct_resolved
-            norm_key = normalize_cell_type_env_key(addr)
-            # Record the leaf as its own consumed-leaf so that cache hits
-            # for this address can propagate it to future ancestors.
-            _consumed_leaves.setdefault(addr, set()).add(norm_key)
-            _record_consumed_leaf(norm_key)
+            if _track_consumed:
+                norm_key = normalize_cell_type_env_key(addr)
+                # Record the leaf as its own consumed-leaf so that cache hits
+                # for this address can propagate it to future ancestors.
+                _consumed_leaves.setdefault(addr, set()).add(norm_key)
+                _record_consumed_leaf(norm_key)
             return cache[addr]
         in_progress.add(addr)
         formula = get_cell_formula(addr)
@@ -573,6 +624,14 @@ def expand_leaf_env_to_argument_env(
                 _loaded_from_persistent.add(addr)
                 _propagate_consumed_leaves_to_ancestors(addr)
                 return cache[addr]
+            if len(_analysis_stack) >= _MAX_ANALYSIS_DEPTH:
+                raise DynamicRefError(
+                    f"Argument-subgraph analysis exceeded the maximum depth of "
+                    f"{_MAX_ANALYSIS_DEPTH} while inferring the type of {addr!r}. "
+                    "The dynamic-ref argument chain is too deeply nested to analyse; "
+                    "constrain an intermediate cell in the chain to cut it short, or "
+                    "simplify the chain."
+                )
             _analysis_stack.append(addr)
             refs = get_refs_from_formula(formula, _sheet_from_addr(addr))
             try:
@@ -730,7 +789,7 @@ def expand_leaf_env_to_argument_env(
                 # stack.  This covers the case where a child was served from
                 # the in-memory cache (so _record_consumed_leaf was never
                 # called for its leaves during *this* traversal).
-                if _analysis_stack:
+                if _track_consumed and _analysis_stack:
                     parent = _analysis_stack[-1]
                     child_leaves = _consumed_leaves.get(addr)
                     if child_leaves:
@@ -739,7 +798,6 @@ def expand_leaf_env_to_argument_env(
             if addr in cache and formula is not None and addr not in _loaded_from_persistent:
                 _persist_result(addr, formula, cache[addr])
 
-    t0 = time.perf_counter()
     try:
         for addr in sorted(argument_refs):
             cell_type_for(addr)
@@ -767,6 +825,8 @@ def expand_leaf_env_to_argument_env(
             detail={
                 "argument_refs": len(argument_refs),
                 "inferred_cells": len(cache),
+                "calls": _calls,
+                "consumed_leaf_tracking": _track_consumed,
             },
         )
     )
