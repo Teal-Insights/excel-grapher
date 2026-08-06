@@ -24,6 +24,12 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+      - id: format-qmd-check
+        name: format qmd --check
+        entry: uv run python scripts/format_qmd.py --check
+        language: system
+        pass_filenames: false
+        always_run: true
       - id: ty-check
         name: ty check
         entry: uv run ty check

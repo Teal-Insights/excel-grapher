@@ -6,6 +6,10 @@ We use `fastpyxl` as a drop-in replacement for `openpyxl`.
 
 `.qmd` files can be rendered to markdown with `uv run quarto render path/to/file.qmd`.
 
+Ruff formats Python embedded in Markdown, so the rendered `examples/**/*.md` files are covered by
+`ruff format --check`. Format the `.qmd` sources (not the generated `.md`) with
+`uv run python scripts/format_qmd.py`, then re-render; otherwise the next render undoes the fix.
+
 Always practice test-driven development. Write a stub (if necessary), write a test, watch it fail for the right reason (RED), write the code to make it pass (GREEN), and then refactor to clean up the code.
 
 This is a greenfield project with no users, so we are free to make design decisions that unconstrained by the legacy codebase.

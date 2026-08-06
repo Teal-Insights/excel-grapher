@@ -86,10 +86,11 @@ Excel address strings expand to cells, ranges, and comma-separated unions.
 ```python
 class NodeShape(StrEnum):
     cell = "cell"
-    row = "row"          # RangeKey with min_row == max_row
-    column = "column"    # RangeKey with min_col == max_col
-    range = "range"      # general rectangle
-    union = "union"      # multi-area
+    row = "row"  # RangeKey with min_row == max_row
+    column = "column"  # RangeKey with min_col == max_col
+    range = "range"  # general rectangle
+    union = "union"  # multi-area
+
 
 class CellKey(str):
     @property
@@ -100,6 +101,7 @@ class CellKey(str):
     def column(self) -> str: ...
     @property
     def row(self) -> int: ...
+
 
 class RangeKey(str):
     @property
@@ -115,7 +117,9 @@ class RangeKey(str):
     @property
     def max_row(self) -> int: ...
 
+
 type UnionMember = CellKey | RangeKey
+
 
 class UnionKey(str):
     @property
@@ -123,7 +127,9 @@ class UnionKey(str):
     @property
     def members(self) -> tuple[UnionMember, ...]: ...
 
+
 type NodeKey = CellKey | RangeKey | UnionKey
+
 
 def parse_node_key(value: str | NodeKey) -> NodeKey:
     """Canonicalize and return the appropriate key subtype."""
@@ -176,10 +182,10 @@ Prefer Chris’s #375 counterproposal over `kind` + `min_*`/`max_*` as source of
 ```python
 @dataclass
 class Node:
-    address: NodeKey          # canonical CellKey | RangeKey | UnionKey
+    address: NodeKey  # canonical CellKey | RangeKey | UnionKey
     formula: str | None
     normalized_formula: str | None
-    value: Any                # None for multi-cell nodes in MVP
+    value: Any  # None for multi-cell nodes in MVP
     is_leaf: bool
     is_target: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -299,7 +305,7 @@ multi-cell node **plus** per-member parameters (bindings), not a bare forward:
 ```python
 @dataclass(frozen=True)
 class ProjectedAddress:
-    address: NodeKey                    # owning RangeKey / UnionKey
+    address: NodeKey  # owning RangeKey / UnionKey
     parameters: Mapping[str, Any] | None = None  # e.g. member bindings / refs
 ```
 
@@ -315,7 +321,7 @@ class ProjectedAddress:
 
 ```python
 shape_fingerprint: str | bytes
-skeleton: AstNode          # holes or baked address leaves
+skeleton: AstNode  # holes or baked address leaves
 member_bindings: Mapping[NodeKey, tuple[AddressLeaf, ...]]
 ```
 
@@ -465,8 +471,9 @@ Python API only in this issue.
 ```python
 @dataclass(frozen=True)
 class CoalesceReport:
-    created_groups: tuple[NodeKey, ...]          # multi-area keys
+    created_groups: tuple[NodeKey, ...]  # multi-area keys
     skipped_families: tuple[SkippedFamily, ...]  # fingerprint + reason
+
 
 @dataclass(frozen=True)
 class SkippedFamily:

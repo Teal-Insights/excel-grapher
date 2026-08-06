@@ -52,9 +52,7 @@ inline the bindings we care about:
 
 ``` python
 # Build the dependency graph
-graph: DependencyGraph = create_dependency_graph(
-    workbook_path, ["Sheet1!F5:J5"], load_values=True
-)
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!F5:J5"], load_values=True)
 ```
 
 The manifest has a top-level `series` array with one entry per series.
@@ -465,12 +463,8 @@ output_series = derive_output_series(graph, bindings, workbook=workbook_path)
 print(
     f"```text\n{pformat({'id': output_series[0]['id'], 'compute_name': output_series[0]['compute_name'], 'cell_count': len(output_series[0]['cells'])}, indent=2)}\n```\n"
 )
-resolved_output = resolve_series_binding(
-    graph, workbook_path, series, direction="output"
-)
-leaf_out = next(
-    leaf for leaf in resolved_output["leaves"] if leaf["key"]["TIME_PERIOD"] == 3
-)
+resolved_output = resolve_series_binding(graph, workbook_path, series, direction="output")
+leaf_out = next(leaf for leaf in resolved_output["leaves"] if leaf["key"]["TIME_PERIOD"] == 3)
 print(
     f"```text\n{pformat({'address': leaf_out['address'], 'record': leaf_out['record']}, indent=2)}\n```\n"
 )
@@ -540,7 +534,7 @@ set_borvelia_primary_balance(
     ],
 )
 records = compute_borvelia_primary_balance(ctx=ctx)
-print(tabulate(records, headers='keys', tablefmt='pipe'))
+print(tabulate(records, headers="keys", tablefmt="pipe"))
 ```
 
 The compute function evaluates each bound cell via `xl_cell` by default.
@@ -587,7 +581,7 @@ series API without parsing source:
 ``` python
 from exported_model import list_setters, list_computes
 
-list_setters()   # ["set_borvelia_primary_balance"]
+list_setters()  # ["set_borvelia_primary_balance"]
 list_computes()  # ["compute_borvelia_primary_balance"]
 ```
 

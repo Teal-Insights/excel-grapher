@@ -10,9 +10,7 @@ Each row of [examples/micro_workbooks/codegen_basics.xlsx](codegen_basics.xlsx) 
 #| warning: false
 from pathlib import Path
 
-from excel_grapher.grapher import (
-    create_dependency_graph, DependencyGraph
-)
+from excel_grapher.grapher import create_dependency_graph, DependencyGraph
 from excel_grapher.exporter import CodeGenerator
 
 # Load the example workbook
@@ -24,10 +22,7 @@ workbook_path = Path("codegen_basics.xlsx")
 The first example is a single-cell formula with no dependencies. We can extract the graph with the `create_dependency_graph` function (see [Extraction Basics](extraction_basics.md) for more details); then, instead of running the graph using the `FormulaEvaluator` Excel emulator, we can transpile the graph to standalone Python code using the `CodeGenerator` class. We'll write the code to a file called `formula_with_no_dependencies.py` in the `codegen_outputs` folder.
 
 ```{python}
-graph: DependencyGraph = create_dependency_graph(
-    workbook_path,
-    ["Sheet1!B1"]
-)
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!B1"])
 
 with CodeGenerator(graph) as gen:
     code = gen.generate()
@@ -41,6 +36,7 @@ We can then append the file as a module to our current session and run the code:
 
 ```{python}
 import sys
+
 sys.path.append("codegen_outputs")
 from formula_with_no_dependencies import compute_all
 
@@ -55,10 +51,7 @@ The return value of the `compute_all` function is a dictionary of the target cel
 The second example consists of two cells: one hardcoded ("Sheet1!B2") and one a formula that depends on the hardcoded cell ("Sheet1!C2"). Let's generate the code for this example and run it with the default input:
 
 ```{python}
-graph: DependencyGraph = create_dependency_graph(
-    workbook_path,
-    ["Sheet1!C2"]
-)
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C2"])
 
 with CodeGenerator(graph) as gen:
     code = gen.generate()
@@ -88,10 +81,7 @@ The implementation of the C2 function is defined on lines 345-347. The hardcoded
 If there are multiple target cells that are not adjacent to each other, `compute_all` simply returns a dictionary keyed by cell address for each target cell.
 
 ```{python}
-graph: DependencyGraph = create_dependency_graph(
-    workbook_path,
-    ["Sheet1!C3", "Sheet1!E3"]
-)
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C3", "Sheet1!E3"])
 
 with CodeGenerator(graph) as gen:
     code = gen.generate()
@@ -114,10 +104,7 @@ bindings** instead — see [Series bindings](series_bindings.qmd).
 The next example demonstrates what happens when we export the code with multiple adjacent targets.
 
 ```{python}
-graph: DependencyGraph = create_dependency_graph(
-    workbook_path,
-    ["Sheet1!C4", "Sheet1!D4"]
-)
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C4", "Sheet1!D4"])
 
 with CodeGenerator(graph) as gen:
     code = gen.generate()
@@ -140,10 +127,7 @@ In the fourth example, The B5 and C5 formula cells make a cycle. Excel's interna
 
 ```{python}
 #| warning: true
-graph: DependencyGraph = create_dependency_graph(
-    workbook_path,
-    ["Sheet1!B5", "Sheet1!C5"]
-)
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!B5", "Sheet1!C5"])
 
 with CodeGenerator(graph) as gen:
     code = gen.generate()

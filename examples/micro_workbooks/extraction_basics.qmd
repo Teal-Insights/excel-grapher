@@ -11,20 +11,20 @@ Each row of [examples/micro_workbooks/extraction_basics.xlsx](extraction_basics.
 from pathlib import Path
 from pprint import pformat
 
-from excel_grapher.grapher import (
-    create_dependency_graph, to_mermaid, DependencyGraph
-)
+from excel_grapher.grapher import create_dependency_graph, to_mermaid, DependencyGraph
 from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter import CodeGenerator
 
 # Load the example workbook
 workbook_path = Path("extraction_basics.xlsx")
 
+
 # Define helper functions to print the graph object and Mermaid diagram
 def print_text(text: str):
     print("```text")
     print(text)
     print("```\n")
+
 
 def print_mermaid(graph: DependencyGraph):
     mermaid = to_mermaid(graph)
@@ -235,7 +235,9 @@ A much harder case is when the arguments of `OFFSET` or `INDIRECT` involve compu
 Option 1 is implemented by passing `use_cached_dynamic_refs=True` to `create_dependency_graph`. This tells grapher to treat all dependencies of the `OFFSET` function's row/column arguments as constants, so that the arguments can be resolved to scalar values by computing the formula chain.
 
 ```{python}
-graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!E10"], load_values=False, use_cached_dynamic_refs=True)
+graph: DependencyGraph = create_dependency_graph(
+    workbook_path, ["Sheet1!E10"], load_values=False, use_cached_dynamic_refs=True
+)
 ```
 
 The risk with this approach is that the user may modify "Sheet1!B10" after the graph is built, which will break the graph. For instance, if the user changes "Sheet1!B10" from `0` (the default/cached value) to `1` and then tries to evaluate "Sheet1!E10" using the `FormulaEvaluator`, the graph will break because the dependency cell "Sheet1!D10" will not be found in the extracted graph:
@@ -267,7 +269,9 @@ from excel_grapher import DynamicRefConfig
 
 constraints_schema = {"Sheet1!B10": Literal[0, 1]}
 config = DynamicRefConfig.from_constraints(constraints_schema, {})
-graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!E10"], load_values=False, dynamic_refs=config)
+graph: DependencyGraph = create_dependency_graph(
+    workbook_path, ["Sheet1!E10"], load_values=False, dynamic_refs=config
+)
 
 print_mermaid(graph)
 ```
@@ -289,9 +293,15 @@ Multiple targets can be passed to `create_dependency_graph`. In this case, the g
 
 ```{python}
 # Assert graph is identical whether we pass two cell addresses, a sheet-qualified range, or a defined name
-assert create_dependency_graph(workbook_path, ["Sheet1!C11", "Sheet1!D11"], load_values=True) == create_dependency_graph(workbook_path, ["Sheet1!C11:D11"], load_values=True) == create_dependency_graph(workbook_path, ["MyNamedRange"], load_values=True)
+assert (
+    create_dependency_graph(workbook_path, ["Sheet1!C11", "Sheet1!D11"], load_values=True)
+    == create_dependency_graph(workbook_path, ["Sheet1!C11:D11"], load_values=True)
+    == create_dependency_graph(workbook_path, ["MyNamedRange"], load_values=True)
+)
 
 # Print the mermaid diagram for the graph
-graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C11", "Sheet1!D11"], load_values=True)
+graph: DependencyGraph = create_dependency_graph(
+    workbook_path, ["Sheet1!C11", "Sheet1!D11"], load_values=True
+)
 print_mermaid(graph)
 ```
