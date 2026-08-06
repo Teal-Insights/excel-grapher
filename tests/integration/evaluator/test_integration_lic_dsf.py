@@ -15,7 +15,7 @@ from excel_grapher import DependencyGraph, FormulaEvaluator, XlError, create_dep
 from tests.utils.discover_formula_cells import discover_formula_cells_in_rows
 
 # Path to the test workbook
-WORKBOOK_PATH = Path("examples/lic_dsf/data/lic-dsf-template-2025-08-12.xlsm")
+WORKBOOK_PATH = Path("tests/fixtures/lic_dsf/lic-dsf-template-2025-08-12.xlsm")
 
 # Configuration matching the indicator mapping script
 INDICATOR_CONFIG = {
