@@ -289,7 +289,7 @@ upload_to_vcs_release = false
 # Intentionally excludes pandas/matplotlib/jupyter so NumPy is not pulled transitively.
 test-core = [
     "pytest>=9.0.2",
-    "ruff>=0.14.0",
+    "ruff>=0.16.0",
     "ty>=0.0.9",
     "xlsxwriter>=3.2.0",
 ]
@@ -307,7 +307,7 @@ dev = [
     "pytest-cov>=4.0.0",
     "python-semantic-release>=10.5.3",
     "quarto>=0.1.0",
-    "ruff>=0.14.0",
+    "ruff>=0.16.0",
     "ty>=0.0.9",
     "xlsxwriter>=3.2.0",
     "xlwings>=0.34.0",

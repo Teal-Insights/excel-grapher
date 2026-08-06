@@ -11,9 +11,7 @@ scenarios.
 ``` python
 from pathlib import Path
 
-from excel_grapher.grapher import (
-    create_dependency_graph, DependencyGraph
-)
+from excel_grapher.grapher import create_dependency_graph, DependencyGraph
 from excel_grapher.exporter import CodeGenerator
 
 # Load the example workbook
@@ -31,10 +29,7 @@ emulator, we can transpile the graph to standalone Python code using the
 `formula_with_no_dependencies.py` in the `codegen_outputs` folder.
 
 ``` python
-graph: DependencyGraph = create_dependency_graph(
-    workbook_path,
-    ["Sheet1!B1"]
-)
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!B1"])
 
 with CodeGenerator(graph) as gen:
     code = gen.generate()
@@ -55,6 +50,7 @@ the code:
 
 ``` python
 import sys
+
 sys.path.append("codegen_outputs")
 from formula_with_no_dependencies import compute_all
 
@@ -77,10 +73,7 @@ Let’s generate the code for this example and run it with the default
 input:
 
 ``` python
-graph: DependencyGraph = create_dependency_graph(
-    workbook_path,
-    ["Sheet1!C2"]
-)
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C2"])
 
 with CodeGenerator(graph) as gen:
     code = gen.generate()
@@ -127,10 +120,7 @@ If there are multiple target cells that are not adjacent to each other,
 target cell.
 
 ``` python
-graph: DependencyGraph = create_dependency_graph(
-    workbook_path,
-    ["Sheet1!C3", "Sheet1!E3"]
-)
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C3", "Sheet1!E3"])
 
 with CodeGenerator(graph) as gen:
     code = gen.generate()
@@ -158,10 +148,7 @@ The next example demonstrates what happens when we export the code with
 multiple adjacent targets.
 
 ``` python
-graph: DependencyGraph = create_dependency_graph(
-    workbook_path,
-    ["Sheet1!C4", "Sheet1!D4"]
-)
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C4", "Sheet1!D4"])
 
 with CodeGenerator(graph) as gen:
     code = gen.generate()
@@ -201,10 +188,7 @@ replicates this behavior with a `CircularReferenceWarning` unless the
 workbook is configured to allow cycles:
 
 ``` python
-graph: DependencyGraph = create_dependency_graph(
-    workbook_path,
-    ["Sheet1!B5", "Sheet1!C5"]
-)
+graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!B5", "Sheet1!C5"])
 
 with CodeGenerator(graph) as gen:
     code = gen.generate()
