@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import heapq
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -27,138 +26,9 @@ from excel_grapher.grapher.lightweight_viz import (
     assemble_lightweight_viz_payload,
     build_lightweight_viz_core,
     derive_partition_modules_table,
+    unconditional_scc_ranks,
 )
 from excel_grapher.grapher.node import Node
-
-# --- Graph algorithms (module inference; exporter-local) --------------------
-
-
-def _dfs_postorder_finish(adj: list[list[int]], n: int) -> list[int]:
-    visited = [False] * n
-    order: list[int] = []
-    for start in range(n):
-        if visited[start]:
-            continue
-        stack: list[tuple[int, int]] = [(start, 0)]
-        visited[start] = True
-        while stack:
-            v, ni = stack[-1]
-            nbrs = adj[v]
-            if ni < len(nbrs):
-                w = nbrs[ni]
-                stack[-1] = (v, ni + 1)
-                if not visited[w]:
-                    visited[w] = True
-                    stack.append((w, 0))
-            else:
-                stack.pop()
-                order.append(v)
-    return order
-
-
-def _assign_components_reverse(adj_rev: list[list[int]], order_rev: list[int], n: int) -> list[int]:
-    comp = [-1] * n
-    label = 0
-    for start in order_rev:
-        if comp[start] >= 0:
-            continue
-        stack = [start]
-        comp[start] = label
-        while stack:
-            v = stack.pop()
-            for w in adj_rev[v]:
-                if comp[w] < 0:
-                    comp[w] = label
-                    stack.append(w)
-        label += 1
-    return comp
-
-
-def iterative_kosaraju_scc(adj_out: list[list[int]], n: int) -> list[int]:
-    order = _dfs_postorder_finish(adj_out, n)
-    adj_rev = [[] for _ in range(n)]
-    for u in range(n):
-        for v in adj_out[u]:
-            adj_rev[v].append(u)
-    for row in adj_rev:
-        row.sort()
-    comp = _assign_components_reverse(adj_rev, list(reversed(order)), n)
-    return comp
-
-
-def _remap_components(comp: list[int]) -> tuple[list[int], int]:
-    mapping: dict[int, int] = {}
-    out = [0] * len(comp)
-    nxt = 0
-    for i, c in enumerate(comp):
-        if c not in mapping:
-            mapping[c] = nxt
-            nxt += 1
-        out[i] = mapping[c]
-    return out, nxt
-
-
-def build_condensation_edges(
-    adj: list[list[int]], n: int, comp: list[int], n_comp: int
-) -> list[list[int]]:
-    edges: set[tuple[int, int]] = set()
-    for u in range(n):
-        cu = comp[u]
-        for v in adj[u]:
-            cv = comp[v]
-            if cu != cv:
-                edges.add((cu, cv))
-    cond = [[] for _ in range(n_comp)]
-    for a, b in sorted(edges):
-        cond[a].append(b)
-    return cond
-
-
-def condensation_indegree(adj_cond: list[list[int]], n_comp: int) -> list[int]:
-    indeg = [0] * n_comp
-    for u in range(n_comp):
-        for v in adj_cond[u]:
-            indeg[v] += 1
-    return indeg
-
-
-def kahn_toposort(adj: list[list[int]], n: int) -> list[int] | None:
-    indeg = condensation_indegree(adj, n)
-    heap = [i for i in range(n) if indeg[i] == 0]
-    heapq.heapify(heap)
-    order: list[int] = []
-    while heap:
-        u = heapq.heappop(heap)
-        order.append(u)
-        for v in adj[u]:
-            indeg[v] -= 1
-            if indeg[v] == 0:
-                heapq.heappush(heap, v)
-    if len(order) != n:
-        return None
-    return order
-
-
-def longest_path_ranks(adj_cond: list[list[int]], n_comp: int) -> list[int]:
-    preds = [[] for _ in range(n_comp)]
-    for u in range(n_comp):
-        for v in adj_cond[u]:
-            preds[v].append(u)
-    for row in preds:
-        row.sort()
-
-    topo = kahn_toposort(adj_cond, n_comp)
-    if topo is None:
-        return [0] * n_comp
-
-    rank = [0] * n_comp
-    for v in topo:
-        pr = preds[v]
-        if not pr:
-            rank[v] = 0
-        else:
-            rank[v] = max(rank[u] + 1 for u in pr)
-    return rank
 
 
 @dataclass(frozen=True, slots=True)
@@ -342,11 +212,8 @@ def _analyze_modules_directed_louvain_for_viz(
     key_id = {k: i for i, k in enumerate(keys)}
     uncond, _all_adj = _build_int_adjacencies(dep_graph, keys, key_id)
 
-    comp_raw = iterative_kosaraju_scc(uncond, n)
-    comp, n_comp = _remap_components(comp_raw)
-    adj_cond = build_condensation_edges(uncond, n, comp, n_comp)
-    scc_rank = longest_path_ranks(adj_cond, n_comp)
-    node_rank = tuple(scc_rank[comp[i]] for i in range(n))
+    ranks, n_comp = unconditional_scc_ranks(uncond, n)
+    node_rank = tuple(ranks)
 
     module_of = _module_assignment_directed_louvain(
         nx_graph,
