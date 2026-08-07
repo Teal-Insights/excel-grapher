@@ -89,7 +89,9 @@ class TestDependencyGraphFilterMethods:
         ws.write_formula(2, 0, "=A1+A2", None, 5)  # A3 = =A1+A2
         wb.close()
 
-        graph = create_dependency_graph(excel_path, ["Sheet1!A3"], load_values=True)
+        graph = create_dependency_graph(
+            excel_path, ["Sheet1!A3"], load_values=True, store_raw_formula=True
+        )
         formula_items = list(graph.formula_nodes())
 
         assert len(formula_items) == 1
@@ -108,7 +110,9 @@ class TestDependencyGraphFilterMethods:
         ws.write_formula(2, 0, "=A1+A2", None, 5)  # A3 = =A1+A2
         wb.close()
 
-        graph = create_dependency_graph(excel_path, ["Sheet1!A3"], load_values=True)
+        graph = create_dependency_graph(
+            excel_path, ["Sheet1!A3"], load_values=True, store_raw_formula=True
+        )
         leaf_items = list(graph.leaf_node_items())
 
         assert len(leaf_items) == 2
@@ -126,7 +130,9 @@ class TestDependencyGraphFilterMethods:
         ws.write_formula(0, 2, "=B1+1", None, 3)  # C1 = =B1+1
         wb.close()
 
-        graph = create_dependency_graph(excel_path, ["Sheet1!C1"], load_values=True)
+        graph = create_dependency_graph(
+            excel_path, ["Sheet1!C1"], load_values=True, store_raw_formula=True
+        )
         keys = graph.formula_keys()
 
         # Should be sorted alphabetically
@@ -143,7 +149,9 @@ class TestDependencyGraphFilterMethods:
         ws.write_formula(0, 2, "=A1+B1", None, 30)  # C1 = =A1+B1
         wb.close()
 
-        graph = create_dependency_graph(excel_path, ["Sheet1!C1"], load_values=True)
+        graph = create_dependency_graph(
+            excel_path, ["Sheet1!C1"], load_values=True, store_raw_formula=True
+        )
         keys = graph.leaf_keys()
 
         assert keys == ["Sheet1!A1", "Sheet1!B1"]
@@ -158,7 +166,9 @@ class TestDependencyGraphFilterMethods:
         ws.write_formula(1, 0, "=A1*2", None, 84)  # A2 = =A1*2
         wb.close()
 
-        graph = create_dependency_graph(excel_path, ["Sheet1!A2"], load_values=True)
+        graph = create_dependency_graph(
+            excel_path, ["Sheet1!A2"], load_values=True, store_raw_formula=True
+        )
 
         # Access formula node
         node = graph.get_node("Sheet1!A2")
@@ -183,7 +193,9 @@ class TestDependencyGraphFilterMethods:
         ws.write_formula(0, 2, "=A1+B1", None, 3)  # C1 = =A1+B1
         wb.close()
 
-        graph = create_dependency_graph(excel_path, ["Sheet1!C1"], load_values=True)
+        graph = create_dependency_graph(
+            excel_path, ["Sheet1!C1"], load_values=True, store_raw_formula=True
+        )
 
         # Check dependencies
         deps = graph.get_dependencies("Sheet1!C1")
@@ -204,7 +216,9 @@ class TestDependencyGraphFilterMethods:
         wb.close()
 
         # We know the target formula cell; sheet-name quoting is handled by the graph builder.
-        graph = create_dependency_graph(excel_path, ["My Data!A2"], load_values=True)
+        graph = create_dependency_graph(
+            excel_path, ["My Data!A2"], load_values=True, store_raw_formula=True
+        )
 
         # Keys should be properly quoted
         assert graph.get_node("'My Data'!A2") is not None
@@ -233,7 +247,9 @@ class TestDependencyGraphFilterMethods:
         wb.close()
 
         # We know the target formula cell; sheet-name quoting is handled by the graph builder.
-        graph = create_dependency_graph(excel_path, ["Output Sheet!A1"], load_values=True)
+        graph = create_dependency_graph(
+            excel_path, ["Output Sheet!A1"], load_values=True, store_raw_formula=True
+        )
 
         # Data sheet key should NOT be quoted
         assert graph.get_node("Data!A1") is not None

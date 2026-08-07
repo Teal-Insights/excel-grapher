@@ -34,11 +34,40 @@ _EXCLUDED_CAUSES = (
 )
 
 
+class RawFormulasRequiredError(RuntimeError):
+    """TACO pattern inference needs raw workbook formulas that the graph lacks."""
+
+
+def _require_raw_formulas(graph: DependencyGraph) -> None:
+    """Raise when `graph` has formula cells but no raw formula strings.
+
+    Stride patterns are inferred from the relative/absolute (`$`) markers that
+    normalization strips, so `normalized_formula` cannot stand in here.
+    """
+    saw_formula_cell = False
+    for _key, node in graph.formula_nodes():
+        if node.formula is not None:
+            return
+        saw_formula_cell = True
+    if saw_formula_cell:
+        raise RawFormulasRequiredError(
+            "TACO range compression needs raw workbook formulas, but no node in this "
+            "graph stores one. Build the graph with "
+            "create_dependency_graph(..., store_raw_formula=True)."
+        )
+
+
 def build_taco_index(
     graph: DependencyGraph,
     config: TacoBuildConfig | None = None,
 ) -> TacoIndex:
-    """Build a TACO compressed index from `graph` without mutating it."""
+    """Build a TACO compressed index from `graph` without mutating it.
+
+    Raises:
+        RawFormulasRequiredError: If `graph` has formula cells but was built
+            without `store_raw_formula=True`.
+    """
+    _require_raw_formulas(graph)
     cfg = config or TacoBuildConfig()
     index = TacoIndex()
     covered: set[tuple[NodeKey, NodeKey]] = set()

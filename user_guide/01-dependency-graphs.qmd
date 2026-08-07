@@ -12,7 +12,8 @@ guide-section: "Core workflow"
 - **Extensible metadata**: each `Node` has a `metadata: dict[str, Any]` that hooks can mutate.
 - **Range expansion**: ranges like `A1:A10` are expanded to individual cell dependencies (bounded by `max_range_cells`).
 - **Whole-column/row shorthand**: Excel forms like `Data!A:A` and `Data!5:5` parse as syntactic shorthands and resolve to each sheet's **used range** (workbook dimensions), not Excel's full grid. These shorthands expand to every row/column in that extent even when `max_range_cells` would otherwise keep only rectangular corner endpoints.
-- **Normalized formulas**: each formula node has a `normalized_formula` field with sheet-qualified refs, resolved named ranges, and stripped `$` markers — ready for transpilation.
+- **Normalized formulas**: each formula node has a `normalized_formula` field with sheet-qualified refs, resolved named ranges, and stripped `$` markers — ready for transpilation. It is what identifies a formula cell, the only formula text evaluation and export read, and the only text compression rewrites.
+- **Raw formulas are opt-in**: `Node.formula` (the workbook string, e.g. `=A1+$B$2`) is stored only with `create_dependency_graph(..., store_raw_formula=True)`. It is an audit/display field — see [Raw formula storage](#raw-formula-storage).
 
 ### Quick start: building a graph
 
@@ -30,6 +31,31 @@ print(len(g))          # number of visited nodes
 print(to_graphviz(g))  # GraphViz DOT
 ```
 
+### Raw formula storage {#raw-formula-storage}
+
+Extraction always stores `normalized_formula`. The raw workbook string
+`Node.formula` is opt-in, because nothing in evaluation, compression, or export
+needs it — dropping it is a straight memory saving on large workbooks.
+
+```python
+graph = create_dependency_graph(wb_path, targets)          # node.formula is None
+graph = create_dependency_graph(wb_path, targets, store_raw_formula=True)
+```
+
+Turn it on when you want:
+
+- the original text for auditing, debugging, or display (graph exports and the
+  lightweight viewer fall back to `normalized_formula` when it is absent); or
+- the **TACO range-pattern index** below, which infers stride patterns from the
+  relative/absolute (`$`) markers that normalization strips.
+  `build_taco_index` raises `RawFormulasRequiredError` on a graph without them.
+
+Raw formulas are a record of what extraction read. Compression and projection
+rewrite `normalized_formula` only, so on a compressed graph `Node.formula` still
+shows the pre-compression workbook text — display it, but never re-parse it as
+the node's current definition. For the same reason the compression audit trail
+(`record.formula_rewrites`) reports normalized formulas only.
+
 ### Optional TACO range-pattern index
 
 After building a cell-level graph, you can optionally attach a **TACO-style**
@@ -45,8 +71,9 @@ from excel_grapher.grapher import build_taco_index, create_dependency_graph
 
 wb_path = Path("model.xlsx")
 
-# Build the index as a derived artifact from the canonical graph:
-graph = create_dependency_graph(wb_path, ["Sheet1!D3:D100"])
+# Build the index as a derived artifact from the canonical graph.
+# Pattern inference reads the raw `$` markers, so raw formulas must be stored:
+graph = create_dependency_graph(wb_path, ["Sheet1!D3:D100"], store_raw_formula=True)
 index = build_taco_index(graph)
 
 # Query compressed ranges, then materialize to cell keys when needed:
@@ -168,11 +195,13 @@ from excel_grapher.grapher import DependencyGraph
 targets = discover_formula_cells_in_rows(Path("model.xlsx"), "Sheet1", [10, 11, 12])
 
 ## Build the dependency graph
-graph: DependencyGraph = create_dependency_graph(Path("model.xlsx"), targets, load_values=True)
+graph: DependencyGraph = create_dependency_graph(
+    Path("model.xlsx"), targets, load_values=True, store_raw_formula=True
+)
 
 ## Access cells by normalized address (O(1) lookup)
 node = graph.get_node("Sheet1!A10")
-print(node.formula)             # Original formula
+print(node.formula)             # Original formula (only with store_raw_formula=True)
 print(node.normalized_formula)  # Sheet-qualified for transpilation
 print(node.value)               # Cached value from Excel
 print(node.is_target)           # True if this node came from original targets

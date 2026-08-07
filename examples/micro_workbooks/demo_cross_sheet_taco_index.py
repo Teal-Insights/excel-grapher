@@ -129,6 +129,9 @@ def main() -> None:
         WORKBOOK,
         TARGETS,
         load_values=True,
+        # TACO infers stride patterns from raw `$` markers, which
+        # normalization strips, so the raw formulas must be kept.
+        store_raw_formula=True,
     )
     full_index = build_taco_index(graph)
 

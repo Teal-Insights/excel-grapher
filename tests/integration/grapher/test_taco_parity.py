@@ -28,6 +28,7 @@ def test_taco_full_parity_on_fixture_workbook() -> None:
         ],
         load_values=False,
         capture_dependency_provenance=True,
+        store_raw_formula=True,
     )
     index = build_taco_index(graph)
     kinds = {edge.meta.kind for edge in index.compressed_edges}

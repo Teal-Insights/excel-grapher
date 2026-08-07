@@ -90,21 +90,16 @@ def replace_substrings_at_spans(
     return out
 
 
-def direct_provenance_for_key_in_strings(
-    formula: str | None,
+def direct_provenance_for_key_in_normalized(
     normalized: str | None,
     dep_key: str,
 ) -> EdgeProvenance:
-    """Build minimal direct-ref provenance by locating `dep_key` substrings."""
-    sites_f: list[tuple[int, int]] = []
+    """Build minimal direct-ref provenance by locating `dep_key` in `normalized`."""
     sites_n: list[tuple[int, int]] = []
-    if formula:
-        sites_f.extend(_find_literal_spans(formula, dep_key))
     if normalized:
         sites_n.extend(_find_literal_spans(normalized, dep_key))
     return EdgeProvenance(
         causes=DependencyCause.direct_ref,
-        direct_sites_formula=tuple(sites_f),
         direct_sites_normalized=tuple(sites_n),
     )
 
@@ -130,33 +125,14 @@ class CompressionProvenanceRequiredError(RuntimeError):
 def refresh_direct_sites(
     provenance: EdgeProvenance,
     *,
-    old_formula: str | None,
-    new_formula: str | None,
-    old_normalized: str | None,
     new_normalized: str | None,
     precedent_key: NodeKey,
 ) -> EdgeProvenance:
-    """Re-locate direct-ref spans after a dependent formula rewrite."""
+    """Re-locate direct-ref spans in `new_normalized` after a dependent rewrite."""
     sites_n: list[tuple[int, int]] = []
     if new_normalized:
         sites_n = _find_literal_spans(new_normalized, precedent_key)
-
-    sites_f: list[tuple[int, int]] = []
-    if new_formula:
-        if provenance.direct_sites_formula and old_formula:
-            for a, b in provenance.direct_sites_formula:
-                if 0 <= a <= b <= len(old_formula):
-                    needle = old_formula[a:b]
-                    if needle:
-                        sites_f.extend(_find_literal_spans(new_formula, needle))
-        else:
-            sites_f = _find_literal_spans(new_formula, precedent_key)
-
-    return replace(
-        provenance,
-        direct_sites_formula=tuple(sites_f),
-        direct_sites_normalized=tuple(sites_n),
-    )
+    return replace(provenance, direct_sites_normalized=tuple(sites_n))
 
 
 def _structural_inline_candidate(
@@ -167,7 +143,7 @@ def _structural_inline_candidate(
     if is_identity_transit(graph, transit_key) is not None:
         return None
     t_node = graph.get_node(transit_key)
-    if t_node is None or t_node.is_leaf or t_node.formula is None:
+    if t_node is None or t_node.is_leaf or t_node.normalized_formula is None:
         return None
     dependents = graph.get_dependents(transit_key)
     if len(dependents) != 1:
@@ -182,14 +158,8 @@ def _structural_inline_candidate(
     if not dependent_context_substitutable(graph, dependent, replacing=transit_key):
         return None
     prov = graph.get_edge_attrs(dependent, transit_key).provenance
-    if prov is not None:
-        if len(prov.direct_sites_normalized) != 1:
-            return None
-        dep_node = graph.get_node(dependent)
-        if dep_node is None:
-            return None
-        if dep_node.formula is not None and len(prov.direct_sites_formula) != 1:
-            return None
+    if prov is not None and len(prov.direct_sites_normalized) != 1:
+        return None
     return dependent
 
 
@@ -233,19 +203,21 @@ def compression_safe_provenance(prov: EdgeProvenance | None) -> bool:
 
 @dataclass(frozen=True)
 class FormulaRewrite:
-    """Dependent formula rewrite performed during projection."""
+    """Dependent formula rewrite performed during projection.
+
+    Compression rewrites `normalized_formula` only, so the audit trail records
+    normalized text. The raw `Node.formula`, when stored, keeps the workbook
+    text it was extracted with; `ProjectedNodeSnapshot.formula` captures it for
+    removed nodes.
+    """
 
     dependent: str
-    before_formula: str | None
-    after_formula: str | None
     before_normalized: str | None
     after_normalized: str | None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "dependent": self.dependent,
-            "before_formula": self.before_formula,
-            "after_formula": self.after_formula,
             "before_normalized": self.before_normalized,
             "after_normalized": self.after_normalized,
         }
@@ -254,8 +226,6 @@ class FormulaRewrite:
     def from_dict(cls, data: Mapping[str, Any]) -> FormulaRewrite:
         return cls(
             dependent=str(data["dependent"]),
-            before_formula=data.get("before_formula"),
-            after_formula=data.get("after_formula"),
             before_normalized=data.get("before_normalized"),
             after_normalized=data.get("after_normalized"),
         )
@@ -428,12 +398,7 @@ def _incoming_edge_substitutable(
         return False
     if prov is None:
         return False
-    if len(prov.direct_sites_normalized) != 1:
-        return False
-    dep_node = graph.get_node(dependent)
-    if dep_node is None:
-        return False
-    return dep_node.formula is None or len(prov.direct_sites_formula) == 1
+    return len(prov.direct_sites_normalized) == 1
 
 
 def substitute_body_at_spans(

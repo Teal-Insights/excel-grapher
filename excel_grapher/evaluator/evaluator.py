@@ -300,7 +300,7 @@ class FormulaEvaluator:
             if node is None:
                 continue
 
-            if node.formula is None:
+            if node.normalized_formula is None:
                 # It's a leaf
                 leaves.add(current)
             else:
@@ -347,15 +347,18 @@ class FormulaEvaluator:
         if node is None:
             raise KeyError(f"Cell {address} not found in graph")
 
-        if node.formula is None:
+        nf = node.normalized_formula
+        if nf is None:
+            # A raw formula without a normalized one is a malformed node, not a leaf.
+            if node.formula is not None:
+                raise MissingNormalizedFormulaError(norm)
             self._cache[norm] = node.value
             self._leaf_values[norm] = node.value  # Track for change detection
             if self.on_cell_evaluated is not None:
                 self.on_cell_evaluated(norm, node.value)
             return node.value
 
-        nf = node.normalized_formula
-        if nf is None or not isinstance(nf, str) or not nf.strip():
+        if not isinstance(nf, str) or not nf.strip():
             raise MissingNormalizedFormulaError(norm)
         formula = nf.strip()
 

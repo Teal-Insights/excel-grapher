@@ -59,7 +59,7 @@ def test_non_autofill_row_span_not_one_rr_group(tmp_path: Path) -> None:
     ws.write_formula(2, 8, "=D3+H3")
     wb.close()
 
-    graph = create_dependency_graph(path, ["Demo!I3"], load_values=False)
+    graph = create_dependency_graph(path, ["Demo!I3"], load_values=False, store_raw_formula=True)
     index = build_taco_index(graph)
     assert not any(e.meta.kind == PatternKind.rr for e in index.compressed_edges)
     assert_taco_parity(graph, index)

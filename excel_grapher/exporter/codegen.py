@@ -452,11 +452,16 @@ class CodeGenerator:
             return self._ast_cache[normalized]
 
         node = self.graph.get_node(normalized)
-        if node is None or node.formula is None:
+        if node is None:
             return None
 
         nf = node.normalized_formula
-        if nf is None or not isinstance(nf, str) or not nf.strip():
+        if nf is None:
+            # A raw formula without a normalized one is a malformed node, not a leaf.
+            if node.formula is not None:
+                raise MissingNormalizedFormulaError(normalized)
+            return None
+        if not isinstance(nf, str) or not nf.strip():
             raise MissingNormalizedFormulaError(normalized)
         ast = parse(nf.strip())
         self._ast_cache[normalized] = ast
@@ -540,7 +545,7 @@ class CodeGenerator:
             expr = f"xl_cell(ctx, {repr(normalized)})"
         else:
             node = self.graph.get_node(normalized)
-            if node is not None and node.formula is not None:
+            if node is not None and node.normalized_formula is not None:
                 func_name = address_to_python_name(normalized)
                 expr = f"xl_eval(ctx, {repr(normalized)}, {func_name})"
             elif self._reader_index is not None:
@@ -1212,7 +1217,7 @@ class CodeGenerator:
         needed_leaves: set[str] = set()
         for addr in all_cells:
             node = self.graph.get_node(addr)
-            if node is None or node.formula is not None:
+            if node is None or node.normalized_formula is not None:
                 continue
             needed_leaves.add(normalize_address(addr))
         return needed_leaves
@@ -2191,12 +2196,15 @@ class CodeGenerator:
         func_name = address_to_python_name(normalized)
         node = self.graph.get_node(normalized)
 
-        if node is None or node.formula is None:
+        if node is None or node.normalized_formula is None:
             raise ValueError(f"Not a formula cell: {normalized}")
 
         lines: list[str] = []
         lines.append(f"def {func_name}(ctx):")
-        doc = f"Formula: {node.formula}".replace("'''", "\\'''")
+        # Prefer the raw workbook text when it was stored; otherwise document the
+        # normalized formula, which is always present for a formula cell.
+        shown_formula = node.formula if node.formula is not None else node.normalized_formula
+        doc = f"Formula: {shown_formula}".replace("'''", "\\'''")
         if doc[-1] not in ".?!":
             doc = f"{doc}."
         lines.append(f"    '''{doc}'''")
@@ -2293,7 +2301,7 @@ class CodeGenerator:
                 return
 
             # If it's a formula, parse and find cell references
-            if node.formula is not None:
+            if node.normalized_formula is not None:
                 ast = self._get_or_parse_ast(addr)
                 assert ast is not None
                 deps = self._extract_cell_refs(ast)
@@ -3065,7 +3073,7 @@ class CodeGenerator:
                 return
             self._emitted.add(address)
             node = self.graph.get_node(address)
-            if node is not None and node.formula is not None:
+            if node is not None and node.normalized_formula is not None:
                 normalized = normalize_address(address)
                 formula_emit_order.append(normalized)
                 self._temp_var_counter = 0

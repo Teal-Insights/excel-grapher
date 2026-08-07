@@ -24,7 +24,9 @@ def test_normalized_formula_prefixes_same_sheet_refs(tmp_path: Path) -> None:
     wb.save(excel_path)
     wb.close()
 
-    graph = create_dependency_graph(excel_path, ["Sheet1!A3"], load_values=False)
+    graph = create_dependency_graph(
+        excel_path, ["Sheet1!A3"], load_values=False, store_raw_formula=True
+    )
     node = graph.get_node("Sheet1!A3")
     assert node is not None
     assert node.formula == "=A1+A2"
@@ -43,7 +45,9 @@ def test_normalized_formula_resolves_named_ranges(tmp_path: Path) -> None:
     wb.save(excel_path)
     wb.close()
 
-    graph = create_dependency_graph(excel_path, ["Sheet1!A2"], load_values=False)
+    graph = create_dependency_graph(
+        excel_path, ["Sheet1!A2"], load_values=False, store_raw_formula=True
+    )
     node = graph.get_node("Sheet1!A2")
     assert node is not None
     assert node.formula == "=MyInput*2"
@@ -61,7 +65,9 @@ def test_normalized_formula_strips_absolute_markers(tmp_path: Path) -> None:
     wb.save(excel_path)
     wb.close()
 
-    graph = create_dependency_graph(excel_path, ["Sheet1!A2"], load_values=False)
+    graph = create_dependency_graph(
+        excel_path, ["Sheet1!A2"], load_values=False, store_raw_formula=True
+    )
     node = graph.get_node("Sheet1!A2")
     assert node is not None
     # All three refs should normalize to Sheet1!A1
@@ -81,7 +87,9 @@ def test_normalized_formula_qualifies_range_endpoints(tmp_path: Path) -> None:
     wb.save(excel_path)
     wb.close()
 
-    graph = create_dependency_graph(excel_path, ["Sheet1!A4"], load_values=False)
+    graph = create_dependency_graph(
+        excel_path, ["Sheet1!A4"], load_values=False, store_raw_formula=True
+    )
     node = graph.get_node("Sheet1!A4")
     assert node is not None
     assert node.formula == "=SUM(A1:A3)"
@@ -100,7 +108,9 @@ def test_normalized_formula_preserves_cross_sheet_refs(tmp_path: Path) -> None:
     wb.save(excel_path)
     wb.close()
 
-    graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
+    graph = create_dependency_graph(
+        excel_path, ["Sheet1!A1"], load_values=False, store_raw_formula=True
+    )
     node = graph.get_node("Sheet1!A1")
     assert node is not None
     # Cross-sheet ref should stay quoted but lose $ markers
@@ -118,7 +128,9 @@ def test_normalized_formula_is_none_for_leaves(tmp_path: Path) -> None:
     wb.save(excel_path)
     wb.close()
 
-    graph = create_dependency_graph(excel_path, ["Sheet1!A2"], load_values=False)
+    graph = create_dependency_graph(
+        excel_path, ["Sheet1!A2"], load_values=False, store_raw_formula=True
+    )
     leaf = graph.get_node("Sheet1!A1")
     assert leaf is not None
     assert leaf.is_leaf
@@ -141,7 +153,9 @@ def test_mixed_sheet_formula_bare_ref_binds_to_formula_sheet_issue_160(tmp_path:
     wb.save(excel_path)
     wb.close()
 
-    graph = create_dependency_graph(excel_path, ["Engine!C14"], load_values=True)
+    graph = create_dependency_graph(
+        excel_path, ["Engine!C14"], load_values=True, store_raw_formula=True
+    )
     deps = sorted(graph.get_dependencies("Engine!C14"))
     assert "Engine!C10" in deps
     assert "Inputs!C10" not in deps

@@ -55,7 +55,7 @@ def test_rr_chain_workbook_parity(tmp_path: Path) -> None:
         ws.write_formula(row - 1, 15, f"=P{row - 1}+1")
     wb.close()
 
-    graph = create_dependency_graph(path, ["Data!P4:P9"], load_values=False)
+    graph = create_dependency_graph(path, ["Data!P4:P9"], load_values=False, store_raw_formula=True)
     index = build_taco_index(graph)
     assert any(e.meta.kind == PatternKind.rr_chain for e in index.compressed_edges)
     assert_taco_parity(graph, index)

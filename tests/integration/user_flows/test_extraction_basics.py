@@ -39,7 +39,9 @@ def test_formula_with_no_dependencies_is_extracted_as_single_formula_leaf_node(
     path = workbook_factory(
         lambda ws, _wb: write_single_row(ws, ("Formula with no dependencies", "=1+1"))
     )
-    graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!B1"], load_values=True)
+    graph: DependencyGraph = create_dependency_graph(
+        path, ["Sheet1!B1"], load_values=True, store_raw_formula=True
+    )
     assert len(graph._nodes) == 1
 
     node: NodeView | None = graph.get_node("Sheet1!B1")
@@ -68,7 +70,9 @@ def test_linear_dependency_is_extracted_as_two_nodes_with_one_edge(
     workbook_factory: WorkbookFactory,
 ) -> None:
     path = workbook_factory(lambda ws, _wb: write_single_row(ws, ("Linear dependency", 1, "=B1+1")))
-    graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!C1"], load_values=True)
+    graph: DependencyGraph = create_dependency_graph(
+        path, ["Sheet1!C1"], load_values=True, store_raw_formula=True
+    )
     assert len(graph._nodes) == 2
 
     target_node: NodeView | None = graph.get_node("Sheet1!C1")
@@ -109,7 +113,9 @@ def test_conditions_are_extracted_as_unguarded_but_conditional_branches_as_guard
     path = workbook_factory(
         lambda ws, _wb: write_single_row(ws, ("Conditional branches", 1, 10, 20, "=IF(B1=1,C1,D1)"))
     )
-    graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!E1"], load_values=True)
+    graph: DependencyGraph = create_dependency_graph(
+        path, ["Sheet1!E1"], load_values=True, store_raw_formula=True
+    )
     assert len(graph._nodes) == 4
 
     target_node: NodeView | None = graph.get_node("Sheet1!E1")

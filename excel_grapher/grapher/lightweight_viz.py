@@ -19,7 +19,11 @@ from excel_grapher.core.address_keys import (
     parse_node_key,
 )
 
-from .formula_label import truncate_formula_display, validate_max_formula_length
+from .formula_label import (
+    display_formula,
+    truncate_formula_display,
+    validate_max_formula_length,
+)
 from .graph import DependencyGraph
 from .node import NodeKey, NodeView
 
@@ -995,8 +999,9 @@ def build_lightweight_viz_core(
         cols.append(col)
         sheet_ix.append(sheet_index_map[sheet])
         is_leaf.append(node.is_leaf)
-        if include_formula_on_nodes and node.formula:
-            formulas.append(truncate_formula_display(node.formula, max_formula_length))
+        shown_formula = display_formula(node)
+        if include_formula_on_nodes and shown_formula:
+            formulas.append(truncate_formula_display(shown_formula, max_formula_length))
         else:
             formulas.append(None)
 

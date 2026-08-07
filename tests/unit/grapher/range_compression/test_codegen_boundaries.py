@@ -113,6 +113,7 @@ def test_internal_only_compresses_middle_formula_column(tmp_path: Path) -> None:
         path,
         ["Model!D3:D7"],
         load_values=False,
+        store_raw_formula=True,
     )
     inputs = frozenset(f"Model!A{row}" for row in range(3, 8))
     index = build_taco_index(

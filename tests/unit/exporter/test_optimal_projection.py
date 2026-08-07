@@ -57,18 +57,15 @@ def _direct_edge(graph: DependencyGraph, dependent: str, precedent: str) -> None
     dr = DependencyCause.direct_ref
     dep_node = graph.get_node(dependent)
     assert dep_node is not None
-    f = dep_node.formula
     n = dep_node.normalized_formula
-    assert f is not None and n is not None
+    assert n is not None
     ref = precedent
-    i_f = f.index(ref)
     i_n = n.index(ref)
     graph.add_edge(
         dependent,
         precedent,
         provenance=EdgeProvenance(
             causes=dr,
-            direct_sites_formula=((i_f, i_f + len(ref)),),
             direct_sites_normalized=((i_n, i_n + len(ref)),),
         ),
     )

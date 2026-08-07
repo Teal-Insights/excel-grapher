@@ -242,7 +242,6 @@ def test_get_edge_attrs_returns_typed_container() -> None:
     g.add_node(_formula("S", "B", 1, "=S!A1"))
     prov = EdgeProvenance(
         causes=DependencyCause.direct_ref,
-        direct_sites_formula=((1, 5),),
         direct_sites_normalized=((1, 5),),
     )
     g.add_edge("S!B1", "S!A1", provenance=prov)
@@ -312,7 +311,6 @@ def test_edge_provenance_stored_in_typed_map() -> None:
     g.add_node(_formula("S", "B", 1, "=S!A1"))
     prov = EdgeProvenance(
         causes=DependencyCause.direct_ref,
-        direct_sites_formula=((1, 5),),
         direct_sites_normalized=((1, 5),),
     )
     g.add_edge("S!B1", "S!A1", provenance=prov)

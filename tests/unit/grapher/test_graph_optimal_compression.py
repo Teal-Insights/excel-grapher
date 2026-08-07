@@ -7,7 +7,7 @@ import fastpyxl
 import pytest
 import xlsxwriter
 
-from excel_grapher import create_dependency_graph
+from excel_grapher import FormulaEvaluator, create_dependency_graph
 from excel_grapher.core.cell_types import Between, CellKind, EnumDomain, RealBetween
 from excel_grapher.evaluator.parser import parse
 from excel_grapher.grapher.compression import (
@@ -50,24 +50,20 @@ def _direct_edge(
     dependent: str,
     precedent: str,
     *,
-    formula: str | None = None,
     normalized: str | None = None,
 ) -> None:
     dr = DependencyCause.direct_ref
     dep_node = graph.get_node(dependent)
     assert dep_node is not None
-    f = formula if formula is not None else dep_node.formula
     n = normalized if normalized is not None else dep_node.normalized_formula
-    assert f is not None and n is not None
+    assert n is not None
     ref = precedent
-    i_f = f.index(ref)
     i_n = n.index(ref)
     graph.add_edge(
         dependent,
         precedent,
         provenance=EdgeProvenance(
             causes=dr,
-            direct_sites_formula=((i_f, i_f + len(ref)),),
             direct_sites_normalized=((i_n, i_n + len(ref)),),
         ),
     )
@@ -87,15 +83,14 @@ def _local_ref_edge(
     f = dep_node.formula
     n = dep_node.normalized_formula
     assert f is not None and n is not None
+    assert formula_ref in f
     ref_n = normalized_ref if normalized_ref is not None else precedent
-    i_f = f.index(formula_ref)
     i_n = n.index(ref_n)
     graph.add_edge(
         dependent,
         precedent,
         provenance=EdgeProvenance(
             causes=dr,
-            direct_sites_formula=((i_f, i_f + len(formula_ref)),),
             direct_sites_normalized=((i_n, i_n + len(ref_n)),),
         ),
     )
@@ -162,14 +157,14 @@ def test_compress_identity_transit_refreshes_sibling_edge_spans() -> None:
     assert prov is not None
     node = graph.get_node("Engine!C20")
     assert node is not None
-    formula = node.formula
     normalized = node.normalized_formula
-    assert formula is not None and normalized is not None
-    assert formula[prov.direct_sites_formula[0][0] : prov.direct_sites_formula[0][1]] == "C14"
+    assert normalized is not None
     assert (
         normalized[prov.direct_sites_normalized[0][0] : prov.direct_sites_normalized[0][1]]
         == "Engine!C14"
     )
+    # Compression rewrites normalized text only; the raw formula stays as captured.
+    assert node.formula == "=B20*(1+C15/100)/(1+C14/100)-C16"
 
 
 def test_optimal_inline_local_ref_after_identity_transit(tmp_path: Path) -> None:
@@ -307,7 +302,6 @@ def test_optimal_inlines_transit_with_guarded_outgoing_edges() -> None:
         guard=branch_guard,
         provenance=EdgeProvenance(
             causes=DependencyCause.direct_ref,
-            direct_sites_formula=((20, 29),),
             direct_sites_normalized=((20, 29),),
         ),
     )
@@ -349,7 +343,6 @@ def test_optimal_inline_shared_dep_unguarded_on_dependent_wins() -> None:
         guard=branch_guard,
         provenance=EdgeProvenance(
             causes=DependencyCause.direct_ref,
-            direct_sites_formula=((20, 29),),
             direct_sites_normalized=((20, 29),),
         ),
     )
@@ -598,10 +591,6 @@ def test_optimal_keeps_two_call_sites() -> None:
         "Sheet1!B1",
         provenance=EdgeProvenance(
             causes=dr,
-            direct_sites_formula=(
-                (f.index(ref), f.index(ref) + len(ref)),
-                (f.rindex(ref), f.rindex(ref) + len(ref)),
-            ),
             direct_sites_normalized=(
                 (f.index(ref), f.index(ref) + len(ref)),
                 (f.rindex(ref), f.rindex(ref) + len(ref)),
@@ -614,14 +603,15 @@ def test_optimal_keeps_two_call_sites() -> None:
 
 
 def test_optimal_blocks_unsafe_incoming_edge(tmp_path: Path) -> None:
+    """A dependent reaching the transit through a range ref cannot absorb its body."""
     path = tmp_path / "rng.xlsx"
     wb = xlsxwriter.Workbook(path)
     ws = wb.add_worksheet("Sheet1")
-    ws.write_number(0, 1, 1)
-    ws.write_number(0, 2, 2)
-    ws.write_formula(0, 0, "=SUM(Sheet1!B1:C1)", None, 3)
-    ws.write_formula(0, 3, "=Sheet1!B1*2", None, 2)
-    ws.write_formula(0, 4, "=Sheet1!D1+1", None, 3)
+    ws.write_number(0, 1, 1)  # B1
+    ws.write_formula(0, 3, "=Sheet1!B1*2", None, 2)  # D1
+    ws.write_number(1, 3, 5)  # D2
+    ws.write_formula(0, 4, "=SUM(Sheet1!D1:D2)", None, 7)  # E1
+
     wb.close()
 
     graph = create_dependency_graph(
@@ -630,8 +620,38 @@ def test_optimal_blocks_unsafe_incoming_edge(tmp_path: Path) -> None:
         load_values=False,
         capture_dependency_provenance=True,
     )
+    prov = graph.get_edge_attrs("Sheet1!E1", "Sheet1!D1").provenance
+    assert prov is not None
+    assert DependencyCause.static_range in prov.causes
+
     removed = graph.compress_optimal()
     assert "Sheet1!D1" not in removed
+
+
+def test_optimal_inlines_already_qualified_formulas(tmp_path: Path) -> None:
+    """Normalization is a no-op on sheet-qualified formulas; spans must still be recorded."""
+    path = tmp_path / "qualified.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(0, 1, 1)  # B1
+    ws.write_formula(0, 3, "=Sheet1!B1*2", None, 2)  # D1
+    ws.write_formula(0, 4, "=Sheet1!D1+1", None, 3)  # E1
+    wb.close()
+
+    graph = create_dependency_graph(
+        path,
+        ["Sheet1!E1"],
+        load_values=False,
+        capture_dependency_provenance=True,
+    )
+    before = FormulaEvaluator(graph).evaluate("Sheet1!E1")
+
+    assert "Sheet1!D1" in graph.compress_optimal()
+    node = graph.get_node("Sheet1!E1")
+    assert node is not None
+    assert node.normalized_formula == "=(Sheet1!B1*2)+1"
+    assert graph.get_dependencies("Sheet1!E1") == {"Sheet1!B1"}
+    assert FormulaEvaluator(graph).evaluate("Sheet1!E1") == before
 
 
 def test_optimal_blocks_unsafe_body_range() -> None:
@@ -755,7 +775,6 @@ def test_optimal_blocks_guarded_incoming_edge() -> None:
         guard=Literal(True),
         provenance=EdgeProvenance(
             causes=DependencyCause.direct_ref,
-            direct_sites_formula=sp,
             direct_sites_normalized=sp,
         ),
     )

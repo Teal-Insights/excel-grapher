@@ -147,7 +147,7 @@ def validate_graph(
         node = graph.get_node(key)
         if node is None:
             continue
-        if node.formula is None:
+        if node.normalized_formula is None:
             continue
         if scope is not None and node.sheet not in scope:
             continue

@@ -78,7 +78,6 @@ def test_identity_projection_does_not_mutate_original_graph() -> None:
         "Sheet1!B1",
         provenance=EdgeProvenance(
             causes=dr,
-            direct_sites_formula=sp,
             direct_sites_normalized=sp,
         ),
     )
@@ -112,7 +111,6 @@ def test_projection_result_behaves_like_projected_graph() -> None:
         "Sheet1!B1",
         provenance=EdgeProvenance(
             causes=dr,
-            direct_sites_formula=sp,
             direct_sites_normalized=sp,
         ),
     )
@@ -172,7 +170,6 @@ def test_manifest_serializes_and_resolves_chain_aliases() -> None:
         "Sheet1!B1",
         provenance=EdgeProvenance(
             causes=dr,
-            direct_sites_formula=sp,
             direct_sites_normalized=sp,
         ),
     )
@@ -213,7 +210,6 @@ def test_collapsed_group_records_statement_order_and_external_boundary() -> None
         "Sheet1!B1",
         provenance=EdgeProvenance(
             causes=dr,
-            direct_sites_formula=sp,
             direct_sites_normalized=sp,
         ),
     )
@@ -252,7 +248,6 @@ def test_apply_projection_preserves_manifest_from_earlier_steps() -> None:
         "Sheet1!B1",
         provenance=EdgeProvenance(
             causes=dr,
-            direct_sites_formula=sp,
             direct_sites_normalized=sp,
         ),
     )
@@ -296,7 +291,6 @@ def test_apply_projection_composes_heterogeneous_kinds() -> None:
         "Sheet1!B1",
         provenance=EdgeProvenance(
             causes=dr,
-            direct_sites_formula=sp,
             direct_sites_normalized=sp,
         ),
     )
@@ -355,7 +349,6 @@ def test_manifest_node_snapshots_preserve_cell_coordinates_and_values() -> None:
         "Sheet1!B1",
         provenance=EdgeProvenance(
             causes=dr,
-            direct_sites_formula=sp,
             direct_sites_normalized=sp,
         ),
     )
@@ -473,7 +466,6 @@ def test_projection_respects_compression_safety(test_name: str) -> None:
             "Sheet1!B1",
             provenance=EdgeProvenance(
                 causes=dr,
-                direct_sites_formula=sp,
                 direct_sites_normalized=sp,
             ),
         )
@@ -651,7 +643,6 @@ def test_optimal_projection_does_not_mutate_shared_preparsed_ast() -> None:
         "Sheet1!B1",
         provenance=EdgeProvenance(
             causes=dr,
-            direct_sites_formula=span,
             direct_sites_normalized=span,
         ),
     )

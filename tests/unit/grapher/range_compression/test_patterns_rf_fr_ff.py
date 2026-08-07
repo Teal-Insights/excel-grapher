@@ -27,7 +27,9 @@ def test_rf_running_sum_column_parity(tmp_path: Path) -> None:
         ws.write_formula(row - 1, 5, f"=SUM(E{row}:$E${tail})")
     wb.close()
 
-    graph = create_dependency_graph(path, ["Data!F3:F12"], load_values=False)
+    graph = create_dependency_graph(
+        path, ["Data!F3:F12"], load_values=False, store_raw_formula=True
+    )
     index = build_taco_index(graph)
     rf = [e for e in index.compressed_edges if e.meta.kind == PatternKind.rf]
     assert len(rf) == 1
@@ -45,7 +47,9 @@ def test_fr_ytd_column_parity(tmp_path: Path) -> None:
         ws.write_formula(row - 1, 7, f"=SUM($G${first}:G{row})")
     wb.close()
 
-    graph = create_dependency_graph(path, [f"Data!H{first}:H{last}"], load_values=False)
+    graph = create_dependency_graph(
+        path, [f"Data!H{first}:H{last}"], load_values=False, store_raw_formula=True
+    )
     index = build_taco_index(graph)
     fr = [e for e in index.compressed_edges if e.meta.kind == PatternKind.fr]
     assert len(fr) == 1
@@ -71,7 +75,7 @@ def test_ff_vlookup_table_parity(tmp_path: Path) -> None:
         )
     wb.close()
 
-    graph = create_dependency_graph(path, ["Data!K3:K7"], load_values=False)
+    graph = create_dependency_graph(path, ["Data!K3:K7"], load_values=False, store_raw_formula=True)
     index = build_taco_index(graph)
     ff = [e for e in index.compressed_edges if e.meta.kind == PatternKind.ff]
     assert len(ff) == 1

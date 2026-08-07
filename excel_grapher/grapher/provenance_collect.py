@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.type_analysis_cache import TypeAnalysisCache
@@ -57,13 +57,15 @@ def _merge_into(
 def _prov_with_direct_span(
     span: tuple[int, int],
     *,
-    span_target: Literal["formula", "normalized"],
+    collect_spans: bool,
 ) -> EdgeProvenance:
-    if span_target == "formula":
-        return EdgeProvenance(
-            causes=DependencyCause.direct_ref,
-            direct_sites_formula=(span,),
-        )
+    """Build direct-ref provenance, recording `span` only for the normalized pass.
+
+    Spans are stored against `normalized_formula` only; a pass over the raw
+    workbook formula contributes cause flags but no positions.
+    """
+    if not collect_spans:
+        return EdgeProvenance(causes=DependencyCause.direct_ref)
     return EdgeProvenance(
         causes=DependencyCause.direct_ref,
         direct_sites_normalized=(span,),
@@ -85,7 +87,7 @@ def _flat_provenance_one_string(
     dynamic_refs: DynamicRefConfig | None,
     wb_formulas: fastpyxl.Workbook,
     resolve_cached_value: Callable[[str, str], object | None],
-    span_target: Literal["formula", "normalized"],
+    collect_spans: bool,
     dynamic_expansion_cache: dict[tuple[str, str, str], tuple[set[str], set[str], set[str]]]
     | None = None,
     type_analysis_cache: TypeAnalysisCache | None = None,
@@ -314,7 +316,7 @@ def _flat_provenance_one_string(
     for ref, span in parse_standalone_cell_refs_with_spans(masked):
         sh = ref.sheet if ref.sheet is not None else current_sheet
         k = format_key(sh, f"{ref.column}{ref.row}")
-        _merge_into(acc, k, _prov_with_direct_span(span, span_target=span_target))
+        _merge_into(acc, k, _prov_with_direct_span(span, collect_spans=collect_spans))
 
     for m in _NAME_TOKEN_RE.finditer(masked):
         token = m.group(1)
@@ -323,7 +325,7 @@ def _flat_provenance_one_string(
             sh, a1 = resolved
             k = format_key(sh, a1)
             span = m.span()
-            _merge_into(acc, k, _prov_with_direct_span(span, span_target=span_target))
+            _merge_into(acc, k, _prov_with_direct_span(span, collect_spans=collect_spans))
             continue
         resolved_range = named_range_ranges.get(token)
         if resolved_range is not None:
@@ -382,6 +384,12 @@ def _flat_provenance_formula_and_normalized(
     dynamic_expansion_cache: dict[tuple[str, str, str], tuple[set[str], set[str], set[str]]]
     | None = None,
 ) -> dict[str, EdgeProvenance]:
+    # When normalization is a no-op the single pass is already over the normalized
+    # text, so it must collect the spans that the second pass would otherwise supply.
+    # `normalized` is None on the branch recursion in `collect_provenance_for_formula`,
+    # where `formula_str` is a sub-expression: spans there would be offset against the
+    # branch rather than the node's formula, so that path stays span-free.
+    normalized_matches_raw = bool(normalized) and normalized == formula_str
     raw_map = _flat_provenance_one_string(
         formula_str,
         current_sheet=current_sheet,
@@ -396,12 +404,12 @@ def _flat_provenance_formula_and_normalized(
         dynamic_refs=dynamic_refs,
         wb_formulas=wb_formulas,
         resolve_cached_value=resolve_cached_value,
-        span_target="formula",
+        collect_spans=normalized_matches_raw,
         dynamic_expansion_cache=dynamic_expansion_cache,
         type_analysis_cache=type_analysis_cache,
         workbook_sha256=workbook_sha256,
     )
-    if not normalized or normalized == formula_str:
+    if not normalized or normalized_matches_raw:
         return raw_map
 
     norm_map = _flat_provenance_one_string(
@@ -418,7 +426,7 @@ def _flat_provenance_formula_and_normalized(
         dynamic_refs=dynamic_refs,
         wb_formulas=wb_formulas,
         resolve_cached_value=resolve_cached_value,
-        span_target="normalized",
+        collect_spans=True,
         dynamic_expansion_cache=dynamic_expansion_cache,
         type_analysis_cache=type_analysis_cache,
         workbook_sha256=workbook_sha256,
@@ -435,10 +443,10 @@ def _flat_provenance_formula_and_normalized(
         if n is None:
             out[k] = r
             continue
-        causes = r.causes | n.causes
+        # The raw-formula pass contributes cause flags only; spans always come
+        # from the normalized pass.
         out[k] = EdgeProvenance(
-            causes=causes,
-            direct_sites_formula=r.direct_sites_formula,
+            causes=r.causes | n.causes,
             direct_sites_normalized=n.direct_sites_normalized,
         )
     return out

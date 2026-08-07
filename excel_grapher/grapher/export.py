@@ -4,7 +4,11 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-from .formula_label import truncate_formula_display, validate_max_formula_length
+from .formula_label import (
+    display_formula,
+    truncate_formula_display,
+    validate_max_formula_length,
+)
 from .graph import DependencyGraph, GraphReadView
 from .guard import GuardExpr
 from .lightweight_viz import (
@@ -38,16 +42,17 @@ def _node_display_label(
     max_formula_length: int | None,
 ) -> str:
     base = label_fn(key, node) if label_fn is not None else str(key)
-    if not include_formula_on_nodes or not node.formula:
+    formula = display_formula(node)
+    if not include_formula_on_nodes or not formula:
         return base
-    shown = truncate_formula_display(node.formula, max_formula_length)
+    shown = truncate_formula_display(formula, max_formula_length)
     return f"{base}\n{shown}"
 
 
 def _networkx_value_type(node: Node | NodeView) -> str:
     value = node.value
     if value is None:
-        return "UNKNOWN" if node.formula is not None else "EMPTY"
+        return "UNKNOWN" if node.normalized_formula is not None else "EMPTY"
     # bool must be checked before int, since bool subclasses int.
     if isinstance(value, bool):
         return "BOOLEAN"
