@@ -485,3 +485,139 @@ def test_candidates_reuse_shared_cell_type_cache(tmp_path: Path) -> None:
         f"Expected B1 to be a cache hit on {total_calls - 1} of {total_calls} calls, "
         f"but got {b1_cache_hits}. shared_cell_type_cache is not being reused."
     )
+
+
+# ---------------------------------------------------------------------------
+# Issue #484: memoize static-ref extraction, cache worksheets, emit progress
+# ---------------------------------------------------------------------------
+
+
+def _build_shared_band_offsets_workbook(path: Path, *, band: int, n_offsets: int) -> list[str]:
+    """Many OFFSET formulas whose arguments share one large static SUM band.
+
+    Layout on sheet ``S`` (matches the MCVE in issue #484):
+      - ``A1`` leaf used by every ``C{i}`` formula.
+      - ``C1:C{band}`` = ``=$A$1+i`` (static band).
+      - For each ``j`` in ``1..n_offsets``:
+        - ``D{j}`` = ``=SUM($C$1:$C${band})`` (identical formula string).
+        - ``E{j}`` = ``=OFFSET($B$1,MOD(INT(D{j}),3),0)``.
+      - ``B1`` leaf base for OFFSET.
+    """
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    ws.write_number(0, 0, 1)  # A1
+    ws.write_number(0, 1, 0)  # B1
+    for i in range(1, band + 1):
+        ws.write_formula(i - 1, 2, f"=$A$1+{i}", None, 1 + i)  # C{i}
+    targets: list[str] = []
+    for j in range(1, n_offsets + 1):
+        ws.write_formula(j - 1, 3, f"=SUM($C$1:$C${band})", None, 0)  # D{j}
+        ws.write_formula(
+            j - 1,
+            4,
+            f"=OFFSET($B$1,MOD(INT(D{j}),3),0)",
+            None,
+            0,
+        )  # E{j}
+        targets.append(f"S!E{j}")
+    wb.close()
+    return targets
+
+
+def test_candidates_memoize_refs_without_dynamic_across_shared_band(
+    tmp_path: Path,
+) -> None:
+    """Identical static formulas must not be re-parsed once per OFFSET call site.
+
+    Regression for issue #484: the candidate helper's argument-subgraph walk
+    called `_refs_without_dynamic` with no memoization, so a shared
+    ``SUM($C$1:$C$band)`` tip was range-parsed once per OFFSET formula.
+    """
+    from unittest.mock import patch
+
+    from excel_grapher.grapher import builder as builder_mod
+
+    band, n_offsets = 40, 20
+    path = tmp_path / "shared_band_offsets.xlsx"
+    targets = _build_shared_band_offsets_workbook(path, band=band, n_offsets=n_offsets)
+
+    real_parse_ranges = builder_mod.parse_range_refs_with_spans
+    sum_formula_parses = 0
+
+    def counting_parse_ranges(formula: str, *args, **kwargs):
+        nonlocal sum_formula_parses
+        if f"$C$1:$C${band}" in formula or f"C1:C{band}" in formula:
+            sum_formula_parses += 1
+        return real_parse_ranges(formula, *args, **kwargs)
+
+    with patch.object(builder_mod, "parse_range_refs_with_spans", counting_parse_ranges):
+        result = list_dynamic_ref_constraint_candidates(path, targets)
+
+    # Unconstrained leaf feeding the OFFSET row argument via the SUM band.
+    assert "S!A1" in result
+
+    # Without memoization this is ~n_offsets (one SUM parse per OFFSET tip).
+    # With memoization the identical SUM string is parsed once.
+    assert sum_formula_parses <= 2, (
+        f"Expected the shared SUM band to be range-parsed at most twice "
+        f"(memoized _refs_without_dynamic), got {sum_formula_parses} parses "
+        f"across {n_offsets} OFFSET formulas"
+    )
+
+
+def test_candidates_worksheet_cache_reduces_getitem_calls(tmp_path: Path) -> None:
+    """wb[sheet] must be called at most once per unique sheet during candidate scan.
+
+    Mirrors `create_dependency_graph`'s `_ws_f_cache` (issue #484).
+    """
+    from unittest.mock import patch
+
+    import fastpyxl
+
+    band, n_offsets = 30, 10
+    path = tmp_path / "candidates_ws_cache.xlsx"
+    targets = _build_shared_band_offsets_workbook(path, band=band, n_offsets=n_offsets)
+
+    original_getitem = fastpyxl.Workbook.__getitem__
+    calls: list[str] = []
+
+    def spy_getitem(self: fastpyxl.Workbook, key: str):
+        calls.append(key)
+        return original_getitem(self, key)
+
+    with patch.object(fastpyxl.Workbook, "__getitem__", spy_getitem):
+        list_dynamic_ref_constraint_candidates(path, targets)
+
+    sheet_calls = calls.count("S")
+    assert sheet_calls <= 1, (
+        f"Expected wb['S'] to be called at most once (worksheet cache), "
+        f"but it was called {sheet_calls} times"
+    )
+
+
+def test_candidates_emit_bfs_and_arg_progress_traces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Long candidate scans must emit progress traces (issue #484)."""
+    from excel_grapher.grapher import builder as builder_mod
+    from excel_grapher.grapher.dynamic_refs import DynamicRefTraceEvent, trace_dynamic_refs
+
+    monkeypatch.setattr(builder_mod, "_CANDIDATES_BFS_PROGRESS_INTERVAL", 5, raising=False)
+    monkeypatch.setattr(builder_mod, "_CANDIDATES_ARG_PROGRESS_INTERVAL", 20, raising=False)
+
+    band, n_offsets = 40, 15
+    path = tmp_path / "candidates_progress.xlsx"
+    targets = _build_shared_band_offsets_workbook(path, band=band, n_offsets=n_offsets)
+
+    events: list[DynamicRefTraceEvent] = []
+    with trace_dynamic_refs(events.append):
+        list_dynamic_ref_constraint_candidates(path, targets)
+
+    bfs_progress = [e for e in events if e.kind == "bfs-progress"]
+    arg_progress = [e for e in events if e.kind == "candidates-arg-progress"]
+    assert bfs_progress, "expected bfs-progress events during candidate BFS"
+    assert all(e.name == "list_dynamic_ref_constraint_candidates" for e in bfs_progress)
+    assert all("nodes" in e.detail and "queue" in e.detail for e in bfs_progress)
+    assert arg_progress, "expected candidates-arg-progress during argument walks"
+    assert all(e.name == "list_dynamic_ref_constraint_candidates" for e in arg_progress)
+    assert all("visited" in e.detail for e in arg_progress)
