@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v5.1.0 (2026-08-07)
+
+### Features
+
+- **grapher**: Element-aware guards for array-context IF (#483)
+  ([#495](https://github.com/Teal-Insights/excel-grapher/pull/495),
+  [`7b0eea6`](https://github.com/Teal-Insights/excel-grapher/commit/7b0eea644321f6446d91e1157c39fcd9770b66b8))
+
+### Performance Improvements
+
+- **core**: Hand ndarray operands straight to the array operator paths
+  ([#505](https://github.com/Teal-Insights/excel-grapher/pull/505),
+  [`6f689eb`](https://github.com/Teal-Insights/excel-grapher/commit/6f689eb7cecfe87a0f3c947a0dfd5e21887b5eca))
+
+
 ## v5.0.0 (2026-08-07)
 
 ### Features
