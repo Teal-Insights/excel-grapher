@@ -1323,7 +1323,10 @@ def list_dynamic_ref_constraint_candidates(
     # Worksheet cache: avoid repeated O(#sheets) __getitem__ scans (issue #484).
     _ws_f_cache: dict[str, Worksheet] = {}
     # Memoize static-ref extraction across candidate BFS / argument walks.
-    _refs_cache: dict[tuple[str, str], set[str]] = {}
+    # Store frozensets and return a fresh mutable set on every call so callers
+    # that mutate in place (e.g. expand_leaf_env_to_argument_env's `refs |= …`)
+    # cannot poison later lookups.
+    _refs_cache: dict[tuple[str, str], frozenset[str]] = {}
 
     def _get_ws_f(sheet: str) -> Worksheet:
         ws = _ws_f_cache.get(sheet)
@@ -1351,7 +1354,7 @@ def list_dynamic_ref_constraint_candidates(
             cache_key = (f, sheet)
             cached = _refs_cache.get(cache_key)
             if cached is not None:
-                return cached
+                return set(cached)
             dyn = _find_function_calls_with_spans(f, frozenset({"OFFSET", "INDIRECT", "INDEX"}))
             spans = [span for _fn, _inner, span in dyn]
             masked = mask_spans(f, spans)
@@ -1391,7 +1394,7 @@ def list_dynamic_ref_constraint_candidates(
                         max_cells=max_range_cells,
                     ):
                         out.add(format_key(dep_sheet, dep_a1))
-            _refs_cache[cache_key] = out
+            _refs_cache[cache_key] = frozenset(out)
             return out
 
         collected: set[str] = set()

@@ -621,3 +621,65 @@ def test_candidates_emit_bfs_and_arg_progress_traces(
     assert arg_progress, "expected candidates-arg-progress during argument walks"
     assert all(e.name == "list_dynamic_ref_constraint_candidates" for e in arg_progress)
     assert all("visited" in e.detail for e in arg_progress)
+
+
+def test_candidates_refs_memo_returns_independent_sets(tmp_path: Path) -> None:
+    """Caller mutations must not poison memoized `_refs_without_dynamic` results.
+
+    `expand_leaf_env_to_argument_env` updates its refs set in place (`refs |= …`).
+    The candidate helper memoizes `_refs_without_dynamic` across that call and
+    the argument-subgraph walk, so cache hits must return a fresh set — otherwise
+    expand's in-place update corrupts later lookups for the same formula.
+    """
+    from unittest.mock import patch
+
+    from excel_grapher.grapher import builder as builder_mod
+    from excel_grapher.grapher.dynamic_refs import expand_leaf_env_to_argument_env
+
+    path = tmp_path / "refs_memo_isolation.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    ws.write_number(0, 0, 1)  # A1
+    ws.write_number(1, 0, 2)  # A2
+    ws.write_number(0, 1, 0)  # B1
+    # Sheet-qualified so normalize matches the raw cell string (same cache key).
+    ws.write_formula(0, 3, "=S!A1+S!A2", None, 3)  # D1 tip into OFFSET
+    ws.write_formula(0, 4, "=OFFSET($B$1,D1,0)", None, 0)  # E1
+    wb.close()
+
+    env = _make_env(
+        {
+            "S!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=0, max=5)),
+            "S!A2": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=0, max=5)),
+            "S!B1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=0, max=0)),
+        }
+    )
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+
+    poison = "S!__POISON__"
+    cache_was_poisoned: list[bool] = []
+    real_expand = expand_leaf_env_to_argument_env
+
+    def wrapping_expand(
+        argument_refs,
+        get_cell_formula,
+        get_refs_from_formula,
+        *args,
+        **kwargs,
+    ):
+        formula = "=S!A1+S!A2"
+        first = get_refs_from_formula(formula, "S")
+        first.add(poison)
+        second = get_refs_from_formula(formula, "S")
+        cache_was_poisoned.append(poison in second)
+        first.discard(poison)
+        return real_expand(argument_refs, get_cell_formula, get_refs_from_formula, *args, **kwargs)
+
+    with patch.object(builder_mod, "expand_leaf_env_to_argument_env", wrapping_expand):
+        list_dynamic_ref_constraint_candidates(path, ["S!E1"], dynamic_refs=config)
+
+    assert cache_was_poisoned, "expand_leaf_env_to_argument_env was not invoked"
+    assert cache_was_poisoned[0] is False, (
+        "memoized _refs_without_dynamic returned a shared mutable set; "
+        "in-place mutation poisoned the cache for later lookups"
+    )
