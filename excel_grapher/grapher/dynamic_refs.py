@@ -1892,22 +1892,26 @@ def _div_numeric_domains(
             ]
         )
     else:
-        corners.extend(
-            [
-                _trunc_div_int(ba.lo, bb.lo),
-                _trunc_div_int(ba.lo, -1),
-                _trunc_div_int(ba.hi, bb.lo),
-                _trunc_div_int(ba.hi, -1),
-            ]
-        )
-        corners.extend(
-            [
-                _trunc_div_int(ba.lo, 1),
-                _trunc_div_int(ba.lo, bb.hi),
-                _trunc_div_int(ba.hi, 1),
-                _trunc_div_int(ba.hi, bb.hi),
-            ]
-        )
+        # Zero-spanning divisor with known_nonzero: keep each side's sign
+        # constant, but never divide by an endpoint that is itself zero.
+        if bb.lo < 0:
+            corners.extend(
+                [
+                    _trunc_div_int(ba.lo, bb.lo),
+                    _trunc_div_int(ba.lo, -1),
+                    _trunc_div_int(ba.hi, bb.lo),
+                    _trunc_div_int(ba.hi, -1),
+                ]
+            )
+        if bb.hi > 0:
+            corners.extend(
+                [
+                    _trunc_div_int(ba.lo, 1),
+                    _trunc_div_int(ba.lo, bb.hi),
+                    _trunc_div_int(ba.hi, 1),
+                    _trunc_div_int(ba.hi, bb.hi),
+                ]
+            )
     if not corners:
         return None
     lo, hi = min(corners), max(corners)
