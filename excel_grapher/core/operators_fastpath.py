@@ -17,8 +17,43 @@ from .operator_thresholds import MIN_OPERATOR_FASTPATH_CELLS
 from .types import XlError
 
 _NUMERIC_CELL_TYPES = (int, float, np.integer, np.floating)
+_DIRECT_FLOAT_CELL_TYPES = frozenset({int, float, bool})
 _CASEFOLD_UFUNC = np.frompyfunc(excel_casefold, 1, 1)
 _TO_STRING_UFUNC = np.frompyfunc(to_string, 1, 1)
+
+
+def _object_cell_types(arr: np.ndarray) -> frozenset[type] | None:
+    """Return the distinct cell types of an object ndarray, `None` for typed dtypes.
+
+    Each dispatch tier needs one yes/no fact about an operand (does it hold an
+    error, is it all text, is it all numeric). One C-level pass answers all of
+    them, replacing a full Python scan per tier. `None` means the operand was
+    not classified, so callers keep their own per-cell checks.
+    """
+    if arr.dtype != object:
+        return None
+    return frozenset(map(type, arr.ravel()))
+
+
+def _may_hold_error(cell_types: frozenset[type] | None) -> bool:
+    """Whether an operand can contain an embedded ``XlError``."""
+    return cell_types is None or any(issubclass(kind, XlError) for kind in cell_types)
+
+
+def _all_plain_strings(cell_types: frozenset[type] | None) -> bool:
+    """Whether every cell is text; ``XlError`` is a ``str`` subclass but not text."""
+    if cell_types is None:
+        return True
+    return all(issubclass(kind, str) and not issubclass(kind, XlError) for kind in cell_types)
+
+
+def _holds_plain_text(arr: np.ndarray, cell_types: frozenset[type] | None) -> bool:
+    """Whether any cell is text, falling back to a scan for unclassified operands."""
+    if cell_types is None:
+        return any(
+            isinstance(value, str) and not isinstance(value, XlError) for value in arr.ravel()
+        )
+    return any(issubclass(kind, str) and not issubclass(kind, XlError) for kind in cell_types)
 
 
 def _try_asarray_float64(arr: np.ndarray) -> np.ndarray | None:
@@ -58,8 +93,46 @@ def _try_batch_coerce_numeric_strings(arr: np.ndarray) -> np.ndarray | None:
     return out.reshape(arr.shape)
 
 
-def batch_coerce_to_float64(arr: np.ndarray) -> np.ndarray | None:
-    """Coerce an object ndarray to float64, or return None when any cell fails."""
+def _try_map_float_strings(arr: np.ndarray) -> np.ndarray | None:
+    """Parse an all-text operand with one C-level ``float`` map.
+
+    ``float`` already ignores surrounding whitespace, so this accepts exactly
+    what `try_coerce_string_to_float` accepts. Text it rejects (blank cells, ISO
+    dates) returns `None` so the per-cell tiers can apply the remaining Excel
+    coercions.
+    """
+    flat = arr.ravel()
+    try:
+        values = np.fromiter(map(float, flat), dtype=np.float64, count=flat.size)
+    except (TypeError, ValueError):
+        return None
+    return values.reshape(arr.shape)
+
+
+def batch_coerce_to_float64(
+    arr: np.ndarray,
+    cell_types: frozenset[type] | None = None,
+) -> np.ndarray | None:
+    """Coerce an object ndarray to float64, or return None when any cell fails.
+
+    Args:
+        arr: Object (or already numeric) ndarray of Excel cell values.
+        cell_types: Cell types from `_object_cell_types` when the caller has
+            already classified `arr`; omit to classify here.
+
+    Returns:
+        A float64 array, or `None` when any cell cannot coerce.
+    """
+    if cell_types is None:
+        cell_types = _object_cell_types(arr)
+    if cell_types is not None:
+        if cell_types <= _DIRECT_FLOAT_CELL_TYPES:
+            return np.asarray(arr, dtype=np.float64)
+        if _all_plain_strings(cell_types):
+            mapped = _try_map_float_strings(arr)
+            if mapped is not None:
+                return mapped
+
     direct = _try_asarray_float64(arr)
     if direct is not None:
         return direct
@@ -284,32 +357,41 @@ def try_fastpath_compare_array(
 ) -> np.ndarray | XlError | None:
     """Apply a vectorized compare fast path, or return None to use the reference loop.
 
+    Both operands are classified once with `_object_cell_types`; each tier below
+    is entered only when that classification says it can apply.
+
     Dispatch tiers (arrays with at least ``MIN_OPERATOR_FASTPATH_CELLS`` elements):
 
     1. Fail-fast scan for embedded ``XlError`` values (C-order, left wins per cell).
     2. String path when both sides are plain ``str`` cells (scalar-broadcast aware).
     3. Numeric path when both sides batch-coerce to float64 (including all-string
-       numeric text columns via ``_try_batch_coerce_numeric_strings``).
+       numeric text columns).
 
     Smaller arrays and mixed-type cells fall through to the per-cell reference loop.
     """
     if arr_left.size < MIN_OPERATOR_FASTPATH_CELLS:
         return None
 
-    error = _first_paired_error_c_order(arr_left, arr_right)
-    if error is not None:
-        return error
+    left_types = _object_cell_types(arr_left)
+    right_types = _object_cell_types(arr_right)
 
-    string_result = _try_string_compare_fastpath(op, arr_left, arr_right)
-    if string_result is not None:
-        return string_result
+    if _may_hold_error(left_types) or _may_hold_error(right_types):
+        error = _first_paired_error_c_order(arr_left, arr_right)
+        if error is not None:
+            return error
 
-    left_numeric = batch_coerce_to_float64(arr_left)
-    right_numeric = batch_coerce_to_float64(arr_right)
-    if left_numeric is not None and right_numeric is not None:
-        return _numpy_compare(op, left_numeric, right_numeric)
+    if _all_plain_strings(left_types) and _all_plain_strings(right_types):
+        string_result = _try_string_compare_fastpath(op, arr_left, arr_right)
+        if string_result is not None:
+            return string_result
 
-    return None
+    left_numeric = batch_coerce_to_float64(arr_left, left_types)
+    if left_numeric is None:
+        return None
+    right_numeric = batch_coerce_to_float64(arr_right, right_types)
+    if right_numeric is None:
+        return None
+    return _numpy_compare(op, left_numeric, right_numeric)
 
 
 def try_fastpath_arithmetic_array(
@@ -459,12 +541,11 @@ def try_fastpath_sumproduct(arrays: list[np.ndarray]) -> float | None:
         return None
     coerced: list[np.ndarray] = []
     for arr in arrays:
-        flat = arr.ravel()
-        for value in flat:
-            # `XlError` is a `StrEnum`; plain text must not use numeric coerce.
-            if isinstance(value, str) and not isinstance(value, XlError):
-                return None
-        batch = batch_coerce_to_float64(arr)
+        # `XlError` is a `StrEnum`; plain text must not use numeric coerce.
+        cell_types = _object_cell_types(arr)
+        if _holds_plain_text(arr, cell_types):
+            return None
+        batch = batch_coerce_to_float64(arr, cell_types)
         if batch is None:
             return None
         coerced.append(batch)

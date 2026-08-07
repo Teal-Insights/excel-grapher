@@ -56,7 +56,6 @@ def _fixture_graph(rows: int = ROWS, *, distinct_guards: bool = False) -> Depend
             # one shared constant and understate real provenance payload.
             provenance=EdgeProvenance(
                 causes=DependencyCause.direct_ref,
-                direct_sites_formula=((row, row + 3),),
                 direct_sites_normalized=((row, row + 10),),
             ),
         )
