@@ -89,9 +89,8 @@ def test_codegen_export_has_no_ty_or_ruff_diagnostics(tmp_path: Path) -> None:
         export_file.unlink(missing_ok=True)
 
 
-@pytest.mark.xfail(reason="Issue #252: generated export is not Ruff-clean without --fix (I001).")
 def test_codegen_export_is_ruff_clean_without_fix(tmp_path: Path) -> None:
-    """Track raw generated-file Ruff hygiene without auto-fixes."""
+    """Raw generated-file Ruff hygiene holds without auto-fixes."""
     repo_root = Path(__file__).resolve().parents[3]
 
     graph = _make_graph(_make_node("S!A1", None, 1.0))

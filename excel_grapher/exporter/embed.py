@@ -563,6 +563,11 @@ def emit_runtime(
     if import_lines:
         out.append("")
 
+    # isort (ruff's I001) wants two blank lines between the import block and the
+    # first top-level definition. Entries contribute one newline each when joined,
+    # so a second empty entry supplies the second blank line.
+    out.append("")
+
     for s in ordered:
         mod = symbol_to_module[s]
         node = symbol_to_node[s]
