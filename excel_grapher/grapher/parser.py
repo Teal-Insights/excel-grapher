@@ -29,7 +29,7 @@ from excel_grapher.core.range_shorthand import (
     expand_whole_row_deps,
 )
 
-from .guard import And, Compare, GuardExpr, Literal, Not, Or
+from .guard import And, Compare, GuardExpr, Literal, Not, Or, RangeRef
 from .guard import CellRef as GuardCellRef
 from .node import NodeKey
 
@@ -1291,10 +1291,21 @@ def parse_guard_expr(
     *,
     current_sheet: str,
     named_ranges: dict[str, tuple[str, str]] | None = None,
+    allow_ranges: bool = False,
 ) -> GuardExpr | None:
     """Parse a minimal boolean expression suitable for IF(...) conditions.
 
-    If parsing fails (unsupported syntax), returns None.
+    Args:
+        expr: The condition text (no leading `=`).
+        current_sheet: Sheet used to qualify unqualified references.
+        named_ranges: Single-cell named ranges available to the formula.
+        allow_ranges: Parse multi-cell range operands into `RangeRef` template
+            nodes, for array-context conditions evaluated element-wise. Ranges
+            are still rejected inside `AND`/`OR`, which collapse an array to a
+            single boolean rather than evaluating it element-wise.
+
+    Returns:
+        The parsed guard, or `None` when the syntax is unsupported.
     """
     if named_ranges is None:
         named_ranges = {}
@@ -1321,7 +1332,10 @@ def parse_guard_expr(
             if len(parts) != 1:
                 return None
             operand = parse_guard_expr(
-                parts[0], current_sheet=current_sheet, named_ranges=named_ranges
+                parts[0],
+                current_sheet=current_sheet,
+                named_ranges=named_ranges,
+                allow_ranges=allow_ranges,
             )
             return None if operand is None else Not(operand)
         if fn in {"AND", "OR"}:
@@ -1329,6 +1343,8 @@ def parse_guard_expr(
                 return None
             ops: list[GuardExpr] = []
             for p in parts:
+                # `allow_ranges=False`: AND/OR reduce an array operand to one
+                # boolean, so their operands are not element-wise templates.
                 ge = parse_guard_expr(p, current_sheet=current_sheet, named_ranges=named_ranges)
                 if ge is None:
                     return None
@@ -1339,16 +1355,26 @@ def parse_guard_expr(
     for op in ("<>", "<=", ">=", "=", "<", ">"):
         if op in s:
             left_s, right_s = (p.strip() for p in s.split(op, 1))
-            left = _parse_guard_atom(left_s, current_sheet=current_sheet, named_ranges=named_ranges)
+            left = _parse_guard_atom(
+                left_s,
+                current_sheet=current_sheet,
+                named_ranges=named_ranges,
+                allow_ranges=allow_ranges,
+            )
             right = _parse_guard_atom(
-                right_s, current_sheet=current_sheet, named_ranges=named_ranges
+                right_s,
+                current_sheet=current_sheet,
+                named_ranges=named_ranges,
+                allow_ranges=allow_ranges,
             )
             if left is None or right is None:
                 return None
             return Compare(left=left, op=op, right=right)
 
     # Atom (truthy cell ref or literal)
-    return _parse_guard_atom(s, current_sheet=current_sheet, named_ranges=named_ranges)
+    return _parse_guard_atom(
+        s, current_sheet=current_sheet, named_ranges=named_ranges, allow_ranges=allow_ranges
+    )
 
 
 def _split_top_level_args(s: str) -> list[str] | None:
@@ -1398,9 +1424,16 @@ def _parse_guard_atom(
     *,
     current_sheet: str,
     named_ranges: dict[str, tuple[str, str]],
+    allow_ranges: bool = False,
 ) -> GuardExpr | None:
     if not s:
         return None
+
+    # Multi-cell range (array-context conditions only)
+    if allow_ranges:
+        range_ref = _parse_guard_range_atom(s, current_sheet=current_sheet)
+        if range_ref is not None:
+            return range_ref
 
     # TRUE/FALSE
     if s.upper() == "TRUE":
@@ -1447,3 +1480,155 @@ def _parse_guard_atom(
         return GuardCellRef(_to_node_key(current_sheet, col, int(m.group("row"))))
 
     return None
+
+
+def _parse_guard_range_atom(s: str, *, current_sheet: str) -> RangeRef | None:
+    """Parse a bare multi-cell range token into a `RangeRef` guard template."""
+    for regex, sheet_of in (
+        (_RANGE_TOKEN_QUOTED_RE, _sheet_from_quoted_group),
+        (_RANGE_TOKEN_UNQUOTED_RE, lambda m: m.group("sheet")),
+        (_RANGE_TOKEN_LOCAL_RE, lambda _m: current_sheet),
+    ):
+        m = regex.match(s)
+        if m is None:
+            continue
+        sheet = sheet_of(m)
+        key = _address_keys.parse_node_key(
+            _address_keys.format_range_key(
+                sheet,
+                f"{m.group('c1')}{m.group('r1')}",
+                f"{m.group('c2')}{m.group('r2')}",
+            )
+        )
+        if not isinstance(key, _address_keys.RangeKey):
+            # A 1x1 "range" is a scalar; leave it to the cell atom parser.
+            return None
+        return RangeRef(str(key))
+    return None
+
+
+# Functions whose result at each array position depends only on the operands at
+# that same position. Ranges nested anywhere else (aggregates such as `SUM`,
+# lookups, `OFFSET`/`INDIRECT`/`INDEX`) are not element-aligned with an
+# enclosing array condition, so their cells stay unguarded.
+_ELEMENT_WISE_FN_NAMES = frozenset(
+    {
+        "ABS",
+        "CEILING",
+        "EXP",
+        "FLOOR",
+        "IF",
+        "IFERROR",
+        "IFNA",
+        "IFS",
+        "INT",
+        "LN",
+        "LOG",
+        "LOG10",
+        "MOD",
+        "MROUND",
+        "N",
+        "NOT",
+        "POWER",
+        "ROUND",
+        "ROUNDDOWN",
+        "ROUNDUP",
+        "SIGN",
+        "SQRT",
+        "SWITCH",
+        "T",
+        "TRUNC",
+        "VALUE",
+    }
+)
+
+_FUNCTION_CALL_HEAD_RE = re.compile(r"(?P<name>[A-Za-z_][A-Za-z0-9_.]*)\s*\(")
+
+
+@functools.lru_cache(maxsize=4096)
+def _find_all_function_call_spans(formula: str) -> tuple[tuple[str, tuple[int, int]], ...]:
+    """Return `(function_name, span)` for every function call in `formula`."""
+    out: list[tuple[str, tuple[int, int]]] = []
+    for m in _FUNCTION_CALL_HEAD_RE.finditer(formula):
+        open_idx = m.end() - 1
+        depth = 0
+        in_str = False
+        i = open_idx
+        while i < len(formula):
+            ch = formula[i]
+            if ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        name = m.group("name").upper().rsplit(".", 1)[-1]
+                        out.append((name, (m.start(), i + 1)))
+                        break
+            i += 1
+    return tuple(out)
+
+
+def element_aligned_range_cells(
+    expr: str,
+    *,
+    current_sheet: str,
+    shape: tuple[int, int],
+    max_cells: int,
+) -> dict[tuple[str, str], tuple[int, int]]:
+    """Map cells of `expr`'s element-aligned ranges to their `(row, col)` offsets.
+
+    A range is element-aligned with an enclosing array condition when it has the
+    same shape and every function call enclosing it evaluates element-wise (see
+    `_ELEMENT_WISE_FN_NAMES`). Cells that would take two different offsets (from
+    overlapping ranges) are dropped, since no single element guard describes them.
+
+    Args:
+        expr: Branch expression text (with or without a leading `=`).
+        current_sheet: Sheet used to qualify unqualified references.
+        shape: `(n_rows, n_cols)` of the condition's range.
+        max_cells: Range-expansion budget; larger ranges are skipped because
+            their dependencies are not expanded per cell either.
+
+    Returns:
+        A `(sheet, a1) -> (row_offset, col_offset)` mapping, possibly empty.
+    """
+    f = expr if expr.startswith("=") else "=" + expr
+    call_spans = _find_all_function_call_spans(f)
+
+    offsets: dict[tuple[str, str], tuple[int, int]] = {}
+    ambiguous: set[tuple[str, str]] = set()
+    for start, end, span in parse_range_refs_with_spans(f):
+        if start.range_kind != "cell":
+            continue
+        if any(
+            name not in _ELEMENT_WISE_FN_NAMES
+            for name, call_span in call_spans
+            if call_span[0] <= span[0] and span[1] <= call_span[1]
+        ):
+            continue
+
+        sheet = start.sheet if start.sheet is not None else current_sheet
+        c1 = fastpyxl.utils.cell.column_index_from_string(start.column)
+        c2 = fastpyxl.utils.cell.column_index_from_string(end.column)
+        col_lo, col_hi = (c1, c2) if c1 <= c2 else (c2, c1)
+        row_lo, row_hi = (start.row, end.row) if start.row <= end.row else (end.row, start.row)
+        n_rows = row_hi - row_lo + 1
+        n_cols = col_hi - col_lo + 1
+        if (n_rows, n_cols) != shape or n_rows * n_cols > max_cells:
+            continue
+
+        for row_offset in range(n_rows):
+            for col_offset in range(n_cols):
+                column = fastpyxl.utils.cell.get_column_letter(col_lo + col_offset)
+                cell = (sheet, f"{column}{row_lo + row_offset}")
+                existing = offsets.get(cell)
+                if existing is not None and existing != (row_offset, col_offset):
+                    ambiguous.add(cell)
+                offsets[cell] = (row_offset, col_offset)
+
+    for cell in ambiguous:
+        offsets.pop(cell, None)
+    return offsets
