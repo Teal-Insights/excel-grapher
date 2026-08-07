@@ -62,6 +62,10 @@ from .target_expansion import expand_targets_to_roots
 from .type_analysis_cache import TypeAnalysisCache
 
 _logger = logging.getLogger(__name__)
+_CANDIDATES_BFS_PROGRESS_INTERVAL = 5000
+"""Emit a `bfs-progress` trace every N outer BFS nodes in candidate listing."""
+_CANDIDATES_ARG_PROGRESS_INTERVAL = 50_000
+"""Emit a `candidates-arg-progress` trace every N argument-subgraph visits."""
 _VOLATILE_DYNAMIC_REF_FUNCS = frozenset(
     {"NOW", "TODAY", "RAND", "RANDBETWEEN", "RANDARRAY", "INFO"}
 )
@@ -1376,6 +1380,23 @@ def list_dynamic_ref_constraint_candidates(
     # Shared across every dynamic-ref call site so intermediates in overlapping
     # argument subgraphs are inferred once, as in `create_dependency_graph`.
     _shared_cell_type_cache_cand: dict[str, CellType] = {}
+    # Worksheet cache: avoid repeated O(#sheets) __getitem__ scans (issue #484).
+    _ws_f_cache: dict[str, Worksheet] = {}
+    # Memoize static-ref extraction across candidate BFS / argument walks.
+    # Store frozensets and return a fresh mutable set on every call so callers
+    # that mutate in place (e.g. expand_leaf_env_to_argument_env's `refs |= …`)
+    # cannot poison later lookups.
+    _refs_cache: dict[tuple[str, str], frozenset[str]] = {}
+
+    def _get_ws_f(sheet: str) -> Worksheet:
+        ws = _ws_f_cache.get(sheet)
+        if ws is None:
+            ws = wb_formulas[sheet]
+            _ws_f_cache[sheet] = ws
+        return ws
+
+    def _cell_value(sheet: str, a1: str) -> object | None:
+        return _get_ws_f(sheet)[a1].value
 
     try:
         named_range_maps = build_named_range_map(wb_formulas)
@@ -1383,11 +1404,17 @@ def list_dynamic_ref_constraint_candidates(
         named_range_ranges = named_range_maps.range_map
         normalizer = FormulaNormalizer(named_ranges, named_range_ranges)
         cell_type_env = {} if dynamic_refs is None else dynamic_refs.cell_type_env
+        sheetnames = list(wb_formulas.sheetnames)
+        sheetname_set = set(sheetnames)
         _NAME_TOKEN_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*!)")
 
         def _refs_without_dynamic(formula_str: str, sheet: str) -> set[str]:
             """Static (non-dynamic-ref) cell addresses referenced by *formula_str*."""
             f = formula_str if formula_str.startswith("=") else "=" + formula_str
+            cache_key = (f, sheet)
+            cached = _refs_cache.get(cache_key)
+            if cached is not None:
+                return set(cached)
             dyn = _find_function_calls_with_spans(f, frozenset({"OFFSET", "INDIRECT", "INDEX"}))
             spans = [span for _fn, _inner, span in dyn]
             masked = mask_spans(f, spans)
@@ -1427,6 +1454,7 @@ def list_dynamic_ref_constraint_candidates(
                         max_cells=max_range_cells,
                     ):
                         out.add(format_key(dep_sheet, dep_a1))
+            _refs_cache[cache_key] = frozenset(out)
             return out
 
         collected: set[str] = set()
@@ -1435,7 +1463,7 @@ def list_dynamic_ref_constraint_candidates(
 
         target_roots = _expand_targets_to_roots(
             targets,
-            sheetnames=list(wb_formulas.sheetnames),
+            sheetnames=sheetnames,
             named_ranges=named_ranges,
             named_range_ranges=named_range_ranges,
             max_range_cells=max_range_cells,
@@ -1443,17 +1471,42 @@ def list_dynamic_ref_constraint_candidates(
         for sh, a1 in target_roots:
             queue.append((sh, a1, 0))
 
+        _bfs_t0 = time.perf_counter()
+        _bfs_count = 0
+        _bfs_next_log = _CANDIDATES_BFS_PROGRESS_INTERVAL
+        _arg_walk_count = 0
+        _arg_next_log = _CANDIDATES_ARG_PROGRESS_INTERVAL
+
         while queue:
             current_sheet, current_a1, depth = queue.popleft()
             key = format_key(current_sheet, current_a1)
             if key in visited:
                 continue
             visited.add(key)
+            _bfs_count += 1
+            if _bfs_count >= _bfs_next_log:
+                _emit_trace(
+                    DynamicRefTraceEvent(
+                        kind="bfs-progress",
+                        name="list_dynamic_ref_constraint_candidates",
+                        elapsed_s=time.perf_counter() - _bfs_t0,
+                        detail={
+                            "nodes": _bfs_count,
+                            "queue": len(queue),
+                            "depth": depth,
+                            "last": key,
+                            "collected": len(collected),
+                            "refs_cache_size": len(_refs_cache),
+                            "arg_visited": _arg_walk_count,
+                        },
+                    )
+                )
+                _bfs_next_log += _CANDIDATES_BFS_PROGRESS_INTERVAL
 
-            if depth >= max_depth or current_sheet not in wb_formulas.sheetnames:
+            if depth >= max_depth or current_sheet not in sheetname_set:
                 continue
 
-            cell_val = wb_formulas[current_sheet][current_a1].value
+            cell_val = _cell_value(current_sheet, current_a1)
             if isinstance(cell_val, ArrayFormula):
                 cell_val = cell_val.text or ""
                 if cell_val and not cell_val.startswith("="):
@@ -1524,19 +1577,36 @@ def list_dynamic_ref_constraint_candidates(
                     if addr in all_refs:
                         continue
                     all_refs.add(addr)
+                    _arg_walk_count += 1
+                    if _arg_walk_count >= _arg_next_log:
+                        _emit_trace(
+                            DynamicRefTraceEvent(
+                                kind="candidates-arg-progress",
+                                name="list_dynamic_ref_constraint_candidates",
+                                elapsed_s=time.perf_counter() - _bfs_t0,
+                                detail={
+                                    "visited": _arg_walk_count,
+                                    "pending": len(to_visit_inner),
+                                    "last": addr,
+                                    "bfs_nodes": _bfs_count,
+                                    "refs_cache_size": len(_refs_cache),
+                                },
+                            )
+                        )
+                        _arg_next_log += _CANDIDATES_ARG_PROGRESS_INTERVAL
                     sh, a1 = parse_address(addr)
-                    if sh not in wb_formulas.sheetnames:
+                    if sh not in sheetname_set:
                         continue
-                    inner_val = wb_formulas[sh][a1].value
+                    inner_val = _cell_value(sh, a1)
                     if isinstance(inner_val, str) and inner_val.startswith("="):
                         to_visit_inner.update(_refs_without_dynamic(inner_val, sh))
 
                 leaves: set[str] = set()
                 for addr in all_refs:
                     sh, a1 = parse_address(addr)
-                    if sh not in wb_formulas.sheetnames:
+                    if sh not in sheetname_set:
                         continue
-                    inner_val = wb_formulas[sh][a1].value
+                    inner_val = _cell_value(sh, a1)
                     if not (isinstance(inner_val, str) and inner_val.startswith("=")):
                         leaves.add(addr)
 
@@ -1556,9 +1626,9 @@ def list_dynamic_ref_constraint_candidates(
 
                         def _get_cell_formula(addr: str) -> str | None:
                             sh2, a1_2 = parse_address(addr)
-                            if sh2 not in wb_formulas.sheetnames:
+                            if sh2 not in sheetname_set:
                                 return None
-                            v = wb_formulas[sh2][a1_2].value
+                            v = _cell_value(sh2, a1_2)
                             if not isinstance(v, str) or not v.startswith("="):
                                 return None
                             return normalizer.normalize(v, sh2)
@@ -1609,7 +1679,7 @@ def list_dynamic_ref_constraint_candidates(
                         )
                         for addr in sort_node_keys(
                             offset_targets | indirect_targets | index_targets,
-                            sheet_order=list(wb_formulas.sheetnames),
+                            sheet_order=sheetnames,
                         ):
                             sh, a1 = parse_address(addr)
                             queue.append((sh, a1, depth + 1))
@@ -1619,8 +1689,22 @@ def list_dynamic_ref_constraint_candidates(
             # Queue static (non-dynamic-ref) deps for continued BFS.
             for addr in _refs_without_dynamic(f, current_sheet):
                 sh, a1 = parse_address(addr)
-                if sh in wb_formulas.sheetnames:
+                if sh in sheetname_set:
                     queue.append((sh, a1, depth + 1))
+
+        _emit_trace(
+            DynamicRefTraceEvent(
+                kind="bfs-done",
+                name="list_dynamic_ref_constraint_candidates",
+                elapsed_s=time.perf_counter() - _bfs_t0,
+                detail={
+                    "nodes": _bfs_count,
+                    "collected": len(collected),
+                    "refs_cache_size": len(_refs_cache),
+                    "arg_visited": _arg_walk_count,
+                },
+            )
+        )
 
     finally:
         if _owns_wb:
