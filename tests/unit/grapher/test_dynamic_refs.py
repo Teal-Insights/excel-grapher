@@ -3578,3 +3578,123 @@ class TestLazyIfEval:
         result = self._eval("IF(0, 1/0, 99)")
         assert result == 99 or result == 99.0
         assert not isinstance(result, XlError)
+
+
+class TestNumericDomainPrimitives:
+    """Shared collapse/densify primitives behind the numeric-domain transfer functions."""
+
+    @staticmethod
+    def _limits(max_branches: int = 8) -> DynamicRefLimits:
+        return DynamicRefLimits(max_branches=max_branches)
+
+    def test_finite_or_hull_keeps_small_sets_exact(self) -> None:
+        out = dynamic_refs_mod._finite_or_hull({3, 1, 2}, self._limits())
+        assert out == dynamic_refs_mod._FiniteInts(frozenset({1, 2, 3}))
+
+    def test_finite_or_hull_collapses_oversized_sets_to_bounds(self) -> None:
+        out = dynamic_refs_mod._finite_or_hull(set(range(0, 20)), self._limits())
+        assert out == dynamic_refs_mod._IntBounds(0, 19)
+
+    def test_finite_or_hull_collapses_at_exact_threshold(self) -> None:
+        """`max_branches` is inclusive: a set of exactly that size stays exact."""
+        out = dynamic_refs_mod._finite_or_hull(set(range(8)), self._limits(8))
+        assert out == dynamic_refs_mod._FiniteInts(frozenset(range(8)))
+
+    def test_densify_or_bounds_expands_narrow_spans(self) -> None:
+        out = dynamic_refs_mod._densify_or_bounds(2, 5, self._limits())
+        assert out == dynamic_refs_mod._FiniteInts(frozenset({2, 3, 4, 5}))
+
+    def test_densify_or_bounds_keeps_wide_spans_as_bounds(self) -> None:
+        out = dynamic_refs_mod._densify_or_bounds(0, 100, self._limits())
+        assert out == dynamic_refs_mod._IntBounds(0, 100)
+
+    def test_densify_or_bounds_returns_empty_when_inverted(self) -> None:
+        """An inverted span is the empty domain, not a backwards `_IntBounds`."""
+        out = dynamic_refs_mod._densify_or_bounds(0, -1, self._limits())
+        assert out == dynamic_refs_mod._FiniteInts(frozenset())
+
+
+class TestNumericDomainTransferInvariants:
+    """Behaviour of the binary transfer functions that a shared skeleton must preserve."""
+
+    @staticmethod
+    def _limits(max_branches: int = 8) -> DynamicRefLimits:
+        return DynamicRefLimits(max_branches=max_branches)
+
+    def test_add_bounds_densifies_narrow_result(self) -> None:
+        out = dynamic_refs_mod._add_numeric_domains(
+            dynamic_refs_mod._IntBounds(0, 1), dynamic_refs_mod._IntBounds(0, 1), self._limits()
+        )
+        assert out == dynamic_refs_mod._FiniteInts(frozenset({0, 1, 2}))
+
+    def test_sub_bounds_uses_cross_corners(self) -> None:
+        out = dynamic_refs_mod._sub_numeric_domains(
+            dynamic_refs_mod._IntBounds(0, 10), dynamic_refs_mod._IntBounds(1, 2), self._limits()
+        )
+        assert out == dynamic_refs_mod._IntBounds(-2, 9)
+
+    def test_mul_bounds_never_densifies(self) -> None:
+        """MUL intentionally skips the densify step that ADD/SUB apply."""
+        out = dynamic_refs_mod._mul_numeric_domains(
+            dynamic_refs_mod._IntBounds(1, 2), dynamic_refs_mod._IntBounds(1, 2), self._limits()
+        )
+        assert out == dynamic_refs_mod._IntBounds(1, 4)
+
+    def test_mul_finite_pair_stays_exact(self) -> None:
+        out = dynamic_refs_mod._mul_numeric_domains(
+            dynamic_refs_mod._FiniteInts(frozenset({2, 3})),
+            dynamic_refs_mod._FiniteInts(frozenset({4})),
+            self._limits(),
+        )
+        assert out == dynamic_refs_mod._FiniteInts(frozenset({8, 12}))
+
+    def test_union_merges_finite_sets_without_cartesian_product(self) -> None:
+        out = dynamic_refs_mod._union_numeric_domains(
+            dynamic_refs_mod._FiniteInts(frozenset({1, 2})),
+            dynamic_refs_mod._FiniteInts(frozenset({3})),
+            self._limits(),
+        )
+        assert out == dynamic_refs_mod._FiniteInts(frozenset({1, 2, 3}))
+
+    @pytest.mark.parametrize(
+        "fn",
+        ["_union_numeric_domains", "_add_numeric_domains", "_sub_numeric_domains"],
+    )
+    def test_none_operand_propagates(self, fn: str) -> None:
+        op = getattr(dynamic_refs_mod, fn)
+        assert op(None, dynamic_refs_mod._IntBounds(0, 1), self._limits()) is None
+        assert op(dynamic_refs_mod._IntBounds(0, 1), None, self._limits()) is None
+
+    def test_div_returns_none_when_all_divisors_are_zero(self) -> None:
+        out = dynamic_refs_mod._div_numeric_domains(
+            dynamic_refs_mod._FiniteInts(frozenset({4})),
+            dynamic_refs_mod._FiniteInts(frozenset({0})),
+            self._limits(),
+        )
+        assert out is None
+
+    def test_div_truncates_toward_zero(self) -> None:
+        out = dynamic_refs_mod._div_numeric_domains(
+            dynamic_refs_mod._FiniteInts(frozenset({-7})),
+            dynamic_refs_mod._FiniteInts(frozenset({2})),
+            self._limits(),
+        )
+        assert out == dynamic_refs_mod._FiniteInts(frozenset({-3}))
+
+    def test_min_and_max_take_componentwise_bounds(self) -> None:
+        a = dynamic_refs_mod._IntBounds(0, 10)
+        b = dynamic_refs_mod._IntBounds(20, 30)
+        assert dynamic_refs_mod._min_numeric_domains(a, b, self._limits()) == (
+            dynamic_refs_mod._IntBounds(0, 10)
+        )
+        assert dynamic_refs_mod._max_numeric_domains(a, b, self._limits()) == (
+            dynamic_refs_mod._IntBounds(20, 30)
+        )
+
+    def test_min_of_finite_pair_is_pointwise(self) -> None:
+        out = dynamic_refs_mod._min_numeric_domains(
+            dynamic_refs_mod._FiniteInts(frozenset({1, 5})),
+            dynamic_refs_mod._FiniteInts(frozenset({3})),
+            self._limits(),
+        )
+        assert out == dynamic_refs_mod._FiniteInts(frozenset({1, 3}))
