@@ -6,7 +6,7 @@ from collections.abc import Iterable, Sequence
 from excel_grapher.core.address_keys import normalize_key
 
 from .graph import DependencyGraph
-from .node import Node, NodeKey, NodeKind, member_keys
+from .node import Node, NodeKey, NodeKind, copy_metadata, member_keys
 
 
 def select_path_induced_subgraph(
@@ -176,7 +176,7 @@ def _induced_dependency_subgraph(
                 value=node.value,
                 is_leaf=node.is_leaf,
                 is_target=node.is_target,
-                metadata=dict(node.metadata),
+                metadata=copy_metadata(node.metadata),
                 kind=node.kind,
                 min_col=node.min_col,
                 min_row=node.min_row,

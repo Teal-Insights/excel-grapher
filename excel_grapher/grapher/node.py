@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Any, Protocol, TypeAlias
@@ -129,6 +129,65 @@ def _derived_fields_cache_clear() -> None:
     _DERIVED_FIELDS_CACHE.clear()
 
 
+class _EmptyMetadata(Mapping[str, Any]):
+    """Immutable empty mapping shared by every node with no metadata.
+
+    Nodes default to the `EMPTY_METADATA` singleton rather than a fresh dict, so
+    the common (empty) case costs one shared object instead of ~64 bytes per
+    node. Reads behave like `{}`; writes raise `TypeError` because the mapping is
+    not mutable — populate metadata via `Node.set_metadata` /
+    `Node.update_metadata` (or `DependencyGraph.set_node_metadata`).
+    """
+
+    __slots__ = ()
+
+    def __getitem__(self, key: str) -> Any:
+        raise KeyError(key)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(())
+
+    def __len__(self) -> int:
+        return 0
+
+    def __contains__(self, key: object) -> bool:
+        return False
+
+    def __hash__(self) -> int:
+        # `Mapping` sets `__hash__ = None`; instances are immutable and all equal,
+        # so a constant hash is consistent. Also required for a dataclass default.
+        return hash(())
+
+    def __repr__(self) -> str:
+        return "{}"
+
+    def __copy__(self) -> _EmptyMetadata:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> _EmptyMetadata:
+        return self
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (_empty_metadata, ())
+
+
+EMPTY_METADATA: Mapping[str, Any] = _EmptyMetadata()
+
+
+def _empty_metadata() -> Mapping[str, Any]:
+    """Return the shared empty-metadata singleton (pickle/copy reconstructor)."""
+    return EMPTY_METADATA
+
+
+def copy_metadata(metadata: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    """Return an independent copy of `metadata`, sharing the empty singleton.
+
+    Empty (or missing) metadata propagates as `EMPTY_METADATA` without
+    materializing a dict; anything else is copied into a plain dict.
+    """
+    return dict(metadata) if metadata else EMPTY_METADATA
+
+
 class NodeKind(StrEnum):
     """Coarse node classification for compatibility metadata.
 
@@ -176,6 +235,12 @@ class Node:
     Instances are slotted (no per-instance `__dict__`). Derived attributes
     (`key`, `shape`, `column_index`) are served from a process-wide LRU keyed on
     the canonical address rather than `functools.cached_property`.
+
+    `metadata` is a read-only `Mapping` for callers. Nodes without metadata share
+    the immutable `EMPTY_METADATA` singleton instead of allocating a dict, so
+    `node.metadata["k"] = v` is not supported (it raises `TypeError` on a node
+    with no metadata yet). Writers — node hooks included — use
+    `set_metadata` / `update_metadata`, or `DependencyGraph.set_node_metadata`.
     """
 
     sheet: str | None
@@ -186,7 +251,7 @@ class Node:
     value: Any
     is_leaf: bool
     is_target: bool = False
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = EMPTY_METADATA
     kind: NodeKind = NodeKind.cell
     min_col: str | None = None
     min_row: int | None = None
@@ -195,6 +260,10 @@ class Node:
     address: AddressKey | None = None
 
     def __post_init__(self) -> None:
+        if not self.metadata:
+            # Never hold a caller's empty dict; share the singleton instead.
+            self.metadata = EMPTY_METADATA
+
         if self.address is not None:
             self.address = _coerce_address(self.address)
             self._sync_fields_from_address()
@@ -290,6 +359,24 @@ class Node:
         self.min_row = int(self.min_row)
         self.max_row = int(self.max_row)
 
+    def set_metadata(self, metadata: Mapping[str, Any] | None) -> None:
+        """Replace this node's metadata with a copy of `metadata`.
+
+        Empty or `None` input drops back to the shared `EMPTY_METADATA`
+        singleton, so nodes without metadata never own a dict.
+        """
+        self.metadata = copy_metadata(metadata)
+
+    def update_metadata(self, updates: Mapping[str, Any]) -> None:
+        """Merge `updates` into this node's metadata, allocating on first write."""
+        if not updates:
+            return
+        current = self.metadata
+        if isinstance(current, dict):
+            current.update(updates)
+        else:
+            self.metadata = {**current, **updates}
+
     @property
     def key(self) -> NodeKey:
         assert self.address is not None
@@ -357,6 +444,11 @@ class NodeView:
         return int(fastpyxl.utils.cell.column_index_from_string(self.column))
 
 
+def _view_metadata(metadata: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Return a read-only snapshot of `metadata` for a `NodeView`."""
+    return MappingProxyType(dict(metadata)) if metadata else EMPTY_METADATA
+
+
 def node_to_view(node: Node) -> NodeView:
     """Build an immutable `NodeView` snapshot from a stored `Node`."""
     return NodeView(
@@ -368,7 +460,7 @@ def node_to_view(node: Node) -> NodeView:
         value=node.value,
         is_leaf=node.is_leaf,
         is_target=node.is_target,
-        metadata=MappingProxyType(dict(node.metadata)),
+        metadata=_view_metadata(node.metadata),
         kind=node.kind,
         min_col=node.min_col,
         min_row=node.min_row,
@@ -388,7 +480,7 @@ def make_cell_node(
     value: Any = None,
     is_leaf: bool = True,
     is_target: bool = False,
-    metadata: dict[str, Any] | None = None,
+    metadata: Mapping[str, Any] | None = None,
 ) -> Node:
     """Build a single-cell graph node."""
     return Node(
@@ -400,7 +492,7 @@ def make_cell_node(
         value=value,
         is_leaf=is_leaf,
         is_target=is_target,
-        metadata=dict(metadata or {}),
+        metadata=copy_metadata(metadata),
         kind=NodeKind.cell,
     )
 
@@ -413,7 +505,7 @@ def make_union_node(
     value: Any = None,
     is_leaf: bool = True,
     is_target: bool = False,
-    metadata: dict[str, Any] | None = None,
+    metadata: Mapping[str, Any] | None = None,
 ) -> Node:
     """Build a multi-cell node from cell members (or a cell node for one member).
 
@@ -433,7 +525,7 @@ def make_union_node(
             value=value,
             is_leaf=is_leaf,
             is_target=is_target,
-            metadata=dict(metadata or {}),
+            metadata=copy_metadata(metadata),
             address=address,
         )
     if formula is not None or normalized_formula is not None:
@@ -449,7 +541,7 @@ def make_union_node(
         value=None,
         is_leaf=is_leaf,
         is_target=is_target,
-        metadata=dict(metadata or {}),
+        metadata=copy_metadata(metadata),
         address=address,
     )
 
