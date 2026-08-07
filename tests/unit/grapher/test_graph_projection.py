@@ -604,7 +604,7 @@ def test_projection_copy_preserves_graph_metadata_fields() -> None:
         "_edges",
         "_reverse_edges",
         "_guards",
-        "_edge_extra",
+        "_edge_provenance",
         "_hooks",
         "_occupancy",
     }

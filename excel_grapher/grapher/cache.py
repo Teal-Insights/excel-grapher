@@ -457,8 +457,9 @@ def dependency_graph_from_json(payload: dict[str, Any]) -> DependencyGraph:
         attrs = e.get("attrs", {})
         if not isinstance(attrs, dict):
             raise TypeError("edge attrs must be dict")
+        provenance = None
         if "provenance" in attrs:
-            attrs["provenance"] = _edge_provenance_from_json(attrs["provenance"])
-        g.add_edge(from_key, to_key, guard=guard, **attrs)
+            provenance = _edge_provenance_from_json(attrs["provenance"])
+        g.add_edge(from_key, to_key, guard=guard, provenance=provenance)
 
     return g
