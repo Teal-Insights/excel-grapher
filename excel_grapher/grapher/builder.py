@@ -36,13 +36,24 @@ from .dynamic_refs import (
     infer_dynamic_offset_targets,
 )
 from .graph import DependencyGraph, NodeHook
-from .guard import And, Compare, GuardExpr, Literal, Not, and_guard, or_guard
+from .guard import (
+    And,
+    Compare,
+    GuardExpr,
+    Literal,
+    Not,
+    and_guard,
+    guard_range_shape,
+    instantiate_element_guard,
+    or_guard,
+)
 from .node import Node
 from .parser import (
     CellRef,
     FormulaNormalizer,
     _find_function_calls_with_spans,
     _split_function_args,
+    element_aligned_range_cells,
     expand_range,
     expand_range_ref,
     format_key,
@@ -52,6 +63,7 @@ from .parser import (
     parse_range_refs_with_spans,
     parse_standalone_cell_refs,
     split_top_level_choose,
+    split_top_level_function,
     split_top_level_if,
     split_top_level_ifs,
     split_top_level_switch,
@@ -71,6 +83,65 @@ _VOLATILE_DYNAMIC_REF_FUNCS = frozenset(
 )
 _CONDITIONAL_FN_NAMES = frozenset({"IF", "IFS", "CHOOSE", "SWITCH"})
 _DYNAMIC_REF_FN_NAMES = frozenset({"OFFSET", "INDIRECT", "INDEX"})
+# Functions that consume a whole array argument and reduce or reshape it. A
+# conditional nested inside one of these is evaluated element-wise by Excel
+# (`SUM(IF(A1:A10>0,B1:B10,0))`), which is the array context that turns a
+# range-typed condition into per-element edge guards. See issue #483.
+#
+# Element alignment is positional, matching CSE and dynamic-array evaluation.
+# The one form it does not describe is legacy implicit intersection, where the
+# formula's own row/column selects a single element instead. Excel 2019+ writes
+# that reading explicitly as `@A1:A10`, which never parses into a range template
+# (so those formulas stay conservative); only a pre-2019 save of a non-CSE
+# `SUM(IF(range,...))` — a formula that already returns a one-element result in
+# that engine — could be read the other way.
+_ARRAY_CONSUMING_FN_NAMES = frozenset(
+    {
+        "AGGREGATE",
+        "AVEDEV",
+        "AVERAGE",
+        "AVERAGEA",
+        "CONCAT",
+        "COUNT",
+        "COUNTA",
+        "DEVSQ",
+        "GEOMEAN",
+        "HARMEAN",
+        "LARGE",
+        "MAX",
+        "MAXA",
+        "MEDIAN",
+        "MIN",
+        "MINA",
+        "MMULT",
+        "MODE",
+        "MODE.MULT",
+        "MODE.SNGL",
+        "PERCENTILE",
+        "PERCENTILE.EXC",
+        "PERCENTILE.INC",
+        "PRODUCT",
+        "QUARTILE",
+        "QUARTILE.EXC",
+        "QUARTILE.INC",
+        "SMALL",
+        "STDEV",
+        "STDEV.P",
+        "STDEV.S",
+        "STDEVA",
+        "STDEVP",
+        "SUM",
+        "SUMPRODUCT",
+        "SUMSQ",
+        "TEXTJOIN",
+        "TRANSPOSE",
+        "VAR",
+        "VAR.P",
+        "VAR.S",
+        "VARA",
+        "VARP",
+    }
+)
 # Matches volatile builtins with optional Excel compatibility prefixes. Add new
 # volatile function names to ``_VOLATILE_DYNAMIC_REF_FUNCS`` only (not prefix
 # variants); ``_XLFN.`` / ``_XLUDF.`` are handled generically here.
@@ -206,6 +277,13 @@ def _outermost_embedded_conditional_spans(
     ]
     return [
         span for span in cond_spans if not any(_span_contains(other, span) for other in cond_spans)
+    ]
+
+
+def _spans_in_array_context(formula: str) -> list[tuple[int, int]]:
+    """Return spans of calls that impose array context on nested conditionals."""
+    return [
+        span for _, _, span in _find_function_calls_with_spans(formula, _ARRAY_CONSUMING_FN_NAMES)
     ]
 
 
@@ -578,19 +656,21 @@ def create_dependency_graph(
         return False
 
     def extract_deps_with_guards(
-        formula: str, current_sheet: str, current_a1: str
+        formula: str, current_sheet: str, current_a1: str, *, array_formula: bool = False
     ) -> list[tuple[str, str, GuardExpr | None]]:
         if not formula.startswith("="):
             return []
         try:
-            return _extract_deps_with_guards_inner(formula, current_sheet, current_a1)
+            return _extract_deps_with_guards_inner(
+                formula, current_sheet, current_a1, array_formula=array_formula
+            )
         except DynamicRefError:
             raise
         except ValueError as exc:
             raise ValueError(f"{current_sheet}!{current_a1}: {exc}") from exc
 
     def _extract_deps_with_guards_inner(
-        formula: str, current_sheet: str, current_a1: str
+        formula: str, current_sheet: str, current_a1: str, *, array_formula: bool = False
     ) -> list[tuple[str, str, GuardExpr | None]]:
         sheet_order = list(wb_formulas.sheetnames)
 
@@ -1021,7 +1101,71 @@ def create_dependency_graph(
                 out.append(d)
             return _workbook_sorted_sheet_a1_pairs(out, sheet_order=sheet_order)
 
-        def extract_expr_deps_guarded(expr: str) -> dict[tuple[str, str], GuardExpr | None]:
+        def extract_array_if_deps(f: str) -> dict[tuple[str, str], GuardExpr | None] | None:
+            """Extract per-element deps for an array-context `IF`, else `None`.
+
+            In array context Excel evaluates `IF` element-wise over its range
+            arguments, so element `i` of a value range is read only under element
+            `i` of the condition. The condition is parsed once into a template
+            (`RangeRef` placeholders) and instantiated per element; branch cells
+            that are not element-aligned with the condition — differently shaped
+            ranges, scalars, ranges under an aggregate — stay unconditional.
+
+            Returns `None` when the form is not an array-context `IF` (no
+            parseable range-typed condition), leaving the scalar handling below
+            to run unchanged.
+            """
+            args = split_top_level_function(f, "IF")
+            if args is None or len(args) not in (2, 3) or not args[0] or not args[1]:
+                return None
+            cond_s = args[0]
+            template = parse_guard_expr(
+                cond_s,
+                current_sheet=current_sheet,
+                named_ranges=named_ranges,
+                allow_ranges=True,
+            )
+            if template is None:
+                return None
+            shape = guard_range_shape(template)
+            if shape is None:
+                return None
+
+            out: dict[tuple[str, str], GuardExpr | None] = {}
+            # The whole condition range is read to build the boolean array.
+            for sh, a1 in extract_expr_deps(cond_s):
+                _merge_guarded_dep(out, (sh, a1), None)
+
+            def add_array_branch(branch_expr: str, *, negated: bool) -> None:
+                if not branch_expr:
+                    return
+                aligned = element_aligned_range_cells(
+                    branch_expr,
+                    current_sheet=current_sheet,
+                    shape=shape,
+                    max_cells=max_range_cells,
+                )
+                for key, inner_guard in extract_expr_deps_guarded(
+                    branch_expr, array_context=True
+                ).items():
+                    offset = aligned.get(key)
+                    element_guard: GuardExpr | None = None
+                    if offset is not None:
+                        element_guard = instantiate_element_guard(
+                            template, row_offset=offset[0], col_offset=offset[1]
+                        )
+                        if element_guard is not None and negated:
+                            element_guard = Not(element_guard)
+                    _merge_guarded_dep(out, key, _conjoin_guards(element_guard, inner_guard))
+
+            add_array_branch(args[1], negated=False)
+            if len(args) == 3:
+                add_array_branch(args[2], negated=True)
+            return out
+
+        def extract_expr_deps_guarded(
+            expr: str, *, array_context: bool = False
+        ) -> dict[tuple[str, str], GuardExpr | None]:
             """Extract guarded deps from an expression, recursing into conditionals.
 
             Deps of a branch that is itself a conditional carry the conjunction of
@@ -1030,13 +1174,28 @@ def create_dependency_graph(
             scanned the same way; surrounding refs stay unconditional. A dep
             reachable through several branches gets the disjunction of its
             per-branch guards (`None` — unconditional/opaque — always wins).
+
+            Args:
+                expr: Expression text, with or without a leading `=`.
+                array_context: Whether Excel evaluates `expr` element-wise (a CSE
+                    array formula, or nesting inside an array-consuming call), in
+                    which case a range-typed `IF` condition yields per-element
+                    guards instead of one guard for the whole range.
             """
             f = expr if expr.startswith("=") else "=" + expr
             out: dict[tuple[str, str], GuardExpr | None] = {}
 
             def add_branch(branch_expr: str, branch_guard: GuardExpr | None) -> None:
-                for key, inner_guard in extract_expr_deps_guarded(branch_expr).items():
+                for key, inner_guard in extract_expr_deps_guarded(
+                    branch_expr, array_context=array_context
+                ).items():
                     _merge_guarded_dep(out, key, _conjoin_guards(branch_guard, inner_guard))
+
+            # 0) Array-context IF(range_condition, ...): per-element guards.
+            if array_context:
+                array_out = extract_array_if_deps(f)
+                if array_out is not None:
+                    return array_out
 
             # 1) IF(cond, then, else)
             if_parts = split_top_level_if(f)
@@ -1156,8 +1315,15 @@ def create_dependency_graph(
             # deps, then treat remaining surrounding refs as unconditional.
             embedded_spans = _outermost_embedded_conditional_spans(f)
             if embedded_spans:
-                for start, end in embedded_spans:
-                    for key, guard in extract_expr_deps_guarded(f[start:end]).items():
+                array_spans = _spans_in_array_context(f)
+                for span in embedded_spans:
+                    start, end = span
+                    nested_array_context = array_context or any(
+                        _span_contains(outer, span) for outer in array_spans
+                    )
+                    for key, guard in extract_expr_deps_guarded(
+                        f[start:end], array_context=nested_array_context
+                    ).items():
                         _merge_guarded_dep(out, key, guard)
                 for sh, a1 in extract_expr_deps(mask_spans(f, embedded_spans)):
                     _merge_guarded_dep(out, (sh, a1), None)
@@ -1167,7 +1333,10 @@ def create_dependency_graph(
                 _merge_guarded_dep(out, (sh, a1), None)
             return out
 
-        return _sorted_guard_deps(extract_expr_deps_guarded(formula), sheet_order=sheet_order)
+        return _sorted_guard_deps(
+            extract_expr_deps_guarded(formula, array_context=array_formula),
+            sheet_order=sheet_order,
+        )
 
     visited: set[str] = set()
     q: deque[tuple[str, str, int]] = deque()
@@ -1225,7 +1394,10 @@ def create_dependency_graph(
 
             ws_f = _get_ws_f(sheet)
             raw = ws_f[a1].value
-            if isinstance(raw, ArrayFormula):
+            # CSE array formulas are evaluated element-wise, which is one of the
+            # array contexts that make range-typed `IF` conditions per-element.
+            is_array_formula = isinstance(raw, ArrayFormula)
+            if is_array_formula:
                 raw = raw.text or ""
                 if raw and not raw.startswith("="):
                     raw = f"={raw}"
@@ -1265,7 +1437,9 @@ def create_dependency_graph(
 
             # Run extraction first so that the constraint-based dynamic-ref expansion
             # (_dyn_cache) is populated before provenance collection reads from it.
-            deps_and_guards = extract_deps_with_guards(formula_str, sheet, a1)
+            deps_and_guards = extract_deps_with_guards(
+                formula_str, sheet, a1, array_formula=is_array_formula
+            )
 
             prov_map: dict[str, EdgeProvenance] | None = None
             if capture_dependency_provenance:

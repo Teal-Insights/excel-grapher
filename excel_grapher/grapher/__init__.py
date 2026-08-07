@@ -50,6 +50,7 @@ from .export import (
 from .graph import CycleError, CycleReport, DependencyGraph, GraphReadView, NodeHook
 from .guard import And, Compare, GuardExpr, Literal, Not, Or
 from .guard import CellRef as GuardCellRef
+from .guard import RangeRef as GuardRangeRef
 from .node import (
     CellLocation,
     Node,
@@ -105,6 +106,7 @@ __all__ = [
     "CycleReport",
     "GuardExpr",
     "GuardCellRef",
+    "GuardRangeRef",
     "Literal",
     "Compare",
     "Not",
