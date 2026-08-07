@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v5.0.0 (2026-08-07)
+
+### Features
+
+- **grapher**: Drop direct_sites_formula, make raw formula storage opt-in
+  ([#500](https://github.com/Teal-Insights/excel-grapher/pull/500),
+  [`8a03de3`](https://github.com/Teal-Insights/excel-grapher/commit/8a03de31e4343ee1687c8439ec138c6c925b2bd4))
+
+- **scripts**: Add a repeatable graph memory measurement harness (#490)
+  ([#501](https://github.com/Teal-Insights/excel-grapher/pull/501),
+  [`35ebe7a`](https://github.com/Teal-Insights/excel-grapher/commit/35ebe7a71a259b93c80477e34cdf999cd675b733))
+
+### Performance Improvements
+
+- **grapher**: Share one empty metadata mapping across nodes (fixes #493)
+  ([#499](https://github.com/Teal-Insights/excel-grapher/pull/499),
+  [`27287d0`](https://github.com/Teal-Insights/excel-grapher/commit/27287d0f6cd88cbb877e05dbe73ec6a27bd74a1b))
+
+### Breaking Changes
+
+- **grapher**: `EdgeProvenance.direct_sites_formula` is removed, and `FormulaRewrite` no longer
+  carries `before_formula` / `after_formula` -- the compression audit trail reports normalized
+  formulas only. `Node.formula` is now `None` unless the graph is built with
+  `create_dependency_graph(..., store_raw_formula=True)`, which TACO range compression requires.
+  Graph caches written by schema 3 are rejected and rebuilt.
+
+
 ## v4.1.2 (2026-08-07)
 
 ### Bug Fixes
