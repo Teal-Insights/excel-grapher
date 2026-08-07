@@ -53,6 +53,35 @@ def test_as_scalar_rejects_range_list_and_ndarray() -> None:
     assert as_scalar(None) is None
 
 
+def test_as_scalar_passes_plain_scalars_through_unchanged() -> None:
+    """The plain-scalar shortcut must not alter the value or its type."""
+    for value in (3, 3.5, "text", True, False, None):
+        assert as_scalar(value) is value
+
+
+def test_as_scalar_still_classifies_scalar_subclasses_and_numpy_scalars() -> None:
+    """Subclasses skip the exact-type shortcut and keep the general classification."""
+
+    class Coord(int):
+        pass
+
+    class Label(str):
+        pass
+
+    coord = Coord(7)
+    label = Label("A1")
+    assert as_scalar(coord) is coord
+    assert as_scalar(label) is label
+    assert as_scalar(XlError.NA) == XlError.NA
+    assert as_scalar(np.float64(2.5)) == 2.5
+    assert as_scalar(np.str_("text")) == "text"
+
+
+def test_as_scalar_rejects_tuple_and_zero_row_ndarray() -> None:
+    assert as_scalar((1, 2)) == XlError.VALUE
+    assert as_scalar(np.empty((0, 2), dtype=object)) == XlError.VALUE
+
+
 def test_to_number_rejects_range() -> None:
     def resolve(address: str) -> CellValue:
         return 1

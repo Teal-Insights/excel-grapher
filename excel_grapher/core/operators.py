@@ -8,7 +8,9 @@ Exponent (``^``) stays on a per-cell loop inside the fast path for parity.
 Lazy ``Range`` / nested-list operands use shared ``operator_maps`` (same loops as
 export ``xl_map_*``). Large grids materialize once at this boundary and try
 ``operators_fastpath``; on a miss the same arrays feed ``reference_*_array``
-rather than walking the ``Range`` a second time.
+rather than walking the ``Range`` a second time. An ndarray operand already is
+that buffer, so it is handed to the array paths as-is rather than copied out to
+nested lists and rebuilt cell by cell.
 
 When the optional ``fast`` extra (NumPy) is not installed, large-grid
 materialization is skipped and callers fall through to ``operator_maps``.
@@ -48,10 +50,6 @@ else:  # pragma: no cover - exercised when the `fast` extra is absent
     )
 
 
-def _is_grid_operand(value: object) -> bool:
-    return Grid.wrap(value) is not None
-
-
 def _as_cell_result(value: object) -> FormulaValue:
     """Normalize operator results to ``FormulaValue`` (nested lists, not ndarrays)."""
     rows = _as_nested_rows_from_ndarray(value)
@@ -61,7 +59,21 @@ def _as_cell_result(value: object) -> FormulaValue:
 
 
 def _materialize_grid(grid: Grid) -> Any:
+    """Return the grid as a 2-D object ndarray, reusing an ndarray operand as-is.
+
+    ndarray operands are already the buffer the array paths want, so they are
+    only reshaped/cast when needed; `Range` and nested-list grids are walked
+    once through ``Grid.at``.
+    """
     assert np is not None
+    array = grid.array
+    if array is not None:
+        arr = cast(Any, array)
+        if arr.dtype != object:
+            arr = arr.astype(object)
+        if arr.ndim == 1:
+            arr = arr.reshape(grid.nrows, grid.ncols)
+        return arr
     return np.array(
         [[grid.at(row0, col0) for col0 in range(grid.ncols)] for row0 in range(grid.nrows)],
         dtype=object,
@@ -72,6 +84,8 @@ def _apply_large_grid_binary(
     op: str | None,
     left: object,
     right: object,
+    left_grid: Grid | None,
+    right_grid: Grid | None,
     *,
     kind: str,
 ) -> FormulaValue | None:
@@ -88,8 +102,6 @@ def _apply_large_grid_binary(
     if np is None:
         return None
 
-    left_grid = Grid.wrap(left)
-    right_grid = Grid.wrap(right)
     if left_grid is None and right_grid is None:
         return None
     if left_grid is not None and right_grid is not None:
@@ -139,8 +151,10 @@ def _xl_compare(op: str, left: FormulaValue, right: FormulaValue) -> FormulaValu
     if isinstance(right, XlError):
         return right
 
-    if _is_grid_operand(left) or _is_grid_operand(right):
-        large = _apply_large_grid_binary(op, left, right, kind="compare")
+    left_grid = Grid.wrap(left)
+    right_grid = Grid.wrap(right)
+    if left_grid is not None or right_grid is not None:
+        large = _apply_large_grid_binary(op, left, right, left_grid, right_grid, kind="compare")
         if large is not None:
             return large
         return cast(FormulaValue, map_compare(op, left, right))
@@ -158,8 +172,10 @@ def _xl_arithmetic(
     if isinstance(right, XlError):
         return right
 
-    if _is_grid_operand(left) or _is_grid_operand(right):
-        large = _apply_large_grid_binary(op, left, right, kind="arithmetic")
+    left_grid = Grid.wrap(left)
+    right_grid = Grid.wrap(right)
+    if left_grid is not None or right_grid is not None:
+        large = _apply_large_grid_binary(op, left, right, left_grid, right_grid, kind="arithmetic")
         if large is not None:
             return large
         return cast(FormulaValue, map_arithmetic(op, left, right))
@@ -183,8 +199,10 @@ def _xl_concat(left: FormulaValue, right: FormulaValue) -> FormulaValue:
     if isinstance(right, XlError):
         return right
 
-    if _is_grid_operand(left) or _is_grid_operand(right):
-        large = _apply_large_grid_binary(None, left, right, kind="concat")
+    left_grid = Grid.wrap(left)
+    right_grid = Grid.wrap(right)
+    if left_grid is not None or right_grid is not None:
+        large = _apply_large_grid_binary(None, left, right, left_grid, right_grid, kind="concat")
         if large is not None:
             return large
         return cast(FormulaValue, map_concat(left, right))

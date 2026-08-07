@@ -30,13 +30,22 @@ def _is_ndarray_like(value: object) -> bool:
     return isinstance(ndim, int) and ndim >= 1 and hasattr(value, "flat")
 
 
+_PLAIN_SCALAR_TYPES = frozenset({bool, int, float, str, type(None)})
+
+
 def as_scalar(value: object) -> float | int | str | bool | XlError | None:
     """Collapse range/array values to `#VALUE!` for scalar coercion contexts.
 
     Lazy `Range`, unbound `ExcelRange`, and nested lists are not valid scalar
     operands. Materialized ndarray buffers (fast-path internals) also collapse
     to `#VALUE!`. Does not evaluate cells inside a `Range`.
+
+    Cells of an exact plain scalar type return immediately: `_is_ndarray_like`
+    probes several attributes that miss on every ordinary cell, and `to_number`
+    / `to_string` call this once per cell in the per-cell loops.
     """
+    if type(value) in _PLAIN_SCALAR_TYPES:
+        return cast("float | int | str | bool | None", value)
     if isinstance(value, (Range, ExcelRange, list, tuple)) or _is_ndarray_like(value):
         return XlError.VALUE
     return cast("float | int | str | bool | XlError | None", value)
