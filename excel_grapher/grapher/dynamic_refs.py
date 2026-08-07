@@ -1901,8 +1901,16 @@ def _div_numeric_domains(
     if bb.lo <= 0 <= bb.hi and not known_nonzero:
         return None
     ba = _normalize_to_bounds(a)
-    # A divisor interval straddling zero is split around it, so the sign stays constant.
-    divisors = (bb.lo, bb.hi) if bb.hi < 0 or bb.lo > 0 else (bb.lo, -1, 1, bb.hi)
+    divisors: tuple[int, ...]
+    if bb.hi < 0 or bb.lo > 0:
+        divisors = (bb.lo, bb.hi)
+    else:
+        divisors = (
+            *((bb.lo, -1) if bb.lo < 0 else ()),
+            *((1, bb.hi) if bb.hi > 0 else ()),
+        )
+    if not divisors:
+        return None
     corners = [_trunc_div_int(num, den) for num in (ba.lo, ba.hi) for den in divisors]
     return _densify_or_bounds(min(corners), max(corners), limits)
 

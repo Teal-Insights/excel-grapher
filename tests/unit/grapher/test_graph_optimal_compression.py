@@ -197,6 +197,13 @@ def test_optimal_inline_local_ref_after_identity_transit(tmp_path: Path) -> None
     removed = projected.compress_optimal()
     assert "Engine!B20" in removed
     assert "Engine!C14" in removed
+    # Embedded CHOOSE branch guard survives structural inline onto C20.
+    from excel_grapher.grapher.guard import CellRef, Compare
+    from excel_grapher.grapher.guard import Literal as GuardLiteral
+
+    assert projected.get_edge_guard("Engine!C20", "Engine!B9") == Compare(
+        left=CellRef(key="Inputs!B22"), op="=", right=GuardLiteral(value=1)
+    )
 
     node = projected.get_node("Engine!C20")
     assert node is not None
@@ -275,6 +282,134 @@ def test_optimal_inline_single_call_site() -> None:
     na = graph.get_node("Sheet1!A1")
     assert na is not None
     assert na.normalized_formula == "=(Sheet1!D1*2)+1"
+
+
+def test_optimal_inlines_transit_with_guarded_outgoing_edges() -> None:
+    """Embedded conditionals leave guards on transit outs; the body is still pasteable."""
+    from excel_grapher.grapher.guard import CellRef, Compare, Literal
+
+    branch_guard = Compare(left=CellRef(key="Sheet1!C1"), op="=", right=Literal(value=1))
+    graph = DependencyGraph()
+    c = _make_node("Sheet1!C1", None, None, is_leaf=True)
+    d = _make_node("Sheet1!D1", None, None, is_leaf=True)
+    b = _make_node(
+        "Sheet1!B1",
+        "=IF(Sheet1!C1=1,Sheet1!D1,0)",
+        "=IF(Sheet1!C1=1,Sheet1!D1,0)",
+    )
+    a = _make_node("Sheet1!A1", "=Sheet1!B1+1", "=Sheet1!B1+1")
+    for n in (c, d, b, a):
+        graph.add_node(n)
+    _direct_edge(graph, "Sheet1!B1", "Sheet1!C1")
+    graph.add_edge(
+        "Sheet1!B1",
+        "Sheet1!D1",
+        guard=branch_guard,
+        provenance=EdgeProvenance(
+            causes=DependencyCause.direct_ref,
+            direct_sites_formula=((20, 29),),
+            direct_sites_normalized=((20, 29),),
+        ),
+    )
+    _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
+
+    removed = graph.compress_optimal()
+    assert "Sheet1!B1" in removed
+    assert graph.get_edge_guard("Sheet1!A1", "Sheet1!C1") is None
+    assert graph.get_edge_guard("Sheet1!A1", "Sheet1!D1") == branch_guard
+    na = graph.get_node("Sheet1!A1")
+    assert na is not None
+    assert na.normalized_formula == "=(IF(Sheet1!C1=1,Sheet1!D1,0))+1"
+
+
+def test_optimal_inline_shared_dep_unguarded_on_dependent_wins() -> None:
+    """Unconditional read on the dependent clears a guarded read from the transit."""
+    from excel_grapher.grapher.guard import CellRef, Compare, Literal
+
+    branch_guard = Compare(left=CellRef(key="Sheet1!C1"), op="=", right=Literal(value=1))
+    graph = DependencyGraph()
+    c = _make_node("Sheet1!C1", None, None, is_leaf=True)
+    d = _make_node("Sheet1!D1", None, None, is_leaf=True)
+    b = _make_node(
+        "Sheet1!B1",
+        "=IF(Sheet1!C1=1,Sheet1!D1,0)",
+        "=IF(Sheet1!C1=1,Sheet1!D1,0)",
+    )
+    a = _make_node(
+        "Sheet1!A1",
+        "=Sheet1!B1+Sheet1!D1",
+        "=Sheet1!B1+Sheet1!D1",
+    )
+    for n in (c, d, b, a):
+        graph.add_node(n)
+    _direct_edge(graph, "Sheet1!B1", "Sheet1!C1")
+    graph.add_edge(
+        "Sheet1!B1",
+        "Sheet1!D1",
+        guard=branch_guard,
+        provenance=EdgeProvenance(
+            causes=DependencyCause.direct_ref,
+            direct_sites_formula=((20, 29),),
+            direct_sites_normalized=((20, 29),),
+        ),
+    )
+    _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
+    _direct_edge(graph, "Sheet1!A1", "Sheet1!D1")
+
+    removed = graph.compress_optimal()
+    assert "Sheet1!B1" in removed
+    assert graph.get_edge_guard("Sheet1!A1", "Sheet1!D1") is None
+
+
+def test_merge_inline_edge_guards_none_wins_and_or() -> None:
+    from excel_grapher.grapher.compression import merge_inline_edge_guards
+    from excel_grapher.grapher.guard import CellRef, Compare, Literal, Or
+
+    g1 = Compare(left=CellRef(key="Sheet1!C1"), op="=", right=Literal(value=1))
+    g2 = Compare(left=CellRef(key="Sheet1!C1"), op="=", right=Literal(value=2))
+
+    assert (
+        merge_inline_edge_guards(
+            dependent_guard=None,
+            dependent_has_edge=True,
+            transit_guard=g1,
+            transit_has_edge=True,
+        )
+        is None
+    )
+    assert (
+        merge_inline_edge_guards(
+            dependent_guard=g1,
+            dependent_has_edge=True,
+            transit_guard=None,
+            transit_has_edge=True,
+        )
+        is None
+    )
+    assert (
+        merge_inline_edge_guards(
+            dependent_guard=g1,
+            dependent_has_edge=True,
+            transit_guard=g1,
+            transit_has_edge=True,
+        )
+        == g1
+    )
+    assert merge_inline_edge_guards(
+        dependent_guard=g1,
+        dependent_has_edge=True,
+        transit_guard=g2,
+        transit_has_edge=True,
+    ) == Or(operands=(g1, g2))
+    assert (
+        merge_inline_edge_guards(
+            dependent_guard=None,
+            dependent_has_edge=False,
+            transit_guard=g1,
+            transit_has_edge=True,
+        )
+        == g1
+    )
 
 
 def test_optimal_inline_chain() -> None:
@@ -599,8 +734,8 @@ def test_optimal_blocks_when_provenance_absent() -> None:
     assert "Sheet1!B1" not in removed
 
 
-@pytest.mark.parametrize("test_name", ["guard"])
-def test_optimal_respects_guards(test_name: str) -> None:
+def test_optimal_blocks_guarded_incoming_edge() -> None:
+    """A guarded dependent→transit edge is not inlined (guards are not conjoined)."""
     from excel_grapher.grapher.guard import Literal
 
     graph = DependencyGraph()
@@ -609,14 +744,21 @@ def test_optimal_respects_guards(test_name: str) -> None:
     a = _make_node("Sheet1!A1", "=Sheet1!B1+1", "=Sheet1!B1+1")
     for n in (d, b, a):
         graph.add_node(n)
-    dr = DependencyCause.direct_ref
+    _direct_edge(graph, "Sheet1!B1", "Sheet1!D1")
+    af = "=Sheet1!B1+1"
+    ref = "Sheet1!B1"
+    i = af.index(ref)
+    sp = ((i, i + len(ref)),)
     graph.add_edge(
+        "Sheet1!A1",
         "Sheet1!B1",
-        "Sheet1!D1",
         guard=Literal(True),
-        provenance=EdgeProvenance(causes=dr),
+        provenance=EdgeProvenance(
+            causes=DependencyCause.direct_ref,
+            direct_sites_formula=sp,
+            direct_sites_normalized=sp,
+        ),
     )
-    _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
 
     removed = graph.compress_optimal()
     assert "Sheet1!B1" not in removed

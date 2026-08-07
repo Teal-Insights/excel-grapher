@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v4.1.1 (2026-08-07)
+
+### Bug Fixes
+
+- **grapher**: Avoid ZeroDivisionError in _div_numeric_domains
+  ([#488](https://github.com/Teal-Insights/excel-grapher/pull/488),
+  [`194ab3d`](https://github.com/Teal-Insights/excel-grapher/commit/194ab3d3eade40170af88cf8011372dd16db3d0f))
+
+- **grapher**: Isolate memoized candidate static-ref sets
+  ([#485](https://github.com/Teal-Insights/excel-grapher/pull/485),
+  [`3f68255`](https://github.com/Teal-Insights/excel-grapher/commit/3f6825525be6e9d29668df935db5f7d9b2d6e27f))
+
+### Performance Improvements
+
+- **grapher**: Memoize candidate static-ref walks (fixes #484)
+  ([#485](https://github.com/Teal-Insights/excel-grapher/pull/485),
+  [`3f68255`](https://github.com/Teal-Insights/excel-grapher/commit/3f6825525be6e9d29668df935db5f7d9b2d6e27f))
+
+
+## v4.1.0 (2026-08-07)
+
+### Bug Fixes
+
+- **grapher**: Allow optimal inline of bodies with guarded outs
+  ([#481](https://github.com/Teal-Insights/excel-grapher/pull/481),
+  [`40361bb`](https://github.com/Teal-Insights/excel-grapher/commit/40361bb9667e99e74e392f1e7a8579e005f3f42d))
+
+### Features
+
+- **grapher**: Extract guards from conditionals embedded in expressions
+  ([#481](https://github.com/Teal-Insights/excel-grapher/pull/481),
+  [`40361bb`](https://github.com/Teal-Insights/excel-grapher/commit/40361bb9667e99e74e392f1e7a8579e005f3f42d))
+
+### Refactoring
+
+- **viz**: Share SCC condensation ranking between grapher and exporter
+  ([#482](https://github.com/Teal-Insights/excel-grapher/pull/482),
+  [`75cc154`](https://github.com/Teal-Insights/excel-grapher/commit/75cc1544489f689eeab484d67b0a41d01557fe7e))
+
+
 ## v4.0.2 (2026-08-07)
 
 ### Bug Fixes
