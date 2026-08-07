@@ -1058,6 +1058,7 @@ class DependencyGraph:
         from .compression import (
             FormulaRewrite,
             direct_provenance_for_key_in_strings,
+            merge_inline_edge_guards,
             refresh_direct_sites,
             substitute_body_at_spans,
         )
@@ -1119,9 +1120,12 @@ class DependencyGraph:
 
         inherited_deps = t_deps - d_other_deps
         for dep in d_other_deps | t_deps:
-            guard = d_dep_guards.get(dep)
-            if guard is None:
-                guard = t_dep_guards.get(dep)
+            guard = merge_inline_edge_guards(
+                dependent_guard=d_dep_guards.get(dep),
+                dependent_has_edge=dep in d_other_deps,
+                transit_guard=t_dep_guards.get(dep),
+                transit_has_edge=dep in t_deps,
+            )
             if dep in inherited_deps:
                 new_prov = direct_provenance_for_key_in_strings(new_formula, new_norm, dep)
             else:

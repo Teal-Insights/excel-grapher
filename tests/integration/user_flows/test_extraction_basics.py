@@ -350,6 +350,146 @@ def test_dep_shared_between_nested_branch_and_else_branch_ORs_its_guards(
     )
 
 
+def test_IF_embedded_in_arithmetic_extracts_branch_guards(
+    workbook_factory: WorkbookFactory,
+) -> None:
+    b1_is_1 = Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=1))
+
+    path = workbook_factory(
+        lambda ws, _wb: write_single_row(
+            ws, ("IF embedded in arithmetic", 1, 10, 20, "=1+IF(B1=1,C1,D1)")
+        )
+    )
+    graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!E1"], load_values=True)
+    assert len(graph._nodes) == 4
+
+    assert graph.get_edge_guard("Sheet1!E1", "Sheet1!B1") is None
+    assert graph.get_edge_guard("Sheet1!E1", "Sheet1!C1") == b1_is_1
+    assert graph.get_edge_guard("Sheet1!E1", "Sheet1!D1") == Not(operand=b1_is_1)
+
+
+def test_IF_embedded_in_SUM_extracts_branch_guards(
+    workbook_factory: WorkbookFactory,
+) -> None:
+    b1_is_1 = Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=1))
+
+    path = workbook_factory(
+        lambda ws, _wb: write_single_row(
+            ws, ("IF embedded in SUM", 1, 10, 20, 30, "=SUM(IF(B1=1,C1,D1),E1)")
+        )
+    )
+    graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!F1"], load_values=True)
+    assert len(graph._nodes) == 5
+
+    assert graph.get_edge_guard("Sheet1!F1", "Sheet1!B1") is None
+    assert graph.get_edge_guard("Sheet1!F1", "Sheet1!C1") == b1_is_1
+    assert graph.get_edge_guard("Sheet1!F1", "Sheet1!D1") == Not(operand=b1_is_1)
+    # Sibling argument of SUM is unconditional.
+    assert graph.get_edge_guard("Sheet1!F1", "Sheet1!E1") is None
+
+
+def test_IF_embedded_in_arithmetic_inside_outer_IF_conjoins_guards(
+    workbook_factory: WorkbookFactory,
+) -> None:
+    a1_is_1 = Compare(left=CellRef(key="Sheet1!A1"), op="=", right=Literal(value=1))
+    b1_is_1 = Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=1))
+
+    path = workbook_factory(
+        lambda ws, _wb: write_single_row(
+            ws,
+            (
+                1,
+                1,
+                10,
+                20,
+                "=IF(A1=1,1+IF(B1=1,C1,D1),0)",
+            ),
+        )
+    )
+    graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!E1"], load_values=True)
+    assert len(graph._nodes) == 5
+
+    assert graph.get_edge_guard("Sheet1!E1", "Sheet1!A1") is None
+    assert graph.get_edge_guard("Sheet1!E1", "Sheet1!B1") == a1_is_1
+    assert graph.get_edge_guard("Sheet1!E1", "Sheet1!C1") == And(operands=(a1_is_1, b1_is_1))
+    assert graph.get_edge_guard("Sheet1!E1", "Sheet1!D1") == And(
+        operands=(a1_is_1, Not(operand=b1_is_1))
+    )
+
+
+def test_dep_in_surrounding_arithmetic_and_embedded_IF_branch_is_unconditional(
+    workbook_factory: WorkbookFactory,
+) -> None:
+    b1_is_1 = Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=1))
+
+    path = workbook_factory(
+        lambda ws, _wb: write_single_row(
+            ws, ("Shared dep with surrounding", 1, 10, 20, "=C1+IF(B1=1,C1,D1)")
+        )
+    )
+    graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!E1"], load_values=True)
+    assert len(graph._nodes) == 4
+
+    assert graph.get_edge_guard("Sheet1!E1", "Sheet1!B1") is None
+    # Surrounding arithmetic reads C1 unconditionally, so the branch guard must not win.
+    assert graph.get_edge_guard("Sheet1!E1", "Sheet1!C1") is None
+    assert graph.get_edge_guard("Sheet1!E1", "Sheet1!D1") == Not(operand=b1_is_1)
+
+
+def test_IFS_embedded_in_arithmetic_extracts_sequential_guards(
+    workbook_factory: WorkbookFactory,
+) -> None:
+    b1_is_1 = Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=1))
+    b1_is_2 = Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=2))
+
+    path = workbook_factory(
+        lambda ws, _wb: write_single_row(
+            ws,
+            ("IFS embedded in arithmetic", 1, 10, 20, "=1+IFS(B1=1,C1,B1=2,D1)"),
+        )
+    )
+    graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!E1"], load_values=True)
+    assert len(graph._nodes) == 4
+
+    assert graph.get_edge_guard("Sheet1!E1", "Sheet1!B1") is None
+    assert graph.get_edge_guard("Sheet1!E1", "Sheet1!C1") == b1_is_1
+    assert graph.get_edge_guard("Sheet1!E1", "Sheet1!D1") == And(
+        operands=(b1_is_2, Not(operand=b1_is_1))
+    )
+
+
+def test_sibling_embedded_IFs_extract_independent_guards(
+    workbook_factory: WorkbookFactory,
+) -> None:
+    b1_is_1 = Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=1))
+    e1_is_1 = Compare(left=CellRef(key="Sheet1!E1"), op="=", right=Literal(value=1))
+
+    path = workbook_factory(
+        lambda ws, _wb: write_single_row(
+            ws,
+            (
+                "Sibling embedded IFs",
+                1,
+                10,
+                20,
+                1,
+                30,
+                40,
+                "=IF(B1=1,C1,D1)+IF(E1=1,F1,G1)",
+            ),
+        )
+    )
+    graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!H1"], load_values=True)
+    assert len(graph._nodes) == 7
+
+    assert graph.get_edge_guard("Sheet1!H1", "Sheet1!B1") is None
+    assert graph.get_edge_guard("Sheet1!H1", "Sheet1!E1") is None
+    assert graph.get_edge_guard("Sheet1!H1", "Sheet1!C1") == b1_is_1
+    assert graph.get_edge_guard("Sheet1!H1", "Sheet1!D1") == Not(operand=b1_is_1)
+    assert graph.get_edge_guard("Sheet1!H1", "Sheet1!F1") == e1_is_1
+    assert graph.get_edge_guard("Sheet1!H1", "Sheet1!G1") == Not(operand=e1_is_1)
+
+
 def test_nested_conditional_across_cells_preserves_guards_on_both_edges(
     workbook_factory: WorkbookFactory,
 ) -> None:

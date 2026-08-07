@@ -14,6 +14,7 @@ from excel_grapher.core.formula_ast import (
 
 from .dependency_provenance import DependencyCause, EdgeProvenance
 from .graph import DependencyGraph
+from .guard import GuardExpr, or_guard
 from .node import NodeKey
 
 _singleton_ref_address: dict[str, str] = {}
@@ -355,15 +356,43 @@ def _formula_body(formula: str) -> str:
     return formula[1:] if formula.startswith("=") else formula
 
 
+def merge_inline_edge_guards(
+    *,
+    dependent_guard: GuardExpr | None,
+    dependent_has_edge: bool,
+    transit_guard: GuardExpr | None,
+    transit_has_edge: bool,
+) -> GuardExpr | None:
+    """Merge dependent and transit guards for one dep after structural inline.
+
+    `None` (unconditional/opaque) wins when both sides contribute an edge,
+    matching `DependencyGraph.add_edge`. Distinct non-`None` guards are OR'd.
+    """
+    if dependent_has_edge and transit_has_edge:
+        if dependent_guard is None or transit_guard is None:
+            return None
+        if dependent_guard == transit_guard:
+            return dependent_guard
+        return or_guard(dependent_guard, transit_guard)
+    if dependent_has_edge:
+        return dependent_guard
+    if transit_has_edge:
+        return transit_guard
+    return None
+
+
 def node_body_substitutable(graph: DependencyGraph, key: NodeKey) -> bool:
-    """Return whether `key`'s formula body may be pasted into a sole dependent."""
+    """Return whether `key`'s formula body may be pasted into a sole dependent.
+
+    Outgoing edge guards are allowed: structural inline pastes the formula text
+    (so embedded conditionals remain) and transfers those guards onto the
+    dependent. Provenance must still be compression-safe.
+    """
     node = graph.get_node(key)
     if node is None or node.is_leaf or not node.normalized_formula:
         return False
     for dep in graph.get_dependencies(key):
         attrs = graph.get_edge_attrs(key, dep)
-        if graph.get_edge_guard(key, dep) is not None:
-            return False
         if not compression_safe_provenance(attrs.provenance):
             return False
     return True
