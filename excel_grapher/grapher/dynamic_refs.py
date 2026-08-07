@@ -9,6 +9,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from functools import lru_cache
 from itertools import product
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast, get_args, get_origin
@@ -125,6 +126,15 @@ _EXPAND_PROGRESS_INTERVAL = 50_000
 Argument-env expansion over a large workbook can run for minutes inside a
 single call; without periodic progress the caller sees nothing between
 `workbook-loaded` and the terminal `expand-env` event.
+"""
+
+_RANGE_EXPANSION_CACHE_SIZE = 16
+"""Memo size for static-range address expansion.
+
+The pattern worth caching is a formula chain that mentions the same handful of
+static ranges at every level, so a small cache captures nearly all of the reuse
+while bounding how many expanded ranges (up to `max_range_cells` strings each)
+are held alive.
 """
 
 _MAX_ANALYSIS_DEPTH = 600
@@ -477,10 +487,35 @@ def expand_leaf_env_to_argument_env(
     _loaded_from_persistent: set[str] = set()
     # Stack of formula cells being analysed (for recording consumed leaves)
     _analysis_stack: list[str] = []
-    # Progress accounting for `expand-env-progress` traces
+    # Progress accounting for `expand-env-progress` traces.  `_calls` counts
+    # `cell_type_for` entries; `_bulk_hits` counts refs served straight from
+    # `cache` without re-entering it (issue #465).  Both are progress, so both
+    # drive the trace interval.
     t0 = time.perf_counter()
     _calls = 0
+    _bulk_hits = 0
     _next_progress = _EXPAND_PROGRESS_INTERVAL
+
+    def _note_progress(last: str) -> None:
+        """Emit an `expand-env-progress` trace once the counters cross the interval."""
+        nonlocal _next_progress
+        if _calls + _bulk_hits < _next_progress:
+            return
+        _next_progress = _calls + _bulk_hits + _EXPAND_PROGRESS_INTERVAL
+        _emit_trace(
+            DynamicRefTraceEvent(
+                kind="expand-env-progress",
+                name="expand_leaf_env_to_argument_env",
+                elapsed_s=time.perf_counter() - t0,
+                detail={
+                    "calls": _calls,
+                    "bulk_ref_hits": _bulk_hits,
+                    "cache_size": len(cache),
+                    "stack_depth": len(_analysis_stack),
+                    "last": last,
+                },
+            )
+        )
 
     def _formula_to_parse(raw: str) -> str:
         body = raw[1:] if raw.startswith("=") else raw
@@ -574,24 +609,55 @@ def expand_leaf_env_to_argument_env(
             for ancestor in _analysis_stack:
                 _consumed_leaves.setdefault(ancestor, set()).update(child_leaves)
 
+    def _propagate_consumed_leaves_bulk(addrs: list[str]) -> None:
+        """Propagate the consumed leaves of many cached cells in one pass.
+
+        Equivalent to calling `_propagate_consumed_leaves_to_ancestors` for each
+        address, but merges the children first so the stack is walked once
+        instead of once per address (issue #465).
+        """
+        if not _track_consumed or not _analysis_stack:
+            return
+        merged: set[str] = set()
+        for addr in addrs:
+            child_leaves = _consumed_leaves.get(addr)
+            if child_leaves:
+                merged |= child_leaves
+        if not merged:
+            return
+        for ancestor in _analysis_stack:
+            _consumed_leaves.setdefault(ancestor, set()).update(merged)
+
+    def _resolve_ref_types(refs: Iterable[str]) -> dict[str, CellType]:
+        """Resolve the type of every ref, serving already-inferred ones in bulk.
+
+        A long formula chain that repeatedly mentions a large static range would
+        otherwise re-enter `cell_type_for` for every cell of that range at every
+        level of the chain -- `O(depth x range_cells)` entries for work that is a
+        dict lookup after the first level (issue #465).  Cached refs are read
+        straight out of `cache` here; only their consumed-leaf propagation still
+        has to happen, and that is batched.
+        """
+        nonlocal _bulk_hits
+        ref_types: dict[str, CellType] = {}
+        bulk_served: list[str] = []
+        for r in refs:
+            cached_ct = cache.get(r)
+            if cached_ct is not None:
+                ref_types[r] = cached_ct
+                bulk_served.append(r)
+                continue
+            ref_types[r] = cell_type_for(r)
+        if bulk_served:
+            _bulk_hits += len(bulk_served)
+            _note_progress(bulk_served[-1])
+            _propagate_consumed_leaves_bulk(bulk_served)
+        return ref_types
+
     def cell_type_for(addr: str) -> CellType:
-        nonlocal _calls, _next_progress
+        nonlocal _calls
         _calls += 1
-        if _calls >= _next_progress:
-            _next_progress = _calls + _EXPAND_PROGRESS_INTERVAL
-            _emit_trace(
-                DynamicRefTraceEvent(
-                    kind="expand-env-progress",
-                    name="expand_leaf_env_to_argument_env",
-                    elapsed_s=time.perf_counter() - t0,
-                    detail={
-                        "calls": _calls,
-                        "cache_size": len(cache),
-                        "stack_depth": len(_analysis_stack),
-                        "last": addr,
-                    },
-                )
-            )
+        _note_progress(addr)
         if addr in cache:
             _propagate_consumed_leaves_to_ancestors(addr)
             return cache[addr]
@@ -663,7 +729,7 @@ def expand_leaf_env_to_argument_env(
                     return cache[addr]
                 cache[addr] = _values_to_cell_type({val})
                 return cache[addr]
-            ref_types = {r: cell_type_for(r) for r in sorted(refs)}
+            ref_types = _resolve_ref_types(sorted(refs))
             if ast_root is not None:
                 infer_result = _infer_numeric_domain_result(
                     ast_root,
@@ -826,6 +892,7 @@ def expand_leaf_env_to_argument_env(
                 "argument_refs": len(argument_refs),
                 "inferred_cells": len(cache),
                 "calls": _calls,
+                "bulk_ref_hits": _bulk_hits,
                 "consumed_leaf_tracking": _track_consumed,
             },
         )
@@ -2293,8 +2360,13 @@ def _describe_unsupported_numeric_construct(node: AstNode | None) -> str | None:
     return type(node).__name__
 
 
-def _range_node_cell_addresses(node: RangeNode) -> list[str] | None:
-    """Expand a single-sheet A1 range to sheet-qualified cell keys in row-major order."""
+@lru_cache(maxsize=_RANGE_EXPANSION_CACHE_SIZE)
+def _range_node_cell_addresses(node: RangeNode) -> tuple[str, ...] | None:
+    """Expand a single-sheet A1 range to sheet-qualified cell keys in row-major order.
+
+    Memoized: a formula chain that mentions the same static range at every level
+    re-expands it once per level otherwise (issue #465).
+    """
     try:
         norm_start = normalize_cell_type_env_key(node.start)
         norm_end = normalize_cell_type_env_key(node.end)
@@ -2310,12 +2382,11 @@ def _range_node_cell_addresses(node: RangeNode) -> list[str] | None:
     clo, chi = sorted((col1, col2))
     from fastpyxl.utils.cell import get_column_letter
 
-    out: list[str] = []
-    for r in range(rlo, rhi + 1):
-        for c in range(clo, chi + 1):
-            col_letter = get_column_letter(c)
-            out.append(f"{sheet}!{col_letter}{r}")
-    return out
+    return tuple(
+        f"{sheet}!{get_column_letter(c)}{r}"
+        for r in range(rlo, rhi + 1)
+        for c in range(clo, chi + 1)
+    )
 
 
 def _infer_sum_argument_domain(
@@ -2335,7 +2406,11 @@ def _infer_sum_argument_domain(
             return None
         acc: _FiniteInts | _IntBounds | None = _FiniteInts(frozenset({0}))
         for addr in addrs:
-            d = _domain_from_cell_type(_lookup_cell_type(env, addr), limits)
+            # `_range_node_cell_addresses` already emits normalized env keys, so
+            # look them up directly: re-normalizing every cell of the range at
+            # every level of a formula chain is the same O(depth x range_cells)
+            # cost issue #465 is about.
+            d = _domain_from_cell_type(env.get(addr), limits)
             if d is None:
                 return None
             acc = _add_numeric_domains(acc, d, limits)
@@ -3365,6 +3440,36 @@ def _ast_address_to_ref_key(address: str) -> str:
     return format_key(sheet, f"{col_letter}{row}")
 
 
+@lru_cache(maxsize=_RANGE_EXPANSION_CACHE_SIZE)
+def _expanded_range_keys(
+    *,
+    sheet: str,
+    start_col: str,
+    start_row: int,
+    end_col: str,
+    end_row: int,
+    max_cells: int,
+) -> tuple[str, ...]:
+    """Return the sheet-qualified keys of a static range, memoized.
+
+    Thin cached wrapper over `excel_grapher.grapher.parser.expand_range` (its
+    `max_cells` truncation behaviour is preserved).  A long formula chain that
+    mentions the same range at every level would otherwise re-derive all of its
+    cells once per level (issue #465).
+    """
+    return tuple(
+        format_key(dep_sheet, dep_a1)
+        for dep_sheet, dep_a1 in expand_range(
+            sheet=sheet,
+            start_col=start_col,
+            start_row=start_row,
+            end_col=end_col,
+            end_row=end_row,
+            max_cells=max_cells,
+        )
+    )
+
+
 def _collect_static_addresses_from_ast(
     node: AstNode,
     *,
@@ -3408,15 +3513,16 @@ def _collect_static_addresses_from_ast(
                 return
             col_s, row_s = coordinate_from_string(coord_s.replace("$", ""))
             col_e, row_e = coordinate_from_string(coord_e.replace("$", ""))
-            for dep_sheet, dep_a1 in expand_range(
-                sheet=sheet_s,
-                start_col=col_s,
-                start_row=row_s,
-                end_col=col_e,
-                end_row=row_e,
-                max_cells=max_range_cells,
-            ):
-                addrs.add(format_key(dep_sheet, dep_a1))
+            addrs.update(
+                _expanded_range_keys(
+                    sheet=sheet_s,
+                    start_col=col_s,
+                    start_row=row_s,
+                    end_col=col_e,
+                    end_row=row_e,
+                    max_cells=max_range_cells,
+                )
+            )
             return
         if isinstance(n, FunctionCallNode) and n.name.upper() in {"OFFSET", "INDIRECT", "INDEX"}:
             return
