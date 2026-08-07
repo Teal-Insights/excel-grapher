@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v4.1.2 (2026-08-07)
+
+### Bug Fixes
+
+- **grapher**: Resolve INDEX empty-arg vectors for MATCH (fixes #497)
+  ([#498](https://github.com/Teal-Insights/excel-grapher/pull/498),
+  [`e892363`](https://github.com/Teal-Insights/excel-grapher/commit/e8923639ffd9c861372c96009474169eac9c6aed))
+
+### Documentation
+
+- **tests**: Drop stale xfail note from extraction_basics docstring
+  ([#494](https://github.com/Teal-Insights/excel-grapher/pull/494),
+  [`9073405`](https://github.com/Teal-Insights/excel-grapher/commit/9073405189a04d0a8f80b95fabe71116c65a16ec))
+
+### Refactoring
+
+- **grapher**: Share collapse/densify skeleton across numeric domains
+  ([#489](https://github.com/Teal-Insights/excel-grapher/pull/489),
+  [`b016196`](https://github.com/Teal-Insights/excel-grapher/commit/b016196b185909b27c0ab8a887bd8f8cfd03cd1a))
+
+### Testing
+
+- Make xfail markers strict by default
+  ([#494](https://github.com/Teal-Insights/excel-grapher/pull/494),
+  [`9073405`](https://github.com/Teal-Insights/excel-grapher/commit/9073405189a04d0a8f80b95fabe71116c65a16ec))
+
+
 ## v4.1.1 (2026-08-07)
 
 ### Bug Fixes
