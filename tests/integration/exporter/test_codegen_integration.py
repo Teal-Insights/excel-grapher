@@ -448,5 +448,11 @@ class TestGeneratedCodeWithRealWorkbook:
             if node is not None and node.formula is not None:
                 formula_targets.append(addr)
 
+        # Excel-native error values (e.g. VLOOKUP over an empty table) raise at the cell
+        # boundary and are not sweep failures; only missing-cell KeyErrors are.
+        xl_error_exception = namespace["XlErrorException"]
         for addr in formula_targets:
-            xl_cell(ctx, addr)
+            try:
+                xl_cell(ctx, addr)
+            except xl_error_exception:
+                continue
