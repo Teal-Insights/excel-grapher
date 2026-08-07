@@ -340,9 +340,7 @@ def test_add_edge_merges_provenance_on_existing_edge() -> None:
     )
 
     merged = g._edge_provenance[("S!B1", "S!A1")]
-    assert merged.causes == (
-        DependencyCause.direct_ref | DependencyCause.static_range
-    )
+    assert merged.causes == (DependencyCause.direct_ref | DependencyCause.static_range)
 
 
 def test_add_edge_without_provenance_preserves_existing() -> None:
