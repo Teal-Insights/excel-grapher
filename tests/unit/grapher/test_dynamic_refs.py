@@ -1775,6 +1775,30 @@ def test_expand_leaf_env_choose_unions_selected_numeric_options() -> None:
     assert out.enum.values == frozenset({10, 30})
 
 
+def test_div_numeric_domains_known_nonzero_zero_endpoint_does_not_raise() -> None:
+    """known_nonzero skips the zero-span guard; zero endpoints must not be used as divisors."""
+    limits = DynamicRefLimits(max_branches=8)
+    # Divisor domain starts at 0 (issue #487 repro).
+    result = dynamic_refs_mod._div_numeric_domains(
+        dynamic_refs_mod._IntBounds(1, 5),
+        dynamic_refs_mod._IntBounds(0, 10),
+        limits,
+        known_nonzero=True,
+    )
+    assert result is not None
+    bounds = dynamic_refs_mod._normalize_to_bounds(result)
+    assert bounds.lo <= bounds.hi
+
+    # Symmetric case: divisor domain ends at 0.
+    result_hi_zero = dynamic_refs_mod._div_numeric_domains(
+        dynamic_refs_mod._IntBounds(1, 5),
+        dynamic_refs_mod._IntBounds(-10, 0),
+        limits,
+        known_nonzero=True,
+    )
+    assert result_hi_zero is not None
+
+
 def test_infer_numeric_domain_result_reports_divisor_may_include_zero() -> None:
     limits = DynamicRefLimits(max_branches=8)
     env: CellTypeEnv = {
