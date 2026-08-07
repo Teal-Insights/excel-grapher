@@ -65,12 +65,12 @@ def test_rr_manual_graph_parity() -> None:
         graph.add_edge(
             f"Sheet1!D{row}",
             f"Sheet1!B{row}",
-            provenance=EdgeProvenance(causes=frozenset({dr})),
+            provenance=EdgeProvenance(causes=dr),
         )
         graph.add_edge(
             f"Sheet1!D{row}",
             f"Sheet1!C{row}",
-            provenance=EdgeProvenance(causes=frozenset({dr})),
+            provenance=EdgeProvenance(causes=dr),
         )
 
     index = build_taco_index(graph)
@@ -111,7 +111,7 @@ def test_build_taco_index_does_not_mutate_graph() -> None:
     graph.add_edge(
         "Sheet1!D3",
         "Sheet1!B3",
-        provenance=EdgeProvenance(causes=frozenset({dr})),
+        provenance=EdgeProvenance(causes=dr),
     )
     snapshot = len(graph), frozenset(graph), graph.get_dependencies("Sheet1!D3")
     build_taco_index(graph)
@@ -126,7 +126,7 @@ def test_find_dependents_returns_range_ref() -> None:
         graph.add_edge(
             f"Sheet1!D{row}",
             f"Sheet1!B{row}",
-            provenance=EdgeProvenance(causes=frozenset({DependencyCause.direct_ref})),
+            provenance=EdgeProvenance(causes=DependencyCause.direct_ref),
         )
     index = build_taco_index(graph)
     deps = index.find_dependents("Sheet1!B4")
@@ -143,7 +143,7 @@ def test_find_precedents_returns_range_ref() -> None:
         graph.add_edge(
             f"Sheet1!D{row}",
             f"Sheet1!B{row}",
-            provenance=EdgeProvenance(causes=frozenset({DependencyCause.direct_ref})),
+            provenance=EdgeProvenance(causes=DependencyCause.direct_ref),
         )
     index = build_taco_index(graph)
     precs = index.find_precedents("Sheet1!D4")

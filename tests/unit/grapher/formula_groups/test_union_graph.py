@@ -147,13 +147,13 @@ def test_edge_attrs_on_cell_to_union() -> None:
     g.add_node(flag)
 
     guard = Compare(CellRef("Sheet1!C1"), "=", Literal(True))
-    prov = EdgeProvenance(causes=frozenset({DependencyCause.direct_ref}))
+    prov = EdgeProvenance(causes=DependencyCause.direct_ref)
     g.add_edge(cell.key, union.key, guard=guard, provenance=prov)
 
     attrs = g.get_edge_attrs(cell.key, union.key)
     assert attrs.guard == guard
     assert attrs.provenance is not None
-    assert attrs.provenance.causes == frozenset({DependencyCause.direct_ref})
+    assert attrs.provenance.causes == DependencyCause.direct_ref
 
 
 def test_locate_cell_member_of_union() -> None:

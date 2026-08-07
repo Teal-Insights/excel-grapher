@@ -67,7 +67,7 @@ def _direct_edge(graph: DependencyGraph, dependent: str, precedent: str) -> None
         dependent,
         precedent,
         provenance=EdgeProvenance(
-            causes=frozenset({dr}),
+            causes=dr,
             direct_sites_formula=((i_f, i_f + len(ref)),),
             direct_sites_normalized=((i_n, i_n + len(ref)),),
         ),
@@ -313,7 +313,7 @@ def test_statement_order_cached_matches_uncached_may_cycle_fallback() -> None:
     c = _make_node("Sheet1!C1", None, None, is_leaf=True)
     for n in (a, b, c):
         graph.add_node(n)
-    provenance = EdgeProvenance(causes=frozenset({DependencyCause.direct_ref}))
+    provenance = EdgeProvenance(causes=DependencyCause.direct_ref)
     guard = Compare(left=CellRef(key="Sheet1!C1"), op="=", right=Literal(value=True))
     graph.add_edge("Sheet1!A1", "Sheet1!B1", guard=guard, provenance=provenance)
     graph.add_edge("Sheet1!B1", "Sheet1!A1", guard=guard, provenance=provenance)

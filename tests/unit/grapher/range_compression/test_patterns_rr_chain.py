@@ -38,7 +38,7 @@ def test_rr_chain_manual_graph() -> None:
         graph.add_edge(
             f"Sheet1!P{row}",
             f"Sheet1!P{row - 1}",
-            provenance=EdgeProvenance(causes=frozenset({DependencyCause.direct_ref})),
+            provenance=EdgeProvenance(causes=DependencyCause.direct_ref),
         )
     index = build_taco_index(graph)
     chains = [e for e in index.compressed_edges if e.meta.kind == PatternKind.rr_chain]

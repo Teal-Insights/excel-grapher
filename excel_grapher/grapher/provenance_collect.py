@@ -61,11 +61,11 @@ def _prov_with_direct_span(
 ) -> EdgeProvenance:
     if span_target == "formula":
         return EdgeProvenance(
-            causes=frozenset({DependencyCause.direct_ref}),
+            causes=DependencyCause.direct_ref,
             direct_sites_formula=(span,),
         )
     return EdgeProvenance(
-        causes=frozenset({DependencyCause.direct_ref}),
+        causes=DependencyCause.direct_ref,
         direct_sites_normalized=(span,),
     )
 
@@ -129,11 +129,11 @@ def _flat_provenance_one_string(
                 max_cells=max_range_cells,
             ):
                 k = format_key(dep_sheet, dep_a1)
-                _merge_into(acc, k, EdgeProvenance(causes=frozenset({cause_dyn})))
+                _merge_into(acc, k, EdgeProvenance(causes=cause_dyn))
             for ref in arg_refs:
                 arg_sheet = ref.sheet if ref.sheet is not None else current_sheet
                 k = format_key(arg_sheet, f"{ref.column}{ref.row}")
-                _merge_into(acc, k, EdgeProvenance(causes=frozenset({cause_dyn})))
+                _merge_into(acc, k, EdgeProvenance(causes=cause_dyn))
     else:
         calls = _find_function_calls_with_spans(f, frozenset({"OFFSET", "INDIRECT"}))
         if dynamic_refs is None:
@@ -169,7 +169,7 @@ def _flat_provenance_one_string(
                                 if fn_name == "OFFSET"
                                 else DependencyCause.dynamic_indirect
                             )
-                            _merge_into(acc, k, EdgeProvenance(causes=frozenset({dyn_cause})))
+                            _merge_into(acc, k, EdgeProvenance(causes=dyn_cause))
                             if is_variable:
                                 argument_addrs.add(k)
             if calls:
@@ -286,13 +286,13 @@ def _flat_provenance_one_string(
                     _merge_into(
                         acc,
                         addr,
-                        EdgeProvenance(causes=frozenset({DependencyCause.dynamic_offset})),
+                        EdgeProvenance(causes=DependencyCause.dynamic_offset),
                     )
                 for addr in indirect_targets:
                     _merge_into(
                         acc,
                         addr,
-                        EdgeProvenance(causes=frozenset({DependencyCause.dynamic_indirect})),
+                        EdgeProvenance(causes=DependencyCause.dynamic_indirect),
                     )
 
     masked = mask_spans(masked, dyn_spans)
@@ -309,9 +309,7 @@ def _flat_provenance_one_string(
                 max_cells=max_range_cells,
             ):
                 k = format_key(dep_sheet, dep_a1)
-                _merge_into(
-                    acc, k, EdgeProvenance(causes=frozenset({DependencyCause.static_range}))
-                )
+                _merge_into(acc, k, EdgeProvenance(causes=DependencyCause.static_range))
 
     for ref, span in parse_standalone_cell_refs_with_spans(masked):
         sh = ref.sheet if ref.sheet is not None else current_sheet
@@ -345,7 +343,7 @@ def _flat_provenance_one_string(
                     _merge_into(
                         acc,
                         k,
-                        EdgeProvenance(causes=frozenset({DependencyCause.static_range})),
+                        EdgeProvenance(causes=DependencyCause.static_range),
                     )
             continue
         if token in defined_names:

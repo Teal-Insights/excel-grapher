@@ -29,12 +29,8 @@ from .ref_parser import (
 )
 from .types import CompressedEdge, PatternKind, PatternMeta, RangeRef, SingleEdge
 
-_EXCLUDED_CAUSES = frozenset(
-    {
-        DependencyCause.static_range,
-        DependencyCause.dynamic_offset,
-        DependencyCause.dynamic_indirect,
-    }
+_EXCLUDED_CAUSES = (
+    DependencyCause.static_range | DependencyCause.dynamic_offset | DependencyCause.dynamic_indirect
 )
 
 
@@ -71,7 +67,7 @@ def _edge_is_excluded_from_pattern_inference(
     prov = attrs.provenance
     if prov is None:
         return False
-    return bool(prov.causes & (_EXCLUDED_CAUSES - {DependencyCause.static_range}))
+    return bool(prov.causes & (_EXCLUDED_CAUSES & ~DependencyCause.static_range))
 
 
 def _compress_group(

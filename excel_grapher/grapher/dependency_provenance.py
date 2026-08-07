@@ -1,29 +1,29 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import IntFlag, auto
 
 
-class DependencyCause(StrEnum):
+class DependencyCause(IntFlag):
     """How a dependency edge arises from a formula."""
 
-    direct_ref = "direct_ref"
-    static_range = "static_range"
-    dynamic_offset = "dynamic_offset"
-    dynamic_indirect = "dynamic_indirect"
+    direct_ref = auto()
+    static_range = auto()
+    dynamic_offset = auto()
+    dynamic_indirect = auto()
 
 
 @dataclass(frozen=True, slots=True)
 class EdgeProvenance:
     """Metadata for a single directed edge, possibly from multiple mechanisms in one formula."""
 
-    causes: frozenset[DependencyCause]
+    causes: DependencyCause
     direct_sites_formula: tuple[tuple[int, int], ...] = ()
     direct_sites_normalized: tuple[tuple[int, int], ...] = ()
 
     @staticmethod
     def empty() -> EdgeProvenance:
-        return EdgeProvenance(causes=frozenset())
+        return EdgeProvenance(causes=DependencyCause(0))
 
     def merge(self, other: EdgeProvenance) -> EdgeProvenance:
         return EdgeProvenance(

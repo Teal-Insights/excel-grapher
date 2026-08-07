@@ -66,7 +66,7 @@ def _direct_edge(
         dependent,
         precedent,
         provenance=EdgeProvenance(
-            causes=frozenset({dr}),
+            causes=dr,
             direct_sites_formula=((i_f, i_f + len(ref)),),
             direct_sites_normalized=((i_n, i_n + len(ref)),),
         ),
@@ -94,7 +94,7 @@ def _local_ref_edge(
         dependent,
         precedent,
         provenance=EdgeProvenance(
-            causes=frozenset({dr}),
+            causes=dr,
             direct_sites_formula=((i_f, i_f + len(formula_ref)),),
             direct_sites_normalized=((i_n, i_n + len(ref_n)),),
         ),
@@ -149,7 +149,7 @@ def test_compress_identity_transit_refreshes_sibling_edge_spans() -> None:
     graph.add_edge(
         "Engine!B20",
         "Inputs!B6",
-        provenance=EdgeProvenance(causes=frozenset({DependencyCause.direct_ref})),
+        provenance=EdgeProvenance(causes=DependencyCause.direct_ref),
     )
     _local_ref_edge(graph, "Engine!C20", "Engine!B20", formula_ref="B20")
     _local_ref_edge(graph, "Engine!C20", "Engine!C14", formula_ref="C14")
@@ -462,7 +462,7 @@ def test_optimal_keeps_two_call_sites() -> None:
         "Sheet1!A1",
         "Sheet1!B1",
         provenance=EdgeProvenance(
-            causes=frozenset({dr}),
+            causes=dr,
             direct_sites_formula=(
                 (f.index(ref), f.index(ref) + len(ref)),
                 (f.rindex(ref), f.rindex(ref) + len(ref)),
@@ -510,7 +510,7 @@ def test_optimal_blocks_unsafe_body_range() -> None:
     graph.add_edge(
         "Sheet1!G13",
         "Sheet1!B1",
-        provenance=EdgeProvenance(causes=frozenset({DependencyCause.static_range})),
+        provenance=EdgeProvenance(causes=DependencyCause.static_range),
     )
     _direct_edge(graph, "Sheet1!G15", "Sheet1!G13")
 
@@ -614,7 +614,7 @@ def test_optimal_respects_guards(test_name: str) -> None:
         "Sheet1!B1",
         "Sheet1!D1",
         guard=Literal(True),
-        provenance=EdgeProvenance(causes=frozenset({dr})),
+        provenance=EdgeProvenance(causes=dr),
     )
     _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
 
