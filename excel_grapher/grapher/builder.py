@@ -313,9 +313,9 @@ def create_dependency_graph(
     `DynamicRefConfig.from_constraints`.
 
     When `capture_dependency_provenance` is True, each edge stores merged
-    `excel_grapher.grapher.dependency_provenance.EdgeProvenance` under the
-    `\"provenance\"` key in `DependencyGraph.edge_attrs` (how the dependency
-    arises: direct reference, static range, dynamic OFFSET/INDIRECT).
+    `excel_grapher.grapher.dependency_provenance.EdgeProvenance` on
+    `DependencyGraph._edge_provenance` (how the dependency arises: direct
+    reference, static range, dynamic OFFSET/INDIRECT).
 
     `blank_ranges` is an optional iterable of sheet-qualified A1 rectangles
     (e.g. `\"Sheet1!B2:D10\"`) treated as structurally empty: no nodes are

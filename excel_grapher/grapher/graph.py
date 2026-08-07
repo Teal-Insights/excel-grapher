@@ -26,7 +26,7 @@ NodeHook = Callable[[NodeKey, Node], None]
 
 EdgeKey = tuple[NodeKey, NodeKey]
 
-_PICKLE_VERSION = 2
+_PICKLE_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -139,7 +139,7 @@ class DependencyGraph:
     _edges: dict[NodeKey, set[NodeKey]] = field(default_factory=dict)  # node -> deps
     _reverse_edges: dict[NodeKey, set[NodeKey]] = field(default_factory=dict)  # node -> dependents
     _guards: dict[EdgeKey, GuardExpr] = field(default_factory=dict)
-    _edge_extra: dict[EdgeKey, dict[str, Any]] = field(default_factory=dict)
+    _edge_provenance: dict[EdgeKey, EdgeProvenance] = field(default_factory=dict)
     _hooks: list[NodeHook] = field(default_factory=list)
     # Cell key -> owning node key (cell owns itself; multi-cell owns members).
     _occupancy: dict[NodeKey, NodeKey] = field(default_factory=dict)
@@ -185,7 +185,7 @@ class DependencyGraph:
             key: set(dependents) for key, dependents in self._reverse_edges.items()
         }
         cloned._guards = dict(self._guards)
-        cloned._edge_extra = {edge: dict(extra) for edge, extra in self._edge_extra.items()}
+        cloned._edge_provenance = dict(self._edge_provenance)
         cloned._occupancy = dict(self._occupancy)
         cloned.leaf_classification = (
             dict(self.leaf_classification) if self.leaf_classification is not None else None
@@ -276,20 +276,20 @@ class DependencyGraph:
         to_key: NodeKey,
         *,
         guard: GuardExpr | None = None,
-        **attrs: Any,
+        provenance: EdgeProvenance | None = None,
     ) -> None:
         """Add edge: from_key depends on to_key (from_key -> to_key).
 
         Endpoints are stored as given (after `normalize_key`). Member-cell
         keys are allowed; callers that need owner nodes should resolve via
         `resolve_endpoint` / `get_dependency_nodes`.
+
+        Re-adding an existing edge merges guards with `or_guard` and merges
+        provenance via `merge_edge_provenance`. Omitting `provenance` on a
+        re-add leaves any existing provenance unchanged.
         """
         from_key = normalize_key(from_key)
         to_key = normalize_key(to_key)
-        unknown_attrs = [k for k in attrs if k != "provenance"]
-        if unknown_attrs:
-            names = ", ".join(sorted(unknown_attrs))
-            raise ValueError(f"Unsupported edge attrs: {names}")
         ek = (from_key, to_key)
         deps_existing = self._edges.get(from_key)
         was_present = deps_existing is not None and to_key in deps_existing
@@ -299,7 +299,7 @@ class DependencyGraph:
 
         if not was_present:
             merged_guard = guard
-            merged_extra: dict[str, Any] = {}
+            old_prov: EdgeProvenance | None = None
         else:
             existing_guard = self._guards.get(ek)
             if existing_guard is None or guard is None:
@@ -308,26 +308,21 @@ class DependencyGraph:
                 merged_guard = guard
             else:
                 merged_guard = or_guard(existing_guard, guard)
-            merged_extra = dict(self._edge_extra.get(ek, {}))
-
-        merged_extra.update({k: v for k, v in attrs.items() if k != "provenance"})
-        prov_new = attrs.get("provenance")
-        if prov_new is not None and isinstance(prov_new, EdgeProvenance):
-            old_prov = merged_extra.get("provenance")
-            merged_extra["provenance"] = merge_edge_provenance(
-                old_prov if isinstance(old_prov, EdgeProvenance) else None,
-                prov_new,
-            )
+            old_prov = self._edge_provenance.get(ek)
 
         if merged_guard is not None:
             self._guards[ek] = merged_guard
         else:
             self._guards.pop(ek, None)
 
-        if merged_extra:
-            self._edge_extra[ek] = merged_extra
-        else:
-            self._edge_extra.pop(ek, None)
+        if provenance is not None:
+            merged_prov = merge_edge_provenance(old_prov, provenance)
+            if merged_prov is not None:
+                self._edge_provenance[ek] = merged_prov
+            else:
+                self._edge_provenance.pop(ek, None)
+        elif not was_present:
+            self._edge_provenance.pop(ek, None)
 
     # ---- public read API ----------------------------------------------------
 
@@ -394,11 +389,9 @@ class DependencyGraph:
         tk = normalize_key(to_key)
         if tk not in self._edges.get(fk, set()):
             return EdgeAttrs()
-        extra = self._edge_extra.get((fk, tk), {})
-        prov = extra.get("provenance")
         return EdgeAttrs(
             guard=self._guards.get((fk, tk)),
-            provenance=prov if isinstance(prov, EdgeProvenance) else None,
+            provenance=self._edge_provenance.get((fk, tk)),
         )
 
     def get_edge_guard(self, from_key: NodeKey, to_key: NodeKey) -> GuardExpr | None:
@@ -744,10 +737,8 @@ class DependencyGraph:
                     continue
                 ok = True
                 for d_key in dependents_t:
-                    prov = self._edge_extra.get((d_key, t_key), {}).get("provenance")
-                    if not compression_safe_provenance(
-                        prov if isinstance(prov, EdgeProvenance) else None
-                    ):
+                    prov = self._edge_provenance.get((d_key, t_key))
+                    if not compression_safe_provenance(prov):
                         ok = False
                         break
                 if not ok:
@@ -823,10 +814,8 @@ class DependencyGraph:
                         continue
                     ok = True
                     for d_key in dependents_t:
-                        prov = self._edge_extra.get((d_key, t_key), {}).get("provenance")
-                        if not compression_safe_provenance(
-                            prov if isinstance(prov, EdgeProvenance) else None
-                        ):
+                        prov = self._edge_provenance.get((d_key, t_key))
+                        if not compression_safe_provenance(prov):
                             ok = False
                             break
                     if not ok:
@@ -888,7 +877,9 @@ class DependencyGraph:
                 idx[k]: {idx[d] for d in ds} for k, ds in self._reverse_edges.items()
             },
             "_guards": [(idx[a], idx[b], g) for (a, b), g in self._guards.items()],
-            "_edge_extra": [(idx[a], idx[b], dict(e)) for (a, b), e in self._edge_extra.items()],
+            "_edge_provenance": [
+                (idx[a], idx[b], p) for (a, b), p in self._edge_provenance.items()
+            ],
             "_hooks": self._hooks,
             "leaf_classification": self.leaf_classification,
             "sheet_order": list(self.sheet_order) if self.sheet_order is not None else None,
@@ -918,7 +909,7 @@ class DependencyGraph:
             (i2k(a), i2k(b)): _intern_guard_cell_refs(g, keys, key_index=key_index)
             for a, b, g in state["_guards"]
         }
-        self._edge_extra = {(i2k(a), i2k(b)): dict(e) for a, b, e in state["_edge_extra"]}
+        self._edge_provenance = {(i2k(a), i2k(b)): p for a, b, p in state["_edge_provenance"]}
         self._hooks = state["_hooks"]
         lc = state["leaf_classification"]
         if lc:
@@ -957,7 +948,7 @@ class DependencyGraph:
         self._reverse_edges.setdefault(to_key, set()).discard(from_key)
         ek = (from_key, to_key)
         self._guards.pop(ek, None)
-        self._edge_extra.pop(ek, None)
+        self._edge_provenance.pop(ek, None)
 
     def _compress_one_transit(
         self,
@@ -974,8 +965,7 @@ class DependencyGraph:
         )
 
         for d_key in list(self._reverse_edges.get(t_key, set())):
-            extra = self._edge_extra.get((d_key, t_key), {})
-            prov = extra.get("provenance")
+            prov = self._edge_provenance.get((d_key, t_key))
             guard = self._guards.get((d_key, t_key))
             d_node = self._nodes.get(d_key)
             if d_node is None:
@@ -1022,13 +1012,12 @@ class DependencyGraph:
             for dep in list(self._edges.get(d_key, set())):
                 if dep == r_key:
                     continue
-                dep_extra = self._edge_extra.get((d_key, dep), {})
-                old_dep_prov = dep_extra.get("provenance")
+                old_dep_prov = self._edge_provenance.get((d_key, dep))
                 if not isinstance(old_dep_prov, EdgeProvenance):
                     continue
                 if DependencyCause.direct_ref not in old_dep_prov.causes:
                     continue
-                dep_extra["provenance"] = refresh_direct_sites(
+                self._edge_provenance[(d_key, dep)] = refresh_direct_sites(
                     old_dep_prov,
                     old_formula=before_formula,
                     new_formula=new_formula,
@@ -1036,7 +1025,6 @@ class DependencyGraph:
                     new_normalized=new_norm,
                     precedent_key=dep,
                 )
-                self._edge_extra[(d_key, dep)] = dep_extra
 
         for dep in list(self._edges.get(t_key, set())):
             self._remove_edge(t_key, dep)
@@ -1081,8 +1069,7 @@ class DependencyGraph:
         if t_node.formula is None or t_node.normalized_formula is None:
             return
 
-        extra = self._edge_extra.get((d_key, t_key), {})
-        prov = extra.get("provenance")
+        prov = self._edge_provenance.get((d_key, t_key))
         if not isinstance(prov, EdgeProvenance):
             return
 
@@ -1178,7 +1165,7 @@ def _collect_graph_keys(g: DependencyGraph) -> list[str]:
     for a, b in g._guards:
         add(a)
         add(b)
-    for a, b in g._edge_extra:
+    for a, b in g._edge_provenance:
         add(a)
         add(b)
     for guard in g._guards.values():

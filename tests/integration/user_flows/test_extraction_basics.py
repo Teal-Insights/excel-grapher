@@ -59,7 +59,7 @@ def test_formula_with_no_dependencies_is_extracted_as_single_formula_leaf_node(
     dependents: frozenset[NodeKey] = graph.get_dependents("Sheet1!B1")
     assert dependents == frozenset()
     assert not graph._guards
-    assert not graph._edge_extra
+    assert not graph._edge_provenance
     assert not graph._hooks
     assert graph.leaf_classification is None
 
@@ -98,7 +98,7 @@ def test_linear_dependency_is_extracted_as_two_nodes_with_one_edge(
     dependents: frozenset[NodeKey] = graph.get_dependents("Sheet1!C1")
     assert dependents == frozenset()
     assert not graph._guards
-    assert not graph._edge_extra
+    assert not graph._edge_provenance
     assert not graph._hooks
     assert graph.leaf_classification is None
 

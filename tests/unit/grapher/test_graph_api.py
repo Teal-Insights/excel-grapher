@@ -300,8 +300,73 @@ def test_add_edge_rejects_unknown_edge_attrs() -> None:
     g = DependencyGraph()
     g.add_node(_leaf("S", "A", 1))
     g.add_node(_formula("S", "B", 1, "=S!A1"))
-    with pytest.raises(ValueError, match="Unsupported edge attrs"):
-        g.add_edge("S!B1", "S!A1", weight=3)
+    with pytest.raises(TypeError):
+        g.add_edge("S!B1", "S!A1", weight=3)  # ty: ignore[unknown-argument]
+
+
+def test_edge_provenance_stored_in_typed_map() -> None:
+    from dataclasses import fields as dc_fields
+
+    g = DependencyGraph()
+    g.add_node(_leaf("S", "A", 1))
+    g.add_node(_formula("S", "B", 1, "=S!A1"))
+    prov = EdgeProvenance(
+        causes=DependencyCause.direct_ref,
+        direct_sites_formula=((1, 5),),
+        direct_sites_normalized=((1, 5),),
+    )
+    g.add_edge("S!B1", "S!A1", provenance=prov)
+
+    assert ("S!B1", "S!A1") in g._edge_provenance
+    assert g._edge_provenance[("S!B1", "S!A1")] == prov
+    field_names = {f.name for f in dc_fields(DependencyGraph)}
+    assert "_edge_provenance" in field_names
+    assert "_edge_extra" not in field_names
+
+
+def test_add_edge_merges_provenance_on_existing_edge() -> None:
+    g = DependencyGraph()
+    g.add_node(_leaf("S", "A", 1))
+    g.add_node(_formula("S", "B", 1, "=S!A1"))
+    g.add_edge(
+        "S!B1",
+        "S!A1",
+        provenance=EdgeProvenance(causes=DependencyCause.direct_ref),
+    )
+    g.add_edge(
+        "S!B1",
+        "S!A1",
+        provenance=EdgeProvenance(causes=DependencyCause.static_range),
+    )
+
+    merged = g._edge_provenance[("S!B1", "S!A1")]
+    assert merged.causes == (DependencyCause.direct_ref | DependencyCause.static_range)
+
+
+def test_add_edge_without_provenance_preserves_existing() -> None:
+    g = DependencyGraph()
+    g.add_node(_leaf("S", "A", 1))
+    g.add_node(_formula("S", "B", 1, "=S!A1"))
+    prov = EdgeProvenance(causes=DependencyCause.direct_ref)
+    g.add_edge("S!B1", "S!A1", provenance=prov)
+    g.add_edge("S!B1", "S!A1")
+
+    assert g._edge_provenance[("S!B1", "S!A1")] == prov
+
+
+def test_remove_edge_clears_provenance() -> None:
+    g = DependencyGraph()
+    g.add_node(_leaf("S", "A", 1))
+    g.add_node(_formula("S", "B", 1, "=S!A1"))
+    g.add_edge(
+        "S!B1",
+        "S!A1",
+        provenance=EdgeProvenance(causes=DependencyCause.direct_ref),
+    )
+    g._remove_edge("S!B1", "S!A1")
+
+    assert ("S!B1", "S!A1") not in g._edge_provenance
+    assert g.get_edge_attrs("S!B1", "S!A1").provenance is None
 
 
 # -------------------------------------------------------------------

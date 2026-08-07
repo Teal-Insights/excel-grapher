@@ -110,8 +110,8 @@ def test_pickle_round_trip_many_guarded_edges() -> None:
         assert isinstance(g_edge, Compare)
 
 
-def test_pickle_round_trip_preserves_extra_attrs() -> None:
-    """Extra (non-guard) edge attributes must survive round-trip."""
+def test_pickle_round_trip_preserves_edge_provenance() -> None:
+    """Typed edge provenance must survive pickle round-trip."""
     from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
 
     g = DependencyGraph()
@@ -129,6 +129,7 @@ def test_pickle_round_trip_preserves_extra_attrs() -> None:
     attrs = restored.get_edge_attrs("Sheet1!B1", "Sheet1!A1")
     assert attrs.provenance is not None
     assert attrs.provenance.causes == DependencyCause.direct_ref
+    assert restored._edge_provenance[("Sheet1!B1", "Sheet1!A1")] == prov
 
 
 def test_pickle_round_trip_preserves_leaf_classification() -> None:
@@ -165,18 +166,32 @@ def test_pickle_round_trip_preserves_named_range_maps() -> None:
 def test_pickle_does_not_contain_per_edge_wrapper_dicts() -> None:
     """The serialized state must not wrap each edge's guard in a {'guard': ...} dict.
 
-    After optimization, guards are stored directly in a _guards dict keyed by
-    (from_key, to_key), eliminating millions of small wrapper dicts.
+    After optimization, guards are stored directly in a `_guards` dict keyed by
+    `(from_key, to_key)`, eliminating millions of small wrapper dicts. Provenance
+    is likewise stored directly in `_edge_provenance` as `EdgeProvenance` values.
     """
+    from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
+
     g = _make_test_graph()
+    g.add_edge(
+        "Sheet1!B1",
+        "Sheet1!A1",
+        provenance=EdgeProvenance(causes=DependencyCause.direct_ref),
+    )
     state = g.__getstate__()
 
     # The state should NOT contain '_edge_attrs' (old format with wrapper dicts)
     assert "_edge_attrs" not in state, (
         "Serialized state still contains _edge_attrs; expected compact representation"
     )
+    assert "_edge_extra" not in state, (
+        "Serialized state still contains _edge_extra; expected typed _edge_provenance"
+    )
     # The state should contain '_guards' (compact representation)
     assert "_guards" in state
+    assert "_edge_provenance" in state
+    for _a, _b, prov in state["_edge_provenance"]:
+        assert isinstance(prov, EdgeProvenance)
 
 
 # -------------------------------------------------------------------
