@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -12,6 +13,7 @@ from excel_grapher.core.address_keys import (
     CellKey,
     NodeShape,
     RangeKey,
+    UnionKey,
 )
 from excel_grapher.core.address_keys import NodeKey as AddressKey
 from excel_grapher.core.address_keys import expand_node_cells as _expand_node_cells
@@ -23,6 +25,108 @@ from excel_grapher.core.address_keys import quote_sheet_if_needed as _quote_shee
 
 # Graph node identity; same canonical form as NormalizedAddress (cell / range / union).
 NodeKey: TypeAlias = str
+
+# Bounded cache for Node derived fields (`key` / `shape` / `column_index`).
+# External to the instance so `@dataclass(slots=True)` stays compatible (unlike
+# `functools.cached_property`, which needs a per-instance `__dict__`).
+# Use a dict LRU (not `functools.lru_cache`): `_make_key` treats `str` subclasses
+# as distinct from plain `str`, which would split AddressKey / str traffic.
+_NODE_DERIVED_CACHE_MAXSIZE = 16384
+
+
+@dataclass(frozen=True, slots=True)
+class _NodeDerivedFields:
+    """Cached derived Node attributes for one canonical address."""
+
+    key: NodeKey
+    shape: NodeShape
+    column_index: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class NodeDerivedCacheInfo:
+    """Hit/miss statistics for the Node derived-fields LRU."""
+
+    hits: int
+    misses: int
+    maxsize: int
+    currsize: int
+
+
+def _compute_derived_fields(address: AddressKey | str) -> _NodeDerivedFields:
+    """Compute derived Node fields for a canonical address."""
+    if isinstance(address, (CellKey, RangeKey, UnionKey)):
+        parsed: AddressKey = address
+    else:
+        parsed = _parse_node_key(address)
+    key = address if type(address) is str else str(address)
+    column_index: int | None = None
+    if isinstance(parsed, CellKey):
+        column_index = int(fastpyxl.utils.cell.column_index_from_string(parsed.column))
+    return _NodeDerivedFields(key=key, shape=parsed.shape, column_index=column_index)
+
+
+class _NodeDerivedFieldsCache:
+    """Process-wide LRU for Node derived fields, keyed by address text."""
+
+    def __init__(self, maxsize: int = _NODE_DERIVED_CACHE_MAXSIZE) -> None:
+        if maxsize < 1:
+            raise ValueError("maxsize must be at least 1")
+        self._maxsize = maxsize
+        self._cache: OrderedDict[str, _NodeDerivedFields] = OrderedDict()
+        self._hits = 0
+        self._misses = 0
+
+    def get(self, address: AddressKey | str) -> _NodeDerivedFields:
+        cached = self._cache.get(address)
+        if cached is not None:
+            self._hits += 1
+            self._cache.move_to_end(address)
+            return cached
+
+        self._misses += 1
+        derived = _compute_derived_fields(address)
+        # Store under a plain str so AddressKey and str lookups share one entry.
+        store_key = address if type(address) is str else str(address)
+        self._cache[store_key] = derived
+        if len(self._cache) > self._maxsize:
+            self._cache.popitem(last=False)
+        return derived
+
+    def clear(self) -> None:
+        self._cache.clear()
+        self._hits = 0
+        self._misses = 0
+
+    def cache_info(self) -> NodeDerivedCacheInfo:
+        return NodeDerivedCacheInfo(
+            hits=self._hits,
+            misses=self._misses,
+            maxsize=self._maxsize,
+            currsize=len(self._cache),
+        )
+
+
+_DERIVED_FIELDS_CACHE = _NodeDerivedFieldsCache()
+
+
+def _lookup_derived_fields(address: AddressKey | str) -> _NodeDerivedFields:
+    """Return cached derived fields for `address` (plain str or AddressKey)."""
+    return _DERIVED_FIELDS_CACHE.get(address)
+
+
+def _derived_fields(address: AddressKey) -> _NodeDerivedFields:
+    return _lookup_derived_fields(address)
+
+
+def _derived_fields_cache_info() -> NodeDerivedCacheInfo:
+    """Return hit/miss statistics for the derived-fields LRU."""
+    return _DERIVED_FIELDS_CACHE.cache_info()
+
+
+def _derived_fields_cache_clear() -> None:
+    """Clear the derived-fields LRU (intended for tests)."""
+    _DERIVED_FIELDS_CACHE.clear()
 
 
 class NodeKind(StrEnum):
@@ -47,7 +151,7 @@ def _coerce_address(value: str | AddressKey) -> AddressKey:
     return _parse_node_key(str(value))
 
 
-@dataclass
+@dataclass(slots=True)
 class Node:
     """Workbook cell or multi-cell span in a dependency graph.
 
@@ -61,6 +165,10 @@ class Node:
 
     `is_leaf` is true when the node has no outgoing dependency edges (value-only
     cells and literal-only formulas such as `=1+1`).
+
+    Instances are slotted (no per-instance `__dict__`). Derived attributes
+    (`key`, `shape`, `column_index`) are served from a process-wide LRU keyed on
+    the canonical address rather than `functools.cached_property`.
     """
 
     sheet: str | None
@@ -178,18 +286,20 @@ class Node:
     @property
     def key(self) -> NodeKey:
         assert self.address is not None
-        return str(self.address)
+        return _derived_fields(self.address).key
 
     @property
     def shape(self) -> NodeShape:
         assert self.address is not None
-        return self.address.shape
+        return _derived_fields(self.address).shape
 
     @property
     def column_index(self) -> int:
-        if self.kind is not NodeKind.cell or self.column is None:
+        assert self.address is not None
+        idx = _derived_fields(self.address).column_index
+        if idx is None:
             raise ValueError("column_index is only defined for cell nodes")
-        return int(fastpyxl.utils.cell.column_index_from_string(self.column))
+        return idx
 
 
 @dataclass(frozen=True)
