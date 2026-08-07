@@ -158,6 +158,7 @@ unresolved-reference = "ignore"
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = ["--import-mode=importlib", "-m", "not slow"]
+xfail_strict = true
 markers = [
     "slow: opt-in tests that are long-running (deselected by default)"
 ]
