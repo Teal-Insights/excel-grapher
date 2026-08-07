@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.21.1 (2026-08-07)
+
+### Bug Fixes
+
+- **dynamic-refs**: Gate consumed-leaf bookkeeping on persistent cache (#463)
+  ([#464](https://github.com/Teal-Insights/excel-grapher/pull/464),
+  [`fa5722c`](https://github.com/Teal-Insights/excel-grapher/commit/fa5722c944dcbf282da15be2ba3f03eb77f4e43d))
+
+- **grapher**: Conjoin nested conditional guards into AND edge guards (#115)
+  ([#470](https://github.com/Teal-Insights/excel-grapher/pull/470),
+  [`e6e7607`](https://github.com/Teal-Insights/excel-grapher/commit/e6e760769f6843b6d224e8edc05d403e94f4bbc5))
+
+### Chores
+
+- Clean up stale LIC DSF example files
+  ([#468](https://github.com/Teal-Insights/excel-grapher/pull/468),
+  [`0937bd8`](https://github.com/Teal-Insights/excel-grapher/commit/0937bd8df8b04782b5b6fe0a400b826802953283))
+
+- **deps**: Upgrade ruff to 0.16 and format Markdown code blocks
+  ([#466](https://github.com/Teal-Insights/excel-grapher/pull/466),
+  [`ce029f3`](https://github.com/Teal-Insights/excel-grapher/commit/ce029f3cb37ecaffff3605d1f04d496557bb1563))
+
+
 ## v3.21.0 (2026-07-27)
 
 ### Features
