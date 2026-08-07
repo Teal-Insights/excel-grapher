@@ -340,6 +340,8 @@ class NodeShape(StrEnum):
 class CellKey(str):
     """Canonical sheet-qualified single-cell key (`Sheet1!E63`)."""
 
+    __slots__ = ()
+
     @property
     def shape(self) -> NodeShape:
         return NodeShape.cell
@@ -363,6 +365,8 @@ class CellKey(str):
 
 class RangeKey(str):
     """Canonical sheet-qualified rectangle (`Sheet1!D63:Y63`, `Sheet1!E4:I18`)."""
+
+    __slots__ = ()
 
     @property
     def shape(self) -> NodeShape:
@@ -425,6 +429,8 @@ class RangeKey(str):
 
 class UnionKey(str):
     """Canonical multi-area key (`Sheet1!A1:D1,E5` or `Sheet1!A1,Sheet2!B2`)."""
+
+    __slots__ = ()
 
     @property
     def shape(self) -> NodeShape:
