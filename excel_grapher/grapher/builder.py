@@ -65,6 +65,8 @@ _logger = logging.getLogger(__name__)
 _VOLATILE_DYNAMIC_REF_FUNCS = frozenset(
     {"NOW", "TODAY", "RAND", "RANDBETWEEN", "RANDARRAY", "INFO"}
 )
+_CONDITIONAL_FN_NAMES = frozenset({"IF", "IFS", "CHOOSE", "SWITCH"})
+_DYNAMIC_REF_FN_NAMES = frozenset({"OFFSET", "INDIRECT", "INDEX"})
 # Matches volatile builtins with optional Excel compatibility prefixes. Add new
 # volatile function names to ``_VOLATILE_DYNAMIC_REF_FUNCS`` only (not prefix
 # variants); ``_XLFN.`` / ``_XLUDF.`` are handled generically here.
@@ -157,6 +159,50 @@ def _sequential_default_guard(negations: list[GuardExpr]) -> GuardExpr:
     if len(negations) == 1:
         return negations[0]
     return And(tuple(negations))
+
+
+def _span_contains(outer: tuple[int, int], inner: tuple[int, int]) -> bool:
+    """Return True when `inner` lies strictly inside `outer`."""
+    return outer[0] <= inner[0] and inner[1] <= outer[1] and outer != inner
+
+
+def _is_whole_formula_call(formula: str, span: tuple[int, int]) -> bool:
+    """Return True when `span` covers the entire formula body after a leading `=`."""
+    body_start = 1 if formula.startswith("=") else 0
+    while body_start < len(formula) and formula[body_start].isspace():
+        body_start += 1
+    body_end = len(formula)
+    while body_end > body_start and formula[body_end - 1].isspace():
+        body_end -= 1
+    return span[0] <= body_start and span[1] >= body_end
+
+
+def _outermost_embedded_conditional_spans(
+    formula: str,
+) -> list[tuple[int, int]]:
+    """Return spans of outermost conditional calls embedded in a larger expression.
+
+    Skips:
+
+    - the formula's own top-level call (avoids re-entering when splitters reject it,
+      e.g. a two-argument `IF`);
+    - conditionals nested inside another conditional (handled by recursive
+      top-level branching);
+    - conditionals whose entire call lies inside an `OFFSET`/`INDIRECT`/`INDEX`
+      span (dynamic-ref argument analysis owns those deps).
+    """
+    dyn_spans = [
+        span for _, _, span in _find_function_calls_with_spans(formula, _DYNAMIC_REF_FN_NAMES)
+    ]
+    cond_spans = [
+        span
+        for _, _, span in _find_function_calls_with_spans(formula, _CONDITIONAL_FN_NAMES)
+        if not _is_whole_formula_call(formula, span)
+        and not any(_span_contains(dyn, span) for dyn in dyn_spans)
+    ]
+    return [
+        span for span in cond_spans if not any(_span_contains(other, span) for other in cond_spans)
+    ]
 
 
 def _expand_targets_to_roots(
@@ -972,12 +1018,14 @@ def create_dependency_graph(
             return _workbook_sorted_sheet_a1_pairs(out, sheet_order=sheet_order)
 
         def extract_expr_deps_guarded(expr: str) -> dict[tuple[str, str], GuardExpr | None]:
-            """Extract guarded deps from an expression, recursing into nested conditionals.
+            """Extract guarded deps from an expression, recursing into conditionals.
 
             Deps of a branch that is itself a conditional carry the conjunction of
-            the enclosing branch guard and their own (inner) guard. A dep reachable
-            through several branches gets the disjunction of its per-branch guards
-            (`None` — unconditional/opaque — always wins).
+            the enclosing branch guard and their own (inner) guard. Conditionals
+            embedded inside a larger expression (arithmetic, aggregates, etc.) are
+            scanned the same way; surrounding refs stay unconditional. A dep
+            reachable through several branches gets the disjunction of its
+            per-branch guards (`None` — unconditional/opaque — always wins).
             """
             f = expr if expr.startswith("=") else "=" + expr
             out: dict[tuple[str, str], GuardExpr | None] = {}
@@ -1097,6 +1145,18 @@ def create_dependency_graph(
 
                 if switch_default is not None:
                     add_branch(switch_default, _sequential_default_guard(match_negations))
+                return out
+
+            # 5) Conditionals embedded in a larger expression (e.g. `1+IF(...)`,
+            # `SUM(IF(...),E1)`). Recurse into each outermost call for guarded
+            # deps, then treat remaining surrounding refs as unconditional.
+            embedded_spans = _outermost_embedded_conditional_spans(f)
+            if embedded_spans:
+                for start, end in embedded_spans:
+                    for key, guard in extract_expr_deps_guarded(f[start:end]).items():
+                        _merge_guarded_dep(out, key, guard)
+                for sh, a1 in extract_expr_deps(mask_spans(f, embedded_spans)):
+                    _merge_guarded_dep(out, (sh, a1), None)
                 return out
 
             for sh, a1 in extract_expr_deps(f):
