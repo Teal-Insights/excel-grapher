@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v4.0.0 (2026-08-07)
+
+### Features
+
+- Store DependencyCause as IntFlag bitmask
+  ([#477](https://github.com/Teal-Insights/excel-grapher/pull/477),
+  [`9672528`](https://github.com/Teal-Insights/excel-grapher/commit/96725282e3c75b3996c946fa877bce9bfeb78567))
+
+
 ## v3.21.2 (2026-08-07)
 
 ### Performance Improvements
