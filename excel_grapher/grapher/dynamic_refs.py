@@ -1770,6 +1770,53 @@ def _expr_is_known_nonzero(node: AstNode, env: CellTypeEnv) -> bool:
     return False
 
 
+def _finite_or_hull(
+    values: Iterable[int],
+    limits: DynamicRefLimits,
+) -> _FiniteInts | _IntBounds:
+    """Keep `values` exact, or collapse to its bounding interval past `max_branches`."""
+    vals = frozenset(values)
+    if len(vals) <= limits.max_branches:
+        return _FiniteInts(vals)
+    return _IntBounds(min(vals), max(vals))
+
+
+def _densify_or_bounds(
+    lo: int,
+    hi: int,
+    limits: DynamicRefLimits,
+) -> _FiniteInts | _IntBounds:
+    """Enumerate `[lo, hi]` exactly when narrow enough, else keep it as bounds.
+
+    An inverted span (`hi < lo`) is the empty domain.
+    """
+    if hi < lo:
+        return _FiniteInts(frozenset())
+    if hi - lo + 1 <= limits.max_branches:
+        return _FiniteInts(frozenset(range(lo, hi + 1)))
+    return _IntBounds(lo, hi)
+
+
+def _pointwise_numeric_domains(
+    a: _FiniteInts | _IntBounds | None,
+    b: _FiniteInts | _IntBounds | None,
+    limits: DynamicRefLimits,
+    *,
+    values_op: Callable[[int, int], int],
+    bounds_op: Callable[[_IntBounds, _IntBounds], tuple[int, int]],
+    densify: bool = True,
+) -> _FiniteInts | _IntBounds | None:
+    """Lift a scalar op to domains: exact over finite pairs, interval arithmetic otherwise."""
+    if a is None or b is None:
+        return None
+    if isinstance(a, _FiniteInts) and isinstance(b, _FiniteInts):
+        return _finite_or_hull((values_op(x, y) for x in a.values for y in b.values), limits)
+    lo, hi = bounds_op(_normalize_to_bounds(a), _normalize_to_bounds(b))
+    if not densify:
+        return _FiniteInts(frozenset()) if hi < lo else _IntBounds(lo, hi)
+    return _densify_or_bounds(lo, hi, limits)
+
+
 def _union_numeric_domains(
     a: _FiniteInts | _IntBounds | None,
     b: _FiniteInts | _IntBounds | None,
@@ -1778,19 +1825,9 @@ def _union_numeric_domains(
     if a is None or b is None:
         return None
     if isinstance(a, _FiniteInts) and isinstance(b, _FiniteInts):
-        u = a.values | b.values
-        if len(u) <= limits.max_branches:
-            return _FiniteInts(u)
-        return _IntBounds(min(u), max(u))
-    ba = _normalize_to_bounds(a)
-    bb = _normalize_to_bounds(b)
-    lo, hi = min(ba.lo, bb.lo), max(ba.hi, bb.hi)
-    if hi < lo:
-        return _FiniteInts(frozenset())
-    span = hi - lo + 1
-    if span <= limits.max_branches:
-        return _FiniteInts(frozenset(range(lo, hi + 1)))
-    return _IntBounds(lo, hi)
+        return _finite_or_hull(a.values | b.values, limits)
+    ba, bb = _normalize_to_bounds(a), _normalize_to_bounds(b)
+    return _densify_or_bounds(min(ba.lo, bb.lo), max(ba.hi, bb.hi), limits)
 
 
 def _add_numeric_domains(
@@ -1798,21 +1835,13 @@ def _add_numeric_domains(
     b: _FiniteInts | _IntBounds | None,
     limits: DynamicRefLimits,
 ) -> _FiniteInts | _IntBounds | None:
-    if a is None or b is None:
-        return None
-    if isinstance(a, _FiniteInts) and isinstance(b, _FiniteInts):
-        sums = {x + y for x in a.values for y in b.values}
-        if len(sums) <= limits.max_branches:
-            return _FiniteInts(frozenset(sums))
-        return _IntBounds(min(sums), max(sums))
-    ba, bb = _normalize_to_bounds(a), _normalize_to_bounds(b)
-    lo, hi = ba.lo + bb.lo, ba.hi + bb.hi
-    if hi < lo:
-        return _FiniteInts(frozenset())
-    span = hi - lo + 1
-    if span <= limits.max_branches:
-        return _FiniteInts(frozenset(range(lo, hi + 1)))
-    return _IntBounds(lo, hi)
+    return _pointwise_numeric_domains(
+        a,
+        b,
+        limits,
+        values_op=lambda x, y: x + y,
+        bounds_op=lambda ba, bb: (ba.lo + bb.lo, ba.hi + bb.hi),
+    )
 
 
 def _sub_numeric_domains(
@@ -1820,21 +1849,18 @@ def _sub_numeric_domains(
     b: _FiniteInts | _IntBounds | None,
     limits: DynamicRefLimits,
 ) -> _FiniteInts | _IntBounds | None:
-    if a is None or b is None:
-        return None
-    if isinstance(a, _FiniteInts) and isinstance(b, _FiniteInts):
-        diffs = {x - y for x in a.values for y in b.values}
-        if len(diffs) <= limits.max_branches:
-            return _FiniteInts(frozenset(diffs))
-        return _IntBounds(min(diffs), max(diffs))
-    ba, bb = _normalize_to_bounds(a), _normalize_to_bounds(b)
-    lo, hi = ba.lo - bb.hi, ba.hi - bb.lo
-    if hi < lo:
-        return _FiniteInts(frozenset())
-    span = hi - lo + 1
-    if span <= limits.max_branches:
-        return _FiniteInts(frozenset(range(lo, hi + 1)))
-    return _IntBounds(lo, hi)
+    return _pointwise_numeric_domains(
+        a,
+        b,
+        limits,
+        values_op=lambda x, y: x - y,
+        bounds_op=lambda ba, bb: (ba.lo - bb.hi, ba.hi - bb.lo),
+    )
+
+
+def _mul_bounds_corners(ba: _IntBounds, bb: _IntBounds) -> tuple[int, int]:
+    corners = (ba.lo * bb.lo, ba.lo * bb.hi, ba.hi * bb.lo, ba.hi * bb.hi)
+    return min(corners), max(corners)
 
 
 def _mul_numeric_domains(
@@ -1842,19 +1868,15 @@ def _mul_numeric_domains(
     b: _FiniteInts | _IntBounds | None,
     limits: DynamicRefLimits,
 ) -> _FiniteInts | _IntBounds | None:
-    if a is None or b is None:
-        return None
-    if isinstance(a, _FiniteInts) and isinstance(b, _FiniteInts):
-        prods = {x * y for x in a.values for y in b.values}
-        if len(prods) <= limits.max_branches:
-            return _FiniteInts(frozenset(prods))
-        return _IntBounds(min(prods), max(prods))
-    ba, bb = _normalize_to_bounds(a), _normalize_to_bounds(b)
-    corners = (ba.lo * bb.lo, ba.lo * bb.hi, ba.hi * bb.lo, ba.hi * bb.hi)
-    lo, hi = min(corners), max(corners)
-    if hi < lo:
-        return _FiniteInts(frozenset())
-    return _IntBounds(lo, hi)
+    # Unlike ADD/SUB, a narrow product interval is left as bounds rather than re-enumerated.
+    return _pointwise_numeric_domains(
+        a,
+        b,
+        limits,
+        values_op=lambda x, y: x * y,
+        bounds_op=_mul_bounds_corners,
+        densify=False,
+    )
 
 
 def _trunc_div_int(numerator: int, denominator: int) -> int:
@@ -1874,49 +1896,15 @@ def _div_numeric_domains(
         quotients = {_trunc_div_int(x, y) for x in a.values for y in b.values if y != 0}
         if not quotients:
             return None
-        if len(quotients) <= limits.max_branches:
-            return _FiniteInts(frozenset(quotients))
-        return _IntBounds(min(quotients), max(quotients))
+        return _finite_or_hull(quotients, limits)
     bb = _normalize_to_bounds(b)
     if bb.lo <= 0 <= bb.hi and not known_nonzero:
         return None
     ba = _normalize_to_bounds(a)
-    corners: list[int] = []
-    if bb.hi < 0 or bb.lo > 0:
-        corners.extend(
-            [
-                _trunc_div_int(ba.lo, bb.lo),
-                _trunc_div_int(ba.lo, bb.hi),
-                _trunc_div_int(ba.hi, bb.lo),
-                _trunc_div_int(ba.hi, bb.hi),
-            ]
-        )
-    else:
-        corners.extend(
-            [
-                _trunc_div_int(ba.lo, bb.lo),
-                _trunc_div_int(ba.lo, -1),
-                _trunc_div_int(ba.hi, bb.lo),
-                _trunc_div_int(ba.hi, -1),
-            ]
-        )
-        corners.extend(
-            [
-                _trunc_div_int(ba.lo, 1),
-                _trunc_div_int(ba.lo, bb.hi),
-                _trunc_div_int(ba.hi, 1),
-                _trunc_div_int(ba.hi, bb.hi),
-            ]
-        )
-    if not corners:
-        return None
-    lo, hi = min(corners), max(corners)
-    if hi < lo:
-        return _FiniteInts(frozenset())
-    span = hi - lo + 1
-    if span <= limits.max_branches:
-        return _FiniteInts(frozenset(range(lo, hi + 1)))
-    return _IntBounds(lo, hi)
+    # A divisor interval straddling zero is split around it, so the sign stays constant.
+    divisors = (bb.lo, bb.hi) if bb.hi < 0 or bb.lo > 0 else (bb.lo, -1, 1, bb.hi)
+    corners = [_trunc_div_int(num, den) for num in (ba.lo, ba.hi) for den in divisors]
+    return _densify_or_bounds(min(corners), max(corners), limits)
 
 
 def _div_numeric_result(
@@ -2060,23 +2048,26 @@ def _exp_numeric_domain(
     return _IntBounds(int(math.floor(exp_lo)), int(math.ceil(exp_hi)))
 
 
+def _extremum_numeric_domains(
+    a: _FiniteInts | _IntBounds,
+    b: _FiniteInts | _IntBounds,
+    limits: DynamicRefLimits,
+    *,
+    pick: Callable[[int, int], int],
+) -> _FiniteInts | _IntBounds:
+    """Apply `MIN`/`MAX` componentwise; both operands are known, so the result is too."""
+    if isinstance(a, _FiniteInts) and isinstance(b, _FiniteInts):
+        return _finite_or_hull((pick(x, y) for x in a.values for y in b.values), limits)
+    ba, bb = _normalize_to_bounds(a), _normalize_to_bounds(b)
+    return _densify_or_bounds(pick(ba.lo, bb.lo), pick(ba.hi, bb.hi), limits)
+
+
 def _min_numeric_domains(
     a: _FiniteInts | _IntBounds,
     b: _FiniteInts | _IntBounds,
     limits: DynamicRefLimits,
 ) -> _FiniteInts | _IntBounds:
-    if isinstance(a, _FiniteInts) and isinstance(b, _FiniteInts):
-        vals = frozenset(min(x, y) for x in a.values for y in b.values)
-        if len(vals) <= limits.max_branches:
-            return _FiniteInts(vals)
-        return _IntBounds(min(vals), max(vals))
-    ba, bb = _normalize_to_bounds(a), _normalize_to_bounds(b)
-    lo = min(ba.lo, bb.lo)
-    hi = min(ba.hi, bb.hi)
-    span = hi - lo + 1
-    if span <= limits.max_branches:
-        return _FiniteInts(frozenset(range(lo, hi + 1)))
-    return _IntBounds(lo, hi)
+    return _extremum_numeric_domains(a, b, limits, pick=min)
 
 
 def _max_numeric_domains(
@@ -2084,18 +2075,7 @@ def _max_numeric_domains(
     b: _FiniteInts | _IntBounds,
     limits: DynamicRefLimits,
 ) -> _FiniteInts | _IntBounds:
-    if isinstance(a, _FiniteInts) and isinstance(b, _FiniteInts):
-        vals = frozenset(max(x, y) for x in a.values for y in b.values)
-        if len(vals) <= limits.max_branches:
-            return _FiniteInts(vals)
-        return _IntBounds(min(vals), max(vals))
-    ba, bb = _normalize_to_bounds(a), _normalize_to_bounds(b)
-    lo = max(ba.lo, bb.lo)
-    hi = max(ba.hi, bb.hi)
-    span = hi - lo + 1
-    if span <= limits.max_branches:
-        return _FiniteInts(frozenset(range(lo, hi + 1)))
-    return _IntBounds(lo, hi)
+    return _extremum_numeric_domains(a, b, limits, pick=max)
 
 
 # ---------------------------------------------------------------------------
