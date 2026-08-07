@@ -14,6 +14,24 @@ from excel_grapher.core.address_keys import (
 )
 
 
+@pytest.mark.parametrize(
+    ("key_cls", "text"),
+    [
+        (CellKey, "Sheet1!E63"),
+        (RangeKey, "Sheet1!D63:Y63"),
+        (UnionKey, "Sheet1!A1:D1,E5"),
+    ],
+)
+def test_address_keys_are_slotted(key_cls: type[str], text: str) -> None:
+    key = key_cls(text)
+    assert not hasattr(key, "__dict__")
+    with pytest.raises(AttributeError):
+        key.dynamic_attr = 1  # type: ignore[attr-defined]
+    assert key == text
+    assert hash(key) == hash(text)
+    assert {key: "ok"}[text] == "ok"
+
+
 def test_parse_cell_key() -> None:
     key = parse_node_key("Sheet1!E63")
     assert isinstance(key, CellKey)
