@@ -113,8 +113,7 @@ print_text(str(guard))
 
 ## 04. Nested conditional in a cell
 
-Currently, only one guard per edge is supported. The top-level guard takes precedence over nested guards. Support for multiple guards per edge is on the project roadmap. For instance, `=IF(NOT(B4=1),IF(B4=0,C4,1),0)` in "Sheet1!D4" could be expressed either as a list of guard conditions or as a single guard with conditions joined by logical `AND`:
-`NOT(Sheet1!B4=1) AND Sheet1!B4=0`.
+When a conditional is nested inside another conditional's branch, a dependency of the inner branch is only reached when every enclosing condition holds, so its edge guard is the logical `AND` of all of them. For instance, `=IF(NOT(B4=1),IF(B4=0,C4,1),0)` in "Sheet1!D4" guards the edge to "Sheet1!C4" with `AND(NOT(Sheet1!B4=1),Sheet1!B4=0)`. This works to arbitrary nesting depth and across the conditional functions (`IF`, `IFS`, `CHOOSE`, `SWITCH`). A dependency that is reachable through more than one branch instead gets its per-branch guards joined by logical `OR` (and a dependency that also feeds a condition stays unguarded, since it is always read).
 
 ```{python}
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!D4"], load_values=False)

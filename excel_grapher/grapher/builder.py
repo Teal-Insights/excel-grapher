@@ -36,7 +36,7 @@ from .dynamic_refs import (
     infer_dynamic_offset_targets,
 )
 from .graph import DependencyGraph, NodeHook
-from .guard import And, Compare, GuardExpr, Literal, Not
+from .guard import And, Compare, GuardExpr, Literal, Not, and_guard, or_guard
 from .node import Node
 from .parser import (
     CellRef,
@@ -116,6 +116,47 @@ def _sorted_guard_deps(
         (sh, a1, dep_map[(sh, a1)])
         for sh, a1 in _workbook_sorted_sheet_a1_pairs(dep_map.keys(), sheet_order=sheet_order)
     ]
+
+
+def _conjoin_guards(outer: GuardExpr | None, inner: GuardExpr | None) -> GuardExpr | None:
+    """AND an enclosing branch guard with a nested guard.
+
+    `None` (unconditional or opaque) acts as identity: the other guard is still a
+    sound necessary condition for the dependency to be active.
+    """
+    if outer is None:
+        return inner
+    if inner is None:
+        return outer
+    return and_guard(outer, inner)
+
+
+def _merge_guarded_dep(
+    out: dict[tuple[str, str], GuardExpr | None],
+    key: tuple[str, str],
+    guard: GuardExpr | None,
+) -> None:
+    """Merge a guarded dep into `out`, ORing guards when the dep repeats.
+
+    `None` (unconditional/opaque) always wins, mirroring `DependencyGraph.add_edge`.
+    """
+    if key not in out:
+        out[key] = guard
+        return
+    existing = out[key]
+    if existing is None or guard is None:
+        out[key] = None
+    elif existing != guard:
+        out[key] = or_guard(existing, guard)
+
+
+def _sequential_default_guard(negations: list[GuardExpr]) -> GuardExpr:
+    """Guard for a sequential default branch: NOT(cond_1) AND ... NOT(cond_n)."""
+    if not negations:
+        return Literal(True)
+    if len(negations) == 1:
+        return negations[0]
+    return And(tuple(negations))
 
 
 def _expand_targets_to_roots(
@@ -930,193 +971,139 @@ def create_dependency_graph(
                 out.append(d)
             return _workbook_sorted_sheet_a1_pairs(out, sheet_order=sheet_order)
 
-        # 1) IF(cond, then, else)
-        if_parts = split_top_level_if(formula)
-        if if_parts is not None:
-            cond_s, then_s, else_s = if_parts
-            cond_guard = parse_guard_expr(
-                cond_s, current_sheet=current_sheet, named_ranges=named_ranges
-            )
+        def extract_expr_deps_guarded(expr: str) -> dict[tuple[str, str], GuardExpr | None]:
+            """Extract guarded deps from an expression, recursing into nested conditionals.
 
-            unconditional = extract_expr_deps(cond_s)
-            out: dict[tuple[str, str], GuardExpr | None] = {
-                (sh, a1): None for (sh, a1) in unconditional
-            }
+            Deps of a branch that is itself a conditional carry the conjunction of
+            the enclosing branch guard and their own (inner) guard. A dep reachable
+            through several branches gets the disjunction of its per-branch guards
+            (`None` — unconditional/opaque — always wins).
+            """
+            f = expr if expr.startswith("=") else "=" + expr
+            out: dict[tuple[str, str], GuardExpr | None] = {}
 
-            # If the condition can't be parsed, branch deps are still conditional, but opaque.
-            then_guard: GuardExpr | None = cond_guard
-            else_guard: GuardExpr | None = None if cond_guard is None else Not(cond_guard)
+            def add_branch(branch_expr: str, branch_guard: GuardExpr | None) -> None:
+                for key, inner_guard in extract_expr_deps_guarded(branch_expr).items():
+                    _merge_guarded_dep(out, key, _conjoin_guards(branch_guard, inner_guard))
 
-            for sh, a1 in extract_expr_deps(then_s):
-                key = (sh, a1)
-                if key in out:
-                    continue
-                out[key] = then_guard
-
-            if else_s:
-                for sh, a1 in extract_expr_deps(else_s):
-                    key = (sh, a1)
-                    if key in out:
-                        continue
-                    out[key] = else_guard
-
-            return _sorted_guard_deps(out, sheet_order=sheet_order)
-
-        # 2) IFS(cond1, value1, cond2, value2, ..., [default])
-        ifs_args = split_top_level_ifs(formula)
-        if ifs_args is not None:
-            # All condition expressions may be evaluated (sequentially), so include deps from all
-            # conditions as unconditional to avoid missing required inputs.
-            conditions: list[str] = []
-            values: list[str] = []
-            default_expr: str | None = None
-            if len(ifs_args) >= 2:
-                pairs = ifs_args
-                if len(pairs) % 2 == 1:
-                    default_expr = pairs[-1]
-                    pairs = pairs[:-1]
-                for i in range(0, len(pairs), 2):
-                    conditions.append(pairs[i])
-                    values.append(pairs[i + 1])
-
-            unconditional_pairs: list[tuple[str, str]] = []
-            seen_unconditional: set[tuple[str, str]] = set()
-            for c in conditions:
-                for sh, a1 in extract_expr_deps(c):
-                    if (sh, a1) in seen_unconditional:
-                        continue
-                    seen_unconditional.add((sh, a1))
-                    unconditional_pairs.append((sh, a1))
-
-            out: dict[tuple[str, str], GuardExpr | None] = {
-                (sh, a1): None
-                for sh, a1 in _workbook_sorted_sheet_a1_pairs(
-                    unconditional_pairs, sheet_order=sheet_order
-                )
-            }
-
-            prev_negations: list[GuardExpr] = []
-            for _idx, (cond_s, val_s) in enumerate(zip(conditions, values, strict=False), start=1):
+            # 1) IF(cond, then, else)
+            if_parts = split_top_level_if(f)
+            if if_parts is not None:
+                cond_s, then_s, else_s = if_parts
                 cond_guard = parse_guard_expr(
                     cond_s, current_sheet=current_sheet, named_ranges=named_ranges
                 )
-                # Build sequential guard: cond_i AND NOT(cond_1) AND ... NOT(cond_{i-1})
-                g: GuardExpr | None
-                if cond_guard is None:
-                    g = None
-                else:
-                    ops: list[GuardExpr] = [cond_guard, *prev_negations]
-                    g = ops[0] if len(ops) == 1 else And(tuple(ops))
-                    prev_negations.append(Not(cond_guard))
+                for sh, a1 in extract_expr_deps(cond_s):
+                    _merge_guarded_dep(out, (sh, a1), None)
 
-                for sh, a1 in extract_expr_deps(val_s):
-                    key = (sh, a1)
-                    if key in out:
-                        continue
-                    out[key] = g
+                # If the condition can't be parsed, branch deps are still conditional,
+                # but opaque.
+                add_branch(then_s, cond_guard)
+                if else_s:
+                    add_branch(else_s, None if cond_guard is None else Not(cond_guard))
+                return out
 
-            if default_expr is not None:
-                if prev_negations:
-                    default_guard: GuardExpr = (
-                        prev_negations[0]
-                        if len(prev_negations) == 1
-                        else And(tuple(prev_negations))
+            # 2) IFS(cond1, value1, cond2, value2, ..., [default])
+            ifs_args = split_top_level_ifs(f)
+            if ifs_args is not None:
+                conditions: list[str] = []
+                values: list[str] = []
+                ifs_default: str | None = None
+                if len(ifs_args) >= 2:
+                    pairs = ifs_args
+                    if len(pairs) % 2 == 1:
+                        ifs_default = pairs[-1]
+                        pairs = pairs[:-1]
+                    for i in range(0, len(pairs), 2):
+                        conditions.append(pairs[i])
+                        values.append(pairs[i + 1])
+
+                # All condition expressions may be evaluated (sequentially), so include
+                # deps from all conditions as unconditional to avoid missing required
+                # inputs.
+                for c in conditions:
+                    for sh, a1 in extract_expr_deps(c):
+                        _merge_guarded_dep(out, (sh, a1), None)
+
+                prev_negations: list[GuardExpr] = []
+                for cond_s, val_s in zip(conditions, values, strict=False):
+                    cond_guard = parse_guard_expr(
+                        cond_s, current_sheet=current_sheet, named_ranges=named_ranges
                     )
-                else:
-                    default_guard = Literal(True)
-                for sh, a1 in extract_expr_deps(default_expr):
-                    key = (sh, a1)
-                    if key in out:
-                        continue
-                    out[key] = default_guard
+                    # Build sequential guard: cond_i AND NOT(cond_1) AND ... NOT(cond_{i-1})
+                    g: GuardExpr | None
+                    if cond_guard is None:
+                        g = None
+                    else:
+                        ops: list[GuardExpr] = [cond_guard, *prev_negations]
+                        g = ops[0] if len(ops) == 1 else And(tuple(ops))
+                        prev_negations.append(Not(cond_guard))
+                    add_branch(val_s, g)
 
-            return _sorted_guard_deps(out, sheet_order=sheet_order)
+                if ifs_default is not None:
+                    add_branch(ifs_default, _sequential_default_guard(prev_negations))
+                return out
 
-        # 3) CHOOSE(index, value1, value2, ...)
-        choose_args = split_top_level_choose(formula)
-        if choose_args is not None and len(choose_args) >= 2:
-            index_s = choose_args[0]
-            choices = choose_args[1:]
-
-            index_expr = parse_guard_expr(
-                index_s, current_sheet=current_sheet, named_ranges=named_ranges
-            )
-            unconditional = extract_expr_deps(index_s)
-            out: dict[tuple[str, str], GuardExpr | None] = {
-                (sh, a1): None for (sh, a1) in unconditional
-            }
-
-            for i, choice_s in enumerate(choices, start=1):
-                guard: GuardExpr | None = None
-                if index_expr is not None:
-                    guard = Compare(left=index_expr, op="=", right=Literal(i))
-                for sh, a1 in extract_expr_deps(choice_s):
-                    key = (sh, a1)
-                    if key in out:
-                        continue
-                    out[key] = guard
-
-            return _sorted_guard_deps(out, sheet_order=sheet_order)
-
-        # 4) SWITCH(expr, value1, result1, ..., [default])
-        switch_args = split_top_level_switch(formula)
-        if switch_args is not None and len(switch_args) >= 3:
-            expr_s = switch_args[0]
-            expr_ge = parse_guard_expr(
-                expr_s, current_sheet=current_sheet, named_ranges=named_ranges
-            )
-            unconditional = extract_expr_deps(expr_s)
-            out: dict[tuple[str, str], GuardExpr | None] = {
-                (sh, a1): None for (sh, a1) in unconditional
-            }
-
-            pairs = switch_args[1:]
-            default_expr: str | None = None
-            if len(pairs) % 2 == 1:
-                default_expr = pairs[-1]
-                pairs = pairs[:-1]
-
-            prev_negations: list[GuardExpr] = []
-            for i in range(0, len(pairs), 2):
-                val_s = pairs[i]
-                res_s = pairs[i + 1]
-                val_ge = parse_guard_expr(
-                    val_s, current_sheet=current_sheet, named_ranges=named_ranges
+            # 3) CHOOSE(index, value1, value2, ...)
+            choose_args = split_top_level_choose(f)
+            if choose_args is not None and len(choose_args) >= 2:
+                index_s = choose_args[0]
+                index_expr = parse_guard_expr(
+                    index_s, current_sheet=current_sheet, named_ranges=named_ranges
                 )
-                match: GuardExpr | None = None
-                if expr_ge is not None and val_ge is not None:
-                    match = Compare(left=expr_ge, op="=", right=val_ge)
+                for sh, a1 in extract_expr_deps(index_s):
+                    _merge_guarded_dep(out, (sh, a1), None)
 
-                guard: GuardExpr | None = None
-                if match is not None:
-                    ops2: list[GuardExpr] = [match, *prev_negations]
-                    guard = ops2[0] if len(ops2) == 1 else And(tuple(ops2))
-                    prev_negations.append(Not(match))
+                for i, choice_s in enumerate(choose_args[1:], start=1):
+                    guard: GuardExpr | None = None
+                    if index_expr is not None:
+                        guard = Compare(left=index_expr, op="=", right=Literal(i))
+                    add_branch(choice_s, guard)
+                return out
 
-                for sh, a1 in extract_expr_deps(res_s):
-                    key = (sh, a1)
-                    if key in out:
-                        continue
-                    out[key] = guard
+            # 4) SWITCH(expr, value1, result1, ..., [default])
+            switch_args = split_top_level_switch(f)
+            if switch_args is not None and len(switch_args) >= 3:
+                expr_s = switch_args[0]
+                expr_ge = parse_guard_expr(
+                    expr_s, current_sheet=current_sheet, named_ranges=named_ranges
+                )
+                for sh, a1 in extract_expr_deps(expr_s):
+                    _merge_guarded_dep(out, (sh, a1), None)
 
-            if default_expr is not None:
-                if prev_negations:
-                    default_guard2: GuardExpr = (
-                        prev_negations[0]
-                        if len(prev_negations) == 1
-                        else And(tuple(prev_negations))
+                switch_pairs = switch_args[1:]
+                switch_default: str | None = None
+                if len(switch_pairs) % 2 == 1:
+                    switch_default = switch_pairs[-1]
+                    switch_pairs = switch_pairs[:-1]
+
+                match_negations: list[GuardExpr] = []
+                for i in range(0, len(switch_pairs), 2):
+                    val_s = switch_pairs[i]
+                    res_s = switch_pairs[i + 1]
+                    val_ge = parse_guard_expr(
+                        val_s, current_sheet=current_sheet, named_ranges=named_ranges
                     )
-                else:
-                    default_guard2 = Literal(True)
-                for sh, a1 in extract_expr_deps(default_expr):
-                    key = (sh, a1)
-                    if key in out:
-                        continue
-                    out[key] = default_guard2
+                    match: GuardExpr | None = None
+                    if expr_ge is not None and val_ge is not None:
+                        match = Compare(left=expr_ge, op="=", right=val_ge)
 
-            return _sorted_guard_deps(out, sheet_order=sheet_order)
+                    case_guard: GuardExpr | None = None
+                    if match is not None:
+                        ops2: list[GuardExpr] = [match, *match_negations]
+                        case_guard = ops2[0] if len(ops2) == 1 else And(tuple(ops2))
+                        match_negations.append(Not(match))
+                    add_branch(res_s, case_guard)
 
-        return [(sh, a1, None) for (sh, a1) in extract_expr_deps(formula)]
+                if switch_default is not None:
+                    add_branch(switch_default, _sequential_default_guard(match_negations))
+                return out
+
+            for sh, a1 in extract_expr_deps(f):
+                _merge_guarded_dep(out, (sh, a1), None)
+            return out
+
+        return _sorted_guard_deps(extract_expr_deps_guarded(formula), sheet_order=sheet_order)
 
     visited: set[str] = set()
     q: deque[tuple[str, str, int]] = deque()

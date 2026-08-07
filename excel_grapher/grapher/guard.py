@@ -109,6 +109,25 @@ def canonicalize_guard(expr: GuardExpr) -> GuardExpr:
     return expr
 
 
+def and_guard(a: GuardExpr, b: GuardExpr) -> GuardExpr:
+    """Combine two guards with AND, flattening nested ANDs.
+
+    `Literal(True)` is the AND identity and is dropped from the result.
+    """
+    ops: list[GuardExpr] = []
+    for g in (a, b):
+        if isinstance(g, And):
+            ops.extend(g.operands)
+        else:
+            ops.append(g)
+    ops = [g for g in ops if g != Literal(True)]
+    if not ops:
+        return Literal(True)
+    if len(ops) == 1:
+        return ops[0]
+    return And(tuple(ops))
+
+
 def or_guard(a: GuardExpr, b: GuardExpr) -> GuardExpr:
     """Combine two guards with OR, flattening nested ORs."""
     ops: list[GuardExpr] = []
