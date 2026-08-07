@@ -32,7 +32,8 @@ def test_node_uses_slots_without_instance_dict() -> None:
 def test_node_rejects_arbitrary_attribute_assignment() -> None:
     node = _leaf()
     with pytest.raises(AttributeError):
-        setattr(node, "not_a_field", 123)
+        # Bypass static attribute checks; slots must still reject unknown names.
+        object.__setattr__(node, "not_a_field", 123)
 
 
 def test_node_public_fields_and_derived_properties() -> None:
