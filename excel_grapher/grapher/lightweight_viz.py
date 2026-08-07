@@ -712,14 +712,25 @@ def _longest_path_ranks(adj_cond: list[list[int]], n_comp: int) -> list[int]:
     return rank
 
 
-def _default_unconditional_node_ranks(uncond: list[list[int]], n: int) -> list[int]:
+def unconditional_scc_ranks(uncond: list[list[int]], n: int) -> tuple[list[int], int]:
+    """Rank nodes by longest path through the SCC condensation of `uncond`.
+
+    Args:
+        uncond: Out-adjacency (unconditional edges only), indexed by node id.
+        n: Node count; `uncond` must have this length.
+
+    Returns:
+        `(ranks, scc_count)`, where `ranks[i]` is the condensation rank of node
+        `i` (cycle members share a rank) and `scc_count` is the number of
+        strongly connected components.
+    """
     if n == 0:
-        return []
+        return [], 0
     comp_raw = _iterative_kosaraju_scc(uncond, n)
     comp, n_comp = _remap_components(comp_raw)
     adj_cond = _build_condensation_edges(uncond, n, comp, n_comp)
     comp_rank = _longest_path_ranks(adj_cond, n_comp)
-    return [comp_rank[comp[i]] for i in range(n)]
+    return [comp_rank[comp[i]] for i in range(n)], n_comp
 
 
 def _default_bfs_target_ranks(adj: list[list[int]], rev_adj: list[list[int]], n: int) -> list[int]:
@@ -916,7 +927,7 @@ def build_lightweight_viz_core(
                 n, module_of, ranks, iteration_order=iteration_order
             )
         elif layout_mode == "layered":
-            ranks = _default_unconditional_node_ranks(uncond, n)
+            ranks, _scc_count = unconditional_scc_ranks(uncond, n)
             xs, ys, bucket_density, dense_bucket_count = _rank_band_xy(n, module_of, ranks)
         elif layout_mode == "force":
             ranks = _default_bfs_target_ranks(selected_adj, rev_selected, n)
