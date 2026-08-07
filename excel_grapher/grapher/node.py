@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -12,6 +13,7 @@ from excel_grapher.core.address_keys import (
     CellKey,
     NodeShape,
     RangeKey,
+    UnionKey,
 )
 from excel_grapher.core.address_keys import NodeKey as AddressKey
 from excel_grapher.core.address_keys import expand_node_cells as _expand_node_cells
@@ -23,6 +25,68 @@ from excel_grapher.core.address_keys import quote_sheet_if_needed as _quote_shee
 
 # Graph node identity; same canonical form as NormalizedAddress (cell / range / union).
 NodeKey: TypeAlias = str
+
+# Bounded cache for Node derived fields (`key` / `shape` / `column_index`).
+# External to the instance so `@dataclass(slots=True)` stays compatible (unlike
+# `functools.cached_property`, which needs a per-instance `__dict__`).
+_NODE_DERIVED_CACHE_MAXSIZE = 16384
+
+
+@dataclass(frozen=True, slots=True)
+class _NodeDerivedFields:
+    """Cached derived Node attributes for one canonical address."""
+
+    key: NodeKey
+    shape: NodeShape
+    column_index: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class NodeDerivedCacheInfo:
+    """Hit/miss statistics for the Node derived-fields LRU."""
+
+    hits: int
+    misses: int
+    maxsize: int
+    currsize: int
+
+
+@functools.lru_cache(maxsize=_NODE_DERIVED_CACHE_MAXSIZE)
+def _lookup_derived_fields(address: str) -> _NodeDerivedFields:
+    """Compute derived Node fields for a canonical address string.
+
+    `address` may be a plain `str` or an `AddressKey` (`str` subclass). Cache
+    keys compare equal across those forms for the same text.
+    """
+    if isinstance(address, (CellKey, RangeKey, UnionKey)):
+        parsed: AddressKey = address
+    else:
+        parsed = _parse_node_key(address)
+    key = address if type(address) is str else str(address)
+    column_index: int | None = None
+    if isinstance(parsed, CellKey):
+        column_index = int(fastpyxl.utils.cell.column_index_from_string(parsed.column))
+    return _NodeDerivedFields(key=key, shape=parsed.shape, column_index=column_index)
+
+
+def _derived_fields(address: AddressKey) -> _NodeDerivedFields:
+    return _lookup_derived_fields(address)
+
+
+def _derived_fields_cache_info() -> NodeDerivedCacheInfo:
+    """Return hit/miss statistics for the derived-fields LRU."""
+    info = _lookup_derived_fields.cache_info()
+    return NodeDerivedCacheInfo(
+        hits=info.hits,
+        misses=info.misses,
+        maxsize=info.maxsize or _NODE_DERIVED_CACHE_MAXSIZE,
+        currsize=info.currsize,
+    )
+
+
+def _derived_fields_cache_clear() -> None:
+    """Clear the derived-fields LRU (intended for tests)."""
+    _lookup_derived_fields.cache_clear()
 
 
 class NodeKind(StrEnum):
@@ -47,7 +111,7 @@ def _coerce_address(value: str | AddressKey) -> AddressKey:
     return _parse_node_key(str(value))
 
 
-@dataclass
+@dataclass(slots=True)
 class Node:
     """Workbook cell or multi-cell span in a dependency graph.
 
@@ -61,6 +125,10 @@ class Node:
 
     `is_leaf` is true when the node has no outgoing dependency edges (value-only
     cells and literal-only formulas such as `=1+1`).
+
+    Instances are slotted (no per-instance `__dict__`). Derived attributes
+    (`key`, `shape`, `column_index`) are served from a process-wide LRU keyed on
+    the canonical address rather than `functools.cached_property`.
     """
 
     sheet: str | None
@@ -178,18 +246,20 @@ class Node:
     @property
     def key(self) -> NodeKey:
         assert self.address is not None
-        return str(self.address)
+        return _derived_fields(self.address).key
 
     @property
     def shape(self) -> NodeShape:
         assert self.address is not None
-        return self.address.shape
+        return _derived_fields(self.address).shape
 
     @property
     def column_index(self) -> int:
-        if self.kind is not NodeKind.cell or self.column is None:
+        assert self.address is not None
+        idx = _derived_fields(self.address).column_index
+        if idx is None:
             raise ValueError("column_index is only defined for cell nodes")
-        return int(fastpyxl.utils.cell.column_index_from_string(self.column))
+        return idx
 
 
 @dataclass(frozen=True)
