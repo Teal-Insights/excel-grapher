@@ -5,8 +5,7 @@ and guards for different cases, including nested conditionals and cycles.
 
 These tests are intended to map to the micro-workbook examples in
 examples/micro_workbooks/extraction_basics.qmd, but without dependency on
-or logical/semantic coupling to the xlsx file. Unimplemented roadmap
-behaviors are marked `xfail`.
+or logical/semantic coupling to the xlsx file.
 """
 
 from __future__ import annotations
