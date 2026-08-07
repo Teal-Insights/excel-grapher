@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import functools
+from collections import OrderedDict
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -29,6 +29,8 @@ NodeKey: TypeAlias = str
 # Bounded cache for Node derived fields (`key` / `shape` / `column_index`).
 # External to the instance so `@dataclass(slots=True)` stays compatible (unlike
 # `functools.cached_property`, which needs a per-instance `__dict__`).
+# Use a dict LRU (not `functools.lru_cache`): `_make_key` treats `str` subclasses
+# as distinct from plain `str`, which would split AddressKey / str traffic.
 _NODE_DERIVED_CACHE_MAXSIZE = 16384
 
 
@@ -51,13 +53,8 @@ class NodeDerivedCacheInfo:
     currsize: int
 
 
-@functools.lru_cache(maxsize=_NODE_DERIVED_CACHE_MAXSIZE)
-def _lookup_derived_fields(address: str) -> _NodeDerivedFields:
-    """Compute derived Node fields for a canonical address string.
-
-    `address` may be a plain `str` or an `AddressKey` (`str` subclass). Cache
-    keys compare equal across those forms for the same text.
-    """
+def _compute_derived_fields(address: AddressKey | str) -> _NodeDerivedFields:
+    """Compute derived Node fields for a canonical address."""
     if isinstance(address, (CellKey, RangeKey, UnionKey)):
         parsed: AddressKey = address
     else:
@@ -69,24 +66,67 @@ def _lookup_derived_fields(address: str) -> _NodeDerivedFields:
     return _NodeDerivedFields(key=key, shape=parsed.shape, column_index=column_index)
 
 
+class _NodeDerivedFieldsCache:
+    """Process-wide LRU for Node derived fields, keyed by address text."""
+
+    def __init__(self, maxsize: int = _NODE_DERIVED_CACHE_MAXSIZE) -> None:
+        if maxsize < 1:
+            raise ValueError("maxsize must be at least 1")
+        self._maxsize = maxsize
+        self._cache: OrderedDict[str, _NodeDerivedFields] = OrderedDict()
+        self._hits = 0
+        self._misses = 0
+
+    def get(self, address: AddressKey | str) -> _NodeDerivedFields:
+        cached = self._cache.get(address)
+        if cached is not None:
+            self._hits += 1
+            self._cache.move_to_end(address)
+            return cached
+
+        self._misses += 1
+        derived = _compute_derived_fields(address)
+        # Store under a plain str so AddressKey and str lookups share one entry.
+        store_key = address if type(address) is str else str(address)
+        self._cache[store_key] = derived
+        if len(self._cache) > self._maxsize:
+            self._cache.popitem(last=False)
+        return derived
+
+    def clear(self) -> None:
+        self._cache.clear()
+        self._hits = 0
+        self._misses = 0
+
+    def cache_info(self) -> NodeDerivedCacheInfo:
+        return NodeDerivedCacheInfo(
+            hits=self._hits,
+            misses=self._misses,
+            maxsize=self._maxsize,
+            currsize=len(self._cache),
+        )
+
+
+_DERIVED_FIELDS_CACHE = _NodeDerivedFieldsCache()
+
+
+def _lookup_derived_fields(address: AddressKey | str) -> _NodeDerivedFields:
+    """Return cached derived fields for `address` (plain str or AddressKey)."""
+    return _DERIVED_FIELDS_CACHE.get(address)
+
+
 def _derived_fields(address: AddressKey) -> _NodeDerivedFields:
     return _lookup_derived_fields(address)
 
 
 def _derived_fields_cache_info() -> NodeDerivedCacheInfo:
     """Return hit/miss statistics for the derived-fields LRU."""
-    info = _lookup_derived_fields.cache_info()
-    return NodeDerivedCacheInfo(
-        hits=info.hits,
-        misses=info.misses,
-        maxsize=info.maxsize or _NODE_DERIVED_CACHE_MAXSIZE,
-        currsize=info.currsize,
-    )
+    return _DERIVED_FIELDS_CACHE.cache_info()
 
 
 def _derived_fields_cache_clear() -> None:
     """Clear the derived-fields LRU (intended for tests)."""
-    _lookup_derived_fields.cache_clear()
+    _DERIVED_FIELDS_CACHE.clear()
 
 
 class NodeKind(StrEnum):
