@@ -909,9 +909,7 @@ class DependencyGraph:
             (i2k(a), i2k(b)): _intern_guard_cell_refs(g, keys, key_index=key_index)
             for a, b, g in state["_guards"]
         }
-        self._edge_provenance = {
-            (i2k(a), i2k(b)): p for a, b, p in state["_edge_provenance"]
-        }
+        self._edge_provenance = {(i2k(a), i2k(b)): p for a, b, p in state["_edge_provenance"]}
         self._hooks = state["_hooks"]
         lc = state["leaf_classification"]
         if lc:
