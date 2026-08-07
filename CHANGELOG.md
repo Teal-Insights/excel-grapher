@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v4.0.2 (2026-08-07)
+
+### Bug Fixes
+
+- **grapher**: Use dict LRU so AddressKey and str share cache entries
+  ([#479](https://github.com/Teal-Insights/excel-grapher/pull/479),
+  [`12f2ff4`](https://github.com/Teal-Insights/excel-grapher/commit/12f2ff46f155a7d850e1e079372d86649cfe26f5))
+
+### Code Style
+
+- Format edge-provenance changes and silence ty on rejection test
+  ([#480](https://github.com/Teal-Insights/excel-grapher/pull/480),
+  [`6145a05`](https://github.com/Teal-Insights/excel-grapher/commit/6145a05122844c7e8f76ad023a7b20654ae4d267))
+
+- Reformat after rebase onto IntFlag main
+  ([#480](https://github.com/Teal-Insights/excel-grapher/pull/480),
+  [`6145a05`](https://github.com/Teal-Insights/excel-grapher/commit/6145a05122844c7e8f76ad023a7b20654ae4d267))
+
+### Performance Improvements
+
+- **grapher**: Flatten _edge_extra into typed _edge_provenance
+  ([#480](https://github.com/Teal-Insights/excel-grapher/pull/480),
+  [`6145a05`](https://github.com/Teal-Insights/excel-grapher/commit/6145a05122844c7e8f76ad023a7b20654ae4d267))
+
+- **grapher**: Flatten _edge_extra into typed _edge_provenance (#474)
+  ([#480](https://github.com/Teal-Insights/excel-grapher/pull/480),
+  [`6145a05`](https://github.com/Teal-Insights/excel-grapher/commit/6145a05122844c7e8f76ad023a7b20654ae4d267))
+
+- **grapher**: Slots=True on Node with address-keyed derived-field LRU (#476)
+  ([#479](https://github.com/Teal-Insights/excel-grapher/pull/479),
+  [`12f2ff4`](https://github.com/Teal-Insights/excel-grapher/commit/12f2ff46f155a7d850e1e079372d86649cfe26f5))
+
+- **grapher**: Use slots=True on Node with address-keyed LRU
+  ([#479](https://github.com/Teal-Insights/excel-grapher/pull/479),
+  [`12f2ff4`](https://github.com/Teal-Insights/excel-grapher/commit/12f2ff46f155a7d850e1e079372d86649cfe26f5))
+
+### Testing
+
+- **grapher**: Avoid ruff B010 in Node slots attribute check
+  ([#479](https://github.com/Teal-Insights/excel-grapher/pull/479),
+  [`12f2ff4`](https://github.com/Teal-Insights/excel-grapher/commit/12f2ff46f155a7d850e1e079372d86649cfe26f5))
+
+
 ## v4.0.1 (2026-08-07)
 
 ### Performance Improvements
