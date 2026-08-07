@@ -44,6 +44,7 @@ from excel_grapher.core.formula_ast import (
     BinaryOpNode,
     BoolNode,
     CellRefNode,
+    EmptyArgNode,
     ErrorNode,
     FormulaParseError,
     FunctionCallNode,
@@ -1472,6 +1473,109 @@ def _domain_from_cell_type(
     return None
 
 
+def _literal_positive_int(node: AstNode) -> int | None:
+    """Return a positive whole number when `node` is a numeric literal >= 1."""
+    if not isinstance(node, NumberNode):
+        return None
+    v = node.value
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v if v >= 1 else None
+    if isinstance(v, float) and v.is_integer() and v >= 1:
+        return int(v)
+    return None
+
+
+def _static_rect_bounds(node: AstNode) -> tuple[str, int, int, int, int] | None:
+    """Return `(sheet, rlo, rhi, clo, chi)` for a static cell or rectangular range."""
+    if isinstance(node, CellRefNode):
+        try:
+            sheet, coord = node.address.split("!", 1)
+        except ValueError:
+            return None
+        row, col = coordinate_to_tuple(coord.replace("$", ""))
+        return sheet, row, row, col, col
+    if isinstance(node, RangeNode):
+        try:
+            s1, coord_start = node.start.split("!", 1)
+            s2, coord_end = node.end.split("!", 1)
+        except ValueError:
+            return None
+        if s1 != s2:
+            return None
+        row1, col1 = coordinate_to_tuple(coord_start.replace("$", ""))
+        row2, col2 = coordinate_to_tuple(coord_end.replace("$", ""))
+        rlo, rhi = sorted((row1, row2))
+        clo, chi = sorted((col1, col2))
+        return s1, rlo, rhi, clo, chi
+    return None
+
+
+def _range_node_from_bounds(
+    sheet: str, rlo: int, rhi: int, clo: int, chi: int
+) -> CellRefNode | RangeNode:
+    from fastpyxl.utils.cell import get_column_letter
+
+    start = f"{sheet}!{get_column_letter(clo)}{rlo}"
+    end = f"{sheet}!{get_column_letter(chi)}{rhi}"
+    if start == end:
+        return CellRefNode(address=start)
+    return RangeNode(start=start, end=end)
+
+
+def _index_vector_lookup_array(node: AstNode) -> AstNode | None:
+    """Resolve static `INDEX(range,,k)` / `INDEX(range,k[,])` to a 1-D range or cell.
+
+    Matches Excel / `FormulaEvaluator` geometry for an omitted row or column axis
+    with a literal selector, so MATCH can treat the result like a direct range.
+    """
+    if not isinstance(node, FunctionCallNode) or node.name.upper() != "INDEX":
+        return None
+    if len(node.args) < 2:
+        return None
+    bounds = _static_rect_bounds(node.args[0])
+    if bounds is None:
+        return None
+    sheet, rlo, rhi, clo, chi = bounds
+    nrows = rhi - rlo + 1
+    ncols = chi - clo + 1
+
+    row_arg = node.args[1]
+    col_arg: AstNode | None = node.args[2] if len(node.args) >= 3 else None
+    row_omitted = isinstance(row_arg, EmptyArgNode)
+    col_omitted = col_arg is None or isinstance(col_arg, EmptyArgNode)
+
+    if row_omitted and col_omitted:
+        return None
+    if row_omitted:
+        assert col_arg is not None
+        k = _literal_positive_int(col_arg)
+        if k is None or k > ncols:
+            return None
+        c = clo + k - 1
+        return _range_node_from_bounds(sheet, rlo, rhi, c, c)
+    if col_omitted:
+        k = _literal_positive_int(row_arg)
+        if k is None:
+            return None
+        if nrows == 1:
+            if k > ncols:
+                return None
+            c = clo + k - 1
+            return _range_node_from_bounds(sheet, rlo, rhi, c, c)
+        if ncols == 1:
+            if k > nrows:
+                return None
+            r = rlo + k - 1
+            return _range_node_from_bounds(sheet, r, r, clo, chi)
+        if k > nrows:
+            return None
+        r = rlo + k - 1
+        return _range_node_from_bounds(sheet, r, r, clo, chi)
+    return None
+
+
 def _static_match_lookup_extent(node: AstNode) -> int | None:
     """Return N so MATCH position is within [1, N] when lookup_array has static shape."""
     if isinstance(node, CellRefNode):
@@ -1493,6 +1597,9 @@ def _static_match_lookup_extent(node: AstNode) -> int | None:
         if ncols == 1:
             return nrows
         return nrows * ncols
+    vector = _index_vector_lookup_array(node)
+    if vector is not None:
+        return _static_match_lookup_extent(vector)
     return None
 
 
@@ -1531,6 +1638,9 @@ def _ordered_match_lookup_cells(arg: AstNode, *, current_sheet: str) -> list[str
             for c in range(clo, chi + 1):
                 out.append(format_key(sheet, f"{get_column_letter(c)}{rlo}"))
         return out
+    vector = _index_vector_lookup_array(arg)
+    if vector is not None:
+        return _ordered_match_lookup_cells(vector, current_sheet=current_sheet)
     return None
 
 
@@ -2702,6 +2812,16 @@ def _infer_numeric_domain_result(
                     _FiniteInts(frozenset({column_index_from_string(col_letter)}))
                 )
             return _domain_result(None)
+        if name in {"COLUMNS", "ROWS"}:
+            if len(node.args) != 1:
+                return _domain_result(None)
+            bounds = _static_rect_bounds(node.args[0])
+            if bounds is None:
+                return _domain_result(None)
+            _sheet, rlo, rhi, clo, chi = bounds
+            if name == "COLUMNS":
+                return _domain_result(_FiniteInts(frozenset({chi - clo + 1})))
+            return _domain_result(_FiniteInts(frozenset({rhi - rlo + 1})))
         if name == "MATCH":
             if len(node.args) < 2:
                 return _domain_result(None)
@@ -3292,6 +3412,13 @@ def _collect_addresses_needing_domain(
                 addrs.add(n.address)
             return
         if isinstance(n, RangeNode):
+            if (
+                parent is not None
+                and isinstance(parent, FunctionCallNode)
+                and arg_index is not None
+                and is_ref_only_arg(parent.name, arg_index)
+            ):
+                return
             try:
                 sheet, coord_start = n.start.split("!", 1)
                 _sheet2, coord_end = n.end.split("!", 1)

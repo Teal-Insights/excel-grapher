@@ -21,7 +21,7 @@ from excel_grapher.core.cell_types import (
     IntIntervalDomain,
     NotEqualCell,
 )
-from excel_grapher.core.formula_ast import AstNode
+from excel_grapher.core.formula_ast import AstNode, FunctionCallNode
 from excel_grapher.core.formula_ast import parse as parse_ast
 from excel_grapher.grapher import dynamic_refs as dynamic_refs_mod
 from excel_grapher.grapher import parser as parser_mod
@@ -1371,6 +1371,140 @@ def test_match_domain_collection_skips_lookup_array_but_full_closure_keeps_upstr
     assert need == {"Sheet1!B1"}
     closure = dynamic_refs_mod._collect_addresses(ast)
     assert "Sheet1!Z1" in closure
+
+
+def test_static_match_lookup_extent_resolves_index_empty_row_column_slice() -> None:
+    """INDEX(range,,k) / INDEX(range,k,) are static 1-D MATCH lookup shapes (issue #497)."""
+    col_slice = parse_ast("=INDEX(Trigger!AA1:AB3,,1)")
+    assert isinstance(col_slice, FunctionCallNode)
+    assert dynamic_refs_mod._static_match_lookup_extent(col_slice) == 3
+    ordered = dynamic_refs_mod._ordered_match_lookup_cells(col_slice, current_sheet="Out")
+    assert ordered == ["Trigger!AA1", "Trigger!AA2", "Trigger!AA3"]
+
+    row_slice = parse_ast("=INDEX(Trigger!AA1:AB3,2,)")
+    assert isinstance(row_slice, FunctionCallNode)
+    assert dynamic_refs_mod._static_match_lookup_extent(row_slice) == 2
+    ordered_row = dynamic_refs_mod._ordered_match_lookup_cells(row_slice, current_sheet="Out")
+    assert ordered_row == ["Trigger!AA2", "Trigger!AB2"]
+
+
+def test_columns_rows_numeric_domain_from_static_range() -> None:
+    """COLUMNS/ROWS over a static range yield a singleton integer domain."""
+    limits = DynamicRefLimits()
+    cols = parse_ast("=COLUMNS(Trigger!AA1:AB3)")
+    rows = parse_ast("=ROWS(Trigger!AA1:AB3)")
+    col_dom = dynamic_refs_mod._infer_numeric_domain(cols, {}, limits, current_sheet="Out")
+    row_dom = dynamic_refs_mod._infer_numeric_domain(rows, {}, limits, current_sheet="Out")
+    assert isinstance(col_dom, dynamic_refs_mod._FiniteInts)
+    assert col_dom.values == frozenset({2})
+    assert isinstance(row_dom, dynamic_refs_mod._FiniteInts)
+    assert row_dom.values == frozenset({3})
+
+
+def test_columns_ref_only_skips_range_domain_collection() -> None:
+    ast = parse_ast("=COLUMNS(Trigger!AA1:AB3)")
+    need = dynamic_refs_mod._collect_addresses_needing_domain(ast)
+    assert need == set()
+
+
+def _build_vlookup_index_empty_arg_workbook(path: Path) -> None:
+    """MCVE workbook for issue #497: VLOOKUP col under nested INDEX(range,,1)."""
+    wb = xlsxwriter.Workbook(path)
+    lookup = wb.add_worksheet("lookup")
+    for row, (name, code) in enumerate([("A", 1), ("B", 2), ("C", 3)], start=1):
+        lookup.write_string(row - 1, 0, name)
+        lookup.write_number(row - 1, 1, code)
+
+    trigger = wb.add_worksheet("Trigger")
+    for row, name in enumerate(["A", "B", "C"], start=1):
+        trigger.write_string(row - 1, 25, name)  # Z
+        trigger.write_formula(
+            row - 1,
+            26,
+            f"=VLOOKUP(Z{row}, lookup!$A$1:$B$3, 2, FALSE)",
+            None,
+            row,
+        )  # AA
+        trigger.write_number(row - 1, 27, 10 * row)  # AB
+
+    inputs = wb.add_worksheet("Inputs")
+    inputs.write_number(0, 0, 2)  # A1
+
+    out = wb.add_worksheet("Out")
+    out.write_formula(
+        0,
+        0,
+        "=INDEX(Trigger!AA1:AA3, MATCH(Inputs!A1, Trigger!AA1:AA3, 0))",
+        None,
+        2,
+    )
+    out.write_formula(
+        1,
+        0,
+        "=INDEX(Trigger!AA1:AB3, MATCH(Inputs!A1, Trigger!AA1:AA3, 0), 2)",
+        None,
+        20,
+    )
+    out.write_formula(
+        2,
+        0,
+        (
+            "=INDEX(Trigger!AA1:AB3, MATCH(Inputs!A1, INDEX(Trigger!AA1:AB3,,1), 0), "
+            "COLUMNS(Trigger!AA1:AB3))"
+        ),
+        None,
+        20,
+    )
+    wb.close()
+
+
+def test_index_match_nested_index_empty_arg_over_vlookup_column(tmp_path: Path) -> None:
+    """Nested INDEX(range,,1) over a VLOOKUP column must not fail domain build (#497)."""
+    from typing import Annotated, Literal
+
+    from excel_grapher.core.cell_types import Between, RealBetween
+
+    excel_path = tmp_path / "vlookup_index_empty_arg_any.xlsx"
+    _build_vlookup_index_empty_arg_workbook(excel_path)
+
+    financial = Annotated[float, RealBetween(0, 1e6)]
+    constraints: dict[str, object] = {
+        "Inputs!A1": Annotated[int, Between(1, 3)],
+        "lookup!A1": Literal["A"],
+        "lookup!A2": Literal["B"],
+        "lookup!A3": Literal["C"],
+        "lookup!B1": financial,
+        "lookup!B2": financial,
+        "lookup!B3": financial,
+        "Trigger!Z1": Literal["A"],
+        "Trigger!Z2": Literal["B"],
+        "Trigger!Z3": Literal["C"],
+        "Trigger!AB1": Literal[10],
+        "Trigger!AB2": Literal[20],
+        "Trigger!AB3": Literal[30],
+    }
+    config = DynamicRefConfig.from_constraints(constraints, {})
+
+    # Controls that already work without nested INDEX(range,,1).
+    for target in ("Out!A1", "Out!A2"):
+        graph = create_dependency_graph(
+            excel_path,
+            [target],
+            load_values=True,
+            dynamic_refs=config,
+        )
+        assert target in graph
+
+    # Bug case: nested INDEX(range,,1) + COLUMNS over a VLOOKUP first column.
+    graph = create_dependency_graph(
+        excel_path,
+        ["Out!A3"],
+        load_values=True,
+        dynamic_refs=config,
+    )
+    assert "Out!A3" in graph
+    deps = graph.get_dependencies("Out!A3")
+    assert {"Trigger!AB1", "Trigger!AB2", "Trigger!AB3"} & deps
 
 
 def test_expand_leaf_env_wide_interval_no_interval_branch_limit_error() -> None:

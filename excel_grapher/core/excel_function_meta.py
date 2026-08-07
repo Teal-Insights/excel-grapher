@@ -30,6 +30,8 @@ class ExcelFunctionMeta:
 FUNCTION_META: dict[str, ExcelFunctionMeta] = {
     "ROW": ExcelFunctionMeta("ROW", ("ref_only",)),
     "COLUMN": ExcelFunctionMeta("COLUMN", ("ref_only",)),
+    "ROWS": ExcelFunctionMeta("ROWS", ("ref_only",)),
+    "COLUMNS": ExcelFunctionMeta("COLUMNS", ("ref_only",)),
     "SUM": ExcelFunctionMeta("SUM", ()),
     "MIN": ExcelFunctionMeta("MIN", ()),
     "MAX": ExcelFunctionMeta("MAX", ()),
