@@ -117,7 +117,7 @@ def test_select_path_induced_subgraph_preserves_guard_and_provenance() -> None:
     g.add_node(_formula("S!D1", "=B1"))
     g.add_node(_leaf("S!B1", 1))
     guard = Compare(left=GuardCellRef(key="S!A1"), op="=", right=Literal(1))
-    provenance = EdgeProvenance(causes=frozenset({DependencyCause.direct_ref}))
+    provenance = EdgeProvenance(causes=DependencyCause.direct_ref)
     g.add_edge("S!F1", "S!D1")
     g.add_edge("S!D1", "S!B1", guard=guard, provenance=provenance)
 

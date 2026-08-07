@@ -68,7 +68,7 @@ def test_identity_projection_does_not_mutate_original_graph() -> None:
     for n in (c, b, a):
         graph.add_node(n)
     dr = DependencyCause.direct_ref
-    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=frozenset({dr})))
+    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=dr))
     af = "=Sheet1!B1"
     ref = "Sheet1!B1"
     i = af.index(ref)
@@ -77,7 +77,7 @@ def test_identity_projection_does_not_mutate_original_graph() -> None:
         "Sheet1!A1",
         "Sheet1!B1",
         provenance=EdgeProvenance(
-            causes=frozenset({dr}),
+            causes=dr,
             direct_sites_formula=sp,
             direct_sites_normalized=sp,
         ),
@@ -102,7 +102,7 @@ def test_projection_result_behaves_like_projected_graph() -> None:
     for n in (c, b, a):
         graph.add_node(n)
     dr = DependencyCause.direct_ref
-    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=frozenset({dr})))
+    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=dr))
     af = "=Sheet1!B1"
     ref = "Sheet1!B1"
     i = af.index(ref)
@@ -111,7 +111,7 @@ def test_projection_result_behaves_like_projected_graph() -> None:
         "Sheet1!A1",
         "Sheet1!B1",
         provenance=EdgeProvenance(
-            causes=frozenset({dr}),
+            causes=dr,
             direct_sites_formula=sp,
             direct_sites_normalized=sp,
         ),
@@ -161,8 +161,8 @@ def test_manifest_serializes_and_resolves_chain_aliases() -> None:
     for n in (d, c, b, a):
         graph.add_node(n)
     dr = DependencyCause.direct_ref
-    graph.add_edge("Sheet1!C1", "Sheet1!D1", provenance=EdgeProvenance(causes=frozenset({dr})))
-    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=frozenset({dr})))
+    graph.add_edge("Sheet1!C1", "Sheet1!D1", provenance=EdgeProvenance(causes=dr))
+    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=dr))
     af = "=Sheet1!B1"
     ref = "Sheet1!B1"
     i = af.index(ref)
@@ -171,7 +171,7 @@ def test_manifest_serializes_and_resolves_chain_aliases() -> None:
         "Sheet1!A1",
         "Sheet1!B1",
         provenance=EdgeProvenance(
-            causes=frozenset({dr}),
+            causes=dr,
             direct_sites_formula=sp,
             direct_sites_normalized=sp,
         ),
@@ -202,8 +202,8 @@ def test_collapsed_group_records_statement_order_and_external_boundary() -> None
     for n in (d, c, b, a):
         graph.add_node(n)
     dr = DependencyCause.direct_ref
-    graph.add_edge("Sheet1!C1", "Sheet1!D1", provenance=EdgeProvenance(causes=frozenset({dr})))
-    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=frozenset({dr})))
+    graph.add_edge("Sheet1!C1", "Sheet1!D1", provenance=EdgeProvenance(causes=dr))
+    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=dr))
     af = "=Sheet1!B1"
     ref = "Sheet1!B1"
     i = af.index(ref)
@@ -212,7 +212,7 @@ def test_collapsed_group_records_statement_order_and_external_boundary() -> None
         "Sheet1!A1",
         "Sheet1!B1",
         provenance=EdgeProvenance(
-            causes=frozenset({dr}),
+            causes=dr,
             direct_sites_formula=sp,
             direct_sites_normalized=sp,
         ),
@@ -241,8 +241,8 @@ def test_apply_projection_preserves_manifest_from_earlier_steps() -> None:
     for n in (d, c, b, a):
         graph.add_node(n)
     dr = DependencyCause.direct_ref
-    graph.add_edge("Sheet1!C1", "Sheet1!D1", provenance=EdgeProvenance(causes=frozenset({dr})))
-    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=frozenset({dr})))
+    graph.add_edge("Sheet1!C1", "Sheet1!D1", provenance=EdgeProvenance(causes=dr))
+    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=dr))
     af = "=Sheet1!B1"
     ref = "Sheet1!B1"
     i = af.index(ref)
@@ -251,7 +251,7 @@ def test_apply_projection_preserves_manifest_from_earlier_steps() -> None:
         "Sheet1!A1",
         "Sheet1!B1",
         provenance=EdgeProvenance(
-            causes=frozenset({dr}),
+            causes=dr,
             direct_sites_formula=sp,
             direct_sites_normalized=sp,
         ),
@@ -286,7 +286,7 @@ def test_apply_projection_composes_heterogeneous_kinds() -> None:
     for n in (c, b, a):
         graph.add_node(n)
     dr = DependencyCause.direct_ref
-    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=frozenset({dr})))
+    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=dr))
     af = "=Sheet1!B1"
     ref = "Sheet1!B1"
     i = af.index(ref)
@@ -295,7 +295,7 @@ def test_apply_projection_composes_heterogeneous_kinds() -> None:
         "Sheet1!A1",
         "Sheet1!B1",
         provenance=EdgeProvenance(
-            causes=frozenset({dr}),
+            causes=dr,
             direct_sites_formula=sp,
             direct_sites_normalized=sp,
         ),
@@ -345,7 +345,7 @@ def test_manifest_node_snapshots_preserve_cell_coordinates_and_values() -> None:
     for n in (c, b, a):
         graph.add_node(n)
     dr = DependencyCause.direct_ref
-    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=frozenset({dr})))
+    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=dr))
     af = "=Sheet1!B1"
     ref = "Sheet1!B1"
     i = af.index(ref)
@@ -354,7 +354,7 @@ def test_manifest_node_snapshots_preserve_cell_coordinates_and_values() -> None:
         "Sheet1!A1",
         "Sheet1!B1",
         provenance=EdgeProvenance(
-            causes=frozenset({dr}),
+            causes=dr,
             direct_sites_formula=sp,
             direct_sites_normalized=sp,
         ),
@@ -466,13 +466,13 @@ def test_projection_respects_compression_safety(test_name: str) -> None:
             "Sheet1!B1",
             "Sheet1!C1",
             guard=Literal(True),
-            provenance=EdgeProvenance(causes=frozenset({dr})),
+            provenance=EdgeProvenance(causes=dr),
         )
         graph.add_edge(
             "Sheet1!A1",
             "Sheet1!B1",
             provenance=EdgeProvenance(
-                causes=frozenset({dr}),
+                causes=dr,
                 direct_sites_formula=sp,
                 direct_sites_normalized=sp,
             ),
@@ -500,8 +500,8 @@ def test_custom_collapse_projection_uses_public_primitives_without_forwarding() 
     for n in (d, b, a):
         graph.add_node(n)
     dr = DependencyCause.direct_ref
-    graph.add_edge("Sheet1!B1", "Sheet1!D1", provenance=EdgeProvenance(causes=frozenset({dr})))
-    graph.add_edge("Sheet1!A1", "Sheet1!B1", provenance=EdgeProvenance(causes=frozenset({dr})))
+    graph.add_edge("Sheet1!B1", "Sheet1!D1", provenance=EdgeProvenance(causes=dr))
+    graph.add_edge("Sheet1!A1", "Sheet1!B1", provenance=EdgeProvenance(causes=dr))
     graph.set_node_metadata("Sheet1!B1", {"label": "doubled input"})
 
     class InlineCollapse:
@@ -529,7 +529,7 @@ def test_custom_collapse_projection_uses_public_primitives_without_forwarding() 
             projected.add_edge(
                 "Sheet1!A1",
                 "Sheet1!D1",
-                provenance=EdgeProvenance(causes=frozenset({dr})),
+                provenance=EdgeProvenance(causes=dr),
             )
             projected.remove_node("Sheet1!B1")
             projected.set_node_metadata("Sheet1!A1", {"collapsed_from": ["Sheet1!B1"]})
@@ -571,7 +571,7 @@ def test_projection_copy_isolates_projection_mutations() -> None:
     graph.add_edge(
         "Sheet1!B1",
         "Sheet1!C1",
-        provenance=EdgeProvenance(causes=frozenset({DependencyCause.direct_ref})),
+        provenance=EdgeProvenance(causes=DependencyCause.direct_ref),
     )
     graph.set_node_metadata("Sheet1!B1", {"label": "source"})
 
@@ -641,7 +641,7 @@ def test_optimal_projection_does_not_mutate_shared_preparsed_ast() -> None:
     graph.add_edge(
         "Sheet1!B1",
         "Sheet1!C1",
-        provenance=EdgeProvenance(causes=frozenset({dr})),
+        provenance=EdgeProvenance(causes=dr),
     )
     ref = "Sheet1!B1"
     formula = "=Sheet1!B1+1"
@@ -650,7 +650,7 @@ def test_optimal_projection_does_not_mutate_shared_preparsed_ast() -> None:
         "Sheet1!A1",
         "Sheet1!B1",
         provenance=EdgeProvenance(
-            causes=frozenset({dr}),
+            causes=dr,
             direct_sites_formula=span,
             direct_sites_normalized=span,
         ),
@@ -690,7 +690,7 @@ def test_dependency_graph_and_projection_satisfy_graph_read_view() -> None:
     for n in (c, b):
         graph.add_node(n)
     dr = DependencyCause.direct_ref
-    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=frozenset({dr})))
+    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=dr))
 
     projection = IdentityTransitCompression().project(graph)
 
@@ -728,7 +728,7 @@ def test_optimal_projection_keeps_multi_cell_node_with_member_dependent() -> Non
     graph.add_edge(
         dependent.key,
         "Sheet1!D63",
-        provenance=EdgeProvenance(causes=frozenset({DependencyCause.direct_ref})),
+        provenance=EdgeProvenance(causes=DependencyCause.direct_ref),
     )
 
     projection = OptimalCompression().project(graph)

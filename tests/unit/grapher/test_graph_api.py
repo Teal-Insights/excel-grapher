@@ -241,7 +241,7 @@ def test_get_edge_attrs_returns_typed_container() -> None:
     g.add_node(_leaf("S", "A", 1))
     g.add_node(_formula("S", "B", 1, "=S!A1"))
     prov = EdgeProvenance(
-        causes=frozenset({DependencyCause.direct_ref}),
+        causes=DependencyCause.direct_ref,
         direct_sites_formula=((1, 5),),
         direct_sites_normalized=((1, 5),),
     )
@@ -250,7 +250,7 @@ def test_get_edge_attrs_returns_typed_container() -> None:
     attrs = g.get_edge_attrs("S!B1", "S!A1")
     assert isinstance(attrs, EdgeAttrs)
     assert attrs.provenance is not None
-    assert attrs.provenance.causes == frozenset({DependencyCause.direct_ref})
+    assert attrs.provenance.causes == DependencyCause.direct_ref
     assert attrs.guard is None
 
 
@@ -269,7 +269,7 @@ def test_get_edge_attrs_normalizes_keys() -> None:
     g = DependencyGraph()
     g.add_node(_leaf("My Sheet", "A", 1))
     g.add_node(_formula("My Sheet", "B", 1, "='My Sheet'!A1"))
-    prov = EdgeProvenance(causes=frozenset({DependencyCause.direct_ref}))
+    prov = EdgeProvenance(causes=DependencyCause.direct_ref)
     g.add_edge("'My Sheet'!B1", "'My Sheet'!A1", provenance=prov)
 
     attrs = g.get_edge_attrs("'My Sheet'!B1", "'My Sheet'!A1")

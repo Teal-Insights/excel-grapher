@@ -102,7 +102,7 @@ def direct_provenance_for_key_in_strings(
     if normalized:
         sites_n.extend(_find_literal_spans(normalized, dep_key))
     return EdgeProvenance(
-        causes=frozenset({DependencyCause.direct_ref}),
+        causes=DependencyCause.direct_ref,
         direct_sites_formula=tuple(sites_f),
         direct_sites_normalized=tuple(sites_n),
     )
@@ -222,11 +222,11 @@ def compression_safe_provenance(prov: EdgeProvenance | None) -> bool:
         return False
     if DependencyCause.direct_ref not in prov.causes:
         return False
-    unsafe = {
-        DependencyCause.static_range,
-        DependencyCause.dynamic_offset,
-        DependencyCause.dynamic_indirect,
-    }
+    unsafe = (
+        DependencyCause.static_range
+        | DependencyCause.dynamic_offset
+        | DependencyCause.dynamic_indirect
+    )
     return not (prov.causes & unsafe)
 
 

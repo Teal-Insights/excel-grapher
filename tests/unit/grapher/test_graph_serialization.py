@@ -119,7 +119,7 @@ def test_pickle_round_trip_preserves_extra_attrs() -> None:
     g.add_node(Node("Sheet1", "B", 1, "=A1", "=Sheet1!A1", None, False))
 
     prov = EdgeProvenance(
-        causes=frozenset({DependencyCause.direct_ref}),
+        causes=DependencyCause.direct_ref,
         direct_sites_formula=((1, 3),),
         direct_sites_normalized=((1, 11),),
     )
@@ -128,7 +128,7 @@ def test_pickle_round_trip_preserves_extra_attrs() -> None:
     restored: DependencyGraph = pickle.loads(pickle.dumps(g))
     attrs = restored.get_edge_attrs("Sheet1!B1", "Sheet1!A1")
     assert attrs.provenance is not None
-    assert attrs.provenance.causes == frozenset({DependencyCause.direct_ref})
+    assert attrs.provenance.causes == DependencyCause.direct_ref
 
 
 def test_pickle_round_trip_preserves_leaf_classification() -> None:

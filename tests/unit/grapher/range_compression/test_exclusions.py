@@ -80,7 +80,7 @@ def test_static_range_one_off_sum_not_compressed() -> None:
         graph.add_edge(
             "Sheet1!F3",
             f"Sheet1!E{row}",
-            provenance=EdgeProvenance(causes=frozenset({dr})),
+            provenance=EdgeProvenance(causes=dr),
         )
     index = build_taco_index(graph)
     assert index.compressed_edges == []

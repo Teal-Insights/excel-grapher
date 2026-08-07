@@ -318,7 +318,7 @@ def _guard_from_json(v: object) -> GuardExpr | None:
 
 def _edge_provenance_to_json(p: EdgeProvenance) -> dict[str, Any]:
     return {
-        "causes": sorted([c.value for c in p.causes]),
+        "causes": sorted(c.name for c in p.causes),
         "direct_sites_formula": [list(x) for x in p.direct_sites_formula],
         "direct_sites_normalized": [list(x) for x in p.direct_sites_normalized],
     }
@@ -331,7 +331,12 @@ def _edge_provenance_from_json(v: object) -> EdgeProvenance:
     causes_v = d.get("causes")
     if not isinstance(causes_v, list) or not all(isinstance(x, str) for x in causes_v):
         raise TypeError("provenance.causes must be list[str]")
-    causes = frozenset(DependencyCause(x) for x in causes_v)
+    causes = DependencyCause(0)
+    for name in causes_v:
+        try:
+            causes |= DependencyCause[name]
+        except KeyError as e:
+            raise TypeError(f"unknown provenance cause: {name!r}") from e
     dsf = d.get("direct_sites_formula", [])
     dsn = d.get("direct_sites_normalized", [])
     if not isinstance(dsf, list) or not isinstance(dsn, list):

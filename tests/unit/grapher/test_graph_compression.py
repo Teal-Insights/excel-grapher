@@ -55,7 +55,7 @@ def test_compress_happy_path_manual_graph() -> None:
     graph.add_node(b)
     graph.add_node(a)
     dr = DependencyCause.direct_ref
-    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=frozenset({dr})))
+    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=dr))
     af = "=Sheet1!B1"
     ref = "Sheet1!B1"
     i = af.index(ref)
@@ -64,7 +64,7 @@ def test_compress_happy_path_manual_graph() -> None:
         "Sheet1!A1",
         "Sheet1!B1",
         provenance=EdgeProvenance(
-            causes=frozenset({dr}),
+            causes=dr,
             direct_sites_formula=sp,
             direct_sites_normalized=sp,
         ),
@@ -99,7 +99,7 @@ def test_compress_identity_transits_populates_record() -> None:
     graph.add_node(b)
     graph.add_node(a)
     dr = DependencyCause.direct_ref
-    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=frozenset({dr})))
+    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=dr))
     af = "=Sheet1!B1"
     ref = "Sheet1!B1"
     i = af.index(ref)
@@ -108,7 +108,7 @@ def test_compress_identity_transits_populates_record() -> None:
         "Sheet1!A1",
         "Sheet1!B1",
         provenance=EdgeProvenance(
-            causes=frozenset({dr}),
+            causes=dr,
             direct_sites_formula=sp,
             direct_sites_normalized=sp,
         ),
@@ -137,8 +137,8 @@ def test_compress_chain_manual_graph() -> None:
     for n in (d, c, b, a):
         graph.add_node(n)
     dr = DependencyCause.direct_ref
-    graph.add_edge("Sheet1!C1", "Sheet1!D1", provenance=EdgeProvenance(causes=frozenset({dr})))
-    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=frozenset({dr})))
+    graph.add_edge("Sheet1!C1", "Sheet1!D1", provenance=EdgeProvenance(causes=dr))
+    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=dr))
     af = "=Sheet1!B1"
     ref = "Sheet1!B1"
     i = af.index(ref)
@@ -147,7 +147,7 @@ def test_compress_chain_manual_graph() -> None:
         "Sheet1!A1",
         "Sheet1!B1",
         provenance=EdgeProvenance(
-            causes=frozenset({dr}),
+            causes=dr,
             direct_sites_formula=sp,
             direct_sites_normalized=sp,
         ),
@@ -235,11 +235,11 @@ def test_mixed_direct_and_offset_blocks_manual() -> None:
         graph.add_node(n)
     dr = DependencyCause.direct_ref
     dy = DependencyCause.dynamic_offset
-    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=frozenset({dr})))
+    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=dr))
     graph.add_edge(
         "Sheet1!A1",
         "Sheet1!B1",
-        provenance=EdgeProvenance(causes=frozenset({dr, dy})),
+        provenance=EdgeProvenance(causes=dr | dy),
     )
     assert graph.compress_identity_transits() == []
 
@@ -259,7 +259,7 @@ def test_guarded_transit_not_compressed() -> None:
         "Sheet1!B1",
         "Sheet1!C1",
         guard=Literal(True),
-        provenance=EdgeProvenance(causes=frozenset({dr})),
+        provenance=EdgeProvenance(causes=dr),
     )
     af = "=Sheet1!B1"
     ref = "Sheet1!B1"
@@ -269,7 +269,7 @@ def test_guarded_transit_not_compressed() -> None:
         "Sheet1!A1",
         "Sheet1!B1",
         provenance=EdgeProvenance(
-            causes=frozenset({dr}),
+            causes=dr,
             direct_sites_formula=sp,
             direct_sites_normalized=sp,
         ),
