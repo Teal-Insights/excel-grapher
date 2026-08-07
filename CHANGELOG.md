@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v3.21.2 (2026-08-07)
+
+### Performance Improvements
+
+- **dynamic-refs**: Serve cached refs in bulk during env expansion (#465)
+  ([#471](https://github.com/Teal-Insights/excel-grapher/pull/471),
+  [`50fb962`](https://github.com/Teal-Insights/excel-grapher/commit/50fb962a8c5f91cebd630a2c7e9b3796d9c59c1b))
+
+
 ## v3.21.1 (2026-08-07)
 
 ### Bug Fixes
