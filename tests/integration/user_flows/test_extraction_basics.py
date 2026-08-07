@@ -19,7 +19,7 @@ import pytest
 from excel_grapher import DynamicRefConfig
 from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.grapher import CycleReport, DependencyGraph, create_dependency_graph
-from excel_grapher.grapher.guard import And, CellRef, Compare, GuardExpr, Literal, Not
+from excel_grapher.grapher.guard import And, CellRef, Compare, GuardExpr, Literal, Not, Or
 from excel_grapher.grapher.node import NodeKey, NodeView
 from tests.integration.user_flows.utils import (
     WorkbookFactory,
@@ -136,9 +136,6 @@ def test_conditions_are_extracted_as_unguarded_but_conditional_branches_as_guard
     )
 
 
-@pytest.mark.xfail(
-    reason="Nested conditionals are not currently being correctly consolidated into a single AND guard"
-)
 def test_nested_conditional_in_a_cell_is_extracted_as_an_AND_guard(
     workbook_factory: WorkbookFactory,
 ) -> None:
@@ -149,12 +146,207 @@ def test_nested_conditional_in_a_cell_is_extracted_as_an_AND_guard(
     )
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!D1"], load_values=True)
     assert len(graph._nodes) == 3
-    guard: GuardExpr | None = graph.get_edge_guard("Sheet1!D1", "Sheet1!B1")
+    # B1 feeds the outer condition, so it is read unconditionally.
+    assert graph.get_edge_guard("Sheet1!D1", "Sheet1!B1") is None
+    # C1 is only read when the outer and inner conditions both hold.
+    guard: GuardExpr | None = graph.get_edge_guard("Sheet1!D1", "Sheet1!C1")
     assert guard == And(
         operands=(
             Not(operand=Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=1))),
             Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=0)),
         )
+    )
+
+
+def test_three_level_nested_IF_conjoins_guards_from_every_level(
+    workbook_factory: WorkbookFactory,
+) -> None:
+    b1_is_1 = Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=1))
+    c1_is_1 = Compare(left=CellRef(key="Sheet1!C1"), op="=", right=Literal(value=1))
+    d1_is_1 = Compare(left=CellRef(key="Sheet1!D1"), op="=", right=Literal(value=1))
+
+    path = workbook_factory(
+        lambda ws, _wb: write_single_row(
+            ws,
+            (
+                "Three-level nested IF",
+                1,
+                1,
+                1,
+                10,
+                20,
+                30,
+                40,
+                "=IF(B1=1,IF(C1=1,IF(D1=1,E1,F1),G1),H1)",
+            ),
+        )
+    )
+    graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!I1"], load_values=True)
+    assert len(graph._nodes) == 8
+
+    # Outer condition dep is unconditional.
+    assert graph.get_edge_guard("Sheet1!I1", "Sheet1!B1") is None
+    # Inner condition deps carry the guards of the branches enclosing them.
+    assert graph.get_edge_guard("Sheet1!I1", "Sheet1!C1") == b1_is_1
+    assert graph.get_edge_guard("Sheet1!I1", "Sheet1!D1") == And(operands=(b1_is_1, c1_is_1))
+    # Branch deps carry a flat conjunction of every enclosing condition.
+    assert graph.get_edge_guard("Sheet1!I1", "Sheet1!E1") == And(
+        operands=(b1_is_1, c1_is_1, d1_is_1)
+    )
+    assert graph.get_edge_guard("Sheet1!I1", "Sheet1!F1") == And(
+        operands=(b1_is_1, c1_is_1, Not(operand=d1_is_1))
+    )
+    assert graph.get_edge_guard("Sheet1!I1", "Sheet1!G1") == And(
+        operands=(b1_is_1, Not(operand=c1_is_1))
+    )
+    assert graph.get_edge_guard("Sheet1!I1", "Sheet1!H1") == Not(operand=b1_is_1)
+
+
+def test_nested_IF_in_else_branch_conjoins_with_negated_outer_condition(
+    workbook_factory: WorkbookFactory,
+) -> None:
+    b1_is_1 = Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=1))
+    d1_is_1 = Compare(left=CellRef(key="Sheet1!D1"), op="=", right=Literal(value=1))
+
+    path = workbook_factory(
+        lambda ws, _wb: write_single_row(
+            ws,
+            ("Nested IF in else branch", 1, 10, 1, 20, 30, "=IF(B1=1,C1,IF(D1=1,E1,F1))"),
+        )
+    )
+    graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!G1"], load_values=True)
+    assert len(graph._nodes) == 6
+
+    assert graph.get_edge_guard("Sheet1!G1", "Sheet1!B1") is None
+    assert graph.get_edge_guard("Sheet1!G1", "Sheet1!C1") == b1_is_1
+    assert graph.get_edge_guard("Sheet1!G1", "Sheet1!D1") == Not(operand=b1_is_1)
+    assert graph.get_edge_guard("Sheet1!G1", "Sheet1!E1") == And(
+        operands=(Not(operand=b1_is_1), d1_is_1)
+    )
+    assert graph.get_edge_guard("Sheet1!G1", "Sheet1!F1") == And(
+        operands=(Not(operand=b1_is_1), Not(operand=d1_is_1))
+    )
+
+
+def test_IFS_nested_in_IF_branch_conjoins_sequential_guards_with_outer_condition(
+    workbook_factory: WorkbookFactory,
+) -> None:
+    b1_is_1 = Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=1))
+    c1_is_1 = Compare(left=CellRef(key="Sheet1!C1"), op="=", right=Literal(value=1))
+    c1_is_2 = Compare(left=CellRef(key="Sheet1!C1"), op="=", right=Literal(value=2))
+
+    path = workbook_factory(
+        lambda ws, _wb: write_single_row(
+            ws,
+            ("IFS nested in IF branch", 1, 1, 10, 20, "=IF(B1=1,IFS(C1=1,D1,C1=2,E1),0)"),
+        )
+    )
+    graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!F1"], load_values=True)
+    assert len(graph._nodes) == 5
+
+    assert graph.get_edge_guard("Sheet1!F1", "Sheet1!B1") is None
+    # The nested IFS conditions are unconditional within the branch, so they carry
+    # only the outer branch guard.
+    assert graph.get_edge_guard("Sheet1!F1", "Sheet1!C1") == b1_is_1
+    assert graph.get_edge_guard("Sheet1!F1", "Sheet1!D1") == And(operands=(b1_is_1, c1_is_1))
+    assert graph.get_edge_guard("Sheet1!F1", "Sheet1!E1") == And(
+        operands=(b1_is_1, c1_is_2, Not(operand=c1_is_1))
+    )
+
+
+def test_IF_nested_in_IFS_value_conjoins_with_sequential_guard(
+    workbook_factory: WorkbookFactory,
+) -> None:
+    b1_is_1 = Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=1))
+    c1_is_1 = Compare(left=CellRef(key="Sheet1!C1"), op="=", right=Literal(value=1))
+
+    path = workbook_factory(
+        lambda ws, _wb: write_single_row(
+            ws,
+            ("IF nested in IFS value", 1, 1, 10, 20, "=IFS(B1=1,IF(C1=1,D1,E1),TRUE,0)"),
+        )
+    )
+    graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!F1"], load_values=True)
+    assert len(graph._nodes) == 5
+
+    assert graph.get_edge_guard("Sheet1!F1", "Sheet1!B1") is None
+    assert graph.get_edge_guard("Sheet1!F1", "Sheet1!C1") == b1_is_1
+    assert graph.get_edge_guard("Sheet1!F1", "Sheet1!D1") == And(operands=(b1_is_1, c1_is_1))
+    assert graph.get_edge_guard("Sheet1!F1", "Sheet1!E1") == And(
+        operands=(b1_is_1, Not(operand=c1_is_1))
+    )
+
+
+def test_CHOOSE_nested_in_IF_branch_conjoins_index_guard_with_outer_condition(
+    workbook_factory: WorkbookFactory,
+) -> None:
+    b1_is_1 = Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=1))
+    c1_selects_1 = Compare(left=CellRef(key="Sheet1!C1"), op="=", right=Literal(value=1))
+    c1_selects_2 = Compare(left=CellRef(key="Sheet1!C1"), op="=", right=Literal(value=2))
+
+    path = workbook_factory(
+        lambda ws, _wb: write_single_row(
+            ws,
+            ("CHOOSE nested in IF branch", 1, 2, 10, 20, "=IF(B1=1,CHOOSE(C1,D1,E1),0)"),
+        )
+    )
+    graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!F1"], load_values=True)
+    assert len(graph._nodes) == 5
+
+    assert graph.get_edge_guard("Sheet1!F1", "Sheet1!B1") is None
+    assert graph.get_edge_guard("Sheet1!F1", "Sheet1!C1") == b1_is_1
+    assert graph.get_edge_guard("Sheet1!F1", "Sheet1!D1") == And(operands=(b1_is_1, c1_selects_1))
+    assert graph.get_edge_guard("Sheet1!F1", "Sheet1!E1") == And(operands=(b1_is_1, c1_selects_2))
+
+
+def test_IF_nested_in_SWITCH_result_conjoins_with_match_guard(
+    workbook_factory: WorkbookFactory,
+) -> None:
+    b1_matches_1 = Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=1))
+    c1_is_1 = Compare(left=CellRef(key="Sheet1!C1"), op="=", right=Literal(value=1))
+
+    path = workbook_factory(
+        lambda ws, _wb: write_single_row(
+            ws,
+            ("IF nested in SWITCH result", 1, 1, 10, 20, 30, "=SWITCH(B1,1,IF(C1=1,D1,E1),F1)"),
+        )
+    )
+    graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!G1"], load_values=True)
+    assert len(graph._nodes) == 6
+
+    assert graph.get_edge_guard("Sheet1!G1", "Sheet1!B1") is None
+    assert graph.get_edge_guard("Sheet1!G1", "Sheet1!C1") == b1_matches_1
+    assert graph.get_edge_guard("Sheet1!G1", "Sheet1!D1") == And(operands=(b1_matches_1, c1_is_1))
+    assert graph.get_edge_guard("Sheet1!G1", "Sheet1!E1") == And(
+        operands=(b1_matches_1, Not(operand=c1_is_1))
+    )
+    assert graph.get_edge_guard("Sheet1!G1", "Sheet1!F1") == Not(operand=b1_matches_1)
+
+
+def test_dep_shared_between_nested_branch_and_else_branch_ORs_its_guards(
+    workbook_factory: WorkbookFactory,
+) -> None:
+    b1_is_1 = Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=1))
+    c1_is_1 = Compare(left=CellRef(key="Sheet1!C1"), op="=", right=Literal(value=1))
+
+    path = workbook_factory(
+        lambda ws, _wb: write_single_row(
+            ws,
+            ("Shared dep across branches", 1, 1, 10, 20, "=IF(B1=1,IF(C1=1,D1,E1),D1)"),
+        )
+    )
+    graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!F1"], load_values=True)
+    assert len(graph._nodes) == 5
+
+    assert graph.get_edge_guard("Sheet1!F1", "Sheet1!B1") is None
+    assert graph.get_edge_guard("Sheet1!F1", "Sheet1!C1") == b1_is_1
+    # D1 is reachable through the nested then-branch AND through the outer else
+    # branch; the guard must not claim it is only needed when B1=1.
+    assert graph.get_edge_guard("Sheet1!F1", "Sheet1!D1") == Or(
+        operands=(And(operands=(b1_is_1, c1_is_1)), Not(operand=b1_is_1))
+    )
+    assert graph.get_edge_guard("Sheet1!F1", "Sheet1!E1") == And(
+        operands=(b1_is_1, Not(operand=c1_is_1))
     )
 
 

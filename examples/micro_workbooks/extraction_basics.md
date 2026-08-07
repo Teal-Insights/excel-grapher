@@ -56,16 +56,25 @@ DependencyGraph(_nodes={   'Sheet1!B1': Node(sheet='Sheet1',
                                              value=None,
                                              is_leaf=True,
                                              is_target=True,
-                                             metadata={})},
+                                             metadata={},
+                                             kind=<NodeKind.cell: 'cell'>,
+                                             min_col='B',
+                                             min_row=1,
+                                             max_col='B',
+                                             max_row=1,
+                                             address='Sheet1!B1')},
                 _edges={'Sheet1!B1': set()},
                 _reverse_edges={'Sheet1!B1': set()},
                 _guards={},
                 _edge_extra={},
                 _hooks=[],
+                _occupancy={'Sheet1!B1': 'Sheet1!B1'},
                 leaf_classification=None,
                 sheet_order=['Sheet1'],
+                sheet_bounds={'Sheet1': (11, 5)},
                 named_ranges={},
-                named_range_ranges={'MyNamedRange': ('Sheet1', 'C11', 'D11')})
+                named_range_ranges={'MyNamedRange': ('Sheet1', 'C11', 'D11')},
+                preparsed_formulas=None)
 ```
 
 If we render this to Mermaid, we can see that it is a single-node graph
@@ -169,9 +178,9 @@ flowchart TD
   Sheet1_C3["Sheet1!C3"]
   Sheet1_D3["Sheet1!D3"]
   Sheet1_E3("Sheet1!E3<br>=IF(B3=1,C3,D3)")
-  Sheet1_E3 --> Sheet1_B3
-  Sheet1_E3 -.->|"Sheet1!B3=1"| Sheet1_C3
   Sheet1_E3 -.->|"NOT(Sheet1!B3=1)"| Sheet1_D3
+  Sheet1_E3 -.->|"Sheet1!B3=1"| Sheet1_C3
+  Sheet1_E3 --> Sheet1_B3
 ```
 
 To see the representation of guards in Python, we can inspect the
@@ -205,12 +214,16 @@ Sheet1!B3=1
 
 ## 04. Nested conditional in a cell
 
-Currently, only one guard per edge is supported. The top-level guard
-takes precedence over nested guards. Support for multiple guards per
-edge is on the project roadmap. For instance,
-`=IF(NOT(B4=1),IF(B4=0,C4,1),0)` in “Sheet1!D4” could be expressed
-either as a list of guard conditions or as a single guard with
-conditions joined by logical `AND`: `NOT(Sheet1!B4=1) AND Sheet1!B4=0`.
+When a conditional is nested inside another conditional’s branch, a
+dependency of the inner branch is only reached when every enclosing
+condition holds, so its edge guard is the logical `AND` of all of them.
+For instance, `=IF(NOT(B4=1),IF(B4=0,C4,1),0)` in “Sheet1!D4” guards the
+edge to “Sheet1!C4” with `AND(NOT(Sheet1!B4=1),Sheet1!B4=0)`. This works
+to arbitrary nesting depth and across the conditional functions (`IF`,
+`IFS`, `CHOOSE`, `SWITCH`). A dependency that is reachable through more
+than one branch instead gets its per-branch guards joined by logical
+`OR` (and a dependency that also feeds a condition stays unguarded,
+since it is always read).
 
 ``` python
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!D4"], load_values=False)
@@ -223,8 +236,8 @@ flowchart TD
   Sheet1_B4["Sheet1!B4"]
   Sheet1_C4["Sheet1!C4"]
   Sheet1_D4("Sheet1!D4<br>=IF(NOT(B4=1),IF(B4=0,C4,1),0)")
+  Sheet1_D4 -.->|"AND(NOT(Sheet1!B4=1),Sheet1!B4=0)"| Sheet1_C4
   Sheet1_D4 --> Sheet1_B4
-  Sheet1_D4 -.->|"NOT(Sheet1!B4=1)"| Sheet1_C4
 ```
 
 ## 05. Nested conditional across cells
@@ -247,11 +260,11 @@ flowchart TD
   Sheet1_C5["Sheet1!C5"]
   Sheet1_D5("Sheet1!D5<br>=IF(B5=0,C5,2)")
   Sheet1_E5("Sheet1!E5<br>=IF(A5=1,B5,D5)")
-  Sheet1_D5 --> Sheet1_B5
   Sheet1_D5 -.->|"Sheet1!B5=0"| Sheet1_C5
-  Sheet1_E5 --> Sheet1_A5
+  Sheet1_D5 --> Sheet1_B5
   Sheet1_E5 -.->|"Sheet1!A5=1"| Sheet1_B5
   Sheet1_E5 -.->|"NOT(Sheet1!A5=1)"| Sheet1_D5
+  Sheet1_E5 --> Sheet1_A5
 ```
 
 ## 06. Must cycle
@@ -292,8 +305,8 @@ with FormulaEvaluator(graph) as evaluator:
 2.0
 ```
 
-    C:\Users\chris\Software\excel-grapher\excel_grapher\evaluator\evaluator.py:226: CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).
-      return xl_circular_reference()
+    /home/user/excel-grapher/excel_grapher/runtime/cache.py:56: CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).
+      warn_circular_reference(stacklevel=2)
 
 For a detailed report on cycles in the graph, we can use the
 `cycle_report` method:
@@ -491,7 +504,7 @@ graph: DependencyGraph = create_dependency_graph(
 )
 ```
 
-    C:\Users\chris\Software\excel-grapher\excel_grapher\grapher\parser.py:753: UserWarning: Resolved OFFSET/INDIRECT references from cached workbook values; these dependencies are fixed at graph-build time. Changing an input that shifts a resolution target outside the graph makes the graph uncomputable. Pass `dynamic_refs` to resolve over an input domain instead.
+    /home/user/excel-grapher/excel_grapher/grapher/parser.py:828: UserWarning: Resolved OFFSET/INDIRECT references from cached workbook values; these dependencies are fixed at graph-build time. Changing an input that shifts a resolution target outside the graph makes the graph uncomputable. Pass `dynamic_refs` to resolve over an input domain instead.
       _warn_cached_dynamic_once()
 
 The risk with this approach is that the user may modify “Sheet1!B10”
