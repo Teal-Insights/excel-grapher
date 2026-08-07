@@ -27,7 +27,9 @@ def test_to_networkx_roundtrip_nodes_edges(tmp_path: Path) -> None:
     excel_path = tmp_path / "simple_chain.xlsx"
     _make_chain_xlsx(excel_path)
 
-    graph = create_dependency_graph(excel_path, ["Sheet1!A4"], load_values=True)
+    graph = create_dependency_graph(
+        excel_path, ["Sheet1!A4"], load_values=True, store_raw_formula=True
+    )
     G = to_networkx(graph)
 
     assert set(G.nodes) >= {"Sheet1!A1", "Sheet1!A2", "Sheet1!A3", "Sheet1!A4"}
@@ -47,7 +49,9 @@ def test_to_networkx_roundtrip_nodes_edges(tmp_path: Path) -> None:
 def test_to_networkx_truncates_formula(tmp_path: Path) -> None:
     excel_path = tmp_path / "simple_chain.xlsx"
     _make_chain_xlsx(excel_path)
-    graph = create_dependency_graph(excel_path, ["Sheet1!A4"], load_values=True)
+    graph = create_dependency_graph(
+        excel_path, ["Sheet1!A4"], load_values=True, store_raw_formula=True
+    )
     G = to_networkx(graph, max_formula_length=4)
     assert G.nodes["Sheet1!A4"]["label"] == "Sheet1!A4\n=A3*..."
 
@@ -61,10 +65,14 @@ def test_to_networkx_value_type_for_none_distinguishes_formula_vs_blank(tmp_path
     )  # B1 formula (value remains None when load_values=False)
     wb.close()
 
-    formula_graph = create_dependency_graph(excel_path, ["Sheet1!B1"], load_values=False)
+    formula_graph = create_dependency_graph(
+        excel_path, ["Sheet1!B1"], load_values=False, store_raw_formula=True
+    )
     formula_nx = to_networkx(formula_graph)
     assert formula_nx.nodes["Sheet1!B1"]["value_type"] == "UNKNOWN"
 
-    blank_graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
+    blank_graph = create_dependency_graph(
+        excel_path, ["Sheet1!A1"], load_values=False, store_raw_formula=True
+    )
     blank_nx = to_networkx(blank_graph)
     assert blank_nx.nodes["Sheet1!A1"]["value_type"] == "EMPTY"

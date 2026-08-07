@@ -52,14 +52,12 @@ def test_merge_edge_provenance_none_passthrough() -> None:
 def test_json_round_trip_preserves_cause_names() -> None:
     prov = EdgeProvenance(
         causes=DependencyCause.direct_ref | DependencyCause.static_range,
-        direct_sites_formula=((1, 3),),
         direct_sites_normalized=((1, 11),),
     )
     blob = _edge_provenance_to_json(prov)
     assert blob["causes"] == ["direct_ref", "static_range"]
     restored = _edge_provenance_from_json(blob)
     assert restored.causes == prov.causes
-    assert restored.direct_sites_formula == ((1, 3),)
     assert restored.direct_sites_normalized == ((1, 11),)
 
 

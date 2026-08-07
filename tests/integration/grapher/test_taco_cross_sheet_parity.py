@@ -24,6 +24,7 @@ def test_cross_sheet_taco_full_parity() -> None:
         FIXTURE,
         ["Report!D3:D7", "Report!F3:F7", "Report!H3:H7", "Report!K3:K7"],
         load_values=False,
+        store_raw_formula=True,
     )
     index = build_taco_index(graph)
     kinds = {e.meta.kind for e in index.compressed_edges}

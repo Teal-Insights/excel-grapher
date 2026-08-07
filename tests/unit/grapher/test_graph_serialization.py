@@ -120,7 +120,6 @@ def test_pickle_round_trip_preserves_edge_provenance() -> None:
 
     prov = EdgeProvenance(
         causes=DependencyCause.direct_ref,
-        direct_sites_formula=((1, 3),),
         direct_sites_normalized=((1, 11),),
     )
     g.add_edge("Sheet1!B1", "Sheet1!A1", provenance=prov)

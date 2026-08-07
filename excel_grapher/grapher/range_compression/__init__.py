@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .build import build_taco_index
+from .build import RawFormulasRequiredError, build_taco_index
 from .config import TacoBuildConfig, input_keys_from_graph
 from .index import TacoIndex
 from .materialize import materialize_dependents, materialize_precedents
@@ -10,6 +10,7 @@ from .types import CompressedEdge, PatternKind, PatternMeta, RangeRef, SingleEdg
 
 __all__ = [
     "CompressedEdge",
+    "RawFormulasRequiredError",
     "PatternKind",
     "PatternMeta",
     "RangeRef",

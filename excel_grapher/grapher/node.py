@@ -163,6 +163,13 @@ class Node:
 
     Multi-cell nodes store `formula` / `normalized_formula` / `value` as `None`.
 
+    `normalized_formula` identifies a formula cell: it is always stored, and it
+    is the only formula text that compression and projection rewrite. The raw
+    workbook string `formula` is opt-in at extraction
+    (`create_dependency_graph(store_raw_formula=True)`) and audit-only -- on a
+    compressed graph it still holds the pre-compression text, so never re-parse
+    it as the node's current definition.
+
     `is_leaf` is true when the node has no outgoing dependency edges (value-only
     cells and literal-only formulas such as `=1+1`).
 

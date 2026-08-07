@@ -64,7 +64,13 @@ from .node import (
 )
 from .parser import format_cell_key, format_key, needs_quoting
 from .preparsed_formulas import warm_preparsed_formulas
-from .range_compression import TacoBuildConfig, TacoIndex, build_taco_index, input_keys_from_graph
+from .range_compression import (
+    RawFormulasRequiredError,
+    TacoBuildConfig,
+    TacoIndex,
+    build_taco_index,
+    input_keys_from_graph,
+)
 from .validation import ValidationResult, WorkbookCalcSettings, get_calc_settings, validate_graph
 
 __all__ = [
@@ -73,6 +79,7 @@ __all__ = [
     "input_keys_from_graph",
     "TacoBuildConfig",
     "TacoIndex",
+    "RawFormulasRequiredError",
     "normalize_blank_range_specs",
     "list_dynamic_ref_constraint_candidates",
     "GRAPH_CACHE_SCHEMA_VERSION",

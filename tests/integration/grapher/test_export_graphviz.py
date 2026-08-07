@@ -32,7 +32,9 @@ def test_to_graphviz_contains_nodes_edges_and_shapes(tmp_path: Path) -> None:
     excel_path = tmp_path / "simple_chain.xlsx"
     _make_chain_xlsx(excel_path)
 
-    graph = create_dependency_graph(excel_path, ["Sheet1!A4"], load_values=False)
+    graph = create_dependency_graph(
+        excel_path, ["Sheet1!A4"], load_values=False, store_raw_formula=True
+    )
     dot = to_graphviz(graph, rankdir="LR")
 
     assert "digraph dependencies" in dot
@@ -55,7 +57,9 @@ def test_to_graphviz_contains_nodes_edges_and_shapes(tmp_path: Path) -> None:
 def test_to_graphviz_can_omit_formula_labels(tmp_path: Path) -> None:
     excel_path = tmp_path / "simple_chain.xlsx"
     _make_chain_xlsx(excel_path)
-    graph = create_dependency_graph(excel_path, ["Sheet1!A4"], load_values=False)
+    graph = create_dependency_graph(
+        excel_path, ["Sheet1!A4"], load_values=False, store_raw_formula=True
+    )
     dot = to_graphviz(graph, rankdir="LR", include_formula_on_nodes=False)
     assert '"Sheet1!A4" [label="Sheet1!A4" shape=ellipse' in dot
 
@@ -63,7 +67,9 @@ def test_to_graphviz_can_omit_formula_labels(tmp_path: Path) -> None:
 def test_to_graphviz_truncates_formula(tmp_path: Path) -> None:
     excel_path = tmp_path / "simple_chain.xlsx"
     _make_chain_xlsx(excel_path)
-    graph = create_dependency_graph(excel_path, ["Sheet1!A4"], load_values=False)
+    graph = create_dependency_graph(
+        excel_path, ["Sheet1!A4"], load_values=False, store_raw_formula=True
+    )
     dot = to_graphviz(graph, rankdir="LR", max_formula_length=4)
     assert '"Sheet1!A4" [label="Sheet1!A4\\n=A3*..." shape=ellipse' in dot
 

@@ -17,7 +17,8 @@ from .guard import And, CellRef, Compare, GuardExpr, Not, Or
 from .guard import Literal as GuardLiteral
 from .node import Node, NodeKey
 
-GRAPH_CACHE_SCHEMA_VERSION = 3
+# 4: `EdgeProvenance.direct_sites_formula` dropped; spans are normalized-only.
+GRAPH_CACHE_SCHEMA_VERSION = 4
 
 
 class GraphCacheMeta(TypedDict):
@@ -319,7 +320,6 @@ def _guard_from_json(v: object) -> GuardExpr | None:
 def _edge_provenance_to_json(p: EdgeProvenance) -> dict[str, Any]:
     return {
         "causes": sorted(c.name for c in p.causes),
-        "direct_sites_formula": [list(x) for x in p.direct_sites_formula],
         "direct_sites_normalized": [list(x) for x in p.direct_sites_normalized],
     }
 
@@ -337,13 +337,12 @@ def _edge_provenance_from_json(v: object) -> EdgeProvenance:
             causes |= DependencyCause[name]
         except KeyError as e:
             raise TypeError(f"unknown provenance cause: {name!r}") from e
-    dsf = d.get("direct_sites_formula", [])
+    # Schema 3 payloads also carry `direct_sites_formula`; it is ignored.
     dsn = d.get("direct_sites_normalized", [])
-    if not isinstance(dsf, list) or not isinstance(dsn, list):
+    if not isinstance(dsn, list):
         raise TypeError("provenance sites must be lists")
     return EdgeProvenance(
         causes=causes,
-        direct_sites_formula=tuple((int(a), int(b)) for a, b in dsf),
         direct_sites_normalized=tuple((int(a), int(b)) for a, b in dsn),
     )
 

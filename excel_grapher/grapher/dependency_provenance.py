@@ -15,10 +15,16 @@ class DependencyCause(IntFlag):
 
 @dataclass(frozen=True, slots=True)
 class EdgeProvenance:
-    """Metadata for a single directed edge, possibly from multiple mechanisms in one formula."""
+    """Metadata for a single directed edge, possibly from multiple mechanisms in one formula.
+
+    `direct_sites_normalized` holds `[start, end)` spans of the precedent
+    reference inside the dependent's `normalized_formula`. Spans against the raw
+    `Node.formula` are deliberately not stored: `normalized_formula` is the
+    single source for compression / projection rewriting, and the raw formula is
+    an opt-in audit field that rewriting leaves untouched.
+    """
 
     causes: DependencyCause
-    direct_sites_formula: tuple[tuple[int, int], ...] = ()
     direct_sites_normalized: tuple[tuple[int, int], ...] = ()
 
     @staticmethod
@@ -28,9 +34,6 @@ class EdgeProvenance:
     def merge(self, other: EdgeProvenance) -> EdgeProvenance:
         return EdgeProvenance(
             causes=self.causes | other.causes,
-            direct_sites_formula=tuple(
-                sorted(set(self.direct_sites_formula) | set(other.direct_sites_formula))
-            ),
             direct_sites_normalized=tuple(
                 sorted(set(self.direct_sites_normalized) | set(other.direct_sites_normalized))
             ),

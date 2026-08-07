@@ -65,7 +65,6 @@ def test_compress_happy_path_manual_graph() -> None:
         "Sheet1!B1",
         provenance=EdgeProvenance(
             causes=dr,
-            direct_sites_formula=sp,
             direct_sites_normalized=sp,
         ),
     )
@@ -109,7 +108,6 @@ def test_compress_identity_transits_populates_record() -> None:
         "Sheet1!B1",
         provenance=EdgeProvenance(
             causes=dr,
-            direct_sites_formula=sp,
             direct_sites_normalized=sp,
         ),
     )
@@ -148,7 +146,6 @@ def test_compress_chain_manual_graph() -> None:
         "Sheet1!B1",
         provenance=EdgeProvenance(
             causes=dr,
-            direct_sites_formula=sp,
             direct_sites_normalized=sp,
         ),
     )
@@ -270,7 +267,6 @@ def test_guarded_transit_not_compressed() -> None:
         "Sheet1!B1",
         provenance=EdgeProvenance(
             causes=dr,
-            direct_sites_formula=sp,
             direct_sites_normalized=sp,
         ),
     )

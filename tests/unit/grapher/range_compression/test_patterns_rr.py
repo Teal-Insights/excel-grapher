@@ -91,7 +91,9 @@ def test_rr_synthetic_workbook_parity(tmp_path: Path) -> None:
         ws.write_formula(row - 1, 3, f"=B{row}*C{row}")
     wb.close()
 
-    graph = create_dependency_graph(path, [f"Data!D{first}:D{last}"], load_values=False)
+    graph = create_dependency_graph(
+        path, [f"Data!D{first}:D{last}"], load_values=False, store_raw_formula=True
+    )
     index = build_taco_index(graph)
     assert_taco_parity(graph, index)
     assert len(index.compressed_edges) >= 2

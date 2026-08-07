@@ -27,7 +27,9 @@ def test_cross_sheet_rr_column_parity(tmp_path: Path) -> None:
         report.write_formula(row - 1, 3, f"=Data!B{row}")
     wb.close()
 
-    graph = create_dependency_graph(path, ["Report!D3:D7"], load_values=False)
+    graph = create_dependency_graph(
+        path, ["Report!D3:D7"], load_values=False, store_raw_formula=True
+    )
     index = build_taco_index(graph)
     rr = [e for e in index.compressed_edges if e.meta.kind == PatternKind.rr]
     assert len(rr) == 1

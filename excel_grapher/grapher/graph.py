@@ -500,9 +500,13 @@ class DependencyGraph:
                 yield key
 
     def formula_nodes(self) -> Iterator[tuple[NodeKey, Node]]:
-        """Iterate over (key, node) pairs for nodes that contain formulas."""
+        """Iterate over (key, node) pairs for nodes that contain formulas.
+
+        Formula cells are identified by `normalized_formula`, which is always
+        stored; the raw `formula` string is opt-in (see `store_raw_formula`).
+        """
         for key, node in self._nodes.items():
-            if node.formula is not None:
+            if node.normalized_formula is not None:
                 yield key, node
 
     def leaf_node_items(self) -> Iterator[tuple[NodeKey, Node]]:
@@ -515,7 +519,7 @@ class DependencyGraph:
         """Return sorted list of keys for nodes that contain formulas."""
         return self.keys(
             order="workbook",
-            source=(k for k, node in self._nodes.items() if node.formula is not None),
+            source=(k for k, node in self._nodes.items() if node.normalized_formula is not None),
         )
 
     def leaf_keys(self) -> list[NodeKey]:
@@ -835,7 +839,7 @@ class DependencyGraph:
                     continue
 
                 t_node = self.get_node(t_key)
-                if t_node is None or t_node.is_leaf or t_node.formula is None:
+                if t_node is None or t_node.is_leaf or t_node.normalized_formula is None:
                     continue
                 if t_key in forwarding_protected:
                     continue
@@ -959,7 +963,7 @@ class DependencyGraph:
     ) -> None:
         from .compression import (
             FormulaRewrite,
-            direct_provenance_for_key_in_strings,
+            direct_provenance_for_key_in_normalized,
             refresh_direct_sites,
             replace_substrings_at_spans,
         )
@@ -971,17 +975,8 @@ class DependencyGraph:
             if d_node is None:
                 continue
 
-            before_formula = d_node.formula
             before_normalized = d_node.normalized_formula
-            new_formula = before_formula
             new_norm = before_normalized
-            if isinstance(prov, EdgeProvenance) and prov.direct_sites_formula and new_formula:
-                new_formula = replace_substrings_at_spans(
-                    new_formula, prov.direct_sites_formula, r_key
-                )
-            elif new_formula and t_key in new_formula:
-                new_formula = new_formula.replace(t_key, r_key)
-
             if isinstance(prov, EdgeProvenance) and prov.direct_sites_normalized and new_norm:
                 new_norm = replace_substrings_at_spans(
                     new_norm, prov.direct_sites_normalized, r_key
@@ -989,24 +984,19 @@ class DependencyGraph:
             elif new_norm and t_key in new_norm:
                 new_norm = new_norm.replace(t_key, r_key)
 
-            if record is not None and (
-                before_formula != new_formula or before_normalized != new_norm
-            ):
+            if record is not None and before_normalized != new_norm:
                 record.formula_rewrites.append(
                     FormulaRewrite(
                         dependent=d_key,
-                        before_formula=before_formula,
-                        after_formula=new_formula,
                         before_normalized=before_normalized,
                         after_normalized=new_norm,
                     )
                 )
 
-            d_node.formula = new_formula
             d_node.normalized_formula = new_norm
 
             self._remove_edge(d_key, t_key)
-            new_prov = direct_provenance_for_key_in_strings(new_formula, new_norm, r_key)
+            new_prov = direct_provenance_for_key_in_normalized(new_norm, r_key)
             self.add_edge(d_key, r_key, guard=guard, provenance=new_prov)
 
             for dep in list(self._edges.get(d_key, set())):
@@ -1019,9 +1009,6 @@ class DependencyGraph:
                     continue
                 self._edge_provenance[(d_key, dep)] = refresh_direct_sites(
                     old_dep_prov,
-                    old_formula=before_formula,
-                    new_formula=new_formula,
-                    old_normalized=before_normalized,
                     new_normalized=new_norm,
                     precedent_key=dep,
                 )
@@ -1057,7 +1044,7 @@ class DependencyGraph:
     ) -> None:
         from .compression import (
             FormulaRewrite,
-            direct_provenance_for_key_in_strings,
+            direct_provenance_for_key_in_normalized,
             merge_inline_edge_guards,
             refresh_direct_sites,
             substitute_body_at_spans,
@@ -1067,23 +1054,15 @@ class DependencyGraph:
         d_node = self._nodes.get(d_key)
         if t_node is None or d_node is None:
             return
-        if t_node.formula is None or t_node.normalized_formula is None:
+        if t_node.normalized_formula is None:
             return
 
         prov = self._edge_provenance.get((d_key, t_key))
         if not isinstance(prov, EdgeProvenance):
             return
 
-        before_formula = d_node.formula
         before_normalized = d_node.normalized_formula
-        new_formula = before_formula
         new_norm = before_normalized
-        if new_formula is not None and prov.direct_sites_formula:
-            new_formula = substitute_body_at_spans(
-                new_formula,
-                prov.direct_sites_formula,
-                t_node.formula,
-            )
         if new_norm is not None and prov.direct_sites_normalized:
             new_norm = substitute_body_at_spans(
                 new_norm,
@@ -1091,12 +1070,10 @@ class DependencyGraph:
                 t_node.normalized_formula,
             )
 
-        if record is not None and (before_formula != new_formula or before_normalized != new_norm):
+        if record is not None and before_normalized != new_norm:
             record.formula_rewrites.append(
                 FormulaRewrite(
                     dependent=d_key,
-                    before_formula=before_formula,
-                    after_formula=new_formula,
                     before_normalized=before_normalized,
                     after_normalized=new_norm,
                 )
@@ -1112,7 +1089,6 @@ class DependencyGraph:
             if isinstance(prov, EdgeProvenance):
                 old_dependent_provenance[dep] = prov
 
-        d_node.formula = new_formula
         d_node.normalized_formula = new_norm
 
         for dep in list(self._edges.get(d_key, set())):
@@ -1127,20 +1103,17 @@ class DependencyGraph:
                 transit_has_edge=dep in t_deps,
             )
             if dep in inherited_deps:
-                new_prov = direct_provenance_for_key_in_strings(new_formula, new_norm, dep)
+                new_prov = direct_provenance_for_key_in_normalized(new_norm, dep)
             else:
                 old_prov = old_dependent_provenance.get(dep)
                 if old_prov is not None:
                     new_prov = refresh_direct_sites(
                         old_prov,
-                        old_formula=before_formula,
-                        new_formula=new_formula,
-                        old_normalized=before_normalized,
                         new_normalized=new_norm,
                         precedent_key=dep,
                     )
                 else:
-                    new_prov = direct_provenance_for_key_in_strings(new_formula, new_norm, dep)
+                    new_prov = direct_provenance_for_key_in_normalized(new_norm, dep)
             self.add_edge(d_key, dep, guard=guard, provenance=new_prov)
 
         for dep in list(self._edges.get(t_key, set())):

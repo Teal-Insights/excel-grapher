@@ -198,7 +198,9 @@ def test_array_formula_cells_surface_formula_text(tmp_path: Path) -> None:
     finally:
         wb_formula.close()
 
-    graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
+    graph = create_dependency_graph(
+        excel_path, ["Sheet1!A1"], load_values=False, store_raw_formula=True
+    )
     node = graph.get_node("Sheet1!A1")
     assert node is not None
     assert node.is_leaf is False

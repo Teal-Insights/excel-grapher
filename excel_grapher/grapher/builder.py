@@ -328,6 +328,7 @@ def create_dependency_graph(
     dynamic_refs: DynamicRefConfig | None = None,
     use_cached_dynamic_refs: bool = False,
     capture_dependency_provenance: bool = False,
+    store_raw_formula: bool = False,
     blank_ranges: Iterable[str] | None = None,
     type_analysis_cache: TypeAnalysisCache | None = None,
     warm_ast_cache: bool = False,
@@ -365,7 +366,22 @@ def create_dependency_graph(
     When `capture_dependency_provenance` is True, each edge stores merged
     `excel_grapher.grapher.dependency_provenance.EdgeProvenance` on
     `DependencyGraph._edge_provenance` (how the dependency arises: direct
-    reference, static range, dynamic OFFSET/INDIRECT).
+    reference, static range, dynamic OFFSET/INDIRECT). Direct-reference spans
+    are recorded against `Node.normalized_formula` only.
+
+    When `store_raw_formula` is True, each formula cell also keeps the workbook
+    formula text on `Node.formula`. It defaults to False because the string is
+    not needed to evaluate, compress, or export a graph: `normalized_formula`
+    (always stored) is what every consumer reads, and dropping the raw copy is a
+    sizeable memory saving on large workbooks. Enable it when you need the
+    original text -- audit / display use, and TACO range compression
+    (`excel_grapher.grapher.range_compression`), which infers stride patterns
+    from the relative/absolute (`$`) markers that normalization strips.
+
+    Raw formulas are audit records of extraction: compression and projection
+    rewrite `normalized_formula` only, so on a compressed graph `Node.formula`
+    still shows the pre-compression workbook text and must not be re-parsed as
+    the node's current definition.
 
     `blank_ranges` is an optional iterable of sheet-qualified A1 rectangles
     (e.g. `\"Sheet1!B2:D10\"`) treated as structurally empty: no nodes are
@@ -1233,7 +1249,7 @@ def create_dependency_graph(
 
             if is_formula:
                 formula_str = str(raw)
-                formula = formula_str
+                formula = formula_str if store_raw_formula else None
                 normalized = normalizer.normalize(formula_str, sheet)
                 value = None
                 if wb_values is not None:
