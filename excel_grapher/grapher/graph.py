@@ -20,7 +20,7 @@ from excel_grapher.core.formula_ast import AstNode
 
 from .dependency_provenance import DependencyCause, EdgeProvenance, merge_edge_provenance
 from .guard import And, CellRef, Compare, GuardConstraints, GuardExpr, Not, Or, or_guard
-from .node import Node, NodeKey, NodeView, member_keys, node_to_view
+from .node import Node, NodeKey, NodeView, copy_metadata, member_keys, node_to_view
 
 NodeHook = Callable[[NodeKey, Node], None]
 
@@ -170,7 +170,7 @@ class DependencyGraph:
                 value=node.value,
                 is_leaf=node.is_leaf,
                 is_target=node.is_target,
-                metadata=dict(node.metadata),
+                metadata=copy_metadata(node.metadata),
                 kind=node.kind,
                 min_col=node.min_col,
                 min_row=node.min_row,
@@ -425,7 +425,7 @@ class DependencyGraph:
         node = self._nodes.get(nk)
         if node is None:
             raise KeyError(f"Cell {key} not found in graph")
-        node.metadata = dict(metadata)
+        node.set_metadata(metadata)
 
     def set_node_formula(
         self,

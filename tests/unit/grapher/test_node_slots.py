@@ -56,7 +56,7 @@ def test_node_public_fields_and_derived_properties() -> None:
     assert node.value is None
     assert node.is_leaf is False
     assert node.is_target is True
-    assert node.metadata == {"k": 1}
+    assert dict(node.metadata) == {"k": 1}
     assert node.kind is NodeKind.cell
     assert node.min_col == "B"
     assert node.max_col == "B"

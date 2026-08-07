@@ -86,7 +86,7 @@ def test_get_node_view_metadata_is_read_only() -> None:
     """Mutating the metadata mapping on a NodeView must fail."""
     g = DependencyGraph()
     node = _leaf("S", "A", 1, value=7)
-    node.metadata["k"] = "v"
+    node.set_metadata({"k": "v"})
     g.add_node(node)
 
     view = g.get_node("S!A1")
@@ -423,7 +423,7 @@ def test_set_node_value_does_not_change_other_fields() -> None:
 def test_set_node_metadata_replaces_mapping() -> None:
     g = DependencyGraph()
     node = _leaf("S", "A", 1)
-    node.metadata["existing"] = "before"
+    node.set_metadata({"existing": "before"})
     g.add_node(node)
 
     g.set_node_metadata("S!A1", {"row_labels": ["Revenue"], "column_labels": ["2024"]})

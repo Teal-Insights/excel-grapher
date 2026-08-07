@@ -240,7 +240,7 @@ def test_copy_for_projection_preserves_union_and_occupancy() -> None:
     assert cloned.get_dependencies(cell.key) == frozenset({union.key})
     assert cloned.cell_owner("Sheet1!E5") == union.key
 
-    cloned._nodes[union.key].metadata["x"] = 1
+    cloned._nodes[union.key].update_metadata({"x": 1})
     original = g.get_node(union.key)
     assert original is not None
     assert "x" not in original.metadata
