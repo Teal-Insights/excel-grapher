@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v4.0.1 (2026-08-07)
+
+### Performance Improvements
+
+- **core**: Slot CellKey, RangeKey, and UnionKey
+  ([#478](https://github.com/Teal-Insights/excel-grapher/pull/478),
+  [`47e073f`](https://github.com/Teal-Insights/excel-grapher/commit/47e073f1fbb6986dd7e11a1a9f862de3fa3912b1))
+
+
 ## v4.0.0 (2026-08-07)
 
 ### Features
