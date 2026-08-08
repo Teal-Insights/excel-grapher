@@ -54,12 +54,21 @@ def test_map_arithmetic_shape_mismatch_returns_value_error() -> None:
     assert map_arithmetic("+", left, right) == XlError.VALUE
 
 
-def test_map_arithmetic_fail_fast_on_embedded_cell_error() -> None:
+def test_map_arithmetic_preserves_embedded_cell_errors() -> None:
+    """Array arithmetic keeps per-element errors (Excel; #504)."""
+
     def resolve(address: str) -> CellValue:
         return {"S!A1": 1, "S!A2": XlError.DIV, "S!A3": 3}[address]
 
     rng = Range("S", 1, 1, 3, 1, resolve)
-    assert map_arithmetic("*", rng, 2) == XlError.DIV
+    assert map_arithmetic("*", rng, 2) == [[2], [XlError.DIV], [6]]
+
+
+def test_map_arithmetic_preserves_div_zero_per_element() -> None:
+    """``1/(rng<>0)`` must yield a vector of ``1`` / ``#DIV/0!``, not a scalar (#504)."""
+    compare = map_compare("<>", [[5], [0], [7]], 0)
+    assert compare == [[True], [False], [True]]
+    assert map_arithmetic("/", 1, compare) == [[1.0], [XlError.DIV], [1.0]]
 
 
 def test_map_compare_and_concat_over_nested_lists() -> None:

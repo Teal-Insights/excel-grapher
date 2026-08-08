@@ -161,7 +161,11 @@ def lookup_cells(
     lookup_vector_or_array: object,
     result_vector: object = None,
 ) -> Scalar:
-    """Excel LOOKUP over a lazy grid or nested-list array."""
+    """Excel LOOKUP over a lazy grid or nested-list array.
+
+    Error values in the lookup vector are skipped (Excel), so idioms such as
+    `LOOKUP(2, 1/(rng<>0), rng)` return the last non-error match.
+    """
     grid = _coerce_grid(lookup_vector_or_array)
     if grid is None:
         return XlError.VALUE
@@ -194,9 +198,14 @@ def lookup_cells(
         lookup_flat = grid
         result_flat = result_grid
 
+    # Excel LOOKUP skips error values in the lookup vector (the
+    # LOOKUP(2, 1/(rng<>0), rng) idiom depends on this).
     last_match_idx = None
     for i in range(lookup_flat.size):
-        if _compare_values(lookup_flat.at_flat(i), lookup_value) <= 0:
+        cell = lookup_flat.at_flat(i)
+        if isinstance(cell, XlError):
+            continue
+        if _compare_values(cell, lookup_value) <= 0:
             last_match_idx = i
         else:
             break

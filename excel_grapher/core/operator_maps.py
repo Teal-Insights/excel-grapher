@@ -68,7 +68,11 @@ def _apply_arithmetic_cell(op: str, left: Scalar, right: Scalar) -> CellValue:
 
 
 def map_arithmetic(op: str, left: object, right: object) -> object:
-    """Element-wise arithmetic over scalar or broadcast array operands."""
+    """Element-wise arithmetic over scalar or broadcast array operands.
+
+    Array results embed per-element ``XlError`` values rather than collapsing
+    the whole operation to a scalar error.
+    """
     pair = _broadcast_grids(left, right)
     if isinstance(pair, XlError):
         return pair
@@ -80,10 +84,10 @@ def map_arithmetic(op: str, left: object, right: object) -> object:
     for row0 in range(arr_left.nrows):
         out_row: list[CellValue] = []
         for col0 in range(arr_left.ncols):
-            cell = _apply_arithmetic_cell(op, arr_left.at(row0, col0), arr_right.at(row0, col0))
-            if isinstance(cell, XlError):
-                return cell
-            out_row.append(cell)
+            # Preserve per-element errors (Excel array arithmetic; LOOKUP idioms).
+            out_row.append(
+                _apply_arithmetic_cell(op, arr_left.at(row0, col0), arr_right.at(row0, col0))
+            )
         result.append(out_row)
     return result
 

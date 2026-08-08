@@ -122,3 +122,16 @@ def test_exact_match_on_lazy_range_stops_before_trailing_cells() -> None:
     rng = Range("S", 1, 1, 3, 1, resolve)
     assert match_cells("y", rng, 0) == 2
     assert calls == ["S!A1", "S!A2"]
+
+
+def test_lookup_skips_error_values_in_lookup_vector() -> None:
+    """Excel LOOKUP ignores errors in the lookup vector (#504).
+
+    The ``LOOKUP(2, 1/(rng<>0), rng)`` idiom relies on this: ``1/FALSE`` is
+    ``#DIV/0!``, and LOOKUP must return the result for the last non-error
+    entry ``<=`` the lookup value rather than falling through to the last cell.
+    """
+    div = XlError.DIV
+    assert lookup_cells(2, [1.0, 1.0, div, 1.0, div, div], ["a", "b", "c", "d", "e", "f"]) == "d"
+    assert lookup_cells(2, [[1.0], [1.0], [div], [1.0]], [["a"], ["b"], ["c"], ["d"]]) == "d"
+    assert lookup_cells(2, [div, div], ["a", "b"]) == XlError.NA
