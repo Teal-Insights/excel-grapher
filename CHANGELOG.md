@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v5.1.2 (2026-08-08)
+
+### Bug Fixes
+
+- **core**: Align INDEX zero selectors and computed-array path (#503)
+  ([#510](https://github.com/Teal-Insights/excel-grapher/pull/510),
+  [`7ef28f1`](https://github.com/Teal-Insights/excel-grapher/commit/7ef28f1c2e1802b94d407fffa39d4d42bc7b21ff))
+
+- **core**: LOOKUP skips lookup-vector errors (#504)
+  ([#508](https://github.com/Teal-Insights/excel-grapher/pull/508),
+  [`c3e4a4f`](https://github.com/Teal-Insights/excel-grapher/commit/c3e4a4f709a0cbb063fbc2fa714f5ab7e6e3a52f))
+
+- **core**: LOOKUP skips lookup-vector errors; array arithmetic preserves them
+  ([#508](https://github.com/Teal-Insights/excel-grapher/pull/508),
+  [`c3e4a4f`](https://github.com/Teal-Insights/excel-grapher/commit/c3e4a4f709a0cbb063fbc2fa714f5ab7e6e3a52f))
+
+### Testing
+
+- **evaluator**: Expect array arithmetic to preserve embedded errors
+  ([#508](https://github.com/Teal-Insights/excel-grapher/pull/508),
+  [`c3e4a4f`](https://github.com/Teal-Insights/excel-grapher/commit/c3e4a4f709a0cbb063fbc2fa714f5ab7e6e3a52f))
+
+
 ## v5.1.1 (2026-08-08)
 
 ### Bug Fixes
