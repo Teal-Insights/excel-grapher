@@ -1507,6 +1507,100 @@ def test_index_match_nested_index_empty_arg_over_vlookup_column(tmp_path: Path) 
     assert {"Trigger!AB1", "Trigger!AB2", "Trigger!AB3"} & deps
 
 
+def test_static_match_lookup_extent_index_zero_over_boolean_projection() -> None:
+    """INDEX((range<>0),0) has the same MATCH extent as `range` (issue #506)."""
+    lookup = parse_ast("=INDEX((B!N11:N14<>0),0)")
+    assert isinstance(lookup, FunctionCallNode)
+    assert dynamic_refs_mod._static_match_lookup_extent(lookup) == 4
+
+    lookup_col = parse_ast("=INDEX((B!N11:N14<>0),0,1)")
+    assert dynamic_refs_mod._static_match_lookup_extent(lookup_col) == 4
+
+    # Value-preserving ordered cells stay unavailable for projected arrays.
+    assert dynamic_refs_mod._ordered_match_lookup_cells(lookup, current_sheet="B") is None
+
+
+def test_static_match_lookup_extent_index_zero_over_direct_range() -> None:
+    """INDEX(range,0) is a static 1-D MATCH lookup shape (Excel whole-column form)."""
+    col = parse_ast("=INDEX(B!N11:N14,0)")
+    assert dynamic_refs_mod._static_match_lookup_extent(col) == 4
+    ordered = dynamic_refs_mod._ordered_match_lookup_cells(col, current_sheet="Out")
+    assert ordered == ["B!N11", "B!N12", "B!N13", "B!N14"]
+
+
+def test_match_true_index_boolean_projection_numeric_domain() -> None:
+    """MATCH(TRUE, INDEX((range<>0),0), 0) abstracts to IntBounds(1, N)."""
+    match = parse_ast("=MATCH(TRUE,INDEX((B!N11:N14<>0),0),0)")
+    dom = dynamic_refs_mod._infer_numeric_domain(match, {}, DynamicRefLimits(), current_sheet="B")
+    assert isinstance(dom, dynamic_refs_mod._IntBounds)
+    assert dom.lo == 1 and dom.hi == 4
+
+
+def _build_match_index_first_nonzero_workbook(path: Path) -> None:
+    """MCVE workbook for issue #506: first-nonzero via MATCH/INDEX boolean projection."""
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("B")
+    for r, year in enumerate([1, 2, 3], start=11):
+        ws.write_number(r - 1, 12, year)  # M
+        ws.write_number(r - 1, 8, year)  # I
+        ws.write_number(r - 1, 10, 0.04 - 0.01 * (r - 11))  # K
+        ws.write_formula(
+            r - 1,
+            13,
+            f'=IFNA(XLOOKUP(M{r},$I$11:$I$13,$K$11:$K$13),"")',
+            None,
+            0.04 - 0.01 * (r - 11),
+        )  # N
+    ws.write_number(13, 12, 4)  # M14
+    ws.write_blank(13, 13, None)  # N14
+    ws.write_formula(
+        9,
+        14,
+        "=INDEX(N11:N14,MATCH(TRUE,INDEX((N11:N14<>0),0),0))",
+        None,
+        0.04,
+    )  # O10
+    wb.close()
+
+
+def test_index_match_first_nonzero_boolean_projection_builds_graph(tmp_path: Path) -> None:
+    """First-nonzero MATCH/INDEX pattern must not raise DynamicRefError (#506)."""
+    from typing import Annotated, Literal
+
+    from excel_grapher.core.cell_types import RealBetween
+
+    excel_path = tmp_path / "match_index_first_nonzero.xlsx"
+    _build_match_index_first_nonzero_workbook(excel_path)
+
+    unit = Annotated[float, RealBetween(0, 1)]
+    constraints: dict[str, object] = {
+        "B!M11": Literal[1],
+        "B!M12": Literal[2],
+        "B!M13": Literal[3],
+        "B!M14": Literal[4],
+        "B!I11": Literal[1],
+        "B!I12": Literal[2],
+        "B!I13": Literal[3],
+        "B!K11": unit,
+        "B!K12": unit,
+        "B!K13": unit,
+        "B!N11": unit,
+        "B!N12": unit,
+        "B!N13": unit,
+        "B!N14": Literal[None],
+    }
+    config = DynamicRefConfig.from_constraints(constraints, {})
+    graph = create_dependency_graph(
+        excel_path,
+        ["B!O10"],
+        load_values=True,
+        dynamic_refs=config,
+    )
+    assert "B!O10" in graph
+    deps = graph.get_dependencies("B!O10")
+    assert {"B!N11", "B!N12", "B!N13", "B!N14"} & deps
+
+
 def test_expand_leaf_env_wide_interval_no_interval_branch_limit_error() -> None:
     from excel_grapher.grapher.dynamic_refs import expand_leaf_env_to_argument_env
 
