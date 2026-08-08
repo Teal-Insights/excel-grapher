@@ -124,20 +124,6 @@ _RETURN_UNPACK_NON_HOISTABLE = frozenset(
 )
 
 
-def _is_literal_zero_ast(node: AstNode) -> bool:
-    """Return True when `node` is the numeric literal 0 (not a boolean)."""
-    if not isinstance(node, NumberNode):
-        return False
-    value = node.value
-    if isinstance(value, bool):
-        return False
-    if isinstance(value, int):
-        return value == 0
-    if isinstance(value, float) and value.is_integer():
-        return int(value) == 0
-    return False
-
-
 @dataclass
 class _ReturnUnpackState:
     statements: list[str]
@@ -1892,6 +1878,11 @@ class CodeGenerator:
             return (r2 - r1 + 1, c2 - c1 + 1)
         return (1, 1)
 
+    @staticmethod
+    def _index_arg_is_whole_selector(arg: AstNode | None) -> bool:
+        """True when *arg* is the literal `0` (Excel whole row/column selector)."""
+        return isinstance(arg, NumberNode) and arg.value == 0
+
     def _index_range_result_is_scalar(self, range_node: RangeNode, node: FunctionCallNode) -> bool:
         """True when INDEX(range, ...) resolves to a single cell (not a row/column slice)."""
         _, r1, c1, r2, c2 = self._range_coords(range_node.start, range_node.end)
@@ -1902,25 +1893,19 @@ class CodeGenerator:
         col_arg = node.args[2] if len(node.args) > 2 else None
         row_omitted = row_arg is None or isinstance(row_arg, EmptyArgNode)
         col_omitted = col_arg is None or isinstance(col_arg, EmptyArgNode)
-        row_zero = row_arg is not None and _is_literal_zero_ast(row_arg)
-        col_zero = col_arg is not None and _is_literal_zero_ast(col_arg)
 
         if row_omitted and col_omitted:
             return nrows == 1 and ncols == 1
         if row_omitted:
-            if col_zero:
+            if self._index_arg_is_whole_selector(col_arg):
                 return nrows == 1 and ncols == 1
             return nrows == 1
         if col_omitted:
-            if row_zero:
+            if self._index_arg_is_whole_selector(row_arg):
                 return nrows == 1 and ncols == 1
             return ncols == 1
-        if row_zero and col_zero:
+        if self._index_arg_is_whole_selector(row_arg) or self._index_arg_is_whole_selector(col_arg):
             return nrows == 1 and ncols == 1
-        if row_zero:
-            return nrows == 1
-        if col_zero:
-            return ncols == 1
         return True
 
     def _emit_range_ref_tuple(self, range_node: RangeNode) -> str:

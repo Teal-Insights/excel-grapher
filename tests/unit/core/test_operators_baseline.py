@@ -5,12 +5,13 @@ and checked-in throughput numbers that later sprints must beat while preserving
 Excel coercion and error behavior.
 Semantics contract (array paths):
 
-- **Fail-fast, C-order**: the first embedded ``XlError`` during row-major
-  ``np.ndindex`` iteration wins; no partial result array is returned.
-- **Comparisons**: numeric coercion via ``to_number``; when either side fails,
-  fall back to casefolded string comparison of ``to_string`` values.
-- **Arithmetic**: per-cell ``to_number``; ``/`` returns ``DIV`` on zero divisor;
-  ``^`` returns ``NUM`` on invalid or complex results.
+- **Comparisons**: fail-fast in C-order — the first embedded ``XlError`` during
+  row-major ``np.ndindex`` iteration wins; no partial result array is returned.
+  Numeric coercion via ``to_number``; when either side fails, fall back to
+  casefolded string comparison of ``to_string`` values.
+- **Arithmetic**: preserve per-element errors in the result array (operand
+  sentinels, coercion failures, ``/`` ``DIV`` on zero divisor, ``^`` ``NUM`` on
+  invalid or complex results). Top-level scalar operand errors still propagate.
 - **Concat**: per-cell ``to_string``; top-level operand errors propagate before
   the array loop.
 - **Broadcasting**: shape mismatch returns ``VALUE``; scalars broadcast with
@@ -97,15 +98,21 @@ def test_array_compare_fail_fast_returns_first_error_in_c_order() -> None:
     assert xl_eq(left, 1.0) == XlError.DIV
 
 
-def test_array_arithmetic_fail_fast_returns_first_error_in_c_order() -> None:
+def test_array_arithmetic_preserves_embedded_errors_per_element() -> None:
     left = np.array([[1.0, XlError.REF], [XlError.NA, 3.0]], dtype=object)
-    assert xl_mul(left, 2.0) == XlError.REF
+    assert array_tolist(xl_mul(left, 2.0)) == [
+        [2.0, XlError.REF],
+        [XlError.NA, 6.0],
+    ]
 
 
-def test_array_division_fail_fast_on_first_zero_divisor() -> None:
+def test_array_division_preserves_div_zero_per_element() -> None:
     left = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=object)
     right = np.array([[1.0, 0.0], [2.0, 4.0]], dtype=object)
-    assert xl_div(left, right) == XlError.DIV
+    assert array_tolist(xl_div(left, right)) == [
+        [1.0, XlError.DIV],
+        [1.5, 1.0],
+    ]
 
 
 def test_array_shape_mismatch_returns_value_for_compare() -> None:

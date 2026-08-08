@@ -27,7 +27,10 @@ from tests.bench.operators_bench import (
     numeric_string_column,
 )
 from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
-from tests.unit.core.operators_test_helpers import assert_arithmetic_matches_reference
+from tests.unit.core.operators_test_helpers import (
+    array_tolist,
+    assert_arithmetic_matches_reference,
+)
 from tests.unit.core.test_operators_baseline import BASELINE_PATH
 from tests.unit.gaps.workbook_helpers import write_large_numeric_sumproduct
 
@@ -80,28 +83,28 @@ def test_numeric_fastpath_matches_reference_on_large_numeric_strings(op: str) ->
     assert_arithmetic_matches_reference(op, left, right)
 
 
-def test_numeric_fastpath_falls_back_on_embedded_error() -> None:
+def test_numeric_fastpath_preserves_embedded_error_per_element() -> None:
     left = np.array([[1.0, XlError.NA], [3.0, 4.0]], dtype=object)
     right = np.array([[2.0, 2.0], [2.0, 2.0]], dtype=object)
-    assert xl_mul(left, right) == XlError.NA
+    assert array_tolist(xl_mul(left, right)) == [[2.0, XlError.NA], [6.0, 8.0]]
 
 
 def test_numeric_fastpath_falls_back_on_non_numeric_string() -> None:
     left = np.array([["abc", 2.0]], dtype=object)
     right = np.array([[1.0, 2.0]], dtype=object)
-    assert xl_mul(left, right) == XlError.VALUE
+    assert array_tolist(xl_mul(left, right)) == [[XlError.VALUE, 4.0]]
 
 
-def test_numeric_fastpath_div_fail_fast_on_first_zero_in_c_order() -> None:
+def test_numeric_fastpath_div_preserves_zero_divisor_per_element() -> None:
     left = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=object)
     right = np.array([[1.0, 0.0], [2.0, 4.0]], dtype=object)
-    assert xl_div(left, right) == XlError.DIV
+    assert array_tolist(xl_div(left, right)) == [[1.0, XlError.DIV], [1.5, 1.0]]
 
 
-def test_numeric_fastpath_pow_invalid_returns_num() -> None:
+def test_numeric_fastpath_pow_invalid_embeds_num_per_element() -> None:
     left = np.array([[-1.0, 2.0]], dtype=object)
     right = np.array([[0.5, 2.0]], dtype=object)
-    assert xl_pow(left, right) == XlError.NUM
+    assert array_tolist(xl_pow(left, right)) == [[XlError.NUM, 4.0]]
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:

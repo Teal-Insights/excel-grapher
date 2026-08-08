@@ -450,8 +450,8 @@ def test_criteria_product_sum_parity_via_binary_ops() -> None:
         assert ev.evaluate(["S!C1"]) == {"S!C1": 40.0}
 
 
-def test_binary_op_fail_fast_does_not_evaluate_trailing_formula_cells() -> None:
-    """Array multiply stops at the first cell error; trailing formulas stay cold."""
+def test_binary_op_preserves_embedded_errors_and_evaluates_full_array() -> None:
+    """Array multiply embeds per-element errors and still walks trailing cells (#504)."""
     graph = _make_graph(
         _make_node("S!A1", None, 1),
         _make_node("S!A2", "=1/0", None),
@@ -467,8 +467,10 @@ def test_binary_op_fail_fast_does_not_evaluate_trailing_formula_cells() -> None:
         seen.append(address)
 
     with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
-        assert ev.evaluate(["S!C1"]) == {"S!C1": XlError.DIV}
-        assert "S!A3" not in ev._cache
-        assert "S!B3" not in ev._cache
-    assert "S!A3" not in seen
-    assert "S!B3" not in seen
+        assert ev.evaluate(["S!C1"]) == {
+            "S!C1": [[2.0], [XlError.DIV], [10100.0]],
+        }
+        assert ev._cache["S!A3"] == 100.0
+        assert ev._cache["S!B3"] == 101.0
+    assert "S!A3" in seen
+    assert "S!B3" in seen

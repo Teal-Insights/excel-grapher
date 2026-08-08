@@ -51,9 +51,9 @@ def test_xl_eq_array_compare_fail_fast_on_first_cell_error() -> None:
     assert xl_eq(left, 1.0) == XlError.NA
 
 
-def test_xl_mul_array_arithmetic_fail_fast_on_first_cell_error() -> None:
+def test_xl_mul_array_arithmetic_preserves_per_element_errors() -> None:
     left = np.array([[True, XlError.DIV]], dtype=object)
-    assert xl_mul(left, 1) == XlError.DIV
+    assert array_tolist(xl_mul(left, 1)) == [[1.0, XlError.DIV]]
 
 
 def test_xl_concat_elementwise_arrays() -> None:

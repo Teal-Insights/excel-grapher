@@ -115,3 +115,15 @@ def test_lookup_parity_vector_and_array_forms() -> None:
     assert result.generated_results["S!C4"] == 2
     assert result.generated_results["S!F1"] == 20
     assert result.generated_results["S!J1"] == 20
+
+
+def test_lookup_last_nonzero_idiom_parity() -> None:
+    """``LOOKUP(2, 1/(rng<>0), rng)`` skips ``#DIV/0!`` in the lookup vector (#504)."""
+    graph = _make_graph(
+        _make_node("S!A1", None, 5),
+        _make_node("S!A2", None, 0),
+        _make_node("S!A3", None, 7),
+        _make_node("S!B1", "=LOOKUP(2,1/(S!A1:S!A3<>0),S!A1:S!A3)", None),
+    )
+    result = assert_codegen_matches_evaluator(graph, ["S!B1"])
+    assert result.generated_results["S!B1"] == 7

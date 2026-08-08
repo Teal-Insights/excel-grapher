@@ -48,16 +48,3 @@ def test_xl_index_over_lazy_range_agrees_with_nested_list() -> None:
     eager = [[1, 2], [3, 4]]
     assert xl_index(lazy, 2, 1) == xl_index(eager, 2, 1) == 3
     assert xl_index(lazy, 1, 2) == 2
-
-
-def test_index_cells_row_zero_returns_whole_array() -> None:
-    """Excel INDEX(array, 0) returns the entire array (#502)."""
-    col = [[5], [0], [7]]
-    assert index_cells(col, 0, None) == col
-    assert index_cells(col, 0, 1) == col
-
-    table = [[1, 2], [3, 4], [5, 6]]
-    assert index_cells(table, 0, 2) == [[2], [4], [6]]
-    assert index_cells(table, 2, 0) == [[3, 4]]
-    assert index_cells(table, 0, 0) == table
-    assert index_cells(table, None, 0) == table

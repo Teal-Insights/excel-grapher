@@ -2,7 +2,7 @@
 
 ``+``, ``-``, ``*``, and ``/`` use NumPy element-wise ops on coerced float64 arrays.
 The ``^`` exponent operator is not vectorized: it runs a C-order Python loop so
-fail-fast ``#NUM!`` semantics match the reference implementation.
+per-element ``#NUM!`` embedding matches the reference implementation.
 """
 
 from __future__ import annotations
@@ -165,35 +165,40 @@ def batch_coerce_to_float64(
     return out.reshape(arr.shape)
 
 
-def _first_zero_index(values: np.ndarray) -> int | None:
-    """Return the C-order flat index of the first zero, if any."""
-    flat = values.ravel()
-    matches = np.flatnonzero(flat == 0.0)
-    if matches.size == 0:
-        return None
-    return int(matches[0])
-
-
-def _fastpath_pow(left: np.ndarray, right: np.ndarray) -> np.ndarray | XlError:
-    """Element-wise power on pre-coerced float arrays (C-order fail-fast).
+def _fastpath_pow(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+    """Element-wise power on pre-coerced float arrays.
 
     Uses Python ``**`` per cell rather than ``np.power`` so complex results and
-    exceptions align with ``operators_reference``.
+    exceptions align with ``operators_reference``. Invalid cells embed ``#NUM!``.
     """
     flat_left = left.ravel()
     flat_right = right.ravel()
-    out = np.empty(flat_left.size, dtype=np.float64)
+    out = np.empty(flat_left.size, dtype=object)
     for index in range(flat_left.size):
         base = float(flat_left[index])
         exponent = float(flat_right[index])
         try:
             value = base**exponent
         except (ValueError, OverflowError):
-            return XlError.NUM
+            out[index] = XlError.NUM
+            continue
         if isinstance(value, complex):
-            return XlError.NUM
+            out[index] = XlError.NUM
+            continue
         out[index] = value
-    return out.reshape(left.shape).astype(object)
+    return out.reshape(left.shape)
+
+
+def _fastpath_divide(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+    """Element-wise division embedding ``#DIV/0!`` where the divisor is zero."""
+    zero_mask = right == 0.0
+    out = np.empty(left.shape, dtype=object)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        quotients = left / right
+    out[~zero_mask] = quotients[~zero_mask]
+    if bool(np.any(zero_mask)):
+        out[zero_mask] = XlError.DIV
+    return out
 
 
 def _bool_result_as_object(values: np.ndarray) -> np.ndarray:
@@ -421,9 +426,7 @@ def try_fastpath_arithmetic_array(
     if op == "*":
         return _float_result_as_object(left * right)
     if op == "/":
-        if _first_zero_index(right) is not None:
-            return XlError.DIV
-        return _float_result_as_object(left / right)
+        return _fastpath_divide(left, right)
     if op == "^":
         return _fastpath_pow(left, right)
     raise ValueError(f"Unknown arithmetic operator: {op}")

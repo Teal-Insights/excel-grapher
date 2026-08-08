@@ -36,8 +36,8 @@ def index_cells(
     Returns a scalar cell value, or a row/column slice (`Range` or nested list)
     when only one of `row_num` / `col_num` selects a vector.
 
-    `row_num = 0` / `col_num = 0` select the entire opposite axis (Excel's
-    whole-column / whole-row form); both zeros return the full array.
+    A `row_num` or `col_num` of `0` selects the entire column or row (Excel
+    whole-vector form). Both `0` returns the full array.
     """
     grid = Grid.wrap(array)
     if grid is None:
@@ -64,7 +64,7 @@ def index_cells(
             return cn
         col = int(cn)
         if col == 0:
-            return array
+            return grid.as_array()
         if col < 1 or col > ncols:
             return XlError.REF
         if nrows == 1:
@@ -81,7 +81,7 @@ def index_cells(
 
     if col_omitted:
         if row == 0:
-            return array
+            return grid.as_array()
         if nrows == 1:
             if row < 1 or row > ncols:
                 return XlError.REF
@@ -101,10 +101,8 @@ def index_cells(
     if isinstance(cn, XlError):
         return cn
     col = int(cn)
-
-    # Excel: 0 selects the full opposite axis; (0, 0) returns the whole array.
     if row == 0 and col == 0:
-        return array
+        return grid.as_array()
     if row == 0:
         if col < 1 or col > ncols:
             return XlError.REF
@@ -117,7 +115,6 @@ def index_cells(
         if ncols == 1:
             return grid.at(row - 1, 0)
         return grid.row_slice(row - 1)
-
     if nrows == 1:
         if row < 1 or row > ncols:
             return XlError.REF
@@ -185,7 +182,11 @@ def lookup_cells(
     lookup_vector_or_array: object,
     result_vector: object = None,
 ) -> Scalar:
-    """Excel LOOKUP over a lazy grid or nested-list array."""
+    """Excel LOOKUP over a lazy grid or nested-list array.
+
+    Error values in the lookup vector are skipped (Excel), so idioms such as
+    `LOOKUP(2, 1/(rng<>0), rng)` return the last non-error match.
+    """
     grid = _coerce_grid(lookup_vector_or_array)
     if grid is None:
         return XlError.VALUE
@@ -218,9 +219,14 @@ def lookup_cells(
         lookup_flat = grid
         result_flat = result_grid
 
+    # Excel LOOKUP skips error values in the lookup vector (the
+    # LOOKUP(2, 1/(rng<>0), rng) idiom depends on this).
     last_match_idx = None
     for i in range(lookup_flat.size):
-        if _compare_values(lookup_flat.at_flat(i), lookup_value) <= 0:
+        cell = lookup_flat.at_flat(i)
+        if isinstance(cell, XlError):
+            continue
+        if _compare_values(cell, lookup_value) <= 0:
             last_match_idx = i
         else:
             break
