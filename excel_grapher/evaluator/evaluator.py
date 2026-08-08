@@ -34,6 +34,7 @@ from excel_grapher.runtime.cache import (
     xl_iterative_compute,
 )
 from excel_grapher.runtime.info import xl_isblank
+from excel_grapher.runtime.lookup import xl_index
 
 from .ast_cache import DEFAULT_AST_CACHE_MAXSIZE, AstCache, AstCacheInfo
 from .errors import MissingNormalizedFormulaError, ParseError
@@ -720,11 +721,33 @@ class FormulaEvaluator:
         return xl_columns(ref)
 
     def _eval_index(self, args: list[AstNode]) -> FormulaValue:
-        node = FunctionCallNode(name="INDEX", args=args)
-        ref = self._index_call_to_range(node)
-        if isinstance(ref, XlError):
+        if len(args) < 1:
+            raise ParseError("INDEX(...)", "INDEX requires at least 1 argument")
+        array_node = args[0]
+        if _index_array_is_reference(array_node):
+            node = FunctionCallNode(name="INDEX", args=args)
+            ref = self._index_call_to_range(node)
+            if isinstance(ref, XlError):
+                return ref
             return ref
-        return ref
+
+        # Computed arrays (e.g. `(rng<>0)`) use value-mode INDEX.
+        array = self._resolve_binary_operand(self._evaluate_ast(array_node))
+        if isinstance(array, XlError):
+            return array
+        if len(args) < 2 or isinstance(args[1], EmptyArgNode):
+            row_num: FormulaValue | None = None
+        else:
+            row_num = self._evaluate_ast(args[1])
+            if isinstance(row_num, XlError):
+                return row_num
+        if len(args) < 3 or isinstance(args[2], EmptyArgNode):
+            col_num: FormulaValue | None = None
+        else:
+            col_num = self._evaluate_ast(args[2])
+            if isinstance(col_num, XlError):
+                return col_num
+        return cast(FormulaValue, xl_index(array, row_num, col_num))
 
     def _index_call_to_range(self, node: FunctionCallNode) -> ExcelRange | XlError:
         if len(node.args) < 1:
@@ -781,6 +804,15 @@ class FormulaEvaluator:
         if isinstance(evaluated, ExcelRange):
             return evaluated
         return XlError.VALUE
+
+
+def _index_array_is_reference(node: AstNode) -> bool:
+    """True when INDEX's array arg should keep address geometry (not values)."""
+    if isinstance(node, (RangeNode, WholeColumnNode, WholeRowNode, CellRefNode)):
+        return True
+    if isinstance(node, FunctionCallNode) and node.name.upper() in {"INDEX", "OFFSET"}:
+        return True
+    return False
 
 
 def _range_from_a1(start: str, end: str) -> ExcelRange:

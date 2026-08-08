@@ -99,3 +99,57 @@ def test_index_scalar_out_of_bounds_returns_ref_error() -> None:
     result = assert_codegen_matches_evaluator(graph, ["S!C1"])
     assert result.evaluator_results["S!C1"] == XlError.REF
     assert result.generated_results["S!C1"] == XlError.REF
+
+
+def test_index_row_zero_returns_whole_column_for_sum_and_match() -> None:
+    """INDEX(array, 0) selects the entire column (Excel whole-axis form; #502)."""
+    graph = _make_graph(
+        _make_node("S!A1", None, 5),
+        _make_node("S!A2", None, 0),
+        _make_node("S!A3", None, 7),
+        _make_node("S!B1", "=SUM(INDEX(S!A1:S!A3,0))", None),
+        _make_node("S!B2", "=MATCH(7,INDEX(S!A1:S!A3,0),0)", None),
+    )
+    result = assert_codegen_matches_evaluator(graph, ["S!B1", "S!B2"])
+    assert result.evaluator_results["S!B1"] == 12
+    assert result.generated_results["S!B1"] == 12
+    assert result.evaluator_results["S!B2"] == 3
+    assert result.generated_results["S!B2"] == 3
+
+
+def test_index_zero_axis_selectors_on_2d_array() -> None:
+    """INDEX(rng, 0, k) / INDEX(rng, k, 0) return whole column/row (#502)."""
+    graph = _make_graph(
+        _make_node("S!A1", None, 1),
+        _make_node("S!A2", None, 4),
+        _make_node("S!A3", None, 7),
+        _make_node("S!B1", None, 2),
+        _make_node("S!B2", None, 5),
+        _make_node("S!B3", None, 8),
+        _make_node("S!C1", None, 3),
+        _make_node("S!C2", None, 6),
+        _make_node("S!C3", None, 9),
+        _make_node("S!E1", "=SUM(INDEX(S!A1:S!C3,0,2))", None),
+        _make_node("S!E2", "=SUM(INDEX(S!A1:S!C3,2,0))", None),
+        _make_node("S!E3", "=SUM(INDEX(S!A1:S!C3,0,0))", None),
+    )
+    result = assert_codegen_matches_evaluator(graph, ["S!E1", "S!E2", "S!E3"])
+    assert result.evaluator_results["S!E1"] == 15
+    assert result.generated_results["S!E1"] == 15
+    assert result.evaluator_results["S!E2"] == 15
+    assert result.generated_results["S!E2"] == 15
+    assert result.evaluator_results["S!E3"] == 45
+    assert result.generated_results["S!E3"] == 45
+
+
+def test_index_zero_over_computed_array_for_match_true_idiom() -> None:
+    """MATCH(TRUE, INDEX((rng<>0),0), 0) finds the first non-zero (#502)."""
+    graph = _make_graph(
+        _make_node("S!A1", None, 0),
+        _make_node("S!A2", None, 0),
+        _make_node("S!A3", None, 7),
+        _make_node("S!B1", "=MATCH(TRUE,INDEX((S!A1:S!A3<>0),0),0)", None),
+    )
+    result = assert_codegen_matches_evaluator(graph, ["S!B1"])
+    assert result.evaluator_results["S!B1"] == 3
+    assert result.generated_results["S!B1"] == 3

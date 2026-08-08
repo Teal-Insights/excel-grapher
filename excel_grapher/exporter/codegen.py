@@ -124,6 +124,20 @@ _RETURN_UNPACK_NON_HOISTABLE = frozenset(
 )
 
 
+def _is_literal_zero_ast(node: AstNode) -> bool:
+    """Return True when `node` is the numeric literal 0 (not a boolean)."""
+    if not isinstance(node, NumberNode):
+        return False
+    value = node.value
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value == 0
+    if isinstance(value, float) and value.is_integer():
+        return int(value) == 0
+    return False
+
+
 @dataclass
 class _ReturnUnpackState:
     statements: list[str]
@@ -1888,12 +1902,24 @@ class CodeGenerator:
         col_arg = node.args[2] if len(node.args) > 2 else None
         row_omitted = row_arg is None or isinstance(row_arg, EmptyArgNode)
         col_omitted = col_arg is None or isinstance(col_arg, EmptyArgNode)
+        row_zero = row_arg is not None and _is_literal_zero_ast(row_arg)
+        col_zero = col_arg is not None and _is_literal_zero_ast(col_arg)
 
         if row_omitted and col_omitted:
             return nrows == 1 and ncols == 1
         if row_omitted:
+            if col_zero:
+                return nrows == 1 and ncols == 1
             return nrows == 1
         if col_omitted:
+            if row_zero:
+                return nrows == 1 and ncols == 1
+            return ncols == 1
+        if row_zero and col_zero:
+            return nrows == 1 and ncols == 1
+        if row_zero:
+            return nrows == 1
+        if col_zero:
             return ncols == 1
         return True
 

@@ -211,3 +211,41 @@ def test_index_excel_range_two_dimensional_cell() -> None:
     r = index_excel_range(base, 2, 2)
     assert isinstance(r, ExcelRange)
     assert (r.start_row, r.start_col, r.end_row, r.end_col) == (2, 2, 2, 2)
+
+
+def test_index_excel_range_zero_selects_whole_axis() -> None:
+    """row_num/col_num 0 return the entire column/row/array (#502)."""
+    from excel_grapher.core.addressing import index_excel_range
+
+    base = ExcelRange(sheet="S", start_row=1, start_col=1, end_row=3, end_col=3)
+
+    whole_col = index_excel_range(base, 0, 2)
+    assert isinstance(whole_col, ExcelRange)
+    assert (whole_col.start_row, whole_col.start_col, whole_col.end_row, whole_col.end_col) == (
+        1,
+        2,
+        3,
+        2,
+    )
+
+    whole_row = index_excel_range(base, 2, 0)
+    assert isinstance(whole_row, ExcelRange)
+    assert (whole_row.start_row, whole_row.start_col, whole_row.end_row, whole_row.end_col) == (
+        2,
+        1,
+        2,
+        3,
+    )
+
+    whole = index_excel_range(base, 0, None)
+    assert isinstance(whole, ExcelRange)
+    assert (whole.start_row, whole.start_col, whole.end_row, whole.end_col) == (1, 1, 3, 3)
+
+    both_zero = index_excel_range(base, 0, 0)
+    assert isinstance(both_zero, ExcelRange)
+    assert (both_zero.start_row, both_zero.start_col, both_zero.end_row, both_zero.end_col) == (
+        1,
+        1,
+        3,
+        3,
+    )

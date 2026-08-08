@@ -27,6 +27,9 @@ def index_excel_range(
 
     Mirrors `excel_grapher.runtime.lookup.xl_index` geometry
     so OFFSET(INDEX(...), ...) receives a true cell reference.
+
+    `row_num = 0` / `col_num = 0` select the entire opposite axis (Excel's
+    whole-column / whole-row form); both zeros return the full base range.
     """
     nrows = base.end_row - base.start_row + 1
     ncols = base.end_col - base.start_col + 1
@@ -37,6 +40,11 @@ def index_excel_range(
         r = base.start_row + r0
         c = base.start_col + c0
         return ExcelRange(base.sheet, r, c, r, c)
+
+    def full_base() -> ExcelRange:
+        return ExcelRange(
+            base.sheet, base.start_row, base.start_col, base.end_row, base.end_col
+        )
 
     if row_omitted and col_omitted:
         if nrows == 1 and ncols == 1:
@@ -52,6 +60,8 @@ def index_excel_range(
         if isinstance(cn, XlError):
             return cn
         col = int(cn)
+        if col == 0:
+            return full_base()
         if col < 1 or col > ncols:
             return XlError.REF
         if nrows == 1:
@@ -65,6 +75,8 @@ def index_excel_range(
     row = int(rn)
 
     if col_omitted:
+        if row == 0:
+            return full_base()
         if nrows == 1:
             if row < 1 or row > ncols:
                 return XlError.REF
@@ -82,6 +94,25 @@ def index_excel_range(
     if isinstance(cn, XlError):
         return cn
     col = int(cn)
+
+    # Excel: 0 selects the full opposite axis; (0, 0) returns the whole range.
+    if row == 0 and col == 0:
+        return full_base()
+    if row == 0:
+        if col < 1 or col > ncols:
+            return XlError.REF
+        if nrows == 1:
+            return abs_cell(0, col - 1)
+        c0 = base.start_col + col - 1
+        return ExcelRange(base.sheet, base.start_row, c0, base.end_row, c0)
+    if col == 0:
+        if row < 1 or row > nrows:
+            return XlError.REF
+        if ncols == 1:
+            return abs_cell(row - 1, 0)
+        r0 = base.start_row + row - 1
+        return ExcelRange(base.sheet, r0, base.start_col, r0, base.end_col)
+
     if nrows == 1:
         if row < 1 or row > ncols:
             return XlError.REF
