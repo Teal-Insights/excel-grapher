@@ -736,17 +736,19 @@ class FormulaEvaluator:
         if isinstance(array, XlError):
             return array
         if len(args) < 2 or isinstance(args[1], EmptyArgNode):
-            row_num: FormulaValue | None = None
+            row_num: CellValue | None = None
         else:
-            row_num = self._evaluate_ast(args[1])
-            if isinstance(row_num, XlError):
-                return row_num
+            row_val = self._evaluate_ast(args[1])
+            if isinstance(row_val, XlError):
+                return row_val
+            row_num = cast(CellValue | None, row_val)
         if len(args) < 3 or isinstance(args[2], EmptyArgNode):
-            col_num: FormulaValue | None = None
+            col_num: CellValue | None = None
         else:
-            col_num = self._evaluate_ast(args[2])
-            if isinstance(col_num, XlError):
-                return col_num
+            col_val = self._evaluate_ast(args[2])
+            if isinstance(col_val, XlError):
+                return col_val
+            col_num = cast(CellValue | None, col_val)
         return cast(FormulaValue, xl_index(array, row_num, col_num))
 
     def _index_call_to_range(self, node: FunctionCallNode) -> ExcelRange | XlError:

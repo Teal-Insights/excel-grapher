@@ -42,9 +42,7 @@ def index_excel_range(
         return ExcelRange(base.sheet, r, c, r, c)
 
     def full_base() -> ExcelRange:
-        return ExcelRange(
-            base.sheet, base.start_row, base.start_col, base.end_row, base.end_col
-        )
+        return ExcelRange(base.sheet, base.start_row, base.start_col, base.end_row, base.end_col)
 
     if row_omitted and col_omitted:
         if nrows == 1 and ncols == 1:
