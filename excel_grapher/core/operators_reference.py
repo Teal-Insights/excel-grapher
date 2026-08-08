@@ -1,7 +1,8 @@
 """Reference (per-cell loop) array implementations for Excel binary operators.
 
-These functions preserve the Sprint 0 semantics contract used as the golden
-reference when adding vectorized fast paths in later sprints.
+These functions are the golden reference for vectorized fast paths.
+Comparisons fail-fast on the first embedded error; arithmetic embeds
+per-element errors in the result array (Excel array arithmetic).
 
 Array helpers lazily import NumPy so the default (no-`fast`) install can load
 this module without the accelerator. Scalar helpers stay NumPy-free and are
@@ -141,37 +142,33 @@ def reference_arithmetic_array(
     arr_left: Any,
     arr_right: Any,
 ) -> Any | XlError:
-    """Element-wise arithmetic over broadcast object ndarrays (C-order, fail-fast)."""
+    """Element-wise arithmetic over broadcast object ndarrays.
+
+    Per-element errors (operand sentinels, coercion failures, ``#DIV/0!``,
+    ``#NUM!``) are embedded in the result array rather than collapsing the
+    whole operation to a scalar error (Excel array arithmetic).
+    """
     import numpy as np
 
     result = np.empty(arr_left.shape, dtype=object)
     for indices in np.ndindex(arr_left.shape):
-        ln = to_number(arr_left[indices])
-        rn = to_number(arr_right[indices])
+        left_cell = arr_left[indices]
+        right_cell = arr_right[indices]
+        if isinstance(left_cell, XlError):
+            result[indices] = left_cell
+            continue
+        if isinstance(right_cell, XlError):
+            result[indices] = right_cell
+            continue
+        ln = to_number(left_cell)
+        rn = to_number(right_cell)
         if isinstance(ln, XlError):
-            return ln
+            result[indices] = ln
+            continue
         if isinstance(rn, XlError):
-            return rn
-        if op == "+":
-            result[indices] = ln + rn
-        elif op == "-":
-            result[indices] = ln - rn
-        elif op == "*":
-            result[indices] = ln * rn
-        elif op == "/":
-            if rn == 0:
-                return XlError.DIV
-            result[indices] = ln / rn
-        elif op == "^":
-            try:
-                value = ln**rn
-            except (ValueError, OverflowError):
-                return XlError.NUM
-            if isinstance(value, complex):
-                return XlError.NUM
-            result[indices] = value
-        else:
-            raise ValueError(f"Unknown arithmetic operator: {op}")
+            result[indices] = rn
+            continue
+        result[indices] = apply_arithmetic(op, ln, rn)
     return result
 
 
