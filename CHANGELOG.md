@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v5.1.1 (2026-08-08)
+
+### Bug Fixes
+
+- **grapher**: Infer MATCH extent for INDEX((range<>0),0)
+  ([#507](https://github.com/Teal-Insights/excel-grapher/pull/507),
+  [`d18e838`](https://github.com/Teal-Insights/excel-grapher/commit/d18e8389cd7956f9824261dc08aa6830db24d1a3))
+
+- **grapher**: MATCH extent for INDEX((range<>0),0) first-nonzero pattern (#506)
+  ([#507](https://github.com/Teal-Insights/excel-grapher/pull/507),
+  [`d18e838`](https://github.com/Teal-Insights/excel-grapher/commit/d18e8389cd7956f9824261dc08aa6830db24d1a3))
+
+- **tests**: Use constant Literal forms in #506 MCVE
+  ([#507](https://github.com/Teal-Insights/excel-grapher/pull/507),
+  [`d18e838`](https://github.com/Teal-Insights/excel-grapher/commit/d18e8389cd7956f9824261dc08aa6830db24d1a3))
+
+
 ## v5.1.0 (2026-08-07)
 
 ### Features
