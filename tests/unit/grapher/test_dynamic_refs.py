@@ -1574,10 +1574,19 @@ def test_index_match_first_nonzero_boolean_projection_builds_graph(tmp_path: Pat
 
     unit = Annotated[float, RealBetween(0, 1)]
     constraints: dict[str, object] = {
-        **{f"B!M{r}": Literal[r - 10] for r in range(11, 15)},
-        **{f"B!I{r}": Literal[r - 10] for r in range(11, 14)},
-        **{f"B!K{r}": unit for r in range(11, 14)},
-        **{f"B!N{r}": unit for r in range(11, 14)},
+        "B!M11": Literal[1],
+        "B!M12": Literal[2],
+        "B!M13": Literal[3],
+        "B!M14": Literal[4],
+        "B!I11": Literal[1],
+        "B!I12": Literal[2],
+        "B!I13": Literal[3],
+        "B!K11": unit,
+        "B!K12": unit,
+        "B!K13": unit,
+        "B!N11": unit,
+        "B!N12": unit,
+        "B!N13": unit,
         "B!N14": Literal[None],
     }
     config = DynamicRefConfig.from_constraints(constraints, {})
