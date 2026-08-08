@@ -48,6 +48,7 @@ from .export import (
     write_web_viz_html,
 )
 from .graph import CycleError, CycleReport, DependencyGraph, GraphReadView, NodeHook
+from .graph_pickle import dump_graph, load_graph
 from .guard import And, Compare, GuardExpr, Literal, Not, Or
 from .guard import CellRef as GuardCellRef
 from .guard import RangeRef as GuardRangeRef
@@ -92,6 +93,8 @@ __all__ = [
     "warm_preparsed_formulas",
     "DependencyCause",
     "DependencyGraph",
+    "dump_graph",
+    "load_graph",
     "GraphReadView",
     "EdgeProvenance",
     "DynamicRefConfig",

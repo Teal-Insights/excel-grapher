@@ -5,7 +5,7 @@ import heapq
 import warnings
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, SupportsIndex, runtime_checkable
 
 if TYPE_CHECKING:
     from .compression import IdentityTransitCompressionRecord, OptimalCompressionRecord
@@ -19,6 +19,7 @@ from excel_grapher.core.address_keys import (
 from excel_grapher.core.formula_ast import AstNode
 
 from .dependency_provenance import DependencyCause, EdgeProvenance, merge_edge_provenance
+from .graph_pickle import dumps_graph_blob, loads_graph_blob
 from .guard import And, CellRef, Compare, GuardConstraints, GuardExpr, Not, Or, or_guard
 from .node import Node, NodeKey, NodeView, copy_metadata, member_keys, node_to_view
 
@@ -155,6 +156,16 @@ class DependencyGraph:
         """Return a deep copy of this graph (node hooks are not copied)."""
         cloned = copy.deepcopy(self)
         cloned._hooks = []
+        return cloned
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> DependencyGraph:
+        """Clone without going through the pickle blob reduce path."""
+        existing = memo.get(id(self))
+        if existing is not None:
+            return existing
+        cloned = self._copy_for_projection()
+        memo[id(self)] = cloned
+        cloned._hooks = copy.deepcopy(self._hooks, memo)
         return cloned
 
     def _copy_for_projection(self) -> DependencyGraph:
@@ -869,7 +880,13 @@ class DependencyGraph:
 
     # ---- serialization ------------------------------------------------------
 
+    def __reduce_ex__(self, protocol: SupportsIndex, /) -> str | tuple[Any, ...]:
+        """Pickle via a multipart blob so unpickle peak stays near final size."""
+        del protocol
+        return (loads_graph_blob, (dumps_graph_blob(self),))
+
     def __getstate__(self) -> dict[str, Any]:
+        """Legacy compact state dict (kept for direct callers and old tests)."""
         keys_sorted = _collect_graph_keys(self)
         idx = {k: i for i, k in enumerate(keys_sorted)}
         return {
@@ -894,41 +911,58 @@ class DependencyGraph:
         }
 
     def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore from a legacy v3 state dict, clearing intermediates as we go."""
         if not isinstance(state, dict) or state.get("v") != _PICKLE_VERSION:
             raise TypeError(
                 "Unsupported or corrupted DependencyGraph pickle; rebuild the graph cache."
             )
-        keys = state["keys"]
+        keys = state.pop("keys")
         key_index = {s: i for i, s in enumerate(keys)}
 
-        def i2k(i: int) -> NodeKey:
-            return keys[i]
+        nodes_raw = state.pop("_nodes")
+        self._nodes = {keys[i]: n for i, n in nodes_raw.items()}
+        nodes_raw.clear()
 
-        self._nodes = {i2k(i): n for i, n in state["_nodes"].items()}
-        self._edges = {i2k(i): {i2k(d) for d in ds} for i, ds in state["_edges"].items()}
-        self._reverse_edges = {
-            i2k(i): {i2k(d) for d in ds} for i, ds in state["_reverse_edges"].items()
-        }
+        edges_raw = state.pop("_edges")
+        self._edges = {}
+        for i, ds in edges_raw.items():
+            self._edges[keys[i]] = {keys[d] for d in ds}
+            ds.clear()
+        edges_raw.clear()
+
+        reverse_raw = state.pop("_reverse_edges")
+        self._reverse_edges = {}
+        for i, ds in reverse_raw.items():
+            self._reverse_edges[keys[i]] = {keys[d] for d in ds}
+            ds.clear()
+        reverse_raw.clear()
+
+        guards_raw = state.pop("_guards")
         self._guards = {
-            (i2k(a), i2k(b)): _intern_guard_cell_refs(g, keys, key_index=key_index)
-            for a, b, g in state["_guards"]
+            (keys[a], keys[b]): _intern_guard_cell_refs(g, keys, key_index=key_index)
+            for a, b, g in guards_raw
         }
-        self._edge_provenance = {(i2k(a), i2k(b)): p for a, b, p in state["_edge_provenance"]}
-        self._hooks = state["_hooks"]
-        lc = state["leaf_classification"]
+        guards_raw.clear()
+
+        provenance_raw = state.pop("_edge_provenance")
+        self._edge_provenance = {(keys[a], keys[b]): p for a, b, p in provenance_raw}
+        provenance_raw.clear()
+
+        self._hooks = state.pop("_hooks")
+        lc = state.pop("leaf_classification")
         if lc:
             self.leaf_classification = {keys[key_index[k]]: v for k, v in lc.items()}
         else:
             self.leaf_classification = None
-        sheet_order = state.get("sheet_order")
-        if sheet_order:
-            self.sheet_order = list(sheet_order)
-        else:
-            self.sheet_order = None
-        nr = state.get("named_ranges")
+        sheet_order = state.pop("sheet_order", None)
+        self.sheet_order = list(sheet_order) if sheet_order else None
+        nr = state.pop("named_ranges", None)
         self.named_ranges = dict(nr) if nr else None
-        nrr = state.get("named_range_ranges")
+        nrr = state.pop("named_range_ranges", None)
         self.named_range_ranges = dict(nrr) if nrr else None
+        self.sheet_bounds = None
+        self.preparsed_formulas = None
+        state.clear()
         self._rebuild_occupancy()
 
     def _rebuild_occupancy(self) -> None:
