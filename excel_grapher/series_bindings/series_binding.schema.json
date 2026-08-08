@@ -22,9 +22,9 @@
     },
     "series": {
       "type": "array",
-      "minItems": 1,
+      "minItems": 0,
       "items": { "$ref": "#/$defs/SeriesBinding" },
-      "description": "One binding per generated setter (MVP: one logical indicator series each)."
+      "description": "One binding per generated setter (MVP: one logical indicator series each). Empty lists are allowed for draft/placeholder shards."
     }
   },
   "$defs": {
@@ -111,7 +111,7 @@
         "id": { "type": "string" },
         "concepts": {
           "type": "array",
-          "minItems": 1,
+          "minItems": 0,
           "items": { "$ref": "#/$defs/ConceptDefinition" }
         }
       }

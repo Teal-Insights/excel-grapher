@@ -82,6 +82,182 @@ def test_merge_rejects_workbook_mismatch() -> None:
         merge_series_binding_documents([a, b])
 
 
+def test_merge_skips_empty_series_shards() -> None:
+    empty = {
+        "schema_version": "1.10.0",
+        "workbook": "workbook.xlsx",
+        "concept_scheme": {"id": "inputs_placeholder", "concepts": []},
+        "series": [],
+    }
+    populated = parse_bindings_file(FIXTURES / "shard_inputs.yaml")
+    populated = {
+        **populated,
+        "schema_version": "1.10.0",
+        "workbook": "workbook.xlsx",
+    }
+    merged = merge_series_binding_documents([empty, populated])
+    assert [s["id"] for s in merged["series"]] == ["row_a"]
+
+
+def test_load_directory_of_empty_series_placeholders(tmp_path: Path) -> None:
+    root = tmp_path / "bindings"
+    root.mkdir()
+    for name, scheme_id in (
+        ("inputs.bindings.yaml", "inputs_placeholder"),
+        ("outputs.bindings.yaml", "outputs_placeholder"),
+        ("internals.bindings.yaml", "internals_placeholder"),
+    ):
+        (root / name).write_text(
+            f"""schema_version: 1.10.0
+workbook: workbook.xlsx
+concept_scheme:
+  id: {scheme_id}
+  concepts: []
+series: []
+""",
+            encoding="utf-8",
+        )
+
+    loaded = load_series_bindings(root)
+    assert loaded["schema_version"] == "1.10.0"
+    assert loaded["workbook"] == "workbook.xlsx"
+    assert loaded["series"] == []
+
+
+def test_merge_unions_concept_scheme_across_shards() -> None:
+    left = {
+        "schema_version": "1.10.0",
+        "workbook": "workbook.xlsx",
+        "concept_scheme": {
+            "id": "inputs_scheme",
+            "concepts": [
+                {"id": "PARAMETER", "dtype": "string"},
+                {"id": "TIME_PERIOD", "dtype": "int"},
+            ],
+        },
+        "series": [
+            {
+                "id": "param_series",
+                "sheet": "Inputs",
+                "data_range": "Inputs!B2",
+                "layout": "scalar",
+                "input": {"setter": {"name": "set_param_series"}},
+                "structure": {
+                    "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
+                    "dimensions": [
+                        {
+                            "concept": "PARAMETER",
+                            "role": "key",
+                            "scope": "cell",
+                            "bind": {"kind": "constant", "value": "x"},
+                        }
+                    ],
+                },
+                "key": ["PARAMETER"],
+            }
+        ],
+    }
+    right = {
+        "schema_version": "1.10.0",
+        "workbook": "workbook.xlsx",
+        "concept_scheme": {
+            "id": "outputs_scheme",
+            "concepts": [
+                {"id": "INDICATOR", "dtype": "string"},
+                {"id": "TIME_PERIOD", "dtype": "int"},
+            ],
+        },
+        "series": [
+            {
+                "id": "indicator_series",
+                "sheet": "Outputs",
+                "data_range": "Outputs!B2",
+                "layout": "scalar",
+                "output": {"compute": {"name": "compute_indicator_series"}},
+                "structure": {
+                    "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
+                    "dimensions": [
+                        {
+                            "concept": "INDICATOR",
+                            "role": "key",
+                            "scope": "cell",
+                            "bind": {"kind": "constant", "value": "y"},
+                        }
+                    ],
+                },
+                "key": ["INDICATOR"],
+            }
+        ],
+    }
+
+    merged = merge_series_binding_documents([left, right])
+    concepts = merged["concept_scheme"]["concepts"]
+    assert [c["id"] for c in concepts] == ["PARAMETER", "TIME_PERIOD", "INDICATOR"]
+    assert merged["concept_scheme"]["id"] == "inputs_scheme"
+    assert {s["id"] for s in merged["series"]} == {"param_series", "indicator_series"}
+
+
+def test_merge_rejects_conflicting_concept_definitions() -> None:
+    left = {
+        "schema_version": "1.10.0",
+        "concept_scheme": {
+            "id": "scheme_a",
+            "concepts": [{"id": "TIME_PERIOD", "dtype": "int"}],
+        },
+        "series": [
+            {
+                "id": "a",
+                "sheet": "S",
+                "data_range": "S!A1",
+                "layout": "scalar",
+                "input": {"setter": {"name": "set_a"}},
+                "structure": {
+                    "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
+                    "dimensions": [
+                        {
+                            "concept": "TIME_PERIOD",
+                            "role": "key",
+                            "scope": "cell",
+                            "bind": {"kind": "constant", "value": 1},
+                        }
+                    ],
+                },
+                "key": ["TIME_PERIOD"],
+            }
+        ],
+    }
+    right = {
+        "schema_version": "1.10.0",
+        "concept_scheme": {
+            "id": "scheme_b",
+            "concepts": [{"id": "TIME_PERIOD", "dtype": "datetime"}],
+        },
+        "series": [
+            {
+                "id": "b",
+                "sheet": "S",
+                "data_range": "S!B1",
+                "layout": "scalar",
+                "input": {"setter": {"name": "set_b"}},
+                "structure": {
+                    "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
+                    "dimensions": [
+                        {
+                            "concept": "TIME_PERIOD",
+                            "role": "key",
+                            "scope": "cell",
+                            "bind": {"kind": "constant", "value": 2},
+                        }
+                    ],
+                },
+                "key": ["TIME_PERIOD"],
+            }
+        ],
+    }
+    with pytest.raises(SeriesBindingsLoadError, match="concept_scheme"):
+        merge_series_binding_documents([left, right])
+
+
 def test_canonical_hash_stable_under_key_order() -> None:
     doc_a = {
         "schema_version": "1.0.0",

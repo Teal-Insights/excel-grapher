@@ -57,8 +57,70 @@ def _binding_files_in_directory(directory: Path) -> list[Path]:
     return sorted(set(files_found), key=lambda p: p.name.lower())
 
 
+def _merge_concept_schemes(
+    existing: dict[str, Any] | None,
+    incoming: Any,
+    *,
+    shard_index: int,
+) -> dict[str, Any]:
+    """Union `concept_scheme` concepts by id, keeping the first scheme's metadata."""
+    if not isinstance(incoming, dict):
+        raise SeriesBindingsLoadError(f"Document {shard_index} concept_scheme must be a mapping")
+    incoming_concepts = incoming.get("concepts")
+    if not isinstance(incoming_concepts, list):
+        raise SeriesBindingsLoadError(
+            f"Document {shard_index} concept_scheme.concepts must be a list"
+        )
+
+    if existing is None:
+        merged_scheme = {key: value for key, value in incoming.items() if key != "concepts"}
+        merged_scheme["concepts"] = [concept for concept in incoming_concepts]
+        return merged_scheme
+
+    concepts_by_id: dict[str, Any] = {}
+    concept_order: list[str] = []
+    for concept in existing.get("concepts") or []:
+        if not isinstance(concept, dict):
+            raise SeriesBindingsLoadError("concept_scheme.concepts entries must be mappings")
+        concept_id = concept.get("id")
+        if not isinstance(concept_id, str):
+            raise SeriesBindingsLoadError("Each concept requires a string id")
+        if concept_id not in concepts_by_id:
+            concepts_by_id[concept_id] = concept
+            concept_order.append(concept_id)
+
+    for concept in incoming_concepts:
+        if not isinstance(concept, dict):
+            raise SeriesBindingsLoadError(
+                f"concept_scheme.concepts entries must be mappings in shard {shard_index}"
+            )
+        concept_id = concept.get("id")
+        if not isinstance(concept_id, str):
+            raise SeriesBindingsLoadError(
+                f"Each concept requires a string id (shard {shard_index})"
+            )
+        if concept_id in concepts_by_id:
+            if concepts_by_id[concept_id] != concept:
+                raise SeriesBindingsLoadError(
+                    f"concept_scheme concept {concept_id!r} conflict at shard {shard_index}"
+                )
+            continue
+        concepts_by_id[concept_id] = concept
+        concept_order.append(concept_id)
+
+    return {
+        **existing,
+        "concepts": [concepts_by_id[concept_id] for concept_id in concept_order],
+    }
+
+
 def merge_series_binding_documents(documents: list[dict[str, Any]]) -> dict[str, Any]:
-    """Merge partial manifests (e.g. one per sheet) into one workbook document."""
+    """Merge partial manifests (e.g. one per sheet) into one workbook document.
+
+    Shards with an empty `series` list are treated as no-ops for series merging
+    but still contribute `schema_version`, `workbook`, and `concept_scheme`.
+    Concept schemes are unioned by concept id; conflicting definitions raise.
+    """
     if not documents:
         raise SeriesBindingsLoadError("No binding documents to merge")
 
@@ -94,16 +156,17 @@ def merge_series_binding_documents(documents: list[dict[str, Any]]) -> dict[str,
 
         doc_concepts = doc.get("concept_scheme")
         if doc_concepts is not None:
-            if concept_scheme is None:
-                concept_scheme = doc_concepts
-            elif doc_concepts != concept_scheme:
-                raise SeriesBindingsLoadError(
-                    f"concept_scheme mismatch across shards (first difference at shard {index})"
-                )
+            concept_scheme = _merge_concept_schemes(
+                concept_scheme,
+                doc_concepts,
+                shard_index=index,
+            )
 
         series = doc.get("series")
-        if not isinstance(series, list) or not series:
-            raise SeriesBindingsLoadError(f"Document {index} must contain a non-empty series list")
+        if not isinstance(series, list):
+            raise SeriesBindingsLoadError(f"Document {index} must contain a series list")
+        if not series:
+            continue
         seen_ids_in_document: set[str] = set()
 
         for entry in series:
