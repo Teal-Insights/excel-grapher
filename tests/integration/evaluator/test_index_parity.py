@@ -134,3 +134,41 @@ def test_index_computed_array_row_zero_match_parity() -> None:
     assert result.generated_results["S!B2"] == 1
     assert result.evaluator_results["S!B3"] == 2
     assert result.generated_results["S!B3"] == 2
+
+
+def test_index_zero_axis_selectors_on_2d_array() -> None:
+    """INDEX(rng, 0, k) / INDEX(rng, k, 0) return whole column/row (#502)."""
+    graph = _make_graph(
+        _make_node("S!A1", None, 1),
+        _make_node("S!A2", None, 4),
+        _make_node("S!A3", None, 7),
+        _make_node("S!B1", None, 2),
+        _make_node("S!B2", None, 5),
+        _make_node("S!B3", None, 8),
+        _make_node("S!C1", None, 3),
+        _make_node("S!C2", None, 6),
+        _make_node("S!C3", None, 9),
+        _make_node("S!E1", "=SUM(INDEX(S!A1:S!C3,0,2))", None),
+        _make_node("S!E2", "=SUM(INDEX(S!A1:S!C3,2,0))", None),
+        _make_node("S!E3", "=SUM(INDEX(S!A1:S!C3,0,0))", None),
+    )
+    result = assert_codegen_matches_evaluator(graph, ["S!E1", "S!E2", "S!E3"])
+    assert result.evaluator_results["S!E1"] == 15
+    assert result.generated_results["S!E1"] == 15
+    assert result.evaluator_results["S!E2"] == 15
+    assert result.generated_results["S!E2"] == 15
+    assert result.evaluator_results["S!E3"] == 45
+    assert result.generated_results["S!E3"] == 45
+
+
+def test_index_zero_over_computed_array_finds_later_nonzero() -> None:
+    """MATCH(TRUE, INDEX((rng<>0),0), 0) finds the first non-zero past leading zeros."""
+    graph = _make_graph(
+        _make_node("S!A1", None, 0),
+        _make_node("S!A2", None, 0),
+        _make_node("S!A3", None, 7),
+        _make_node("S!B1", "=MATCH(TRUE,INDEX((S!A1:S!A3<>0),0),0)", None),
+    )
+    result = assert_codegen_matches_evaluator(graph, ["S!B1"])
+    assert result.evaluator_results["S!B1"] == 3
+    assert result.generated_results["S!B1"] == 3
