@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v5.1.3 (2026-08-08)
+
+### Bug Fixes
+
+- **core**: INDEX row/col 0 returns whole axis
+  ([#509](https://github.com/Teal-Insights/excel-grapher/pull/509),
+  [`1f16849`](https://github.com/Teal-Insights/excel-grapher/commit/1f16849fdc8a1f1b317f42671648c67a9e90edf5))
+
+- **core**: INDEX(array, 0) returns whole column/row (#502)
+  ([#509](https://github.com/Teal-Insights/excel-grapher/pull/509),
+  [`1f16849`](https://github.com/Teal-Insights/excel-grapher/commit/1f16849fdc8a1f1b317f42671648c67a9e90edf5))
+
+- **evaluator**: Satisfy ty on value-mode INDEX args
+  ([#509](https://github.com/Teal-Insights/excel-grapher/pull/509),
+  [`1f16849`](https://github.com/Teal-Insights/excel-grapher/commit/1f16849fdc8a1f1b317f42671648c67a9e90edf5))
+
+### Code Style
+
+- **evaluator**: Inline INDEX reference predicate
+  ([#509](https://github.com/Teal-Insights/excel-grapher/pull/509),
+  [`1f16849`](https://github.com/Teal-Insights/excel-grapher/commit/1f16849fdc8a1f1b317f42671648c67a9e90edf5))
+
+
 ## v5.1.2 (2026-08-08)
 
 ### Bug Fixes
