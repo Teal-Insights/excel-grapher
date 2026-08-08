@@ -34,6 +34,7 @@ from excel_grapher.runtime.cache import (
     xl_iterative_compute,
 )
 from excel_grapher.runtime.info import xl_isblank
+from excel_grapher.runtime.lookup import xl_index
 
 from .ast_cache import DEFAULT_AST_CACHE_MAXSIZE, AstCache, AstCacheInfo
 from .errors import MissingNormalizedFormulaError, ParseError
@@ -720,40 +721,83 @@ class FormulaEvaluator:
         return xl_columns(ref)
 
     def _eval_index(self, args: list[AstNode]) -> FormulaValue:
-        node = FunctionCallNode(name="INDEX", args=args)
-        ref = self._index_call_to_range(node)
-        if isinstance(ref, XlError):
-            return ref
-        return ref
+        """Evaluate INDEX for reference bases and computed value arrays.
+
+        Literal ranges / nested INDEX/OFFSET keep the reference path
+        (`ExcelRange` geometry). Computed arrays (e.g. `A1:A3<>0`) use shared
+        `xl_index` / `index_cells` so evaluator and export agree (#503).
+        """
+        if len(args) < 1:
+            return XlError.VALUE
+        array_node = args[0]
+        row_num, col_num, arg_err = self._index_row_col_args(args)
+        if arg_err is not None:
+            return arg_err
+
+        if self._index_array_is_reference(array_node):
+            base = self._index_base_range(array_node)
+            if isinstance(base, ExcelRange):
+                return index_excel_range(base, row_num, col_num)
+            if isinstance(base, XlError) and base is not XlError.VALUE:
+                return base
+            # Nested INDEX may yield a computed array rather than geometry; fall
+            # through to the shared value-INDEX path.
+
+        array = self._evaluate_ast(array_node)
+        if isinstance(array, XlError):
+            return array
+        if isinstance(array, ExcelRange):
+            return index_excel_range(array, row_num, col_num)
+        return cast(
+            FormulaValue,
+            xl_index(array, cast(CellValue, row_num), cast(CellValue, col_num)),
+        )
+
+    @staticmethod
+    def _index_array_is_reference(node: AstNode) -> bool:
+        """True when INDEX's array arg is a reference expression, not a value array."""
+        if isinstance(node, (RangeNode, WholeColumnNode, WholeRowNode, CellRefNode)):
+            return True
+        if isinstance(node, FunctionCallNode):
+            return node.name.upper() in {"INDEX", "OFFSET", "INDIRECT"}
+        return False
+
+    def _index_row_col_args(
+        self, args: list[AstNode]
+    ) -> tuple[FormulaValue | None, FormulaValue | None, XlError | None]:
+        if len(args) < 2 or isinstance(args[1], EmptyArgNode):
+            row_num: FormulaValue | None = None
+        else:
+            row_num = self._evaluate_ast(args[1])
+            if isinstance(row_num, XlError):
+                return None, None, row_num
+        if len(args) < 3 or isinstance(args[2], EmptyArgNode):
+            col_num: FormulaValue | None = None
+        else:
+            col_num = self._evaluate_ast(args[2])
+            if isinstance(col_num, XlError):
+                return None, None, col_num
+        return row_num, col_num, None
+
+    def _index_base_range(self, array_node: AstNode) -> ExcelRange | XlError:
+        """Resolve INDEX's array argument to `ExcelRange` geometry when possible."""
+        if isinstance(array_node, WholeColumnNode):
+            return self._resolve_whole_column(array_node.sheet, array_node.column)
+        if isinstance(array_node, WholeRowNode):
+            return self._resolve_whole_row(array_node.sheet, array_node.row)
+        if isinstance(array_node, RangeNode):
+            return _range_from_a1(array_node.start, array_node.end)
+        return self._range_from_ref_node(array_node)
 
     def _index_call_to_range(self, node: FunctionCallNode) -> ExcelRange | XlError:
         if len(node.args) < 1:
             return XlError.VALUE
-        array_node = node.args[0]
-        if isinstance(array_node, WholeColumnNode):
-            base = self._resolve_whole_column(array_node.sheet, array_node.column)
-        elif isinstance(array_node, WholeRowNode):
-            base = self._resolve_whole_row(array_node.sheet, array_node.row)
-        elif isinstance(array_node, RangeNode):
-            base = _range_from_a1(array_node.start, array_node.end)
-        else:
-            inner = self._range_from_ref_node(array_node)
-            if not isinstance(inner, ExcelRange):
-                return XlError.VALUE
-            base = inner
-
-        if len(node.args) < 2 or isinstance(node.args[1], EmptyArgNode):
-            row_num = None
-        else:
-            row_num = self._evaluate_ast(node.args[1])
-            if isinstance(row_num, XlError):
-                return row_num
-        if len(node.args) < 3 or isinstance(node.args[2], EmptyArgNode):
-            col_num = None
-        else:
-            col_num = self._evaluate_ast(node.args[2])
-            if isinstance(col_num, XlError):
-                return col_num
+        base = self._index_base_range(node.args[0])
+        if isinstance(base, XlError):
+            return base
+        row_num, col_num, arg_err = self._index_row_col_args(node.args)
+        if arg_err is not None:
+            return arg_err
         return index_excel_range(base, row_num, col_num)
 
     def _range_from_ref_node(self, node: AstNode) -> ExcelRange | XlError:

@@ -1878,6 +1878,11 @@ class CodeGenerator:
             return (r2 - r1 + 1, c2 - c1 + 1)
         return (1, 1)
 
+    @staticmethod
+    def _index_arg_is_whole_selector(arg: AstNode | None) -> bool:
+        """True when *arg* is the literal `0` (Excel whole row/column selector)."""
+        return isinstance(arg, NumberNode) and arg.value == 0
+
     def _index_range_result_is_scalar(self, range_node: RangeNode, node: FunctionCallNode) -> bool:
         """True when INDEX(range, ...) resolves to a single cell (not a row/column slice)."""
         _, r1, c1, r2, c2 = self._range_coords(range_node.start, range_node.end)
@@ -1892,9 +1897,15 @@ class CodeGenerator:
         if row_omitted and col_omitted:
             return nrows == 1 and ncols == 1
         if row_omitted:
+            if self._index_arg_is_whole_selector(col_arg):
+                return nrows == 1 and ncols == 1
             return nrows == 1
         if col_omitted:
+            if self._index_arg_is_whole_selector(row_arg):
+                return nrows == 1 and ncols == 1
             return ncols == 1
+        if self._index_arg_is_whole_selector(row_arg) or self._index_arg_is_whole_selector(col_arg):
+            return nrows == 1 and ncols == 1
         return True
 
     def _emit_range_ref_tuple(self, range_node: RangeNode) -> str:

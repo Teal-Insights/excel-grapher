@@ -153,3 +153,9 @@ class Grid:
         if self._range is not None:
             return self._range.column(col0 + 1)
         return [[row[col0]] for row in self._nested_rows()]
+
+    def as_array(self) -> Range | list[list[CellValue]]:
+        """Return the full grid as a lazy `Range` or nested-list copy."""
+        if self._range is not None:
+            return self._range
+        return [list(row) for row in self._nested_rows()]

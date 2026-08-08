@@ -35,6 +35,9 @@ def index_cells(
 
     Returns a scalar cell value, or a row/column slice (`Range` or nested list)
     when only one of `row_num` / `col_num` selects a vector.
+
+    A `row_num` or `col_num` of `0` selects the entire column or row (Excel
+    whole-vector form). Both `0` returns the full array.
     """
     grid = Grid.wrap(array)
     if grid is None:
@@ -60,6 +63,8 @@ def index_cells(
         if isinstance(cn, XlError):
             return cn
         col = int(cn)
+        if col == 0:
+            return grid.as_array()
         if col < 1 or col > ncols:
             return XlError.REF
         if nrows == 1:
@@ -75,6 +80,8 @@ def index_cells(
     row = int(rn)
 
     if col_omitted:
+        if row == 0:
+            return grid.as_array()
         if nrows == 1:
             if row < 1 or row > ncols:
                 return XlError.REF
@@ -94,6 +101,20 @@ def index_cells(
     if isinstance(cn, XlError):
         return cn
     col = int(cn)
+    if row == 0 and col == 0:
+        return grid.as_array()
+    if row == 0:
+        if col < 1 or col > ncols:
+            return XlError.REF
+        if nrows == 1:
+            return grid.at(0, col - 1)
+        return grid.col_slice(col - 1)
+    if col == 0:
+        if row < 1 or row > nrows:
+            return XlError.REF
+        if ncols == 1:
+            return grid.at(row - 1, 0)
+        return grid.row_slice(row - 1)
     if nrows == 1:
         if row < 1 or row > ncols:
             return XlError.REF
