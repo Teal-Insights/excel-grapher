@@ -99,3 +99,38 @@ def test_index_scalar_out_of_bounds_returns_ref_error() -> None:
     result = assert_codegen_matches_evaluator(graph, ["S!C1"])
     assert result.evaluator_results["S!C1"] == XlError.REF
     assert result.generated_results["S!C1"] == XlError.REF
+
+
+def test_index_row_zero_whole_column_match_and_sum() -> None:
+    """INDEX(range, 0) returns the whole column (issue #502)."""
+    graph = _make_graph(
+        _make_node("S!A1", None, 5),
+        _make_node("S!A2", None, 0),
+        _make_node("S!A3", None, 7),
+        _make_node("S!B1", "=MATCH(7, INDEX(S!A1:S!A3, 0), 0)", None),
+        _make_node("S!B2", "=SUM(INDEX(S!A1:S!A3, 0))", None),
+    )
+    result = assert_codegen_matches_evaluator(graph, ["S!B1", "S!B2"])
+    assert result.evaluator_results["S!B1"] == 3
+    assert result.generated_results["S!B1"] == 3
+    assert result.evaluator_results["S!B2"] == 12
+    assert result.generated_results["S!B2"] == 12
+
+
+def test_index_computed_array_row_zero_match_parity() -> None:
+    """INDEX((rng<>0), 0) must agree across evaluator and export (issue #503)."""
+    graph = _make_graph(
+        _make_node("S!A1", None, 5),
+        _make_node("S!A2", None, 0),
+        _make_node("S!A3", None, 7),
+        _make_node("S!B1", "=MATCH(TRUE, (S!A1:S!A3<>0), 0)", None),
+        _make_node("S!B2", "=MATCH(TRUE, INDEX((S!A1:S!A3<>0), 0), 0)", None),
+        _make_node("S!B3", "=SUM(INDEX((S!A1:S!A3<>0)*1, 0))", None),
+    )
+    result = assert_codegen_matches_evaluator(graph, ["S!B1", "S!B2", "S!B3"])
+    assert result.evaluator_results["S!B1"] == 1
+    assert result.generated_results["S!B1"] == 1
+    assert result.evaluator_results["S!B2"] == 1
+    assert result.generated_results["S!B2"] == 1
+    assert result.evaluator_results["S!B3"] == 2
+    assert result.generated_results["S!B3"] == 2
