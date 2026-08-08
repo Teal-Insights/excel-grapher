@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v5.1.4 (2026-08-08)
+
+### Bug Fixes
+
+- **series-bindings**: Allow empty shards and union concept schemes
+  ([#512](https://github.com/Teal-Insights/excel-grapher/pull/512),
+  [`cf50a1d`](https://github.com/Teal-Insights/excel-grapher/commit/cf50a1d160261452f0f821e1e5e07e6740460cb9))
+
+
 ## v5.1.3 (2026-08-08)
 
 ### Bug Fixes
