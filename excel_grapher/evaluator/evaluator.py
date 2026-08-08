@@ -810,9 +810,7 @@ def _index_array_is_reference(node: AstNode) -> bool:
     """True when INDEX's array arg should keep address geometry (not values)."""
     if isinstance(node, (RangeNode, WholeColumnNode, WholeRowNode, CellRefNode)):
         return True
-    if isinstance(node, FunctionCallNode) and node.name.upper() in {"INDEX", "OFFSET"}:
-        return True
-    return False
+    return isinstance(node, FunctionCallNode) and node.name.upper() in {"INDEX", "OFFSET"}
 
 
 def _range_from_a1(start: str, end: str) -> ExcelRange:
