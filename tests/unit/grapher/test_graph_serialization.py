@@ -10,6 +10,7 @@ Covers:
 from __future__ import annotations
 
 import pickle
+from pathlib import Path
 
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.guard import CellRef, Compare, Literal
@@ -232,3 +233,116 @@ def test_deserialized_nodekeys_share_identity() -> None:
                 assert id(dep) == node_key_ids[dep], (
                     f"Edge dep {dep!r} is a different object than _nodes key"
                 )
+
+
+# -------------------------------------------------------------------
+# Unpickle peak memory (issue #513)
+# -------------------------------------------------------------------
+
+
+def _synthetic_graph_for_memory(n: int = 10_000) -> DependencyGraph:
+    """Build a mid-size synthetic graph for peak-memory assertions."""
+    from excel_grapher.grapher.node import make_cell_node
+
+    graph = DependencyGraph()
+    keys: list[str] = []
+    for i in range(n):
+        col = chr(ord("A") + (i % 26))
+        row = (i // 26) + 1
+        node = make_cell_node(sheet="S", column=col, row=row, value=i, is_leaf=True)
+        graph.add_node(node)
+        keys.append(node.address)
+    for i in range(1, n):
+        if i % 3 == 0:
+            graph.add_edge(keys[i], keys[i - 1])
+    return graph
+
+
+def test_unpickle_peak_memory_near_final_resident_size() -> None:
+    """Unpickling must not peak near 2x final size (issue #513).
+
+    Legacy `__getstate__` kept indexed adjacency in the pickle memo while
+    `__setstate__` rebuilt string-keyed maps (~2.4x). The multipart reduce
+    path plus `load_graph` keep peak near final resident size.
+    """
+    import gc
+    import tempfile
+    import tracemalloc
+    from pathlib import Path
+
+    from excel_grapher.grapher.graph_pickle import dump_graph, load_graph
+
+    graph = _synthetic_graph_for_memory()
+    payload = pickle.dumps(graph, protocol=pickle.HIGHEST_PROTOCOL)
+    expected_nodes = len(graph)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "graph.pkl.gz"
+        dump_graph(graph, path)
+        del graph
+        gc.collect()
+
+        tracemalloc.start()
+        try:
+            restored_pickle: DependencyGraph = pickle.loads(payload)
+            pickle_current, pickle_peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+
+        gc.collect()
+        tracemalloc.start()
+        try:
+            restored_file: DependencyGraph = load_graph(path)
+            file_current, file_peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+
+    assert len(restored_pickle) == expected_nodes
+    assert len(restored_file) == expected_nodes
+    pickle_ratio = pickle_peak / max(pickle_current, 1)
+    file_ratio = file_peak / max(file_current, 1)
+    # Allow slight headroom above 1.2 for allocator / memo noise on mid-size graphs.
+    assert pickle_ratio <= 1.25, (
+        f"pickle.loads peak/current={pickle_ratio:.2f} "
+        f"(peak={pickle_peak}, current={pickle_current})"
+    )
+    assert file_ratio <= 1.25, (
+        f"load_graph peak/current={file_ratio:.2f} (peak={file_peak}, current={file_current})"
+    )
+
+
+def test_dump_graph_load_graph_round_trip(tmp_path: Path) -> None:
+    """Public dump/load API preserves edges, guards, and named ranges."""
+    from excel_grapher.grapher.graph_pickle import dump_graph, load_graph
+
+    original = _make_test_graph()
+    original.named_ranges = {"OneCell": ("Sheet1", "A1")}
+    path = tmp_path / "graph.pkl"
+    dump_graph(original, path)
+    restored: DependencyGraph = load_graph(path)
+
+    assert len(restored) == len(original)
+    for key in original:
+        assert restored.get_dependencies(key) == original.get_dependencies(key)
+        assert restored.get_dependents(key) == original.get_dependents(key)
+    assert restored.get_edge_guard("Sheet1!D1", "Sheet1!A1") is not None
+    assert restored.named_ranges == {"OneCell": ("Sheet1", "A1")}
+
+
+def test_load_graph_reads_legacy_pickle_stream(tmp_path: Path) -> None:
+    """`load_graph` falls back to a legacy single-object pickle file."""
+    from excel_grapher.grapher.graph_pickle import load_graph
+
+    original = _make_test_graph()
+    path = tmp_path / "legacy.pkl"
+
+    # Emit a setstate-shaped pickle without touching `__reduce_ex__` on the class.
+    class _LegacyGraphProxy:
+        def __reduce__(self) -> tuple[object, ...]:
+            return (DependencyGraph.__new__, (DependencyGraph,), original.__getstate__())
+
+    path.write_bytes(pickle.dumps(_LegacyGraphProxy(), protocol=pickle.HIGHEST_PROTOCOL))
+
+    restored: DependencyGraph = load_graph(path)
+    assert len(restored) == len(original)
+    assert restored.get_dependencies("Sheet1!D1") == original.get_dependencies("Sheet1!D1")
