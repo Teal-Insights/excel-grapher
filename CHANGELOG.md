@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v5.1.5 (2026-08-09)
+
+### Bug Fixes
+
+- **grapher**: Cut DependencyGraph unpickle peak memory
+  ([#514](https://github.com/Teal-Insights/excel-grapher/pull/514),
+  [`95f865a`](https://github.com/Teal-Insights/excel-grapher/commit/95f865a57873e5bef8a2a9fe1e3721cbc3a8b737))
+
+- **grapher**: Cut DependencyGraph unpickle peak memory (#513)
+  ([#514](https://github.com/Teal-Insights/excel-grapher/pull/514),
+  [`95f865a`](https://github.com/Teal-Insights/excel-grapher/commit/95f865a57873e5bef8a2a9fe1e3721cbc3a8b737))
+
+### Testing
+
+- **grapher**: Avoid monkeypatching __reduce_ex__ in legacy load test
+  ([#514](https://github.com/Teal-Insights/excel-grapher/pull/514),
+  [`95f865a`](https://github.com/Teal-Insights/excel-grapher/commit/95f865a57873e5bef8a2a9fe1e3721cbc3a8b737))
+
+
 ## v5.1.4 (2026-08-08)
 
 ### Bug Fixes
