@@ -335,13 +335,13 @@ def test_load_graph_reads_legacy_pickle_stream(tmp_path: Path) -> None:
 
     original = _make_test_graph()
     path = tmp_path / "legacy.pkl"
-    # Write a setstate-shaped pickle by temporarily removing the multipart reduce.
-    reduce_ex = DependencyGraph.__reduce_ex__
-    try:
-        del DependencyGraph.__reduce_ex__
-        path.write_bytes(pickle.dumps(original, protocol=pickle.HIGHEST_PROTOCOL))
-    finally:
-        DependencyGraph.__reduce_ex__ = reduce_ex
+
+    # Emit a setstate-shaped pickle without touching `__reduce_ex__` on the class.
+    class _LegacyGraphProxy:
+        def __reduce__(self) -> tuple[object, ...]:
+            return (DependencyGraph.__new__, (DependencyGraph,), original.__getstate__())
+
+    path.write_bytes(pickle.dumps(_LegacyGraphProxy(), protocol=pickle.HIGHEST_PROTOCOL))
 
     restored: DependencyGraph = load_graph(path)
     assert len(restored) == len(original)
