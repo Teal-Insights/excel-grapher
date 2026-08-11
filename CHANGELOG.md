@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v5.1.6 (2026-08-11)
+
+### Bug Fixes
+
+- **grapher**: Exclude ROW/COLUMN address-only refs from dependency edges
+  ([#516](https://github.com/Teal-Insights/excel-grapher/pull/516),
+  [`144afc3`](https://github.com/Teal-Insights/excel-grapher/commit/144afc37e260a29b716f8a06679e14d869c4e41d))
+
+### Code Style
+
+- Fix import formatting after ROW/COLUMN dep exclusion
+  ([#516](https://github.com/Teal-Insights/excel-grapher/pull/516),
+  [`144afc3`](https://github.com/Teal-Insights/excel-grapher/commit/144afc37e260a29b716f8a06679e14d869c4e41d))
+
+
 ## v5.1.5 (2026-08-09)
 
 ### Bug Fixes
