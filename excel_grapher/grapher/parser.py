@@ -10,7 +10,8 @@ from typing import Literal as TypingLiteral
 import fastpyxl.utils.cell
 
 from excel_grapher.core import address_keys as _address_keys
-from excel_grapher.core.address_keys import (    format_cell_key,
+from excel_grapher.core.address_keys import (
+    format_cell_key,
     needs_quoting,
     quoted_sheet_name_regex,
     quoted_sheet_prefix_regex,
@@ -473,9 +474,7 @@ def ref_only_function_spans(formula: str) -> list[tuple[int, int]]:
     if not isinstance(formula, str) or not formula.startswith("="):
         return []
     spans: list[tuple[int, int]] = []
-    for _fn, inner, span in _find_function_calls_with_spans(
-        formula, ref_only_function_names()
-    ):
+    for _fn, inner, span in _find_function_calls_with_spans(formula, ref_only_function_names()):
         # Nested calls may evaluate values (e.g. INDEX row selector); keep them.
         if "(" in inner:
             continue

@@ -153,6 +153,4 @@ def test_row_anchor_inside_offset_index_is_not_self_loop(tmp_path: Path) -> None
     deps = graph.get_dependencies("Sheet1!B106")
     assert "Sheet1!B106" not in deps
     assert "Sheet1!A1" in deps
-    assert not any(
-        "Sheet1!B106" in c and len(c) == 1 for c in graph.cycle_report().must_cycles
-    )
+    assert not any("Sheet1!B106" in c and len(c) == 1 for c in graph.cycle_report().must_cycles)
