@@ -10,8 +10,9 @@ See GitHub #517.
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, TypeAlias, cast
+from typing import Literal, Protocol, TypeAlias, cast
 
 from excel_grapher.core.formula_ast import (
     AstNode,
@@ -30,9 +31,6 @@ from excel_grapher.core.formula_ast import (
     WholeRowNode,
     parse,
 )
-
-if TYPE_CHECKING:
-    from excel_grapher.grapher.graph import DependencyGraph
 
 AddressKind: TypeAlias = Literal["CELL", "RANGE", "WHOLE_COL", "WHOLE_ROW"]
 AddressLeaf: TypeAlias = CellRefNode | RangeNode | WholeColumnNode | WholeRowNode
@@ -248,7 +246,23 @@ class FormulaShapeSummary:
         }
 
 
-def summarize_formula_shapes(graph: DependencyGraph) -> FormulaShapeSummary:
+class _FormulaNodeView(Protocol):
+    """Minimal node surface needed by `summarize_formula_shapes`."""
+
+    @property
+    def normalized_formula(self) -> str | None: ...
+
+
+class _FormulaGraphView(Protocol):
+    """Minimal graph surface needed by `summarize_formula_shapes`.
+
+    Kept as a `Protocol` so `core` does not import `grapher` (package boundary).
+    """
+
+    def formula_nodes(self) -> Iterator[tuple[object, _FormulaNodeView]]: ...
+
+
+def summarize_formula_shapes(graph: _FormulaGraphView) -> FormulaShapeSummary:
     """Count distinct normalized formulas vs punched AST shapes in `graph`.
 
     Walks `graph.formula_nodes()`, fingerprints each `normalized_formula`, and
@@ -265,12 +279,12 @@ def summarize_formula_shapes(graph: DependencyGraph) -> FormulaShapeSummary:
         stripped = nf.strip()
         if not stripped:
             continue
-        normalized.append(stripped)
         try:
             shape = fingerprint_formula_shape(stripped)
         except FormulaParseError:
             unparseable += 1
             continue
+        normalized.append(stripped)
         shape_counter[shape.shape_key] += 1
 
     distinct_formulas = len(set(normalized))
