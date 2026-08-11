@@ -28,6 +28,7 @@ from .parser import (
     _split_function_args,
     expand_range,
     format_key,
+    mask_ref_only_function_calls,
     mask_spans,
     parse_dynamic_range_refs_with_spans,
     parse_range_refs_with_spans,
@@ -162,7 +163,9 @@ def _flat_provenance_one_string(
                             or (fn_name == "OFFSET" and i == 0 and "(" in norm_arg)
                             or fn_name == "INDIRECT"
                         )
-                        for ref in parse_standalone_cell_refs(norm_arg):
+                        for ref in parse_standalone_cell_refs(
+                            mask_ref_only_function_calls(norm_arg)
+                        ):
                             sh = ref.sheet if ref.sheet is not None else current_sheet
                             a1 = f"{ref.column}{ref.row}"
                             k = format_key(sh, a1)
@@ -188,6 +191,7 @@ def _flat_provenance_one_string(
                         formula_str if formula_str.startswith("=") else "=" + formula_str,
                         spans,
                     )
+                    masked2 = mask_ref_only_function_calls(masked2)
                     norm = normalizer.normalize(masked2, sheet_of_cell)
                     out: set[str] = set()
                     for ref in parse_standalone_cell_refs(norm):
@@ -298,6 +302,7 @@ def _flat_provenance_one_string(
                     )
 
     masked = mask_spans(masked, dyn_spans)
+    masked = mask_ref_only_function_calls(masked)
 
     if expand_ranges:
         for start, end, _span in parse_range_refs_with_spans(masked):

@@ -57,6 +57,7 @@ from .parser import (
     expand_range,
     expand_range_ref,
     format_key,
+    mask_ref_only_function_calls,
     mask_spans,
     parse_dynamic_range_refs_with_spans,
     parse_guard_expr,
@@ -607,6 +608,7 @@ def create_dependency_graph(
             formula_text if formula_text.startswith("=") else "=" + formula_text,
             sheet_of_cell,
         )
+        normalized = mask_ref_only_function_calls(normalized)
         out: set[str] = set()
         for ref in parse_standalone_cell_refs(normalized):
             sh = ref.sheet if ref.sheet is not None else sheet_of_cell
@@ -647,6 +649,7 @@ def create_dependency_graph(
             if _contains_volatile_function(expr):
                 return True
             normalized = normalizer.normalize(expr, current_sheet)
+            normalized = mask_ref_only_function_calls(normalized)
             for ref in parse_standalone_cell_refs(normalized):
                 sh = ref.sheet if ref.sheet is not None else current_sheet
                 to_visit.add(format_key(sh, f"{ref.column}{ref.row}"))
@@ -872,7 +875,8 @@ def create_dependency_graph(
                                 # Static ranges are handled by infer_dynamic_index_targets (GH-156).
                                 if fn_name == "INDEX" and i == 0 and "(" not in normalized:
                                     continue
-                                for ref in parse_standalone_cell_refs(normalized):
+                                value_expr = mask_ref_only_function_calls(normalized)
+                                for ref in parse_standalone_cell_refs(value_expr):
                                     sh = ref.sheet if ref.sheet is not None else current_sheet
                                     a1 = f"{ref.column}{ref.row}"
                                     deps.append((sh, a1))
@@ -880,7 +884,7 @@ def create_dependency_graph(
                                         argument_addrs.add(format_key(sh, a1))
                                 if is_variable:
                                     for start, end, _span in parse_range_refs_with_spans(
-                                        normalized
+                                        value_expr
                                     ):
                                         range_sheet = (
                                             start.sheet
@@ -911,6 +915,7 @@ def create_dependency_graph(
                                 formula_str if formula_str.startswith("=") else "=" + formula_str,
                                 spans,
                             )
+                            masked = mask_ref_only_function_calls(masked)
                             norm = normalizer.normalize(masked, sheet_of_cell)
                             out: set[str] = set()
                             for ref in parse_standalone_cell_refs(norm):
@@ -1058,6 +1063,7 @@ def create_dependency_graph(
                             (offset_targets, indirect_targets, index_targets),
                         )
             masked = mask_spans(masked, dyn_spans)
+            masked = mask_ref_only_function_calls(masked)
 
             # Expand ranges when requested, then always parse standalone cells
             # (range spans masked) so bare endpoints in single-prefix forms are
@@ -1608,6 +1614,7 @@ def list_dynamic_ref_constraint_candidates(
             dyn = _find_function_calls_with_spans(f, frozenset({"OFFSET", "INDIRECT", "INDEX"}))
             spans = [span for _fn, _inner, span in dyn]
             masked = mask_spans(f, spans)
+            masked = mask_ref_only_function_calls(masked)
             norm = normalizer.normalize(masked, sheet)
             out: set[str] = set()
             for ref in parse_standalone_cell_refs(norm):
@@ -1742,10 +1749,11 @@ def list_dynamic_ref_constraint_candidates(
                             or (fn_name == "INDEX" and i >= 1)
                         )
                         if is_variable:
-                            for ref in parse_standalone_cell_refs(normalized_arg):
+                            value_arg = mask_ref_only_function_calls(normalized_arg)
+                            for ref in parse_standalone_cell_refs(value_arg):
                                 sh = ref.sheet if ref.sheet is not None else current_sheet
                                 argument_addrs.add(format_key(sh, f"{ref.column}{ref.row}"))
-                            for start, end, _span in parse_range_refs_with_spans(normalized_arg):
+                            for start, end, _span in parse_range_refs_with_spans(value_arg):
                                 range_sheet = (
                                     start.sheet if start.sheet is not None else current_sheet
                                 )

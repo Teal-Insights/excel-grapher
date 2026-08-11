@@ -10,13 +10,13 @@ from typing import Literal as TypingLiteral
 import fastpyxl.utils.cell
 
 from excel_grapher.core import address_keys as _address_keys
-from excel_grapher.core.address_keys import (
-    format_cell_key,
+from excel_grapher.core.address_keys import (    format_cell_key,
     needs_quoting,
     quoted_sheet_name_regex,
     quoted_sheet_prefix_regex,
     unescape_formula_sheet_name,
 )
+from excel_grapher.core.excel_function_meta import ref_only_function_names
 from excel_grapher.core.excel_function_names import excel_function_call_prefixes
 from excel_grapher.core.formula_normalization import (
     build_named_range_replacement_state,
@@ -459,6 +459,33 @@ def mask_spans(s: str, spans: list[tuple[int, int]]) -> str:
         for i in range(a, b):
             buf[i] = " "
     return "".join(buf)
+
+
+def ref_only_function_spans(formula: str) -> list[tuple[int, int]]:
+    """Return spans of address/shape-only `ROW`/`COLUMN`/`ROWS`/`COLUMNS` calls.
+
+    Only calls whose arguments contain no nested function calls are included.
+    Those arguments are used solely for address/shape (`is_ref_only_arg`), so
+    they must not create value dependency edges. Nested calls such as
+    `ROW(INDEX(...))` are left unmasked so refs inside the nested expression
+    remain visible for dependency extraction.
+    """
+    if not isinstance(formula, str) or not formula.startswith("="):
+        return []
+    spans: list[tuple[int, int]] = []
+    for _fn, inner, span in _find_function_calls_with_spans(
+        formula, ref_only_function_names()
+    ):
+        # Nested calls may evaluate values (e.g. INDEX row selector); keep them.
+        if "(" in inner:
+            continue
+        spans.append(span)
+    return spans
+
+
+def mask_ref_only_function_calls(formula: str) -> str:
+    """Mask address-only `ROW`/`COLUMN`/`ROWS`/`COLUMNS` calls in `formula`."""
+    return mask_spans(formula, ref_only_function_spans(formula))
 
 
 # Private aliases so the module's historical internal names keep working.
@@ -1257,7 +1284,8 @@ def parse_dynamic_range_refs_with_spans(
                     "=" + arg,
                     current_sheet,
                 )
-                for ref in parse_standalone_cell_refs(normalized):
+                value_expr = mask_ref_only_function_calls(normalized)
+                for ref in parse_standalone_cell_refs(value_expr):
                     sheet = ref.sheet if ref.sheet is not None else current_sheet
                     arg_refs.append(
                         CellRef(
