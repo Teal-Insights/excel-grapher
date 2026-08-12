@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v6.0.0 (2026-08-12)
+
+### Bug Fixes
+
+- **grapher**: Require CellKey when loading graph cache nodes
+  ([#524](https://github.com/Teal-Insights/excel-grapher/pull/524),
+  [`da8fbdb`](https://github.com/Teal-Insights/excel-grapher/commit/da8fbdbef5ca9879cbc599750e4b50fc9ab87796))
+
+### Refactoring
+
+- Remove multi-member occupancy from DependencyGraph
+  ([#524](https://github.com/Teal-Insights/excel-grapher/pull/524),
+  [`da8fbdb`](https://github.com/Teal-Insights/excel-grapher/commit/da8fbdbef5ca9879cbc599750e4b50fc9ab87796))
+
+### Testing
+
+- Relax unpickle peak/current bound after occupancy removal
+  ([#524](https://github.com/Teal-Insights/excel-grapher/pull/524),
+  [`da8fbdb`](https://github.com/Teal-Insights/excel-grapher/commit/da8fbdbef5ca9879cbc599750e4b50fc9ab87796))
+
+
 ## v5.2.0 (2026-08-12)
 
 ### Bug Fixes
