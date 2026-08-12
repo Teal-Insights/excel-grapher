@@ -1,3 +1,14 @@
+---
+status: superseded
+superseded_by: https://github.com/teal-insights/excel-grapher/issues/523
+---
+
+> **Superseded by [#523](https://github.com/teal-insights/excel-grapher/issues/523).**
+> Multi-member / occupancy machinery is being removed from `DependencyGraph`
+> (cell-only graph). This plan's Issue 1 storage and Issues 2–3 eval/codegen
+> direction are obsolete; do not implement overlays or formula-group graph nodes
+> from this document.
+
 # Formula-group nodes — combined implementation plan
 
 Three slices, in order. Each section is the full scope for that slice — do not

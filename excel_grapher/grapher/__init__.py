@@ -53,16 +53,9 @@ from .guard import And, Compare, GuardExpr, Literal, Not, Or
 from .guard import CellRef as GuardCellRef
 from .guard import RangeRef as GuardRangeRef
 from .node import (
-    CellLocation,
     Node,
     NodeKey,
-    NodeKind,
-    RangeLocation,
-    locate_cell,
-    locate_range,
     make_cell_node,
-    make_union_node,
-    member_keys,
 )
 from .parser import format_cell_key, format_key, needs_quoting
 from .preparsed_formulas import warm_preparsed_formulas
@@ -124,14 +117,7 @@ __all__ = [
     "Or",
     "Node",
     "NodeKey",
-    "NodeKind",
-    "CellLocation",
-    "RangeLocation",
     "make_cell_node",
-    "make_union_node",
-    "member_keys",
-    "locate_cell",
-    "locate_range",
     "LightweightVizLocalEdges",
     "LightweightVizModule",
     "LightweightVizModuleEdge",

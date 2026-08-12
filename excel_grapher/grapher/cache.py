@@ -357,7 +357,6 @@ def dependency_graph_to_json(graph: DependencyGraph) -> dict[str, Any]:
             {
                 "key": key,
                 "address": key,
-                "kind": node.kind.value,
                 "sheet": node.sheet,
                 "column": node.column,
                 "row": node.row,

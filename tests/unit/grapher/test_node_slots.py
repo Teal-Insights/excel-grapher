@@ -11,11 +11,9 @@ from excel_grapher.core.address_keys import CellKey, NodeShape, parse_node_key
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.node import (
     Node,
-    NodeKind,
     _derived_fields_cache_clear,
     _derived_fields_cache_info,
     make_cell_node,
-    make_union_node,
 )
 
 
@@ -57,7 +55,6 @@ def test_node_public_fields_and_derived_properties() -> None:
     assert node.is_leaf is False
     assert node.is_target is True
     assert dict(node.metadata) == {"k": 1}
-    assert node.kind is NodeKind.cell
     assert node.min_col == "B"
     assert node.max_col == "B"
     assert node.min_row == 2
@@ -68,24 +65,7 @@ def test_node_public_fields_and_derived_properties() -> None:
     assert node.column_index == 2
 
 
-def test_node_extent_and_address_construction() -> None:
-    extent = Node(
-        sheet="Sheet1",
-        column=None,
-        row=None,
-        formula=None,
-        normalized_formula=None,
-        value=None,
-        is_leaf=True,
-        min_col="D",
-        max_col="Y",
-        min_row=63,
-        max_row=63,
-    )
-    assert extent.key == "Sheet1!D63:Y63"
-    assert extent.shape is NodeShape.row
-    assert extent.kind is NodeKind.union
-
+def test_node_address_construction() -> None:
     by_address = Node(
         sheet=None,
         column=None,
@@ -98,6 +78,20 @@ def test_node_extent_and_address_construction() -> None:
     )
     assert by_address.key == "Sheet1!E5"
     assert by_address.column_index == 5
+
+
+def test_node_rejects_multi_cell_address() -> None:
+    with pytest.raises(ValueError, match="single cells"):
+        Node(
+            sheet=None,
+            column=None,
+            row=None,
+            formula=None,
+            normalized_formula=None,
+            value=None,
+            is_leaf=True,
+            address=parse_node_key("Sheet1!A1:B2"),
+        )
 
 
 def test_graph_mutations_on_slotted_node() -> None:
@@ -179,14 +173,3 @@ def test_slotted_node_is_smaller_than_dict_backed_baseline() -> None:
     # Instance without __dict__ is the win; size alone can vary by allocator.
     assert not hasattr(node, "__dict__")
     assert sys.getsizeof(node) < 256
-
-
-def test_union_node_derived_fields_use_cache() -> None:
-    _derived_fields_cache_clear()
-    node = make_union_node(["Sheet1!A1", "Sheet1!E5"])
-    assert node.key == "Sheet1!A1,E5"
-    assert node.shape is NodeShape.union
-    with pytest.raises(ValueError, match="column_index"):
-        _ = node.column_index
-    info = _derived_fields_cache_info()
-    assert info.currsize >= 1
