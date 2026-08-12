@@ -10,12 +10,12 @@ from excel_grapher.core.address_keys import RangeKey, format_cell_key
 from .node import NodeKey
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class GuardExpr:
     """Base type for conditional dependency guards."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CellRef(GuardExpr):
     """A cell reference used in a condition."""
 
@@ -25,7 +25,7 @@ class CellRef(GuardExpr):
         return self.key
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RangeRef(GuardExpr):
     """A multi-cell range used in an array-context condition.
 
@@ -64,17 +64,28 @@ class RangeRef(GuardExpr):
             )
         rk = RangeKey(self.key)
         column = get_column_letter(column_index_from_string(rk.min_col) + col_offset)
-        return CellRef(format_cell_key(rk.sheet, column, rk.min_row + row_offset))
+        return intern_guard(
+            CellRef(format_cell_key(rk.sheet, column, rk.min_row + row_offset))
+        )
 
     def __str__(self) -> str:  # pragma: no cover (covered indirectly via exports)
         return self.key
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Literal(GuardExpr):
     """A literal value in a condition."""
 
     value: Any
+
+    def __eq__(self, other: object) -> bool:
+        # Bool is a subclass of int; `True == 1` must not collapse distinct literals.
+        if not isinstance(other, Literal):
+            return NotImplemented
+        return type(self.value) is type(other.value) and self.value == other.value
+
+    def __hash__(self) -> int:
+        return hash((type(self.value), self.value))
 
     def __str__(self) -> str:  # pragma: no cover (covered indirectly via exports)
         v = self.value
@@ -85,7 +96,7 @@ class Literal(GuardExpr):
         return str(v)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Compare(GuardExpr):
     """Comparison: left op right."""
 
@@ -97,7 +108,7 @@ class Compare(GuardExpr):
         return f"{self.left}{self.op}{self.right}"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Not(GuardExpr):
     """Logical negation."""
 
@@ -107,7 +118,7 @@ class Not(GuardExpr):
         return f"NOT({self.operand})"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class And(GuardExpr):
     """Logical AND."""
 
@@ -118,7 +129,7 @@ class And(GuardExpr):
         return f"AND({inner})"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Or(GuardExpr):
     """Logical OR."""
 
@@ -127,6 +138,45 @@ class Or(GuardExpr):
     def __str__(self) -> str:  # pragma: no cover (covered indirectly via exports)
         inner = ",".join(str(o) for o in self.operands)
         return f"OR({inner})"
+
+
+# Process-wide hash-cons table: equal GuardExpr trees share one object.
+_GUARD_POOL: dict[GuardExpr, GuardExpr] = {}
+
+
+def intern_guard(expr: GuardExpr) -> GuardExpr:
+    """Return the canonical shared instance for `expr` (hash-cons / intern).
+
+    Child nodes are interned first so equal subtrees are shared by identity as
+    well as equality. Distinct-but-equal trees constructed independently (for
+    example the same `IF` condition on two cells) collapse to one object.
+    """
+    if isinstance(expr, Compare):
+        left = intern_guard(expr.left)
+        right = intern_guard(expr.right)
+        if left is not expr.left or right is not expr.right:
+            expr = Compare(left=left, op=expr.op, right=right)
+    elif isinstance(expr, Not):
+        operand = intern_guard(expr.operand)
+        if operand is not expr.operand:
+            expr = Not(operand=operand)
+    elif isinstance(expr, And):
+        ops = tuple(intern_guard(o) for o in expr.operands)
+        if any(a is not b for a, b in zip(ops, expr.operands, strict=True)):
+            expr = And(ops)
+    elif isinstance(expr, Or):
+        ops = tuple(intern_guard(o) for o in expr.operands)
+        if any(a is not b for a, b in zip(ops, expr.operands, strict=True)):
+            expr = Or(ops)
+
+    cached = _GUARD_POOL.get(expr)
+    if cached is not None:
+        return cached
+    _GUARD_POOL[expr] = expr
+    return expr
+
+
+_LITERAL_TRUE = intern_guard(Literal(True))
 
 
 def canonicalize_guard(expr: GuardExpr) -> GuardExpr:
@@ -140,22 +190,22 @@ def canonicalize_guard(expr: GuardExpr) -> GuardExpr:
         left = canonicalize_guard(expr.left)
         right = canonicalize_guard(expr.right)
         if left is expr.left and right is expr.right:
-            return expr
-        return Compare(left=left, op=expr.op, right=right)
+            return intern_guard(expr)
+        return intern_guard(Compare(left=left, op=expr.op, right=right))
     if isinstance(expr, And):
         ops = tuple(canonicalize_guard(o) for o in expr.operands)
-        return And(ops)
+        return intern_guard(And(ops))
     if isinstance(expr, Or):
         ops = tuple(canonicalize_guard(o) for o in expr.operands)
-        return Or(ops)
+        return intern_guard(Or(ops))
     if isinstance(expr, Not):
         operand = canonicalize_guard(expr.operand)
         if isinstance(operand, Not):
             return canonicalize_guard(operand.operand)
         if operand is expr.operand:
-            return expr
-        return Not(operand=operand)
-    return expr
+            return intern_guard(expr)
+        return intern_guard(Not(operand=operand))
+    return intern_guard(expr)
 
 
 def guard_range_shape(expr: GuardExpr) -> tuple[int, int] | None:
@@ -208,12 +258,12 @@ def instantiate_element_guard(
         right = instantiate_element_guard(expr.right, row_offset=row_offset, col_offset=col_offset)
         if left is None or right is None:
             return None
-        return Compare(left=left, op=expr.op, right=right)
+        return intern_guard(Compare(left=left, op=expr.op, right=right))
     if isinstance(expr, Not):
         operand = instantiate_element_guard(
             expr.operand, row_offset=row_offset, col_offset=col_offset
         )
-        return None if operand is None else Not(operand)
+        return None if operand is None else intern_guard(Not(operand))
     if isinstance(expr, (And, Or)):
         operands: list[GuardExpr] = []
         for operand in expr.operands:
@@ -223,8 +273,10 @@ def instantiate_element_guard(
             if resolved is None:
                 return None
             operands.append(resolved)
-        return And(tuple(operands)) if isinstance(expr, And) else Or(tuple(operands))
-    return expr
+        return intern_guard(
+            And(tuple(operands)) if isinstance(expr, And) else Or(tuple(operands))
+        )
+    return intern_guard(expr)
 
 
 def and_guard(a: GuardExpr, b: GuardExpr) -> GuardExpr:
@@ -238,12 +290,12 @@ def and_guard(a: GuardExpr, b: GuardExpr) -> GuardExpr:
             ops.extend(g.operands)
         else:
             ops.append(g)
-    ops = [g for g in ops if g != Literal(True)]
+    ops = [g for g in ops if g != _LITERAL_TRUE]
     if not ops:
-        return Literal(True)
+        return _LITERAL_TRUE
     if len(ops) == 1:
-        return ops[0]
-    return And(tuple(ops))
+        return intern_guard(ops[0])
+    return intern_guard(And(tuple(ops)))
 
 
 def or_guard(a: GuardExpr, b: GuardExpr) -> GuardExpr:
@@ -257,7 +309,7 @@ def or_guard(a: GuardExpr, b: GuardExpr) -> GuardExpr:
         ops.extend(b.operands)
     else:
         ops.append(b)
-    return Or(tuple(ops))
+    return intern_guard(Or(tuple(ops)))
 
 
 @dataclass(frozen=True)

@@ -90,7 +90,7 @@ def build_taco_index(
 def _edge_is_excluded_from_pattern_inference(
     graph: DependencyGraph, dependent: NodeKey, precedent: NodeKey
 ) -> bool:
-    if graph.get_edge_guard(dependent, precedent) is not None:
+    if graph.is_guarded(dependent, precedent):
         return True
     attrs = graph.get_edge_attrs(dependent, precedent)
     prov = attrs.provenance

@@ -20,7 +20,17 @@ from excel_grapher.core.formula_ast import AstNode
 
 from .dependency_provenance import DependencyCause, EdgeProvenance, merge_edge_provenance
 from .graph_pickle import dumps_graph_blob, loads_graph_blob
-from .guard import And, CellRef, Compare, GuardConstraints, GuardExpr, Not, Or, or_guard
+from .guard import (
+    And,
+    CellRef,
+    Compare,
+    GuardConstraints,
+    GuardExpr,
+    Not,
+    Or,
+    intern_guard,
+    or_guard,
+)
 from .node import Node, NodeKey, NodeView, copy_metadata, member_keys, node_to_view
 
 NodeHook = Callable[[NodeKey, Node], None]
@@ -106,6 +116,8 @@ class GraphReadView(Protocol):
     def get_edge_attrs(self, from_key: NodeKey, to_key: NodeKey) -> EdgeAttrs: ...
 
     def get_edge_guard(self, from_key: NodeKey, to_key: NodeKey) -> GuardExpr | None: ...
+
+    def is_guarded(self, from_key: NodeKey, to_key: NodeKey) -> bool: ...
 
     def leaf_keys(self) -> list[NodeKey]: ...
 
@@ -322,7 +334,7 @@ class DependencyGraph:
             old_prov = self._edge_provenance.get(ek)
 
         if merged_guard is not None:
-            self._guards[ek] = merged_guard
+            self._guards[ek] = intern_guard(merged_guard)
         else:
             self._guards.pop(ek, None)
 
@@ -414,6 +426,16 @@ class DependencyGraph:
         tk = normalize_key(to_key)
         v = self._guards.get((fk, tk))
         return v if isinstance(v, GuardExpr) else None
+
+    def is_guarded(self, from_key: NodeKey, to_key: NodeKey) -> bool:
+        """Return whether edge `from_key -> to_key` carries a guard.
+
+        Membership-only: does not retrieve the guard AST. Prefer this over
+        `get_edge_guard(...) is not None` when the expression is unused.
+        """
+        fk = normalize_key(from_key)
+        tk = normalize_key(to_key)
+        return (fk, tk) in self._guards
 
     # ---- durable node mutation ---------------------------------------------
 
@@ -567,7 +589,7 @@ class DependencyGraph:
         out: dict[NodeKey, set[NodeKey]] = {k: set() for k in self._nodes}
         for k in self._nodes:
             for dep in self._edges.get(k, ()):
-                if (k, dep) in self._guards:
+                if self.is_guarded(k, dep):
                     continue
                 resolved = self._resolve_graph_endpoint(dep)
                 if resolved is not None:
@@ -1225,7 +1247,7 @@ def _intern_guard_cell_refs(
             return Or(operands=tuple(rec(o) for o in e.operands))
         return e
 
-    return rec(expr)
+    return intern_guard(rec(expr))
 
 
 def _scc_cycles(adj: dict[NodeKey, set[NodeKey]]) -> list[set[NodeKey]]:

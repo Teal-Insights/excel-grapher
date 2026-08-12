@@ -531,6 +531,9 @@ class ProjectionResult:
     def get_edge_guard(self, from_key: NodeKey, to_key: NodeKey) -> GuardExpr | None:
         return self.projected_graph.get_edge_guard(from_key, to_key)
 
+    def is_guarded(self, from_key: NodeKey, to_key: NodeKey) -> bool:
+        return self.projected_graph.is_guarded(from_key, to_key)
+
     def leaf_keys(self) -> list[NodeKey]:
         return self.projected_graph.leaf_keys()
 
