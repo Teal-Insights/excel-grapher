@@ -490,39 +490,43 @@ def create_dependency_graph(
     if not isinstance(workbook, (str, Path)):
         raise TypeError(
             "create_dependency_graph requires a path or path-like string for "
-            f"`workbook`; got {type(workbook).__name__}. Pre-loaded Workbook "
-            "instances cannot supply both formulas and cached values, so "
-            "callers must pass a path that the builder can load in both modes."
+            f"`workbook`; got {type(workbook).__name__}. Pass a path so the "
+            "builder can load formulas and cached values together via "
+            "`keep_formula_cache=True` (or load formulas alone when "
+            "`load_values=False`)."
         )
 
     blank_rects = normalize_blank_range_specs(blank_ranges)
 
-    def load_wb(data_only: bool) -> fastpyxl.Workbook:
+    def load_wb(
+        *,
+        data_only: bool = False,
+        keep_formula_cache: bool = False,
+    ) -> fastpyxl.Workbook:
         path = Path(workbook)
         keep_vba = path.suffix.lower() == ".xlsm"
-        return fastpyxl.load_workbook(path, data_only=data_only, keep_vba=keep_vba)
+        return fastpyxl.load_workbook(
+            path,
+            data_only=data_only,
+            keep_vba=keep_vba,
+            keep_formula_cache=keep_formula_cache,
+        )
 
     _t0 = time.perf_counter()
-    wb_formulas = load_wb(data_only=False)
+    # One parse supplies both formulas (`cell.value`) and Excel's last-calculated
+    # cache (`cell.cached_value`) when values are requested.
+    wb_formulas = load_wb(keep_formula_cache=load_values)
     _emit_trace(
         DynamicRefTraceEvent(
             kind="workbook-loaded",
             name="create_dependency_graph",
             elapsed_s=time.perf_counter() - _t0,
-            detail={"data_only": False},
+            detail={"keep_formula_cache": load_values},
         )
     )
-    _t0 = time.perf_counter()
-    wb_values = load_wb(data_only=True) if load_values else None
-    if wb_values is not None:
-        _emit_trace(
-            DynamicRefTraceEvent(
-                kind="workbook-loaded",
-                name="create_dependency_graph",
-                elapsed_s=time.perf_counter() - _t0,
-                detail={"data_only": True},
-            )
-        )
+    # Lazy fallback for resolve_cached_value when the initial load omitted caches
+    # (`load_values=False`) but dynamic-ref resolution later needs them.
+    wb_values: fastpyxl.Workbook | None = None
 
     # Compute workbook SHA-256 for persistent type-analysis cache
     _wb_sha256: str | None = None
@@ -580,7 +584,7 @@ def create_dependency_graph(
             _get_ws_f(sheet)
 
     def _get_ws_v(sheet: str) -> Worksheet:
-        # Only called when wb_values is not None.
+        # Only used for the lazy data_only fallback workbook.
         ws = _ws_v_cache.get(sheet)
         if ws is None:
             assert wb_values is not None
@@ -588,12 +592,21 @@ def create_dependency_graph(
             _ws_v_cache[sheet] = ws
         return ws
 
+    def _cached_value_from_formula_cell(cell: object) -> object | None:
+        """Return Excel's cached result for a formula cell, else the cell value."""
+        data_type = getattr(cell, "data_type", None)
+        raw = getattr(cell, "value", None)
+        is_formula = data_type == "f" or isinstance(raw, ArrayFormula)
+        if is_formula:
+            return getattr(cell, "cached_value", None)
+        return raw
+
     def resolve_cached_value(sheet: str, a1: str) -> object | None:
         nonlocal wb_values
-        if wb_values is None and not isinstance(workbook, fastpyxl.Workbook):
-            wb_values = load_wb(data_only=True)
+        if wb_formulas.keep_formula_cache:
+            return _cached_value_from_formula_cell(_get_ws_f(sheet)[a1])
         if wb_values is None:
-            return None
+            wb_values = load_wb(data_only=True)
         return _get_ws_v(sheet)[a1].value
 
     def _contains_volatile_function(formula_or_expr: str) -> bool:
@@ -1415,7 +1428,8 @@ def create_dependency_graph(
                     continue
 
             ws_f = _get_ws_f(sheet)
-            raw = ws_f[a1].value
+            cell = ws_f[a1]
+            raw = cell.value
             # CSE array formulas are evaluated element-wise, which is one of the
             # array contexts that make range-typed `IF` conditions per-element.
             is_array_formula = isinstance(raw, ArrayFormula)
@@ -1430,8 +1444,8 @@ def create_dependency_graph(
                 formula = formula_str if store_raw_formula else None
                 normalized = normalizer.normalize(formula_str, sheet)
                 value = None
-                if wb_values is not None:
-                    value = _get_ws_v(sheet)[a1].value
+                if load_values:
+                    value = _cached_value_from_formula_cell(cell)
                 is_leaf = False
             else:
                 formula_str = ""
