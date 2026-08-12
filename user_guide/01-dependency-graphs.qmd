@@ -8,7 +8,7 @@ guide-section: "Core workflow"
 - **Node identity**: nodes are keyed by sheet-qualified A1 strings like `Sheet1!A1` (`NodeKey`).
 - **Edge direction**: an edge `A -> B` means **A depends on B** (dependency-first evaluation).
 - **Leaf definition**: a leaf is any node with no cell dependencies (`Node.is_leaf=True`), including non-formula cells and literal-only formulas (e.g. `=1+1`).
-- **Values are optional**: `load_values=True` loads cached Excel results (second workbook load); otherwise formula nodes have `value=None`.
+- **Values are optional**: `load_values=True` loads cached Excel results in the same parse as formulas (`keep_formula_cache=True`); otherwise formula nodes have `value=None`.
 - **Extensible metadata**: each `Node` exposes `metadata` as a read-only `Mapping[str, Any]`. Nodes without metadata share one immutable empty mapping instead of allocating a dict, so hooks write through `node.set_metadata(...)` / `node.update_metadata(...)` (or `graph.set_node_metadata(key, ...)`) rather than `node.metadata[key] = value`.
 - **Range expansion**: ranges like `A1:A10` are expanded to individual cell dependencies (bounded by `max_range_cells`).
 - **Whole-column/row shorthand**: Excel forms like `Data!A:A` and `Data!5:5` parse as syntactic shorthands and resolve to each sheet's **used range** (workbook dimensions), not Excel's full grid. These shorthands expand to every row/column in that extent even when `max_range_cells` would otherwise keep only rectangular corner endpoints.

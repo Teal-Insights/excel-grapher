@@ -792,10 +792,11 @@ wheels = [
 
 [[package]]
 name = "fastpyxl"
-version = "1.0.9"
-source = { git = "https://github.com/Promptly-Technologies-LLC/fastpyxl#c056dad803c93097ddd2a634ed2593abff77bae2" }
+version = "1.0.12"
+source = { git = "https://github.com/Promptly-Technologies-LLC/fastpyxl#92d2c2984c0096c151e46c96e8b3cb2c5774b4c8" }
 dependencies = [
     { name = "et-xmlfile" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
 ]
 
 [[package]]
