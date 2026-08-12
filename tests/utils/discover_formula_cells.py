@@ -36,23 +36,25 @@ def discover_formula_cells_in_rows(
         )
     use_side_cache = bool(getattr(wb_formulas, "keep_formula_cache", False))
     owned_values = False
-    if not use_side_cache and wb_values is None:
-        wb_values = fastpyxl.load_workbook(
-            wb_path, data_only=True, read_only=True, keep_vba=True
-        )
-        owned_values = owned
+    values_wb: fastpyxl.Workbook | None = None
+    if not use_side_cache:
+        if wb_values is None:
+            values_wb = fastpyxl.load_workbook(
+                wb_path, data_only=True, read_only=True, keep_vba=True
+            )
+            owned_values = owned
+        else:
+            values_wb = wb_values
     try:
         if sheet_name not in wb_formulas.sheetnames:
             print(f"  Warning: Sheet '{sheet_name}' not found")
             return []
-        if not use_side_cache:
-            assert wb_values is not None
-            if sheet_name not in wb_values.sheetnames:
-                print(f"  Warning: Sheet '{sheet_name}' not found")
-                return []
+        if values_wb is not None and sheet_name not in values_wb.sheetnames:
+            print(f"  Warning: Sheet '{sheet_name}' not found")
+            return []
 
         ws_formulas = wb_formulas[sheet_name]
-        ws_values = None if use_side_cache else wb_values[sheet_name]
+        ws_values = None if values_wb is None else values_wb[sheet_name]
         targets: list[str] = []
 
         for row in rows:
@@ -60,10 +62,9 @@ def discover_formula_cells_in_rows(
             for col_idx in range(1, max_col + 1):
                 cell_formula = ws_formulas.cell(row=row, column=col_idx)
                 if isinstance(cell_formula.value, str) and cell_formula.value.startswith("="):
-                    if use_side_cache:
+                    if ws_values is None:
                         cached_value = cell_formula.cached_value
                     else:
-                        assert ws_values is not None
                         cached_value = ws_values.cell(row=row, column=col_idx).value
                     if not isinstance(cached_value, (int, float)) or isinstance(cached_value, bool):
                         continue
@@ -74,5 +75,5 @@ def discover_formula_cells_in_rows(
     finally:
         if owned:
             wb_formulas.close()
-        if owned_values and wb_values is not None:
-            wb_values.close()
+        if owned_values and values_wb is not None:
+            values_wb.close()

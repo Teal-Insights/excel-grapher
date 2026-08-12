@@ -427,6 +427,12 @@ def create_dependency_graph(
     Targets that are neither sheet-qualified nor a known defined name raise
     `ValueError`.
 
+    When `load_values` is True (default), the workbook is loaded once with
+    `keep_formula_cache=True` so formula text and Excel's last-calculated
+    cache are available without a second `data_only` parse. When False,
+    formula nodes keep `value=None` and the formula-cache side map is not
+    populated.
+
     Supports basic A1 references, sheet-qualified references, and dynamic references
     (OFFSET/INDIRECT). For OFFSET/INDIRECT:
 
