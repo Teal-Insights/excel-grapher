@@ -20,6 +20,9 @@ from excel_grapher.grapher.parser import parse_guard_expr
 def test_intern_guard_keeps_bool_and_int_literals_distinct() -> None:
     assert intern_guard(Literal(True)) is not intern_guard(Literal(1))
     assert intern_guard(Literal(False)) is not intern_guard(Literal(0))
+
+
+def test_intern_guard_returns_identical_object_for_equal_trees() -> None:
     a = Compare(CellRef("Sheet1!A1"), "=", Literal(1))
     b = Compare(CellRef("Sheet1!A1"), "=", Literal(1))
     assert a is not b

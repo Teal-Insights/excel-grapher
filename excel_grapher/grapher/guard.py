@@ -64,9 +64,9 @@ class RangeRef(GuardExpr):
             )
         rk = RangeKey(self.key)
         column = get_column_letter(column_index_from_string(rk.min_col) + col_offset)
-        return intern_guard(
-            CellRef(format_cell_key(rk.sheet, column, rk.min_row + row_offset))
-        )
+        cell = intern_guard(CellRef(format_cell_key(rk.sheet, column, rk.min_row + row_offset)))
+        assert isinstance(cell, CellRef)
+        return cell
 
     def __str__(self) -> str:  # pragma: no cover (covered indirectly via exports)
         return self.key
@@ -273,9 +273,7 @@ def instantiate_element_guard(
             if resolved is None:
                 return None
             operands.append(resolved)
-        return intern_guard(
-            And(tuple(operands)) if isinstance(expr, And) else Or(tuple(operands))
-        )
+        return intern_guard(And(tuple(operands)) if isinstance(expr, And) else Or(tuple(operands)))
     return intern_guard(expr)
 
 

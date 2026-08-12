@@ -39,13 +39,6 @@ def test_is_guarded_normalizes_keys() -> None:
     assert graph.is_guarded("'Sheet1'!B1", "'Sheet1'!A1")
 
 
-def test_literal_true_is_not_interned_with_literal_one() -> None:
-    from excel_grapher.grapher.guard import intern_guard
-
-    assert intern_guard(Literal(True)) is not intern_guard(Literal(1))
-    assert Literal(True) != Literal(1)
-
-
 def test_add_edge_interns_identical_guards_across_edges() -> None:
     graph = _graph_with_shared_condition()
     g_b = graph.get_edge_guard("Sheet1!B1", "Sheet1!A1")
