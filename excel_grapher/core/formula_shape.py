@@ -10,7 +10,7 @@ See GitHub #517.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from typing import Literal, Protocol, TypeAlias, cast
 
@@ -209,7 +209,12 @@ def specialize_formula_shape(
 
 @dataclass(frozen=True, slots=True)
 class FormulaShapeSummary:
-    """Cardinality of exact formulas vs punched AST shapes in a graph."""
+    """Cardinality of exact formulas vs punched AST shapes.
+
+    `formula_nodes` counts successfully fingerprinted instances only.
+    `unparseable` is the count of fingerprint/`parse` failures excluded from
+    that total (and from shape counts).
+    """
 
     formula_nodes: int
     distinct_normalized_formulas: int
@@ -226,10 +231,10 @@ class FormulaShapeSummary:
 
     @property
     def mean_instances_per_shape(self) -> float:
-        """Average formula nodes sharing each distinct shape."""
+        """Average successfully fingerprinted formula nodes per distinct shape."""
         if self.distinct_shapes == 0:
             return 0.0
-        return (self.formula_nodes - self.unparseable) / self.distinct_shapes
+        return self.formula_nodes / self.distinct_shapes
 
     def to_dict(self) -> dict[str, object]:
         """JSON-serializable report dict."""
@@ -262,21 +267,26 @@ class _FormulaGraphView(Protocol):
     def formula_nodes(self) -> Iterator[tuple[object, _FormulaNodeView]]: ...
 
 
-def summarize_formula_shapes(graph: _FormulaGraphView) -> FormulaShapeSummary:
-    """Count distinct normalized formulas vs punched AST shapes in `graph`.
+def summarize_normalized_formulas(
+    formulas: Iterable[str],
+) -> tuple[FormulaShapeSummary, list[str]]:
+    """Fingerprint an iterable of normalized formula strings.
 
-    Walks `graph.formula_nodes()`, fingerprints each `normalized_formula`, and
-    reports whether shapes collapse the string-keyed set (#517 go/no-go metric).
+    Args:
+        formulas: Already-normalized formula texts (leading `=` optional).
+
+    Returns:
+        `(summary, parseable_formulas)` where `parseable_formulas` are the
+        successfully fingerprinted inputs (same order), suitable for parse-warm
+        timing. Failed parses increment `summary.unparseable` and are omitted
+        from `formula_nodes` / shape counts.
     """
-    normalized: list[str] = []
+    parseable: list[str] = []
     shape_counter: Counter[str] = Counter()
     unparseable = 0
 
-    for _, node in graph.formula_nodes():
-        nf = node.normalized_formula
-        if nf is None or not isinstance(nf, str):
-            continue
-        stripped = nf.strip()
+    for formula in formulas:
+        stripped = formula.strip()
         if not stripped:
             continue
         try:
@@ -284,15 +294,29 @@ def summarize_formula_shapes(graph: _FormulaGraphView) -> FormulaShapeSummary:
         except FormulaParseError:
             unparseable += 1
             continue
-        normalized.append(stripped)
+        parseable.append(stripped)
         shape_counter[shape.shape_key] += 1
 
-    distinct_formulas = len(set(normalized))
-    shape_counts = tuple(shape_counter.most_common())
-    return FormulaShapeSummary(
-        formula_nodes=len(normalized),
-        distinct_normalized_formulas=distinct_formulas,
+    summary = FormulaShapeSummary(
+        formula_nodes=len(parseable),
+        distinct_normalized_formulas=len(set(parseable)),
         distinct_shapes=len(shape_counter),
         unparseable=unparseable,
-        shape_counts=shape_counts,
+        shape_counts=tuple(shape_counter.most_common()),
     )
+    return summary, parseable
+
+
+def summarize_formula_shapes(graph: _FormulaGraphView) -> FormulaShapeSummary:
+    """Count distinct normalized formulas vs punched AST shapes in `graph`.
+
+    Walks `graph.formula_nodes()`, fingerprints each `normalized_formula`, and
+    reports whether shapes collapse the string-keyed set (#517 go/no-go metric).
+    """
+    formulas: list[str] = []
+    for _, node in graph.formula_nodes():
+        nf = node.normalized_formula
+        if isinstance(nf, str) and nf.strip():
+            formulas.append(nf.strip())
+    summary, _ = summarize_normalized_formulas(formulas)
+    return summary

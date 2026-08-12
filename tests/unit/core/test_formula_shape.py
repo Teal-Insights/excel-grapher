@@ -18,9 +18,11 @@ from excel_grapher.core.formula_ast import (
     parse,
 )
 from excel_grapher.core.formula_shape import (
+    FormulaShapeSummary,
     fingerprint_formula_shape,
     specialize_formula_shape,
     summarize_formula_shapes,
+    summarize_normalized_formulas,
 )
 
 _TACO = Path("examples/micro_workbooks/taco_patterns.xlsx")
@@ -114,6 +116,34 @@ def test_specialize_rejects_kind_mismatch() -> None:
     bad_params = (CellRefNode("Sheet1!A1"), RangeNode("Sheet1!A1", "Sheet1!A2"))
     with pytest.raises(ValueError, match="kind"):
         specialize_formula_shape(shape.skeleton, bad_params)
+
+
+def test_mean_instances_per_shape_ignores_unparseable_count() -> None:
+    """`formula_nodes` is successes-only; do not subtract `unparseable` again."""
+    summary = FormulaShapeSummary(
+        formula_nodes=3,
+        distinct_normalized_formulas=3,
+        distinct_shapes=2,
+        unparseable=1,
+        shape_counts=(("B(+,$CELL,$CELL)", 2), ("$CELL", 1)),
+    )
+    assert summary.mean_instances_per_shape == 1.5
+
+
+def test_summarize_normalized_formulas_counts_unparseable_separately() -> None:
+    summary, parseable = summarize_normalized_formulas(
+        [
+            "=Sheet1!A1+Sheet1!B1",
+            "=Sheet1!A2+Sheet1!B2",
+            "=1+",  # parse error
+            "=$CELL",  # bare ref — not sheet-qualified
+        ]
+    )
+    assert summary.unparseable == 2
+    assert summary.formula_nodes == 2
+    assert summary.distinct_shapes == 1
+    assert summary.mean_instances_per_shape == 2.0
+    assert parseable == ["=Sheet1!A1+Sheet1!B1", "=Sheet1!A2+Sheet1!B2"]
 
 
 @pytest.mark.skipif(not _FFV2.is_file(), reason="ffv2.xlsx fixture missing")

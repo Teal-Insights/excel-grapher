@@ -23,11 +23,13 @@ import time
 from collections.abc import Sequence
 from pathlib import Path
 
-from excel_grapher.core.formula_ast import parse
+from excel_grapher.core.formula_ast import FormulaParseError, parse
+from excel_grapher.core.formula_normalization import normalize_excel_formula
 from excel_grapher.core.formula_shape import (
     FormulaShapeSummary,
     fingerprint_formula_shape,
     summarize_formula_shapes,
+    summarize_normalized_formulas,
 )
 from excel_grapher.grapher.graph import DependencyGraph
 
@@ -82,40 +84,14 @@ def summarize_scanned_formula_shapes(
     graph extraction), so counts are an approximation.
 
     Returns:
-        `(summary, normalized_formulas)` for cardinality + parse-warm timing.
+        `(summary, parseable_formulas)` for cardinality + parse-warm timing.
     """
-    from collections import Counter
-
-    from excel_grapher.core.formula_ast import FormulaParseError
-    from excel_grapher.core.formula_normalization import normalize_excel_formula
-
     normalized: list[str] = []
-    shape_counter: Counter[str] = Counter()
-    unparseable = 0
     for sheet_name, raw in sheet_formulas:
-        try:
-            nf = normalize_excel_formula(raw, sheet_name).strip()
-        except Exception:
-            unparseable += 1
-            continue
-        if not nf:
-            continue
-        try:
-            shape = fingerprint_formula_shape(nf)
-        except FormulaParseError:
-            unparseable += 1
-            continue
-        normalized.append(nf)
-        shape_counter[shape.shape_key] += 1
-
-    summary = FormulaShapeSummary(
-        formula_nodes=len(normalized),
-        distinct_normalized_formulas=len(set(normalized)),
-        distinct_shapes=len(shape_counter),
-        unparseable=unparseable,
-        shape_counts=tuple(shape_counter.most_common()),
-    )
-    return summary, normalized
+        nf = normalize_excel_formula(raw, sheet_name).strip()
+        if nf:
+            normalized.append(nf)
+    return summarize_normalized_formulas(normalized)
 
 
 def measure_parse_warm_times(
@@ -141,8 +117,6 @@ def measure_parse_warm_times(
         }
 
     # Discover shapes once (not included in either timed warm path).
-    from excel_grapher.core.formula_ast import FormulaParseError
-
     reps_by_shape: dict[str, str] = {}
     parseable: list[str] = []
     for formula in distinct:
