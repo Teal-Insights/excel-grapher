@@ -6,7 +6,7 @@ from collections.abc import Iterable, Sequence
 from excel_grapher.core.address_keys import normalize_key
 
 from .graph import DependencyGraph
-from .node import Node, NodeKey, NodeKind, copy_metadata, member_keys
+from .node import Node, NodeKey, copy_metadata
 
 
 def select_path_induced_subgraph(
@@ -128,15 +128,6 @@ def _collect_path_nodes(
     return path_nodes
 
 
-def _endpoint_aliases(graph: DependencyGraph, key: NodeKey) -> list[NodeKey]:
-    """Return stored keys that refer to the same occupancy as `key`."""
-    aliases = [key]
-    node = graph.get_node(key)
-    if node is not None and node.kind is not NodeKind.cell and node.address is not None:
-        aliases.extend(member_keys(node))
-    return aliases
-
-
 def _reverse_reachable_nodes(graph: DependencyGraph, seeds: Iterable[NodeKey]) -> set[NodeKey]:
     seen: set[NodeKey] = set()
     q = deque(seeds)
@@ -145,11 +136,10 @@ def _reverse_reachable_nodes(graph: DependencyGraph, seeds: Iterable[NodeKey]) -
         if node in seen:
             continue
         seen.add(node)
-        for alias in _endpoint_aliases(graph, node):
-            for dependent in graph.get_dependents(alias):
-                resolved = graph.resolve_endpoint(dependent) or dependent
-                if resolved not in seen:
-                    q.append(resolved)
+        for dependent in graph.get_dependents(node):
+            resolved = graph.resolve_endpoint(dependent) or dependent
+            if resolved not in seen:
+                q.append(resolved)
     return seen
 
 
@@ -177,7 +167,6 @@ def _induced_dependency_subgraph(
                 is_leaf=node.is_leaf,
                 is_target=node.is_target,
                 metadata=copy_metadata(node.metadata),
-                kind=node.kind,
                 min_col=node.min_col,
                 min_row=node.min_row,
                 max_col=node.max_col,

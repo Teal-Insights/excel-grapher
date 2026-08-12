@@ -104,13 +104,12 @@ def test_deep_size_of_empty_roots_is_zero() -> None:
 def test_report_covers_the_graph_components() -> None:
     report = measure_graph_memory(_fixture_graph())
     names = [component.name for component in report.components]
-    assert names[:6] == [
+    assert names[:5] == [
         "nodes",
         "edges_forward",
         "edges_reverse",
         "guards",
         "provenance",
-        "occupancy",
     ]
     assert report.node_count == 2 * ROWS
     assert report.edge_count == ROWS
@@ -127,7 +126,7 @@ def test_component_totals_reconcile_with_the_distinct_total() -> None:
 
 def test_interned_keys_are_reported_as_shared_not_owned() -> None:
     report = measure_graph_memory(_fixture_graph())
-    # Node keys live in _nodes, _edges, _reverse_edges and _occupancy alike.
+    # Node keys live in _nodes, _edges, and _reverse_edges alike.
     assert report.component("nodes").shared_bytes > 0
     assert report.component("edges_forward").shared_bytes > 0
     assert report.shared_bytes > 0
