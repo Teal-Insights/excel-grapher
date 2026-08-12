@@ -307,11 +307,6 @@ def _component_specs(graph: DependencyGraph) -> list[_ComponentSpec]:
             "_edge_provenance: edge key -> EdgeProvenance (causes + site offsets)",
             (graph._edge_provenance,),
         ),
-        _ComponentSpec(
-            "occupancy",
-            "_occupancy: member cell -> owning node key",
-            (graph._occupancy,),
-        ),
     ]
     metadata_roots = tuple(
         value

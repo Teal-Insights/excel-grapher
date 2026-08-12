@@ -1,4 +1,4 @@
-"""Sprint 1 unit tests for CellKey / RangeKey / UnionKey and cover algorithm."""
+"""Unit tests for CellKey / RangeKey / UnionKey address parsing."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from excel_grapher.core.address_keys import (
     NodeShape,
     RangeKey,
     UnionKey,
-    members_to_node_key,
     parse_node_key,
 )
 
@@ -146,75 +145,3 @@ def test_parse_union_strips_spaces_around_commas() -> None:
 def test_parse_node_key_idempotent() -> None:
     key = parse_node_key("Sheet1!Y63:D63")
     assert parse_node_key(key) is key or parse_node_key(key) == key
-
-
-def test_members_to_node_key_order_independent_union() -> None:
-    members = [
-        "Sheet1!E5",
-        "Sheet1!A1",
-        "Sheet1!C1",
-        "Sheet1!B1",
-        "Sheet1!D1",
-    ]
-    shuffled = list(reversed(members))
-    key_a = members_to_node_key(members)
-    key_b = members_to_node_key(shuffled)
-    assert key_a == key_b == "Sheet1!A1:D1,E5"
-    assert isinstance(key_a, UnionKey)
-    assert key_a.shape is NodeShape.union
-
-
-def test_members_to_node_key_filled_block_single_range() -> None:
-    cells: list[str] = []
-    for row in range(4, 19):
-        for col in ("E", "F", "G", "H", "I"):
-            cells.append(f"Sheet1!{col}{row}")
-    key = members_to_node_key(cells)
-    assert isinstance(key, RangeKey)
-    assert key == "Sheet1!E4:I18"
-    assert key.shape is NodeShape.range
-
-
-def test_members_to_node_key_single_cell() -> None:
-    key = members_to_node_key(["Sheet1!E63"])
-    assert isinstance(key, CellKey)
-    assert key == "Sheet1!E63"
-
-
-def test_members_to_node_key_row_stripe() -> None:
-    # non-contiguous columns on one row -> horizontal runs, not one D:Y span
-    key = members_to_node_key(["Sheet1!D63", "Sheet1!E63", "Sheet1!F63", "Sheet1!Y63"])
-    assert key == "Sheet1!D63:F63,Y63"
-    # contiguous D..Y
-    from fastpyxl.utils.cell import get_column_letter
-
-    start = 4  # D
-    end = 25  # Y
-    contig = [f"Sheet1!{get_column_letter(i)}63" for i in range(start, end + 1)]
-    key2 = members_to_node_key(contig)
-    assert isinstance(key2, RangeKey)
-    assert key2 == "Sheet1!D63:Y63"
-    assert key2.shape is NodeShape.row
-
-
-def test_members_to_node_key_dedupes_and_rejects_empty() -> None:
-    key = members_to_node_key(["Sheet1!A1", "Sheet1!A1", "Sheet1!B1"])
-    assert key == "Sheet1!A1:B1"
-    with pytest.raises(ValueError, match="empty"):
-        members_to_node_key([])
-
-
-def test_members_to_node_key_cross_sheet() -> None:
-    key = members_to_node_key(["Sheet2!B2", "Sheet1!A1"])
-    assert isinstance(key, UnionKey)
-    assert key == "Sheet1!A1,Sheet2!B2"
-
-
-def test_members_to_node_key_quoted_sheet() -> None:
-    key = members_to_node_key(["'My Sheet'!A1", "'My Sheet'!B1"])
-    assert key == "'My Sheet'!A1:B1"
-
-
-def test_members_to_node_key_rejects_non_cell_members() -> None:
-    with pytest.raises(ValueError, match="cell"):
-        members_to_node_key(["Sheet1!A1:B2"])

@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v6.0.0 (2026-08-12)
+
+### Bug Fixes
+
+- **grapher**: Require CellKey when loading graph cache nodes
+  ([#524](https://github.com/Teal-Insights/excel-grapher/pull/524),
+  [`da8fbdb`](https://github.com/Teal-Insights/excel-grapher/commit/da8fbdbef5ca9879cbc599750e4b50fc9ab87796))
+
+### Refactoring
+
+- Remove multi-member occupancy from DependencyGraph
+  ([#524](https://github.com/Teal-Insights/excel-grapher/pull/524),
+  [`da8fbdb`](https://github.com/Teal-Insights/excel-grapher/commit/da8fbdbef5ca9879cbc599750e4b50fc9ab87796))
+
+### Testing
+
+- Relax unpickle peak/current bound after occupancy removal
+  ([#524](https://github.com/Teal-Insights/excel-grapher/pull/524),
+  [`da8fbdb`](https://github.com/Teal-Insights/excel-grapher/commit/da8fbdbef5ca9879cbc599750e4b50fc9ab87796))
+
+
+## v5.2.0 (2026-08-12)
+
+### Bug Fixes
+
+- **core**: Avoid grapher import in formula_shape summary
+  ([#518](https://github.com/Teal-Insights/excel-grapher/pull/518),
+  [`884bb28`](https://github.com/Teal-Insights/excel-grapher/commit/884bb2819631d31f16ed9c21479af4d5317246e4))
+
+- **core**: Correct mean_instances_per_shape and share summarize helper
+  ([#518](https://github.com/Teal-Insights/excel-grapher/pull/518),
+  [`884bb28`](https://github.com/Teal-Insights/excel-grapher/commit/884bb2819631d31f16ed9c21479af4d5317246e4))
+
+- **grapher**: Document keep_formula_cache load path
+  ([#519](https://github.com/Teal-Insights/excel-grapher/pull/519),
+  [`fdaa645`](https://github.com/Teal-Insights/excel-grapher/commit/fdaa6452a2dc25303231916d904509a2802c8cfd))
+
+### Features
+
+- **core**: Fingerprint parameterized formula AST shapes
+  ([#518](https://github.com/Teal-Insights/excel-grapher/pull/518),
+  [`884bb28`](https://github.com/Teal-Insights/excel-grapher/commit/884bb2819631d31f16ed9c21479af4d5317246e4))
+
+- **core**: Validate parameterized formula AST shape interning (#517)
+  ([#518](https://github.com/Teal-Insights/excel-grapher/pull/518),
+  [`884bb28`](https://github.com/Teal-Insights/excel-grapher/commit/884bb2819631d31f16ed9c21479af4d5317246e4))
+
+### Performance Improvements
+
+- **grapher**: Load formulas and caches in one fastpyxl pass
+  ([#519](https://github.com/Teal-Insights/excel-grapher/pull/519),
+  [`fdaa645`](https://github.com/Teal-Insights/excel-grapher/commit/fdaa6452a2dc25303231916d904509a2802c8cfd))
+
+
 ## v5.1.6 (2026-08-11)
 
 ### Bug Fixes

@@ -33,8 +33,13 @@ def graph() -> DependencyGraph:
 
     # Discover formula cells in the configured rows
     targets: list[str] = []
-    wb_f = fastpyxl.load_workbook(WORKBOOK_PATH, data_only=False, read_only=True, keep_vba=True)
-    wb_v = fastpyxl.load_workbook(WORKBOOK_PATH, data_only=True, read_only=True, keep_vba=True)
+    wb_f = fastpyxl.load_workbook(
+        WORKBOOK_PATH,
+        data_only=False,
+        read_only=True,
+        keep_vba=True,
+        keep_formula_cache=True,
+    )
     try:
         for sheet_name, rows in INDICATOR_CONFIG.items():
             targets.extend(
@@ -43,12 +48,10 @@ def graph() -> DependencyGraph:
                     sheet_name,
                     rows,
                     wb_formulas=wb_f,
-                    wb_values=wb_v,
                 )
             )
     finally:
         wb_f.close()
-        wb_v.close()
 
     return create_dependency_graph(
         WORKBOOK_PATH,

@@ -19,7 +19,6 @@ from typing import TypeAlias
 from fastpyxl.utils.cell import (
     column_index_from_string,
     coordinate_from_string,
-    get_column_letter,
 )
 from fastpyxl.utils.exceptions import CellCoordinatesException
 
@@ -323,7 +322,7 @@ def sort_node_keys(
 
 
 # ---------------------------------------------------------------------------
-# Node key model (CellKey / RangeKey / UnionKey) — formula-group Issue 1 sprint 1
+# Address key model (CellKey / RangeKey / UnionKey)
 # ---------------------------------------------------------------------------
 
 
@@ -572,101 +571,3 @@ def parse_node_key(value: str | NodeKey) -> NodeKey:
     if not area_raw or area_raw.endswith("!"):
         raise ValueError(f"Empty union key: {text!r}")
     return _parse_single_area(area_raw)
-
-
-def members_to_node_key(members: Sequence[str | NodeKey]) -> NodeKey:
-    """Build a canonical node key that exactly covers the given cell members.
-
-    Uses sheet partition, sort by `(row, col)`, greedy horizontal runs, then
-    greedy vertical merge of equal-width runs. Same member set always yields
-    the same key regardless of input order.
-    """
-    if not members:
-        raise ValueError("Cannot build node key from empty member set")
-
-    cells: dict[tuple[str, int, int], tuple[str, str, int]] = {}
-    for raw in members:
-        parsed = parse_node_key(raw)
-        if not isinstance(parsed, CellKey):
-            raise ValueError(
-                f"members_to_node_key requires cell members; got {type(parsed).__name__}: {raw!r}"
-            )
-        col_i = int(column_index_from_string(parsed.column))
-        cells[(parsed.sheet, parsed.row, col_i)] = (parsed.sheet, parsed.column, parsed.row)
-
-    if not cells:
-        raise ValueError("Cannot build node key from empty member set")
-
-    by_sheet: dict[str, list[tuple[int, int, str]]] = {}
-    for sheet, row, col_i in cells:
-        _sheet, col_letters, _row = cells[(sheet, row, col_i)]
-        by_sheet.setdefault(sheet, []).append((row, col_i, col_letters))
-
-    areas: list[CellKey | RangeKey] = []
-    for sheet, items in by_sheet.items():
-        items.sort(key=lambda t: (t[0], t[1]))
-        # Horizontal runs: (row, min_col_i, max_col_i, min_col_letters, max_col_letters)
-        runs: list[tuple[int, int, int]] = []
-        for row, col_i, _col_letters in items:
-            if runs and runs[-1][0] == row and col_i == runs[-1][2] + 1:
-                prev = runs[-1]
-                runs[-1] = (prev[0], prev[1], col_i)
-            else:
-                runs.append((row, col_i, col_i))
-
-        # Vertical merge: (min_col_i, max_col_i, min_row, max_row)
-        rects: list[tuple[int, int, int, int]] = [
-            (min_c, max_c, row, row) for row, min_c, max_c in runs
-        ]
-        rects.sort(key=lambda r: (r[0], r[1], r[2]))
-        merged: list[tuple[int, int, int, int]] = []
-        for min_c, max_c, min_r, max_r in rects:
-            if (
-                merged
-                and merged[-1][0] == min_c
-                and merged[-1][1] == max_c
-                and min_r == merged[-1][3] + 1
-            ):
-                prev = merged[-1]
-                merged[-1] = (prev[0], prev[1], prev[2], max_r)
-            else:
-                merged.append((min_c, max_c, min_r, max_r))
-
-        for min_c, max_c, min_r, max_r in merged:
-            areas.append(
-                _make_range_or_cell_key(
-                    sheet,
-                    get_column_letter(min_c),
-                    min_r,
-                    get_column_letter(max_c),
-                    max_r,
-                )
-            )
-
-    return _make_union_key(areas)
-
-
-def expand_node_cells(key: str | NodeKey) -> tuple[CellKey, ...]:
-    """Expand a cell, range, or union key into canonical member `CellKey`s.
-
-    Order is deterministic: sheet order as in the key, then row, then column.
-    """
-    parsed = parse_node_key(key)
-    if isinstance(parsed, CellKey):
-        return (parsed,)
-
-    cells: list[CellKey] = []
-    areas: Sequence[CellKey | RangeKey] = (
-        (parsed,) if isinstance(parsed, RangeKey) else parsed.members
-    )
-
-    for area in areas:
-        if isinstance(area, CellKey):
-            cells.append(area)
-            continue
-        min_c = column_index_from_string(area.min_col)
-        max_c = column_index_from_string(area.max_col)
-        for row in range(area.min_row, area.max_row + 1):
-            for col_i in range(min_c, max_c + 1):
-                cells.append(_make_cell_key(area.sheet, get_column_letter(col_i), row))
-    return tuple(cells)

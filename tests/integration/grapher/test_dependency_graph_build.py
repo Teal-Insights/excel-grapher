@@ -240,8 +240,8 @@ def test_parse_target_handles_quoted_sheet_name(tmp_path: Path) -> None:
 def test_rejects_workbook_instance_input(tmp_path: Path) -> None:
     """Reject pre-loaded `fastpyxl.Workbook` instances.
 
-    They cannot supply both formulas and cached values, so the builder must raise
-    `TypeError` rather than silently producing nodes with `value=None`.
+    The builder loads from a path with `keep_formula_cache` when values are
+    requested, so callers must pass a path rather than a pre-loaded workbook.
     """
     excel_path = tmp_path / "instance_input.xlsx"
     _create_fixture_workbook(excel_path)

@@ -16,7 +16,6 @@ from excel_grapher.grapher.node import (
     Node,
     copy_metadata,
     make_cell_node,
-    make_union_node,
     node_to_view,
 )
 from excel_grapher.grapher.subgraph import select_path_induced_subgraph
@@ -45,7 +44,7 @@ def _formula_node(sheet: str = "Sheet1", column: str = "B", row: int = 1) -> Nod
 def test_fresh_nodes_share_the_empty_metadata_singleton() -> None:
     """No node allocates a dict for metadata it never uses."""
     cell = _leaf()
-    union = make_union_node(["Sheet1!A1", "Sheet1!E5"])
+    other = make_cell_node("Sheet1", "E", 5)
     direct = Node(
         sheet="Sheet1",
         column="A",
@@ -58,7 +57,7 @@ def test_fresh_nodes_share_the_empty_metadata_singleton() -> None:
     explicit_empty = make_cell_node("Sheet1", "A", 3, metadata={})
 
     assert cell.metadata is EMPTY_METADATA
-    assert union.metadata is EMPTY_METADATA
+    assert other.metadata is EMPTY_METADATA
     assert direct.metadata is EMPTY_METADATA
     assert explicit_empty.metadata is EMPTY_METADATA
 

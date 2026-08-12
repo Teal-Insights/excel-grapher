@@ -13,8 +13,6 @@ from typing import Any, Literal
 
 from excel_grapher.core.address_keys import (
     CellKey,
-    RangeKey,
-    UnionKey,
     normalize_key,
     parse_node_key,
 )
@@ -43,39 +41,26 @@ BFS_HORIZONTAL_MIN_SLOT_GAP = 1.0
 
 
 def _resolve_viz_endpoint(graph: DependencyGraph, dep: NodeKey) -> NodeKey | None:
-    """Map an edge endpoint to a stored graph key (exact or occupancy owner)."""
+    """Map an edge endpoint to a stored graph key when present."""
     nk = normalize_key(dep)
     if nk in graph:
         return nk
-    try:
-        return graph.cell_owner(nk)
-    except ValueError:
-        return None
+    return None
 
 
 def _viz_label_geometry(node: NodeView) -> tuple[str, int, str]:
-    """Return `(sheet, row, column)` used as the viz node label anchor.
-
-    Multi-cell nodes use top-left / first-canonical-member geometry so unions
-    and non-row ranges never require scalar `Node.column` / `Node.row`.
-    """
+    """Return `(sheet, row, column)` used as the viz node label anchor."""
     parsed = parse_node_key(node.key)
-    if isinstance(parsed, CellKey):
-        return parsed.sheet, parsed.row, parsed.column
-    if isinstance(parsed, RangeKey):
-        return parsed.sheet, parsed.min_row, parsed.min_col
-    assert isinstance(parsed, UnionKey)
-    first = parsed.members[0]
-    if isinstance(first, CellKey):
-        return first.sheet, first.row, first.column
-    return first.sheet, first.min_row, first.min_col
+    if not isinstance(parsed, CellKey):
+        raise ValueError(f"Visualization requires cell nodes; got: {node.key!r}")
+    return parsed.sheet, parsed.row, parsed.column
 
 
 def _node_sheets(node: NodeView) -> set[str]:
     parsed = parse_node_key(node.key)
-    if isinstance(parsed, (CellKey, RangeKey)):
-        return {parsed.sheet}
-    return {m.sheet for m in parsed.members}
+    if not isinstance(parsed, CellKey):
+        raise ValueError(f"Visualization requires cell nodes; got: {node.key!r}")
+    return {parsed.sheet}
 
 
 def _build_int_adjacencies(

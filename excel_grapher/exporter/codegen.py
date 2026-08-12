@@ -3280,11 +3280,12 @@ class CodeGenerator:
                 closure.add(addr)
                 for dep in self.graph.get_dependencies(addr):
                     dep_n = normalize_address(dep)
-                    resolved = None
+                    owner = dep_n
                     resolve = getattr(self.graph, "resolve_endpoint", None)
                     if callable(resolve):
                         resolved = resolve(dep_n)
-                    owner = resolved if resolved is not None else dep_n
+                        if resolved is not None:
+                            owner = resolved
                     owner_n = normalize_address(owner)
                     if owner_n not in closure and self.graph.get_node(owner_n) is not None:
                         stack.append(owner_n)

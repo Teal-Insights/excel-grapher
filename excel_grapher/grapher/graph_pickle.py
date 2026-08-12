@@ -195,7 +195,6 @@ def _read_graph_frames(buf: BinaryIO) -> Any:
         (keys[a], keys[b]): cast(EdgeProvenance, p) for a, b, p in part2["_edge_provenance"]
     }
     del part2, edge_src, edge_dst
-    graph._rebuild_occupancy()
     return graph
 
 
