@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from weakref import WeakValueDictionary
 
 from fastpyxl.utils.cell import column_index_from_string, get_column_letter
 
@@ -10,12 +11,12 @@ from excel_grapher.core.address_keys import RangeKey, format_cell_key
 from .node import NodeKey
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class GuardExpr:
     """Base type for conditional dependency guards."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class CellRef(GuardExpr):
     """A cell reference used in a condition."""
 
@@ -25,7 +26,7 @@ class CellRef(GuardExpr):
         return self.key
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class RangeRef(GuardExpr):
     """A multi-cell range used in an array-context condition.
 
@@ -72,7 +73,7 @@ class RangeRef(GuardExpr):
         return self.key
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class Literal(GuardExpr):
     """A literal value in a condition."""
 
@@ -96,7 +97,7 @@ class Literal(GuardExpr):
         return str(v)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class Compare(GuardExpr):
     """Comparison: left op right."""
 
@@ -108,7 +109,7 @@ class Compare(GuardExpr):
         return f"{self.left}{self.op}{self.right}"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class Not(GuardExpr):
     """Logical negation."""
 
@@ -118,7 +119,7 @@ class Not(GuardExpr):
         return f"NOT({self.operand})"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class And(GuardExpr):
     """Logical AND."""
 
@@ -129,7 +130,7 @@ class And(GuardExpr):
         return f"AND({inner})"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class Or(GuardExpr):
     """Logical OR."""
 
@@ -140,8 +141,32 @@ class Or(GuardExpr):
         return f"OR({inner})"
 
 
-# Process-wide hash-cons table: equal GuardExpr trees share one object.
-_GUARD_POOL: dict[GuardExpr, GuardExpr] = {}
+# Weak hash-cons table: structural keys so the key does not keep the value alive.
+# Entries disappear once no graph (or other strong ref) retains the expression.
+_GUARD_POOL: WeakValueDictionary[tuple[Any, ...], GuardExpr] = WeakValueDictionary()
+
+
+def _guard_intern_key(expr: GuardExpr) -> tuple[Any, ...]:
+    """Return a structural pool key that does not strongly reference `expr`.
+
+    Composite nodes key children by `id()`; callers must intern children first so
+    equal subtrees share identity and thus the same child ids.
+    """
+    if isinstance(expr, CellRef):
+        return (CellRef, expr.key)
+    if isinstance(expr, RangeRef):
+        return (RangeRef, expr.key)
+    if isinstance(expr, Literal):
+        return (Literal, type(expr.value), expr.value)
+    if isinstance(expr, Compare):
+        return (Compare, id(expr.left), expr.op, id(expr.right))
+    if isinstance(expr, Not):
+        return (Not, id(expr.operand))
+    if isinstance(expr, And):
+        return (And, *(id(o) for o in expr.operands))
+    if isinstance(expr, Or):
+        return (Or, *(id(o) for o in expr.operands))
+    return (type(expr), id(expr))
 
 
 def intern_guard(expr: GuardExpr) -> GuardExpr:
@@ -150,6 +175,9 @@ def intern_guard(expr: GuardExpr) -> GuardExpr:
     Child nodes are interned first so equal subtrees are shared by identity as
     well as equality. Distinct-but-equal trees constructed independently (for
     example the same `IF` condition on two cells) collapse to one object.
+
+    The intern pool holds values weakly: expressions retained only by the pool
+    are eligible for collection once no graph (or other strong ref) keeps them.
     """
     if isinstance(expr, Compare):
         left = intern_guard(expr.left)
@@ -169,11 +197,29 @@ def intern_guard(expr: GuardExpr) -> GuardExpr:
         if any(a is not b for a, b in zip(ops, expr.operands, strict=True)):
             expr = Or(ops)
 
-    cached = _GUARD_POOL.get(expr)
+    key = _guard_intern_key(expr)
+    cached = _GUARD_POOL.get(key)
     if cached is not None:
         return cached
-    _GUARD_POOL[expr] = expr
+    _GUARD_POOL[key] = expr
     return expr
+
+
+def guard_intern_pool_size() -> int:
+    """Return the number of live entries in the guard intern pool."""
+    return len(_GUARD_POOL)
+
+
+def clear_guard_intern_pool() -> None:
+    """Drop all intern-pool entries and re-seed `Literal(True)`.
+
+    Expressions still held by graphs remain alive but will not be shared with
+    newly interned equals until those equals are interned again. Intended for
+    batch jobs that extract many independent workbooks in one process.
+    """
+    global _LITERAL_TRUE
+    _GUARD_POOL.clear()
+    _LITERAL_TRUE = intern_guard(Literal(True))
 
 
 _LITERAL_TRUE = intern_guard(Literal(True))

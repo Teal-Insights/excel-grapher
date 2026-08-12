@@ -528,7 +528,8 @@ class DependencyGraph:
         out: dict[NodeKey, set[NodeKey]] = {k: set() for k in self._nodes}
         for k in self._nodes:
             for dep in self._edges.get(k, ()):
-                if self.is_guarded(k, dep):
+                # Direct membership: keys are already canonical here.
+                if (k, dep) in self._guards:
                     continue
                 resolved = self._resolve_graph_endpoint(dep)
                 if resolved is not None:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import gc
+
 from excel_grapher.grapher.guard import (
     And,
     CellRef,
@@ -11,6 +13,8 @@ from excel_grapher.grapher.guard import (
     Or,
     RangeRef,
     and_guard,
+    clear_guard_intern_pool,
+    guard_intern_pool_size,
     intern_guard,
     or_guard,
 )
@@ -74,3 +78,29 @@ def test_parse_guard_expr_interns_identical_conditions() -> None:
     second = parse_guard_expr("$A$1=1", current_sheet="Sheet1")
     assert first is not None and second is not None
     assert first is second
+
+
+def test_unreferenced_interned_guards_can_be_collected() -> None:
+    """Pool entries are weak: dropping all strong refs frees the interned tree."""
+    marker = "unique-gc-marker-zz999"
+    expr = intern_guard(Compare(CellRef("Sheet1!ZZ999"), "=", Literal(marker)))
+    expr_id = id(expr)
+    del expr
+    gc.collect()
+    revived = intern_guard(Compare(CellRef("Sheet1!ZZ999"), "=", Literal(marker)))
+    # Old pooled object was collected; this is a new interned instance.
+    assert id(revived) != expr_id
+    twin = intern_guard(Compare(CellRef("Sheet1!ZZ999"), "=", Literal(marker)))
+    assert twin is revived
+
+
+def test_clear_guard_intern_pool_drops_entries_but_reseeds_true() -> None:
+    held = intern_guard(Compare(CellRef("Sheet1!AA1"), "=", Literal(42)))
+    clear_guard_intern_pool()
+    # Cleared entries are gone; a new equal tree is a distinct object from `held`.
+    revived = intern_guard(Compare(CellRef("Sheet1!AA1"), "=", Literal(42)))
+    assert revived == held
+    assert revived is not held
+    # and_guard identity for TRUE still works after reseed.
+    assert and_guard(Literal(True), revived) is revived
+    assert guard_intern_pool_size() >= 1
