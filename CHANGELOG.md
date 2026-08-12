@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v6.1.0 (2026-08-12)
+
+### Bug Fixes
+
+- **grapher**: Narrow RangeRef.element return after intern
+  ([#522](https://github.com/Teal-Insights/excel-grapher/pull/522),
+  [`29a62a6`](https://github.com/Teal-Insights/excel-grapher/commit/29a62a60ec92efa26382232e9286d480c509b0fc))
+
+- **grapher**: Weak intern pool and cheap uncond adjacency check
+  ([#522](https://github.com/Teal-Insights/excel-grapher/pull/522),
+  [`29a62a6`](https://github.com/Teal-Insights/excel-grapher/commit/29a62a60ec92efa26382232e9286d480c509b0fc))
+
+### Features
+
+- **grapher**: Intern GuardExpr trees and add is_guarded
+  ([#522](https://github.com/Teal-Insights/excel-grapher/pull/522),
+  [`29a62a6`](https://github.com/Teal-Insights/excel-grapher/commit/29a62a60ec92efa26382232e9286d480c509b0fc))
+
+- **grapher**: Intern GuardExpr trees and add is_guarded (#491)
+  ([#522](https://github.com/Teal-Insights/excel-grapher/pull/522),
+  [`29a62a6`](https://github.com/Teal-Insights/excel-grapher/commit/29a62a60ec92efa26382232e9286d480c509b0fc))
+
+
 ## v6.0.0 (2026-08-12)
 
 ### Bug Fixes
