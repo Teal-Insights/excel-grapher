@@ -9,7 +9,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal, TypedDict, cast
 
-from excel_grapher.core.address_keys import parse_node_key
+from excel_grapher.core.address_keys import CellKey, parse_node_key
 
 from .dependency_provenance import DependencyCause, EdgeProvenance
 from .graph import DependencyGraph
@@ -420,6 +420,11 @@ def dependency_graph_from_json(payload: dict[str, Any]) -> DependencyGraph:
         is_target = bool(n.get("is_target", False))
         metadata = cast(dict[str, Any], n.get("metadata", {}))
         if address is not None:
+            parsed = parse_node_key(cast(str, address))
+            if not isinstance(parsed, CellKey):
+                raise TypeError(
+                    f"Graph cache nodes must be cells; got {type(parsed).__name__}: {address!r}"
+                )
             node = Node(
                 sheet=cast(str | None, n.get("sheet")),
                 column=cast(str | None, n.get("column")),
@@ -430,7 +435,7 @@ def dependency_graph_from_json(payload: dict[str, Any]) -> DependencyGraph:
                 is_leaf=is_leaf,
                 is_target=is_target,
                 metadata=metadata,
-                address=parse_node_key(cast(str, address)),
+                address=parsed,
             )
         else:
             node = Node(
