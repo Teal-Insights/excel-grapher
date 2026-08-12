@@ -272,12 +272,7 @@ class Node:
         self.max_col = str(self.max_col).upper()
         self.min_row = int(self.min_row)
         self.max_row = int(self.max_row)
-        if (
-            self.min_col != col
-            or self.max_col != col
-            or self.min_row != row
-            or self.max_row != row
-        ):
+        if self.min_col != col or self.max_col != col or self.min_row != row or self.max_row != row:
             raise ValueError(
                 "Graph nodes must be single cells; extent fields must match sheet/column/row"
             )
