@@ -66,7 +66,7 @@ def is_identity_transit(graph: DependencyGraph, transit_key: NodeKey) -> NodeKey
     if len(deps) != 1:
         return None
     r_key = next(iter(deps))
-    if graph.get_edge_guard(transit_key, r_key) is not None:
+    if graph.is_guarded(transit_key, r_key):
         return None
     addr = _singleton_cell_ref_address(node.normalized_formula)
     if addr is None:
@@ -151,7 +151,7 @@ def _structural_inline_candidate(
     dependent = next(iter(dependents))
     if graph._is_dependency_reachable(transit_key, dependent):
         return None
-    if graph.get_edge_guard(dependent, transit_key) is not None:
+    if graph.is_guarded(dependent, transit_key):
         return None
     if not node_body_substitutable(graph, transit_key):
         return None
@@ -378,7 +378,7 @@ def dependent_context_substitutable(
     for dep in graph.get_dependencies(dependent):
         if dep == replacing:
             continue
-        if graph.get_edge_guard(dependent, dep) is not None:
+        if graph.is_guarded(dependent, dep):
             return False
         attrs = graph.get_edge_attrs(dependent, dep)
         if not compression_safe_provenance(attrs.provenance):
@@ -391,7 +391,7 @@ def _incoming_edge_substitutable(
     dependent: NodeKey,
     precedent: NodeKey,
 ) -> bool:
-    if graph.get_edge_guard(dependent, precedent) is not None:
+    if graph.is_guarded(dependent, precedent):
         return False
     prov = graph.get_edge_attrs(dependent, precedent).provenance
     if not compression_safe_provenance(prov):

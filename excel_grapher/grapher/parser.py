@@ -30,7 +30,7 @@ from excel_grapher.core.range_shorthand import (
     expand_whole_row_deps,
 )
 
-from .guard import And, Compare, GuardExpr, Literal, Not, Or, RangeRef
+from .guard import And, Compare, GuardExpr, Literal, Not, Or, RangeRef, intern_guard
 from .guard import CellRef as GuardCellRef
 from .node import NodeKey
 
@@ -1333,7 +1333,24 @@ def parse_guard_expr(
 
     Returns:
         The parsed guard, or `None` when the syntax is unsupported.
+        Successful results are passed through `intern_guard`.
     """
+    parsed = _parse_guard_expr(
+        expr,
+        current_sheet=current_sheet,
+        named_ranges=named_ranges,
+        allow_ranges=allow_ranges,
+    )
+    return None if parsed is None else intern_guard(parsed)
+
+
+def _parse_guard_expr(
+    expr: str,
+    *,
+    current_sheet: str,
+    named_ranges: dict[str, tuple[str, str]] | None = None,
+    allow_ranges: bool = False,
+) -> GuardExpr | None:
     if named_ranges is None:
         named_ranges = {}
     s = expr.strip()

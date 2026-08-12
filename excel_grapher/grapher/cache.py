@@ -13,7 +13,7 @@ from excel_grapher.core.address_keys import CellKey, parse_node_key
 
 from .dependency_provenance import DependencyCause, EdgeProvenance
 from .graph import DependencyGraph
-from .guard import And, CellRef, Compare, GuardExpr, Not, Or
+from .guard import And, CellRef, Compare, GuardExpr, Not, Or, intern_guard
 from .guard import Literal as GuardLiteral
 from .node import Node, NodeKey
 
@@ -275,9 +275,9 @@ def _guard_from_json(v: object) -> GuardExpr | None:
         key = d.get("key")
         if not isinstance(key, str):
             raise TypeError("cell guard key must be str")
-        return CellRef(key=cast(NodeKey, key))
+        return intern_guard(CellRef(key=cast(NodeKey, key)))
     if typ == "lit":
-        return GuardLiteral(value=_value_from_json(d.get("value")))
+        return intern_guard(GuardLiteral(value=_value_from_json(d.get("value"))))
     if typ == "cmp":
         op = d.get("op")
         if not isinstance(op, str):
@@ -286,12 +286,12 @@ def _guard_from_json(v: object) -> GuardExpr | None:
         right = _guard_from_json(d.get("right"))
         if left is None or right is None:
             raise TypeError("cmp left/right cannot be null")
-        return Compare(left=left, op=op, right=right)
+        return intern_guard(Compare(left=left, op=op, right=right))
     if typ == "not":
         operand = _guard_from_json(d.get("operand"))
         if operand is None:
             raise TypeError("not operand cannot be null")
-        return Not(operand=operand)
+        return intern_guard(Not(operand=operand))
     if typ == "and":
         ops = d.get("operands")
         if not isinstance(ops, list):
@@ -302,7 +302,7 @@ def _guard_from_json(v: object) -> GuardExpr | None:
             if g is None:
                 raise TypeError("and operands cannot be null")
             parts.append(g)
-        return And(tuple(parts))
+        return intern_guard(And(tuple(parts)))
     if typ == "or":
         ops = d.get("operands")
         if not isinstance(ops, list):
@@ -313,7 +313,7 @@ def _guard_from_json(v: object) -> GuardExpr | None:
             if g is None:
                 raise TypeError("or operands cannot be null")
             parts_o.append(g)
-        return Or(tuple(parts_o))
+        return intern_guard(Or(tuple(parts_o)))
     raise ValueError(f"Unknown guard JSON type: {typ!r}")
 
 

@@ -76,7 +76,7 @@ def _build_int_adjacencies(
             if tid is None:
                 continue
             all_e[i].append(tid)
-            if graph.get_edge_guard(fk, tk) is None:
+            if not graph.is_guarded(fk, tk):
                 uncond[i].append(tid)
     return uncond, all_e
 
@@ -106,7 +106,7 @@ def _edge_list_filtered(
             ti = None if resolved is None else key_id.get(resolved)
             if ti is None:
                 continue
-            g = graph.get_edge_guard(fk, tk) is not None
+            g = graph.is_guarded(fk, tk)
             if g and not include_guarded:
                 continue
             out.append((fi, ti, g))
@@ -252,7 +252,7 @@ def _build_out_adj_guarded(
             ti = None if resolved is None else key_id.get(resolved)
             if ti is None:
                 continue
-            guarded = graph.get_edge_guard(fk, tk) is not None
+            guarded = graph.is_guarded(fk, tk)
             if guarded and not include_guarded:
                 continue
             out[fi].append((ti, guarded))
