@@ -1084,21 +1084,28 @@ def _infer_single_index_call(
     )
 
 
-def _qualify_fragment(
-    expr: str,
+@lru_cache(maxsize=4096)
+def _defined_name_token_pattern(name: str) -> re.Pattern[str]:
+    """Compiled word-bounded defined-name token that is not a sheet qualifier."""
+    return re.compile(rf"\b{re.escape(name)}\b(?!\s*!)")
+
+
+_QualifyReplacementPairs = tuple[tuple[str, str], ...]
+_qualify_pairs_cache: dict[tuple[int, int], _QualifyReplacementPairs] = {}
+_QUALIFY_PAIRS_CACHE_MAX = 64
+
+
+def _qualify_replacement_pairs(
     named_ranges: Mapping[str, tuple[str, str]],
     named_range_ranges: Mapping[str, tuple[str, str, str]] | None,
-) -> str:
-    """Replace named range tokens in a formula fragment with sheet-qualified refs so the parser can parse it."""
-    if not expr.strip():
-        return expr
-    # Replace longer names first so "Country_list" is not partially matched by "Count".
+) -> _QualifyReplacementPairs:
+    """Return `(name, replacement)` pairs, longest name first."""
     all_names = sorted(
         set(named_ranges.keys())
         | (set(named_range_ranges.keys()) if named_range_ranges else set()),
         key=lambda n: (-len(n), n),
     )
-    result = expr
+    pairs: list[tuple[str, str]] = []
     for name in all_names:
         if name in named_ranges:
             sheet, addr = named_ranges[name]
@@ -1108,7 +1115,50 @@ def _qualify_fragment(
             replacement = f"{format_key(sheet, start_a1)}:{format_key(sheet, end_a1)}"
         else:
             continue
-        result = re.sub(rf"\b{re.escape(name)}\b(?!\s*!)", replacement, result)
+        pairs.append((name, replacement))
+    return tuple(pairs)
+
+
+def _cached_qualify_replacement_pairs(
+    named_ranges: Mapping[str, tuple[str, str]],
+    named_range_ranges: Mapping[str, tuple[str, str, str]] | None,
+) -> _QualifyReplacementPairs:
+    """Reuse replacement pairs for a given pair of named-range mapping objects."""
+    key = (
+        id(named_ranges),
+        id(named_range_ranges) if named_range_ranges is not None else 0,
+    )
+    cached = _qualify_pairs_cache.get(key)
+    if cached is not None:
+        return cached
+    pairs = _qualify_replacement_pairs(named_ranges, named_range_ranges)
+    if len(_qualify_pairs_cache) >= _QUALIFY_PAIRS_CACHE_MAX:
+        _qualify_pairs_cache.clear()
+    _qualify_pairs_cache[key] = pairs
+    return pairs
+
+
+def _qualify_fragment(
+    expr: str,
+    named_ranges: Mapping[str, tuple[str, str]],
+    named_range_ranges: Mapping[str, tuple[str, str, str]] | None,
+) -> str:
+    """Replace named range tokens in a formula fragment with sheet-qualified refs.
+
+    Patterns are compiled once per defined name and reused. Names whose literal
+    text is absent from the fragment are skipped. Longer names are applied first
+    so `Sales.Total` is not partially matched by `Sales`.
+    """
+    if not expr.strip():
+        return expr
+    pairs = _cached_qualify_replacement_pairs(named_ranges, named_range_ranges)
+    if not pairs:
+        return expr
+    result = expr
+    for name, replacement in pairs:
+        if name not in result:
+            continue
+        result = _defined_name_token_pattern(name).sub(replacement, result)
     return result
 
 
