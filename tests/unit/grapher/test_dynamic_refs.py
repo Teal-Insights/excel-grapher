@@ -3042,6 +3042,99 @@ def test_shared_intermediate_env_expansion_cache(tmp_path: Path) -> None:
     )
 
 
+def _build_shifted_index_same_match_workbook(
+    path: Path,
+    *,
+    formula_count: int = 12,
+    country_count: int = 8,
+) -> tuple[list[str], dict[str, object]]:
+    """INDEX arrays shift per row; MATCH arguments stay absolute and identical.
+
+    This is the LIC-DSF chart-series shape from issue #528: each output cell is
+    a variation of `INDEX(shifted_range, MATCH(fixed_lookup, fixed_list, 0))`.
+    Normalized formulae differ (so `_dyn_dep_cache` misses) while the MATCH
+    argument subgraph — the only refs collected for env expansion — is the same.
+    """
+    countries = [f"Country {i:03d}" for i in range(1, country_count + 1)]
+    wb = xlsxwriter.Workbook(path)
+    inputs = wb.add_worksheet("Inputs")
+    lookup = wb.add_worksheet("Lookup")
+    chart = wb.add_worksheet("Chart Data")
+    outputs = wb.add_worksheet("Outputs")
+
+    inputs.write("A1", countries[0])
+    last_lookup_row = country_count + 1
+    for row, country in enumerate(countries, start=1):
+        lookup.write(row, 0, country)
+        lookup.write_number(row, 1, row * 10)
+
+    for row in range(1, formula_count + country_count + 2):
+        chart.write_number(row - 1, 0, row)
+        chart.write_number(row - 1, 1, row * 100)
+
+    targets: list[str] = []
+    for i in range(formula_count):
+        start = i + 1
+        end = start + country_count - 1
+        outputs.write_formula(
+            i,
+            0,
+            "=INDEX("
+            f"'Chart Data'!A{start}:B{end},"
+            f"MATCH(Inputs!$A$1,Lookup!$A$2:$A${last_lookup_row},0),"
+            "1"
+            ")",
+        )
+        targets.append(f"Outputs!A{i + 1}")
+
+    wb.close()
+    constraints: dict[str, object] = {"Inputs!A1": _literal_constraint(*countries)}
+    for row, country in enumerate(countries, start=2):
+        constraints[f"Lookup!A{row}"] = _literal_constraint(country)
+    return targets, constraints
+
+
+def test_shifted_index_variants_reuse_identical_argument_env(tmp_path: Path) -> None:
+    """Row-wise INDEX variants must not re-derive the same MATCH argument env.
+
+    Regression for issue #528: `_dyn_cache` / `_dyn_dep_cache` key on the
+    normalized formula (plus position), so a relative INDEX array makes every
+    row a miss even when `expand_leaf_env_to_argument_env` would return the
+    same env.  One expansion should serve every variant; INDEX target inference
+    still runs per formula so shifted arrays keep distinct deps.
+    """
+    formula_count = 12
+    country_count = 8
+    excel_path = tmp_path / "shifted_index_same_match.xlsx"
+    targets, constraints = _build_shifted_index_same_match_workbook(
+        excel_path,
+        formula_count=formula_count,
+        country_count=country_count,
+    )
+    config = DynamicRefConfig.from_constraints(constraints, {})
+
+    graph, call_count = _build_graph_counting_dynamic_expansion(
+        excel_path,
+        targets,
+        dynamic_refs=config,
+    )
+
+    assert call_count == 1, (
+        f"expand_leaf_env_to_argument_env was called {call_count} times for "
+        f"{formula_count} INDEX variants with an identical MATCH subgraph; "
+        "expected 1 (issue #528)"
+    )
+
+    first_deps = set(graph.get_dependencies(targets[0]))
+    last_deps = set(graph.get_dependencies(targets[-1]))
+    assert "Inputs!A1" in first_deps
+    assert "Lookup!A2" in first_deps
+    assert "'Chart Data'!A1" in first_deps
+    assert f"'Chart Data'!A{formula_count}" in last_deps
+    assert "'Chart Data'!A1" not in last_deps
+    assert f"'Chart Data'!A{formula_count}" not in first_deps
+
+
 # ---------------------------------------------------------------------------
 # Deterministic traversal order
 # ---------------------------------------------------------------------------

@@ -487,11 +487,14 @@ def create_dependency_graph(
 
     **Cost model**: constraint-based dynamic-ref expansion (`dynamic_refs` set,
     `use_cached_dynamic_refs=False`) runs `expand_leaf_env_to_argument_env`
-    once per formula regardless of `capture_dependency_provenance`.  A shared
-    per-graph cache ensures provenance collection reuses the already-computed
-    expansion instead of repeating it.  Callers doing iterative constraint-tuning
-    workflows can still set `capture_dependency_provenance=False` to avoid any
-    provenance overhead (formula-string span collection, branch-union merging, etc.).
+    once per distinct argument-subgraph (the set of cells feeding OFFSET /
+    INDIRECT / INDEX arguments), not once per formula.  Row-wise INDEX/MATCH
+    variants that share a MATCH lookup therefore reuse the env instead of
+    re-deriving it (issue #528).  A shared per-graph cache also ensures
+    provenance collection reuses the already-computed expansion instead of
+    repeating it.  Callers doing iterative constraint-tuning workflows can
+    still set `capture_dependency_provenance=False` to avoid any provenance
+    overhead (formula-string span collection, branch-union merging, etc.).
     """
     if not isinstance(workbook, (str, Path)):
         raise TypeError(
@@ -565,6 +568,20 @@ def create_dependency_graph(
     # formula cells inferred once are reused across BFS nodes, avoiding redundant
     # recursive domain inference when many dynamic-ref formulas share intermediates.
     _shared_cell_type_cache: dict[str, CellType] = {}
+    # Memoize static-ref extraction across argument-subgraph walks.  Store
+    # frozensets and return a fresh mutable set on every call so callers that
+    # mutate in place (e.g. expand_leaf_env_to_argument_env's `refs |= …`)
+    # cannot poison later lookups.
+    _refs_without_dynamic_cache: dict[tuple[str, str], frozenset[str]] = {}
+    # argument_addrs frozenset -> (statically reachable refs, leaf cells).
+    _arg_subgraph_cache: dict[frozenset[str], tuple[set[str], set[str]]] = {}
+    _dyn_stats = {
+        "infer_calls": 0,
+        "cache_hits": 0,
+        "dep_cache_hits": 0,
+        "env_cache_hits": 0,
+        "arg_subgraph_hits": 0,
+    }
     _NAME_TOKEN_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*!)")
 
     # Worksheet caches: avoid repeated O(#sheets) __getitem__ scans on every BFS node.
@@ -588,6 +605,71 @@ def create_dependency_graph(
     def _ensure_sheet_bounds(sheet: str) -> None:
         if sheet not in sheet_bounds:
             _get_ws_f(sheet)
+
+    def _refs_in_formula_without_dynamic(formula_str: str, sheet_of_cell: str) -> set[str]:
+        """Static (non-dynamic-ref) cell addresses referenced by `formula_str`."""
+        f = formula_str if formula_str.startswith("=") else "=" + formula_str
+        cache_key = (f, sheet_of_cell)
+        cached = _refs_without_dynamic_cache.get(cache_key)
+        if cached is not None:
+            return set(cached)
+        dyn = _find_function_calls_with_spans(
+            f,
+            frozenset({"OFFSET", "INDIRECT", "INDEX"}),
+        )
+        spans = [span for _fn, _inner, span in dyn]
+        masked = mask_spans(f, spans)
+        masked = mask_ref_only_function_calls(masked)
+        norm = normalizer.normalize(masked, sheet_of_cell)
+        out: set[str] = set()
+        for ref in parse_standalone_cell_refs(norm):
+            sh = ref.sheet if ref.sheet is not None else sheet_of_cell
+            out.add(format_key(sh, f"{ref.column}{ref.row}"))
+        for start, end, _span in parse_range_refs_with_spans(norm):
+            sh = start.sheet if start.sheet is not None else sheet_of_cell
+            for dep_sheet, dep_a1 in expand_range(
+                sheet=sh,
+                start_col=start.column,
+                start_row=start.row,
+                end_col=end.column,
+                end_row=end.row,
+                max_cells=max_range_cells,
+            ):
+                out.add(format_key(dep_sheet, dep_a1))
+        _refs_without_dynamic_cache[cache_key] = frozenset(out)
+        return out
+
+    def _argument_subgraph_refs(argument_addrs: set[str]) -> tuple[set[str], set[str]]:
+        """Return statically reachable refs and leaves feeding dynamic-ref arguments."""
+        cache_key = frozenset(argument_addrs)
+        cached = _arg_subgraph_cache.get(cache_key)
+        if cached is not None:
+            _dyn_stats["arg_subgraph_hits"] += 1
+            return cached
+        all_refs: set[str] = set()
+        to_visit = set(argument_addrs)
+        while to_visit:
+            addr = to_visit.pop()
+            if addr in all_refs:
+                continue
+            all_refs.add(addr)
+            sh, a1 = parse_address(addr)
+            if sh not in wb_formulas.sheetnames:
+                continue
+            cell_val = _get_ws_f(sh)[a1].value
+            if isinstance(cell_val, str) and cell_val.startswith("="):
+                to_visit.update(_refs_in_formula_without_dynamic(cell_val, sh))
+        leaves: set[str] = set()
+        for addr in all_refs:
+            sh, a1 = parse_address(addr)
+            if sh not in wb_formulas.sheetnames:
+                continue
+            cell_val = _get_ws_f(sh)[a1].value
+            if not (isinstance(cell_val, str) and cell_val.startswith("=")):
+                leaves.add(addr)
+        result = (all_refs, leaves)
+        _arg_subgraph_cache[cache_key] = result
+        return result
 
     def _get_ws_v(sheet: str) -> Worksheet:
         # Only used for the lazy data_only fallback workbook.
@@ -921,59 +1003,7 @@ def create_dependency_graph(
                                             deps.append((dep_sheet, dep_a1))
                                             argument_addrs.add(format_key(dep_sheet, dep_a1))
                     if calls:
-
-                        def _refs_in_formula_without_dynamic(
-                            formula_str: str, sheet_of_cell: str
-                        ) -> set[str]:
-                            dyn = _find_function_calls_with_spans(
-                                formula_str if formula_str.startswith("=") else "=" + formula_str,
-                                frozenset({"OFFSET", "INDIRECT", "INDEX"}),
-                            )
-                            spans = [span for _fn, _inner, span in dyn]
-                            masked = mask_spans(
-                                formula_str if formula_str.startswith("=") else "=" + formula_str,
-                                spans,
-                            )
-                            masked = mask_ref_only_function_calls(masked)
-                            norm = normalizer.normalize(masked, sheet_of_cell)
-                            out: set[str] = set()
-                            for ref in parse_standalone_cell_refs(norm):
-                                sh = ref.sheet if ref.sheet is not None else sheet_of_cell
-                                out.add(format_key(sh, f"{ref.column}{ref.row}"))
-                            for start, end, _span in parse_range_refs_with_spans(norm):
-                                sh = start.sheet if start.sheet is not None else sheet_of_cell
-                                for dep_sheet, dep_a1 in expand_range(
-                                    sheet=sh,
-                                    start_col=start.column,
-                                    start_row=start.row,
-                                    end_col=end.column,
-                                    end_row=end.row,
-                                    max_cells=max_range_cells,
-                                ):
-                                    out.add(format_key(dep_sheet, dep_a1))
-                            return out
-
-                        all_refs: set[str] = set()
-                        to_visit = set(argument_addrs)
-                        while to_visit:
-                            addr = to_visit.pop()
-                            if addr in all_refs:
-                                continue
-                            all_refs.add(addr)
-                            sh, a1 = parse_address(addr)
-                            if sh not in wb_formulas.sheetnames:
-                                continue
-                            cell_val = _get_ws_f(sh)[a1].value
-                            if isinstance(cell_val, str) and cell_val.startswith("="):
-                                to_visit.update(_refs_in_formula_without_dynamic(cell_val, sh))
-                        leaves = set()
-                        for addr in all_refs:
-                            sh, a1 = parse_address(addr)
-                            if sh not in wb_formulas.sheetnames:
-                                continue
-                            cell_val = _get_ws_f(sh)[a1].value
-                            if not (isinstance(cell_val, str) and cell_val.startswith("=")):
-                                leaves.add(addr)
+                        all_refs, leaves = _argument_subgraph_refs(argument_addrs)
                         missing_leaves = leaves_missing_cell_type_constraints(
                             leaves, dynamic_refs.cell_type_env
                         )
@@ -1005,29 +1035,35 @@ def create_dependency_graph(
                             _dyn_stats["cache_hits"] += 1
                         else:
                             _dyn_stats["infer_calls"] += 1
+                            if all_refs and all(
+                                addr in _shared_cell_type_cache for addr in all_refs
+                            ):
+                                expanded_env = _shared_cell_type_cache
+                                _dyn_stats["env_cache_hits"] += 1
+                            else:
 
-                            def _get_cell_formula(addr: str) -> str | None:
-                                sh, a1 = parse_address(addr)
-                                if sh not in wb_formulas.sheetnames:
-                                    return None
-                                v = _get_ws_f(sh)[a1].value
-                                if not isinstance(v, str) or not v.startswith("="):
-                                    return None
-                                return normalizer.normalize(v, sh)
+                                def _get_cell_formula(addr: str) -> str | None:
+                                    sh, a1 = parse_address(addr)
+                                    if sh not in wb_formulas.sheetnames:
+                                        return None
+                                    v = _get_ws_f(sh)[a1].value
+                                    if not isinstance(v, str) or not v.startswith("="):
+                                        return None
+                                    return normalizer.normalize(v, sh)
 
-                            expanded_env = expand_leaf_env_to_argument_env(
-                                all_refs,
-                                _get_cell_formula,
-                                _refs_in_formula_without_dynamic,
-                                dynamic_refs.cell_type_env,
-                                dynamic_refs.limits,
-                                named_ranges=named_ranges,
-                                named_range_ranges=named_range_ranges,
-                                max_range_cells=max_range_cells,
-                                shared_cell_type_cache=_shared_cell_type_cache,
-                                type_analysis_cache=type_analysis_cache,
-                                workbook_sha256=_wb_sha256,
-                            )
+                                expanded_env = expand_leaf_env_to_argument_env(
+                                    all_refs,
+                                    _get_cell_formula,
+                                    _refs_in_formula_without_dynamic,
+                                    dynamic_refs.cell_type_env,
+                                    dynamic_refs.limits,
+                                    named_ranges=named_ranges,
+                                    named_range_ranges=named_range_ranges,
+                                    max_range_cells=max_range_cells,
+                                    shared_cell_type_cache=_shared_cell_type_cache,
+                                    type_analysis_cache=type_analysis_cache,
+                                    workbook_sha256=_wb_sha256,
+                                )
                             try:
                                 offset_targets = infer_dynamic_offset_targets(
                                     formula_for_infer,
@@ -1395,7 +1431,6 @@ def create_dependency_graph(
     _bfs_t0 = time.perf_counter()
     _bfs_count = 0
     _bfs_next_log = 5000
-    _dyn_stats = {"infer_calls": 0, "cache_hits": 0, "dep_cache_hits": 0}
 
     try:
         while q:
@@ -1419,6 +1454,8 @@ def create_dependency_graph(
                             "infer_calls": _dyn_stats["infer_calls"],
                             "cache_hits": _dyn_stats["cache_hits"],
                             "dep_cache_hits": _dyn_stats["dep_cache_hits"],
+                            "env_cache_hits": _dyn_stats["env_cache_hits"],
+                            "arg_subgraph_hits": _dyn_stats["arg_subgraph_hits"],
                             "env_cache_size": len(_shared_cell_type_cache),
                         },
                     )
@@ -1522,7 +1559,13 @@ def create_dependency_graph(
             if not graph.get_dependencies(key):
                 node.is_leaf = True
     finally:
-        if _dyn_stats["infer_calls"] or _dyn_stats["cache_hits"] or _dyn_stats["dep_cache_hits"]:
+        if (
+            _dyn_stats["infer_calls"]
+            or _dyn_stats["cache_hits"]
+            or _dyn_stats["dep_cache_hits"]
+            or _dyn_stats["env_cache_hits"]
+            or _dyn_stats["arg_subgraph_hits"]
+        ):
             _emit_trace(
                 DynamicRefTraceEvent(
                     kind="bfs-done",
@@ -1533,6 +1576,8 @@ def create_dependency_graph(
                         "infer_calls": _dyn_stats["infer_calls"],
                         "cache_hits": _dyn_stats["cache_hits"],
                         "dep_cache_hits": _dyn_stats["dep_cache_hits"],
+                        "env_cache_hits": _dyn_stats["env_cache_hits"],
+                        "arg_subgraph_hits": _dyn_stats["arg_subgraph_hits"],
                         "env_cache_size": len(_shared_cell_type_cache),
                     },
                 )
@@ -1603,6 +1648,7 @@ def list_dynamic_ref_constraint_candidates(
     # that mutate in place (e.g. expand_leaf_env_to_argument_env's `refs |= …`)
     # cannot poison later lookups.
     _refs_cache: dict[tuple[str, str], frozenset[str]] = {}
+    _arg_subgraph_cache_cand: dict[frozenset[str], tuple[set[str], set[str]]] = {}
 
     def _get_ws_f(sheet: str) -> Worksheet:
         ws = _ws_f_cache.get(sheet)
@@ -1788,45 +1834,51 @@ def list_dynamic_ref_constraint_candidates(
                                     argument_addrs.add(format_key(dep_sheet, dep_a1))
 
                 # Walk argument_addrs to statically-reachable leaves.
-                all_refs: set[str] = set()
-                to_visit_inner = set(argument_addrs)
-                while to_visit_inner:
-                    addr = to_visit_inner.pop()
-                    if addr in all_refs:
-                        continue
-                    all_refs.add(addr)
-                    _arg_walk_count += 1
-                    if _arg_walk_count >= _arg_next_log:
-                        _emit_trace(
-                            DynamicRefTraceEvent(
-                                kind="candidates-arg-progress",
-                                name="list_dynamic_ref_constraint_candidates",
-                                elapsed_s=time.perf_counter() - _bfs_t0,
-                                detail={
-                                    "visited": _arg_walk_count,
-                                    "pending": len(to_visit_inner),
-                                    "last": addr,
-                                    "bfs_nodes": _bfs_count,
-                                    "refs_cache_size": len(_refs_cache),
-                                },
+                arg_key = frozenset(argument_addrs)
+                cached_subgraph = _arg_subgraph_cache_cand.get(arg_key)
+                if cached_subgraph is not None:
+                    all_refs, leaves = cached_subgraph
+                else:
+                    all_refs = set()
+                    to_visit_inner = set(argument_addrs)
+                    while to_visit_inner:
+                        addr = to_visit_inner.pop()
+                        if addr in all_refs:
+                            continue
+                        all_refs.add(addr)
+                        _arg_walk_count += 1
+                        if _arg_walk_count >= _arg_next_log:
+                            _emit_trace(
+                                DynamicRefTraceEvent(
+                                    kind="candidates-arg-progress",
+                                    name="list_dynamic_ref_constraint_candidates",
+                                    elapsed_s=time.perf_counter() - _bfs_t0,
+                                    detail={
+                                        "visited": _arg_walk_count,
+                                        "pending": len(to_visit_inner),
+                                        "last": addr,
+                                        "bfs_nodes": _bfs_count,
+                                        "refs_cache_size": len(_refs_cache),
+                                    },
+                                )
                             )
-                        )
-                        _arg_next_log += _CANDIDATES_ARG_PROGRESS_INTERVAL
-                    sh, a1 = parse_address(addr)
-                    if sh not in sheetname_set:
-                        continue
-                    inner_val = _cell_value(sh, a1)
-                    if isinstance(inner_val, str) and inner_val.startswith("="):
-                        to_visit_inner.update(_refs_without_dynamic(inner_val, sh))
+                            _arg_next_log += _CANDIDATES_ARG_PROGRESS_INTERVAL
+                        sh, a1 = parse_address(addr)
+                        if sh not in sheetname_set:
+                            continue
+                        inner_val = _cell_value(sh, a1)
+                        if isinstance(inner_val, str) and inner_val.startswith("="):
+                            to_visit_inner.update(_refs_without_dynamic(inner_val, sh))
 
-                leaves: set[str] = set()
-                for addr in all_refs:
-                    sh, a1 = parse_address(addr)
-                    if sh not in sheetname_set:
-                        continue
-                    inner_val = _cell_value(sh, a1)
-                    if not (isinstance(inner_val, str) and inner_val.startswith("=")):
-                        leaves.add(addr)
+                    leaves = set()
+                    for addr in all_refs:
+                        sh, a1 = parse_address(addr)
+                        if sh not in sheetname_set:
+                            continue
+                        inner_val = _cell_value(sh, a1)
+                        if not (isinstance(inner_val, str) and inner_val.startswith("=")):
+                            leaves.add(addr)
+                    _arg_subgraph_cache_cand[arg_key] = (all_refs, leaves)
 
                 missing = leaves_missing_cell_type_constraints(leaves, cell_type_env)
                 if missing:
@@ -1842,28 +1894,34 @@ def list_dynamic_ref_constraint_candidates(
                         )
                         _current_col = fastpyxl.utils.cell.column_index_from_string(_col_letter)
 
-                        def _get_cell_formula(addr: str) -> str | None:
-                            sh2, a1_2 = parse_address(addr)
-                            if sh2 not in sheetname_set:
-                                return None
-                            v = _cell_value(sh2, a1_2)
-                            if not isinstance(v, str) or not v.startswith("="):
-                                return None
-                            return normalizer.normalize(v, sh2)
+                        if all_refs and all(
+                            addr in _shared_cell_type_cache_cand for addr in all_refs
+                        ):
+                            expanded_env = _shared_cell_type_cache_cand
+                        else:
 
-                        expanded_env = expand_leaf_env_to_argument_env(
-                            all_refs,
-                            _get_cell_formula,
-                            _refs_without_dynamic,
-                            dynamic_refs.cell_type_env,
-                            dynamic_refs.limits,
-                            named_ranges=named_ranges,
-                            named_range_ranges=named_range_ranges,
-                            max_range_cells=max_range_cells,
-                            shared_cell_type_cache=_shared_cell_type_cache_cand,
-                            type_analysis_cache=type_analysis_cache,
-                            workbook_sha256=_wb_sha256_cand,
-                        )
+                            def _get_cell_formula(addr: str) -> str | None:
+                                sh2, a1_2 = parse_address(addr)
+                                if sh2 not in sheetname_set:
+                                    return None
+                                v = _cell_value(sh2, a1_2)
+                                if not isinstance(v, str) or not v.startswith("="):
+                                    return None
+                                return normalizer.normalize(v, sh2)
+
+                            expanded_env = expand_leaf_env_to_argument_env(
+                                all_refs,
+                                _get_cell_formula,
+                                _refs_without_dynamic,
+                                dynamic_refs.cell_type_env,
+                                dynamic_refs.limits,
+                                named_ranges=named_ranges,
+                                named_range_ranges=named_range_ranges,
+                                max_range_cells=max_range_cells,
+                                shared_cell_type_cache=_shared_cell_type_cache_cand,
+                                type_analysis_cache=type_analysis_cache,
+                                workbook_sha256=_wb_sha256_cand,
+                            )
                         offset_targets = infer_dynamic_offset_targets(
                             formula_for_infer,
                             current_sheet=current_sheet,

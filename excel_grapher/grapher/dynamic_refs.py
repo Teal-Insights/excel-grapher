@@ -455,6 +455,9 @@ def expand_leaf_env_to_argument_env(
     When `shared_cell_type_cache` is provided, intermediate cell type inferences
     are persisted across multiple calls.  This avoids redundant work when many
     BFS nodes share intermediate formula cells in their argument subgraphs.
+    Addresses already present in that cache are not re-walked: a later call
+    whose `argument_refs` are a subset of a previous expansion returns without
+    re-entering `cell_type_for` (issue #528).
 
     When `type_analysis_cache` and `workbook_sha256` are provided, successful
     intermediate formula-cell type results are persisted to SQLite across runs.
@@ -865,8 +868,11 @@ def expand_leaf_env_to_argument_env(
             if addr in cache and formula is not None and addr not in _loaded_from_persistent:
                 _persist_result(addr, formula, cache[addr])
 
+    skipped_cached_refs = 0
     try:
-        for addr in sorted(argument_refs):
+        pending = [addr for addr in argument_refs if addr not in cache]
+        skipped_cached_refs = len(argument_refs) - len(pending)
+        for addr in sorted(pending):
             cell_type_for(addr)
     except Exception as exc:
         _emit_trace(
@@ -894,6 +900,7 @@ def expand_leaf_env_to_argument_env(
                 "inferred_cells": len(cache),
                 "calls": _calls,
                 "bulk_ref_hits": _bulk_hits,
+                "skipped_cached_refs": skipped_cached_refs,
                 "consumed_leaf_tracking": _track_consumed,
             },
         )
