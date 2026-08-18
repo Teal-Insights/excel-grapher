@@ -1,6 +1,6 @@
-"""Scaling guards for `expand_leaf_env_to_argument_env` (issues #463, #465).
+"""Scaling guards for `expand_leaf_env_to_argument_env` (issues #463, #465, #528).
 
-Covers four defences against the LIC-DSF hang:
+Covers defences against the LIC-DSF hang:
 
 - Consumed-leaf bookkeeping is only maintained when a persistent
   `TypeAnalysisCache` is actually going to read it.
@@ -11,6 +11,8 @@ Covers four defences against the LIC-DSF hang:
   `O(depth x range_cells)`.
 - The address expansion of a static range is memoized, so re-mentioning the same
   range at every level of a chain does not re-derive its cells every time.
+- A later expansion whose `argument_refs` are already in `shared_cell_type_cache`
+  does not re-enter `cell_type_for` (issue #528).
 """
 
 from __future__ import annotations
@@ -319,6 +321,88 @@ class TestStaticRangeExpansionMemo:
         assert addrs is not None
         assert addrs[0] == "My Sheet!B2"
         assert all(addr == normalize_cell_type_env_key(addr) for addr in addrs)
+
+
+class TestSkipCachedArgumentRefs:
+    """Do not re-walk argument refs already present in `shared_cell_type_cache`.
+
+    Issue #528: INDEX/MATCH variants that share an argument subgraph re-enter
+    `expand_leaf_env_to_argument_env` with the same ~100k refs.  The shared
+    cache already holds every type (`inferred_cells` frozen) but the walk still
+    called `cell_type_for` once per ref.  Skip those hits so a repeat expansion
+    is a dict membership scan, not another derivation.
+    """
+
+    def test_repeat_expansion_does_not_reenter_cell_type_for(self) -> None:
+        get_cell_formula, get_refs_from_formula, leaf_env = _build_range_chain(12, 40)
+        shared: dict[str, CellType] = {}
+        argument_refs = {f"Sheet1!A{r}" for r in range(2, 13)}
+
+        events: list[DynamicRefTraceEvent] = []
+        with trace_dynamic_refs(events.append):
+            env1 = expand_leaf_env_to_argument_env(
+                set(argument_refs),
+                get_cell_formula,
+                get_refs_from_formula,
+                leaf_env,
+                DynamicRefLimits(),
+                shared_cell_type_cache=shared,
+            )
+            env2 = expand_leaf_env_to_argument_env(
+                set(argument_refs),
+                get_cell_formula,
+                get_refs_from_formula,
+                leaf_env,
+                DynamicRefLimits(),
+                shared_cell_type_cache=shared,
+            )
+
+        expands = [e for e in events if e.kind == "expand-env"]
+        assert len(expands) == 2
+        first, second = expands
+        first_calls = first.detail["calls"]
+        assert isinstance(first_calls, int)
+        assert first_calls > 0
+        assert second.detail["calls"] == 0
+        assert second.detail["skipped_cached_refs"] == len(argument_refs)
+        assert env2 is env1
+        assert env1["Sheet1!A12"].enum is not None
+
+    def test_only_uncached_refs_are_walked(self) -> None:
+        get_cell_formula, get_refs_from_formula, leaf_env = _build_chain(8)
+        shared: dict[str, CellType] = {}
+
+        expand_leaf_env_to_argument_env(
+            {"Sheet1!A6"},
+            get_cell_formula,
+            get_refs_from_formula,
+            leaf_env,
+            DynamicRefLimits(),
+            shared_cell_type_cache=shared,
+        )
+        formula_lookups: list[str] = []
+
+        def counting_get_formula(addr: str) -> str | None:
+            formula_lookups.append(addr)
+            return get_cell_formula(addr)
+
+        events: list[DynamicRefTraceEvent] = []
+        with trace_dynamic_refs(events.append):
+            env = expand_leaf_env_to_argument_env(
+                {"Sheet1!A6", "Sheet1!A8"},
+                counting_get_formula,
+                get_refs_from_formula,
+                leaf_env,
+                DynamicRefLimits(),
+                shared_cell_type_cache=shared,
+            )
+
+        (expand,) = [e for e in events if e.kind == "expand-env"]
+        assert "Sheet1!A6" not in formula_lookups
+        assert "Sheet1!A8" in formula_lookups
+        assert expand.detail["skipped_cached_refs"] >= 1
+        assert env["Sheet1!A8"].enum is not None
+        assert env["Sheet1!A6"].enum is not None
 
 
 class TestAnalysisDepthGuard:
