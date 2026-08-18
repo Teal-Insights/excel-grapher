@@ -197,6 +197,7 @@ def compression_safe_provenance(prov: EdgeProvenance | None) -> bool:
         DependencyCause.static_range
         | DependencyCause.dynamic_offset
         | DependencyCause.dynamic_indirect
+        | DependencyCause.dynamic_index
     )
     return not (prov.causes & unsafe)
 

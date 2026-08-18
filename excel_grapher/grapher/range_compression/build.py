@@ -30,7 +30,10 @@ from .ref_parser import (
 from .types import CompressedEdge, PatternKind, PatternMeta, RangeRef, SingleEdge
 
 _EXCLUDED_CAUSES = (
-    DependencyCause.static_range | DependencyCause.dynamic_offset | DependencyCause.dynamic_indirect
+    DependencyCause.static_range
+    | DependencyCause.dynamic_offset
+    | DependencyCause.dynamic_indirect
+    | DependencyCause.dynamic_index
 )
 
 

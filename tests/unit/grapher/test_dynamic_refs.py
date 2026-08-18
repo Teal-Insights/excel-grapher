@@ -26,6 +26,7 @@ from excel_grapher.core.formula_ast import parse as parse_ast
 from excel_grapher.grapher import dynamic_refs as dynamic_refs_mod
 from excel_grapher.grapher import parser as parser_mod
 from excel_grapher.grapher.builder import _format_missing_leaves
+from excel_grapher.grapher.dependency_provenance import DependencyCause
 from excel_grapher.grapher.dynamic_refs import (
     DynamicRefConfig,
     DynamicRefError,
@@ -1298,6 +1299,162 @@ def test_create_dependency_graph_index_match_includes_full_lookup_range(tmp_path
     }
 
 
+def test_create_dependency_graph_standalone_index_records_dynamic_index_provenance(
+    tmp_path: Path,
+) -> None:
+    """INDEX targets and row/col selectors carry `dynamic_index` (GH-531)."""
+    excel_path = tmp_path / "standalone_index_provenance.xlsx"
+    _build_standalone_index_workbook(excel_path)
+
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({1, 2, 3})),
+            )
+        }
+    )
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+
+    graph = create_dependency_graph(
+        excel_path,
+        ["Sheet1!C1"],
+        load_values=False,
+        dynamic_refs=config,
+        capture_dependency_provenance=True,
+    )
+    for dep in ("Sheet1!B1", "Sheet1!A1", "Sheet1!A2", "Sheet1!A3"):
+        prov = graph.get_edge_attrs("Sheet1!C1", dep).provenance
+        assert prov is not None, f"missing provenance for C1→{dep}"
+        assert DependencyCause.dynamic_index in prov.causes, (
+            f"expected dynamic_index on C1→{dep}, got {prov.causes}"
+        )
+
+
+def test_index_match_records_dynamic_index_provenance(tmp_path: Path) -> None:
+    """INDEX/MATCH result and MATCH inputs carry `dynamic_index` (GH-531)."""
+    excel_path = tmp_path / "index_match_provenance.xlsx"
+    _build_index_match_workbook(excel_path)
+    env = _make_env(
+        {
+            "Sheet1!B5": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({20})),
+            ),
+            "Sheet1!A10": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({10})),
+            ),
+            "Sheet1!A11": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({20})),
+            ),
+            "Sheet1!A12": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({30})),
+            ),
+        }
+    )
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+
+    graph = create_dependency_graph(
+        excel_path,
+        ["Sheet1!D5"],
+        load_values=False,
+        dynamic_refs=config,
+        capture_dependency_provenance=True,
+    )
+    for dep in ("Sheet1!A10", "Sheet1!A11", "Sheet1!A12", "Sheet1!B5", "Sheet1!B11"):
+        prov = graph.get_edge_attrs("Sheet1!D5", dep).provenance
+        assert prov is not None, f"missing provenance for D5→{dep}"
+        assert DependencyCause.dynamic_index in prov.causes, (
+            f"expected dynamic_index on D5→{dep}, got {prov.causes}"
+        )
+
+
+def _build_shifted_chart_data_index_match_workbook(path: Path) -> None:
+    """Two row-shifted INDEX/MATCH formulas on a Chart Data sheet."""
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Chart Data")
+    ws.write_number(4, 0, 10)  # A5
+    ws.write_number(5, 0, 20)  # A6
+    ws.write_number(6, 0, 30)  # A7
+    ws.write_number(4, 4, 100)  # E5
+    ws.write_number(5, 4, 200)  # E6
+    ws.write_number(6, 4, 300)  # E7
+    ws.write_number(4, 10, 10)  # K5
+    ws.write_number(5, 10, 20)  # K6
+    ws.write_formula(4, 20, "=INDEX($E$5:$E$7,MATCH(K5,$A$5:$A$7,0))", None, 100)  # U5
+    ws.write_formula(5, 20, "=INDEX($E$5:$E$7,MATCH(K6,$A$5:$A$7,0))", None, 200)  # U6
+    wb.close()
+
+
+def test_shifted_chart_data_index_match_records_dynamic_index_provenance(
+    tmp_path: Path,
+) -> None:
+    """Row-shifted Chart Data INDEX/MATCH edges carry `dynamic_index` (GH-531)."""
+    excel_path = tmp_path / "chart_data_index_match_provenance.xlsx"
+    _build_shifted_chart_data_index_match_workbook(excel_path)
+    env = _make_env(
+        {
+            "Chart Data!K5": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({10})),
+            ),
+            "Chart Data!K6": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({20})),
+            ),
+            "Chart Data!A5": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({10})),
+            ),
+            "Chart Data!A6": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({20})),
+            ),
+            "Chart Data!A7": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({30})),
+            ),
+        }
+    )
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+
+    graph = create_dependency_graph(
+        excel_path,
+        ["'Chart Data'!U5", "'Chart Data'!U6"],
+        load_values=False,
+        dynamic_refs=config,
+        capture_dependency_provenance=True,
+    )
+    expected = {
+        "'Chart Data'!U5": (
+            "'Chart Data'!A5",
+            "'Chart Data'!A6",
+            "'Chart Data'!A7",
+            "'Chart Data'!K5",
+            "'Chart Data'!E5",
+        ),
+        "'Chart Data'!U6": (
+            "'Chart Data'!A5",
+            "'Chart Data'!A6",
+            "'Chart Data'!A7",
+            "'Chart Data'!K6",
+            "'Chart Data'!E6",
+        ),
+    }
+    for formula_key, deps in expected.items():
+        got = graph.get_dependencies(formula_key)
+        for dep in deps:
+            assert dep in got, f"{formula_key} missing dep {dep}; got {got}"
+            prov = graph.get_edge_attrs(formula_key, dep).provenance
+            assert prov is not None, f"missing provenance for {formula_key}→{dep}"
+            assert DependencyCause.dynamic_index in prov.causes, (
+                f"expected dynamic_index on {formula_key}→{dep}, got {prov.causes}"
+            )
+
+
 def test_create_dependency_graph_index_literal_row_col_no_array_corner_edges_issue_156(
     tmp_path: Path,
 ) -> None:
@@ -2537,6 +2694,39 @@ def test_constraint_indirect_expansion_not_duplicated_with_provenance(
     )
     assert "Sheet1!B1" in graph.get_dependencies("Sheet1!A1")
     assert "Sheet1!B2" in graph.get_dependencies("Sheet1!A1")
+
+
+def test_constraint_index_dynamic_ref_expansion_not_duplicated_with_provenance(
+    tmp_path: Path,
+) -> None:
+    """INDEX formulas should share dynamic-ref expansion with provenance (GH-531)."""
+    excel_path = tmp_path / "index_provenance_perf.xlsx"
+    _build_standalone_index_workbook(excel_path)
+
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({1, 2, 3})),
+            )
+        }
+    )
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+
+    graph, call_count = _build_graph_counting_dynamic_expansion(
+        excel_path,
+        ["Sheet1!C1"],
+        dynamic_refs=config,
+    )
+
+    assert call_count == 1, (
+        f"expand_leaf_env_to_argument_env was called {call_count} times; "
+        "expected 1 for INDEX with provenance enabled"
+    )
+    for dep in ("Sheet1!B1", "Sheet1!A1", "Sheet1!A2", "Sheet1!A3"):
+        prov = graph.get_edge_attrs("Sheet1!C1", dep).provenance
+        assert prov is not None
+        assert DependencyCause.dynamic_index in prov.causes
 
 
 def test_constraint_branch_dynamic_ref_expansion_not_duplicated_with_provenance(
