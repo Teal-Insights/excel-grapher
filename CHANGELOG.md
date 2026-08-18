@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v6.1.2 (2026-08-18)
+
+### Bug Fixes
+
+- **grapher**: Isolate argument-subgraph memo and cover OFFSET reuse
+  ([#530](https://github.com/Teal-Insights/excel-grapher/pull/530),
+  [`948cc56`](https://github.com/Teal-Insights/excel-grapher/commit/948cc56a96b3107f26a1472b9fc05295b699c004))
+
+### Performance Improvements
+
+- **grapher**: Reuse argument-env expansion across formula variants
+  ([#530](https://github.com/Teal-Insights/excel-grapher/pull/530),
+  [`948cc56`](https://github.com/Teal-Insights/excel-grapher/commit/948cc56a96b3107f26a1472b9fc05295b699c004))
+
+
 ## v6.1.1 (2026-08-17)
 
 ### Performance Improvements
