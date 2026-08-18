@@ -487,14 +487,23 @@ def create_dependency_graph(
 
     **Cost model**: constraint-based dynamic-ref expansion (`dynamic_refs` set,
     `use_cached_dynamic_refs=False`) runs `expand_leaf_env_to_argument_env`
-    once per distinct argument-subgraph (the set of cells feeding OFFSET /
-    INDIRECT / INDEX arguments), not once per formula.  Row-wise INDEX/MATCH
-    variants that share a MATCH lookup therefore reuse the env instead of
-    re-deriving it (issue #528).  A shared per-graph cache also ensures
-    provenance collection reuses the already-computed expansion instead of
-    repeating it.  Callers doing iterative constraint-tuning workflows can
-    still set `capture_dependency_provenance=False` to avoid any provenance
-    overhead (formula-string span collection, branch-union merging, etc.).
+    only when some argument-subgraph ref (a cell feeding OFFSET / INDIRECT /
+    INDEX arguments) is not yet in the shared cell-type cache.  The first
+    formula that needs a given set of argument cells pays for expansion;
+    later formulas whose argument refs are already typed skip the expand call
+    and reuse the env (issue #528).  That includes row-wise INDEX/MATCH and
+    OFFSET variants that share a MATCH lookup.  INDEX / OFFSET / INDIRECT
+    *target* inference still runs per formula so shifted arrays and bases
+    keep distinct deps.
+
+    Provenance collection (`capture_dependency_provenance=True`) reads the
+    per-cell `_dyn_cache` of inferred targets filled during extraction
+    (keyed by normalized formula, sheet, and A1).  Row-wise variants miss
+    that key across cells, but extraction populates it before provenance
+    runs, so provenance does not re-expand.  Callers doing iterative
+    constraint-tuning workflows can still set
+    `capture_dependency_provenance=False` to avoid provenance overhead
+    (formula-string span collection, branch-union merging, etc.).
     """
     if not isinstance(workbook, (str, Path)):
         raise TypeError(
@@ -574,7 +583,13 @@ def create_dependency_graph(
     # cannot poison later lookups.
     _refs_without_dynamic_cache: dict[tuple[str, str], frozenset[str]] = {}
     # argument_addrs frozenset -> (statically reachable refs, leaf cells).
-    _arg_subgraph_cache: dict[frozenset[str], tuple[set[str], set[str]]] = {}
+    # Store frozensets and return fresh mutable sets so callers that mutate
+    # `all_refs` cannot poison later lookups for the same subgraph.
+    _arg_subgraph_cache: dict[frozenset[str], tuple[frozenset[str], frozenset[str]]] = {}
+    # Per-address (child refs, is_leaf) so overlapping but not identical
+    # argument_addrs (row-wise OFFSET with a relative lookup) reuse worksheet
+    # reads instead of re-walking the shared MATCH list.
+    _arg_node_cache: dict[str, tuple[frozenset[str], bool]] = {}
     _dyn_stats = {
         "infer_calls": 0,
         "cache_hits": 0,
@@ -639,37 +654,47 @@ def create_dependency_graph(
         _refs_without_dynamic_cache[cache_key] = frozenset(out)
         return out
 
+    def _argument_node(addr: str) -> tuple[frozenset[str], bool]:
+        """Return static child refs and whether `addr` is a non-formula leaf."""
+        cached = _arg_node_cache.get(addr)
+        if cached is not None:
+            return cached
+        children: frozenset[str] = frozenset()
+        is_leaf = False
+        sh, a1 = parse_address(addr)
+        if sh in wb_formulas.sheetnames:
+            cell_val = _get_ws_f(sh)[a1].value
+            if isinstance(cell_val, str) and cell_val.startswith("="):
+                children = frozenset(_refs_in_formula_without_dynamic(cell_val, sh))
+            else:
+                is_leaf = True
+        result = (children, is_leaf)
+        _arg_node_cache[addr] = result
+        return result
+
     def _argument_subgraph_refs(argument_addrs: set[str]) -> tuple[set[str], set[str]]:
         """Return statically reachable refs and leaves feeding dynamic-ref arguments."""
         cache_key = frozenset(argument_addrs)
         cached = _arg_subgraph_cache.get(cache_key)
         if cached is not None:
             _dyn_stats["arg_subgraph_hits"] += 1
-            return cached
+            return set(cached[0]), set(cached[1])
         all_refs: set[str] = set()
+        leaves: set[str] = set()
         to_visit = set(argument_addrs)
         while to_visit:
             addr = to_visit.pop()
             if addr in all_refs:
                 continue
             all_refs.add(addr)
-            sh, a1 = parse_address(addr)
-            if sh not in wb_formulas.sheetnames:
-                continue
-            cell_val = _get_ws_f(sh)[a1].value
-            if isinstance(cell_val, str) and cell_val.startswith("="):
-                to_visit.update(_refs_in_formula_without_dynamic(cell_val, sh))
-        leaves: set[str] = set()
-        for addr in all_refs:
-            sh, a1 = parse_address(addr)
-            if sh not in wb_formulas.sheetnames:
-                continue
-            cell_val = _get_ws_f(sh)[a1].value
-            if not (isinstance(cell_val, str) and cell_val.startswith("=")):
+            children, is_leaf = _argument_node(addr)
+            if is_leaf:
                 leaves.add(addr)
-        result = (all_refs, leaves)
-        _arg_subgraph_cache[cache_key] = result
-        return result
+            else:
+                to_visit.update(children)
+        frozen = (frozenset(all_refs), frozenset(leaves))
+        _arg_subgraph_cache[cache_key] = frozen
+        return set(all_refs), set(leaves)
 
     def _get_ws_v(sheet: str) -> Worksheet:
         # Only used for the lazy data_only fallback workbook.
@@ -1648,7 +1673,8 @@ def list_dynamic_ref_constraint_candidates(
     # that mutate in place (e.g. expand_leaf_env_to_argument_env's `refs |= …`)
     # cannot poison later lookups.
     _refs_cache: dict[tuple[str, str], frozenset[str]] = {}
-    _arg_subgraph_cache_cand: dict[frozenset[str], tuple[set[str], set[str]]] = {}
+    _arg_subgraph_cache_cand: dict[frozenset[str], tuple[frozenset[str], frozenset[str]]] = {}
+    _arg_node_cache_cand: dict[str, tuple[frozenset[str], bool]] = {}
 
     def _get_ws_f(sheet: str) -> Worksheet:
         ws = _ws_f_cache.get(sheet)
@@ -1837,48 +1863,55 @@ def list_dynamic_ref_constraint_candidates(
                 arg_key = frozenset(argument_addrs)
                 cached_subgraph = _arg_subgraph_cache_cand.get(arg_key)
                 if cached_subgraph is not None:
-                    all_refs, leaves = cached_subgraph
+                    all_refs, leaves = set(cached_subgraph[0]), set(cached_subgraph[1])
                 else:
                     all_refs = set()
+                    leaves = set()
                     to_visit_inner = set(argument_addrs)
                     while to_visit_inner:
                         addr = to_visit_inner.pop()
                         if addr in all_refs:
                             continue
                         all_refs.add(addr)
-                        _arg_walk_count += 1
-                        if _arg_walk_count >= _arg_next_log:
-                            _emit_trace(
-                                DynamicRefTraceEvent(
-                                    kind="candidates-arg-progress",
-                                    name="list_dynamic_ref_constraint_candidates",
-                                    elapsed_s=time.perf_counter() - _bfs_t0,
-                                    detail={
-                                        "visited": _arg_walk_count,
-                                        "pending": len(to_visit_inner),
-                                        "last": addr,
-                                        "bfs_nodes": _bfs_count,
-                                        "refs_cache_size": len(_refs_cache),
-                                    },
+                        node = _arg_node_cache_cand.get(addr)
+                        if node is None:
+                            _arg_walk_count += 1
+                            if _arg_walk_count >= _arg_next_log:
+                                _emit_trace(
+                                    DynamicRefTraceEvent(
+                                        kind="candidates-arg-progress",
+                                        name="list_dynamic_ref_constraint_candidates",
+                                        elapsed_s=time.perf_counter() - _bfs_t0,
+                                        detail={
+                                            "visited": _arg_walk_count,
+                                            "pending": len(to_visit_inner),
+                                            "last": addr,
+                                            "bfs_nodes": _bfs_count,
+                                            "refs_cache_size": len(_refs_cache),
+                                        },
+                                    )
                                 )
-                            )
-                            _arg_next_log += _CANDIDATES_ARG_PROGRESS_INTERVAL
-                        sh, a1 = parse_address(addr)
-                        if sh not in sheetname_set:
-                            continue
-                        inner_val = _cell_value(sh, a1)
-                        if isinstance(inner_val, str) and inner_val.startswith("="):
-                            to_visit_inner.update(_refs_without_dynamic(inner_val, sh))
-
-                    leaves = set()
-                    for addr in all_refs:
-                        sh, a1 = parse_address(addr)
-                        if sh not in sheetname_set:
-                            continue
-                        inner_val = _cell_value(sh, a1)
-                        if not (isinstance(inner_val, str) and inner_val.startswith("=")):
+                                _arg_next_log += _CANDIDATES_ARG_PROGRESS_INTERVAL
+                            children: frozenset[str] = frozenset()
+                            is_leaf = False
+                            sh, a1 = parse_address(addr)
+                            if sh in sheetname_set:
+                                inner_val = _cell_value(sh, a1)
+                                if isinstance(inner_val, str) and inner_val.startswith("="):
+                                    children = frozenset(_refs_without_dynamic(inner_val, sh))
+                                else:
+                                    is_leaf = True
+                            node = (children, is_leaf)
+                            _arg_node_cache_cand[addr] = node
+                        children, is_leaf = node
+                        if is_leaf:
                             leaves.add(addr)
-                    _arg_subgraph_cache_cand[arg_key] = (all_refs, leaves)
+                        else:
+                            to_visit_inner.update(children)
+                    _arg_subgraph_cache_cand[arg_key] = (
+                        frozenset(all_refs),
+                        frozenset(leaves),
+                    )
 
                 missing = leaves_missing_cell_type_constraints(leaves, cell_type_env)
                 if missing:

@@ -3135,6 +3135,151 @@ def test_shifted_index_variants_reuse_identical_argument_env(tmp_path: Path) -> 
     assert f"'Chart Data'!A{formula_count}" not in first_deps
 
 
+def _build_shifted_offset_same_match_workbook(
+    path: Path,
+    *,
+    formula_count: int = 12,
+    country_count: int = 8,
+) -> tuple[list[str], dict[str, object]]:
+    """OFFSET bases shift per row; MATCH arguments stay absolute and identical.
+
+    Sibling of `_build_shifted_index_same_match_workbook`: each output cell is
+    a variation of `OFFSET(shifted_base, MATCH(fixed_lookup, fixed_list, 0)-1, 0)`.
+    The OFFSET base is not an argument-subgraph ref (static A1, no nested call),
+    so env expansion should still see one MATCH subgraph while OFFSET targets
+    remain per-formula.
+    """
+    countries = [f"Country {i:03d}" for i in range(1, country_count + 1)]
+    wb = xlsxwriter.Workbook(path)
+    inputs = wb.add_worksheet("Inputs")
+    lookup = wb.add_worksheet("Lookup")
+    chart = wb.add_worksheet("Chart Data")
+    outputs = wb.add_worksheet("Outputs")
+
+    inputs.write("A1", countries[0])
+    last_lookup_row = country_count + 1
+    for row, country in enumerate(countries, start=1):
+        lookup.write(row, 0, country)
+        lookup.write_number(row, 1, row * 10)
+
+    for row in range(1, formula_count + country_count + 2):
+        chart.write_number(row - 1, 0, row)
+        chart.write_number(row - 1, 1, row * 100)
+
+    targets: list[str] = []
+    for i in range(formula_count):
+        start = i + 1
+        outputs.write_formula(
+            i,
+            0,
+            "=OFFSET("
+            f"'Chart Data'!A{start},"
+            f"MATCH(Inputs!$A$1,Lookup!$A$2:$A${last_lookup_row},0)-1,"
+            "0"
+            ")",
+        )
+        targets.append(f"Outputs!A{i + 1}")
+
+    wb.close()
+    constraints: dict[str, object] = {"Inputs!A1": _literal_constraint(*countries)}
+    for row, country in enumerate(countries, start=2):
+        constraints[f"Lookup!A{row}"] = _literal_constraint(country)
+    return targets, constraints
+
+
+def test_shifted_offset_variants_reuse_identical_argument_env(tmp_path: Path) -> None:
+    """Row-wise OFFSET variants must not re-derive the same MATCH argument env.
+
+    Provenance collection *does* analyse OFFSET (unlike INDEX), so this also
+    guards against a `_dyn_cache` miss re-expanding the MATCH subgraph during
+    `capture_dependency_provenance=True` (the default for this helper).
+    """
+    formula_count = 12
+    country_count = 8
+    excel_path = tmp_path / "shifted_offset_same_match.xlsx"
+    targets, constraints = _build_shifted_offset_same_match_workbook(
+        excel_path,
+        formula_count=formula_count,
+        country_count=country_count,
+    )
+    config = DynamicRefConfig.from_constraints(constraints, {})
+
+    graph, call_count = _build_graph_counting_dynamic_expansion(
+        excel_path,
+        targets,
+        dynamic_refs=config,
+    )
+
+    assert call_count == 1, (
+        f"expand_leaf_env_to_argument_env was called {call_count} times for "
+        f"{formula_count} OFFSET variants with an identical MATCH subgraph; "
+        "expected 1 (issue #528)"
+    )
+
+    first_deps = set(graph.get_dependencies(targets[0]))
+    last_deps = set(graph.get_dependencies(targets[-1]))
+    assert "Inputs!A1" in first_deps
+    assert "Lookup!A2" in first_deps
+    assert "'Chart Data'!A1" in first_deps
+    assert f"'Chart Data'!A{formula_count}" in last_deps
+    assert "'Chart Data'!A1" not in last_deps
+    assert f"'Chart Data'!A{formula_count}" not in first_deps
+
+
+def test_argument_subgraph_memo_returns_independent_sets(tmp_path: Path) -> None:
+    """Caller mutations of argument-subgraph sets must not poison the memo.
+
+    `_argument_subgraph_refs` is cached by `frozenset(argument_addrs)`.  If the
+    cache stores the live `all_refs` set, `expand_leaf_env_to_argument_env`'s
+    caller (or a wrapper) mutating that set would change later lookups for the
+    same MATCH subgraph and defeat env reuse.
+    """
+    from unittest.mock import patch
+
+    from excel_grapher.grapher import builder as builder_mod
+
+    formula_count = 12
+    excel_path = tmp_path / "subgraph_memo_isolation.xlsx"
+    targets, constraints = _build_shifted_offset_same_match_workbook(
+        excel_path,
+        formula_count=formula_count,
+    )
+    config = DynamicRefConfig.from_constraints(constraints, {})
+
+    poison = "Outputs!ZZ999"
+    original_expand = expand_leaf_env_to_argument_env
+    call_count = 0
+
+    def wrapping_expand(argument_refs, *args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        argument_refs.add(poison)
+        clean = {addr for addr in argument_refs if addr != poison}
+        return original_expand(clean, *args, **kwargs)
+
+    with (
+        patch.object(builder_mod, "expand_leaf_env_to_argument_env", wrapping_expand),
+        patch(
+            "excel_grapher.grapher.provenance_collect.expand_leaf_env_to_argument_env",
+            wrapping_expand,
+        ),
+    ):
+        graph = create_dependency_graph(
+            excel_path,
+            targets,
+            load_values=False,
+            dynamic_refs=config,
+            capture_dependency_provenance=True,
+        )
+
+    assert call_count == 1, (
+        f"expand_leaf_env_to_argument_env was called {call_count} times; "
+        "mutating the argument-subgraph set must not poison the memo "
+        f"(expected 1 expand for {formula_count} OFFSET variants)"
+    )
+    assert "'Chart Data'!A1" in graph.get_dependencies(targets[0])
+
+
 # ---------------------------------------------------------------------------
 # Deterministic traversal order
 # ---------------------------------------------------------------------------
