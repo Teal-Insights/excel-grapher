@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v6.3.3 (2026-08-19)
+
+### Bug Fixes
+
+- **grapher**: Share argument-subgraph ref walks with provenance
+  ([#540](https://github.com/Teal-Insights/excel-grapher/pull/540),
+  [`3decc35`](https://github.com/Teal-Insights/excel-grapher/commit/3decc352ece2a1a98ffd941846fc19cbf80c81bd))
+
+
 ## v6.3.2 (2026-08-19)
 
 ### Bug Fixes
