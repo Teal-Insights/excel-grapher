@@ -10,10 +10,10 @@ if TYPE_CHECKING:
 import fastpyxl
 import fastpyxl.utils.cell
 
-from excel_grapher.core.address_keys import parse_address
 from excel_grapher.core.cell_types import leaves_missing_cell_type_constraints
 
 from .dependency_provenance import DependencyCause, EdgeProvenance, merge_provenance_maps
+from .dynamic_ref_walk import DynamicRefWalkContext
 from .dynamic_refs import (
     DynamicRefConfig,
     DynamicRefError,
@@ -119,6 +119,7 @@ def _flat_provenance_one_string(
     | None = None,
     type_analysis_cache: TypeAnalysisCache | None = None,
     workbook_sha256: str | None = None,
+    ref_walk: DynamicRefWalkContext | None = None,
 ) -> dict[str, EdgeProvenance]:
     """Mirror extract_expr_deps masking pipeline; accumulate provenance for one formula string starting with '='."""
     if normalizer is None:
@@ -215,68 +216,6 @@ def _flat_provenance_one_string(
                                     _merge_into(acc, k, EdgeProvenance(causes=dyn_cause))
                                     argument_addrs.add(k)
             if calls:
-
-                def _refs_in_formula_without_dynamic(
-                    formula_str: str, sheet_of_cell: str
-                ) -> set[str]:
-                    dyn = _find_function_calls_with_spans(
-                        formula_str if formula_str.startswith("=") else "=" + formula_str,
-                        _DYNAMIC_REF_FNS,
-                    )
-                    spans = [span for _fn, _inner, span in dyn]
-                    masked2 = mask_spans(
-                        formula_str if formula_str.startswith("=") else "=" + formula_str,
-                        spans,
-                    )
-                    masked2 = mask_ref_only_function_calls(masked2)
-                    norm = normalizer.normalize(masked2, sheet_of_cell)
-                    out: set[str] = set()
-                    for ref in parse_standalone_cell_refs(norm):
-                        sh = ref.sheet if ref.sheet is not None else sheet_of_cell
-                        out.add(format_key(sh, f"{ref.column}{ref.row}"))
-                    for start, end, _span in parse_range_refs_with_spans(norm):
-                        sh = start.sheet if start.sheet is not None else sheet_of_cell
-                        for dep_sheet, dep_a1 in expand_range(
-                            sheet=sh,
-                            start_col=start.column,
-                            start_row=start.row,
-                            end_col=end.column,
-                            end_row=end.row,
-                            max_cells=max_range_cells,
-                        ):
-                            out.add(format_key(dep_sheet, dep_a1))
-                    return out
-
-                all_refs: set[str] = set()
-                to_visit = set(argument_addrs)
-                while to_visit:
-                    addr = to_visit.pop()
-                    if addr in all_refs:
-                        continue
-                    all_refs.add(addr)
-                    sh, a1 = parse_address(addr)
-                    if sh not in wb_formulas.sheetnames:
-                        continue
-                    cell_val = wb_formulas[sh][a1].value
-                    if isinstance(cell_val, str) and cell_val.startswith("="):
-                        to_visit.update(_refs_in_formula_without_dynamic(cell_val, sh))
-                leaves: set[str] = set()
-                for addr in all_refs:
-                    sh, a1 = parse_address(addr)
-                    if sh not in wb_formulas.sheetnames:
-                        continue
-                    cell_val = wb_formulas[sh][a1].value
-                    if not (isinstance(cell_val, str) and cell_val.startswith("=")):
-                        leaves.add(addr)
-                missing_leaves = leaves_missing_cell_type_constraints(
-                    leaves, dynamic_refs.cell_type_env
-                )
-                if missing_leaves:
-                    raise DynamicRefError(
-                        "Provenance: leaf cells feeding OFFSET/INDIRECT/INDEX have no "
-                        f"constraint: {sorted(missing_leaves)}"
-                    )
-
                 formula_for_infer = normalizer.normalize(f, current_sheet)
                 _col_letter, _current_row = fastpyxl.utils.cell.coordinate_from_string(current_a1)
                 _current_col = fastpyxl.utils.cell.column_index_from_string(_col_letter)
@@ -286,25 +225,33 @@ def _flat_provenance_one_string(
                         _cache_key
                     ]
                 else:
-
-                    def _get_cell_formula(addr: str) -> str | None:
-                        sh, a1 = parse_address(addr)
-                        if sh not in wb_formulas.sheetnames:
-                            return None
-                        v = wb_formulas[sh][a1].value
-                        if not isinstance(v, str) or not v.startswith("="):
-                            return None
-                        return normalizer.normalize(v, sh)
-
+                    walk = ref_walk
+                    if walk is None:
+                        walk = DynamicRefWalkContext(
+                            normalizer=normalizer,
+                            max_range_cells=max_range_cells,
+                            get_cell_value=lambda sh, a1: wb_formulas[sh][a1].value,
+                            sheet_names=wb_formulas.sheetnames,
+                        )
+                    all_refs, leaves = walk.argument_subgraph_refs(argument_addrs)
+                    missing_leaves = leaves_missing_cell_type_constraints(
+                        leaves, dynamic_refs.cell_type_env
+                    )
+                    if missing_leaves:
+                        raise DynamicRefError(
+                            "Provenance: leaf cells feeding OFFSET/INDIRECT/INDEX have no "
+                            f"constraint: {sorted(missing_leaves)}"
+                        )
                     expanded_env = expand_leaf_env_to_argument_env(
                         all_refs,
-                        _get_cell_formula,
-                        _refs_in_formula_without_dynamic,
+                        walk.cell_formula,
+                        walk.refs_in_formula_without_dynamic,
                         dynamic_refs.cell_type_env,
                         dynamic_refs.limits,
                         named_ranges=named_ranges,
                         named_range_ranges=named_range_ranges,
                         max_range_cells=max_range_cells,
+                        shared_cell_type_cache=walk.shared_cell_type_cache,
                         type_analysis_cache=type_analysis_cache,
                         workbook_sha256=workbook_sha256,
                     )
@@ -339,6 +286,12 @@ def _flat_provenance_one_string(
                         current_row=_current_row,
                         current_col=_current_col,
                     )
+                    if dynamic_expansion_cache is not None:
+                        dynamic_expansion_cache[_cache_key] = (
+                            offset_targets,
+                            indirect_targets,
+                            index_targets,
+                        )
                 for addr in offset_targets:
                     _merge_into(
                         acc,
@@ -445,6 +398,7 @@ def _flat_provenance_formula_and_normalized(
     workbook_sha256: str | None = None,
     dynamic_expansion_cache: dict[tuple[str, str, str], tuple[set[str], set[str], set[str]]]
     | None = None,
+    ref_walk: DynamicRefWalkContext | None = None,
 ) -> dict[str, EdgeProvenance]:
     # When normalization is a no-op the single pass is already over the normalized
     # text, so it must collect the spans that the second pass would otherwise supply.
@@ -470,6 +424,7 @@ def _flat_provenance_formula_and_normalized(
         dynamic_expansion_cache=dynamic_expansion_cache,
         type_analysis_cache=type_analysis_cache,
         workbook_sha256=workbook_sha256,
+        ref_walk=ref_walk,
     )
     if not normalized or normalized_matches_raw:
         return raw_map
@@ -492,6 +447,7 @@ def _flat_provenance_formula_and_normalized(
         dynamic_expansion_cache=dynamic_expansion_cache,
         type_analysis_cache=type_analysis_cache,
         workbook_sha256=workbook_sha256,
+        ref_walk=ref_walk,
     )
     out: dict[str, EdgeProvenance] = {}
     all_keys = set(raw_map) | set(norm_map)
@@ -539,6 +495,7 @@ def collect_provenance_for_formula(
     | None = None,
     type_analysis_cache: TypeAnalysisCache | None = None,
     workbook_sha256: str | None = None,
+    ref_walk: DynamicRefWalkContext | None = None,
 ) -> dict[str, EdgeProvenance]:
     """Build a dependency-key to `EdgeProvenance` map for one formula.
 
@@ -546,68 +503,47 @@ def collect_provenance_for_formula(
     """
     if normalizer is None:
         normalizer = FormulaNormalizer(named_ranges, named_range_ranges)
+    if ref_walk is None:
+
+        def _cell_value(sheet: str, a1: str) -> object:
+            return wb_formulas[sheet][a1].value
+
+        ref_walk = DynamicRefWalkContext(
+            normalizer=normalizer,
+            max_range_cells=max_range_cells,
+            get_cell_value=_cell_value,
+            sheet_names=wb_formulas.sheetnames,
+        )
     f = _ensure_leading_equals(formula)
+
+    def _collect_branch(branch_formula: str) -> dict[str, EdgeProvenance]:
+        return collect_provenance_for_formula(
+            _ensure_leading_equals(branch_formula),
+            normalized_formula=None,
+            current_sheet=current_sheet,
+            current_a1=current_a1,
+            named_ranges=named_ranges,
+            named_range_ranges=named_range_ranges,
+            normalizer=normalizer,
+            defined_names=defined_names,
+            expand_ranges=expand_ranges,
+            max_range_cells=max_range_cells,
+            use_cached_dynamic_refs=use_cached_dynamic_refs,
+            dynamic_refs=dynamic_refs,
+            wb_formulas=wb_formulas,
+            resolve_cached_value=resolve_cached_value,
+            dynamic_expansion_cache=dynamic_expansion_cache,
+            type_analysis_cache=type_analysis_cache,
+            workbook_sha256=workbook_sha256,
+            ref_walk=ref_walk,
+        )
 
     if_parts = split_top_level_if(f)
     if if_parts is not None:
         cond_s, then_s, else_s = if_parts
-        maps = [
-            collect_provenance_for_formula(
-                _ensure_leading_equals(cond_s),
-                normalized_formula=None,
-                current_sheet=current_sheet,
-                current_a1=current_a1,
-                named_ranges=named_ranges,
-                named_range_ranges=named_range_ranges,
-                normalizer=normalizer,
-                defined_names=defined_names,
-                expand_ranges=expand_ranges,
-                max_range_cells=max_range_cells,
-                use_cached_dynamic_refs=use_cached_dynamic_refs,
-                dynamic_refs=dynamic_refs,
-                wb_formulas=wb_formulas,
-                resolve_cached_value=resolve_cached_value,
-                dynamic_expansion_cache=dynamic_expansion_cache,
-            ),
-            collect_provenance_for_formula(
-                _ensure_leading_equals(then_s),
-                normalized_formula=None,
-                current_sheet=current_sheet,
-                current_a1=current_a1,
-                named_ranges=named_ranges,
-                named_range_ranges=named_range_ranges,
-                normalizer=normalizer,
-                defined_names=defined_names,
-                expand_ranges=expand_ranges,
-                max_range_cells=max_range_cells,
-                use_cached_dynamic_refs=use_cached_dynamic_refs,
-                dynamic_refs=dynamic_refs,
-                wb_formulas=wb_formulas,
-                resolve_cached_value=resolve_cached_value,
-                dynamic_expansion_cache=dynamic_expansion_cache,
-            ),
-        ]
+        maps = [_collect_branch(cond_s), _collect_branch(then_s)]
         if else_s:
-            maps.append(
-                collect_provenance_for_formula(
-                    _ensure_leading_equals(else_s),
-                    normalized_formula=None,
-                    current_sheet=current_sheet,
-                    current_a1=current_a1,
-                    named_ranges=named_ranges,
-                    named_range_ranges=named_range_ranges,
-                    defined_names=defined_names,
-                    expand_ranges=expand_ranges,
-                    max_range_cells=max_range_cells,
-                    use_cached_dynamic_refs=use_cached_dynamic_refs,
-                    dynamic_refs=dynamic_refs,
-                    wb_formulas=wb_formulas,
-                    resolve_cached_value=resolve_cached_value,
-                    dynamic_expansion_cache=dynamic_expansion_cache,
-                    type_analysis_cache=type_analysis_cache,
-                    workbook_sha256=workbook_sha256,
-                )
-            )
+            maps.append(_collect_branch(else_s))
         return merge_provenance_maps(maps)
 
     ifs_args = split_top_level_ifs(f)
@@ -617,138 +553,25 @@ def collect_provenance_for_formula(
         if len(pairs) % 2 == 1:
             default_ifs = pairs[-1]
             pairs = pairs[:-1]
-        maps: list[dict[str, EdgeProvenance]] = []
+        maps = []
         for i in range(0, len(pairs), 2):
             cond_s, val_s = pairs[i], pairs[i + 1]
-            maps.append(
-                collect_provenance_for_formula(
-                    _ensure_leading_equals(cond_s),
-                    normalized_formula=None,
-                    current_sheet=current_sheet,
-                    current_a1=current_a1,
-                    named_ranges=named_ranges,
-                    named_range_ranges=named_range_ranges,
-                    defined_names=defined_names,
-                    expand_ranges=expand_ranges,
-                    max_range_cells=max_range_cells,
-                    use_cached_dynamic_refs=use_cached_dynamic_refs,
-                    dynamic_refs=dynamic_refs,
-                    wb_formulas=wb_formulas,
-                    resolve_cached_value=resolve_cached_value,
-                    dynamic_expansion_cache=dynamic_expansion_cache,
-                    type_analysis_cache=type_analysis_cache,
-                    workbook_sha256=workbook_sha256,
-                )
-            )
-            maps.append(
-                collect_provenance_for_formula(
-                    _ensure_leading_equals(val_s),
-                    normalized_formula=None,
-                    current_sheet=current_sheet,
-                    current_a1=current_a1,
-                    named_ranges=named_ranges,
-                    named_range_ranges=named_range_ranges,
-                    defined_names=defined_names,
-                    expand_ranges=expand_ranges,
-                    max_range_cells=max_range_cells,
-                    use_cached_dynamic_refs=use_cached_dynamic_refs,
-                    dynamic_refs=dynamic_refs,
-                    wb_formulas=wb_formulas,
-                    resolve_cached_value=resolve_cached_value,
-                    dynamic_expansion_cache=dynamic_expansion_cache,
-                    type_analysis_cache=type_analysis_cache,
-                    workbook_sha256=workbook_sha256,
-                )
-            )
+            maps.append(_collect_branch(cond_s))
+            maps.append(_collect_branch(val_s))
         if default_ifs is not None:
-            maps.append(
-                collect_provenance_for_formula(
-                    _ensure_leading_equals(default_ifs),
-                    normalized_formula=None,
-                    current_sheet=current_sheet,
-                    current_a1=current_a1,
-                    named_ranges=named_ranges,
-                    named_range_ranges=named_range_ranges,
-                    defined_names=defined_names,
-                    expand_ranges=expand_ranges,
-                    max_range_cells=max_range_cells,
-                    use_cached_dynamic_refs=use_cached_dynamic_refs,
-                    dynamic_refs=dynamic_refs,
-                    wb_formulas=wb_formulas,
-                    resolve_cached_value=resolve_cached_value,
-                    dynamic_expansion_cache=dynamic_expansion_cache,
-                    type_analysis_cache=type_analysis_cache,
-                    workbook_sha256=workbook_sha256,
-                )
-            )
+            maps.append(_collect_branch(default_ifs))
         return merge_provenance_maps(maps)
 
     choose_args = split_top_level_choose(f)
     if choose_args is not None and len(choose_args) >= 2:
-        maps = [
-            collect_provenance_for_formula(
-                _ensure_leading_equals(choose_args[0]),
-                normalized_formula=None,
-                current_sheet=current_sheet,
-                current_a1=current_a1,
-                named_ranges=named_ranges,
-                named_range_ranges=named_range_ranges,
-                normalizer=normalizer,
-                defined_names=defined_names,
-                expand_ranges=expand_ranges,
-                max_range_cells=max_range_cells,
-                use_cached_dynamic_refs=use_cached_dynamic_refs,
-                dynamic_refs=dynamic_refs,
-                wb_formulas=wb_formulas,
-                resolve_cached_value=resolve_cached_value,
-                dynamic_expansion_cache=dynamic_expansion_cache,
-            )
-        ]
+        maps = [_collect_branch(choose_args[0])]
         for choice_s in choose_args[1:]:
-            maps.append(
-                collect_provenance_for_formula(
-                    _ensure_leading_equals(choice_s),
-                    normalized_formula=None,
-                    current_sheet=current_sheet,
-                    current_a1=current_a1,
-                    named_ranges=named_ranges,
-                    named_range_ranges=named_range_ranges,
-                    defined_names=defined_names,
-                    expand_ranges=expand_ranges,
-                    max_range_cells=max_range_cells,
-                    use_cached_dynamic_refs=use_cached_dynamic_refs,
-                    dynamic_refs=dynamic_refs,
-                    wb_formulas=wb_formulas,
-                    resolve_cached_value=resolve_cached_value,
-                    dynamic_expansion_cache=dynamic_expansion_cache,
-                    type_analysis_cache=type_analysis_cache,
-                    workbook_sha256=workbook_sha256,
-                )
-            )
+            maps.append(_collect_branch(choice_s))
         return merge_provenance_maps(maps)
 
     switch_args = split_top_level_switch(f)
     if switch_args is not None and len(switch_args) >= 3:
-        expr_s = switch_args[0]
-        maps = [
-            collect_provenance_for_formula(
-                _ensure_leading_equals(expr_s),
-                normalized_formula=None,
-                current_sheet=current_sheet,
-                current_a1=current_a1,
-                named_ranges=named_ranges,
-                named_range_ranges=named_range_ranges,
-                normalizer=normalizer,
-                defined_names=defined_names,
-                expand_ranges=expand_ranges,
-                max_range_cells=max_range_cells,
-                use_cached_dynamic_refs=use_cached_dynamic_refs,
-                dynamic_refs=dynamic_refs,
-                wb_formulas=wb_formulas,
-                resolve_cached_value=resolve_cached_value,
-                dynamic_expansion_cache=dynamic_expansion_cache,
-            )
-        ]
+        maps = [_collect_branch(switch_args[0])]
         pairs = switch_args[1:]
         default_expr: str | None = None
         if len(pairs) % 2 == 1:
@@ -756,46 +579,10 @@ def collect_provenance_for_formula(
             pairs = pairs[:-1]
         for i in range(0, len(pairs), 2):
             val_s, res_s = pairs[i], pairs[i + 1]
-            for sub in (val_s, res_s):
-                maps.append(
-                    collect_provenance_for_formula(
-                        _ensure_leading_equals(sub),
-                        normalized_formula=None,
-                        current_sheet=current_sheet,
-                        current_a1=current_a1,
-                        named_ranges=named_ranges,
-                        named_range_ranges=named_range_ranges,
-                        defined_names=defined_names,
-                        expand_ranges=expand_ranges,
-                        max_range_cells=max_range_cells,
-                        use_cached_dynamic_refs=use_cached_dynamic_refs,
-                        dynamic_refs=dynamic_refs,
-                        wb_formulas=wb_formulas,
-                        resolve_cached_value=resolve_cached_value,
-                        dynamic_expansion_cache=dynamic_expansion_cache,
-                    )
-                )
+            maps.append(_collect_branch(val_s))
+            maps.append(_collect_branch(res_s))
         if default_expr is not None:
-            maps.append(
-                collect_provenance_for_formula(
-                    _ensure_leading_equals(default_expr),
-                    normalized_formula=None,
-                    current_sheet=current_sheet,
-                    current_a1=current_a1,
-                    named_ranges=named_ranges,
-                    named_range_ranges=named_range_ranges,
-                    defined_names=defined_names,
-                    expand_ranges=expand_ranges,
-                    max_range_cells=max_range_cells,
-                    use_cached_dynamic_refs=use_cached_dynamic_refs,
-                    dynamic_refs=dynamic_refs,
-                    wb_formulas=wb_formulas,
-                    resolve_cached_value=resolve_cached_value,
-                    dynamic_expansion_cache=dynamic_expansion_cache,
-                    type_analysis_cache=type_analysis_cache,
-                    workbook_sha256=workbook_sha256,
-                )
-            )
+            maps.append(_collect_branch(default_expr))
         return merge_provenance_maps(maps)
 
     return _flat_provenance_formula_and_normalized(
@@ -816,4 +603,5 @@ def collect_provenance_for_formula(
         dynamic_expansion_cache=dynamic_expansion_cache,
         type_analysis_cache=type_analysis_cache,
         workbook_sha256=workbook_sha256,
+        ref_walk=ref_walk,
     )
