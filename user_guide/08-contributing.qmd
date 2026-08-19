@@ -128,7 +128,8 @@ and returns a `ProjectionResult` facade that reads like the projected graph and 
 durable `ProjectionManifest`. The facade satisfies the read-only `grapher.GraphReadView`
 protocol, the same surface `DependencyGraph` exposes, so read-only consumers such as
 `to_networkx` and `CodeGenerator` accept a graph or a projection interchangeably.
-`IdentityTransitCompression` is the built-in reference step:
+`IdentityTransitCompression` is the built-in reference step. Target-marked cells
+and optional `preserve` keys stay in the projected graph:
 
 ```python
 projection = IdentityTransitCompression().project(graph)
@@ -157,13 +158,16 @@ Build the projected graph from a copy and record lineage on the manifest:
 
 ```python
 from excel_grapher.exporter import (
-    BaseProjectionManifest, ProjectedNodeSnapshot, ProjectionResult,
+    BaseProjectionManifest,
+    ProjectedNodeSnapshot,
+    ProjectionResult,
     register_projection_manifest,
 )
 
+
 class SubgraphCollapse:
     def project(self, graph):
-        projected = graph.copy()                      # never mutate the canonical graph
+        projected = graph.copy()  # never mutate the canonical graph
         # ... select a single-exit subgraph, then on `projected`:
         #     set_node_formula(root, inlined_formula, normalized_formula)  # substitute bodies
         #     add_edge(root, external_dep, ...)              # rewire to surviving deps
@@ -171,13 +175,14 @@ class SubgraphCollapse:
         #     set_node_metadata(root, {"collapsed_from": [...]})  # tag the condensed node
         manifest = BaseProjectionManifest(
             kind="subgraph_collapse",
-            forwarding_map={},                         # internal nodes are not forwarded
+            forwarding_map={},  # internal nodes are not forwarded
             retained_to_collapsed_sources={root: tuple(internals)},
             removed_node_snapshots={addr: ProjectedNodeSnapshot(...) for addr in internals},
             formula_rewrites=(),
             collapsed_groups=(),
         )
         return ProjectionResult(graph, projected, manifest)
+
 
 # Enable serialization round-trips for the custom kind:
 register_projection_manifest("subgraph_collapse", BaseProjectionManifest.from_dict)

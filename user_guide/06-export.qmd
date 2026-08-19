@@ -90,6 +90,7 @@ from excel_grapher.exporter import (
     register_series_docstring_callback,
 )
 
+
 def my_series_docstring(ctx):
     # ctx.contract contains deterministic binding facts (fields, examples, layout, etc.)
     return SeriesFunctionDoc(
@@ -102,12 +103,14 @@ def my_series_docstring(ctx):
         },
     )
 
+
 register_series_docstring_callback("my_docs", my_series_docstring)
 
 
 def compact_google_renderer(contract, doc, *, series=None):
     # Simple callables are valid custom renderers.
     return GoogleSeriesDocstringRenderer().render(contract, doc, series=series)
+
 
 code = CodeGenerator(graph).generate(
     targets,
@@ -133,14 +136,18 @@ Callback contract highlights:
 ## Graph projection for export
 
 Identity transit nodes (pure mirrors such as `Outputs!B12 = Engine!C6`) can be collapsed in
-**projected** export artifacts while the canonical workbook graph stays unchanged. Pass a
-`ProjectionResult` to `CodeGenerator` so public targets and series bindings keep their
-workbook-facing addresses:
+**projected** export artifacts while the canonical workbook graph stays unchanged. Marked
+extract targets (`is_target`) and optional `preserve` keys are not forwarded, matching
+`OptimalCompression`. Pass a `ProjectionResult` to `CodeGenerator` so remaining public
+addresses keep their workbook-facing identity:
 
 ```python
 from excel_grapher.exporter import CodeGenerator, IdentityTransitCompression
 
-projection = IdentityTransitCompression().project(graph)
+projection = IdentityTransitCompression(
+    series_bindings=series_bindings,
+    bindings_workbook=workbook_path,
+).project(graph)
 modules = CodeGenerator(projection).generate_modules(
     targets,
     series_bindings=series_bindings,
@@ -177,10 +184,26 @@ from excel_grapher.exporter import CodeGenerator
 
 graph = DependencyGraph()
 graph.add_node(
-    Node(sheet="S", column="A", row=1, formula=None, normalized_formula=None, value=10.0, is_leaf=True)
+    Node(
+        sheet="S",
+        column="A",
+        row=1,
+        formula=None,
+        normalized_formula=None,
+        value=10.0,
+        is_leaf=True,
+    )
 )
 graph.add_node(
-    Node(sheet="S", column="B", row=1, formula="=S!A1*2", normalized_formula="=S!A1*2", value=None, is_leaf=False)
+    Node(
+        sheet="S",
+        column="B",
+        row=1,
+        formula="=S!A1*2",
+        normalized_formula="=S!A1*2",
+        value=None,
+        is_leaf=False,
+    )
 )
 graph.add_edge("S!B1", "S!A1")
 

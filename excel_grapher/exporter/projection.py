@@ -381,11 +381,16 @@ def build_forwarding_projection_manifest(
 
 def project_identity_transits(
     graph: DependencyGraph,
+    *,
+    preserve: set[str] | None = None,
 ) -> tuple[DependencyGraph, BaseProjectionManifest]:
-    """Return a projected copy of `graph` with identity transit nodes collapsed."""
+    """Return a projected copy of `graph` with identity transit nodes collapsed.
+
+    `preserve` keys (and all `is_target` nodes) are ineligible for forwarding.
+    """
     projected = graph._copy_for_projection()
     record = IdentityTransitCompressionRecord()
-    projected.compress_identity_transits(record=record)
+    projected.compress_identity_transits(preserve=preserve, record=record)
     return projected, build_forwarding_projection_manifest(graph, record, kind="identity_transit")
 
 
@@ -561,11 +566,43 @@ class ProjectionResult:
 
 
 class IdentityTransitCompression:
-    """Collapse pure identity transit nodes into a projected export graph."""
+    """Collapse pure identity transit nodes into a projected export graph.
+
+    Target-marked cells and keys in `preserve` are ineligible for forwarding.
+    Pass series-bound public addresses via `preserve` (see
+    `series_binding_public_addresses`) or via `series_bindings` /
+    `bindings_workbook` so published leaves stay in the projected graph.
+    """
+
+    def __init__(
+        self,
+        *,
+        preserve: set[str] | None = None,
+        series_bindings: WorkbookSeriesBindings | None = None,
+        bindings_workbook: Path | str | None = None,
+    ) -> None:
+        if series_bindings is not None and bindings_workbook is None:
+            raise ValueError("bindings_workbook is required when series_bindings is set")
+        self._preserve = preserve
+        self._series_bindings = series_bindings
+        self._bindings_workbook = bindings_workbook
 
     def project(self, graph: DependencyGraph) -> ProjectionResult:
         """Build a non-mutating identity-transit projection for export artifacts."""
-        projected, manifest = project_identity_transits(graph)
+        preserve = set(self._preserve) if self._preserve is not None else set()
+        if self._series_bindings is not None:
+            from excel_grapher.series_bindings.workflow import series_binding_public_addresses
+
+            assert self._bindings_workbook is not None
+            preserve |= series_binding_public_addresses(
+                graph,
+                self._series_bindings,
+                workbook=self._bindings_workbook,
+            )
+        projected, manifest = project_identity_transits(
+            graph,
+            preserve=preserve if preserve or self._preserve is not None else None,
+        )
         return ProjectionResult(
             original_graph=graph,
             projected_graph=projected,

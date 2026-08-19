@@ -10,6 +10,7 @@ from excel_grapher.core.cell_types import CellKind, EnumDomain
 from excel_grapher.grapher.compression import CompressionProvenanceRequiredError
 from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
 from excel_grapher.grapher.dynamic_refs import DynamicRefConfig, DynamicRefLimits
+from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.node import Node
 
 
@@ -19,6 +20,7 @@ def _make_node(
     normalized: str | None,
     *,
     is_leaf: bool = False,
+    is_target: bool = False,
 ) -> Node:
     sheet, rest = key.split("!", 1)
     if sheet.startswith("'"):
@@ -33,7 +35,37 @@ def _make_node(
         normalized_formula=normalized,
         value=None,
         is_leaf=is_leaf,
+        is_target=is_target,
     )
+
+
+def _direct_edge(graph: DependencyGraph, dependent: str, precedent: str) -> None:
+    dep_node = graph.get_node(dependent)
+    assert dep_node is not None
+    normalized = dep_node.normalized_formula
+    assert normalized is not None
+    start = normalized.index(precedent)
+    graph.add_edge(
+        dependent,
+        precedent,
+        provenance=EdgeProvenance(
+            causes=DependencyCause.direct_ref,
+            direct_sites_normalized=((start, start + len(precedent)),),
+        ),
+    )
+
+
+def _identity_transit_graph(*, b_is_target: bool = False) -> DependencyGraph:
+    graph = DependencyGraph()
+    c = _make_node("Sheet1!C1", None, None, is_leaf=True)
+    object.__setattr__(c, "value", 42)
+    b = _make_node("Sheet1!B1", "=Sheet1!C1", "=Sheet1!C1", is_target=b_is_target)
+    a = _make_node("Sheet1!A1", "=Sheet1!B1", "=Sheet1!B1")
+    for node in (c, b, a):
+        graph.add_node(node)
+    _direct_edge(graph, "Sheet1!B1", "Sheet1!C1")
+    _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
+    return graph
 
 
 def test_compress_happy_path_manual_graph() -> None:
@@ -358,3 +390,68 @@ def test_indirect_enum_blocks_when_direct_same_cell(tmp_path: Path) -> None:
     assert DependencyCause.direct_ref in prov.causes
     assert DependencyCause.dynamic_indirect in prov.causes
     assert graph.compress_identity_transits() == []
+
+
+def test_identity_transit_is_target_not_removed() -> None:
+    graph = _identity_transit_graph(b_is_target=True)
+
+    removed = graph.compress_identity_transits()
+
+    assert "Sheet1!B1" not in removed
+    assert "Sheet1!B1" in graph
+    assert graph.get_dependencies("Sheet1!A1") == frozenset({"Sheet1!B1"})
+
+
+def test_identity_transit_non_target_still_removed() -> None:
+    graph = _identity_transit_graph()
+
+    removed = graph.compress_identity_transits()
+
+    assert "Sheet1!B1" in removed
+    assert "Sheet1!B1" not in graph
+    assert graph.get_dependencies("Sheet1!A1") == frozenset({"Sheet1!C1"})
+
+
+def test_identity_transit_explicit_preserve_not_removed() -> None:
+    graph = _identity_transit_graph()
+
+    removed = graph.compress_identity_transits(preserve={"Sheet1!B1"})
+
+    assert "Sheet1!B1" not in removed
+    assert "Sheet1!B1" in graph
+    assert graph.get_dependencies("Sheet1!A1") == frozenset({"Sheet1!B1"})
+
+
+def test_identity_transit_is_target_protected_even_with_unrelated_preserve() -> None:
+    graph = _identity_transit_graph(b_is_target=True)
+
+    removed = graph.compress_identity_transits(preserve={"Sheet1!Z99"})
+
+    assert "Sheet1!B1" not in removed
+    assert "Sheet1!B1" in graph
+
+
+def test_identity_transit_target_barrier_does_not_block_upstream_collapse() -> None:
+    graph = DependencyGraph()
+    d = _make_node("Sheet1!D1", None, None, is_leaf=True)
+    object.__setattr__(d, "value", 1)
+    c = _make_node("Sheet1!C1", "=Sheet1!D1", "=Sheet1!D1")
+    b = _make_node("Sheet1!B1", "=Sheet1!C1", "=Sheet1!C1", is_target=True)
+    a = _make_node("Sheet1!A1", "=Sheet1!B1", "=Sheet1!B1")
+    for node in (d, c, b, a):
+        graph.add_node(node)
+    _direct_edge(graph, "Sheet1!C1", "Sheet1!D1")
+    _direct_edge(graph, "Sheet1!B1", "Sheet1!C1")
+    _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
+
+    removed = graph.compress_identity_transits()
+
+    assert "Sheet1!B1" not in removed
+    assert "Sheet1!C1" in removed
+    assert "Sheet1!B1" in graph
+    assert "Sheet1!C1" not in graph
+    b_node = graph.get_node("Sheet1!B1")
+    assert b_node is not None
+    assert b_node.normalized_formula == "=Sheet1!D1"
+    assert graph.get_dependencies("Sheet1!A1") == frozenset({"Sheet1!B1"})
+    assert graph.get_dependencies("Sheet1!B1") == frozenset({"Sheet1!D1"})
