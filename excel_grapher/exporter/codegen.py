@@ -118,6 +118,11 @@ _ARITHMETIC_OPS = frozenset({"+", "-", "*", "/", "^"})
 # AST-level special cases; other IS functions propagate argument errors there.
 _THUNK_ARG_FUNCTIONS = frozenset({"ISERROR", "ISNA", "ISBLANK", "ISNUMBER", "ISTEXT"})
 
+# Emit paths for these functions inspect concrete CellRefNode / RangeNode ASTs
+# (static OFFSET, xl_index_ref, ROW of the formula cell). Shared helpers walk
+# punched AddressHoleNode skeletons, so these stay on the filled-AST body.
+_SHAPE_HELPER_REF_FUNCS = frozenset({"OFFSET", "INDEX", "ROW", "COLUMN", "COLUMNS"})
+
 # Return unpacking hoists substantive ``xl_*`` runtime calls into statement-level
 # temporaries. Coercion helpers and error literals stay inline because they are
 # cheap and wrapping them would add noise without aiding debugging.
@@ -582,7 +587,12 @@ class CodeGenerator:
         return self._hoist_return_expr(expr)
 
     def _emit_address_hole(self, node: AddressHoleNode) -> str:
-        """Emit a punched address hole as `xl_cell` / `xl_range` on a helper param."""
+        """Emit a punched address hole as `xl_cell` / `xl_range` on a helper param.
+
+        The bound address is a runtime string, so helpers cannot emit
+        `xl_eval(ctx, addr, cell_fn)`. `xl_cell` resolves formula cells through
+        `ctx.resolver` and leaf cells through inputs.
+        """
         pname = f"p{node.index}"
         expr = f"xl_cell(ctx, {pname})" if node.kind == "CELL" else f"xl_range(ctx, {pname})"
         return self._hoist_return_expr(expr)
@@ -2226,22 +2236,20 @@ class CodeGenerator:
 
     @staticmethod
     def _shape_helper_eligible(skeleton: SkeletonNode) -> bool:
-        """Return whether `skeleton` can be emitted as a shared param helper."""
+        """Return whether `skeleton` can be emitted as a shared param helper.
+
+        Helpers bind addresses at call time, so emit must not depend on a
+        concrete `CellRefNode` / `RangeNode`. OFFSET, INDEX, and ROW/COLUMN/
+        COLUMNS inspect those nodes (or the formula cell address), so they
+        stay on the specialized filled-AST body.
+        """
         for hole in iter_address_holes(skeleton):
             if hole.kind not in {"CELL", "RANGE"}:
                 return False
 
         def walk(node: object) -> bool:
             if isinstance(node, FunctionCallNode):
-                upper = normalize_excel_function_name(node.name)
-                if upper in {"ROW", "COLUMN"}:
-                    if not node.args or (
-                        len(node.args) == 1 and isinstance(node.args[0], EmptyArgNode)
-                    ):
-                        return False
-                    if node.args and isinstance(node.args[0], AddressHoleNode):
-                        return False
-                if upper == "COLUMNS" and node.args and isinstance(node.args[0], AddressHoleNode):
+                if normalize_excel_function_name(node.name) in _SHAPE_HELPER_REF_FUNCS:
                     return False
                 return all(walk(arg) for arg in node.args)
             if isinstance(node, BinaryOpNode):
@@ -2252,6 +2260,12 @@ class CodeGenerator:
 
         return walk(skeleton)
 
+    def _shape_params_include_scalar_range(self, params: tuple[AddressLeaf, ...]) -> bool:
+        """Return whether any RANGE param is a 1x1 range (inlined as a scalar)."""
+        return any(
+            isinstance(leaf, RangeNode) and self._range_node_is_single_cell(leaf) for leaf in params
+        )
+
     def _plan_shape_helpers(self, formula_addresses: Sequence[str]) -> None:
         """Record profitable shape helper names for this generate() pass."""
         self._shape_helper_names.clear()
@@ -2261,6 +2275,7 @@ class CodeGenerator:
         if table is None:
             return
         counts: dict[str, int] = {}
+        scalar_range_shapes: set[str] = set()
         for address in formula_addresses:
             node = self.graph.get_node(address)
             if node is None or not isinstance(node.normalized_formula, str):
@@ -2268,11 +2283,15 @@ class CodeGenerator:
             found = table.lookup(node.normalized_formula)
             if found is None:
                 continue
-            shape_key, skeleton, _params = found
+            shape_key, skeleton, params = found
             if not self._shape_helper_eligible(skeleton):
                 continue
+            if self._shape_params_include_scalar_range(params):
+                scalar_range_shapes.add(shape_key)
             counts[shape_key] = counts.get(shape_key, 0) + 1
-        profitable = sorted(key for key, n in counts.items() if n >= 2)
+        profitable = sorted(
+            key for key, n in counts.items() if n >= 2 and key not in scalar_range_shapes
+        )
         self._shape_helper_names = {
             shape_key: f"_shape_{index}" for index, shape_key in enumerate(profitable)
         }

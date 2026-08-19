@@ -10,6 +10,7 @@ import fastpyxl
 import excel_grapher.evaluator.evaluator as evaluator_module
 from excel_grapher import DependencyGraph, FormulaEvaluator, Node, create_dependency_graph
 from excel_grapher.core.address_keys import parse_address
+from excel_grapher.core.types import XlError
 from excel_grapher.grapher.formula_shapes import warm_formula_shapes
 
 
@@ -50,7 +51,7 @@ def test_shape_eval_skips_parse_and_matches_string_path() -> None:
         parse_calls += 1
         return original_parse(formula)
 
-    with FormulaEvaluator(graph) as ev, patch.object(evaluator_module, "parse", counting_parse):
+    with patch.object(evaluator_module, "parse", counting_parse), FormulaEvaluator(graph) as ev:
         shaped = ev.evaluate(["S!B1", "S!B2"])
         assert parse_calls == 0
         assert shaped["S!B1"] == 20.0
@@ -86,6 +87,33 @@ def test_shape_eval_if_short_circuits_like_string_path() -> None:
         result = ev.evaluate(["S!C1", "S!C2"])
     assert result["S!C1"] == 10
     assert result["S!C2"] == 20
+
+
+def test_shape_eval_if_does_not_evaluate_unused_error_branch() -> None:
+    graph = DependencyGraph()
+    graph.add_node(_make_node("S!A1", None, 1))
+    graph.add_node(_make_node("S!B1", None, 10))
+    graph.add_node(_make_node("S!C1", "=1/0"))
+    graph.add_node(_make_node("S!D1", "=IF(S!A1,S!B1,S!C1)"))
+    graph.add_node(_make_node("S!A2", None, 0))
+    graph.add_node(_make_node("S!D2", "=IF(S!A2,S!B1,S!C1)"))
+    for parent, child in (
+        ("S!D1", "S!A1"),
+        ("S!D1", "S!B1"),
+        ("S!D1", "S!C1"),
+        ("S!D2", "S!A2"),
+        ("S!D2", "S!B1"),
+        ("S!D2", "S!C1"),
+    ):
+        graph.add_edge(parent, child)
+    graph.formula_shapes = warm_formula_shapes(graph)
+
+    with FormulaEvaluator(graph) as ev:
+        taken = ev.evaluate("S!D1")
+        assert taken == 10
+        assert "S!C1" not in ev._cache
+        unused = ev.evaluate("S!D2")
+        assert unused == XlError.DIV
 
 
 def test_create_graph_warm_formula_shapes_evaluator_parity(tmp_path: Path) -> None:
