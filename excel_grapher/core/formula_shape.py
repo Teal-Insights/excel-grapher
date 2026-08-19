@@ -10,10 +10,11 @@ See GitHub #517.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Literal, Protocol, TypeAlias, cast
 
+from excel_grapher.core.address_keys import format_range_key, parse_address
 from excel_grapher.core.formula_ast import (
     AstNode,
     BinaryOpNode,
@@ -179,6 +180,20 @@ def _fill(node: SkeletonNode, params: tuple[AddressLeaf, ...], seen: list[int]) 
     raise TypeError(f"unsupported skeleton node: {type(node).__name__}")
 
 
+def fill_address_holes(
+    skeleton: SkeletonNode,
+    params: tuple[AddressLeaf, ...] | list[AddressLeaf],
+) -> AstNode:
+    """Replace holes in `skeleton` (or a subtree) using `params` by hole index.
+
+    Unlike `specialize_formula_shape`, this does not require the subtree to
+    mention every param; nested INDEX/OFFSET args can fill a subset of holes.
+    """
+    param_tuple = tuple(params)
+    seen: list[int] = []
+    return _fill(skeleton, param_tuple, seen)
+
+
 def specialize_formula_shape(
     skeleton: SkeletonNode,
     params: tuple[AddressLeaf, ...] | list[AddressLeaf],
@@ -205,6 +220,103 @@ def specialize_formula_shape(
     if seen != list(range(len(param_tuple))):
         raise ValueError(f"hole indices must be a dense 0..n-1 sequence in preorder; got {seen!r}")
     return result
+
+
+def iter_address_holes(skeleton: SkeletonNode) -> Iterator[AddressHoleNode]:
+    """Yield address holes in preorder."""
+    match skeleton:
+        case AddressHoleNode():
+            yield skeleton
+        case FunctionCallNode(_, args):
+            for arg in args:
+                yield from iter_address_holes(cast(SkeletonNode, arg))
+        case BinaryOpNode(_, left, right):
+            yield from iter_address_holes(cast(SkeletonNode, left))
+            yield from iter_address_holes(cast(SkeletonNode, right))
+        case UnaryOpNode(_, operand):
+            yield from iter_address_holes(cast(SkeletonNode, operand))
+        case _:
+            return
+
+
+def encode_address_leaf(leaf: AddressLeaf) -> str:
+    """Encode an address leaf as a sheet-qualified A1 / range string.
+
+    Cell refs stay canonical `Sheet!A1`. Ranges become `Sheet!A1:B2` (single
+    sheet prefix). Whole-column / whole-row refs use `Sheet!A:A` / `Sheet!1:1`.
+    """
+    match leaf:
+        case CellRefNode(address):
+            return address
+        case RangeNode(start, end):
+            sheet, start_cell = parse_address(start)
+            if "!" in end:
+                _, end_cell = parse_address(end)
+            else:
+                end_cell = end
+            return format_range_key(sheet, start_cell, end_cell)
+        case WholeColumnNode(sheet, column):
+            return format_range_key(sheet, column, column)
+        case WholeRowNode(sheet, row):
+            return format_range_key(sheet, str(row), str(row))
+    raise TypeError(f"not an address leaf: {type(leaf).__name__}")
+
+
+@dataclass(frozen=True, slots=True)
+class FormulaShapeTable:
+    """Interned skeletons plus per-formula parameter bindings.
+
+    `shapes` maps `shape_key` to one shared skeleton. `bindings` maps a
+    stripped `normalized_formula` to `(shape_key, params)`. Excel-facing node
+    storage stays as formula strings; this table is an overlay the evaluator
+    and codegen both read.
+    """
+
+    shapes: dict[str, SkeletonNode]
+    bindings: dict[str, tuple[str, tuple[AddressLeaf, ...]]]
+
+    def copy(self) -> FormulaShapeTable:
+        """Shallow-copy maps; skeletons and param tuples are shared."""
+        return FormulaShapeTable(shapes=dict(self.shapes), bindings=dict(self.bindings))
+
+    def lookup(
+        self, normalized_formula: str
+    ) -> tuple[str, SkeletonNode, tuple[AddressLeaf, ...]] | None:
+        """Return `(shape_key, skeleton, params)` for `normalized_formula`."""
+        stripped = normalized_formula.strip()
+        binding = self.bindings.get(stripped)
+        if binding is None:
+            return None
+        shape_key, params = binding
+        skeleton = self.shapes.get(shape_key)
+        if skeleton is None:
+            return None
+        return shape_key, skeleton, params
+
+
+def intern_formula_shapes(
+    formulas: Iterable[str],
+    *,
+    parsed: Mapping[str, AstNode] | None = None,
+) -> FormulaShapeTable:
+    """Build a shape table from normalized formula strings.
+
+    Duplicate strings share one binding. Formulas that share a punched
+    `shape_key` share one skeleton. `parsed` is an optional map from stripped
+    formula text to an already-parsed AST (avoids a second parse after
+    `warm_preparsed_formulas`).
+    """
+    shapes: dict[str, SkeletonNode] = {}
+    bindings: dict[str, tuple[str, tuple[AddressLeaf, ...]]] = {}
+    for formula in formulas:
+        stripped = formula.strip()
+        if not stripped or stripped in bindings:
+            continue
+        ast = parsed.get(stripped) if parsed is not None else None
+        shape = fingerprint_formula_shape(ast if ast is not None else stripped)
+        shapes.setdefault(shape.shape_key, shape.skeleton)
+        bindings[stripped] = (shape.shape_key, shape.params)
+    return FormulaShapeTable(shapes=shapes, bindings=bindings)
 
 
 @dataclass(frozen=True, slots=True)

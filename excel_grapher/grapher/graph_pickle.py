@@ -175,6 +175,7 @@ def _read_graph_frames(buf: BinaryIO) -> Any:
     graph.named_range_ranges = dict(nrr) if nrr else None
     graph.sheet_bounds = None
     graph.preparsed_formulas = None
+    graph.formula_shapes = None
     del part1, nodes, node_keys
 
     part2 = pickle.load(buf)

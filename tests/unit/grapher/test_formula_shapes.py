@@ -1,0 +1,108 @@
+"""Tests for opt-in interned formula AST shapes on DependencyGraph."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import fastpyxl
+import pytest
+
+from excel_grapher import DependencyGraph, Node, create_dependency_graph
+from excel_grapher.core.address_keys import parse_address
+from excel_grapher.core.formula_ast import FormulaParseError
+from excel_grapher.grapher.formula_shapes import warm_formula_shapes
+
+
+def _cell_node(address: str, formula: str | None, *, value: object = None) -> Node:
+    sheet, coord = parse_address(address)
+    col = "".join(c for c in coord if c.isalpha())
+    row = int("".join(c for c in coord if c.isdigit()))
+    return Node(
+        sheet=sheet,
+        column=col,
+        row=row,
+        formula=formula,
+        normalized_formula=formula,
+        value=value,
+        is_leaf=formula is None,
+    )
+
+
+def test_warm_formula_shapes_interns_shared_skeleton() -> None:
+    graph = DependencyGraph()
+    graph.add_node(_cell_node("S!A1", None, value=1))
+    graph.add_node(_cell_node("S!B1", "=S!A1+1"))
+    graph.add_node(_cell_node("S!B2", "=S!A2+1"))
+    table = warm_formula_shapes(graph)
+    assert len(table.shapes) == 1
+    assert len(table.bindings) == 2
+    left = table.lookup("=S!A1+1")
+    right = table.lookup("=S!A2+1")
+    assert left is not None and right is not None
+    assert left[0] == right[0]
+    assert left[1] is right[1]
+    assert left[2] != right[2]
+
+
+def test_create_dependency_graph_warm_formula_shapes_opt_in(tmp_path: Path) -> None:
+    excel_path = tmp_path / "shapes.xlsx"
+    wb = fastpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws["A1"].value = 1
+    ws["B1"].value = "=A1+1"
+    ws["B2"].value = "=A1+2"
+    wb.save(excel_path)
+    wb.close()
+
+    default = create_dependency_graph(excel_path, ["Sheet1!B1", "Sheet1!B2"], load_values=False)
+    assert default.formula_shapes is None
+    assert default.preparsed_formulas is None
+
+    shaped = create_dependency_graph(
+        excel_path,
+        ["Sheet1!B1", "Sheet1!B2"],
+        load_values=False,
+        warm_formula_shapes=True,
+    )
+    assert shaped.formula_shapes is not None
+    assert shaped.preparsed_formulas is None
+    assert len(shaped.formula_shapes.shapes) == 2
+
+    both = create_dependency_graph(
+        excel_path,
+        ["Sheet1!B1", "Sheet1!B2"],
+        load_values=False,
+        warm_ast_cache=True,
+        warm_formula_shapes=True,
+    )
+    assert both.preparsed_formulas is not None
+    assert both.formula_shapes is not None
+
+
+def test_set_node_formula_invalidates_shape_table() -> None:
+    graph = DependencyGraph()
+    graph.add_node(_cell_node("S!A1", None, value=1))
+    graph.add_node(_cell_node("S!B1", "=S!A1+1"))
+    graph.formula_shapes = warm_formula_shapes(graph)
+    graph.set_node_formula("S!B1", "=S!A1+2", "=S!A1+2")
+    assert graph.formula_shapes is None
+
+
+def test_warm_formula_shapes_raises_on_invalid_formula() -> None:
+    graph = DependencyGraph()
+    graph.add_node(_cell_node("S!A1", "=1+"))
+    with pytest.raises(FormulaParseError):
+        warm_formula_shapes(graph)
+
+
+def test_pickle_drops_formula_shapes() -> None:
+    import pickle
+
+    graph = DependencyGraph()
+    graph.add_node(_cell_node("S!A1", None, value=1))
+    graph.add_node(_cell_node("S!B1", "=S!A1+1"))
+    graph.formula_shapes = warm_formula_shapes(graph)
+    restored = pickle.loads(pickle.dumps(graph))
+    assert restored.formula_shapes is None
+    assert restored.get_node("S!B1") is not None

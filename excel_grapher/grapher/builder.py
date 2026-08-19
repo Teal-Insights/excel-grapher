@@ -411,6 +411,7 @@ def create_dependency_graph(
     blank_ranges: Iterable[str] | None = None,
     type_analysis_cache: TypeAnalysisCache | None = None,
     warm_ast_cache: bool = False,
+    warm_formula_shapes: bool = False,
 ) -> DependencyGraph:
     r"""Build a dependency graph starting from target cells.
 
@@ -484,6 +485,12 @@ def create_dependency_graph(
     (oldest warmed entries may be evicted). `preparsed_formulas` is not stored
     in JSON graph caches; call `warm_preparsed_formulas` after cache load or
     formula mutation.
+
+    When `warm_formula_shapes` is True, the same parse pass interns punched AST
+    skeletons on `DependencyGraph.formula_shapes`. `FormulaEvaluator` compiles
+    each shape once and `CodeGenerator` emits a shared helper per shape when
+    profitable. The table is not JSON/pickle serialized; call
+    `warm_formula_shapes` after cache load. Formula rewrite invalidates it.
 
     **Cost model**: constraint-based dynamic-ref expansion (`dynamic_refs` set,
     `use_cached_dynamic_refs=False`) runs `expand_leaf_env_to_argument_env`
@@ -1615,10 +1622,15 @@ def create_dependency_graph(
     graph.named_ranges = dict(named_ranges)
     graph.named_range_ranges = dict(named_range_ranges)
     graph.sheet_bounds = dict(sheet_bounds)
-    if warm_ast_cache:
+    if warm_ast_cache or warm_formula_shapes:
+        from .formula_shapes import warm_formula_shapes as intern_graph_formula_shapes
         from .preparsed_formulas import warm_preparsed_formulas
 
-        graph.preparsed_formulas = warm_preparsed_formulas(graph)
+        parsed = warm_preparsed_formulas(graph)
+        if warm_ast_cache:
+            graph.preparsed_formulas = parsed
+        if warm_formula_shapes:
+            graph.formula_shapes = intern_graph_formula_shapes(graph, parsed=parsed)
     return graph
 
 

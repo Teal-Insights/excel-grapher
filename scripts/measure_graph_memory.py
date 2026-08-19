@@ -335,6 +335,14 @@ def _component_specs(graph: DependencyGraph) -> list[_ComponentSpec]:
                 (graph.preparsed_formulas,),
             )
         )
+    if graph.formula_shapes is not None:
+        specs.append(
+            _ComponentSpec(
+                "formula_shapes",
+                "formula_shapes: opt-in interned AST skeletons from warm_formula_shapes",
+                (graph.formula_shapes,),
+            )
+        )
     return specs
 
 

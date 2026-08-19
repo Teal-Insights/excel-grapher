@@ -589,6 +589,9 @@ def test_projection_copy_preserves_graph_metadata_fields() -> None:
     graph.named_ranges = {"Rate": ("Sheet1", "A1")}
     graph.named_range_ranges = {"Table": ("Sheet1", "A1", "B2")}
     graph.preparsed_formulas = cast(Any, {"Sheet1!A1": object()})
+    from excel_grapher.core.formula_shape import intern_formula_shapes
+
+    graph.formula_shapes = intern_formula_shapes(["=Sheet1!A1+1"])
 
     graph_structure_fields = {
         "_nodes",
@@ -608,6 +611,7 @@ def test_projection_copy_preserves_graph_metadata_fields() -> None:
         "named_ranges",
         "named_range_ranges",
         "preparsed_formulas",
+        "formula_shapes",
     )
 
     projected = graph._copy_for_projection()
