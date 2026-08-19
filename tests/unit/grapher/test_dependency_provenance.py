@@ -72,3 +72,23 @@ def test_json_from_legacy_string_cause_list() -> None:
     assert DependencyCause.direct_ref in restored.causes
     assert DependencyCause.dynamic_indirect in restored.causes
     assert DependencyCause.static_range not in restored.causes
+
+
+def test_dynamic_index_is_additive_flag() -> None:
+    assert DependencyCause.dynamic_index not in (
+        DependencyCause.direct_ref
+        | DependencyCause.static_range
+        | DependencyCause.dynamic_offset
+        | DependencyCause.dynamic_indirect
+    )
+    combined = DependencyCause.dynamic_index | DependencyCause.direct_ref
+    assert DependencyCause.dynamic_index in combined
+    assert DependencyCause.direct_ref in combined
+
+
+def test_json_round_trip_preserves_dynamic_index() -> None:
+    prov = EdgeProvenance(causes=DependencyCause.dynamic_index)
+    blob = _edge_provenance_to_json(prov)
+    assert blob["causes"] == ["dynamic_index"]
+    restored = _edge_provenance_from_json(blob)
+    assert restored.causes == DependencyCause.dynamic_index

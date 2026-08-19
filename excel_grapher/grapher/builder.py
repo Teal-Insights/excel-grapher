@@ -434,14 +434,14 @@ def create_dependency_graph(
     populated.
 
     Supports basic A1 references, sheet-qualified references, and dynamic references
-    (OFFSET/INDIRECT). For OFFSET/INDIRECT:
+    (OFFSET/INDIRECT/INDEX). For OFFSET/INDIRECT/INDEX:
 
     - **use_cached_dynamic_refs=True**: Resolve using cached workbook values (existing path).
       `dynamic_refs` is ignored.
     - **use_cached_dynamic_refs=False** (default), **dynamic_refs=None**: On any formula
-      that contains OFFSET or INDIRECT requiring resolution, raise `DynamicRefError`.
+      that contains OFFSET, INDIRECT, or INDEX requiring resolution, raise `DynamicRefError`.
       Callers can pass a `DynamicRefConfig` or set `use_cached_dynamic_refs=True` to avoid.
-    - **use_cached_dynamic_refs=False**, **dynamic_refs** set: Resolve OFFSET/INDIRECT via
+    - **use_cached_dynamic_refs=False**, **dynamic_refs** set: Resolve OFFSET/INDIRECT/INDEX via
       the config's `cell_type_env` and `limits`; missing or invalid domains raise
       `DynamicRefError`.
 
@@ -451,7 +451,7 @@ def create_dependency_graph(
     When `capture_dependency_provenance` is True, each edge stores merged
     `excel_grapher.grapher.dependency_provenance.EdgeProvenance` on
     `DependencyGraph._edge_provenance` (how the dependency arises: direct
-    reference, static range, dynamic OFFSET/INDIRECT). Direct-reference spans
+    reference, static range, dynamic OFFSET/INDIRECT/INDEX). Direct-reference spans
     are recorded against `Node.normalized_formula` only.
 
     When `store_raw_formula` is True, each formula cell also keeps the workbook
@@ -826,7 +826,7 @@ def create_dependency_graph(
 
             masked = f
 
-            # 0) Dynamic refs (OFFSET/INDIRECT): cached, raise, or constraint-based.
+            # 0) Dynamic refs (OFFSET/INDIRECT/INDEX): cached, raise, or constraint-based.
             dyn_spans: list[tuple[int, int]] = []
             if use_cached_dynamic_refs:
                 for start, end, span, arg_refs in parse_dynamic_range_refs_with_spans(

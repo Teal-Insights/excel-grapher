@@ -221,6 +221,40 @@ def test_offset_blocks_compression(tmp_path: Path) -> None:
     assert "Sheet1!B1" not in removed
 
 
+def test_index_blocks_compression(tmp_path: Path) -> None:
+    path = tmp_path / "idx.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(0, 2, 1)  # C1 row selector
+    ws.write_number(0, 0, 10)  # A1 INDEX target when row=1
+    ws.write_formula(0, 1, "=Sheet1!A1", None, 10)  # B1 transit of A1
+    ws.write_formula(0, 3, "=INDEX(Sheet1!B1:Sheet1!B1,Sheet1!C1,1)", None, 10)  # D1
+    wb.close()
+
+    from excel_grapher.core.cell_types import CellType
+
+    env = {
+        "Sheet1!C1": CellType(
+            kind=CellKind.NUMBER,
+            enum=EnumDomain(values=frozenset({1})),
+        )
+    }
+    cfg = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+
+    graph = create_dependency_graph(
+        path,
+        ["Sheet1!D1"],
+        load_values=False,
+        dynamic_refs=cfg,
+        capture_dependency_provenance=True,
+    )
+    prov = graph.get_edge_attrs("Sheet1!D1", "Sheet1!B1").provenance
+    assert prov is not None
+    assert DependencyCause.dynamic_index in prov.causes
+    removed = graph.compress_identity_transits()
+    assert "Sheet1!B1" not in removed
+
+
 def test_mixed_direct_and_offset_blocks_manual() -> None:
     from excel_grapher.grapher.graph import DependencyGraph
 

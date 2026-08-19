@@ -19,6 +19,7 @@ from .dynamic_refs import (
     DynamicRefError,
     GlobalWorkbookBounds,
     expand_leaf_env_to_argument_env,
+    infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
 )
@@ -41,6 +42,31 @@ from .parser import (
 )
 
 _NAME_TOKEN_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*!)")
+_DYNAMIC_REF_FNS = frozenset({"OFFSET", "INDIRECT", "INDEX"})
+
+
+def _dynamic_cause(fn_name: str) -> DependencyCause:
+    if fn_name == "OFFSET":
+        return DependencyCause.dynamic_offset
+    if fn_name == "INDIRECT":
+        return DependencyCause.dynamic_indirect
+    if fn_name == "INDEX":
+        return DependencyCause.dynamic_index
+    return DependencyCause.dynamic_offset
+
+
+def _index_has_non_literal_row_col(inner: str) -> bool:
+    idx_args = _split_function_args(inner)
+    if idx_args is None or len(idx_args) < 2:
+        return False
+    for j, idx_arg in enumerate(idx_args):
+        if j == 0:
+            continue
+        try:
+            float(idx_arg.strip())
+        except ValueError:
+            return True
+    return False
 
 
 def _merge_into(
@@ -116,12 +142,7 @@ def _flat_provenance_one_string(
             value_resolver=resolve_cached_value,
         ):
             dyn_spans.append(span)
-            fn = _call_kind_at_span(f, span)
-            cause_dyn = (
-                DependencyCause.dynamic_offset
-                if fn == "OFFSET"
-                else DependencyCause.dynamic_indirect
-            )
+            cause_dyn = _dynamic_cause(_call_kind_at_span(f, span))
             sheet = start.sheet if start.sheet is not None else current_sheet
             for dep_sheet, dep_a1 in expand_range(
                 sheet=sheet,
@@ -138,11 +159,13 @@ def _flat_provenance_one_string(
                 k = format_key(arg_sheet, f"{ref.column}{ref.row}")
                 _merge_into(acc, k, EdgeProvenance(causes=cause_dyn))
     else:
-        calls = _find_function_calls_with_spans(f, frozenset({"OFFSET", "INDIRECT"}))
+        calls = _find_function_calls_with_spans(f, _DYNAMIC_REF_FNS)
         if dynamic_refs is None:
+            calls = [c for c in calls if c[0] != "INDEX" or _index_has_non_literal_row_col(c[1])]
             if calls:
                 raise DynamicRefError(
-                    "Provenance collection requires dynamic ref resolution for OFFSET/INDIRECT in this formula."
+                    "Provenance collection requires dynamic ref resolution for "
+                    "OFFSET/INDIRECT/INDEX in this formula."
                 )
         else:
             bounds = GlobalWorkbookBounds(sheet=current_sheet)
@@ -153,6 +176,7 @@ def _flat_provenance_one_string(
                     args = _split_function_args(inner)
                     if args is None:
                         continue
+                    dyn_cause = _dynamic_cause(fn_name)
                     for i, arg in enumerate(args):
                         norm_arg = normalizer.normalize(
                             "=" + arg,
@@ -162,21 +186,34 @@ def _flat_provenance_one_string(
                             (fn_name == "OFFSET" and i >= 1)
                             or (fn_name == "OFFSET" and i == 0 and "(" in norm_arg)
                             or fn_name == "INDIRECT"
+                            or (fn_name == "INDEX" and i >= 1)
                         )
-                        for ref in parse_standalone_cell_refs(
-                            mask_ref_only_function_calls(norm_arg)
-                        ):
+                        if fn_name == "INDEX" and i == 0 and "(" not in norm_arg:
+                            continue
+                        value_expr = mask_ref_only_function_calls(norm_arg)
+                        for ref in parse_standalone_cell_refs(value_expr):
                             sh = ref.sheet if ref.sheet is not None else current_sheet
                             a1 = f"{ref.column}{ref.row}"
                             k = format_key(sh, a1)
-                            dyn_cause = (
-                                DependencyCause.dynamic_offset
-                                if fn_name == "OFFSET"
-                                else DependencyCause.dynamic_indirect
-                            )
                             _merge_into(acc, k, EdgeProvenance(causes=dyn_cause))
                             if is_variable:
                                 argument_addrs.add(k)
+                        if is_variable:
+                            for start, end, _span in parse_range_refs_with_spans(value_expr):
+                                range_sheet = (
+                                    start.sheet if start.sheet is not None else current_sheet
+                                )
+                                for dep_sheet, dep_a1 in expand_range(
+                                    sheet=range_sheet,
+                                    start_col=start.column,
+                                    start_row=start.row,
+                                    end_col=end.column,
+                                    end_row=end.row,
+                                    max_cells=max_range_cells,
+                                ):
+                                    k = format_key(dep_sheet, dep_a1)
+                                    _merge_into(acc, k, EdgeProvenance(causes=dyn_cause))
+                                    argument_addrs.add(k)
             if calls:
 
                 def _refs_in_formula_without_dynamic(
@@ -184,7 +221,7 @@ def _flat_provenance_one_string(
                 ) -> set[str]:
                     dyn = _find_function_calls_with_spans(
                         formula_str if formula_str.startswith("=") else "=" + formula_str,
-                        frozenset({"OFFSET", "INDIRECT"}),
+                        _DYNAMIC_REF_FNS,
                     )
                     spans = [span for _fn, _inner, span in dyn]
                     masked2 = mask_spans(
@@ -236,7 +273,8 @@ def _flat_provenance_one_string(
                 )
                 if missing_leaves:
                     raise DynamicRefError(
-                        f"Provenance: leaf cells feeding OFFSET/INDIRECT have no constraint: {sorted(missing_leaves)}"
+                        "Provenance: leaf cells feeding OFFSET/INDIRECT/INDEX have no "
+                        f"constraint: {sorted(missing_leaves)}"
                     )
 
                 formula_for_infer = normalizer.normalize(f, current_sheet)
@@ -244,7 +282,9 @@ def _flat_provenance_one_string(
                 _current_col = fastpyxl.utils.cell.column_index_from_string(_col_letter)
                 _cache_key = (formula_for_infer, current_sheet, current_a1)
                 if dynamic_expansion_cache is not None and _cache_key in dynamic_expansion_cache:
-                    offset_targets, indirect_targets, _ = dynamic_expansion_cache[_cache_key]
+                    offset_targets, indirect_targets, index_targets = dynamic_expansion_cache[
+                        _cache_key
+                    ]
                 else:
 
                     def _get_cell_formula(addr: str) -> str | None:
@@ -288,6 +328,17 @@ def _flat_provenance_one_string(
                         named_ranges=named_ranges,
                         named_range_ranges=named_range_ranges,
                     )
+                    index_targets = infer_dynamic_index_targets(
+                        formula_for_infer,
+                        current_sheet=current_sheet,
+                        cell_type_env=expanded_env,
+                        limits=dynamic_refs.limits,
+                        bounds=bounds,
+                        named_ranges=named_ranges,
+                        named_range_ranges=named_range_ranges,
+                        current_row=_current_row,
+                        current_col=_current_col,
+                    )
                 for addr in offset_targets:
                     _merge_into(
                         acc,
@@ -299,6 +350,12 @@ def _flat_provenance_one_string(
                         acc,
                         addr,
                         EdgeProvenance(causes=DependencyCause.dynamic_indirect),
+                    )
+                for addr in index_targets:
+                    _merge_into(
+                        acc,
+                        addr,
+                        EdgeProvenance(causes=DependencyCause.dynamic_index),
                     )
 
     masked = mask_spans(masked, dyn_spans)
@@ -360,8 +417,8 @@ def _flat_provenance_one_string(
 
 
 def _call_kind_at_span(formula: str, span: tuple[int, int]) -> str:
-    """Return 'OFFSET' or 'INDIRECT' for the dynamic call covering span (cached path)."""
-    calls = _find_function_calls_with_spans(formula, frozenset({"OFFSET", "INDIRECT"}))
+    """Return OFFSET, INDIRECT, or INDEX for the dynamic call covering span."""
+    calls = _find_function_calls_with_spans(formula, _DYNAMIC_REF_FNS)
     for fn, _inner, sp in calls:
         if sp == span:
             return fn

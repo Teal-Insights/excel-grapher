@@ -11,6 +11,7 @@ class DependencyCause(IntFlag):
     static_range = auto()
     dynamic_offset = auto()
     dynamic_indirect = auto()
+    dynamic_index = auto()
 
 
 @dataclass(frozen=True, slots=True)
