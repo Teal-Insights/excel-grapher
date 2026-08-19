@@ -9,8 +9,11 @@ import fastpyxl
 import pytest
 
 from scripts.measure_formula_shapes import (
+    DEFAULT_TARGETS,
     DEFAULT_WORKBOOK,
     main,
+    measure_codegen_sizes,
+    measure_eval_times,
     measure_parse_warm_times,
     summarize_scanned_formula_shapes,
 )
@@ -21,7 +24,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_main_renders_cardinality_report(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["--no-parse-timing"]) == 0
+    assert main(["--no-parse-timing", "--no-eval-timing", "--no-codegen"]) == 0
     out = capsys.readouterr().out
     assert "distinct normalized formulas:" in out
     assert "distinct shapes:" in out
@@ -29,7 +32,7 @@ def test_main_renders_cardinality_report(capsys: pytest.CaptureFixture[str]) -> 
 
 
 def test_main_emits_json(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["--json", "--no-parse-timing"]) == 0
+    assert main(["--json", "--no-parse-timing", "--no-eval-timing", "--no-codegen"]) == 0
     payload = json.loads(capsys.readouterr().out)
     summary = payload["summary"]
     assert summary["formula_nodes"] == 24
@@ -71,6 +74,23 @@ def test_summarize_scanned_formula_shapes_normalizes_then_fingerprints(
     assert summary.unparseable == 1
     assert summary.mean_instances_per_shape == 2.0
     assert len(parseable) == 2
+
+
+def test_measure_eval_and_codegen_report_shape_collapse() -> None:
+    from excel_grapher import create_dependency_graph
+
+    graph = create_dependency_graph(
+        DEFAULT_WORKBOOK,
+        list(DEFAULT_TARGETS),
+        load_values=False,
+    )
+    eval_times = measure_eval_times(graph, repeats=1)
+    assert eval_times["formula_cells"] == 24.0
+    assert eval_times["string_keyed_eval_s"] >= 0.0
+    assert eval_times["shape_keyed_eval_s"] >= 0.0
+    codegen = measure_codegen_sizes(graph, list(DEFAULT_TARGETS))
+    assert codegen["shape_helpers"] >= 1.0
+    assert codegen["cell_functions"] >= 1.0
 
 
 def test_measure_parse_warm_times_reports_shape_collapse() -> None:
