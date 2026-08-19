@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v6.2.0 (2026-08-19)
+
+### Features
+
+- **grapher**: Record INDEX targets in dependency provenance
+  ([#532](https://github.com/Teal-Insights/excel-grapher/pull/532),
+  [`c93ed9f`](https://github.com/Teal-Insights/excel-grapher/commit/c93ed9f337dce2bab1614e1f7d4f181cf0650209))
+
+
 ## v6.1.2 (2026-08-18)
 
 ### Bug Fixes
