@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v6.3.2 (2026-08-19)
+
+### Bug Fixes
+
+- **grapher**: Retain is_target nodes in identity-transit compression
+  ([#538](https://github.com/Teal-Insights/excel-grapher/pull/538),
+  [`1544590`](https://github.com/Teal-Insights/excel-grapher/commit/15445909e355c18181aff62e335f6d94f3931346))
+
+
 ## v6.3.1 (2026-08-19)
 
 ### Bug Fixes
