@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v6.3.0 (2026-08-19)
+
+### Features
+
+- Intern parameterized formula AST shapes for parse, eval, and codegen (#517)
+  ([#534](https://github.com/Teal-Insights/excel-grapher/pull/534),
+  [`c452449`](https://github.com/Teal-Insights/excel-grapher/commit/c452449da01e0fbadc4637844f3af65a24b30494))
+
+- **evaluator**: Compile interned formula shapes
+  ([#534](https://github.com/Teal-Insights/excel-grapher/pull/534),
+  [`c452449`](https://github.com/Teal-Insights/excel-grapher/commit/c452449da01e0fbadc4637844f3af65a24b30494))
+
+- **grapher**: Intern parameterized formula AST shapes
+  ([#534](https://github.com/Teal-Insights/excel-grapher/pull/534),
+  [`c452449`](https://github.com/Teal-Insights/excel-grapher/commit/c452449da01e0fbadc4637844f3af65a24b30494))
+
+- **scripts**: Measure shape eval and codegen wins
+  ([#534](https://github.com/Teal-Insights/excel-grapher/pull/534),
+  [`c452449`](https://github.com/Teal-Insights/excel-grapher/commit/c452449da01e0fbadc4637844f3af65a24b30494))
+
+
 ## v6.2.0 (2026-08-19)
 
 ### Features
