@@ -10,6 +10,8 @@ import pytest
 from excel_grapher import DependencyGraph, Node, create_dependency_graph
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.core.formula_ast import FormulaParseError
+from excel_grapher.grapher.cache import dependency_graph_from_json, dependency_graph_to_json
+from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
 from excel_grapher.grapher.formula_shapes import warm_formula_shapes
 
 
@@ -106,3 +108,37 @@ def test_pickle_drops_formula_shapes() -> None:
     restored = pickle.loads(pickle.dumps(graph))
     assert restored.formula_shapes is None
     assert restored.get_node("S!B1") is not None
+
+
+def test_json_cache_drops_formula_shapes() -> None:
+    graph = DependencyGraph()
+    graph.add_node(_cell_node("S!A1", None, value=1))
+    graph.add_node(_cell_node("S!B1", "=S!A1+1"))
+    graph.formula_shapes = warm_formula_shapes(graph)
+    restored = dependency_graph_from_json(dependency_graph_to_json(graph))
+    assert restored.formula_shapes is None
+    assert restored.get_node("S!B1") is not None
+
+
+def test_compress_identity_transits_invalidates_formula_shapes() -> None:
+    graph = DependencyGraph()
+    graph.add_node(_cell_node("Sheet1!C1", None, value=42))
+    graph.add_node(_cell_node("Sheet1!B1", "=Sheet1!C1"))
+    graph.add_node(_cell_node("Sheet1!A1", "=Sheet1!B1"))
+    direct = DependencyCause.direct_ref
+    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=direct))
+    formula = "=Sheet1!B1"
+    start = formula.index("Sheet1!B1")
+    graph.add_edge(
+        "Sheet1!A1",
+        "Sheet1!B1",
+        provenance=EdgeProvenance(
+            causes=direct,
+            direct_sites_normalized=((start, start + len("Sheet1!B1")),),
+        ),
+    )
+    graph.formula_shapes = warm_formula_shapes(graph)
+    assert graph.formula_shapes is not None
+    removed = graph.compress_identity_transits()
+    assert "Sheet1!B1" in removed
+    assert graph.formula_shapes is None
