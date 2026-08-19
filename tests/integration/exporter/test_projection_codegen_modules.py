@@ -83,6 +83,7 @@ def test_projected_generate_modules_package_runs_and_matches_evaluator(tmp_path:
     bindings = _baseline_bindings(workbook_path)
 
     projection = IdentityTransitCompression().project(graph)
+    assert "Outputs!B12" in projection
     files = CodeGenerator(projection).generate_modules(
         targets,
         series_bindings=bindings,

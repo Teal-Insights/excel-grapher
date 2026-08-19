@@ -116,9 +116,10 @@ def series_binding_public_addresses(
     """Return normalized addresses published by series binding `data_range`s.
 
     Pass the result as `preserve` to `OptimalCompression` / `compress_optimal`
-    (or via `OptimalCompression(series_bindings=...)`) so series-bound leaves
-    that are not export targets stay in the projected graph.
-    `compress_optimal` always unions `preserve` with `target_keys()`.
+    or `IdentityTransitCompression` / `compress_identity_transits` (or via
+    `series_bindings=...` on either projection) so series-bound leaves that
+    are not export targets stay in the projected graph. Both compressors
+    always union `preserve` with `target_keys()`.
     """
     addresses: set[str] = set()
     for series in bindings.get("series", []):

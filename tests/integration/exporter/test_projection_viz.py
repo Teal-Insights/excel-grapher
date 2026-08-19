@@ -26,7 +26,7 @@ def test_projected_networkx_omits_transit_nodes_without_mutating_graph(tmp_path:
 
     graph = create_dependency_graph(
         workbook_path,
-        ["Outputs!B12", "Outputs!B14"],
+        ["Outputs!B14"],
         capture_dependency_provenance=True,
     )
     original_node_count = len(graph)

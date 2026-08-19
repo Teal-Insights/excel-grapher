@@ -677,6 +677,7 @@ class DependencyGraph:
     def compress_identity_transits(
         self,
         *,
+        preserve: set[NodeKey] | None = None,
         record: IdentityTransitCompressionRecord | None = None,
     ) -> list[NodeKey]:
         """Remove identity transit nodes and rewire dependents.
@@ -686,9 +687,14 @@ class DependencyGraph:
         Requires dependency provenance from graph construction with
         `capture_dependency_provenance=True` for safe edges.
 
+        Skips `is_target` nodes and any keys in `preserve` so public extraction
+        and series-bound addresses stay in the graph.
+
         Node hooks are not invoked for removed or updated nodes.
 
         Args:
+            preserve: Node keys that must not be forwarded. Always unioned with
+                `target_keys()` so marked targets stay public.
             record: When provided, populate with removal lineage for projection
                 manifests.
 
@@ -703,6 +709,10 @@ class DependencyGraph:
             snapshot_transit_node,
         )
 
+        collapse_preserve = frozenset(self.target_keys())
+        if preserve is not None:
+            collapse_preserve |= frozenset(normalize_key(key) for key in preserve)
+
         require_compression_provenance(self)
         clear_identity_singleton_ref_cache()
         try:
@@ -712,6 +722,8 @@ class DependencyGraph:
             while heap:
                 t_key = heapq.heappop(heap)
                 if t_key not in self._nodes:
+                    continue
+                if t_key in collapse_preserve:
                     continue
                 r_key = is_identity_transit(self, t_key)
                 if r_key is None:

@@ -401,8 +401,9 @@ def test_issue_224_mcve_bindings_resolve_on_original_graph(tmp_path: Path) -> No
     assert before["series"][0]["leaves"]
 
     projection = IdentityTransitCompression().project(graph)
-    assert "Outputs!B12" not in projection
+    assert "Outputs!B12" in projection
     assert "Outputs!B12" in graph
+    assert projection.manifest.map_to_projected("Outputs!B12") == "Outputs!B12"
 
     after = resolve_series_bindings(
         projection.original_graph,
@@ -411,6 +412,118 @@ def test_issue_224_mcve_bindings_resolve_on_original_graph(tmp_path: Path) -> No
         direction="output",
     )
     assert after["series"][0]["leaves"]
+
+
+def test_identity_projection_keeps_target_identity_transit() -> None:
+    from excel_grapher.grapher.graph import DependencyGraph
+
+    graph = DependencyGraph()
+    c = _make_node("Sheet1!C1", None, None, is_leaf=True)
+    b = _make_node("Sheet1!B1", "=Sheet1!C1", "=Sheet1!C1", is_target=True)
+    a = _make_node("Sheet1!A1", "=Sheet1!B1", "=Sheet1!B1")
+    for node in (c, b, a):
+        graph.add_node(node)
+    dr = DependencyCause.direct_ref
+    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=dr))
+    af = "=Sheet1!B1"
+    ref = "Sheet1!B1"
+    i = af.index(ref)
+    graph.add_edge(
+        "Sheet1!A1",
+        "Sheet1!B1",
+        provenance=EdgeProvenance(
+            causes=dr,
+            direct_sites_normalized=((i, i + len(ref)),),
+        ),
+    )
+
+    projection = IdentityTransitCompression().project(graph)
+    assert "Sheet1!B1" in projection
+    assert projection.manifest.map_to_projected("Sheet1!B1") == "Sheet1!B1"
+    assert projection.get_dependencies("Sheet1!A1") == frozenset({"Sheet1!B1"})
+
+
+def test_identity_projection_explicit_preserve_keeps_transit() -> None:
+    from excel_grapher.grapher.graph import DependencyGraph
+
+    graph = DependencyGraph()
+    c = _make_node("Sheet1!C1", None, None, is_leaf=True)
+    b = _make_node("Sheet1!B1", "=Sheet1!C1", "=Sheet1!C1")
+    a = _make_node("Sheet1!A1", "=Sheet1!B1", "=Sheet1!B1")
+    for node in (c, b, a):
+        graph.add_node(node)
+    dr = DependencyCause.direct_ref
+    graph.add_edge("Sheet1!B1", "Sheet1!C1", provenance=EdgeProvenance(causes=dr))
+    af = "=Sheet1!B1"
+    ref = "Sheet1!B1"
+    i = af.index(ref)
+    graph.add_edge(
+        "Sheet1!A1",
+        "Sheet1!B1",
+        provenance=EdgeProvenance(
+            causes=dr,
+            direct_sites_normalized=((i, i + len(ref)),),
+        ),
+    )
+
+    projection = IdentityTransitCompression(preserve={"Sheet1!B1"}).project(graph)
+    assert "Sheet1!B1" in projection
+    assert projection.manifest.map_to_projected("Sheet1!B1") == "Sheet1!B1"
+
+
+def test_identity_projection_preserves_series_bound_non_target(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "series_bound.xlsx"
+    wb = xlsxwriter.Workbook(workbook_path)
+    engine = wb.add_worksheet("Engine")
+    engine.write_number("C6", 10)
+    out = wb.add_worksheet("Outputs")
+    out.write_formula("B12", "=Engine!C6", None, 10)
+    out.write_formula("B14", "=Outputs!B12+1", None, 11)
+    wb.close()
+
+    graph = create_dependency_graph(
+        workbook_path,
+        ["Outputs!B14"],
+        load_values=True,
+        capture_dependency_provenance=True,
+    )
+    bindings = cast(
+        WorkbookSeriesBindings,
+        {
+            "schema_version": "1.2.0",
+            "workbook": str(workbook_path),
+            "series": [
+                {
+                    "id": "baseline",
+                    "data_range": "Outputs!B12",
+                    "layout": "scalar",
+                    "output": {"compute": {"name": "compute_baseline"}},
+                    "structure": {
+                        "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
+                        "dimensions": [
+                            {
+                                "concept": "LABEL",
+                                "role": "key",
+                                "scope": "series",
+                                "bind": {"kind": "constant", "value": "baseline"},
+                            }
+                        ],
+                    },
+                    "key": ["LABEL"],
+                }
+            ],
+        },
+    )
+
+    without_preserve = IdentityTransitCompression().project(graph)
+    assert "Outputs!B12" not in without_preserve
+
+    projection = IdentityTransitCompression(
+        series_bindings=bindings,
+        bindings_workbook=workbook_path,
+    ).project(graph)
+    assert "Outputs!B12" in projection
+    assert projection.manifest.map_to_projected("Outputs!B12") == "Outputs!B12"
 
 
 def test_static_range_blocks_projection(tmp_path: Path) -> None:

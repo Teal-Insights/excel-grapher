@@ -82,13 +82,14 @@ def test_projected_codegen_emits_compute_for_removed_public_mirror(tmp_path: Pat
 
     graph = create_dependency_graph(
         workbook_path,
-        ["Outputs!B12", "Outputs!B14"],
+        ["Outputs!B14"],
         load_values=True,
         capture_dependency_provenance=True,
     )
     bindings = _baseline_bindings(workbook_path)
 
     projection = IdentityTransitCompression().project(graph)
+    assert "Outputs!B12" not in projection
     with CodeGenerator(projection) as gen:
         code = gen.generate(
             ["Outputs!B12", "Outputs!B14"],
@@ -113,7 +114,7 @@ def test_projected_generate_modules_emits_alias_resolver(tmp_path: Path) -> None
 
     graph = create_dependency_graph(
         workbook_path,
-        ["Outputs!B12", "Outputs!B14"],
+        ["Outputs!B14"],
         load_values=True,
         capture_dependency_provenance=True,
     )
@@ -176,7 +177,7 @@ def test_projected_codegen_omits_internal_aliases_inside_export_closure(tmp_path
     assert "cell_outputs_b12" not in code
 
 
-def test_projected_codegen_preserves_public_targets_for_removed_mirror(tmp_path: Path) -> None:
+def test_projected_codegen_preserves_public_target_identity_transit(tmp_path: Path) -> None:
     workbook_path = tmp_path / "identity_target.xlsx"
     _write_identity_workbook(workbook_path)
 
@@ -186,14 +187,12 @@ def test_projected_codegen_preserves_public_targets_for_removed_mirror(tmp_path:
         load_values=True,
         capture_dependency_provenance=True,
     )
-    mirror = graph.get_node("Outputs!B12")
-    assert mirror is not None
-    graph._nodes["Outputs!B12"].is_target = True
-
     projection = IdentityTransitCompression().project(graph)
+    assert "Outputs!B12" in projection
     with CodeGenerator(projection) as gen:
         code = gen.generate()
 
+    assert "# --- Projection public address aliases ---" not in code
     assert "'Outputs!B12'" in code or '"Outputs!B12"' in code
     ns = _exec_generated(code)
     targets = cast(dict[str, object], ns["TARGETS"])
@@ -244,7 +243,6 @@ def test_projected_codegen_matches_evaluator_with_unpack_return(tmp_path: Path) 
         evaluator_results = ev.evaluate(targets)
 
     code = CodeGenerator(projection, unpack_return=True).generate(targets)
-    assert "# --- Projection public address aliases ---" in code
     ns = _exec_generated(code)
     ctx_factory = cast(Callable[..., object], ns["make_context"])
     xl_cell = cast(Callable[..., object], ns["xl_cell"])
@@ -273,11 +271,12 @@ def test_projected_codegen_alias_delegates_to_retained_formula(tmp_path: Path) -
 
     graph = create_dependency_graph(
         workbook_path,
-        ["Outputs!B12", "Outputs!B14"],
+        ["Outputs!B14"],
         load_values=True,
         capture_dependency_provenance=True,
     )
     projection = IdentityTransitCompression().project(graph)
+    assert "Outputs!B12" not in projection
     assert projection.manifest.map_to_projected("Outputs!B12") == "Engine!C6"
 
     code = CodeGenerator(projection).generate(["Outputs!B12", "Outputs!B14"])
