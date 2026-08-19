@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v6.3.1 (2026-08-19)
+
+### Bug Fixes
+
+- **exporter**: Skip shared helpers for OFFSET, INDEX, and 1x1 ranges
+  ([#536](https://github.com/Teal-Insights/excel-grapher/pull/536),
+  [`1e8b9c9`](https://github.com/Teal-Insights/excel-grapher/commit/1e8b9c9b48728a2749185a010e103043ccb8e35d))
+
+
 ## v6.3.0 (2026-08-19)
 
 ### Features
