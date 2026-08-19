@@ -78,6 +78,7 @@ from .parser import (
     WholeRowNode,
     parse,
 )
+from .shape_eval import ShapeEvalFn, compile_formula_shape
 
 _SKIP_ERROR_PRECHECK = {
     # Selective Grid consumers: AST precheck must not force a full scan.
@@ -134,6 +135,11 @@ class FormulaEvaluator:
         preparsed = self.graph.preparsed_formulas
         if preparsed:
             self._ast_cache.seed(preparsed)
+        self._shape_fns: dict[str, ShapeEvalFn] = {}
+        table = getattr(self.graph, "formula_shapes", None)
+        if table is not None:
+            for shape_key, skeleton in table.shapes.items():
+                self._shape_fns[shape_key] = compile_formula_shape(self, skeleton)
         self._call_stack: list[str] = []
         self._leaf_values: dict[str, FormulaValue] = {}  # For auto-detection
         self._iteration_values: dict[str, FormulaValue] = {}
@@ -365,8 +371,7 @@ class FormulaEvaluator:
 
         self._call_stack.append(norm)
         try:
-            ast = self._parse_cached(formula)
-            result = self._evaluate_ast(ast)
+            result = self._evaluate_formula(formula)
             # Auto-resolve 1x1 ExcelRange to single value
             result = self._auto_resolve_single_cell(result)
             # Excel treats formula results of None (empty cell reference) as 0
@@ -378,6 +383,19 @@ class FormulaEvaluator:
             return result
         finally:
             self._call_stack.pop()
+
+    def _evaluate_formula(self, formula: str) -> FormulaValue:
+        """Evaluate a normalized formula, preferring a compiled shape when interned."""
+        table = getattr(self.graph, "formula_shapes", None)
+        if table is not None:
+            found = table.lookup(formula)
+            if found is not None:
+                shape_key, _skeleton, params = found
+                compiled = self._shape_fns.get(shape_key)
+                if compiled is not None:
+                    return compiled(params)
+        ast = self._parse_cached(formula)
+        return self._evaluate_ast(ast)
 
     def _evaluate_ast(self, node: AstNode) -> FormulaValue:
         if isinstance(node, EmptyArgNode):
@@ -526,14 +544,14 @@ class FormulaEvaluator:
     def _eval_binary_op(self, node: BinaryOpNode) -> FormulaValue:
         left = self._resolve_binary_operand(self._evaluate_ast(node.left))
         right = self._resolve_binary_operand(self._evaluate_ast(node.right))
+        return self._apply_binary_op(node.op, left, right)
 
+    def _apply_binary_op(self, op: str, left: FormulaValue, right: FormulaValue) -> FormulaValue:
         # Propagate errors
         if isinstance(left, XlError):
             return left
         if isinstance(right, XlError):
             return right
-
-        op = node.op
 
         # String concatenation
         if op == "&":
@@ -567,16 +585,19 @@ class FormulaEvaluator:
 
     def _eval_unary_op(self, node: UnaryOpNode) -> FormulaValue:
         operand = self._resolve_binary_operand(self._evaluate_ast(node.operand))
+        return self._apply_unary_op(node.op, operand)
+
+    def _apply_unary_op(self, op: str, operand: FormulaValue) -> FormulaValue:
         if isinstance(operand, XlError):
             return operand
 
-        if node.op == "-":
+        if op == "-":
             return xl_neg(operand)
 
-        if node.op == "%":
+        if op == "%":
             return xl_percent(operand)
 
-        raise ValueError(f"Unknown unary operator: {node.op}")
+        raise ValueError(f"Unknown unary operator: {op}")
 
     def _eval_if_branch(self, arg: AstNode) -> FormulaValue:
         """Evaluate an IF then/else branch.

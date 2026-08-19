@@ -21,6 +21,14 @@ from excel_grapher.core.address_keys import (
 from excel_grapher.core.address_keys import (
     normalize_key as normalize_address,
 )
+from excel_grapher.core.formula_shape import (
+    AddressHoleNode,
+    AddressLeaf,
+    SkeletonNode,
+    encode_address_leaf,
+    iter_address_holes,
+    specialize_formula_shape,
+)
 from excel_grapher.core.operator_thresholds import MIN_OPERATOR_FASTPATH_CELLS
 from excel_grapher.evaluator.errors import MissingNormalizedFormulaError
 from excel_grapher.evaluator.name_utils import (
@@ -178,6 +186,7 @@ class CodeGenerator:
         self._return_unpack_stack: list[_ReturnUnpackFrame] = []
         self._reader_index: ReaderIndex | None = None
         self._used_readers: set[str] = set()
+        self._shape_helper_names: dict[str, str] = {}
 
     def __enter__(self) -> CodeGenerator:
         return self
@@ -200,6 +209,7 @@ class CodeGenerator:
         self._return_unpack_stack = []
         self._reader_index = None
         self._used_readers.clear()
+        self._shape_helper_names.clear()
 
     def _include_dep_tracking(
         self,
@@ -463,11 +473,20 @@ class CodeGenerator:
             return None
         if not isinstance(nf, str) or not nf.strip():
             raise MissingNormalizedFormulaError(normalized)
-        ast = parse(nf.strip())
+        stripped = nf.strip()
+        table = getattr(self.graph, "formula_shapes", None)
+        if table is not None:
+            found = table.lookup(stripped)
+            if found is not None:
+                _shape_key, skeleton, params = found
+                ast = specialize_formula_shape(skeleton, params)
+                self._ast_cache[normalized] = ast
+                return ast
+        ast = parse(stripped)
         self._ast_cache[normalized] = ast
         return ast
 
-    def _emit_ast(self, node: AstNode) -> str:
+    def _emit_ast(self, node: SkeletonNode) -> str:
         """Convert an AST node to a Python expression string.
 
         Args:
@@ -491,6 +510,9 @@ class CodeGenerator:
         if isinstance(node, ErrorNode):
             # Error literals raise in the exported error channel.
             return f"xl_raise(XlError.{node.error.name})"
+
+        if isinstance(node, AddressHoleNode):
+            return self._emit_address_hole(node)
 
         if isinstance(node, CellRefNode):
             return self._emit_cell_eval(node.address)
@@ -557,6 +579,12 @@ class CodeGenerator:
                 expr = resolved["call_form"]
             else:
                 expr = f"xl_cell(ctx, {repr(normalized)})"
+        return self._hoist_return_expr(expr)
+
+    def _emit_address_hole(self, node: AddressHoleNode) -> str:
+        """Emit a punched address hole as `xl_cell` / `xl_range` on a helper param."""
+        pname = f"p{node.index}"
+        expr = f"xl_cell(ctx, {pname})" if node.kind == "CELL" else f"xl_range(ctx, {pname})"
         return self._hoist_return_expr(expr)
 
     @staticmethod
@@ -1593,7 +1621,7 @@ class CodeGenerator:
         finally:
             frame.lazy = prev_lazy
 
-    def _emit_ast_child(self, node: AstNode) -> str:
+    def _emit_ast_child(self, node: SkeletonNode) -> str:
         """Emit a nested formula operand while optionally unpacking return temps."""
         if not self._return_unpack_stack:
             return self._emit_ast(node)
@@ -1979,7 +2007,7 @@ class CodeGenerator:
             return extent
         return 1
 
-    def _ast_needs_array_operator_branch(self, node: AstNode) -> bool:
+    def _ast_needs_array_operator_branch(self, node: SkeletonNode) -> bool:
         """Return whether a subtree can *evaluate to* a range/array at runtime.
 
         Only array-producing nodes require the operator broadcast branch: ranges,
@@ -1992,6 +2020,8 @@ class CodeGenerator:
         """
         if isinstance(node, RangeNode):
             return not self._range_node_is_single_cell(node)
+        if isinstance(node, AddressHoleNode):
+            return node.kind in {"RANGE", "WHOLE_COL", "WHOLE_ROW"}
         if isinstance(node, BinaryOpNode):
             return self._ast_needs_array_operator_branch(
                 node.left
@@ -2185,7 +2215,7 @@ class CodeGenerator:
         lines.append(f"    return {expr}")
         return lines
 
-    def _emit_formula_body_lines(self, ast: AstNode) -> list[str]:
+    def _emit_formula_body_lines(self, ast: SkeletonNode) -> list[str]:
         """Emit statement/return lines for a formula cell or alias body."""
         unpack_stmts = self._start_return_unpack()
         try:
@@ -2193,6 +2223,90 @@ class CodeGenerator:
         finally:
             self._stop_return_unpack()
         return self._format_return_lines(unpack_stmts, expr)
+
+    @staticmethod
+    def _shape_helper_eligible(skeleton: SkeletonNode) -> bool:
+        """Return whether `skeleton` can be emitted as a shared param helper."""
+        for hole in iter_address_holes(skeleton):
+            if hole.kind not in {"CELL", "RANGE"}:
+                return False
+
+        def walk(node: object) -> bool:
+            if isinstance(node, FunctionCallNode):
+                upper = normalize_excel_function_name(node.name)
+                if upper in {"ROW", "COLUMN"}:
+                    if not node.args or (
+                        len(node.args) == 1 and isinstance(node.args[0], EmptyArgNode)
+                    ):
+                        return False
+                    if node.args and isinstance(node.args[0], AddressHoleNode):
+                        return False
+                if upper == "COLUMNS" and node.args and isinstance(node.args[0], AddressHoleNode):
+                    return False
+                return all(walk(arg) for arg in node.args)
+            if isinstance(node, BinaryOpNode):
+                return walk(node.left) and walk(node.right)
+            if isinstance(node, UnaryOpNode):
+                return walk(node.operand)
+            return True
+
+        return walk(skeleton)
+
+    def _plan_shape_helpers(self, formula_addresses: Sequence[str]) -> None:
+        """Record profitable shape helper names for this generate() pass."""
+        self._shape_helper_names.clear()
+        if self._reader_index is not None:
+            return
+        table = getattr(self.graph, "formula_shapes", None)
+        if table is None:
+            return
+        counts: dict[str, int] = {}
+        for address in formula_addresses:
+            node = self.graph.get_node(address)
+            if node is None or not isinstance(node.normalized_formula, str):
+                continue
+            found = table.lookup(node.normalized_formula)
+            if found is None:
+                continue
+            shape_key, skeleton, _params = found
+            if not self._shape_helper_eligible(skeleton):
+                continue
+            counts[shape_key] = counts.get(shape_key, 0) + 1
+        profitable = sorted(key for key, n in counts.items() if n >= 2)
+        self._shape_helper_names = {
+            shape_key: f"_shape_{index}" for index, shape_key in enumerate(profitable)
+        }
+
+    def _emit_shape_helpers(self) -> list[str]:
+        """Emit shared per-shape helpers referenced by formula cell wrappers."""
+        table = getattr(self.graph, "formula_shapes", None)
+        if table is None or not self._shape_helper_names:
+            return []
+        lines: list[str] = ["# --- Shared formula-shape helpers ---", ""]
+        for shape_key, helper_name in self._shape_helper_names.items():
+            skeleton = table.shapes[shape_key]
+            n_holes = len(list(iter_address_holes(skeleton)))
+            params = ", ".join(["ctx", *[f"p{i}" for i in range(n_holes)]])
+            lines.append(f"def {helper_name}({params}):")
+            self._temp_var_counter = 0
+            prev_cell = self._formula_cell_address
+            self._formula_cell_address = None
+            try:
+                body = self._emit_formula_body_lines(skeleton)
+            finally:
+                self._formula_cell_address = prev_cell
+            lines.extend(body)
+            lines.append("")
+            lines.append("")
+        return lines
+
+    def _emit_shape_helper_call(
+        self, helper_name: str, params: tuple[AddressLeaf, ...]
+    ) -> list[str]:
+        encoded = ", ".join(repr(encode_address_leaf(leaf)) for leaf in params)
+        if encoded:
+            return [f"    return {helper_name}(ctx, {encoded})"]
+        return [f"    return {helper_name}(ctx)"]
 
     def _emit_cell(self, address: str) -> str:
         """Emit a Python function for a single formula cell.
@@ -2219,6 +2333,15 @@ class CodeGenerator:
         if doc[-1] not in ".?!":
             doc = f"{doc}."
         lines.append(f"    '''{doc}'''")
+        table = getattr(self.graph, "formula_shapes", None)
+        if table is not None and self._shape_helper_names:
+            found = table.lookup(node.normalized_formula)
+            if found is not None:
+                shape_key, _skeleton, params = found
+                helper_name = self._shape_helper_names.get(shape_key)
+                if helper_name is not None:
+                    lines.extend(self._emit_shape_helper_call(helper_name, params))
+                    return "\n".join(lines)
         # Reset temp var counter for each cell to keep variable names short
         self._temp_var_counter = 0
         ast = self._get_or_parse_ast(normalized)
@@ -3149,6 +3272,11 @@ class CodeGenerator:
             )
         else:
             self._reader_index = None
+
+        self._plan_shape_helpers(formula_emit_order)
+        helper_lines = self._emit_shape_helpers()
+        if helper_lines:
+            cell_code_lines.extend(helper_lines)
 
         for address in self._workbook_sort_addresses(formula_emit_order):
             formula_cells.add(address)

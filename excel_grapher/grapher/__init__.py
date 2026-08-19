@@ -47,6 +47,7 @@ from .export import (
     write_lightweight_viz_data,
     write_web_viz_html,
 )
+from .formula_shapes import warm_formula_shapes
 from .graph import CycleError, CycleReport, DependencyGraph, GraphReadView, NodeHook
 from .graph_pickle import dump_graph, load_graph
 from .guard import And, Compare, GuardExpr, Literal, Not, Or
@@ -84,6 +85,7 @@ __all__ = [
     "save_graph_cache",
     "try_load_graph_cache",
     "warm_preparsed_formulas",
+    "warm_formula_shapes",
     "DependencyCause",
     "DependencyGraph",
     "dump_graph",

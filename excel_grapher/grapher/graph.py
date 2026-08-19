@@ -15,6 +15,7 @@ from excel_grapher.core.address_keys import (
     sort_node_keys,
 )
 from excel_grapher.core.formula_ast import AstNode
+from excel_grapher.core.formula_shape import FormulaShapeTable
 
 from .dependency_provenance import DependencyCause, EdgeProvenance, merge_edge_provenance
 from .graph_pickle import dumps_graph_blob, loads_graph_blob
@@ -155,6 +156,8 @@ class DependencyGraph:
     named_range_ranges: dict[str, tuple[str, str, str]] | None = None
     # Opt-in AST cache from warm_ast_cache; not JSON-serialized; re-warm after load.
     preparsed_formulas: dict[str, AstNode] | None = None
+    # Opt-in punched-shape table from warm_formula_shapes; not JSON/pickle serialized.
+    formula_shapes: FormulaShapeTable | None = None
 
     def copy(self) -> DependencyGraph:
         """Return a deep copy of this graph (node hooks are not copied)."""
@@ -211,6 +214,9 @@ class DependencyGraph:
         )
         cloned.preparsed_formulas = (
             dict(self.preparsed_formulas) if self.preparsed_formulas is not None else None
+        )
+        cloned.formula_shapes = (
+            self.formula_shapes.copy() if self.formula_shapes is not None else None
         )
         return cloned
 
@@ -432,6 +438,7 @@ class DependencyGraph:
             raise KeyError(f"Cell {key} not found in graph")
         node.formula = formula
         node.normalized_formula = normalized_formula
+        self._invalidate_formula_shapes()
 
     def remove_node(self, key: NodeKey) -> None:
         """Remove a node and all of its incident edges.
@@ -924,7 +931,12 @@ class DependencyGraph:
         self.named_range_ranges = dict(nrr) if nrr else None
         self.sheet_bounds = None
         self.preparsed_formulas = None
+        self.formula_shapes = None
         state.clear()
+
+    def _invalidate_formula_shapes(self) -> None:
+        """Drop interned shapes after a formula rewrite (re-warm to restore)."""
+        self.formula_shapes = None
 
     # ---- internal edge mutation --------------------------------------------
 
@@ -975,6 +987,8 @@ class DependencyGraph:
                 )
 
             d_node.normalized_formula = new_norm
+            if before_normalized != new_norm:
+                self._invalidate_formula_shapes()
 
             self._remove_edge(d_key, t_key)
             new_prov = direct_provenance_for_key_in_normalized(new_norm, r_key)
@@ -1071,6 +1085,8 @@ class DependencyGraph:
                 old_dependent_provenance[dep] = prov
 
         d_node.normalized_formula = new_norm
+        if before_normalized != new_norm:
+            self._invalidate_formula_shapes()
 
         for dep in list(self._edges.get(d_key, set())):
             self._remove_edge(d_key, dep)
