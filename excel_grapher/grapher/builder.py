@@ -16,7 +16,7 @@ from fastpyxl.worksheet.worksheet import Worksheet
 
 from excel_grapher.core.address_keys import format_range_key, parse_address, sort_node_keys
 from excel_grapher.core.cell_types import CellType, leaves_missing_cell_type_constraints
-from excel_grapher.core.formula_ast import AstNode
+from excel_grapher.core.formula_ast import AstNode, FormulaParseError
 from excel_grapher.core.formula_ast import parse as parse_formula_ast
 
 from .blank_ranges import (
@@ -474,8 +474,9 @@ def create_dependency_graph(
 
     Extraction always parses each formula cell into `Node.formula_ast` (distinct
     `normalized_formula` strings share one interned tree). `normalized_formula`
-    remains absolute A1 text. Unparseable formulas fail closed with
-    `FormulaParseError`.
+    remains absolute A1 text. Formulas the AST parser cannot handle leave
+    `formula_ast` unset; extraction still records the cell and its
+    dependencies.
 
     `blank_ranges` is an optional iterable of sheet-qualified A1 rectangles
     (e.g. `\"Sheet1!B2:D10\"`) treated as structurally empty: no nodes are
@@ -1390,7 +1391,7 @@ def create_dependency_graph(
     _bfs_t0 = time.perf_counter()
     _bfs_count = 0
     _bfs_next_log = 5000
-    formula_ast_intern: dict[str, AstNode] = {}
+    formula_ast_intern: dict[str, AstNode | None] = {}
 
     try:
         while q:
@@ -1451,9 +1452,13 @@ def create_dependency_graph(
                     value = _cached_value_from_formula_cell(cell)
                 is_leaf = False
                 stripped = normalized.strip()
-                formula_ast = formula_ast_intern.get(stripped)
-                if formula_ast is None:
-                    formula_ast = parse_formula_ast(stripped)
+                if stripped in formula_ast_intern:
+                    formula_ast = formula_ast_intern[stripped]
+                else:
+                    try:
+                        formula_ast = parse_formula_ast(stripped)
+                    except FormulaParseError:
+                        formula_ast = None
                     formula_ast_intern[stripped] = formula_ast
             else:
                 formula_str = ""
