@@ -34,7 +34,22 @@ def _workbook_with_shared_formula(tmp_path: Path) -> Path:
     return path
 
 
-def test_extraction_attaches_formula_ast_by_default(tmp_path: Path) -> None:
+def test_extraction_leaves_formula_ast_none_when_unparseable(tmp_path: Path) -> None:
+    path = tmp_path / "implicit_intersection.xlsx"
+    wb = fastpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws["A1"].value = 1
+    ws["B1"].value = 2
+    ws["C1"].value = "=SUM(IF(@A1:A3>0,@B1:B3,0))"
+    wb.save(path)
+    wb.close()
+
+    graph = create_dependency_graph(path, ["Sheet1!C1"], load_values=False)
+    node = graph.get_node("Sheet1!C1")
+    assert node is not None
+    assert node.normalized_formula is not None
+    assert node.formula_ast is None
     path = _workbook_with_shared_formula(tmp_path)
     graph = create_dependency_graph(path, ["Sheet1!B1", "Sheet1!C1"], load_values=False)
 
