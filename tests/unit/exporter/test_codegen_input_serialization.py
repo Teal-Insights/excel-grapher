@@ -6,6 +6,7 @@ from typing import Any, cast
 
 import pytest
 
+from excel_grapher.evaluator.parser import AstNode
 from excel_grapher.evaluator.types import XlError
 from excel_grapher.exporter.codegen import CodeGenerator, GraphLike
 
@@ -22,6 +23,7 @@ class _Node:
     formula: str | None
     normalized_formula: str | None
     value: object | None
+    formula_ast: AstNode | None = None
 
 
 class _FakeGraph:

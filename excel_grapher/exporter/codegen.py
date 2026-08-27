@@ -78,6 +78,7 @@ if TYPE_CHECKING:
 class GraphNode(Protocol):
     formula: str | None
     normalized_formula: str | None
+    formula_ast: AstNode | None
     value: object | None
 
 
@@ -476,7 +477,7 @@ class CodeGenerator:
             if node.formula is not None:
                 raise MissingNormalizedFormulaError(normalized)
             return None
-        formula_ast = getattr(node, "formula_ast", None)
+        formula_ast = node.formula_ast
         if formula_ast is not None:
             self._ast_cache[normalized] = formula_ast
             return formula_ast
