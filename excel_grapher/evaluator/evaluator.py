@@ -15,6 +15,11 @@ from excel_grapher.core.address_keys import (
 )
 from excel_grapher.core.addressing import index_excel_range
 from excel_grapher.core.excel_function_meta import grid_range_arg_indices
+from excel_grapher.core.formula_ast import (
+    resolve_cell_ref,
+    resolve_whole_column_ref,
+    resolve_whole_row_ref,
+)
 from excel_grapher.core.grid import Range
 from excel_grapher.core.range_shorthand import (
     SheetBounds,
@@ -432,13 +437,17 @@ class FormulaEvaluator:
         if isinstance(node, ErrorNode):
             return node.error
         if isinstance(node, CellRefNode):
-            return self._evaluate_cell(node.address)
+            return self._evaluate_cell(resolve_cell_ref(node.ref, self._formula_anchor()))
         if isinstance(node, WholeColumnNode):
-            return self._resolve_whole_column(node.sheet, node.column)
+            sheet, column = resolve_whole_column_ref(node, self._formula_anchor())
+            return self._resolve_whole_column(sheet, column)
         if isinstance(node, WholeRowNode):
-            return self._resolve_whole_row(node.sheet, node.row)
+            sheet, row = resolve_whole_row_ref(node, self._formula_anchor())
+            return self._resolve_whole_row(sheet, row)
         if isinstance(node, RangeNode):
-            return _range_from_a1(node.start, node.end)
+            start = resolve_cell_ref(node.start_ref, self._formula_anchor())
+            end = resolve_cell_ref(node.end_ref, self._formula_anchor())
+            return _range_from_a1(start, end)
         if isinstance(node, FunctionCallNode):
             name = normalize_excel_function_name(node.name)
             if name == "IF":
@@ -729,6 +738,9 @@ class FormulaEvaluator:
             cast(CellValue, width_val) if width_val is not None else None,
         )
 
+    def _formula_anchor(self) -> str | None:
+        return self._call_stack[-1] if self._call_stack else None
+
     def _current_formula_row_col(self) -> tuple[int, int] | None:
         if not self._call_stack:
             return None
@@ -826,11 +838,15 @@ class FormulaEvaluator:
     def _index_base_range(self, array_node: AstNode) -> ExcelRange | XlError:
         """Resolve INDEX's array argument to `ExcelRange` geometry when possible."""
         if isinstance(array_node, WholeColumnNode):
-            return self._resolve_whole_column(array_node.sheet, array_node.column)
+            sheet, column = resolve_whole_column_ref(array_node, self._formula_anchor())
+            return self._resolve_whole_column(sheet, column)
         if isinstance(array_node, WholeRowNode):
-            return self._resolve_whole_row(array_node.sheet, array_node.row)
+            sheet, row = resolve_whole_row_ref(array_node, self._formula_anchor())
+            return self._resolve_whole_row(sheet, row)
         if isinstance(array_node, RangeNode):
-            return _range_from_a1(array_node.start, array_node.end)
+            start = resolve_cell_ref(array_node.start_ref, self._formula_anchor())
+            end = resolve_cell_ref(array_node.end_ref, self._formula_anchor())
+            return _range_from_a1(start, end)
         return self._range_from_ref_node(array_node)
 
     def _index_call_to_range(self, node: FunctionCallNode) -> ExcelRange | XlError:
@@ -847,14 +863,19 @@ class FormulaEvaluator:
     def _range_from_ref_node(self, node: AstNode) -> ExcelRange | XlError:
         """Interpret an AST node as a reference (cell or range) without evaluating its value."""
         if isinstance(node, RangeNode):
-            return _range_from_a1(node.start, node.end)
+            start = resolve_cell_ref(node.start_ref, self._formula_anchor())
+            end = resolve_cell_ref(node.end_ref, self._formula_anchor())
+            return _range_from_a1(start, end)
         if isinstance(node, WholeColumnNode):
-            return self._resolve_whole_column(node.sheet, node.column)
+            sheet, column = resolve_whole_column_ref(node, self._formula_anchor())
+            return self._resolve_whole_column(sheet, column)
         if isinstance(node, WholeRowNode):
-            return self._resolve_whole_row(node.sheet, node.row)
+            sheet, row = resolve_whole_row_ref(node, self._formula_anchor())
+            return self._resolve_whole_row(sheet, row)
 
         if isinstance(node, CellRefNode):
-            sheet, coord = parse_address(node.address)
+            address = resolve_cell_ref(node.ref, self._formula_anchor())
+            sheet, coord = parse_address(address)
             coord = coord.replace("$", "")
             col_str, row = fastpyxl.utils.cell.coordinate_from_string(coord)
             col = fastpyxl.utils.cell.column_index_from_string(col_str)

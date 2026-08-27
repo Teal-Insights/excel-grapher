@@ -14,8 +14,11 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from typing import Literal, Protocol, TypeAlias, cast
 
-from excel_grapher.core.address_keys import format_range_key, parse_address
+from fastpyxl.utils.cell import get_column_letter
+
+from excel_grapher.core.address_keys import format_range_key, parse_address, quote_sheet_if_needed
 from excel_grapher.core.formula_ast import (
+    AbsoluteAxis,
     AstNode,
     BinaryOpNode,
     BoolNode,
@@ -26,11 +29,15 @@ from excel_grapher.core.formula_ast import (
     FunctionCallNode,
     NumberNode,
     RangeNode,
+    RelativeAxis,
     StringNode,
     UnaryOpNode,
     WholeColumnNode,
     WholeRowNode,
     parse,
+    resolve_cell_ref,
+    resolve_whole_column_ref,
+    resolve_whole_row_ref,
 )
 
 AddressKind: TypeAlias = Literal["CELL", "RANGE", "WHOLE_COL", "WHOLE_ROW"]
@@ -239,26 +246,97 @@ def iter_address_holes(skeleton: SkeletonNode) -> Iterator[AddressHoleNode]:
             return
 
 
+def _encode_col_axis(axis: AbsoluteAxis | RelativeAxis) -> str:
+    if isinstance(axis, AbsoluteAxis):
+        return f"${get_column_letter(axis.index)}"
+    return f"C[{axis.offset}]"
+
+
+def _encode_row_axis(axis: AbsoluteAxis | RelativeAxis) -> str:
+    if isinstance(axis, AbsoluteAxis):
+        return f"${axis.index}"
+    return f"R[{axis.offset}]"
+
+
+def resolve_address_leaf(leaf: AddressLeaf, anchor: str | None) -> str:
+    """Resolve an address leaf to canonical sheet-qualified A1 / range text.
+
+    Relative axes add their offset to `anchor` (the formula host cell).
+    Fully-absolute leaves ignore `anchor`.
+
+    Args:
+        leaf: Cell, range, whole-column, or whole-row AST leaf.
+        anchor: Host cell used to bind relative axes. Ignored when every axis
+            on `leaf` is absolute.
+
+    Returns:
+        Canonical `Sheet!A1`, `Sheet!A1:B2`, `Sheet!A:A`, or `Sheet!1:1`.
+
+    Raises:
+        ValueError: If a relative axis is present and `anchor` is missing.
+    """
+    match leaf:
+        case CellRefNode(ref):
+            return resolve_cell_ref(ref, anchor)
+        case RangeNode(start_ref, end_ref):
+            start = resolve_cell_ref(start_ref, anchor)
+            end = resolve_cell_ref(end_ref, anchor)
+            sheet, start_cell = parse_address(start)
+            _, end_cell = parse_address(end)
+            return format_range_key(sheet, start_cell, end_cell)
+        case WholeColumnNode():
+            sheet, letter = resolve_whole_column_ref(leaf, anchor)
+            return format_range_key(sheet, letter, letter)
+        case WholeRowNode():
+            sheet, row = resolve_whole_row_ref(leaf, anchor)
+            return format_range_key(sheet, str(row), str(row))
+    raise TypeError(f"not an address leaf: {type(leaf).__name__}")
+
+
 def encode_address_leaf(leaf: AddressLeaf) -> str:
     """Encode an address leaf as a sheet-qualified A1 / range string.
 
-    Cell refs stay canonical `Sheet!A1`. Ranges become `Sheet!A1:B2` (single
-    sheet prefix). Whole-column / whole-row refs use `Sheet!A:A` / `Sheet!1:1`.
+    Fully-absolute cell refs stay canonical `Sheet!A1`. Relative/mixed refs use
+    `$` on absolute axes and `C[n]`/`R[n]` on relative axes. Ranges become
+    `Sheet!A1:B2` when both endpoints are fully absolute.
     """
     match leaf:
-        case CellRefNode(address):
-            return address
-        case RangeNode(start, end):
-            sheet, start_cell = parse_address(start)
-            if "!" in end:
+        case CellRefNode(ref):
+            if isinstance(ref.col, AbsoluteAxis) and isinstance(ref.row, AbsoluteAxis):
+                return resolve_cell_ref(ref, None)
+            return (
+                f"{quote_sheet_if_needed(ref.sheet)}!"
+                f"{_encode_col_axis(ref.col)}{_encode_row_axis(ref.row)}"
+            )
+        case RangeNode(start_ref, end_ref):
+            start_abs = isinstance(start_ref.col, AbsoluteAxis) and isinstance(
+                start_ref.row, AbsoluteAxis
+            )
+            end_abs = isinstance(end_ref.col, AbsoluteAxis) and isinstance(
+                end_ref.row, AbsoluteAxis
+            )
+            if start_abs and end_abs:
+                start = resolve_cell_ref(start_ref, None)
+                end = resolve_cell_ref(end_ref, None)
+                sheet, start_cell = parse_address(start)
                 _, end_cell = parse_address(end)
-            else:
-                end_cell = end
-            return format_range_key(sheet, start_cell, end_cell)
-        case WholeColumnNode(sheet, column):
-            return format_range_key(sheet, column, column)
-        case WholeRowNode(sheet, row):
-            return format_range_key(sheet, str(row), str(row))
+                return format_range_key(sheet, start_cell, end_cell)
+            start_enc = encode_address_leaf(CellRefNode(start_ref))
+            end_enc = encode_address_leaf(CellRefNode(end_ref))
+            return f"{start_enc}:{end_enc}"
+        case WholeColumnNode():
+            if isinstance(leaf.col, AbsoluteAxis):
+                sheet, letter = resolve_whole_column_ref(leaf, None)
+                return format_range_key(sheet, letter, letter)
+            return f"{quote_sheet_if_needed(leaf.sheet)}!{_encode_col_axis(leaf.col)}:{_encode_col_axis(leaf.col)}"
+        case WholeRowNode():
+            if isinstance(leaf.row, AbsoluteAxis):
+                sheet, row = resolve_whole_row_ref(leaf, None)
+                return format_range_key(sheet, str(row), str(row))
+            return (
+                f"{quote_sheet_if_needed(leaf.sheet)}!"
+                f"{_encode_row_axis(leaf.row)}:{_encode_row_axis(leaf.row)}"
+            )
     raise TypeError(f"not an address leaf: {type(leaf).__name__}")
 
 

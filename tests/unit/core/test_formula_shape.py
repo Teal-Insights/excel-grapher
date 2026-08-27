@@ -137,6 +137,23 @@ def test_encode_address_leaf_cell_and_range() -> None:
     assert encode_address_leaf(WholeRowNode(sheet="Data", row=3)) == "Data!3:3"
 
 
+def test_encode_address_leaf_relative_axes() -> None:
+    from excel_grapher.core.formula_ast import (
+        AbsoluteAxis,
+        CellRef,
+        RelativeAxis,
+        parse_preserving_axes,
+    )
+
+    ast = parse_preserving_axes("=A1", anchor="Sheet1!B2")
+    assert isinstance(ast, CellRefNode)
+    assert encode_address_leaf(ast) == "Sheet1!C[-1]R[-1]"
+    mixed = CellRefNode(
+        CellRef(sheet="Sheet1", col=AbsoluteAxis(1), row=RelativeAxis(-1)),
+    )
+    assert encode_address_leaf(mixed) == "Sheet1!$AR[-1]"
+
+
 def test_intern_formula_shapes_collapses_autofill_family() -> None:
     table = intern_formula_shapes(
         [

@@ -4,24 +4,45 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+from fastpyxl.utils.cell import column_index_from_string
+
 from excel_grapher.core.formula_ast import (
+    AbsoluteAxis,
     AstNode,
+    AxisRef,
     BinaryOpNode,
     BoolNode,
+    CellRef,
     CellRefNode,
     EmptyArgNode,
     ErrorNode,
     FunctionCallNode,
     NumberNode,
     RangeNode,
+    RelativeAxis,
     StringNode,
     UnaryOpNode,
     WholeColumnNode,
     WholeRowNode,
+    cell_ref_from_a1,
 )
 from excel_grapher.core.types import XlError
 
 _JsonObject = dict[str, Any]
+
+
+def _axis_to_json(axis: AbsoluteAxis | RelativeAxis) -> _JsonObject:
+    if isinstance(axis, AbsoluteAxis):
+        return {"k": "abs", "n": axis.index}
+    return {"k": "rel", "n": axis.offset}
+
+
+def _cell_ref_to_json(ref: CellRef) -> _JsonObject:
+    return {
+        "sheet": ref.sheet,
+        "col": _axis_to_json(ref.col),
+        "row": _axis_to_json(ref.row),
+    }
 
 
 def ast_to_json(node: AstNode) -> _JsonObject:
@@ -35,14 +56,18 @@ def ast_to_json(node: AstNode) -> _JsonObject:
             return {"t": "bool", "v": value}
         case ErrorNode(error):
             return {"t": "err", "v": error.value}
-        case CellRefNode(address):
-            return {"t": "cell", "v": address}
-        case RangeNode(start, end):
-            return {"t": "range", "s": start, "e": end}
-        case WholeColumnNode(sheet, column):
-            return {"t": "whole_col", "sheet": sheet, "column": column}
+        case CellRefNode(ref):
+            return {"t": "cell", **_cell_ref_to_json(ref)}
+        case RangeNode(start_ref, end_ref):
+            return {
+                "t": "range",
+                "s": _cell_ref_to_json(start_ref),
+                "e": _cell_ref_to_json(end_ref),
+            }
+        case WholeColumnNode(sheet, col):
+            return {"t": "whole_col", "sheet": sheet, "col": _axis_to_json(col)}
         case WholeRowNode(sheet, row):
-            return {"t": "whole_row", "sheet": sheet, "row": row}
+            return {"t": "whole_row", "sheet": sheet, "row": _axis_to_json(row)}
         case FunctionCallNode(name, args):
             return {"t": "fn", "n": name, "a": [ast_to_json(arg) for arg in args]}
         case BinaryOpNode(op, left, right):
@@ -52,6 +77,47 @@ def ast_to_json(node: AstNode) -> _JsonObject:
         case EmptyArgNode():
             return {"t": "empty"}
     raise TypeError(f"unsupported AST node: {type(node).__name__}")
+
+
+def _axis_from_json(payload: object) -> AxisRef:
+    if not isinstance(payload, dict):
+        raise TypeError("axis payload must be an object")
+    d = cast(_JsonObject, payload)
+    kind = d.get("k")
+    n = d.get("n")
+    if not isinstance(n, int) or isinstance(n, bool):
+        raise TypeError("axis payload must have int n")
+    if kind == "abs":
+        return AbsoluteAxis(n)
+    if kind == "rel":
+        return RelativeAxis(n)
+    raise TypeError(f"unknown axis kind: {kind!r}")
+
+
+def _cell_ref_from_json(payload: object, *, legacy_a1: object = None) -> CellRef:
+    if isinstance(legacy_a1, str):
+        return cell_ref_from_a1(legacy_a1)
+    if not isinstance(payload, dict):
+        raise TypeError("cell ref payload must be an object")
+    d = cast(_JsonObject, payload)
+    sheet = d.get("sheet")
+    if not isinstance(sheet, str):
+        raise TypeError("cell ref payload must have string sheet")
+    return CellRef(
+        sheet=sheet, col=_axis_from_json(d.get("col")), row=_axis_from_json(d.get("row"))
+    )
+
+
+def _axis_or_column_letter_from_json(payload: object) -> AxisRef:
+    if isinstance(payload, str):
+        return AbsoluteAxis(int(column_index_from_string(payload)))
+    return _axis_from_json(payload)
+
+
+def _axis_or_int_from_json(payload: object) -> AxisRef:
+    if isinstance(payload, int) and not isinstance(payload, bool):
+        return AbsoluteAxis(payload)
+    return _axis_from_json(payload)
 
 
 def ast_from_json(payload: object) -> AstNode:
@@ -88,28 +154,28 @@ def ast_from_json(payload: object) -> AstNode:
             raise TypeError(f"unknown Excel error literal: {value!r}")
         return ErrorNode(error)
     if tag == "cell":
-        value = d.get("v")
-        if not isinstance(value, str):
-            raise TypeError("cell payload must be a string")
-        return CellRefNode(value)
+        return CellRefNode(_cell_ref_from_json(d, legacy_a1=d.get("v")))
     if tag == "range":
         start = d.get("s")
         end = d.get("e")
-        if not isinstance(start, str) or not isinstance(end, str):
-            raise TypeError("range payload must have string start and end")
-        return RangeNode(start, end)
+        return RangeNode(
+            start_ref=_cell_ref_from_json(
+                start, legacy_a1=start if isinstance(start, str) else None
+            ),
+            end_ref=_cell_ref_from_json(end, legacy_a1=end if isinstance(end, str) else None),
+        )
     if tag == "whole_col":
         sheet = d.get("sheet")
-        column = d.get("column")
-        if not isinstance(sheet, str) or not isinstance(column, str):
-            raise TypeError("whole_col payload must have string sheet and column")
-        return WholeColumnNode(sheet=sheet, column=column)
+        if not isinstance(sheet, str):
+            raise TypeError("whole_col payload must have string sheet")
+        col = d.get("col", d.get("column"))
+        return WholeColumnNode(sheet=sheet, col=_axis_or_column_letter_from_json(col))
     if tag == "whole_row":
         sheet = d.get("sheet")
         row = d.get("row")
-        if not isinstance(sheet, str) or not isinstance(row, int) or isinstance(row, bool):
-            raise TypeError("whole_row payload must have string sheet and int row")
-        return WholeRowNode(sheet=sheet, row=row)
+        if not isinstance(sheet, str):
+            raise TypeError("whole_row payload must have string sheet")
+        return WholeRowNode(sheet=sheet, row=_axis_or_int_from_json(row))
     if tag == "fn":
         name = d.get("n")
         args = d.get("a")
