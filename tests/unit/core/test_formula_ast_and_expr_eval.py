@@ -14,6 +14,7 @@ from excel_grapher.core.formula_ast import (
     RangeNode,
     StringNode,
     parse,
+    parse_optional,
 )
 from excel_grapher.core.types import CellValue
 
@@ -44,6 +45,14 @@ def test_core_formula_ast_parses_basic_literals_and_refs() -> None:
     ast = parse("=_xlfn.XLOOKUP(Sheet1!A1, Sheet1!A1:A3, Sheet1!B1:B3)")
     assert isinstance(ast, FunctionCallNode)
     assert ast.name == "XLOOKUP"
+
+
+def test_parse_optional_returns_none_for_missing_blank_or_unparseable() -> None:
+    assert parse_optional(None) is None
+    assert parse_optional("") is None
+    assert parse_optional("   ") is None
+    assert parse_optional("=SUM(IF(@A1:A3>0,@B1:B3,0))") is None
+    assert parse_optional("=Sheet1!A1+2") == parse("=Sheet1!A1+2")
 
 
 def test_core_expr_eval_basic_functions_over_integers() -> None:
