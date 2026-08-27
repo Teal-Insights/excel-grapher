@@ -10,7 +10,13 @@ import pytest
 
 import excel_grapher.evaluator.evaluator as evaluator_module
 from excel_grapher import FormulaEvaluator, create_dependency_graph
-from excel_grapher.core.formula_ast import BinaryOpNode, CellRefNode, NumberNode, parse
+from excel_grapher.core.formula_ast import (
+    BinaryOpNode,
+    CellRefNode,
+    NumberNode,
+    parse,
+    parse_preserving_axes,
+)
 from excel_grapher.grapher.cache import (
     GRAPH_CACHE_SCHEMA_VERSION,
     dependency_graph_from_json,
@@ -63,8 +69,8 @@ def test_extraction_stores_formula_ast(tmp_path: Path) -> None:
     assert b1 is not None and c1 is not None
     assert b1.normalized_formula is not None
     assert c1.normalized_formula is not None
-    assert b1.formula_ast == parse(b1.normalized_formula)
-    assert c1.formula_ast == parse(c1.normalized_formula)
+    assert b1.formula_ast == parse_preserving_axes("=A1*2", anchor="Sheet1!B1")
+    assert c1.formula_ast == parse_preserving_axes("=B1+1", anchor="Sheet1!C1")
     assert graph.preparsed_formulas is None
 
 
@@ -75,7 +81,8 @@ def test_extraction_interns_identical_formula_asts(tmp_path: Path) -> None:
     b2 = graph._get_internal_node("Sheet1!B2")
     assert b1 is not None and b2 is not None
     assert b1.formula_ast is not None
-    assert b1.formula_ast is b2.formula_ast
+    # Same raw `=A1*2` at B1 vs B2 is a different relative offset, so ASTs differ.
+    assert b1.formula_ast != b2.formula_ast
 
 
 def test_copy_node_preserves_formula_ast() -> None:
@@ -135,10 +142,10 @@ def test_json_cache_round_trips_formula_ast(tmp_path: Path) -> None:
     assert original is not None and loaded is not None
     assert loaded.normalized_formula == original.normalized_formula
     assert loaded.formula_ast == original.formula_ast
-    assert loaded.formula_ast == parse(loaded.normalized_formula or "")
+    assert loaded.formula_ast == parse_preserving_axes("=B1+1", anchor="Sheet1!C1")
 
 
-def test_json_cache_interns_formula_asts_by_normalized_formula(tmp_path: Path) -> None:
+def test_json_cache_interns_formula_asts_by_canonical_ast(tmp_path: Path) -> None:
     path = _workbook_with_shared_formula(tmp_path)
     graph = create_dependency_graph(path, ["Sheet1!B1", "Sheet1!B2"], load_values=False)
     b1 = graph.get_node("Sheet1!B1")
@@ -150,8 +157,13 @@ def test_json_cache_interns_formula_asts_by_normalized_formula(tmp_path: Path) -
     payload = dependency_graph_to_json(graph)
     pool = payload["formula_asts"]
     assert isinstance(pool, dict)
-    assert shared.strip() in pool
-    assert sum(1 for key in pool if key == shared.strip()) == 1
+    keys = [
+        node_payload.get("formula_ast_key")
+        for node_payload in payload["nodes"]
+        if node_payload.get("normalized_formula")
+    ]
+    assert all(isinstance(key, str) and key in pool for key in keys)
+    assert len(set(keys)) == 2
     for node_payload in payload["nodes"]:
         assert "formula_ast" not in node_payload
 
@@ -160,8 +172,9 @@ def test_json_cache_interns_formula_asts_by_normalized_formula(tmp_path: Path) -
     loaded_b2 = restored._get_internal_node("Sheet1!B2")
     assert loaded_b1 is not None and loaded_b2 is not None
     assert loaded_b1.formula_ast is not None
-    assert loaded_b1.formula_ast is loaded_b2.formula_ast
-    assert loaded_b1.formula_ast == parse(shared)
+    assert loaded_b1.formula_ast != loaded_b2.formula_ast
+    assert loaded_b1.formula_ast == parse_preserving_axes("=A1*2", anchor="Sheet1!B1")
+    assert loaded_b2.formula_ast == parse_preserving_axes("=A1*2", anchor="Sheet1!B2")
 
 
 def test_json_cache_rejects_non_object_formula_asts() -> None:

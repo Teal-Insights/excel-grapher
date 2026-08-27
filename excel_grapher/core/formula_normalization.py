@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from excel_grapher.core.address_keys import (
     format_cell_key,
     format_range_key,
+    parse_address,
     quote_sheet_if_needed,
     quoted_sheet_prefix_regex,
     unescape_formula_sheet_name,
@@ -381,6 +382,47 @@ def normalize_excel_formula_with_name_state(
     result = _apply_named_range_replacements(result, replacements, names_re)
     result = _collapse_same_sheet_range_prefixes(result)
     return _unmask_string_literals(result, literals)
+
+
+def expand_defined_names(
+    formula: str,
+    *,
+    named_ranges: dict[str, tuple[str, str]] | None = None,
+    named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
+) -> str:
+    """Replace defined names with sheet-qualified A1, leaving `$` markers intact.
+
+    Replacement targets are emitted with `$` on both axes so defined names stay
+    absolute when parsed with `parse_preserving_axes`. String literals are
+    masked so names inside quotes are not expanded.
+    """
+    if not formula:
+        return formula
+    masked, literals = _mask_string_literals(formula)
+    repl, names_re = build_named_range_replacement_state(named_ranges, named_range_ranges)
+    abs_repl = {name: _absolutize_defined_name_target(target) for name, target in repl.items()}
+    result = _apply_named_range_replacements(masked, abs_repl, names_re)
+    return _unmask_string_literals(result, literals)
+
+
+def _abs_a1_coord(coord: str) -> str:
+    from fastpyxl.utils.cell import coordinate_from_string
+
+    col_letter, row = coordinate_from_string(coord.replace("$", ""))
+    return f"${col_letter}${row}"
+
+
+def _absolutize_defined_name_target(target: str) -> str:
+    """Rewrite a defined-name A1 target so both axes are `$`-absolute."""
+    sheet, rest = parse_address(target)
+    prefix = quote_sheet_if_needed(sheet)
+    if ":" in rest:
+        start, end = rest.split(":", 1)
+        if "!" in end:
+            end_sheet, end_coord = parse_address(end)
+            return f"{prefix}!{_abs_a1_coord(start)}:{quote_sheet_if_needed(end_sheet)}!{_abs_a1_coord(end_coord)}"
+        return f"{prefix}!{_abs_a1_coord(start)}:{_abs_a1_coord(end)}"
+    return f"{prefix}!{_abs_a1_coord(rest)}"
 
 
 def normalize_excel_formula(

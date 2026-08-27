@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 import time
@@ -14,9 +15,10 @@ import fastpyxl.utils.cell
 from fastpyxl.worksheet.formula import ArrayFormula
 from fastpyxl.worksheet.worksheet import Worksheet
 
-from excel_grapher.core.address_keys import format_range_key, parse_address, sort_node_keys
+from excel_grapher.core.address_keys import CellKey, format_range_key, parse_address, sort_node_keys
 from excel_grapher.core.cell_types import CellType, leaves_missing_cell_type_constraints
-from excel_grapher.core.formula_ast import AstNode, parse_optional
+from excel_grapher.core.formula_ast import AstNode, parse_preserving_axes_optional
+from excel_grapher.core.formula_ast_json import ast_to_json
 
 from .blank_ranges import (
     address_in_blank_ranges,
@@ -471,11 +473,12 @@ def create_dependency_graph(
     still shows the pre-compression workbook text and must not be re-parsed as
     the node's current definition.
 
-    Extraction always parses each formula cell into `Node.formula_ast` (distinct
-    `normalized_formula` strings share one interned tree). `normalized_formula`
-    remains absolute A1 text. Formulas the AST parser cannot handle leave
-    `formula_ast` unset; extraction still records the cell and its
-    dependencies.
+    Extraction always parses each formula cell into `Node.formula_ast` from the
+    raw workbook text, preserving per-axis relative/absolute intent. Distinct
+    ASTs share one interned tree (keyed by canonical AST JSON, not by
+    `normalized_formula`). `normalized_formula` remains derived absolute A1
+    text. Formulas the AST parser cannot handle leave `formula_ast` unset;
+    extraction still records the cell and its dependencies.
 
     `blank_ranges` is an optional iterable of sheet-qualified A1 rectangles
     (e.g. `\"Sheet1!B2:D10\"`) treated as structurally empty: no nodes are
@@ -1450,12 +1453,21 @@ def create_dependency_graph(
                 if load_values:
                     value = _cached_value_from_formula_cell(cell)
                 is_leaf = False
-                stripped = normalized.strip()
-                if stripped in formula_ast_intern:
-                    formula_ast = formula_ast_intern[stripped]
-                else:
-                    formula_ast = parse_optional(stripped)
-                    formula_ast_intern[stripped] = formula_ast
+                formula_ast = parse_preserving_axes_optional(
+                    formula_str,
+                    anchor=CellKey(key),
+                    named_ranges=named_ranges,
+                    named_range_ranges=named_range_ranges,
+                )
+                if formula_ast is not None:
+                    intern_key = json.dumps(
+                        ast_to_json(formula_ast), sort_keys=True, separators=(",", ":")
+                    )
+                    cached_ast = formula_ast_intern.get(intern_key)
+                    if cached_ast is not None:
+                        formula_ast = cached_ast
+                    else:
+                        formula_ast_intern[intern_key] = formula_ast
             else:
                 formula_str = ""
                 formula = None

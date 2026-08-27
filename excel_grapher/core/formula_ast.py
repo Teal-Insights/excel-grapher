@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import TypeAlias
+
+from fastpyxl.utils.cell import column_index_from_string, coordinate_from_string, get_column_letter
+
+from excel_grapher.core.address_keys import CellKey, format_cell_key, parse_address
 
 from .excel_function_names import normalize_excel_function_name
 from .types import XlError
@@ -37,26 +42,203 @@ class ErrorNode:
 
 
 @dataclass(frozen=True, slots=True)
+class AbsoluteAxis:
+    """1-based absolute row number or column index."""
+
+    index: int
+
+
+@dataclass(frozen=True, slots=True)
+class RelativeAxis:
+    """Offset from the host cell along one axis."""
+
+    offset: int
+
+
+AxisRef: TypeAlias = AbsoluteAxis | RelativeAxis
+
+
+@dataclass(frozen=True, slots=True)
+class CellRef:
+    """Sheet-qualified cell with per-axis relative/absolute intent."""
+
+    sheet: str
+    col: AxisRef
+    row: AxisRef
+
+
+def cell_ref_from_a1(address: str) -> CellRef:
+    """Build a fully-absolute `CellRef` from sheet-qualified A1 text."""
+    sheet, coord = parse_address(address)
+    col_letter, row = coordinate_from_string(coord.replace("$", ""))
+    return CellRef(
+        sheet=sheet,
+        col=AbsoluteAxis(int(column_index_from_string(col_letter))),
+        row=AbsoluteAxis(int(row)),
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class CellRefNode:
-    address: str  # Normalized: "Sheet!A1"
+    """AST leaf for a sheet-qualified cell reference."""
+
+    ref: CellRef
+
+    def __init__(self, ref: CellRef | str | None = None, /, *, address: str | None = None) -> None:
+        if address is not None:
+            if ref is not None:
+                raise TypeError("pass ref or address, not both")
+            object.__setattr__(self, "ref", cell_ref_from_a1(address))
+        elif isinstance(ref, str):
+            object.__setattr__(self, "ref", cell_ref_from_a1(ref))
+        elif isinstance(ref, CellRef):
+            object.__setattr__(self, "ref", ref)
+        else:
+            raise TypeError("CellRefNode requires a CellRef or A1 address")
+
+    @property
+    def address(self) -> str:
+        """Canonical sheet-qualified A1 when both axes are absolute."""
+        return resolve_cell_ref(self.ref, None)
 
 
 @dataclass(frozen=True, slots=True)
 class RangeNode:
-    start: str  # "Sheet!A1"
-    end: str  # "Sheet!B2"
+    """AST leaf for an A1 range with per-endpoint axis intent."""
+
+    start_ref: CellRef
+    end_ref: CellRef
+
+    def __init__(
+        self,
+        start: str | CellRef | None = None,
+        end: str | CellRef | None = None,
+        *,
+        start_ref: CellRef | None = None,
+        end_ref: CellRef | None = None,
+    ) -> None:
+        raw_start = start_ref if start_ref is not None else start
+        raw_end = end_ref if end_ref is not None else end
+        if raw_start is None or raw_end is None:
+            raise TypeError("RangeNode requires start and end")
+        object.__setattr__(
+            self,
+            "start_ref",
+            raw_start if isinstance(raw_start, CellRef) else cell_ref_from_a1(raw_start),
+        )
+        object.__setattr__(
+            self,
+            "end_ref",
+            raw_end if isinstance(raw_end, CellRef) else cell_ref_from_a1(raw_end),
+        )
+
+    @property
+    def start(self) -> str:
+        """Canonical start A1 when both start axes are absolute."""
+        return resolve_cell_ref(self.start_ref, None)
+
+    @property
+    def end(self) -> str:
+        """Canonical end A1 when both end axes are absolute."""
+        return resolve_cell_ref(self.end_ref, None)
 
 
 @dataclass(frozen=True, slots=True)
 class WholeColumnNode:
     sheet: str
-    column: str
+    col: AxisRef
+
+    def __init__(
+        self,
+        sheet: str,
+        column: str | AxisRef | None = None,
+        *,
+        col: AxisRef | None = None,
+    ) -> None:
+        object.__setattr__(self, "sheet", sheet)
+        axis = col if col is not None else column
+        if axis is None:
+            raise TypeError("WholeColumnNode requires a column")
+        if isinstance(axis, str):
+            axis = AbsoluteAxis(int(column_index_from_string(axis.upper())))
+        object.__setattr__(self, "col", axis)
+
+    @property
+    def column(self) -> str:
+        """Column letter when this whole-column ref is absolute."""
+        _sheet, letter = resolve_whole_column_ref(self, None)
+        return letter
 
 
 @dataclass(frozen=True, slots=True)
 class WholeRowNode:
     sheet: str
-    row: int
+    row: AxisRef
+
+    def __init__(self, sheet: str, row: int | AxisRef) -> None:
+        object.__setattr__(self, "sheet", sheet)
+        if isinstance(row, int):
+            object.__setattr__(self, "row", AbsoluteAxis(row))
+        else:
+            object.__setattr__(self, "row", row)
+
+
+def _resolve_axis(axis: AxisRef, base: int | None) -> int:
+    if isinstance(axis, AbsoluteAxis):
+        return axis.index
+    if base is None:
+        raise ValueError("relative axis requires an anchor cell")
+    return base + axis.offset
+
+
+def _coerce_anchor_key(anchor: CellKey | str | None) -> CellKey | None:
+    if anchor is None:
+        return None
+    if isinstance(anchor, CellKey):
+        return anchor
+    return CellKey(str(anchor))
+
+
+def resolve_cell_ref(ref: CellRef | CellRefNode, anchor: CellKey | str | None) -> str:
+    """Resolve `ref` to canonical sheet-qualified A1.
+
+    Absolute axes ignore `anchor`. Relative axes add their offset to `anchor`.
+
+    Raises:
+        ValueError: If a relative axis is present and `anchor` is missing, or
+            the resolved row/column is less than 1.
+    """
+    cell = ref.ref if isinstance(ref, CellRefNode) else ref
+    anchor_key = _coerce_anchor_key(anchor)
+    col_base = None if anchor_key is None else int(column_index_from_string(anchor_key.column))
+    row_base = None if anchor_key is None else int(anchor_key.row)
+    col_index = _resolve_axis(cell.col, col_base)
+    row_index = _resolve_axis(cell.row, row_base)
+    if col_index < 1 or row_index < 1:
+        raise ValueError(f"resolved address out of range: col={col_index} row={row_index}")
+    return format_cell_key(cell.sheet, get_column_letter(col_index), row_index)
+
+
+def resolve_whole_column_ref(
+    node: WholeColumnNode, anchor: CellKey | str | None
+) -> tuple[str, str]:
+    """Resolve a whole-column leaf to `(sheet, column_letter)`."""
+    anchor_key = _coerce_anchor_key(anchor)
+    col_base = None if anchor_key is None else int(column_index_from_string(anchor_key.column))
+    col_index = _resolve_axis(node.col, col_base)
+    if col_index < 1:
+        raise ValueError(f"resolved column out of range: {col_index}")
+    return node.sheet, get_column_letter(col_index)
+
+
+def resolve_whole_row_ref(node: WholeRowNode, anchor: CellKey | str | None) -> tuple[str, int]:
+    """Resolve a whole-row leaf to `(sheet, row_number)`."""
+    anchor_key = _coerce_anchor_key(anchor)
+    row_base = None if anchor_key is None else int(anchor_key.row)
+    row_index = _resolve_axis(node.row, row_base)
+    if row_index < 1:
+        raise ValueError(f"resolved row out of range: {row_index}")
+    return node.sheet, row_index
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,10 +283,68 @@ AstNode: TypeAlias = (
 )
 
 
+def iter_resolved_cell_keys(node: AstNode, anchor: CellKey | str) -> Iterator[str]:
+    """Yield canonical cell keys referenced by `node` against `anchor`.
+
+    Range endpoints are yielded (not expanded). Whole-column/row leaves are
+    skipped; callers that need those bounds should resolve them separately.
+    """
+    match node:
+        case CellRefNode(ref):
+            yield resolve_cell_ref(ref, anchor)
+        case RangeNode(start_ref, end_ref):
+            yield resolve_cell_ref(start_ref, anchor)
+            yield resolve_cell_ref(end_ref, anchor)
+        case FunctionCallNode(_, args):
+            for arg in args:
+                yield from iter_resolved_cell_keys(arg, anchor)
+        case BinaryOpNode(_, left, right):
+            yield from iter_resolved_cell_keys(left, anchor)
+            yield from iter_resolved_cell_keys(right, anchor)
+        case UnaryOpNode(_, operand):
+            yield from iter_resolved_cell_keys(operand, anchor)
+        case _:
+            return
+
+
+def bind_axes(node: AstNode, anchor: CellKey | str) -> AstNode:
+    """Return a copy of `node` with every axis resolved to `AbsoluteAxis`."""
+    match node:
+        case CellRefNode(ref):
+            return CellRefNode(resolve_cell_ref(ref, anchor))
+        case RangeNode(start_ref, end_ref):
+            return RangeNode(
+                resolve_cell_ref(start_ref, anchor),
+                resolve_cell_ref(end_ref, anchor),
+            )
+        case WholeColumnNode():
+            sheet, letter = resolve_whole_column_ref(node, anchor)
+            return WholeColumnNode(sheet=sheet, column=letter)
+        case WholeRowNode():
+            sheet, row = resolve_whole_row_ref(node, anchor)
+            return WholeRowNode(sheet=sheet, row=row)
+        case FunctionCallNode(name, args):
+            return FunctionCallNode(name, [bind_axes(arg, anchor) for arg in args])
+        case BinaryOpNode(op, left, right):
+            return BinaryOpNode(op, bind_axes(left, anchor), bind_axes(right, anchor))
+        case UnaryOpNode(op, operand):
+            return UnaryOpNode(op, bind_axes(operand, anchor))
+        case _:
+            return node
+
+
 class _Scanner:
-    def __init__(self, text: str) -> None:
+    def __init__(
+        self,
+        text: str,
+        *,
+        anchor: CellKey | None = None,
+        preserve_axes: bool = False,
+    ) -> None:
         self.text = text
         self.i = 0
+        self.anchor = anchor
+        self.preserve_axes = preserve_axes
 
     def peek(self) -> str | None:
         if self.i >= len(self.text):
@@ -131,6 +371,10 @@ class _Scanner:
     def eof(self) -> bool:
         return self.peek() is None
 
+    @property
+    def default_sheet(self) -> str | None:
+        return None if self.anchor is None else self.anchor.sheet
+
 
 # Operator precedence (higher = binds tighter)
 # Excel precedence: comparison < concat < add/sub < mul/div < exponent < unary
@@ -153,12 +397,37 @@ _PRECEDENCE: dict[str, int] = {
 _RIGHT_ASSOC: set[str] = {"^"}
 
 
-def parse(formula: str) -> AstNode:
+def parse(
+    formula: str,
+    *,
+    anchor: CellKey | str | None = None,
+    preserve_axes: bool = False,
+) -> AstNode:
+    """Parse a formula into an AST.
+
+    By default every cell/range axis is stored as `AbsoluteAxis` (the historical
+    `parse(normalized_formula)` contract). Pass `preserve_axes=True` with
+    `anchor` to keep `$` vs bare A1 as absolute vs relative offsets.
+
+    Args:
+        formula: Excel formula text, with or without a leading `=`.
+        anchor: Host cell used when `preserve_axes` is True, and as the default
+            sheet for unqualified refs.
+        preserve_axes: If True, missing `$` becomes a `RelativeAxis` offset from
+            `anchor`. Requires `anchor`.
+
+    Raises:
+        FormulaParseError: If `formula` is not a supported expression.
+        ValueError: If `preserve_axes` is True and `anchor` is missing.
+    """
     raw = formula.strip()
     if raw.startswith("="):
         raw = raw[1:].strip()
 
-    s = _Scanner(raw)
+    coerced = _coerce_anchor_key(anchor)
+    if preserve_axes and coerced is None:
+        raise ValueError("preserve_axes requires an anchor cell")
+    s = _Scanner(raw, anchor=coerced, preserve_axes=preserve_axes)
     node = _parse_expression(s, formula, min_prec=0)
     s.skip_ws()
     if not s.eof():
@@ -178,6 +447,52 @@ def parse_optional(formula: str | None) -> AstNode | None:
         return None
     try:
         return parse(stripped)
+    except FormulaParseError:
+        return None
+
+
+def parse_preserving_axes(
+    formula: str,
+    *,
+    anchor: CellKey | str,
+    named_ranges: dict[str, tuple[str, str]] | None = None,
+    named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
+) -> AstNode:
+    """Parse `formula` from raw workbook text, preserving `$` axis intent.
+
+    Bare A1 refs resolve against `anchor`. Defined names expand to absolute
+    sheet-qualified A1 before parsing.
+    """
+    from excel_grapher.core.formula_normalization import expand_defined_names
+
+    expanded = expand_defined_names(
+        formula,
+        named_ranges=named_ranges,
+        named_range_ranges=named_range_ranges,
+    )
+    return parse(expanded, anchor=anchor, preserve_axes=True)
+
+
+def parse_preserving_axes_optional(
+    formula: str | None,
+    *,
+    anchor: CellKey | str,
+    named_ranges: dict[str, tuple[str, str]] | None = None,
+    named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
+) -> AstNode | None:
+    """Like `parse_preserving_axes`, returning None on missing/blank/unparseable input."""
+    if formula is None:
+        return None
+    stripped = formula.strip()
+    if not stripped:
+        return None
+    try:
+        return parse_preserving_axes(
+            stripped,
+            anchor=anchor,
+            named_ranges=named_ranges,
+            named_range_ranges=named_range_ranges,
+        )
     except FormulaParseError:
         return None
 
@@ -255,6 +570,19 @@ def _parse_unary(s: _Scanner, original: str) -> AstNode:
     return node
 
 
+def _col_axis(s: _Scanner, col_index: int, is_abs: bool) -> AxisRef:
+    if is_abs or not s.preserve_axes or s.anchor is None:
+        return AbsoluteAxis(col_index)
+    base = int(column_index_from_string(s.anchor.column))
+    return RelativeAxis(col_index - base)
+
+
+def _row_axis(s: _Scanner, row_index: int, is_abs: bool) -> AxisRef:
+    if is_abs or not s.preserve_axes or s.anchor is None:
+        return AbsoluteAxis(row_index)
+    return RelativeAxis(row_index - int(s.anchor.row))
+
+
 def _parse_atom(s: _Scanner, original: str) -> AstNode:
     """Parse an atomic expression (literal, cell ref, function call, or parenthesized expr)."""
     s.skip_ws()
@@ -278,12 +606,19 @@ def _parse_atom(s: _Scanner, original: str) -> AstNode:
     if ch == "#":
         return _parse_error(s, original)
 
-    if ch.isdigit() or ch == ".":
-        return _parse_number(s, original)
-
-    # Quoted sheet name: 'Sheet Name'!A1
     if ch == "'":
         return _parse_quoted_sheet_ref(s, original)
+
+    if ch == "$":
+        return _parse_local_ref(s, original)
+
+    if ch.isdigit() or ch == ".":
+        saved = s.i
+        whole_row = _try_parse_local_whole_row(s, original)
+        if whole_row is not None:
+            return whole_row
+        s.i = saved
+        return _parse_number(s, original)
 
     if ch.isalpha() or ch in ("_",):
         ident = _parse_ident(s)
@@ -295,20 +630,19 @@ def _parse_atom(s: _Scanner, original: str) -> AstNode:
             args = _parse_args(s, original)
             return FunctionCallNode(name=normalize_excel_function_name(upper), args=args)
 
-        # Booleans
         if upper == "TRUE":
             return BoolNode(True)
         if upper == "FALSE":
             return BoolNode(False)
 
-        # Cell ref or range: we already consumed the sheet name (before '!') or the whole token.
-        # Rewind behavior is annoying; instead parse address tokens directly from raw start.
-        # If there's an exclamation next, ident is the sheet name.
         if s.peek() == "!":
             s.consume()
             return _parse_ref_after_sheet_bang(s, original, sheet_qualifier=ident)
 
-        # Bare A1 is not supported because inputs are normalized and sheet-qualified.
+        local = _try_finish_local_ident_ref(s, original, ident)
+        if local is not None:
+            return local
+
         raise FormulaParseError(
             original, "Cell references must be sheet-qualified (e.g., Sheet1!A1)"
         )
@@ -316,19 +650,146 @@ def _parse_atom(s: _Scanner, original: str) -> AstNode:
     raise FormulaParseError(original, f"Unexpected character {ch!r} at {s.i}")
 
 
+def _local_sheet(s: _Scanner, original: str) -> str:
+    if s.default_sheet is None:
+        raise FormulaParseError(
+            original, "Cell references must be sheet-qualified (e.g., Sheet1!A1)"
+        )
+    return s.default_sheet
+
+
+def _try_parse_local_whole_row(s: _Scanner, original: str) -> WholeRowNode | None:
+    if s.default_sheet is None:
+        return None
+    s.skip_ws()
+    abs_row = False
+    if s.peek() == "$":
+        s.consume()
+        abs_row = True
+    if s.peek() is None or not s.peek().isdigit():
+        return None
+    row_str = s.take_while(lambda c: c.isdigit())
+    s.skip_ws()
+    if s.peek() != ":":
+        return None
+    s.consume()
+    s.skip_ws()
+    if s.peek() == "$":
+        s.consume()
+        abs_row = True
+    row2 = s.take_while(lambda c: c.isdigit())
+    if row2 != row_str:
+        return None
+    return WholeRowNode(sheet=s.default_sheet, row=_row_axis(s, int(row_str), abs_row))
+
+
+def _parse_local_ref(s: _Scanner, original: str) -> AstNode:
+    """Parse a bare `$`-prefixed local ref (`$A$1`, `$A:A`, `$1:$1`)."""
+    sheet = _local_sheet(s, original)
+    s.skip_ws()
+    if s.peek() != "$":
+        raise FormulaParseError(original, f"Expected '$' at {s.i}")
+    saved = s.i
+    s.consume()
+    ch = s.peek()
+    if ch is not None and ch.isdigit():
+        s.i = saved
+        whole_row = _try_parse_local_whole_row(s, original)
+        if whole_row is None:
+            raise FormulaParseError(original, f"Invalid cell coordinate at {s.i}")
+        return whole_row
+    s.i = saved
+    return _parse_a1_or_whole_col_or_range(s, original, sheet)
+
+
+def _try_finish_local_ident_ref(s: _Scanner, original: str, ident: str) -> AstNode | None:
+    if s.default_sheet is None:
+        return None
+    sheet = s.default_sheet
+    if ident.isalpha() and s.peek() == ":":
+        s.i -= len(ident)
+        return _parse_a1_or_whole_col_or_range(s, original, sheet)
+    if ident.isalpha() and s.peek() == "$":
+        s.i -= len(ident)
+        return _parse_a1_or_whole_col_or_range(s, original, sheet)
+    col_row = _split_a1_ident(ident)
+    if col_row is not None:
+        col_letters, row_str = col_row
+        ref = CellRef(
+            sheet=sheet,
+            col=_col_axis(s, int(column_index_from_string(col_letters)), is_abs=False),
+            row=_row_axis(s, int(row_str), is_abs=False),
+        )
+        s.skip_ws()
+        if s.peek() == ":":
+            s.consume()
+            end = _parse_range_end_ref(s, original, default_sheet=sheet)
+            return RangeNode(start_ref=ref, end_ref=end)
+        return CellRefNode(ref)
+    return None
+
+
+def _split_a1_ident(ident: str) -> tuple[str, str] | None:
+    i = 0
+    while i < len(ident) and ident[i].isalpha():
+        i += 1
+    if i == 0 or i == len(ident):
+        return None
+    col, row = ident[:i], ident[i:]
+    if not row.isdigit() or not (1 <= len(col) <= 3):
+        return None
+    return col.upper(), row
+
+
+def _parse_a1_or_whole_col_or_range(s: _Scanner, original: str, sheet: str) -> AstNode:
+    saved = s.i
+    whole_col = _try_parse_whole_column(s, original, sheet)
+    if whole_col is not None:
+        return whole_col
+    s.i = saved
+    return _parse_cell_or_range(s, original, sheet)
+
+
+def _try_parse_whole_column(s: _Scanner, original: str, sheet: str) -> WholeColumnNode | None:
+    del original
+    s.skip_ws()
+    abs_col = False
+    if s.peek() == "$":
+        s.consume()
+        abs_col = True
+    col = s.take_while(lambda c: c.isalpha())
+    if not col:
+        return None
+    s.skip_ws()
+    if s.peek() != ":":
+        return None
+    s.consume()
+    s.skip_ws()
+    if s.peek() == "$":
+        s.consume()
+        abs_col = True
+    col2 = s.take_while(lambda c: c.isalpha())
+    if col2.upper() != col.upper():
+        return None
+    if s.peek() is not None and s.peek().isdigit():
+        return None
+    return WholeColumnNode(
+        sheet=sheet,
+        col=_col_axis(s, int(column_index_from_string(col.upper())), abs_col),
+    )
+
+
 def _parse_quoted_sheet_ref(s: _Scanner, original: str) -> AstNode:
     """Parse a quoted sheet reference like 'Sheet Name'!A1 or 'Sheet Name'!A1:B2."""
     if s.consume() != "'":
         raise FormulaParseError(original, "Expected single quote")
 
-    # Read until closing quote (Excel escapes quotes by doubling: '' -> ')
     sheet_chars: list[str] = []
     while True:
         ch = s.consume()
         if ch is None:
             raise FormulaParseError(original, "Unterminated quoted sheet name")
         if ch == "'":
-            # Check for escaped quote ('')
             if s.peek() == "'":
                 s.consume()
                 sheet_chars.append("'")
@@ -336,9 +797,8 @@ def _parse_quoted_sheet_ref(s: _Scanner, original: str) -> AstNode:
             break
         sheet_chars.append(ch)
 
-    sheet_name = "'" + "".join(sheet_chars) + "'"
+    sheet_name = "".join(sheet_chars)
 
-    # Expect !
     if s.peek() != "!":
         raise FormulaParseError(original, f"Expected '!' after quoted sheet name '{sheet_name}'")
     s.consume()
@@ -358,66 +818,83 @@ def _bare_sheet_name(sheet_qualifier: str) -> str:
 
 def _parse_ref_after_sheet_bang(s: _Scanner, original: str, *, sheet_qualifier: str) -> AstNode:
     """Parse a reference after ``sheet!`` (cell, whole column/row, or A1 range)."""
+    sheet = _bare_sheet_name(sheet_qualifier)
+    s.skip_ws()
+    saved = s.i
+    whole_row = _try_parse_whole_row_after_bang(s, sheet)
+    if whole_row is not None:
+        return whole_row
+    s.i = saved
+    whole_col = _try_parse_whole_column(s, original, sheet)
+    if whole_col is not None:
+        return whole_col
+    s.i = saved
+    return _parse_cell_or_range(s, original, sheet)
+
+
+def _try_parse_whole_row_after_bang(s: _Scanner, sheet: str) -> WholeRowNode | None:
+    s.skip_ws()
+    abs_row = False
+    if s.peek() == "$":
+        s.consume()
+        abs_row = True
+    if s.peek() is None or not s.peek().isdigit():
+        return None
+    row_str = s.take_while(lambda c: c.isdigit())
+    s.skip_ws()
+    if s.peek() != ":":
+        return None
+    s.consume()
     s.skip_ws()
     if s.peek() == "$":
         s.consume()
+        abs_row = True
+    row2 = s.take_while(lambda c: c.isdigit())
+    if row2 != row_str:
+        return None
+    return WholeRowNode(sheet=sheet, row=_row_axis(s, int(row_str), abs_row))
 
-    ch = s.peek()
-    if ch is not None and ch.isdigit():
-        row_start = s.i
-        row_str = s.take_while(lambda c: c.isdigit())
-        s.skip_ws()
-        if s.peek() == ":":
-            s.consume()
-            s.skip_ws()
-            if s.peek() == "$":
-                s.consume()
-            row2 = s.take_while(lambda c: c.isdigit())
-            if row2 == row_str:
-                return WholeRowNode(sheet=_bare_sheet_name(sheet_qualifier), row=int(row_str))
-        s.i = row_start
 
-    col_start = s.i
-    col = s.take_while(lambda c: c.isalpha())
-    if col:
-        s.skip_ws()
-        if s.peek() == ":":
-            s.consume()
-            s.skip_ws()
-            if s.peek() == "$":
-                s.consume()
-            col2 = s.take_while(lambda c: c.isalpha())
-            if col2.upper() == col.upper():
-                return WholeColumnNode(
-                    sheet=_bare_sheet_name(sheet_qualifier),
-                    column=col.upper(),
-                )
-        s.i = col_start
-
-    addr = _parse_cell_coord(s, original)
-    start = f"{sheet_qualifier}!{addr}"
+def _parse_cell_axes(s: _Scanner, original: str) -> tuple[bool, int, bool, int]:
     s.skip_ws()
-    if s.peek() == ":":
+    abs_col = False
+    if s.peek() == "$":
         s.consume()
-        end = _parse_range_end(s, original, default_sheet=sheet_qualifier)
-        return RangeNode(start=start, end=end)
-    return CellRefNode(start)
-
-
-def _parse_cell_coord(s: _Scanner, original: str) -> str:
-    s.skip_ws()
+        abs_col = True
     col = s.take_while(lambda c: c.isalpha())
+    abs_row = False
+    if s.peek() == "$":
+        s.consume()
+        abs_row = True
     row = s.take_while(lambda c: c.isdigit())
     if not col or not row:
         raise FormulaParseError(original, f"Invalid cell coordinate at {s.i}")
-    return f"{col.upper()}{row}"
+    return abs_col, int(column_index_from_string(col.upper())), abs_row, int(row)
 
 
-def _parse_range_end(s: _Scanner, original: str, default_sheet: str) -> str:
+def _cell_ref_from_parsed_axes(
+    s: _Scanner, sheet: str, abs_col: bool, col_index: int, abs_row: bool, row_index: int
+) -> CellRef:
+    return CellRef(
+        sheet=sheet,
+        col=_col_axis(s, col_index, abs_col),
+        row=_row_axis(s, row_index, abs_row),
+    )
+
+
+def _parse_cell_or_range(s: _Scanner, original: str, sheet: str) -> AstNode:
+    abs_col, col_index, abs_row, row_index = _parse_cell_axes(s, original)
+    start = _cell_ref_from_parsed_axes(s, sheet, abs_col, col_index, abs_row, row_index)
     s.skip_ws()
-    # End can be 'Quoted Sheet'!B2, Sheet!B2, or just B2.
+    if s.peek() == ":":
+        s.consume()
+        end = _parse_range_end_ref(s, original, default_sheet=sheet)
+        return RangeNode(start_ref=start, end_ref=end)
+    return CellRefNode(start)
 
-    # Check for quoted sheet name
+
+def _parse_range_end_ref(s: _Scanner, original: str, default_sheet: str) -> CellRef:
+    s.skip_ws()
     if s.peek() == "'":
         s.consume()
         sheet_chars: list[str] = []
@@ -432,27 +909,25 @@ def _parse_range_end(s: _Scanner, original: str, default_sheet: str) -> str:
                     continue
                 break
             sheet_chars.append(ch)
-        sheet_name = "'" + "".join(sheet_chars) + "'"
+        sheet_name = "".join(sheet_chars)
         if s.peek() != "!":
             raise FormulaParseError(
                 original,
                 f"Expected '!' after quoted sheet name '{sheet_name}' in range end",
             )
         s.consume()
-        addr = _parse_cell_coord(s, original)
-        return f"{sheet_name}!{addr}"
+        abs_col, col_index, abs_row, row_index = _parse_cell_axes(s, original)
+        return _cell_ref_from_parsed_axes(s, sheet_name, abs_col, col_index, abs_row, row_index)
 
-    # Check for unquoted sheet name
     start = s.i
     sheet = s.take_while(lambda c: c.isalnum() or c in ("_", ".", " "))
     if s.peek() == "!":
         s.consume()
-        addr = _parse_cell_coord(s, original)
-        return f"{sheet}!{addr}"
-    # No explicit sheet: interpret the consumed token as a column part and continue digits if needed.
+        abs_col, col_index, abs_row, row_index = _parse_cell_axes(s, original)
+        return _cell_ref_from_parsed_axes(s, sheet, abs_col, col_index, abs_row, row_index)
     s.i = start
-    addr = _parse_cell_coord(s, original)
-    return f"{default_sheet}!{addr}"
+    abs_col, col_index, abs_row, row_index = _parse_cell_axes(s, original)
+    return _cell_ref_from_parsed_axes(s, default_sheet, abs_col, col_index, abs_row, row_index)
 
 
 def _parse_args(s: _Scanner, original: str) -> list[AstNode]:
@@ -468,7 +943,6 @@ def _parse_args(s: _Scanner, original: str) -> list[AstNode]:
         if ch == ",":
             args.append(EmptyArgNode())
         elif ch == ")":
-            # This handles the case like FUNC(arg,) where the last argument is omitted
             args.append(EmptyArgNode())
             s.consume()
             return args
@@ -480,7 +954,6 @@ def _parse_args(s: _Scanner, original: str) -> list[AstNode]:
         if ch == ",":
             s.consume()
             s.skip_ws()
-            # If the next character is ')', it means the last argument was omitted (e.g., FUNC(arg,))
             if s.peek() == ")":
                 args.append(EmptyArgNode())
                 s.consume()
@@ -501,7 +974,6 @@ def _parse_string(s: _Scanner, original: str) -> StringNode:
         if ch is None:
             raise FormulaParseError(original, "Unterminated string")
         if ch == '"':
-            # Excel escapes quotes by doubling.
             if s.peek() == '"':
                 s.consume()
                 out.append('"')

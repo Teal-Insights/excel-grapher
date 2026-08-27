@@ -21,12 +21,13 @@ from excel_grapher.core.address_keys import (
 from excel_grapher.core.address_keys import (
     normalize_key as normalize_address,
 )
+from excel_grapher.core.formula_ast import bind_axes, resolve_cell_ref
 from excel_grapher.core.formula_shape import (
     AddressHoleNode,
     AddressLeaf,
     SkeletonNode,
-    encode_address_leaf,
     iter_address_holes,
+    resolve_address_leaf,
     specialize_formula_shape,
 )
 from excel_grapher.core.operator_thresholds import MIN_OPERATOR_FASTPATH_CELLS
@@ -479,8 +480,9 @@ class CodeGenerator:
             return None
         formula_ast = node.formula_ast
         if formula_ast is not None:
-            self._ast_cache[normalized] = formula_ast
-            return formula_ast
+            bound = bind_axes(formula_ast, normalized)
+            self._ast_cache[normalized] = bound
+            return bound
         if not isinstance(nf, str) or not nf.strip():
             raise MissingNormalizedFormulaError(normalized)
         table = getattr(self.graph, "formula_shapes", None)
@@ -488,7 +490,7 @@ class CodeGenerator:
             found = table.lookup(normalized)
             if found is not None:
                 _shape_key, skeleton, params = found
-                ast = specialize_formula_shape(skeleton, params)
+                ast = bind_axes(specialize_formula_shape(skeleton, params), normalized)
                 self._ast_cache[normalized] = ast
                 return ast
         ast = parse(nf.strip())
@@ -1994,9 +1996,11 @@ class CodeGenerator:
         c1, c2 = (start_col, end_col) if start_col <= end_col else (end_col, start_col)
         return (start_sheet, r1, c1, r2, c2)
 
-    def _range_node_is_single_cell(self, node: RangeNode) -> bool:
+    def _range_node_is_single_cell(self, node: RangeNode, *, anchor: str | None = None) -> bool:
         """True when `node` spans exactly one cell (e.g. `A1:A1`)."""
-        _, r1, c1, r2, c2 = self._range_coords(node.start, node.end)
+        start = resolve_cell_ref(node.start_ref, anchor)
+        end = resolve_cell_ref(node.end_ref, anchor)
+        _, r1, c1, r2, c2 = self._range_coords(start, end)
         return r1 == r2 and c1 == c2
 
     def _range_cell_count(self, start: str, end: str) -> int:
@@ -2264,10 +2268,13 @@ class CodeGenerator:
 
         return walk(skeleton)
 
-    def _shape_params_include_scalar_range(self, params: tuple[AddressLeaf, ...]) -> bool:
+    def _shape_params_include_scalar_range(
+        self, params: tuple[AddressLeaf, ...], *, host: str
+    ) -> bool:
         """Return whether any RANGE param is a 1x1 range (inlined as a scalar)."""
         return any(
-            isinstance(leaf, RangeNode) and self._range_node_is_single_cell(leaf) for leaf in params
+            isinstance(leaf, RangeNode) and self._range_node_is_single_cell(leaf, anchor=host)
+            for leaf in params
         )
 
     def _plan_shape_helpers(self, formula_addresses: Sequence[str]) -> None:
@@ -2290,7 +2297,7 @@ class CodeGenerator:
             shape_key, skeleton, params = found
             if not self._shape_helper_eligible(skeleton):
                 continue
-            if self._shape_params_include_scalar_range(params):
+            if self._shape_params_include_scalar_range(params, host=address):
                 scalar_range_shapes.add(shape_key)
             counts[shape_key] = counts.get(shape_key, 0) + 1
         profitable = sorted(
@@ -2324,9 +2331,9 @@ class CodeGenerator:
         return lines
 
     def _emit_shape_helper_call(
-        self, helper_name: str, params: tuple[AddressLeaf, ...]
+        self, helper_name: str, params: tuple[AddressLeaf, ...], host_address: str
     ) -> list[str]:
-        encoded = ", ".join(repr(encode_address_leaf(leaf)) for leaf in params)
+        encoded = ", ".join(repr(resolve_address_leaf(leaf, host_address)) for leaf in params)
         if encoded:
             return [f"    return {helper_name}(ctx, {encoded})"]
         return [f"    return {helper_name}(ctx)"]
@@ -2363,7 +2370,7 @@ class CodeGenerator:
                 shape_key, _skeleton, params = found
                 helper_name = self._shape_helper_names.get(shape_key)
                 if helper_name is not None:
-                    lines.extend(self._emit_shape_helper_call(helper_name, params))
+                    lines.extend(self._emit_shape_helper_call(helper_name, params, normalized))
                     return "\n".join(lines)
         # Reset temp var counter for each cell to keep variable names short
         self._temp_var_counter = 0

@@ -45,6 +45,11 @@ def test_codegen_emits_shared_shape_helper_for_autofill(tmp_path: Path) -> None:
     assert "def _shape_0(" in code
     assert "return _shape_0(ctx," in code
     assert code.count("def _shape_") == 1
+    # Interned params stay relative; call sites pass host-resolved A1.
+    assert "C[-1]" not in code
+    assert "R[" not in code
+    assert "return _shape_0(ctx, 'Sheet1!A1')" in code
+    assert "return _shape_0(ctx, 'Sheet1!A5')" in code
     # Cell wrappers stay thin; the arithmetic lives in the helper.
     assert "xl_mul" in code or "*" in code
 
