@@ -166,6 +166,16 @@ def parse(formula: str) -> AstNode:
     return node
 
 
+def parse_optional(formula: str | None) -> AstNode | None:
+    """Parse `formula`, or return None when it is missing or blank."""
+    if formula is None:
+        return None
+    stripped = formula.strip()
+    if not stripped:
+        return None
+    return parse(stripped)
+
+
 def _parse_expression(s: _Scanner, original: str, min_prec: int) -> AstNode:
     """Pratt parser / precedence climbing for expressions."""
     left = _parse_unary(s, original)

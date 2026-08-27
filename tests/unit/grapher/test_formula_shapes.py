@@ -38,8 +38,8 @@ def test_warm_formula_shapes_interns_shared_skeleton() -> None:
     table = warm_formula_shapes(graph)
     assert len(table.shapes) == 1
     assert len(table.bindings) == 2
-    left = table.lookup("=S!A1+1")
-    right = table.lookup("=S!A2+1")
+    left = table.lookup("S!B1")
+    right = table.lookup("S!B2")
     assert left is not None and right is not None
     assert left[0] == right[0]
     assert left[1] is right[1]
@@ -60,6 +60,9 @@ def test_create_dependency_graph_warm_formula_shapes_opt_in(tmp_path: Path) -> N
     default = create_dependency_graph(excel_path, ["Sheet1!B1", "Sheet1!B2"], load_values=False)
     assert default.formula_shapes is None
     assert default.preparsed_formulas is None
+    b1 = default.get_node("Sheet1!B1")
+    assert b1 is not None
+    assert b1.formula_ast is not None
 
     shaped = create_dependency_graph(
         excel_path,

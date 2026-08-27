@@ -23,7 +23,6 @@ from excel_grapher.grapher.cache import (
     save_graph_cache,
     try_load_graph_cache,
 )
-from excel_grapher.grapher.preparsed_formulas import warm_preparsed_formulas
 
 
 def _make_simple_workbook(path: Path) -> None:
@@ -72,8 +71,9 @@ def test_cache_load_rewarm_avoids_evaluator_parse_on_first_pass(tmp_path: Path) 
     loaded = try_load_graph_cache(cache_path, expected_meta=meta)
     assert loaded is not None
     assert loaded.preparsed_formulas is None
-
-    loaded.preparsed_formulas = warm_preparsed_formulas(loaded)
+    loaded_node = loaded.get_node("Sheet1!A3")
+    assert loaded_node is not None
+    assert loaded_node.formula_ast is not None
 
     parse_calls = 0
     original_parse = evaluator_module.parse

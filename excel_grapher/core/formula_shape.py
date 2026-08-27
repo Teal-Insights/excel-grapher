@@ -10,7 +10,7 @@ See GitHub #517.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from typing import Literal, Protocol, TypeAlias, cast
 
@@ -264,12 +264,12 @@ def encode_address_leaf(leaf: AddressLeaf) -> str:
 
 @dataclass(frozen=True, slots=True)
 class FormulaShapeTable:
-    """Interned skeletons plus per-formula parameter bindings.
+    """Interned skeletons plus per-node parameter bindings.
 
     `shapes` maps `shape_key` to one shared skeleton. `bindings` maps a
-    stripped `normalized_formula` to `(shape_key, params)`. Excel-facing node
-    storage stays as formula strings; this table is an overlay the evaluator
-    and codegen both read.
+    `NodeKey` to `(shape_key, params)`. Excel-facing node storage still keeps
+    `normalized_formula` as absolute A1 text; this table is an overlay the
+    evaluator and codegen both read.
     """
 
     shapes: dict[str, SkeletonNode]
@@ -279,12 +279,9 @@ class FormulaShapeTable:
         """Shallow-copy maps; skeletons and param tuples are shared."""
         return FormulaShapeTable(shapes=dict(self.shapes), bindings=dict(self.bindings))
 
-    def lookup(
-        self, normalized_formula: str
-    ) -> tuple[str, SkeletonNode, tuple[AddressLeaf, ...]] | None:
-        """Return `(shape_key, skeleton, params)` for `normalized_formula`."""
-        stripped = normalized_formula.strip()
-        binding = self.bindings.get(stripped)
+    def lookup(self, node_key: str) -> tuple[str, SkeletonNode, tuple[AddressLeaf, ...]] | None:
+        """Return `(shape_key, skeleton, params)` for `node_key`."""
+        binding = self.bindings.get(node_key)
         if binding is None:
             return None
         shape_key, params = binding
@@ -295,27 +292,32 @@ class FormulaShapeTable:
 
 
 def intern_formula_shapes(
-    formulas: Iterable[str],
-    *,
-    parsed: Mapping[str, AstNode] | None = None,
+    items: Iterable[tuple[str, str | AstNode]],
 ) -> FormulaShapeTable:
-    """Build a shape table from normalized formula strings.
+    """Build a shape table from `(node_key, formula_or_ast)` pairs.
 
-    Duplicate strings share one binding. Formulas that share a punched
-    `shape_key` share one skeleton. `parsed` is an optional map from stripped
-    formula text to an already-parsed AST (avoids a second parse after
-    `warm_preparsed_formulas`).
+    Each node gets its own binding even when formula text is shared.
+    Formulas that share a punched `shape_key` share one skeleton.
     """
     shapes: dict[str, SkeletonNode] = {}
     bindings: dict[str, tuple[str, tuple[AddressLeaf, ...]]] = {}
-    for formula in formulas:
-        stripped = formula.strip()
-        if not stripped or stripped in bindings:
+    for item in items:
+        if not isinstance(item, tuple) or len(item) != 2:
+            raise TypeError("intern_formula_shapes expects (node_key, formula_or_ast) pairs")
+        node_key, formula_or_ast = item
+        if node_key in bindings:
             continue
-        ast = parsed.get(stripped) if parsed is not None else None
-        shape = fingerprint_formula_shape(ast if ast is not None else stripped)
+        source: str | AstNode
+        if isinstance(formula_or_ast, str):
+            stripped = formula_or_ast.strip()
+            if not stripped:
+                continue
+            source = stripped
+        else:
+            source = formula_or_ast
+        shape = fingerprint_formula_shape(source)
         shapes.setdefault(shape.shape_key, shape.skeleton)
-        bindings[stripped] = (shape.shape_key, shape.params)
+        bindings[node_key] = (shape.shape_key, shape.params)
     return FormulaShapeTable(shapes=shapes, bindings=bindings)
 
 

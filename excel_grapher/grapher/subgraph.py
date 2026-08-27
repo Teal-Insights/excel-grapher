@@ -6,7 +6,7 @@ from collections.abc import Iterable, Sequence
 from excel_grapher.core.address_keys import normalize_key
 
 from .graph import DependencyGraph
-from .node import Node, NodeKey, copy_metadata
+from .node import NodeKey, copy_node
 
 
 def select_path_induced_subgraph(
@@ -156,24 +156,7 @@ def _induced_dependency_subgraph(
         node = graph._get_internal_node(key)
         if node is None:
             continue
-        sub.add_node(
-            Node(
-                sheet=node.sheet,
-                column=node.column,
-                row=node.row,
-                formula=node.formula,
-                normalized_formula=node.normalized_formula,
-                value=node.value,
-                is_leaf=node.is_leaf,
-                is_target=node.is_target,
-                metadata=copy_metadata(node.metadata),
-                min_col=node.min_col,
-                min_row=node.min_row,
-                max_col=node.max_col,
-                max_row=node.max_row,
-                address=node.address,
-            )
-        )
+        sub.add_node(copy_node(node))
 
     for from_key in graph.keys(order="workbook", source=keep_keys):
         for to_key in graph.get_dependencies(from_key):

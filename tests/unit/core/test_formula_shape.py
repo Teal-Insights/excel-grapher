@@ -140,23 +140,25 @@ def test_encode_address_leaf_cell_and_range() -> None:
 def test_intern_formula_shapes_collapses_autofill_family() -> None:
     table = intern_formula_shapes(
         [
-            "=Sheet1!B1+Sheet1!C1",
-            "=Sheet1!B2+Sheet1!C2",
-            "=Sheet1!B1+Sheet1!C1",
-            "=SUM(Sheet1!A1:A3)",
+            ("Sheet1!A1", "=Sheet1!B1+Sheet1!C1"),
+            ("Sheet1!A2", "=Sheet1!B2+Sheet1!C2"),
+            ("Sheet1!A3", "=Sheet1!B1+Sheet1!C1"),
+            ("Sheet1!A4", "=SUM(Sheet1!A1:A3)"),
         ]
     )
-    assert len(table.bindings) == 3
+    assert len(table.bindings) == 4
     assert len(table.shapes) == 2
-    plus_a = table.lookup("=Sheet1!B1+Sheet1!C1")
-    plus_b = table.lookup("=Sheet1!B2+Sheet1!C2")
-    assert plus_a is not None and plus_b is not None
-    assert plus_a[0] == plus_b[0]
+    plus_a = table.lookup("Sheet1!A1")
+    plus_b = table.lookup("Sheet1!A2")
+    plus_dup = table.lookup("Sheet1!A3")
+    assert plus_a is not None and plus_b is not None and plus_dup is not None
+    assert plus_a[0] == plus_b[0] == plus_dup[0]
     assert plus_a[1] is plus_b[1]
+    assert plus_a[2] == plus_dup[2]
     assert plus_a[2] != plus_b[2]
     copied = table.copy()
     assert copied.shapes is not table.shapes
-    assert copied.lookup("=SUM(Sheet1!A1:A3)") is not None
+    assert copied.lookup("Sheet1!A4") is not None
     assert table.lookup("=missing") is None
 
 

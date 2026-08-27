@@ -11,7 +11,8 @@ def warm_preparsed_formulas(graph: DependencyGraph) -> dict[str, AstNode]:
     """Parse each distinct `normalized_formula` in `graph`.
 
     Returns a mapping from stripped normalized formula strings to AST roots.
-    Duplicate formulas across cells share one entry.
+    Duplicate formulas across cells share one entry. When a node already has
+    `formula_ast`, that tree is reused instead of re-parsing.
 
     Re-call after loading a graph from JSON cache or mutating node formulas
     post-extraction so `DependencyGraph.preparsed_formulas` stays aligned.
@@ -30,5 +31,8 @@ def warm_preparsed_formulas(graph: DependencyGraph) -> dict[str, AstNode]:
         stripped = nf.strip()
         if not stripped or stripped in warmed:
             continue
-        warmed[stripped] = parse(stripped)
+        if node.formula_ast is not None:
+            warmed[stripped] = node.formula_ast
+        else:
+            warmed[stripped] = parse(stripped)
     return warmed

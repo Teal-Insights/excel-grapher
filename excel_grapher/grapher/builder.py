@@ -16,6 +16,8 @@ from fastpyxl.worksheet.worksheet import Worksheet
 
 from excel_grapher.core.address_keys import format_range_key, parse_address, sort_node_keys
 from excel_grapher.core.cell_types import CellType, leaves_missing_cell_type_constraints
+from excel_grapher.core.formula_ast import AstNode
+from excel_grapher.core.formula_ast import parse as parse_formula_ast
 
 from .blank_ranges import (
     address_in_blank_ranges,
@@ -470,6 +472,11 @@ def create_dependency_graph(
     still shows the pre-compression workbook text and must not be re-parsed as
     the node's current definition.
 
+    Extraction always parses each formula cell into `Node.formula_ast` (distinct
+    `normalized_formula` strings share one interned tree). `normalized_formula`
+    remains absolute A1 text. Unparseable formulas fail closed with
+    `FormulaParseError`.
+
     `blank_ranges` is an optional iterable of sheet-qualified A1 rectangles
     (e.g. `\"Sheet1!B2:D10\"`) treated as structurally empty: no nodes are
     created for those cells (edges into them are kept), and dynamic-ref leaf
@@ -479,19 +486,21 @@ def create_dependency_graph(
     <-> export** parity (consistent behavior between evaluation and generated code).
 
     When `warm_ast_cache` is True, each distinct `normalized_formula` in the
-    built graph is parsed once and stored on `DependencyGraph.preparsed_formulas`.
-    `FormulaEvaluator` seeds its AST cache from that mapping so first evaluation
-    does not re-parse unless formulas change after extraction. Seeding is
-    best-effort when distinct formulas exceed `FormulaEvaluator.ast_cache_maxsize`
-    (oldest warmed entries may be evicted). `preparsed_formulas` is not stored
-    in JSON graph caches; call `warm_preparsed_formulas` after cache load or
-    formula mutation.
+    built graph is stored on `DependencyGraph.preparsed_formulas` (reusing
+    `Node.formula_ast`). `FormulaEvaluator` also seeds its AST cache from
+    per-node ASTs, so first evaluation does not re-parse unless formulas change
+    after extraction. Seeding is best-effort when distinct formulas exceed
+    `FormulaEvaluator.ast_cache_maxsize` (oldest warmed entries may be
+    evicted). `preparsed_formulas` is not stored in JSON graph caches; call
+    `warm_preparsed_formulas` after cache load or formula mutation if you need
+    the string-keyed overlay.
 
     When `warm_formula_shapes` is True, the same parse pass interns punched AST
-    skeletons on `DependencyGraph.formula_shapes`. `FormulaEvaluator` compiles
-    each shape once and `CodeGenerator` emits a shared helper per shape when
-    profitable. The table is not JSON/pickle serialized; call
-    `warm_formula_shapes` after cache load. Formula rewrite invalidates it.
+    skeletons on `DependencyGraph.formula_shapes`, keyed by `NodeKey`.
+    `FormulaEvaluator` compiles each shape once and `CodeGenerator` emits a
+    shared helper per shape when profitable. The table is not JSON/pickle
+    serialized; call `warm_formula_shapes` after cache load. Formula rewrite
+    invalidates it.
 
     **Cost model**: constraint-based dynamic-ref expansion (`dynamic_refs` set,
     `use_cached_dynamic_refs=False`) runs `expand_leaf_env_to_argument_env`
@@ -1381,6 +1390,7 @@ def create_dependency_graph(
     _bfs_t0 = time.perf_counter()
     _bfs_count = 0
     _bfs_next_log = 5000
+    formula_ast_intern: dict[str, AstNode] = {}
 
     try:
         while q:
@@ -1440,12 +1450,18 @@ def create_dependency_graph(
                 if load_values:
                     value = _cached_value_from_formula_cell(cell)
                 is_leaf = False
+                stripped = normalized.strip()
+                formula_ast = formula_ast_intern.get(stripped)
+                if formula_ast is None:
+                    formula_ast = parse_formula_ast(stripped)
+                    formula_ast_intern[stripped] = formula_ast
             else:
                 formula_str = ""
                 formula = None
                 normalized = None
                 value = raw
                 is_leaf = True
+                formula_ast = None
 
             col, row = fastpyxl.utils.cell.coordinate_from_string(a1)
             col_idx = fastpyxl.utils.cell.column_index_from_string(col)
@@ -1458,6 +1474,7 @@ def create_dependency_graph(
                 value=value,
                 is_leaf=is_leaf,
                 is_target=key in target_root_keys,
+                formula_ast=formula_ast,
             )
             graph.add_node(node)
 

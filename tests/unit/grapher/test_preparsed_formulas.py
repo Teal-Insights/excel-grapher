@@ -14,7 +14,7 @@ from excel_grapher.core.formula_ast import AstNode, FormulaParseError, parse
 from excel_grapher.grapher.preparsed_formulas import warm_preparsed_formulas
 
 
-def test_warm_preparsed_formulas_deduplicates_by_normalized_formula(tmp_path: Path) -> None:
+def test_warm_preparsed_formulas_reuses_per_node_formula_ast(tmp_path: Path) -> None:
     excel_path = tmp_path / "dup_formulas.xlsx"
     wb = fastpyxl.Workbook()
     ws = wb.active
@@ -36,11 +36,42 @@ def test_warm_preparsed_formulas_deduplicates_by_normalized_formula(tmp_path: Pa
     with patch("excel_grapher.grapher.preparsed_formulas.parse", counting_parse):
         warmed = warm_preparsed_formulas(graph)
 
-    assert parse_calls == 1
+    assert parse_calls == 0
     assert len(warmed) == 1
     nf = graph.get_node("Sheet1!B1")
     assert nf is not None
     assert nf.normalized_formula in warmed
+    assert nf.formula_ast is warmed[nf.normalized_formula]
+
+
+def test_warm_preparsed_formulas_parses_when_formula_ast_missing() -> None:
+    sheet, coord = parse_address("S!B1")
+    col = "".join(c for c in coord if c.isalpha())
+    row = int("".join(c for c in coord if c.isdigit()))
+    graph = DependencyGraph()
+    graph.add_node(
+        Node(
+            sheet=sheet,
+            column=col,
+            row=row,
+            formula="=1+1",
+            normalized_formula="=1+1",
+            value=None,
+            is_leaf=False,
+        )
+    )
+    parse_calls = 0
+
+    def counting_parse(formula: str) -> AstNode:
+        nonlocal parse_calls
+        parse_calls += 1
+        return parse(formula)
+
+    with patch("excel_grapher.grapher.preparsed_formulas.parse", counting_parse):
+        warmed = warm_preparsed_formulas(graph)
+
+    assert parse_calls == 1
+    assert warmed["=1+1"] == parse("=1+1")
 
 
 def test_create_dependency_graph_warm_ast_cache_opt_in(tmp_path: Path) -> None:
@@ -55,6 +86,9 @@ def test_create_dependency_graph_warm_ast_cache_opt_in(tmp_path: Path) -> None:
 
     graph_default = create_dependency_graph(excel_path, ["Sheet1!A2"], load_values=False)
     assert graph_default.preparsed_formulas is None
+    default_node = graph_default.get_node("Sheet1!A2")
+    assert default_node is not None
+    assert default_node.formula_ast is not None
 
     graph_warm = create_dependency_graph(
         excel_path,

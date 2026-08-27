@@ -704,7 +704,7 @@ def test_projection_copy_preserves_graph_metadata_fields() -> None:
     graph.preparsed_formulas = cast(Any, {"Sheet1!A1": object()})
     from excel_grapher.core.formula_shape import intern_formula_shapes
 
-    graph.formula_shapes = intern_formula_shapes(["=Sheet1!A1+1"])
+    graph.formula_shapes = intern_formula_shapes([("Sheet1!B1", "=Sheet1!A1+1")])
 
     graph_structure_fields = {
         "_nodes",
