@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import fastpyxl
+import pytest
 
 import excel_grapher.evaluator.evaluator as evaluator_module
 from excel_grapher import FormulaEvaluator, create_dependency_graph
@@ -16,8 +17,10 @@ from excel_grapher.grapher.cache import (
     dependency_graph_from_json,
     dependency_graph_to_json,
 )
+from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
 from excel_grapher.grapher.formula_shapes import warm_formula_shapes
-from excel_grapher.grapher.node import copy_node, make_cell_node
+from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.grapher.node import Node, copy_node, make_cell_node
 
 
 def _workbook_with_shared_formula(tmp_path: Path) -> Path:
@@ -50,6 +53,9 @@ def test_extraction_leaves_formula_ast_none_when_unparseable(tmp_path: Path) -> 
     assert node is not None
     assert node.normalized_formula is not None
     assert node.formula_ast is None
+
+
+def test_extraction_stores_formula_ast(tmp_path: Path) -> None:
     path = _workbook_with_shared_formula(tmp_path)
     graph = create_dependency_graph(path, ["Sheet1!B1", "Sheet1!C1"], load_values=False)
 
@@ -91,8 +97,6 @@ def test_copy_node_preserves_formula_ast() -> None:
 
 
 def test_set_node_formula_parses_formula_ast() -> None:
-    from excel_grapher.grapher.graph import DependencyGraph
-
     graph = DependencyGraph()
     graph.add_node(make_cell_node("Sheet1", "A", 1, is_leaf=True, value=1))
     graph.add_node(make_cell_node("Sheet1", "B", 1, is_leaf=False))
@@ -107,6 +111,20 @@ def test_set_node_formula_parses_formula_ast() -> None:
     assert cleared.formula_ast is None
 
 
+def test_set_node_formula_leaves_formula_ast_unset_when_unparseable() -> None:
+    graph = DependencyGraph()
+    graph.add_node(make_cell_node("Sheet1", "B", 1, is_leaf=False))
+    graph.set_node_formula(
+        "Sheet1!B1",
+        "=SUM(IF(@A1:A3>0,@B1:B3,0))",
+        "=SUM(IF(@Sheet1!A1:A3>0,@Sheet1!B1:B3,0))",
+    )
+    view = graph.get_node("Sheet1!B1")
+    assert view is not None
+    assert view.normalized_formula == "=SUM(IF(@Sheet1!A1:A3>0,@Sheet1!B1:B3,0))"
+    assert view.formula_ast is None
+
+
 def test_json_cache_round_trips_formula_ast(tmp_path: Path) -> None:
     path = _workbook_with_shared_formula(tmp_path)
     graph = create_dependency_graph(path, ["Sheet1!C1"], load_values=True)
@@ -119,6 +137,41 @@ def test_json_cache_round_trips_formula_ast(tmp_path: Path) -> None:
     assert loaded.normalized_formula == original.normalized_formula
     assert loaded.formula_ast == original.formula_ast
     assert loaded.formula_ast == parse(loaded.normalized_formula or "")
+
+
+def test_json_cache_interns_formula_asts_by_normalized_formula(tmp_path: Path) -> None:
+    path = _workbook_with_shared_formula(tmp_path)
+    graph = create_dependency_graph(path, ["Sheet1!B1", "Sheet1!B2"], load_values=False)
+    b1 = graph.get_node("Sheet1!B1")
+    b2 = graph.get_node("Sheet1!B2")
+    assert b1 is not None and b2 is not None
+    shared = b1.normalized_formula
+    assert shared is not None and shared == b2.normalized_formula
+
+    payload = dependency_graph_to_json(graph)
+    pool = payload["formula_asts"]
+    assert isinstance(pool, dict)
+    assert shared.strip() in pool
+    assert sum(1 for key in pool if key == shared.strip()) == 1
+    for node_payload in payload["nodes"]:
+        assert "formula_ast" not in node_payload
+
+    restored = dependency_graph_from_json(payload)
+    loaded_b1 = restored._get_internal_node("Sheet1!B1")
+    loaded_b2 = restored._get_internal_node("Sheet1!B2")
+    assert loaded_b1 is not None and loaded_b2 is not None
+    assert loaded_b1.formula_ast is not None
+    assert loaded_b1.formula_ast is loaded_b2.formula_ast
+    assert loaded_b1.formula_ast == parse(shared)
+
+
+def test_json_cache_rejects_non_object_formula_asts() -> None:
+    graph = DependencyGraph()
+    graph.add_node(make_cell_node("Sheet1", "A", 1, is_leaf=True, value=1))
+    payload = dependency_graph_to_json(graph)
+    payload["formula_asts"] = []
+    with pytest.raises(TypeError, match="formula_asts"):
+        dependency_graph_from_json(payload)
 
 
 def test_evaluator_seeds_ast_cache_from_per_node_formula_ast(tmp_path: Path) -> None:
@@ -187,6 +240,86 @@ def test_intern_formula_shapes_binds_each_node_key() -> None:
     assert table.lookup("=missing") is None
 
 
+def _cell(key: str, formula: str | None, normalized: str | None, *, is_leaf: bool = False) -> Node:
+    sheet, rest = key.split("!", 1)
+    col = "".join(c for c in rest if c.isalpha())
+    row = int("".join(c for c in rest if c.isdigit()))
+    return Node(
+        sheet=sheet,
+        column=col,
+        row=row,
+        formula=formula,
+        normalized_formula=normalized,
+        value=None,
+        is_leaf=is_leaf,
+    )
+
+
+def _direct_edge(graph: DependencyGraph, dependent: str, precedent: str) -> None:
+    dep = graph.get_node(dependent)
+    assert dep is not None
+    normalized = dep.normalized_formula
+    assert normalized is not None
+    start = normalized.index(precedent)
+    graph.add_edge(
+        dependent,
+        precedent,
+        provenance=EdgeProvenance(
+            causes=DependencyCause.direct_ref,
+            direct_sites_normalized=((start, start + len(precedent)),),
+        ),
+    )
+
+
+def test_identity_transit_rewrites_keep_formula_ast_aligned() -> None:
+    graph = DependencyGraph()
+    graph.add_node(_cell("Sheet1!C1", None, None, is_leaf=True))
+    graph.add_node(_cell("Sheet1!B1", "=Sheet1!C1", "=Sheet1!C1"))
+    graph.add_node(_cell("Sheet1!A1", "=Sheet1!B1", "=Sheet1!B1"))
+    _direct_edge(graph, "Sheet1!B1", "Sheet1!C1")
+    _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
+
+    removed = graph.compress_identity_transits()
+    assert "Sheet1!B1" in removed
+    node = graph.get_node("Sheet1!A1")
+    assert node is not None
+    assert node.normalized_formula == "=Sheet1!C1"
+    assert node.formula_ast == parse("=Sheet1!C1")
+
+
+def test_optimal_inline_rewrites_keep_formula_ast_aligned() -> None:
+    graph = DependencyGraph()
+    graph.add_node(_cell("Sheet1!D1", None, None, is_leaf=True))
+    graph.add_node(_cell("Sheet1!B1", "=Sheet1!D1*2", "=Sheet1!D1*2"))
+    graph.add_node(_cell("Sheet1!A1", "=Sheet1!B1+1", "=Sheet1!B1+1"))
+    _direct_edge(graph, "Sheet1!B1", "Sheet1!D1")
+    _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
+
+    removed = graph.compress_optimal()
+    assert "Sheet1!B1" in removed
+    node = graph.get_node("Sheet1!A1")
+    assert node is not None
+    assert node.normalized_formula == "=(Sheet1!D1*2)+1"
+    assert node.formula_ast == parse("=(Sheet1!D1*2)+1")
+
+
+def test_identity_transit_leaves_formula_ast_unset_when_rewrite_unparseable() -> None:
+    unparseable = "=SUM(IF(@Sheet1!A1:A3>0,@Sheet1!C1:C3,0))+Sheet1!B1"
+    graph = DependencyGraph()
+    graph.add_node(_cell("Sheet1!C1", None, None, is_leaf=True))
+    graph.add_node(_cell("Sheet1!B1", "=Sheet1!C1", "=Sheet1!C1"))
+    graph.add_node(_cell("Sheet1!A1", unparseable, unparseable))
+    _direct_edge(graph, "Sheet1!B1", "Sheet1!C1")
+    _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
+
+    removed = graph.compress_identity_transits()
+    assert "Sheet1!B1" in removed
+    node = graph.get_node("Sheet1!A1")
+    assert node is not None
+    assert node.normalized_formula == "=SUM(IF(@Sheet1!A1:A3>0,@Sheet1!C1:C3,0))+Sheet1!C1"
+    assert node.formula_ast is None
+
+
 def test_warm_formula_shapes_uses_per_node_ast() -> None:
     graph_node = make_cell_node(
         "S",
@@ -196,7 +329,6 @@ def test_warm_formula_shapes_uses_per_node_ast() -> None:
         is_leaf=False,
         formula_ast=BinaryOpNode("+", CellRefNode("S!A1"), NumberNode(1.0)),
     )
-    from excel_grapher.grapher.graph import DependencyGraph
 
     graph = DependencyGraph()
     graph.add_node(make_cell_node("S", "A", 1, value=1, is_leaf=True))

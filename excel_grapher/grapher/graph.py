@@ -410,9 +410,13 @@ class DependencyGraph:
     ) -> None:
         """Set a node's `formula` and `normalized_formula` durably.
 
-        Edges are not recomputed; callers rewiring dependencies must update edges
-        explicitly. Intended for projection authors building export-only graph
-        views. Raises `KeyError` if the node is missing.
+        Parses `normalized_formula` into `formula_ast`. Unparseable formulas
+        leave `formula_ast` unset. Edges are not recomputed; callers rewiring
+        dependencies must update edges explicitly. Intended for projection
+        authors building export-only graph views.
+
+        Raises:
+            KeyError: If the node is missing.
         """
         nk = normalize_key(key)
         node = self._nodes.get(nk)

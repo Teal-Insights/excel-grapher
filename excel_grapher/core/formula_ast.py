@@ -167,13 +167,16 @@ def parse(formula: str) -> AstNode:
 
 
 def parse_optional(formula: str | None) -> AstNode | None:
-    """Parse `formula`, or return None when it is missing or blank."""
+    """Parse `formula`, or return None when it is missing, blank, or unparseable."""
     if formula is None:
         return None
     stripped = formula.strip()
     if not stripped:
         return None
-    return parse(stripped)
+    try:
+        return parse(stripped)
+    except FormulaParseError:
+        return None
 
 
 def _parse_expression(s: _Scanner, original: str, min_prec: int) -> AstNode:

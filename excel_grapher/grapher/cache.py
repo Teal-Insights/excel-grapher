@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Literal, TypedDict, cast
 
 from excel_grapher.core.address_keys import CellKey, parse_node_key
+from excel_grapher.core.formula_ast import AstNode
 from excel_grapher.core.formula_ast_json import ast_from_json, ast_to_json
 
 from .dependency_provenance import DependencyCause, EdgeProvenance
@@ -18,7 +19,7 @@ from .guard import And, CellRef, Compare, GuardExpr, Not, Or, intern_guard
 from .guard import Literal as GuardLiteral
 from .node import Node, NodeKey
 
-# 5: per-node `formula_ast` JSON round-trip. `normalized_formula` remains A1 text.
+# 5: interned `formula_asts` pool keyed by stripped `normalized_formula`.
 GRAPH_CACHE_SCHEMA_VERSION = 5
 
 
@@ -348,6 +349,35 @@ def _edge_provenance_from_json(v: object) -> EdgeProvenance:
     )
 
 
+def _formula_ast_intern_key(normalized_formula: str | None) -> str | None:
+    if not isinstance(normalized_formula, str):
+        return None
+    stripped = normalized_formula.strip()
+    return stripped or None
+
+
+def _formula_asts_to_json(graph: DependencyGraph) -> dict[str, Any]:
+    pool: dict[str, Any] = {}
+    for _key, node in graph.formula_nodes():
+        intern_key = _formula_ast_intern_key(node.normalized_formula)
+        if intern_key is None or intern_key in pool or node.formula_ast is None:
+            continue
+        pool[intern_key] = ast_to_json(node.formula_ast)
+    return pool
+
+
+def _formula_asts_from_json(payload: dict[str, Any]) -> dict[str, AstNode]:
+    raw = payload.get("formula_asts", {})
+    if not isinstance(raw, dict):
+        raise TypeError("formula_asts must be an object")
+    pool: dict[str, AstNode] = {}
+    for key, encoded in raw.items():
+        if not isinstance(key, str):
+            raise TypeError("formula_asts keys must be strings")
+        pool[key] = ast_from_json(encoded)
+    return pool
+
+
 def dependency_graph_to_json(graph: DependencyGraph) -> dict[str, Any]:
     nodes: list[dict[str, Any]] = []
     for key in graph:
@@ -367,7 +397,6 @@ def dependency_graph_to_json(graph: DependencyGraph) -> dict[str, Any]:
                 "max_row": node.max_row,
                 "formula": node.formula,
                 "normalized_formula": node.normalized_formula,
-                "formula_ast": None if node.formula_ast is None else ast_to_json(node.formula_ast),
                 "value": _value_to_json(node.value),
                 "is_leaf": node.is_leaf,
                 "is_target": node.is_target,
@@ -391,7 +420,12 @@ def dependency_graph_to_json(graph: DependencyGraph) -> dict[str, Any]:
                 }
             )
 
-    return {"nodes": nodes, "edges": edges, "leaf_classification": graph.leaf_classification}
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "leaf_classification": graph.leaf_classification,
+        "formula_asts": _formula_asts_to_json(graph),
+    }
 
 
 def dependency_graph_from_json(payload: dict[str, Any]) -> DependencyGraph:
@@ -409,6 +443,8 @@ def dependency_graph_from_json(payload: dict[str, Any]) -> DependencyGraph:
             raise TypeError("leaf_classification must be dict[str,str]")
         g.leaf_classification = cast(dict[str, str], leaf_cls)
 
+    formula_asts = _formula_asts_from_json(payload)
+
     for n in nodes_v:
         if not isinstance(n, dict):
             raise TypeError("node must be dict")
@@ -417,8 +453,8 @@ def dependency_graph_from_json(payload: dict[str, Any]) -> DependencyGraph:
             address = n.get("key")
         formula = cast(str | None, n["formula"])
         normalized_formula = cast(str | None, n["normalized_formula"])
-        formula_ast_v = n.get("formula_ast")
-        formula_ast = None if formula_ast_v is None else ast_from_json(formula_ast_v)
+        intern_key = _formula_ast_intern_key(normalized_formula)
+        formula_ast = formula_asts.get(intern_key) if intern_key is not None else None
         value = _value_from_json(n["value"])
         is_leaf = bool(n["is_leaf"])
         is_target = bool(n.get("is_target", False))

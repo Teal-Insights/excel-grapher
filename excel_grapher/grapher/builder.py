@@ -16,8 +16,7 @@ from fastpyxl.worksheet.worksheet import Worksheet
 
 from excel_grapher.core.address_keys import format_range_key, parse_address, sort_node_keys
 from excel_grapher.core.cell_types import CellType, leaves_missing_cell_type_constraints
-from excel_grapher.core.formula_ast import AstNode, FormulaParseError
-from excel_grapher.core.formula_ast import parse as parse_formula_ast
+from excel_grapher.core.formula_ast import AstNode, parse_optional
 
 from .blank_ranges import (
     address_in_blank_ranges,
@@ -1455,10 +1454,7 @@ def create_dependency_graph(
                 if stripped in formula_ast_intern:
                     formula_ast = formula_ast_intern[stripped]
                 else:
-                    try:
-                        formula_ast = parse_formula_ast(stripped)
-                    except FormulaParseError:
-                        formula_ast = None
+                    formula_ast = parse_optional(stripped)
                     formula_ast_intern[stripped] = formula_ast
             else:
                 formula_str = ""

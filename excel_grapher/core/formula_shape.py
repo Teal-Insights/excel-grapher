@@ -280,7 +280,10 @@ class FormulaShapeTable:
         return FormulaShapeTable(shapes=dict(self.shapes), bindings=dict(self.bindings))
 
     def lookup(self, node_key: str) -> tuple[str, SkeletonNode, tuple[AddressLeaf, ...]] | None:
-        """Return `(shape_key, skeleton, params)` for `node_key`."""
+        """Return `(shape_key, skeleton, params)` for `node_key`.
+
+        `node_key` is a graph node address, not formula text.
+        """
         binding = self.bindings.get(node_key)
         if binding is None:
             return None
@@ -296,6 +299,7 @@ def intern_formula_shapes(
 ) -> FormulaShapeTable:
     """Build a shape table from `(node_key, formula_or_ast)` pairs.
 
+    Bindings are keyed by `node_key` (a cell address), not by formula text.
     Each node gets its own binding even when formula text is shared.
     Formulas that share a punched `shape_key` share one skeleton.
     """
