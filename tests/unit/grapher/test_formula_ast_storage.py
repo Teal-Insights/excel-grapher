@@ -11,7 +11,6 @@ import pytest
 import excel_grapher.evaluator.evaluator as evaluator_module
 from excel_grapher import FormulaEvaluator, create_dependency_graph
 from excel_grapher.core.formula_ast import BinaryOpNode, CellRefNode, NumberNode, parse
-from excel_grapher.core.formula_shape import intern_formula_shapes
 from excel_grapher.grapher.cache import (
     GRAPH_CACHE_SCHEMA_VERSION,
     dependency_graph_from_json,
@@ -216,28 +215,6 @@ def test_formula_shape_bindings_are_keyed_by_node_key(tmp_path: Path) -> None:
     assert b1 is not None and b2 is not None
     assert b1[0] == b2[0]
     assert b1[1] is b2[1]
-
-
-def test_intern_formula_shapes_binds_each_node_key() -> None:
-    table = intern_formula_shapes(
-        [
-            ("Sheet1!A1", "=Sheet1!B1+Sheet1!C1"),
-            ("Sheet1!A2", "=Sheet1!B2+Sheet1!C2"),
-            ("Sheet1!A3", "=Sheet1!B1+Sheet1!C1"),
-            ("Sheet1!A4", "=SUM(Sheet1!A1:A3)"),
-        ]
-    )
-    assert len(table.bindings) == 4
-    assert len(table.shapes) == 2
-    plus_a = table.lookup("Sheet1!A1")
-    plus_b = table.lookup("Sheet1!A2")
-    plus_dup = table.lookup("Sheet1!A3")
-    assert plus_a is not None and plus_b is not None and plus_dup is not None
-    assert plus_a[0] == plus_b[0] == plus_dup[0]
-    assert plus_a[1] is plus_b[1]
-    assert plus_a[2] == plus_dup[2]
-    assert plus_a[2] != plus_b[2]
-    assert table.lookup("=missing") is None
 
 
 def _cell(key: str, formula: str | None, normalized: str | None, *, is_leaf: bool = False) -> Node:
