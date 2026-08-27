@@ -666,7 +666,8 @@ def _try_parse_local_whole_row(s: _Scanner, original: str) -> WholeRowNode | Non
     if s.peek() == "$":
         s.consume()
         abs_row = True
-    if s.peek() is None or not s.peek().isdigit():
+    row_ch = s.peek()
+    if row_ch is None or not row_ch.isdigit():
         return None
     row_str = s.take_while(lambda c: c.isdigit())
     s.skip_ws()
@@ -771,7 +772,8 @@ def _try_parse_whole_column(s: _Scanner, original: str, sheet: str) -> WholeColu
     col2 = s.take_while(lambda c: c.isalpha())
     if col2.upper() != col.upper():
         return None
-    if s.peek() is not None and s.peek().isdigit():
+    after_col = s.peek()
+    if after_col is not None and after_col.isdigit():
         return None
     return WholeColumnNode(
         sheet=sheet,
@@ -838,7 +840,8 @@ def _try_parse_whole_row_after_bang(s: _Scanner, sheet: str) -> WholeRowNode | N
     if s.peek() == "$":
         s.consume()
         abs_row = True
-    if s.peek() is None or not s.peek().isdigit():
+    row_ch = s.peek()
+    if row_ch is None or not row_ch.isdigit():
         return None
     row_str = s.take_while(lambda c: c.isdigit())
     s.skip_ws()

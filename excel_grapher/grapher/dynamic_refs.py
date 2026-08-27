@@ -54,6 +54,7 @@ from excel_grapher.core.formula_ast import (
     UnaryOpNode,
     WholeColumnNode,
     WholeRowNode,
+    resolve_whole_row_ref,
 )
 from excel_grapher.core.formula_ast import (
     parse as parse_ast,
@@ -3759,7 +3760,8 @@ def _collect_static_addresses_from_ast(
             return
         if isinstance(n, WholeRowNode):
             bounds = sheet_bounds or {}
-            for dep_sheet, dep_a1 in expand_whole_row_deps(n.sheet, n.row, bounds):
+            _sheet, row = resolve_whole_row_ref(n, None)
+            for dep_sheet, dep_a1 in expand_whole_row_deps(_sheet, row, bounds):
                 addrs.add(format_key(dep_sheet, dep_a1))
             return
         if isinstance(n, RangeNode):

@@ -100,6 +100,7 @@ def test_parse_preserving_axes_cross_sheet_keeps_sheet_and_axes() -> None:
 
 def test_parse_preserving_axes_quoted_sheet() -> None:
     ast = parse_preserving_axes("='My Sheet'!A1", anchor="'My Sheet'!B2")
+    assert isinstance(ast, CellRefNode)
     assert ast == CellRefNode(_rel(-1, -1, sheet="My Sheet"))
     assert resolve_cell_ref(ast.ref, "'My Sheet'!B2") == "'My Sheet'!A1"
 
@@ -119,6 +120,7 @@ def test_parse_preserving_axes_whole_column_relative_vs_absolute() -> None:
     rel = parse_preserving_axes("=A:A", anchor="Sheet1!B1")
     assert rel == WholeColumnNode(sheet="Sheet1", col=RelativeAxis(-1))
     abs_col = parse_preserving_axes("=$A:$A", anchor="Sheet1!B1")
+    assert isinstance(abs_col, WholeColumnNode)
     assert abs_col == WholeColumnNode(sheet="Sheet1", col=AbsoluteAxis(1))
     assert abs_col.column == "A"
 
