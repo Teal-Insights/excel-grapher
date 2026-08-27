@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, TypeAlias
 
@@ -14,6 +14,7 @@ from excel_grapher.core.address_keys import (
 )
 from excel_grapher.core.address_keys import format_cell_key as _format_cell_key
 from excel_grapher.core.address_keys import parse_node_key as _parse_node_key
+from excel_grapher.core.formula_ast import AstNode
 
 # Graph node identity; canonical sheet-qualified cell address string.
 NodeKey: TypeAlias = str
@@ -192,9 +193,11 @@ class Node:
     Canonical identity is `address` (`CellKey`). Legacy constructors that pass
     `sheet`/`column`/`row` still work and sync `address` in `__post_init__`.
 
-    `normalized_formula` identifies a formula cell: it is always stored, and it
-    is the only formula text that compression and projection rewrite. The raw
-    workbook string `formula` is opt-in at extraction
+    `normalized_formula` identifies a formula cell: it is always stored as
+    absolute A1 text, and it is the only formula text that compression and
+    projection rewrite. `formula_ast` is the parsed form of that string and is
+    the primary in-memory formula artifact after extraction. The raw workbook
+    string `formula` is opt-in at extraction
     (`create_dependency_graph(store_raw_formula=True)`) and audit-only -- on a
     compressed graph it still holds the pre-compression text, so never re-parse
     it as the node's current definition.
@@ -227,6 +230,7 @@ class Node:
     max_col: str | None = None
     max_row: int | None = None
     address: CellKey | None = None
+    formula_ast: AstNode | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not self.metadata:
@@ -335,6 +339,7 @@ class NodeView:
     max_col: str | None = None
     max_row: int | None = None
     address: CellKey | None = None
+    formula_ast: AstNode | None = field(default=None, repr=False)
 
     @property
     def key(self) -> NodeKey:
@@ -376,6 +381,7 @@ def node_to_view(node: Node) -> NodeView:
         max_col=node.max_col,
         max_row=node.max_row,
         address=node.address,
+        formula_ast=node.formula_ast,
     )
 
 
@@ -390,6 +396,7 @@ def make_cell_node(
     is_leaf: bool = True,
     is_target: bool = False,
     metadata: Mapping[str, Any] | None = None,
+    formula_ast: AstNode | None = None,
 ) -> Node:
     """Build a single-cell graph node."""
     return Node(
@@ -402,4 +409,29 @@ def make_cell_node(
         is_leaf=is_leaf,
         is_target=is_target,
         metadata=copy_metadata(metadata),
+        formula_ast=formula_ast,
+    )
+
+
+def copy_node(node: Node) -> Node:
+    """Return a field-wise copy of `node`.
+
+    Metadata is copied; `formula_ast` is shared because AST nodes are frozen.
+    """
+    return Node(
+        sheet=node.sheet,
+        column=node.column,
+        row=node.row,
+        formula=node.formula,
+        normalized_formula=node.normalized_formula,
+        value=node.value,
+        is_leaf=node.is_leaf,
+        is_target=node.is_target,
+        metadata=copy_metadata(node.metadata),
+        min_col=node.min_col,
+        min_row=node.min_row,
+        max_col=node.max_col,
+        max_row=node.max_row,
+        address=node.address,
+        formula_ast=node.formula_ast,
     )

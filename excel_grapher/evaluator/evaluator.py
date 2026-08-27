@@ -132,9 +132,7 @@ class FormulaEvaluator:
     def __post_init__(self) -> None:
         self._cache: dict[str, FormulaValue] = {}
         self._ast_cache = AstCache(maxsize=self.ast_cache_maxsize)
-        preparsed = self.graph.preparsed_formulas
-        if preparsed:
-            self._ast_cache.seed(preparsed)
+        self._seed_ast_cache_from_graph()
         self._shape_fns: dict[str, ShapeEvalFn] = {}
         table = getattr(self.graph, "formula_shapes", None)
         if table is not None:
@@ -169,6 +167,23 @@ class FormulaEvaluator:
     def ast_cache_info(self) -> AstCacheInfo:
         """Return hit/miss statistics for the AST parse cache."""
         return self._ast_cache.cache_info()
+
+    def _seed_ast_cache_from_graph(self) -> None:
+        """Seed the string-keyed AST LRU from per-node trees and overlays."""
+        entries: dict[str, AstNode] = {}
+        for _key, node in self.graph.formula_nodes():
+            ast = node.formula_ast
+            nf = node.normalized_formula
+            if ast is None or not isinstance(nf, str):
+                continue
+            stripped = nf.strip()
+            if stripped and stripped not in entries:
+                entries[stripped] = ast
+        if entries:
+            self._ast_cache.seed(entries)
+        preparsed = getattr(self.graph, "preparsed_formulas", None)
+        if preparsed:
+            self._ast_cache.seed(preparsed)
 
     def _parse_cached(self, normalized_formula: str) -> AstNode:
         return self._ast_cache.get(normalized_formula, parse_fn=parse)
@@ -371,7 +386,7 @@ class FormulaEvaluator:
 
         self._call_stack.append(norm)
         try:
-            result = self._evaluate_formula(formula)
+            result = self._evaluate_formula(formula, node_key=norm, formula_ast=node.formula_ast)
             # Auto-resolve 1x1 ExcelRange to single value
             result = self._auto_resolve_single_cell(result)
             # Excel treats formula results of None (empty cell reference) as 0
@@ -384,16 +399,24 @@ class FormulaEvaluator:
         finally:
             self._call_stack.pop()
 
-    def _evaluate_formula(self, formula: str) -> FormulaValue:
+    def _evaluate_formula(
+        self,
+        formula: str,
+        *,
+        node_key: str,
+        formula_ast: AstNode | None = None,
+    ) -> FormulaValue:
         """Evaluate a normalized formula, preferring a compiled shape when interned."""
         table = getattr(self.graph, "formula_shapes", None)
         if table is not None:
-            found = table.lookup(formula)
+            found = table.lookup(node_key)
             if found is not None:
                 shape_key, _skeleton, params = found
                 compiled = self._shape_fns.get(shape_key)
                 if compiled is not None:
                     return compiled(params)
+        if formula_ast is not None:
+            return self._evaluate_ast(formula_ast)
         ast = self._parse_cached(formula)
         return self._evaluate_ast(ast)
 

@@ -476,18 +476,21 @@ class CodeGenerator:
             if node.formula is not None:
                 raise MissingNormalizedFormulaError(normalized)
             return None
+        formula_ast = getattr(node, "formula_ast", None)
+        if formula_ast is not None:
+            self._ast_cache[normalized] = formula_ast
+            return formula_ast
         if not isinstance(nf, str) or not nf.strip():
             raise MissingNormalizedFormulaError(normalized)
-        stripped = nf.strip()
         table = getattr(self.graph, "formula_shapes", None)
         if table is not None:
-            found = table.lookup(stripped)
+            found = table.lookup(normalized)
             if found is not None:
                 _shape_key, skeleton, params = found
                 ast = specialize_formula_shape(skeleton, params)
                 self._ast_cache[normalized] = ast
                 return ast
-        ast = parse(stripped)
+        ast = parse(nf.strip())
         self._ast_cache[normalized] = ast
         return ast
 
@@ -2280,7 +2283,7 @@ class CodeGenerator:
             node = self.graph.get_node(address)
             if node is None or not isinstance(node.normalized_formula, str):
                 continue
-            found = table.lookup(node.normalized_formula)
+            found = table.lookup(address)
             if found is None:
                 continue
             shape_key, skeleton, params = found
@@ -2354,7 +2357,7 @@ class CodeGenerator:
         lines.append(f"    '''{doc}'''")
         table = getattr(self.graph, "formula_shapes", None)
         if table is not None and self._shape_helper_names:
-            found = table.lookup(node.normalized_formula)
+            found = table.lookup(normalized)
             if found is not None:
                 shape_key, _skeleton, params = found
                 helper_name = self._shape_helper_names.get(shape_key)

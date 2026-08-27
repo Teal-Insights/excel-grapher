@@ -12,7 +12,7 @@ guide-section: "Core workflow"
 - **Extensible metadata**: each `Node` exposes `metadata` as a read-only `Mapping[str, Any]`. Nodes without metadata share one immutable empty mapping instead of allocating a dict, so hooks write through `node.set_metadata(...)` / `node.update_metadata(...)` (or `graph.set_node_metadata(key, ...)`) rather than `node.metadata[key] = value`.
 - **Range expansion**: ranges like `A1:A10` are expanded to individual cell dependencies (bounded by `max_range_cells`).
 - **Whole-column/row shorthand**: Excel forms like `Data!A:A` and `Data!5:5` parse as syntactic shorthands and resolve to each sheet's **used range** (workbook dimensions), not Excel's full grid. These shorthands expand to every row/column in that extent even when `max_range_cells` would otherwise keep only rectangular corner endpoints.
-- **Normalized formulas**: each formula node has a `normalized_formula` field with sheet-qualified refs, resolved named ranges, and stripped `$` markers — ready for transpilation. It is what identifies a formula cell, the only formula text evaluation and export read, and the only text compression rewrites.
+- **Normalized formulas**: each formula node has a `normalized_formula` field with sheet-qualified refs, resolved named ranges, and stripped `$` markers — ready for transpilation. It is what identifies a formula cell, the only formula text evaluation and export currently read, and the only text compression rewrites. Extraction also stores `formula_ast`, the parsed tree of that string (the primary in-memory formula artifact).
 - **Raw formulas are opt-in**: `Node.formula` (the workbook string, e.g. `=A1+$B$2`) is stored only with `create_dependency_graph(..., store_raw_formula=True)`. It is an audit/display field — see [Raw formula storage](#raw-formula-storage).
 
 ### Quick start: building a graph
@@ -27,7 +27,7 @@ wb_path = Path("model.xlsx")
 targets = ["Sheet1!A10"]
 
 g = create_dependency_graph(wb_path, targets, load_values=False)
-print(len(g))          # number of visited nodes
+print(len(g))  # number of visited nodes
 print(to_graphviz(g))  # GraphViz DOT
 ```
 
@@ -38,7 +38,7 @@ Extraction always stores `normalized_formula`. The raw workbook string
 needs it — dropping it is a straight memory saving on large workbooks.
 
 ```python
-graph = create_dependency_graph(wb_path, targets)          # node.formula is None
+graph = create_dependency_graph(wb_path, targets)  # node.formula is None
 graph = create_dependency_graph(wb_path, targets, store_raw_formula=True)
 ```
 
@@ -201,10 +201,10 @@ graph: DependencyGraph = create_dependency_graph(
 
 ## Access cells by normalized address (O(1) lookup)
 node = graph.get_node("Sheet1!A10")
-print(node.formula)             # Original formula (only with store_raw_formula=True)
+print(node.formula)  # Original formula (only with store_raw_formula=True)
 print(node.normalized_formula)  # Sheet-qualified for transpilation
-print(node.value)               # Cached value from Excel
-print(node.is_target)           # True if this node came from original targets
+print(node.value)  # Cached value from Excel
+print(node.is_target)  # True if this node came from original targets
 
 ## Iterate over formula cells
 for key, node in graph.formula_nodes():
@@ -253,8 +253,7 @@ def discover_formula_cells_in_rows(
     wb_path: Path,
     sheet_name: str,
     rows: list[int],
-) -> list[str]:
-    ...
+) -> list[str]: ...
 ```
 
 Returns sheet-qualified cell addresses (e.g., `"'Sheet Name'!A1"`) for formula cells.

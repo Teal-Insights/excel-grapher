@@ -14,7 +14,7 @@ from excel_grapher.core.address_keys import (
     normalize_key,
     sort_node_keys,
 )
-from excel_grapher.core.formula_ast import AstNode
+from excel_grapher.core.formula_ast import AstNode, parse_optional
 from excel_grapher.core.formula_shape import FormulaShapeTable
 
 from .dependency_provenance import DependencyCause, EdgeProvenance, merge_edge_provenance
@@ -30,7 +30,7 @@ from .guard import (
     intern_guard,
     or_guard,
 )
-from .node import Node, NodeKey, NodeView, copy_metadata, node_to_view
+from .node import Node, NodeKey, NodeView, copy_node, node_to_view
 
 NodeHook = Callable[[NodeKey, Node], None]
 
@@ -178,25 +178,7 @@ class DependencyGraph:
     def _copy_for_projection(self) -> DependencyGraph:
         """Return an isolated mutable graph clone for projection rewrites."""
         cloned = DependencyGraph()
-        cloned._nodes = {
-            key: Node(
-                sheet=node.sheet,
-                column=node.column,
-                row=node.row,
-                formula=node.formula,
-                normalized_formula=node.normalized_formula,
-                value=node.value,
-                is_leaf=node.is_leaf,
-                is_target=node.is_target,
-                metadata=copy_metadata(node.metadata),
-                min_col=node.min_col,
-                min_row=node.min_row,
-                max_col=node.max_col,
-                max_row=node.max_row,
-                address=node.address,
-            )
-            for key, node in self._nodes.items()
-        }
+        cloned._nodes = {key: copy_node(node) for key, node in self._nodes.items()}
         cloned._edges = {key: set(deps) for key, deps in self._edges.items()}
         cloned._reverse_edges = {
             key: set(dependents) for key, dependents in self._reverse_edges.items()
@@ -438,6 +420,7 @@ class DependencyGraph:
             raise KeyError(f"Cell {key} not found in graph")
         node.formula = formula
         node.normalized_formula = normalized_formula
+        node.formula_ast = parse_optional(normalized_formula)
         self._invalidate_formula_shapes()
 
     def remove_node(self, key: NodeKey) -> None:
@@ -1000,6 +983,7 @@ class DependencyGraph:
 
             d_node.normalized_formula = new_norm
             if before_normalized != new_norm:
+                d_node.formula_ast = parse_optional(new_norm)
                 self._invalidate_formula_shapes()
 
             self._remove_edge(d_key, t_key)
@@ -1098,6 +1082,7 @@ class DependencyGraph:
 
         d_node.normalized_formula = new_norm
         if before_normalized != new_norm:
+            d_node.formula_ast = parse_optional(new_norm)
             self._invalidate_formula_shapes()
 
         for dep in list(self._edges.get(d_key, set())):
