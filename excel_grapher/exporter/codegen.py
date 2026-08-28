@@ -1220,6 +1220,11 @@ class CodeGenerator:
         return sorted(names)
 
     @staticmethod
+    def _internals_needs_datetime_import(cell_code_lines: list[str]) -> bool:
+        """Return True when formula bodies emit `datetime.datetime(...)` literals."""
+        return "datetime.datetime" in "\n".join(cell_code_lines)
+
+    @staticmethod
     def _format_from_runtime_import(names: list[str]) -> str:
         if not names:
             return ""
@@ -2901,6 +2906,8 @@ class CodeGenerator:
         runtime_import_block = self._format_from_runtime_import(internals_import_names)
         internals_lines: list[str] = ["from __future__ import annotations", ""]
         used_readers = sorted(self._used_readers)
+        if self._internals_needs_datetime_import(cell_code_lines + alias_lines):
+            internals_lines.extend(["import datetime", ""])
         if used_readers:
             internals_lines.append(self._format_from_module_import("_readers", used_readers))
         if runtime_import_block:
