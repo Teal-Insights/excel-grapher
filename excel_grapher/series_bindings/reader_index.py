@@ -16,6 +16,7 @@ from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings.normalize import has_constant_direction, has_input_direction
 from excel_grapher.series_bindings.ranges import effective_reader_range_address
 from excel_grapher.series_bindings.resolve import resolve_series_bindings
+from excel_grapher.series_bindings.scalar_literals import py_scalar_literal
 from excel_grapher.series_bindings.setter_codegen import (
     _reader_function_name,
     _should_emit_reader,
@@ -102,7 +103,7 @@ def format_reader_call_form(
     if address is not None:
         return f"{reader}(ctx, address={address!r})"
     assert kwargs is not None
-    parts = ", ".join(f"{name}={value!r}" for name, value in kwargs.items())
+    parts = ", ".join(f"{name}={py_scalar_literal(value)}" for name, value in kwargs.items())
     return f"{reader}(ctx, {parts})"
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +88,16 @@ def test_format_reader_call_form_keyed() -> None:
             kwargs={"time_period": 3},
         )
         == "read_borvelia_primary_balance(ctx, time_period=3)"
+    )
+
+
+def test_format_reader_call_form_datetime_kwarg() -> None:
+    assert (
+        format_reader_call_form(
+            "read_puka_receptions",
+            kwargs={"time_period": datetime(2026, 9, 7)},
+        )
+        == "read_puka_receptions(ctx, time_period=datetime.datetime(2026, 9, 7, 0, 0))"
     )
 
 
