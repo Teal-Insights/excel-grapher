@@ -453,6 +453,9 @@ class _FormulaNodeView(Protocol):
     @property
     def normalized_formula(self) -> str | None: ...
 
+    @property
+    def formula_ast(self) -> AstNode | None: ...
+
 
 class _FormulaGraphView(Protocol):
     """Minimal graph surface needed by `summarize_formula_shapes`.
@@ -504,15 +507,45 @@ def summarize_normalized_formulas(
 
 
 def summarize_formula_shapes(graph: _FormulaGraphView) -> FormulaShapeSummary:
-    """Count distinct normalized formulas vs punched AST shapes in `graph`.
+    """Count distinct formula identities vs punched AST shapes in `graph`.
 
-    Walks `graph.formula_nodes()`, fingerprints each `normalized_formula`, and
-    reports whether shapes collapse the string-keyed set (#517 go/no-go metric).
+    Walks `graph.formula_nodes()`, fingerprints each `formula_ast` (falling
+    back to `normalized_formula`), and reports whether shapes collapse the
+    distinct A1 formula-string set (#517 go/no-go metric).
     """
-    formulas: list[str] = []
+    from excel_grapher.core.formula_ast_json import ast_identity_key
+
+    shape_counter: Counter[str] = Counter()
+    unparseable = 0
+    string_idents: set[str] = set()
+    parseable = 0
+
     for _, node in graph.formula_nodes():
         nf = node.normalized_formula
+        source: AstNode | str | None = node.formula_ast
+        if source is None:
+            if isinstance(nf, str) and nf.strip():
+                source = nf.strip()
+            else:
+                continue
+        try:
+            shape = fingerprint_formula_shape(source)
+        except FormulaParseError:
+            unparseable += 1
+            continue
+        parseable += 1
         if isinstance(nf, str) and nf.strip():
-            formulas.append(nf.strip())
-    summary, _ = summarize_normalized_formulas(formulas)
-    return summary
+            string_idents.add(nf.strip())
+        elif not isinstance(source, str):
+            string_idents.add(ast_identity_key(source))
+        else:
+            string_idents.add(source)
+        shape_counter[shape.shape_key] += 1
+
+    return FormulaShapeSummary(
+        formula_nodes=parseable,
+        distinct_normalized_formulas=len(string_idents),
+        distinct_shapes=len(shape_counter),
+        unparseable=unparseable,
+        shape_counts=tuple(shape_counter.most_common()),
+    )

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import logging
 import math
 import re
@@ -59,6 +58,7 @@ from excel_grapher.core.formula_ast import (
 from excel_grapher.core.formula_ast import (
     parse as parse_ast,
 )
+from excel_grapher.core.formula_ast_json import formula_identity_digest
 from excel_grapher.core.range_shorthand import expand_whole_column_deps, expand_whole_row_deps
 from excel_grapher.core.types import ExcelRange, XlError
 
@@ -562,14 +562,17 @@ def expand_leaf_env_to_argument_env(
         for ancestor in _analysis_stack:
             _consumed_leaves.setdefault(ancestor, set()).add(leaf_addr)
 
-    def _try_persistent_lookup(addr: str, formula: str) -> tuple[CellType, list[str]] | None:
+    def _try_persistent_lookup(
+        addr: str, formula: str, formula_ast: object | None
+    ) -> tuple[CellType, list[str]] | None:
         """Try to load a cached type from the persistent SQLite cache.
 
         Returns `(cell_type, consumed_leaf_keys)` on hit, or `None`.
         """
         if _tac is None or workbook_sha256 is None:
             return None
-        norm_formula_sha = hashlib.sha256(formula.encode()).hexdigest()
+        ast = formula_ast if isinstance(formula_ast, AstNode) else None
+        norm_formula_sha = formula_identity_digest(formula=formula, formula_ast=ast)
         return _tac.get_formula_cell_type(
             workbook_sha256=workbook_sha256,
             address=addr,
@@ -578,14 +581,15 @@ def expand_leaf_env_to_argument_env(
             current_leaf_env=leaf_env,
         )
 
-    def _persist_result(addr: str, formula: str, ct: CellType) -> None:
+    def _persist_result(addr: str, formula: str, formula_ast: object | None, ct: CellType) -> None:
         """Write a successful formula-cell type to the persistent cache."""
         if _tac is None or workbook_sha256 is None:
             return
         # Don't cache ANY results in v1
         if ct.kind is CellKind.ANY and ct.enum is None:
             return
-        norm_formula_sha = hashlib.sha256(formula.encode()).hexdigest()
+        ast = formula_ast if isinstance(formula_ast, AstNode) else None
+        norm_formula_sha = formula_identity_digest(formula=formula, formula_ast=ast)
         consumed = sorted(_consumed_leaves.get(addr, set()))
         fp = _compute_leaf_env_subset_fingerprint(consumed, leaf_env)
         _tac.put_formula_cell_type(
@@ -680,14 +684,20 @@ def expand_leaf_env_to_argument_env(
             return cache[addr]
         in_progress.add(addr)
         formula = get_cell_formula(addr)
+        ast_root = None
         try:
             if formula is None:
                 raise DynamicRefError(
                     f"Missing constraint for leaf {addr!r} that feeds OFFSET/INDIRECT. "
                     "Add constraints only for leaf cells (non-formula) in the argument subgraph."
                 )
+            try:
+                formula_parse = _formula_to_parse(formula)
+                ast_root = parse_ast(formula_parse)
+            except FormulaParseError:
+                ast_root = None
             # Check persistent cache before expensive analysis
-            _persistent_result = _try_persistent_lookup(addr, formula)
+            _persistent_result = _try_persistent_lookup(addr, formula, ast_root)
             if _persistent_result is not None:
                 cached_ct, cached_consumed = _persistent_result
                 cache[addr] = cached_ct
@@ -705,11 +715,6 @@ def expand_leaf_env_to_argument_env(
                 )
             _analysis_stack.append(addr)
             refs = get_refs_from_formula(formula, _sheet_from_addr(addr))
-            try:
-                formula_parse = _formula_to_parse(formula)
-                ast_root = parse_ast(formula_parse)
-            except FormulaParseError:
-                ast_root = None
             if ast_root is not None:
                 refs |= _collect_static_addresses_from_ast(
                     ast_root, max_range_cells=max_range_cells
@@ -867,7 +872,7 @@ def expand_leaf_env_to_argument_env(
                         _consumed_leaves.setdefault(parent, set()).update(child_leaves)
             # Persist successful result to SQLite cache (skip if loaded from persistent cache)
             if addr in cache and formula is not None and addr not in _loaded_from_persistent:
-                _persist_result(addr, formula, cache[addr])
+                _persist_result(addr, formula, ast_root, cache[addr])
 
     skipped_cached_refs = 0
     try:

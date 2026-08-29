@@ -14,7 +14,13 @@ from excel_grapher.core.address_keys import (
     normalize_key,
     sort_node_keys,
 )
-from excel_grapher.core.formula_ast import AstNode, parse_optional
+from excel_grapher.core.formula_ast import (
+    AstNode,
+    bind_axes,
+    parse_optional,
+    replace_resolved_cell_ref,
+    unparse_normalized_formula,
+)
 from excel_grapher.core.formula_shape import FormulaShapeTable
 
 from .dependency_provenance import DependencyCause, EdgeProvenance, merge_edge_provenance
@@ -427,6 +433,35 @@ class DependencyGraph:
         node.formula_ast = parse_optional(normalized_formula)
         self._invalidate_formula_shapes()
 
+    def set_node_ast(
+        self,
+        key: NodeKey,
+        formula_ast: AstNode | None,
+        *,
+        formula: str | None = None,
+    ) -> None:
+        """Set a node's formula from `formula_ast`.
+
+        Derives `normalized_formula` as absolute A1. `formula` is the opt-in
+        raw audit string. Unset `formula_ast` clears both formula fields.
+        Edges are not recomputed; callers rewiring dependencies must update
+        edges explicitly.
+
+        Raises:
+            KeyError: If the node is missing.
+        """
+        nk = normalize_key(key)
+        node = self._nodes.get(nk)
+        if node is None:
+            raise KeyError(f"Cell {key} not found in graph")
+        node.formula = formula
+        node.formula_ast = formula_ast
+        if formula_ast is None:
+            node.normalized_formula = None
+        else:
+            node.normalized_formula = unparse_normalized_formula(formula_ast, anchor=node.address)
+        self._invalidate_formula_shapes()
+
     def remove_node(self, key: NodeKey) -> None:
         """Remove a node and all of its incident edges.
 
@@ -472,11 +507,11 @@ class DependencyGraph:
     def formula_nodes(self) -> Iterator[tuple[NodeKey, Node]]:
         """Iterate over (key, node) pairs for nodes that contain formulas.
 
-        Formula cells are identified by `normalized_formula`, which is always
-        stored; the raw `formula` string is opt-in (see `store_raw_formula`).
+        Formula cells are identified by `has_formula` (`formula_ast` or
+        unparseable `normalized_formula` text).
         """
         for key, node in self._nodes.items():
-            if node.normalized_formula is not None:
+            if node.has_formula:
                 yield key, node
 
     def leaf_node_items(self) -> Iterator[tuple[NodeKey, Node]]:
@@ -489,7 +524,7 @@ class DependencyGraph:
         """Return sorted list of keys for nodes that contain formulas."""
         return self.keys(
             order="workbook",
-            source=(k for k, node in self._nodes.items() if node.normalized_formula is not None),
+            source=(k for k, node in self._nodes.items() if node.has_formula),
         )
 
     def leaf_keys(self) -> list[NodeKey]:
@@ -818,7 +853,7 @@ class DependencyGraph:
                     continue
 
                 t_node = self.get_node(t_key)
-                if t_node is None or t_node.is_leaf or t_node.normalized_formula is None:
+                if t_node is None or t_node.is_leaf or not t_node.has_formula:
                     continue
                 if t_key in forwarding_protected:
                     continue
@@ -976,6 +1011,16 @@ class DependencyGraph:
             elif new_norm and t_key in new_norm:
                 new_norm = new_norm.replace(t_key, r_key)
 
+            if d_node.formula_ast is not None:
+                d_node.formula_ast = replace_resolved_cell_ref(
+                    d_node.formula_ast,
+                    old_key=t_key,
+                    new_key=r_key,
+                    anchor=d_node.address or d_key,
+                )
+            elif before_normalized != new_norm:
+                d_node.formula_ast = parse_optional(new_norm)
+
             if record is not None and before_normalized != new_norm:
                 record.formula_rewrites.append(
                     FormulaRewrite(
@@ -987,7 +1032,6 @@ class DependencyGraph:
 
             d_node.normalized_formula = new_norm
             if before_normalized != new_norm:
-                d_node.formula_ast = parse_optional(new_norm)
                 self._invalidate_formula_shapes()
 
             self._remove_edge(d_key, t_key)
@@ -1049,7 +1093,7 @@ class DependencyGraph:
         d_node = self._nodes.get(d_key)
         if t_node is None or d_node is None:
             return
-        if t_node.normalized_formula is None:
+        if t_node.formula_ast is None and t_node.normalized_formula is None:
             return
 
         prov = self._edge_provenance.get((d_key, t_key))
@@ -1058,7 +1102,11 @@ class DependencyGraph:
 
         before_normalized = d_node.normalized_formula
         new_norm = before_normalized
-        if new_norm is not None and prov.direct_sites_normalized:
+        if (
+            new_norm is not None
+            and t_node.normalized_formula is not None
+            and prov.direct_sites_normalized
+        ):
             new_norm = substitute_body_at_spans(
                 new_norm,
                 prov.direct_sites_normalized,
@@ -1085,7 +1133,16 @@ class DependencyGraph:
                 old_dependent_provenance[dep] = prov
 
         d_node.normalized_formula = new_norm
-        if before_normalized != new_norm:
+        if d_node.formula_ast is not None and t_node.formula_ast is not None:
+            d_node.formula_ast = replace_resolved_cell_ref(
+                d_node.formula_ast,
+                old_key=t_key,
+                new_key=t_key,
+                anchor=d_node.address or d_key,
+                replacement=bind_axes(t_node.formula_ast, t_node.address or t_key),
+            )
+            self._invalidate_formula_shapes()
+        elif before_normalized != new_norm:
             d_node.formula_ast = parse_optional(new_norm)
             self._invalidate_formula_shapes()
 

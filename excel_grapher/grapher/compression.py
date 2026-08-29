@@ -10,6 +10,7 @@ from excel_grapher.core.formula_ast import (
     FormulaParseError,
     UnaryOpNode,
     parse,
+    resolve_cell_ref,
 )
 
 from .dependency_provenance import DependencyCause, EdgeProvenance
@@ -53,6 +54,25 @@ def _singleton_cell_ref_address(normalized_formula: str) -> str | None:
     return ast.address
 
 
+def _identity_ref_address(node: object) -> str | None:
+    """Return the singleton cell-ref target of `node`, or None."""
+    ast = getattr(node, "formula_ast", None)
+    if ast is not None:
+        while isinstance(ast, UnaryOpNode) and ast.op == "+":
+            ast = ast.operand
+        if not isinstance(ast, CellRefNode):
+            return None
+        anchor = getattr(node, "address", None) or getattr(node, "key", None)
+        try:
+            return resolve_cell_ref(ast.ref, anchor)
+        except ValueError:
+            return None
+    nf = getattr(node, "normalized_formula", None)
+    if not isinstance(nf, str) or not nf:
+        return None
+    return _singleton_cell_ref_address(nf)
+
+
 def is_identity_transit(graph: DependencyGraph, transit_key: NodeKey) -> NodeKey | None:
     """Return the sole dependency key for an identity transit node.
 
@@ -60,7 +80,7 @@ def is_identity_transit(graph: DependencyGraph, transit_key: NodeKey) -> NodeKey
     return that dependency's key; otherwise return None.
     """
     node = graph.get_node(transit_key)
-    if node is None or node.is_leaf or not node.normalized_formula:
+    if node is None or node.is_leaf or not node.has_formula:
         return None
     deps = graph.get_dependencies(transit_key)
     if len(deps) != 1:
@@ -68,7 +88,7 @@ def is_identity_transit(graph: DependencyGraph, transit_key: NodeKey) -> NodeKey
     r_key = next(iter(deps))
     if graph.is_guarded(transit_key, r_key):
         return None
-    addr = _singleton_cell_ref_address(node.normalized_formula)
+    addr = _identity_ref_address(node)
     if addr is None:
         return None
     r_node = graph.get_node(r_key)
@@ -143,7 +163,7 @@ def _structural_inline_candidate(
     if is_identity_transit(graph, transit_key) is not None:
         return None
     t_node = graph.get_node(transit_key)
-    if t_node is None or t_node.is_leaf or t_node.normalized_formula is None:
+    if t_node is None or t_node.is_leaf or not t_node.has_formula:
         return None
     dependents = graph.get_dependents(transit_key)
     if len(dependents) != 1:
@@ -206,10 +226,10 @@ def compression_safe_provenance(prov: EdgeProvenance | None) -> bool:
 class FormulaRewrite:
     """Dependent formula rewrite performed during projection.
 
-    Compression rewrites `normalized_formula` only, so the audit trail records
-    normalized text. The raw `Node.formula`, when stored, keeps the workbook
-    text it was extracted with; `ProjectedNodeSnapshot.formula` captures it for
-    removed nodes.
+    Compression rewrites `formula_ast` (and refreshes derived
+    `normalized_formula`). The raw `Node.formula`, when stored, keeps the
+    workbook text it was extracted with; `ProjectedNodeSnapshot.formula`
+    captures it for removed nodes.
     """
 
     dependent: str
@@ -360,7 +380,7 @@ def node_body_substitutable(graph: DependencyGraph, key: NodeKey) -> bool:
     dependent. Provenance must still be compression-safe.
     """
     node = graph.get_node(key)
-    if node is None or node.is_leaf or not node.normalized_formula:
+    if node is None or node.is_leaf or not node.has_formula:
         return False
     for dep in graph.get_dependencies(key):
         attrs = graph.get_edge_attrs(key, dep)

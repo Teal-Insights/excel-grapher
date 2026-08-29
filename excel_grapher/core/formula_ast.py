@@ -6,7 +6,13 @@ from typing import TypeAlias
 
 from fastpyxl.utils.cell import column_index_from_string, coordinate_from_string, get_column_letter
 
-from excel_grapher.core.address_keys import CellKey, format_cell_key, parse_address
+from excel_grapher.core.address_keys import (
+    CellKey,
+    format_cell_key,
+    format_range_key,
+    parse_address,
+    quote_sheet_if_needed,
+)
 
 from .excel_function_names import normalize_excel_function_name
 from .types import XlError
@@ -331,6 +337,158 @@ def bind_axes(node: AstNode, anchor: CellKey | str) -> AstNode:
             return UnaryOpNode(op, bind_axes(operand, anchor))
         case _:
             return node
+
+
+def _unparse_number(value: float) -> str:
+    as_float = float(value)
+    if as_float.is_integer() and abs(as_float) < 1e15:
+        return str(int(as_float))
+    return format(as_float, ".15g")
+
+
+def _unparse_string(value: str) -> str:
+    return '"' + value.replace('"', '""') + '"'
+
+
+def _unparse_atom_ref(
+    node: CellRefNode | RangeNode | WholeColumnNode | WholeRowNode,
+    anchor: CellKey | str | None,
+) -> str:
+    match node:
+        case CellRefNode(ref):
+            return resolve_cell_ref(ref, anchor)
+        case RangeNode(start_ref, end_ref):
+            start = resolve_cell_ref(start_ref, anchor)
+            end = resolve_cell_ref(end_ref, anchor)
+            start_sheet, start_coord = parse_address(start)
+            end_sheet, end_coord = parse_address(end)
+            if start_sheet == end_sheet:
+                return format_range_key(start_sheet, start_coord, end_coord)
+            return f"{start}:{end}"
+        case WholeColumnNode():
+            sheet, letter = resolve_whole_column_ref(node, anchor)
+            return f"{quote_sheet_if_needed(sheet)}!{letter}:{letter}"
+        case WholeRowNode():
+            sheet, row = resolve_whole_row_ref(node, anchor)
+            return f"{quote_sheet_if_needed(sheet)}!{row}:{row}"
+
+
+def _unparse_expr(
+    node: AstNode,
+    *,
+    anchor: CellKey | str | None,
+    parent_prec: int,
+    is_right: bool,
+) -> str:
+    match node:
+        case NumberNode(value):
+            return _unparse_number(value)
+        case StringNode(value):
+            return _unparse_string(value)
+        case BoolNode(value):
+            return "TRUE" if value else "FALSE"
+        case ErrorNode(error):
+            return error.value
+        case EmptyArgNode():
+            return ""
+        case CellRefNode() | RangeNode() | WholeColumnNode() | WholeRowNode():
+            return _unparse_atom_ref(node, anchor)
+        case FunctionCallNode(name, args):
+            inner = ",".join(
+                _unparse_expr(arg, anchor=anchor, parent_prec=0, is_right=False) for arg in args
+            )
+            return f"{name}({inner})"
+        case UnaryOpNode("%", operand):
+            body = _unparse_expr(operand, anchor=anchor, parent_prec=6, is_right=False)
+            return f"{body}%"
+        case UnaryOpNode(op, operand):
+            body = _unparse_expr(operand, anchor=anchor, parent_prec=6, is_right=False)
+            return f"{op}{body}"
+        case BinaryOpNode(op, left, right):
+            prec = _PRECEDENCE[op]
+            left_s = _unparse_expr(left, anchor=anchor, parent_prec=prec, is_right=False)
+            right_s = _unparse_expr(right, anchor=anchor, parent_prec=prec, is_right=True)
+            text = f"{left_s}{op}{right_s}"
+            need_parens = prec < parent_prec or (
+                is_right and op not in _RIGHT_ASSOC and prec == parent_prec
+            )
+            return f"({text})" if need_parens else text
+    raise TypeError(f"unsupported AST node: {type(node).__name__}")
+
+
+def unparse_normalized_formula(
+    node: AstNode,
+    *,
+    anchor: CellKey | str | None = None,
+) -> str:
+    """Render `node` as absolute A1 formula text (leading `=`).
+
+    Relative axes resolve against `anchor`. Same-sheet ranges use a single
+    sheet prefix. This is the derived `normalized_formula` spelling used until
+    that field is removed.
+
+    Args:
+        node: Formula AST to render.
+        anchor: Host cell for relative axes. Required when `node` has any
+            `RelativeAxis`.
+
+    Returns:
+        Sheet-qualified absolute A1 formula beginning with `=`.
+    """
+    return "=" + _unparse_expr(node, anchor=anchor, parent_prec=0, is_right=False)
+
+
+def replace_resolved_cell_ref(
+    node: AstNode,
+    *,
+    old_key: str,
+    new_key: str,
+    anchor: CellKey | str,
+    replacement: AstNode | None = None,
+) -> AstNode:
+    """Replace `CellRefNode` leaves that resolve to `old_key`.
+
+    Range and whole-column/row leaves are left unchanged. When `replacement` is
+    omitted, matching leaves become an absolute `CellRefNode` for `new_key`.
+
+    Args:
+        node: Formula AST to rewrite.
+        old_key: Canonical sheet-qualified address to match after resolution.
+        new_key: Absolute replacement address when `replacement` is omitted.
+        anchor: Host cell used to resolve relative axes.
+        replacement: Optional subtree to splice in place of each match.
+
+    Returns:
+        A new tree when any leaf changed; otherwise `node`.
+    """
+    subst = CellRefNode(new_key) if replacement is None else replacement
+
+    def walk(cur: AstNode) -> AstNode:
+        match cur:
+            case CellRefNode(ref):
+                if resolve_cell_ref(ref, anchor) == old_key:
+                    return subst
+                return cur
+            case FunctionCallNode(name, args):
+                new_args = [walk(arg) for arg in args]
+                if new_args == args:
+                    return cur
+                return FunctionCallNode(name, new_args)
+            case BinaryOpNode(op, left, right):
+                new_left = walk(left)
+                new_right = walk(right)
+                if new_left is left and new_right is right:
+                    return cur
+                return BinaryOpNode(op, new_left, new_right)
+            case UnaryOpNode(op, operand):
+                new_operand = walk(operand)
+                if new_operand is operand:
+                    return cur
+                return UnaryOpNode(op, new_operand)
+            case _:
+                return cur
+
+    return walk(node)
 
 
 class _Scanner:

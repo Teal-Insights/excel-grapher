@@ -174,7 +174,11 @@ class FormulaEvaluator:
         return self._ast_cache.cache_info()
 
     def _seed_ast_cache_from_graph(self) -> None:
-        """Seed the string-keyed AST LRU from per-node trees and overlays."""
+        """Seed the string-keyed AST LRU from per-node trees and overlays.
+
+        Per-node `formula_ast` is evaluated directly; this cache is the fallback
+        parse path for formula cells that still only have `normalized_formula`.
+        """
         entries: dict[str, AstNode] = {}
         for _key, node in self.graph.formula_nodes():
             ast = node.formula_ast
@@ -327,8 +331,10 @@ class FormulaEvaluator:
             if node is None:
                 continue
 
-            if node.normalized_formula is None:
-                # It's a leaf
+            if node.formula_ast is None and node.normalized_formula is None:
+                # A raw formula without AST or normalized text is malformed, not a leaf.
+                if node.formula is not None:
+                    raise MissingNormalizedFormulaError(current)
                 leaves.add(current)
             else:
                 # Add its dependencies to the queue
@@ -375,8 +381,9 @@ class FormulaEvaluator:
             raise KeyError(f"Cell {address} not found in graph")
 
         nf = node.normalized_formula
-        if nf is None:
-            # A raw formula without a normalized one is a malformed node, not a leaf.
+        formula_ast = getattr(node, "formula_ast", None)
+        if formula_ast is None and nf is None:
+            # A raw formula without AST or normalized text is malformed, not a leaf.
             if node.formula is not None:
                 raise MissingNormalizedFormulaError(norm)
             self._cache[norm] = node.value
@@ -385,13 +392,15 @@ class FormulaEvaluator:
                 self.on_cell_evaluated(norm, node.value)
             return node.value
 
-        if not isinstance(nf, str) or not nf.strip():
-            raise MissingNormalizedFormulaError(norm)
-        formula = nf.strip()
+        formula: str | None = None
+        if formula_ast is None:
+            if not isinstance(nf, str) or not nf.strip():
+                raise MissingNormalizedFormulaError(norm)
+            formula = nf.strip()
 
         self._call_stack.append(norm)
         try:
-            result = self._evaluate_formula(formula, node_key=norm, formula_ast=node.formula_ast)
+            result = self._evaluate_formula(formula, node_key=norm, formula_ast=formula_ast)
             # Auto-resolve 1x1 ExcelRange to single value
             result = self._auto_resolve_single_cell(result)
             # Excel treats formula results of None (empty cell reference) as 0
@@ -406,12 +415,12 @@ class FormulaEvaluator:
 
     def _evaluate_formula(
         self,
-        formula: str,
+        formula: str | None,
         *,
         node_key: str,
         formula_ast: AstNode | None = None,
     ) -> FormulaValue:
-        """Evaluate a normalized formula, preferring a compiled shape when interned."""
+        """Evaluate a formula AST, preferring a compiled shape when interned."""
         table = getattr(self.graph, "formula_shapes", None)
         if table is not None:
             found = table.lookup(node_key)
@@ -422,6 +431,8 @@ class FormulaEvaluator:
                     return compiled(params)
         if formula_ast is not None:
             return self._evaluate_ast(formula_ast)
+        if formula is None:
+            raise MissingNormalizedFormulaError(node_key)
         ast = self._parse_cached(formula)
         return self._evaluate_ast(ast)
 

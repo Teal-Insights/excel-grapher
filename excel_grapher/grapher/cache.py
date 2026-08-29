@@ -11,7 +11,7 @@ from typing import Any, Literal, TypedDict, cast
 
 from excel_grapher.core.address_keys import CellKey, parse_node_key
 from excel_grapher.core.formula_ast import AstNode
-from excel_grapher.core.formula_ast_json import ast_from_json, ast_to_json
+from excel_grapher.core.formula_ast_json import ast_from_json, ast_identity_key, ast_to_json
 
 from .dependency_provenance import DependencyCause, EdgeProvenance
 from .graph import DependencyGraph
@@ -350,7 +350,7 @@ def _edge_provenance_from_json(v: object) -> EdgeProvenance:
 
 
 def _formula_ast_intern_key(ast: AstNode) -> str:
-    return json.dumps(ast_to_json(ast), sort_keys=True, separators=(",", ":"))
+    return ast_identity_key(ast)
 
 
 def _formula_asts_to_json(graph: DependencyGraph) -> dict[str, Any]:

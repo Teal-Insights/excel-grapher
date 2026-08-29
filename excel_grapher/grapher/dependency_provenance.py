@@ -19,10 +19,9 @@ class EdgeProvenance:
     """Metadata for a single directed edge, possibly from multiple mechanisms in one formula.
 
     `direct_sites_normalized` holds `[start, end)` spans of the precedent
-    reference inside the dependent's `normalized_formula`. Spans against the raw
-    `Node.formula` are deliberately not stored: `normalized_formula` is the
-    single source for compression / projection rewriting, and the raw formula is
-    an opt-in audit field that rewriting leaves untouched.
+    reference inside the dependent's derived `normalized_formula`. Compression
+    rewrites `formula_ast` structurally and refreshes those spans against the
+    derived A1 text. Spans against the raw `Node.formula` are not stored.
     """
 
     causes: DependencyCause

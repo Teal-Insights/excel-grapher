@@ -14,7 +14,12 @@ from excel_grapher.core.formula_ast import (
     WholeRowNode,
     parse,
 )
-from excel_grapher.core.formula_ast_json import ast_from_json, ast_to_json
+from excel_grapher.core.formula_ast_json import (
+    ast_from_json,
+    ast_identity_key,
+    ast_to_json,
+    formula_identity_digest,
+)
 from excel_grapher.core.types import XlError
 
 
@@ -70,3 +75,12 @@ def test_ast_from_json_rejects_non_object() -> None:
         ast_from_json(["cell"])
     with pytest.raises(TypeError):
         ast_from_json(None)
+
+
+def test_formula_identity_digest_uses_ast_when_present() -> None:
+    ast = parse("=Sheet1!A1+1")
+    stale = "=Sheet1!A1+999"
+    digest = formula_identity_digest(formula=stale, formula_ast=ast)
+    assert digest == formula_identity_digest(formula="ignored", formula_ast=ast)
+    assert digest != formula_identity_digest(formula=stale, formula_ast=None)
+    assert ast_identity_key(ast) != stale
