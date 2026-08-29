@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v7.0.0 (2026-08-29)
+
+### Bug Fixes
+
+- **exporter**: Import datetime in internals for reader kwargs
+  ([`3012fc4`](https://github.com/Teal-Insights/excel-grapher/commit/3012fc435a3b0f0191db8c4ea54a11d51233a9ff))
+
+- **grapher**: Leave formula_ast unset when extraction parse fails
+  ([`42e6bab`](https://github.com/Teal-Insights/excel-grapher/commit/42e6bab55d51f66a6f39e6c04eb5e3e18312259d))
+
+### Features
+
+- **grapher**: Intern cached formula ASTs and fail-soft on rewrite parse
+  ([`f2fdf34`](https://github.com/Teal-Insights/excel-grapher/commit/f2fdf341a1623ed5c3880fb3d332e910b24839f2))
+
+- **grapher**: Store per-node formula AST at extraction
+  ([`82cc9a2`](https://github.com/Teal-Insights/excel-grapher/commit/82cc9a2e8551807253361e48aaaccc11d9010f47))
+
+### Refactoring
+
+- **grapher**: Drop duplicate intern test and getattr formula_ast
+  ([`0bb5c10`](https://github.com/Teal-Insights/excel-grapher/commit/0bb5c10648d64404cce686796a893a86fc12b822))
+
+### Breaking Changes
+
+- **grapher**: FormulaShapeTable.lookup and intern_formula_shapes key bindings by NodeKey rather
+  than normalized formula text.
+
+
 ## v6.3.3 (2026-08-19)
 
 ### Bug Fixes
