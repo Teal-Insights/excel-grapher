@@ -19,8 +19,8 @@ from .guard import And, CellRef, Compare, GuardExpr, Not, Or, intern_guard
 from .guard import Literal as GuardLiteral
 from .node import Node, NodeKey
 
-# 6: interned `formula_asts` pool keyed by canonical axis-aware AST JSON.
-GRAPH_CACHE_SCHEMA_VERSION = 6
+# 7: interned `formula_asts` pool as encoded trees; nodes store `formula_ast_id`.
+GRAPH_CACHE_SCHEMA_VERSION = 7
 
 
 class GraphCacheMeta(TypedDict):
@@ -349,35 +349,42 @@ def _edge_provenance_from_json(v: object) -> EdgeProvenance:
     )
 
 
-def _formula_ast_intern_key(ast: AstNode) -> str:
-    return json.dumps(ast_to_json(ast), sort_keys=True, separators=(",", ":"))
-
-
-def _formula_asts_to_json(graph: DependencyGraph) -> dict[str, Any]:
-    pool: dict[str, Any] = {}
-    for _key, node in graph.formula_nodes():
-        if node.formula_ast is None:
+def _formula_ast_pool_to_json(graph: DependencyGraph) -> tuple[list[Any], dict[AstNode, int]]:
+    """Encode each distinct formula AST once; return `(pool, tree -> id)`."""
+    ids: dict[AstNode, int] = {}
+    encoded: list[Any] = []
+    for key in graph:
+        node = graph.get_node(key)
+        if node is None or node.formula_ast is None:
             continue
-        intern_key = _formula_ast_intern_key(node.formula_ast)
-        if intern_key in pool:
-            continue
-        pool[intern_key] = ast_to_json(node.formula_ast)
-    return pool
+        if node.formula_ast not in ids:
+            ids[node.formula_ast] = len(encoded)
+            encoded.append(ast_to_json(node.formula_ast))
+    return encoded, ids
 
 
-def _formula_asts_from_json(payload: dict[str, Any]) -> dict[str, AstNode]:
-    raw = payload.get("formula_asts", {})
-    if not isinstance(raw, dict):
-        raise TypeError("formula_asts must be an object")
-    pool: dict[str, AstNode] = {}
-    for key, encoded in raw.items():
-        if not isinstance(key, str):
-            raise TypeError("formula_asts keys must be strings")
-        pool[key] = ast_from_json(encoded)
-    return pool
+def _formula_asts_from_json(payload: dict[str, Any]) -> list[AstNode]:
+    raw = payload.get("formula_asts", [])
+    if not isinstance(raw, list):
+        raise TypeError("formula_asts must be a list")
+    return [ast_from_json(item) for item in raw]
+
+
+def _formula_ast_from_node_payload(
+    node_payload: dict[str, Any], pool: list[AstNode]
+) -> AstNode | None:
+    if "formula_ast_id" not in node_payload:
+        return None
+    intern_id = node_payload["formula_ast_id"]
+    if not isinstance(intern_id, int) or isinstance(intern_id, bool):
+        raise TypeError("formula_ast_id must be an int")
+    if intern_id < 0 or intern_id >= len(pool):
+        raise TypeError("formula_ast_id out of range")
+    return pool[intern_id]
 
 
 def dependency_graph_to_json(graph: DependencyGraph) -> dict[str, Any]:
+    formula_asts, formula_ast_ids = _formula_ast_pool_to_json(graph)
     nodes: list[dict[str, Any]] = []
     for key in graph:
         node = graph.get_node(key)
@@ -401,7 +408,7 @@ def dependency_graph_to_json(graph: DependencyGraph) -> dict[str, Any]:
             "metadata": dict(node.metadata),
         }
         if node.formula_ast is not None:
-            payload["formula_ast_key"] = _formula_ast_intern_key(node.formula_ast)
+            payload["formula_ast_id"] = formula_ast_ids[node.formula_ast]
         nodes.append(payload)
 
     edges: list[dict[str, Any]] = []
@@ -424,7 +431,7 @@ def dependency_graph_to_json(graph: DependencyGraph) -> dict[str, Any]:
         "nodes": nodes,
         "edges": edges,
         "leaf_classification": graph.leaf_classification,
-        "formula_asts": _formula_asts_to_json(graph),
+        "formula_asts": formula_asts,
     }
 
 
@@ -453,10 +460,7 @@ def dependency_graph_from_json(payload: dict[str, Any]) -> DependencyGraph:
             address = n.get("key")
         formula = cast(str | None, n["formula"])
         normalized_formula = cast(str | None, n["normalized_formula"])
-        intern_key = n.get("formula_ast_key")
-        if not isinstance(intern_key, str):
-            intern_key = None
-        formula_ast = formula_asts.get(intern_key) if intern_key is not None else None
+        formula_ast = _formula_ast_from_node_payload(n, formula_asts)
         value = _value_from_json(n["value"])
         is_leaf = bool(n["is_leaf"])
         is_target = bool(n.get("is_target", False))

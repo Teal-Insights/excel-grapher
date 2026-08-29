@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import re
 import time
@@ -17,8 +16,11 @@ from fastpyxl.worksheet.worksheet import Worksheet
 
 from excel_grapher.core.address_keys import CellKey, format_range_key, parse_address, sort_node_keys
 from excel_grapher.core.cell_types import CellType, leaves_missing_cell_type_constraints
-from excel_grapher.core.formula_ast import AstNode, parse_preserving_axes_optional
-from excel_grapher.core.formula_ast_json import ast_to_json
+from excel_grapher.core.formula_ast import (
+    AstNode,
+    intern_formula_ast,
+    parse_preserving_axes_optional,
+)
 
 from .blank_ranges import (
     address_in_blank_ranges,
@@ -475,10 +477,11 @@ def create_dependency_graph(
 
     Extraction always parses each formula cell into `Node.formula_ast` from the
     raw workbook text, preserving per-axis relative/absolute intent. Distinct
-    ASTs share one interned tree (keyed by canonical AST JSON, not by
-    `normalized_formula`). `normalized_formula` remains derived absolute A1
-    text. Formulas the AST parser cannot handle leave `formula_ast` unset;
-    extraction still records the cell and its dependencies.
+    ASTs share one interned tree (keyed by the frozen tree itself, not by a
+    JSON encoding or by `normalized_formula`). `normalized_formula` remains
+    derived absolute A1 text. Formulas the AST parser cannot handle leave
+    `formula_ast` unset; extraction still records the cell and its
+    dependencies.
 
     `blank_ranges` is an optional iterable of sheet-qualified A1 rectangles
     (e.g. `\"Sheet1!B2:D10\"`) treated as structurally empty: no nodes are
@@ -1393,7 +1396,7 @@ def create_dependency_graph(
     _bfs_t0 = time.perf_counter()
     _bfs_count = 0
     _bfs_next_log = 5000
-    formula_ast_intern: dict[str, AstNode | None] = {}
+    formula_ast_intern: dict[AstNode, AstNode] = {}
 
     try:
         while q:
@@ -1460,14 +1463,7 @@ def create_dependency_graph(
                     named_range_ranges=named_range_ranges,
                 )
                 if formula_ast is not None:
-                    intern_key = json.dumps(
-                        ast_to_json(formula_ast), sort_keys=True, separators=(",", ":")
-                    )
-                    cached_ast = formula_ast_intern.get(intern_key)
-                    if cached_ast is not None:
-                        formula_ast = cached_ast
-                    else:
-                        formula_ast_intern[intern_key] = formula_ast
+                    formula_ast = intern_formula_ast(formula_ast, formula_ast_intern)
             else:
                 formula_str = ""
                 formula = None
