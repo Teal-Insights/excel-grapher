@@ -775,7 +775,7 @@ def test_optimal_projection_does_not_mutate_shared_preparsed_ast() -> None:
     assert projected_cache is not graph.preparsed_formulas
     assert projected_cache["=SUM(Sheet1!C1,1)"] is ast
     assert graph.preparsed_formulas["=SUM(Sheet1!C1,1)"] is ast
-    assert ast.args == list(original_args)
+    assert ast.args == original_args
 
 
 def test_projection_snapshot_and_rewrite_types_are_shared_across_layers() -> None:

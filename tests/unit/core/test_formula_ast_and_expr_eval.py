@@ -36,7 +36,7 @@ def test_core_formula_ast_parses_basic_literals_and_refs() -> None:
     ast = parse("=SUM(Sheet1!A1:A3)")
     assert isinstance(ast, FunctionCallNode)
     assert ast.name == "SUM"
-    assert ast.args == [RangeNode("Sheet1!A1", "Sheet1!A3")]
+    assert ast.args == (RangeNode("Sheet1!A1", "Sheet1!A3"),)
 
     ast = parse('=_xludf.IFNA(Sheet1!A1, "fallback")')
     assert isinstance(ast, FunctionCallNode)

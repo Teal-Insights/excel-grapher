@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import TypeAlias
 
@@ -243,8 +243,14 @@ def resolve_whole_row_ref(node: WholeRowNode, anchor: CellKey | str | None) -> t
 
 @dataclass(frozen=True, slots=True)
 class FunctionCallNode:
+    """Function invocation. `args` is frozen so formula trees are hashable."""
+
     name: str
-    args: list[AstNode]
+    args: tuple[AstNode, ...]
+
+    def __init__(self, name: str, args: Sequence[AstNode]) -> None:
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "args", tuple(args))
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,6 +287,15 @@ AstNode: TypeAlias = (
     | UnaryOpNode
     | EmptyArgNode
 )
+
+
+def intern_formula_ast(tree: AstNode, intern: dict[AstNode, AstNode]) -> AstNode:
+    """Return the canonical interned instance of `tree`.
+
+    The intern map is keyed by the frozen tree itself. Do not intern a JSON
+    encoding of `tree`.
+    """
+    return intern.setdefault(tree, tree)
 
 
 def iter_resolved_cell_keys(node: AstNode, anchor: CellKey | str) -> Iterator[str]:

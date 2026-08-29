@@ -134,7 +134,7 @@ def test_set_node_formula_leaves_formula_ast_unset_when_unparseable() -> None:
 def test_json_cache_round_trips_formula_ast(tmp_path: Path) -> None:
     path = _workbook_with_shared_formula(tmp_path)
     graph = create_dependency_graph(path, ["Sheet1!C1"], load_values=True)
-    assert GRAPH_CACHE_SCHEMA_VERSION >= 5
+    assert GRAPH_CACHE_SCHEMA_VERSION >= 7
 
     restored = dependency_graph_from_json(dependency_graph_to_json(graph))
     original = graph.get_node("Sheet1!C1")
@@ -156,16 +156,18 @@ def test_json_cache_interns_formula_asts_by_canonical_ast(tmp_path: Path) -> Non
 
     payload = dependency_graph_to_json(graph)
     pool = payload["formula_asts"]
-    assert isinstance(pool, dict)
-    keys = [
-        node_payload.get("formula_ast_key")
+    assert isinstance(pool, list)
+    ids = [
+        node_payload.get("formula_ast_id")
         for node_payload in payload["nodes"]
         if node_payload.get("normalized_formula")
     ]
-    assert all(isinstance(key, str) and key in pool for key in keys)
-    assert len(set(keys)) == 2
+    assert all(isinstance(ast_id, int) and not isinstance(ast_id, bool) for ast_id in ids)
+    assert all(0 <= ast_id < len(pool) for ast_id in ids)
+    assert len(set(ids)) == 2
     for node_payload in payload["nodes"]:
         assert "formula_ast" not in node_payload
+        assert "formula_ast_key" not in node_payload
 
     restored = dependency_graph_from_json(payload)
     loaded_b1 = restored._get_internal_node("Sheet1!B1")
@@ -177,11 +179,11 @@ def test_json_cache_interns_formula_asts_by_canonical_ast(tmp_path: Path) -> Non
     assert loaded_b2.formula_ast == parse_preserving_axes("=A1*2", anchor="Sheet1!B2")
 
 
-def test_json_cache_rejects_non_object_formula_asts() -> None:
+def test_json_cache_rejects_non_list_formula_asts() -> None:
     graph = DependencyGraph()
     graph.add_node(make_cell_node("Sheet1", "A", 1, is_leaf=True, value=1))
     payload = dependency_graph_to_json(graph)
-    payload["formula_asts"] = []
+    payload["formula_asts"] = {}
     with pytest.raises(TypeError, match="formula_asts"):
         dependency_graph_from_json(payload)
 
