@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v8.0.0 (2026-08-29)
+
+### Bug Fixes
+
+- **core**: Satisfy ty on axis-aware parse and whole-row deps
+  ([`69a2707`](https://github.com/Teal-Insights/excel-grapher/commit/69a27079d5fc21ae66d582a362dc2f9dadf3c9bf))
+
+### Features
+
+- **core**: Preserve per-axis relative/absolute refs in formula AST
+  ([#545](https://github.com/Teal-Insights/excel-grapher/pull/545),
+  [`9f62116`](https://github.com/Teal-Insights/excel-grapher/commit/9f621166dbfaf21b7696da6c45f60db18e142c08))
+
+
 ## v7.0.0 (2026-08-29)
 
 ### Bug Fixes
