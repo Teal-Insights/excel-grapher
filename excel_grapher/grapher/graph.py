@@ -1004,13 +1004,6 @@ class DependencyGraph:
 
             before_normalized = d_node.normalized_formula
             new_norm = before_normalized
-            if isinstance(prov, EdgeProvenance) and prov.direct_sites_normalized and new_norm:
-                new_norm = replace_substrings_at_spans(
-                    new_norm, prov.direct_sites_normalized, r_key
-                )
-            elif new_norm and t_key in new_norm:
-                new_norm = new_norm.replace(t_key, r_key)
-
             if d_node.formula_ast is not None:
                 d_node.formula_ast = replace_resolved_cell_ref(
                     d_node.formula_ast,
@@ -1018,7 +1011,17 @@ class DependencyGraph:
                     new_key=r_key,
                     anchor=d_node.address or d_key,
                 )
-            elif before_normalized != new_norm:
+                new_norm = unparse_normalized_formula(
+                    d_node.formula_ast, anchor=d_node.address or d_key
+                )
+            elif isinstance(prov, EdgeProvenance) and prov.direct_sites_normalized and new_norm:
+                new_norm = replace_substrings_at_spans(
+                    new_norm, prov.direct_sites_normalized, r_key
+                )
+            elif new_norm and t_key in new_norm:
+                new_norm = new_norm.replace(t_key, r_key)
+
+            if d_node.formula_ast is None and before_normalized != new_norm:
                 d_node.formula_ast = parse_optional(new_norm)
 
             if record is not None and before_normalized != new_norm:
@@ -1102,7 +1105,19 @@ class DependencyGraph:
 
         before_normalized = d_node.normalized_formula
         new_norm = before_normalized
-        if (
+        if d_node.formula_ast is not None and t_node.formula_ast is not None:
+            d_node.formula_ast = replace_resolved_cell_ref(
+                d_node.formula_ast,
+                old_key=t_key,
+                new_key=t_key,
+                anchor=d_node.address or d_key,
+                replacement=bind_axes(t_node.formula_ast, t_node.address or t_key),
+            )
+            new_norm = unparse_normalized_formula(
+                d_node.formula_ast, anchor=d_node.address or d_key
+            )
+            self._invalidate_formula_shapes()
+        elif (
             new_norm is not None
             and t_node.normalized_formula is not None
             and prov.direct_sites_normalized
@@ -1112,6 +1127,9 @@ class DependencyGraph:
                 prov.direct_sites_normalized,
                 t_node.normalized_formula,
             )
+            if before_normalized != new_norm:
+                d_node.formula_ast = parse_optional(new_norm)
+                self._invalidate_formula_shapes()
 
         if record is not None and before_normalized != new_norm:
             record.formula_rewrites.append(
@@ -1133,18 +1151,6 @@ class DependencyGraph:
                 old_dependent_provenance[dep] = prov
 
         d_node.normalized_formula = new_norm
-        if d_node.formula_ast is not None and t_node.formula_ast is not None:
-            d_node.formula_ast = replace_resolved_cell_ref(
-                d_node.formula_ast,
-                old_key=t_key,
-                new_key=t_key,
-                anchor=d_node.address or d_key,
-                replacement=bind_axes(t_node.formula_ast, t_node.address or t_key),
-            )
-            self._invalidate_formula_shapes()
-        elif before_normalized != new_norm:
-            d_node.formula_ast = parse_optional(new_norm)
-            self._invalidate_formula_shapes()
 
         for dep in list(self._edges.get(d_key, set())):
             self._remove_edge(d_key, dep)
