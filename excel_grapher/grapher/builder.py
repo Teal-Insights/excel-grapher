@@ -641,6 +641,8 @@ def create_dependency_graph(
         sheet_names=wb_formulas.sheetnames,
         shared_cell_type_cache=_shared_cell_type_cache,
         stats=_dyn_stats,
+        named_ranges=named_ranges,
+        named_range_ranges=named_range_ranges,
     )
 
     def _get_ws_v(sheet: str) -> Worksheet:
@@ -1025,6 +1027,7 @@ def create_dependency_graph(
                                     shared_cell_type_cache=_shared_cell_type_cache,
                                     type_analysis_cache=type_analysis_cache,
                                     workbook_sha256=_wb_sha256,
+                                    get_cell_ast=ref_walk.cell_ast,
                                 )
                             try:
                                 offset_targets = infer_dynamic_offset_targets(
@@ -1903,6 +1906,20 @@ def list_dynamic_ref_constraint_candidates(
                                     return None
                                 return normalizer.normalize(v, sh2)
 
+                            def _get_cell_ast(addr: str) -> AstNode | None:
+                                sh2, a1_2 = parse_address(addr)
+                                if sh2 not in sheetname_set:
+                                    return None
+                                v = _cell_value(sh2, a1_2)
+                                if not isinstance(v, str) or not v.startswith("="):
+                                    return None
+                                return parse_preserving_axes_optional(
+                                    v,
+                                    anchor=addr,
+                                    named_ranges=named_ranges,
+                                    named_range_ranges=named_range_ranges,
+                                )
+
                             expanded_env = expand_leaf_env_to_argument_env(
                                 all_refs,
                                 _get_cell_formula,
@@ -1915,6 +1932,7 @@ def list_dynamic_ref_constraint_candidates(
                                 shared_cell_type_cache=_shared_cell_type_cache_cand,
                                 type_analysis_cache=type_analysis_cache,
                                 workbook_sha256=_wb_sha256_cand,
+                                get_cell_ast=_get_cell_ast,
                             )
                         offset_targets = infer_dynamic_offset_targets(
                             formula_for_infer,

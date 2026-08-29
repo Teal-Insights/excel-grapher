@@ -53,6 +53,7 @@ from excel_grapher.core.formula_ast import (
     UnaryOpNode,
     WholeColumnNode,
     WholeRowNode,
+    bind_axes,
     resolve_whole_row_ref,
 )
 from excel_grapher.core.formula_ast import (
@@ -437,6 +438,7 @@ def expand_leaf_env_to_argument_env(
     shared_cell_type_cache: dict[str, CellType] | None = None,
     type_analysis_cache: TypeAnalysisCache | None = None,
     workbook_sha256: str | None = None,
+    get_cell_ast: Callable[[str], AstNode | None] | None = None,
 ) -> dict[str, CellType]:
     """Build a CellTypeEnv for all refs in the argument chain from leaf constraints only.
 
@@ -462,6 +464,11 @@ def expand_leaf_env_to_argument_env(
 
     When `type_analysis_cache` and `workbook_sha256` are provided, successful
     intermediate formula-cell type results are persisted to SQLite across runs.
+
+    `get_cell_ast`, when provided, supplies the stored per-cell `formula_ast`.
+    Cache identity then uses that tree so relative vs absolute formulas that
+    share A1 text do not collide. The fallback path keys by formula string and
+    parses only after a cache miss.
     """
     cache: dict[str, CellType] = (
         shared_cell_type_cache if shared_cell_type_cache is not None else {}
@@ -684,20 +691,19 @@ def expand_leaf_env_to_argument_env(
             return cache[addr]
         in_progress.add(addr)
         formula = get_cell_formula(addr)
-        ast_root = None
+        stored_ast: AstNode | None = None
+        ast_root: AstNode | None = None
         try:
             if formula is None:
                 raise DynamicRefError(
                     f"Missing constraint for leaf {addr!r} that feeds OFFSET/INDIRECT. "
                     "Add constraints only for leaf cells (non-formula) in the argument subgraph."
                 )
-            try:
-                formula_parse = _formula_to_parse(formula)
-                ast_root = parse_ast(formula_parse)
-            except FormulaParseError:
-                ast_root = None
-            # Check persistent cache before expensive analysis
-            _persistent_result = _try_persistent_lookup(addr, formula, ast_root)
+            if get_cell_ast is not None:
+                fetched = get_cell_ast(addr)
+                stored_ast = fetched if isinstance(fetched, AstNode) else None
+            # Check persistent cache before expensive analysis / parse.
+            _persistent_result = _try_persistent_lookup(addr, formula, stored_ast)
             if _persistent_result is not None:
                 cached_ct, cached_consumed = _persistent_result
                 cache[addr] = cached_ct
@@ -705,6 +711,15 @@ def expand_leaf_env_to_argument_env(
                 _loaded_from_persistent.add(addr)
                 _propagate_consumed_leaves_to_ancestors(addr)
                 return cache[addr]
+            ast_root = stored_ast
+            if ast_root is None:
+                try:
+                    formula_parse = _formula_to_parse(formula)
+                    ast_root = parse_ast(formula_parse)
+                except FormulaParseError:
+                    ast_root = None
+            elif stored_ast is not None:
+                ast_root = bind_axes(stored_ast, addr)
             if len(_analysis_stack) >= _MAX_ANALYSIS_DEPTH:
                 raise DynamicRefError(
                     f"Argument-subgraph analysis exceeded the maximum depth of "
@@ -872,7 +887,7 @@ def expand_leaf_env_to_argument_env(
                         _consumed_leaves.setdefault(parent, set()).update(child_leaves)
             # Persist successful result to SQLite cache (skip if loaded from persistent cache)
             if addr in cache and formula is not None and addr not in _loaded_from_persistent:
-                _persist_result(addr, formula, ast_root, cache[addr])
+                _persist_result(addr, formula, stored_ast, cache[addr])
 
     skipped_cached_refs = 0
     try:
