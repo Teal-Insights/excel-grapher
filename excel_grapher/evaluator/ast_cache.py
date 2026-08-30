@@ -24,7 +24,14 @@ class AstCacheInfo:
 
 
 class AstCache:
-    """LRU cache mapping normalized formula strings to parsed AST nodes."""
+    """LRU cache mapping absolute A1 formula strings to absolute-bound ASTs.
+
+    Keys are stripped `normalized_formula` text (`FormulaStyle.A1_ABSOLUTE`).
+    That spelling is a lossy key once trees carry per-axis `RelativeAxis`
+    intent, so values must be fully `bind_axes`-resolved (`AbsoluteAxis` only).
+    Never store a relative tree under this key: another host that shares the
+    spelling would inherit the wrong offsets on the string fallback path.
+    """
 
     def __init__(self, maxsize: int = DEFAULT_AST_CACHE_MAXSIZE) -> None:
         if maxsize < 1:
@@ -56,7 +63,11 @@ class AstCache:
         return ast
 
     def seed(self, entries: Mapping[str, AstNode]) -> None:
-        """Insert pre-parsed ASTs without affecting hit/miss statistics."""
+        """Insert pre-parsed absolute-bound ASTs without affecting hit/miss stats.
+
+        Each value must already be host-independent (`bind_axes` against the
+        originating `NodeKey`). First-wins: existing keys are left unchanged.
+        """
         for normalized_formula, ast in entries.items():
             if normalized_formula in self._cache:
                 continue

@@ -494,12 +494,13 @@ def create_dependency_graph(
     <-> export** parity (consistent behavior between evaluation and generated code).
 
     When `warm_ast_cache` is True, each distinct derived `normalized_formula`
-    in the built graph is stored on `DependencyGraph.preparsed_formulas`
-    (reusing `Node.formula_ast`). `FormulaEvaluator` evaluates per-node trees
-    directly and seeds its string-keyed fallback cache from those ASTs, so
-    first evaluation does not re-parse unless formulas change after extraction.
-    Seeding is best-effort when distinct formulas exceed
-    `FormulaEvaluator.ast_cache_maxsize` (oldest warmed entries may be
+    in the built graph is stored on `DependencyGraph.preparsed_formulas` as an
+    absolute-bound AST (`bind_axes` of `Node.formula_ast`). The mapping is
+    keyed by absolute A1 text, not `NodeKey`. `FormulaEvaluator` evaluates
+    per-node trees directly and seeds its string-keyed fallback cache from
+    those bound ASTs, so first evaluation does not re-parse unless formulas
+    change after extraction. Seeding is best-effort when distinct formulas
+    exceed `FormulaEvaluator.ast_cache_maxsize` (oldest warmed entries may be
     evicted). `preparsed_formulas` is not stored in JSON graph caches; call
     `warm_preparsed_formulas` after cache load or formula mutation if you need
     the string-keyed overlay.

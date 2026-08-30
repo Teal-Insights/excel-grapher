@@ -20,7 +20,8 @@ def warm_formula_shapes(
     Prefer `Node.formula_ast` when present. Duplicate formula strings still
     share a skeleton; each cell gets its own binding. Pass `parsed` from
     `warm_preparsed_formulas` to avoid a second parse for nodes that have no
-    stored AST.
+    stored AST. That overlay is absolute-bound; shapes for those nodes intern
+    the bound tree.
 
     Re-call after loading a graph from JSON/pickle cache or mutating node
     formulas so `DependencyGraph.formula_shapes` stays aligned.
