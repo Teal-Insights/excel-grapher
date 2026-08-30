@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v9.1.0 (2026-08-30)
+
+### Bug Fixes
+
+- **core**: Retarget identity cell refs without dropping relative axes
+  ([#552](https://github.com/Teal-Insights/excel-grapher/pull/552),
+  [`ef56099`](https://github.com/Teal-Insights/excel-grapher/commit/ef56099f6af046e75ab3701e812a95ff47a02cc8))
+
+- **grapher**: Derive compressed A1 text from rewritten AST
+  ([#552](https://github.com/Teal-Insights/excel-grapher/pull/552),
+  [`ef56099`](https://github.com/Teal-Insights/excel-grapher/commit/ef56099f6af046e75ab3701e812a95ff47a02cc8))
+
+- **grapher**: Key type analysis by stored formula_ast
+  ([#552](https://github.com/Teal-Insights/excel-grapher/pull/552),
+  [`ef56099`](https://github.com/Teal-Insights/excel-grapher/commit/ef56099f6af046e75ab3701e812a95ff47a02cc8))
+
+- **grapher**: Preserve raw formula and relative axes on node setters
+  ([#552](https://github.com/Teal-Insights/excel-grapher/pull/552),
+  [`ef56099`](https://github.com/Teal-Insights/excel-grapher/commit/ef56099f6af046e75ab3701e812a95ff47a02cc8))
+
+### Features
+
+- **grapher**: Migrate formula consumers onto formula_ast
+  ([#552](https://github.com/Teal-Insights/excel-grapher/pull/552),
+  [`ef56099`](https://github.com/Teal-Insights/excel-grapher/commit/ef56099f6af046e75ab3701e812a95ff47a02cc8))
+
+### Testing
+
+- **grapher**: Satisfy ty on stale-A1 codegen exec helpers
+  ([#552](https://github.com/Teal-Insights/excel-grapher/pull/552),
+  [`ef56099`](https://github.com/Teal-Insights/excel-grapher/commit/ef56099f6af046e75ab3701e812a95ff47a02cc8))
+
+
 ## v9.0.0 (2026-08-29)
 
 ### Features
