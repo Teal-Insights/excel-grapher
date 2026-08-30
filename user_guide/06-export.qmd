@@ -21,6 +21,14 @@ with CodeGenerator(graph) as gen:
 
 If neither explicit targets nor target-marked nodes are available, code generation raises a `ValueError`.
 
+When `graph.formula_shapes` is set, `generate()` may emit shared per-shape
+helpers. That overlay is read at generate time (not an init snapshot).
+Missing shapes fall back to per-node AST. Shapes are opt-in
+(`create_dependency_graph(..., warm_formula_shapes=False)` by default);
+after compression, formula rewrite, or JSON/pickle load the overlay is
+dropped and callers must rewarm. See
+[Formula-shape overlay](01-dependency-graphs.qmd#formula-shape-overlay).
+
 ## Return-line unpacking
 
 By default, each formula cell function returns a single nested expression. For easier

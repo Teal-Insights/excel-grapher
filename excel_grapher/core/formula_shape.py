@@ -4,7 +4,9 @@ Fingerprint a formula AST by punching cell/range/whole-column/whole-row leaves
 into typed holes. Formulas that differ only in those addresses share a
 `shape_key` and skeleton; each instance carries its own parameter tuple.
 
-See GitHub #517.
+See GitHub #517. Overlay lifetime (opt-in, caller rewarm, evaluator
+construction snapshot) is documented under GitHub #560 and
+`excel_grapher.grapher.formula_shapes.warm_formula_shapes`.
 """
 
 from __future__ import annotations
@@ -346,8 +348,10 @@ class FormulaShapeTable:
 
     `shapes` maps `shape_key` to one shared skeleton. `bindings` maps a
     `NodeKey` to `(shape_key, params)`. Excel-facing formula text is the derived
-    `normalized_formula` view (`render_formula` / `A1_ABSOLUTE`); this table is
-    an overlay the evaluator and codegen both read.
+    `normalized_formula` view (`render_formula` / `A1_ABSOLUTE`). This table is
+    an optional overlay: `Node.formula_ast` is authoritative, and missing
+    shapes fall back to AST. The evaluator compiles helpers from it at
+    construction; codegen reads it at generate time.
     """
 
     shapes: dict[str, SkeletonNode]

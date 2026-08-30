@@ -438,6 +438,12 @@ def dependency_graph_to_json(graph: DependencyGraph) -> dict[str, Any]:
 
 
 def dependency_graph_from_json(payload: dict[str, Any]) -> DependencyGraph:
+    """Rebuild a graph from `dependency_graph_to_json` payload.
+
+    `formula_shapes` and `preparsed_formulas` are omitted (`None`). Call
+    `warm_formula_shapes` / `warm_preparsed_formulas` after load if you want
+    those overlays.
+    """
     nodes_v = payload["nodes"]
     edges_v = payload["edges"]
     leaf_cls = payload.get("leaf_classification")

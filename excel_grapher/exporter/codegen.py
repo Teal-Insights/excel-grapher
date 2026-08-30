@@ -163,7 +163,11 @@ class _ReturnUnpackFrame:
 
 
 class CodeGenerator:
-    """Generates Python code from Excel formulas."""
+    """Generates Python code from Excel formulas.
+
+    Reads `graph.formula_shapes` at `generate` time when present (not an
+    init snapshot). Missing shapes fall back to per-node AST.
+    """
 
     def __init__(
         self,
@@ -2690,6 +2694,10 @@ class CodeGenerator:
         include_compute_all: bool | None = None,
     ) -> str:
         """Generate standalone Python code for target cells.
+
+        When `graph.formula_shapes` is set, this pass may emit shared
+        per-shape helpers. The overlay is read at generate time (not an init
+        snapshot). Missing shapes fall back to per-node AST.
 
         Args:
             targets: List of target cell addresses to compute.

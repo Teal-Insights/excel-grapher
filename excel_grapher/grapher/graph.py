@@ -152,6 +152,13 @@ class DependencyGraph:
     `get_dependencies` / `get_dependents` / `get_edge_attrs` return endpoints
     exactly as stored. `resolve_endpoint` / `get_dependency_nodes` resolve to
     stored cell keys when present (evaluation order, export, codegen).
+
+    `formula_shapes` is an optional acceleration overlay from
+    `warm_formula_shapes` (unset by default). `Node.formula_ast` is
+    authoritative; eval and codegen fall back to AST when the overlay is
+    missing. Compression, formula rewrite, and JSON/pickle load drop it
+    (`None`). Callers who want shapes again must rewarm; a live
+    `FormulaEvaluator` does not pick up a rewarm automatically.
     """
 
     _nodes: dict[NodeKey, Node] = field(default_factory=dict)
@@ -169,7 +176,9 @@ class DependencyGraph:
     # Keys: stripped absolute A1 `normalized_formula`. Values: bind_axes trees.
     # Re-warm after load, formula mutation, or move_node that changes targets.
     preparsed_formulas: dict[str, AstNode] | None = None
-    # Opt-in punched-shape table from warm_formula_shapes; not JSON/pickle serialized.
+    # Opt-in eval/codegen overlay from warm_formula_shapes. AST is
+    # authoritative; missing overlay falls back. Not JSON/pickle serialized;
+    # compression and formula rewrite drop it. Callers must rewarm.
     formula_shapes: FormulaShapeTable | None = None
 
     def copy(self) -> DependencyGraph:
@@ -429,7 +438,8 @@ class DependencyGraph:
         `formula_ast` unset and keep `normalized_formula` as fallback text.
         Edges are not recomputed; callers rewiring dependencies must update
         edges explicitly. Intended for projection authors building export-only
-        graph views.
+        graph views. Drops `formula_shapes`; callers who want the overlay must
+        rewarm.
 
         Raises:
             KeyError: If the node is missing.
@@ -464,7 +474,8 @@ class DependencyGraph:
         the raw audit string unchanged. Pass `formula=` to set or clear it.
         Unset `formula_ast` clears the derived formula view and, unless
         `formula=` is passed, the raw audit string. Edges are not recomputed;
-        callers rewiring dependencies must update edges explicitly.
+        callers rewiring dependencies must update edges explicitly. Drops
+        `formula_shapes`; callers who want the overlay must rewarm.
 
         Raises:
             KeyError: If the node is missing.
@@ -736,7 +747,9 @@ class DependencyGraph:
         Skips `is_target` nodes and any keys in `preserve` so public extraction
         and series-bound addresses stay in the graph.
 
-        Node hooks are not invoked for removed or updated nodes.
+        Node hooks are not invoked for removed or updated nodes. Drops
+        `formula_shapes`; callers who want the overlay must rewarm after
+        compression.
 
         Args:
             preserve: Node keys that must not be forwarded. Always unioned with
@@ -814,7 +827,8 @@ class DependencyGraph:
         (external consumers such as series-bound public addresses). Forwarding
         targets are also protected from later inlining. Identity forwarding is
         cell-ref-only: a transit mentioned as a range endpoint or whole-column/row
-        leaf is left in place.
+        leaf is left in place. Drops `formula_shapes`; callers who want the overlay
+        must rewarm after compression.
 
         Args:
             preserve: Node keys that must not be collapsed (forwarded or inlined).
@@ -1001,7 +1015,12 @@ class DependencyGraph:
         state.clear()
 
     def _invalidate_formula_shapes(self) -> None:
-        """Drop interned shapes after a formula rewrite (re-warm to restore)."""
+        """Drop interned shapes after a formula rewrite.
+
+        Does not rewarm. Call `warm_formula_shapes` and assign the result if
+        the overlay is needed again. A live `FormulaEvaluator` still keeps
+        its construction-time shape helpers until reconstructed.
+        """
         self.formula_shapes = None
 
     # ---- internal edge mutation --------------------------------------------

@@ -511,12 +511,21 @@ def create_dependency_graph(
     `warm_preparsed_formulas` after cache load or formula mutation if you need
     the string-keyed overlay.
 
+    Formula-shape overlay (`DependencyGraph.formula_shapes`) is opt-in
+    acceleration for eval and codegen. Default remains
+    `warm_formula_shapes=False`; parameterized shapes from GitHub #517 stay
+    opt-in. `Node.formula_ast` is authoritative. Missing or dropped shapes
+    fall back to AST, so correctness does not require the overlay to be warm.
+
     When `warm_formula_shapes` is True, the same parse pass interns punched AST
     skeletons on `DependencyGraph.formula_shapes`, keyed by `NodeKey`.
-    `FormulaEvaluator` compiles each shape once and `CodeGenerator` emits a
+    `FormulaEvaluator` compiles each shape once at construction.
+    `CodeGenerator.generate` reads the overlay at generate time and emits a
     shared helper per shape when profitable. The table is not JSON/pickle
-    serialized; call `warm_formula_shapes` after cache load. Formula rewrite
-    invalidates it.
+    serialized. Compression and formula rewrite drop it (`None`). After those
+    events, call `warm_formula_shapes(graph)` and assign the result; the graph
+    does not auto-rewarm. Rewarming does not refresh `_shape_fns` on a live
+    `FormulaEvaluator` -- construct a new one (GitHub #560).
 
     **Cost model**: constraint-based dynamic-ref expansion (`dynamic_refs` set,
     `use_cached_dynamic_refs=False`) runs `expand_leaf_env_to_argument_env`
