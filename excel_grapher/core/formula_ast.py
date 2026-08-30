@@ -438,6 +438,30 @@ def unparse_normalized_formula(
     return "=" + _unparse_expr(node, anchor=anchor, parent_prec=0, is_right=False)
 
 
+def _retarget_cell_ref(ref: CellRef, new_key: str, anchor: CellKey | str) -> CellRef:
+    """Point `ref` at `new_key` while keeping each axis's relative/absolute kind."""
+    sheet, coord = parse_address(new_key)
+    col_letter, row = coordinate_from_string(coord.replace("$", ""))
+    new_col = int(column_index_from_string(col_letter))
+    new_row = int(row)
+    anchor_key = _coerce_anchor_key(anchor)
+    if anchor_key is None:
+        raise ValueError("retargeting a relative axis requires an anchor cell")
+    col_base = int(column_index_from_string(anchor_key.column))
+    row_base = int(anchor_key.row)
+
+    def toward(axis: AxisRef, new_index: int, base: int) -> AxisRef:
+        if isinstance(axis, AbsoluteAxis):
+            return AbsoluteAxis(new_index)
+        return RelativeAxis(new_index - base)
+
+    return CellRef(
+        sheet=sheet,
+        col=toward(ref.col, new_col, col_base),
+        row=toward(ref.row, new_row, row_base),
+    )
+
+
 def replace_resolved_cell_ref(
     node: AstNode,
     *,
@@ -449,25 +473,27 @@ def replace_resolved_cell_ref(
     """Replace `CellRefNode` leaves that resolve to `old_key`.
 
     Range and whole-column/row leaves are left unchanged. When `replacement` is
-    omitted, matching leaves become an absolute `CellRefNode` for `new_key`.
+    omitted, matching leaves keep each axis's relative/absolute kind and retarget
+    to `new_key` against `anchor`.
 
     Args:
         node: Formula AST to rewrite.
         old_key: Canonical sheet-qualified address to match after resolution.
-        new_key: Absolute replacement address when `replacement` is omitted.
-        anchor: Host cell used to resolve relative axes.
+        new_key: Replacement address when `replacement` is omitted.
+        anchor: Host cell used to resolve relative axes and retarget offsets.
         replacement: Optional subtree to splice in place of each match.
 
     Returns:
         A new tree when any leaf changed; otherwise `node`.
     """
-    subst = CellRefNode(new_key) if replacement is None else replacement
 
     def walk(cur: AstNode) -> AstNode:
         match cur:
             case CellRefNode(ref):
                 if resolve_cell_ref(ref, anchor) == old_key:
-                    return subst
+                    if replacement is not None:
+                        return replacement
+                    return CellRefNode(_retarget_cell_ref(ref, new_key, anchor))
                 return cur
             case FunctionCallNode(name, args):
                 new_args = [walk(arg) for arg in args]
