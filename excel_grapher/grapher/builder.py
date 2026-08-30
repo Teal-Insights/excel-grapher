@@ -461,17 +461,18 @@ def create_dependency_graph(
 
     When `store_raw_formula` is True, each formula cell also keeps the workbook
     formula text on `Node.formula`. It defaults to False because the string is
-    not needed to evaluate, compress, or export a graph: `normalized_formula`
-    (always stored) is what every consumer reads, and dropping the raw copy is a
-    sizeable memory saving on large workbooks. Enable it when you need the
-    original text -- audit / display use, and TACO range compression
-    (`excel_grapher.grapher.range_compression`), which infers stride patterns
-    from the relative/absolute (`$`) markers that normalization strips.
+    not needed to evaluate, compress, or export a graph: `formula_ast` is the
+    in-memory source of truth, `normalized_formula` is derived absolute A1, and
+    dropping the raw copy is a sizeable memory saving on large workbooks.
+    Enable it when you need the original text -- audit / display use, and TACO
+    range compression (`excel_grapher.grapher.range_compression`), which infers
+    stride patterns from the relative/absolute (`$`) markers that
+    normalization strips.
 
     Raw formulas are audit records of extraction: compression and projection
-    rewrite `normalized_formula` only, so on a compressed graph `Node.formula`
-    still shows the pre-compression workbook text and must not be re-parsed as
-    the node's current definition.
+    rewrite `formula_ast` (and refresh derived `normalized_formula`), so on a
+    compressed graph `Node.formula` still shows the pre-compression workbook
+    text and must not be re-parsed as the node's current definition.
 
     Extraction always parses each formula cell into `Node.formula_ast` from the
     raw workbook text, preserving per-axis relative/absolute intent. Distinct
@@ -488,11 +489,12 @@ def create_dependency_graph(
     `excel_grapher.exporter.codegen.CodeGenerator.generate` for **evaluator
     <-> export** parity (consistent behavior between evaluation and generated code).
 
-    When `warm_ast_cache` is True, each distinct `normalized_formula` in the
-    built graph is stored on `DependencyGraph.preparsed_formulas` (reusing
-    `Node.formula_ast`). `FormulaEvaluator` also seeds its AST cache from
-    per-node ASTs, so first evaluation does not re-parse unless formulas change
-    after extraction. Seeding is best-effort when distinct formulas exceed
+    When `warm_ast_cache` is True, each distinct derived `normalized_formula`
+    in the built graph is stored on `DependencyGraph.preparsed_formulas`
+    (reusing `Node.formula_ast`). `FormulaEvaluator` evaluates per-node trees
+    directly and seeds its string-keyed fallback cache from those ASTs, so
+    first evaluation does not re-parse unless formulas change after extraction.
+    Seeding is best-effort when distinct formulas exceed
     `FormulaEvaluator.ast_cache_maxsize` (oldest warmed entries may be
     evicted). `preparsed_formulas` is not stored in JSON graph caches; call
     `warm_preparsed_formulas` after cache load or formula mutation if you need

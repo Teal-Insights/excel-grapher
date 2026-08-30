@@ -109,7 +109,8 @@ def test_set_node_formula_parses_formula_ast() -> None:
     graph.set_node_formula("Sheet1!B1", "=A1+2", "=Sheet1!A1+2")
     view = graph.get_node("Sheet1!B1")
     assert view is not None
-    assert view.formula_ast == parse("=Sheet1!A1+2")
+    assert view.formula_ast == parse_preserving_axes("=A1+2", anchor="Sheet1!B1")
+    assert view.normalized_formula == "=Sheet1!A1+2"
 
     graph.set_node_formula("Sheet1!B1", None, None)
     cleared = graph.get_node("Sheet1!B1")

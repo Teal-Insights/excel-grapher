@@ -18,6 +18,7 @@ from excel_grapher.core.formula_ast import (
     AstNode,
     bind_axes,
     parse_optional,
+    parse_preserving_axes_optional,
     replace_resolved_cell_ref,
     unparse_normalized_formula,
 )
@@ -37,6 +38,10 @@ from .guard import (
     or_guard,
 )
 from .node import Node, NodeKey, NodeView, copy_node, node_to_view
+
+# Sentinel so `set_node_ast(..., formula=None)` can clear the raw audit string
+# while omitting `formula=` keeps the existing workbook formula.
+_FORMULA_UNSET = object()
 
 NodeHook = Callable[[NodeKey, Node], None]
 
@@ -414,12 +419,15 @@ class DependencyGraph:
         formula: str | None,
         normalized_formula: str | None,
     ) -> None:
-        """Set a node's `formula` and `normalized_formula` durably.
+        """Set a node's `formula` and derived `normalized_formula`.
 
-        Parses `normalized_formula` into `formula_ast`. Unparseable formulas
-        leave `formula_ast` unset. Edges are not recomputed; callers rewiring
-        dependencies must update edges explicitly. Intended for projection
-        authors building export-only graph views.
+        Parses raw `formula` with axis intent when present; otherwise parses
+        `normalized_formula` as absolute A1. A successful parse refreshes
+        `normalized_formula` from the tree. Unparseable formulas leave
+        `formula_ast` unset and store the passed `normalized_formula`. Edges
+        are not recomputed; callers rewiring dependencies must update edges
+        explicitly. Intended for projection authors building export-only
+        graph views.
 
         Raises:
             KeyError: If the node is missing.
@@ -429,8 +437,16 @@ class DependencyGraph:
         if node is None:
             raise KeyError(f"Cell {key} not found in graph")
         node.formula = formula
-        node.normalized_formula = normalized_formula
-        node.formula_ast = parse_optional(normalized_formula)
+        ast: AstNode | None = None
+        if formula is not None:
+            ast = parse_preserving_axes_optional(formula, anchor=node.address or nk)
+        if ast is None:
+            ast = parse_optional(normalized_formula)
+        node.formula_ast = ast
+        if ast is not None:
+            node.normalized_formula = unparse_normalized_formula(ast, anchor=node.address)
+        else:
+            node.normalized_formula = normalized_formula
         self._invalidate_formula_shapes()
 
     def set_node_ast(
@@ -438,14 +454,15 @@ class DependencyGraph:
         key: NodeKey,
         formula_ast: AstNode | None,
         *,
-        formula: str | None = None,
+        formula: str | None | object = _FORMULA_UNSET,
     ) -> None:
         """Set a node's formula from `formula_ast`.
 
-        Derives `normalized_formula` as absolute A1. `formula` is the opt-in
-        raw audit string. Unset `formula_ast` clears both formula fields.
-        Edges are not recomputed; callers rewiring dependencies must update
-        edges explicitly.
+        Derives `normalized_formula` as absolute A1. Omit `formula` to leave
+        the raw audit string unchanged. Pass `formula=` to set or clear it.
+        Unset `formula_ast` clears `normalized_formula` and, unless `formula=`
+        is passed, the raw audit string. Edges are not recomputed; callers
+        rewiring dependencies must update edges explicitly.
 
         Raises:
             KeyError: If the node is missing.
@@ -454,7 +471,10 @@ class DependencyGraph:
         node = self._nodes.get(nk)
         if node is None:
             raise KeyError(f"Cell {key} not found in graph")
-        node.formula = formula
+        if formula is not _FORMULA_UNSET:
+            node.formula = formula if isinstance(formula, str) or formula is None else None
+        elif formula_ast is None:
+            node.formula = None
         node.formula_ast = formula_ast
         if formula_ast is None:
             node.normalized_formula = None

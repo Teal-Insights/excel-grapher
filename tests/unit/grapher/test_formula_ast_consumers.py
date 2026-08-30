@@ -7,11 +7,14 @@ from unittest.mock import patch
 import excel_grapher.evaluator.evaluator as evaluator_module
 from excel_grapher import FormulaEvaluator
 from excel_grapher.core.formula_ast import (
+    BinaryOpNode,
+    CellRefNode,
     RelativeAxis,
     parse,
     parse_preserving_axes,
     unparse_normalized_formula,
 )
+from excel_grapher.exporter.codegen import CodeGenerator
 from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
 from excel_grapher.grapher.formula_label import display_formula
 from excel_grapher.grapher.graph import DependencyGraph
@@ -59,6 +62,52 @@ def test_set_node_ast_derives_normalized_formula() -> None:
     assert not cleared.has_formula
 
 
+def test_set_node_ast_omitting_formula_keeps_raw_audit_string() -> None:
+    graph = DependencyGraph()
+    graph.add_node(make_cell_node("Sheet1", "A", 1, is_leaf=True, value=1))
+    graph.add_node(
+        make_cell_node(
+            "Sheet1",
+            "B",
+            1,
+            is_leaf=False,
+            formula="=A1+1",
+            formula_ast=parse("=Sheet1!A1+1"),
+        )
+    )
+    graph.set_node_ast("Sheet1!B1", parse("=Sheet1!A1+2"))
+    kept = graph.get_node("Sheet1!B1")
+    assert kept is not None
+    assert kept.formula == "=A1+1"
+    assert kept.normalized_formula == "=Sheet1!A1+2"
+
+    graph.set_node_ast("Sheet1!B1", parse("=Sheet1!A1+3"), formula="=A1+3")
+    replaced = graph.get_node("Sheet1!B1")
+    assert replaced is not None
+    assert replaced.formula == "=A1+3"
+
+    graph.set_node_ast("Sheet1!B1", parse("=Sheet1!A1+4"), formula=None)
+    cleared = graph.get_node("Sheet1!B1")
+    assert cleared is not None
+    assert cleared.formula is None
+
+
+def test_set_node_formula_preserves_relative_axes_from_raw_text() -> None:
+    graph = DependencyGraph()
+    graph.add_node(make_cell_node("Sheet1", "A", 1, is_leaf=True, value=1))
+    graph.add_node(make_cell_node("Sheet1", "B", 1, is_leaf=False))
+    graph.set_node_formula("Sheet1!B1", "=A1+2", "=Sheet1!A1+2")
+    view = graph.get_node("Sheet1!B1")
+    assert view is not None
+    assert view.formula_ast == parse_preserving_axes("=A1+2", anchor="Sheet1!B1")
+    assert view.normalized_formula == "=Sheet1!A1+2"
+    assert isinstance(view.formula_ast, BinaryOpNode)
+    left = view.formula_ast.left
+    assert isinstance(left, CellRefNode)
+    assert isinstance(left.ref.col, RelativeAxis)
+    assert left.ref.col.offset == -1
+
+
 def test_evaluator_uses_formula_ast_even_when_normalized_text_is_stale() -> None:
     graph = DependencyGraph()
     graph.add_node(make_cell_node("S", "A", 1, value=10, is_leaf=True))
@@ -85,6 +134,33 @@ def test_evaluator_uses_formula_ast_even_when_normalized_text_is_stale() -> None
     with FormulaEvaluator(graph) as ev, patch.object(evaluator_module, "parse", counting_parse):
         assert ev.evaluate("S!B1") == 11.0
         assert parse_calls == 0
+
+
+def test_codegen_uses_formula_ast_even_when_normalized_text_is_stale() -> None:
+    graph = DependencyGraph()
+    graph.add_node(make_cell_node("S", "A", 1, value=10, is_leaf=True))
+    graph.add_node(
+        make_cell_node(
+            "S",
+            "B",
+            1,
+            is_leaf=False,
+            normalized_formula="=S!A1+999",
+            formula_ast=parse("=S!A1+1"),
+        )
+    )
+    graph.add_edge("S!B1", "S!A1")
+
+    code = CodeGenerator(graph).generate(["S!B1"])
+    assert "999" not in code
+    namespace: dict[str, object] = {}
+    exec(code, namespace)
+    compute_all = namespace["compute_all"]
+    make_context = namespace["make_context"]
+    assert callable(compute_all)
+    assert callable(make_context)
+    result = compute_all(ctx=make_context())
+    assert result["S!B1"] == 11.0
 
 
 def test_display_formula_prefers_raw_then_unparsed_ast() -> None:
@@ -155,9 +231,14 @@ def test_identity_transit_rewrites_ast_and_keeps_unrelated_relative_axes() -> No
     assert node is not None
     assert node.formula_ast is not None
     # Unrelated C2 relative offset (col+2, row+1 from A1) is preserved.
-    from excel_grapher.core.formula_ast import BinaryOpNode, CellRefNode
-
+    # The rewritten B1 site keeps a relative offset to C1 (col+2 from A1).
     assert isinstance(node.formula_ast, BinaryOpNode)
+    left = node.formula_ast.left
+    assert isinstance(left, CellRefNode)
+    assert isinstance(left.ref.col, RelativeAxis)
+    assert left.ref.col.offset == 2
+    assert isinstance(left.ref.row, RelativeAxis)
+    assert left.ref.row.offset == 0
     right = node.formula_ast.right
     assert isinstance(right, CellRefNode)
     assert isinstance(right.ref.col, RelativeAxis)
@@ -241,3 +322,47 @@ def test_structural_inline_derives_a1_from_spliced_ast() -> None:
         node.formula_ast, anchor="Sheet1!A1"
     )
     assert node.normalized_formula == "=Sheet1!D1*2+1"
+
+
+def test_structural_inline_binds_relative_transit_body() -> None:
+    graph = DependencyGraph()
+    graph.add_node(make_cell_node("Sheet1", "D", 1, value=5, is_leaf=True))
+    graph.add_node(
+        make_cell_node(
+            "Sheet1",
+            "B",
+            1,
+            is_leaf=False,
+            formula_ast=parse_preserving_axes("=D1*2", anchor="Sheet1!B1"),
+        )
+    )
+    graph.add_node(
+        make_cell_node(
+            "Sheet1",
+            "A",
+            1,
+            is_leaf=False,
+            formula_ast=parse_preserving_axes("=B1+C2", anchor="Sheet1!A1"),
+        )
+    )
+    _direct_edge(graph, "Sheet1!B1", "Sheet1!D1")
+    _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
+
+    removed = graph.compress_optimal()
+    assert "Sheet1!B1" in removed
+    node = graph.get_node("Sheet1!A1")
+    assert node is not None
+    assert node.formula_ast is not None
+    assert isinstance(node.formula_ast, BinaryOpNode)
+    inlined = node.formula_ast.left
+    assert inlined == parse("=Sheet1!D1*2")
+    right = node.formula_ast.right
+    assert isinstance(right, CellRefNode)
+    assert isinstance(right.ref.col, RelativeAxis)
+    assert right.ref.col.offset == 2
+    assert isinstance(right.ref.row, RelativeAxis)
+    assert right.ref.row.offset == 1
+    assert node.normalized_formula == unparse_normalized_formula(
+        node.formula_ast, anchor="Sheet1!A1"
+    )
+    assert node.normalized_formula == "=Sheet1!D1*2+Sheet1!C2"
