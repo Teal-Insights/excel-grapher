@@ -464,7 +464,8 @@ def create_dependency_graph(
     When `store_raw_formula` is True, each formula cell also keeps the workbook
     formula text on `Node.formula`. It defaults to False because the string is
     not needed to evaluate, compress, or export a graph: `formula_ast` is the
-    in-memory source of truth, `normalized_formula` is derived absolute A1, and
+    in-memory source of truth, `normalized_formula` is a derived
+    `render_formula(..., style=A1_ABSOLUTE)` view (not stored on the node), and
     dropping the raw copy is a sizeable memory saving on large workbooks.
     Enable it when you need the original text -- audit / display use, and TACO
     range compression (`excel_grapher.grapher.range_compression`), which infers
@@ -472,15 +473,15 @@ def create_dependency_graph(
     normalization strips.
 
     Raw formulas are audit records of extraction: compression and projection
-    rewrite `formula_ast` (and refresh derived `normalized_formula`), so on a
+    rewrite `formula_ast` (the derived `normalized_formula` view follows), so on a
     compressed graph `Node.formula` still shows the pre-compression workbook
     text and must not be re-parsed as the node's current definition.
 
     Extraction always parses each formula cell into `Node.formula_ast` from the
     raw workbook text, preserving per-axis relative/absolute intent. Distinct
     ASTs share one interned tree (keyed by the frozen tree itself, not by a
-    JSON encoding or by `normalized_formula`). `normalized_formula` remains
-    derived absolute A1 text. Formulas the AST parser cannot handle leave
+    JSON encoding or by formula text). `normalized_formula` is derived
+    absolute A1 via `render_formula`. Formulas the AST parser cannot handle leave
     `formula_ast` unset; extraction still records the cell and its
     dependencies.
 

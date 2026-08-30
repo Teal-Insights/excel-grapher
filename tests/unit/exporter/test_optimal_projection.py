@@ -102,7 +102,7 @@ def test_optimal_projection_does_not_mutate_original_graph() -> None:
     assert graph.get_dependencies("Sheet1!A1") == frozenset({"Sheet1!B1"})
     assert graph.get_dependencies("Sheet1!B1") == frozenset({"Sheet1!D1"})
     assert graph.preparsed_formulas == {"=Sheet1!D1*2": ast}
-    assert projected_a.normalized_formula == "=(Sheet1!D1*2)+1"
+    assert projected_a.normalized_formula == "=Sheet1!D1*2+1"
     assert projection.get_dependencies("Sheet1!A1") == frozenset({"Sheet1!D1"})
 
 

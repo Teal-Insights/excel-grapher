@@ -135,7 +135,7 @@ def test_set_node_formula_leaves_formula_ast_unset_when_unparseable() -> None:
 def test_json_cache_round_trips_formula_ast(tmp_path: Path) -> None:
     path = _workbook_with_shared_formula(tmp_path)
     graph = create_dependency_graph(path, ["Sheet1!C1"], load_values=True)
-    assert GRAPH_CACHE_SCHEMA_VERSION >= 7
+    assert GRAPH_CACHE_SCHEMA_VERSION >= 8
 
     restored = dependency_graph_from_json(dependency_graph_to_json(graph))
     original = graph.get_node("Sheet1!C1")
@@ -161,7 +161,7 @@ def test_json_cache_interns_formula_asts_by_canonical_ast(tmp_path: Path) -> Non
     ids = [
         node_payload.get("formula_ast_id")
         for node_payload in payload["nodes"]
-        if node_payload.get("normalized_formula")
+        if "formula_ast_id" in node_payload
     ]
     assert all(isinstance(ast_id, int) and not isinstance(ast_id, bool) for ast_id in ids)
     assert all(0 <= ast_id < len(pool) for ast_id in ids)
@@ -169,6 +169,7 @@ def test_json_cache_interns_formula_asts_by_canonical_ast(tmp_path: Path) -> Non
     for node_payload in payload["nodes"]:
         assert "formula_ast" not in node_payload
         assert "formula_ast_key" not in node_payload
+        assert "normalized_formula" not in node_payload
 
     restored = dependency_graph_from_json(payload)
     loaded_b1 = restored._get_internal_node("Sheet1!B1")
@@ -292,8 +293,8 @@ def test_optimal_inline_rewrites_keep_formula_ast_aligned() -> None:
     assert "Sheet1!B1" in removed
     node = graph.get_node("Sheet1!A1")
     assert node is not None
-    assert node.normalized_formula == "=(Sheet1!D1*2)+1"
-    assert node.formula_ast == parse("=(Sheet1!D1*2)+1")
+    assert node.normalized_formula == "=Sheet1!D1*2+1"
+    assert node.formula_ast == parse("=Sheet1!D1*2+1")
 
 
 def test_identity_transit_leaves_formula_ast_unset_when_rewrite_unparseable() -> None:
@@ -354,3 +355,113 @@ def test_projection_copy_keeps_formula_ast(tmp_path: Path) -> None:
     cloned = projected._get_internal_node("Sheet1!C1")
     assert original is not None and cloned is not None
     assert cloned.formula_ast is original.formula_ast
+
+
+def test_node_does_not_store_normalized_formula() -> None:
+    from dataclasses import fields
+
+    stored = {f.name for f in fields(Node)}
+    assert "normalized_formula" not in stored
+    assert "formula_ast" in stored
+    assert "_unparseable_formula" in stored
+
+    node = make_cell_node(
+        "Sheet1",
+        "B",
+        1,
+        formula="=A1",
+        normalized_formula="=Sheet1!A1",
+        is_leaf=False,
+    )
+    assert node.normalized_formula == "=Sheet1!A1"
+    assert node.formula_ast is not None
+    assert node._unparseable_formula is None
+    with pytest.raises(AttributeError):
+        object.__setattr__(node, "normalized_formula", "=Sheet1!Z9")
+
+
+def test_json_cache_omits_normalized_formula_and_keeps_unparseable_text() -> None:
+    graph = DependencyGraph()
+    graph.add_node(make_cell_node("Sheet1", "A", 1, is_leaf=True, value=1))
+    graph.add_node(
+        make_cell_node(
+            "Sheet1",
+            "B",
+            1,
+            formula="=A1+1",
+            normalized_formula="=Sheet1!A1+1",
+            is_leaf=False,
+        )
+    )
+    unparseable = "=SUM(IF(@Sheet1!A1:A3>0,@Sheet1!B1:B3,0))"
+    graph.add_node(
+        make_cell_node(
+            "Sheet1",
+            "C",
+            1,
+            formula=unparseable,
+            normalized_formula=unparseable,
+            is_leaf=False,
+        )
+    )
+    payload = dependency_graph_to_json(graph)
+    by_key = {n["key"]: n for n in payload["nodes"]}
+    assert "normalized_formula" not in by_key["Sheet1!A1"]
+    assert "normalized_formula" not in by_key["Sheet1!B1"]
+    assert "unparseable_formula" not in by_key["Sheet1!B1"]
+    assert "formula_ast_id" in by_key["Sheet1!B1"]
+    assert by_key["Sheet1!C1"]["unparseable_formula"] == unparseable
+    assert "formula_ast_id" not in by_key["Sheet1!C1"]
+
+    restored = dependency_graph_from_json(payload)
+    loaded = restored.get_node("Sheet1!C1")
+    assert loaded is not None
+    assert loaded.formula_ast is None
+    assert loaded.normalized_formula == unparseable
+    assert loaded.has_formula
+
+
+def test_json_cache_loads_legacy_normalized_formula_without_ast() -> None:
+    graph = DependencyGraph()
+    graph.add_node(make_cell_node("Sheet1", "A", 1, is_leaf=True, value=1))
+    payload = dependency_graph_to_json(graph)
+    payload["nodes"].append(
+        {
+            "key": "Sheet1!B1",
+            "address": "Sheet1!B1",
+            "sheet": "Sheet1",
+            "column": "B",
+            "row": 1,
+            "formula": "=A1+1",
+            "normalized_formula": "=Sheet1!A1+1",
+            "value": None,
+            "is_leaf": False,
+            "is_target": False,
+            "metadata": {},
+        }
+    )
+    restored = dependency_graph_from_json(payload)
+    loaded = restored.get_node("Sheet1!B1")
+    assert loaded is not None
+    assert loaded.formula_ast == parse("=Sheet1!A1+1")
+    assert loaded.normalized_formula == "=Sheet1!A1+1"
+    assert loaded._unparseable_formula is None
+
+
+def test_is_graph_formula_node_follows_has_formula() -> None:
+    from excel_grapher.series_bindings.graph_predicates import is_graph_formula_node
+
+    graph = DependencyGraph()
+    graph.add_node(make_cell_node("Sheet1", "A", 1, is_leaf=True, value=1))
+    graph.add_node(
+        make_cell_node(
+            "Sheet1",
+            "B",
+            1,
+            normalized_formula="=Sheet1!A1",
+            is_leaf=False,
+        )
+    )
+    assert not is_graph_formula_node(graph, "Sheet1!A1")
+    assert is_graph_formula_node(graph, "Sheet1!B1")
+    assert not is_graph_formula_node(graph, "Sheet1!Z9")

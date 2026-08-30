@@ -561,8 +561,8 @@ class TestGenerate:
         with pytest.raises(ValueError, match="No export targets were provided"):
             _ = CodeGenerator(graph).generate()
 
-    def test_generate_caches_parsed_asts(self, monkeypatch):
-        """generate() should not repeatedly parse the same cell formulas."""
+    def test_generate_uses_stored_formula_ast(self, monkeypatch):
+        """generate() should use per-node `formula_ast` and not re-parse."""
         graph = _make_graph(
             _make_node("Sheet1!A1", None, 10.0),
             _make_node("Sheet1!A2", None, 20.0),
@@ -585,7 +585,37 @@ class TestGenerate:
 
         _ = gen.generate(["Sheet1!C1"])
 
-        # Only formula cells should be parsed, and each should be parsed once.
+        assert calls == []
+
+    def test_generate_parses_when_formula_ast_missing(self, monkeypatch):
+        """generate() falls back to parsing derived formula text once per cell."""
+        graph = _make_graph(
+            _make_node("Sheet1!A1", None, 10.0),
+            _make_node("Sheet1!A2", None, 20.0),
+            _make_node("Sheet1!B1", "=Sheet1!A1+Sheet1!A2", None),
+            _make_node("Sheet1!C1", "=Sheet1!B1*2", None),
+        )
+        for key in ("Sheet1!B1", "Sheet1!C1"):
+            node = graph._get_internal_node(key)
+            assert node is not None
+            node._unparseable_formula = node.normalized_formula
+            node.formula_ast = None
+
+        gen = CodeGenerator(graph)
+
+        import excel_grapher.exporter.codegen as codegen_module
+
+        original_parse = codegen_module.parse
+        calls: list[str] = []
+
+        def counting_parse(formula: str):
+            calls.append(formula)
+            return original_parse(formula)
+
+        monkeypatch.setattr(codegen_module, "parse", counting_parse)
+
+        _ = gen.generate(["Sheet1!C1"])
+
         assert len(calls) == 2
 
 

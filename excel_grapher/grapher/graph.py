@@ -47,7 +47,7 @@ NodeHook = Callable[[NodeKey, Node], None]
 
 EdgeKey = tuple[NodeKey, NodeKey]
 
-_PICKLE_VERSION = 3
+_PICKLE_VERSION = 4
 
 
 @dataclass(frozen=True)
@@ -419,14 +419,14 @@ class DependencyGraph:
         formula: str | None,
         normalized_formula: str | None,
     ) -> None:
-        """Set a node's `formula` and derived `normalized_formula`.
+        """Set a node's `formula` and parse it into `formula_ast`.
 
         Parses raw `formula` with axis intent when present; otherwise parses
-        `normalized_formula` as absolute A1. A successful parse refreshes
-        `normalized_formula` from the tree. Unparseable formulas leave
-        `formula_ast` unset and store the passed `normalized_formula`. Edges
-        are not recomputed; callers rewiring dependencies must update edges
-        explicitly. Intended for projection authors building export-only
+        `normalized_formula` as absolute A1. A successful parse is the source
+        of the derived `normalized_formula` view. Unparseable formulas leave
+        `formula_ast` unset and keep `normalized_formula` as fallback text.
+        Edges are not recomputed; callers rewiring dependencies must update
+        edges explicitly. Intended for projection authors building export-only
         graph views.
 
         Raises:
@@ -444,9 +444,9 @@ class DependencyGraph:
             ast = parse_optional(normalized_formula)
         node.formula_ast = ast
         if ast is not None:
-            node.normalized_formula = unparse_normalized_formula(ast, anchor=node.address)
+            node._unparseable_formula = None
         else:
-            node.normalized_formula = normalized_formula
+            node._unparseable_formula = normalized_formula
         self._invalidate_formula_shapes()
 
     def set_node_ast(
@@ -460,9 +460,9 @@ class DependencyGraph:
 
         Derives `normalized_formula` as absolute A1. Omit `formula` to leave
         the raw audit string unchanged. Pass `formula=` to set or clear it.
-        Unset `formula_ast` clears `normalized_formula` and, unless `formula=`
-        is passed, the raw audit string. Edges are not recomputed; callers
-        rewiring dependencies must update edges explicitly.
+        Unset `formula_ast` clears the derived formula view and, unless
+        `formula=` is passed, the raw audit string. Edges are not recomputed;
+        callers rewiring dependencies must update edges explicitly.
 
         Raises:
             KeyError: If the node is missing.
@@ -476,10 +476,7 @@ class DependencyGraph:
         elif formula_ast is None:
             node.formula = None
         node.formula_ast = formula_ast
-        if formula_ast is None:
-            node.normalized_formula = None
-        else:
-            node.normalized_formula = unparse_normalized_formula(formula_ast, anchor=node.address)
+        node._unparseable_formula = None
         self._invalidate_formula_shapes()
 
     def remove_node(self, key: NodeKey) -> None:
@@ -528,7 +525,7 @@ class DependencyGraph:
         """Iterate over (key, node) pairs for nodes that contain formulas.
 
         Formula cells are identified by `has_formula` (`formula_ast` or
-        unparseable `normalized_formula` text).
+        unparseable formula text). `normalized_formula` is a derived view.
         """
         for key, node in self._nodes.items():
             if node.has_formula:
@@ -1042,7 +1039,7 @@ class DependencyGraph:
                 new_norm = new_norm.replace(t_key, r_key)
 
             if d_node.formula_ast is None and before_normalized != new_norm:
-                d_node.formula_ast = parse_optional(new_norm)
+                d_node.apply_formula_text(new_norm)
 
             if record is not None and before_normalized != new_norm:
                 record.formula_rewrites.append(
@@ -1053,7 +1050,6 @@ class DependencyGraph:
                     )
                 )
 
-            d_node.normalized_formula = new_norm
             if before_normalized != new_norm:
                 self._invalidate_formula_shapes()
 
@@ -1148,7 +1144,7 @@ class DependencyGraph:
                 t_node.normalized_formula,
             )
             if before_normalized != new_norm:
-                d_node.formula_ast = parse_optional(new_norm)
+                d_node.apply_formula_text(new_norm)
                 self._invalidate_formula_shapes()
 
         if record is not None and before_normalized != new_norm:
@@ -1169,8 +1165,6 @@ class DependencyGraph:
             prov = self.get_edge_attrs(d_key, dep).provenance
             if isinstance(prov, EdgeProvenance):
                 old_dependent_provenance[dep] = prov
-
-        d_node.normalized_formula = new_norm
 
         for dep in list(self._edges.get(d_key, set())):
             self._remove_edge(d_key, dep)

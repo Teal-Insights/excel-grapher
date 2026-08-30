@@ -154,9 +154,9 @@ def test_normalized_formula_resolves_range_named_range(tmp_path: Path) -> None:
     graph = create_dependency_graph(excel_path, ["Sheet1!C1"], load_values=False)
     node = graph.get_node("Sheet1!C1")
     assert node is not None
-    # Range-based name should be fully expanded in normalized_formula so that
+    # Range-based name should be fully expanded in the derived A1 view so that
     # downstream parsers never see a bare identifier like NumRange.
-    assert node.normalized_formula == "=VLOOKUP(Sheet1!A1, Sheet1!A1:B1, 2, FALSE())"
+    assert node.normalized_formula == "=VLOOKUP(Sheet1!A1,Sheet1!A1:B1,2,FALSE())"
 
 
 def test_named_range_map_resolves_offset_counta_plus_literal(tmp_path: Path) -> None:

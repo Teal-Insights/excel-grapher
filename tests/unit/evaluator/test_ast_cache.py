@@ -25,15 +25,21 @@ def _make_node(
     sheet, coord = parse_address(address)
     col = "".join(c for c in coord if c.isalpha())
     row = int("".join(c for c in coord if c.isdigit()))
-    return Node(
+    node = Node(
         sheet=sheet,
         column=col,
         row=row,
         formula=formula,
-        normalized_formula=normalized_formula if normalized_formula is not None else formula,
+        normalized_formula=None,
         value=value,
         is_leaf=formula is None,
     )
+    # Leave `formula_ast` unset so these tests cover the evaluator's
+    # string-keyed parse cache rather than stored-AST evaluation.
+    text = normalized_formula if normalized_formula is not None else formula
+    if text is not None:
+        node._unparseable_formula = text
+    return node
 
 
 def _make_graph(*nodes: Node) -> DependencyGraph:

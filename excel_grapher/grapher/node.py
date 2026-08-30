@@ -14,7 +14,12 @@ from excel_grapher.core.address_keys import (
 )
 from excel_grapher.core.address_keys import format_cell_key as _format_cell_key
 from excel_grapher.core.address_keys import parse_node_key as _parse_node_key
-from excel_grapher.core.formula_ast import AstNode, unparse_normalized_formula
+from excel_grapher.core.formula_ast import (
+    AstNode,
+    FormulaStyle,
+    parse_optional,
+    render_formula,
+)
 
 # Graph node identity; canonical sheet-qualified cell address string.
 NodeKey: TypeAlias = str
@@ -186,20 +191,20 @@ def copy_metadata(metadata: Mapping[str, Any] | None) -> Mapping[str, Any]:
     return dict(metadata) if metadata else EMPTY_METADATA
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, init=False)
 class Node:
     """Single workbook cell in a dependency graph.
 
     Canonical identity is `address` (`CellKey`). Legacy constructors that pass
-    `sheet`/`column`/`row` still work and sync `address` in `__post_init__`.
+    `sheet`/`column`/`row` still work and sync `address` in `__init__`.
 
     `formula_ast` is the primary in-memory formula artifact. `normalized_formula`
-    is derived absolute A1 text kept for compatibility until it is removed: writers
-    that change `formula_ast` (extraction, `set_node_ast`, compression) refresh it.
-    The raw workbook string `formula` is opt-in at extraction
-    (`create_dependency_graph(store_raw_formula=True)`) and audit-only -- on a
-    compressed graph it still holds the pre-compression text, so never re-parse
-    it as the node's current definition.
+    is a derived view (`render_formula` with `A1_ABSOLUTE`); it is not stored.
+    Unparseable cells keep the last known formula text as a fallback so
+    `has_formula` still holds. The raw workbook string `formula` is opt-in at
+    extraction (`create_dependency_graph(store_raw_formula=True)`) and
+    audit-only -- on a compressed graph it still holds the pre-compression text,
+    so never re-parse it as the node's current definition.
 
     `is_leaf` is true when the node has no outgoing dependency edges (value-only
     cells and literal-only formulas such as `=1+1`).
@@ -219,19 +224,52 @@ class Node:
     column: str | None
     row: int | None
     formula: str | None
-    normalized_formula: str | None
     value: Any
     is_leaf: bool
-    is_target: bool = False
-    metadata: Mapping[str, Any] = EMPTY_METADATA
-    min_col: str | None = None
-    min_row: int | None = None
-    max_col: str | None = None
-    max_row: int | None = None
-    address: CellKey | None = None
-    formula_ast: AstNode | None = field(default=None, repr=False)
+    is_target: bool
+    metadata: Mapping[str, Any]
+    min_col: str | None
+    min_row: int | None
+    max_col: str | None
+    max_row: int | None
+    address: CellKey | None
+    formula_ast: AstNode | None = field(repr=False)
+    _unparseable_formula: str | None = field(repr=False)
 
-    def __post_init__(self) -> None:
+    def __init__(
+        self,
+        sheet: str | None,
+        column: str | None,
+        row: int | None,
+        formula: str | None,
+        normalized_formula: str | None,
+        value: Any,
+        is_leaf: bool,
+        is_target: bool = False,
+        metadata: Mapping[str, Any] = EMPTY_METADATA,
+        min_col: str | None = None,
+        min_row: int | None = None,
+        max_col: str | None = None,
+        max_row: int | None = None,
+        address: CellKey | None = None,
+        formula_ast: AstNode | None = None,
+    ) -> None:
+        self.sheet = sheet
+        self.column = column
+        self.row = row
+        self.formula = formula
+        self.value = value
+        self.is_leaf = is_leaf
+        self.is_target = is_target
+        self.metadata = metadata
+        self.min_col = min_col
+        self.min_row = min_row
+        self.max_col = max_col
+        self.max_row = max_row
+        self.address = address
+        self.formula_ast = formula_ast
+        self._unparseable_formula = None
+
         if not self.metadata:
             # Never hold a caller's empty dict; share the singleton instead.
             self.metadata = EMPTY_METADATA
@@ -244,10 +282,12 @@ class Node:
             assert self.sheet is not None and self.column is not None and self.row is not None
             self.address = CellKey(_format_cell_key(self.sheet, self.column, self.row))
 
-        if self.formula_ast is not None and self.normalized_formula is None:
-            self.normalized_formula = unparse_normalized_formula(
-                self.formula_ast, anchor=self.address
-            )
+        if self.formula_ast is None and normalized_formula:
+            ast = parse_optional(normalized_formula)
+            if ast is not None:
+                self.formula_ast = ast
+            else:
+                self._unparseable_formula = normalized_formula
 
     def _sync_fields_from_address(self) -> None:
         addr = self.address
@@ -318,9 +358,34 @@ class Node:
         return _derived_fields(self.address).column_index
 
     @property
+    def normalized_formula(self) -> str | None:
+        """Absolute A1 formula text derived from `formula_ast`, or unparseable fallback."""
+        if self.formula_ast is not None:
+            return render_formula(
+                self.formula_ast,
+                anchor=self.address,
+                style=FormulaStyle.A1_ABSOLUTE,
+            )
+        return self._unparseable_formula
+
+    @property
     def has_formula(self) -> bool:
         """True when this cell has a formula AST or unparseable formula text."""
-        return self.formula_ast is not None or self.normalized_formula is not None
+        return self.formula_ast is not None or self._unparseable_formula is not None
+
+    def apply_formula_text(self, text: str | None) -> None:
+        """Parse `text` into `formula_ast`, or keep it as unparseable fallback.
+
+        Clears both when `text` is missing or blank. Used when a rewrite only
+        has formula strings (the AST parser could not handle the cell).
+        """
+        if text is None or not str(text).strip():
+            self.formula_ast = None
+            self._unparseable_formula = None
+            return
+        ast = parse_optional(text)
+        self.formula_ast = ast
+        self._unparseable_formula = None if ast is not None else text
 
 
 @dataclass(frozen=True)
@@ -337,7 +402,6 @@ class NodeView:
     column: str | None
     row: int | None
     formula: str | None
-    normalized_formula: str | None
     value: Any
     is_leaf: bool
     is_target: bool
@@ -348,6 +412,7 @@ class NodeView:
     max_row: int | None = None
     address: CellKey | None = None
     formula_ast: AstNode | None = field(default=None, repr=False)
+    _unparseable_formula: str | None = field(default=None, repr=False)
 
     @property
     def key(self) -> NodeKey:
@@ -367,9 +432,20 @@ class NodeView:
         return int(fastpyxl.utils.cell.column_index_from_string(self.column))
 
     @property
+    def normalized_formula(self) -> str | None:
+        """Absolute A1 formula text derived from `formula_ast`, or unparseable fallback."""
+        if self.formula_ast is not None:
+            return render_formula(
+                self.formula_ast,
+                anchor=self.address,
+                style=FormulaStyle.A1_ABSOLUTE,
+            )
+        return self._unparseable_formula
+
+    @property
     def has_formula(self) -> bool:
         """True when this cell has a formula AST or unparseable formula text."""
-        return self.formula_ast is not None or self.normalized_formula is not None
+        return self.formula_ast is not None or self._unparseable_formula is not None
 
 
 def _view_metadata(metadata: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -384,7 +460,6 @@ def node_to_view(node: Node) -> NodeView:
         column=node.column,
         row=node.row,
         formula=node.formula,
-        normalized_formula=node.normalized_formula,
         value=node.value,
         is_leaf=node.is_leaf,
         is_target=node.is_target,
@@ -395,6 +470,7 @@ def node_to_view(node: Node) -> NodeView:
         max_row=node.max_row,
         address=node.address,
         formula_ast=node.formula_ast,
+        _unparseable_formula=node._unparseable_formula,
     )
 
 
@@ -436,7 +512,7 @@ def copy_node(node: Node) -> Node:
         column=node.column,
         row=node.row,
         formula=node.formula,
-        normalized_formula=node.normalized_formula,
+        normalized_formula=None if node.formula_ast is not None else node._unparseable_formula,
         value=node.value,
         is_leaf=node.is_leaf,
         is_target=node.is_target,

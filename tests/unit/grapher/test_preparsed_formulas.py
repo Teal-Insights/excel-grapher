@@ -60,6 +60,10 @@ def test_warm_preparsed_formulas_parses_when_formula_ast_missing() -> None:
             is_leaf=False,
         )
     )
+    internal = graph._get_internal_node("S!B1")
+    assert internal is not None
+    internal.formula_ast = None
+    internal._unparseable_formula = "=1+1"
     parse_calls = 0
 
     def counting_parse(formula: str) -> AstNode:

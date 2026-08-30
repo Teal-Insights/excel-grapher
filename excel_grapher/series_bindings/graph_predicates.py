@@ -17,6 +17,10 @@ def is_graph_leaf(graph: DependencyGraph, address: str) -> bool:
 
 
 def is_graph_formula_node(graph: DependencyGraph, address: str) -> bool:
-    """Return True when `address` is a graph node with a workbook formula."""
+    """Return True when `address` is a graph node with a workbook formula.
+
+    Formula cells are those with `formula_ast` or unparseable formula text
+    (`Node.has_formula`). The derived `normalized_formula` view is not storage.
+    """
     node = graph.get_node(address) if address in graph else None
     return bool(node is not None and node.has_formula)
