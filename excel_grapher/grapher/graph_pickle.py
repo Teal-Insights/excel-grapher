@@ -81,6 +81,11 @@ def load_graph(path: str | Path) -> Any:
 
     Sniffs the `EGDG` multipart header first. If absent, falls back to
     `pickle.load` so older single-object pickles still open.
+
+    `formula_shapes` and `preparsed_formulas` are omitted (`None`). Call
+    `warm_formula_shapes` / `warm_preparsed_formulas` after load if you want
+    those overlays. A live `FormulaEvaluator` does not refresh compiled
+    shape helpers from a later rewarm; construct a new evaluator.
     """
     source = Path(path)
     opener = gzip.open if source.suffix == ".gz" else open

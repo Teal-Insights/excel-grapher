@@ -125,6 +125,19 @@ if TYPE_CHECKING:
 
 @dataclass
 class FormulaEvaluator:
+    """Evaluate Excel formulas over a `DependencyGraph`.
+
+    Holds a shared reference to `graph` (no deep copy). Cell-value and
+    parsed-AST caches are per-evaluator.
+
+    Formula-shape helpers (`_shape_fns`) are compiled in `__post_init__`
+    from `graph.formula_shapes` at construction. That compile is a snapshot:
+    reassigning or rewarming `graph.formula_shapes` later does not refresh
+    `_shape_fns`. Construct a new `FormulaEvaluator` after rewarming if you
+    want compiled shape helpers. Missing shapes fall back to
+    `Node.formula_ast`; correctness does not require the overlay to be warm.
+    """
+
     graph: DependencyGraph
     auto_detect_changes: bool = True
     eager_invalidation: bool = True
@@ -429,7 +442,12 @@ class FormulaEvaluator:
         node_key: str,
         formula_ast: AstNode | None = None,
     ) -> FormulaValue:
-        """Evaluate a formula AST, preferring a compiled shape when interned."""
+        """Evaluate a formula AST, preferring a compiled shape when interned.
+
+        Shape helpers come from the construction-time `_shape_fns` snapshot.
+        Missing overlay, missing binding, or a shape not compiled at init
+        falls back to `formula_ast` / the string parse path.
+        """
         table = getattr(self.graph, "formula_shapes", None)
         if table is not None:
             found = table.lookup(node_key)
