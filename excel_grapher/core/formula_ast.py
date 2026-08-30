@@ -604,28 +604,125 @@ def unparse_normalized_formula(
     return render_formula(node, anchor=anchor, style=FormulaStyle.A1_ABSOLUTE)
 
 
-def _retarget_cell_ref(ref: CellRef, new_key: str, anchor: CellKey | str) -> CellRef:
-    """Point `ref` at `new_key` while keeping each axis's relative/absolute kind."""
-    sheet, coord = parse_address(new_key)
-    col_letter, row = coordinate_from_string(coord.replace("$", ""))
-    new_col = int(column_index_from_string(col_letter))
-    new_row = int(row)
+def _retarget_axis(axis: AxisRef, new_index: int, base: int) -> AxisRef:
+    if isinstance(axis, AbsoluteAxis):
+        return AbsoluteAxis(new_index)
+    return RelativeAxis(new_index - base)
+
+
+def _anchor_axis_bases(anchor: CellKey | str) -> tuple[int, int]:
     anchor_key = _coerce_anchor_key(anchor)
     if anchor_key is None:
         raise ValueError("retargeting a relative axis requires an anchor cell")
     col_base = int(column_index_from_string(anchor_key.column))
     row_base = int(anchor_key.row)
+    return col_base, row_base
 
-    def toward(axis: AxisRef, new_index: int, base: int) -> AxisRef:
-        if isinstance(axis, AbsoluteAxis):
-            return AbsoluteAxis(new_index)
-        return RelativeAxis(new_index - base)
 
+def _new_key_indexes(new_key: str) -> tuple[str, int, int]:
+    sheet, coord = parse_address(new_key)
+    col_letter, row = coordinate_from_string(coord.replace("$", ""))
+    return sheet, int(column_index_from_string(col_letter)), int(row)
+
+
+def _cell_key_parts(key: str) -> tuple[str, str, int] | None:
+    try:
+        cell = key if isinstance(key, CellKey) else CellKey(str(key))
+        return cell.sheet, cell.column, cell.row
+    except (TypeError, ValueError):
+        return None
+
+
+def _retarget_cell_ref(ref: CellRef, new_key: str, anchor: CellKey | str) -> CellRef:
+    """Point `ref` at `new_key` while keeping each axis's relative/absolute kind."""
+    sheet, new_col, new_row = _new_key_indexes(new_key)
+    col_base, row_base = _anchor_axis_bases(anchor)
     return CellRef(
         sheet=sheet,
-        col=toward(ref.col, new_col, col_base),
-        row=toward(ref.row, new_row, row_base),
+        col=_retarget_axis(ref.col, new_col, col_base),
+        row=_retarget_axis(ref.row, new_row, row_base),
     )
+
+
+def _whole_column_matches_cell_key(
+    node: WholeColumnNode, key: str, anchor: CellKey | str
+) -> bool:
+    parts = _cell_key_parts(key)
+    if parts is None:
+        return False
+    old_sheet, old_col, _old_row = parts
+    sheet, letter = resolve_whole_column_ref(node, anchor)
+    return sheet == old_sheet and letter == old_col
+
+
+def _whole_row_matches_cell_key(
+    node: WholeRowNode, key: str, anchor: CellKey | str
+) -> bool:
+    parts = _cell_key_parts(key)
+    if parts is None:
+        return False
+    old_sheet, _old_col, old_row = parts
+    sheet, row = resolve_whole_row_ref(node, anchor)
+    return sheet == old_sheet and row == old_row
+
+
+def _retarget_whole_column(
+    node: WholeColumnNode, new_key: str, anchor: CellKey | str
+) -> WholeColumnNode:
+    sheet, new_col, _new_row = _new_key_indexes(new_key)
+    col_base, _row_base = _anchor_axis_bases(anchor)
+    return WholeColumnNode(sheet=sheet, col=_retarget_axis(node.col, new_col, col_base))
+
+
+def _retarget_whole_row(
+    node: WholeRowNode, new_key: str, anchor: CellKey | str
+) -> WholeRowNode:
+    sheet, _new_col, new_row = _new_key_indexes(new_key)
+    _col_base, row_base = _anchor_axis_bases(anchor)
+    return WholeRowNode(sheet=sheet, row=_retarget_axis(node.row, new_row, row_base))
+
+
+def ast_mentions_resolved_non_cell_key(
+    node: AstNode,
+    *,
+    key: str,
+    anchor: CellKey | str,
+) -> bool:
+    """Return whether `key` appears as a range endpoint or whole-col/row leaf.
+
+    `CellRefNode` mentions are ignored. Identity-transit compression uses this
+    to fail closed instead of removing a node that a range still names.
+
+    Args:
+        node: Formula tree to search.
+        key: Canonical sheet-qualified cell address to match after resolution.
+        anchor: Host cell used to resolve relative axes.
+
+    Returns:
+        True when a `RangeNode` endpoint or a whole-column/row leaf matches `key`.
+    """
+
+    def visit(cur: AstNode) -> bool:
+        match cur:
+            case RangeNode(start_ref, end_ref):
+                return (
+                    resolve_cell_ref(start_ref, anchor) == key
+                    or resolve_cell_ref(end_ref, anchor) == key
+                )
+            case WholeColumnNode():
+                return _whole_column_matches_cell_key(cur, key, anchor)
+            case WholeRowNode():
+                return _whole_row_matches_cell_key(cur, key, anchor)
+            case FunctionCallNode(_, args):
+                return any(visit(arg) for arg in args)
+            case BinaryOpNode(_, left, right):
+                return visit(left) or visit(right)
+            case UnaryOpNode(_, operand):
+                return visit(operand)
+            case _:
+                return False
+
+    return visit(node)
 
 
 def replace_resolved_cell_ref(
@@ -636,18 +733,27 @@ def replace_resolved_cell_ref(
     anchor: CellKey | str,
     replacement: AstNode | None = None,
 ) -> AstNode:
-    """Replace `CellRefNode` leaves that resolve to `old_key`.
+    """Retarget address leaves that resolve to `old_key`.
 
-    Range and whole-column/row leaves are left unchanged. When `replacement` is
-    omitted, matching leaves keep each axis's relative/absolute kind and retarget
-    to `new_key` against `anchor`.
+    When `replacement` is omitted, matching `CellRefNode`s, `RangeNode`
+    endpoints, and whole-column/row leaves keep each axis's relative/absolute
+    kind and point at `new_key` against `anchor`. Whole-column leaves match
+    `old_key` by sheet and column; whole-row leaves match by sheet and row.
+
+    When `replacement` is provided, only `CellRefNode` leaves are spliced;
+    range endpoints and whole-column/row leaves cannot hold a subtree.
+
+    Identity-transit compression is cell-ref-only: it skips a transit when a
+    dependent mentions it as a non-cell leaf (`ast_mentions_resolved_non_cell_key`)
+    rather than rewriting range geometry or leaving a stale name.
 
     Args:
         node: Formula AST to rewrite.
         old_key: Canonical sheet-qualified address to match after resolution.
         new_key: Replacement address when `replacement` is omitted.
         anchor: Host cell used to resolve relative axes and retarget offsets.
-        replacement: Optional subtree to splice in place of each match.
+        replacement: Optional subtree to splice in place of each `CellRefNode`
+            match.
 
     Returns:
         A new tree when any leaf changed; otherwise `node`.
@@ -661,6 +767,34 @@ def replace_resolved_cell_ref(
                         return replacement
                     return CellRefNode(_retarget_cell_ref(ref, new_key, anchor))
                 return cur
+            case RangeNode(start_ref, end_ref):
+                if replacement is not None:
+                    return cur
+                new_start = (
+                    _retarget_cell_ref(start_ref, new_key, anchor)
+                    if resolve_cell_ref(start_ref, anchor) == old_key
+                    else start_ref
+                )
+                new_end = (
+                    _retarget_cell_ref(end_ref, new_key, anchor)
+                    if resolve_cell_ref(end_ref, anchor) == old_key
+                    else end_ref
+                )
+                if new_start is start_ref and new_end is end_ref:
+                    return cur
+                return RangeNode(start_ref=new_start, end_ref=new_end)
+            case WholeColumnNode():
+                if replacement is not None:
+                    return cur
+                if not _whole_column_matches_cell_key(cur, old_key, anchor):
+                    return cur
+                return _retarget_whole_column(cur, new_key, anchor)
+            case WholeRowNode():
+                if replacement is not None:
+                    return cur
+                if not _whole_row_matches_cell_key(cur, old_key, anchor):
+                    return cur
+                return _retarget_whole_row(cur, new_key, anchor)
             case FunctionCallNode(name, args):
                 new_args = [walk(arg) for arg in args]
                 if new_args == args:
