@@ -165,7 +165,9 @@ class DependencyGraph:
     sheet_bounds: dict[str, tuple[int, int]] | None = None
     named_ranges: dict[str, tuple[str, str]] | None = None
     named_range_ranges: dict[str, tuple[str, str, str]] | None = None
-    # Opt-in AST cache from warm_ast_cache; not JSON-serialized; re-warm after load.
+    # Opt-in string-keyed AST overlay from warm_ast_cache (not JSON-serialized).
+    # Keys: stripped absolute A1 `normalized_formula`. Values: bind_axes trees.
+    # Re-warm after load, formula mutation, or move_node that changes targets.
     preparsed_formulas: dict[str, AstNode] | None = None
     # Opt-in punched-shape table from warm_formula_shapes; not JSON/pickle serialized.
     formula_shapes: FormulaShapeTable | None = None
