@@ -195,7 +195,9 @@ def copy_metadata(metadata: Mapping[str, Any] | None) -> Mapping[str, Any]:
 class Node:
     """Single workbook cell in a dependency graph.
 
-    Canonical identity is `address` (`CellKey`). Legacy constructors that pass
+    Canonical identity is `address` (`CellKey`). Change it through
+    `DependencyGraph.move_node`; assigning `address` directly raises so relative
+    formula axes cannot silently retarget. Legacy constructors that pass
     `sheet`/`column`/`row` still work and sync `address` in `__init__`.
 
     `formula_ast` is the primary in-memory formula artifact. `normalized_formula`
@@ -275,7 +277,6 @@ class Node:
             self.metadata = EMPTY_METADATA
 
         if self.address is not None:
-            self.address = _coerce_cell_address(self.address)
             self._sync_fields_from_address()
         else:
             self._finalize_cell_legacy()
@@ -323,6 +324,23 @@ class Node:
             raise ValueError(
                 "Graph nodes must be single cells; extent fields must match sheet/column/row"
             )
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "address":
+            if value is not None and not isinstance(value, CellKey):
+                value = _coerce_cell_address(value)
+            current = getattr(self, "address", None)
+            if current is not None and value != current:
+                raise ValueError(
+                    "changing Node.address would retarget relative formula axes; "
+                    "use DependencyGraph.move_node"
+                )
+        object.__setattr__(self, name, value)
+
+    def _relocate(self, new_address: CellKey | str) -> None:
+        """Update identity after `DependencyGraph.move_node` rewrites relative axes."""
+        object.__setattr__(self, "address", _coerce_cell_address(new_address))
+        self._sync_fields_from_address()
 
     def set_metadata(self, metadata: Mapping[str, Any] | None) -> None:
         """Replace this node's metadata with a copy of `metadata`.
