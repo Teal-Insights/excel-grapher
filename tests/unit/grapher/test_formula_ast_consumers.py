@@ -153,12 +153,10 @@ def test_codegen_uses_formula_ast_even_when_normalized_text_is_stale() -> None:
 
     code = CodeGenerator(graph).generate(["S!B1"])
     assert "999" not in code
-    namespace: dict[str, object] = {}
+    namespace: dict = {}
     exec(code, namespace)
     compute_all = namespace["compute_all"]
     make_context = namespace["make_context"]
-    assert callable(compute_all)
-    assert callable(make_context)
     result = compute_all(ctx=make_context())
     assert result["S!B1"] == 11.0
 
