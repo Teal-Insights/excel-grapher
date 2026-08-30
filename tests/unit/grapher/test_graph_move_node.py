@@ -113,7 +113,7 @@ def test_move_node_mixed_axes_range_and_whole_leaves() -> None:
     assert whole.normalized_formula == "=Sheet1!A:A"
 
 
-def test_move_node_reinerns_formula_shapes() -> None:
+def test_move_node_reinterns_formula_shapes() -> None:
     graph = DependencyGraph()
     _add_leaf(graph, "Sheet1", "A", 2)
     _add_leaf(graph, "Sheet1", "A", 3)
