@@ -1,8 +1,14 @@
-"""Canonical Excel formula normalization for sheet-qualified A1 references.
+"""Transitional regex Excel formula normalization for sheet-qualified A1 text.
 
-Graph extraction, evaluation, and codegen share these rules so bare cell
-references resolve against the formula cell's sheet and named ranges expand
-consistently before `excel_grapher.core.formula_ast` parsing.
+The formula-text dialect of record is AST `render_formula` (`A1_ABSOLUTE`).
+Regex normalization is **not** a peer of that dialect: it does not match AST
+canonicalizations (unary `+`, redundant parens, number spelling, compact
+whitespace, lowercase refs). Graph extraction uses it only as a fallback when
+the AST parser cannot handle a cell, and as a helper for string-based ref
+scans of already-rendered text.
+
+`expand_defined_names` is a parse preprocessor (keeps `$` markers) used by
+`parse_preserving_axes`; it is not the `normalized_formula` dialect.
 """
 
 from __future__ import annotations
@@ -432,7 +438,10 @@ def normalize_excel_formula(
     named_ranges: dict[str, tuple[str, str]] | None = None,
     named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
 ) -> str:
-    """Normalize a formula string (`=...`) for transpilation and parsing.
+    """Regex-normalize a formula string (`=...`) for fallback parsing.
+
+    Transitional and **not** the `normalized_formula` dialect. Prefer AST
+    `render_formula` (`A1_ABSOLUTE`) whenever a tree is available.
 
     - Same-sheet refs (`A1`) become `Sheet!A1` using *current_sheet*.
     - Same-sheet ranges become single-prefix (`Sheet!A1:A3`); cross-sheet
@@ -462,7 +471,11 @@ def prepare_formula(
     named_ranges: dict[str, tuple[str, str]] | None = None,
     named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
 ) -> PreparedFormula:
-    """Normalize *formula* for the cell on *current_sheet* and return a bundle."""
+    """Regex-normalize *formula* for the cell on *current_sheet*.
+
+    Transitional helper. Prefer `parse_preserving_axes` plus `render_formula`
+    when an AST is available.
+    """
     return PreparedFormula(
         normalized_formula=normalize_excel_formula(
             formula,

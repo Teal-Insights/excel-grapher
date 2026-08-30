@@ -86,10 +86,12 @@ def _prov_with_direct_span(
     *,
     collect_spans: bool,
 ) -> EdgeProvenance:
-    """Build direct-ref provenance, recording `span` only for the normalized pass.
+    """Build direct-ref provenance, recording `span` only for the dialect pass.
 
-    Spans are stored against `normalized_formula` only; a pass over the raw
-    workbook formula contributes cause flags but no positions.
+    Spans are stored against the string that becomes `Node.normalized_formula`
+    (AST `render_formula` when parseable, regex fallback otherwise). A pass
+    over a different spelling of the same formula may contribute cause flags
+    but no positions.
     """
     if not collect_spans:
         return EdgeProvenance(causes=DependencyCause.direct_ref)
@@ -403,11 +405,12 @@ def _flat_provenance_formula_and_normalized(
     | None = None,
     ref_walk: DynamicRefWalkContext | None = None,
 ) -> dict[str, EdgeProvenance]:
-    # When normalization is a no-op the single pass is already over the normalized
-    # text, so it must collect the spans that the second pass would otherwise supply.
-    # `normalized` is None on the branch recursion in `collect_provenance_for_formula`,
-    # where `formula_str` is a sub-expression: spans there would be offset against the
-    # branch rather than the node's formula, so that path stays span-free.
+    # When the extraction string already is the `normalized_formula` dialect
+    # (AST render, or regex fallback when the AST parser failed), the single
+    # pass collects spans. `normalized` is None on branch recursion in
+    # `collect_provenance_for_formula`, where `formula_str` is a sub-expression:
+    # spans there would be offset against the branch rather than the node's
+    # formula, so that path stays span-free.
     normalized_matches_raw = bool(normalized) and normalized == formula_str
     raw_map = _flat_provenance_one_string(
         formula_str,
@@ -464,8 +467,8 @@ def _flat_provenance_formula_and_normalized(
         if n is None:
             out[k] = r
             continue
-        # The raw-formula pass contributes cause flags only; spans always come
-        # from the normalized pass.
+        # The non-dialect pass contributes cause flags only; spans always come
+        # from the `normalized_formula` string.
         out[k] = EdgeProvenance(
             causes=r.causes | n.causes,
             direct_sites_normalized=n.direct_sites_normalized,

@@ -498,7 +498,7 @@ def normalize_formula(
     named_ranges: dict[str, tuple[str, str]] | None = None,
     named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
 ) -> str:
-    """Normalize a formula for transpilation.
+    """Regex-normalize a formula (transitional; not the AST render dialect).
 
     - Replace same-sheet refs (A1) with sheet-qualified refs (Sheet1!A1)
     - Resolve named ranges to their targets
@@ -506,7 +506,8 @@ def normalize_formula(
     - Qualify range endpoints
 
     Returns:
-        The normalized formula string.
+        The regex-normalized formula string. Do not record provenance spans
+        against this text and later apply them to `Node.normalized_formula`.
     """
     return normalize_excel_formula(
         formula,
@@ -517,7 +518,11 @@ def normalize_formula(
 
 
 class FormulaNormalizer:
-    """Normalizes formulas efficiently across a graph build session.
+    """Cached regex formula normalizer (transitional, non-authoritative).
+
+    AST `render_formula` (`A1_ABSOLUTE`) is the `normalized_formula` dialect.
+    Use this class for unparseable-cell fallback and for string-based ref
+    scans. Do not treat its output as a peer of `Node.normalized_formula`.
 
     Compared to calling `normalize_formula` repeatedly:
 

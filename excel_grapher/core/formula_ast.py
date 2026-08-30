@@ -68,9 +68,9 @@ AxisRef: TypeAlias = AbsoluteAxis | RelativeAxis
 class FormulaStyle(StrEnum):
     """How `render_formula` spells cell and range references.
 
-    `A1_ABSOLUTE` is sheet-qualified A1 with `$` stripped (the derived
-    `normalized_formula` view). `A1_EXCEL` keeps `$` on absolute axes and omits
-    the host sheet prefix. `R1C1` uses `R1C1` / `R[-1]C[2]` tokens.
+    `A1_ABSOLUTE` is the `normalized_formula` dialect: sheet-qualified A1 with
+    `$` stripped. `A1_EXCEL` keeps `$` on absolute axes and omits the host sheet
+    prefix. `R1C1` uses `R1C1` / `R[-1]C[2]` tokens.
     """
 
     A1_ABSOLUTE = "a1_absolute"
@@ -544,9 +544,19 @@ def render_formula(
 ) -> str:
     """Render `ast` as formula text (leading `=`).
 
-    `style` selects the reference spelling. Relative axes resolve against
-    `anchor`. When `coerce_relative_refs` is True, every `RelativeAxis` is bound
-    to an `AbsoluteAxis` first (preparing Excel write-back that wants fully
+    This is the formula-text dialect of record. It is not a byte-identical
+    copy of Excel's raw formula or of regex `normalize_excel_formula`. The
+    tree is canonicalized on parse/render:
+
+    - unary `+` is dropped (parse)
+    - redundant parentheses are omitted; only precedence-required ones remain
+    - number spelling is canonical (`1.0` -> `1`, `1e2` -> `100`)
+    - whitespace is compact (`=SUM( A1 )` renders as `=SUM(Sheet1!A1)`)
+
+    Bare refs are sheet-qualified when parsed with an `anchor`. `style`
+    selects reference spelling. Relative axes resolve against `anchor`. When
+    `coerce_relative_refs` is True, every `RelativeAxis` is bound to an
+    `AbsoluteAxis` first (preparing Excel write-back that wants fully
     absolute addresses). Same-sheet prefixes are omitted for `A1_EXCEL` and
     `R1C1` when `anchor` is the host cell.
 
@@ -749,6 +759,11 @@ def parse(
     `parse(normalized_formula)` contract). Pass `preserve_axes=True` with
     `anchor` to keep `$` vs bare A1 as absolute vs relative offsets.
 
+    Excel-like whitespace around operators, commas, and call arguments is
+    accepted. Scientific literals (`1e2`, `1E+2`, `1.5e-1`) become `NumberNode`.
+    Incomplete exponents (`1e`, `1E+`) raise `FormulaParseError` (fail-soft via
+    `parse_optional` / `parse_preserving_axes_optional`). Unary `+` is dropped.
+
     Args:
         formula: Excel formula text, with or without a leading `=`.
         anchor: Host cell used when `preserve_axes` is True, and as the default
@@ -801,7 +816,8 @@ def parse_preserving_axes(
     """Parse `formula` from raw workbook text, preserving `$` axis intent.
 
     Bare A1 refs resolve against `anchor`. Defined names expand to absolute
-    sheet-qualified A1 before parsing.
+    sheet-qualified A1 before parsing. Whitespace and scientific literals follow
+    the same acceptance rules as `parse`.
     """
     from excel_grapher.core.formula_normalization import expand_defined_names
 
@@ -1149,7 +1165,7 @@ def _parse_quoted_sheet_ref(s: _Scanner, original: str) -> AstNode:
 
 
 def _parse_ident(s: _Scanner) -> str:
-    return s.take_while(lambda c: c.isalnum() or c in ("_", ".", " "))
+    return s.take_while(lambda c: c.isalnum() or c in ("_", "."))
 
 
 def _bare_sheet_name(sheet_qualifier: str) -> str:
@@ -1263,7 +1279,8 @@ def _parse_range_end_ref(s: _Scanner, original: str, default_sheet: str) -> Cell
         return _cell_ref_from_parsed_axes(s, sheet_name, abs_col, col_index, abs_row, row_index)
 
     start = s.i
-    sheet = s.take_while(lambda c: c.isalnum() or c in ("_", ".", " "))
+    sheet = s.take_while(lambda c: c.isalnum() or c in ("_", "."))
+    s.skip_ws()
     if s.peek() == "!":
         s.consume()
         abs_col, col_index, abs_row, row_index = _parse_cell_axes(s, original)
@@ -1326,7 +1343,19 @@ def _parse_string(s: _Scanner, original: str) -> StringNode:
 
 
 def _parse_number(s: _Scanner, original: str) -> NumberNode:
-    text = s.take_while(lambda c: c.isdigit() or c == ".")
+    start = s.i
+    s.take_while(lambda c: c.isdigit() or c == ".")
+    ch = s.peek()
+    if ch is not None and ch in ("e", "E"):
+        exp_mark = s.i
+        s.consume()
+        sign = s.peek()
+        if sign in ("+", "-"):
+            s.consume()
+        exp_digits = s.take_while(lambda c: c.isdigit())
+        if not exp_digits:
+            s.i = exp_mark
+    text = s.text[start : s.i]
     try:
         return NumberNode(float(text))
     except ValueError:
