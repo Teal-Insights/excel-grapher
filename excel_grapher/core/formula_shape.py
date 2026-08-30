@@ -345,9 +345,9 @@ class FormulaShapeTable:
     """Interned skeletons plus per-node parameter bindings.
 
     `shapes` maps `shape_key` to one shared skeleton. `bindings` maps a
-    `NodeKey` to `(shape_key, params)`. Excel-facing node storage still keeps
-    `normalized_formula` as absolute A1 text; this table is an overlay the
-    evaluator and codegen both read.
+    `NodeKey` to `(shape_key, params)`. Excel-facing formula text is the derived
+    `normalized_formula` view (`render_formula` / `A1_ABSOLUTE`); this table is
+    an overlay the evaluator and codegen both read.
     """
 
     shapes: dict[str, SkeletonNode]

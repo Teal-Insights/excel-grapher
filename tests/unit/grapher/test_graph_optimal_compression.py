@@ -276,7 +276,7 @@ def test_optimal_inline_single_call_site() -> None:
     assert graph.get_dependencies("Sheet1!A1") == frozenset({"Sheet1!D1"})
     na = graph.get_node("Sheet1!A1")
     assert na is not None
-    assert na.normalized_formula == "=(Sheet1!D1*2)+1"
+    assert na.normalized_formula == "=Sheet1!D1*2+1"
 
 
 def test_optimal_inlines_transit_with_guarded_outgoing_edges() -> None:
@@ -313,7 +313,7 @@ def test_optimal_inlines_transit_with_guarded_outgoing_edges() -> None:
     assert graph.get_edge_guard("Sheet1!A1", "Sheet1!D1") == branch_guard
     na = graph.get_node("Sheet1!A1")
     assert na is not None
-    assert na.normalized_formula == "=(IF(Sheet1!C1=1,Sheet1!D1,0))+1"
+    assert na.normalized_formula == "=IF(Sheet1!C1=1,Sheet1!D1,0)+1"
 
 
 def test_optimal_inline_shared_dep_unguarded_on_dependent_wins() -> None:

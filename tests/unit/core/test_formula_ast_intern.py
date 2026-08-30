@@ -82,7 +82,7 @@ def test_json_cache_assigns_integer_formula_ast_ids(tmp_path: Path) -> None:
     wb.close()
 
     graph = create_dependency_graph(path, ["Sheet1!B1", "Sheet1!B2"], load_values=False)
-    assert GRAPH_CACHE_SCHEMA_VERSION >= 7
+    assert GRAPH_CACHE_SCHEMA_VERSION >= 8
     payload = dependency_graph_to_json(graph)
     pool = payload["formula_asts"]
     assert isinstance(pool, list)
@@ -90,7 +90,7 @@ def test_json_cache_assigns_integer_formula_ast_ids(tmp_path: Path) -> None:
     ids = [
         node_payload["formula_ast_id"]
         for node_payload in payload["nodes"]
-        if node_payload.get("normalized_formula")
+        if "formula_ast_id" in node_payload
     ]
     assert ids == [0, 1] or ids == [1, 0]
     assert len(set(ids)) == 2

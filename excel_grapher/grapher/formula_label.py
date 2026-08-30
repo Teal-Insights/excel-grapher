@@ -17,7 +17,7 @@ def display_formula(node: _HasFormulas) -> str | None:
 
     Prefers the raw workbook string, which extraction stores only when
     `store_raw_formula=True`. Otherwise renders `formula_ast` as absolute A1,
-    then falls back to stored `normalized_formula` for unparseable cells.
+    then falls back to unparseable formula text when no AST is stored.
     """
     if node.formula is not None:
         return node.formula

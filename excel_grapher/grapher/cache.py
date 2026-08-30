@@ -19,8 +19,9 @@ from .guard import And, CellRef, Compare, GuardExpr, Not, Or, intern_guard
 from .guard import Literal as GuardLiteral
 from .node import Node, NodeKey
 
+# 8: drop stored `normalized_formula`; strings are derived via `render_formula`.
 # 7: interned `formula_asts` pool as encoded trees; nodes store `formula_ast_id`.
-GRAPH_CACHE_SCHEMA_VERSION = 7
+GRAPH_CACHE_SCHEMA_VERSION = 8
 
 
 class GraphCacheMeta(TypedDict):
@@ -401,7 +402,6 @@ def dependency_graph_to_json(graph: DependencyGraph) -> dict[str, Any]:
             "max_col": node.max_col,
             "max_row": node.max_row,
             "formula": node.formula,
-            "normalized_formula": node.normalized_formula,
             "value": _value_to_json(node.value),
             "is_leaf": node.is_leaf,
             "is_target": node.is_target,
@@ -409,6 +409,8 @@ def dependency_graph_to_json(graph: DependencyGraph) -> dict[str, Any]:
         }
         if node.formula_ast is not None:
             payload["formula_ast_id"] = formula_ast_ids[node.formula_ast]
+        elif node._unparseable_formula is not None:
+            payload["unparseable_formula"] = node._unparseable_formula
         nodes.append(payload)
 
     edges: list[dict[str, Any]] = []
@@ -459,8 +461,15 @@ def dependency_graph_from_json(payload: dict[str, Any]) -> DependencyGraph:
         if address is None:
             address = n.get("key")
         formula = cast(str | None, n["formula"])
-        normalized_formula = cast(str | None, n["normalized_formula"])
         formula_ast = _formula_ast_from_node_payload(n, formula_asts)
+        unparseable = n.get("unparseable_formula")
+        if unparseable is not None and not isinstance(unparseable, str):
+            raise TypeError("unparseable_formula must be a string")
+        # Schema 7 stored `normalized_formula` on every node; schema 8 derives it.
+        fallback = unparseable
+        if fallback is None and formula_ast is None:
+            legacy = n.get("normalized_formula")
+            fallback = legacy if isinstance(legacy, str) else None
         value = _value_from_json(n["value"])
         is_leaf = bool(n["is_leaf"])
         is_target = bool(n.get("is_target", False))
@@ -476,7 +485,7 @@ def dependency_graph_from_json(payload: dict[str, Any]) -> DependencyGraph:
                 column=cast(str | None, n.get("column")),
                 row=None if n.get("row") is None else int(n["row"]),
                 formula=formula,
-                normalized_formula=normalized_formula,
+                normalized_formula=fallback,
                 value=value,
                 is_leaf=is_leaf,
                 is_target=is_target,
@@ -490,7 +499,7 @@ def dependency_graph_from_json(payload: dict[str, Any]) -> DependencyGraph:
                 column=cast(str, n["column"]),
                 row=int(n["row"]),
                 formula=formula,
-                normalized_formula=normalized_formula,
+                normalized_formula=fallback,
                 value=value,
                 is_leaf=is_leaf,
                 is_target=is_target,

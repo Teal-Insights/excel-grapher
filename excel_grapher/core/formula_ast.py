@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import TypeAlias
 
 from fastpyxl.utils.cell import column_index_from_string, coordinate_from_string, get_column_letter
@@ -62,6 +63,19 @@ class RelativeAxis:
 
 
 AxisRef: TypeAlias = AbsoluteAxis | RelativeAxis
+
+
+class FormulaStyle(StrEnum):
+    """How `render_formula` spells cell and range references.
+
+    `A1_ABSOLUTE` is sheet-qualified A1 with `$` stripped (the derived
+    `normalized_formula` view). `A1_EXCEL` keeps `$` on absolute axes and omits
+    the host sheet prefix. `R1C1` uses `R1C1` / `R[-1]C[2]` tokens.
+    """
+
+    A1_ABSOLUTE = "a1_absolute"
+    A1_EXCEL = "a1_excel"
+    R1C1 = "r1c1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,7 +342,7 @@ def iter_resolved_cell_keys(node: AstNode, anchor: CellKey | str) -> Iterator[st
             return
 
 
-def bind_axes(node: AstNode, anchor: CellKey | str) -> AstNode:
+def bind_axes(node: AstNode, anchor: CellKey | str | None) -> AstNode:
     """Return a copy of `node` with every axis resolved to `AbsoluteAxis`."""
     match node:
         case CellRefNode(ref):
@@ -365,26 +379,110 @@ def _unparse_string(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
 
 
+def _host_sheet(anchor: CellKey | str | None) -> str | None:
+    key = _coerce_anchor_key(anchor)
+    return None if key is None else key.sheet
+
+
+def _sheet_prefix(sheet: str, *, style: FormulaStyle, host_sheet: str | None) -> str:
+    if style is FormulaStyle.A1_ABSOLUTE or host_sheet is None or sheet != host_sheet:
+        return f"{quote_sheet_if_needed(sheet)}!"
+    return ""
+
+
+def _r1c1_axis(axis: AxisRef, *, is_row: bool) -> str:
+    token = "R" if is_row else "C"
+    if isinstance(axis, AbsoluteAxis):
+        return f"{token}{axis.index}"
+    if axis.offset == 0:
+        return token
+    return f"{token}[{axis.offset}]"
+
+
+def _r1c1_cell(ref: CellRef) -> str:
+    return _r1c1_axis(ref.row, is_row=True) + _r1c1_axis(ref.col, is_row=False)
+
+
+def _a1_excel_coord(ref: CellRef, anchor: CellKey | str | None) -> str:
+    key = _coerce_anchor_key(anchor)
+    col_base = None if key is None else int(column_index_from_string(key.column))
+    row_base = None if key is None else int(key.row)
+    col_index = _resolve_axis(ref.col, col_base)
+    row_index = _resolve_axis(ref.row, row_base)
+    if col_index < 1 or row_index < 1:
+        raise ValueError(f"resolved address out of range: col={col_index} row={row_index}")
+    letter = get_column_letter(col_index)
+    col_s = f"${letter}" if isinstance(ref.col, AbsoluteAxis) else letter
+    row_s = f"${row_index}" if isinstance(ref.row, AbsoluteAxis) else str(row_index)
+    return f"{col_s}{row_s}"
+
+
+def _qualify_atom(sheet: str, body: str, *, style: FormulaStyle, host_sheet: str | None) -> str:
+    return f"{_sheet_prefix(sheet, style=style, host_sheet=host_sheet)}{body}"
+
+
 def _unparse_atom_ref(
     node: CellRefNode | RangeNode | WholeColumnNode | WholeRowNode,
     anchor: CellKey | str | None,
+    style: FormulaStyle,
 ) -> str:
+    host_sheet = _host_sheet(anchor)
     match node:
         case CellRefNode(ref):
+            if style is FormulaStyle.R1C1:
+                return _qualify_atom(ref.sheet, _r1c1_cell(ref), style=style, host_sheet=host_sheet)
+            if style is FormulaStyle.A1_EXCEL:
+                return _qualify_atom(
+                    ref.sheet, _a1_excel_coord(ref, anchor), style=style, host_sheet=host_sheet
+                )
             return resolve_cell_ref(ref, anchor)
         case RangeNode(start_ref, end_ref):
-            start = resolve_cell_ref(start_ref, anchor)
-            end = resolve_cell_ref(end_ref, anchor)
-            start_sheet, start_coord = parse_address(start)
-            end_sheet, end_coord = parse_address(end)
-            if start_sheet == end_sheet:
-                return format_range_key(start_sheet, start_coord, end_coord)
-            return f"{start}:{end}"
+            if style is FormulaStyle.R1C1:
+                start_body = _r1c1_cell(start_ref)
+                end_body = _r1c1_cell(end_ref)
+            elif style is FormulaStyle.A1_EXCEL:
+                start_body = _a1_excel_coord(start_ref, anchor)
+                end_body = _a1_excel_coord(end_ref, anchor)
+            else:
+                start = resolve_cell_ref(start_ref, anchor)
+                end = resolve_cell_ref(end_ref, anchor)
+                start_sheet, start_coord = parse_address(start)
+                end_sheet, end_coord = parse_address(end)
+                if start_sheet == end_sheet:
+                    return format_range_key(start_sheet, start_coord, end_coord)
+                return f"{start}:{end}"
+            if start_ref.sheet == end_ref.sheet:
+                return (
+                    f"{_qualify_atom(start_ref.sheet, start_body, style=style, host_sheet=host_sheet)}"
+                    f":{end_body}"
+                )
+            return (
+                f"{_qualify_atom(start_ref.sheet, start_body, style=style, host_sheet=host_sheet)}:"
+                f"{_qualify_atom(end_ref.sheet, end_body, style=style, host_sheet=host_sheet)}"
+            )
         case WholeColumnNode():
+            if style is FormulaStyle.R1C1:
+                token = _r1c1_axis(node.col, is_row=False)
+                body = f"{token}:{token}"
+                return _qualify_atom(node.sheet, body, style=style, host_sheet=host_sheet)
             sheet, letter = resolve_whole_column_ref(node, anchor)
+            if style is FormulaStyle.A1_EXCEL:
+                marked = f"${letter}" if isinstance(node.col, AbsoluteAxis) else letter
+                return _qualify_atom(
+                    sheet, f"{marked}:{marked}", style=style, host_sheet=host_sheet
+                )
             return f"{quote_sheet_if_needed(sheet)}!{letter}:{letter}"
         case WholeRowNode():
+            if style is FormulaStyle.R1C1:
+                token = _r1c1_axis(node.row, is_row=True)
+                body = f"{token}:{token}"
+                return _qualify_atom(node.sheet, body, style=style, host_sheet=host_sheet)
             sheet, row = resolve_whole_row_ref(node, anchor)
+            if style is FormulaStyle.A1_EXCEL:
+                marked = f"${row}" if isinstance(node.row, AbsoluteAxis) else str(row)
+                return _qualify_atom(
+                    sheet, f"{marked}:{marked}", style=style, host_sheet=host_sheet
+                )
             return f"{quote_sheet_if_needed(sheet)}!{row}:{row}"
 
 
@@ -392,6 +490,7 @@ def _unparse_expr(
     node: AstNode,
     *,
     anchor: CellKey | str | None,
+    style: FormulaStyle,
     parent_prec: int,
     is_right: bool,
 ) -> str:
@@ -407,28 +506,71 @@ def _unparse_expr(
         case EmptyArgNode():
             return ""
         case CellRefNode() | RangeNode() | WholeColumnNode() | WholeRowNode():
-            return _unparse_atom_ref(node, anchor)
+            return _unparse_atom_ref(node, anchor, style)
         case FunctionCallNode(name, args):
             inner = ",".join(
-                _unparse_expr(arg, anchor=anchor, parent_prec=0, is_right=False) for arg in args
+                _unparse_expr(arg, anchor=anchor, style=style, parent_prec=0, is_right=False)
+                for arg in args
             )
             return f"{name}({inner})"
         case UnaryOpNode("%", operand):
-            body = _unparse_expr(operand, anchor=anchor, parent_prec=6, is_right=False)
+            body = _unparse_expr(operand, anchor=anchor, style=style, parent_prec=6, is_right=False)
             return f"{body}%"
         case UnaryOpNode(op, operand):
-            body = _unparse_expr(operand, anchor=anchor, parent_prec=6, is_right=False)
+            body = _unparse_expr(operand, anchor=anchor, style=style, parent_prec=6, is_right=False)
             return f"{op}{body}"
         case BinaryOpNode(op, left, right):
             prec = _PRECEDENCE[op]
-            left_s = _unparse_expr(left, anchor=anchor, parent_prec=prec, is_right=False)
-            right_s = _unparse_expr(right, anchor=anchor, parent_prec=prec, is_right=True)
+            left_s = _unparse_expr(
+                left, anchor=anchor, style=style, parent_prec=prec, is_right=False
+            )
+            right_s = _unparse_expr(
+                right, anchor=anchor, style=style, parent_prec=prec, is_right=True
+            )
             text = f"{left_s}{op}{right_s}"
             need_parens = prec < parent_prec or (
                 is_right and op not in _RIGHT_ASSOC and prec == parent_prec
             )
             return f"({text})" if need_parens else text
     raise TypeError(f"unsupported AST node: {type(node).__name__}")
+
+
+def render_formula(
+    ast: AstNode,
+    *,
+    anchor: CellKey | str | None = None,
+    style: FormulaStyle | str = FormulaStyle.A1_ABSOLUTE,
+    coerce_relative_refs: bool = False,
+) -> str:
+    """Render `ast` as formula text (leading `=`).
+
+    `style` selects the reference spelling. Relative axes resolve against
+    `anchor`. When `coerce_relative_refs` is True, every `RelativeAxis` is bound
+    to an `AbsoluteAxis` first (preparing Excel write-back that wants fully
+    absolute addresses). Same-sheet prefixes are omitted for `A1_EXCEL` and
+    `R1C1` when `anchor` is the host cell.
+
+    Args:
+        ast: Formula tree to stringify.
+        anchor: Host cell for relative axes. Required when `ast` has any
+            `RelativeAxis`, or when `coerce_relative_refs` is True and relative
+            axes are present.
+        style: `A1_ABSOLUTE`, `A1_EXCEL`, or `R1C1` (or the matching string).
+        coerce_relative_refs: If True, bind relative axes to absolute indexes
+            before spelling them.
+
+    Returns:
+        Formula text beginning with `=`.
+
+    Raises:
+        ValueError: If a relative axis is present and `anchor` is missing, or
+            a resolved row/column is less than 1.
+    """
+    resolved_style = FormulaStyle(style)
+    tree = bind_axes(ast, anchor) if coerce_relative_refs else ast
+    return "=" + _unparse_expr(
+        tree, anchor=anchor, style=resolved_style, parent_prec=0, is_right=False
+    )
 
 
 def unparse_normalized_formula(
@@ -438,9 +580,8 @@ def unparse_normalized_formula(
 ) -> str:
     """Render `node` as absolute A1 formula text (leading `=`).
 
-    Relative axes resolve against `anchor`. Same-sheet ranges use a single
-    sheet prefix. This is the derived `normalized_formula` spelling used until
-    that field is removed.
+    Equivalent to `render_formula` with `style=A1_ABSOLUTE`. Relative axes
+    resolve against `anchor`. Same-sheet ranges use a single sheet prefix.
 
     Args:
         node: Formula AST to render.
@@ -450,7 +591,7 @@ def unparse_normalized_formula(
     Returns:
         Sheet-qualified absolute A1 formula beginning with `=`.
     """
-    return "=" + _unparse_expr(node, anchor=anchor, parent_prec=0, is_right=False)
+    return render_formula(node, anchor=anchor, style=FormulaStyle.A1_ABSOLUTE)
 
 
 def _retarget_cell_ref(ref: CellRef, new_key: str, anchor: CellKey | str) -> CellRef:

@@ -27,7 +27,7 @@ from .node import Node, NodeKey
 # Logical payload: magic + little-endian version + two pickle frames.
 # `dumps_graph_blob` gzip-compresses that payload for the pickle reduce path.
 _GRAPH_BLOB_MAGIC = b"EGDG"
-_GRAPH_BLOB_VERSION = 4
+_GRAPH_BLOB_VERSION = 5
 _GRAPH_BLOB_HEADER = _GRAPH_BLOB_MAGIC + _GRAPH_BLOB_VERSION.to_bytes(4, "little")
 _GZIP_MAGIC = b"\x1f\x8b"
 
