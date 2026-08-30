@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v10.0.0 (2026-08-30)
+
+### Features
+
+- **grapher**: Render_formula API and drop stored normalized_formula
+  ([#553](https://github.com/Teal-Insights/excel-grapher/pull/553),
+  [`8e684c9`](https://github.com/Teal-Insights/excel-grapher/commit/8e684c963e28353c5a6f4a46b0f9e0ec6094641e))
+
+- **grapher**: Render_formula API and drop stored normalized_formula (#543)
+  ([#553](https://github.com/Teal-Insights/excel-grapher/pull/553),
+  [`8e684c9`](https://github.com/Teal-Insights/excel-grapher/commit/8e684c963e28353c5a6f4a46b0f9e0ec6094641e))
+
+### Testing
+
+- **grapher**: Cover JSON cache load of legacy normalized_formula
+  ([#553](https://github.com/Teal-Insights/excel-grapher/pull/553),
+  [`8e684c9`](https://github.com/Teal-Insights/excel-grapher/commit/8e684c963e28353c5a6f4a46b0f9e0ec6094641e))
+
+
 ## v9.1.0 (2026-08-30)
 
 ### Bug Fixes
