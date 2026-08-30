@@ -728,6 +728,11 @@ class DependencyGraph:
         Requires dependency provenance from graph construction with
         `capture_dependency_provenance=True` for safe edges.
 
+        Identity forwarding rewrites `CellRefNode` leaves only. If a dependent
+        mentions the transit as a `RangeNode` endpoint or a whole-column/row
+        leaf, the transit is left in place so the formula cannot keep naming a
+        removed node and range geometry is not rewritten.
+
         Skips `is_target` nodes and any keys in `preserve` so public extraction
         and series-bound addresses stay in the graph.
 
@@ -745,6 +750,7 @@ class DependencyGraph:
         from .compression import (
             clear_identity_singleton_ref_cache,
             compression_safe_provenance,
+            identity_rewrite_sites_are_cell_refs,
             is_identity_transit,
             require_compression_provenance,
             snapshot_transit_node,
@@ -780,6 +786,8 @@ class DependencyGraph:
                         break
                 if not ok:
                     continue
+                if not identity_rewrite_sites_are_cell_refs(self, t_key, dependents_t):
+                    continue
 
                 dependents_before = list(dependents_t)
                 snapshot = snapshot_transit_node(self, t_key) if record is not None else None
@@ -804,7 +812,9 @@ class DependencyGraph:
         Collapses nodes when substitution is safe. Both identity-transit forwarding
         and formula inlining skip `is_target` nodes and any keys in `preserve`
         (external consumers such as series-bound public addresses). Forwarding
-        targets are also protected from later inlining.
+        targets are also protected from later inlining. Identity forwarding is
+        cell-ref-only: a transit mentioned as a range endpoint or whole-column/row
+        leaf is left in place.
 
         Args:
             preserve: Node keys that must not be collapsed (forwarded or inlined).
@@ -820,6 +830,7 @@ class DependencyGraph:
             clear_identity_singleton_ref_cache,
             compression_safe_provenance,
             dependent_context_substitutable,
+            identity_rewrite_sites_are_cell_refs,
             is_identity_transit,
             node_body_substitutable,
             require_compression_provenance,
@@ -856,6 +867,8 @@ class DependencyGraph:
                             ok = False
                             break
                     if not ok:
+                        continue
+                    if not identity_rewrite_sites_are_cell_refs(self, t_key, dependents_t):
                         continue
 
                     dependents_before = list(dependents_t)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -9,6 +9,7 @@ from excel_grapher.core.formula_ast import (
     CellRefNode,
     FormulaParseError,
     UnaryOpNode,
+    ast_mentions_resolved_non_cell_key,
     parse,
     resolve_cell_ref,
 )
@@ -97,6 +98,31 @@ def is_identity_transit(graph: DependencyGraph, transit_key: NodeKey) -> NodeKey
     if addr != r_node.key:
         return None
     return r_key
+
+
+def identity_rewrite_sites_are_cell_refs(
+    graph: DependencyGraph,
+    transit_key: NodeKey,
+    dependents: Iterable[NodeKey],
+) -> bool:
+    """Return whether every dependent names `transit_key` only as a cell ref.
+
+    Identity forwarding rewrites `CellRefNode` sites. A `RangeNode` endpoint or
+    whole-column/row leaf that resolves to `transit_key` is not a safe identity
+    site: retargeting would change range geometry, and compressing anyway would
+    leave a formula naming a removed node. Return False so the caller skips.
+    """
+    for d_key in dependents:
+        d_node = graph.get_node(d_key)
+        if d_node is None or d_node.formula_ast is None:
+            continue
+        if ast_mentions_resolved_non_cell_key(
+            d_node.formula_ast,
+            key=transit_key,
+            anchor=d_node.address or d_key,
+        ):
+            return False
+    return True
 
 
 def replace_substrings_at_spans(
@@ -419,7 +445,16 @@ def _incoming_edge_substitutable(
         return False
     if prov is None:
         return False
-    return len(prov.direct_sites_normalized) == 1
+    if len(prov.direct_sites_normalized) != 1:
+        return False
+    d_node = graph.get_node(dependent)
+    if d_node is None or d_node.formula_ast is None:
+        return True
+    return not ast_mentions_resolved_non_cell_key(
+        d_node.formula_ast,
+        key=precedent,
+        anchor=d_node.address or dependent,
+    )
 
 
 def substitute_body_at_spans(
