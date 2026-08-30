@@ -152,3 +152,20 @@ def test_fully_absolute_cell_ref_node_r1c1() -> None:
         CellRef(sheet="Sheet1", col=RelativeAxis(0), row=AbsoluteAxis(3)),
     )
     assert render_formula(mixed, anchor="Sheet1!B2", style=FormulaStyle.R1C1) == "=R[-1]C1:R3C"
+
+
+def test_a1_absolute_dialect_canonicalizes_numbers_plus_parens_and_spaces() -> None:
+    """`A1_ABSOLUTE` is the `normalized_formula` dialect, not a byte copy of Excel text."""
+    cases = [
+        ("=A1+1.0", "=Sheet1!A1+1"),
+        ("=(A1)", "=Sheet1!A1"),
+        ("=+A1", "=Sheet1!A1"),
+        ("=SUM( A1 )", "=SUM(Sheet1!A1)"),
+        ("=a1+b2", "=Sheet1!A1+Sheet1!B2"),
+        ("=1e2", "=100"),
+        ("=1E+2", "=100"),
+        ("=1.50e-1", "=0.15"),
+    ]
+    for raw, expected in cases:
+        ast = parse_preserving_axes(raw, anchor="Sheet1!C1")
+        assert render_formula(ast, anchor="Sheet1!C1", style=FormulaStyle.A1_ABSOLUTE) == expected

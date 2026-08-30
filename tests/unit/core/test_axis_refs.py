@@ -150,6 +150,19 @@ def test_parse_preserving_axes_optional_fail_soft() -> None:
     assert parse_preserving_axes_optional(None, anchor="Sheet1!B1") is None
 
 
+def test_parse_preserving_axes_accepts_excel_like_whitespace() -> None:
+    ast = parse_preserving_axes("=SUM( A1 )", anchor="Sheet1!B1")
+    assert ast == FunctionCallNode("SUM", [CellRefNode(_rel(-1, 0))])
+    spaced = parse_preserving_axes("= A1 + 1.0 ", anchor="Sheet1!B2")
+    assert spaced == BinaryOpNode("+", CellRefNode(_rel(-1, -1)), NumberNode(1.0))
+
+
+def test_parse_preserving_axes_scientific_literals() -> None:
+    ast = parse_preserving_axes("=A1+1e2", anchor="Sheet1!B1")
+    assert ast == BinaryOpNode("+", CellRefNode(_rel(-1, 0)), NumberNode(100.0))
+    assert parse_preserving_axes_optional("=1e", anchor="Sheet1!A1") is None
+
+
 def test_parse_preserving_axes_rejects_r1c1_brackets() -> None:
     with pytest.raises(FormulaParseError):
         parse_preserving_axes("=R[-1]C[-1]", anchor="Sheet1!B2")

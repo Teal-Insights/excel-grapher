@@ -55,6 +55,24 @@ def test_parse_optional_returns_none_for_missing_blank_or_unparseable() -> None:
     assert parse_optional("=Sheet1!A1+2") == parse("=Sheet1!A1+2")
 
 
+def test_parse_scientific_number_literals() -> None:
+    assert parse("=1e2") == NumberNode(100.0)
+    assert parse("=1E+2") == NumberNode(100.0)
+    assert parse("=1.5e-1") == NumberNode(0.15)
+    assert parse("=.5E+1") == NumberNode(5.0)
+    assert parse("=SUM(1e2,Sheet1!A1)") == FunctionCallNode(
+        "SUM",
+        [NumberNode(100.0), CellRefNode("Sheet1!A1")],
+    )
+
+
+def test_incomplete_scientific_literal_is_unparseable() -> None:
+    """`1e` / `1E+` without an exponent fail-soft rather than becoming `NumberNode(1)`."""
+    assert parse_optional("=1e") is None
+    assert parse_optional("=1E+") is None
+    assert parse_optional("=1e-") is None
+
+
 def test_core_expr_eval_basic_functions_over_integers() -> None:
     values: dict[str, CellValue] = {
         "Sheet1!A1": 1,
