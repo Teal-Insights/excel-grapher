@@ -653,7 +653,7 @@ class FormulaEvaluator:
             return 0
         return self._evaluate_ast(arg)
 
-    def _eval_if(self, args: list[AstNode]) -> FormulaValue:
+    def _eval_if(self, args: Sequence[AstNode]) -> FormulaValue:
         if len(args) < 2:
             raise ParseError("IF(...)", "IF requires at least 2 arguments")
         cond = self._evaluate_ast(args[0])
@@ -666,7 +666,7 @@ class FormulaEvaluator:
             return self._eval_if_branch(args[2])
         return False
 
-    def _eval_iferror(self, args: list[AstNode]) -> FormulaValue:
+    def _eval_iferror(self, args: Sequence[AstNode]) -> FormulaValue:
         if len(args) < 2:
             raise ParseError("IFERROR(...)", "IFERROR requires 2 arguments")
         v = self._evaluate_ast(args[0])
@@ -674,7 +674,7 @@ class FormulaEvaluator:
             return self._evaluate_ast(args[1])
         return v
 
-    def _eval_ifna(self, args: list[AstNode]) -> FormulaValue:
+    def _eval_ifna(self, args: Sequence[AstNode]) -> FormulaValue:
         if len(args) < 2:
             raise ParseError("IFNA(...)", "IFNA requires 2 arguments")
         v = self._evaluate_ast(args[0])
@@ -682,19 +682,19 @@ class FormulaEvaluator:
             return self._evaluate_ast(args[1])
         return v
 
-    def _eval_iserror(self, args: list[AstNode]) -> bool:
+    def _eval_iserror(self, args: Sequence[AstNode]) -> bool:
         if len(args) < 1:
             raise ParseError("ISERROR(...)", "ISERROR requires 1 argument")
         v = self._evaluate_ast(args[0])
         return isinstance(v, XlError)
 
-    def _eval_isna(self, args: list[AstNode]) -> bool:
+    def _eval_isna(self, args: Sequence[AstNode]) -> bool:
         if len(args) < 1:
             raise ParseError("ISNA(...)", "ISNA requires 1 argument")
         v = self._evaluate_ast(args[0])
         return v == XlError.NA
 
-    def _eval_isblank(self, args: list[AstNode]) -> bool:
+    def _eval_isblank(self, args: Sequence[AstNode]) -> bool:
         if len(args) != 1:
             raise ParseError("ISBLANK(...)", "ISBLANK requires 1 argument")
         v = self._evaluate_ast(args[0])
@@ -704,7 +704,7 @@ class FormulaEvaluator:
             v = self._evaluate_cell(self._single_cell_address(v))
         return xl_isblank(cast(CellValue, v))
 
-    def _eval_choose(self, args: list[AstNode]) -> FormulaValue:
+    def _eval_choose(self, args: Sequence[AstNode]) -> FormulaValue:
         if len(args) < 2:
             raise ParseError("CHOOSE(...)", "CHOOSE requires at least 2 arguments")
         index_val = self._evaluate_ast(args[0])
@@ -719,7 +719,7 @@ class FormulaEvaluator:
         # Only evaluate the selected choice (lazy)
         return self._evaluate_ast(args[idx])
 
-    def _eval_offset(self, args: list[AstNode]) -> FormulaValue:
+    def _eval_offset(self, args: Sequence[AstNode]) -> FormulaValue:
         if len(args) < 3:
             raise ParseError("OFFSET(...)", "OFFSET requires at least 3 arguments")
 
@@ -761,7 +761,7 @@ class FormulaEvaluator:
         col = fastpyxl.utils.cell.column_index_from_string(col_str)
         return row, col
 
-    def _eval_row(self, args: list[AstNode]) -> int | XlError:
+    def _eval_row(self, args: Sequence[AstNode]) -> int | XlError:
         if not args or (len(args) == 1 and isinstance(args[0], EmptyArgNode)):
             pos = self._current_formula_row_col()
             return XlError.VALUE if pos is None else pos[0]
@@ -770,7 +770,7 @@ class FormulaEvaluator:
             return ref
         return xl_row(ref)
 
-    def _eval_column(self, args: list[AstNode]) -> int | XlError:
+    def _eval_column(self, args: Sequence[AstNode]) -> int | XlError:
         if not args or (len(args) == 1 and isinstance(args[0], EmptyArgNode)):
             pos = self._current_formula_row_col()
             return XlError.VALUE if pos is None else pos[1]
@@ -779,7 +779,7 @@ class FormulaEvaluator:
             return ref
         return xl_column(ref)
 
-    def _eval_columns(self, args: list[AstNode]) -> int | XlError:
+    def _eval_columns(self, args: Sequence[AstNode]) -> int | XlError:
         if len(args) < 1:
             raise ParseError("COLUMNS(...)", "COLUMNS requires 1 argument")
         ref = self._range_from_ref_node(args[0])
@@ -787,7 +787,7 @@ class FormulaEvaluator:
             return ref
         return xl_columns(ref)
 
-    def _eval_index(self, args: list[AstNode]) -> FormulaValue:
+    def _eval_index(self, args: Sequence[AstNode]) -> FormulaValue:
         """Evaluate INDEX for reference bases and computed value arrays.
 
         Literal ranges / nested INDEX/OFFSET keep the reference path
@@ -830,7 +830,7 @@ class FormulaEvaluator:
         return False
 
     def _index_row_col_args(
-        self, args: list[AstNode]
+        self, args: Sequence[AstNode]
     ) -> tuple[FormulaValue | None, FormulaValue | None, XlError | None]:
         if len(args) < 2 or isinstance(args[1], EmptyArgNode):
             row_num: FormulaValue | None = None

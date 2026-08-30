@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v9.0.0 (2026-08-29)
+
+### Features
+
+- **core**: Intern formula ASTs by hashable tree identity
+  ([`43f1248`](https://github.com/Teal-Insights/excel-grapher/commit/43f1248ec48cd27bfcfa9f227045dc5b353edaa7))
+
+
 ## v8.0.0 (2026-08-29)
 
 ### Bug Fixes
