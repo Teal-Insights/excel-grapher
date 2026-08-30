@@ -434,7 +434,7 @@ def test_json_cache_loads_legacy_normalized_formula_without_ast() -> None:
             "row": 1,
             "formula": "=A1+1",
             "normalized_formula": "=Sheet1!A1+1",
-            "value": None,
+            "value": {"t": "none", "v": None},
             "is_leaf": False,
             "is_target": False,
             "metadata": {},
