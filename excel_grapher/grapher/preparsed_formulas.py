@@ -12,7 +12,9 @@ def warm_preparsed_formulas(graph: DependencyGraph) -> dict[str, AstNode]:
 
     Returns a mapping from stripped normalized formula strings to AST roots.
     Duplicate formulas across cells share one entry. When a node already has
-    `formula_ast`, that tree is reused instead of re-parsing.
+    `formula_ast`, that tree is reused instead of re-parsing. The mapping is
+    still keyed by stripped `normalized_formula` so the evaluator's string-keyed
+    fallback cache can seed from it.
 
     Re-call after loading a graph from JSON cache or mutating node formulas
     post-extraction so `DependencyGraph.preparsed_formulas` stays aligned.

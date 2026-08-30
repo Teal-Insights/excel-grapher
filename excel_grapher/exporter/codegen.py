@@ -54,6 +54,7 @@ from excel_grapher.evaluator.parser import (
 from excel_grapher.evaluator.types import XlError
 from excel_grapher.exporter.embed import emit_runtime
 from excel_grapher.grapher.blank_ranges import BlankRangeRect, normalize_blank_range_specs
+from excel_grapher.grapher.formula_label import display_formula
 from excel_grapher.grapher.graph import CycleError
 from excel_grapher.grapher.parser import format_key
 from excel_grapher.grapher.target_expansion import (
@@ -81,6 +82,17 @@ class GraphNode(Protocol):
     normalized_formula: str | None
     formula_ast: AstNode | None
     value: object | None
+
+
+def _node_has_formula(node: object) -> bool:
+    """Return True when `node` is a formula cell (AST or unparseable text)."""
+    has = getattr(node, "has_formula", None)
+    if isinstance(has, bool):
+        return has
+    return (
+        getattr(node, "formula_ast", None) is not None
+        or getattr(node, "normalized_formula", None) is not None
+    )
 
 
 class GraphLike(Protocol):
@@ -473,12 +485,12 @@ class CodeGenerator:
             return None
 
         nf = node.normalized_formula
-        if nf is None:
-            # A raw formula without a normalized one is a malformed node, not a leaf.
+        formula_ast = node.formula_ast
+        if formula_ast is None and nf is None:
+            # A raw formula without AST or normalized text is malformed, not a leaf.
             if node.formula is not None:
                 raise MissingNormalizedFormulaError(normalized)
             return None
-        formula_ast = node.formula_ast
         if formula_ast is not None:
             bound = bind_axes(formula_ast, normalized)
             self._ast_cache[normalized] = bound
@@ -578,7 +590,7 @@ class CodeGenerator:
             expr = f"xl_cell(ctx, {repr(normalized)})"
         else:
             node = self.graph.get_node(normalized)
-            if node is not None and node.normalized_formula is not None:
+            if node is not None and _node_has_formula(node):
                 func_name = address_to_python_name(normalized)
                 expr = f"xl_eval(ctx, {repr(normalized)}, {func_name})"
             elif self._reader_index is not None:
@@ -1266,7 +1278,7 @@ class CodeGenerator:
         needed_leaves: set[str] = set()
         for addr in all_cells:
             node = self.graph.get_node(addr)
-            if node is None or node.normalized_formula is not None:
+            if node is None or _node_has_formula(node):
                 continue
             needed_leaves.add(normalize_address(addr))
         return needed_leaves
@@ -2294,7 +2306,7 @@ class CodeGenerator:
         scalar_range_shapes: set[str] = set()
         for address in formula_addresses:
             node = self.graph.get_node(address)
-            if node is None or not isinstance(node.normalized_formula, str):
+            if node is None or not _node_has_formula(node):
                 continue
             found = table.lookup(address)
             if found is None:
@@ -2356,14 +2368,14 @@ class CodeGenerator:
         func_name = address_to_python_name(normalized)
         node = self.graph.get_node(normalized)
 
-        if node is None or node.normalized_formula is None:
+        if node is None or not _node_has_formula(node):
             raise ValueError(f"Not a formula cell: {normalized}")
 
         lines: list[str] = []
         lines.append(f"def {func_name}(ctx):")
         # Prefer the raw workbook text when it was stored; otherwise document the
-        # normalized formula, which is always present for a formula cell.
-        shown_formula = node.formula if node.formula is not None else node.normalized_formula
+        # AST-derived (or stored) normalized formula.
+        shown_formula = display_formula(node) or "="
         doc = f"Formula: {shown_formula}".replace("'''", "\\'''")
         if doc[-1] not in ".?!":
             doc = f"{doc}."
@@ -2470,7 +2482,7 @@ class CodeGenerator:
                 return
 
             # If it's a formula, parse and find cell references
-            if node.normalized_formula is not None:
+            if _node_has_formula(node):
                 ast = self._get_or_parse_ast(addr)
                 assert ast is not None
                 deps = self._extract_cell_refs(ast)
@@ -3244,7 +3256,7 @@ class CodeGenerator:
                 return
             self._emitted.add(address)
             node = self.graph.get_node(address)
-            if node is not None and node.normalized_formula is not None:
+            if node is not None and _node_has_formula(node):
                 normalized = normalize_address(address)
                 formula_emit_order.append(normalized)
                 self._temp_var_counter = 0

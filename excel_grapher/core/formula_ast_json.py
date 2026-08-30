@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, cast
 
 from fastpyxl.utils.cell import column_index_from_string
@@ -77,6 +79,22 @@ def ast_to_json(node: AstNode) -> _JsonObject:
         case EmptyArgNode():
             return {"t": "empty"}
     raise TypeError(f"unsupported AST node: {type(node).__name__}")
+
+
+def ast_identity_key(node: AstNode) -> str:
+    """Canonical JSON document used as a formula-AST identity key."""
+    return json.dumps(ast_to_json(node), sort_keys=True, separators=(",", ":"))
+
+
+def formula_identity_digest(*, formula: str, formula_ast: AstNode | None) -> str:
+    """SHA-256 of `formula_ast` when present, otherwise of `formula` text.
+
+    Type-analysis and similar caches key formula identity by AST so relative
+    vs absolute trees that share A1 text do not collide. Unparseable cells
+    fall back to the stored formula string.
+    """
+    payload = ast_identity_key(formula_ast) if formula_ast is not None else formula
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 def _axis_from_json(payload: object) -> AxisRef:

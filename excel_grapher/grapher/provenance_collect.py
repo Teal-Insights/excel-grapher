@@ -232,6 +232,8 @@ def _flat_provenance_one_string(
                             max_range_cells=max_range_cells,
                             get_cell_value=lambda sh, a1: wb_formulas[sh][a1].value,
                             sheet_names=wb_formulas.sheetnames,
+                            named_ranges=named_ranges,
+                            named_range_ranges=named_range_ranges,
                         )
                     all_refs, leaves = walk.argument_subgraph_refs(argument_addrs)
                     missing_leaves = leaves_missing_cell_type_constraints(
@@ -254,6 +256,7 @@ def _flat_provenance_one_string(
                         shared_cell_type_cache=walk.shared_cell_type_cache,
                         type_analysis_cache=type_analysis_cache,
                         workbook_sha256=workbook_sha256,
+                        get_cell_ast=walk.cell_ast,
                     )
                     offset_targets = infer_dynamic_offset_targets(
                         formula_for_infer,
@@ -513,6 +516,8 @@ def collect_provenance_for_formula(
             max_range_cells=max_range_cells,
             get_cell_value=_cell_value,
             sheet_names=wb_formulas.sheetnames,
+            named_ranges=named_ranges,
+            named_range_ranges=named_range_ranges,
         )
     f = _ensure_leading_equals(formula)
 

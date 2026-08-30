@@ -463,17 +463,18 @@ def create_dependency_graph(
 
     When `store_raw_formula` is True, each formula cell also keeps the workbook
     formula text on `Node.formula`. It defaults to False because the string is
-    not needed to evaluate, compress, or export a graph: `normalized_formula`
-    (always stored) is what every consumer reads, and dropping the raw copy is a
-    sizeable memory saving on large workbooks. Enable it when you need the
-    original text -- audit / display use, and TACO range compression
-    (`excel_grapher.grapher.range_compression`), which infers stride patterns
-    from the relative/absolute (`$`) markers that normalization strips.
+    not needed to evaluate, compress, or export a graph: `formula_ast` is the
+    in-memory source of truth, `normalized_formula` is derived absolute A1, and
+    dropping the raw copy is a sizeable memory saving on large workbooks.
+    Enable it when you need the original text -- audit / display use, and TACO
+    range compression (`excel_grapher.grapher.range_compression`), which infers
+    stride patterns from the relative/absolute (`$`) markers that
+    normalization strips.
 
     Raw formulas are audit records of extraction: compression and projection
-    rewrite `normalized_formula` only, so on a compressed graph `Node.formula`
-    still shows the pre-compression workbook text and must not be re-parsed as
-    the node's current definition.
+    rewrite `formula_ast` (and refresh derived `normalized_formula`), so on a
+    compressed graph `Node.formula` still shows the pre-compression workbook
+    text and must not be re-parsed as the node's current definition.
 
     Extraction always parses each formula cell into `Node.formula_ast` from the
     raw workbook text, preserving per-axis relative/absolute intent. Distinct
@@ -491,11 +492,12 @@ def create_dependency_graph(
     `excel_grapher.exporter.codegen.CodeGenerator.generate` for **evaluator
     <-> export** parity (consistent behavior between evaluation and generated code).
 
-    When `warm_ast_cache` is True, each distinct `normalized_formula` in the
-    built graph is stored on `DependencyGraph.preparsed_formulas` (reusing
-    `Node.formula_ast`). `FormulaEvaluator` also seeds its AST cache from
-    per-node ASTs, so first evaluation does not re-parse unless formulas change
-    after extraction. Seeding is best-effort when distinct formulas exceed
+    When `warm_ast_cache` is True, each distinct derived `normalized_formula`
+    in the built graph is stored on `DependencyGraph.preparsed_formulas`
+    (reusing `Node.formula_ast`). `FormulaEvaluator` evaluates per-node trees
+    directly and seeds its string-keyed fallback cache from those ASTs, so
+    first evaluation does not re-parse unless formulas change after extraction.
+    Seeding is best-effort when distinct formulas exceed
     `FormulaEvaluator.ast_cache_maxsize` (oldest warmed entries may be
     evicted). `preparsed_formulas` is not stored in JSON graph caches; call
     `warm_preparsed_formulas` after cache load or formula mutation if you need
@@ -644,6 +646,8 @@ def create_dependency_graph(
         sheet_names=wb_formulas.sheetnames,
         shared_cell_type_cache=_shared_cell_type_cache,
         stats=_dyn_stats,
+        named_ranges=named_ranges,
+        named_range_ranges=named_range_ranges,
     )
 
     def _get_ws_v(sheet: str) -> Worksheet:
@@ -1028,6 +1032,7 @@ def create_dependency_graph(
                                     shared_cell_type_cache=_shared_cell_type_cache,
                                     type_analysis_cache=type_analysis_cache,
                                     workbook_sha256=_wb_sha256,
+                                    get_cell_ast=ref_walk.cell_ast,
                                 )
                             try:
                                 offset_targets = infer_dynamic_offset_targets(
@@ -1899,6 +1904,20 @@ def list_dynamic_ref_constraint_candidates(
                                     return None
                                 return normalizer.normalize(v, sh2)
 
+                            def _get_cell_ast(addr: str) -> AstNode | None:
+                                sh2, a1_2 = parse_address(addr)
+                                if sh2 not in sheetname_set:
+                                    return None
+                                v = _cell_value(sh2, a1_2)
+                                if not isinstance(v, str) or not v.startswith("="):
+                                    return None
+                                return parse_preserving_axes_optional(
+                                    v,
+                                    anchor=addr,
+                                    named_ranges=named_ranges,
+                                    named_range_ranges=named_range_ranges,
+                                )
+
                             expanded_env = expand_leaf_env_to_argument_env(
                                 all_refs,
                                 _get_cell_formula,
@@ -1911,6 +1930,7 @@ def list_dynamic_ref_constraint_candidates(
                                 shared_cell_type_cache=_shared_cell_type_cache_cand,
                                 type_analysis_cache=type_analysis_cache,
                                 workbook_sha256=_wb_sha256_cand,
+                                get_cell_ast=_get_cell_ast,
                             )
                         offset_targets = infer_dynamic_offset_targets(
                             formula_for_infer,

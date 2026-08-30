@@ -649,7 +649,7 @@ def test_optimal_inlines_already_qualified_formulas(tmp_path: Path) -> None:
     assert "Sheet1!D1" in graph.compress_optimal()
     node = graph.get_node("Sheet1!E1")
     assert node is not None
-    assert node.normalized_formula == "=(Sheet1!B1*2)+1"
+    assert node.normalized_formula == "=Sheet1!B1*2+1"
     assert graph.get_dependencies("Sheet1!E1") == {"Sheet1!B1"}
     assert FormulaEvaluator(graph).evaluate("Sheet1!E1") == before
 

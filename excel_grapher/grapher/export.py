@@ -52,7 +52,7 @@ def _node_display_label(
 def _networkx_value_type(node: Node | NodeView) -> str:
     value = node.value
     if value is None:
-        return "UNKNOWN" if node.normalized_formula is not None else "EMPTY"
+        return "UNKNOWN" if node.has_formula else "EMPTY"
     # bool must be checked before int, since bool subclasses int.
     if isinstance(value, bool):
         return "BOOLEAN"

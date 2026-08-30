@@ -14,7 +14,7 @@ from excel_grapher.core.address_keys import (
 )
 from excel_grapher.core.address_keys import format_cell_key as _format_cell_key
 from excel_grapher.core.address_keys import parse_node_key as _parse_node_key
-from excel_grapher.core.formula_ast import AstNode
+from excel_grapher.core.formula_ast import AstNode, unparse_normalized_formula
 
 # Graph node identity; canonical sheet-qualified cell address string.
 NodeKey: TypeAlias = str
@@ -193,11 +193,10 @@ class Node:
     Canonical identity is `address` (`CellKey`). Legacy constructors that pass
     `sheet`/`column`/`row` still work and sync `address` in `__post_init__`.
 
-    `normalized_formula` identifies a formula cell: it is always stored as
-    absolute A1 text, and it is the only formula text that compression and
-    projection rewrite. `formula_ast` is the parsed form of that string and is
-    the primary in-memory formula artifact after extraction. The raw workbook
-    string `formula` is opt-in at extraction
+    `formula_ast` is the primary in-memory formula artifact. `normalized_formula`
+    is derived absolute A1 text kept for compatibility until it is removed: writers
+    that change `formula_ast` (extraction, `set_node_ast`, compression) refresh it.
+    The raw workbook string `formula` is opt-in at extraction
     (`create_dependency_graph(store_raw_formula=True)`) and audit-only -- on a
     compressed graph it still holds the pre-compression text, so never re-parse
     it as the node's current definition.
@@ -240,11 +239,15 @@ class Node:
         if self.address is not None:
             self.address = _coerce_cell_address(self.address)
             self._sync_fields_from_address()
-            return
+        else:
+            self._finalize_cell_legacy()
+            assert self.sheet is not None and self.column is not None and self.row is not None
+            self.address = CellKey(_format_cell_key(self.sheet, self.column, self.row))
 
-        self._finalize_cell_legacy()
-        assert self.sheet is not None and self.column is not None and self.row is not None
-        self.address = CellKey(_format_cell_key(self.sheet, self.column, self.row))
+        if self.formula_ast is not None and self.normalized_formula is None:
+            self.normalized_formula = unparse_normalized_formula(
+                self.formula_ast, anchor=self.address
+            )
 
     def _sync_fields_from_address(self) -> None:
         addr = self.address
@@ -314,6 +317,11 @@ class Node:
         assert self.address is not None
         return _derived_fields(self.address).column_index
 
+    @property
+    def has_formula(self) -> bool:
+        """True when this cell has a formula AST or unparseable formula text."""
+        return self.formula_ast is not None or self.normalized_formula is not None
+
 
 @dataclass(frozen=True)
 class NodeView:
@@ -357,6 +365,11 @@ class NodeView:
         if self.column is None:
             raise ValueError("column_index requires a column")
         return int(fastpyxl.utils.cell.column_index_from_string(self.column))
+
+    @property
+    def has_formula(self) -> bool:
+        """True when this cell has a formula AST or unparseable formula text."""
+        return self.formula_ast is not None or self.normalized_formula is not None
 
 
 def _view_metadata(metadata: Mapping[str, Any]) -> Mapping[str, Any]:

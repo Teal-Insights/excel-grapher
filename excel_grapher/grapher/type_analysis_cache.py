@@ -33,7 +33,7 @@ from excel_grapher.grapher.dynamic_refs import DynamicRefLimits
 logger = logging.getLogger(__name__)
 
 # Bump this when the analysis logic changes in a way that affects cached results.
-ANALYSIS_SCHEMA_VERSION: int = 2
+ANALYSIS_SCHEMA_VERSION: int = 3
 
 _EXCEL_GRAPHER_VERSION: str = _package_version()
 

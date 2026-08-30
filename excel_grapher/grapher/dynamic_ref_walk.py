@@ -10,8 +10,9 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection, Iterable
 
-from excel_grapher.core.address_keys import parse_address
+from excel_grapher.core.address_keys import CellKey, parse_address
 from excel_grapher.core.cell_types import CellType
+from excel_grapher.core.formula_ast import AstNode, parse_preserving_axes_optional
 
 from .parser import (
     FormulaNormalizer,
@@ -44,6 +45,8 @@ class DynamicRefWalkContext:
         sheet_names: Collection[str],
         shared_cell_type_cache: dict[str, CellType] | None = None,
         stats: dict[str, int] | None = None,
+        named_ranges: dict[str, tuple[str, str]] | None = None,
+        named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
     ) -> None:
         self._normalizer = normalizer
         self._max_range_cells = max_range_cells
@@ -55,9 +58,12 @@ class DynamicRefWalkContext:
             shared_cell_type_cache if shared_cell_type_cache is not None else {}
         )
         self._stats = stats
+        self._named_ranges = named_ranges
+        self._named_range_ranges = named_range_ranges
         self._refs_without_dynamic_cache: dict[tuple[str, str], frozenset[str]] = {}
         self._arg_subgraph_cache: dict[frozenset[str], tuple[frozenset[str], frozenset[str]]] = {}
         self._arg_node_cache: dict[str, tuple[frozenset[str], bool]] = {}
+        self._ast_cache: dict[str, AstNode | None] = {}
 
     def refs_in_formula_without_dynamic(self, formula_str: str, sheet_of_cell: str) -> set[str]:
         """Return static (non-dynamic-ref) cell addresses referenced by `formula_str`."""
@@ -98,6 +104,27 @@ class DynamicRefWalkContext:
         if not isinstance(value, str) or not value.startswith("="):
             return None
         return self._normalizer.normalize(value, sheet)
+
+    def cell_ast(self, addr: str) -> AstNode | None:
+        """Return the axis-preserving formula AST at `addr`, or None."""
+        if addr in self._ast_cache:
+            return self._ast_cache[addr]
+        sheet, a1 = parse_address(addr)
+        if sheet not in self._sheet_names:
+            self._ast_cache[addr] = None
+            return None
+        value = self._get_cell_value(sheet, a1)
+        if not isinstance(value, str) or not value.startswith("="):
+            self._ast_cache[addr] = None
+            return None
+        ast = parse_preserving_axes_optional(
+            value,
+            anchor=CellKey(addr),
+            named_ranges=self._named_ranges,
+            named_range_ranges=self._named_range_ranges,
+        )
+        self._ast_cache[addr] = ast
+        return ast
 
     def argument_node(self, addr: str) -> tuple[frozenset[str], bool]:
         """Return static child refs and whether `addr` is a non-formula leaf."""
