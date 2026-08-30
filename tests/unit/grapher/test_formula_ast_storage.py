@@ -278,7 +278,7 @@ def test_identity_transit_rewrites_keep_formula_ast_aligned() -> None:
     node = graph.get_node("Sheet1!A1")
     assert node is not None
     assert node.normalized_formula == "=Sheet1!C1"
-    assert node.formula_ast == parse("=Sheet1!C1")
+    assert node.formula_ast == parse_preserving_axes("=Sheet1!C1", anchor="Sheet1!A1")
 
 
 def test_optimal_inline_rewrites_keep_formula_ast_aligned() -> None:

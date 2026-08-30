@@ -837,6 +837,29 @@ def parse_preserving_axes_optional(
         return None
 
 
+def parse_formula_text(
+    formula: str | None,
+    *,
+    anchor: CellKey | str | None = None,
+    named_ranges: dict[str, tuple[str, str]] | None = None,
+    named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
+) -> AstNode | None:
+    """Parse `formula`, preserving `$` vs bare-A1 axes when `anchor` is set.
+
+    Without `anchor`, uses absolute-only `parse`. Relative vs mixed `$` intent
+    cannot be recovered from that path. Returns None when `formula` is missing,
+    blank, or unparseable.
+    """
+    if anchor is None:
+        return parse_optional(formula)
+    return parse_preserving_axes_optional(
+        formula,
+        anchor=anchor,
+        named_ranges=named_ranges,
+        named_range_ranges=named_range_ranges,
+    )
+
+
 def _parse_expression(s: _Scanner, original: str, min_prec: int) -> AstNode:
     """Pratt parser / precedence climbing for expressions."""
     left = _parse_unary(s, original)

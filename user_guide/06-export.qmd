@@ -189,7 +189,6 @@ graph.add_node(
         column="A",
         row=1,
         formula=None,
-        normalized_formula=None,
         value=10.0,
         is_leaf=True,
     )
@@ -200,9 +199,9 @@ graph.add_node(
         column="B",
         row=1,
         formula="=S!A1*2",
-        normalized_formula="=S!A1*2",
         value=None,
         is_leaf=False,
+        normalized_formula="=S!A1*2",
     )
 )
 graph.add_edge("S!B1", "S!A1")

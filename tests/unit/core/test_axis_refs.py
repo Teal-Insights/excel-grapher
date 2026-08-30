@@ -23,6 +23,7 @@ from excel_grapher.core.formula_ast import (
     WholeRowNode,
     iter_resolved_cell_keys,
     parse,
+    parse_formula_text,
     parse_preserving_axes,
     parse_preserving_axes_optional,
     resolve_cell_ref,
@@ -148,6 +149,21 @@ def test_parse_preserving_axes_named_range_is_absolute() -> None:
 def test_parse_preserving_axes_optional_fail_soft() -> None:
     assert parse_preserving_axes_optional("=SUM(IF(@A1>0,1,0))", anchor="Sheet1!B1") is None
     assert parse_preserving_axes_optional(None, anchor="Sheet1!B1") is None
+
+
+def test_parse_formula_text_preserves_axes_when_anchored() -> None:
+    ast = parse_formula_text("=A1+$B$1", anchor="Sheet1!B2")
+    assert ast == parse_preserving_axes("=A1+$B$1", anchor="Sheet1!B2")
+    assert parse_formula_text("=SUM(IF(@A1>0,1,0))", anchor="Sheet1!B1") is None
+    assert parse_formula_text(None, anchor="Sheet1!B1") is None
+
+
+def test_parse_formula_text_absolutizes_without_anchor() -> None:
+    ast = parse_formula_text("=Sheet1!A1")
+    assert ast == parse("=Sheet1!A1")
+    assert isinstance(ast, CellRefNode)
+    assert isinstance(ast.ref.col, AbsoluteAxis)
+    assert isinstance(ast.ref.row, AbsoluteAxis)
 
 
 def test_parse_preserving_axes_rejects_r1c1_brackets() -> None:

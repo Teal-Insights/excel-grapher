@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Literal, TypedDict, cast
 
 from excel_grapher.core.address_keys import CellKey, parse_node_key
-from excel_grapher.core.formula_ast import AstNode
+from excel_grapher.core.formula_ast import AstNode, parse_optional
 from excel_grapher.core.formula_ast_json import ast_from_json, ast_to_json
 
 from .dependency_provenance import DependencyCause, EdgeProvenance
@@ -466,10 +466,15 @@ def dependency_graph_from_json(payload: dict[str, Any]) -> DependencyGraph:
         if unparseable is not None and not isinstance(unparseable, str):
             raise TypeError("unparseable_formula must be a string")
         # Schema 7 stored `normalized_formula` on every node; schema 8 derives it.
+        # That stored A1 is already `$`-stripped, so parse it as absolute-only —
+        # relative vs mixed `$` intent cannot be recovered.
         fallback = unparseable
         if fallback is None and formula_ast is None:
             legacy = n.get("normalized_formula")
-            fallback = legacy if isinstance(legacy, str) else None
+            if isinstance(legacy, str):
+                formula_ast = parse_optional(legacy)
+                if formula_ast is None:
+                    fallback = legacy
         value = _value_from_json(n["value"])
         is_leaf = bool(n["is_leaf"])
         is_target = bool(n.get("is_target", False))

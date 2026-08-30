@@ -17,7 +17,7 @@ from excel_grapher.core.address_keys import parse_node_key as _parse_node_key
 from excel_grapher.core.formula_ast import (
     AstNode,
     FormulaStyle,
-    parse_optional,
+    parse_formula_text,
     render_formula,
 )
 
@@ -198,13 +198,18 @@ class Node:
     Canonical identity is `address` (`CellKey`). Legacy constructors that pass
     `sheet`/`column`/`row` still work and sync `address` in `__init__`.
 
-    `formula_ast` is the primary in-memory formula artifact. `normalized_formula`
-    is a derived view (`render_formula` with `A1_ABSOLUTE`); it is not stored.
-    Unparseable cells keep the last known formula text as a fallback so
-    `has_formula` still holds. The raw workbook string `formula` is opt-in at
-    extraction (`create_dependency_graph(store_raw_formula=True)`) and
-    audit-only -- on a compressed graph it still holds the pre-compression text,
-    so never re-parse it as the node's current definition.
+    `formula_ast` is the primary in-memory formula artifact. Construct nodes
+    with `formula_ast=` when the tree is already known. `normalized_formula` is
+    a derived view (`render_formula` with `A1_ABSOLUTE`); it is not stored, and
+    the constructor keyword of the same name is only a bootstrap for string
+    input. When an address is available, that bootstrap parses with
+    `parse_preserving_axes` so `$` vs bare A1 is kept; without an anchor,
+    relative intent cannot be recovered. Unparseable cells keep the last known
+    formula text as a fallback so `has_formula` still holds. The raw workbook
+    string `formula` is opt-in at extraction
+    (`create_dependency_graph(store_raw_formula=True)`) and audit-only -- on a
+    compressed graph it still holds the pre-compression text, so never re-parse
+    it as the node's current definition.
 
     `is_leaf` is true when the node has no outgoing dependency edges (value-only
     cells and literal-only formulas such as `=1+1`).
@@ -238,13 +243,13 @@ class Node:
 
     def __init__(
         self,
-        sheet: str | None,
-        column: str | None,
-        row: int | None,
-        formula: str | None,
-        normalized_formula: str | None,
-        value: Any,
-        is_leaf: bool,
+        sheet: str | None = None,
+        column: str | None = None,
+        row: int | None = None,
+        formula: str | None = None,
+        *,
+        value: Any = None,
+        is_leaf: bool = True,
         is_target: bool = False,
         metadata: Mapping[str, Any] = EMPTY_METADATA,
         min_col: str | None = None,
@@ -253,6 +258,7 @@ class Node:
         max_row: int | None = None,
         address: CellKey | None = None,
         formula_ast: AstNode | None = None,
+        normalized_formula: str | None = None,
     ) -> None:
         self.sheet = sheet
         self.column = column
@@ -283,7 +289,7 @@ class Node:
             self.address = CellKey(_format_cell_key(self.sheet, self.column, self.row))
 
         if self.formula_ast is None and normalized_formula:
-            ast = parse_optional(normalized_formula)
+            ast = parse_formula_text(normalized_formula, anchor=self.address)
             if ast is not None:
                 self.formula_ast = ast
             else:
@@ -376,14 +382,17 @@ class Node:
     def apply_formula_text(self, text: str | None) -> None:
         """Parse `text` into `formula_ast`, or keep it as unparseable fallback.
 
-        Clears both when `text` is missing or blank. Used when a rewrite only
-        has formula strings (the AST parser could not handle the cell).
+        When `address` is set, parse with `parse_preserving_axes` so `$` vs
+        bare A1 is kept. Without an anchor, relative intent cannot be
+        recovered. Clears both when `text` is missing or blank. Used when a
+        rewrite only has formula strings (the AST parser could not handle the
+        cell).
         """
         if text is None or not str(text).strip():
             self.formula_ast = None
             self._unparseable_formula = None
             return
-        ast = parse_optional(text)
+        ast = parse_formula_text(text, anchor=self.address)
         self.formula_ast = ast
         self._unparseable_formula = None if ast is not None else text
 
@@ -487,7 +496,11 @@ def make_cell_node(
     metadata: Mapping[str, Any] | None = None,
     formula_ast: AstNode | None = None,
 ) -> Node:
-    """Build a single-cell graph node."""
+    """Build a single-cell graph node.
+
+    Prefer `formula_ast=` when the tree is already known. `normalized_formula`
+    is bootstrap text parsed with axis intent against this cell's address.
+    """
     return Node(
         sheet=sheet,
         column=column,

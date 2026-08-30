@@ -43,7 +43,8 @@ def test_warm_formula_shapes_interns_shared_skeleton() -> None:
     assert left is not None and right is not None
     assert left[0] == right[0]
     assert left[1] is right[1]
-    assert left[2] != right[2]
+    # Bare `S!A1` / `S!A2` at B1 / B2 are the same relative offset.
+    assert left[2] == right[2]
 
 
 def test_create_dependency_graph_warm_formula_shapes_opt_in(tmp_path: Path) -> None:

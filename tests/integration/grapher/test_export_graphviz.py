@@ -96,8 +96,8 @@ def test_to_graphviz_invalid_max_formula_length() -> None:
 
 def test_to_graphviz_uses_graph_sheet_order_for_node_listing() -> None:
     g = DependencyGraph(sheet_order=["Later", "Earlier"])
-    g.add_node(Node("Earlier", "A", 1, None, None, 1, True))
-    g.add_node(Node("Later", "A", 1, None, None, 1, True))
+    g.add_node(Node("Earlier", "A", 1, value=1))
+    g.add_node(Node("Later", "A", 1, value=1))
 
     dot = to_graphviz(g)
     later_idx = dot.index('"Later!A1" [')
