@@ -644,9 +644,7 @@ def _retarget_cell_ref(ref: CellRef, new_key: str, anchor: CellKey | str) -> Cel
     )
 
 
-def _whole_column_matches_cell_key(
-    node: WholeColumnNode, key: str, anchor: CellKey | str
-) -> bool:
+def _whole_column_matches_cell_key(node: WholeColumnNode, key: str, anchor: CellKey | str) -> bool:
     parts = _cell_key_parts(key)
     if parts is None:
         return False
@@ -655,9 +653,7 @@ def _whole_column_matches_cell_key(
     return sheet == old_sheet and letter == old_col
 
 
-def _whole_row_matches_cell_key(
-    node: WholeRowNode, key: str, anchor: CellKey | str
-) -> bool:
+def _whole_row_matches_cell_key(node: WholeRowNode, key: str, anchor: CellKey | str) -> bool:
     parts = _cell_key_parts(key)
     if parts is None:
         return False
@@ -674,9 +670,7 @@ def _retarget_whole_column(
     return WholeColumnNode(sheet=sheet, col=_retarget_axis(node.col, new_col, col_base))
 
 
-def _retarget_whole_row(
-    node: WholeRowNode, new_key: str, anchor: CellKey | str
-) -> WholeRowNode:
+def _retarget_whole_row(node: WholeRowNode, new_key: str, anchor: CellKey | str) -> WholeRowNode:
     sheet, _new_col, new_row = _new_key_indexes(new_key)
     _col_base, row_base = _anchor_axis_bases(anchor)
     return WholeRowNode(sheet=sheet, row=_retarget_axis(node.row, new_row, row_base))

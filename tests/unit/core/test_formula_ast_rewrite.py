@@ -177,12 +177,8 @@ def test_inline_replaces_cell_with_subtree() -> None:
 
 def test_ast_mentions_resolved_non_cell_key_range_and_whole() -> None:
     mixed = parse("=SUM(Sheet1!B1:B3)+Sheet1!B1")
-    assert ast_mentions_resolved_non_cell_key(
-        mixed, key="Sheet1!B1", anchor="Sheet1!A1"
-    )
-    assert not ast_mentions_resolved_non_cell_key(
-        mixed, key="Sheet1!C1", anchor="Sheet1!A1"
-    )
+    assert ast_mentions_resolved_non_cell_key(mixed, key="Sheet1!B1", anchor="Sheet1!A1")
+    assert not ast_mentions_resolved_non_cell_key(mixed, key="Sheet1!C1", anchor="Sheet1!A1")
     assert ast_mentions_resolved_non_cell_key(
         parse("=SUM(Sheet1!B:B)"), key="Sheet1!B5", anchor="Sheet1!A1"
     )
