@@ -139,6 +139,14 @@ write_workbook(projection, Path("projected.xlsx"))
 to_web_viz_payload(to_networkx(projection))
 ```
 
+`project()` drops `formula_shapes` on the clone. Rewarm before
+`write_workbook` if you want Excel shared formulas; otherwise the writer
+emits per-cell A1:
+
+```python
+projection.projected_graph.formula_shapes = warm_formula_shapes(projection.projected_graph)
+```
+
 #### The manifest contract
 
 `ProjectionManifest` is a protocol; codegen depends only on its small address-projection

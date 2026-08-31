@@ -178,6 +178,17 @@ modules = CodeGenerator(projection).generate_modules(
 write_workbook(projection, Path("projected.xlsx"))
 ```
 
+`project()` compresses a clone and drops `formula_shapes`. `write_workbook` does
+not rewarm, so default `shared_formulas="auto"` emits per-cell A1 unless you
+rewarm the clone first:
+
+```python
+from excel_grapher.grapher import warm_formula_shapes
+
+projection.projected_graph.formula_shapes = warm_formula_shapes(projection.projected_graph)
+write_workbook(projection, Path("projected.xlsx"))
+```
+
 `ProjectionResult` behaves like the projected graph for dependency reads, and exposes
 `original_graph` plus a serializable `manifest`. The manifest separates **address
 projection** (`map_to_projected`, used by codegen to keep removed public addresses

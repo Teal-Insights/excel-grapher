@@ -106,9 +106,11 @@ def write_workbook(
             `graph.formula_shapes` is warm and skips grouping when it is
             missing. `off` always writes per-cell A1. `require` fails if the
             overlay is missing. The writer does not auto-rewarm (GitHub
-            #560). Stale shapes, non-contiguous or mixed-axis leftovers,
-            array formulas, and `INDIRECT` emit per-cell rather than an
-            invalid shared formula.
+            #560). `project()` drops the overlay on the clone; rewarm
+            `projection.projected_graph.formula_shapes` before writing a
+            `ProjectionResult` if you want grouping. Stale shapes,
+            non-contiguous or mixed-axis leftovers, array formulas, and
+            `INDIRECT` emit per-cell rather than an invalid shared formula.
 
     Raises:
         FileExistsError: If `destination` exists and `overwrite` is False.

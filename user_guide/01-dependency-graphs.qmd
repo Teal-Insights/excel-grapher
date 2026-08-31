@@ -70,7 +70,10 @@ master cell in A1 relative to that cell, which is what Excel and fastpyxl
 persist and re-parse. Pass `shared_formulas="off"` to keep per-cell A1, or
 `shared_formulas="require"` to fail if the overlay is missing. The writer
 does not auto-rewarm; after compression, rewrite, or load, call
-`warm_formula_shapes` and assign the result. Non-contiguous runs, mixed
+`warm_formula_shapes` and assign the result. `project()` also drops the
+overlay on the clone, so a `ProjectionResult` writes per-cell A1 unless you
+rewarm `projection.projected_graph` first (see
+[Exporting standalone Python](06-export.qmd)). Non-contiguous runs, mixed
 absolute params, array formulas, and `INDIRECT` stay per-cell.
 
 Defined-name **tokens** are expanded to A1 at parse
