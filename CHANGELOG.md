@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v11.3.0 (2026-08-31)
+
+### Documentation
+
+- Distinguish move-then-write from project-then-write
+  ([#575](https://github.com/Teal-Insights/excel-grapher/pull/575),
+  [`ca38ace`](https://github.com/Teal-Insights/excel-grapher/commit/ca38acee481a115b32f1a88104ad067539b51aad))
+
+### Features
+
+- **grapher**: Emit Excel shared formulas from interned shapes
+  ([#576](https://github.com/Teal-Insights/excel-grapher/pull/576),
+  [`c72ec83`](https://github.com/Teal-Insights/excel-grapher/commit/c72ec8331dbc981a0e23431c782c24e276bffa29))
+
+### Testing
+
+- **grapher**: Round-trip write_workbook after move_node
+  ([#575](https://github.com/Teal-Insights/excel-grapher/pull/575),
+  [`ca38ace`](https://github.com/Teal-Insights/excel-grapher/commit/ca38acee481a115b32f1a88104ad067539b51aad))
+
+- **grapher**: Write_workbook round-trip after move_node
+  ([#575](https://github.com/Teal-Insights/excel-grapher/pull/575),
+  [`ca38ace`](https://github.com/Teal-Insights/excel-grapher/commit/ca38acee481a115b32f1a88104ad067539b51aad))
+
+
 ## v11.2.0 (2026-08-31)
 
 ### Features
