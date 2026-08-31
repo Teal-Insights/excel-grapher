@@ -203,7 +203,9 @@ class Node:
     `formula_ast` is the primary in-memory formula artifact. `normalized_formula`
     is a derived view (`render_formula` with `A1_ABSOLUTE`); it is not stored.
     Unparseable cells keep the last known formula text as a fallback so
-    `has_formula` still holds. The raw workbook string `formula` is opt-in at
+    `has_formula` still holds. `DependencyGraph.formula_shapes` is an optional
+    eval/codegen overlay; missing or dropped shapes fall back to this AST.
+    The raw workbook string `formula` is opt-in at
     extraction (`create_dependency_graph(store_raw_formula=True)`) and
     audit-only -- on a compressed graph it still holds the pre-compression text,
     so never re-parse it as the node's current definition.

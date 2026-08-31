@@ -18,8 +18,10 @@ from excel_grapher.core.address_keys import CellKey, format_range_key, parse_add
 from excel_grapher.core.cell_types import CellType, leaves_missing_cell_type_constraints
 from excel_grapher.core.formula_ast import (
     AstNode,
+    FormulaStyle,
     intern_formula_ast,
     parse_preserving_axes_optional,
+    render_formula,
 )
 
 from .blank_ranges import (
@@ -163,8 +165,9 @@ _POSITION_DEPENDENT_DYNAMIC_REF_PATTERN = re.compile(
 # Formulas with argument-less ROW()/COLUMN(): (normalized_formula, sheet, cell_a1).
 _DynamicRefCacheKey = tuple[str, str] | tuple[str, str, str]
 _DynamicRefTargets = tuple[set[str], set[str], set[str]]
-# Deps and inferred targets are keyed by normalized formula; masking spans are not
-# cached because they refer to raw formula text offsets.
+# Deps and inferred targets are keyed by the extraction formula string
+# (AST `render_formula` when parseable). Masking spans refer to offsets in
+# that same string, not the raw workbook formula.
 _DynamicRefDependencyCacheValue = tuple[list[tuple[str, str]], _DynamicRefTargets]
 
 
@@ -481,8 +484,11 @@ def create_dependency_graph(
     raw workbook text, preserving per-axis relative/absolute intent. Distinct
     ASTs share one interned tree (keyed by the frozen tree itself, not by a
     JSON encoding or by formula text). `normalized_formula` is derived
-    absolute A1 via `render_formula`. Formulas the AST parser cannot handle leave
-    `formula_ast` unset; extraction still records the cell and its
+    absolute A1 via `render_formula`. Build-time dependency extraction and
+    provenance spans run against that same rendered string, not against regex
+    `FormulaNormalizer` output. Formulas the AST parser cannot handle leave
+    `formula_ast` unset and fall back to regex normalization (transitional,
+    non-authoritative) so extraction can still record the cell and its
     dependencies.
 
     `blank_ranges` is an optional iterable of sheet-qualified A1 rectangles
@@ -494,22 +500,32 @@ def create_dependency_graph(
     <-> export** parity (consistent behavior between evaluation and generated code).
 
     When `warm_ast_cache` is True, each distinct derived `normalized_formula`
-    in the built graph is stored on `DependencyGraph.preparsed_formulas`
-    (reusing `Node.formula_ast`). `FormulaEvaluator` evaluates per-node trees
-    directly and seeds its string-keyed fallback cache from those ASTs, so
-    first evaluation does not re-parse unless formulas change after extraction.
-    Seeding is best-effort when distinct formulas exceed
-    `FormulaEvaluator.ast_cache_maxsize` (oldest warmed entries may be
+    in the built graph is stored on `DependencyGraph.preparsed_formulas` as an
+    absolute-bound AST (`bind_axes` of `Node.formula_ast`). The mapping is
+    keyed by absolute A1 text, not `NodeKey`. `FormulaEvaluator` evaluates
+    per-node trees directly and seeds its string-keyed fallback cache from
+    those bound ASTs, so first evaluation does not re-parse unless formulas
+    change after extraction. Seeding is best-effort when distinct formulas
+    exceed `FormulaEvaluator.ast_cache_maxsize` (oldest warmed entries may be
     evicted). `preparsed_formulas` is not stored in JSON graph caches; call
     `warm_preparsed_formulas` after cache load or formula mutation if you need
     the string-keyed overlay.
 
+    Formula-shape overlay (`DependencyGraph.formula_shapes`) is opt-in
+    acceleration for eval and codegen. Default remains
+    `warm_formula_shapes=False`; parameterized shapes from GitHub #517 stay
+    opt-in. `Node.formula_ast` is authoritative. Missing or dropped shapes
+    fall back to AST, so correctness does not require the overlay to be warm.
+
     When `warm_formula_shapes` is True, the same parse pass interns punched AST
     skeletons on `DependencyGraph.formula_shapes`, keyed by `NodeKey`.
-    `FormulaEvaluator` compiles each shape once and `CodeGenerator` emits a
+    `FormulaEvaluator` compiles each shape once at construction.
+    `CodeGenerator.generate` reads the overlay at generate time and emits a
     shared helper per shape when profitable. The table is not JSON/pickle
-    serialized; call `warm_formula_shapes` after cache load. Formula rewrite
-    invalidates it.
+    serialized. Compression and formula rewrite drop it (`None`). After those
+    events, call `warm_formula_shapes(graph)` and assign the result; the graph
+    does not auto-rewarm. Rewarming does not refresh `_shape_fns` on a live
+    `FormulaEvaluator` -- construct a new one (GitHub #560).
 
     **Cost model**: constraint-based dynamic-ref expansion (`dynamic_refs` set,
     `use_cached_dynamic_refs=False`) runs `expand_leaf_env_to_argument_env`
@@ -1457,7 +1473,6 @@ def create_dependency_graph(
             if is_formula:
                 formula_str = str(raw)
                 formula = formula_str if store_raw_formula else None
-                normalized = normalizer.normalize(formula_str, sheet)
                 value = None
                 if load_values:
                     value = _cached_value_from_formula_cell(cell)
@@ -1470,10 +1485,18 @@ def create_dependency_graph(
                 )
                 if formula_ast is not None:
                     formula_ast = intern_formula_ast(formula_ast, formula_ast_intern)
+                    extraction_formula = render_formula(
+                        formula_ast,
+                        anchor=CellKey(key),
+                        style=FormulaStyle.A1_ABSOLUTE,
+                    )
+                    node_normalized: str | None = None
+                else:
+                    extraction_formula = normalizer.normalize(formula_str, sheet)
+                    node_normalized = extraction_formula
             else:
-                formula_str = ""
                 formula = None
-                normalized = None
+                node_normalized = None
                 value = raw
                 is_leaf = True
                 formula_ast = None
@@ -1485,7 +1508,7 @@ def create_dependency_graph(
                 column=col,
                 row=int(row),
                 formula=formula,
-                normalized_formula=normalized,
+                normalized_formula=node_normalized,
                 value=value,
                 is_leaf=is_leaf,
                 is_target=key in target_root_keys,
@@ -1498,15 +1521,17 @@ def create_dependency_graph(
 
             # Run extraction first so that the constraint-based dynamic-ref expansion
             # (_dyn_cache) is populated before provenance collection reads from it.
+            # Both extraction and provenance use the AST-rendered dialect (or the
+            # regex fallback when the cell is unparseable).
             deps_and_guards = extract_deps_with_guards(
-                formula_str, sheet, a1, array_formula=is_array_formula
+                extraction_formula, sheet, a1, array_formula=is_array_formula
             )
 
             prov_map: dict[str, EdgeProvenance] | None = None
             if capture_dependency_provenance:
                 prov_map = collect_provenance_for_formula(
-                    formula_str,
-                    normalized_formula=normalized,
+                    extraction_formula,
+                    normalized_formula=extraction_formula,
                     current_sheet=sheet,
                     current_a1=a1,
                     named_ranges=named_ranges,

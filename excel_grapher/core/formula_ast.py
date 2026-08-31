@@ -68,9 +68,9 @@ AxisRef: TypeAlias = AbsoluteAxis | RelativeAxis
 class FormulaStyle(StrEnum):
     """How `render_formula` spells cell and range references.
 
-    `A1_ABSOLUTE` is sheet-qualified A1 with `$` stripped (the derived
-    `normalized_formula` view). `A1_EXCEL` keeps `$` on absolute axes and omits
-    the host sheet prefix. `R1C1` uses `R1C1` / `R[-1]C[2]` tokens.
+    `A1_ABSOLUTE` is the `normalized_formula` dialect: sheet-qualified A1 with
+    `$` stripped. `A1_EXCEL` keeps `$` on absolute axes and omits the host sheet
+    prefix. `R1C1` uses `R1C1` / `R[-1]C[2]` tokens.
     """
 
     A1_ABSOLUTE = "a1_absolute"
@@ -544,9 +544,19 @@ def render_formula(
 ) -> str:
     """Render `ast` as formula text (leading `=`).
 
-    `style` selects the reference spelling. Relative axes resolve against
-    `anchor`. When `coerce_relative_refs` is True, every `RelativeAxis` is bound
-    to an `AbsoluteAxis` first (preparing Excel write-back that wants fully
+    This is the formula-text dialect of record. It is not a byte-identical
+    copy of Excel's raw formula or of regex `normalize_excel_formula`. The
+    tree is canonicalized on parse/render:
+
+    - unary `+` is dropped (parse)
+    - redundant parentheses are omitted; only precedence-required ones remain
+    - number spelling is canonical (`1.0` -> `1`, `1e2` -> `100`)
+    - whitespace is compact (`=SUM( A1 )` renders as `=SUM(Sheet1!A1)`)
+
+    Bare refs are sheet-qualified when parsed with an `anchor`. `style`
+    selects reference spelling. Relative axes resolve against `anchor`. When
+    `coerce_relative_refs` is True, every `RelativeAxis` is bound to an
+    `AbsoluteAxis` first (preparing Excel write-back that wants fully
     absolute addresses). Same-sheet prefixes are omitted for `A1_EXCEL` and
     `R1C1` when `anchor` is the host cell.
 
@@ -594,35 +604,44 @@ def unparse_normalized_formula(
     return render_formula(node, anchor=anchor, style=FormulaStyle.A1_ABSOLUTE)
 
 
-def _retarget_cell_ref(ref: CellRef, new_key: str, anchor: CellKey | str) -> CellRef:
-    """Point `ref` at `new_key` while keeping each axis's relative/absolute kind."""
-    sheet, coord = parse_address(new_key)
-    col_letter, row = coordinate_from_string(coord.replace("$", ""))
-    new_col = int(column_index_from_string(col_letter))
-    new_row = int(row)
+def _retarget_axis(axis: AxisRef, new_index: int, base: int) -> AxisRef:
+    if isinstance(axis, AbsoluteAxis):
+        return AbsoluteAxis(new_index)
+    return RelativeAxis(new_index - base)
+
+
+def _anchor_axis_bases(anchor: CellKey | str) -> tuple[int, int]:
     anchor_key = _coerce_anchor_key(anchor)
     if anchor_key is None:
         raise ValueError("retargeting a relative axis requires an anchor cell")
     col_base = int(column_index_from_string(anchor_key.column))
     row_base = int(anchor_key.row)
+    return col_base, row_base
 
-    def toward(axis: AxisRef, new_index: int, base: int) -> AxisRef:
-        if isinstance(axis, AbsoluteAxis):
-            return AbsoluteAxis(new_index)
-        return RelativeAxis(new_index - base)
 
+def _new_key_indexes(new_key: str) -> tuple[str, int, int]:
+    sheet, coord = parse_address(new_key)
+    col_letter, row = coordinate_from_string(coord.replace("$", ""))
+    return sheet, int(column_index_from_string(col_letter)), int(row)
+
+
+def _cell_key_parts(key: str) -> tuple[str, str, int] | None:
+    try:
+        cell = key if isinstance(key, CellKey) else CellKey(str(key))
+        return cell.sheet, cell.column, cell.row
+    except (TypeError, ValueError):
+        return None
+
+
+def _retarget_cell_ref(ref: CellRef, new_key: str, anchor: CellKey | str) -> CellRef:
+    """Point `ref` at `new_key` while keeping each axis's relative/absolute kind."""
+    sheet, new_col, new_row = _new_key_indexes(new_key)
+    col_base, row_base = _anchor_axis_bases(anchor)
     return CellRef(
         sheet=sheet,
-        col=toward(ref.col, new_col, col_base),
-        row=toward(ref.row, new_row, row_base),
+        col=_retarget_axis(ref.col, new_col, col_base),
+        row=_retarget_axis(ref.row, new_row, row_base),
     )
-
-
-def _anchor_col_row(anchor: CellKey | str) -> tuple[int, int]:
-    key = _coerce_anchor_key(anchor)
-    if key is None:
-        raise ValueError("relative axis requires an anchor cell")
-    return int(column_index_from_string(key.column)), int(key.row)
 
 
 def _rebase_axis(axis: AxisRef, old_base: int, new_base: int) -> AxisRef:
@@ -632,8 +651,8 @@ def _rebase_axis(axis: AxisRef, old_base: int, new_base: int) -> AxisRef:
 
 
 def _rebase_cell_ref(ref: CellRef, old_anchor: CellKey | str, new_anchor: CellKey | str) -> CellRef:
-    old_col, old_row = _anchor_col_row(old_anchor)
-    new_col, new_row = _anchor_col_row(new_anchor)
+    old_col, old_row = _anchor_axis_bases(old_anchor)
+    new_col, new_row = _anchor_axis_bases(new_anchor)
     rebased = CellRef(
         sheet=ref.sheet,
         col=_rebase_axis(ref.col, old_col, new_col),
@@ -669,8 +688,8 @@ def rebase_relative_axes(
         raise ValueError("rebasing relative axes requires old and new anchor cells")
     if old_key == new_key:
         return node
-    old_col, old_row = _anchor_col_row(old_key)
-    new_col, new_row = _anchor_col_row(new_key)
+    old_col, old_row = _anchor_axis_bases(old_key)
+    new_col, new_row = _anchor_axis_bases(new_key)
 
     def walk(cur: AstNode) -> AstNode:
         match cur:
@@ -724,9 +743,11 @@ def retarget_resolved_refs(
 ) -> AstNode:
     """Point cell refs and range endpoints that resolve to `old_key` at `new_key`.
 
-    Unlike `replace_resolved_cell_ref`, range endpoints are rewritten. Whole-column
-    and whole-row leaves are left unchanged (they do not resolve to a cell key).
-    Matching leaves keep each axis's relative/absolute kind.
+    Whole-column and whole-row leaves are left unchanged (`move_node` cut
+    semantics: `A:A` is not a reference to cell `A1`). Matching cell and range
+    leaves keep each axis's relative/absolute kind. Use
+    `replace_resolved_cell_ref` when whole-column/row leaves should follow the
+    cell's column or row.
 
     Args:
         node: Formula AST to rewrite.
@@ -776,6 +797,81 @@ def retarget_resolved_refs(
     return walk(node)
 
 
+def _whole_column_matches_cell_key(node: WholeColumnNode, key: str, anchor: CellKey | str) -> bool:
+    parts = _cell_key_parts(key)
+    if parts is None:
+        return False
+    old_sheet, old_col, _old_row = parts
+    sheet, letter = resolve_whole_column_ref(node, anchor)
+    return sheet == old_sheet and letter == old_col
+
+
+def _whole_row_matches_cell_key(node: WholeRowNode, key: str, anchor: CellKey | str) -> bool:
+    parts = _cell_key_parts(key)
+    if parts is None:
+        return False
+    old_sheet, _old_col, old_row = parts
+    sheet, row = resolve_whole_row_ref(node, anchor)
+    return sheet == old_sheet and row == old_row
+
+
+def _retarget_whole_column(
+    node: WholeColumnNode, new_key: str, anchor: CellKey | str
+) -> WholeColumnNode:
+    sheet, new_col, _new_row = _new_key_indexes(new_key)
+    col_base, _row_base = _anchor_axis_bases(anchor)
+    return WholeColumnNode(sheet=sheet, col=_retarget_axis(node.col, new_col, col_base))
+
+
+def _retarget_whole_row(node: WholeRowNode, new_key: str, anchor: CellKey | str) -> WholeRowNode:
+    sheet, _new_col, new_row = _new_key_indexes(new_key)
+    _col_base, row_base = _anchor_axis_bases(anchor)
+    return WholeRowNode(sheet=sheet, row=_retarget_axis(node.row, new_row, row_base))
+
+
+def ast_mentions_resolved_non_cell_key(
+    node: AstNode,
+    *,
+    key: str,
+    anchor: CellKey | str,
+) -> bool:
+    """Return whether `key` appears as a range endpoint or whole-col/row leaf.
+
+    `CellRefNode` mentions are ignored. Identity-transit compression uses this
+    to fail closed instead of removing a node that a range still names.
+
+    Args:
+        node: Formula tree to search.
+        key: Canonical sheet-qualified cell address to match after resolution.
+        anchor: Host cell used to resolve relative axes.
+
+    Returns:
+        True when a `RangeNode` endpoint or a whole-column/row leaf matches `key`.
+    """
+
+    def visit(cur: AstNode) -> bool:
+        match cur:
+            case RangeNode(start_ref, end_ref):
+                return (
+                    resolve_cell_ref(start_ref, anchor) == key
+                    or resolve_cell_ref(end_ref, anchor) == key
+                )
+            case WholeColumnNode():
+                return _whole_column_matches_cell_key(cur, key, anchor)
+            case WholeRowNode():
+                return _whole_row_matches_cell_key(cur, key, anchor)
+            case FunctionCallNode(_, args):
+                return any(visit(arg) for arg in args)
+            case BinaryOpNode(_, left, right):
+                return visit(left) or visit(right)
+            case UnaryOpNode(_, operand):
+                return visit(operand)
+            case _:
+                return False
+
+    return visit(node)
+
+
 def replace_resolved_cell_ref(
     node: AstNode,
     *,
@@ -784,18 +880,27 @@ def replace_resolved_cell_ref(
     anchor: CellKey | str,
     replacement: AstNode | None = None,
 ) -> AstNode:
-    """Replace `CellRefNode` leaves that resolve to `old_key`.
+    """Retarget address leaves that resolve to `old_key`.
 
-    Range and whole-column/row leaves are left unchanged. When `replacement` is
-    omitted, matching leaves keep each axis's relative/absolute kind and retarget
-    to `new_key` against `anchor`.
+    When `replacement` is omitted, matching `CellRefNode`s, `RangeNode`
+    endpoints, and whole-column/row leaves keep each axis's relative/absolute
+    kind and point at `new_key` against `anchor`. Whole-column leaves match
+    `old_key` by sheet and column; whole-row leaves match by sheet and row.
+
+    When `replacement` is provided, only `CellRefNode` leaves are spliced;
+    range endpoints and whole-column/row leaves cannot hold a subtree.
+
+    Identity-transit compression is cell-ref-only: it skips a transit when a
+    dependent mentions it as a non-cell leaf (`ast_mentions_resolved_non_cell_key`)
+    rather than rewriting range geometry or leaving a stale name.
 
     Args:
         node: Formula AST to rewrite.
         old_key: Canonical sheet-qualified address to match after resolution.
         new_key: Replacement address when `replacement` is omitted.
         anchor: Host cell used to resolve relative axes and retarget offsets.
-        replacement: Optional subtree to splice in place of each match.
+        replacement: Optional subtree to splice in place of each `CellRefNode`
+            match.
 
     Returns:
         A new tree when any leaf changed; otherwise `node`.
@@ -809,6 +914,34 @@ def replace_resolved_cell_ref(
                         return replacement
                     return CellRefNode(_retarget_cell_ref(ref, new_key, anchor))
                 return cur
+            case RangeNode(start_ref, end_ref):
+                if replacement is not None:
+                    return cur
+                new_start = (
+                    _retarget_cell_ref(start_ref, new_key, anchor)
+                    if resolve_cell_ref(start_ref, anchor) == old_key
+                    else start_ref
+                )
+                new_end = (
+                    _retarget_cell_ref(end_ref, new_key, anchor)
+                    if resolve_cell_ref(end_ref, anchor) == old_key
+                    else end_ref
+                )
+                if new_start is start_ref and new_end is end_ref:
+                    return cur
+                return RangeNode(start_ref=new_start, end_ref=new_end)
+            case WholeColumnNode():
+                if replacement is not None:
+                    return cur
+                if not _whole_column_matches_cell_key(cur, old_key, anchor):
+                    return cur
+                return _retarget_whole_column(cur, new_key, anchor)
+            case WholeRowNode():
+                if replacement is not None:
+                    return cur
+                if not _whole_row_matches_cell_key(cur, old_key, anchor):
+                    return cur
+                return _retarget_whole_row(cur, new_key, anchor)
             case FunctionCallNode(name, args):
                 new_args = [walk(arg) for arg in args]
                 if new_args == args:
@@ -907,6 +1040,11 @@ def parse(
     `parse(normalized_formula)` contract). Pass `preserve_axes=True` with
     `anchor` to keep `$` vs bare A1 as absolute vs relative offsets.
 
+    Excel-like whitespace around operators, commas, and call arguments is
+    accepted. Scientific literals (`1e2`, `1E+2`, `1.5e-1`) become `NumberNode`.
+    Incomplete exponents (`1e`, `1E+`) raise `FormulaParseError` (fail-soft via
+    `parse_optional` / `parse_preserving_axes_optional`). Unary `+` is dropped.
+
     Args:
         formula: Excel formula text, with or without a leading `=`.
         anchor: Host cell used when `preserve_axes` is True, and as the default
@@ -959,7 +1097,8 @@ def parse_preserving_axes(
     """Parse `formula` from raw workbook text, preserving `$` axis intent.
 
     Bare A1 refs resolve against `anchor`. Defined names expand to absolute
-    sheet-qualified A1 before parsing.
+    sheet-qualified A1 before parsing. Whitespace and scientific literals follow
+    the same acceptance rules as `parse`.
     """
     from excel_grapher.core.formula_normalization import expand_defined_names
 
@@ -1307,7 +1446,7 @@ def _parse_quoted_sheet_ref(s: _Scanner, original: str) -> AstNode:
 
 
 def _parse_ident(s: _Scanner) -> str:
-    return s.take_while(lambda c: c.isalnum() or c in ("_", ".", " "))
+    return s.take_while(lambda c: c.isalnum() or c in ("_", "."))
 
 
 def _bare_sheet_name(sheet_qualifier: str) -> str:
@@ -1421,7 +1560,8 @@ def _parse_range_end_ref(s: _Scanner, original: str, default_sheet: str) -> Cell
         return _cell_ref_from_parsed_axes(s, sheet_name, abs_col, col_index, abs_row, row_index)
 
     start = s.i
-    sheet = s.take_while(lambda c: c.isalnum() or c in ("_", ".", " "))
+    sheet = s.take_while(lambda c: c.isalnum() or c in ("_", "."))
+    s.skip_ws()
     if s.peek() == "!":
         s.consume()
         abs_col, col_index, abs_row, row_index = _parse_cell_axes(s, original)
@@ -1484,7 +1624,19 @@ def _parse_string(s: _Scanner, original: str) -> StringNode:
 
 
 def _parse_number(s: _Scanner, original: str) -> NumberNode:
-    text = s.take_while(lambda c: c.isdigit() or c == ".")
+    start = s.i
+    s.take_while(lambda c: c.isdigit() or c == ".")
+    ch = s.peek()
+    if ch is not None and ch in ("e", "E"):
+        exp_mark = s.i
+        s.consume()
+        sign = s.peek()
+        if sign in ("+", "-"):
+            s.consume()
+        exp_digits = s.take_while(lambda c: c.isdigit())
+        if not exp_digits:
+            s.i = exp_mark
+    text = s.text[start : s.i]
     try:
         return NumberNode(float(text))
     except ValueError:

@@ -116,6 +116,27 @@ def test_shape_eval_if_does_not_evaluate_unused_error_branch() -> None:
         assert unused == XlError.DIV
 
 
+def test_rewarming_graph_does_not_refresh_live_evaluator_shape_fns() -> None:
+    graph = DependencyGraph()
+    graph.add_node(_make_node("S!A1", None, 10))
+    graph.add_node(_make_node("S!A2", None, 20))
+    graph.add_node(_make_node("S!B1", "=S!A1*2"))
+    graph.add_node(_make_node("S!B2", "=S!A2*2"))
+    graph.add_edge("S!B1", "S!A1")
+    graph.add_edge("S!B2", "S!A2")
+
+    with FormulaEvaluator(graph) as ev:
+        assert ev._shape_fns == {}
+        graph.formula_shapes = warm_formula_shapes(graph)
+        assert graph.formula_shapes is not None
+        assert ev._shape_fns == {}
+        assert ev.evaluate(["S!B1", "S!B2"]) == {"S!B1": 20.0, "S!B2": 40.0}
+
+    with FormulaEvaluator(graph) as ev_after_rewarm:
+        assert len(ev_after_rewarm._shape_fns) == 1
+        assert ev_after_rewarm.evaluate(["S!B1", "S!B2"]) == {"S!B1": 20.0, "S!B2": 40.0}
+
+
 def test_create_graph_warm_formula_shapes_evaluator_parity(tmp_path: Path) -> None:
     path = tmp_path / "shape_eval.xlsx"
     wb = fastpyxl.Workbook()

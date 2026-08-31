@@ -12,7 +12,7 @@ guide-section: "Core workflow"
 - **Extensible metadata**: each `Node` exposes `metadata` as a read-only `Mapping[str, Any]`. Nodes without metadata share one immutable empty mapping instead of allocating a dict, so hooks write through `node.set_metadata(...)` / `node.update_metadata(...)` (or `graph.set_node_metadata(key, ...)`) rather than `node.metadata[key] = value`.
 - **Range expansion**: ranges like `A1:A10` are expanded to individual cell dependencies (bounded by `max_range_cells`).
 - **Whole-column/row shorthand**: Excel forms like `Data!A:A` and `Data!5:5` parse as syntactic shorthands and resolve to each sheet's **used range** (workbook dimensions), not Excel's full grid. These shorthands expand to every row/column in that extent even when `max_range_cells` would otherwise keep only rectangular corner endpoints.
-- **Formula AST**: each formula node stores `formula_ast`, the parsed tree extracted from the workbook (the canonical in-memory formula). `normalized_formula` is a derived view (`render_formula(..., style=A1_ABSOLUTE)`): sheet-qualified refs, resolved named ranges, and stripped `$` markers. It is not stored on the node or in the JSON graph cache. Formula cells are identified by `has_formula` (`formula_ast` or unparseable fallback text). Compression and projection rewrite the AST; the string view follows.
+- **Formula AST**: each formula node stores `formula_ast`, the parsed tree extracted from the workbook (the canonical in-memory formula). `normalized_formula` is a derived view (`render_formula(..., style=A1_ABSOLUTE)`): sheet-qualified refs, resolved named ranges, and stripped `$` markers. It is not stored on the node or in the JSON graph cache. Formula cells are identified by `has_formula` (`formula_ast` or unparseable fallback text). Compression and projection rewrite the AST; the string view follows. Identity-transit compression rewrites `CellRefNode` leaves only: a transit mentioned as a range endpoint or whole-column/row leaf is left in place so the formula cannot name a removed node and range geometry is not rewritten. `replace_resolved_cell_ref` still retargets those leaves when called directly. `formula_shapes` is an optional eval/codegen overlay on top of that AST — see [Formula-shape overlay](#formula-shape-overlay).
 - **Raw formulas are opt-in**: `Node.formula` (the workbook string, e.g. `=A1+$B$2`) is stored only with `create_dependency_graph(..., store_raw_formula=True)`. It is an audit/display field — see [Raw formula storage](#raw-formula-storage).
 
 ### Quick start: building a graph
@@ -56,6 +56,42 @@ rewrite `formula_ast` only, so on a compressed graph `Node.formula` still
 shows the pre-compression workbook text — display it, but never re-parse it as
 the node's current definition. For the same reason the compression audit trail
 (`record.formula_rewrites`) reports derived absolute A1 formulas only.
+
+### Formula-shape overlay {#formula-shape-overlay}
+
+`DependencyGraph.formula_shapes` is an optional acceleration overlay for
+eval and codegen. `Node.formula_ast` is the source of truth; missing or
+dropped shapes fall back to AST, so correctness does not require the overlay
+to be warm.
+
+Shapes are opt-in. `create_dependency_graph` defaults to
+`warm_formula_shapes=False` (parameterized shapes from GitHub #517 did not
+make this default-on). Pass the flag, or call `warm_formula_shapes` and
+assign the result:
+
+```python
+from excel_grapher.grapher import create_dependency_graph, warm_formula_shapes
+from excel_grapher.evaluator import FormulaEvaluator
+
+graph = create_dependency_graph(wb_path, targets, warm_formula_shapes=True)
+# or later:
+graph.formula_shapes = warm_formula_shapes(graph)
+```
+
+Compression, formula rewrite, and JSON/pickle load drop the overlay (`None`,
+not serialized). The graph does not auto-rewarm. After those events, callers
+who want shapes again must rewarm:
+
+```python
+graph.formula_shapes = warm_formula_shapes(graph)
+ev = FormulaEvaluator(graph)  # new evaluator; live ones keep their init snapshot
+```
+
+A `FormulaEvaluator` holds a shared reference to the graph (no deep copy),
+but it compiles shape helpers from `graph.formula_shapes` at construction.
+Rewarming the overlay on a live graph does not refresh those compiled
+helpers. Construct a new `FormulaEvaluator` after rewarming if you want
+the shape path (GitHub #560).
 
 ### Optional TACO range-pattern index
 
