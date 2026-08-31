@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v12.1.0 (2026-08-31)
+
+### Features
+
+- **exporter**: Record range watches for export invalidation
+  ([#585](https://github.com/Teal-Insights/excel-grapher/pull/585),
+  [`842acce`](https://github.com/Teal-Insights/excel-grapher/commit/842accececbb111ffda3021fc09cdfe6e0090d0e))
+
+
 ## v12.0.0 (2026-08-31)
 
 ### Bug Fixes
