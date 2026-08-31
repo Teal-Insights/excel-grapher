@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v10.3.0 (2026-08-31)
+
+### Bug Fixes
+
+- **grapher**: Drop occupancy edges and merge guards on move_node
+  ([#571](https://github.com/Teal-Insights/excel-grapher/pull/571),
+  [`881a829`](https://github.com/Teal-Insights/excel-grapher/commit/881a829a7755d15cb9ecdd7a7fae6ccda7e3c5b6))
+
+### Features
+
+- **grapher**: Move_node rewrites relative refs on geometry change
+  ([#571](https://github.com/Teal-Insights/excel-grapher/pull/571),
+  [`881a829`](https://github.com/Teal-Insights/excel-grapher/commit/881a829a7755d15cb9ecdd7a7fae6ccda7e3c5b6))
+
+- **grapher**: Rewrite relative refs when NodeKey geometry changes
+  ([#571](https://github.com/Teal-Insights/excel-grapher/pull/571),
+  [`881a829`](https://github.com/Teal-Insights/excel-grapher/commit/881a829a7755d15cb9ecdd7a7fae6ccda7e3c5b6))
+
+### Testing
+
+- **grapher**: Fix move_node formula-shape test name
+  ([#571](https://github.com/Teal-Insights/excel-grapher/pull/571),
+  [`881a829`](https://github.com/Teal-Insights/excel-grapher/commit/881a829a7755d15cb9ecdd7a7fae6ccda7e3c5b6))
+
+
 ## v10.2.0 (2026-08-31)
 
 ### Bug Fixes
