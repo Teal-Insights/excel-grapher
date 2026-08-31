@@ -18,6 +18,7 @@ SUPPORTED_SCHEMA_VERSIONS: frozenset[str] = frozenset(
         "1.11.0",
         "1.12.0",
         "1.13.0",
+        "1.14.0",
     }
 )
 
@@ -29,6 +30,7 @@ IMPLEMENTED_BIND_KINDS: frozenset[str] = frozenset(
         "row_label",
         "value_map",
         "constant",
+        "sheet_name",
     }
 )
 

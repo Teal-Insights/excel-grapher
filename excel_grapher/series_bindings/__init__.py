@@ -75,7 +75,11 @@ from excel_grapher.series_bindings.output_helper_index import (
     resolve_output_helper_ref,
 )
 from excel_grapher.series_bindings.output_series import derive_output_series
-from excel_grapher.series_bindings.ranges import expand_data_range, expand_data_range_for_graph
+from excel_grapher.series_bindings.ranges import (
+    expand_data_range,
+    expand_data_range_for_graph,
+    series_data_ranges,
+)
 from excel_grapher.series_bindings.reader_index import (
     ReaderCallResolution,
     ReaderIndex,
@@ -241,6 +245,7 @@ __all__ = [
     "normalize_series_entry",
     "expand_data_range",
     "expand_data_range_for_graph",
+    "series_data_ranges",
     "format_schema_errors",
     "generate_setters_module",
     "list_series_docstring_callbacks",

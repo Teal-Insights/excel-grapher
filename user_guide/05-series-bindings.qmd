@@ -77,10 +77,56 @@ lic_inputs.bindings/
 Rules:
 
 - Same `schema_version` and `workbook` in every shard (error otherwise).
-- Union `series[]`; **reject duplicate `series[].id`** across shards.
+- Union `series[]` by `id`. Duplicate ids **within** one shard are an error.
+- Duplicate ids **across** shards merge:
+  - **Direction composition:** `sheet`, `data_range`, and structure match — combine `input` / `output` / `internal` / `constant` blocks (conflicting blocks error).
+  - **Complementary ranges (1.14.0):** `sheet` / `data_range` may differ when shards share direction, `key`, and dimension *shape*. Resolve concatenates cells. A scenario dimension may use a different `constant` (or `bind.kind: sheet_name`) per shard without counting as a structural conflict.
 - `load_series_bindings(path)` accepts a **file or directory** of `*.bindings.{yaml,yml,json}`.
 
 **Non-goals:** bindings embedded inside the xlsx; one file per series; repo-wide manifest without a `workbook` field.
+
+### Complementary shards (1.14.0)
+
+Excel workbooks often paste the same statement onto scenario sheets (`Baseline`, `B1_GDP_ext`, …): identical row labels and year headers, different numbers. Author one series id per economic line, one shard per sheet:
+
+```yaml
+# baseline.bindings.yaml
+schema_version: "1.14.0"
+series:
+  - id: external_debt_nominal
+    sheet: Baseline
+    data_range: Baseline!C12:X12
+    layout: series
+    internal: {}
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind: {kind: data_cell, read: float}
+      dimensions:
+        - id: SCENARIO
+          concept: SCENARIO
+          role: key
+          scope: cell
+          bind: {kind: constant, value: Baseline}
+        - id: TIME_PERIOD
+          concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind: {kind: column_header, header_row: 8, read: int}
+    key: [SCENARIO, TIME_PERIOD]
+```
+
+A second shard with `sheet: B1`, `data_range: B1!C12:X12`, and `SCENARIO` constant `B1` merges into **one** series whose resolved cells include both ranges, keyed by `(SCENARIO, TIME_PERIOD)`.
+
+To share an identical `structure` block across shards, bind the scenario to the worksheet name:
+
+```yaml
+bind: {kind: sheet_name}                        # value is the sheet name
+bind: {kind: sheet_name, values: {Baseline DSA: Baseline, B1_GDP_ext: B1}}
+```
+
+A single file may also declare `data_range` (and `sheet`) as lists covering every complementary rectangle. Putting two entries with the same `id` in one file is still an error.
 
 ## Input and output direction blocks
 
@@ -223,6 +269,7 @@ Expansion uses the same path as graph **targets** (`expand_targets_to_roots`), i
 - Local range: `Inputs!F5:J5`
 - **Both-end sheet-qualified** (project standard): `Inputs!F5:Inputs!J5`, `'My Sheet'!A1:'My Sheet'!B2`
 - **Defined names**: `PrimaryRow` (requires `workbook=` or a graph built from that workbook so named-range maps are available)
+- **List of ranges (1.14.0):** `data_range: [Baseline!C12:X12, B1!C12:X12]` concatenates complementary rectangles; `series_data_ranges()` normalizes a string or list
 
 ```python
 from excel_grapher.series_bindings import expand_data_range, expand_data_range_for_graph
@@ -399,6 +446,7 @@ Optional:
 | `row_label` | series/cell | **supported** | Label text on the data row |
 | `value_map` | cell | **supported** | Key rows or columns by manifest values (1.5.0) |
 | `constant` | series | **supported** | Fixed scalar (e.g. scalar layout key) |
+| `sheet_name` | cell | **supported** | Worksheet name of each data cell; optional `values` map to a code (1.14.0) |
 
 Normalization: `strip`, `strip_trailing_unit` (removes trailing `(…)` unit clauses from indicator text).
 
@@ -734,6 +782,7 @@ Generated code imports `datetime` and emits `datetime.datetime(...)` literals on
 | **1.11.0** | `constant` direction for non-I/O graph-leaf bindings: emit `read_*` and Phase 2 body rewrite without `set_*` / `compute_*`. |
 | **1.12.0** | Series-level `exclude_columns` (`ColumnSpec`) symmetric with `exclude_rows` for carving non-data columns out of an expanded `data_range`. |
 | **1.13.0** | Optional `input.domain` so generated `set_*` setters reject out-of-domain measure values (`enum`, `between`, `real_between`). |
+| **1.14.0** | Complementary shards: same series `id` with different `sheet` / `data_range` merge when direction, `key`, and dimension shape match (`data_range` may be a list). `bind.kind: sheet_name` (optional `values` map from worksheet name to code). |
 
 ## Input domains (1.13.0)
 
@@ -842,6 +891,7 @@ from excel_grapher.series_bindings import (
     derive_internal_series,
     expand_data_range,
     load_series_bindings,
+    series_data_ranges,
     validate_series_bindings,
 )
 from excel_grapher.exporter import CodeGenerator
@@ -852,7 +902,8 @@ bindings = load_series_bindings(workbook.with_suffix(".bindings.yaml"))
 targets = [
     addr
     for s in bindings["series"]
-    for addr in expand_data_range(s["data_range"], workbook=workbook)
+    for data_range in series_data_ranges(s)
+    for addr in expand_data_range(data_range, workbook=workbook)
 ]
 graph = create_dependency_graph(workbook, targets, load_values=True)
 

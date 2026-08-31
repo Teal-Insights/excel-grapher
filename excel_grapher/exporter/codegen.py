@@ -734,9 +734,11 @@ class CodeGenerator:
                 continue
             if series.get("layout") == "scalar":
                 continue
-            data_range = series.get("data_range")
-            if isinstance(data_range, str) and ":" in data_range:
-                return True
+            from excel_grapher.series_bindings.ranges import series_data_ranges
+
+            for data_range in series_data_ranges(series):
+                if ":" in data_range:
+                    return True
         return False
 
     @staticmethod

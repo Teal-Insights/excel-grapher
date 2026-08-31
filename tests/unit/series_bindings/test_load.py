@@ -69,7 +69,7 @@ def test_merge_rejects_duplicate_series_id_within_single_document() -> None:
 def test_merge_rejects_conflicting_series_id() -> None:
     doc = parse_bindings_file(FIXTURES / "shard_inputs.yaml")
     conflicting = parse_bindings_file(FIXTURES / "shard_inputs.yaml")
-    conflicting["series"][0]["data_range"] = "Inputs!B3:C3"
+    conflicting["series"][0]["structure"]["dimensions"][0]["bind"]["header_row"] = 2
     with pytest.raises(SeriesBindingsLoadError, match="structural fields differ"):
         merge_series_binding_documents([doc, conflicting])
 

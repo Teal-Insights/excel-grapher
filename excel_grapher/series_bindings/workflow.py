@@ -11,7 +11,11 @@ from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings.canonical import bindings_canonical_sha256
 from excel_grapher.series_bindings.input_series import derive_input_series
 from excel_grapher.series_bindings.load import SeriesBindingsLoadError, load_series_bindings
-from excel_grapher.series_bindings.ranges import expand_data_range, expand_data_range_for_graph
+from excel_grapher.series_bindings.ranges import (
+    expand_data_range,
+    expand_data_range_for_graph,
+    series_data_ranges,
+)
 from excel_grapher.series_bindings.resolve import resolve_series_bindings
 from excel_grapher.series_bindings.types import (
     InputSeries,
@@ -101,8 +105,7 @@ def all_series_targets(
     """Expand every series ``data_range`` into graph target addresses."""
     targets: list[str] = []
     for series in bindings["series"]:
-        data_range = series.get("data_range")
-        if isinstance(data_range, str):
+        for data_range in series_data_ranges(series):
             targets.extend(expand_data_range(data_range, workbook=workbook))
     return sorted(set(targets))
 
@@ -125,17 +128,15 @@ def series_binding_public_addresses(
     for series in bindings.get("series", []):
         if not isinstance(series, dict):
             continue
-        data_range = series.get("data_range")
-        if not isinstance(data_range, str):
-            continue
-        addresses.update(
-            normalize_address(addr)
-            for addr in expand_data_range_for_graph(
-                graph,
-                data_range,
-                workbook=workbook,
+        for data_range in series_data_ranges(series):
+            addresses.update(
+                normalize_address(addr)
+                for addr in expand_data_range_for_graph(
+                    graph,
+                    data_range,
+                    workbook=workbook,
+                )
             )
-        )
     return frozenset(addresses)
 
 

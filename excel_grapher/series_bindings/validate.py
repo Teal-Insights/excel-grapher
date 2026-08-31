@@ -14,7 +14,12 @@ from excel_grapher.series_bindings.normalize import (
     input_mode,
     is_override_input,
 )
-from excel_grapher.series_bindings.ranges import expand_data_range_for_graph
+from excel_grapher.series_bindings.ranges import (
+    expand_series_data_ranges_for_graph,
+    series_data_ranges,
+    series_sheets,
+    sheet_from_data_range,
+)
 from excel_grapher.series_bindings.types import (
     ValidationIssue,
     ValidationReport,
@@ -322,22 +327,18 @@ def _validate_bind_geometry(
 def _validate_series_structure(series: dict[str, Any]) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     series_id = str(series.get("id", ""))
-    sheet = series.get("sheet")
-    data_range = series.get("data_range")
-
-    if isinstance(data_range, str) and isinstance(sheet, str) and "!" in str(data_range):
-        from excel_grapher.core.address_keys import parse_address
-        from excel_grapher.grapher.target_expansion import split_range_target_on_colon
-
-        split = split_range_target_on_colon(data_range)
-        start = split[0] if split is not None else data_range
-        range_sheet, _ = parse_address(start)
-        if range_sheet != sheet:
+    sheets = series_sheets(series)
+    for data_range in series_data_ranges(series):
+        range_sheet = sheet_from_data_range(data_range)
+        if range_sheet is None:
+            continue
+        if range_sheet not in sheets:
             issues.append(
                 _issue(
                     "error",
                     "sheet_mismatch",
-                    f"series sheet {sheet!r} does not match data_range sheet {range_sheet!r}",
+                    f"series sheet {series.get('sheet')!r} does not match data_range sheet "
+                    f"{range_sheet!r}",
                     series_id=series_id,
                 )
             )
@@ -657,15 +658,14 @@ def validate_series_bindings(
             issues.extend(_validate_implementation_support(series))
             issues.extend(_validate_dtype_read_consistency(series, concept_dtypes=concept_dtypes))
 
-            data_range = series.get("data_range")
-            if not isinstance(data_range, str):
+            if not series_data_ranges(series):
                 continue
 
             _, require_unique_key = _series_validation_flags(series)
             try:
-                addresses = expand_data_range_for_graph(
+                addresses = expand_series_data_ranges_for_graph(
                     graph,
-                    data_range,
+                    series,
                     workbook=workbook,
                 )
             except (ValueError, TypeError) as exc:
