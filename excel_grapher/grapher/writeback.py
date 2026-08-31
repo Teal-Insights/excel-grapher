@@ -24,6 +24,11 @@ from excel_grapher.core.types import XlError
 
 from .graph import GraphReadView
 from .node import NodeView
+from .shared_formulas import (
+    SharedFormulasMode,
+    parse_shared_formulas_mode,
+    shared_formula_cell_values,
+)
 
 
 def write_workbook(
@@ -34,6 +39,7 @@ def write_workbook(
     coerce_relative_refs: bool = False,
     overwrite: bool = False,
     include_defined_names: bool = True,
+    shared_formulas: SharedFormulasMode = "auto",
 ) -> None:
     """Write `graph` to a new `.xlsx` at `destination`.
 
@@ -63,20 +69,37 @@ def write_workbook(
     spills, so write-back emits `t="array"` for both. A flagged array cell
     with no observed `ref` is refused rather than written as a scalar formula.
 
+    When `graph.formula_shapes` is warm, contiguous autofill runs that share
+    an interned relative shape become one Excel shared formula (`t="shared"`).
+    The overlay is opt-in and is not rewarmed here; missing or stale shapes,
+    gaps, mixed axes, array formulas, and `INDIRECT` stay per-cell A1. See
+    `shared_formulas`.
+
     Args:
         graph: Read view whose cells are written.
         destination: Output path. Parent directories must already exist.
         formula_style: Reference spelling. Default `A1_EXCEL` keeps `$` on
             absolute axes and omits the host sheet prefix. `R1C1` is not
-            persisted for normal formula cells (shared-formula emission is a
-            later stage).
+            persisted for normal formula cells; shared-formula groups use
+            interned relative shapes (the R1C1 dialect) and store the master
+            cell in A1, which is what Excel and fastpyxl persist on disk.
         coerce_relative_refs: If True, bind relative axes to absolute
             indexes before spelling (`$` on both axes in `A1_EXCEL`).
+            Shared-formula grouping is skipped (absolute fills are not a
+            shared relative shape).
         overwrite: If False (default), raise when `destination` exists.
             The source workbook is never opened or saved.
         include_defined_names: If True (default), write `named_ranges` and
             `named_range_ranges` as workbook-global defined names. Set False
             to omit the name table.
+        shared_formulas: Group interned autofill runs into Excel shared
+            formulas (`t="shared"`). `auto` (default) groups when
+            `graph.formula_shapes` is warm and skips grouping when it is
+            missing. `off` always writes per-cell A1. `require` fails if the
+            overlay is missing. The writer does not auto-rewarm (GitHub
+            #560). Stale shapes, non-contiguous or mixed-axis leftovers,
+            array formulas, and `INDIRECT` emit per-cell rather than an
+            invalid shared formula.
 
     Raises:
         FileExistsError: If `destination` exists and `overwrite` is False.
@@ -84,15 +107,17 @@ def write_workbook(
             `sheet_order`, a formula cell has no `formula_ast`,
             `formula_style` is `R1C1`, a relative axis has no host
             address, an array formula is missing its observed spill / CSE
-            `ref`, or a defined name cannot be expressed as a cell or
-            rectangle.
+            `ref`, a defined name cannot be expressed as a cell or
+            rectangle, `shared_formulas` is not a known mode, or
+            `shared_formulas='require'` and `formula_shapes` is missing.
     """
     dest = Path(destination)
     style = FormulaStyle(formula_style)
+    shared_mode = parse_shared_formulas_mode(shared_formulas)
     if style is FormulaStyle.R1C1:
         raise ValueError(
             "R1C1 formula style is not persisted for normal formula cells; "
-            "shared-formula emission is a later write-back stage"
+            "shared-formula groups store the master in A1 (Excel's xlsx dialect)"
         )
     if dest.exists() and not overwrite:
         raise FileExistsError(f"Refusing to overwrite existing file: {dest}")
@@ -102,7 +127,12 @@ def write_workbook(
         raise ValueError("Cannot write an empty graph view")
 
     sheet_names = _ordered_sheet_names(graph)
-    planned = _plan_cells(graph, style=style, coerce_relative_refs=coerce_relative_refs)
+    planned = _plan_cells(
+        graph,
+        style=style,
+        coerce_relative_refs=coerce_relative_refs,
+        shared_formulas=shared_mode,
+    )
     planned_names = _plan_defined_names(graph) if include_defined_names else []
 
     wb = Workbook()
@@ -176,7 +206,14 @@ def _plan_cells(
     *,
     style: FormulaStyle,
     coerce_relative_refs: bool,
+    shared_formulas: SharedFormulasMode,
 ) -> list[tuple[str, str, object]]:
+    shared_values = shared_formula_cell_values(
+        graph,
+        style=style,
+        coerce_relative_refs=coerce_relative_refs,
+        mode=shared_formulas,
+    )
     planned: list[tuple[str, str, object]] = []
     for key in graph:
         node = graph.get_node(key)
@@ -185,18 +222,15 @@ def _plan_cells(
         if not node.sheet or not node.column or node.row is None:
             raise ValueError(f"Cannot write cell {key} without sheet/column/row")
         coord = f"{node.column}{node.row}"
-        planned.append(
-            (
-                node.sheet,
-                coord,
-                _cell_value(
-                    node,
-                    key=key,
-                    style=style,
-                    coerce_relative_refs=coerce_relative_refs,
-                ),
+        value = shared_values.get(key)
+        if value is None:
+            value = _cell_value(
+                node,
+                key=key,
+                style=style,
+                coerce_relative_refs=coerce_relative_refs,
             )
-        )
+        planned.append((node.sheet, coord, value))
     return planned
 
 

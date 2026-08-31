@@ -60,6 +60,18 @@ distinguish legacy CSE from dynamic-array spills; both round-trip as
 `t="array"`. A flagged array cell missing that `ref` is refused rather than
 written as a scalar formula.
 
+When `graph.formula_shapes` is warm, `write_workbook` groups contiguous
+autofill columns or rows that share an interned relative shape into Excel
+shared formulas (`<f t="shared" ref="B2:B10" si="0">`). Group identity is
+the punched shape plus identical remaining relative axis vectors — the same
+R1C1 text `render_formula(..., style=R1C1)` would produce. OOXML stores the
+master cell in A1 relative to that cell, which is what Excel and fastpyxl
+persist and re-parse. Pass `shared_formulas="off"` to keep per-cell A1, or
+`shared_formulas="require"` to fail if the overlay is missing. The writer
+does not auto-rewarm; after compression, rewrite, or load, call
+`warm_formula_shapes` and assign the result. Non-contiguous runs, mixed
+absolute params, array formulas, and `INDIRECT` stay per-cell.
+
 Defined-name **tokens** are expanded to A1 at parse
 (`parse_preserving_axes` runs `expand_defined_names`), so a cell that was
 `=A1*TaxRate` is written as expanded A1 (for example `=A1*Settings!$B$2`).
@@ -112,9 +124,11 @@ the node's current definition. For the same reason the compression audit trail
 ### Formula-shape overlay {#formula-shape-overlay}
 
 `DependencyGraph.formula_shapes` is an optional acceleration overlay for
-eval and codegen. `Node.formula_ast` is the source of truth; missing or
-dropped shapes fall back to AST, so correctness does not require the overlay
-to be warm.
+eval, codegen, and Excel write-back. `Node.formula_ast` is the source of
+truth; missing or dropped shapes fall back to AST, so correctness does not
+require the overlay to be warm. `write_workbook` uses a warm overlay to
+group autofill columns into Excel shared formulas and otherwise writes
+per-cell A1.
 
 Shapes are opt-in. `create_dependency_graph` defaults to
 `warm_formula_shapes=False` (parameterized shapes from GitHub #517 did not
