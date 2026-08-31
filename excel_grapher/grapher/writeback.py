@@ -12,9 +12,13 @@ from datetime import date, datetime
 from pathlib import Path
 
 from fastpyxl import Workbook
+from fastpyxl.utils.cell import coordinate_from_string
+from fastpyxl.utils.exceptions import CellCoordinatesException
+from fastpyxl.workbook.defined_name import DefinedName
 from fastpyxl.worksheet.formula import ArrayFormula
 from fastpyxl.worksheet.worksheet import Worksheet
 
+from excel_grapher.core.address_keys import quote_sheet_if_needed
 from excel_grapher.core.formula_ast import FormulaStyle, render_formula
 from excel_grapher.core.types import XlError
 
@@ -29,6 +33,7 @@ def write_workbook(
     formula_style: FormulaStyle = FormulaStyle.A1_EXCEL,
     coerce_relative_refs: bool = False,
     overwrite: bool = False,
+    include_defined_names: bool = True,
 ) -> None:
     """Write `graph` to a new `.xlsx` at `destination`.
 
@@ -37,17 +42,26 @@ def write_workbook(
     non-mutating `ProjectionResult`. Formula rewriting is an intended
     write-back use case; compressed or projected views are written as they
     are. Output contains only sheets and cells from the view. Styles,
-    charts, VBA, defined names, and cells outside the view are omitted
-    (accepted v1 lossiness).
+    charts, VBA, and cells outside the view are omitted (accepted v1
+    lossiness).
 
     Formula cells are spelled from current `formula_ast` via `render_formula`
-    (never from the opt-in raw `Node.formula` audit string). Leaves write
-    `node.value`. Formula cells do not receive evaluator-computed cached
-    results. Cells extracted as `ArrayFormula` are written back as
-    `ArrayFormula(text, ref=...)` using the observed spill / CSE `ref`.
-    fastpyxl does not distinguish legacy CSE from dynamic-array spills, so
-    write-back emits `t="array"` for both. A flagged array cell with no
-    observed `ref` is refused rather than written as a scalar formula.
+    (never from the opt-in raw `Node.formula` audit string). Defined names are
+    expanded to A1 before parse, so written formulas are expanded A1 (for
+    example `=A1*Settings!$B$2`, not `=A1*TaxRate`). That is expected, not a
+    bug. When `include_defined_names` is True (default), workbook-global names
+    from `graph.named_ranges` and `graph.named_range_ranges` are written so
+    aliases still exist in Excel. Names the writer cannot express as a cell
+    or rectangle are refused. Scope is not stored on the graph maps, so
+    names are emitted workbook-global. The writer does not invent a name from
+    an expanded AST.
+
+    Leaves write `node.value`. Formula cells do not receive
+    evaluator-computed cached results. Cells extracted as `ArrayFormula` are
+    written back as `ArrayFormula(text, ref=...)` using the observed spill /
+    CSE `ref`. fastpyxl does not distinguish legacy CSE from dynamic-array
+    spills, so write-back emits `t="array"` for both. A flagged array cell
+    with no observed `ref` is refused rather than written as a scalar formula.
 
     Args:
         graph: Read view whose cells are written.
@@ -60,14 +74,18 @@ def write_workbook(
             indexes before spelling (`$` on both axes in `A1_EXCEL`).
         overwrite: If False (default), raise when `destination` exists.
             The source workbook is never opened or saved.
+        include_defined_names: If True (default), write `named_ranges` and
+            `named_range_ranges` as workbook-global defined names. Set False
+            to omit the name table.
 
     Raises:
         FileExistsError: If `destination` exists and `overwrite` is False.
         ValueError: If the view is empty, spans multiple sheets without
             `sheet_order`, a formula cell has no `formula_ast`,
             `formula_style` is `R1C1`, a relative axis has no host
-            address, or an array formula is missing its observed spill / CSE
-            `ref`.
+            address, an array formula is missing its observed spill / CSE
+            `ref`, or a defined name cannot be expressed as a cell or
+            rectangle.
     """
     dest = Path(destination)
     style = FormulaStyle(formula_style)
@@ -85,6 +103,7 @@ def write_workbook(
 
     sheet_names = _ordered_sheet_names(graph)
     planned = _plan_cells(graph, style=style, coerce_relative_refs=coerce_relative_refs)
+    planned_names = _plan_defined_names(graph) if include_defined_names else []
 
     wb = Workbook()
     tmp: Path | None = None
@@ -92,6 +111,8 @@ def write_workbook(
         sheets = _create_sheets(wb, sheet_names)
         for sheet_name, coord, value in planned:
             sheets[sheet_name][coord] = value
+        for name, attr_text in planned_names:
+            wb.defined_names.add(DefinedName(name=name, attr_text=attr_text))
         tmp = dest.with_name(f".{dest.name}.{os.getpid()}.tmp")
         wb.save(tmp)
         os.replace(tmp, dest)
@@ -224,3 +245,64 @@ def _excel_leaf_value(value: object, *, key: str) -> object:
     if isinstance(value, (int, float, str, datetime, date)):
         return value
     raise ValueError(f"Unsupported leaf value type {type(value).__name__} at {key}")
+
+
+def _plan_defined_names(graph: GraphReadView) -> list[tuple[str, str]]:
+    cells = dict(graph.named_ranges or {})
+    ranges = dict(graph.named_range_ranges or {})
+    overlap = sorted(set(cells) & set(ranges))
+    if overlap:
+        shown = ", ".join(overlap)
+        raise ValueError(
+            f"Defined name(s) {shown} appear in both named_ranges and named_range_ranges"
+        )
+    planned: list[tuple[str, str]] = []
+    for name, dest in cells.items():
+        sheet, coord = dest
+        planned.append((name, _defined_name_cell_attr(name, sheet, coord)))
+    for name, dest in ranges.items():
+        sheet, start, end = dest
+        planned.append((name, _defined_name_range_attr(name, sheet, start, end)))
+    return planned
+
+
+def _require_defined_name(name: object) -> str:
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError(f"Cannot write defined name {name!r}: name is empty")
+    return name
+
+
+def _require_defined_name_sheet(name: str, sheet: object) -> str:
+    if not isinstance(sheet, str) or not sheet.strip():
+        raise ValueError(
+            f"Cannot write defined name {name!r}: expected a sheet-qualified cell or range"
+        )
+    return sheet
+
+
+def _absolute_a1_coord(coord: object, *, name: str) -> str:
+    if not isinstance(coord, str) or not coord.strip():
+        raise ValueError(f"Cannot write defined name {name!r}: expected an A1 cell, got {coord!r}")
+    try:
+        col, row = coordinate_from_string(coord.replace("$", ""))
+    except (CellCoordinatesException, IndexError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Cannot write defined name {name!r}: expected an A1 cell, got {coord!r}"
+        ) from exc
+    if not col or not isinstance(row, int) or row < 1:
+        raise ValueError(f"Cannot write defined name {name!r}: expected an A1 cell, got {coord!r}")
+    return f"${col}${row}"
+
+
+def _defined_name_cell_attr(name: object, sheet: object, coord: object) -> str:
+    label = _require_defined_name(name)
+    sheet_name = _require_defined_name_sheet(label, sheet)
+    return f"{quote_sheet_if_needed(sheet_name)}!{_absolute_a1_coord(coord, name=label)}"
+
+
+def _defined_name_range_attr(name: object, sheet: object, start: object, end: object) -> str:
+    label = _require_defined_name(name)
+    sheet_name = _require_defined_name_sheet(label, sheet)
+    start_a1 = _absolute_a1_coord(start, name=label)
+    end_a1 = _absolute_a1_coord(end, name=label)
+    return f"{quote_sheet_if_needed(sheet_name)}!{start_a1}:{end_a1}"
