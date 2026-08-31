@@ -168,7 +168,7 @@ def test_write_workbook_refuses_relative_axes_without_host_address(tmp_path: Pat
         formula_ast=parse_preserving_axes("=A1", anchor="Sheet1!B2"),
     )
     graph.add_node(node)
-    graph._nodes[node.key].address = None
+    object.__setattr__(graph._nodes[node.key], "address", None)
     with pytest.raises(ValueError, match="anchor"):
         write_workbook(graph, tmp_path / "no_anchor.xlsx")
 

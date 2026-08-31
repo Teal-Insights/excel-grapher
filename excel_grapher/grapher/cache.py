@@ -19,9 +19,10 @@ from .guard import And, CellRef, Compare, GuardExpr, Not, Or, intern_guard
 from .guard import Literal as GuardLiteral
 from .node import Node, NodeKey
 
+# 9: persist `is_array_formula` / `array_formula_ref` for CSE and spill write-back.
 # 8: drop stored `normalized_formula`; strings are derived via `render_formula`.
 # 7: interned `formula_asts` pool as encoded trees; nodes store `formula_ast_id`.
-GRAPH_CACHE_SCHEMA_VERSION = 8
+GRAPH_CACHE_SCHEMA_VERSION = 9
 
 
 class GraphCacheMeta(TypedDict):
@@ -411,6 +412,10 @@ def dependency_graph_to_json(graph: DependencyGraph) -> dict[str, Any]:
             payload["formula_ast_id"] = formula_ast_ids[node.formula_ast]
         elif node._unparseable_formula is not None:
             payload["unparseable_formula"] = node._unparseable_formula
+        if node.is_array_formula:
+            payload["is_array_formula"] = True
+            if node.array_formula_ref is not None:
+                payload["array_formula_ref"] = node.array_formula_ref
         nodes.append(payload)
 
     edges: list[dict[str, Any]] = []
@@ -485,6 +490,10 @@ def dependency_graph_from_json(payload: dict[str, Any]) -> DependencyGraph:
         is_leaf = bool(n["is_leaf"])
         is_target = bool(n.get("is_target", False))
         metadata = cast(dict[str, Any], n.get("metadata", {}))
+        is_array_formula = bool(n.get("is_array_formula", False))
+        array_formula_ref = n.get("array_formula_ref")
+        if array_formula_ref is not None and not isinstance(array_formula_ref, str):
+            raise TypeError("array_formula_ref must be a string")
         if address is not None:
             parsed = parse_node_key(cast(str, address))
             if not isinstance(parsed, CellKey):
@@ -503,6 +512,8 @@ def dependency_graph_from_json(payload: dict[str, Any]) -> DependencyGraph:
                 metadata=metadata,
                 address=parsed,
                 formula_ast=formula_ast,
+                is_array_formula=is_array_formula,
+                array_formula_ref=array_formula_ref,
             )
         else:
             node = Node(
@@ -516,6 +527,8 @@ def dependency_graph_from_json(payload: dict[str, Any]) -> DependencyGraph:
                 is_target=is_target,
                 metadata=metadata,
                 formula_ast=formula_ast,
+                is_array_formula=is_array_formula,
+                array_formula_ref=array_formula_ref,
             )
         g.add_node(node)
 

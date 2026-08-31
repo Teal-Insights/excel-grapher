@@ -218,6 +218,14 @@ class Node:
     `is_leaf` is true when the node has no outgoing dependency edges (value-only
     cells and literal-only formulas such as `=1+1`).
 
+    `is_array_formula` is true when extraction observed a fastpyxl
+    `ArrayFormula` on this cell. `array_formula_ref` is the spill / CSE range
+    Excel stored (`ref`, e.g. `E1:E10`), or `None` when that attribute was
+    missing. Write-back emits `ArrayFormula` from these fields and refuses to
+    scalarize a flagged cell whose `ref` was not observed. fastpyxl does not
+    distinguish legacy CSE from dynamic-array spills; both round-trip as
+    `t="array"`.
+
     Instances are slotted (no per-instance `__dict__`). Derived attributes
     (`key`, `shape`, `column_index`) are served from a process-wide LRU keyed on
     the canonical address rather than `functools.cached_property`.
@@ -244,6 +252,8 @@ class Node:
     address: CellKey | None
     formula_ast: AstNode | None = field(repr=False)
     _unparseable_formula: str | None = field(repr=False)
+    is_array_formula: bool
+    array_formula_ref: str | None
 
     def __init__(
         self,
@@ -263,6 +273,8 @@ class Node:
         address: CellKey | None = None,
         formula_ast: AstNode | None = None,
         normalized_formula: str | None = None,
+        is_array_formula: bool = False,
+        array_formula_ref: str | None = None,
     ) -> None:
         self.sheet = sheet
         self.column = column
@@ -279,6 +291,10 @@ class Node:
         self.address = address
         self.formula_ast = formula_ast
         self._unparseable_formula = None
+        self.is_array_formula = bool(is_array_formula)
+        self.array_formula_ref = (
+            array_formula_ref if self.is_array_formula and array_formula_ref else None
+        )
 
         if not self.metadata:
             # Never hold a caller's empty dict; share the singleton instead.
@@ -442,6 +458,8 @@ class NodeView:
     address: CellKey | None = None
     formula_ast: AstNode | None = field(default=None, repr=False)
     _unparseable_formula: str | None = field(default=None, repr=False)
+    is_array_formula: bool = False
+    array_formula_ref: str | None = None
 
     @property
     def key(self) -> NodeKey:
@@ -500,6 +518,8 @@ def node_to_view(node: Node) -> NodeView:
         address=node.address,
         formula_ast=node.formula_ast,
         _unparseable_formula=node._unparseable_formula,
+        is_array_formula=node.is_array_formula,
+        array_formula_ref=node.array_formula_ref,
     )
 
 
@@ -515,11 +535,15 @@ def make_cell_node(
     is_target: bool = False,
     metadata: Mapping[str, Any] | None = None,
     formula_ast: AstNode | None = None,
+    is_array_formula: bool = False,
+    array_formula_ref: str | None = None,
 ) -> Node:
     """Build a single-cell graph node.
 
     Prefer `formula_ast=` when the tree is already known. `normalized_formula`
     is bootstrap text parsed with axis intent against this cell's address.
+    `is_array_formula` / `array_formula_ref` capture CSE or spill provenance
+    from extraction; omit them for ordinary scalar formulas.
     """
     return Node(
         sheet=sheet,
@@ -532,6 +556,8 @@ def make_cell_node(
         is_target=is_target,
         metadata=copy_metadata(metadata),
         formula_ast=formula_ast,
+        is_array_formula=is_array_formula,
+        array_formula_ref=array_formula_ref,
     )
 
 
@@ -556,4 +582,6 @@ def copy_node(node: Node) -> Node:
         max_row=node.max_row,
         address=node.address,
         formula_ast=node.formula_ast,
+        is_array_formula=node.is_array_formula,
+        array_formula_ref=node.array_formula_ref,
     )

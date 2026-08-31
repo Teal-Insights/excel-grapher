@@ -489,7 +489,11 @@ def create_dependency_graph(
     `FormulaNormalizer` output. Formulas the AST parser cannot handle leave
     `formula_ast` unset and fall back to regex normalization (transitional,
     non-authoritative) so extraction can still record the cell and its
-    dependencies.
+    dependencies. CSE and spilled array formulas also store
+    `Node.is_array_formula` and the observed fastpyxl `ref` on
+    `Node.array_formula_ref` so `write_workbook` can emit `ArrayFormula`
+    instead of a scalar formula string. fastpyxl does not distinguish legacy
+    CSE from dynamic-array spills.
 
     `blank_ranges` is an optional iterable of sheet-qualified A1 rectangles
     (e.g. `\"Sheet1!B2:D10\"`) treated as structurally empty: no nodes are
@@ -1464,7 +1468,10 @@ def create_dependency_graph(
             # CSE array formulas are evaluated element-wise, which is one of the
             # array contexts that make range-typed `IF` conditions per-element.
             is_array_formula = isinstance(raw, ArrayFormula)
+            array_formula_ref: str | None = None
             if is_array_formula:
+                observed_ref = raw.ref
+                array_formula_ref = observed_ref if observed_ref else None
                 raw = raw.text or ""
                 if raw and not raw.startswith("="):
                     raw = f"={raw}"
@@ -1513,6 +1520,8 @@ def create_dependency_graph(
                 is_leaf=is_leaf,
                 is_target=key in target_root_keys,
                 formula_ast=formula_ast,
+                is_array_formula=is_array_formula,
+                array_formula_ref=array_formula_ref,
             )
             graph.add_node(node)
 

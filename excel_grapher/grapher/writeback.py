@@ -12,6 +12,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from fastpyxl import Workbook
+from fastpyxl.worksheet.formula import ArrayFormula
 from fastpyxl.worksheet.worksheet import Worksheet
 
 from excel_grapher.core.formula_ast import FormulaStyle, render_formula
@@ -42,7 +43,11 @@ def write_workbook(
     Formula cells are spelled from current `formula_ast` via `render_formula`
     (never from the opt-in raw `Node.formula` audit string). Leaves write
     `node.value`. Formula cells do not receive evaluator-computed cached
-    results.
+    results. Cells extracted as `ArrayFormula` are written back as
+    `ArrayFormula(text, ref=...)` using the observed spill / CSE `ref`.
+    fastpyxl does not distinguish legacy CSE from dynamic-array spills, so
+    write-back emits `t="array"` for both. A flagged array cell with no
+    observed `ref` is refused rather than written as a scalar formula.
 
     Args:
         graph: Read view whose cells are written.
@@ -60,8 +65,9 @@ def write_workbook(
         FileExistsError: If `destination` exists and `overwrite` is False.
         ValueError: If the view is empty, spans multiple sheets without
             `sheet_order`, a formula cell has no `formula_ast`,
-            `formula_style` is `R1C1`, or a relative axis has no host
-            address.
+            `formula_style` is `R1C1`, a relative axis has no host
+            address, or an array formula is missing its observed spill / CSE
+            `ref`.
     """
     dest = Path(destination)
     style = FormulaStyle(formula_style)
@@ -184,7 +190,7 @@ def _cell_value(
         if node.formula_ast is None:
             raise ValueError(f"Cannot write unparseable formula at {_cell_label(node, key)}")
         try:
-            return render_formula(
+            text = render_formula(
                 node.formula_ast,
                 anchor=node.address,
                 style=style,
@@ -192,6 +198,19 @@ def _cell_value(
             )
         except ValueError as exc:
             raise ValueError(f"Cannot render formula at {_cell_label(node, key)}: {exc}") from exc
+        if node.is_array_formula:
+            ref = node.array_formula_ref
+            if not ref:
+                raise ValueError(
+                    f"Cannot write array formula at {_cell_label(node, key)} "
+                    "without an observed spill/CSE ref"
+                )
+            return ArrayFormula(ref, text)
+        return text
+    if node.is_array_formula:
+        raise ValueError(
+            f"Cannot write array formula at {_cell_label(node, key)} without formula_ast"
+        )
     return _excel_leaf_value(node.value, key=_cell_label(node, key))
 
 
