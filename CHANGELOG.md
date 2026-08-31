@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v11.5.0 (2026-08-31)
+
+### Features
+
+- **exporter**: Emit CONSTANTS as MappingProxyType
+  ([#582](https://github.com/Teal-Insights/excel-grapher/pull/582),
+  [`0a376dd`](https://github.com/Teal-Insights/excel-grapher/commit/0a376dd25e0becae728263e12e4bf69a775bc2eb))
+
+### Testing
+
+- **runtime**: Avoid ty invalid-assignment on frozen CONSTANTS
+  ([#582](https://github.com/Teal-Insights/excel-grapher/pull/582),
+  [`0a376dd`](https://github.com/Teal-Insights/excel-grapher/commit/0a376dd25e0becae728263e12e4bf69a775bc2eb))
+
+
 ## v11.4.0 (2026-08-31)
 
 ### Bug Fixes
