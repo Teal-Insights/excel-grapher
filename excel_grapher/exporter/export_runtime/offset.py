@@ -10,7 +10,12 @@ from excel_grapher.core import XlError, to_number
 from excel_grapher.core.address_keys import format_cell_key
 from excel_grapher.core.addressing import index_excel_range, offset_range
 from excel_grapher.core.types import XlErrorException
-from excel_grapher.runtime.cache import EvalContext, _parse_range_address, xl_cell
+from excel_grapher.runtime.cache import (
+    EvalContext,
+    _parse_range_address,
+    _record_leaf_safe_range_watch,
+    xl_cell,
+)
 from excel_grapher.runtime.leaves import MISSING, leaf
 
 from .ranges import Range
@@ -45,13 +50,19 @@ def _number_or_raise(value: CellValue) -> float:
 def _ctx_range(ctx: EvalContext, sheet: str, r1: int, c1: int, r2: int, c2: int) -> Range:
     # Leave the resolver unannotated: embed strips `excel_grapher.core` imports, so
     # aliases like `CellValue as CoreCellValue` never appear in generated runtime.py.
+    leaf_safe = _record_leaf_safe_range_watch(ctx, sheet, r1, c1, r2, c2)
+    explode_cells = bool(getattr(ctx, "stack", None)) and not leaf_safe
+
     def resolve(address: str):
         return xl_cell(ctx, address)
 
     def resolve_coord(row: int, col: int):
-        found = leaf(ctx.leaves, sheet, row, col)
-        if found is not MISSING:
-            return found
+        if not explode_cells:
+            found = leaf(ctx.leaves, sheet, row, col)
+            if found is not MISSING:
+                return found
+            if leaf_safe:
+                return None
         return xl_cell(ctx, _format_address(sheet, row, col))
 
     return Range(sheet, r1, c1, r2, c2, resolve, _coord_resolver=resolve_coord)

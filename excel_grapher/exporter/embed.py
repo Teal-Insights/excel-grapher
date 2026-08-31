@@ -496,6 +496,14 @@ def emit_runtime(
     # wire the alias explicitly whenever the context base is emitted.
     if "EvalContextBase" in symbol_deps and "HelperCacheKey" in symbol_to_node:
         symbol_deps["EvalContextBase"].add("HelperCacheKey")
+    # RangeWatch is only referenced from full `EvalContext` annotations / helpers.
+    # Slim aliases `EvalContext = EvalContextBase` and must not pull the alias in.
+    if (
+        "EvalContext" in symbol_deps
+        and "RangeWatch" in symbol_to_node
+        and symbol_to_module.get("EvalContext") == "cache_context"
+    ):
+        symbol_deps["EvalContext"].add("RangeWatch")
 
     seed = set(required_symbols) | {
         "XlError",
