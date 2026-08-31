@@ -249,8 +249,8 @@ def test_identity_transit_rewrites_ast_and_keeps_unrelated_relative_axes() -> No
     assert node.normalized_formula == "=Sheet1!C1+Sheet1!C2"
 
 
-def test_identity_transit_derives_a1_from_ast_not_string_replace() -> None:
-    """Range endpoints are not identity sites; derived A1 must follow the AST."""
+def test_identity_transit_skips_when_range_endpoint_mentions_transit() -> None:
+    """Identity forwarding is cell-ref-only; range endpoints fail closed (#557)."""
     graph = DependencyGraph()
     graph.add_node(make_cell_node("Sheet1", "C", 1, value=1, is_leaf=True))
     graph.add_node(
@@ -275,15 +275,14 @@ def test_identity_transit_derives_a1_from_ast_not_string_replace() -> None:
     _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
 
     removed = graph.compress_identity_transits()
-    assert "Sheet1!B1" in removed
+    assert "Sheet1!B1" not in removed
     node = graph.get_node("Sheet1!A1")
     assert node is not None
-    assert node.formula_ast is not None
-    assert node.formula_ast == parse("=SUM(Sheet1!B1:B3)+Sheet1!C1")
+    assert node.formula_ast == parse("=SUM(Sheet1!B1:B3)+Sheet1!B1")
     assert node.normalized_formula == unparse_normalized_formula(
         node.formula_ast, anchor="Sheet1!A1"
     )
-    assert node.normalized_formula == "=SUM(Sheet1!B1:B3)+Sheet1!C1"
+    assert node.normalized_formula == "=SUM(Sheet1!B1:B3)+Sheet1!B1"
 
 
 def test_structural_inline_derives_a1_from_spliced_ast() -> None:
