@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v12.3.0 (2026-08-31)
+
+### Features
+
+- **series-bindings**: Merge complementary shards across sheets
+  ([#591](https://github.com/Teal-Insights/excel-grapher/pull/591),
+  [`e8b5f7f`](https://github.com/Teal-Insights/excel-grapher/commit/e8b5f7fd2a84db5a47cdc1e7aaf2ee7689827210))
+
+
 ## v12.2.0 (2026-08-31)
 
 ### Features
