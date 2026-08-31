@@ -8,6 +8,7 @@ import sys
 import pytest
 
 from excel_grapher.core.address_keys import CellKey, NodeShape, parse_node_key
+from excel_grapher.core.formula_ast import parse_preserving_axes
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.node import (
     Node,
@@ -40,11 +41,11 @@ def test_node_public_fields_and_derived_properties() -> None:
         "B",
         2,
         formula="=A1",
-        normalized_formula="=Sheet1!A1",
         value=None,
         is_leaf=False,
         is_target=True,
         metadata={"k": 1},
+        formula_ast=parse_preserving_axes("=A1", anchor="Sheet1!B2"),
     )
     assert node.sheet == "Sheet1"
     assert node.column == "B"
@@ -117,8 +118,8 @@ def test_deepcopy_and_projection_clone_preserve_slotted_nodes() -> None:
             "B",
             1,
             formula="=A1",
-            normalized_formula="=Sheet1!A1",
             is_leaf=False,
+            formula_ast=parse_preserving_axes("=A1", anchor="Sheet1!B1"),
         )
     )
     graph.add_edge("Sheet1!B1", "Sheet1!A1")

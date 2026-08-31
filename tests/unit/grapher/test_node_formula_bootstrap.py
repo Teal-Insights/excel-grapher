@@ -94,6 +94,42 @@ def test_apply_formula_text_keeps_unparseable_fallback() -> None:
     assert node.has_formula
 
 
+def test_node_bootstrap_sheet_qualified_without_dollars_is_relative() -> None:
+    node = Node(
+        sheet="Sheet1",
+        column="B",
+        row=1,
+        is_leaf=False,
+        normalized_formula="=Sheet1!A1",
+    )
+    assert node.formula_ast == parse_preserving_axes("=A1", anchor="Sheet1!B1")
+    assert isinstance(node.formula_ast, CellRefNode)
+    assert isinstance(node.formula_ast.ref.col, RelativeAxis)
+    assert isinstance(node.formula_ast.ref.row, RelativeAxis)
+    assert node.formula_ast != parse("=Sheet1!A1")
+    assert node.normalized_formula == "=Sheet1!A1"
+
+
+def test_set_node_formula_fallback_preserves_mixed_axes() -> None:
+    graph = DependencyGraph()
+    graph.add_node(make_cell_node("Sheet1", "A", 1, is_leaf=True, value=1))
+    graph.add_node(make_cell_node("Sheet1", "B", 2, is_leaf=False))
+    graph.set_node_formula("Sheet1!B2", None, "=A1+$B$1")
+    view = graph.get_node("Sheet1!B2")
+    assert view is not None
+    expected = parse_preserving_axes("=A1+$B$1", anchor="Sheet1!B2")
+    assert view.formula_ast == expected
+    assert isinstance(view.formula_ast, BinaryOpNode)
+    left = view.formula_ast.left
+    right = view.formula_ast.right
+    assert isinstance(left, CellRefNode)
+    assert isinstance(right, CellRefNode)
+    assert isinstance(left.ref.col, RelativeAxis)
+    assert isinstance(right.ref.col, AbsoluteAxis)
+    assert isinstance(right.ref.row, AbsoluteAxis)
+    assert view.normalized_formula == "=Sheet1!A1+Sheet1!B1"
+
+
 def test_identity_transit_string_fallback_preserves_mixed_axes() -> None:
     graph = DependencyGraph()
     graph.add_node(make_cell_node("Sheet1", "C", 1, value=1, is_leaf=True))

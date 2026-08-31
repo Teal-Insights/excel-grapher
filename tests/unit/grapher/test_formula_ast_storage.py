@@ -15,6 +15,7 @@ from excel_grapher.core.formula_ast import (
     CellRefNode,
     NumberNode,
     parse,
+    parse_formula_text,
     parse_preserving_axes,
 )
 from excel_grapher.grapher.cache import (
@@ -92,7 +93,6 @@ def test_copy_node_preserves_formula_ast() -> None:
         "B",
         1,
         formula="=A1+1",
-        normalized_formula="=Sheet1!A1+1",
         is_leaf=False,
         formula_ast=ast,
     )
@@ -234,18 +234,20 @@ def test_formula_shape_bindings_are_keyed_by_node_key(tmp_path: Path) -> None:
     assert b1[1] is b2[1]
 
 
-def _cell(key: str, formula: str | None, normalized: str | None, *, is_leaf: bool = False) -> Node:
+def _cell(key: str, formula: str | None, *, is_leaf: bool = False) -> Node:
     sheet, rest = key.split("!", 1)
     col = "".join(c for c in rest if c.isalpha())
     row = int("".join(c for c in rest if c.isdigit()))
+    ast = parse_formula_text(formula, anchor=key) if formula else None
     return Node(
         sheet=sheet,
         column=col,
         row=row,
         formula=formula,
-        normalized_formula=normalized,
         value=None,
         is_leaf=is_leaf,
+        formula_ast=ast,
+        normalized_formula=None if ast is not None else formula,
     )
 
 
@@ -267,9 +269,9 @@ def _direct_edge(graph: DependencyGraph, dependent: str, precedent: str) -> None
 
 def test_identity_transit_rewrites_keep_formula_ast_aligned() -> None:
     graph = DependencyGraph()
-    graph.add_node(_cell("Sheet1!C1", None, None, is_leaf=True))
-    graph.add_node(_cell("Sheet1!B1", "=Sheet1!C1", "=Sheet1!C1"))
-    graph.add_node(_cell("Sheet1!A1", "=Sheet1!B1", "=Sheet1!B1"))
+    graph.add_node(_cell("Sheet1!C1", None, is_leaf=True))
+    graph.add_node(_cell("Sheet1!B1", "=C1"))
+    graph.add_node(_cell("Sheet1!A1", "=B1"))
     _direct_edge(graph, "Sheet1!B1", "Sheet1!C1")
     _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
 
@@ -278,14 +280,14 @@ def test_identity_transit_rewrites_keep_formula_ast_aligned() -> None:
     node = graph.get_node("Sheet1!A1")
     assert node is not None
     assert node.normalized_formula == "=Sheet1!C1"
-    assert node.formula_ast == parse_preserving_axes("=Sheet1!C1", anchor="Sheet1!A1")
+    assert node.formula_ast == parse_preserving_axes("=C1", anchor="Sheet1!A1")
 
 
 def test_optimal_inline_rewrites_keep_formula_ast_aligned() -> None:
     graph = DependencyGraph()
-    graph.add_node(_cell("Sheet1!D1", None, None, is_leaf=True))
-    graph.add_node(_cell("Sheet1!B1", "=Sheet1!D1*2", "=Sheet1!D1*2"))
-    graph.add_node(_cell("Sheet1!A1", "=Sheet1!B1+1", "=Sheet1!B1+1"))
+    graph.add_node(_cell("Sheet1!D1", None, is_leaf=True))
+    graph.add_node(_cell("Sheet1!B1", "=D1*2"))
+    graph.add_node(_cell("Sheet1!A1", "=B1+1"))
     _direct_edge(graph, "Sheet1!B1", "Sheet1!D1")
     _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
 
@@ -300,9 +302,9 @@ def test_optimal_inline_rewrites_keep_formula_ast_aligned() -> None:
 def test_identity_transit_leaves_formula_ast_unset_when_rewrite_unparseable() -> None:
     unparseable = "=SUM(IF(@Sheet1!A1:A3>0,@Sheet1!C1:C3,0))+Sheet1!B1"
     graph = DependencyGraph()
-    graph.add_node(_cell("Sheet1!C1", None, None, is_leaf=True))
-    graph.add_node(_cell("Sheet1!B1", "=Sheet1!C1", "=Sheet1!C1"))
-    graph.add_node(_cell("Sheet1!A1", unparseable, unparseable))
+    graph.add_node(_cell("Sheet1!C1", None, is_leaf=True))
+    graph.add_node(_cell("Sheet1!B1", "=C1"))
+    graph.add_node(_cell("Sheet1!A1", unparseable))
     _direct_edge(graph, "Sheet1!B1", "Sheet1!C1")
     _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
 
@@ -319,7 +321,6 @@ def test_warm_formula_shapes_uses_per_node_ast() -> None:
         "S",
         "B",
         1,
-        normalized_formula="=S!A1+1",
         is_leaf=False,
         formula_ast=BinaryOpNode("+", CellRefNode("S!A1"), NumberNode(1.0)),
     )
@@ -370,8 +371,8 @@ def test_node_does_not_store_normalized_formula() -> None:
         "B",
         1,
         formula="=A1",
-        normalized_formula="=Sheet1!A1",
         is_leaf=False,
+        formula_ast=parse_preserving_axes("=A1", anchor="Sheet1!B1"),
     )
     assert node.normalized_formula == "=Sheet1!A1"
     assert node.formula_ast is not None
@@ -389,8 +390,8 @@ def test_json_cache_omits_normalized_formula_and_keeps_unparseable_text() -> Non
             "B",
             1,
             formula="=A1+1",
-            normalized_formula="=Sheet1!A1+1",
             is_leaf=False,
+            formula_ast=parse_preserving_axes("=A1+1", anchor="Sheet1!B1"),
         )
     )
     unparseable = "=SUM(IF(@Sheet1!A1:A3>0,@Sheet1!B1:B3,0))"
@@ -458,8 +459,8 @@ def test_is_graph_formula_node_follows_has_formula() -> None:
             "Sheet1",
             "B",
             1,
-            normalized_formula="=Sheet1!A1",
             is_leaf=False,
+            formula_ast=parse_preserving_axes("=A1", anchor="Sheet1!B1"),
         )
     )
     assert not is_graph_formula_node(graph, "Sheet1!A1")
