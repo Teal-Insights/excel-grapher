@@ -14,6 +14,7 @@ from excel_grapher.core.addressing import split_sheet_qualified_address
 from excel_grapher.core.types import resolve_excel_range
 
 from .cache_context import EvalContext, EvalContextBase, HelperCacheKey
+from .leaves import MISSING, lookup_leaf
 
 __all__ = [
     "CircularReferenceWarning",
@@ -115,10 +116,10 @@ def _evaluate_address(
         ctx.circular_warning_roots.add(root)
         return xl_circular_reference()
 
-    if address in ctx.inputs:
-        v = ctx.inputs[address]
-        ctx.cache[address] = v
-        return _raise_if_error_value(v)
+    found = lookup_leaf(ctx, address)
+    if found is not MISSING:
+        ctx.cache[address] = found
+        return _raise_if_error_value(found)
 
     fn = obtain_fn()
 
@@ -147,7 +148,7 @@ def xl_cell(ctx: EvalContext, address: str) -> CellValue:
 
     Resolution order:
     - cached value (per ctx)
-    - user-provided inputs
+    - leaf coordinate store (`ctx.leaves` / NodeKey overlays)
     - exported formula implementation (via resolver)
     - missing cell raises KeyError
     """

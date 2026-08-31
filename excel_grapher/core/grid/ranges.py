@@ -29,6 +29,11 @@ class Range:
     # Resolvers may come from evaluation contexts with their own value
     # vocabulary; values are validated/coerced at consumption time.
     _resolver: Callable[[str], FormulaValue] = field(repr=False, compare=False)
+    # Optional coordinate reader: `(row, col)` absolute 1-based. When set,
+    # `cell` / `value_at` use it and do not construct NodeKey strings.
+    _coord_resolver: Callable[[int, int], FormulaValue] | None = field(
+        default=None, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         """Validate the rectangular bounds."""
@@ -60,7 +65,7 @@ class Range:
             XlErrorException: If the resolved cell is an Excel error.
         """
         self._validate_relative_cell(row, col)
-        value = self._resolver(self._address(self.start_row + row - 1, self.start_col + col - 1))
+        value = self._resolve_at(self.start_row + row - 1, self.start_col + col - 1)
         return self._raise_if_error(value)
 
     def row(self, row: int) -> Range:
@@ -76,6 +81,7 @@ class Range:
             absolute_row,
             self.end_col,
             self._resolver,
+            _coord_resolver=self._coord_resolver,
         )
 
     def column(self, col: int) -> Range:
@@ -91,6 +97,7 @@ class Range:
             self.end_row,
             absolute_col,
             self._resolver,
+            _coord_resolver=self._coord_resolver,
         )
 
     def view(
@@ -115,6 +122,7 @@ class Range:
             self.start_row + row_end - 1,
             self.start_col + col_end - 1,
             self._resolver,
+            _coord_resolver=self._coord_resolver,
         )
 
     def value_at(self, row: int, col: int) -> FormulaValue:
@@ -126,9 +134,8 @@ class Range:
         matching) use this accessor; `cell`/iteration raise instead.
         """
         self._validate_relative_cell(row, col)
-        address = self._address(self.start_row + row - 1, self.start_col + col - 1)
         try:
-            return self._resolver(address)
+            return self._resolve_at(self.start_row + row - 1, self.start_col + col - 1)
         except XlErrorException as exc:
             return exc.code
 
@@ -154,6 +161,11 @@ class Range:
     def __iter__(self) -> Iterator[FormulaValue]:
         """Yield values in deterministic row-major order."""
         return self.iter_values()
+
+    def _resolve_at(self, row: int, col: int) -> FormulaValue:
+        if self._coord_resolver is not None:
+            return self._coord_resolver(row, col)
+        return self._resolver(self._address(row, col))
 
     def _address(self, row: int, col: int) -> str:
         col_letter = fastpyxl.utils.cell.get_column_letter(col)

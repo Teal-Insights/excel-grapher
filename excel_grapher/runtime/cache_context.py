@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Hashable, Iterable
 from dataclasses import dataclass, field
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 from excel_grapher.core import CellValue
+
+from .leaves import LeafInputs, LeafStore, as_leaf_store, overlay_leaf_inputs
 
 __all__ = ["EvalContext", "EvalContextBase", "HelperCacheKey"]
 
@@ -17,7 +19,7 @@ HelperCacheKey: TypeAlias = tuple[Hashable, tuple[tuple[str, Hashable], ...]]
 class EvalContextBase:
     """Per-run evaluation state without dependency-tracking fields."""
 
-    inputs: dict[str, CellValue]
+    inputs: Any
     resolver: Callable[[str], Callable[[EvalContext], CellValue] | None]
     cache: dict[str, CellValue] = field(default_factory=dict)
     computing: set[str] = field(default_factory=set)
@@ -28,6 +30,12 @@ class EvalContextBase:
     iterate_count: int = 100
     iterate_delta: float = 0.001
     iteration_values: dict[str, CellValue] = field(default_factory=dict)
+    leaves: LeafStore = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        store = as_leaf_store(self.inputs) if self.inputs else as_leaf_store(self.leaves)
+        self.leaves = store
+        self.inputs = LeafInputs(store)
 
 
 @dataclass(slots=True)
@@ -79,8 +87,13 @@ class EvalContext(EvalContextBase):
             self.reverse_deps.pop(addr, None)
 
     def set_inputs(self, inputs: dict[str, CellValue]) -> None:
-        """Update input values and invalidate dependent cached results."""
+        """Update input values and invalidate dependent cached results.
+
+        `inputs` is NodeKey-keyed. Keys that cannot round-trip to
+        `(sheet, row, col)` raise `ValueError`.
+        """
+        parsed = as_leaf_store(inputs)
         changed = [k for k, v in inputs.items() if self.inputs.get(k) != v]
-        self.inputs.update(inputs)
+        overlay_leaf_inputs(self.leaves, parsed)
         if changed:
             self.invalidate(changed)

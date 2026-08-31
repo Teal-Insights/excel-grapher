@@ -9,6 +9,7 @@ from excel_grapher.core import CellValue, XlError, XlErrorException
 
 from .cache import xl_circular_reference
 from .cache_context import EvalContextBase
+from .leaves import MISSING, lookup_leaf
 
 __all__ = [
     "EvalContext",
@@ -47,10 +48,10 @@ def _evaluate_address(
             return ctx.iteration_values.get(address, 0)
         return xl_circular_reference()
 
-    if address in ctx.inputs:
-        value = ctx.inputs[address]
-        ctx.cache[address] = value
-        return _raise_if_error_value(value)
+    found = lookup_leaf(ctx, address)
+    if found is not MISSING:
+        ctx.cache[address] = found
+        return _raise_if_error_value(found)
 
     fn = obtain_fn()
 

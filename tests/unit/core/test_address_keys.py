@@ -12,6 +12,7 @@ from excel_grapher.core.address_keys import (
     format_key,
     make_node_key_sort_key,
     normalize_key,
+    parse_cell_coords,
     quoted_sheet_prefix_regex,
     sort_node_keys,
     split_address_on_colon,
@@ -156,6 +157,28 @@ def test_normalize_key_canonicalizes_one_row_ranges() -> None:
     assert normalize_key("Sheet1!D63:Sheet1!Y63") == "Sheet1!D63:Y63"
     assert normalize_key("Sheet1!$D$63:$Y$63") == "Sheet1!D63:Y63"
     assert normalize_key("'Sheet1'!D63:Y63") == "Sheet1!D63:Y63"
+
+
+@pytest.mark.parametrize(
+    ("address", "expected"),
+    [
+        ("Sheet1!A1", ("Sheet1", 1, 1)),
+        ("Sheet1!B2", ("Sheet1", 2, 2)),
+        ("Sheet1!$C$10", ("Sheet1", 10, 3)),
+        ("'My Sheet'!AA3", ("My Sheet", 3, 27)),
+        ("'O''Neil'!Z1", ("O'Neil", 1, 26)),
+    ],
+)
+def test_parse_cell_coords_returns_sheet_row_col(
+    address: str, expected: tuple[str, int, int]
+) -> None:
+    assert parse_cell_coords(address) == expected
+
+
+@pytest.mark.parametrize("address", ["A1", "Sheet1!A1:B2", "Sheet1!A:A"])
+def test_parse_cell_coords_rejects_non_cells(address: str) -> None:
+    with pytest.raises(ValueError):
+        parse_cell_coords(address)
 
 
 def test_sort_node_keys_orders_row_keys_by_min_col() -> None:
