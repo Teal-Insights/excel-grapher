@@ -40,6 +40,7 @@ from .guard import (
     Or,
     intern_guard,
     or_guard,
+    rewrite_guard_keys,
 )
 from .node import Node, NodeKey, NodeView, copy_node, node_to_view
 
@@ -52,6 +53,19 @@ NodeHook = Callable[[NodeKey, Node], None]
 EdgeKey = tuple[NodeKey, NodeKey]
 
 _PICKLE_VERSION = 4
+
+
+def _or_merge_optional_guards(parts: list[GuardExpr | None]) -> GuardExpr | None:
+    """OR-merge guards; `None` (unconditional) wins, matching `add_edge`."""
+    if not parts:
+        return None
+    merged = parts[0]
+    for part in parts[1:]:
+        if merged is None or part is None:
+            merged = None
+        elif merged != part:
+            merged = or_guard(merged, part)
+    return intern_guard(merged) if merged is not None else None
 
 
 @dataclass(frozen=True)
@@ -526,6 +540,13 @@ class DependencyGraph:
         affected bindings are re-interned (shared relative params may split or
         join).
 
+        Incoming edges from occupancy (range expansion, whole-column/row
+        members) are dropped when the dependent formula was not rewritten to
+        mention `new_key`. Remaining `GuardExpr` trees rewrite `CellRef` keys
+        and `RangeRef` endpoints. If the destination already has an incoming
+        edge from the same dependent, guards merge with `or_guard` (`None`
+        unconditional wins) and provenance merges with `merge_edge_provenance`.
+
         Assigning `Node.address` directly raises; geometry edits must go
         through this method.
 
@@ -536,7 +557,8 @@ class DependencyGraph:
         Raises:
             KeyError: If `old_key` is missing.
             ValueError: If `new_key` is not a single cell, already exists,
-                or an affected formula is unparseable.
+                an affected formula is unparseable, or a range guard would
+                split across sheets.
         """
         old_nk = normalize_key(old_key)
         dest = parse_node_key(normalize_key(new_key))
@@ -558,6 +580,8 @@ class DependencyGraph:
             if dep_node is None:
                 continue
             self._require_rewritable_formula(dep_node, dep_key)
+        for guard in self._guards.values():
+            rewrite_guard_keys(guard, old_nk, new_nk)
 
         if node.formula_ast is not None:
             rebased = rebase_relative_axes(node.formula_ast, old_anchor=old_nk, new_anchor=new_nk)
@@ -581,7 +605,9 @@ class DependencyGraph:
             dep_node.formula_ast = new_ast
             rewritten_dependents.append(dep_key)
 
-        self._relocate_graph_identity(old_nk, new_nk, node)
+        self._relocate_graph_identity(
+            old_nk, new_nk, node, rewritten_dependents=frozenset(rewritten_dependents)
+        )
         self._refresh_move_provenance(new_nk, rewritten_dependents)
         self._reintern_moved_formula_shapes(old_nk, new_nk, rewritten_dependents)
 
@@ -589,9 +615,17 @@ class DependencyGraph:
         if node.formula_ast is None and node.has_formula:
             raise ValueError(f"cannot rewrite unparseable formula at {key} when moving a node")
 
-    def _relocate_graph_identity(self, old_key: NodeKey, new_key: NodeKey, node: Node) -> None:
-        outgoing = set(self._edges.pop(old_key, set()))
-        incoming = set(self._reverse_edges.pop(old_key, set()))
+    def _relocate_graph_identity(
+        self,
+        old_key: NodeKey,
+        new_key: NodeKey,
+        node: Node,
+        rewritten_dependents: frozenset[NodeKey],
+    ) -> None:
+        old_edges = {src: set(dsts) for src, dsts in self._edges.items()}
+        old_guards = dict(self._guards)
+        old_prov = dict(self._edge_provenance)
+
         self._nodes.pop(old_key)
         node._relocate(new_key)
         self._nodes[new_key] = node
@@ -599,31 +633,44 @@ class DependencyGraph:
         def swap(key: NodeKey) -> NodeKey:
             return new_key if key == old_key else key
 
-        outgoing = {swap(key) for key in outgoing}
-        incoming = {swap(key) for key in incoming}
-        self._edges[new_key] = outgoing
-        self._reverse_edges[new_key] = incoming
+        def keep_incoming(src: NodeKey, dst: NodeKey) -> bool:
+            if dst != old_key:
+                return True
+            return src == old_key or src in rewritten_dependents
 
-        for dep in outgoing:
-            if dep == new_key:
-                continue
-            self._reverse_edges.setdefault(dep, set()).discard(old_key)
-            self._reverse_edges[dep].add(new_key)
+        guard_parts: dict[EdgeKey, list[GuardExpr | None]] = {}
+        prov_parts: dict[EdgeKey, list[EdgeProvenance | None]] = {}
+        new_edges: dict[NodeKey, set[NodeKey]] = {}
+        new_reverse: dict[NodeKey, set[NodeKey]] = {}
+        for src, dests in old_edges.items():
+            for dst in sorted(dests):
+                if not keep_incoming(src, dst):
+                    continue
+                new_src, new_dst = swap(src), swap(dst)
+                new_edges.setdefault(new_src, set()).add(new_dst)
+                new_reverse.setdefault(new_dst, set()).add(new_src)
+                new_ek = (new_src, new_dst)
+                guard_parts.setdefault(new_ek, []).append(old_guards.get((src, dst)))
+                prov_parts.setdefault(new_ek, []).append(old_prov.get((src, dst)))
 
-        for dependent in incoming:
-            if dependent == new_key:
-                continue
-            self._edges.setdefault(dependent, set()).discard(old_key)
-            self._edges[dependent].add(new_key)
+        new_edges.setdefault(new_key, set())
+        new_reverse.setdefault(new_key, set())
+        self._edges = new_edges
+        self._reverse_edges = new_reverse
 
-        def remap_edge_dict(mapping: dict[EdgeKey, Any]) -> None:
-            items = list(mapping.items())
-            mapping.clear()
-            for (src, dst), value in items:
-                mapping[(swap(src), swap(dst))] = value
+        self._guards = {}
+        for ek, parts in guard_parts.items():
+            merged = _or_merge_optional_guards(parts)
+            if merged is not None:
+                self._guards[ek] = rewrite_guard_keys(merged, old_key, new_key)
 
-        remap_edge_dict(self._guards)
-        remap_edge_dict(self._edge_provenance)
+        self._edge_provenance = {}
+        for ek, parts in prov_parts.items():
+            merged_prov = None
+            for part in parts:
+                merged_prov = merge_edge_provenance(merged_prov, part)
+            if merged_prov is not None:
+                self._edge_provenance[ek] = merged_prov
 
         if self.leaf_classification is not None and old_key in self.leaf_classification:
             self.leaf_classification[new_key] = self.leaf_classification.pop(old_key)

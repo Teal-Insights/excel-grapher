@@ -244,6 +244,20 @@ def test_rebase_relative_axes_noop_when_anchor_unchanged() -> None:
     assert rebase_relative_axes(ast, old_anchor="Sheet1!B2", new_anchor="Sheet1!B2") is ast
 
 
+def test_retarget_resolved_refs_preserves_identity_for_interior_occupancy() -> None:
+    ast = parse_preserving_axes("=SUM(A1:A3)", anchor="Sheet1!B1")
+    rewritten = retarget_resolved_refs(
+        ast, old_key="Sheet1!A2", new_key="Sheet1!C9", anchor="Sheet1!B1"
+    )
+    assert rewritten is ast
+
+
+def test_rebase_relative_axes_preserves_function_identity_without_relative_refs() -> None:
+    ast = parse_preserving_axes("=SUM(1,2)", anchor="Sheet1!B2")
+    rebased = rebase_relative_axes(ast, old_anchor="Sheet1!B2", new_anchor="Sheet1!C3")
+    assert rebased is ast
+
+
 def test_retarget_resolved_refs_range_endpoints() -> None:
     ast = parse_preserving_axes("=SUM(B1:B3)+B1", anchor="Sheet1!A1")
     rewritten = retarget_resolved_refs(

@@ -13,8 +13,10 @@ from excel_grapher.core.formula_ast import (
     parse_preserving_axes,
     resolve_cell_ref,
 )
+from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
 from excel_grapher.grapher.formula_shapes import warm_formula_shapes
 from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.grapher.guard import CellRef, Compare, Literal, intern_guard, or_guard
 from excel_grapher.grapher.node import make_cell_node
 
 
@@ -111,6 +113,8 @@ def test_move_node_mixed_axes_range_and_whole_leaves() -> None:
     whole = graph.get_node("Sheet1!D1")
     assert whole is not None
     assert whole.normalized_formula == "=Sheet1!A:A"
+    assert graph.get_dependencies("Sheet1!D1") == frozenset({"Sheet1!A3"})
+    assert graph.get_dependents("Sheet1!B5") == frozenset({"Sheet1!C4"})
 
 
 def test_move_node_reinterns_formula_shapes() -> None:
@@ -192,3 +196,142 @@ def test_move_node_raises_on_unparseable_dependent() -> None:
     with pytest.raises(ValueError, match="unparseable"):
         graph.move_node("Sheet1!A1", "Sheet1!C3")
     assert "Sheet1!A1" in graph
+
+
+def test_move_node_drops_occupancy_incoming_edges() -> None:
+    graph = DependencyGraph()
+    _add_leaf(graph, "Sheet1", "A", 1)
+    _add_leaf(graph, "Sheet1", "A", 2)
+    _add_leaf(graph, "Sheet1", "A", 3)
+    _add_formula(
+        graph,
+        "Sheet1",
+        "B",
+        1,
+        "=SUM(A1:A3)",
+        deps=("Sheet1!A1", "Sheet1!A2", "Sheet1!A3"),
+    )
+    before = graph.get_node("Sheet1!B1")
+    assert before is not None
+    formula_ast = before.formula_ast
+
+    graph.move_node("Sheet1!A2", "Sheet1!C9")
+
+    host = graph.get_node("Sheet1!B1")
+    assert host is not None
+    assert host.formula_ast is formula_ast
+    assert host.normalized_formula == "=SUM(Sheet1!A1:A3)"
+    assert graph.get_dependencies("Sheet1!B1") == frozenset({"Sheet1!A1", "Sheet1!A3"})
+    assert graph.get_dependents("Sheet1!C9") == frozenset()
+    assert "Sheet1!A2" not in graph
+
+
+def test_move_node_retargets_range_endpoint_dependents() -> None:
+    graph = DependencyGraph()
+    _add_leaf(graph, "Sheet1", "A", 1)
+    _add_leaf(graph, "Sheet1", "A", 2)
+    _add_leaf(graph, "Sheet1", "A", 3)
+    _add_formula(
+        graph,
+        "Sheet1",
+        "B",
+        1,
+        "=SUM(A1:A3)",
+        deps=("Sheet1!A1", "Sheet1!A2", "Sheet1!A3"),
+    )
+
+    graph.move_node("Sheet1!A1", "Sheet1!B5")
+
+    host = graph.get_node("Sheet1!B1")
+    assert host is not None
+    assert host.normalized_formula == "=SUM(Sheet1!B5:A3)"
+    assert graph.get_dependencies("Sheet1!B1") == frozenset({"Sheet1!B5", "Sheet1!A2", "Sheet1!A3"})
+    assert graph.get_dependents("Sheet1!B5") == frozenset({"Sheet1!B1"})
+
+
+def test_move_node_rewrites_guard_keys_on_sibling_edges() -> None:
+    graph = DependencyGraph()
+    _add_leaf(graph, "Sheet1", "A", 1)
+    _add_leaf(graph, "Sheet1", "C", 1)
+    cond = intern_guard(Compare(left=CellRef("Sheet1!A1"), op=">", right=Literal(0)))
+    _add_formula(graph, "Sheet1", "B", 1, "=IF(A1>0,C1,0)", deps=("Sheet1!A1",))
+    graph.add_edge("Sheet1!B1", "Sheet1!C1", guard=cond)
+
+    graph.move_node("Sheet1!A1", "Sheet1!D5")
+
+    host = graph.get_node("Sheet1!B1")
+    assert host is not None
+    assert host.normalized_formula == "=IF(Sheet1!D5>0,Sheet1!C1,0)"
+    assert graph.get_dependencies("Sheet1!B1") == frozenset({"Sheet1!D5", "Sheet1!C1"})
+    rewritten = intern_guard(Compare(left=CellRef("Sheet1!D5"), op=">", right=Literal(0)))
+    assert graph.get_edge_guard("Sheet1!B1", "Sheet1!C1") == rewritten
+    assert graph.get_edge_guard("Sheet1!B1", "Sheet1!D5") is None
+
+
+def test_move_node_merges_guards_when_landing_on_dangling_endpoint() -> None:
+    graph = DependencyGraph()
+    _add_leaf(graph, "Sheet1", "A", 1)
+    g_a = intern_guard(Compare(left=CellRef("Sheet1!A1"), op=">", right=Literal(0)))
+    g_c = intern_guard(Compare(left=CellRef("Sheet1!C3"), op="<", right=Literal(10)))
+    ast = parse_preserving_axes("=A1+C3", anchor="Sheet1!B1")
+    graph.add_node(
+        make_cell_node(
+            "Sheet1",
+            "B",
+            1,
+            formula="=A1+C3",
+            formula_ast=ast,
+            is_leaf=False,
+        )
+    )
+    graph.add_edge(
+        "Sheet1!B1",
+        "Sheet1!A1",
+        guard=g_a,
+        provenance=EdgeProvenance(causes=DependencyCause.direct_ref),
+    )
+    graph.add_edge(
+        "Sheet1!B1",
+        "Sheet1!C3",
+        guard=g_c,
+        provenance=EdgeProvenance(causes=DependencyCause.static_range),
+    )
+
+    graph.move_node("Sheet1!A1", "Sheet1!C3")
+
+    host = graph.get_node("Sheet1!B1")
+    assert host is not None
+    assert host.normalized_formula == "=Sheet1!C3+Sheet1!C3"
+    assert graph.get_dependencies("Sheet1!B1") == frozenset({"Sheet1!C3"})
+    expected = or_guard(
+        intern_guard(Compare(left=CellRef("Sheet1!C3"), op=">", right=Literal(0))),
+        intern_guard(Compare(left=CellRef("Sheet1!C3"), op="<", right=Literal(10))),
+    )
+    assert graph.get_edge_guard("Sheet1!B1", "Sheet1!C3") == expected
+    attrs = graph.get_edge_attrs("Sheet1!B1", "Sheet1!C3")
+    assert attrs.provenance is not None
+    assert attrs.provenance.causes == DependencyCause.direct_ref | DependencyCause.static_range
+
+
+def test_move_node_unconditional_wins_when_merging_onto_existing_edge() -> None:
+    graph = DependencyGraph()
+    _add_leaf(graph, "Sheet1", "A", 1)
+    g_c = intern_guard(Compare(left=CellRef("Sheet1!C3"), op="<", right=Literal(10)))
+    ast = parse_preserving_axes("=A1+C3", anchor="Sheet1!B1")
+    graph.add_node(
+        make_cell_node(
+            "Sheet1",
+            "B",
+            1,
+            formula="=A1+C3",
+            formula_ast=ast,
+            is_leaf=False,
+        )
+    )
+    graph.add_edge("Sheet1!B1", "Sheet1!A1")
+    graph.add_edge("Sheet1!B1", "Sheet1!C3", guard=g_c)
+
+    graph.move_node("Sheet1!A1", "Sheet1!C3")
+
+    assert graph.get_dependencies("Sheet1!B1") == frozenset({"Sheet1!C3"})
+    assert graph.get_edge_guard("Sheet1!B1", "Sheet1!C3") is None

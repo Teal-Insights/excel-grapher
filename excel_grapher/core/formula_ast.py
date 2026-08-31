@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TypeAlias
@@ -661,6 +661,16 @@ def _rebase_cell_ref(ref: CellRef, old_anchor: CellKey | str, new_anchor: CellKe
     return ref if rebased == ref else rebased
 
 
+def _rewritten_call_args(
+    args: tuple[AstNode, ...], walk: Callable[[AstNode], AstNode]
+) -> tuple[AstNode, ...] | None:
+    """Return rewritten function args, or None when every arg is unchanged."""
+    new_args = tuple(walk(arg) for arg in args)
+    if all(a is b for a, b in zip(new_args, args, strict=True)):
+        return None
+    return new_args
+
+
 def rebase_relative_axes(
     node: AstNode,
     *,
@@ -713,8 +723,8 @@ def rebase_relative_axes(
                     return cur
                 return WholeRowNode(sheet=cur.sheet, row=new_axis)
             case FunctionCallNode(name, args):
-                new_args = [walk(arg) for arg in args]
-                if new_args == args:
+                new_args = _rewritten_call_args(args, walk)
+                if new_args is None:
                     return cur
                 return FunctionCallNode(name, new_args)
             case BinaryOpNode(op, left, right):
@@ -776,8 +786,8 @@ def retarget_resolved_refs(
                     return cur
                 return RangeNode(start_ref=new_start, end_ref=new_end)
             case FunctionCallNode(name, args):
-                new_args = [walk(arg) for arg in args]
-                if new_args == args:
+                new_args = _rewritten_call_args(args, walk)
+                if new_args is None:
                     return cur
                 return FunctionCallNode(name, new_args)
             case BinaryOpNode(op, left, right):
@@ -943,8 +953,8 @@ def replace_resolved_cell_ref(
                     return cur
                 return _retarget_whole_row(cur, new_key, anchor)
             case FunctionCallNode(name, args):
-                new_args = [walk(arg) for arg in args]
-                if new_args == args:
+                new_args = _rewritten_call_args(args, walk)
+                if new_args is None:
                     return cur
                 return FunctionCallNode(name, new_args)
             case BinaryOpNode(op, left, right):
