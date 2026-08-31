@@ -1,0 +1,207 @@
+"""Write a `GraphReadView` to a new Excel workbook.
+
+This is workbook I/O next to `create_dependency_graph`, not Python codegen.
+`write_workbook` is an export backend on the same read surface `CodeGenerator`
+already accepts (`DependencyGraph` or `ProjectionResult`).
+"""
+
+from __future__ import annotations
+
+import os
+from datetime import date, datetime
+from pathlib import Path
+
+from fastpyxl import Workbook
+from fastpyxl.worksheet.worksheet import Worksheet
+
+from excel_grapher.core.formula_ast import FormulaStyle, render_formula
+from excel_grapher.core.types import XlError
+
+from .graph import GraphReadView
+from .node import NodeView
+
+
+def write_workbook(
+    graph: GraphReadView,
+    destination: Path | str,
+    *,
+    formula_style: FormulaStyle = FormulaStyle.A1_EXCEL,
+    coerce_relative_refs: bool = False,
+    overwrite: bool = False,
+) -> None:
+    """Write `graph` to a new `.xlsx` at `destination`.
+
+    Accepts any `GraphReadView`: a mutable `DependencyGraph` (the workbook
+    after `set_node_ast` / `set_node_value` / in-place `compress_*`) or a
+    non-mutating `ProjectionResult`. Formula rewriting is an intended
+    write-back use case; compressed or projected views are written as they
+    are. Output contains only sheets and cells from the view. Styles,
+    charts, VBA, defined names, and cells outside the view are omitted
+    (accepted v1 lossiness).
+
+    Formula cells are spelled from current `formula_ast` via `render_formula`
+    (never from the opt-in raw `Node.formula` audit string). Leaves write
+    `node.value`. Formula cells do not receive evaluator-computed cached
+    results.
+
+    Args:
+        graph: Read view whose cells are written.
+        destination: Output path. Parent directories must already exist.
+        formula_style: Reference spelling. Default `A1_EXCEL` keeps `$` on
+            absolute axes and omits the host sheet prefix. `R1C1` is not
+            persisted for normal formula cells (shared-formula emission is a
+            later stage).
+        coerce_relative_refs: If True, bind relative axes to absolute
+            indexes before spelling (`$` on both axes in `A1_EXCEL`).
+        overwrite: If False (default), raise when `destination` exists.
+            The source workbook is never opened or saved.
+
+    Raises:
+        FileExistsError: If `destination` exists and `overwrite` is False.
+        ValueError: If the view is empty, spans multiple sheets without
+            `sheet_order`, a formula cell has no `formula_ast`,
+            `formula_style` is `R1C1`, or a relative axis has no host
+            address.
+    """
+    dest = Path(destination)
+    style = FormulaStyle(formula_style)
+    if style is FormulaStyle.R1C1:
+        raise ValueError(
+            "R1C1 formula style is not persisted for normal formula cells; "
+            "shared-formula emission is a later write-back stage"
+        )
+    if dest.exists() and not overwrite:
+        raise FileExistsError(f"Refusing to overwrite existing file: {dest}")
+    if dest.exists() and dest.is_dir():
+        raise IsADirectoryError(f"Destination is a directory: {dest}")
+    if len(graph) == 0:
+        raise ValueError("Cannot write an empty graph view")
+
+    sheet_names = _ordered_sheet_names(graph)
+    planned = _plan_cells(graph, style=style, coerce_relative_refs=coerce_relative_refs)
+
+    wb = Workbook()
+    tmp: Path | None = None
+    try:
+        sheets = _create_sheets(wb, sheet_names)
+        for sheet_name, coord, value in planned:
+            sheets[sheet_name][coord] = value
+        tmp = dest.with_name(f".{dest.name}.{os.getpid()}.tmp")
+        wb.save(tmp)
+        os.replace(tmp, dest)
+        tmp = None
+    finally:
+        wb.close()
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
+
+
+def _cell_label(node: NodeView, fallback: str) -> str:
+    if node.address is not None:
+        return str(node.address)
+    if node.sheet and node.column and node.row is not None:
+        return f"{node.sheet}!{node.column}{node.row}"
+    return fallback
+
+
+def _ordered_sheet_names(graph: GraphReadView) -> list[str]:
+    present: set[str] = set()
+    for key in graph:
+        node = graph.get_node(key)
+        if node is None:
+            continue
+        if not node.sheet:
+            raise ValueError(f"Cannot write cell {key} without a sheet name")
+        present.add(node.sheet)
+    if not present:
+        raise ValueError("Cannot write an empty graph view")
+
+    order = graph.sheet_order
+    if order:
+        seen: set[str] = set()
+        names: list[str] = []
+        for name in order:
+            if name in present and name not in seen:
+                names.append(name)
+                seen.add(name)
+        names.extend(sorted(present - seen))
+        return names
+    if len(present) > 1:
+        raise ValueError("sheet_order is required when writing a view that spans multiple sheets")
+    return list(present)
+
+
+def _create_sheets(wb: Workbook, sheet_names: list[str]) -> dict[str, Worksheet]:
+    first, *rest = sheet_names
+    active = wb.active
+    if active is None:
+        active = wb.create_sheet(first)
+    else:
+        active.title = first
+    sheets: dict[str, Worksheet] = {first: active}
+    for name in rest:
+        sheets[name] = wb.create_sheet(name)
+    return sheets
+
+
+def _plan_cells(
+    graph: GraphReadView,
+    *,
+    style: FormulaStyle,
+    coerce_relative_refs: bool,
+) -> list[tuple[str, str, object]]:
+    planned: list[tuple[str, str, object]] = []
+    for key in graph:
+        node = graph.get_node(key)
+        if node is None:
+            continue
+        if not node.sheet or not node.column or node.row is None:
+            raise ValueError(f"Cannot write cell {key} without sheet/column/row")
+        coord = f"{node.column}{node.row}"
+        planned.append(
+            (
+                node.sheet,
+                coord,
+                _cell_value(
+                    node,
+                    key=key,
+                    style=style,
+                    coerce_relative_refs=coerce_relative_refs,
+                ),
+            )
+        )
+    return planned
+
+
+def _cell_value(
+    node: NodeView,
+    *,
+    key: str,
+    style: FormulaStyle,
+    coerce_relative_refs: bool,
+) -> object:
+    if node.has_formula:
+        if node.formula_ast is None:
+            raise ValueError(f"Cannot write unparseable formula at {_cell_label(node, key)}")
+        try:
+            return render_formula(
+                node.formula_ast,
+                anchor=node.address,
+                style=style,
+                coerce_relative_refs=coerce_relative_refs,
+            )
+        except ValueError as exc:
+            raise ValueError(f"Cannot render formula at {_cell_label(node, key)}: {exc}") from exc
+    return _excel_leaf_value(node.value, key=_cell_label(node, key))
+
+
+def _excel_leaf_value(value: object, *, key: str) -> object:
+    if value is None:
+        return None
+    if isinstance(value, XlError):
+        return str(value)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float, str, datetime, date)):
+        return value
+    raise ValueError(f"Unsupported leaf value type {type(value).__name__} at {key}")

@@ -68,6 +68,7 @@ from .grapher import (
     validate_graph,
     write_lightweight_viz_data,
     write_web_viz_html,
+    write_workbook,
 )
 from .series_bindings import (
     SeriesBindingsLoadError,
@@ -136,6 +137,7 @@ __all__ = [
     "to_networkx",
     "write_lightweight_viz_data",
     "write_web_viz_html",
+    "write_workbook",
     "validate_graph",
     "save_graph_cache",
     "try_load_graph_cache",

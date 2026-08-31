@@ -146,11 +146,17 @@ Callback contract highlights:
 Identity transit nodes (pure mirrors such as `Outputs!B12 = Engine!C6`) can be collapsed in
 **projected** export artifacts while the canonical workbook graph stays unchanged. Marked
 extract targets (`is_target`) and optional `preserve` keys are not forwarded, matching
-`OptimalCompression`. Pass a `ProjectionResult` to `CodeGenerator` so remaining public
-addresses keep their workbook-facing identity:
+`OptimalCompression`. Pass a `ProjectionResult` to `CodeGenerator` or `write_workbook`
+so remaining public addresses keep their workbook-facing identity. Projection is the
+non-mutating export helper for **both** Python codegen and Excel write-back; in-place
+`compress_*` rewrites `self` and `write_workbook` would persist that rewrite into a
+new `.xlsx`.
 
 ```python
+from pathlib import Path
+
 from excel_grapher.exporter import CodeGenerator, IdentityTransitCompression
+from excel_grapher.grapher import write_workbook
 
 projection = IdentityTransitCompression(
     series_bindings=series_bindings,
@@ -161,6 +167,7 @@ modules = CodeGenerator(projection).generate_modules(
     series_bindings=series_bindings,
     bindings_workbook=workbook_path,
 )
+write_workbook(projection, Path("projected.xlsx"))
 ```
 
 `ProjectionResult` behaves like the projected graph for dependency reads, and exposes
@@ -180,7 +187,8 @@ payload = to_web_viz_payload(to_networkx(projection))
 Projection is an extension point: implement the `ProjectionStep` protocol to build your own
 projected graph (see the contributing guide), and compose steps with `apply_projection`.
 In-place `DependencyGraph.compress_identity_transits()` remains available for destructive
-graph simplification; prefer projections for export and viz workflows.
+graph simplification; prefer projections for Python codegen, Excel write-back, and viz
+workflows.
 
 ## Exported code sketch
 
