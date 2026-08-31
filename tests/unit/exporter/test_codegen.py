@@ -1,6 +1,7 @@
 """Tests for codegen module."""
 
 from collections.abc import Callable
+from types import MappingProxyType
 from typing import cast
 
 import pytest
@@ -698,13 +699,13 @@ class TestCodeGeneratorContextManager:
             ["Sheet1!A1", "Sheet1!A2", "Sheet1!A3", "Sheet1!A4"],
             constant_types={"number", "string"},
         )
-        assert "CONSTANTS = {" in code
+        assert "CONSTANTS = MappingProxyType({" in code
         assert "        (1, 1): 10.0," in code
         assert "        (2, 1): 'hi'," in code
         assert "        (3, 1): 0," in code
         assert "DEFAULT_INPUTS = {" in code
         assert "        (4, 1): True," in code
-        assert code.index("DEFAULT_INPUTS = {") < code.index("CONSTANTS = {")
+        assert code.index("DEFAULT_INPUTS = {") < code.index("CONSTANTS = MappingProxyType({")
 
     def test_generate_constant_ranges_override_types(self):
         graph = _make_graph(
@@ -717,7 +718,7 @@ class TestCodeGeneratorContextManager:
             constant_types={"string"},
             constant_ranges=["Sheet1!A1"],
         )
-        assert "CONSTANTS = {" in code
+        assert "CONSTANTS = MappingProxyType({" in code
         assert "        (1, 1): 10.0," in code
         assert "        (2, 1): 'hi'," in code
         assert "DEFAULT_INPUTS" in code
@@ -733,10 +734,10 @@ class TestCodeGeneratorContextManager:
             constant_types={"number"},
             input_ranges=["Sheet1!A1"],
         )
-        assert "CONSTANTS = {" in code
+        assert "CONSTANTS = MappingProxyType({" in code
         assert "        (2, 1): 20.0," in code
         assert "        (1, 1): 10.0," in code
-        assert code.index("DEFAULT_INPUTS = {") < code.index("CONSTANTS = {")
+        assert code.index("DEFAULT_INPUTS = {") < code.index("CONSTANTS = MappingProxyType({")
 
     def test_generate_input_ranges_override_constant_ranges(self):
         graph = _make_graph(
@@ -751,7 +752,7 @@ class TestCodeGeneratorContextManager:
         )
         assert "        (1, 1): 1.0," in code
         assert "        (2, 1): 2.0," in code
-        assert code.index("DEFAULT_INPUTS = {") < code.index("CONSTANTS = {")
+        assert code.index("DEFAULT_INPUTS = {") < code.index("CONSTANTS = MappingProxyType({")
 
     def test_generate_input_ranges_override_graph_leaf_classification(self):
         graph = _make_graph(
@@ -766,7 +767,7 @@ class TestCodeGeneratorContextManager:
         )
         assert "        (1, 1): 10.0," in code
         assert "        (2, 1): 20.0," in code
-        assert code.index("DEFAULT_INPUTS = {") < code.index("CONSTANTS = {")
+        assert code.index("DEFAULT_INPUTS = {") < code.index("CONSTANTS = MappingProxyType({")
 
     def test_classify_leaf_nodes_input_ranges(self):
         graph = _make_graph(
@@ -792,7 +793,7 @@ class TestCodeGeneratorContextManager:
             ["Sheet1!A1", "Sheet1!A2"],
             constant_blanks=True,
         )
-        assert "CONSTANTS = {" in code
+        assert "CONSTANTS = MappingProxyType({" in code
         assert "        (1, 1): 0," in code
         assert "DEFAULT_INPUTS = {" in code
         assert "        (2, 1): 3.0," in code
@@ -805,7 +806,7 @@ class TestCodeGeneratorContextManager:
         _set_leaf_classification(graph, {"Sheet1!A1": "constant", "Sheet1!A2": "input"})
         gen = CodeGenerator(graph)
         code = gen.generate(["Sheet1!A1", "Sheet1!A2"])
-        assert "CONSTANTS = {" in code
+        assert "CONSTANTS = MappingProxyType({" in code
         assert "        (1, 1): 10.0," in code
         assert "DEFAULT_INPUTS = {" in code
         assert "        (2, 1): 20.0," in code
@@ -821,10 +822,27 @@ class TestCodeGeneratorContextManager:
             ["Sheet1!A1", "Sheet1!A2"],
             constant_types={"number"},
         )
-        assert "CONSTANTS = {" in code
+        assert "CONSTANTS = MappingProxyType({" in code
         assert "        (1, 1): 10.0," in code
         assert "        (2, 1): 20.0," in code
         assert "DEFAULT_INPUTS" in code
+
+    def test_generate_wraps_constants_in_nested_mapping_proxy(self):
+        graph = _make_graph(
+            _make_node("Sheet1!A1", None, 10.0),
+            _make_node("Sheet1!A2", None, 20.0),
+        )
+        code = CodeGenerator(graph).generate(
+            ["Sheet1!A1", "Sheet1!A2"],
+            constant_types={"number"},
+        )
+        assert "from types import MappingProxyType" in code
+        assert "CONSTANTS = MappingProxyType({" in code
+        assert "    'Sheet1': MappingProxyType({" in code
+        assert "        (1, 1): 10.0," in code
+        assert "        (2, 1): 20.0," in code
+        assert "DEFAULT_INPUTS = {" in code
+        assert "DEFAULT_INPUTS = MappingProxyType" not in code
 
     def test_classify_leaf_nodes_attaches_to_graph(self):
         graph = _make_graph(
@@ -1006,6 +1024,34 @@ class TestGeneratedCodeExecution:
 
         with pytest.raises(ValueError, match="Cannot round-trip"):
             make_context(inputs={"A1": 1})
+
+    def test_generated_constants_are_read_only_mapping_proxy(self):
+        graph = _make_graph(
+            _make_node("Sheet1!A1", None, 10.0),
+            _make_node("Sheet1!B1", "=Sheet1!A1*2", None),
+        )
+        code = CodeGenerator(graph).generate(
+            ["Sheet1!B1"],
+            constant_types={"number"},
+        )
+        namespace: dict = {}
+        exec(code, namespace)
+        constants = namespace["CONSTANTS"]
+        assert isinstance(constants, MappingProxyType)
+        assert not isinstance(constants, dict)
+        assert isinstance(constants["Sheet1"], MappingProxyType)
+        assert constants["Sheet1"][(1, 1)] == 10.0
+
+        with pytest.raises(TypeError):
+            constants["Sheet1"] = {}
+        with pytest.raises(TypeError):
+            constants["Sheet1"][(1, 1)] = 99
+        with pytest.raises(AttributeError):
+            constants.update({})  # type: ignore[attr-defined]
+
+        compute_all = namespace["compute_all"]
+        assert compute_all()["Sheet1!B1"] == 20.0
+        assert compute_all(inputs={"Sheet1!A1": 7.0})["Sheet1!B1"] == 14.0
 
     def test_generated_code_caches_formula_results_per_run(self):
         """Generated code should compute formula cells only once per ctx."""

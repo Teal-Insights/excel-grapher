@@ -1,9 +1,10 @@
 """Sparse coordinate store for exported leaf values.
 
-Generated `DEFAULT_INPUTS` / `CONSTANTS` use nested
-`dict[sheet, dict[(row, col), value]]` maps. Public APIs (`make_context`,
-`set_inputs`) still accept NodeKey strings and fail closed when a key cannot
-round-trip to `(sheet, row, col)`.
+Generated `DEFAULT_INPUTS` uses nested `dict[sheet, dict[(row, col), value]]`
+maps. Generated `CONSTANTS` uses the same shape wrapped in `MappingProxyType`
+at both levels so constant leaves are not an overridable input table. Public
+APIs (`make_context`, `set_inputs`) still accept NodeKey strings and fail
+closed when a key cannot round-trip to `(sheet, row, col)`.
 """
 
 from __future__ import annotations

@@ -85,6 +85,9 @@ class GraphNode(Protocol):
     value: object | None
 
 
+_MAPPING_PROXY_IMPORT = "from types import MappingProxyType"
+
+
 def _node_has_formula(node: object) -> bool:
     """Return True when `node` is a formula cell (AST or unparseable text)."""
     has = getattr(node, "has_formula", None)
@@ -94,6 +97,18 @@ def _node_has_formula(node: object) -> bool:
         getattr(node, "formula_ast", None) is not None
         or getattr(node, "normalized_formula", None) is not None
     )
+
+
+def _ensure_mapping_proxy_import(source: str) -> str:
+    """Insert `from types import MappingProxyType` after the `__future__` import."""
+    if _MAPPING_PROXY_IMPORT in source:
+        return source
+    marker = "from __future__ import annotations"
+    idx = source.find(marker)
+    if idx == -1:
+        return f"{_MAPPING_PROXY_IMPORT}\n\n{source}"
+    insert_at = idx + len(marker)
+    return f"{source[:insert_at]}\n\n{_MAPPING_PROXY_IMPORT}{source[insert_at:]}"
 
 
 class GraphLike(Protocol):
@@ -2749,12 +2764,17 @@ class CodeGenerator:
         public_addresses = frozenset(normalized_targets) | series_public_addresses
 
         # Combine: runtime + inputs + formulas + entry point
+        if parts["has_constants"]:
+            runtime_code = _ensure_mapping_proxy_import(runtime_code)
         lines: list[str] = [runtime_code, ""]
 
         lines.extend(parts["inputs_block_lines"])
         if parts["has_constants"]:
             lines.append("")
-            lines.extend(parts["constants_block_lines"])
+            if parts["constants_block_lines"]:
+                lines.extend(parts["constants_block_lines"])
+            else:
+                lines.append("CONSTANTS = MappingProxyType({})")
         lines.append("")
         lines.append("")
 
@@ -2913,6 +2933,8 @@ class CodeGenerator:
         data_lines_out: list[str] = [
             "from __future__ import annotations",
             "",
+            _MAPPING_PROXY_IMPORT,
+            "",
             "# --- Default inputs (leaf cells) ---",
             *parts["inputs_block_lines"][1:],  # drop the comment already included above
             "",
@@ -2920,7 +2942,7 @@ class CodeGenerator:
         if parts["constants_block_lines"]:
             data_lines_out.extend(parts["constants_block_lines"])
         else:
-            data_lines_out.append("CONSTANTS = {}")
+            data_lines_out.append("CONSTANTS = MappingProxyType({})")
         data_lines_out.append("")
         data_py = "\n".join(data_lines_out).rstrip() + "\n"
 
@@ -3546,12 +3568,22 @@ class CodeGenerator:
         if constants:
             constants_lines = [
                 "# --- Constant leaf values ---",
-                *self._emit_leaf_store_lines("CONSTANTS", constants),
+                *self._emit_leaf_store_lines("CONSTANTS", constants, frozen=True),
             ]
         return default_lines, constants_lines
 
-    def _emit_leaf_store_lines(self, name: str, addresses: set[str] | list[str]) -> list[str]:
-        """Emit a nested `sheet -> {(row, col): value}` dict literal."""
+    def _emit_leaf_store_lines(
+        self,
+        name: str,
+        addresses: set[str] | list[str],
+        *,
+        frozen: bool = False,
+    ) -> list[str]:
+        """Emit a nested `sheet -> {(row, col): value}` mapping literal.
+
+        When `frozen` is True, wrap the outer store and each sheet map in
+        `MappingProxyType` so generated `CONSTANTS` fail closed on mutation.
+        """
         by_sheet: dict[str, list[tuple[int, int, str]]] = {}
         for key in addresses:
             node = self.graph.get_node(key)
@@ -3560,15 +3592,22 @@ class CodeGenerator:
             by_sheet.setdefault(sheet, []).append((row, col, self._py_literal(value)))
 
         if not by_sheet:
+            if frozen:
+                return [f"{name} = MappingProxyType({{}})"]
             return [f"{name} = {{}}"]
 
-        lines = [f"{name} = {{"]
+        outer_open = "MappingProxyType({" if frozen else "{"
+        inner_open = "MappingProxyType({" if frozen else "{"
+        inner_close = "})," if frozen else "},"
+        outer_close = "})" if frozen else "}"
+
+        lines = [f"{name} = {outer_open}"]
         for sheet in sorted(by_sheet):
-            lines.append(f"    {sheet!r}: {{")
+            lines.append(f"    {sheet!r}: {inner_open}")
             for row, col, lit in sorted(by_sheet[sheet], key=lambda item: (item[0], item[1])):
                 lines.append(f"        ({row}, {col}): {lit},")
-            lines.append("    },")
-        lines.append("}")
+            lines.append(f"    {inner_close}")
+        lines.append(outer_close)
         return lines
 
     def _leaf_coords(self, key: str, node: object | None) -> tuple[str, int, int]:
