@@ -14,7 +14,7 @@ from fastpyxl.utils.cell import (
 )
 
 from excel_grapher.core.address_keys import format_range_key, parse_address
-from excel_grapher.grapher.parser import format_key
+from excel_grapher.grapher.parser import DEFAULT_MAX_RANGE_CELLS, format_key
 from excel_grapher.grapher.resolver import build_named_range_map
 from excel_grapher.grapher.target_expansion import expand_targets_to_roots
 from excel_grapher.series_bindings.geometry import expand_column_specs, expand_row_specs
@@ -77,14 +77,14 @@ def expand_data_range(
     sheetnames: Sequence[str] | None = None,
     named_ranges: Mapping[str, tuple[str, str]] | None = None,
     named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
-    max_range_cells: int = 5000,
+    max_range_cells: int = DEFAULT_MAX_RANGE_CELLS,
 ) -> list[str]:
     """Expand a binding `data_range` to canonical sheet-qualified cell addresses.
 
     Uses the same target expansion as `create_dependency_graph` (including
     both-end sheet-qualified ranges like `Sheet1!A1:Sheet1!B2`, which collapse
     to single-prefix form, and defined names). Rectangles larger than
-    `max_range_cells` raise `ValueError`.
+    `max_range_cells` (default `DEFAULT_MAX_RANGE_CELLS`) raise `ValueError`.
     """
     # Sheet-qualified targets do not need named-range maps; skip the workbook open.
     nr, nrr, wb_sheets = _resolve_named_range_maps(
@@ -118,7 +118,7 @@ def expand_data_range_for_graph(
     data_range: str,
     *,
     workbook: Path | str | None = None,
-    max_range_cells: int = 5000,
+    max_range_cells: int = DEFAULT_MAX_RANGE_CELLS,
 ) -> list[str]:
     """Expand `data_range` using named-range maps (and optional workbook) from a graph."""
     return expand_data_range(
@@ -169,7 +169,7 @@ def effective_reader_range_address(
     workbook: Path | str | None = None,
     named_ranges: Mapping[str, tuple[str, str]] | None = None,
     named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
-    max_range_cells: int = 5000,
+    max_range_cells: int = DEFAULT_MAX_RANGE_CELLS,
 ) -> str | None:
     """Return the address for `read_*_range`, or None when none should be emitted.
 

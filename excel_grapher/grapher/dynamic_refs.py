@@ -63,7 +63,12 @@ from excel_grapher.core.formula_ast_json import formula_identity_digest
 from excel_grapher.core.range_shorthand import expand_whole_column_deps, expand_whole_row_deps
 from excel_grapher.core.types import ExcelRange, XlError
 
-from .parser import _find_function_calls_with_spans, expand_range, format_key
+from .parser import (
+    DEFAULT_MAX_RANGE_CELLS,
+    _find_function_calls_with_spans,
+    expand_range,
+    format_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -434,7 +439,7 @@ def expand_leaf_env_to_argument_env(
     named_ranges: Mapping[str, tuple[str, str]] | None = None,
     named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
     *,
-    max_range_cells: int = 5000,
+    max_range_cells: int = DEFAULT_MAX_RANGE_CELLS,
     shared_cell_type_cache: dict[str, CellType] | None = None,
     type_analysis_cache: TypeAnalysisCache | None = None,
     workbook_sha256: str | None = None,

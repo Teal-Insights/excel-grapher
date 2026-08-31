@@ -35,6 +35,9 @@ from .guard import And, Compare, GuardExpr, Literal, Not, Or, RangeRef, intern_g
 from .guard import CellRef as GuardCellRef
 from .node import NodeKey
 
+DEFAULT_MAX_RANGE_CELLS = 50_000
+"""Inclusive rectangular expansion budget shared by `max_range_cells` defaults."""
+
 # Re-exported for `from excel_grapher.grapher.parser import format_key, ...`
 format_key = _address_keys.format_key
 normalize_key = _address_keys.normalize_key
