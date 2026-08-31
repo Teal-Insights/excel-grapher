@@ -38,12 +38,21 @@ def write_workbook(
     """Write `graph` to a new `.xlsx` at `destination`.
 
     Accepts any `GraphReadView`: a mutable `DependencyGraph` (the workbook
-    after `set_node_ast` / `set_node_value` / in-place `compress_*`) or a
-    non-mutating `ProjectionResult`. Formula rewriting is an intended
-    write-back use case; compressed or projected views are written as they
-    are. Output contains only sheets and cells from the view. Styles,
-    charts, VBA, and cells outside the view are omitted (accepted v1
-    lossiness).
+    after `set_node_ast` / `set_node_value` / `move_node` / in-place
+    `compress_*`) or a non-mutating `ProjectionResult`. Formula rewriting
+    is an intended write-back use case; compressed or projected views are
+    written as they are. Output contains only sheets and cells from the
+    view. Styles, charts, VBA, and cells outside the view are omitted
+    (accepted v1 lossiness). Vacated `move_node` addresses are simply
+    absent; there is no template to clear.
+
+    Two write orders: move then write persists current keys on this
+    `DependencyGraph` (relatives already rewritten so resolved targets
+    match the pre-move meaning). Project then write exports the projected
+    clone. A `ProjectionResult` is a snapshot from `project()`; a later
+    `move_node` on the original graph does not update it. Re-run
+    projection after geometry edits to include them in a projected
+    workbook.
 
     Formula cells are spelled from current `formula_ast` via `render_formula`
     (never from the opt-in raw `Node.formula` audit string). Defined names are

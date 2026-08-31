@@ -46,8 +46,9 @@ from pathlib import Path
 
 from excel_grapher.grapher import create_dependency_graph, write_workbook
 
-graph = create_dependency_graph(Path("model.xlsx"), ["Sheet1!A10"])
-graph.set_node_value("Sheet1!B1", 42)
+graph = create_dependency_graph(Path("model.xlsx"), ["Sheet1!B2"])
+graph.set_node_value("Sheet1!A1", 42)
+graph.move_node("Sheet1!B2", "Sheet1!C3")
 write_workbook(graph, Path("edited.xlsx"))
 ```
 
@@ -74,8 +75,16 @@ Two workflows share the same write API:
 
 | Workflow | Object | What is written |
 |----------|--------|-----------------|
-| **Mutation** | This `DependencyGraph` *is* the workbook (`set_node_ast`, `set_node_value`, in-place `compress_*`) | Current formulas and values at current keys |
+| **Mutation** | This `DependencyGraph` *is* the workbook (`set_node_ast`, `set_node_value`, `move_node`, in-place `compress_*`) | Current formulas and values at current keys. After `move_node`, `new_key` is written and `old_key` is absent (Excel cut semantics: relatives still resolve to the pre-move targets). |
 | **Projection** | Non-mutating export view (`IdentityTransitCompression().project`) | Projected cells only; collapsed addresses are absent |
+
+**Move then write** vs **project then write**: `move_node` mutates the
+canonical graph; `write_workbook(graph)` persists that geometry.
+`IdentityTransitCompression().project(graph)` copies the graph at that
+moment. A later `move_node` on the original does not update an existing
+`ProjectionResult` — re-run `project()` after geometry edits if the
+projected workbook should include them. Writing a pre-move projection is
+still valid; it exports the pre-move view.
 
 Extraction is a target closure, so styles, charts, VBA, and cells outside
 the view do not appear in the output. That is accepted v1 lossiness.

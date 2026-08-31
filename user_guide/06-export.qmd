@@ -152,6 +152,12 @@ non-mutating export helper for **both** Python codegen and Excel write-back; in-
 `compress_*` rewrites `self` and `write_workbook` would persist that rewrite into a
 new `.xlsx`.
 
+A `ProjectionResult` is a snapshot from `project()`. **Project then write**
+exports that clone. **Move then write** (`write_workbook(graph)` after
+`move_node`) persists the mutated geometry. A later `move_node` on the
+original graph does not update an existing projection; re-run `project()`
+after geometry edits if the projected workbook should include them.
+
 ```python
 from pathlib import Path
 

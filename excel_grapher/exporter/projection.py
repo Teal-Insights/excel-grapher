@@ -595,7 +595,10 @@ class IdentityTransitCompression:
         """Build a non-mutating identity-transit projection for export artifacts.
 
         The result is a `GraphReadView` for Python codegen and Excel
-        write-back (`write_workbook`). `original_graph` is unchanged.
+        write-back (`write_workbook`). `original_graph` is unchanged. The
+        projected clone is a snapshot: a later `move_node` on the original
+        graph does not update it. Re-run `project()` after geometry edits
+        to include them in a projected workbook.
         """
         preserve = set(self._preserve) if self._preserve is not None else set()
         if self._series_bindings is not None:
@@ -647,7 +650,10 @@ class OptimalCompression:
         """Build a non-mutating optimal-compression projection for export artifacts.
 
         The result is a `GraphReadView` for Python codegen and Excel
-        write-back (`write_workbook`). `original_graph` is unchanged.
+        write-back (`write_workbook`). `original_graph` is unchanged. The
+        projected clone is a snapshot: a later `move_node` on the original
+        graph does not update it. Re-run `project()` after geometry edits
+        to include them in a projected workbook.
         """
         preserve = set(self._preserve) if self._preserve is not None else set()
         if self._series_bindings is not None:
