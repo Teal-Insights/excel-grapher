@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v11.2.0 (2026-08-31)
+
+### Features
+
+- **grapher**: Write defined-name table from graph maps
+  ([#574](https://github.com/Teal-Insights/excel-grapher/pull/574),
+  [`cde45de`](https://github.com/Teal-Insights/excel-grapher/commit/cde45dee1629979b11653a88e4ca195fea69a60f))
+
+
 ## v11.1.0 (2026-08-31)
 
 ### Features
