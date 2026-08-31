@@ -681,7 +681,8 @@ class TestCodeGeneratorContextManager:
         code = gen.generate(["Sheet1!C1"])
         # Leaf inputs are data; formulas are functions.
         assert "DEFAULT_INPUTS" in code
-        assert "    'Sheet1!A1': 10.0," in code
+        assert "    'Sheet1': {" in code
+        assert "        (1, 1): 10.0," in code
         assert "def cell_sheet1_b1(ctx):" in code
         assert "def cell_sheet1_c1(ctx):" in code
 
@@ -698,11 +699,11 @@ class TestCodeGeneratorContextManager:
             constant_types={"number", "string"},
         )
         assert "CONSTANTS = {" in code
-        assert "    'Sheet1!A1': 10.0," in code
-        assert "    'Sheet1!A2': 'hi'," in code
-        assert "    'Sheet1!A3': 0," in code
+        assert "        (1, 1): 10.0," in code
+        assert "        (2, 1): 'hi'," in code
+        assert "        (3, 1): 0," in code
         assert "DEFAULT_INPUTS = {" in code
-        assert "    'Sheet1!A4': True," in code
+        assert "        (4, 1): True," in code
         assert code.index("DEFAULT_INPUTS = {") < code.index("CONSTANTS = {")
 
     def test_generate_constant_ranges_override_types(self):
@@ -717,8 +718,8 @@ class TestCodeGeneratorContextManager:
             constant_ranges=["Sheet1!A1"],
         )
         assert "CONSTANTS = {" in code
-        assert "    'Sheet1!A1': 10.0," in code
-        assert "    'Sheet1!A2': 'hi'," in code
+        assert "        (1, 1): 10.0," in code
+        assert "        (2, 1): 'hi'," in code
         assert "DEFAULT_INPUTS" in code
 
     def test_generate_input_ranges_override_constant_types(self):
@@ -733,8 +734,8 @@ class TestCodeGeneratorContextManager:
             input_ranges=["Sheet1!A1"],
         )
         assert "CONSTANTS = {" in code
-        assert "    'Sheet1!A2': 20.0," in code
-        assert "    'Sheet1!A1': 10.0," in code
+        assert "        (2, 1): 20.0," in code
+        assert "        (1, 1): 10.0," in code
         assert code.index("DEFAULT_INPUTS = {") < code.index("CONSTANTS = {")
 
     def test_generate_input_ranges_override_constant_ranges(self):
@@ -748,8 +749,8 @@ class TestCodeGeneratorContextManager:
             constant_ranges=["Sheet1!A1:A2"],
             input_ranges=["Sheet1!A1"],
         )
-        assert "    'Sheet1!A1': 1.0," in code
-        assert "    'Sheet1!A2': 2.0," in code
+        assert "        (1, 1): 1.0," in code
+        assert "        (2, 1): 2.0," in code
         assert code.index("DEFAULT_INPUTS = {") < code.index("CONSTANTS = {")
 
     def test_generate_input_ranges_override_graph_leaf_classification(self):
@@ -763,8 +764,8 @@ class TestCodeGeneratorContextManager:
             ["Sheet1!A1", "Sheet1!A2"],
             input_ranges=["Sheet1!A1"],
         )
-        assert "    'Sheet1!A1': 10.0," in code
-        assert "    'Sheet1!A2': 20.0," in code
+        assert "        (1, 1): 10.0," in code
+        assert "        (2, 1): 20.0," in code
         assert code.index("DEFAULT_INPUTS = {") < code.index("CONSTANTS = {")
 
     def test_classify_leaf_nodes_input_ranges(self):
@@ -792,9 +793,9 @@ class TestCodeGeneratorContextManager:
             constant_blanks=True,
         )
         assert "CONSTANTS = {" in code
-        assert "    'Sheet1!A1': 0," in code
+        assert "        (1, 1): 0," in code
         assert "DEFAULT_INPUTS = {" in code
-        assert "    'Sheet1!A2': 3.0," in code
+        assert "        (2, 1): 3.0," in code
 
     def test_generate_uses_graph_leaf_classification_by_default(self):
         graph = _make_graph(
@@ -805,9 +806,9 @@ class TestCodeGeneratorContextManager:
         gen = CodeGenerator(graph)
         code = gen.generate(["Sheet1!A1", "Sheet1!A2"])
         assert "CONSTANTS = {" in code
-        assert "    'Sheet1!A1': 10.0," in code
+        assert "        (1, 1): 10.0," in code
         assert "DEFAULT_INPUTS = {" in code
-        assert "    'Sheet1!A2': 20.0," in code
+        assert "        (2, 1): 20.0," in code
 
     def test_generate_kwargs_override_graph_leaf_classification(self):
         graph = _make_graph(
@@ -821,8 +822,8 @@ class TestCodeGeneratorContextManager:
             constant_types={"number"},
         )
         assert "CONSTANTS = {" in code
-        assert "    'Sheet1!A1': 10.0," in code
-        assert "    'Sheet1!A2': 20.0," in code
+        assert "        (1, 1): 10.0," in code
+        assert "        (2, 1): 20.0," in code
         assert "DEFAULT_INPUTS" in code
 
     def test_classify_leaf_nodes_attaches_to_graph(self):
@@ -900,8 +901,8 @@ class TestCodeGeneratorContextManager:
         )
         gen = CodeGenerator(graph)
         code = gen.generate(["Sheet1!C1"])
-        # A1 is referenced by both B1 and C1, but should only have one DEFAULT_INPUTS entry
-        assert code.count("    'Sheet1!A1':") == 1
+        # A1 is referenced by both B1 and C1, but should only have one leaf store entry
+        assert code.count("        (1, 1):") == 1
 
 
 class TestGenerateNamedRanges:
@@ -985,6 +986,26 @@ class TestGeneratedCodeExecution:
 
         assert compute_all()["Sheet1!B1"] == 20.0
         assert compute_all(inputs={"Sheet1!A1": 7.0})["Sheet1!B1"] == 14.0
+
+    def test_generated_default_inputs_are_coordinate_store(self):
+        graph = _make_graph(
+            _make_node("Sheet1!A1", None, 10.0),
+            _make_node("Sheet1!B2", None, 20.0),
+        )
+        code = CodeGenerator(graph).generate(["Sheet1!A1", "Sheet1!B2"])
+        namespace: dict = {}
+        exec(code, namespace)
+        default_inputs = namespace["DEFAULT_INPUTS"]
+        assert default_inputs == {"Sheet1": {(1, 1): 10.0, (2, 2): 20.0}}
+        assert "Sheet1!A1" not in default_inputs
+
+        make_context = namespace["make_context"]
+        ctx = make_context()
+        assert ctx.inputs["Sheet1!A1"] == 10.0
+        assert ctx.leaves["Sheet1"][(1, 1)] == 10.0
+
+        with pytest.raises(ValueError, match="Cannot round-trip"):
+            make_context(inputs={"A1": 1})
 
     def test_generated_code_caches_formula_results_per_run(self):
         """Generated code should compute formula cells only once per ctx."""

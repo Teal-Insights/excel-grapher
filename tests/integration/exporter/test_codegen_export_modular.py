@@ -143,11 +143,11 @@ def test_codegen_generate_modules_splits_constants(tmp_path: Path) -> None:
     assert "CONSTANTS = {" in data_py
     inputs_section, _, constants_section = data_py.partition("CONSTANTS = {")
     assert "DEFAULT_INPUTS = {" in inputs_section
-    assert "Sheet1!A2" in inputs_section
-    assert "Sheet1!A1" not in inputs_section
-    assert "Sheet1!A1" in constants_section
-    assert "Sheet1!A3" in constants_section
-    assert "merged.update(CONSTANTS)" in api_py
+    assert "(2, 1): 'hi'" in inputs_section
+    assert "(1, 1): 10.0" not in inputs_section
+    assert "(1, 1): 10.0" in constants_section
+    assert "(3, 1): 5.0" in constants_section
+    assert "prepare_context_inputs(DEFAULT_INPUTS, CONSTANTS, inputs)" in api_py
 
 
 def test_codegen_generate_modules_constant_blanks(tmp_path: Path) -> None:
@@ -164,10 +164,10 @@ def test_codegen_generate_modules_constant_blanks(tmp_path: Path) -> None:
 
     assert "CONSTANTS = {" in data_py
     inputs_section, _, constants_section = data_py.partition("CONSTANTS = {")
-    assert "Sheet1!A2" in inputs_section
-    assert "Sheet1!A1" not in inputs_section
-    assert "Sheet1!A1" in constants_section
-    assert "merged.update(CONSTANTS)" in api_py
+    assert "(2, 1): 7.0" in inputs_section
+    assert "(1, 1): 0" not in inputs_section
+    assert "(1, 1): 0," in constants_section
+    assert "prepare_context_inputs(DEFAULT_INPUTS, CONSTANTS, inputs)" in api_py
 
 
 def test_codegen_generate_modules_has_no_ty_or_ruff_diagnostics(tmp_path: Path) -> None:

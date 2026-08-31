@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import cast
 
+import pytest
+
 from excel_grapher.core import CellValue
 from excel_grapher.exporter.embed import emit_runtime, runtime_cache_seed_symbols
 from excel_grapher.runtime.cache import EvalContext, coerce_inputs_dict, xl_cell
@@ -95,6 +97,13 @@ def test_library_eval_context_retains_dep_tracking_after_split() -> None:
     ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _address: None)
     ctx.set_inputs({"S!A1": 1.0})
     assert ctx.inputs["S!A1"] == 1.0
+
+
+def test_set_inputs_fails_closed_on_unparseable_key() -> None:
+    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _address: None)
+    with pytest.raises(ValueError, match="Cannot round-trip"):
+        ctx.set_inputs({"A1": 1.0})
+    assert "A1" not in ctx.inputs
 
 
 def test_library_xl_cell_still_records_dependencies() -> None:

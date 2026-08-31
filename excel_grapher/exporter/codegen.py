@@ -15,6 +15,7 @@ import fastpyxl.utils.cell
 from excel_grapher.core.address_keys import (
     format_range_key,
     parse_address,
+    parse_cell_coords,
     quote_sheet_if_needed,
     sort_node_keys,
 )
@@ -2769,14 +2770,13 @@ class CodeGenerator:
         # Generate entry point helpers
         lines.append("def make_context(inputs: dict[str, object] | None = None) -> EvalContext:")
         lines.append('    """Create an EvalContext with merged inputs."""')
-        lines.append("    merged: dict[str, object] = dict(DEFAULT_INPUTS)")
         if parts["has_constants"]:
-            lines.append("    merged.update(CONSTANTS)")
-        lines.append("    if inputs is not None:")
-        lines.append("        merged.update(inputs)")
+            lines.append("    merged = prepare_context_inputs(DEFAULT_INPUTS, CONSTANTS, inputs)")
+        else:
+            lines.append("    merged = prepare_context_inputs(DEFAULT_INPUTS, None, inputs)")
         lines.append(
             "    return EvalContext("
-            "inputs=coerce_inputs_dict(merged), resolver=_resolve_formula, "
+            "inputs=merged, resolver=_resolve_formula, "
             f"iterative_enabled={bool(self._iterate_enabled)}, "
             f"iterate_count={int(self._iterate_count)}, "
             f"iterate_delta={float(self._iterate_delta)!r})"
@@ -3084,13 +3084,10 @@ class CodeGenerator:
         api_body_lines: list[str] = [
             "def make_context(inputs: dict[str, object] | None = None) -> EvalContext:",
             '    """Create an EvalContext with merged inputs."""',
-            "    merged: dict[str, object] = dict(DEFAULT_INPUTS)",
-            "    merged.update(CONSTANTS)",
-            "    if inputs is not None:",
-            "        merged.update(inputs)",
+            "    merged = prepare_context_inputs(DEFAULT_INPUTS, CONSTANTS, inputs)",
             (
                 "    return EvalContext("
-                "inputs=coerce_inputs_dict(merged), resolver=_resolve_formula, "
+                "inputs=merged, resolver=_resolve_formula, "
                 f"iterative_enabled={bool(self._iterate_enabled)}, "
                 f"iterate_count={int(self._iterate_count)}, "
                 f"iterate_delta={float(self._iterate_delta)!r})"
@@ -3104,7 +3101,7 @@ class CodeGenerator:
             *compute_all_lines,
         ]
         api_body_text = "\n".join(api_body_lines)
-        runtime_entry_names = ["EvalContext", "coerce_inputs_dict"]
+        runtime_entry_names = ["EvalContext", "prepare_context_inputs"]
         # TARGETS may reference handlers by name (`xl_cell`, `xl_range_rows`) without a call.
         if re.search(r"\bxl_cell\b", api_body_text):
             runtime_entry_names.append("xl_cell")
@@ -3354,6 +3351,7 @@ class CodeGenerator:
         runtime_symbols = set(used_xl_functions) | {
             "EvalContext",
             "coerce_inputs_dict",
+            "prepare_context_inputs",
             "xl_cell",
             "xl_eval",
             "xl_raise",
@@ -3524,9 +3522,6 @@ class CodeGenerator:
         include_constants: bool,
         input_ranges: list[tuple[str, int, int, int, int]],
     ) -> tuple[list[str], list[str]]:
-        default_lines: list[str] = []
-        default_lines.append("# --- Default inputs (leaf cells) ---")
-        default_lines.append("DEFAULT_INPUTS = {")
         needed_leaves = self._collect_needed_leaves(all_cells)
 
         if include_constants:
@@ -3543,23 +3538,51 @@ class CodeGenerator:
                 needed_leaves, constants, input_ranges
             )
 
-        for key in sorted(inputs):
-            node = self.graph.get_node(key)
-            value = 0 if node is None else node.value
-            default_lines.append(f"    {repr(key)}: {self._py_literal(value)},")
-        default_lines.append("}")
-
+        default_lines = [
+            "# --- Default inputs (leaf cells) ---",
+            *self._emit_leaf_store_lines("DEFAULT_INPUTS", inputs),
+        ]
         constants_lines: list[str] = []
         if constants:
-            constants_lines.append("# --- Constant leaf values ---")
-            constants_lines.append("CONSTANTS = {")
-            for key in sorted(constants):
-                node = self.graph.get_node(key)
-                value = 0 if node is None else node.value
-                constants_lines.append(f"    {repr(key)}: {self._py_literal(value)},")
-            constants_lines.append("}")
-
+            constants_lines = [
+                "# --- Constant leaf values ---",
+                *self._emit_leaf_store_lines("CONSTANTS", constants),
+            ]
         return default_lines, constants_lines
+
+    def _emit_leaf_store_lines(self, name: str, addresses: set[str] | list[str]) -> list[str]:
+        """Emit a nested `sheet -> {(row, col): value}` dict literal."""
+        by_sheet: dict[str, list[tuple[int, int, str]]] = {}
+        for key in addresses:
+            node = self.graph.get_node(key)
+            value = 0 if node is None else node.value
+            sheet, row, col = self._leaf_coords(key, node)
+            by_sheet.setdefault(sheet, []).append((row, col, self._py_literal(value)))
+
+        if not by_sheet:
+            return [f"{name} = {{}}"]
+
+        lines = [f"{name} = {{"]
+        for sheet in sorted(by_sheet):
+            lines.append(f"    {sheet!r}: {{")
+            for row, col, lit in sorted(by_sheet[sheet], key=lambda item: (item[0], item[1])):
+                lines.append(f"        ({row}, {col}): {lit},")
+            lines.append("    },")
+        lines.append("}")
+        return lines
+
+    def _leaf_coords(self, key: str, node: object | None) -> tuple[str, int, int]:
+        """Resolve a leaf address to `(sheet, row, col)`."""
+        if node is not None:
+            sheet = getattr(node, "sheet", None)
+            row = getattr(node, "row", None)
+            column_index = getattr(node, "column_index", None)
+            if isinstance(sheet, str) and isinstance(row, int) and isinstance(column_index, int):
+                return sheet, row, column_index
+            column = getattr(node, "column", None)
+            if isinstance(sheet, str) and isinstance(row, int) and isinstance(column, str):
+                return sheet, row, int(fastpyxl.utils.cell.column_index_from_string(column))
+        return parse_cell_coords(key)
 
     def _emit_offset_cell_table_lines(self, all_cells: list[str]) -> list[str]:
         lines: list[str] = []

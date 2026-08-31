@@ -74,6 +74,7 @@ _RUNTIME_MODULES: list[tuple[str, Path]] = [
     ("lookup", _RUNTIME_DIR / "lookup.py"),
     ("reference", _RUNTIME_DIR / "reference.py"),
     ("offset_runtime", _RUNTIME_DIR / "offset_runtime.py"),
+    ("leaves", _RUNTIME_DIR / "leaves.py"),
     ("cache_context", _RUNTIME_DIR / "cache_context.py"),
     ("cache_eval_slim", _RUNTIME_DIR / "cache_eval_slim.py"),
     ("cache", _RUNTIME_DIR / "cache.py"),
@@ -392,6 +393,7 @@ def runtime_cache_seed_symbols(*, include_dep_tracking: bool) -> set[str]:
     symbols = {
         "EvalContext",
         "coerce_inputs_dict",
+        "prepare_context_inputs",
         "xl_cell",
         "xl_eval",
         "xl_range",

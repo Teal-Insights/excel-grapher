@@ -151,6 +151,17 @@ def _parse_a1_cell(cell: str) -> tuple[str, int]:
     return str(column).upper(), int(row)
 
 
+def parse_cell_coords(address: str) -> tuple[str, int, int]:
+    """Parse a sheet-qualified A1 cell into `(sheet, row, col)` (1-based).
+
+    Raises:
+        ValueError: If `address` is not a sheet-qualified single cell.
+    """
+    sheet, cell = parse_address(address)
+    col_letters, row = _parse_a1_cell(cell)
+    return sheet, row, int(column_index_from_string(col_letters))
+
+
 def _ordered_columns(left: str, right: str) -> tuple[str, str]:
     """Return two column letters ordered from left to right."""
     left_u = left.upper()

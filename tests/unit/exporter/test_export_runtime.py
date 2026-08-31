@@ -81,6 +81,27 @@ def test_range_row_and_column_views_preserve_laziness() -> None:
     assert calls == ["S!C2", "S!A3"]
 
 
+def test_range_coord_resolver_skips_address_construction() -> None:
+    """Leaf rectangles resolve `(row, col)` without building NodeKey strings."""
+    address_calls: list[str] = []
+    coord_calls: list[tuple[int, int]] = []
+
+    def resolve(address: str) -> CellValue:
+        address_calls.append(address)
+        raise AssertionError(f"address resolver should not run, got {address}")
+
+    def resolve_coord(row: int, col: int) -> CellValue:
+        coord_calls.append((row, col))
+        return row * 10 + col
+
+    rng = Range("S", 1, 1, 2, 2, resolve, _coord_resolver=resolve_coord)
+    assert rng.cell(1, 2) == 12
+    assert rng.value_at(2, 1) == 21
+    assert rng.row(1).cell(1, 1) == 11
+    assert address_calls == []
+    assert coord_calls == [(1, 2), (2, 1), (1, 1)]
+
+
 def test_xl_isnumber_istext_thunks_return_false_for_errors() -> None:
     """Thunked ISNUMBER/ISTEXT catch raised errors and reject XlError sentinels."""
     assert xl_isnumber(lambda: xl_raise(XlError.DIV)) is False

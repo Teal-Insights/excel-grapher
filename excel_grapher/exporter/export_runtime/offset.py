@@ -11,6 +11,7 @@ from excel_grapher.core.address_keys import format_cell_key
 from excel_grapher.core.addressing import index_excel_range, offset_range
 from excel_grapher.core.types import XlErrorException
 from excel_grapher.runtime.cache import EvalContext, _parse_range_address, xl_cell
+from excel_grapher.runtime.leaves import MISSING, leaf
 
 from .ranges import Range
 from .values import CellValue, ExcelRange, Scalar, as_scalar
@@ -47,7 +48,13 @@ def _ctx_range(ctx: EvalContext, sheet: str, r1: int, c1: int, r2: int, c2: int)
     def resolve(address: str):
         return xl_cell(ctx, address)
 
-    return Range(sheet, r1, c1, r2, c2, resolve)
+    def resolve_coord(row: int, col: int):
+        found = leaf(ctx.leaves, sheet, row, col)
+        if found is not MISSING:
+            return found
+        return xl_cell(ctx, _format_address(sheet, row, col))
+
+    return Range(sheet, r1, c1, r2, c2, resolve, _coord_resolver=resolve_coord)
 
 
 def _range_from_ref_info(ref: ExcelRange | OffsetRefInfo) -> ExcelRange:
