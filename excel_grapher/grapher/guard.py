@@ -6,7 +6,13 @@ from weakref import WeakValueDictionary
 
 from fastpyxl.utils.cell import column_index_from_string, get_column_letter
 
-from excel_grapher.core.address_keys import RangeKey, format_cell_key
+from excel_grapher.core.address_keys import (
+    CellKey,
+    RangeKey,
+    format_cell_key,
+    format_range_key,
+    parse_node_key,
+)
 
 from .node import NodeKey
 
@@ -354,6 +360,90 @@ def or_guard(a: GuardExpr, b: GuardExpr) -> GuardExpr:
     else:
         ops.append(b)
     return intern_guard(Or(tuple(ops)))
+
+
+def _rewrite_range_ref_key(key: NodeKey, old_key: NodeKey, new_key: NodeKey) -> NodeKey:
+    """Rewrite bounding-box corners of a range key; interior occupancy is ignored."""
+    try:
+        rk = key if isinstance(key, RangeKey) else RangeKey(str(key))
+        start = format_cell_key(rk.sheet, rk.min_col, rk.min_row)
+        end = format_cell_key(rk.sheet, rk.max_col, rk.max_row)
+    except ValueError:
+        return key
+    if start != old_key and end != old_key:
+        return key
+    dest = parse_node_key(str(new_key))
+    if not isinstance(dest, CellKey):
+        raise ValueError(
+            f"range guard endpoint rewrite requires a cell destination, got {new_key!r}"
+        )
+    start_sheet, start_col, start_row = rk.sheet, rk.min_col, rk.min_row
+    end_sheet, end_col, end_row = rk.sheet, rk.max_col, rk.max_row
+    if start == old_key:
+        start_sheet, start_col, start_row = dest.sheet, dest.column, dest.row
+    if end == old_key:
+        end_sheet, end_col, end_row = dest.sheet, dest.column, dest.row
+    if start_sheet != end_sheet:
+        raise ValueError(
+            f"rewriting range guard {key} would split sheets ({start_sheet!r} vs {end_sheet!r})"
+        )
+    return format_range_key(start_sheet, f"{start_col}{start_row}", f"{end_col}{end_row}")
+
+
+def rewrite_guard_keys(expr: GuardExpr, old_key: NodeKey, new_key: NodeKey) -> GuardExpr:
+    """Replace `old_key` with `new_key` in cell refs and range endpoints.
+
+    Interior occupancy of a `RangeRef` is not a rewrite site: only bounding-box
+    corners that equal `old_key` change. Composite nodes are rebuilt and interned.
+
+    Args:
+        expr: Guard tree to rewrite.
+        old_key: Cell key to replace.
+        new_key: Replacement cell key.
+
+    Returns:
+        Interned guard; `expr` when no cell or range-endpoint key changed.
+
+    Raises:
+        ValueError: If rewriting a `RangeRef` would split it across sheets.
+    """
+    if old_key == new_key:
+        return intern_guard(expr)
+
+    def walk(node: GuardExpr) -> GuardExpr:
+        if isinstance(node, CellRef):
+            if node.key != old_key:
+                return intern_guard(node)
+            return intern_guard(CellRef(new_key))
+        if isinstance(node, RangeRef):
+            rewritten = _rewrite_range_ref_key(node.key, old_key, new_key)
+            if rewritten == node.key:
+                return intern_guard(node)
+            return intern_guard(RangeRef(rewritten))
+        if isinstance(node, Compare):
+            left = walk(node.left)
+            right = walk(node.right)
+            if left is node.left and right is node.right:
+                return intern_guard(node)
+            return intern_guard(Compare(left=left, op=node.op, right=right))
+        if isinstance(node, Not):
+            operand = walk(node.operand)
+            if operand is node.operand:
+                return intern_guard(node)
+            return intern_guard(Not(operand=operand))
+        if isinstance(node, And):
+            ops = tuple(walk(o) for o in node.operands)
+            if all(a is b for a, b in zip(ops, node.operands, strict=True)):
+                return intern_guard(node)
+            return intern_guard(And(ops))
+        if isinstance(node, Or):
+            ops = tuple(walk(o) for o in node.operands)
+            if all(a is b for a, b in zip(ops, node.operands, strict=True)):
+                return intern_guard(node)
+            return intern_guard(Or(ops))
+        return intern_guard(node)
+
+    return walk(expr)
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TypeAlias
@@ -644,6 +644,169 @@ def _retarget_cell_ref(ref: CellRef, new_key: str, anchor: CellKey | str) -> Cel
     )
 
 
+def _rebase_axis(axis: AxisRef, old_base: int, new_base: int) -> AxisRef:
+    if isinstance(axis, AbsoluteAxis) or old_base == new_base:
+        return axis
+    return RelativeAxis(axis.offset + old_base - new_base)
+
+
+def _rebase_cell_ref(ref: CellRef, old_anchor: CellKey | str, new_anchor: CellKey | str) -> CellRef:
+    old_col, old_row = _anchor_axis_bases(old_anchor)
+    new_col, new_row = _anchor_axis_bases(new_anchor)
+    rebased = CellRef(
+        sheet=ref.sheet,
+        col=_rebase_axis(ref.col, old_col, new_col),
+        row=_rebase_axis(ref.row, old_row, new_row),
+    )
+    return ref if rebased == ref else rebased
+
+
+def _rewritten_call_args(
+    args: tuple[AstNode, ...], walk: Callable[[AstNode], AstNode]
+) -> tuple[AstNode, ...] | None:
+    """Return rewritten function args, or None when every arg is unchanged."""
+    new_args = tuple(walk(arg) for arg in args)
+    if all(a is b for a, b in zip(new_args, args, strict=True)):
+        return None
+    return new_args
+
+
+def rebase_relative_axes(
+    node: AstNode,
+    *,
+    old_anchor: CellKey | str,
+    new_anchor: CellKey | str,
+) -> AstNode:
+    """Rewrite relative axes so resolved targets stay put when the host moves.
+
+    Absolute axes are unchanged. After this rewrite,
+    `resolve_cell_ref(ref, new_anchor)` equals the pre-move
+    `resolve_cell_ref(ref, old_anchor)` for every cell, range endpoint,
+    whole-column, and whole-row leaf.
+
+    Args:
+        node: Formula AST owned by the cell that is moving.
+        old_anchor: Host cell before the move.
+        new_anchor: Host cell after the move.
+
+    Returns:
+        A new tree when any relative axis changed; otherwise `node`.
+    """
+    old_key = _coerce_anchor_key(old_anchor)
+    new_key = _coerce_anchor_key(new_anchor)
+    if old_key is None or new_key is None:
+        raise ValueError("rebasing relative axes requires old and new anchor cells")
+    if old_key == new_key:
+        return node
+    old_col, old_row = _anchor_axis_bases(old_key)
+    new_col, new_row = _anchor_axis_bases(new_key)
+
+    def walk(cur: AstNode) -> AstNode:
+        match cur:
+            case CellRefNode(ref):
+                rebased = _rebase_cell_ref(ref, old_key, new_key)
+                return cur if rebased is ref else CellRefNode(rebased)
+            case RangeNode(start_ref, end_ref):
+                new_start = _rebase_cell_ref(start_ref, old_key, new_key)
+                new_end = _rebase_cell_ref(end_ref, old_key, new_key)
+                if new_start is start_ref and new_end is end_ref:
+                    return cur
+                return RangeNode(start_ref=new_start, end_ref=new_end)
+            case WholeColumnNode():
+                new_axis = _rebase_axis(cur.col, old_col, new_col)
+                if new_axis is cur.col:
+                    return cur
+                return WholeColumnNode(sheet=cur.sheet, col=new_axis)
+            case WholeRowNode():
+                new_axis = _rebase_axis(cur.row, old_row, new_row)
+                if new_axis is cur.row:
+                    return cur
+                return WholeRowNode(sheet=cur.sheet, row=new_axis)
+            case FunctionCallNode(name, args):
+                new_args = _rewritten_call_args(args, walk)
+                if new_args is None:
+                    return cur
+                return FunctionCallNode(name, new_args)
+            case BinaryOpNode(op, left, right):
+                new_left = walk(left)
+                new_right = walk(right)
+                if new_left is left and new_right is right:
+                    return cur
+                return BinaryOpNode(op, new_left, new_right)
+            case UnaryOpNode(op, operand):
+                new_operand = walk(operand)
+                if new_operand is operand:
+                    return cur
+                return UnaryOpNode(op, new_operand)
+            case _:
+                return cur
+
+    return walk(node)
+
+
+def retarget_resolved_refs(
+    node: AstNode,
+    *,
+    old_key: str,
+    new_key: str,
+    anchor: CellKey | str,
+) -> AstNode:
+    """Point cell refs and range endpoints that resolve to `old_key` at `new_key`.
+
+    Whole-column and whole-row leaves are left unchanged (`move_node` cut
+    semantics: `A:A` is not a reference to cell `A1`). Matching cell and range
+    leaves keep each axis's relative/absolute kind. Use
+    `replace_resolved_cell_ref` when whole-column/row leaves should follow the
+    cell's column or row.
+
+    Args:
+        node: Formula AST to rewrite.
+        old_key: Canonical sheet-qualified address to match after resolution.
+        new_key: Replacement address.
+        anchor: Host cell used to resolve relative axes and retarget offsets.
+
+    Returns:
+        A new tree when any leaf changed; otherwise `node`.
+    """
+
+    def walk(cur: AstNode) -> AstNode:
+        match cur:
+            case CellRefNode(ref):
+                if resolve_cell_ref(ref, anchor) == old_key:
+                    return CellRefNode(_retarget_cell_ref(ref, new_key, anchor))
+                return cur
+            case RangeNode(start_ref, end_ref):
+                new_start = start_ref
+                new_end = end_ref
+                if resolve_cell_ref(start_ref, anchor) == old_key:
+                    new_start = _retarget_cell_ref(start_ref, new_key, anchor)
+                if resolve_cell_ref(end_ref, anchor) == old_key:
+                    new_end = _retarget_cell_ref(end_ref, new_key, anchor)
+                if new_start is start_ref and new_end is end_ref:
+                    return cur
+                return RangeNode(start_ref=new_start, end_ref=new_end)
+            case FunctionCallNode(name, args):
+                new_args = _rewritten_call_args(args, walk)
+                if new_args is None:
+                    return cur
+                return FunctionCallNode(name, new_args)
+            case BinaryOpNode(op, left, right):
+                new_left = walk(left)
+                new_right = walk(right)
+                if new_left is left and new_right is right:
+                    return cur
+                return BinaryOpNode(op, new_left, new_right)
+            case UnaryOpNode(op, operand):
+                new_operand = walk(operand)
+                if new_operand is operand:
+                    return cur
+                return UnaryOpNode(op, new_operand)
+            case _:
+                return cur
+
+    return walk(node)
+
+
 def _whole_column_matches_cell_key(node: WholeColumnNode, key: str, anchor: CellKey | str) -> bool:
     parts = _cell_key_parts(key)
     if parts is None:
@@ -790,8 +953,8 @@ def replace_resolved_cell_ref(
                     return cur
                 return _retarget_whole_row(cur, new_key, anchor)
             case FunctionCallNode(name, args):
-                new_args = [walk(arg) for arg in args]
-                if new_args == args:
+                new_args = _rewritten_call_args(args, walk)
+                if new_args is None:
                     return cur
                 return FunctionCallNode(name, new_args)
             case BinaryOpNode(op, left, right):

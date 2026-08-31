@@ -375,6 +375,23 @@ class FormulaShapeTable:
             return None
         return shape_key, skeleton, params
 
+    def drop_binding(self, node_key: str) -> None:
+        """Remove the parameter binding for `node_key` if present."""
+        self.bindings.pop(node_key, None)
+
+    def rebind(self, node_key: str, formula_or_ast: str | AstNode) -> None:
+        """Intern `formula_or_ast` as the binding for `node_key`."""
+        shape = fingerprint_formula_shape(formula_or_ast)
+        self.shapes.setdefault(shape.shape_key, shape.skeleton)
+        self.bindings[node_key] = (shape.shape_key, shape.params)
+
+    def prune_unused_shapes(self) -> None:
+        """Drop skeletons that no remaining binding references."""
+        used = {shape_key for shape_key, _params in self.bindings.values()}
+        for shape_key in list(self.shapes):
+            if shape_key not in used:
+                del self.shapes[shape_key]
+
 
 def intern_formula_shapes(
     items: Iterable[tuple[str, str | AstNode]],

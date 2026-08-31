@@ -11,7 +11,9 @@ if TYPE_CHECKING:
     from .compression import IdentityTransitCompressionRecord, OptimalCompressionRecord
 
 from excel_grapher.core.address_keys import (
+    CellKey,
     normalize_key,
+    parse_node_key,
     sort_node_keys,
 )
 from excel_grapher.core.formula_ast import (
@@ -19,7 +21,9 @@ from excel_grapher.core.formula_ast import (
     bind_axes,
     parse_optional,
     parse_preserving_axes_optional,
+    rebase_relative_axes,
     replace_resolved_cell_ref,
+    retarget_resolved_refs,
     unparse_normalized_formula,
 )
 from excel_grapher.core.formula_shape import FormulaShapeTable
@@ -36,6 +40,7 @@ from .guard import (
     Or,
     intern_guard,
     or_guard,
+    rewrite_guard_keys,
 )
 from .node import Node, NodeKey, NodeView, copy_node, node_to_view
 
@@ -48,6 +53,19 @@ NodeHook = Callable[[NodeKey, Node], None]
 EdgeKey = tuple[NodeKey, NodeKey]
 
 _PICKLE_VERSION = 4
+
+
+def _or_merge_optional_guards(parts: list[GuardExpr | None]) -> GuardExpr | None:
+    """OR-merge guards; `None` (unconditional) wins, matching `add_edge`."""
+    if not parts:
+        return None
+    merged = parts[0]
+    for part in parts[1:]:
+        if merged is None or part is None:
+            merged = None
+        elif merged != part:
+            merged = or_guard(merged, part)
+    return intern_guard(merged) if merged is not None else None
 
 
 @dataclass(frozen=True)
@@ -510,6 +528,187 @@ class DependencyGraph:
         self._nodes.pop(nk, None)
         self._edges.pop(nk, None)
         self._reverse_edges.pop(nk, None)
+
+    def move_node(self, old_key: NodeKey, new_key: NodeKey) -> None:
+        """Move a node to a new cell, preserving resolved formula targets.
+
+        Excel cut/move: relative axes on the moved host are rewritten so they
+        still resolve to the same cells against `new_key`. Dependents that
+        resolved to `old_key` are rewritten to resolve to `new_key`. Absolute
+        axes keep their kind. `normalized_formula` is a derived absolute-A1
+        view and follows the rewritten AST. When `formula_shapes` is warmed,
+        affected bindings are re-interned (shared relative params may split or
+        join).
+
+        Incoming edges from occupancy (range expansion, whole-column/row
+        members) are dropped when the dependent formula was not rewritten to
+        mention `new_key`. Remaining `GuardExpr` trees rewrite `CellRef` keys
+        and `RangeRef` endpoints. If the destination already has an incoming
+        edge from the same dependent, guards merge with `or_guard` (`None`
+        unconditional wins) and provenance merges with `merge_edge_provenance`.
+
+        Assigning `Node.address` directly raises; geometry edits must go
+        through this method.
+
+        Args:
+            old_key: Existing node key.
+            new_key: Destination single-cell key.
+
+        Raises:
+            KeyError: If `old_key` is missing.
+            ValueError: If `new_key` is not a single cell, already exists,
+                an affected formula is unparseable, or a range guard would
+                split across sheets.
+        """
+        old_nk = normalize_key(old_key)
+        dest = parse_node_key(normalize_key(new_key))
+        if not isinstance(dest, CellKey):
+            raise ValueError(f"move_node destination must be a single cell, got {new_key!r}")
+        new_nk = str(dest)
+        if old_nk == new_nk:
+            return
+        node = self._nodes.get(old_nk)
+        if node is None:
+            raise KeyError(f"Cell {old_key} not found in graph")
+        if new_nk in self._nodes:
+            raise ValueError(f"Cell {new_key} already exists in graph")
+
+        dependents = [key for key in self._reverse_edges.get(old_nk, ()) if key != old_nk]
+        self._require_rewritable_formula(node, old_nk)
+        for dep_key in dependents:
+            dep_node = self._nodes.get(dep_key)
+            if dep_node is None:
+                continue
+            self._require_rewritable_formula(dep_node, dep_key)
+        for guard in self._guards.values():
+            rewrite_guard_keys(guard, old_nk, new_nk)
+
+        if node.formula_ast is not None:
+            rebased = rebase_relative_axes(node.formula_ast, old_anchor=old_nk, new_anchor=new_nk)
+            node.formula_ast = retarget_resolved_refs(
+                rebased, old_key=old_nk, new_key=new_nk, anchor=new_nk
+            )
+
+        rewritten_dependents: list[NodeKey] = []
+        for dep_key in dependents:
+            dep_node = self._nodes.get(dep_key)
+            if dep_node is None or dep_node.formula_ast is None:
+                continue
+            new_ast = retarget_resolved_refs(
+                dep_node.formula_ast,
+                old_key=old_nk,
+                new_key=new_nk,
+                anchor=dep_node.address or dep_key,
+            )
+            if new_ast is dep_node.formula_ast:
+                continue
+            dep_node.formula_ast = new_ast
+            rewritten_dependents.append(dep_key)
+
+        self._relocate_graph_identity(
+            old_nk, new_nk, node, rewritten_dependents=frozenset(rewritten_dependents)
+        )
+        self._refresh_move_provenance(new_nk, rewritten_dependents)
+        self._reintern_moved_formula_shapes(old_nk, new_nk, rewritten_dependents)
+
+    def _require_rewritable_formula(self, node: Node, key: NodeKey) -> None:
+        if node.formula_ast is None and node.has_formula:
+            raise ValueError(f"cannot rewrite unparseable formula at {key} when moving a node")
+
+    def _relocate_graph_identity(
+        self,
+        old_key: NodeKey,
+        new_key: NodeKey,
+        node: Node,
+        rewritten_dependents: frozenset[NodeKey],
+    ) -> None:
+        old_edges = {src: set(dsts) for src, dsts in self._edges.items()}
+        old_guards = dict(self._guards)
+        old_prov = dict(self._edge_provenance)
+
+        self._nodes.pop(old_key)
+        node._relocate(new_key)
+        self._nodes[new_key] = node
+
+        def swap(key: NodeKey) -> NodeKey:
+            return new_key if key == old_key else key
+
+        def keep_incoming(src: NodeKey, dst: NodeKey) -> bool:
+            if dst != old_key:
+                return True
+            return src == old_key or src in rewritten_dependents
+
+        guard_parts: dict[EdgeKey, list[GuardExpr | None]] = {}
+        prov_parts: dict[EdgeKey, list[EdgeProvenance | None]] = {}
+        new_edges: dict[NodeKey, set[NodeKey]] = {}
+        new_reverse: dict[NodeKey, set[NodeKey]] = {}
+        for src, dests in old_edges.items():
+            for dst in sorted(dests):
+                if not keep_incoming(src, dst):
+                    continue
+                new_src, new_dst = swap(src), swap(dst)
+                new_edges.setdefault(new_src, set()).add(new_dst)
+                new_reverse.setdefault(new_dst, set()).add(new_src)
+                new_ek = (new_src, new_dst)
+                guard_parts.setdefault(new_ek, []).append(old_guards.get((src, dst)))
+                prov_parts.setdefault(new_ek, []).append(old_prov.get((src, dst)))
+
+        new_edges.setdefault(new_key, set())
+        new_reverse.setdefault(new_key, set())
+        self._edges = new_edges
+        self._reverse_edges = new_reverse
+
+        self._guards = {}
+        for ek, parts in guard_parts.items():
+            merged = _or_merge_optional_guards(parts)
+            if merged is not None:
+                self._guards[ek] = rewrite_guard_keys(merged, old_key, new_key)
+
+        self._edge_provenance = {}
+        for ek, parts in prov_parts.items():
+            merged_prov = None
+            for part in parts:
+                merged_prov = merge_edge_provenance(merged_prov, part)
+            if merged_prov is not None:
+                self._edge_provenance[ek] = merged_prov
+
+        if self.leaf_classification is not None and old_key in self.leaf_classification:
+            self.leaf_classification[new_key] = self.leaf_classification.pop(old_key)
+
+    def _refresh_move_provenance(self, moved_key: NodeKey, dependents: list[NodeKey]) -> None:
+        from .compression import refresh_direct_sites
+
+        keys = [moved_key, *dependents]
+        for key in keys:
+            node = self._nodes.get(key)
+            if node is None:
+                continue
+            normalized = node.normalized_formula
+            for dep in list(self._edges.get(key, set())):
+                prov = self._edge_provenance.get((key, dep))
+                if prov is None or DependencyCause.direct_ref not in prov.causes:
+                    continue
+                self._edge_provenance[(key, dep)] = refresh_direct_sites(
+                    prov, new_normalized=normalized, precedent_key=dep
+                )
+
+    def _reintern_moved_formula_shapes(
+        self,
+        old_key: NodeKey,
+        new_key: NodeKey,
+        dependents: list[NodeKey],
+    ) -> None:
+        table = self.formula_shapes
+        if table is None:
+            return
+        table.drop_binding(old_key)
+        for key in (new_key, *dependents):
+            node = self._nodes.get(key)
+            if node is not None and node.formula_ast is not None:
+                table.rebind(key, node.formula_ast)
+            else:
+                table.drop_binding(key)
+        table.prune_unused_shapes()
 
     # ---- internal accessors -------------------------------------------------
 
