@@ -12,6 +12,7 @@ import fastpyxl.utils.cell
 from excel_grapher.core import address_keys as _address_keys
 from excel_grapher.core.address_keys import (
     format_cell_key,
+    format_range_key,
     needs_quoting,
     quoted_sheet_name_regex,
     quoted_sheet_prefix_regex,
@@ -405,14 +406,34 @@ def expand_range(
     end_row: int,
     max_cells: int,
 ) -> list[tuple[str, str]]:
-    """Expand an A1 range into individual (sheet, A1) dependencies."""
+    """Expand an A1 range into individual `(sheet, A1)` dependencies.
+
+    A range whose cell count is at most `max_cells` is enumerated in full
+    (row-major). A range of exactly `max_cells` cells is included; one extra
+    cell is enough to reject the rectangle.
+
+    Args:
+        sheet: Sheet that owns the rectangle.
+        start_col: Start column letters (either corner).
+        start_row: Start row (either corner).
+        end_col: End column letters (either corner).
+        end_row: End row (either corner).
+        max_cells: Inclusive expansion budget.
+
+    Returns:
+        One `(sheet, A1)` pair per cell in the rectangle.
+
+    Raises:
+        ValueError: If the rectangle has more than `max_cells` cells.
+    """
     c1i = fastpyxl.utils.cell.column_index_from_string(start_col)
     c2i = fastpyxl.utils.cell.column_index_from_string(end_col)
     rlo, rhi = (start_row, end_row) if start_row <= end_row else (end_row, start_row)
     clo, chi = (c1i, c2i) if c1i <= c2i else (c2i, c1i)
     n_cells = (rhi - rlo + 1) * (chi - clo + 1)
     if n_cells > max_cells:
-        return [(sheet, f"{start_col}{start_row}"), (sheet, f"{end_col}{end_row}")]
+        label = format_range_key(sheet, f"{start_col}{start_row}", f"{end_col}{end_row}")
+        raise ValueError(f"Range {label} has {n_cells} cells, exceeding max_cells={max_cells}")
 
     out: list[tuple[str, str]] = []
     for rr in range(rlo, rhi + 1):
@@ -429,7 +450,12 @@ def expand_range_ref(
     max_cells: int,
     sheet_bounds: SheetBounds | None = None,
 ) -> list[tuple[str, str]]:
-    """Expand a parsed range reference, using workbook bounds for whole-column/row forms."""
+    """Expand a parsed range reference, using workbook bounds for whole-column/row forms.
+
+    Rectangular ranges follow `expand_range` and raise `ValueError` when they
+    exceed `max_cells`. Whole-column/row shorthands expand to the used-range
+    extent regardless of `max_cells`.
+    """
     sheet = start.sheet if start.sheet is not None else default_sheet
     bounds = sheet_bounds or {}
 

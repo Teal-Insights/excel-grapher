@@ -4,9 +4,9 @@ Excel allows ``C:C`` (entire column) and ``5:5`` (entire row) in formulas. We pa
 those forms syntactically and resolve them to bounded ``ExcelRange`` values using
 each sheet's **used range** from the workbook (``max_row``, ``max_col``), not
 Excel's full grid (1:1 048 576). Rectangular ranges that exceed ``max_range_cells``
-still collapse to corner endpoints (issue #56); whole-column/row shorthands always
-expand to every cell in the used-range extent so ``MATCH``/``INDEX`` on interior
-rows remain correct.
+raise ``ValueError`` (fail closed); whole-column/row shorthands always expand to
+every cell in the used-range extent so ``MATCH``/``INDEX`` on interior rows remain
+correct.
 """
 
 from __future__ import annotations

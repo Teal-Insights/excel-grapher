@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import xlsxwriter
 
 from excel_grapher import create_dependency_graph
@@ -52,8 +53,8 @@ def test_whole_column_deps_bounded_to_used_range_not_excel_max(tmp_path: Path) -
     assert "Data!A1048576" not in deps
 
 
-def test_rectangular_range_still_uses_corner_fallback_issue_56(tmp_path: Path) -> None:
-    excel_path = tmp_path / "rect_corner_cap.xlsx"
+def test_rectangular_range_over_max_cells_raises(tmp_path: Path) -> None:
+    excel_path = tmp_path / "rect_over_cap.xlsx"
     wb = xlsxwriter.Workbook(excel_path)
     ws = wb.add_worksheet("Sheet1")
     ws.write_number(0, 0, 1)
@@ -61,13 +62,10 @@ def test_rectangular_range_still_uses_corner_fallback_issue_56(tmp_path: Path) -
     ws.write_formula(0, 3, "=SUM(Sheet1!A1:C1)", None, 2)
     wb.close()
 
-    graph = create_dependency_graph(
-        excel_path,
-        ["Sheet1!D1"],
-        load_values=False,
-        max_range_cells=2,
-    )
-    deps = graph.get_dependencies("Sheet1!D1")
-    assert "Sheet1!A1" in deps
-    assert "Sheet1!C1" in deps
-    assert "Sheet1!B1" not in deps
+    with pytest.raises(ValueError, match="exceeding max_cells=2"):
+        create_dependency_graph(
+            excel_path,
+            ["Sheet1!D1"],
+            load_values=False,
+            max_range_cells=2,
+        )
