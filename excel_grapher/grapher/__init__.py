@@ -60,7 +60,7 @@ from .node import (
     NodeKey,
     make_cell_node,
 )
-from .parser import format_cell_key, format_key, needs_quoting
+from .parser import DEFAULT_MAX_RANGE_CELLS, format_cell_key, format_key, needs_quoting
 from .preparsed_formulas import warm_preparsed_formulas
 from .range_compression import (
     RawFormulasRequiredError,
@@ -142,5 +142,6 @@ __all__ = [
     "WorkbookCalcSettings",
     "format_cell_key",
     "format_key",
+    "DEFAULT_MAX_RANGE_CELLS",
     "needs_quoting",
 ]

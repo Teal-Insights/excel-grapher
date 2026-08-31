@@ -8,7 +8,7 @@ import fastpyxl.utils.cell
 
 from excel_grapher.core import address_keys as _address_keys
 
-from .parser import expand_range, format_key
+from .parser import DEFAULT_MAX_RANGE_CELLS, expand_range, format_key
 
 
 def split_range_target_on_colon(t: str) -> tuple[str, str] | None:
@@ -26,7 +26,7 @@ def expand_targets_to_roots(
     sheetnames: list[str],
     named_ranges: dict[str, tuple[str, str]],
     named_range_ranges: dict[str, tuple[str, str, str]],
-    max_range_cells: int = 5000,
+    max_range_cells: int = DEFAULT_MAX_RANGE_CELLS,
 ) -> list[tuple[str, str]]:
     """Expand mixed target inputs into concrete `(sheet, single_cell_a1)` roots.
 

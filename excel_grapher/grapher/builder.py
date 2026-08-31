@@ -57,6 +57,7 @@ from .guard import (
 )
 from .node import Node
 from .parser import (
+    DEFAULT_MAX_RANGE_CELLS,
     CellRef,
     FormulaNormalizer,
     _find_function_calls_with_spans,
@@ -410,7 +411,7 @@ def create_dependency_graph(
     *,
     max_depth: int = 50,
     expand_ranges: bool = True,
-    max_range_cells: int = 5000,
+    max_range_cells: int = DEFAULT_MAX_RANGE_CELLS,
     hooks: list[NodeHook] | None = None,
     load_values: bool = True,
     dynamic_refs: DynamicRefConfig | None = None,
@@ -433,9 +434,10 @@ def create_dependency_graph(
       (`"MyInput"`, `"DataRange"`).
 
     Range and named-range targets are expanded to one BFS root per cell
-    (subject to `max_range_cells`); the deduplicated union seeds traversal.
-    Rectangles larger than `max_range_cells` raise `ValueError`. Targets that
-    are neither sheet-qualified nor a known defined name raise `ValueError`.
+    (subject to `max_range_cells`, default `DEFAULT_MAX_RANGE_CELLS`); the
+    deduplicated union seeds traversal. Rectangles larger than
+    `max_range_cells` raise `ValueError`. Targets that are neither
+    sheet-qualified nor a known defined name raise `ValueError`.
 
     When `load_values` is True (default), the workbook is loaded once with
     `keep_formula_cache=True` so formula text and Excel's last-calculated
@@ -1625,7 +1627,7 @@ def list_dynamic_ref_constraint_candidates(
     *,
     dynamic_refs: DynamicRefConfig | None = None,
     max_depth: int = 50,
-    max_range_cells: int = 5000,
+    max_range_cells: int = DEFAULT_MAX_RANGE_CELLS,
     type_analysis_cache: TypeAnalysisCache | None = None,
 ) -> list[str]:
     """Return sorted leaf cells missing dynamic-ref constraint entries.

@@ -15,7 +15,7 @@ alwaysApply: false
   - `expand_range(...)` enumerates cells within a range.
 
 - **Keep expansion limits consistent across call paths.**  
-  If one path uses `max_range_cells`, all related paths (builder, provenance, dynamic-ref arg env) must use the same cap to avoid mismatched dependency/candidate sets.
+  If one path uses `max_range_cells`, all related paths (builder, provenance, dynamic-ref arg env) must use the same cap to avoid mismatched dependency/candidate sets. Shared default: `DEFAULT_MAX_RANGE_CELLS` (`50_000`) in `excel_grapher.grapher.parser`.
 
 - **Treat sheet-qualified endpoints as first-class.**  
   Accept all equivalent forms, including quoted sheets:  
