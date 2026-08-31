@@ -455,3 +455,70 @@ def test_identity_transit_target_barrier_does_not_block_upstream_collapse() -> N
     assert b_node.normalized_formula == "=Sheet1!D1"
     assert graph.get_dependencies("Sheet1!A1") == frozenset({"Sheet1!B1"})
     assert graph.get_dependencies("Sheet1!B1") == frozenset({"Sheet1!D1"})
+
+
+def test_identity_transit_skips_when_whole_column_mentions_transit() -> None:
+    graph = DependencyGraph()
+    c = _make_node("Sheet1!C1", None, None, is_leaf=True)
+    object.__setattr__(c, "value", 1)
+    b = _make_node("Sheet1!B1", "=Sheet1!C1", "=Sheet1!C1")
+    a = _make_node("Sheet1!A1", "=SUM(Sheet1!B:B)", "=SUM(Sheet1!B:B)")
+    for node in (c, b, a):
+        graph.add_node(node)
+    _direct_edge(graph, "Sheet1!B1", "Sheet1!C1")
+    graph.add_edge(
+        "Sheet1!A1",
+        "Sheet1!B1",
+        provenance=EdgeProvenance(causes=DependencyCause.direct_ref),
+    )
+
+    removed = graph.compress_identity_transits()
+    assert "Sheet1!B1" not in removed
+    assert "Sheet1!B1" in graph
+    na = graph.get_node("Sheet1!A1")
+    assert na is not None
+    assert na.normalized_formula == "=SUM(Sheet1!B:B)"
+
+
+def test_identity_transit_skips_when_whole_row_mentions_transit() -> None:
+    graph = DependencyGraph()
+    c = _make_node("Sheet1!C1", None, None, is_leaf=True)
+    object.__setattr__(c, "value", 1)
+    b = _make_node("Sheet1!B1", "=Sheet1!C1", "=Sheet1!C1")
+    a = _make_node("Sheet1!A1", "=SUM(Sheet1!1:1)", "=SUM(Sheet1!1:1)")
+    for node in (c, b, a):
+        graph.add_node(node)
+    _direct_edge(graph, "Sheet1!B1", "Sheet1!C1")
+    graph.add_edge(
+        "Sheet1!A1",
+        "Sheet1!B1",
+        provenance=EdgeProvenance(causes=DependencyCause.direct_ref),
+    )
+    removed = graph.compress_identity_transits()
+    assert "Sheet1!B1" not in removed
+    assert "Sheet1!B1" in graph
+    na = graph.get_node("Sheet1!A1")
+    assert na is not None
+    assert na.normalized_formula == "=SUM(Sheet1!1:1)"
+
+
+def test_identity_transit_skips_if_any_dependent_has_range_endpoint() -> None:
+    """A second, cell-only dependent does not override a range-endpoint mention."""
+    graph = DependencyGraph()
+    c = _make_node("Sheet1!C1", None, None, is_leaf=True)
+    object.__setattr__(c, "value", 1)
+    b = _make_node("Sheet1!B1", "=Sheet1!C1", "=Sheet1!C1")
+    a = _make_node("Sheet1!A1", "=SUM(Sheet1!B1:B3)", "=SUM(Sheet1!B1:B3)")
+    d = _make_node("Sheet1!D1", "=Sheet1!B1", "=Sheet1!B1")
+    for node in (c, b, a, d):
+        graph.add_node(node)
+    _direct_edge(graph, "Sheet1!B1", "Sheet1!C1")
+    _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
+    _direct_edge(graph, "Sheet1!D1", "Sheet1!B1")
+
+    removed = graph.compress_identity_transits()
+    assert "Sheet1!B1" not in removed
+    assert graph.get_dependencies("Sheet1!D1") == {"Sheet1!B1"}
+    nd = graph.get_node("Sheet1!D1")
+    assert nd is not None
+    assert nd.normalized_formula == "=Sheet1!B1"

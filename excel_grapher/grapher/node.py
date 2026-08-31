@@ -205,8 +205,10 @@ class Node:
     input. When an address is available, that bootstrap parses with
     `parse_preserving_axes` so `$` vs bare A1 is kept; without an anchor,
     relative intent cannot be recovered. Unparseable cells keep the last known
-    formula text as a fallback so `has_formula` still holds. The raw workbook
-    string `formula` is opt-in at extraction
+    formula text as a fallback so `has_formula` still holds.
+    `DependencyGraph.formula_shapes` is an optional eval/codegen overlay;
+    missing or dropped shapes fall back to this AST. The raw workbook string
+    `formula` is opt-in at extraction
     (`create_dependency_graph(store_raw_formula=True)`) and audit-only -- on a
     compressed graph it still holds the pre-compression text, so never re-parse
     it as the node's current definition.

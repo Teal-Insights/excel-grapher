@@ -446,6 +446,24 @@ def test_optimal_subsumes_identity_transit() -> None:
     assert graph.get_dependencies("Sheet1!A1") == frozenset({"Sheet1!C1"})
 
 
+def test_optimal_skips_identity_when_range_endpoint_mentions_transit() -> None:
+    graph = DependencyGraph()
+    c = _make_node("Sheet1!C1", None, None, is_leaf=True)
+    object.__setattr__(c, "value", 42)
+    b = _make_node("Sheet1!B1", "=Sheet1!C1", "=Sheet1!C1")
+    a = _make_node("Sheet1!A1", "=SUM(Sheet1!B1:B3)+Sheet1!B1", "=SUM(Sheet1!B1:B3)+Sheet1!B1")
+    for n in (c, b, a):
+        graph.add_node(n)
+    _direct_edge(graph, "Sheet1!B1", "Sheet1!C1")
+    _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
+
+    removed = graph.compress_optimal()
+    assert "Sheet1!B1" not in removed
+    na = graph.get_node("Sheet1!A1")
+    assert na is not None
+    assert na.normalized_formula == "=SUM(Sheet1!B1:B3)+Sheet1!B1"
+
+
 def test_optimal_does_not_collapse_literal_leaf_formula() -> None:
     graph = DependencyGraph()
     b = _make_node("Sheet1!B1", "=1+1", "=1+1", is_leaf=True)

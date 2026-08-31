@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v10.1.0 (2026-08-30)
+
+### Bug Fixes
+
+- **evaluator**: Bind relative formula ASTs before string-cache seed
+  ([`b859657`](https://github.com/Teal-Insights/excel-grapher/commit/b8596570a8283e85ff05b57538b9dde45d57e2d5))
+
+### Features
+
+- **grapher**: Retire regex normalizer as peer of AST render dialect
+  ([#559](https://github.com/Teal-Insights/excel-grapher/pull/559),
+  [`34583d1`](https://github.com/Teal-Insights/excel-grapher/commit/34583d104f03ea5c15a6fc52c8556ed08ada5b85))
+
+
 ## v10.0.0 (2026-08-30)
 
 ### Features

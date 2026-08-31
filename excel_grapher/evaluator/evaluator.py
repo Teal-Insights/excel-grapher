@@ -16,6 +16,7 @@ from excel_grapher.core.address_keys import (
 from excel_grapher.core.addressing import index_excel_range
 from excel_grapher.core.excel_function_meta import grid_range_arg_indices
 from excel_grapher.core.formula_ast import (
+    bind_axes,
     resolve_cell_ref,
     resolve_whole_column_ref,
     resolve_whole_row_ref,
@@ -124,6 +125,19 @@ if TYPE_CHECKING:
 
 @dataclass
 class FormulaEvaluator:
+    """Evaluate Excel formulas over a `DependencyGraph`.
+
+    Holds a shared reference to `graph` (no deep copy). Cell-value and
+    parsed-AST caches are per-evaluator.
+
+    Formula-shape helpers (`_shape_fns`) are compiled in `__post_init__`
+    from `graph.formula_shapes` at construction. That compile is a snapshot:
+    reassigning or rewarming `graph.formula_shapes` later does not refresh
+    `_shape_fns`. Construct a new `FormulaEvaluator` after rewarming if you
+    want compiled shape helpers. Missing shapes fall back to
+    `Node.formula_ast`; correctness does not require the overlay to be warm.
+    """
+
     graph: DependencyGraph
     auto_detect_changes: bool = True
     eager_invalidation: bool = True
@@ -178,16 +192,24 @@ class FormulaEvaluator:
 
         Per-node `formula_ast` is evaluated directly; this cache is the fallback
         parse path for formula cells that still only have `normalized_formula`.
+
+        Cache contract: keys are stripped `normalized_formula` (absolute A1).
+        That string is lossy for axis-aware trees, so values are always
+        `bind_axes` copies resolved against the host `NodeKey`. Do not store a
+        relative tree under this key. `preparsed_formulas` must use the same
+        absolute-bound contract. `move_node` that preserves resolved targets
+        can leave these entries valid; expire or rebuild when targets change.
         """
         entries: dict[str, AstNode] = {}
-        for _key, node in self.graph.formula_nodes():
+        for key, node in self.graph.formula_nodes():
             ast = node.formula_ast
             nf = node.normalized_formula
             if ast is None or not isinstance(nf, str):
                 continue
             stripped = nf.strip()
             if stripped and stripped not in entries:
-                entries[stripped] = ast
+                host = node.address if node.address is not None else key
+                entries[stripped] = bind_axes(ast, host)
         if entries:
             self._ast_cache.seed(entries)
         preparsed = getattr(self.graph, "preparsed_formulas", None)
@@ -420,7 +442,12 @@ class FormulaEvaluator:
         node_key: str,
         formula_ast: AstNode | None = None,
     ) -> FormulaValue:
-        """Evaluate a formula AST, preferring a compiled shape when interned."""
+        """Evaluate a formula AST, preferring a compiled shape when interned.
+
+        Shape helpers come from the construction-time `_shape_fns` snapshot.
+        Missing overlay, missing binding, or a shape not compiled at init
+        falls back to `formula_ast` / the string parse path.
+        """
         table = getattr(self.graph, "formula_shapes", None)
         if table is not None:
             found = table.lookup(node_key)

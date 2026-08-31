@@ -71,3 +71,13 @@ with FormulaEvaluator(graph) as ev:
 print(evaluator_results)
 ## {'Sheet1!B10': ...}
 ```
+
+### Formula-shape overlay
+
+`FormulaEvaluator` compiles shape helpers from `graph.formula_shapes` at
+construction (an init snapshot). The evaluator holds a shared reference to
+the graph, but rewarming `graph.formula_shapes` later does not refresh a live
+evaluator's compiled helpers. Construct a new `FormulaEvaluator` after
+rewarming if you want the shape path. Missing shapes fall back to
+`Node.formula_ast`; the overlay is opt-in and not required for correctness. See
+[Formula-shape overlay](01-dependency-graphs.qmd#formula-shape-overlay).

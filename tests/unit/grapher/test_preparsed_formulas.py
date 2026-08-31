@@ -10,7 +10,14 @@ import pytest
 
 from excel_grapher import DependencyGraph, Node, create_dependency_graph
 from excel_grapher.core.address_keys import parse_address
-from excel_grapher.core.formula_ast import AstNode, FormulaParseError, parse
+from excel_grapher.core.formula_ast import (
+    AstNode,
+    FormulaParseError,
+    bind_axes,
+    parse,
+    parse_preserving_axes,
+)
+from excel_grapher.grapher.node import make_cell_node
 from excel_grapher.grapher.preparsed_formulas import warm_preparsed_formulas
 
 
@@ -38,10 +45,14 @@ def test_warm_preparsed_formulas_reuses_per_node_formula_ast(tmp_path: Path) -> 
 
     assert parse_calls == 0
     assert len(warmed) == 1
-    nf = graph.get_node("Sheet1!B1")
-    assert nf is not None
-    assert nf.normalized_formula in warmed
-    assert nf.formula_ast is warmed[nf.normalized_formula]
+    node = graph.get_node("Sheet1!B1")
+    assert node is not None
+    formula = node.normalized_formula
+    assert formula is not None
+    assert formula in warmed
+    assert node.formula_ast is not None
+    assert node.address is not None
+    assert warmed[formula] == bind_axes(node.formula_ast, node.address)
 
 
 def test_warm_preparsed_formulas_parses_when_formula_ast_missing() -> None:
@@ -125,3 +136,24 @@ def test_warm_preparsed_formulas_raises_on_invalid_formula() -> None:
 
     with pytest.raises(FormulaParseError):
         warm_preparsed_formulas(graph)
+
+
+def test_warm_preparsed_formulas_binds_relative_ast_under_absolute_key() -> None:
+    graph = DependencyGraph()
+    graph.add_node(make_cell_node("S", "A", 1, value=10, is_leaf=True))
+    rel = parse_preserving_axes("=A1*2", anchor="S!B1")
+    abs_ast = parse_preserving_axes("=$A$1*2", anchor="S!C1")
+    graph.add_node(make_cell_node("S", "B", 1, is_leaf=False, formula_ast=rel))
+    graph.add_node(make_cell_node("S", "C", 1, is_leaf=False, formula_ast=abs_ast))
+
+    b1 = graph.get_node("S!B1")
+    c1 = graph.get_node("S!C1")
+    assert b1 is not None and c1 is not None
+    assert b1.normalized_formula == c1.normalized_formula
+    nf = b1.normalized_formula
+    assert nf is not None
+
+    warmed = warm_preparsed_formulas(graph)
+    assert warmed[nf] == bind_axes(rel, "S!B1")
+    assert warmed[nf] == parse(nf)
+    assert warmed[nf] == bind_axes(abs_ast, "S!C1")
