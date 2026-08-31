@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from types import MappingProxyType
+from typing import Any, cast
+
 import pytest
 
 from excel_grapher.runtime.leaves import (
@@ -60,6 +63,16 @@ def test_prepare_context_inputs_merges_constants_then_overlay() -> None:
     merged = prepare_context_inputs(defaults, constants, {"Sheet1!A1": 9})
     assert merged == {"Sheet1": {(1, 1): 9, (2, 1): 2}}
     assert defaults["Sheet1"][(1, 1)] == 1
+
+
+def test_prepare_context_inputs_accepts_mapping_proxy_constants() -> None:
+    defaults = {"Sheet1": {(1, 1): 1}}
+    constants = MappingProxyType({"Sheet1": MappingProxyType({(2, 1): 2})})
+    merged = prepare_context_inputs(defaults, constants, {"Sheet1!A1": 9})
+    assert merged == {"Sheet1": {(1, 1): 9, (2, 1): 2}}
+    assert defaults["Sheet1"][(1, 1)] == 1
+    with pytest.raises(TypeError):
+        cast(Any, constants)["Sheet1"] = {}
 
 
 def test_leaf_inputs_nodekey_view() -> None:

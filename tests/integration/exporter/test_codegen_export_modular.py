@@ -10,6 +10,7 @@ import importlib
 import subprocess
 import sys
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
@@ -88,6 +89,47 @@ def test_codegen_generate_modules_executes_and_matches_evaluator(tmp_path: Path)
         sys.modules.pop("exported", None)
 
 
+def test_codegen_generate_modules_empty_constants_are_mapping_proxy() -> None:
+    graph = _make_graph(_make_node("Sheet1!A1", None, 10.0))
+    data_py = CodeGenerator(graph).generate_modules(["Sheet1!A1"])["data.py"]
+    assert "from types import MappingProxyType" in data_py
+    assert "CONSTANTS = MappingProxyType({})" in data_py
+    assert "DEFAULT_INPUTS = {" in data_py
+
+
+def test_codegen_generate_modules_constants_are_read_only(tmp_path: Path) -> None:
+    graph = _make_graph(
+        _make_node("Sheet1!A1", None, 10.0),
+        _make_node("Sheet1!B1", "=Sheet1!A1*2", None),
+    )
+    files = CodeGenerator(graph).generate_modules(
+        ["Sheet1!B1"],
+        constant_types={"number"},
+    )
+    pkg_dir = tmp_path / "exported_constants"
+    pkg_dir.mkdir(parents=True)
+    for filename, content in files.items():
+        (pkg_dir / filename).write_text(content, encoding="utf-8")
+
+    sys.path.insert(0, str(tmp_path))
+    try:
+        pkg = importlib.import_module("exported_constants")
+        data = importlib.import_module("exported_constants.data")
+        constants = data.CONSTANTS
+        assert isinstance(constants, MappingProxyType)
+        assert isinstance(constants["Sheet1"], MappingProxyType)
+        with pytest.raises(TypeError):
+            constants["Sheet1"] = {}
+        with pytest.raises(TypeError):
+            constants["Sheet1"][(1, 1)] = 99
+        assert pkg.compute_all()["Sheet1!B1"] == 20.0
+    finally:
+        sys.path.remove(str(tmp_path))
+        for name in list(sys.modules):
+            if name == "exported_constants" or name.startswith("exported_constants."):
+                sys.modules.pop(name, None)
+
+
 def test_codegen_generate_modules_api_uses_target_map(tmp_path: Path) -> None:
     graph = _make_graph(_make_node("S!A1", None, 1.0))
     files = CodeGenerator(graph).generate_modules(["S!A1"])
@@ -140,11 +182,14 @@ def test_codegen_generate_modules_splits_constants(tmp_path: Path) -> None:
     data_py = files["data.py"]
     api_py = files["api.py"]
 
-    assert "CONSTANTS = {" in data_py
-    inputs_section, _, constants_section = data_py.partition("CONSTANTS = {")
+    assert "from types import MappingProxyType" in data_py
+    assert "CONSTANTS = MappingProxyType({" in data_py
+    inputs_section, _, constants_section = data_py.partition("CONSTANTS = MappingProxyType({")
     assert "DEFAULT_INPUTS = {" in inputs_section
+    assert "DEFAULT_INPUTS = MappingProxyType" not in inputs_section
     assert "(2, 1): 'hi'" in inputs_section
     assert "(1, 1): 10.0" not in inputs_section
+    assert "    'Sheet1': MappingProxyType({" in constants_section
     assert "(1, 1): 10.0" in constants_section
     assert "(3, 1): 5.0" in constants_section
     assert "prepare_context_inputs(DEFAULT_INPUTS, CONSTANTS, inputs)" in api_py
@@ -162,8 +207,8 @@ def test_codegen_generate_modules_constant_blanks(tmp_path: Path) -> None:
     data_py = files["data.py"]
     api_py = files["api.py"]
 
-    assert "CONSTANTS = {" in data_py
-    inputs_section, _, constants_section = data_py.partition("CONSTANTS = {")
+    assert "CONSTANTS = MappingProxyType({" in data_py
+    inputs_section, _, constants_section = data_py.partition("CONSTANTS = MappingProxyType({")
     assert "(2, 1): 7.0" in inputs_section
     assert "(1, 1): 0" not in inputs_section
     assert "(1, 1): 0," in constants_section
