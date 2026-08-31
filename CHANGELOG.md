@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v11.4.0 (2026-08-31)
+
+### Bug Fixes
+
+- **scripts**: Type the leaf-store scan as LeafStore for ty
+  ([`7f814c0`](https://github.com/Teal-Insights/excel-grapher/commit/7f814c0bd23faf06e516b1b73ff010434ce2c6d6))
+
+### Documentation
+
+- Note projection rewarm for write_workbook
+  ([#578](https://github.com/Teal-Insights/excel-grapher/pull/578),
+  [`7b58489`](https://github.com/Teal-Insights/excel-grapher/commit/7b58489cb2320fd11cd15a6df58f530b5859264a))
+
+- Note rewarming shapes before write_workbook(projection)
+  ([#578](https://github.com/Teal-Insights/excel-grapher/pull/578),
+  [`7b58489`](https://github.com/Teal-Insights/excel-grapher/commit/7b58489cb2320fd11cd15a6df58f530b5859264a))
+
+- Remove duplicate changelog entries for v11.0.0 and v11.3.0
+  ([#578](https://github.com/Teal-Insights/excel-grapher/pull/578),
+  [`7b58489`](https://github.com/Teal-Insights/excel-grapher/commit/7b58489cb2320fd11cd15a6df58f530b5859264a))
+
+### Features
+
+- **exporter**: Emit leaf values as a sparse coordinate store
+  ([`b8b27ad`](https://github.com/Teal-Insights/excel-grapher/commit/b8b27ad095fa582577ce53cd6d77142d88acbdaf))
+
+
 ## v11.3.0 (2026-08-31)
 
 ### Documentation
