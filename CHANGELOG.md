@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v12.0.0 (2026-08-31)
+
+### Bug Fixes
+
+- **grapher**: Raise when expand_range exceeds max_cells
+  ([#587](https://github.com/Teal-Insights/excel-grapher/pull/587),
+  [`34858b1`](https://github.com/Teal-Insights/excel-grapher/commit/34858b149bcadcc22078a4081f3f5796f7e0f2c1))
+
+
 ## v11.5.0 (2026-08-31)
 
 ### Features
