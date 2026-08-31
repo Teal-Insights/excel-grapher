@@ -20,7 +20,7 @@ The unified distribution is `excel-grapher` and exposes a single import package,
 
 - `excel_grapher/core/` — shared semantic types, coercions, and scalar operators.
 - `excel_grapher/runtime/` — Excel-equivalent function implementations and runtime semantics.
-- `excel_grapher/grapher/` — workbook loading, graph extraction, and visualization logic.
+- `excel_grapher/grapher/` — workbook loading, graph extraction, Excel write-back, and visualization logic.
 - `excel_grapher/evaluator/` — `FormulaEvaluator`: an Excel emulator for recomputing formulas in the extracted graph in Python.
 - `excel_grapher/exporter/` — `CodeGenerator`: an transpiler for exporting the extracted graph as a standalone Python library.
 
@@ -74,18 +74,20 @@ acceleration. Exported standalone code stays NumPy-free either way.
 
 ### High-level usage
 
-The library supports a three-stage pipeline:
+The library supports a three-stage pipeline, plus Excel write-back of the same
+graph views used for Python export:
 
 1. **Build a dependency graph** from an Excel workbook (`excel_grapher.grapher`).
 2. **Evaluate formulas with Excel semantics** over that graph (`excel_grapher.evaluator.FormulaEvaluator`).
-3. **Export standalone Python code** that embeds only the required runtime surface (`excel_grapher.exporter.CodeGenerator`).
+3. **Export** standalone Python (`excel_grapher.exporter.CodeGenerator`) and/or a
+   **new `.xlsx`** from the same `GraphReadView` (`excel_grapher.grapher.write_workbook`).
 
 A minimal end‑to‑end example:
 
 ```python
 from pathlib import Path
 
-from excel_grapher.grapher import create_dependency_graph
+from excel_grapher.grapher import create_dependency_graph, write_workbook
 from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter import CodeGenerator
 
@@ -100,8 +102,11 @@ print(len(graph))  # number of visited nodes
 with FormulaEvaluator(graph) as ev:
     results = ev.evaluate(targets)
 
-# 3) Export standalone Python code
+# 3a) Export standalone Python code
 code = CodeGenerator(graph).generate(targets)
+
+# 3b) Write a new workbook from the graph (or a ProjectionResult)
+write_workbook(graph, Path("edited.xlsx"))
 ```
 
 ### Series bindings

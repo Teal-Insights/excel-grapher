@@ -2,9 +2,10 @@
 
 Projections build artifact-specific, non-mutating views of a canonical
 `DependencyGraph`. A projection produces a `ProjectionResult` (a read-only graph
-facade plus a serializable `ProjectionManifest`) so exporters and visualization
-can consume a smaller graph while preserving workbook-facing identity and
-lineage back to the original graph.
+facade plus a serializable `ProjectionManifest`) so Python codegen, Excel
+write-back (`write_workbook`), and visualization can consume a smaller graph
+while preserving workbook-facing identity and lineage back to the original
+graph.
 
 The manifest separates two concerns:
 
@@ -572,6 +573,9 @@ class IdentityTransitCompression:
     Pass series-bound public addresses via `preserve` (see
     `series_binding_public_addresses`) or via `series_bindings` /
     `bindings_workbook` so published leaves stay in the projected graph.
+    Use this instead of in-place `compress_identity_transits` when the
+    canonical graph must stay unchanged for Python codegen or Excel
+    write-back.
     """
 
     def __init__(
@@ -588,7 +592,11 @@ class IdentityTransitCompression:
         self._bindings_workbook = bindings_workbook
 
     def project(self, graph: DependencyGraph) -> ProjectionResult:
-        """Build a non-mutating identity-transit projection for export artifacts."""
+        """Build a non-mutating identity-transit projection for export artifacts.
+
+        The result is a `GraphReadView` for Python codegen and Excel
+        write-back (`write_workbook`). `original_graph` is unchanged.
+        """
         preserve = set(self._preserve) if self._preserve is not None else set()
         if self._series_bindings is not None:
             from excel_grapher.series_bindings.workflow import series_binding_public_addresses
@@ -617,7 +625,9 @@ class OptimalCompression:
     transit forwarding and formula inlining. Pass series-bound public addresses
     via `preserve` (see `series_binding_public_addresses`) or via
     `series_bindings` / `bindings_workbook` so published leaves stay in the
-    projected graph for downstream series helpers.
+    projected graph for downstream series helpers. Use this instead of
+    in-place `compress_optimal` when the canonical graph must stay unchanged
+    for Python codegen or Excel write-back.
     """
 
     def __init__(
@@ -634,7 +644,11 @@ class OptimalCompression:
         self._bindings_workbook = bindings_workbook
 
     def project(self, graph: DependencyGraph) -> ProjectionResult:
-        """Build a non-mutating optimal-compression projection for export artifacts."""
+        """Build a non-mutating optimal-compression projection for export artifacts.
+
+        The result is a `GraphReadView` for Python codegen and Excel
+        write-back (`write_workbook`). `original_graph` is unchanged.
+        """
         preserve = set(self._preserve) if self._preserve is not None else set()
         if self._series_bindings is not None:
             from excel_grapher.series_bindings.workflow import series_binding_public_addresses

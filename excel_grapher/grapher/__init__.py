@@ -1,6 +1,8 @@
 """excel_grapher: Build and analyze dependency graphs from Excel workbooks.
 
-This package intentionally keeps the public API small and stable.
+Workbook I/O lives here (`create_dependency_graph`, `write_workbook`) next to
+graph mutation and visualization. This package intentionally keeps the public
+API small and stable.
 """
 
 from excel_grapher.core.cell_types import (
@@ -68,6 +70,7 @@ from .range_compression import (
     input_keys_from_graph,
 )
 from .validation import ValidationResult, WorkbookCalcSettings, get_calc_settings, validate_graph
+from .writeback import write_workbook
 
 __all__ = [
     "create_dependency_graph",
@@ -132,6 +135,7 @@ __all__ = [
     "to_networkx",
     "write_web_viz_html",
     "write_lightweight_viz_data",
+    "write_workbook",
     "validate_graph",
     "ValidationResult",
     "get_calc_settings",

@@ -31,6 +31,42 @@ print(len(g))  # number of visited nodes
 print(to_graphviz(g))  # GraphViz DOT
 ```
 
+### Writing a workbook {#write-workbook}
+
+`write_workbook` is the inverse of `create_dependency_graph`: it writes a
+`GraphReadView` (`DependencyGraph` or `ProjectionResult`) to a **new** `.xlsx`.
+There is no template-patch mode. If `destination` already exists, pass
+`overwrite=True`; the source workbook is never opened or saved as a side
+effect.
+
+```python
+from pathlib import Path
+
+from excel_grapher.grapher import create_dependency_graph, write_workbook
+
+graph = create_dependency_graph(Path("model.xlsx"), ["Sheet1!A10"])
+graph.set_node_value("Sheet1!B1", 42)
+write_workbook(graph, Path("edited.xlsx"))
+```
+
+Default formula spelling is `render_formula(..., style=A1_EXCEL)` from current
+`formula_ast`, so `$` vs bare A1 round-trips. The writer never re-parses
+`Node.formula` (the opt-in raw audit string, which is stale after compression).
+
+Two workflows share the same write API:
+
+| Workflow | Object | What is written |
+|----------|--------|-----------------|
+| **Mutation** | This `DependencyGraph` *is* the workbook (`set_node_ast`, `set_node_value`, in-place `compress_*`) | Current formulas and values at current keys |
+| **Projection** | Non-mutating export view (`IdentityTransitCompression().project`) | Projected cells only; collapsed addresses are absent |
+
+Extraction is a target closure, so styles, charts, VBA, defined names, and
+cells outside the view do not appear in the output. That is accepted v1
+lossiness.
+
+See [Exporting standalone Python](06-export.qmd) for projection as the
+non-mutating helper shared with Python codegen.
+
 ### Raw formula storage {#raw-formula-storage}
 
 Extraction always stores `formula_ast` (when the formula parses). The raw workbook
