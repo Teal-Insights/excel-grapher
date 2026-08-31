@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v11.1.0 (2026-08-31)
+
+### Features
+
+- **grapher**: Persist array-formula provenance on write-back
+  ([#573](https://github.com/Teal-Insights/excel-grapher/pull/573),
+  [`02ef429`](https://github.com/Teal-Insights/excel-grapher/commit/02ef429f31c5e02cda6e418357893decf98dc3d4))
+
+- **grapher**: Write GraphReadView to a new xlsx
+  ([#572](https://github.com/Teal-Insights/excel-grapher/pull/572),
+  [`f1ef1bb`](https://github.com/Teal-Insights/excel-grapher/commit/f1ef1bba2836632ff3bb4d0097b8c0c0c03acd40))
+
+### Testing
+
+- **grapher**: Bypass address guard in write_workbook missing-anchor case
+  ([#573](https://github.com/Teal-Insights/excel-grapher/pull/573),
+  [`02ef429`](https://github.com/Teal-Insights/excel-grapher/commit/02ef429f31c5e02cda6e418357893decf98dc3d4))
+
+
 ## v11.0.0 (2026-08-31)
 
 ### Features
