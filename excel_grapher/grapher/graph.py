@@ -19,7 +19,7 @@ from excel_grapher.core.address_keys import (
 from excel_grapher.core.formula_ast import (
     AstNode,
     bind_axes,
-    parse_optional,
+    parse_formula_text,
     parse_preserving_axes_optional,
     rebase_relative_axes,
     replace_resolved_cell_ref,
@@ -451,8 +451,9 @@ class DependencyGraph:
         """Set a node's `formula` and parse it into `formula_ast`.
 
         Parses raw `formula` with axis intent when present; otherwise parses
-        `normalized_formula` as absolute A1. A successful parse is the source
-        of the derived `normalized_formula` view. Unparseable formulas leave
+        `normalized_formula` with the host cell as anchor when available
+        (absolute-only when it is not). A successful parse is the source of
+        the derived `normalized_formula` view. Unparseable formulas leave
         `formula_ast` unset and keep `normalized_formula` as fallback text.
         Edges are not recomputed; callers rewiring dependencies must update
         edges explicitly. Intended for projection authors building export-only
@@ -471,7 +472,7 @@ class DependencyGraph:
         if formula is not None:
             ast = parse_preserving_axes_optional(formula, anchor=node.address or nk)
         if ast is None:
-            ast = parse_optional(normalized_formula)
+            ast = parse_formula_text(normalized_formula, anchor=node.address or nk)
         node.formula_ast = ast
         if ast is not None:
             node._unparseable_formula = None

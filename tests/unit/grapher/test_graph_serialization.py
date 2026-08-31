@@ -21,11 +21,18 @@ def _make_test_graph() -> DependencyGraph:
     """Build a small graph with a mix of guarded/unguarded edges and extra attrs."""
     g = DependencyGraph()
 
-    g.add_node(Node("Sheet1", "A", 1, None, None, 1, True))
-    g.add_node(Node("Sheet1", "B", 1, None, None, 2, True))
-    g.add_node(Node("Sheet1", "C", 1, None, None, 0, True))
+    g.add_node(Node("Sheet1", "A", 1, value=1))
+    g.add_node(Node("Sheet1", "B", 1, value=2))
+    g.add_node(Node("Sheet1", "C", 1, value=0))
     g.add_node(
-        Node("Sheet1", "D", 1, "=IF(C1,A1,B1)", "=IF(Sheet1!C1,Sheet1!A1,Sheet1!B1)", None, False)
+        Node(
+            "Sheet1",
+            "D",
+            1,
+            "=IF(C1,A1,B1)",
+            is_leaf=False,
+            normalized_formula="=IF(Sheet1!C1,Sheet1!A1,Sheet1!B1)",
+        )
     )
 
     guard_true = Compare(CellRef("Sheet1!C1"), "=", Literal(True))
@@ -92,14 +99,14 @@ def test_pickle_round_trip_preserves_guards() -> None:
 def test_pickle_round_trip_many_guarded_edges() -> None:
     """Regression: unpickle must not rebuild a full key→index map per guarded edge."""
     g = DependencyGraph()
-    g.add_node(Node("Sheet1", "A", 1, None, None, 1, True))
+    g.add_node(Node("Sheet1", "A", 1, value=1))
     g.add_node(
-        Node("Sheet1", "D", 1, "=1", "=1", None, False),
+        Node("Sheet1", "D", 1, "=1", is_leaf=False, normalized_formula="=1"),
     )
     guard = Compare(CellRef("Sheet1!A1"), "=", Literal(True))
     n_extra = 800
     for i in range(2, 2 + n_extra):
-        g.add_node(Node("Sheet1", "B", i, None, None, 1, True))
+        g.add_node(Node("Sheet1", "B", i, value=1))
         g.add_edge("Sheet1!D1", f"Sheet1!B{i}", guard=guard)
 
     blob = pickle.dumps(g)
@@ -116,8 +123,8 @@ def test_pickle_round_trip_preserves_edge_provenance() -> None:
     from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
 
     g = DependencyGraph()
-    g.add_node(Node("Sheet1", "A", 1, None, None, 1, True))
-    g.add_node(Node("Sheet1", "B", 1, "=A1", "=Sheet1!A1", None, False))
+    g.add_node(Node("Sheet1", "A", 1, value=1))
+    g.add_node(Node("Sheet1", "B", 1, "=A1", is_leaf=False, normalized_formula="=Sheet1!A1"))
 
     prov = EdgeProvenance(
         causes=DependencyCause.direct_ref,

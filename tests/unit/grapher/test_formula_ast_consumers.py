@@ -167,8 +167,7 @@ def test_display_formula_prefers_raw_then_unparsed_ast() -> None:
         "B",
         1,
         formula="=A1",
-        normalized_formula="=Sheet1!A1",
-        formula_ast=parse("=Sheet1!A1"),
+        formula_ast=parse_preserving_axes("=A1", anchor="Sheet1!B1"),
         is_leaf=False,
     )
     assert display_formula(raw) == "=A1"
