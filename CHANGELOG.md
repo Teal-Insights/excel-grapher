@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v12.2.0 (2026-08-31)
+
+### Features
+
+- **grapher**: Raise default max_range_cells to 50_000
+  ([#589](https://github.com/Teal-Insights/excel-grapher/pull/589),
+  [`057b6d4`](https://github.com/Teal-Insights/excel-grapher/commit/057b6d4ae206c7a6a7a106ed66780ccb150db7c4))
+
+
 ## v12.1.0 (2026-08-31)
 
 ### Features
