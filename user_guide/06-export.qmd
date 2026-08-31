@@ -31,6 +31,13 @@ after compression, formula rewrite, or JSON/pickle load the overlay is
 dropped and callers must rewarm. See
 [Formula-shape overlay](01-dependency-graphs.qmd#formula-shape-overlay).
 
+Pass `CodeGenerator(graph, shape_dispatch=True)` to drop the per-cell
+wrappers entirely: one helper per interned formula shape, a `_CELL_SHAPES`
+dispatch table, and hole bodies that either pass child params through
+(constant or a uniform cell offset) or index a parent-param → child-param
+lookup dict. Requires a warm shape overlay. OFFSET/INDEX/ROW cells stay on
+the per-cell path. Series-binding readers are not supported yet.
+
 ## Return-line unpacking
 
 By default, each formula cell function returns a single nested expression. For easier

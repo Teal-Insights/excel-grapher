@@ -79,9 +79,12 @@ def exec_generated_code(
     namespace_seed: dict[str, object] | None = None,
     blank_ranges: list[str] | tuple[str, ...] | None = None,
     unpack_return: bool = False,
+    shape_dispatch: bool = False,
 ) -> tuple[dict[str, object], str, dict[str, object]]:
     """Generate + exec code for targets and return (results, code, namespace)."""
-    code = CodeGenerator(graph, unpack_return=unpack_return).generate(
+    code = CodeGenerator(
+        graph, unpack_return=unpack_return, shape_dispatch=shape_dispatch
+    ).generate(
         targets,
         blank_ranges=blank_ranges,
     )
@@ -102,6 +105,7 @@ def exec_generated_code_with_cache(
     namespace_seed: dict[str, object] | None = None,
     blank_ranges: list[str] | tuple[str, ...] | None = None,
     unpack_return: bool = False,
+    shape_dispatch: bool = False,
 ) -> tuple[dict[str, object], str, dict[str, object]]:
     """Generate + exec code for targets and return (cache, code, namespace).
 
@@ -109,7 +113,9 @@ def exec_generated_code_with_cache(
     codes are recorded in the returned cache as `XlError` sentinel values so
     they compare directly against evaluator results.
     """
-    code = CodeGenerator(graph, unpack_return=unpack_return).generate(
+    code = CodeGenerator(
+        graph, unpack_return=unpack_return, shape_dispatch=shape_dispatch
+    ).generate(
         targets,
         blank_ranges=blank_ranges,
     )
@@ -143,6 +149,7 @@ def assert_codegen_matches_evaluator(
     fail_fast: bool = False,
     blank_ranges: tuple[str, ...] | None = None,
     unpack_return: bool = False,
+    shape_dispatch: bool = False,
 ) -> ParityResult:
     """Assert evaluator results match generated code for the given targets."""
     compare_targets = _dependency_order(graph, targets) if dependency_order else list(targets)
@@ -159,6 +166,7 @@ def assert_codegen_matches_evaluator(
         targets,
         blank_ranges=blank_ranges,
         unpack_return=unpack_return,
+        shape_dispatch=shape_dispatch,
     )
     generated_results = {t: generated_cache[t] for t in targets}
 

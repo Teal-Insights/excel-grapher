@@ -53,6 +53,15 @@ from excel_grapher.evaluator.parser import (
 )
 from excel_grapher.evaluator.types import XlError
 from excel_grapher.exporter.embed import emit_runtime
+from excel_grapher.exporter.shape_dispatch import (
+    ConstantArg,
+    GeometricCellArg,
+    LeafHolePlan,
+    LookupHolePlan,
+    PassthroughHolePlan,
+    ShapeDispatchLayout,
+    analyze_shape_dispatch,
+)
 from excel_grapher.grapher.blank_ranges import BlankRangeRect, normalize_blank_range_specs
 from excel_grapher.grapher.formula_label import display_formula
 from excel_grapher.grapher.graph import CycleError
@@ -167,6 +176,11 @@ class CodeGenerator:
 
     Reads `graph.formula_shapes` at `generate` time when present (not an
     init snapshot). Missing shapes fall back to per-node AST.
+
+    When `shape_dispatch` is True, emit one helper per interned formula shape
+    instead of one function per cell. Call sites pass hole values; helper
+    bodies either pass those through to a child shape or index a lookup dict.
+    Requires a warm `graph.formula_shapes` overlay.
     """
 
     def __init__(
@@ -177,6 +191,7 @@ class CodeGenerator:
         iterate_count: int = 100,
         iterate_delta: float = 0.001,
         unpack_return: bool = False,
+        shape_dispatch: bool = False,
     ) -> None:
         """Initialize the code generator.
 
@@ -190,10 +205,14 @@ class CodeGenerator:
             iterate_delta: Convergence threshold when iterative calculation is enabled.
             unpack_return: When True, hoist nested runtime calls in each formula
                 cell's return expression into statement-level temporaries.
+            shape_dispatch: When True, emit one function per interned formula
+                shape plus a cell→`(shape, params)` table, instead of a Python
+                function per formula cell. Requires `graph.formula_shapes`.
         """
         self.graph = graph
         self._iterate_enabled = iterate_enabled
         self._unpack_return = unpack_return
+        self._shape_dispatch = shape_dispatch
         self._iterate_count = iterate_count
         self._iterate_delta = iterate_delta
         self._emitted: set[str] = set()
@@ -210,6 +229,10 @@ class CodeGenerator:
         self._reader_index: ReaderIndex | None = None
         self._used_readers: set[str] = set()
         self._shape_helper_names: dict[str, str] = {}
+        self._shape_dispatch_layout: ShapeDispatchLayout | None = None
+        self._current_hole_plans: (
+            tuple[LeafHolePlan | PassthroughHolePlan | LookupHolePlan, ...] | None
+        ) = None
 
     def __enter__(self) -> CodeGenerator:
         return self
@@ -233,6 +256,8 @@ class CodeGenerator:
         self._reader_index = None
         self._used_readers.clear()
         self._shape_helper_names.clear()
+        self._shape_dispatch_layout = None
+        self._current_hole_plans = None
 
     def _include_dep_tracking(
         self,
@@ -613,11 +638,155 @@ class CodeGenerator:
 
         The bound address is a runtime string, so helpers cannot emit
         `xl_eval(ctx, addr, cell_fn)`. `xl_cell` resolves formula cells through
-        `ctx.resolver` and leaf cells through inputs.
+        `ctx.resolver` and leaf cells through inputs. Shape-dispatch helpers
+        replace that with a child-shape call or lookup when the hole plan
+        says every instance's child is known.
         """
         pname = f"p{node.index}"
-        expr = f"xl_cell(ctx, {pname})" if node.kind == "CELL" else f"xl_range(ctx, {pname})"
+        plans = self._current_hole_plans
+        if plans is not None and 0 <= node.index < len(plans):
+            expr = self._emit_shape_dispatch_hole(plans[node.index], pname)
+        elif node.kind == "CELL":
+            expr = f"xl_cell(ctx, {pname})"
+        else:
+            expr = f"xl_range(ctx, {pname})"
         return self._hoist_return_expr(expr)
+
+    def _emit_shape_dispatch_hole(
+        self,
+        plan: LeafHolePlan | PassthroughHolePlan | LookupHolePlan,
+        pname: str,
+    ) -> str:
+        """Emit one hole's runtime expression under shape dispatch."""
+        if isinstance(plan, LeafHolePlan):
+            return f"xl_cell(ctx, {pname})" if plan.kind == "CELL" else f"xl_range(ctx, {pname})"
+        if isinstance(plan, LookupHolePlan):
+            return f"_eval_lookup(ctx, {pname}, {plan.table_name})"
+        child_helper = self._shape_helper_names[plan.child_shape_key]
+        child_args = ", ".join(self._emit_shape_dispatch_arg(arg, pname) for arg in plan.args)
+        if child_args:
+            return f"_eval_shape(ctx, {pname}, {child_helper}, {child_args})"
+        return f"_eval_shape(ctx, {pname}, {child_helper})"
+
+    @staticmethod
+    def _emit_shape_dispatch_arg(
+        arg: ConstantArg | GeometricCellArg,
+        pname: str,
+    ) -> str:
+        """Emit one child-param expression relative to parent hole `pname`."""
+        if isinstance(arg, ConstantArg):
+            return repr(arg.address)
+        if arg.sheet is None:
+            return f"_offset_cell({pname}, {arg.dcol}, {arg.drow})"
+        return f"_offset_cell({pname}, {arg.dcol}, {arg.drow}, {arg.sheet!r})"
+
+    @staticmethod
+    def _emit_offset_cell_helper() -> list[str]:
+        return [
+            "def _offset_cell(address, dcol, drow, sheet=None):",
+            "    bang = address.rfind('!')",
+            "    prefix = address[:bang] if sheet is None else sheet",
+            "    coord = address[bang + 1 :]",
+            "    col_s, row = fastpyxl.utils.cell.coordinate_from_string(coord)",
+            "    col = fastpyxl.utils.cell.column_index_from_string(col_s) + dcol",
+            "    return (",
+            "        f'{prefix}!{fastpyxl.utils.cell.get_column_letter(col)}{row + drow}'",
+            "    )",
+            "",
+            "",
+        ]
+
+    @staticmethod
+    def _emit_eval_shape_helper() -> list[str]:
+        return [
+            "def _eval_shape(ctx, host, fn, *params):",
+            "    def _thunk(ctx):",
+            "        return fn(ctx, *params)",
+            "    return xl_eval(ctx, host, _thunk)",
+            "",
+            "",
+        ]
+
+    @staticmethod
+    def _emit_eval_lookup_helper() -> list[str]:
+        return [
+            "def _eval_lookup(ctx, host, table):",
+            "    spec = table.get(host)",
+            "    if spec is None:",
+            "        return xl_cell(ctx, host)",
+            "    fn, params = spec",
+            "    return _eval_shape(ctx, host, fn, *params)",
+            "",
+            "",
+        ]
+
+    def _emit_lookup_table(self, plan: LookupHolePlan) -> list[str]:
+        lines = [f"{plan.table_name} = {{"]
+        for entry in plan.entries:
+            assert entry.child_shape_key is not None
+            helper = self._shape_helper_names[entry.child_shape_key]
+            encoded = ", ".join(repr(param) for param in entry.child_params)
+            param_tuple = f"({encoded},)" if len(entry.child_params) == 1 else f"({encoded})"
+            lines.append(f"    {entry.host!r}: ({helper}, {param_tuple}),")
+        lines.append("}")
+        lines.append("")
+        return lines
+
+    def _emit_cell_shape_table(self, layout: ShapeDispatchLayout) -> list[str]:
+        lines = ["_CELL_SHAPES = {"]
+        for address, shape_key, params in layout.cell_bindings:
+            helper = self._shape_helper_names[shape_key]
+            encoded = ", ".join(repr(param) for param in params)
+            param_tuple = f"({encoded},)" if len(params) == 1 else f"({encoded})"
+            lines.append(f"    {address!r}: ({helper}, {param_tuple}),")
+        lines.append("}")
+        lines.append("")
+        lines.append("")
+        return lines
+
+    def _emit_shape_dispatch(self, layout: ShapeDispatchLayout) -> list[str]:
+        """Emit shape helpers, lookup tables, and the cell dispatch dict."""
+        lines: list[str] = ["# --- Shared formula-shape helpers ---", ""]
+        if layout.needs_offset_cell:
+            lines.extend(self._emit_offset_cell_helper())
+        if layout.needs_eval_shape:
+            lines.extend(self._emit_eval_shape_helper())
+        if layout.needs_eval_lookup:
+            lines.extend(self._emit_eval_lookup_helper())
+        table = getattr(self.graph, "formula_shapes", None)
+        assert table is not None
+        for plan in layout.plans:
+            skeleton = table.shapes[plan.shape_key]
+            n_holes = len(plan.holes)
+            params = ", ".join(["ctx", *[f"p{i}" for i in range(n_holes)]])
+            lines.append(f"def {plan.helper_name}({params}):")
+            if plan.hosts:
+                node = self.graph.get_node(plan.hosts[0])
+                shown = display_formula(node) if node is not None else None
+                if shown:
+                    doc = f"{plan.hosts[0]}: {shown}".replace("'''", "\\'''")
+                    if doc[-1] not in ".?!":
+                        doc = f"{doc}."
+                    lines.append(f"    '''{doc}'''")
+            self._temp_var_counter = 0
+            prev_cell = self._formula_cell_address
+            prev_plans = self._current_hole_plans
+            self._formula_cell_address = None
+            self._current_hole_plans = plan.holes
+            try:
+                body = self._emit_formula_body_lines(skeleton)
+            finally:
+                self._formula_cell_address = prev_cell
+                self._current_hole_plans = prev_plans
+            lines.extend(body)
+            lines.append("")
+            lines.append("")
+        for plan in layout.plans:
+            for hole in plan.holes:
+                if isinstance(hole, LookupHolePlan):
+                    lines.extend(self._emit_lookup_table(hole))
+        lines.extend(self._emit_cell_shape_table(layout))
+        return lines
 
     @staticmethod
     def _py_literal(value: Any) -> str:
@@ -1170,7 +1339,10 @@ class CodeGenerator:
 
     @classmethod
     def _emit_resolver_lines(
-        cls, blank_rects: tuple[BlankRangeRect, ...] | None = None
+        cls,
+        blank_rects: tuple[BlankRangeRect, ...] | None = None,
+        *,
+        shape_cells: bool = False,
     ) -> list[str]:
         prefix: list[str] = []
         if blank_rects:
@@ -1208,6 +1380,22 @@ class CodeGenerator:
                 "    fn = _RESOLVED_FORMULAS.get(address)",
                 "    if fn is not None:",
                 "        return fn",
+            ]
+        )
+        if shape_cells:
+            resolve_head.extend(
+                [
+                    "    spec = _CELL_SHAPES.get(address)",
+                    "    if spec is not None:",
+                    "        shape_fn, params = spec",
+                    "        def _call(ctx, _fn=shape_fn, _params=params):",
+                    "            return _fn(ctx, *_params)",
+                    "        _RESOLVED_FORMULAS[address] = _call",
+                    "        return _call",
+                ]
+            )
+        resolve_head.extend(
+            [
                 "    name = _address_to_func_name(address)",
                 "    fn = globals().get(name)",
                 "    if fn is not None:",
@@ -2301,10 +2489,17 @@ class CodeGenerator:
     def _plan_shape_helpers(self, formula_addresses: Sequence[str]) -> None:
         """Record profitable shape helper names for this generate() pass."""
         self._shape_helper_names.clear()
+        if self._shape_dispatch and self._reader_index is not None:
+            raise ValueError("shape_dispatch does not support series-binding readers yet")
         if self._reader_index is not None:
             return
         table = getattr(self.graph, "formula_shapes", None)
         if table is None:
+            if self._shape_dispatch:
+                raise ValueError(
+                    "shape_dispatch=True requires graph.formula_shapes; "
+                    "pass warm_formula_shapes=True or call warm_formula_shapes"
+                )
             return
         counts: dict[str, int] = {}
         scalar_range_shapes: set[str] = set()
@@ -2322,7 +2517,9 @@ class CodeGenerator:
                 scalar_range_shapes.add(shape_key)
             counts[shape_key] = counts.get(shape_key, 0) + 1
         profitable = sorted(
-            key for key, n in counts.items() if n >= 2 and key not in scalar_range_shapes
+            key
+            for key, n in counts.items()
+            if n >= (1 if self._shape_dispatch else 2) and key not in scalar_range_shapes
         )
         self._shape_helper_names = {
             shape_key: f"_shape_{index}" for index, shape_key in enumerate(profitable)
@@ -2697,7 +2894,9 @@ class CodeGenerator:
 
         When `graph.formula_shapes` is set, this pass may emit shared
         per-shape helpers. The overlay is read at generate time (not an init
-        snapshot). Missing shapes fall back to per-node AST.
+        snapshot). Missing shapes fall back to per-node AST. Pass
+        `shape_dispatch=True` to the constructor to emit one function per
+        shape (plus a cell dispatch table) instead of a function per cell.
 
         Args:
             targets: List of target cell addresses to compute.
@@ -2763,7 +2962,10 @@ class CodeGenerator:
         alias_lines = self._emit_projection_alias_lines(_all_cells, public_addresses)
         lines.extend(alias_lines)
         lines.extend(
-            self._emit_resolver_lines(parts["blank_rects"] if parts["blank_rects"] else None)
+            self._emit_resolver_lines(
+                parts["blank_rects"] if parts["blank_rects"] else None,
+                shape_cells=self._shape_dispatch,
+            )
         )
 
         # Generate entry point helpers
@@ -2935,6 +3137,9 @@ class CodeGenerator:
         used_readers = sorted(self._used_readers)
         if self._internals_needs_datetime_import(cell_code_lines + alias_lines):
             internals_lines.extend(["import datetime", ""])
+        layout = self._shape_dispatch_layout
+        if layout is not None and layout.needs_offset_cell:
+            internals_lines.extend(["import fastpyxl.utils.cell", ""])
         if used_readers:
             internals_lines.append(self._format_from_module_import("_readers", used_readers))
         if runtime_import_block:
@@ -2945,7 +3150,10 @@ class CodeGenerator:
         internals_lines.extend(cell_code_lines)
         internals_lines.extend(alias_lines)
         internals_lines.extend(
-            self._emit_resolver_lines(parts["blank_rects"] if parts["blank_rects"] else None)
+            self._emit_resolver_lines(
+                parts["blank_rects"] if parts["blank_rects"] else None,
+                shape_cells=self._shape_dispatch,
+            )
         )
         internals_py = "\n".join(internals_lines).rstrip() + "\n"
 
@@ -3331,15 +3539,25 @@ class CodeGenerator:
             self._reader_index = None
 
         self._plan_shape_helpers(formula_emit_order)
-        helper_lines = self._emit_shape_helpers()
-        if helper_lines:
-            cell_code_lines.extend(helper_lines)
+        dispatched: set[str] = set()
+        if self._shape_dispatch:
+            layout = analyze_shape_dispatch(
+                self.graph, formula_emit_order, self._shape_helper_names
+            )
+            self._shape_dispatch_layout = layout
+            cell_code_lines.extend(self._emit_shape_dispatch(layout))
+            dispatched = {address for address, _key, _params in layout.cell_bindings}
+        else:
+            helper_lines = self._emit_shape_helpers()
+            if helper_lines:
+                cell_code_lines.extend(helper_lines)
 
         for address in self._workbook_sort_addresses(formula_emit_order):
             formula_cells.add(address)
-            cell_code_lines.append(self._emit_cell(address))
-            cell_code_lines.append("")
-            cell_code_lines.append("")
+            if address not in dispatched:
+                cell_code_lines.append(self._emit_cell(address))
+                cell_code_lines.append("")
+                cell_code_lines.append("")
 
             ast = self._get_or_parse_ast(address)
             assert ast is not None
