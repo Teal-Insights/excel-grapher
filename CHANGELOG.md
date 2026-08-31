@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v10.2.0 (2026-08-31)
+
+### Bug Fixes
+
+- **grapher**: Skip identity compression for range and whole-col/row sites
+  ([#570](https://github.com/Teal-Insights/excel-grapher/pull/570),
+  [`501b265`](https://github.com/Teal-Insights/excel-grapher/commit/501b2654ed3df3aa7bebfe14dbb41dd91a0ce3c9))
+
+### Code Style
+
+- **core**: Apply ruff format to address-leaf rewrite helpers
+  ([#570](https://github.com/Teal-Insights/excel-grapher/pull/570),
+  [`501b265`](https://github.com/Teal-Insights/excel-grapher/commit/501b2654ed3df3aa7bebfe14dbb41dd91a0ce3c9))
+
+### Documentation
+
+- Formula-shape overlay is opt-in; caller must rewarm
+  ([`16fec80`](https://github.com/Teal-Insights/excel-grapher/commit/16fec80e62ad289bca1569d0cf7c17255ad8c927))
+
+### Features
+
+- **core**: Retarget range and whole-col/row leaves in AST rewrite
+  ([#570](https://github.com/Teal-Insights/excel-grapher/pull/570),
+  [`501b265`](https://github.com/Teal-Insights/excel-grapher/commit/501b2654ed3df3aa7bebfe14dbb41dd91a0ce3c9))
+
+- **core**: Retarget range endpoints; fail-closed identity compression
+  ([#570](https://github.com/Teal-Insights/excel-grapher/pull/570),
+  [`501b265`](https://github.com/Teal-Insights/excel-grapher/commit/501b2654ed3df3aa7bebfe14dbb41dd91a0ce3c9))
+
+### Testing
+
+- **evaluator**: Lock formula-shape init snapshot after rewarm
+  ([`f24a11c`](https://github.com/Teal-Insights/excel-grapher/commit/f24a11c00a75ca8d03f98a5b9c2f531fe0318697))
+
+
 ## v10.1.0 (2026-08-30)
 
 ### Bug Fixes
