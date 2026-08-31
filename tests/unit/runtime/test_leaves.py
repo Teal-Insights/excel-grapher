@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import MappingProxyType
+from typing import Any, cast
 
 import pytest
 
@@ -71,7 +72,7 @@ def test_prepare_context_inputs_accepts_mapping_proxy_constants() -> None:
     assert merged == {"Sheet1": {(1, 1): 9, (2, 1): 2}}
     assert defaults["Sheet1"][(1, 1)] == 1
     with pytest.raises(TypeError):
-        constants["Sheet1"] = {}  # type: ignore[index]
+        cast(Any, constants)["Sheet1"] = {}
 
 
 def test_leaf_inputs_nodekey_view() -> None:
