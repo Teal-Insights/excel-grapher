@@ -18,9 +18,10 @@ import sys
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from excel_grapher.core.address_keys import format_cell_key, parse_cell_coords
+from excel_grapher.runtime.leaves import LeafStore
 
 _DESCRIPTION = "Measure exported leaf payload: NodeKey dict vs coordinate store (#579)."
 
@@ -117,7 +118,7 @@ def _time_exec(source: str, *, repeats: int) -> float:
 
 
 def _time_xl_range_scan(
-    store: dict[str, dict[tuple[int, int], object]],
+    store: LeafStore,
     *,
     sheet: str,
     rows: int,
@@ -190,7 +191,7 @@ def measure_leaf_payload(
     coord_ns: dict[str, Any] = {}
     exec(coord_src, coord_ns)
     nodekey_dict = nodekey_ns["DEFAULT_INPUTS"]
-    coord_store = coord_ns["DEFAULT_INPUTS"]
+    coord_store = cast(LeafStore, coord_ns["DEFAULT_INPUTS"])
 
     max_row = max((row for _s, row, _c, _v in leaves), default=0)
     max_col = max((col for _s, _r, col, _v in leaves), default=0)
