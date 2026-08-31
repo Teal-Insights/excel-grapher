@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v11.0.0 (2026-08-31)
+
+### Features
+
+- **grapher**: Preserve axis intent on remaining string→AST entry points
+  ([#563](https://github.com/Teal-Insights/excel-grapher/pull/563),
+  [`79a08c6`](https://github.com/Teal-Insights/excel-grapher/commit/79a08c6c7c2c99bc83c3348e6d7de3f227795266))
+
+- **grapher**: Preserve axis intent on string-to-AST Node entry points
+  ([#563](https://github.com/Teal-Insights/excel-grapher/pull/563),
+  [`79a08c6`](https://github.com/Teal-Insights/excel-grapher/commit/79a08c6c7c2c99bc83c3348e6d7de3f227795266))
+
+### Testing
+
+- **grapher**: Construct formula nodes from Excel-style axis text
+  ([#563](https://github.com/Teal-Insights/excel-grapher/pull/563),
+  [`79a08c6`](https://github.com/Teal-Insights/excel-grapher/commit/79a08c6c7c2c99bc83c3348e6d7de3f227795266))
+
+
 ## v10.3.0 (2026-08-31)
 
 ### Bug Fixes
