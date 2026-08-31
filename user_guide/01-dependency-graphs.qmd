@@ -14,6 +14,7 @@ guide-section: "Core workflow"
 - **Whole-column/row shorthand**: Excel forms like `Data!A:A` and `Data!5:5` parse as syntactic shorthands and resolve to each sheet's **used range** (workbook dimensions), not Excel's full grid. These shorthands expand to every row/column in that extent even when `max_range_cells` would otherwise keep only rectangular corner endpoints.
 - **Formula AST**: each formula node stores `formula_ast`, the parsed tree extracted from the workbook (the canonical in-memory formula). `normalized_formula` is a derived view (`render_formula(..., style=A1_ABSOLUTE)`): sheet-qualified refs, resolved named ranges, and stripped `$` markers. It is not stored on the node or in the JSON graph cache. Formula cells are identified by `has_formula` (`formula_ast` or unparseable fallback text). Compression and projection rewrite the AST; the string view follows. Identity-transit compression rewrites `CellRefNode` leaves only: a transit mentioned as a range endpoint or whole-column/row leaf is left in place so the formula cannot name a removed node and range geometry is not rewritten. `replace_resolved_cell_ref` still retargets those leaves when called directly. `formula_shapes` is an optional eval/codegen overlay on top of that AST — see [Formula-shape overlay](#formula-shape-overlay).
 - **Array formulas**: extraction records `Node.is_array_formula` and the observed spill / CSE `ref` (`Node.array_formula_ref`) when fastpyxl surfaces an `ArrayFormula`. `write_workbook` emits `ArrayFormula` rather than a scalar formula string, and refuses a flagged cell whose `ref` was not observed. fastpyxl does not distinguish legacy CSE from dynamic-array spills; both round-trip as `t="array"`.
+- **Defined names**: extraction expands name tokens to A1 before parse. `write_workbook` emits those expanded formulas and, by default, writes the workbook name table from `named_ranges` / `named_range_ranges` so Excel still has the aliases.
 - **Raw formulas are opt-in**: `Node.formula` (the workbook string, e.g. `=A1+$B$2`) is stored only with `create_dependency_graph(..., store_raw_formula=True)`. It is an audit/display field — see [Raw formula storage](#raw-formula-storage).
 
 ### Quick start: building a graph
@@ -59,6 +60,16 @@ distinguish legacy CSE from dynamic-array spills; both round-trip as
 `t="array"`. A flagged array cell missing that `ref` is refused rather than
 written as a scalar formula.
 
+Defined-name **tokens** are expanded to A1 at parse
+(`parse_preserving_axes` runs `expand_defined_names`), so a cell that was
+`=A1*TaxRate` is written as expanded A1 (for example `=A1*Settings!$B$2`).
+That is expected v1 fidelity, not a bug. The workbook defined-name table
+is still written from `graph.named_ranges` / `named_range_ranges`, so
+aliases such as `TaxRate -> Settings!B2` remain in Excel. Pass
+`include_defined_names=False` to omit the table. Names the writer cannot
+express as a cell or rectangle are refused. Graph maps do not record
+sheet-local vs workbook-global scope, so written names are workbook-global.
+
 Two workflows share the same write API:
 
 | Workflow | Object | What is written |
@@ -66,9 +77,8 @@ Two workflows share the same write API:
 | **Mutation** | This `DependencyGraph` *is* the workbook (`set_node_ast`, `set_node_value`, in-place `compress_*`) | Current formulas and values at current keys |
 | **Projection** | Non-mutating export view (`IdentityTransitCompression().project`) | Projected cells only; collapsed addresses are absent |
 
-Extraction is a target closure, so styles, charts, VBA, defined names, and
-cells outside the view do not appear in the output. That is accepted v1
-lossiness.
+Extraction is a target closure, so styles, charts, VBA, and cells outside
+the view do not appear in the output. That is accepted v1 lossiness.
 
 See [Exporting standalone Python](06-export.qmd) for projection as the
 non-mutating helper shared with Python codegen.
