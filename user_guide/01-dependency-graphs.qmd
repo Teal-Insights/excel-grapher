@@ -10,8 +10,8 @@ guide-section: "Core workflow"
 - **Leaf definition**: a leaf is any node with no cell dependencies (`Node.is_leaf=True`), including non-formula cells and literal-only formulas (e.g. `=1+1`).
 - **Values are optional**: `load_values=True` loads cached Excel results in the same parse as formulas (`keep_formula_cache=True`); otherwise formula nodes have `value=None`.
 - **Extensible metadata**: each `Node` exposes `metadata` as a read-only `Mapping[str, Any]`. Nodes without metadata share one immutable empty mapping instead of allocating a dict, so hooks write through `node.set_metadata(...)` / `node.update_metadata(...)` (or `graph.set_node_metadata(key, ...)`) rather than `node.metadata[key] = value`.
-- **Range expansion**: ranges like `A1:A10` are expanded to individual cell dependencies (bounded by `max_range_cells`).
-- **Whole-column/row shorthand**: Excel forms like `Data!A:A` and `Data!5:5` parse as syntactic shorthands and resolve to each sheet's **used range** (workbook dimensions), not Excel's full grid. These shorthands expand to every row/column in that extent even when `max_range_cells` would otherwise keep only rectangular corner endpoints.
+- **Range expansion**: ranges like `A1:A10` are expanded to individual cell dependencies (bounded by `max_range_cells`). A rectangle larger than the budget raises `ValueError` rather than silently keeping only the two corner cells.
+- **Whole-column/row shorthand**: Excel forms like `Data!A:A` and `Data!5:5` parse as syntactic shorthands and resolve to each sheet's **used range** (workbook dimensions), not Excel's full grid. These shorthands expand to every row/column in that extent even when a rectangular range of the same size would exceed `max_range_cells`.
 - **Formula AST**: each formula node stores `formula_ast`, the parsed tree extracted from the workbook (the canonical in-memory formula). `normalized_formula` is a derived view (`render_formula(..., style=A1_ABSOLUTE)`): sheet-qualified refs, resolved named ranges, and stripped `$` markers. It is not stored on the node or in the JSON graph cache. Formula cells are identified by `has_formula` (`formula_ast` or unparseable fallback text). Compression and projection rewrite the AST; the string view follows. Identity-transit compression rewrites `CellRefNode` leaves only: a transit mentioned as a range endpoint or whole-column/row leaf is left in place so the formula cannot name a removed node and range geometry is not rewritten. `replace_resolved_cell_ref` still retargets those leaves when called directly. `formula_shapes` is an optional eval/codegen overlay on top of that AST — see [Formula-shape overlay](#formula-shape-overlay).
 - **Array formulas**: extraction records `Node.is_array_formula` and the observed spill / CSE `ref` (`Node.array_formula_ref`) when fastpyxl surfaces an `ArrayFormula`. `write_workbook` emits `ArrayFormula` rather than a scalar formula string, and refuses a flagged cell whose `ref` was not observed. fastpyxl does not distinguish legacy CSE from dynamic-array spills; both round-trip as `t="array"`.
 - **Defined names**: extraction expands name tokens to A1 before parse. `write_workbook` emits those expanded formulas and, by default, writes the workbook name table from `named_ranges` / `named_range_ranges` so Excel still has the aliases.
@@ -234,8 +234,8 @@ another).
 
 Range and named-range targets expand to one root per cell (subject to
 `max_range_cells`) and the BFS proceeds from the deduplicated union of roots.
-Targets that are neither sheet-qualified nor a known defined name raise
-`ValueError`.
+Rectangles larger than `max_range_cells` raise `ValueError`. Targets that are
+neither sheet-qualified nor a known defined name raise `ValueError`.
 
 ### Dynamic OFFSET/INDIRECT configuration
 

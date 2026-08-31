@@ -3738,9 +3738,10 @@ def _expanded_range_keys(
     """Return the sheet-qualified keys of a static range, memoized.
 
     Thin cached wrapper over `excel_grapher.grapher.parser.expand_range` (its
-    `max_cells` truncation behaviour is preserved).  A long formula chain that
-    mentions the same range at every level would otherwise re-derive all of its
-    cells once per level (issue #465).
+    `max_cells` budget is preserved, including `ValueError` when the rectangle
+    is larger). A long formula chain that mentions the same range at every
+    level would otherwise re-derive all of its cells once per level (issue
+    #465).
     """
     return tuple(
         format_key(dep_sheet, dep_a1)

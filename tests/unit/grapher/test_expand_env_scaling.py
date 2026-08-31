@@ -289,7 +289,7 @@ class TestStaticRangeExpansionMemo:
         assert keys == ("Sheet1!B2", "Sheet1!C2", "Sheet1!B3", "Sheet1!C3")
 
     def test_memo_respects_the_max_cells_limit(self) -> None:
-        """`max_cells` is part of the key, so truncation is not cached across limits."""
+        """`max_cells` is part of the key, so a raise is not cached across limits."""
         args = {
             "sheet": "Sheet1",
             "start_col": "A",
@@ -298,11 +298,9 @@ class TestStaticRangeExpansionMemo:
             "end_row": 10,
         }
         assert len(dynamic_refs_mod._expanded_range_keys(**args, max_cells=5000)) == 10
-        # Over the limit, `expand_range` degrades to the two endpoints.
-        assert dynamic_refs_mod._expanded_range_keys(**args, max_cells=4) == (
-            "Sheet1!A1",
-            "Sheet1!A10",
-        )
+        with pytest.raises(ValueError, match="exceeding max_cells=4"):
+            dynamic_refs_mod._expanded_range_keys(**args, max_cells=4)
+        assert len(dynamic_refs_mod._expanded_range_keys(**args, max_cells=5000)) == 10
 
     def test_range_node_addresses_are_row_major(self) -> None:
         node = RangeNode(start="Sheet1!B2", end="Sheet1!C3")

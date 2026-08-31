@@ -434,8 +434,8 @@ def create_dependency_graph(
 
     Range and named-range targets are expanded to one BFS root per cell
     (subject to `max_range_cells`); the deduplicated union seeds traversal.
-    Targets that are neither sheet-qualified nor a known defined name raise
-    `ValueError`.
+    Rectangles larger than `max_range_cells` raise `ValueError`. Targets that
+    are neither sheet-qualified nor a known defined name raise `ValueError`.
 
     When `load_values` is True (default), the workbook is loaded once with
     `keep_formula_cache=True` so formula text and Excel's last-calculated

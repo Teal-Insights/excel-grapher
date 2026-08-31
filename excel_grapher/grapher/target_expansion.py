@@ -42,7 +42,8 @@ def expand_targets_to_roots(
 
     Returns roots in first-occurrence order with duplicates removed. Raises
     `ValueError` for unknown defined names, missing sheets, malformed
-    sheet-qualified targets, and ranges that span multiple sheets.
+    sheet-qualified targets, ranges that span multiple sheets, and
+    rectangles larger than `max_range_cells`.
     """
     seen: set[str] = set()
     roots: list[tuple[str, str]] = []

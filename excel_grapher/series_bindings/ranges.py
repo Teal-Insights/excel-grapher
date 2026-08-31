@@ -83,7 +83,8 @@ def expand_data_range(
 
     Uses the same target expansion as `create_dependency_graph` (including
     both-end sheet-qualified ranges like `Sheet1!A1:Sheet1!B2`, which collapse
-    to single-prefix form, and defined names).
+    to single-prefix form, and defined names). Rectangles larger than
+    `max_range_cells` raise `ValueError`.
     """
     # Sheet-qualified targets do not need named-range maps; skip the workbook open.
     nr, nrr, wb_sheets = _resolve_named_range_maps(

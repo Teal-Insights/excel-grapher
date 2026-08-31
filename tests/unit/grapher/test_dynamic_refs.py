@@ -771,11 +771,10 @@ def test_create_dependency_graph_raises_when_leaf_missing_constraint(tmp_path: P
 def test_dynamic_ref_arg_subgraph_aligns_ast_range_cap_with_builder_bfs_issue_56(
     tmp_path: Path,
 ) -> None:
-    """Interior cells of oversized static ranges must not be required only by AST collection.
+    """Oversized static ranges raise instead of silently dropping interior cells.
 
-    The builder BFS uses `expand_range(..., max_cells=...)` (corners only when over the
-    cap). Argument-env expansion must use the same cap when collecting range addresses
-    from the parsed AST (GitHub issue #56).
+    The builder BFS and argument-env AST collection share `expand_range`'s
+    `max_cells` budget (GitHub issue #56). Exceeding it is fail-closed (#586).
     """
     excel_path = tmp_path / "offset_sum_range_cap_issue_56.xlsx"
     wb = xlsxwriter.Workbook(excel_path)
@@ -797,14 +796,14 @@ def test_dynamic_ref_arg_subgraph_aligns_ast_range_cap_with_builder_bfs_issue_56
     )
     config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
 
-    graph = create_dependency_graph(
-        excel_path,
-        ["Sheet1!E1"],
-        load_values=False,
-        dynamic_refs=config,
-        max_range_cells=2,
-    )
-    assert "Sheet1!B1" not in graph
+    with pytest.raises(ValueError, match="exceeding max_cells=2"):
+        create_dependency_graph(
+            excel_path,
+            ["Sheet1!E1"],
+            load_values=False,
+            dynamic_refs=config,
+            max_range_cells=2,
+        )
 
 
 def test_dynamic_ref_missing_multiple_leaves_raises_builder_aggregate_not_per_leaf_issue_56(
