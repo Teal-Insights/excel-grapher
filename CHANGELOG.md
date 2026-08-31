@@ -27,10 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ([#575](https://github.com/Teal-Insights/excel-grapher/pull/575),
   [`ca38ace`](https://github.com/Teal-Insights/excel-grapher/commit/ca38acee481a115b32f1a88104ad067539b51aad))
 
-- **grapher**: Write_workbook round-trip after move_node
-  ([#575](https://github.com/Teal-Insights/excel-grapher/pull/575),
-  [`ca38ace`](https://github.com/Teal-Insights/excel-grapher/commit/ca38acee481a115b32f1a88104ad067539b51aad))
-
 
 ## v11.2.0 (2026-08-31)
 
@@ -65,10 +61,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Features
 
 - **grapher**: Preserve axis intent on remaining string→AST entry points
-  ([#563](https://github.com/Teal-Insights/excel-grapher/pull/563),
-  [`79a08c6`](https://github.com/Teal-Insights/excel-grapher/commit/79a08c6c7c2c99bc83c3348e6d7de3f227795266))
-
-- **grapher**: Preserve axis intent on string-to-AST Node entry points
   ([#563](https://github.com/Teal-Insights/excel-grapher/pull/563),
   [`79a08c6`](https://github.com/Teal-Insights/excel-grapher/commit/79a08c6c7c2c99bc83c3348e6d7de3f227795266))
 
