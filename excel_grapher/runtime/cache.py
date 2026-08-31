@@ -10,6 +10,7 @@ from typing import Any, TypeVar, cast
 import fastpyxl.utils.cell
 
 from excel_grapher.core import CellValue, ExcelRange, XlError, XlErrorException
+from excel_grapher.core.address_keys import format_cell_key
 from excel_grapher.core.addressing import split_sheet_qualified_address
 from excel_grapher.core.types import resolve_excel_range
 
@@ -273,6 +274,47 @@ def _parse_range_address(address: str) -> tuple[str, str, str] | XlError:
     return sheet, start_cell, end_cell
 
 
+def _range_interior_is_leaf_safe(
+    ctx: EvalContextBase, sheet: str, r1: int, c1: int, r2: int, c2: int
+) -> bool:
+    """Return True when `sheet!r1c1:r2c2` contains no formula cells.
+
+    Leaves, blanks, and structural-blank placeholders are safe to watch as one
+    rectangle. Any other resolver hit is mixed; callers record per-cell deps.
+    """
+    sheet_map = ctx.leaves.get(sheet)
+    for row in range(r1, r2 + 1):
+        for col in range(c1, c2 + 1):
+            if sheet_map is not None and (row, col) in sheet_map:
+                continue
+            addr = format_cell_key(sheet, fastpyxl.utils.cell.get_column_letter(col), row)
+            fn = ctx.resolver(addr)
+            if fn is None or getattr(fn, "__structural_blank__", False):
+                continue
+            return False
+    return True
+
+
+def _record_leaf_safe_range_watch(
+    ctx: EvalContextBase, sheet: str, r1: int, c1: int, r2: int, c2: int
+) -> bool:
+    """Record a range watch when a formula is evaluating a leaf-safe rectangle.
+
+    Returns:
+        True when the caller should skip per-cell dependency recording.
+    """
+    stack = getattr(ctx, "stack", None)
+    if not stack:
+        return False
+    if not _range_interior_is_leaf_safe(ctx, sheet, r1, c1, r2, c2):
+        return False
+    record = getattr(ctx, "_record_range_watch", None)
+    if record is None:
+        return False
+    record(stack[-1], sheet, r1, c1, r2, c2)
+    return True
+
+
 def xl_range(ctx: EvalContext, address: str) -> CellValue:
     """Evaluate a sheet-qualified range and return a nested list of values."""
     parsed = _parse_range_address(address)
@@ -293,6 +335,13 @@ def xl_range(ctx: EvalContext, address: str) -> CellValue:
         start_col_idx, end_col_idx = end_col_idx, start_col_idx
 
     rng = ExcelRange(sheet, start_row, start_col_idx, end_row, end_col_idx)
+    if _record_leaf_safe_range_watch(ctx, sheet, start_row, start_col_idx, end_row, end_col_idx):
+
+        def eval_watched(addr: str) -> CellValue:
+            found = lookup_leaf(ctx, addr)
+            return None if found is MISSING else found
+
+        return cast(CellValue, resolve_excel_range(rng, eval_watched))
     return cast(CellValue, resolve_excel_range(rng, lambda addr: xl_cell(ctx, addr)))
 
 

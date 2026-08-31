@@ -44,6 +44,54 @@ def test_emit_runtime_full_includes_dep_tracking_scaffold() -> None:
     code = _minimal_cache_runtime(include_dep_tracking=True)
     assert_dep_tracking_present(code)
     assert count_dep_tracking_lines(code) >= 40
+    assert "range_watches" in code
+    assert "def _record_range_watch(" in code
+    assert "RangeWatch: TypeAlias =" in code
+
+
+def test_emit_runtime_slim_omits_range_watches() -> None:
+    code = _minimal_cache_runtime(include_dep_tracking=False)
+    assert "range_watches" not in code
+    assert "def _record_range_watch(" not in code
+    assert "RangeWatch" not in code
+
+
+def test_full_emitted_runtime_range_watch_invalidation() -> None:
+    """Generated invalidating runtime records rect watches and wakes on set_inputs."""
+    code = emit_runtime(
+        runtime_cache_seed_symbols(include_dep_tracking=True) | {"xl_sum"},
+        include_offset_table=False,
+        include_dep_tracking=True,
+    )
+    namespace: dict[str, object] = {}
+    exec(code, namespace)
+
+    eval_context = cast(type[EvalContext], namespace["EvalContext"])
+    coerce = cast(
+        Callable[[dict[str, object]], dict[str, CellValue]], namespace["coerce_inputs_dict"]
+    )
+    cell = cast(Callable[[EvalContext, str], CellValue], namespace["xl_cell"])
+    range_fn = cast(Callable[[EvalContext, str], CellValue], namespace["xl_range"])
+    sum_fn = cast(Callable[..., CellValue], namespace["xl_sum"])
+
+    def sum_col(ctx: EvalContext) -> CellValue:
+        return sum_fn(range_fn(ctx, "S!A1:A4"))
+
+    def resolver(address: str) -> Callable[[EvalContext], CellValue] | None:
+        if address == "S!B1":
+            return sum_col
+        return None
+
+    ctx = eval_context(
+        inputs=coerce({"S!A1": 1.0, "S!A2": 2.0, "S!A3": 3.0, "S!A4": 4.0}),
+        resolver=resolver,
+    )
+    assert cell(ctx, "S!B1") == 10.0
+    assert ctx.range_watches["S!B1"] == [("S", 1, 1, 4, 1)]
+    assert "S!A2" not in ctx.reverse_deps
+
+    ctx.set_inputs({"S!A2": 20.0})
+    assert cell(ctx, "S!B1") == 28.0
 
 
 def test_slim_emitted_runtime_evaluates_minimal_workbook() -> None:
