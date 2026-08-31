@@ -9,8 +9,8 @@
   "properties": {
     "schema_version": {
       "type": "string",
-      "enum": ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0", "1.9.0", "1.10.0", "1.11.0", "1.12.0", "1.13.0"],
-      "description": "Schema version for tooling and migrations. 1.0.0–1.2.0: row_series and scalar (fully supported). 1.1.0: adds matrix layout (supported with explicit binds). 1.2.0: optional input/output direction blocks and output compute functions. 1.3.0: row_series renamed to series layout; load-time normalization accepts legacy row_series. 1.4.0: adds bool and datetime read modes and dtypes for dimensions and constants (ISO 8601 date strings in manifests). 1.5.0: grouped-row matrix geometry (skip/include/fill/missing on row_label and column_header binds, value_map bind kind, series-level exclude_rows) and optional view-level groups for export sequencing and documentation grouping. 1.6.0: input.mode override for user-editable formula cells (non-leaf input setters). 1.7.0: internal direction for non-I/O formula-cell key triangulation (intersect_graph_formulas validation). 1.8.0: optional dimension/attribute id separating dimension identity from concept, so multiple dimensions can share one concept; record fields and key entries use the effective id (id when declared, else concept) while concept keeps dtype inheritance from concept_scheme. Also adds optional per-dimension dtype overriding the concept-scheme dtype for same-concept dimensions with differing storage types. 1.9.0: optional input.reader name override for generated read_* duals of set_* setters (codegen always emits readers for input series; omit input.reader to default to read_<series_id>). 1.10.0: optional output.compute.helper so compute_* evaluates collapsed / parameterized helpers from record dims instead of xl_cell(address) when a helper covers the published leaves. 1.11.0: constant direction for non-I/O graph-leaf bindings that emit read_* (and Phase 2 body rewrite) without set_* or compute_*. 1.12.0: series-level exclude_columns (ColumnSpec) symmetric with exclude_rows for carving non-data columns out of an expanded data_range. 1.13.0: optional input.domain so generated set_* setters reject out-of-domain measure values (enum literals, integer between, real_between)."
+      "enum": ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0", "1.9.0", "1.10.0", "1.11.0", "1.12.0", "1.13.0", "1.14.0"],
+      "description": "Schema version for tooling and migrations. 1.0.0–1.2.0: row_series and scalar (fully supported). 1.1.0: adds matrix layout (supported with explicit binds). 1.2.0: optional input/output direction blocks and output compute functions. 1.3.0: row_series renamed to series layout; load-time normalization accepts legacy row_series. 1.4.0: adds bool and datetime read modes and dtypes for dimensions and constants (ISO 8601 date strings in manifests). 1.5.0: grouped-row matrix geometry (skip/include/fill/missing on row_label and column_header binds, value_map bind kind, series-level exclude_rows) and optional view-level groups for export sequencing and documentation grouping. 1.6.0: input.mode override for user-editable formula cells (non-leaf input setters). 1.7.0: internal direction for non-I/O formula-cell key triangulation (intersect_graph_formulas validation). 1.8.0: optional dimension/attribute id separating dimension identity from concept, so multiple dimensions can share one concept; record fields and key entries use the effective id (id when declared, else concept) while concept keeps dtype inheritance from concept_scheme. Also adds optional per-dimension dtype overriding the concept-scheme dtype for same-concept dimensions with differing storage types. 1.9.0: optional input.reader name override for generated read_* duals of set_* setters (codegen always emits readers for input series; omit input.reader to default to read_<series_id>). 1.10.0: optional output.compute.helper so compute_* evaluates collapsed / parameterized helpers from record dims instead of xl_cell(address) when a helper covers the published leaves. 1.11.0: constant direction for non-I/O graph-leaf bindings that emit read_* (and Phase 2 body rewrite) without set_* or compute_*. 1.12.0: series-level exclude_columns (ColumnSpec) symmetric with exclude_rows for carving non-data columns out of an expanded data_range. 1.13.0: optional input.domain so generated set_* setters reject out-of-domain measure values (enum literals, integer between, real_between). 1.14.0: complementary shards with the same series id may declare different sheet/data_range (merged data_range is a list); bind.kind sheet_name reads the worksheet name of each data cell, with an optional values map from worksheet name to dimension code."
     },
     "workbook": {
       "type": "string",
@@ -41,6 +41,23 @@
     "DataRange": {
       "description": "Leaf cells for this binding: sheet-qualified range and/or defined name.",
       "oneOf": [{ "$ref": "#/$defs/A1Range" }, { "$ref": "#/$defs/DefinedName" }]
+    },
+    "DataRangeList": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/DataRange" },
+      "description": "One or more DataRange entries concatenated at resolve time (complementary shards)."
+    },
+    "SheetName": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Worksheet name (must match a data_range sheet)."
+    },
+    "SheetNameList": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/SheetName" },
+      "description": "Worksheet names covered by a multi-range complementary series."
     },
     "A1Cell": {
       "type": "string",
@@ -142,7 +159,8 @@
         { "$ref": "#/$defs/BindColumnHeader" },
         { "$ref": "#/$defs/BindRowLabel" },
         { "$ref": "#/$defs/BindValueMap" },
-        { "$ref": "#/$defs/BindConstant" }
+        { "$ref": "#/$defs/BindConstant" },
+        { "$ref": "#/$defs/BindSheetName" }
       ]
     },
     "BindDataCell": {
@@ -265,6 +283,22 @@
       "properties": {
         "kind": { "const": "constant" },
         "value": { "$ref": "#/$defs/ScalarValue" }
+      }
+    },
+    "BindSheetName": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "sheet_name" },
+        "values": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/$defs/ScalarValue" },
+          "description": "Map from worksheet name to dimension code. When omitted, the worksheet name of each data cell is the dimension value."
+        },
+        "read": { "$ref": "#/$defs/ReadAs" },
+        "normalize": { "$ref": "#/$defs/Normalize" }
       }
     },
     "GroupRef": {
@@ -572,13 +606,18 @@
           "description": "Stable binding id, e.g. borvelia_primary_balance."
         },
         "sheet": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Worksheet name (must match data_range sheet)."
+          "description": "Worksheet name (must match data_range sheet). A list when complementary shards cover multiple sheets.",
+          "oneOf": [
+            { "$ref": "#/$defs/SheetName" },
+            { "$ref": "#/$defs/SheetNameList" }
+          ]
         },
         "data_range": {
-          "$ref": "#/$defs/DataRange",
-          "description": "Numeric input cells for this setter; codegen intersects with graph leaves."
+          "description": "Numeric input cells for this setter; codegen intersects with graph leaves. A list concatenates complementary shard ranges at resolve time.",
+          "oneOf": [
+            { "$ref": "#/$defs/DataRange" },
+            { "$ref": "#/$defs/DataRangeList" }
+          ]
         },
         "layout": {
           "$ref": "#/$defs/Layout",

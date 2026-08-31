@@ -26,7 +26,7 @@ from excel_grapher.series_bindings.normalize import (
     has_constant_direction,
     has_input_direction,
 )
-from excel_grapher.series_bindings.ranges import effective_reader_range_address
+from excel_grapher.series_bindings.ranges import effective_reader_range_address, series_data_ranges
 from excel_grapher.series_bindings.resolve import (
     _lookup_concept_dtype,
     resolve_series_bindings,
@@ -320,7 +320,10 @@ def _qualifies_for_reader_range(series: dict[str, Any], resolved: SeriesResoluti
         return False
     if series.get("layout") == "scalar":
         return False
-    return bool(len(resolved["leaves"]) > 1 or ":" in str(series.get("data_range") or ""))
+    ranges = series_data_ranges(series)
+    if len(ranges) != 1:
+        return False
+    return bool(len(resolved["leaves"]) > 1 or ":" in ranges[0])
 
 
 def _should_emit_reader_range(
@@ -368,7 +371,7 @@ def reader_range_omission_issue(
             f"expressed as one xl_range"
         ),
         series_id=series_id,
-        address=str(series.get("data_range") or "") or None,
+        address=(series_data_ranges(series) or [None])[0],
     )
 
 

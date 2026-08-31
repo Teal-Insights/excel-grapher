@@ -16,7 +16,10 @@ from fastpyxl.utils.cell import (
 from excel_grapher.core.address_keys import format_range_key, parse_address
 from excel_grapher.grapher.parser import DEFAULT_MAX_RANGE_CELLS, format_key
 from excel_grapher.grapher.resolver import build_named_range_map
-from excel_grapher.grapher.target_expansion import expand_targets_to_roots
+from excel_grapher.grapher.target_expansion import (
+    expand_targets_to_roots,
+    split_range_target_on_colon,
+)
 from excel_grapher.series_bindings.geometry import expand_column_specs, expand_row_specs
 
 if TYPE_CHECKING:
@@ -68,6 +71,96 @@ def _sheetnames_for_target(
         f"Cannot infer sheet for data_range {data_range!r}; pass sheetnames= or workbook= "
         "for defined-name targets"
     )
+
+
+def sheet_from_data_range(data_range: str) -> str | None:
+    """Return the worksheet name from a sheet-qualified `data_range`, if any."""
+    if "!" not in data_range:
+        return None
+    split = split_range_target_on_colon(data_range)
+    start = split[0] if split is not None else data_range
+    sheet, _ = parse_address(start)
+    return sheet
+
+
+def series_data_ranges(series: Mapping[str, Any]) -> list[str]:
+    """Return the series `data_range` as a list of range strings."""
+    data_range = series.get("data_range")
+    if isinstance(data_range, str) and data_range:
+        return [data_range]
+    if isinstance(data_range, list):
+        return [item for item in data_range if isinstance(item, str) and item]
+    return []
+
+
+def series_sheets(series: Mapping[str, Any]) -> list[str]:
+    """Return declared or inferred worksheet names for a series binding."""
+    sheet = series.get("sheet")
+    if isinstance(sheet, str) and sheet:
+        return [sheet]
+    if isinstance(sheet, list):
+        return [str(name) for name in sheet if isinstance(name, str) and name]
+    sheets: list[str] = []
+    for data_range in series_data_ranges(series):
+        inferred = sheet_from_data_range(data_range)
+        if inferred is not None and inferred not in sheets:
+            sheets.append(inferred)
+    return sheets
+
+
+def format_series_data_range(series: Mapping[str, Any]) -> str:
+    """Return a human-readable `data_range` string (comma-separated when listed)."""
+    return ", ".join(series_data_ranges(series))
+
+
+def expand_series_data_ranges(
+    series: Mapping[str, Any],
+    *,
+    workbook: Path | str | None = None,
+    sheetnames: Sequence[str] | None = None,
+    named_ranges: Mapping[str, tuple[str, str]] | None = None,
+    named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
+    max_range_cells: int = DEFAULT_MAX_RANGE_CELLS,
+) -> list[str]:
+    """Expand every `data_range` entry and concatenate the resulting addresses."""
+    addresses: list[str] = []
+    seen: set[str] = set()
+    for data_range in series_data_ranges(series):
+        for address in expand_data_range(
+            data_range,
+            workbook=workbook,
+            sheetnames=sheetnames,
+            named_ranges=named_ranges,
+            named_range_ranges=named_range_ranges,
+            max_range_cells=max_range_cells,
+        ):
+            if address not in seen:
+                seen.add(address)
+                addresses.append(address)
+    return addresses
+
+
+def expand_series_data_ranges_for_graph(
+    graph: DependencyGraph,
+    series: Mapping[str, Any],
+    *,
+    workbook: Path | str | None = None,
+    max_range_cells: int = DEFAULT_MAX_RANGE_CELLS,
+) -> list[str]:
+    """Expand every series `data_range` using named-range maps from a graph."""
+    addresses: list[str] = []
+    seen: set[str] = set()
+    for data_range in series_data_ranges(series):
+        for address in expand_data_range_for_graph(
+            graph,
+            data_range,
+            workbook=workbook,
+            max_range_cells=max_range_cells,
+        ):
+            if address not in seen:
+                seen.add(address)
+                addresses.append(address)
+    return addresses
 
 
 def expand_data_range(
@@ -178,9 +271,10 @@ def effective_reader_range_address(
     a single contiguous rectangle covering exactly the remaining cells — or None
     when the selection is empty or cannot be expressed as one `xl_range`.
     """
-    data_range = series.get("data_range")
-    if not isinstance(data_range, str) or not data_range:
+    ranges = series_data_ranges(series)
+    if len(ranges) != 1:
         return None
+    data_range = ranges[0]
     exclude_rows = series.get("exclude_rows")
     exclude_columns = series.get("exclude_columns")
     if not exclude_rows and not exclude_columns:

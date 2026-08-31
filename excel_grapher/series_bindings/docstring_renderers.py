@@ -11,6 +11,7 @@ from excel_grapher.series_bindings.docstrings import (
     SeriesBindingDocstringContract,
     SeriesFunctionDoc,
 )
+from excel_grapher.series_bindings.ranges import format_series_data_range
 
 SeriesDocstringRendererName = Literal["plain", "rst", "google", "numpy"]
 
@@ -163,8 +164,12 @@ def _source_binding_lines(
     contract: SeriesBindingDocstringContract,
     series: Mapping[str, Any] | None,
 ) -> list[str]:
-    data_range = series.get("data_range", contract.data_range) if series else contract.data_range
-    layout = series.get("layout", contract.layout) if series else contract.layout
+    if series is not None:
+        data_range = format_series_data_range(series) or contract.data_range
+        layout = series.get("layout", contract.layout)
+    else:
+        data_range = contract.data_range
+        layout = contract.layout
     value_type = contract.value_type if contract.value_type is not None else "unspecified"
     return [
         f"Workbook range: {data_range}",

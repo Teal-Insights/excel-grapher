@@ -32,8 +32,7 @@ class SeriesBindingsSchemaError(ValueError):
 
 def _infer_series_sheets(document: dict[str, Any]) -> None:
     """Fill `sheet` on each series when omitted and `data_range` is sheet-qualified."""
-    from excel_grapher.core.address_keys import parse_address
-    from excel_grapher.grapher.target_expansion import split_range_target_on_colon
+    from excel_grapher.series_bindings.ranges import series_sheets
 
     series_list = document.get("series")
     if not isinstance(series_list, list):
@@ -41,13 +40,11 @@ def _infer_series_sheets(document: dict[str, Any]) -> None:
     for series in series_list:
         if not isinstance(series, dict) or "sheet" in series:
             continue
-        data_range = series.get("data_range")
-        if not isinstance(data_range, str) or "!" not in data_range:
-            continue
-        split = split_range_target_on_colon(data_range)
-        start = split[0] if split is not None else data_range
-        sheet, _ = parse_address(start)
-        series["sheet"] = sheet
+        sheets = series_sheets(series)
+        if len(sheets) == 1:
+            series["sheet"] = sheets[0]
+        elif len(sheets) > 1:
+            series["sheet"] = sheets
 
 
 @lru_cache(maxsize=1)

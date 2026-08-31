@@ -37,7 +37,10 @@ from excel_grapher.series_bindings.normalize import (
     has_output_direction,
     input_mode,
 )
-from excel_grapher.series_bindings.ranges import expand_data_range_for_graph
+from excel_grapher.series_bindings.ranges import (
+    expand_series_data_ranges_for_graph,
+    series_data_ranges,
+)
 from excel_grapher.series_bindings.types import (
     LeafResolution,
     ResolutionIssue,
@@ -352,6 +355,18 @@ def _execute_bind(
             return None
         unit = "row" if axis == "rows" else "column"
         raise ValueError(f"value_map: no value covers data {unit} {index}")
+
+    if kind == "sheet_name":
+        values = bind.get("values")
+        if isinstance(values, dict) and values:
+            if sheet not in values:
+                raise ValueError(f"sheet_name: worksheet {sheet!r} is not in values")
+            raw = values[sheet]
+        else:
+            raw = sheet
+        if read_as in {"auto", "string"} and isinstance(raw, str):
+            return _normalize_string(raw, normalize)
+        return coerce_constant(raw, read_as=read_as)
 
     raise ValueError(f"Unknown bind kind: {kind!r}")
 
@@ -695,8 +710,7 @@ def resolve_series_binding(
     leaves: list[LeafResolution] = []
     requires_address = False
 
-    data_range = series.get("data_range")
-    if not isinstance(data_range, str):
+    if not series_data_ranges(series):
         return {
             "series_id": series_id,
             "ok": False,
@@ -710,7 +724,7 @@ def resolve_series_binding(
         }
 
     try:
-        expanded_addresses = expand_data_range_for_graph(graph, data_range, workbook=workbook)
+        expanded_addresses = expand_series_data_ranges_for_graph(graph, series, workbook=workbook)
         expanded_addresses = _apply_exclude_rows(expanded_addresses, series)
         expanded_addresses = _apply_exclude_columns(expanded_addresses, series)
     except (ValueError, TypeError) as exc:

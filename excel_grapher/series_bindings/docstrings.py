@@ -14,6 +14,7 @@ from excel_grapher.series_bindings.normalize import (
     concept_for_field,
     effective_dimension_id,
 )
+from excel_grapher.series_bindings.ranges import format_series_data_range
 from excel_grapher.series_bindings.types import SeriesResolution, WorkbookSeriesBindings
 
 if TYPE_CHECKING:
@@ -272,7 +273,7 @@ def derive_doc_contract(
         series_id=str(series.get("id", "")),
         function_name=function_name,
         function_kind=function_kind,
-        data_range=str(series.get("data_range", "")),
+        data_range=format_series_data_range(series),
         layout=str(series.get("layout", "")),
         value_type=_field_dtype(series, concepts, measure),
         required_fields=required_fields,
