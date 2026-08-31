@@ -208,6 +208,8 @@ def test_array_formula_cells_surface_formula_text(tmp_path: Path) -> None:
     assert node.normalized_formula is not None
     assert node.formula.startswith("=")
     assert node.value is None
+    assert node.is_array_formula is True
+    assert node.array_formula_ref == "A1:A1"
 
 
 def test_parse_target_handles_quoted_sheet_name(tmp_path: Path) -> None:
