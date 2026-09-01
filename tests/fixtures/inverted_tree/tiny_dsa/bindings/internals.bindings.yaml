@@ -1,0 +1,375 @@
+schema_version: 1.13.0
+workbook: ../tiny-dsa.xlsx
+series:
+  - id: initial_debt_resolved
+    sheet: Inputs
+    data_range: Inputs!B6
+    layout: scalar
+    internal: {}
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions: []
+      attributes:
+        - concept: INDICATOR
+          role: attribute
+          value: initial_debt_to_gdp
+          include_in_record: false
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: PC_GDP
+          include_in_record: true
+    key: []
+    series_context:
+      INDICATOR: initial_debt_to_gdp
+    notes: Initial debt-to-GDP ratio resolved from the country profile via INDEX/MATCH.
+
+  - id: engine_initial_debt_baseline
+    sheet: Engine
+    data_range: Engine!B6
+    layout: scalar
+    internal: {}
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions: []
+      attributes:
+        - concept: SCENARIO
+          role: attribute
+          value: baseline
+          include_in_record: false
+        - concept: INDICATOR
+          role: attribute
+          value: initial_debt_to_gdp
+          include_in_record: false
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: PC_GDP
+          include_in_record: true
+    key: []
+    series_context:
+      SCENARIO: baseline
+      INDICATOR: initial_debt_to_gdp
+    notes: Year-0 debt stock anchor for the baseline recursion on the Engine sheet.
+
+  - id: engine_initial_debt_shocked
+    sheet: Engine
+    data_range: Engine!B20
+    layout: scalar
+    internal: {}
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions: []
+      attributes:
+        - concept: SCENARIO
+          role: attribute
+          value: shocked
+          include_in_record: false
+        - concept: INDICATOR
+          role: attribute
+          value: initial_debt_to_gdp
+          include_in_record: false
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: PC_GDP
+          include_in_record: true
+    key: []
+    series_context:
+      SCENARIO: shocked
+      INDICATOR: initial_debt_to_gdp
+    notes: Year-0 debt stock anchor for the shocked recursion on the Engine sheet.
+
+  - id: shock_magnitude_resolved
+    sheet: Engine
+    data_range: Engine!B9
+    layout: scalar
+    internal: {}
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions: []
+      attributes:
+        - concept: PARAMETER
+          role: attribute
+          value: shock_magnitude_resolved
+          include_in_record: false
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: PP
+          include_in_record: true
+    key: []
+    series_context:
+      PARAMETER: shock_magnitude_resolved
+    notes: Shock magnitude for the selected shock type, looked up via OFFSET on the shock table.
+
+  - id: shock_active
+    sheet: Engine
+    data_range: Engine!C10:G10
+    layout: row_series
+    internal: {}
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: int
+        bind:
+          kind: data_cell
+          read: int
+      dimensions:
+        - id: TIME_PERIOD
+          concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 5
+            read: int
+        - id: INDICATOR
+          concept: INDICATOR
+          role: key
+          scope: series
+          bind:
+            kind: constant
+            value: shock_active
+          include_in_record: false
+      attributes: []
+    key: [TIME_PERIOD]
+    series_context:
+      INDICATOR: shock_active
+    notes: Shock activation flag (1 when year >= shock_year, else 0) for each projection year.
+
+  - id: shocked_growth
+    sheet: Engine
+    data_range: Engine!C14:G14
+    layout: row_series
+    internal: {}
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - id: TIME_PERIOD
+          concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 13
+            read: int
+        - id: INDICATOR
+          concept: INDICATOR
+          role: key
+          scope: series
+          bind:
+            kind: constant
+            value: real_gdp_growth
+          include_in_record: false
+        - id: SCENARIO
+          concept: SCENARIO
+          role: key
+          scope: series
+          bind:
+            kind: constant
+            value: shocked
+          include_in_record: false
+      attributes:
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: PERCENT_PER_ANNUM
+          include_in_record: true
+    key: [TIME_PERIOD]
+    series_context:
+      INDICATOR: real_gdp_growth
+      SCENARIO: shocked
+    notes: Shocked real GDP growth path after applying the selected shock magnitude.
+
+  - id: shocked_interest
+    sheet: Engine
+    data_range: Engine!C15:G15
+    layout: row_series
+    internal: {}
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - id: TIME_PERIOD
+          concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 13
+            read: int
+        - id: INDICATOR
+          concept: INDICATOR
+          role: key
+          scope: series
+          bind:
+            kind: constant
+            value: real_interest_rate
+          include_in_record: false
+        - id: SCENARIO
+          concept: SCENARIO
+          role: key
+          scope: series
+          bind:
+            kind: constant
+            value: shocked
+          include_in_record: false
+      attributes:
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: PERCENT_PER_ANNUM
+          include_in_record: true
+    key: [TIME_PERIOD]
+    series_context:
+      INDICATOR: real_interest_rate
+      SCENARIO: shocked
+    notes: Shocked real interest rate path after applying the selected shock magnitude.
+
+  - id: shocked_primary_balance
+    sheet: Engine
+    data_range: Engine!C16:G16
+    layout: row_series
+    internal: {}
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - id: TIME_PERIOD
+          concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 13
+            read: int
+        - id: INDICATOR
+          concept: INDICATOR
+          role: key
+          scope: series
+          bind:
+            kind: constant
+            value: primary_balance
+          include_in_record: false
+        - id: SCENARIO
+          concept: SCENARIO
+          role: key
+          scope: series
+          bind:
+            kind: constant
+            value: shocked
+          include_in_record: false
+      attributes:
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: PC_GDP
+          include_in_record: true
+    key: [TIME_PERIOD]
+    series_context:
+      INDICATOR: primary_balance
+      SCENARIO: shocked
+    notes: Shocked primary balance path after applying the selected shock magnitude.
+
+  - id: baseline_path_internal
+    sheet: Engine
+    data_range: Engine!C6:G6
+    layout: row_series
+    internal: {}
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - id: TIME_PERIOD
+          concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 5
+            read: int
+        - id: SCENARIO
+          concept: SCENARIO
+          role: key
+          scope: series
+          bind:
+            kind: constant
+            value: baseline
+      attributes:
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: PC_GDP
+          include_in_record: true
+    key: [TIME_PERIOD]
+    series_context:
+      SCENARIO: baseline
+    notes: Internal baseline debt-to-GDP path on the Engine sheet (named range baseline_path).
+
+  - id: shocked_path_internal
+    sheet: Engine
+    data_range: Engine!C20:G20
+    layout: row_series
+    internal: {}
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - id: TIME_PERIOD
+          concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 19
+            read: int
+        - id: SCENARIO
+          concept: SCENARIO
+          role: key
+          scope: series
+          bind:
+            kind: constant
+            value: shocked
+      attributes:
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: PC_GDP
+          include_in_record: true
+    key: [TIME_PERIOD]
+    series_context:
+      SCENARIO: shocked
+    notes: Internal shocked debt-to-GDP path on the Engine sheet (named range shocked_path).

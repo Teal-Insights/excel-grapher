@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 
 from excel_grapher.core.address_keys import normalize_key as normalize_address
 from excel_grapher.grapher import create_dependency_graph
@@ -272,6 +272,7 @@ def generate_bindings_modules(
     targets: list[str],
     bindings: WorkbookSeriesBindings,
     workbook: Path,
+    paradigm: Literal["ctx", "inverted_tree"] = "ctx",
 ) -> dict[str, str]:
     """Generate a modular export package for the binding closure."""
     from excel_grapher.exporter import CodeGenerator
@@ -281,6 +282,7 @@ def generate_bindings_modules(
             targets,
             series_bindings=bindings,
             bindings_workbook=workbook,
+            paradigm=paradigm,
         )
 
 
@@ -291,6 +293,7 @@ def run_binding_checks(
     module_dir: Path,
     package_name: str = "bindings_module",
     smoke_test: bool = True,
+    paradigm: Literal["ctx", "inverted_tree"] = "ctx",
 ) -> BindingsCheckResult:
     """Validate bindings, optionally smoke-test generated setters and computes."""
     result = validate_bindings_workbook(workbook, bindings_path)
@@ -304,8 +307,10 @@ def run_binding_checks(
         targets=result["targets"],
         bindings=result["bindings"],
         workbook=workbook,
+        paradigm=paradigm,
     )
-    if smoke_test:
+    # Setter/compute smoke is ctx-export only; inverted-tree packages have no set_*.
+    if smoke_test and paradigm == "ctx":
         from excel_grapher.series_bindings.smoke import smoke_test_bindings_module
 
         smoke_test_bindings_module(

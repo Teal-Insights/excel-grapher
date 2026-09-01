@@ -1,0 +1,68 @@
+schema_version: 1.13.0
+workbook: ../tiny-dsa.xlsx
+series:
+  - id: country_profile_names
+    sheet: Inputs
+    data_range: Inputs!A10:A12
+    layout: row_series
+    constant: {}
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: string
+        bind:
+          kind: data_cell
+          read: string
+      dimensions:
+        - id: COUNTRY
+          concept: COUNTRY
+          role: key
+          scope: cell
+          bind:
+            kind: row_label
+            label_column: A
+            read: string
+            normalize: strip
+      attributes:
+        - concept: PARAMETER
+          role: attribute
+          value: country_profile_name
+          include_in_record: false
+    key: [COUNTRY]
+    series_context:
+      PARAMETER: country_profile_name
+    notes: MATCH lookup keys in the country profile table. Reader-only; the user-facing selector is country_name.
+
+  - id: engine_year_labels
+    sheet: Engine
+    data_range: Engine!C5:G5
+    layout: row_series
+    constant: {}
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: int
+        bind:
+          kind: data_cell
+          read: int
+      dimensions:
+        - id: TIME_PERIOD
+          concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 5
+            read: int
+        - id: INDICATOR
+          concept: INDICATOR
+          role: key
+          scope: series
+          bind:
+            kind: constant
+            value: projection_year
+          include_in_record: false
+    key: [TIME_PERIOD]
+    series_context:
+      INDICATOR: projection_year
+    notes: Projection-year labels on the Engine baseline header row. Formulas compare these to shock_year.

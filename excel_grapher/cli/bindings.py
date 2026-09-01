@@ -64,6 +64,12 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         default="bindings_module",
         help="Package directory name for smoke tests (default: bindings_module)",
     )
+    validate_parser.add_argument(
+        "--paradigm",
+        choices=("ctx", "inverted_tree"),
+        default="ctx",
+        help="Codegen paradigm (default: ctx). inverted_tree emits leaf-closure computes.",
+    )
 
 
 def dispatch(args: argparse.Namespace) -> int:
@@ -120,6 +126,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
                         module_dir=module_dir,
                         package_name=args.package_name,
                         smoke_test=True,
+                        paradigm=args.paradigm,
                     )
             else:
                 module_dir = _module_dir(args.emit_dir, args.package_name)
@@ -129,6 +136,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
                     module_dir=module_dir,
                     package_name=args.package_name,
                     smoke_test=True,
+                    paradigm=args.paradigm,
                 )
                 if not args.json:
                     _write_generated_files(check_result, module_dir)
@@ -139,6 +147,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
                 targets=result["targets"],
                 bindings=result["bindings"],
                 workbook=workbook,
+                paradigm=args.paradigm,
             )
             _write_generated_files({"generated_files": files}, module_dir)
     except (BindingsSmokeError, ValueError) as exc:
@@ -146,7 +155,10 @@ def cmd_validate(args: argparse.Namespace) -> int:
         return 1
 
     if not args.json and args.smoke_test:
-        print("All setter and compute functions passed smoke checks.")
+        if args.paradigm == "inverted_tree":
+            print("Generated inverted-tree modules (setter smoke skipped).")
+        else:
+            print("All setter and compute functions passed smoke checks.")
     return 0
 
 
