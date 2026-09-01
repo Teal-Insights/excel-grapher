@@ -293,7 +293,9 @@ def _write_compute_workbook(path: Path) -> None:
     for col, year in enumerate([1, 2, 3], start=2):
         engine.write(0, col - 1, year)
         outputs.write(0, col - 1, year)
-        engine.write_formula(5, col - 1, f"={year}*10")
+        # Shared skeleton ``=<col>5*10`` so Pass-1 can parameterize by TIME_PERIOD.
+        engine.write_number(4, col - 1, float(year))
+        engine.write_formula(5, col - 1, f"={chr(64 + col)}5*10")
         outputs.write_formula(11, col - 1, f"=Engine!{chr(64 + col)}6")
     wb.close()
 

@@ -2973,6 +2973,29 @@ class CodeGenerator:
         )
         internals_py = "\n".join(internals_lines).rstrip() + "\n"
 
+        # Pass-1: collapse bound series cell_* IR into named helpers (#595).
+        merged_address_helpers: dict[str, OutputHelperSpec] = dict(address_helpers or {})
+        if series_bindings is not None and bindings_workbook is not None:
+            from excel_grapher.exporter.pass1.collapse import collapse_bound_series_in_source
+
+            collapse = collapse_bound_series_in_source(
+                internals_py,
+                graph=cast("DependencyGraph", self._public_graph()),
+                bindings=series_bindings,
+                workbook=bindings_workbook,
+            )
+            internals_py = collapse.source
+            for address, spec in collapse.address_helpers.items():
+                merged_address_helpers.setdefault(
+                    address,
+                    {"helper": str(spec["name"]), "dims": list(spec.get("dims") or [])},
+                )
+            if "xl_memoize" in internals_py:
+                # Ensure runtime embeds xl_memoize when helpers use it.
+                used = set(parts["used_xl_functions"])
+                used.add("xl_memoize")
+                parts = {**parts, "used_xl_functions": frozenset(used)}
+
         series_setter_names: list[str] = []
         series_reader_names: list[str] = []
         series_compute_names: list[str] = []
@@ -3015,7 +3038,7 @@ class CodeGenerator:
                     series_bindings,
                     workbook=bindings_workbook,
                     export_addresses=export_with_aliases,
-                    address_helpers=address_helpers,
+                    address_helpers=merged_address_helpers or None,
                 )
                 output_helper_imports = output_helper_names(output_helper_index)
                 from excel_grapher.series_bindings.compute_codegen import emit_output_leaves_block
