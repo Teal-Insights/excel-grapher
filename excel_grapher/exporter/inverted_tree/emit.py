@@ -194,9 +194,12 @@ def emit_orchestrator(
         params.append(f"{sid}: {python_annotation(catalog.get(sid))} = {const_name}")
     param_block = ",\n    ".join(params)
     if params:
-        signature = f"def {compute_name}(\n    *,\n    {param_block},\n) -> tuple[float, ...]:"
+        signature = (
+            f"def {compute_name}(\n    *,\n    {param_block},\n"
+            f") -> {python_return_annotation(output)}:"
+        )
     else:
-        signature = f"def {compute_name}() -> tuple[float, ...]:"
+        signature = f"def {compute_name}() -> {python_return_annotation(output)}:"
     runtime: set[str] = set()
     body: list[str] = []
     for sid in leaves:

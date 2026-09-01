@@ -101,16 +101,17 @@ def test_index_match_has_no_xl_index_ref(tmp_path: Path) -> None:
     ) == pytest.approx(80.0)
 
 
-def test_unknown_match_raises_na(tmp_path: Path) -> None:
+def test_unknown_match_returns_na(tmp_path: Path) -> None:
     workbook = _index_match_workbook(tmp_path)
     pkg = load_package(generate_inverted(workbook, _index_match_bindings()), tmp_path, name="a4_na")
-    with pytest.raises(pkg.runtime.XlError) as exc:
+    assert (
         pkg.internals.initial_debt_resolved(
             "NotACountry",
             ("Borvelia", "Litellia", "Aurelium"),
             (60.0, 80.0, 40.0),
         )
-    assert exc.value.code == "#N/A"
+        == "#N/A"
+    )
 
 
 def _offset_workbook(tmp_path: Path) -> Path:
@@ -173,6 +174,4 @@ def test_offset_into_row_is_indexing(tmp_path: Path) -> None:
     assert resolved(1, (-2.0, 2.0, -1.0)) == pytest.approx(-2.0)
     assert resolved(2, (-2.0, 2.0, -1.0)) == pytest.approx(2.0)
     assert resolved(3, (-2.0, 2.0, -1.0)) == pytest.approx(-1.0)
-    with pytest.raises(pkg.runtime.XlError) as exc:
-        resolved(4, (-2.0, 2.0, -1.0))
-    assert exc.value.code == "#VALUE!"
+    assert resolved(4, (-2.0, 2.0, -1.0)) == "#VALUE!"

@@ -3,14 +3,31 @@
 Mechanical extraction emits calls to these helpers instead of reading cells
 from an evaluation context. `take` gathers catalog-order series by index;
 internals never see holes and never fetch extra items to pad a result.
+
+A **measure** is a numeric observation or an Excel error code string
+(`#REF!`, `#DIV/0!`, …) — the same `err.code` ctx stores on Records. Operators
+raise `XlError`; series-member loops catch it so one error cell does not abort
+the tuple.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import NoReturn, TypeVar
+from typing import NoReturn, TypeGuard, TypeVar
 
 T = TypeVar("T")
+
+XL_ERROR_CODES = frozenset(
+    {
+        "#VALUE!",
+        "#REF!",
+        "#DIV/0!",
+        "#N/A",
+        "#NAME?",
+        "#NUM!",
+        "#NULL!",
+    }
+)
 
 
 class XlError(Exception):
@@ -19,6 +36,40 @@ class XlError(Exception):
     def __init__(self, code: str) -> None:
         super().__init__(code)
         self.code = code
+
+
+def is_error(value: object) -> TypeGuard[str]:
+    """True when `value` is an Excel error code string."""
+    return isinstance(value, str) and value in XL_ERROR_CODES
+
+
+def as_measure(value: object, dtype: str = "float") -> int | float | str | bool:
+    """Coerce a helper result to a measure: number or error code.
+
+    Operators still raise `XlError`. Series-member boundaries catch that and
+    store `err.code` here so a `#REF!` cell does not abort the rest of a series.
+    """
+    if isinstance(value, str) and value in XL_ERROR_CODES:
+        return value
+    if isinstance(value, XlError):
+        return value.code
+    if dtype == "int":
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        raise TypeError(f"cannot coerce {type(value).__name__} to int measure")
+    if dtype == "str":
+        return str(value)
+    if dtype == "bool":
+        return bool(value)
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, int | float):
+        return float(value)
+    raise TypeError(f"cannot coerce {type(value).__name__} to float measure")
 
 
 def xl_div(numerator: float, denominator: float) -> float:

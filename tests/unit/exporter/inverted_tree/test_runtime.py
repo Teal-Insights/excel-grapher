@@ -6,6 +6,8 @@ import pytest
 
 from excel_grapher.exporter.inverted_tree.runtime import (
     XlError,
+    as_measure,
+    is_error,
     require_aligned,
     require_length,
     take,
@@ -88,3 +90,12 @@ def test_xl_raise() -> None:
     with pytest.raises(XlError) as exc:
         xl_raise("#N/A")
     assert exc.value.code == "#N/A"
+
+
+def test_as_measure_preserves_error_codes() -> None:
+    assert as_measure(1.5) == 1.5
+    assert as_measure("#REF!") == "#REF!"
+    assert as_measure("#DIV/0!") == "#DIV/0!"
+    assert is_error("#REF!")
+    assert not is_error(1.5)
+    assert not is_error("REF")

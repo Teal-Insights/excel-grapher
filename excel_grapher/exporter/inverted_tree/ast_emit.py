@@ -65,18 +65,27 @@ class EmitContext:
         return symbol
 
 
+def python_measure_type(series: BoundSeries) -> str:
+    """Return the Python type of one observation (`float | str` for numbers)."""
+    if series.python_dtype in {"float", "int"}:
+        return f"{series.python_dtype} | str"
+    return series.python_dtype
+
+
 def python_annotation(series: BoundSeries) -> str:
     """Return a typing annotation for a helper parameter."""
+    inner = python_measure_type(series) if series.is_formula_series else series.python_dtype
     if series.is_scalar:
-        return series.python_dtype
-    return f"Sequence[{series.python_dtype}]"
+        return inner
+    return f"Sequence[{inner}]"
 
 
 def python_return_annotation(series: BoundSeries) -> str:
     """Return a typing annotation for a helper result."""
+    inner = python_measure_type(series)
     if series.is_scalar:
-        return series.python_dtype
-    return f"tuple[{series.python_dtype}, ...]"
+        return inner
+    return f"tuple[{inner}, ...]"
 
 
 def _cast_scalar(expr: str, dtype: str) -> str:
@@ -317,6 +326,20 @@ def emit_helper_body(
         ast = node_formula_ast(graph, series.cells[0])
         expr = emit_expr(ast, ctx)
         used |= ctx.used_runtime
+        used.add("as_measure")
+        used.add("XlError")
+        if series.python_dtype in {"float", "int"}:
+            coerce = (
+                f"as_measure({expr})"
+                if series.python_dtype == "float"
+                else f"as_measure({expr}, {series.python_dtype!r})"
+            )
+            return [
+                "    try:",
+                f"        return {coerce}",
+                "    except XlError as err:",
+                "        return err.code",
+            ], used
         return [f"    return {_cast_scalar(expr, series.python_dtype)}"], used
 
     if deps.is_scan:
@@ -336,6 +359,8 @@ def emit_helper_body(
     ast = node_formula_ast(graph, series.cells[0])
     expr = emit_expr(ast, ctx)
     used |= ctx.used_runtime
+    used.add("as_measure")
+    used.add("XlError")
     lines: list[str] = []
     if seq_params:
         joined = ", ".join(seq_params)
@@ -343,8 +368,19 @@ def emit_helper_body(
         lines.append(f"    n = require_aligned({joined})")
     else:
         lines.append(f"    n = {len(series.cells)}")
-    casted = _cast_scalar(expr, series.python_dtype)
-    lines.append(f"    return tuple({casted} for i in range(n))")
+    measure = python_measure_type(series)
+    coerce = (
+        f"as_measure({expr})"
+        if series.python_dtype == "float"
+        else f"as_measure({expr}, {series.python_dtype!r})"
+    )
+    lines.append(f"    out: list[{measure}] = []")
+    lines.append("    for i in range(n):")
+    lines.append("        try:")
+    lines.append(f"            out.append({coerce})")
+    lines.append("        except XlError as err:")
+    lines.append("            out.append(err.code)")
+    lines.append("    return tuple(out)")
     return lines, used
 
 
@@ -369,6 +405,9 @@ def _emit_scan_body(
     ast = node_formula_ast(graph, series.cells[0])
     expr = emit_expr(ast, ctx)
     used = set(ctx.used_runtime)
+    used.add("as_measure")
+    used.add("XlError")
+    used.add("is_error")
     lines: list[str] = []
     if seq_params:
         used.add("require_aligned")
@@ -376,10 +415,22 @@ def _emit_scan_body(
     else:
         lines.append(f"    n = {len(series.cells)}")
     seed_expr = seed if seed is not None else "0"
-    lines.append(f"    path: list[{series.python_dtype}] = []")
-    lines.append(f"    prior = {seed_expr}")
+    measure = python_measure_type(series)
+    coerce = (
+        f"as_measure({expr})"
+        if series.python_dtype == "float"
+        else f"as_measure({expr}, {series.python_dtype!r})"
+    )
+    lines.append(f"    path: list[{measure}] = []")
+    lines.append(f"    prior: {measure} = {seed_expr}")
     lines.append("    for i in range(n):")
-    lines.append(f"        prior = {_cast_scalar(expr, series.python_dtype)}")
+    lines.append("        if is_error(prior):")
+    lines.append("            path.append(prior)")
+    lines.append("            continue")
+    lines.append("        try:")
+    lines.append(f"            prior = {coerce}")
+    lines.append("        except XlError as err:")
+    lines.append("            prior = err.code")
     lines.append("        path.append(prior)")
     lines.append("    return tuple(path)")
     return lines, used
