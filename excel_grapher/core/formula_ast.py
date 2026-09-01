@@ -71,11 +71,25 @@ class FormulaStyle(StrEnum):
     `A1_ABSOLUTE` is the `normalized_formula` dialect: sheet-qualified A1 with
     `$` stripped. `A1_EXCEL` keeps `$` on absolute axes and omits the host sheet
     prefix. `R1C1` uses `R1C1` / `R[-1]C[2]` tokens.
+
+    Construction accepts the member name or the stored value, case-insensitively
+    (`FormulaStyle("A1_ABSOLUTE")` and `FormulaStyle("a1_absolute")` are
+    equivalent). Unknown strings still raise `ValueError`.
     """
 
     A1_ABSOLUTE = "a1_absolute"
     A1_EXCEL = "a1_excel"
     R1C1 = "r1c1"
+
+    @classmethod
+    def _missing_(cls, value: object) -> FormulaStyle | None:
+        if not isinstance(value, str):
+            return None
+        folded = value.casefold()
+        for member in cls:
+            if member.name.casefold() == folded or member.value.casefold() == folded:
+                return member
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -565,7 +579,8 @@ def render_formula(
         anchor: Host cell for relative axes. Required when `ast` has any
             `RelativeAxis`, or when `coerce_relative_refs` is True and relative
             axes are present.
-        style: `A1_ABSOLUTE`, `A1_EXCEL`, or `R1C1` (or the matching string).
+        style: `A1_ABSOLUTE`, `A1_EXCEL`, or `R1C1`. Member names and values
+            are accepted case-insensitively (`A1_ABSOLUTE` / `a1_absolute`).
         coerce_relative_refs: If True, bind relative axes to absolute indexes
             before spelling them.
 

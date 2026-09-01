@@ -9,6 +9,7 @@ from excel_grapher.core.formula_ast import (
     CellRef,
     CellRefNode,
     FormulaStyle,
+    NumberNode,
     RangeNode,
     RelativeAxis,
     WholeColumnNode,
@@ -18,6 +19,41 @@ from excel_grapher.core.formula_ast import (
     render_formula,
     unparse_normalized_formula,
 )
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("A1_ABSOLUTE", FormulaStyle.A1_ABSOLUTE),
+        ("a1_absolute", FormulaStyle.A1_ABSOLUTE),
+        ("A1_absolute", FormulaStyle.A1_ABSOLUTE),
+        ("A1_EXCEL", FormulaStyle.A1_EXCEL),
+        ("a1_excel", FormulaStyle.A1_EXCEL),
+        ("R1C1", FormulaStyle.R1C1),
+        ("r1c1", FormulaStyle.R1C1),
+        ("R1c1", FormulaStyle.R1C1),
+    ],
+)
+def test_formula_style_accepts_member_name_and_value(raw: str, expected: FormulaStyle) -> None:
+    assert FormulaStyle(raw) is expected
+
+
+def test_formula_style_rejects_unknown_string() -> None:
+    with pytest.raises(ValueError, match="A1_RELATIVE"):
+        FormulaStyle("A1_RELATIVE")
+
+
+@pytest.mark.parametrize(
+    "style",
+    [
+        FormulaStyle.A1_ABSOLUTE,
+        "a1_absolute",
+        "A1_ABSOLUTE",
+    ],
+)
+def test_render_formula_accepts_documented_style_strings(style: FormulaStyle | str) -> None:
+    ast = NumberNode(1)
+    assert render_formula(ast, style=style) == "=1"
 
 
 def test_a1_absolute_matches_unparse_normalized_formula() -> None:
