@@ -39,6 +39,7 @@ from excel_grapher.exporter.pass1.mechanical_body import (
     synthesize_singleton_body,
 )
 from excel_grapher.exporter.pass1.models import MemberContext, SeriesHelperVerificationError
+from excel_grapher.exporter.pass1.modes import ClusteringMode
 from excel_grapher.exporter.pass1.naming import allocate_schedule_helper_names
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings.constant_series import derive_constant_series
@@ -62,6 +63,7 @@ class Pass1CollapseResult:
     source: str
     helper_names: tuple[str, ...]
     address_helpers: dict[str, dict[str, Any]]
+    address_dispatch: dict[str, tuple[str, dict[str, BindingKeyValue]]]
 
 
 def _dtype_annotation(dtype: str) -> str:
@@ -284,20 +286,19 @@ def _summary_has_self_recurrence(summary: object) -> bool:
     return False
 
 
-def collapse_bound_series_in_source(
-    source: str,
-    *,
+def _series_maps_for_graph(
     graph: DependencyGraph,
     bindings: WorkbookSeriesBindings,
-    workbook: Path | str,
-) -> Pass1CollapseResult:
-    """Collapse bound formula series in internals IR into named helpers."""
-    workbook_path = Path(workbook)
-    internal_series = derive_internal_series(graph, bindings, workbook=workbook_path)
-    output_series = derive_output_series(graph, bindings, workbook=workbook_path)
-    input_series = derive_input_series(graph, bindings, workbook=workbook_path)
-    constant_series = derive_constant_series(graph, bindings, workbook=workbook_path)
-
+    *,
+    workbook: Path,
+) -> tuple[
+    Mapping[str, Mapping[str, BindingKeyValue]],
+    Mapping[str, str],
+]:
+    internal_series = derive_internal_series(graph, bindings, workbook=workbook)
+    output_series = derive_output_series(graph, bindings, workbook=workbook)
+    input_series = derive_input_series(graph, bindings, workbook=workbook)
+    constant_series = derive_constant_series(graph, bindings, workbook=workbook)
     bound_address_keys = build_bound_address_keys(
         input_series,
         output_series,
@@ -310,14 +311,97 @@ def collapse_bound_series_in_source(
         input_series=input_series,
         constant_series=constant_series,
     )
+    return bound_address_keys, address_to_series_id
+
+
+def _bound_formula_addresses_missing_ir(
+    source: str,
+    *,
+    graph: DependencyGraph,
+    address_to_series_id: Mapping[str, str],
+) -> list[str]:
+    functions = _function_sources(source)
+    missing: list[str] = []
+    for address in address_to_series_id:
+        node = graph.get_node(address)
+        if node is None or not node.has_formula:
+            continue
+        if address_to_python_name(address) not in functions:
+            missing.append(address)
+    return sorted(missing)
+
+
+def _member_key_kwargs(
+    parameters: Sequence[KeyConceptSpec],
+    keys: Mapping[str, BindingKeyValue],
+) -> dict[str, BindingKeyValue]:
+    return {
+        spec.suggested_param_name: keys[spec.dimension_id]
+        for spec in parameters
+        if spec.dimension_id in keys
+    }
+
+
+def collapse_bound_series_in_source(
+    source: str,
+    *,
+    graph: DependencyGraph,
+    bindings: WorkbookSeriesBindings,
+    workbook: Path | str,
+    canonical_graph: DependencyGraph | None = None,
+    clustering_mode: ClusteringMode = "series",
+) -> Pass1CollapseResult:
+    """Collapse bound formula series in internals IR into named helpers.
+
+    ``graph`` must be the graph that ``cell_*`` IR was emitted from (the
+    emission / projected graph). ``canonical_graph`` defaults to ``graph`` and
+    is used to detect bound formula addresses whose IR is missing — typically
+    because OptimalCompression inlined internals that were not in ``preserve``.
+    """
+    workbook_path = Path(workbook)
+    empty = Pass1CollapseResult(
+        source=source,
+        helper_names=(),
+        address_helpers={},
+        address_dispatch={},
+    )
+
+    inventory_graph = canonical_graph if canonical_graph is not None else graph
+    _bound_keys_canon, address_to_series_id_canon = _series_maps_for_graph(
+        inventory_graph,
+        bindings,
+        workbook=workbook_path,
+    )
+    if not address_to_series_id_canon:
+        return empty
+
+    missing_ir = _bound_formula_addresses_missing_ir(
+        source,
+        graph=inventory_graph,
+        address_to_series_id=address_to_series_id_canon,
+    )
+    if missing_ir:
+        preview = ", ".join(missing_ir[:8])
+        more = f" (+{len(missing_ir) - 8} more)" if len(missing_ir) > 8 else ""
+        raise SeriesHelperVerificationError(
+            "Pass-1 needs cell_* IR for every bound formula address, but these are "
+            "missing. If you projected with OptimalCompression, preserve all bound "
+            f"series (including internals): {preview}{more}"
+        )
+
+    bound_address_keys, address_to_series_id = _series_maps_for_graph(
+        graph,
+        bindings,
+        workbook=workbook_path,
+    )
     if not address_to_series_id:
-        return Pass1CollapseResult(source=source, helper_names=(), address_helpers={})
+        return empty
 
     vocabulary = key_concept_vocabulary_from_bindings(bindings)
     clusters = cluster_graph_formulas(
         graph,
         bound_address_keys=bound_address_keys,
-        clustering_mode="series",
+        clustering_mode=clustering_mode,
         address_to_series_id=address_to_series_id,
         workbook_path=workbook_path,
     )
@@ -332,7 +416,6 @@ def collapse_bound_series_in_source(
         )
     ]
     if not collapsible:
-        # Bound formula addresses that never entered a cluster still fail closed.
         bound_formula_leftovers = [
             address
             for address, _series_id in address_to_series_id.items()
@@ -343,7 +426,7 @@ def collapse_bound_series_in_source(
             raise SeriesHelperVerificationError(
                 f"Pass-1 found bound formula addresses with no collapsible cluster: {preview}"
             )
-        return Pass1CollapseResult(source=source, helper_names=(), address_helpers={})
+        return empty
 
     collapsible = _topo_clusters(collapsible, graph=graph)
     helper_names = allocate_schedule_helper_names(
@@ -354,6 +437,7 @@ def collapse_bound_series_in_source(
     updated = source
     emitted_helpers: list[str] = []
     address_helpers: dict[str, dict[str, Any]] = {}
+    address_dispatch: dict[str, tuple[str, dict[str, BindingKeyValue]]] = {}
     semantic_deps: list[SemanticDependencyRef] = []
     needs_memoize = False
 
@@ -452,6 +536,10 @@ def collapse_bound_series_in_source(
                 "name": helper_name,
                 "dims": [spec.dimension_id for spec in parameters],
             }
+            address_dispatch[member.address] = (
+                helper_name,
+                _member_key_kwargs(parameters, keys),
+            )
 
         updated = _rewrite_call_sites(updated, bindings=collapse_bindings)
         emitted_helpers.append(helper_name)
@@ -495,4 +583,5 @@ def collapse_bound_series_in_source(
         source=updated,
         helper_names=tuple(emitted_helpers),
         address_helpers=address_helpers,
+        address_dispatch=address_dispatch,
     )

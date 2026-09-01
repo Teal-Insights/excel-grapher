@@ -66,6 +66,7 @@ from excel_grapher.grapher.target_expansion import (
 __all__ = ["CodeGenerator", "GraphLike", "GraphNode"]
 
 if TYPE_CHECKING:
+    from excel_grapher.exporter.pass1.modes import ClusteringMode
     from excel_grapher.exporter.projection import ProjectionManifest
     from excel_grapher.grapher import DependencyGraph
     from excel_grapher.series_bindings.docstring_renderers import SeriesDocstringRendererSpec
@@ -135,6 +136,8 @@ class GenerationParts(TypedDict):
     has_constants: bool
     used_xl_functions: Set[str]
     blank_rects: tuple[BlankRangeRect, ...]
+    runtime_symbols: Set[str]
+    include_dep_tracking: bool
 
 
 # Comparison operators emitted via xl_compare / xl_map_compare.
@@ -269,6 +272,13 @@ class CodeGenerator:
         original = getattr(self.graph, "original_graph", None)
         if original is not None:
             return cast("DependencyGraph | GraphLike", original)
+        return self.graph
+
+    def _emission_graph(self) -> DependencyGraph | GraphLike:
+        """Graph that ``cell_*`` IR is emitted from (projected surface when present)."""
+        projected = getattr(self.graph, "projected_graph", None)
+        if projected is not None:
+            return cast("DependencyGraph | GraphLike", projected)
         return self.graph
 
     def _projection_manifest(self) -> ProjectionManifest | None:
@@ -1188,32 +1198,55 @@ class CodeGenerator:
 
     @classmethod
     def _emit_resolver_lines(
-        cls, blank_rects: tuple[BlankRangeRect, ...] | None = None
+        cls,
+        blank_rects: tuple[BlankRangeRect, ...] | None = None,
+        *,
+        address_dispatch: Mapping[str, tuple[str, Mapping[str, object]]] | None = None,
     ) -> list[str]:
+        from excel_grapher.exporter.pass1.bindings import format_binding_key_literal
+
         prefix: list[str] = []
         if blank_rects:
             prefix = cls._emit_blank_range_lines(blank_rects)
         resolve_head = [
             "# --- Formula resolver ---",
             "_RESOLVED_FORMULAS = {}",
-            "def _address_to_func_name(address):",
-            "    name = []",
-            "    prev_underscore = False",
-            "    for ch in address.lower():",
-            '        if ch == "\'":',
-            "            continue",
-            '        if "a" <= ch <= "z" or "0" <= ch <= "9":',
-            "            name.append(ch)",
-            "            prev_underscore = False",
-            "        else:",
-            "            if not prev_underscore:",
-            '                name.append("_")',
-            "                prev_underscore = True",
-            '    base = "".join(name).strip("_")',
-            '    return f"cell_{base}"',
-            "",
-            "def _resolve_formula(address):",
         ]
+        if address_dispatch:
+            resolve_head.append("_ADDRESS_DISPATCH = {")
+            for address in sorted(address_dispatch):
+                helper_name, key_kwargs = address_dispatch[address]
+                if key_kwargs:
+                    inner = ", ".join(
+                        f"{name!r}: {format_binding_key_literal(cast(Any, value))}"
+                        for name, value in sorted(key_kwargs.items())
+                    )
+                    kw_repr = "{" + inner + "}"
+                else:
+                    kw_repr = "{}"
+                resolve_head.append(f"    {address!r}: ({helper_name!r}, {kw_repr}),")
+            resolve_head.append("}")
+        resolve_head.extend(
+            [
+                "def _address_to_func_name(address):",
+                "    name = []",
+                "    prev_underscore = False",
+                "    for ch in address.lower():",
+                '        if ch == "\'":',
+                "            continue",
+                '        if "a" <= ch <= "z" or "0" <= ch <= "9":',
+                "            name.append(ch)",
+                "            prev_underscore = False",
+                "        else:",
+                "            if not prev_underscore:",
+                '                name.append("_")',
+                "                prev_underscore = True",
+                '    base = "".join(name).strip("_")',
+                '    return f"cell_{base}"',
+                "",
+                "def _resolve_formula(address):",
+            ]
+        )
         if blank_rects:
             resolve_head.extend(
                 [
@@ -1226,6 +1259,25 @@ class CodeGenerator:
                 "    fn = _RESOLVED_FORMULAS.get(address)",
                 "    if fn is not None:",
                 "        return fn",
+            ]
+        )
+        if address_dispatch:
+            resolve_head.extend(
+                [
+                    "    dispatch = _ADDRESS_DISPATCH.get(address)",
+                    "    if dispatch is not None:",
+                    "        helper_name, key_kwargs = dispatch",
+                    "        helper = globals()[helper_name]",
+                    "",
+                    "        def _bound(ctx, _helper=helper, _key_kwargs=key_kwargs):",
+                    "            return _helper(ctx, **_key_kwargs)",
+                    "",
+                    "        _RESOLVED_FORMULAS[address] = _bound",
+                    "        return _bound",
+                ]
+            )
+        resolve_head.extend(
+            [
                 "    name = _address_to_func_name(address)",
                 "    fn = globals().get(name)",
                 "    if fn is not None:",
@@ -2881,6 +2933,8 @@ class CodeGenerator:
         docstring_renderer: SeriesDocstringRendererSpec = "google",
         address_helpers: Mapping[str, OutputHelperSpec] | None = None,
         include_compute_all: bool | None = None,
+        skip_collapse: bool = False,
+        clustering_mode: ClusteringMode = "series",
     ) -> dict[str, str]:
         """Generate a multi-module Python package for target cells.
 
@@ -2907,6 +2961,11 @@ class CodeGenerator:
         `compute_all` is omitted by default when every export target is covered by an
         output series binding. Pass `include_compute_all=True` to keep it, or
         `include_compute_all=False` to omit it unconditionally.
+
+        Pass-1 collapse (issue #595) runs when ``series_bindings`` and
+        ``bindings_workbook`` are set unless ``skip_collapse=True``. Collapse
+        clusters on the emission graph and fails closed if the canonical graph
+        has bound formulas whose ``cell_*`` IR was dropped by projection.
         """
         normalized_targets = self._resolve_targets(targets)
 
@@ -2968,33 +3027,58 @@ class CodeGenerator:
         internals_lines.append("# --- Formula cell functions ---\n")
         internals_lines.extend(cell_code_lines)
         internals_lines.extend(alias_lines)
-        internals_lines.extend(
-            self._emit_resolver_lines(parts["blank_rects"] if parts["blank_rects"] else None)
-        )
         internals_py = "\n".join(internals_lines).rstrip() + "\n"
 
         # Pass-1: collapse bound series cell_* IR into named helpers (#595).
         merged_address_helpers: dict[str, OutputHelperSpec] = dict(address_helpers or {})
-        if series_bindings is not None and bindings_workbook is not None:
+        collapsed_address_dispatch: dict[str, tuple[str, dict[str, object]]] | None = None
+        if series_bindings is not None and bindings_workbook is not None and not skip_collapse:
             from excel_grapher.exporter.pass1.collapse import collapse_bound_series_in_source
 
             collapse = collapse_bound_series_in_source(
                 internals_py,
-                graph=cast("DependencyGraph", self._public_graph()),
+                graph=cast("DependencyGraph", self._emission_graph()),
+                canonical_graph=cast("DependencyGraph", self._public_graph()),
                 bindings=series_bindings,
                 workbook=bindings_workbook,
+                clustering_mode=clustering_mode,
             )
             internals_py = collapse.source
+            if collapse.address_dispatch:
+                collapsed_address_dispatch = {
+                    address: (helper, dict(kwargs))
+                    for address, (helper, kwargs) in collapse.address_dispatch.items()
+                }
             for address, spec in collapse.address_helpers.items():
                 merged_address_helpers.setdefault(
                     address,
                     {"helper": str(spec["name"]), "dims": list(spec.get("dims") or [])},
                 )
             if "xl_memoize" in internals_py:
-                # Ensure runtime embeds xl_memoize when helpers use it.
-                used = set(parts["used_xl_functions"])
-                used.add("xl_memoize")
-                parts = {**parts, "used_xl_functions": frozenset(used)}
+                runtime_symbols = set(parts["runtime_symbols"])
+                runtime_symbols.add("xl_memoize")
+                runtime_py = (
+                    emit_runtime(
+                        runtime_symbols,
+                        include_offset_table=False,
+                        include_dep_tracking=bool(parts["include_dep_tracking"]),
+                        include_operators_fastpath=self._needs_operators_fastpath,
+                    ).rstrip()
+                    + "\n"
+                )
+
+        blank_rects: tuple[BlankRangeRect, ...] = parts["blank_rects"]
+        internals_py = (
+            internals_py.rstrip()
+            + "\n\n"
+            + "\n".join(
+                self._emit_resolver_lines(
+                    blank_rects or None,
+                    address_dispatch=collapsed_address_dispatch,
+                )
+            )
+            + "\n"
+        )
 
         series_setter_names: list[str] = []
         series_reader_names: list[str] = []
@@ -3462,6 +3546,8 @@ class CodeGenerator:
             "has_constants": include_constants,
             "used_xl_functions": frozenset(used_xl_functions),
             "blank_rects": blank_rects,
+            "runtime_symbols": frozenset(runtime_symbols),
+            "include_dep_tracking": include_dep_tracking,
         }
 
     def _resolve_targets(self, targets: Sequence[str] | None) -> list[str]:

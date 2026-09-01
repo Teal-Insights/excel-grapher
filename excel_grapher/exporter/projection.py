@@ -625,10 +625,12 @@ class OptimalCompression:
     """Collapse identity transits and safely inlinable formula nodes.
 
     Target-marked cells and keys in `preserve` are ineligible for both identity
-    transit forwarding and formula inlining. Pass series-bound public addresses
-    via `preserve` (see `series_binding_public_addresses`) or via
-    `series_bindings` / `bindings_workbook` so published leaves stay in the
-    projected graph for downstream series helpers. Use this instead of
+    transit forwarding and formula inlining. Pass series-bound addresses via
+    `preserve` (see `series_binding_public_addresses`) or via `series_bindings` /
+    `bindings_workbook` so published leaves stay in the projected graph for
+    downstream series helpers. For Pass-1 semantic collapse (#595), preserve
+    **all** bound series — including internals — otherwise inlined formulas
+    lack ``cell_*`` IR and collapse fails closed. Use this instead of
     in-place `compress_optimal` when the canonical graph must stay unchanged
     for Python codegen or Excel write-back.
     """
