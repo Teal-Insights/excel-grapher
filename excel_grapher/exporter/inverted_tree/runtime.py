@@ -1,8 +1,8 @@
 """Excel operators and series-alignment primitives for inverted-tree codegen.
 
 Mechanical extraction emits calls to these helpers instead of reading cells
-from an evaluation context. `trim` is the only way a caller shortens a
-series; internals never fetch extra items to pad a result.
+from an evaluation context. `take` gathers catalog-order series by index;
+internals never see holes and never fetch extra items to pad a result.
 """
 
 from __future__ import annotations
@@ -67,14 +67,23 @@ def require_aligned(*series: Sequence[object]) -> int:
     return lengths[0]
 
 
-def trim(values: Sequence[T], stop: int, *, start: int = 0) -> tuple[T, ...]:
-    """Return `values[start:stop]`, failing if the slice is not inside the series.
+def require_length(values: Sequence[object], length: int) -> None:
+    """Fail if `values` is not a catalog-order array of `length`."""
+    actual = len(values)
+    if actual != length:
+        raise ValueError(f"expected length {length}, got {actual}")
 
-    Codegen trims first-level arguments to the keys of the result it is about to
-    request. Recursive (lagged) series may only be trimmed from the left as a
-    year-1 prefix: pass `stop=k` and keep `start=0`.
+
+def take(values: Sequence[T], indices: Sequence[int]) -> tuple[T, ...]:
+    """Return `values` at 0-based `indices`, failing closed on out-of-range.
+
+    The orchestrator gathers from a catalog-order array into a dense working
+    buffer. Internals zip/scan that buffer; they never see holes.
     """
     length = len(values)
-    if not (0 <= start <= stop <= length):
-        raise ValueError(f"trim slice [{start}:{stop}] is outside series of length {length}")
-    return tuple(values[start:stop])
+    result: list[T] = []
+    for index in indices:
+        if index < 0 or index >= length:
+            raise ValueError(f"take index {index} is outside series of length {length}")
+        result.append(values[index])
+    return tuple(result)

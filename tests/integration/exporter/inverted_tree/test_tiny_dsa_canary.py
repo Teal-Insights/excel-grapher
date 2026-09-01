@@ -206,19 +206,19 @@ def test_formula_evaluator_parity_still_holds() -> None:
     assert shocked == pytest.approx(_DEFAULT_SHOCKED, abs=1e-9)
 
 
-def test_year_prefix_does_not_require_full_constant_labels(tiny_dsa_pkg) -> None:
+def test_public_computes_require_catalog_order_arrays(tiny_dsa_pkg) -> None:
+    source = inspect.getsource(tiny_dsa_pkg.api)
+    assert "trim(" not in source
+    assert "take(" not in source
     data = tiny_dsa_pkg.data
-    source = inspect.getsource(tiny_dsa_pkg.compute_output_shocked)
-    assert "require_aligned(growth_baseline, interest_baseline, primary_balance_baseline)" in source
-    assert "engine_year_labels" not in source.split("horizon =", 1)[1].split("\n", 1)[0]
-    result = tiny_dsa_pkg.compute_output_shocked(
-        country_name=data.COUNTRY_NAME_DEFAULT,
-        country_initial_debt=data.COUNTRY_INITIAL_DEBT_DEFAULT,
-        growth_baseline=data.GROWTH_BASELINE_DEFAULT[:1],
-        interest_baseline=data.INTEREST_BASELINE_DEFAULT[:1],
-        primary_balance_baseline=data.PRIMARY_BALANCE_BASELINE_DEFAULT[:1],
-        shock_year=data.SHOCK_YEAR_DEFAULT,
-        shock_type=data.SHOCK_TYPE_DEFAULT,
-        shock_magnitudes=data.SHOCK_MAGNITUDES_DEFAULT,
-    )
-    assert result == pytest.approx((_DEFAULT_SHOCKED[0],), abs=1e-9)
+    with pytest.raises(ValueError, match="expected length"):
+        tiny_dsa_pkg.compute_output_shocked(
+            country_name=data.COUNTRY_NAME_DEFAULT,
+            country_initial_debt=data.COUNTRY_INITIAL_DEBT_DEFAULT,
+            growth_baseline=data.GROWTH_BASELINE_DEFAULT[:1],
+            interest_baseline=data.INTEREST_BASELINE_DEFAULT[:1],
+            primary_balance_baseline=data.PRIMARY_BALANCE_BASELINE_DEFAULT[:1],
+            shock_year=data.SHOCK_YEAR_DEFAULT,
+            shock_type=data.SHOCK_TYPE_DEFAULT,
+            shock_magnitudes=data.SHOCK_MAGNITUDES_DEFAULT,
+        )

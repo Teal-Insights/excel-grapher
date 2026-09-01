@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -107,6 +107,7 @@ class SeriesDeps:
     seed_id: str | None
     aligned_ids: frozenset[str]
     lookup_ids: frozenset[str]
+    index_maps: dict[str, tuple[int, ...]]
 
 
 @dataclass
@@ -299,17 +300,6 @@ def collect_series_deps(
     for index, address in enumerate(series.cells):
         ast = node_formula_ast(graph, address)
         collector.visit(ast, host_cell=address, host_index=index)
-    aligned: set[str] = set()
-    for series_id, pairs in collector.aligned_hits.items():
-        if series_id in collector.lookup_ids:
-            continue
-        if series_id == collector.seed_id:
-            continue
-        dep = catalog.get(series_id)
-        if dep.is_scalar:
-            continue
-        if any(host_i == dep_i for host_i, dep_i in pairs):
-            aligned.add(series_id)
     is_scan = collector.saw_self_lag or collector.seed_id is not None
     remaining = [sid for sid in catalog.order if sid in collector.params]
     if collector.seed_id is not None and collector.seed_id in remaining:
@@ -317,6 +307,26 @@ def collect_series_deps(
         param_ids = (collector.seed_id, *remaining)
     else:
         param_ids = tuple(remaining)
+    index_maps: dict[str, tuple[int, ...]] = {}
+    aligned: set[str] = set()
+    host_n = len(series.cells)
+    for series_id, pairs in collector.aligned_hits.items():
+        if series_id in collector.lookup_ids or series_id == collector.seed_id:
+            continue
+        dep = catalog.get(series_id)
+        if dep.is_scalar:
+            continue
+        slots = [-1] * host_n
+        for host_i, dep_i in pairs:
+            if slots[host_i] not in (-1, dep_i):
+                raise InvertedTreeExportError(
+                    f"series {series.series_id!r} cell {series.cells[host_i]} "
+                    f"reads {series_id!r} at two positions ({slots[host_i]}, {dep_i})"
+                )
+            slots[host_i] = dep_i
+        if all(slot >= 0 for slot in slots):
+            index_maps[series_id] = tuple(slots)
+            aligned.add(series_id)
     return SeriesDeps(
         host_id=series.series_id,
         param_ids=param_ids,
@@ -324,6 +334,7 @@ def collect_series_deps(
         seed_id=collector.seed_id,
         aligned_ids=frozenset(aligned),
         lookup_ids=frozenset(collector.lookup_ids),
+        index_maps=index_maps,
     )
 
 
@@ -365,6 +376,77 @@ def leaf_closure(
         sid for sid in catalog.order if sid in seen and catalog.get(sid).direction == "constant"
     ]
     return tuple(inputs + constants)
+
+
+def predecessor_closure(indices: Sequence[int]) -> tuple[int, ...]:
+    """Return `indices` plus every t-1 predecessor down to 0.
+
+    Wanting `{2, 4}` of a lagged path needs `{0, 1, 2, 3, 4}`: the closure is
+    the lag graph (cell `i` reads cell `i-1`), not a string-processing `1..max`
+    rule that happens to agree for a chain.
+    """
+    needed: set[int] = set()
+    stack = list(indices)
+    while stack:
+        index = stack.pop()
+        if index < 0 or index in needed:
+            continue
+        needed.add(index)
+        if index > 0:
+            stack.append(index - 1)
+    return tuple(sorted(needed))
+
+
+def plan_indices(
+    output: BoundSeries,
+    *,
+    catalog: SeriesCatalog,
+    deps: dict[str, SeriesDeps],
+) -> tuple[dict[str, tuple[int, ...]], dict[str, tuple[int, ...]]]:
+    """Plan catalog indices each series must yield, working backward from `output`.
+
+    Returns `(result_indices, call_indices)`:
+
+    - `result_indices[id]`: catalog positions consumers need from `id`
+    - `call_indices[id]`: positions a formula series actually computes (scan
+      edges expand via `predecessor_closure`)
+
+    Lookup / constrained tables stay identity (full catalog). A scan that
+    consumes an elementwise series wins: the scan's closure is unioned into
+    that series' needed set.
+    """
+    result: dict[str, tuple[int, ...]] = {
+        output.series_id: tuple(range(len(output.cells))),
+    }
+    call: dict[str, tuple[int, ...]] = {}
+
+    def add_result(series_id: str, indices: tuple[int, ...]) -> None:
+        previous = result.get(series_id)
+        if previous is None:
+            result[series_id] = tuple(sorted(set(indices)))
+            return
+        result[series_id] = tuple(sorted(set(previous) | set(indices)))
+
+    formula_ids = formula_closure(output.series_id, catalog=catalog, deps=deps)
+    for host_id in reversed(formula_ids):
+        info = deps[host_id]
+        host_result = result[host_id]
+        host_call = predecessor_closure(host_result) if info.is_scan else host_result
+        call[host_id] = host_call
+        for param_id in info.param_ids:
+            dep = catalog.get(param_id)
+            if param_id in info.lookup_ids:
+                add_result(param_id, tuple(range(len(dep.cells))))
+                continue
+            if dep.is_scalar:
+                add_result(param_id, tuple(range(len(dep.cells))))
+                continue
+            index_map = info.index_maps.get(param_id)
+            if index_map is None:
+                add_result(param_id, tuple(range(len(dep.cells))))
+                continue
+            add_result(param_id, tuple(index_map[index] for index in host_call))
+    return result, call
 
 
 def formula_closure(

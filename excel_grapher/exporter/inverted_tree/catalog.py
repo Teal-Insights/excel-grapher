@@ -57,7 +57,7 @@ class BoundSeries:
 
     @property
     def is_time_series(self) -> bool:
-        """True when the series is keyed by `TIME_PERIOD` and can be trimmed."""
+        """True when the series is keyed by `TIME_PERIOD`."""
         return "TIME_PERIOD" in self.key_fields and self.layout == "series"
 
     @property

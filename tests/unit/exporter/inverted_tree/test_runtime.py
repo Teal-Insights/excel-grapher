@@ -1,4 +1,4 @@
-"""Runtime primitives for inverted-tree codegen (`trim`, `require_aligned`, `xl_*`)."""
+"""Runtime primitives for inverted-tree codegen (`take`, `require_aligned`, `xl_*`)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,8 @@ import pytest
 from excel_grapher.exporter.inverted_tree.runtime import (
     XlError,
     require_aligned,
-    trim,
+    require_length,
+    take,
     xl_at,
     xl_choose,
     xl_div,
@@ -30,17 +31,26 @@ def test_require_aligned_rejects_empty_call() -> None:
         require_aligned()
 
 
-def test_trim_prefix() -> None:
-    assert trim((1, 2, 3, 4, 5), 3) == (1, 2, 3)
+def test_require_length_accepts_catalog_size() -> None:
+    require_length((1, 2, 3), 3)
 
 
-def test_trim_rejects_out_of_range() -> None:
-    with pytest.raises(ValueError, match="outside series"):
-        trim((1, 2, 3), 4)
-    with pytest.raises(ValueError, match="outside series"):
-        trim((1, 2, 3), 2, start=3)
-    with pytest.raises(ValueError, match="outside series"):
-        trim((1, 2, 3), 1, start=-1)
+def test_require_length_rejects_mismatch() -> None:
+    with pytest.raises(ValueError, match="expected length 3"):
+        require_length((1, 2), 3)
+
+
+def test_take_gathers_by_index() -> None:
+    assert take((10, 20, 30, 40, 50), (0, 1, 2)) == (10, 20, 30)
+    assert take((10, 20, 30, 40, 50), (1, 3)) == (20, 40)
+    assert take((10, 20, 30), (2,)) == (30,)
+
+
+def test_take_rejects_out_of_range() -> None:
+    with pytest.raises(ValueError, match="take index 3"):
+        take((1, 2, 3), (3,))
+    with pytest.raises(ValueError, match="take index -1"):
+        take((1, 2, 3), (-1,))
 
 
 def test_xl_div_and_div_zero() -> None:

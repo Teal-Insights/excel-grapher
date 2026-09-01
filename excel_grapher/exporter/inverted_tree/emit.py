@@ -19,6 +19,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
     collect_all_deps,
     formula_closure,
     leaf_closure,
+    plan_indices,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 
@@ -162,16 +163,8 @@ def emit_internals_module(
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _horizon_inputs(leaf_ids: Sequence[str], catalog: SeriesCatalog) -> list[str]:
-    return [
-        sid
-        for sid in leaf_ids
-        if catalog.get(sid).is_time_series and catalog.get(sid).direction == "input"
-    ]
-
-
-def _time_series_leaves(leaf_ids: Sequence[str], catalog: SeriesCatalog) -> list[str]:
-    return [sid for sid in leaf_ids if catalog.get(sid).is_time_series]
+def _identity_indices(series: BoundSeries) -> tuple[int, ...]:
+    return tuple(range(len(series.cells)))
 
 
 def emit_orchestrator(
@@ -184,8 +177,10 @@ def emit_orchestrator(
 
     Returns the function source, runtime symbols used, and data constants imported.
     """
-    leaves = leaf_closure(output.series_id, catalog=catalog, deps=dict(deps))
-    formula_ids = formula_closure(output.series_id, catalog=catalog, deps=dict(deps))
+    deps_map = dict(deps)
+    leaves = leaf_closure(output.series_id, catalog=catalog, deps=deps_map)
+    formula_ids = formula_closure(output.series_id, catalog=catalog, deps=deps_map)
+    result_indices, call_indices = plan_indices(output, catalog=catalog, deps=deps_map)
     required = [sid for sid in leaves if catalog.get(sid).direction == "input"]
     defaulted = [sid for sid in leaves if catalog.get(sid).direction == "constant"]
     compute_name = output.compute_name or f"compute_{output.series_id}"
@@ -202,29 +197,37 @@ def emit_orchestrator(
         signature = f"def {compute_name}(\n    *,\n    {param_block},\n) -> tuple[float, ...]:"
     else:
         signature = f"def {compute_name}() -> tuple[float, ...]:"
-    time_inputs = _horizon_inputs(leaves, catalog)
-    time_series = _time_series_leaves(leaves, catalog)
     runtime: set[str] = set()
     body: list[str] = []
-    out_len = len(output.cells)
-    if time_inputs:
-        runtime.add("require_aligned")
-        runtime.add("trim")
-        joined = ", ".join(time_inputs)
-        body.append(f"    horizon = min(require_aligned({joined}), {out_len})")
-        for sid in time_series:
-            body.append(f"    {sid} = trim({sid}, horizon)")
-    elif time_series:
-        runtime.add("trim")
-        body.append(f"    horizon = {out_len}")
-        for sid in time_series:
-            body.append(f"    {sid} = trim({sid}, horizon)")
+    for sid in leaves:
+        series = catalog.get(sid)
+        if not series.is_sequence:
+            continue
+        runtime.add("require_length")
+        body.append(f"    require_length({sid}, {len(series.cells)})")
+        wanted = result_indices.get(sid)
+        if wanted is None:
+            continue
+        identity = _identity_indices(series)
+        if wanted == identity:
+            continue
+        runtime.add("take")
+        body.append(f"    {sid} = take({sid}, {_py_literal(wanted)})")
     locals_bound: set[str] = set(leaves)
     for series_id in formula_ids:
         info = deps[series_id]
         call = f"internals.{series_id}({', '.join(info.param_ids)})"
         body.append(f"    {series_id} = {call}")
         locals_bound.add(series_id)
+        wanted = result_indices[series_id]
+        computed = call_indices[series_id]
+        if wanted == computed:
+            continue
+        work_pos = tuple(computed.index(index) for index in wanted)
+        if work_pos == tuple(range(len(computed))):
+            continue
+        runtime.add("take")
+        body.append(f"    {series_id} = take({series_id}, {_py_literal(work_pos)})")
     if output.series_id in locals_bound:
         if output.is_scalar:
             body.append(f"    return ({output.series_id},)")
