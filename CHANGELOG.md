@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v12.3.1 (2026-09-01)
+
+### Bug Fixes
+
+- **core**: Accept FormulaStyle member-name strings (#584)
+  ([#592](https://github.com/Teal-Insights/excel-grapher/pull/592),
+  [`f620088`](https://github.com/Teal-Insights/excel-grapher/commit/f62008827288f6d08791a538e95b090729bb4629))
+
+
 ## v12.3.0 (2026-08-31)
 
 ### Features
