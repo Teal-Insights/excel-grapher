@@ -12,7 +12,6 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-import pytest
 import xlsxwriter
 
 from excel_grapher.exporter.codegen import CodeGenerator
@@ -468,31 +467,18 @@ _MISMATCH_BINDINGS: dict[str, Any] = {
 }
 
 
-def test_verification_mismatch_fails_closed(tmp_path: Path) -> None:
-    """Export must fail closed when bound series formulas cannot be verified.
+def test_mixed_regime_leaves_intentional_cell_star_leftovers(tmp_path: Path) -> None:
+    """Mixed-regime clusters soft-skip: keep ``cell_*``, do not abort export.
 
-    Desired exception: ``SeriesHelperVerificationError`` once implemented, or a
-    clear ``ValueError`` whose message mentions verification. Must not silently
-    emit ``cell_*`` leftovers for the bound addresses. RED until Pass-1 collapse
-    (#595): today ``generate_modules`` succeeds with per-cell defs.
+    Key-dispatch is out of Pass-1 MVP. Downstream hybrid pipelines treat leftover
+    bound ``cell_*`` as the reject marker for local Pass-1 / key-dispatch.
     """
     workbook = tmp_path / "mismatch.xlsx"
     _write_mismatch_workbook(workbook)
     targets = expand_data_range("Engine!C10:D10", workbook=workbook)
 
-    try:
-        files = _generate(workbook, bindings_doc=_MISMATCH_BINDINGS, targets=targets)
-    except Exception as exc:
-        name = type(exc).__name__
-        if name == "SeriesHelperVerificationError":
-            return
-        if isinstance(exc, ValueError) and "verif" in str(exc).lower():
-            return
-        raise AssertionError(f"Unexpected exception type {name}: {exc}") from exc
-
+    files = _generate(workbook, bindings_doc=_MISMATCH_BINDINGS, targets=targets)
     internals = files["internals.py"]
     cell_defs = sorted(n for n in def_names(internals) if n.startswith("cell_"))
-    pytest.fail(
-        "expected verification failure for unverifiable bound series, but "
-        f"generate_modules succeeded with cell defs={cell_defs}"
-    )
+    assert cell_defs == ["cell_engine_c10", "cell_engine_d10"]
+    assert "mismatched" not in def_names(internals)

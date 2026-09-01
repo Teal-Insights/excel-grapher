@@ -11,6 +11,7 @@ from excel_grapher.exporter.pass1.bindings import (
 )
 from excel_grapher.exporter.pass1.collapse import (
     Pass1CollapseResult,
+    SkippedCluster,
     collapse_bound_series_in_source,
 )
 from excel_grapher.exporter.pass1.models import (
@@ -24,6 +25,7 @@ __all__ = [
     "MemberContext",
     "Pass1CollapseResult",
     "SeriesHelperVerificationError",
+    "SkippedCluster",
     "build_address_to_series_id",
     "build_bound_address_keys",
     "collapse_bound_series_in_source",

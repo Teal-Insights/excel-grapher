@@ -245,6 +245,97 @@ def test_row_series_emits_address_dispatch(tmp_path: Path) -> None:
     assert dispatch["Engine!G10"] == ("shock_flag", {"time_period": 5})
 
 
+def test_mixed_regime_soft_skip_records_skipped_and_keeps_other_helpers(
+    tmp_path: Path,
+) -> None:
+    """Partial collapse: uniform series still helperize; mixed-regime stays ``cell_*``."""
+    from excel_grapher.exporter.pass1.collapse import collapse_bound_series_in_source
+    from tests.integration.exporter.test_pass1_shape_units import _ROW_SERIES_BINDINGS
+
+    workbook = tmp_path / "combined.xlsx"
+    wb = xlsxwriter.Workbook(workbook)
+    engine = wb.add_worksheet("Engine")
+    for col, year in enumerate([1, 2, 3, 4, 5], start=3):
+        engine.write(0, col - 1, year)
+        engine.write_number(4, col - 1, float(year))
+        engine.write_formula(9, col - 1, f"=IF(Engine!{chr(64 + col)}5>=Inputs!$B$1,1,0)")
+    engine.write_formula("C11", "=1+1")
+    engine.write_formula("D11", "=SUM(100,200)")
+    inputs = wb.add_worksheet("Inputs")
+    inputs.write_number("B1", 3)
+    wb.close()
+
+    bindings_doc = deepcopy(_ROW_SERIES_BINDINGS)
+    bindings_doc["workbook"] = "combined.xlsx"
+    bindings_doc["series"].append(
+        {
+            "id": "mismatched",
+            "sheet": "Engine",
+            "data_range": "Engine!C11:D11",
+            "layout": "series",
+            "internal": {},
+            "structure": {
+                "measure": {
+                    "concept": "OBS_VALUE",
+                    "dtype": "float",
+                    "bind": {"kind": "data_cell", "read": "float"},
+                },
+                "dimensions": [
+                    {
+                        "concept": "TIME_PERIOD",
+                        "role": "key",
+                        "scope": "cell",
+                        "bind": {
+                            "kind": "column_header",
+                            "header_row": 1,
+                            "read": "int",
+                        },
+                    }
+                ],
+            },
+            "key": ["TIME_PERIOD"],
+            "validation": {"intersect_graph_formulas": True},
+        }
+    )
+    bindings = validate_bindings_document(bindings_doc)
+    targets = (
+        expand_data_range("Engine!C10:G10", workbook=workbook)
+        + expand_data_range("Engine!C11:D11", workbook=workbook)
+        + ["Inputs!B1"]
+    )
+    graph = create_dependency_graph(workbook, targets, load_values=True)
+    with CodeGenerator(graph) as gen:
+        files = gen.generate_modules(
+            targets,
+            series_bindings=bindings,
+            bindings_workbook=workbook,
+            skip_collapse=True,
+        )
+    collapse = collapse_bound_series_in_source(
+        files["internals.py"],
+        graph=graph,
+        bindings=bindings,
+        workbook=workbook,
+    )
+    assert "shock_flag" in collapse.helper_names
+    assert collapse.skipped
+    assert all(s.reason.startswith("mixed_regime_groups:") for s in collapse.skipped)
+    remaining = def_names(collapse.source)
+    assert "cell_engine_c11" in remaining
+    assert "cell_engine_d11" in remaining
+
+    with CodeGenerator(graph) as gen:
+        files = gen.generate_modules(
+            targets,
+            series_bindings=bindings,
+            bindings_workbook=workbook,
+        )
+    names = def_names(files["internals.py"])
+    assert "cell_engine_c11" in names
+    assert "cell_engine_d11" in names
+    assert_helper_inventory(files["internals.py"], {"shock_flag"})
+
+
 def test_skip_collapse_keeps_cell_star_ir(tmp_path: Path) -> None:
     from tests.integration.exporter.test_pass1_shape_units import (
         _ROW_SERIES_BINDINGS,

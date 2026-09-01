@@ -2,7 +2,9 @@
 
 Runs after CodeGenerator emits per-cell translations. Bound internal/output
 formula series become def <series_id>(ctx, ...) helpers; unbound leftovers may
-remain as cell_*. Verification mismatch raises SeriesHelperVerificationError.
+remain as cell_*. Mixed-regime clusters leave intentional ``cell_*`` leftovers
+(key-dispatch is out of MVP); other verification failures raise
+SeriesHelperVerificationError.
 """
 
 from __future__ import annotations
@@ -57,6 +59,15 @@ _CELL_CALL = re.compile(r"\b(?P<fn>cell_[A-Za-z0-9_]+)\s*\(\s*ctx\s*\)")
 
 
 @dataclass(frozen=True)
+class SkippedCluster:
+    """Cluster left as ``cell_*`` because Pass-1 synthesis soft-skipped it."""
+
+    helper_name: str
+    reason: str
+    addresses: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Pass1CollapseResult:
     """Outcome of collapsing bound series helpers into internals IR."""
 
@@ -64,6 +75,16 @@ class Pass1CollapseResult:
     helper_names: tuple[str, ...]
     address_helpers: dict[str, dict[str, Any]]
     address_dispatch: dict[str, tuple[str, dict[str, BindingKeyValue]]]
+    skipped: tuple[SkippedCluster, ...] = ()
+
+
+def _is_soft_skip_reason(message: str) -> bool:
+    """Return True when synthesis failure should leave intentional ``cell_*`` leftovers.
+
+    Mixed-regime groups need key-dispatch (out of Pass-1 MVP). Downstream pipelines
+    can keep local Pass-1 / key-dispatch on the leftover addresses.
+    """
+    return message.startswith("mixed_regime_groups:")
 
 
 def _dtype_annotation(dtype: str) -> str:
@@ -364,6 +385,7 @@ def collapse_bound_series_in_source(
         helper_names=(),
         address_helpers={},
         address_dispatch={},
+        skipped=(),
     )
 
     inventory_graph = canonical_graph if canonical_graph is not None else graph
@@ -438,6 +460,8 @@ def collapse_bound_series_in_source(
     emitted_helpers: list[str] = []
     address_helpers: dict[str, dict[str, Any]] = {}
     address_dispatch: dict[str, tuple[str, dict[str, BindingKeyValue]]] = {}
+    skipped_clusters: list[SkippedCluster] = []
+    soft_skip_addresses: set[str] = set()
     semantic_deps: list[SemanticDependencyRef] = []
     needs_memoize = False
 
@@ -514,6 +538,18 @@ def collapse_bound_series_in_source(
                 needs_memoize = True
                 member_keys = expected_keys
         except MechanicalSynthesisError as exc:
+            reason = str(exc)
+            if _is_soft_skip_reason(reason):
+                addrs = tuple(m.address for m in members)
+                skipped_clusters.append(
+                    SkippedCluster(
+                        helper_name=helper_name,
+                        reason=reason,
+                        addresses=addrs,
+                    )
+                )
+                soft_skip_addresses.update(addrs)
+                continue
             raise SeriesHelperVerificationError(
                 f"Pass-1 verification failed for helper {helper_name!r}: {exc}"
             ) from exc
@@ -562,7 +598,7 @@ def collapse_bound_series_in_source(
     if needs_memoize:
         updated = _ensure_xl_memoize_import(updated)
 
-    # Fail closed: every formula-backed bound address must have been collapsed.
+    # Fail closed on unexpected leftovers; soft-skipped mixed-regime addresses may remain.
     remaining = _function_sources(updated)
     leftovers = [
         address
@@ -570,6 +606,7 @@ def collapse_bound_series_in_source(
         if (node := graph.get_node(address)) is not None
         and node.has_formula
         and address_to_python_name(address) in remaining
+        and address not in soft_skip_addresses
     ]
     if leftovers:
         preview = ", ".join(leftovers[:8])
@@ -584,4 +621,5 @@ def collapse_bound_series_in_source(
         helper_names=tuple(emitted_helpers),
         address_helpers=address_helpers,
         address_dispatch=address_dispatch,
+        skipped=tuple(skipped_clusters),
     )
