@@ -468,10 +468,11 @@ _MISMATCH_BINDINGS: dict[str, Any] = {
 
 
 def test_mixed_regime_leaves_intentional_cell_star_leftovers(tmp_path: Path) -> None:
-    """Mixed-regime clusters soft-skip: keep ``cell_*``, do not abort export.
+    """Unverifiable clusters soft-skip: keep ``cell_*``, do not abort export.
 
-    Key-dispatch is out of Pass-1 MVP. Downstream hybrid pipelines treat leftover
-    bound ``cell_*`` as the reject marker for local Pass-1 / key-dispatch.
+    Mechanical synthesis failures (mixed-regime, non-parameterizable deps, …)
+    leave intentional leftovers so downstream hybrid pipelines can finish those
+    addresses locally.
     """
     workbook = tmp_path / "mismatch.xlsx"
     _write_mismatch_workbook(workbook)

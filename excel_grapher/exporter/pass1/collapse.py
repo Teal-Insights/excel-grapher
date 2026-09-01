@@ -2,9 +2,9 @@
 
 Runs after CodeGenerator emits per-cell translations. Bound internal/output
 formula series become def <series_id>(ctx, ...) helpers; unbound leftovers may
-remain as cell_*. Mixed-regime clusters leave intentional ``cell_*`` leftovers
-(key-dispatch is out of MVP); other verification failures raise
-SeriesHelperVerificationError.
+remain as cell_*. Clusters the mechanical synthesizer cannot verify soft-skip
+as intentional ``cell_*`` leftovers (recorded on :class:`Pass1CollapseResult`);
+missing IR and unexpected leftovers still raise SeriesHelperVerificationError.
 """
 
 from __future__ import annotations
@@ -81,10 +81,12 @@ class Pass1CollapseResult:
 def _is_soft_skip_reason(message: str) -> bool:
     """Return True when synthesis failure should leave intentional ``cell_*`` leftovers.
 
-    Mixed-regime groups need key-dispatch (out of Pass-1 MVP). Downstream pipelines
-    can keep local Pass-1 / key-dispatch on the leftover addresses.
+    Pass-1 MVP collapses verifiable uniform clusters only. Anything the mechanical
+    synthesizer cannot parameterize (mixed-regime / key-dispatch, non-inlinable
+    ``xl_eval`` deps, fingerprint fallback, …) stays as ``cell_*`` for downstream
+    hybrid pipelines. Missing ``cell_*`` IR is still a hard failure before this path.
     """
-    return message.startswith("mixed_regime_groups:")
+    return bool(message)
 
 
 def _dtype_annotation(dtype: str) -> str:
