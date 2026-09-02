@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from excel_grapher.exporter.inverted_tree.ast_emit import (
     emit_helper_body,
+    emit_zipper_scan,
     python_annotation,
     python_return_annotation,
 )
@@ -22,6 +23,12 @@ from excel_grapher.exporter.inverted_tree.deps import (
     plan_indices,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
+from excel_grapher.exporter.inverted_tree.zipper import (
+    build_scc_map,
+    plan_zipper,
+    scan_function_name,
+    scc_external_params,
+)
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
@@ -110,6 +117,11 @@ def emit_data_module(catalog: SeriesCatalog, graph: DependencyGraph) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _scan_return_annotation(scc: tuple[str, ...], catalog: SeriesCatalog) -> str:
+    parts = ", ".join(python_return_annotation(catalog.get(sid)) for sid in scc)
+    return f"tuple[{parts}]"
+
+
 def _helper_signature(series: BoundSeries, deps: SeriesDeps, catalog: SeriesCatalog) -> str:
     params: list[str] = []
     for param_id in deps.param_ids:
@@ -120,16 +132,65 @@ def _helper_signature(series: BoundSeries, deps: SeriesDeps, catalog: SeriesCata
     return f"def {series.series_id}({joined}) -> {ret}:"
 
 
+def _scan_signature(
+    scc: tuple[str, ...],
+    param_ids: tuple[str, ...],
+    catalog: SeriesCatalog,
+) -> str:
+    params = [f"{pid}: {python_annotation(catalog.get(pid))}" for pid in param_ids]
+    joined = ", ".join(params)
+    ret = _scan_return_annotation(scc, catalog)
+    name = scan_function_name(scc)
+    return f"def {name}({joined}) -> {ret}:"
+
+
+def _emit_scc_wrapper(
+    series: BoundSeries,
+    scc: tuple[str, ...],
+    param_ids: tuple[str, ...],
+    catalog: SeriesCatalog,
+) -> str:
+    args = ", ".join(param_ids)
+    unpack = ", ".join(scc)
+    idx = scc.index(series.series_id)
+    params = [f"{pid}: {python_annotation(catalog.get(pid))}" for pid in param_ids]
+    joined = ", ".join(params)
+    ret = python_return_annotation(series)
+    fn = scan_function_name(scc)
+    lines = [
+        f"def {series.series_id}({joined}) -> {ret}:",
+        f'    """First-level helper for bound series `{series.series_id}`."""',
+        f"    {unpack} = {fn}({args})",
+        f"    return {scc[idx]}",
+    ]
+    return "\n".join(lines)
+
+
 def emit_internals_module(
     catalog: SeriesCatalog,
     deps: Mapping[str, SeriesDeps],
     graph: DependencyGraph,
+    scc_map: Mapping[str, tuple[str, ...]],
 ) -> str:
-    """Emit `internals.py` with one helper per bound formula series."""
+    """Emit `internals.py` with per-series helpers and zipper co-scans."""
     used_runtime: set[str] = set()
     functions: list[str] = []
+    emitted_scans: set[tuple[str, ...]] = set()
     for series in catalog.formula_series():
         info = deps[series.series_id]
+        scc = scc_map.get(series.series_id, (series.series_id,))
+        if len(scc) > 1:
+            param_ids = scc_external_params(scc, deps, catalog.order)
+            if scc not in emitted_scans:
+                emitted_scans.add(scc)
+                plan = plan_zipper(scc, catalog=catalog, graph=graph)
+                body, used = emit_zipper_scan(plan, catalog=catalog, deps=dict(deps), graph=graph)
+                used_runtime |= used
+                joined = ", ".join(f"`{sid}`" for sid in scc)
+                doc = f'    """Joint year loop for lag-zipper series {joined}."""'
+                functions.append("\n".join([_scan_signature(scc, param_ids, catalog), doc, *body]))
+            functions.append(_emit_scc_wrapper(series, scc, param_ids, catalog))
+            continue
         body, used = emit_helper_body(series, catalog=catalog, deps=info, graph=graph)
         used_runtime |= used
         if any(catalog.get(p).is_sequence and p in info.aligned_ids for p in info.param_ids):
@@ -167,20 +228,47 @@ def _identity_indices(series: BoundSeries) -> tuple[int, ...]:
     return tuple(range(len(series.cells)))
 
 
+def _take_after_call(
+    series_id: str,
+    *,
+    result_indices: Mapping[str, tuple[int, ...]],
+    call_indices: Mapping[str, tuple[int, ...]],
+    runtime: set[str],
+) -> str | None:
+    """Return a `take` assignment if the callee computed more than consumers need."""
+    wanted = result_indices.get(series_id)
+    computed = call_indices.get(series_id)
+    if wanted is None or computed is None or wanted == computed:
+        return None
+    work_pos = tuple(computed.index(index) for index in wanted)
+    if work_pos == tuple(range(len(computed))):
+        return None
+    runtime.add("take")
+    return f"    {series_id} = take({series_id}, {_py_literal(work_pos)})"
+
+
 def emit_orchestrator(
     output: BoundSeries,
     *,
     catalog: SeriesCatalog,
     deps: Mapping[str, SeriesDeps],
+    scc_map: Mapping[str, tuple[str, ...]] | None = None,
 ) -> tuple[str, set[str], set[str]]:
     """Emit one public `compute_*` function.
 
     Returns the function source, runtime symbols used, and data constants imported.
+
+    Multi-series lag zippers call the co-scan once and unpack members.
     """
     deps_map = dict(deps)
+    scc_map_dict = dict(scc_map) if scc_map is not None else None
     leaves = leaf_closure(output.series_id, catalog=catalog, deps=deps_map)
-    formula_ids = formula_closure(output.series_id, catalog=catalog, deps=deps_map)
-    result_indices, call_indices = plan_indices(output, catalog=catalog, deps=deps_map)
+    formula_ids = formula_closure(
+        output.series_id, catalog=catalog, deps=deps_map, scc_map=scc_map_dict
+    )
+    result_indices, call_indices = plan_indices(
+        output, catalog=catalog, deps=deps_map, scc_map=scc_map_dict
+    )
     required = [sid for sid in leaves if catalog.get(sid).direction == "input"]
     defaulted = [sid for sid in leaves if catalog.get(sid).direction == "constant"]
     compute_name = output.compute_name or f"compute_{output.series_id}"
@@ -217,20 +305,41 @@ def emit_orchestrator(
         runtime.add("take")
         body.append(f"    {sid} = take({sid}, {_py_literal(wanted)})")
     locals_bound: set[str] = set(leaves)
+    seen_sccs: set[tuple[str, ...]] = set()
+    mapping = scc_map or {}
     for series_id in formula_ids:
+        scc = mapping.get(series_id, (series_id,))
+        if len(scc) > 1:
+            if scc in seen_sccs:
+                continue
+            seen_sccs.add(scc)
+            ext = scc_external_params(scc, deps, catalog.order)
+            fn = scan_function_name(scc)
+            unpack = ", ".join(scc)
+            body.append(f"    {unpack} = internals.{fn}({', '.join(ext)})")
+            for sid in scc:
+                locals_bound.add(sid)
+                taken = _take_after_call(
+                    sid,
+                    result_indices=result_indices,
+                    call_indices=call_indices,
+                    runtime=runtime,
+                )
+                if taken is not None:
+                    body.append(taken)
+            continue
         info = deps[series_id]
         call = f"internals.{series_id}({', '.join(info.param_ids)})"
         body.append(f"    {series_id} = {call}")
         locals_bound.add(series_id)
-        wanted = result_indices[series_id]
-        computed = call_indices[series_id]
-        if wanted == computed:
-            continue
-        work_pos = tuple(computed.index(index) for index in wanted)
-        if work_pos == tuple(range(len(computed))):
-            continue
-        runtime.add("take")
-        body.append(f"    {series_id} = take({series_id}, {_py_literal(work_pos)})")
+        taken = _take_after_call(
+            series_id,
+            result_indices=result_indices,
+            call_indices=call_indices,
+            runtime=runtime,
+        )
+        if taken is not None:
+            body.append(taken)
     if output.series_id in locals_bound:
         if output.is_scalar:
             body.append(f"    return ({output.series_id},)")
@@ -246,6 +355,7 @@ def emit_orchestrator(
 def emit_api_module(
     catalog: SeriesCatalog,
     deps: Mapping[str, SeriesDeps],
+    scc_map: Mapping[str, tuple[str, ...]] | None = None,
 ) -> str:
     """Emit `api.py` with keyword-only output orchestrators."""
     functions: list[str] = []
@@ -253,7 +363,9 @@ def emit_api_module(
     data_imports: set[str] = set()
     compute_names: list[str] = []
     for output in catalog.output_series():
-        source, used_runtime, used_data = emit_orchestrator(output, catalog=catalog, deps=deps)
+        source, used_runtime, used_data = emit_orchestrator(
+            output, catalog=catalog, deps=deps, scc_map=scc_map
+        )
         functions.append(source)
         runtime |= used_runtime
         data_imports |= used_data
@@ -339,6 +451,7 @@ def generate_inverted_tree_modules(
     if not catalog.output_series():
         raise InvertedTreeExportError("inverted-tree codegen requires at least one output series")
     deps = collect_all_deps(catalog, graph)
+    scc_map = build_scc_map(catalog, deps, graph)
     assert_subgraph_bound(
         catalog=catalog,
         graph=graph,
@@ -347,8 +460,8 @@ def generate_inverted_tree_modules(
     runtime_py = _RUNTIME_PATH.read_text(encoding="utf-8")
     return {
         "__init__.py": emit_init_module(catalog),
-        "api.py": emit_api_module(catalog, deps),
+        "api.py": emit_api_module(catalog, deps, scc_map),
         "data.py": emit_data_module(catalog, graph),
         "runtime.py": runtime_py if runtime_py.endswith("\n") else runtime_py + "\n",
-        "internals.py": emit_internals_module(catalog, deps, graph),
+        "internals.py": emit_internals_module(catalog, deps, graph, scc_map),
     }

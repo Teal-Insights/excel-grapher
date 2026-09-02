@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -427,6 +427,7 @@ def plan_indices(
     *,
     catalog: SeriesCatalog,
     deps: dict[str, SeriesDeps],
+    scc_map: dict[str, tuple[str, ...]] | None = None,
 ) -> tuple[dict[str, tuple[int, ...]], dict[str, tuple[int, ...]]]:
     """Plan catalog indices each series must yield, working backward from `output`.
 
@@ -439,6 +440,9 @@ def plan_indices(
     Lookup / constrained tables stay identity (full catalog). A scan that
     consumes an elementwise series wins: the scan's closure is unioned into
     that series' needed set.
+
+    Multi-series lag zippers are one call: every member is computed for the
+    full catalog (the year loop cannot skip a prefix). Consumers then `take`.
     """
     result: dict[str, tuple[int, ...]] = {
         output.series_id: tuple(range(len(output.cells))),
@@ -452,26 +456,71 @@ def plan_indices(
             return
         result[series_id] = tuple(sorted(set(previous) | set(indices)))
 
-    formula_ids = formula_closure(output.series_id, catalog=catalog, deps=deps)
+    formula_ids = formula_closure(output.series_id, catalog=catalog, deps=deps, scc_map=scc_map)
+    processed_sccs: set[tuple[str, ...]] = set()
     for host_id in reversed(formula_ids):
+        scc = (scc_map or {}).get(host_id, (host_id,))
+        if len(scc) > 1:
+            if scc in processed_sccs:
+                continue
+            processed_sccs.add(scc)
+            if not any(sid in result for sid in scc):
+                continue
+            members = set(scc)
+            for sid in scc:
+                full = tuple(range(len(catalog.get(sid).cells)))
+                if sid not in result:
+                    add_result(sid, full)
+                call[sid] = full
+            for sid in scc:
+                _propagate_param_indices(
+                    deps[sid],
+                    call[sid],
+                    catalog=catalog,
+                    skip=members,
+                    add_result=add_result,
+                )
+            continue
         info = deps[host_id]
+        if host_id not in result:
+            continue
         host_result = result[host_id]
         host_call = predecessor_closure(host_result) if info.is_scan else host_result
         call[host_id] = host_call
-        for param_id in info.param_ids:
-            dep = catalog.get(param_id)
-            if param_id in info.lookup_ids:
-                add_result(param_id, tuple(range(len(dep.cells))))
-                continue
-            if dep.is_scalar:
-                add_result(param_id, tuple(range(len(dep.cells))))
-                continue
-            index_map = info.index_maps.get(param_id)
-            if index_map is None:
-                add_result(param_id, tuple(range(len(dep.cells))))
-                continue
-            add_result(param_id, tuple(index_map[index] for index in host_call))
+        _propagate_param_indices(
+            info,
+            host_call,
+            catalog=catalog,
+            skip=set(),
+            add_result=add_result,
+        )
     return result, call
+
+
+def _propagate_param_indices(
+    info: SeriesDeps,
+    host_call: tuple[int, ...],
+    *,
+    catalog: SeriesCatalog,
+    skip: set[str],
+    add_result: Callable[[str, tuple[int, ...]], None],
+) -> None:
+    """Union consumer indices into each first-level param of `info`."""
+    for param_id in info.param_ids:
+        if param_id in skip:
+            continue
+        dep = catalog.get(param_id)
+        if param_id in info.lookup_ids:
+            add_result(param_id, tuple(range(len(dep.cells))))
+            continue
+        if dep.is_scalar:
+            add_result(param_id, tuple(range(len(dep.cells))))
+            continue
+        index_map = info.index_maps.get(param_id)
+        if index_map is None:
+            add_result(param_id, tuple(range(len(dep.cells))))
+            continue
+        add_result(param_id, tuple(index_map[index] for index in host_call))
 
 
 def formula_closure(
@@ -479,8 +528,12 @@ def formula_closure(
     *,
     catalog: SeriesCatalog,
     deps: dict[str, SeriesDeps],
+    scc_map: dict[str, tuple[str, ...]] | None = None,
 ) -> tuple[str, ...]:
-    """Return formula series in the subgraph of `root_id` (bindings order, topo)."""
+    """Return formula series in the subgraph of `root_id` (bindings order, topo).
+
+    Period-lag zipper SCCs are a single unit so they do not fail the DAG sort.
+    """
     seen: set[str] = set()
     stack = [root_id]
     while stack:
@@ -497,7 +550,49 @@ def formula_closure(
     formula_ids = [
         sid for sid in catalog.order if sid in seen and catalog.get(sid).is_formula_series
     ]
-    return tuple(_topo_sort(formula_ids, deps=deps))
+    if scc_map is None:
+        return tuple(_topo_sort(formula_ids, deps=deps))
+    units: list[tuple[str, ...]] = []
+    seen_units: set[tuple[str, ...]] = set()
+    for sid in formula_ids:
+        unit = scc_map.get(sid, (sid,))
+        if unit not in seen_units:
+            seen_units.add(unit)
+            units.append(unit)
+    return tuple(sid for unit in _topo_units(units, deps=deps, scc_map=scc_map) for sid in unit)
+
+
+def _topo_units(
+    units: Sequence[tuple[str, ...]],
+    *,
+    deps: dict[str, SeriesDeps],
+    scc_map: dict[str, tuple[str, ...]],
+) -> list[tuple[str, ...]]:
+    """Topologically sort SCC supernodes (dependencies first)."""
+    selected = set(units)
+    remaining = set(units)
+    ordered: list[tuple[str, ...]] = []
+    while remaining:
+        ready = [
+            unit
+            for unit in units
+            if unit in remaining
+            and all(
+                scc_map.get(pid, (pid,)) not in remaining
+                for sid in unit
+                for pid in (deps[sid].param_ids if sid in deps else ())
+                if scc_map.get(pid, (pid,)) in selected and scc_map.get(pid, (pid,)) != unit
+            )
+        ]
+        if not ready:
+            raise InvertedTreeExportError(
+                f"cyclic formula-series dependencies among "
+                f"{sorted({sid for unit in remaining for sid in unit})}"
+            )
+        for unit in ready:
+            remaining.remove(unit)
+            ordered.append(unit)
+    return ordered
 
 
 def _topo_sort(series_ids: Iterable[str], *, deps: dict[str, SeriesDeps]) -> list[str]:

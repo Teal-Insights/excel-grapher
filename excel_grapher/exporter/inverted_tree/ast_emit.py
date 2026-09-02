@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from excel_grapher.core.address_keys import normalize_key as normalize_address
+from excel_grapher.core.address_keys import parse_cell_coords
 from excel_grapher.core.excel_function_names import normalize_excel_function_name
 from excel_grapher.core.formula_ast import (
     AstNode,
@@ -30,6 +31,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
     range_column_addresses,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
+from excel_grapher.exporter.inverted_tree.zipper import ZipperPlan
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
@@ -57,6 +59,9 @@ class EmitContext:
     index_var: str | None
     prior_var: str | None
     used_runtime: set[str] = field(default_factory=set)
+    scc_ids: frozenset[str] = field(default_factory=frozenset)
+    scc_this_year: dict[str, str] = field(default_factory=dict)
+    scc_prior: dict[str, str] = field(default_factory=dict)
 
     def param(self, series_id: str) -> str:
         return series_id
@@ -142,6 +147,10 @@ def emit_expr(node: AstNode, ctx: EmitContext) -> str:
 
 def _emit_cell_ref(node: CellRefNode, ctx: EmitContext) -> str:
     address = resolve_cell_ref(node, ctx.host_cell)
+    if ctx.scc_ids:
+        scc_expr = _emit_scc_cell_ref(address, ctx)
+        if scc_expr is not None:
+            return scc_expr
     pred = predecessor_address(ctx.host, ctx.host_index, ctx.catalog)
     if pred is not None and normalize_address(address) == normalize_address(pred) and ctx.prior_var:
         return ctx.prior_var
@@ -172,6 +181,28 @@ def _emit_cell_ref(node: CellRefNode, ctx: EmitContext) -> str:
     if ctx.index_var is not None and owner.is_sequence:
         return f"{name}[{ctx.index_var}]"
     return name
+
+
+def _emit_scc_cell_ref(address: str, ctx: EmitContext) -> str | None:
+    owner = ctx.catalog.series_for(address)
+    if owner is None or owner.series_id not in ctx.scc_ids:
+        return None
+    host_col = parse_cell_coords(ctx.host_cell)[2]
+    ref_col = parse_cell_coords(address)[2]
+    if ref_col == host_col:
+        local = ctx.scc_this_year.get(owner.series_id)
+        if local is None:
+            raise InvertedTreeExportError(
+                f"series {ctx.host.series_id!r} reads {owner.series_id!r} in the "
+                "same period before that series was scheduled"
+            )
+        return local
+    prior = ctx.scc_prior.get(owner.series_id)
+    if prior is None:
+        raise InvertedTreeExportError(
+            f"series {ctx.host.series_id!r} lags {owner.series_id!r} with no prior"
+        )
+    return prior
 
 
 def _emit_binary(node: BinaryOpNode, ctx: EmitContext) -> str:
@@ -443,4 +474,89 @@ def _emit_scan_body(
     lines.append("            prior = err.code")
     lines.append("        path.append(prior)")
     lines.append("    return tuple(path)")
+    return lines, used
+
+
+def _as_measure_call(expr: str, series: BoundSeries) -> str:
+    if series.python_dtype == "float":
+        return f"as_measure({expr})"
+    return f"as_measure({expr}, {series.python_dtype!r})"
+
+
+def emit_zipper_scan(
+    plan: ZipperPlan,
+    *,
+    catalog: SeriesCatalog,
+    deps: dict[str, SeriesDeps],
+    graph: DependencyGraph,
+) -> tuple[list[str], set[str]]:
+    """Emit the body of a joint year-loop helper for a lag-only series SCC."""
+    used: set[str] = {"as_measure", "XlError"}
+    scc_ids = frozenset(plan.scc)
+    lines: list[str] = []
+    for sid in plan.scc:
+        series = catalog.get(sid)
+        measure = python_measure_type(series)
+        lines.append(f"    {sid}_path: list[{measure}] = []")
+    seeded: set[str] = set()
+    this_year: dict[str, str] = {}
+    prior: dict[str, str] = {}
+    current_col: int | None = None
+
+    def emit_cell(address: str, *, in_loop: bool, indent: str) -> None:
+        nonlocal used
+        owner = catalog.require_series_for(address)
+        host_index = owner.index_of(address)
+        if host_index is None:
+            raise InvertedTreeExportError(f"zipper cell {address} missing from catalog")
+        ctx = EmitContext(
+            host=owner,
+            catalog=catalog,
+            deps=deps[owner.series_id],
+            host_index=host_index,
+            host_cell=address,
+            index_var="i" if in_loop else None,
+            prior_var=prior.get(owner.series_id),
+            scc_ids=scc_ids,
+            scc_this_year=dict(this_year),
+            scc_prior=dict(prior),
+        )
+        expr = emit_expr(node_formula_ast(graph, address), ctx)
+        used |= ctx.used_runtime
+        coerce = _as_measure_call(expr, owner)
+        var = f"{owner.series_id}_t"
+        lines.append(f"{indent}try:")
+        lines.append(f"{indent}    {var} = {coerce}")
+        lines.append(f"{indent}except XlError as err:")
+        lines.append(f"{indent}    {var} = err.code")
+        this_year[owner.series_id] = var
+        lines.append(f"{indent}{owner.series_id}_path.append({var})")
+        prior[owner.series_id] = f"{owner.series_id}_path[-1]"
+
+    for address in plan.seed_cells:
+        col = parse_cell_coords(address)[2]
+        if current_col is not None and col != current_col:
+            this_year = {}
+        current_col = col
+        emit_cell(address, in_loop=False, indent="    ")
+        seeded.add(catalog.require_series_for(address).series_id)
+    lines.append(f"    n = {plan.loop_n}")
+    lines.append("    for i in range(n):")
+    this_year = {}
+    prior_sids = [sid for sid in plan.scc if sid in seeded or sid in prior]
+    for sid in prior_sids:
+        lines.append(f"        {sid}_prior = {sid}_path[-1]")
+        prior[sid] = f"{sid}_prior"
+    if prior_sids:
+        used.add("is_error")
+        prior_tuple = ", ".join(f"{sid}_prior" for sid in prior_sids)
+        lines.append(f"        _err = next((p for p in ({prior_tuple},) if is_error(p)), None)")
+        lines.append("        if _err is not None:")
+        for sid in plan.scc:
+            lines.append(f"            {sid}_path.append(_err)")
+        lines.append("            continue")
+    for address in plan.loop_cells:
+        emit_cell(address, in_loop=True, indent="        ")
+    returned = ", ".join(f"tuple({sid}_path)" for sid in plan.scc)
+    lines.append(f"    return {returned}")
     return lines, used
