@@ -12,6 +12,7 @@ the tuple.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Sequence
 from typing import NoReturn, TypeGuard, TypeVar
 
@@ -73,11 +74,40 @@ def as_measure(value: object, dtype: str = "float") -> int | float | str | bool:
     raise TypeError(f"cannot coerce {type(value).__name__} to float measure")
 
 
+def _as_number(value: object) -> float:
+    """Coerce `value` to a float the way Excel numeric functions do."""
+    if isinstance(value, str) and is_error(value):
+        raise XlError(value)
+    if value is None:
+        return 0.0
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        text = value.replace("\u00a0", "").replace(" ", "")
+        try:
+            return float(text)
+        except ValueError:
+            raise XlError("#VALUE!") from None
+    raise XlError("#VALUE!")
+
+
 def xl_div(numerator: float, denominator: float) -> float:
     """Excel `/` with `#DIV/0!` on a zero denominator."""
     if denominator == 0:
         raise XlError("#DIV/0!")
     return numerator / denominator
+
+
+def xl_exp(*args: object) -> float:
+    """Excel `EXP`: `e ** x`. Overflow is `#NUM!`; bad input is `#VALUE!`."""
+    if len(args) != 1:
+        raise XlError("#VALUE!")
+    try:
+        return float(math.exp(_as_number(args[0])))
+    except OverflowError:
+        raise XlError("#NUM!") from None
 
 
 def xl_choose(index: int, *choices: float) -> float:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from excel_grapher.exporter.inverted_tree.runtime import (
@@ -18,6 +20,7 @@ from excel_grapher.exporter.inverted_tree.runtime import (
     xl_at,
     xl_choose,
     xl_div,
+    xl_exp,
     xl_match,
     xl_raise,
 )
@@ -113,6 +116,21 @@ def test_xl_raise() -> None:
     with pytest.raises(XlError) as exc:
         xl_raise("#N/A")
     assert exc.value.code == "#N/A"
+
+
+def test_xl_exp_numeric_and_overflow() -> None:
+    assert xl_exp(0) == pytest.approx(1.0)
+    assert xl_exp(1) == pytest.approx(math.e)
+    assert xl_exp(True) == pytest.approx(math.e)
+    with pytest.raises(XlError) as exc:
+        xl_exp(1000)
+    assert exc.value.code == "#NUM!"
+    with pytest.raises(XlError) as exc:
+        xl_exp("not a number")
+    assert exc.value.code == "#VALUE!"
+    with pytest.raises(XlError) as exc:
+        xl_exp(1, 2)
+    assert exc.value.code == "#VALUE!"
 
 
 def test_as_measure_preserves_error_codes() -> None:

@@ -22,6 +22,7 @@ from excel_grapher.core.formula_ast import (
     resolve_cell_ref,
 )
 from excel_grapher.core.formula_shape import fingerprint_formula_shape
+from excel_grapher.exporter.inverted_tree import runtime as inverted_runtime
 from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, SeriesCatalog, covering_series
 from excel_grapher.exporter.inverted_tree.deps import (
     SeriesDeps,
@@ -49,6 +50,11 @@ _COMPARE_OPS = {
     ">=": ">=",
 }
 _ARITHMETIC_OPS = {"+", "-", "*", "/"}
+_RUNTIME_FUNCTIONS = frozenset(
+    name
+    for name, value in vars(inverted_runtime).items()
+    if name.startswith("xl_") and callable(value)
+)
 
 
 @dataclass
@@ -326,6 +332,11 @@ def _emit_function(node: FunctionCallNode, ctx: EmitContext) -> str:
         return "False"
     args = ", ".join(emit_expr(arg, ctx) for arg in node.args)
     func = f"xl_{name.lower()}"
+    if func not in _RUNTIME_FUNCTIONS:
+        raise InvertedTreeExportError(
+            f"series {ctx.host.series_id!r}: Excel function {name} has no "
+            "inverted-tree runtime helper"
+        )
     ctx.use(func)
     return f"{func}({args})"
 
