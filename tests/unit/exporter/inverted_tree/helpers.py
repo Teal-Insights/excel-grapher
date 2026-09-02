@@ -103,6 +103,7 @@ def bindings_document(*series: dict[str, Any], schema_version: str = "1.13.0") -
                 {"id": "TIME_PERIOD", "dtype": "int"},
                 {"id": "OBS_VALUE", "dtype": "number"},
                 {"id": "COUNTRY", "dtype": "string"},
+                {"id": "SCENARIO", "dtype": "string"},
                 {"id": "SHOCK_PARAMETER", "dtype": "string"},
             ],
         },

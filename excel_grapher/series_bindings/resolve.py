@@ -38,6 +38,7 @@ from excel_grapher.series_bindings.normalize import (
     input_mode,
 )
 from excel_grapher.series_bindings.ranges import (
+    apply_series_excludes,
     expand_series_data_ranges_for_graph,
     series_data_ranges,
 )
@@ -377,28 +378,6 @@ def _parse_data_cell(address: str) -> tuple[str, str, int]:
     return sheet, col, row
 
 
-def _apply_exclude_rows(addresses: list[str], series: dict[str, Any]) -> list[str]:
-    """Drop addresses on rows the series declares as never-data via `exclude_rows`."""
-    specs = series.get("exclude_rows")
-    if not specs:
-        return addresses
-    excluded = expand_row_specs(specs)
-    return [address for address in addresses if _parse_data_cell(address)[2] not in excluded]
-
-
-def _apply_exclude_columns(addresses: list[str], series: dict[str, Any]) -> list[str]:
-    """Drop addresses in columns the series declares as never-data via `exclude_columns`."""
-    specs = series.get("exclude_columns")
-    if not specs:
-        return addresses
-    excluded = expand_column_specs(specs)
-    return [
-        address
-        for address in addresses
-        if column_index_from_string(_parse_data_cell(address)[1]) not in excluded
-    ]
-
-
 def _include_in_record(field: dict[str, Any], default: bool) -> bool:
     if "include_in_record" in field:
         return bool(field["include_in_record"])
@@ -724,9 +703,10 @@ def resolve_series_binding(
         }
 
     try:
-        expanded_addresses = expand_series_data_ranges_for_graph(graph, series, workbook=workbook)
-        expanded_addresses = _apply_exclude_rows(expanded_addresses, series)
-        expanded_addresses = _apply_exclude_columns(expanded_addresses, series)
+        expanded_addresses = apply_series_excludes(
+            expand_series_data_ranges_for_graph(graph, series, workbook=workbook),
+            series,
+        )
     except (ValueError, TypeError) as exc:
         return {
             "series_id": series_id,

@@ -15,7 +15,11 @@ from excel_grapher.series_bindings.normalize import (
     has_internal_direction,
     has_output_direction,
 )
-from excel_grapher.series_bindings.ranges import expand_data_range, series_data_ranges
+from excel_grapher.series_bindings.ranges import (
+    apply_series_excludes,
+    expand_data_range,
+    series_data_ranges,
+)
 from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 
 Direction = Literal["input", "constant", "internal", "output"]
@@ -191,7 +195,11 @@ def build_catalog(
     *,
     workbook: Path | str,
 ) -> SeriesCatalog:
-    """Expand every series `data_range` into a lookup catalog."""
+    """Expand every series `data_range` into a lookup catalog.
+
+    Applies series-level `exclude_rows` / `exclude_columns` before indexing,
+    matching `resolve_series_binding` (issue #600).
+    """
     series_map: dict[str, BoundSeries] = {}
     order: list[str] = []
     address_to_id: dict[str, str] = {}
@@ -206,6 +214,7 @@ def build_catalog(
             cells.extend(
                 normalize_address(addr) for addr in expand_data_range(data_range, workbook=workbook)
             )
+        cells = apply_series_excludes(cells, entry)
         bound = BoundSeries(
             series_id=series_id,
             layout=_layout_of(entry),
