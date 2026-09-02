@@ -8,6 +8,7 @@ the distance-zero residual to be a DAG (Allen–Kennedy / Lustre causality).
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -27,11 +28,226 @@ from excel_grapher.exporter.inverted_tree.deps import node_formula_ast
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Mapping
 
     from excel_grapher.exporter.inverted_tree.catalog import SeriesCatalog
     from excel_grapher.exporter.inverted_tree.deps import SeriesDeps
     from excel_grapher.grapher.graph import DependencyGraph
+
+
+@dataclass(frozen=True, slots=True)
+class IndexSet:
+    """Symbolic set of catalog indices.
+
+    Range, strided slice, affine image, and residue predicates normalize to an
+    arithmetic progression when they are one. Genuinely irregular gathers keep
+    a literal tuple, which is the only form whose emitted size grows with the
+    number of members.
+    """
+
+    _start: int | None
+    _stop: int
+    _step: int
+    _items: tuple[int, ...]
+
+    def is_empty(self) -> bool:
+        """True when the set contains no indices."""
+        if self._start is None:
+            return not self._items
+        return len(range(self._start, self._stop, self._step)) == 0
+
+    def is_progression(self) -> bool:
+        """True when this set is empty, a singleton, or an arithmetic progression."""
+        return self._start is not None
+
+    def materialize(self) -> tuple[int, ...]:
+        """Return the indices in increasing order."""
+        if self._start is None:
+            return self._items
+        return tuple(range(self._start, self._stop, self._step))
+
+    def to_source(self) -> str:
+        """Return a Python expression for `take(..., <this>)`."""
+        items = self.materialize()
+        if len(items) <= 1:
+            if not items:
+                return "()"
+            return f"({items[0]},)"
+        if self._start is not None:
+            if self._step == 1:
+                return f"range({self._start}, {self._stop})"
+            return f"range({self._start}, {self._stop}, {self._step})"
+        return f"({', '.join(str(i) for i in items)})"
+
+    def union(self, other: IndexSet) -> IndexSet:
+        """Return the set-theoretic union, recompressed if it is a progression."""
+        if self.is_empty():
+            return other
+        if other.is_empty():
+            return self
+        if (
+            self._start is not None
+            and other._start is not None
+            and self._step == other._step
+            and (self._start - other._start) % self._step == 0
+            and self._stop >= other._start
+            and other._stop >= self._start
+        ):
+            return IndexSet.interval(
+                min(self._start, other._start),
+                max(self._stop, other._stop),
+                self._step,
+            )
+        return IndexSet.from_indices((*self.materialize(), *other.materialize()))
+
+    def map_affine(self, coeff: int, offset: int) -> IndexSet:
+        """Return `{coeff * i + offset | i in self}`."""
+        if self.is_empty():
+            return self
+        if coeff == 0:
+            return IndexSet.interval(offset, offset + 1)
+        if self._start is not None:
+            return IndexSet.interval(
+                coeff * self._start + offset,
+                coeff * self._stop + offset,
+                coeff * self._step,
+            )
+        return IndexSet.from_indices(coeff * i + offset for i in self._items)
+
+    def filter_residue(self, modulus: int, residue: int) -> IndexSet:
+        """Return `{i in self | i % modulus == residue}`."""
+        if modulus <= 0:
+            raise ValueError("IndexSet residue modulus must be positive")
+        residue %= modulus
+        if self._start is not None and self._step == 1:
+            first = self._start + (residue - self._start) % modulus
+            if first >= self._stop:
+                return IndexSet.empty()
+            return IndexSet.interval(first, self._stop, modulus)
+        return IndexSet.from_indices(i for i in self.materialize() if i % modulus == residue)
+
+    def filter(self, pred: Callable[[int], bool]) -> IndexSet:
+        """Return `{i in self | pred(i)}`, recompressed when the result is a slice."""
+        return IndexSet.from_indices(i for i in self.materialize() if pred(i))
+
+    def closure_under(self, distances: Sequence[int]) -> IndexSet:
+        """Close this set under `i -> i - d` for each positive `d` in `distances`.
+
+        Unit lag fills `[0, max]` in one step. A single stride on one residue
+        class walks that progression down. Mixed or irregular distances fall
+        back to a finite fixed-point on the materialized members.
+        """
+        lags = tuple(sorted({d for d in distances if d > 0}))
+        if not lags or self.is_empty():
+            return self
+        if len(lags) == 1 and self._start is not None:
+            distance = lags[0]
+            count = len(range(self._start, self._stop, self._step))
+            if count <= 1 or self._step % distance == 0:
+                start = self._start
+                while start - distance >= 0:
+                    start -= distance
+                last = self._stop - self._step
+                return IndexSet.interval(start, last + distance, distance)
+        if 1 in lags:
+            return IndexSet.interval(0, self._max() + 1)
+        needed = set(self.materialize())
+        stack = list(needed)
+        while stack:
+            index = stack.pop()
+            for distance in lags:
+                pred = index - distance
+                if pred >= 0 and pred not in needed:
+                    needed.add(pred)
+                    stack.append(pred)
+        return IndexSet.from_indices(needed)
+
+    def closure_under_edges(
+        self,
+        edges: Sequence[DependenceEdge],
+        *,
+        producer_id: str | None = None,
+    ) -> IndexSet:
+        """Close under positive distances of `edges` that produce `producer_id`."""
+        distances = [
+            edge.distance
+            for edge in edges
+            if edge.distance > 0 and (producer_id is None or edge.producer_id == producer_id)
+        ]
+        return self.closure_under(distances)
+
+    def positions_in(self, universe: IndexSet) -> IndexSet:
+        """Return this set's positions inside `universe`'s materialized order.
+
+        Raises:
+            ValueError: An index is missing from `universe`.
+        """
+        if self.is_empty():
+            return self
+        if (
+            self._start is not None
+            and universe._start is not None
+            and self._step % universe._step == 0
+            and (self._start - universe._start) % universe._step == 0
+            and self._start >= universe._start
+            and (self._stop - self._step) <= (universe._stop - universe._step)
+        ):
+            start_pos = (self._start - universe._start) // universe._step
+            step_pos = self._step // universe._step
+            count = len(range(self._start, self._stop, self._step))
+            return IndexSet.interval(start_pos, start_pos + count * step_pos, step_pos)
+        pos = {value: index for index, value in enumerate(universe.materialize())}
+        try:
+            return IndexSet.from_indices(pos[index] for index in self.materialize())
+        except KeyError as exc:
+            raise ValueError(f"index {exc.args[0]} is not in the universe") from exc
+
+    def _max(self) -> int:
+        if self.is_empty():
+            raise ValueError("empty IndexSet has no maximum")
+        if self._start is None:
+            return self._items[-1]
+        return self._stop - self._step
+
+    @classmethod
+    def empty(cls) -> IndexSet:
+        """Return the empty set."""
+        return cls(_start=0, _stop=0, _step=1, _items=())
+
+    @classmethod
+    def interval(cls, start: int, stop: int, step: int = 1) -> IndexSet:
+        """Return the arithmetic progression `range(start, stop, step)`.
+
+        A negative `step` is stored as the equivalent increasing progression.
+        """
+        if step == 0:
+            raise ValueError("IndexSet step must be nonzero")
+        if step < 0:
+            return cls.from_indices(range(start, stop, step))
+        items = range(start, stop, step)
+        if not items:
+            return cls.empty()
+        first = items[0]
+        last = items[-1]
+        return cls(_start=first, _stop=last + step, _step=step, _items=())
+
+    @classmethod
+    def from_indices(cls, indices: Iterable[int]) -> IndexSet:
+        """Compress `indices` to a progression, or keep a sorted gather."""
+        items = tuple(sorted(set(indices)))
+        if not items:
+            return cls.empty()
+        if len(items) == 1:
+            return cls.interval(items[0], items[0] + 1)
+        step = items[1] - items[0]
+        if step > 0 and items == tuple(range(items[0], items[-1] + step, step)):
+            return cls.interval(items[0], items[-1] + step, step)
+        return cls(_start=None, _stop=0, _step=1, _items=items)
+
+    @classmethod
+    def affine(cls, base: IndexSet, coeff: int, offset: int) -> IndexSet:
+        """Return the affine image of `base` under `i -> coeff * i + offset`."""
+        return base.map_affine(coeff, offset)
 
 
 @dataclass(frozen=True, slots=True)
