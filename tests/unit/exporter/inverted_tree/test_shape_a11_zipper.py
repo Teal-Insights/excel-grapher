@@ -19,7 +19,10 @@ from tests.unit.exporter.inverted_tree.helpers import (
 
 
 def _zipper_workbook(tmp_path: Path) -> Path:
-    """`adj_t` reads `debt_{t-1}`; `debt_t` reads `adj_t` and `debt_{t-1}`."""
+    """Cell-acyclic zipper from `plans/inverted-tree-scheduling.md`.
+
+    `debt_t = debt_{t-1} + adj_t` and `adj_t = debt_{t-1} * r` (lag only).
+    """
     return write_workbook(
         tmp_path / "a11_zipper.xlsx",
         {
@@ -28,10 +31,10 @@ def _zipper_workbook(tmp_path: Path) -> Path:
                 "B1": 2010,
                 "C1": 2011,
                 "A2": "=100",
-                "B3": "=A2",
                 "B2": "=A2+B3",
-                "C3": "=B2",
                 "C2": "=B2+C3",
+                "B3": "=A2*0.02",
+                "C3": "=B2*0.02",
             },
         },
     )
@@ -75,19 +78,17 @@ def _simultaneous_workbook(tmp_path: Path) -> Path:
     )
 
 
-def test_lag_zipper_emits_joint_year_loop(tmp_path: Path) -> None:
+def test_lag_zipper_emits_demand_driven_scc(tmp_path: Path) -> None:
     workbook = _zipper_workbook(tmp_path)
     modules = generate_inverted(workbook, _zipper_bindings())
     internals = modules["internals.py"]
     api = modules["api.py"]
     assert "cyclic formula-series" not in internals
-    assert "for i in range(" in internals
-    assert internals.count("for i in range(") == 1
     pkg = load_package(modules, tmp_path, name="a11_zip")
     got = pkg.compute_debt()
-    assert got == pytest.approx((100.0, 200.0, 400.0))
+    assert got == pytest.approx((100.0, 102.0, 104.04))
+    assert "eval_instance" in internals
     assert "scan_debt_adjustment" in internals
-    assert "scan_debt_adjustment" in api
     assert "internals.scan_debt_adjustment" in api
 
 
@@ -99,6 +100,7 @@ def test_lag_zipper_matches_formula_evaluator(tmp_path: Path) -> None:
         ["Engine!A2", "Engine!B2", "Engine!C2", "Engine!B3", "Engine!C3"],
         load_values=True,
     )
+    assert graph.cycle_report().has_must_cycles is False
     expected = FormulaEvaluator(graph).evaluate(
         ["Engine!A2", "Engine!B2", "Engine!C2", "Engine!B3", "Engine!C3"]
     )
@@ -112,5 +114,5 @@ def test_lag_zipper_matches_formula_evaluator(tmp_path: Path) -> None:
 
 def test_same_year_cell_cycle_still_fail_closed(tmp_path: Path) -> None:
     workbook = _simultaneous_workbook(tmp_path)
-    with pytest.raises(InvertedTreeExportError, match="cell cycle"):
+    with pytest.raises(InvertedTreeExportError, match="distance-zero residual"):
         generate_inverted(workbook, _zipper_bindings())

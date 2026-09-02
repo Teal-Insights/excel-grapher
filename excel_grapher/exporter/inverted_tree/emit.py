@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from excel_grapher.exporter.inverted_tree.ast_emit import (
     emit_helper_body,
-    emit_zipper_scan,
+    emit_rung3_scc,
     python_annotation,
     python_return_annotation,
 )
@@ -23,9 +23,8 @@ from excel_grapher.exporter.inverted_tree.deps import (
     plan_indices,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
-from excel_grapher.exporter.inverted_tree.zipper import (
+from excel_grapher.exporter.inverted_tree.schedule import (
     build_scc_map,
-    plan_zipper,
     scan_function_name,
     scc_external_params,
 )
@@ -172,7 +171,7 @@ def emit_internals_module(
     graph: DependencyGraph,
     scc_map: Mapping[str, tuple[str, ...]],
 ) -> str:
-    """Emit `internals.py` with per-series helpers and zipper co-scans."""
+    """Emit `internals.py` with per-series helpers and demand-driven SCCs."""
     used_runtime: set[str] = set()
     functions: list[str] = []
     emitted_scans: set[tuple[str, ...]] = set()
@@ -183,11 +182,10 @@ def emit_internals_module(
             param_ids = scc_external_params(scc, deps, catalog.order)
             if scc not in emitted_scans:
                 emitted_scans.add(scc)
-                plan = plan_zipper(scc, catalog=catalog, graph=graph)
-                body, used = emit_zipper_scan(plan, catalog=catalog, deps=dict(deps), graph=graph)
+                body, used = emit_rung3_scc(scc, catalog=catalog, deps=dict(deps), graph=graph)
                 used_runtime |= used
                 joined = ", ".join(f"`{sid}`" for sid in scc)
-                doc = f'    """Joint year loop for lag-zipper series {joined}."""'
+                doc = f'    """Demand-driven co-evaluation of zipper series {joined}."""'
                 functions.append("\n".join([_scan_signature(scc, param_ids, catalog), doc, *body]))
             functions.append(_emit_scc_wrapper(series, scc, param_ids, catalog))
             continue

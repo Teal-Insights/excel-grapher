@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from excel_grapher.core.address_keys import normalize_key as normalize_address
-from excel_grapher.core.address_keys import parse_cell_coords
 from excel_grapher.core.excel_function_names import normalize_excel_function_name
 from excel_grapher.core.formula_ast import (
     AstNode,
@@ -22,6 +21,7 @@ from excel_grapher.core.formula_ast import (
     UnaryOpNode,
     resolve_cell_ref,
 )
+from excel_grapher.core.formula_shape import fingerprint_formula_shape
 from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, SeriesCatalog, covering_series
 from excel_grapher.exporter.inverted_tree.deps import (
     SeriesDeps,
@@ -31,7 +31,6 @@ from excel_grapher.exporter.inverted_tree.deps import (
     range_column_addresses,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
-from excel_grapher.exporter.inverted_tree.zipper import ZipperPlan
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
@@ -60,8 +59,8 @@ class EmitContext:
     prior_var: str | None
     used_runtime: set[str] = field(default_factory=set)
     scc_ids: frozenset[str] = field(default_factory=frozenset)
-    scc_this_year: dict[str, str] = field(default_factory=dict)
-    scc_prior: dict[str, str] = field(default_factory=dict)
+    instance_mode: bool = False
+    compute_names: dict[str, str] = field(default_factory=dict)
 
     def param(self, series_id: str) -> str:
         return series_id
@@ -147,10 +146,8 @@ def emit_expr(node: AstNode, ctx: EmitContext) -> str:
 
 def _emit_cell_ref(node: CellRefNode, ctx: EmitContext) -> str:
     address = resolve_cell_ref(node, ctx.host_cell)
-    if ctx.scc_ids:
-        scc_expr = _emit_scc_cell_ref(address, ctx)
-        if scc_expr is not None:
-            return scc_expr
+    if ctx.instance_mode:
+        return _emit_instance_ref(address, ctx)
     pred = predecessor_address(ctx.host, ctx.host_index, ctx.catalog)
     if pred is not None and normalize_address(address) == normalize_address(pred) and ctx.prior_var:
         return ctx.prior_var
@@ -183,26 +180,72 @@ def _emit_cell_ref(node: CellRefNode, ctx: EmitContext) -> str:
     return name
 
 
-def _emit_scc_cell_ref(address: str, ctx: EmitContext) -> str | None:
-    owner = ctx.catalog.series_for(address)
-    if owner is None or owner.series_id not in ctx.scc_ids:
-        return None
-    host_col = parse_cell_coords(ctx.host_cell)[2]
-    ref_col = parse_cell_coords(address)[2]
-    if ref_col == host_col:
-        local = ctx.scc_this_year.get(owner.series_id)
-        if local is None:
-            raise InvertedTreeExportError(
-                f"series {ctx.host.series_id!r} reads {owner.series_id!r} in the "
-                "same period before that series was scheduled"
-            )
-        return local
-    prior = ctx.scc_prior.get(owner.series_id)
-    if prior is None:
+def _index_expr(offset: int, index_var: str) -> str:
+    if offset == 0:
+        return index_var
+    if offset > 0:
+        return f"{index_var} + {offset}"
+    return f"{index_var} - {-offset}"
+
+
+def _emit_instance_ref(address: str, ctx: EmitContext) -> str:
+    owner = ctx.catalog.require_series_for(address)
+    idx = owner.index_of(address)
+    if idx is None:
         raise InvertedTreeExportError(
-            f"series {ctx.host.series_id!r} lags {owner.series_id!r} with no prior"
+            f"series {ctx.host.series_id!r}: instance ref {address} is unbound"
         )
-    return prior
+    offset = idx - ctx.host_index
+    index_var = ctx.index_var or "i"
+    index_expr = _index_expr(offset, index_var)
+    if owner.series_id in ctx.scc_ids:
+        fn = ctx.compute_names[owner.series_id]
+        ctx.use("demand_instance")
+        return f"demand_instance({owner.series_id!r}, {index_expr}, {fn}, memo, stack)"
+    name = ctx.param(owner.series_id)
+    if owner.is_scalar:
+        return name
+    return f"{name}[{index_expr}]"
+
+
+def formula_shape_runs(
+    series: BoundSeries,
+    graph: DependencyGraph,
+) -> list[tuple[str, int, int]]:
+    """Return consecutive `(shape_key, start, stop)` runs over `series.cells`."""
+    runs: list[tuple[str, int, int]] = []
+    for index, address in enumerate(series.cells):
+        key = fingerprint_formula_shape(node_formula_ast(graph, address)).shape_key
+        if runs and runs[-1][0] == key:
+            runs[-1] = (key, runs[-1][1], index + 1)
+        else:
+            runs.append((key, index, index + 1))
+    return runs
+
+
+def assert_uniform_formula_shape(series: BoundSeries, graph: DependencyGraph) -> None:
+    """Fail closed when a non-SCC helper would replay `cells[0]` on mixed shapes."""
+    if not series.is_sequence or len(series.cells) < 2:
+        return
+    runs = formula_shape_runs(series, graph)
+    if len(runs) > 1:
+        raise InvertedTreeExportError(
+            f"series {series.series_id!r} has {len({run[0] for run in runs})} formula "
+            "shapes; members must share one shape"
+        )
+
+
+def member_peel_stop(series: BoundSeries, graph: DependencyGraph) -> int:
+    """Return the exclusive end of a peeled prefix, or 0 if the series is uniform."""
+    runs = formula_shape_runs(series, graph)
+    if len(runs) <= 1:
+        return 0
+    if len(runs) == 2 and runs[0][1] == 0:
+        return runs[0][2]
+    raise InvertedTreeExportError(
+        f"series {series.series_id!r} has {len({run[0] for run in runs})} formula "
+        "shapes; members must share one shape or a peeled prefix"
+    )
 
 
 def _emit_binary(node: BinaryOpNode, ctx: EmitContext) -> str:
@@ -350,6 +393,11 @@ def emit_helper_body(
     graph: DependencyGraph,
 ) -> tuple[list[str], set[str]]:
     """Return indented body lines and the runtime symbols they use."""
+    if series.is_sequence:
+        if deps.is_scan:
+            member_peel_stop(series, graph)
+        else:
+            assert_uniform_formula_shape(series, graph)
     used: set[str] = set()
     seq_params = [
         sid for sid in deps.param_ids if catalog.get(sid).is_sequence and sid in deps.aligned_ids
@@ -433,17 +481,19 @@ def _emit_scan_body(
     graph: DependencyGraph,
     seq_params: list[str],
 ) -> tuple[list[str], set[str]]:
+    peel = member_peel_stop(series, graph)
+    template_index = peel if peel < len(series.cells) else 0
     seed = deps.seed_id
     ctx = EmitContext(
         host=series,
         catalog=catalog,
         deps=deps,
-        host_index=0,
-        host_cell=series.cells[0],
+        host_index=template_index,
+        host_cell=series.cells[template_index],
         index_var="i",
         prior_var="prior",
     )
-    ast = node_formula_ast(graph, series.cells[0])
+    ast = node_formula_ast(graph, series.cells[template_index])
     expr = emit_expr(ast, ctx)
     used = set(ctx.used_runtime)
     used.add("as_measure")
@@ -463,8 +513,34 @@ def _emit_scan_body(
         else f"as_measure({expr}, {series.python_dtype!r})"
     )
     lines.append(f"    path: list[{measure}] = []")
-    lines.append(f"    prior: {measure} = {seed_expr}")
-    lines.append("    for i in range(n):")
+    if peel > 0:
+        peel_ctx = EmitContext(
+            host=series,
+            catalog=catalog,
+            deps=deps,
+            host_index=0,
+            host_cell=series.cells[0],
+            index_var="i",
+            prior_var=None,
+        )
+        peel_expr = emit_expr(node_formula_ast(graph, series.cells[0]), peel_ctx)
+        used |= peel_ctx.used_runtime
+        peel_coerce = (
+            f"as_measure({peel_expr})"
+            if series.python_dtype == "float"
+            else f"as_measure({peel_expr}, {series.python_dtype!r})"
+        )
+        lines.append(f"    prior: {measure} = {seed_expr}")
+        lines.append(f"    for i in range({peel}):")
+        lines.append("        try:")
+        lines.append(f"            prior = {peel_coerce}")
+        lines.append("        except XlError as err:")
+        lines.append("            prior = err.code")
+        lines.append("        path.append(prior)")
+        lines.append(f"    for i in range({peel}, n):")
+    else:
+        lines.append(f"    prior: {measure} = {seed_expr}")
+        lines.append("    for i in range(n):")
     lines.append("        if is_error(prior):")
     lines.append("            path.append(prior)")
     lines.append("            continue")
@@ -483,80 +559,96 @@ def _as_measure_call(expr: str, series: BoundSeries) -> str:
     return f"as_measure({expr}, {series.python_dtype!r})"
 
 
-def emit_zipper_scan(
-    plan: ZipperPlan,
+def _compute_fn_name(series_id: str) -> str:
+    return f"{series_id}_compute"
+
+
+def _emit_region_return(
+    series: BoundSeries,
+    *,
+    catalog: SeriesCatalog,
+    deps: dict[str, SeriesDeps],
+    graph: DependencyGraph,
+    host_index: int,
+    scc_ids: frozenset[str],
+    compute_names: dict[str, str],
+) -> tuple[str, set[str]]:
+    ctx = EmitContext(
+        host=series,
+        catalog=catalog,
+        deps=deps[series.series_id],
+        host_index=host_index,
+        host_cell=series.cells[host_index],
+        index_var="i",
+        prior_var=None,
+        scc_ids=scc_ids,
+        instance_mode=True,
+        compute_names=compute_names,
+    )
+    expr = emit_expr(node_formula_ast(graph, series.cells[host_index]), ctx)
+    return _as_measure_call(expr, series), set(ctx.used_runtime)
+
+
+def emit_rung3_scc(
+    scc: tuple[str, ...],
     *,
     catalog: SeriesCatalog,
     deps: dict[str, SeriesDeps],
     graph: DependencyGraph,
 ) -> tuple[list[str], set[str]]:
-    """Emit the body of a joint year-loop helper for a lag-only series SCC."""
-    used: set[str] = {"as_measure", "XlError"}
-    scc_ids = frozenset(plan.scc)
-    lines: list[str] = []
-    for sid in plan.scc:
+    """Emit demand-driven instance evaluation for a lag-zipper SCC."""
+    used: set[str] = {"as_measure", "XlError", "eval_instance"}
+    scc_ids = frozenset(scc)
+    compute_names = {sid: _compute_fn_name(sid) for sid in scc}
+    lines: list[str] = [
+        "    memo: dict[tuple[str, int], object] = {}",
+        "    stack: set[tuple[str, int]] = set()",
+        "",
+    ]
+    for sid in scc:
         series = catalog.get(sid)
-        measure = python_measure_type(series)
-        lines.append(f"    {sid}_path: list[{measure}] = []")
-    seeded: set[str] = set()
-    this_year: dict[str, str] = {}
-    prior: dict[str, str] = {}
-    current_col: int | None = None
-
-    def emit_cell(address: str, *, in_loop: bool, indent: str) -> None:
-        nonlocal used
-        owner = catalog.require_series_for(address)
-        host_index = owner.index_of(address)
-        if host_index is None:
-            raise InvertedTreeExportError(f"zipper cell {address} missing from catalog")
-        ctx = EmitContext(
-            host=owner,
+        peel = member_peel_stop(series, graph)
+        fn = compute_names[sid]
+        lines.append(f"    def {fn}(i: int) -> {python_measure_type(series)}:")
+        if peel > 0:
+            peel_expr, peel_used = _emit_region_return(
+                series,
+                catalog=catalog,
+                deps=deps,
+                graph=graph,
+                host_index=0,
+                scc_ids=scc_ids,
+                compute_names=compute_names,
+            )
+            used |= peel_used
+            lines.append(f"        if i < {peel}:")
+            lines.append("            try:")
+            lines.append(f"                return {peel_expr}")
+            lines.append("            except XlError as err:")
+            lines.append("                return err.code")
+        main_index = peel if peel < len(series.cells) else 0
+        main_expr, main_used = _emit_region_return(
+            series,
             catalog=catalog,
-            deps=deps[owner.series_id],
-            host_index=host_index,
-            host_cell=address,
-            index_var="i" if in_loop else None,
-            prior_var=prior.get(owner.series_id),
+            deps=deps,
+            graph=graph,
+            host_index=main_index,
             scc_ids=scc_ids,
-            scc_this_year=dict(this_year),
-            scc_prior=dict(prior),
+            compute_names=compute_names,
         )
-        expr = emit_expr(node_formula_ast(graph, address), ctx)
-        used |= ctx.used_runtime
-        coerce = _as_measure_call(expr, owner)
-        var = f"{owner.series_id}_t"
-        lines.append(f"{indent}try:")
-        lines.append(f"{indent}    {var} = {coerce}")
-        lines.append(f"{indent}except XlError as err:")
-        lines.append(f"{indent}    {var} = err.code")
-        this_year[owner.series_id] = var
-        lines.append(f"{indent}{owner.series_id}_path.append({var})")
-        prior[owner.series_id] = f"{owner.series_id}_path[-1]"
-
-    for address in plan.seed_cells:
-        col = parse_cell_coords(address)[2]
-        if current_col is not None and col != current_col:
-            this_year = {}
-        current_col = col
-        emit_cell(address, in_loop=False, indent="    ")
-        seeded.add(catalog.require_series_for(address).series_id)
-    lines.append(f"    n = {plan.loop_n}")
-    lines.append("    for i in range(n):")
-    this_year = {}
-    prior_sids = [sid for sid in plan.scc if sid in seeded or sid in prior]
-    for sid in prior_sids:
-        lines.append(f"        {sid}_prior = {sid}_path[-1]")
-        prior[sid] = f"{sid}_prior"
-    if prior_sids:
-        used.add("is_error")
-        prior_tuple = ", ".join(f"{sid}_prior" for sid in prior_sids)
-        lines.append(f"        _err = next((p for p in ({prior_tuple},) if is_error(p)), None)")
-        lines.append("        if _err is not None:")
-        for sid in plan.scc:
-            lines.append(f"            {sid}_path.append(_err)")
-        lines.append("            continue")
-    for address in plan.loop_cells:
-        emit_cell(address, in_loop=True, indent="        ")
-    returned = ", ".join(f"tuple({sid}_path)" for sid in plan.scc)
-    lines.append(f"    return {returned}")
+        used |= main_used
+        lines.append("        try:")
+        lines.append(f"            return {main_expr}")
+        lines.append("        except XlError as err:")
+        lines.append("            return err.code")
+        lines.append("")
+    returned: list[str] = []
+    for sid in scc:
+        n = len(catalog.get(sid).cells)
+        fn = compute_names[sid]
+        lines.append(
+            f"    {sid} = tuple(eval_instance({sid!r}, i, {fn}, memo, stack) for i in range({n}))"
+        )
+        returned.append(sid)
+    lines.append(f"    return {', '.join(returned)}")
     return lines, used

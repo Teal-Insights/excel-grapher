@@ -5,8 +5,11 @@ from __future__ import annotations
 import pytest
 
 from excel_grapher.exporter.inverted_tree.runtime import (
+    InstanceCycleError,
     XlError,
     as_measure,
+    demand_instance,
+    eval_instance,
     is_error,
     require_aligned,
     require_length,
@@ -99,3 +102,39 @@ def test_as_measure_preserves_error_codes() -> None:
     assert is_error("#REF!")
     assert not is_error(1.5)
     assert not is_error("REF")
+
+
+def test_eval_instance_memos_and_detects_cycles() -> None:
+    memo: dict[tuple[str, int], float] = {}
+    stack: set[tuple[str, int]] = set()
+    calls = {"n": 0}
+
+    def compute(index: int) -> float:
+        calls["n"] += 1
+        if index == 0:
+            return 1.0
+        return eval_instance("s", index - 1, compute, memo, stack) + 1.0
+
+    assert eval_instance("s", 2, compute, memo, stack) == 3.0
+    assert eval_instance("s", 2, compute, memo, stack) == 3.0
+    assert calls["n"] == 3
+
+    def loop(_index: int) -> float:
+        return eval_instance("c", 0, loop, memo, stack)
+
+    with pytest.raises(InstanceCycleError, match="distance-zero cycle"):
+        eval_instance("c", 0, loop, memo, stack)
+
+
+def test_demand_instance_reraises_stored_error_codes() -> None:
+    memo: dict[tuple[str, int], float | str] = {}
+    stack: set[tuple[str, int]] = set()
+
+    def compute(index: int) -> float | str:
+        del index
+        return "#REF!"
+
+    with pytest.raises(XlError) as exc:
+        demand_instance("s", 0, compute, memo, stack)
+    assert exc.value.code == "#REF!"
+    assert eval_instance("s", 0, compute, memo, stack) == "#REF!"

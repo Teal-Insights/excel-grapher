@@ -12,7 +12,7 @@ the tuple.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import NoReturn, TypeGuard, TypeVar
 
 T = TypeVar("T")
@@ -138,3 +138,49 @@ def take(values: Sequence[T], indices: Sequence[int]) -> tuple[T, ...]:
             raise ValueError(f"take index {index} is outside series of length {length}")
         result.append(values[index])
     return tuple(result)
+
+
+class InstanceCycleError(ValueError):
+    """Demand-driven evaluation hit a same-index circular reference."""
+
+
+def eval_instance(
+    statement: str,
+    index: int,
+    compute: Callable[[int], T],
+    memo: dict[tuple[str, int], T],
+    stack: set[tuple[str, int]],
+) -> T:
+    """Return the memoized value of `statement` at catalog `index`.
+
+    This is the rung-3 dispatcher: demand-driven instance evaluation with an
+    on-stack set that raises `InstanceCycleError` on a real cycle.
+    """
+    if index < 0:
+        raise XlError("#REF!")
+    key = (statement, index)
+    if key in memo:
+        return memo[key]
+    if key in stack:
+        raise InstanceCycleError(f"distance-zero cycle evaluating {statement}[{index}]")
+    stack.add(key)
+    try:
+        value = compute(index)
+    finally:
+        stack.remove(key)
+    memo[key] = value
+    return value
+
+
+def demand_instance(
+    statement: str,
+    index: int,
+    compute: Callable[[int], T],
+    memo: dict[tuple[str, int], T],
+    stack: set[tuple[str, int]],
+) -> T:
+    """Like `eval_instance`, but re-raise a stored Excel error as `XlError`."""
+    value = eval_instance(statement, index, compute, memo, stack)
+    if isinstance(value, str) and is_error(value):
+        raise XlError(value)
+    return value
