@@ -8,7 +8,7 @@ import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
-from excel_grapher.exporter.inverted_tree.schedule import plan_fused_scc
+from excel_grapher.exporter.inverted_tree.schedule import FusedRegion, plan_fused_scc
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
@@ -108,13 +108,21 @@ def test_identity_flip_is_not_a_cell_cycle(tmp_path: Path) -> None:
     assert graph.cycle_report().has_must_cycles is False
 
 
-def test_identity_flip_emits_demand_driven_scan(tmp_path: Path) -> None:
+def test_identity_flip_emits_region_local_fused_scan(tmp_path: Path) -> None:
     workbook = _two_series_workbook(tmp_path)
     modules = generate_inverted(workbook, _two_series_bindings())
     internals = modules["internals.py"]
-    assert "eval_instance" in internals
+    assert "eval_instance" not in internals
+    assert "for t in range(" in internals
+    assert "if t == 0:" in internals
+    assert "elif t == 1:" in internals
     catalog, _deps, graph = inverted_graph_parts(workbook, _two_series_bindings())
-    assert plan_fused_scc(("x", "y"), catalog=catalog, graph=graph) is None
+    plan = plan_fused_scc(("x", "y"), catalog=catalog, graph=graph)
+    assert plan is not None
+    assert plan.regions == (
+        FusedRegion(start=0, stop=1, body_order=("y", "x")),
+        FusedRegion(start=1, stop=2, body_order=("x", "y")),
+    )
     pkg = load_package(modules, tmp_path, name="a13_two")
     assert pkg.compute_x() == pytest.approx((2.0, 10.0))
     assert pkg.compute_y() == pytest.approx((2.0, 10.0))
@@ -157,9 +165,43 @@ def test_qcraft_identity_flip_emits_and_matches_evaluator(tmp_path: Path) -> Non
     assert graph.cycle_report().has_must_cycles is False
     modules = generate_inverted(workbook, _qcraft_bindings())
     internals = modules["internals.py"]
-    assert "eval_instance" in internals
+    assert "eval_instance" not in internals
+    assert "for t in range(" in internals
     catalog, _deps, graph_bound = inverted_graph_parts(workbook, _qcraft_bindings())
-    assert plan_fused_scc(_qcraft_scc(), catalog=catalog, graph=graph_bound) is None
+    plan = plan_fused_scc(_qcraft_scc(), catalog=catalog, graph=graph_bound)
+    assert plan is not None
+    assert plan.regions == (
+        FusedRegion(
+            start=0,
+            stop=1,
+            body_order=(
+                "real_gdp_lcu",
+                "labour_productivity_growth",
+                "real_gdp_growth",
+                "employment_growth",
+            ),
+        ),
+        FusedRegion(
+            start=1,
+            stop=2,
+            body_order=(
+                "real_gdp_lcu",
+                "employment_growth",
+                "real_gdp_growth",
+                "labour_productivity_growth",
+            ),
+        ),
+        FusedRegion(
+            start=2,
+            stop=3,
+            body_order=(
+                "employment_growth",
+                "labour_productivity_growth",
+                "real_gdp_lcu",
+                "real_gdp_growth",
+            ),
+        ),
+    )
     pkg = load_package(modules, tmp_path, name="a13_qc")
     expected = FormulaEvaluator(graph).evaluate(targets)
     assert pkg.compute_employment_growth() == pytest.approx(
@@ -174,6 +216,26 @@ def test_qcraft_identity_flip_emits_and_matches_evaluator(tmp_path: Path) -> Non
     assert pkg.internals.real_gdp_lcu() == pytest.approx(
         (expected["Engine!A2"], expected["Engine!B2"], expected["Engine!C2"])
     )
+
+
+def test_look_ahead_stays_on_rung3(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "a13_lookahead.xlsx",
+        {
+            "Engine": {
+                "A1": 2009,
+                "B1": 2010,
+                "A2": "=B4",
+                "B2": "=10",
+                "A4": "=1",
+                "B4": "=B2",
+            },
+        },
+    )
+    catalog, _deps, graph = inverted_graph_parts(workbook, _two_series_bindings())
+    assert plan_fused_scc(("x", "y"), catalog=catalog, graph=graph) is None
+    internals = generate_inverted(workbook, _two_series_bindings())["internals.py"]
+    assert "eval_instance" in internals
 
 
 def test_same_column_cycle_still_fail_closed(tmp_path: Path) -> None:

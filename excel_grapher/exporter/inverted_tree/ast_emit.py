@@ -31,7 +31,11 @@ from excel_grapher.exporter.inverted_tree.deps import (
     range_column_addresses,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
-from excel_grapher.exporter.inverted_tree.schedule import FusedPlan, plan_fused_scc
+from excel_grapher.exporter.inverted_tree.schedule import (
+    FusedPlan,
+    FusedRegion,
+    plan_fused_scc,
+)
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
@@ -712,14 +716,19 @@ def _indented(lines: list[str], spaces: int) -> list[str]:
 def _fused_template_index(
     series: BoundSeries,
     plan: FusedPlan,
-    graph: DependencyGraph,
+    region: FusedRegion,
 ) -> int:
     start, stop = plan.domain[series.series_id]
-    peel = member_peel_stop(series, graph)
-    floor = max(plan.peel_stop, start + peel)
-    if floor >= stop:
+    union_t = max(region.start, start)
+    if union_t >= min(region.stop, stop):
         return max(0, stop - start - 1)
-    return floor - start
+    return union_t - start
+
+
+def _region_guard(region: FusedRegion) -> str:
+    if region.stop == region.start + 1:
+        return f"t == {region.start}"
+    return f"{region.start} <= t < {region.stop}"
 
 
 def _emit_fused_expr(
@@ -760,64 +769,39 @@ def _emit_fused_assign(series: BoundSeries, expr: str) -> list[str]:
     ]
 
 
-def _emit_fused_peel(
+def _emit_fused_region(
     plan: FusedPlan,
+    region: FusedRegion,
     *,
     catalog: SeriesCatalog,
     deps: dict[str, SeriesDeps],
     graph: DependencyGraph,
 ) -> tuple[list[str], set[str]]:
     used: set[str] = set()
-    lines = [f"        if t < {plan.peel_stop}:"]
-    if plan.peel_stop == 1:
-        ready: set[str] = set()
-        for sid in plan.body_order:
-            start, stop = plan.domain[sid]
-            if not (start <= 0 < stop):
-                continue
-            series = catalog.get(sid)
-            expr, expr_used = _emit_fused_expr(
-                series,
-                catalog=catalog,
-                deps=deps,
-                graph=graph,
-                host_index=0 - start,
-                plan=plan,
-                ready=ready,
-            )
-            used |= expr_used
-            lines.extend(_indented(_emit_fused_assign(series, expr), 12))
-            ready.add(sid)
-        lines.append("            continue")
-        return lines, used
-    emitted_branch = False
-    for step in range(plan.peel_stop):
-        ready = set()
-        body: list[str] = []
-        for sid in plan.body_order:
-            start, stop = plan.domain[sid]
-            if not (start <= step < stop):
-                continue
-            series = catalog.get(sid)
-            expr, expr_used = _emit_fused_expr(
-                series,
-                catalog=catalog,
-                deps=deps,
-                graph=graph,
-                host_index=step - start,
-                plan=plan,
-                ready=ready,
-            )
-            used |= expr_used
-            body.extend(_emit_fused_assign(series, expr))
-            ready.add(sid)
-        if not body:
+    lines: list[str] = []
+    ready: set[str] = set()
+    for sid in region.body_order:
+        start, stop = plan.domain[sid]
+        if stop <= region.start or start >= region.stop:
             continue
-        keyword = "if" if not emitted_branch else "elif"
-        emitted_branch = True
-        lines.append(f"            {keyword} t == {step}:")
-        lines.extend(_indented(body, 16))
-    lines.append("            continue")
+        series = catalog.get(sid)
+        expr, expr_used = _emit_fused_expr(
+            series,
+            catalog=catalog,
+            deps=deps,
+            graph=graph,
+            host_index=_fused_template_index(series, plan, region),
+            plan=plan,
+            ready=ready,
+        )
+        used |= expr_used
+        assign = _emit_fused_assign(series, expr)
+        if start <= region.start and stop >= region.stop:
+            lines.extend(assign)
+        else:
+            lines.append(f"if {start} <= t < {stop}:")
+            lines.extend(_indented(assign, 4))
+        ready.add(sid)
     return lines, used
 
 
@@ -830,9 +814,9 @@ def emit_rung2_scc(
 ) -> tuple[list[str], set[str]]:
     """Emit a fused union-domain loop for a fusible zipper SCC.
 
-    Statements are guarded by their own domains and ordered by the
-    distance-zero residual. The union schedule is the loop; look-ahead or
-    non-contiguous domains must use `emit_rung3_scc`.
+    Each `FusedRegion` is one residual-order / access-class span. The union
+    schedule is the loop; look-ahead or non-contiguous domains must use
+    `emit_rung3_scc`.
 
     Raises:
         InvertedTreeExportError: The SCC is not fusible, or the residual is a
@@ -850,35 +834,16 @@ def emit_rung2_scc(
         lines.append(f"    {sid}: list[{python_measure_type(series)}] = []")
     n = len(plan.schedule)
     lines.append(f"    for t in range({n}):")
-    if plan.peel_stop > 0:
-        peel_lines, peel_used = _emit_fused_peel(plan, catalog=catalog, deps=deps, graph=graph)
-        used |= peel_used
-        lines.extend(peel_lines)
-    ready: set[str] = set()
-    for sid in plan.body_order:
-        start, stop = plan.domain[sid]
-        if stop <= plan.peel_stop:
-            continue
-        series = catalog.get(sid)
-        host_index = _fused_template_index(series, plan, graph)
-        expr, expr_used = _emit_fused_expr(
-            series,
-            catalog=catalog,
-            deps=deps,
-            graph=graph,
-            host_index=host_index,
-            plan=plan,
-            ready=ready,
-        )
-        used |= expr_used
-        assign = _emit_fused_assign(series, expr)
-        main_start = max(start, plan.peel_stop)
-        if main_start == plan.peel_stop and stop == n:
-            lines.extend(_indented(assign, 8))
+    multi = len(plan.regions) > 1
+    for index, region in enumerate(plan.regions):
+        body, body_used = _emit_fused_region(plan, region, catalog=catalog, deps=deps, graph=graph)
+        used |= body_used
+        if multi:
+            keyword = "if" if index == 0 else "elif"
+            lines.append(f"        {keyword} {_region_guard(region)}:")
+            lines.extend(_indented(body, 12))
         else:
-            lines.append(f"        if {start} <= t < {stop}:")
-            lines.extend(_indented(assign, 12))
-        ready.add(sid)
+            lines.extend(_indented(body, 8))
     returned = ", ".join(f"tuple({sid})" for sid in scc)
     lines.append(f"    return {returned}")
     return lines, used

@@ -9,6 +9,7 @@ import pytest
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.schedule import (
     DependenceEdge,
+    FusedRegion,
     plan_fused_scc,
     residual_body_order,
 )
@@ -55,6 +56,10 @@ def test_plan_fused_scc_for_corrected_zipper(tmp_path: Path) -> None:
     assert plan.domain["debt"] == (0, 3)
     assert plan.domain["adjustment"] == (1, 3)
     assert plan.peel_stop == 1
+    assert plan.regions == (
+        FusedRegion(start=0, stop=1, body_order=("debt",)),
+        FusedRegion(start=1, stop=3, body_order=("adjustment", "debt")),
+    )
 
 
 def test_plan_fused_scc_rejects_same_year_cycle(tmp_path: Path) -> None:

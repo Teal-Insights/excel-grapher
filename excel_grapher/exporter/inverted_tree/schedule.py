@@ -353,14 +353,36 @@ def collect_dependence_edges(
 
 
 @dataclass(frozen=True, slots=True)
+class FusedRegion:
+    """One residual-order / access-class span on the union schedule."""
+
+    start: int
+    stop: int
+    body_order: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class FusedPlan:
-    """Union-domain loop for a fusible multi-series SCC (rung 2)."""
+    """Union-domain loop for a fusible multi-series SCC (rung 2).
+
+    `regions` is the source of truth. `body_order` and `peel_stop` describe
+    the last region: its residual order and the union index where it starts.
+    """
 
     scc: tuple[str, ...]
     schedule: tuple[int, ...]
     domain: dict[str, tuple[int, int]]
-    body_order: tuple[str, ...]
-    peel_stop: int
+    regions: tuple[FusedRegion, ...]
+
+    @property
+    def body_order(self) -> tuple[str, ...]:
+        """In-loop statement order of the last region."""
+        return self.regions[-1].body_order
+
+    @property
+    def peel_stop(self) -> int:
+        """Union index where the last region begins."""
+        return self.regions[-1].start
 
 
 def _contiguous_domain(
@@ -383,6 +405,116 @@ def _contiguous_domain(
     return start, stop
 
 
+def _statement_at_union(
+    catalog: SeriesCatalog,
+    series_id: str,
+    union_t: int,
+    domain_start: int,
+) -> str:
+    """Return the statement covering union index `union_t`."""
+    host_index = union_t - domain_start
+    series = catalog.get(series_id)
+    for stmt in series.statements:
+        if stmt.start <= host_index < stmt.stop:
+            return stmt.statement_id
+    return series_id
+
+
+def _residual_order_at_column(
+    members: tuple[str, ...],
+    edges: Sequence[DependenceEdge],
+    column: int,
+) -> tuple[str, ...] | None:
+    """Return the distance-zero topo among `members` in one schedule column."""
+    if not members:
+        return ()
+    residual = _empty_residual(members)
+    for edge in _zero_distance_edges(members, edges):
+        if schedule_coord(edge.consumer_cell) != column:
+            continue
+        _add_residual_edge(residual, edge, members, column=column)
+    return _topo_order(members, residual)
+
+
+def _access_signature(
+    members: tuple[str, ...],
+    edges: Sequence[DependenceEdge],
+    column: int,
+) -> tuple[tuple[str, str, str], ...]:
+    """Return intra-member access classes at `column`, sorted for grouping."""
+    active = set(members)
+    sig = [
+        (edge.consumer_id, edge.producer_id, edge.access)
+        for edge in edges
+        if edge.consumer_id in active
+        and edge.producer_id in active
+        and schedule_coord(edge.consumer_cell) == column
+    ]
+    sig.sort()
+    return tuple(sig)
+
+
+def _column_region_key(
+    scc: tuple[str, ...],
+    *,
+    catalog: SeriesCatalog,
+    domain: Mapping[str, tuple[int, int]],
+    edges: Sequence[DependenceEdge],
+    union_t: int,
+    column: int,
+) -> tuple[tuple[str, ...], tuple[tuple[str, str], ...], tuple[tuple[str, str, str], ...]] | None:
+    """Return `(body_order, shape_sig, access_sig)` for one union index."""
+    active = tuple(sid for sid in scc if domain[sid][0] <= union_t < domain[sid][1])
+    if not active:
+        return None
+    order = _residual_order_at_column(active, edges, column)
+    if order is None:
+        return None
+    shape_sig = tuple(
+        (sid, _statement_at_union(catalog, sid, union_t, domain[sid][0])) for sid in active
+    )
+    return order, shape_sig, _access_signature(active, edges, column)
+
+
+def _fuse_regions(
+    scc: tuple[str, ...],
+    *,
+    catalog: SeriesCatalog,
+    domain: Mapping[str, tuple[int, int]],
+    edges: Sequence[DependenceEdge],
+    coords: Sequence[int],
+) -> tuple[FusedRegion, ...] | None:
+    """Group contiguous union indices that share residual order and access."""
+    regions: list[FusedRegion] = []
+    run_start = 0
+    run_key: (
+        tuple[tuple[str, ...], tuple[tuple[str, str], ...], tuple[tuple[str, str, str], ...]] | None
+    ) = None
+    for union_t, column in enumerate(coords):
+        key = _column_region_key(
+            scc,
+            catalog=catalog,
+            domain=domain,
+            edges=edges,
+            union_t=union_t,
+            column=column,
+        )
+        if key is None:
+            return None
+        if run_key is None:
+            run_start = union_t
+            run_key = key
+            continue
+        if key != run_key:
+            regions.append(FusedRegion(start=run_start, stop=union_t, body_order=run_key[0]))
+            run_start = union_t
+            run_key = key
+    if run_key is None:
+        return None
+    regions.append(FusedRegion(start=run_start, stop=len(coords), body_order=run_key[0]))
+    return tuple(regions)
+
+
 def plan_fused_scc(
     scc: tuple[str, ...],
     *,
@@ -391,9 +523,9 @@ def plan_fused_scc(
 ) -> FusedPlan | None:
     """Return a fused loop plan, or None when the SCC must stay on rung 3.
 
-    Requires one residual body order that is valid in every schedule column,
-    no look-ahead edges, and a contiguous domain per statement on the union
-    schedule.
+    Requires no look-ahead edges and a contiguous domain per statement on the
+    union schedule. Residual order, formula shape, and access class may change
+    along the schedule; each distinct span becomes a `FusedRegion`.
 
     Raises:
         InvertedTreeExportError: Some column's residual is a real same-index
@@ -406,9 +538,7 @@ def plan_fused_scc(
     intra = [edge for edge in edges if edge.consumer_id in members and edge.producer_id in members]
     if any(edge.distance < 0 for edge in intra):
         return None
-    body_order = residual_body_order(scc, edges)
-    if body_order is None:
-        return None
+    assert_distance_zero_legal(scc, edges)
     coords = sorted({schedule_coord(addr) for sid in scc for addr in catalog.get(sid).cells})
     if not coords:
         return None
@@ -419,22 +549,14 @@ def plan_fused_scc(
         if span is None:
             return None
         domain[sid] = span
-    main_active = {
-        sid for sid, (start, stop) in domain.items() if start <= (len(coords) - 1) < stop
-    }
-    peel_stop = len(coords) - 1
-    while peel_stop > 0:
-        prev = peel_stop - 1
-        prev_active = {sid for sid, (start, stop) in domain.items() if start <= prev < stop}
-        if prev_active != main_active:
-            break
-        peel_stop = prev
+    regions = _fuse_regions(scc, catalog=catalog, domain=domain, edges=edges, coords=coords)
+    if regions is None:
+        return None
     return FusedPlan(
         scc=scc,
         schedule=tuple(coords),
         domain=domain,
-        body_order=body_order,
-        peel_stop=peel_stop,
+        regions=regions,
     )
 
 
@@ -598,7 +720,7 @@ def build_scc_map(
 
     Multi-series SCCs fail closed only when some schedule column has a
     same-index cycle. A residual order that changes across columns is legal
-    and is classified later as not fusible.
+    and is fused region-locally when each span has a residual DAG.
     """
     ids = [series.series_id for series in catalog.formula_series()]
     mapping: dict[str, tuple[str, ...]] = {}
