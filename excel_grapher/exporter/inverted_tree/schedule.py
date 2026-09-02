@@ -12,19 +12,11 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from excel_grapher.core.address_keys import normalize_key as normalize_address
 from excel_grapher.core.address_keys import parse_cell_coords
-from excel_grapher.core.excel_function_names import normalize_excel_function_name
-from excel_grapher.core.formula_ast import (
-    AstNode,
-    BinaryOpNode,
-    CellRefNode,
-    FunctionCallNode,
-    RangeNode,
-    UnaryOpNode,
-    resolve_cell_ref,
+from excel_grapher.exporter.inverted_tree.deps import (
+    DependenceEdge,
+    collect_series_edges,
 )
-from excel_grapher.exporter.inverted_tree.deps import node_formula_ast
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 
 if TYPE_CHECKING:
@@ -250,22 +242,6 @@ class IndexSet:
         return base.map_affine(coeff, offset)
 
 
-@dataclass(frozen=True, slots=True)
-class DependenceEdge:
-    """One instance-level read, annotated with schedule distance.
-
-    `distance` is `coord(consumer) - coord(producer)` in the layout schedule
-    (column index for `layout: series` TIME_PERIOD rows). Positive means the
-    producer is an earlier period (a `pre` / lag).
-    """
-
-    consumer_id: str
-    producer_id: str
-    consumer_cell: str
-    producer_cell: str
-    distance: int
-
-
 def scan_function_name(scc: tuple[str, ...]) -> str:
     """Return the internals helper name for a fused or demand-driven SCC."""
     return "scan_" + "_".join(scc)
@@ -354,56 +330,25 @@ def tarjan_series_sccs(
     return ordered
 
 
-def _iter_cell_refs(node: AstNode, host_cell: str) -> Iterable[str]:
-    match node:
-        case CellRefNode():
-            yield resolve_cell_ref(node, host_cell)
-        case RangeNode():
-            return
-        case BinaryOpNode():
-            yield from _iter_cell_refs(node.left, host_cell)
-            yield from _iter_cell_refs(node.right, host_cell)
-        case UnaryOpNode():
-            yield from _iter_cell_refs(node.operand, host_cell)
-        case FunctionCallNode():
-            name = normalize_excel_function_name(node.name)
-            if name in {"OFFSET", "INDEX", "MATCH"}:
-                for arg in node.args[1:]:
-                    yield from _iter_cell_refs(arg, host_cell)
-                return
-            for arg in node.args:
-                yield from _iter_cell_refs(arg, host_cell)
-        case _:
-            return
-
-
 def collect_dependence_edges(
     catalog: SeriesCatalog,
     graph: DependencyGraph,
     series_ids: Sequence[str],
 ) -> tuple[DependenceEdge, ...]:
-    """Collect instance-level cell-ref edges among `series_ids`."""
+    """Collect instance-level cell-ref edges among `series_ids`.
+
+    `whole` and `dynamic` accesses have no fixed distance and are omitted so
+    the residual test stays over concrete instance reads.
+    """
     wanted = set(series_ids)
     edges: list[DependenceEdge] = []
     for series_id in series_ids:
-        series = catalog.get(series_id)
-        for address in series.cells:
-            ast = node_formula_ast(graph, address)
-            for dep in _iter_cell_refs(ast, address):
-                producer = catalog.series_id_for(dep)
-                if producer is None or producer not in wanted:
-                    continue
-                consumer_cell = normalize_address(address)
-                producer_cell = normalize_address(dep)
-                edges.append(
-                    DependenceEdge(
-                        consumer_id=series_id,
-                        producer_id=producer,
-                        consumer_cell=consumer_cell,
-                        producer_cell=producer_cell,
-                        distance=schedule_coord(consumer_cell) - schedule_coord(producer_cell),
-                    )
-                )
+        for edge in collect_series_edges(catalog.get(series_id), catalog=catalog, graph=graph):
+            if edge.producer_id not in wanted:
+                continue
+            if edge.access in {"whole", "dynamic"}:
+                continue
+            edges.append(edge)
     return tuple(edges)
 
 
@@ -522,7 +467,8 @@ def _add_residual_edge(
     if edge.consumer_id == edge.producer_id:
         raise InvertedTreeExportError(
             f"distance-zero residual of zipper series {list(scc)!r} is cyclic "
-            f"at column {column} ({edge.consumer_cell} reads {edge.producer_cell})"
+            f"at column {column} ({edge.consumer_id} {edge.consumer_cell} reads "
+            f"{edge.producer_id} {edge.producer_cell})"
         )
     residual[edge.consumer_id].append(edge.producer_id)
 
@@ -548,6 +494,62 @@ def _topo_order(
     return tuple(ordered)
 
 
+def _first_cyclic_pair(residual: dict[str, list[str]]) -> tuple[str, str] | None:
+    """Return one residual edge that participates in a cycle."""
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def dfs(node: str) -> tuple[str, str] | None:
+        visiting.add(node)
+        for pred in residual.get(node, []):
+            if pred in visiting:
+                return node, pred
+            if pred not in visited:
+                found = dfs(pred)
+                if found is not None:
+                    return found
+        visiting.remove(node)
+        visited.add(node)
+        return None
+
+    for start in residual:
+        if start not in visited:
+            pair = dfs(start)
+            if pair is not None:
+                return pair
+    return None
+
+
+def _residual_cycle_message(
+    scc: tuple[str, ...],
+    column: int,
+    residual: dict[str, list[str]],
+    edges: Sequence[DependenceEdge],
+) -> str:
+    """Name the two statements and the index point of a residual cycle."""
+    pair = _first_cyclic_pair(residual)
+    prefix = f"distance-zero residual of zipper series {list(scc)!r} is cyclic at column {column}"
+    if pair is None:
+        return prefix
+    consumer_id, producer_id = pair
+    match = next(
+        (
+            edge
+            for edge in _zero_distance_edges(scc, edges)
+            if schedule_coord(edge.consumer_cell) == column
+            and edge.consumer_id == consumer_id
+            and edge.producer_id == producer_id
+        ),
+        None,
+    )
+    if match is not None:
+        return (
+            f"{prefix} ({consumer_id} {match.consumer_cell} reads "
+            f"{producer_id} {match.producer_cell})"
+        )
+    return f"{prefix} ({consumer_id} reads {producer_id})"
+
+
 def assert_distance_zero_legal(
     scc: tuple[str, ...],
     edges: Sequence[DependenceEdge],
@@ -567,10 +569,7 @@ def assert_distance_zero_legal(
         _add_residual_edge(residual, edge, scc, column=column)
     for column, residual in by_column.items():
         if _topo_order(scc, residual) is None:
-            raise InvertedTreeExportError(
-                f"distance-zero residual of zipper series {list(scc)!r} is cyclic "
-                f"at column {column}"
-            )
+            raise InvertedTreeExportError(_residual_cycle_message(scc, column, residual, edges))
 
 
 def residual_body_order(

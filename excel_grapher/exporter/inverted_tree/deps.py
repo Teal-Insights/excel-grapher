@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from fastpyxl.utils.cell import get_column_letter
 
@@ -31,6 +31,27 @@ from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
+
+AccessClass = Literal["identity", "shift", "affine", "gather", "whole", "dynamic"]
+
+
+def _layout_distance(consumer: str, producer: str) -> int:
+    """Return layout-column distance (`coord(consumer) - coord(producer)`)."""
+    return parse_cell_coords(consumer)[2] - parse_cell_coords(producer)[2]
+
+
+def _member_access(
+    host_index: int,
+    producer: BoundSeries,
+    producer_cell: str,
+) -> AccessClass:
+    """Classify a cell-ref by series member indices (`f(i) = i` vs `i - k`)."""
+    prod_index = producer.index_of(producer_cell)
+    if prod_index is None:
+        return "gather"
+    if host_index == prod_index:
+        return "identity"
+    return "shift"
 
 
 def iter_range_addresses(start: str, end: str) -> list[str]:
@@ -116,29 +137,62 @@ class SeriesDeps:
     index_maps: dict[str, tuple[int, ...]]
 
 
+@dataclass(frozen=True, slots=True)
+class DependenceEdge:
+    """One instance-level read, annotated with access class and schedule distance.
+
+    `distance` is `coord(consumer) - coord(producer)` in the layout schedule
+    (column index for `layout: series` TIME_PERIOD rows). Positive means the
+    producer is an earlier period (a `pre` / lag). `access` is the series-index
+    map: `identity` is `f(i) = i`, `shift` is `f(i) = i - k`.
+    """
+
+    consumer_id: str
+    producer_id: str
+    consumer_cell: str
+    producer_cell: str
+    distance: int
+    access: AccessClass = "identity"
+
+
 @dataclass
 class _DepCollector:
     host: BoundSeries
     catalog: SeriesCatalog
-    params: dict[str, None] = field(default_factory=dict)
-    lookup_ids: set[str] = field(default_factory=set)
-    aligned_hits: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
-    saw_self_lag: bool = False
-    seed_id: str | None = None
+    edges: list[DependenceEdge] = field(default_factory=list)
 
-    def add_param(self, series_id: str, *, lookup: bool = False) -> None:
-        if series_id == self.host.series_id:
-            return
-        self.params.setdefault(series_id, None)
-        if lookup:
-            self.lookup_ids.add(series_id)
+    def _emit(
+        self,
+        *,
+        producer_id: str,
+        host_cell: str,
+        producer_cell: str,
+        access: AccessClass,
+    ) -> None:
+        consumer_cell = normalize_address(host_cell)
+        producer_cell = normalize_address(producer_cell)
+        self.edges.append(
+            DependenceEdge(
+                consumer_id=self.host.series_id,
+                producer_id=producer_id,
+                consumer_cell=consumer_cell,
+                producer_cell=producer_cell,
+                distance=_layout_distance(consumer_cell, producer_cell),
+                access=access,
+            )
+        )
 
-    def note_cell(self, address: str, host_index: int) -> None:
+    def emit_cell(self, address: str, host_cell: str, host_index: int) -> None:
         owner = self.catalog.require_series_for(address)
         if owner.series_id == self.host.series_id:
             pred = predecessor_address(self.host, host_index, self.catalog)
             if pred is not None and normalize_address(address) == normalize_address(pred):
-                self.saw_self_lag = True
+                self._emit(
+                    producer_id=owner.series_id,
+                    host_cell=host_cell,
+                    producer_cell=address,
+                    access=_member_access(host_index, owner, address),
+                )
                 return
             if normalize_address(address) == self.host.cells[host_index]:
                 return
@@ -146,22 +200,34 @@ class _DepCollector:
                 f"series {self.host.series_id!r} cell {self.host.cells[host_index]} "
                 f"references non-lag cell {address} in the same series"
             )
-        idx = owner.index_of(address)
-        if idx is not None:
-            self.aligned_hits.setdefault(owner.series_id, []).append((host_index, idx))
-        if host_index == 0:
-            pred = predecessor_address(self.host, 0, self.catalog)
-            if pred is not None and normalize_address(address) == normalize_address(pred):
-                self.seed_id = owner.series_id
-                self.add_param(owner.series_id)
-                return
-        self.add_param(owner.series_id)
+        self._emit(
+            producer_id=owner.series_id,
+            host_cell=host_cell,
+            producer_cell=address,
+            access=_member_access(host_index, owner, address),
+        )
+
+    def emit_lookup(
+        self,
+        producer: BoundSeries,
+        host_cell: str,
+        producer_cell: str,
+        access: AccessClass,
+    ) -> None:
+        if producer.series_id == self.host.series_id:
+            return
+        self._emit(
+            producer_id=producer.series_id,
+            host_cell=host_cell,
+            producer_cell=producer_cell,
+            access=access,
+        )
 
     def visit(self, node: AstNode, *, host_cell: str, host_index: int) -> None:
         match node:
             case CellRefNode():
                 address = resolve_cell_ref(node, host_cell)
-                self.note_cell(address, host_index)
+                self.emit_cell(address, host_cell, host_index)
             case RangeNode():
                 start = resolve_cell_ref(node.start_ref, host_cell)
                 end = resolve_cell_ref(node.end_ref, host_cell)
@@ -175,7 +241,7 @@ class _DepCollector:
                         f"series {self.host.series_id!r} range {start}:{end} is not a "
                         f"bound series (unbound cells: {missing[:8]})"
                     )
-                self.add_param(covered.series_id, lookup=True)
+                self.emit_lookup(covered, host_cell, start, "whole")
             case FunctionCallNode():
                 self._visit_function(node, host_cell=host_cell, host_index=host_index)
             case BinaryOpNode():
@@ -218,7 +284,7 @@ class _DepCollector:
                 f"series {self.host.series_id!r}: OFFSET with no arguments"
             )
         table = self._series_for_ref(node.args[0], host_cell)
-        self.add_param(table.series_id, lookup=True)
+        self.emit_lookup(table, host_cell, self._ref_anchor(node.args[0], host_cell), "dynamic")
         for arg in node.args[1:]:
             self.visit(arg, host_cell=host_cell, host_index=host_index)
 
@@ -256,7 +322,7 @@ class _DepCollector:
                     f"series {self.host.series_id!r}: INDEX column {col_index} of "
                     f"{start}:{end} is not a bound series"
                 )
-            self.add_param(covered.series_id, lookup=True)
+            self.emit_lookup(covered, host_cell, column_cells[0], "dynamic")
         else:
             self.visit(node.args[0], host_cell=host_cell, host_index=host_index)
 
@@ -273,7 +339,9 @@ class _DepCollector:
             )
         self.visit(node.args[0], host_cell=host_cell, host_index=host_index)
         array_series = self._series_for_ref(node.args[1], host_cell)
-        self.add_param(array_series.series_id, lookup=True)
+        self.emit_lookup(
+            array_series, host_cell, self._ref_anchor(node.args[1], host_cell), "dynamic"
+        )
         for arg in node.args[2:]:
             self.visit(arg, host_cell=host_cell, host_index=host_index)
 
@@ -294,31 +362,96 @@ class _DepCollector:
             f"got {type(node).__name__}"
         )
 
+    def _ref_anchor(self, node: AstNode, host_cell: str) -> str:
+        if isinstance(node, CellRefNode):
+            return resolve_cell_ref(node, host_cell)
+        if isinstance(node, RangeNode):
+            return resolve_cell_ref(node.start_ref, host_cell)
+        raise InvertedTreeExportError(
+            f"series {self.host.series_id!r}: expected a cell or range reference, "
+            f"got {type(node).__name__}"
+        )
 
-def collect_series_deps(
+
+def collect_series_edges(
     series: BoundSeries,
     *,
     catalog: SeriesCatalog,
     graph: DependencyGraph,
-) -> SeriesDeps:
-    """Collect first-level bound-series dependencies of `series`."""
+) -> list[DependenceEdge]:
+    """Walk `series` formulas and return classified instance-level edges."""
     collector = _DepCollector(host=series, catalog=catalog)
     for index, address in enumerate(series.cells):
         ast = node_formula_ast(graph, address)
         collector.visit(ast, host_cell=address, host_index=index)
-    is_scan = collector.saw_self_lag or collector.seed_id is not None
-    remaining = [sid for sid in catalog.order if sid in collector.params]
-    if collector.seed_id is not None and collector.seed_id in remaining:
-        remaining.remove(collector.seed_id)
-        param_ids = (collector.seed_id, *remaining)
+    return collector.edges
+
+
+def collect_all_dependence_edges(
+    catalog: SeriesCatalog,
+    graph: DependencyGraph,
+) -> tuple[DependenceEdge, ...]:
+    """Collect instance-level edges from every formula series to bound producers."""
+    edges: list[DependenceEdge] = []
+    for series in catalog.formula_series():
+        edges.extend(collect_series_edges(series, catalog=catalog, graph=graph))
+    return tuple(edges)
+
+
+def series_deps_from_edges(
+    host: BoundSeries,
+    edges: Sequence[DependenceEdge],
+    catalog: SeriesCatalog,
+) -> SeriesDeps:
+    """Derive the emit-facing `SeriesDeps` view from classified edges of `host`."""
+    params: dict[str, None] = {}
+    lookup_ids: set[str] = set()
+    aligned_hits: dict[str, list[tuple[int, int]]] = {}
+    saw_self_lag = False
+    seed_id: str | None = None
+    for edge in edges:
+        if edge.consumer_id != host.series_id:
+            continue
+        if edge.producer_id == host.series_id:
+            host_index = host.index_of(edge.consumer_cell)
+            if host_index is None:
+                continue
+            pred = predecessor_address(host, host_index, catalog)
+            if pred is not None and normalize_address(edge.producer_cell) == normalize_address(
+                pred
+            ):
+                saw_self_lag = True
+            continue
+        params.setdefault(edge.producer_id, None)
+        if edge.access in {"whole", "dynamic"}:
+            lookup_ids.add(edge.producer_id)
+            continue
+        host_index = host.index_of(edge.consumer_cell)
+        if host_index is None:
+            continue
+        owner = catalog.get(edge.producer_id)
+        idx = owner.index_of(edge.producer_cell)
+        if idx is not None:
+            aligned_hits.setdefault(edge.producer_id, []).append((host_index, idx))
+        if host_index == 0:
+            pred = predecessor_address(host, 0, catalog)
+            if pred is not None and normalize_address(edge.producer_cell) == normalize_address(
+                pred
+            ):
+                seed_id = edge.producer_id
+    is_scan = saw_self_lag or seed_id is not None
+    remaining = [sid for sid in catalog.order if sid in params]
+    if seed_id is not None and seed_id in remaining:
+        remaining.remove(seed_id)
+        param_ids = (seed_id, *remaining)
     else:
         param_ids = tuple(remaining)
     index_maps: dict[str, tuple[int, ...]] = {}
     aligned: set[str] = set()
     lagged: set[str] = set()
-    host_n = len(series.cells)
-    for series_id, pairs in collector.aligned_hits.items():
-        if series_id in collector.lookup_ids or series_id == collector.seed_id:
+    host_n = len(host.cells)
+    for series_id, pairs in aligned_hits.items():
+        if series_id in lookup_ids or series_id == seed_id:
             continue
         dep = catalog.get(series_id)
         if dep.is_scalar:
@@ -331,14 +464,14 @@ def collect_series_deps(
         for host_i, indices in per_host.items():
             if len(indices) > 2:
                 raise InvertedTreeExportError(
-                    f"series {series.series_id!r} cell {series.cells[host_i]} "
+                    f"series {host.series_id!r} cell {host.cells[host_i]} "
                     f"reads {series_id!r} at more than two positions {tuple(sorted(indices))}"
                 )
             if len(indices) == 2:
                 lo, hi = sorted(indices)
                 if hi - lo != 1:
                     raise InvertedTreeExportError(
-                        f"series {series.series_id!r} cell {series.cells[host_i]} "
+                        f"series {host.series_id!r} cell {host.cells[host_i]} "
                         f"reads {series_id!r} at two positions ({hi}, {lo})"
                     )
                 saw_lag = True
@@ -352,14 +485,28 @@ def collect_series_deps(
             index_maps[series_id] = tuple(slots)
             aligned.add(series_id)
     return SeriesDeps(
-        host_id=series.series_id,
+        host_id=host.series_id,
         param_ids=param_ids,
         is_scan=is_scan,
-        seed_id=collector.seed_id,
+        seed_id=seed_id,
         aligned_ids=frozenset(aligned),
-        lookup_ids=frozenset(collector.lookup_ids),
+        lookup_ids=frozenset(lookup_ids),
         lagged_ids=frozenset(lagged),
         index_maps=index_maps,
+    )
+
+
+def collect_series_deps(
+    series: BoundSeries,
+    *,
+    catalog: SeriesCatalog,
+    graph: DependencyGraph,
+) -> SeriesDeps:
+    """Collect first-level bound-series dependencies of `series`."""
+    return series_deps_from_edges(
+        series,
+        collect_series_edges(series, catalog=catalog, graph=graph),
+        catalog,
     )
 
 
@@ -368,8 +515,9 @@ def collect_all_deps(
     graph: DependencyGraph,
 ) -> dict[str, SeriesDeps]:
     """Collect first-level deps for every formula series."""
+    edges = collect_all_dependence_edges(catalog, graph)
     return {
-        series.series_id: collect_series_deps(series, catalog=catalog, graph=graph)
+        series.series_id: series_deps_from_edges(series, edges, catalog)
         for series in catalog.formula_series()
     }
 
