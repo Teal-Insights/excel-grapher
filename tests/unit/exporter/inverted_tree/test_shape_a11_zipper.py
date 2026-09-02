@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -139,9 +141,10 @@ def _exec_scan(body: list[str], names: set[str]) -> tuple[tuple[object, ...], ..
         "is_error": is_error,
         "live_measure": live_measure,
     }
-    ns = {name: runtime[name] for name in names if name in runtime}
+    ns: dict[str, Any] = {name: runtime[name] for name in names if name in runtime}
     exec("def scan():\n" + "\n".join(body), ns)
-    return ns["scan"]()
+    scan = cast(Callable[[], tuple[tuple[object, ...], ...]], ns["scan"])
+    return scan()
 
 
 def test_fused_loop_agrees_with_rung3_oracle(tmp_path: Path) -> None:
