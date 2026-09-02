@@ -514,8 +514,7 @@ def _emit_thin_orchestrator(
         if catalog.get(sid).direction == "input" or sid in output_leaves:
             call_args.append(f"{sid}={sid}")
     unpack = ", ".join(
-        member.series_id if member.series_id == output.series_id else "_"
-        for member in outputs
+        member.series_id if member.series_id == output.series_id else "_" for member in outputs
     )
     call = f"{runner_name}({', '.join(call_args)})"
     body = [
