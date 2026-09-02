@@ -230,11 +230,13 @@ def plan_fused_scc(
 ) -> FusedPlan | None:
     """Return a fused loop plan, or None when the SCC must stay on rung 3.
 
-    Requires an acyclic distance-zero residual, no look-ahead edges, and a
-    contiguous domain per statement on the union schedule.
+    Requires one residual body order that is valid in every schedule column,
+    no look-ahead edges, and a contiguous domain per statement on the union
+    schedule.
 
     Raises:
-        InvertedTreeExportError: The residual is a real same-index cycle.
+        InvertedTreeExportError: Some column's residual is a real same-index
+            cycle.
     """
     if len(scc) < 2:
         return None
@@ -244,6 +246,8 @@ def plan_fused_scc(
     if any(edge.distance < 0 for edge in intra):
         return None
     body_order = residual_body_order(scc, edges)
+    if body_order is None:
+        return None
     coords = sorted({schedule_coord(addr) for sid in scc for addr in catalog.get(sid).cells})
     if not coords:
         return None
@@ -273,30 +277,44 @@ def plan_fused_scc(
     )
 
 
-def residual_body_order(
+def _zero_distance_edges(
     scc: tuple[str, ...],
     edges: Sequence[DependenceEdge],
-) -> tuple[str, ...]:
-    """Return in-loop statement order after dropping positive-distance edges.
-
-    Raises:
-        InvertedTreeExportError: The distance-zero residual still has a cycle
-            (a real same-index circular reference).
-    """
+) -> list[DependenceEdge]:
     members = set(scc)
-    residual: dict[str, list[str]] = {sid: [] for sid in scc}
+    zero: list[DependenceEdge] = []
     for edge in edges:
         if edge.consumer_id not in members or edge.producer_id not in members:
             continue
-        if edge.distance > 0:
+        if edge.distance != 0:
             continue
-        if edge.consumer_id == edge.producer_id:
-            raise InvertedTreeExportError(
-                f"distance-zero residual of zipper series {list(scc)!r} is cyclic "
-                f"({edge.consumer_cell} reads {edge.producer_cell})"
-            )
-        residual[edge.consumer_id].append(edge.producer_id)
+        zero.append(edge)
+    return zero
 
+
+def _empty_residual(scc: tuple[str, ...]) -> dict[str, list[str]]:
+    return {sid: [] for sid in scc}
+
+
+def _add_residual_edge(
+    residual: dict[str, list[str]],
+    edge: DependenceEdge,
+    scc: tuple[str, ...],
+    *,
+    column: int,
+) -> None:
+    if edge.consumer_id == edge.producer_id:
+        raise InvertedTreeExportError(
+            f"distance-zero residual of zipper series {list(scc)!r} is cyclic "
+            f"at column {column} ({edge.consumer_cell} reads {edge.producer_cell})"
+        )
+    residual[edge.consumer_id].append(edge.producer_id)
+
+
+def _topo_order(
+    scc: tuple[str, ...],
+    residual: dict[str, list[str]],
+) -> tuple[str, ...] | None:
     remaining = set(scc)
     ordered: list[str] = []
     while remaining:
@@ -304,16 +322,56 @@ def residual_body_order(
             sid
             for sid in scc
             if sid in remaining
-            and all(pred not in remaining for pred in residual[sid] if pred in members)
+            and all(pred not in remaining for pred in residual[sid] if pred in remaining)
         ]
         if not ready:
-            raise InvertedTreeExportError(
-                f"distance-zero residual of zipper series {list(scc)!r} is cyclic"
-            )
+            return None
         for sid in ready:
             remaining.remove(sid)
             ordered.append(sid)
     return tuple(ordered)
+
+
+def assert_distance_zero_legal(
+    scc: tuple[str, ...],
+    edges: Sequence[DependenceEdge],
+) -> None:
+    """Fail closed when some schedule column has a same-index cycle.
+
+    Distance-zero edges from different columns are not contracted. A cycle in
+    the union of those edges is a regime flip, not a circular reference.
+
+    Raises:
+        InvertedTreeExportError: Some column's residual still has a cycle.
+    """
+    by_column: dict[int, dict[str, list[str]]] = {}
+    for edge in _zero_distance_edges(scc, edges):
+        column = schedule_coord(edge.consumer_cell)
+        residual = by_column.setdefault(column, _empty_residual(scc))
+        _add_residual_edge(residual, edge, scc, column=column)
+    for column, residual in by_column.items():
+        if _topo_order(scc, residual) is None:
+            raise InvertedTreeExportError(
+                f"distance-zero residual of zipper series {list(scc)!r} is cyclic "
+                f"at column {column}"
+            )
+
+
+def residual_body_order(
+    scc: tuple[str, ...],
+    edges: Sequence[DependenceEdge],
+) -> tuple[str, ...] | None:
+    """Return one in-loop statement order, or None if columns disagree.
+
+    Raises:
+        InvertedTreeExportError: A real same-index circular reference exists
+            in some schedule column.
+    """
+    assert_distance_zero_legal(scc, edges)
+    union = _empty_residual(scc)
+    for edge in _zero_distance_edges(scc, edges):
+        _add_residual_edge(union, edge, scc, column=schedule_coord(edge.consumer_cell))
+    return _topo_order(scc, union)
 
 
 def build_scc_map(
@@ -323,15 +381,16 @@ def build_scc_map(
 ) -> dict[str, tuple[str, ...]]:
     """Map each formula series to its SCC (bindings order).
 
-    Multi-series SCCs must have an acyclic distance-zero residual. Same-index
-    circular refs fail closed.
+    Multi-series SCCs fail closed only when some schedule column has a
+    same-index cycle. A residual order that changes across columns is legal
+    and is classified later as not fusible.
     """
     ids = [series.series_id for series in catalog.formula_series()]
     mapping: dict[str, tuple[str, ...]] = {}
     for scc in tarjan_series_sccs(ids, deps):
         if len(scc) > 1:
             edges = collect_dependence_edges(catalog, graph, scc)
-            residual_body_order(scc, edges)
+            assert_distance_zero_legal(scc, edges)
         for sid in scc:
             mapping[sid] = scc
     return mapping

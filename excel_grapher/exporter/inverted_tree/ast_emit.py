@@ -631,7 +631,7 @@ def emit_rung3_scc(
     deps: dict[str, SeriesDeps],
     graph: DependencyGraph,
 ) -> tuple[list[str], set[str]]:
-    """Emit demand-driven instance evaluation for a lag-zipper SCC."""
+    """Emit demand-driven instance evaluation for a multi-series SCC."""
     used: set[str] = {"as_measure", "XlError", "eval_instance"}
     scc_ids = frozenset(scc)
     compute_names = {sid: _compute_fn_name(sid) for sid in scc}
@@ -642,40 +642,32 @@ def emit_rung3_scc(
     ]
     for sid in scc:
         series = catalog.get(sid)
-        peel = member_peel_stop(series, graph)
+        runs = formula_shape_runs(series, graph)
+        if not runs:
+            raise InvertedTreeExportError(f"series {sid!r} has no members to evaluate")
         fn = compute_names[sid]
         lines.append(f"    def {fn}(i: int) -> {python_measure_type(series)}:")
-        if peel > 0:
-            peel_expr, peel_used = _emit_region_return(
+        for run_index, (_key, start, stop) in enumerate(runs):
+            expr, expr_used = _emit_region_return(
                 series,
                 catalog=catalog,
                 deps=deps,
                 graph=graph,
-                host_index=0,
+                host_index=start,
                 scc_ids=scc_ids,
                 compute_names=compute_names,
             )
-            used |= peel_used
-            lines.append(f"        if i < {peel}:")
-            lines.append("            try:")
-            lines.append(f"                return {peel_expr}")
-            lines.append("            except XlError as err:")
-            lines.append("                return err.code")
-        main_index = peel if peel < len(series.cells) else 0
-        main_expr, main_used = _emit_region_return(
-            series,
-            catalog=catalog,
-            deps=deps,
-            graph=graph,
-            host_index=main_index,
-            scc_ids=scc_ids,
-            compute_names=compute_names,
-        )
-        used |= main_used
-        lines.append("        try:")
-        lines.append(f"            return {main_expr}")
-        lines.append("        except XlError as err:")
-        lines.append("            return err.code")
+            used |= expr_used
+            guarded = run_index < len(runs) - 1
+            if guarded:
+                lines.append(f"        if i < {stop}:")
+                indent = "            "
+            else:
+                indent = "        "
+            lines.append(f"{indent}try:")
+            lines.append(f"{indent}    return {expr}")
+            lines.append(f"{indent}except XlError as err:")
+            lines.append(f"{indent}    return err.code")
         lines.append("")
     returned: list[str] = []
     for sid in scc:

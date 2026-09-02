@@ -38,6 +38,14 @@ def test_distance_zero_cycle_is_illegal() -> None:
         residual_body_order(("debt", "adjustment"), edges)
 
 
+def test_identity_flip_has_no_single_body_order() -> None:
+    edges = (
+        DependenceEdge("x", "y", "Engine!A2", "Engine!A4", 0),
+        DependenceEdge("y", "x", "Engine!B4", "Engine!B2", 0),
+    )
+    assert residual_body_order(("x", "y"), edges) is None
+
+
 def test_plan_fused_scc_for_corrected_zipper(tmp_path: Path) -> None:
     catalog, _deps, graph = inverted_graph_parts(_zipper_workbook(tmp_path), _zipper_bindings())
     plan = plan_fused_scc(("debt", "adjustment"), catalog=catalog, graph=graph)
