@@ -7,11 +7,21 @@ from pathlib import Path
 import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
+from excel_grapher.exporter.inverted_tree.ast_emit import emit_rung2_scc, emit_rung3_scc
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
+from excel_grapher.exporter.inverted_tree.runtime import (
+    XlError,
+    as_measure,
+    demand_instance,
+    eval_instance,
+    is_error,
+    live_measure,
+)
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
+    inverted_graph_parts,
     load_package,
     series_entry,
     write_workbook,
@@ -78,16 +88,18 @@ def _simultaneous_workbook(tmp_path: Path) -> Path:
     )
 
 
-def test_lag_zipper_emits_demand_driven_scc(tmp_path: Path) -> None:
+def test_lag_zipper_emits_fused_union_loop(tmp_path: Path) -> None:
     workbook = _zipper_workbook(tmp_path)
     modules = generate_inverted(workbook, _zipper_bindings())
     internals = modules["internals.py"]
     api = modules["api.py"]
     assert "cyclic formula-series" not in internals
+    assert "eval_instance" not in internals
+    assert "for t in range(" in internals
+    assert internals.count("for t in range(") == 1
     pkg = load_package(modules, tmp_path, name="a11_zip")
     got = pkg.compute_debt()
     assert got == pytest.approx((100.0, 102.0, 104.04))
-    assert "eval_instance" in internals
     assert "scan_debt_adjustment" in internals
     assert "internals.scan_debt_adjustment" in api
 
@@ -116,3 +128,25 @@ def test_same_year_cell_cycle_still_fail_closed(tmp_path: Path) -> None:
     workbook = _simultaneous_workbook(tmp_path)
     with pytest.raises(InvertedTreeExportError, match="distance-zero residual"):
         generate_inverted(workbook, _zipper_bindings())
+
+
+def _exec_scan(body: list[str], names: set[str]) -> tuple[tuple[object, ...], ...]:
+    runtime = {
+        "XlError": XlError,
+        "as_measure": as_measure,
+        "demand_instance": demand_instance,
+        "eval_instance": eval_instance,
+        "is_error": is_error,
+        "live_measure": live_measure,
+    }
+    ns = {name: runtime[name] for name in names if name in runtime}
+    exec("def scan():\n" + "\n".join(body), ns)
+    return ns["scan"]()
+
+
+def test_fused_loop_agrees_with_rung3_oracle(tmp_path: Path) -> None:
+    catalog, deps, graph = inverted_graph_parts(_zipper_workbook(tmp_path), _zipper_bindings())
+    scc = ("debt", "adjustment")
+    fused, fused_used = emit_rung2_scc(scc, catalog=catalog, deps=deps, graph=graph)
+    demand, demand_used = emit_rung3_scc(scc, catalog=catalog, deps=deps, graph=graph)
+    assert _exec_scan(fused, fused_used) == _exec_scan(demand, demand_used)

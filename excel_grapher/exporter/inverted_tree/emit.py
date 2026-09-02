@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from excel_grapher.exporter.inverted_tree.ast_emit import (
     emit_helper_body,
+    emit_rung2_scc,
     emit_rung3_scc,
     python_annotation,
     python_return_annotation,
@@ -25,6 +26,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.schedule import (
     build_scc_map,
+    plan_fused_scc,
     scan_function_name,
     scc_external_params,
 )
@@ -171,7 +173,7 @@ def emit_internals_module(
     graph: DependencyGraph,
     scc_map: Mapping[str, tuple[str, ...]],
 ) -> str:
-    """Emit `internals.py` with per-series helpers and demand-driven SCCs."""
+    """Emit `internals.py` with per-series helpers and fused or demand-driven SCCs."""
     used_runtime: set[str] = set()
     functions: list[str] = []
     emitted_scans: set[tuple[str, ...]] = set()
@@ -182,10 +184,17 @@ def emit_internals_module(
             param_ids = scc_external_params(scc, deps, catalog.order)
             if scc not in emitted_scans:
                 emitted_scans.add(scc)
-                body, used = emit_rung3_scc(scc, catalog=catalog, deps=dict(deps), graph=graph)
+                deps_map = dict(deps)
+                plan = plan_fused_scc(scc, catalog=catalog, graph=graph)
+                if plan is not None:
+                    body, used = emit_rung2_scc(scc, catalog=catalog, deps=deps_map, graph=graph)
+                    kind = "Fused union-domain evaluation"
+                else:
+                    body, used = emit_rung3_scc(scc, catalog=catalog, deps=deps_map, graph=graph)
+                    kind = "Demand-driven co-evaluation"
                 used_runtime |= used
                 joined = ", ".join(f"`{sid}`" for sid in scc)
-                doc = f'    """Demand-driven co-evaluation of zipper series {joined}."""'
+                doc = f'    """{kind} of zipper series {joined}."""'
                 functions.append("\n".join([_scan_signature(scc, param_ids, catalog), doc, *body]))
             functions.append(_emit_scc_wrapper(series, scc, param_ids, catalog))
             continue

@@ -11,6 +11,7 @@ from excel_grapher.exporter.inverted_tree.runtime import (
     demand_instance,
     eval_instance,
     is_error,
+    live_measure,
     require_aligned,
     require_length,
     take,
@@ -138,3 +139,10 @@ def test_demand_instance_reraises_stored_error_codes() -> None:
         demand_instance("s", 0, compute, memo, stack)
     assert exc.value.code == "#REF!"
     assert eval_instance("s", 0, compute, memo, stack) == "#REF!"
+
+
+def test_live_measure_reraises_error_codes() -> None:
+    assert live_measure(1.5) == 1.5
+    with pytest.raises(XlError) as exc:
+        live_measure("#REF!")
+    assert exc.value.code == "#REF!"

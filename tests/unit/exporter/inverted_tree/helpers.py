@@ -11,8 +11,11 @@ from pathlib import Path
 from typing import Any
 
 from excel_grapher.exporter.codegen import CodeGenerator
+from excel_grapher.exporter.inverted_tree.catalog import SeriesCatalog, build_catalog
+from excel_grapher.exporter.inverted_tree.deps import SeriesDeps, collect_all_deps
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.grapher.dynamic_refs import DynamicRefConfig
+from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings import validate_bindings_document
 from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 from excel_grapher.series_bindings.workflow import all_series_targets
@@ -109,6 +112,26 @@ def bindings_document(*series: dict[str, Any], schema_version: str = "1.13.0") -
         },
         "series": list(series),
     }
+
+
+def inverted_graph_parts(
+    workbook: Path,
+    document: dict[str, Any],
+    *,
+    dynamic_refs: DynamicRefConfig | None = None,
+) -> tuple[SeriesCatalog, dict[str, SeriesDeps], DependencyGraph]:
+    """Return catalog, first-level deps, and graph for inverted-tree emit tests."""
+    bindings: WorkbookSeriesBindings = validate_bindings_document(document)
+    targets = all_series_targets(bindings, workbook=workbook)
+    graph = create_dependency_graph(
+        workbook,
+        targets,
+        load_values=True,
+        use_cached_dynamic_refs=dynamic_refs is None,
+        dynamic_refs=dynamic_refs,
+    )
+    catalog = build_catalog(bindings, workbook=workbook)
+    return catalog, collect_all_deps(catalog, graph), graph
 
 
 def generate_inverted(

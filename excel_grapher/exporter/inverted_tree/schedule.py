@@ -191,6 +191,88 @@ def collect_dependence_edges(
     return tuple(edges)
 
 
+@dataclass(frozen=True, slots=True)
+class FusedPlan:
+    """Union-domain loop for a fusible multi-series SCC (rung 2)."""
+
+    scc: tuple[str, ...]
+    schedule: tuple[int, ...]
+    domain: dict[str, tuple[int, int]]
+    body_order: tuple[str, ...]
+    peel_stop: int
+
+
+def _contiguous_domain(
+    series_id: str,
+    catalog: SeriesCatalog,
+    coord_to_t: dict[int, int],
+) -> tuple[int, int] | None:
+    """Return `[start, stop)` in union-index space, or None if the domain has holes."""
+    locals_: list[int] = []
+    for address in catalog.get(series_id).cells:
+        coord = schedule_coord(address)
+        if coord not in coord_to_t:
+            return None
+        locals_.append(coord_to_t[coord])
+    if not locals_:
+        return None
+    start, stop = locals_[0], locals_[-1] + 1
+    if locals_ != list(range(start, stop)):
+        return None
+    return start, stop
+
+
+def plan_fused_scc(
+    scc: tuple[str, ...],
+    *,
+    catalog: SeriesCatalog,
+    graph: DependencyGraph,
+) -> FusedPlan | None:
+    """Return a fused loop plan, or None when the SCC must stay on rung 3.
+
+    Requires an acyclic distance-zero residual, no look-ahead edges, and a
+    contiguous domain per statement on the union schedule.
+
+    Raises:
+        InvertedTreeExportError: The residual is a real same-index cycle.
+    """
+    if len(scc) < 2:
+        return None
+    members = set(scc)
+    edges = collect_dependence_edges(catalog, graph, scc)
+    intra = [edge for edge in edges if edge.consumer_id in members and edge.producer_id in members]
+    if any(edge.distance < 0 for edge in intra):
+        return None
+    body_order = residual_body_order(scc, edges)
+    coords = sorted({schedule_coord(addr) for sid in scc for addr in catalog.get(sid).cells})
+    if not coords:
+        return None
+    coord_to_t = {coord: index for index, coord in enumerate(coords)}
+    domain: dict[str, tuple[int, int]] = {}
+    for sid in scc:
+        span = _contiguous_domain(sid, catalog, coord_to_t)
+        if span is None:
+            return None
+        domain[sid] = span
+    main_active = {
+        sid for sid, (start, stop) in domain.items() if start <= (len(coords) - 1) < stop
+    }
+    peel_stop = len(coords) - 1
+    while peel_stop > 0:
+        prev = peel_stop - 1
+        prev_active = {sid for sid, (start, stop) in domain.items() if start <= prev < stop}
+        if prev_active != main_active:
+            break
+        peel_stop = prev
+    return FusedPlan(
+        scc=scc,
+        schedule=tuple(coords),
+        domain=domain,
+        body_order=body_order,
+        peel_stop=peel_stop,
+    )
+
+
 def residual_body_order(
     scc: tuple[str, ...],
     edges: Sequence[DependenceEdge],

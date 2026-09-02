@@ -172,6 +172,13 @@ def eval_instance(
     return value
 
 
+def live_measure(value: T) -> T:
+    """Return `value`, or raise `XlError` when it is a stored error code."""
+    if isinstance(value, str) and is_error(value):
+        raise XlError(value)
+    return value
+
+
 def demand_instance(
     statement: str,
     index: int,

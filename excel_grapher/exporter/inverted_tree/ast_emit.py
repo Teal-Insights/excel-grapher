@@ -31,6 +31,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
     range_column_addresses,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
+from excel_grapher.exporter.inverted_tree.schedule import FusedPlan, plan_fused_scc
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
@@ -61,6 +62,9 @@ class EmitContext:
     scc_ids: frozenset[str] = field(default_factory=frozenset)
     instance_mode: bool = False
     compute_names: dict[str, str] = field(default_factory=dict)
+    fused_mode: bool = False
+    fused_plan: FusedPlan | None = None
+    fused_ready: frozenset[str] = field(default_factory=frozenset)
 
     def param(self, series_id: str) -> str:
         return series_id
@@ -146,6 +150,8 @@ def emit_expr(node: AstNode, ctx: EmitContext) -> str:
 
 def _emit_cell_ref(node: CellRefNode, ctx: EmitContext) -> str:
     address = resolve_cell_ref(node, ctx.host_cell)
+    if ctx.fused_mode:
+        return _emit_fused_ref(address, ctx)
     if ctx.instance_mode:
         return _emit_instance_ref(address, ctx)
     pred = predecessor_address(ctx.host, ctx.host_index, ctx.catalog)
@@ -186,6 +192,35 @@ def _index_expr(offset: int, index_var: str) -> str:
     if offset > 0:
         return f"{index_var} + {offset}"
     return f"{index_var} - {-offset}"
+
+
+def _emit_fused_ref(address: str, ctx: EmitContext) -> str:
+    owner = ctx.catalog.require_series_for(address)
+    idx = owner.index_of(address)
+    if idx is None or ctx.fused_plan is None:
+        raise InvertedTreeExportError(
+            f"series {ctx.host.series_id!r}: fused ref {address} is unbound"
+        )
+    plan = ctx.fused_plan
+    host_union = plan.domain[ctx.host.series_id][0] + ctx.host_index
+    index_var = ctx.index_var or "t"
+    ctx.use("live_measure")
+    if owner.series_id in ctx.scc_ids:
+        prod_start = plan.domain[owner.series_id][0]
+        delta = prod_start + idx - host_union
+        if delta == 0:
+            if owner.series_id not in ctx.fused_ready:
+                raise InvertedTreeExportError(
+                    f"series {ctx.host.series_id!r}: same-index read of "
+                    f"{owner.series_id!r} before it is written"
+                )
+            return f"live_measure({owner.series_id}_t)"
+        index_expr = _index_expr(delta - prod_start, index_var)
+        return f"live_measure({owner.series_id}[{index_expr}])"
+    name = ctx.param(owner.series_id)
+    if owner.is_scalar:
+        return f"live_measure({name})"
+    return f"live_measure({name}[{_index_expr(idx - host_union, index_var)}])"
 
 
 def _emit_instance_ref(address: str, ctx: EmitContext) -> str:
@@ -651,4 +686,184 @@ def emit_rung3_scc(
         )
         returned.append(sid)
     lines.append(f"    return {', '.join(returned)}")
+    return lines, used
+
+
+def _indented(lines: list[str], spaces: int) -> list[str]:
+    pad = " " * spaces
+    return [f"{pad}{line}" if line else line for line in lines]
+
+
+def _fused_template_index(
+    series: BoundSeries,
+    plan: FusedPlan,
+    graph: DependencyGraph,
+) -> int:
+    start, stop = plan.domain[series.series_id]
+    peel = member_peel_stop(series, graph)
+    floor = max(plan.peel_stop, start + peel)
+    if floor >= stop:
+        return max(0, stop - start - 1)
+    return floor - start
+
+
+def _emit_fused_expr(
+    series: BoundSeries,
+    *,
+    catalog: SeriesCatalog,
+    deps: dict[str, SeriesDeps],
+    graph: DependencyGraph,
+    host_index: int,
+    plan: FusedPlan,
+    ready: set[str],
+) -> tuple[str, set[str]]:
+    ctx = EmitContext(
+        host=series,
+        catalog=catalog,
+        deps=deps[series.series_id],
+        host_index=host_index,
+        host_cell=series.cells[host_index],
+        index_var="t",
+        prior_var=None,
+        scc_ids=frozenset(plan.scc),
+        fused_mode=True,
+        fused_plan=plan,
+        fused_ready=frozenset(ready),
+    )
+    expr = emit_expr(node_formula_ast(graph, series.cells[host_index]), ctx)
+    return _as_measure_call(expr, series), set(ctx.used_runtime)
+
+
+def _emit_fused_assign(series: BoundSeries, expr: str) -> list[str]:
+    sid = series.series_id
+    return [
+        "try:",
+        f"    {sid}_t = {expr}",
+        "except XlError as err:",
+        f"    {sid}_t = err.code",
+        f"{sid}.append({sid}_t)",
+    ]
+
+
+def _emit_fused_peel(
+    plan: FusedPlan,
+    *,
+    catalog: SeriesCatalog,
+    deps: dict[str, SeriesDeps],
+    graph: DependencyGraph,
+) -> tuple[list[str], set[str]]:
+    used: set[str] = set()
+    lines = [f"        if t < {plan.peel_stop}:"]
+    if plan.peel_stop == 1:
+        ready: set[str] = set()
+        for sid in plan.body_order:
+            start, stop = plan.domain[sid]
+            if not (start <= 0 < stop):
+                continue
+            series = catalog.get(sid)
+            expr, expr_used = _emit_fused_expr(
+                series,
+                catalog=catalog,
+                deps=deps,
+                graph=graph,
+                host_index=0 - start,
+                plan=plan,
+                ready=ready,
+            )
+            used |= expr_used
+            lines.extend(_indented(_emit_fused_assign(series, expr), 12))
+            ready.add(sid)
+        lines.append("            continue")
+        return lines, used
+    emitted_branch = False
+    for step in range(plan.peel_stop):
+        ready = set()
+        body: list[str] = []
+        for sid in plan.body_order:
+            start, stop = plan.domain[sid]
+            if not (start <= step < stop):
+                continue
+            series = catalog.get(sid)
+            expr, expr_used = _emit_fused_expr(
+                series,
+                catalog=catalog,
+                deps=deps,
+                graph=graph,
+                host_index=step - start,
+                plan=plan,
+                ready=ready,
+            )
+            used |= expr_used
+            body.extend(_emit_fused_assign(series, expr))
+            ready.add(sid)
+        if not body:
+            continue
+        keyword = "if" if not emitted_branch else "elif"
+        emitted_branch = True
+        lines.append(f"            {keyword} t == {step}:")
+        lines.extend(_indented(body, 16))
+    lines.append("            continue")
+    return lines, used
+
+
+def emit_rung2_scc(
+    scc: tuple[str, ...],
+    *,
+    catalog: SeriesCatalog,
+    deps: dict[str, SeriesDeps],
+    graph: DependencyGraph,
+) -> tuple[list[str], set[str]]:
+    """Emit a fused union-domain loop for a fusible zipper SCC.
+
+    Statements are guarded by their own domains and ordered by the
+    distance-zero residual. The union schedule is the loop; look-ahead or
+    non-contiguous domains must use `emit_rung3_scc`.
+
+    Raises:
+        InvertedTreeExportError: The SCC is not fusible, or the residual is a
+            real same-index cycle.
+    """
+    plan = plan_fused_scc(scc, catalog=catalog, graph=graph)
+    if plan is None:
+        raise InvertedTreeExportError(
+            f"zipper series {list(scc)!r} is not fusible; use demand-driven evaluation"
+        )
+    used: set[str] = {"as_measure", "XlError"}
+    lines: list[str] = []
+    for sid in scc:
+        series = catalog.get(sid)
+        lines.append(f"    {sid}: list[{python_measure_type(series)}] = []")
+    n = len(plan.schedule)
+    lines.append(f"    for t in range({n}):")
+    if plan.peel_stop > 0:
+        peel_lines, peel_used = _emit_fused_peel(plan, catalog=catalog, deps=deps, graph=graph)
+        used |= peel_used
+        lines.extend(peel_lines)
+    ready: set[str] = set()
+    for sid in plan.body_order:
+        start, stop = plan.domain[sid]
+        if stop <= plan.peel_stop:
+            continue
+        series = catalog.get(sid)
+        host_index = _fused_template_index(series, plan, graph)
+        expr, expr_used = _emit_fused_expr(
+            series,
+            catalog=catalog,
+            deps=deps,
+            graph=graph,
+            host_index=host_index,
+            plan=plan,
+            ready=ready,
+        )
+        used |= expr_used
+        assign = _emit_fused_assign(series, expr)
+        main_start = max(start, plan.peel_stop)
+        if main_start == plan.peel_stop and stop == n:
+            lines.extend(_indented(assign, 8))
+        else:
+            lines.append(f"        if {start} <= t < {stop}:")
+            lines.extend(_indented(assign, 12))
+        ready.add(sid)
+    returned = ", ".join(f"tuple({sid})" for sid in scc)
+    lines.append(f"    return {returned}")
     return lines, used
