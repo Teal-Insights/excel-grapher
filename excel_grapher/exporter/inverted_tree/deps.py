@@ -99,7 +99,12 @@ def predecessor_address(series: BoundSeries, index: int, catalog: SeriesCatalog)
 
 @dataclass
 class SeriesDeps:
-    """First-level bound-series dependencies of one formula series."""
+    """First-level bound-series dependencies of one formula series.
+
+    `lagged_ids` are 1-D deps a host cell reads at the aligned index and at
+    `index - 1` (other-series lag). They are passed as a full `Sequence` and
+    indexed twice; they are not `require_aligned` zips.
+    """
 
     host_id: str
     param_ids: tuple[str, ...]
@@ -107,6 +112,7 @@ class SeriesDeps:
     seed_id: str | None
     aligned_ids: frozenset[str]
     lookup_ids: frozenset[str]
+    lagged_ids: frozenset[str]
     index_maps: dict[str, tuple[int, ...]]
 
 
@@ -309,6 +315,7 @@ def collect_series_deps(
         param_ids = tuple(remaining)
     index_maps: dict[str, tuple[int, ...]] = {}
     aligned: set[str] = set()
+    lagged: set[str] = set()
     host_n = len(series.cells)
     for series_id, pairs in collector.aligned_hits.items():
         if series_id in collector.lookup_ids or series_id == collector.seed_id:
@@ -316,14 +323,31 @@ def collect_series_deps(
         dep = catalog.get(series_id)
         if dep.is_scalar:
             continue
-        slots = [-1] * host_n
+        per_host: dict[int, set[int]] = {}
         for host_i, dep_i in pairs:
-            if slots[host_i] not in (-1, dep_i):
+            per_host.setdefault(host_i, set()).add(dep_i)
+        slots = [-1] * host_n
+        saw_lag = False
+        for host_i, indices in per_host.items():
+            if len(indices) > 2:
                 raise InvertedTreeExportError(
                     f"series {series.series_id!r} cell {series.cells[host_i]} "
-                    f"reads {series_id!r} at two positions ({slots[host_i]}, {dep_i})"
+                    f"reads {series_id!r} at more than two positions {tuple(sorted(indices))}"
                 )
-            slots[host_i] = dep_i
+            if len(indices) == 2:
+                lo, hi = sorted(indices)
+                if hi - lo != 1:
+                    raise InvertedTreeExportError(
+                        f"series {series.series_id!r} cell {series.cells[host_i]} "
+                        f"reads {series_id!r} at two positions ({hi}, {lo})"
+                    )
+                saw_lag = True
+                slots[host_i] = hi
+            else:
+                slots[host_i] = next(iter(indices))
+        if saw_lag:
+            lagged.add(series_id)
+            continue
         if all(slot >= 0 for slot in slots):
             index_maps[series_id] = tuple(slots)
             aligned.add(series_id)
@@ -334,6 +358,7 @@ def collect_series_deps(
         seed_id=collector.seed_id,
         aligned_ids=frozenset(aligned),
         lookup_ids=frozenset(collector.lookup_ids),
+        lagged_ids=frozenset(lagged),
         index_maps=index_maps,
     )
 

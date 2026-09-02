@@ -12,6 +12,7 @@ from excel_grapher.core.formula_ast import (
     BinaryOpNode,
     BoolNode,
     CellRefNode,
+    EmptyArgNode,
     ErrorNode,
     FunctionCallNode,
     NumberNode,
@@ -119,6 +120,8 @@ def emit_expr(node: AstNode, ctx: EmitContext) -> str:
             return "True" if value else "False"
         case ErrorNode(error):
             return f"{ctx.use('xl_raise')}({error.value!r})"
+        case EmptyArgNode():
+            return "0"
         case CellRefNode():
             return _emit_cell_ref(node, ctx)
         case RangeNode():
@@ -152,9 +155,16 @@ def _emit_cell_ref(node: CellRefNode, ctx: EmitContext) -> str:
     name = ctx.param(owner.series_id)
     if owner.is_scalar:
         return name
+    idx = owner.index_of(address)
+    if owner.series_id in ctx.deps.lagged_ids and ctx.index_var is not None and idx is not None:
+        offset = idx - ctx.host_index
+        if offset == 0:
+            return f"{name}[{ctx.index_var}]"
+        if offset > 0:
+            return f"{name}[{ctx.index_var} + {offset}]"
+        return f"{name}[{ctx.index_var} - {-offset}]"
     if owner.series_id in ctx.deps.aligned_ids and ctx.index_var is not None:
         return f"{name}[{ctx.index_var}]"
-    idx = owner.index_of(address)
     if idx is not None and ctx.index_var is None:
         return f"{name}[{idx}]" if not owner.is_scalar else name
     if owner.series_id in ctx.deps.lookup_ids:
