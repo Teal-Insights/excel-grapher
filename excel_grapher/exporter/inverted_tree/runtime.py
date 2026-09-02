@@ -125,12 +125,24 @@ def require_length(values: Sequence[object], length: int) -> None:
         raise ValueError(f"expected length {length}, got {actual}")
 
 
-def take(values: Sequence[T], indices: Sequence[int]) -> tuple[T, ...]:
+def take(values: Sequence[T], indices: Sequence[int] | slice) -> tuple[T, ...]:
     """Return `values` at 0-based `indices`, failing closed on out-of-range.
+
+    `indices` may be a sequence (including `range`) or a `slice`. A slice
+    expands with `range(start, stop, step)`: omitted `start` is 0, omitted
+    `stop` is `len(values)`, and `stop` is not clamped — an explicit stop
+    past the series length fails closed, same as a tuple of those indices.
 
     The orchestrator gathers from a catalog-order array into a dense working
     buffer. Internals zip/scan that buffer; they never see holes.
     """
+    if isinstance(indices, slice):
+        start = 0 if indices.start is None else indices.start
+        stop = len(values) if indices.stop is None else indices.stop
+        step = 1 if indices.step is None else indices.step
+        if step == 0:
+            raise ValueError("take slice step cannot be zero")
+        indices = range(start, stop, step)
     length = len(values)
     result: list[T] = []
     for index in indices:

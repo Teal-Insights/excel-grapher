@@ -25,6 +25,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.schedule import (
+    IndexSet,
     build_scc_map,
     plan_fused_scc,
     scan_function_name,
@@ -247,11 +248,11 @@ def _take_after_call(
     computed = call_indices.get(series_id)
     if wanted is None or computed is None or wanted == computed:
         return None
-    work_pos = tuple(computed.index(index) for index in wanted)
-    if work_pos == tuple(range(len(computed))):
+    work = IndexSet.from_indices(wanted).positions_in(IndexSet.from_indices(computed))
+    if work.materialize() == tuple(range(len(computed))):
         return None
     runtime.add("take")
-    return f"    {series_id} = take({series_id}, {_py_literal(work_pos)})"
+    return f"    {series_id} = take({series_id}, {work.to_source()})"
 
 
 def emit_orchestrator(
@@ -310,7 +311,7 @@ def emit_orchestrator(
         if wanted == identity:
             continue
         runtime.add("take")
-        body.append(f"    {sid} = take({sid}, {_py_literal(wanted)})")
+        body.append(f"    {sid} = take({sid}, {IndexSet.from_indices(wanted).to_source()})")
     locals_bound: set[str] = set(leaves)
     seen_sccs: set[tuple[str, ...]] = set()
     mapping = scc_map or {}

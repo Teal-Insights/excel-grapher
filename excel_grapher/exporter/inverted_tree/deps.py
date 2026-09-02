@@ -403,23 +403,19 @@ def leaf_closure(
     return tuple(inputs + constants)
 
 
-def predecessor_closure(indices: Sequence[int]) -> tuple[int, ...]:
-    """Return `indices` plus every t-1 predecessor down to 0.
+def predecessor_closure(
+    indices: Sequence[int],
+    distances: Sequence[int] = (1,),
+) -> tuple[int, ...]:
+    """Return `indices` closed under each positive lag in `distances`.
 
-    Wanting `{2, 4}` of a lagged path needs `{0, 1, 2, 3, 4}`: the closure is
-    the lag graph (cell `i` reads cell `i-1`), not a string-processing `1..max`
-    rule that happens to agree for a chain.
+    The default `distances=(1,)` is the unit-lag scan: wanting `{2, 4}` needs
+    `{0, 1, 2, 3, 4}`. A stride-`k` recurrence passes `distances=(k,)`. The
+    closure is the lag graph, not a string-processing `1..max` rule.
     """
-    needed: set[int] = set()
-    stack = list(indices)
-    while stack:
-        index = stack.pop()
-        if index < 0 or index in needed:
-            continue
-        needed.add(index)
-        if index > 0:
-            stack.append(index - 1)
-    return tuple(sorted(needed))
+    from excel_grapher.exporter.inverted_tree.schedule import IndexSet
+
+    return IndexSet.from_indices(indices).closure_under(distances).materialize()
 
 
 def plan_indices(

@@ -144,9 +144,10 @@ def test_middle_slice_scan_uses_predecessor_closure(tmp_path: Path) -> None:
     modules = generate_inverted(workbook, _middle_bindings())
     api = modules["api.py"]
     assert "trim(" not in api
-    assert "take(growth, (0, 1, 2))" in api
-    assert "take(interest, (0, 1, 2))" in api
-    assert "take(engine_path, (1, 2))" in api
+    assert "take(growth, range(0, 3))" in api
+    assert "take(interest, range(0, 3))" in api
+    assert "take(engine_path, range(1, 3))" in api
+    assert "take(growth, (0, 1, 2))" not in api
     pkg = load_package(modules, tmp_path, name="a3_mid")
     growth = (3.0, 3.5, 4.0, 4.5)
     interest = (4.0, 4.5, 5.0, 5.5)
@@ -220,7 +221,8 @@ def test_punched_elementwise_gathers_holes(tmp_path: Path) -> None:
     modules = generate_inverted(workbook, _punched_bindings())
     api = modules["api.py"]
     assert "trim(" not in api
-    assert "take(values, (0, 2))" in api
+    assert "take(values, range(0, 4, 2))" in api
+    assert "take(values, (0, 2))" not in api
     pkg = load_package(modules, tmp_path, name="a3_punch")
     got = pkg.compute_output_punched(values=(10.0, 20.0, 30.0))
     assert got == pytest.approx((11.0, 31.0))

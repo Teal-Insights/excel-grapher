@@ -59,6 +59,25 @@ def test_take_rejects_out_of_range() -> None:
         take((1, 2, 3), (-1,))
 
 
+def test_take_accepts_range() -> None:
+    values = (10, 20, 30, 40, 50)
+    assert take(values, range(0, 3)) == (10, 20, 30)
+    assert take(values, range(1, 5, 2)) == (20, 40)
+
+
+def test_take_accepts_slice() -> None:
+    values = (10, 20, 30, 40, 50)
+    assert take(values, slice(0, 3)) == (10, 20, 30)
+    assert take(values, slice(1, 5, 2)) == (20, 40)
+    assert take(values, slice(None, 2)) == (10, 20)
+    assert take(values, slice(3, None)) == (40, 50)
+
+
+def test_take_slice_fails_closed_when_stop_exceeds_length() -> None:
+    with pytest.raises(ValueError, match="take index 3"):
+        take((1, 2, 3), slice(0, 4))
+
+
 def test_xl_div_and_div_zero() -> None:
     assert xl_div(10.0, 2.0) == 5.0
     with pytest.raises(XlError) as exc:
