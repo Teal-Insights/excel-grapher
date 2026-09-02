@@ -44,12 +44,13 @@ def is_error(value: object) -> TypeGuard[str]:
 
 
 def as_measure(value: object, dtype: str = "float") -> int | float | str | bool:
-    """Coerce a helper result to a measure: number or error code.
+    """Coerce a helper result to a measure: number or cached text.
 
     Operators still raise `XlError`. Series-member boundaries catch that and
     store `err.code` here so a `#REF!` cell does not abort the rest of a series.
+    Non-numeric cached strings (`n/a`, `..`) pass through as measures.
     """
-    if isinstance(value, str) and value in XL_ERROR_CODES:
+    if isinstance(value, str):
         return value
     if isinstance(value, XlError):
         return value.code

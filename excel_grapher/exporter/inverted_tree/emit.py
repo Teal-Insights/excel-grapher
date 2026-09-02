@@ -11,6 +11,7 @@ from excel_grapher.exporter.inverted_tree.ast_emit import (
     emit_rung2_scc,
     emit_rung3_scc,
     python_annotation,
+    python_measure_type,
     python_return_annotation,
 )
 from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, SeriesCatalog, build_catalog
@@ -65,19 +66,62 @@ def _py_literal(value: object) -> str:
     raise InvertedTreeExportError(f"cannot emit a Python literal for {type(value).__name__}")
 
 
+_GROUP_SPACES = str.maketrans("", "", " \u00a0\u202f\u2009\u2007")
+
+
+def _parse_numeric_text(text: str) -> float | None:
+    """Parse a number, including space-grouped thousands (`1 000`)."""
+    stripped = text.strip()
+    if not stripped:
+        return None
+    try:
+        return float(stripped)
+    except ValueError:
+        compact = stripped.translate(_GROUP_SPACES)
+        if compact == stripped:
+            return None
+        try:
+            return float(compact)
+        except ValueError:
+            return None
+
+
 def _cell_value(graph: DependencyGraph, address: str, dtype: str) -> object:
+    """Read one cached cell as a catalog value.
+
+    Float series keep non-numeric cached text (`n/a`, `..`, `--`, empty) as
+    strings so IMF-style sentinels survive emit. Grouped numeric text such as
+    `1 000` becomes a float. Remaining coercion failures name `address`.
+    """
     node = graph.get_node(address)
     value = getattr(node, "value", None) if node is not None else None
     if value is None:
-        return 0 if dtype in {"int", "float", "number"} else ""
-    if dtype in {"int", "integer"}:
-        return int(value)
-    if dtype in {"float", "number"}:
-        return float(value)
-    if dtype in {"string", "str"}:
-        return str(value)
-    if dtype == "bool":
-        return bool(value)
+        return 0 if dtype in {"int", "integer", "float", "number"} else ""
+    try:
+        if dtype in {"int", "integer"}:
+            if isinstance(value, str):
+                parsed = _parse_numeric_text(value)
+                if parsed is None:
+                    raise ValueError(f"{value!r} is not an integer")
+                return int(parsed)
+            return int(value)
+        if dtype in {"float", "number"}:
+            if isinstance(value, bool):
+                return float(value)
+            if isinstance(value, int | float):
+                return float(value)
+            if isinstance(value, str):
+                parsed = _parse_numeric_text(value)
+                return float(parsed) if parsed is not None else value
+            return float(value)
+        if dtype in {"string", "str"}:
+            return str(value)
+        if dtype == "bool":
+            return bool(value)
+    except (TypeError, ValueError) as exc:
+        raise InvertedTreeExportError(
+            f"cell {address}: cannot read {dtype} value {value!r}"
+        ) from exc
     if isinstance(value, int | float | str | bool):
         return value
     return value
@@ -101,18 +145,20 @@ def emit_data_module(catalog: SeriesCatalog, graph: DependencyGraph) -> str:
     for series in catalog.constant_series():
         name = _data_const_name(series.series_id)
         value = _series_values(series, graph)
+        anno = python_measure_type(series)
         if series.is_scalar:
-            lines.append(f"{name}: {series.python_dtype} = {_py_literal(value)}")
+            lines.append(f"{name}: {anno} = {_py_literal(value)}")
         else:
-            lines.append(f"{name}: tuple[{series.python_dtype}, ...] = {_py_literal(value)}")
+            lines.append(f"{name}: tuple[{anno}, ...] = {_py_literal(value)}")
         lines.append("")
     for series in catalog.input_series():
         name = _default_name(series.series_id)
         value = _series_values(series, graph)
+        anno = python_measure_type(series)
         if series.is_scalar:
-            lines.append(f"{name}: {series.python_dtype} = {_py_literal(value)}")
+            lines.append(f"{name}: {anno} = {_py_literal(value)}")
         else:
-            lines.append(f"{name}: tuple[{series.python_dtype}, ...] = {_py_literal(value)}")
+            lines.append(f"{name}: tuple[{anno}, ...] = {_py_literal(value)}")
         lines.append("")
     if len(lines) == 4:
         lines.append("")

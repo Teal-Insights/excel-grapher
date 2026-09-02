@@ -124,6 +124,14 @@ def test_as_measure_preserves_error_codes() -> None:
     assert not is_error("REF")
 
 
+def test_as_measure_preserves_cached_text_sentinels() -> None:
+    assert as_measure("n/a") == "n/a"
+    assert as_measure("..") == ".."
+    assert as_measure("--") == "--"
+    assert as_measure("") == ""
+    assert not is_error("n/a")
+
+
 def test_eval_instance_memos_and_detects_cycles() -> None:
     memo: dict[tuple[str, int], float] = {}
     stack: set[tuple[str, int]] = set()
