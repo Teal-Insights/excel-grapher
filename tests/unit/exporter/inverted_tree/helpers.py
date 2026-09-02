@@ -130,7 +130,7 @@ def inverted_graph_parts(
         use_cached_dynamic_refs=dynamic_refs is None,
         dynamic_refs=dynamic_refs,
     )
-    catalog = build_catalog(bindings, workbook=workbook)
+    catalog = build_catalog(bindings, workbook=workbook, graph=graph)
     return catalog, collect_all_deps(catalog, graph), graph
 
 

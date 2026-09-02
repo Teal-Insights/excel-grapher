@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import warnings
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -100,8 +100,8 @@ class _WorkbookValues:
         self.close()
 
 
-def _read_cell_value(graph: DependencyGraph, reader: _WorkbookValues, address: str) -> Any:
-    if address in graph:
+def _read_cell_value(graph: DependencyGraph | None, reader: _WorkbookValues, address: str) -> Any:
+    if graph is not None and address in graph:
         node = graph.get_node(address)
         if node is not None:
             return node.value
@@ -233,7 +233,7 @@ def _is_label_source(index: int, sources: set[int] | None, *, is_include: bool) 
 def _resolve_label(
     bind: dict[str, Any],
     *,
-    graph: DependencyGraph,
+    graph: DependencyGraph | None,
     reader: _WorkbookValues,
     axis: str,
     index: int,
@@ -287,7 +287,7 @@ def _resolve_label(
 def _execute_bind(
     bind: dict[str, Any],
     *,
-    graph: DependencyGraph,
+    graph: DependencyGraph | None,
     reader: _WorkbookValues,
     data_address: str,
     inferred_read_as: str | None = None,
@@ -496,6 +496,60 @@ def _build_output_record(
 
 def _extract_key(coordinates: dict[str, Scalar], key_fields: list[str]) -> dict[str, Scalar]:
     return {field: coordinates[field] for field in key_fields if field in coordinates}
+
+
+def resolve_key_domain(
+    workbook: Path | str,
+    series: dict[str, Any],
+    cells: Sequence[str],
+    *,
+    concept_scheme: dict[str, Any] | None = None,
+    graph: DependencyGraph | None = None,
+) -> tuple[dict[str, Scalar], ...]:
+    """Resolve per-cell key coordinates for `cells` in expansion order.
+
+    Uses the same dimension binds as `resolve_series_binding`, but does not
+    intersect with the dependency graph. Bind failures and missing key
+    fields are omitted so layout position remains the schedule default.
+    """
+    key_fields = [str(c) for c in (series.get("key") or [])]
+    if not cells:
+        return ()
+    if not key_fields:
+        return tuple({} for _ in cells)
+    structure = series.get("structure") or {}
+    points: list[dict[str, Scalar]] = []
+    with _WorkbookValues(workbook) as reader:
+        series_coordinates: dict[str, Scalar] = {}
+        for address in cells:
+            coordinates: dict[str, Scalar] = {}
+            for dim in structure.get("dimensions") or []:
+                if not isinstance(dim, dict):
+                    continue
+                field_name = effective_dimension_id(dim)
+                bind = dim.get("bind")
+                if not isinstance(bind, dict):
+                    continue
+                scope = dim.get("scope")
+                if scope == "series" and field_name in series_coordinates:
+                    coordinates[field_name] = series_coordinates[field_name]
+                    continue
+                inferred = _component_dtype(concept_scheme, series, dim)
+                try:
+                    value = _execute_bind(
+                        bind,
+                        graph=graph,
+                        reader=reader,
+                        data_address=address,
+                        inferred_read_as=inferred,
+                    )
+                except (KeyError, ValueError, TypeError):
+                    continue
+                coordinates[field_name] = value
+                if scope == "series":
+                    series_coordinates[field_name] = value
+            points.append(_extract_key(coordinates, key_fields))
+    return tuple(points)
 
 
 def warn_series_resolution_issues(resolved: SeriesResolution, *, stacklevel: int = 3) -> None:

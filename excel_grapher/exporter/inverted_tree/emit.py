@@ -666,7 +666,7 @@ def generate_inverted_tree_modules(
         InvertedTreeExportError: A bound series cannot be inverted fail-closed.
     """
     del targets
-    catalog = build_catalog(series_bindings, workbook=bindings_workbook)
+    catalog = build_catalog(series_bindings, workbook=bindings_workbook, graph=graph)
     if not catalog.output_series():
         raise InvertedTreeExportError("inverted-tree codegen requires at least one output series")
     deps = collect_all_deps(catalog, graph)

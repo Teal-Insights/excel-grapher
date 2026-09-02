@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from excel_grapher.core.address_keys import normalize_key as normalize_address
+from excel_grapher.core.formula_shape import fingerprint_formula_shape
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.series_bindings.normalize import (
     has_constant_direction,
@@ -20,7 +21,11 @@ from excel_grapher.series_bindings.ranges import (
     expand_data_range,
     series_data_ranges,
 )
-from excel_grapher.series_bindings.types import WorkbookSeriesBindings
+from excel_grapher.series_bindings.resolve import resolve_key_domain
+from excel_grapher.series_bindings.types import Scalar, WorkbookSeriesBindings
+
+if TYPE_CHECKING:
+    from excel_grapher.grapher.graph import DependencyGraph
 
 Direction = Literal["input", "constant", "internal", "output"]
 Layout = Literal["scalar", "series", "matrix"]
@@ -37,8 +42,42 @@ _DTYPE_READ = {
 
 
 @dataclass(frozen=True, slots=True)
+class KeyPoint:
+    """Resolved key coordinates for one series member."""
+
+    items: tuple[tuple[str, Scalar], ...]
+
+    def __getitem__(self, field: str) -> Scalar:
+        for name, value in self.items:
+            if name == field:
+                return value
+        raise KeyError(field)
+
+    def as_mapping(self) -> dict[str, Scalar]:
+        """Return a new dict of field names to values."""
+        return dict(self.items)
+
+
+@dataclass(frozen=True, slots=True)
+class Statement:
+    """One formula shape over an ordered index domain.
+
+    A bound series with mixed member formulas partitions into one statement
+    per consecutive shape run. Uniform series are one statement.
+    """
+
+    statement_id: str
+    series_id: str
+    shape_key: str | None
+    start: int
+    stop: int
+    cells: tuple[str, ...]
+    domain: tuple[KeyPoint, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class BoundSeries:
-    """One bindings-catalog series with expanded cell addresses."""
+    """One bindings-catalog series with expanded cells and an index domain."""
 
     series_id: str
     layout: Layout
@@ -48,6 +87,8 @@ class BoundSeries:
     dtype: str
     compute_name: str | None
     raw: Mapping[str, Any]
+    domain: tuple[KeyPoint, ...]
+    statements: tuple[Statement, ...]
 
     @property
     def is_scalar(self) -> bool:
@@ -190,19 +231,93 @@ def _compute_name_of(entry: Mapping[str, Any], series_id: str) -> str | None:
     return None
 
 
+def _key_point(values: Mapping[str, Scalar], key_fields: tuple[str, ...]) -> KeyPoint:
+    return KeyPoint(tuple((field, values[field]) for field in key_fields if field in values))
+
+
+def _whole_statement(
+    series_id: str,
+    cells: tuple[str, ...],
+    domain: tuple[KeyPoint, ...],
+    *,
+    shape_key: str | None = None,
+) -> Statement:
+    return Statement(
+        statement_id=series_id,
+        series_id=series_id,
+        shape_key=shape_key,
+        start=0,
+        stop=len(cells),
+        cells=cells,
+        domain=domain,
+    )
+
+
+def _formula_shape_key(graph: DependencyGraph, address: str) -> str | None:
+    node = graph.get_node(address)
+    ast = getattr(node, "formula_ast", None) if node is not None else None
+    if ast is None:
+        return None
+    return fingerprint_formula_shape(ast).shape_key
+
+
+def _shape_partition(series: BoundSeries, graph: DependencyGraph) -> tuple[Statement, ...]:
+    runs: list[tuple[str | None, int, int]] = []
+    for index, address in enumerate(series.cells):
+        key = _formula_shape_key(graph, address)
+        if runs and runs[-1][0] == key:
+            runs[-1] = (key, runs[-1][1], index + 1)
+        else:
+            runs.append((key, index, index + 1))
+    if not runs:
+        return (_whole_statement(series.series_id, series.cells, series.domain),)
+    if len(runs) == 1:
+        key = runs[0][0]
+        return (_whole_statement(series.series_id, series.cells, series.domain, shape_key=key),)
+    return tuple(
+        Statement(
+            statement_id=f"{series.series_id}__{start}",
+            series_id=series.series_id,
+            shape_key=key,
+            start=start,
+            stop=stop,
+            cells=series.cells[start:stop],
+            domain=series.domain[start:stop],
+        )
+        for key, start, stop in runs
+    )
+
+
+def partition_catalog(catalog: SeriesCatalog, graph: DependencyGraph) -> SeriesCatalog:
+    """Split each series into consecutive formula-shape statements."""
+    series_map = {
+        series_id: replace(series, statements=_shape_partition(series, graph))
+        for series_id, series in catalog.series.items()
+    }
+    return SeriesCatalog(
+        series=series_map,
+        order=catalog.order,
+        address_to_id=catalog.address_to_id,
+    )
+
+
 def build_catalog(
     bindings: WorkbookSeriesBindings,
     *,
     workbook: Path | str,
+    graph: DependencyGraph | None = None,
 ) -> SeriesCatalog:
     """Expand every series `data_range` into a lookup catalog.
 
     Applies series-level `exclude_rows` / `exclude_columns` before indexing,
-    matching `resolve_series_binding` (issue #600).
+    matching `resolve_series_binding` (issue #600). Each series carries an
+    ordered key-point domain. When `graph` is provided, mixed formula shapes
+    partition into one `Statement` per consecutive run.
     """
     series_map: dict[str, BoundSeries] = {}
     order: list[str] = []
     address_to_id: dict[str, str] = {}
+    concept_scheme = bindings.get("concept_scheme")
     for entry in bindings.get("series", []):
         if not isinstance(entry, dict):
             continue
@@ -215,15 +330,27 @@ def build_catalog(
                 normalize_address(addr) for addr in expand_data_range(data_range, workbook=workbook)
             )
         cells = apply_series_excludes(cells, entry)
+        cell_tuple = tuple(cells)
+        key_fields = _key_fields_of(entry)
+        raw_domain = resolve_key_domain(
+            workbook,
+            entry,
+            cell_tuple,
+            concept_scheme=concept_scheme,
+            graph=graph,
+        )
+        domain = tuple(_key_point(values, key_fields) for values in raw_domain)
         bound = BoundSeries(
             series_id=series_id,
             layout=_layout_of(entry),
             direction=_direction_of(entry),
-            cells=tuple(cells),
-            key_fields=_key_fields_of(entry),
+            cells=cell_tuple,
+            key_fields=key_fields,
             dtype=_dtype_of(entry),
             compute_name=_compute_name_of(entry, series_id),
             raw=entry,
+            domain=domain,
+            statements=(_whole_statement(series_id, cell_tuple, domain),),
         )
         series_map[series_id] = bound
         order.append(series_id)
@@ -234,11 +361,14 @@ def build_catalog(
                     f"cell {address} is bound to both {existing!r} and {series_id!r}"
                 )
             address_to_id[address] = series_id
-    return SeriesCatalog(
+    catalog = SeriesCatalog(
         series=series_map,
         order=tuple(order),
         address_to_id=address_to_id,
     )
+    if graph is None:
+        return catalog
+    return partition_catalog(catalog, graph)
 
 
 def covering_series(

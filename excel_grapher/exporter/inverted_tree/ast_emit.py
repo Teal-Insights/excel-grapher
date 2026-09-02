@@ -248,6 +248,9 @@ def formula_shape_runs(
     graph: DependencyGraph,
 ) -> list[tuple[str, int, int]]:
     """Return consecutive `(shape_key, start, stop)` runs over `series.cells`."""
+    statements = series.statements
+    if len(statements) > 1 or (statements and statements[0].shape_key is not None):
+        return [(stmt.shape_key or "", stmt.start, stmt.stop) for stmt in statements]
     runs: list[tuple[str, int, int]] = []
     for index, address in enumerate(series.cells):
         key = fingerprint_formula_shape(node_formula_ast(graph, address)).shape_key
@@ -256,18 +259,6 @@ def formula_shape_runs(
         else:
             runs.append((key, index, index + 1))
     return runs
-
-
-def assert_uniform_formula_shape(series: BoundSeries, graph: DependencyGraph) -> None:
-    """Fail closed when a non-SCC helper would replay `cells[0]` on mixed shapes."""
-    if not series.is_sequence or len(series.cells) < 2:
-        return
-    runs = formula_shape_runs(series, graph)
-    if len(runs) > 1:
-        raise InvertedTreeExportError(
-            f"series {series.series_id!r} has {len({run[0] for run in runs})} formula "
-            "shapes; members must share one shape"
-        )
 
 
 def member_peel_stop(series: BoundSeries, graph: DependencyGraph) -> int:
@@ -420,6 +411,68 @@ def _series_for_ref(node: AstNode, ctx: EmitContext) -> BoundSeries:
     )
 
 
+def _region_measure(
+    series: BoundSeries,
+    *,
+    catalog: SeriesCatalog,
+    deps: SeriesDeps,
+    graph: DependencyGraph,
+    host_index: int,
+    index_var: str | None,
+    prior_var: str | None,
+) -> tuple[str, set[str]]:
+    ctx = EmitContext(
+        host=series,
+        catalog=catalog,
+        deps=deps,
+        host_index=host_index,
+        host_cell=series.cells[host_index],
+        index_var=index_var,
+        prior_var=prior_var,
+    )
+    expr = emit_expr(node_formula_ast(graph, series.cells[host_index]), ctx)
+    return _as_measure_call(expr, series), set(ctx.used_runtime)
+
+
+def _emit_region_chain(
+    series: BoundSeries,
+    *,
+    catalog: SeriesCatalog,
+    deps: SeriesDeps,
+    graph: DependencyGraph,
+    runs: list[tuple[str, int, int]],
+    prior_var: str | None,
+    prefix: str,
+    suffix: str,
+    indent: str,
+) -> tuple[list[str], set[str]]:
+    """Emit an if/elif chain that assigns each shape-run formula."""
+    used: set[str] = set()
+    lines: list[str] = []
+    for run_index, (_key, start, stop) in enumerate(runs):
+        coerce, expr_used = _region_measure(
+            series,
+            catalog=catalog,
+            deps=deps,
+            graph=graph,
+            host_index=start,
+            index_var="i",
+            prior_var=prior_var,
+        )
+        used |= expr_used
+        statement = f"{prefix}{coerce}{suffix}"
+        if run_index < len(runs) - 1:
+            keyword = "if" if run_index == 0 else "elif"
+            lines.append(f"{indent}{keyword} i < {stop}:")
+            lines.append(f"{indent}    {statement}")
+        elif run_index == 0:
+            lines.append(f"{indent}{statement}")
+        else:
+            lines.append(f"{indent}else:")
+            lines.append(f"{indent}    {statement}")
+    return lines, used
+
+
 def emit_helper_body(
     series: BoundSeries,
     *,
@@ -428,11 +481,6 @@ def emit_helper_body(
     graph: DependencyGraph,
 ) -> tuple[list[str], set[str]]:
     """Return indented body lines and the runtime symbols they use."""
-    if series.is_sequence:
-        if deps.is_scan:
-            member_peel_stop(series, graph)
-        else:
-            assert_uniform_formula_shape(series, graph)
     used: set[str] = set()
     seq_params = [
         sid for sid in deps.param_ids if catalog.get(sid).is_sequence and sid in deps.aligned_ids
@@ -471,18 +519,7 @@ def emit_helper_body(
             series, catalog=catalog, deps=deps, graph=graph, seq_params=seq_params
         )
 
-    ctx = EmitContext(
-        host=series,
-        catalog=catalog,
-        deps=deps,
-        host_index=0,
-        host_cell=series.cells[0],
-        index_var="i",
-        prior_var=None,
-    )
-    ast = node_formula_ast(graph, series.cells[0])
-    expr = emit_expr(ast, ctx)
-    used |= ctx.used_runtime
+    runs = formula_shape_runs(series, graph)
     used.add("as_measure")
     used.add("XlError")
     lines: list[str] = []
@@ -493,15 +530,35 @@ def emit_helper_body(
     else:
         lines.append(f"    n = {len(series.cells)}")
     measure = python_measure_type(series)
-    coerce = (
-        f"as_measure({expr})"
-        if series.python_dtype == "float"
-        else f"as_measure({expr}, {series.python_dtype!r})"
-    )
     lines.append(f"    out: list[{measure}] = []")
     lines.append("    for i in range(n):")
     lines.append("        try:")
-    lines.append(f"            out.append({coerce})")
+    if len(runs) <= 1:
+        coerce, expr_used = _region_measure(
+            series,
+            catalog=catalog,
+            deps=deps,
+            graph=graph,
+            host_index=0,
+            index_var="i",
+            prior_var=None,
+        )
+        used |= expr_used
+        lines.append(f"            out.append({coerce})")
+    else:
+        region_lines, region_used = _emit_region_chain(
+            series,
+            catalog=catalog,
+            deps=deps,
+            graph=graph,
+            runs=runs,
+            prior_var=None,
+            prefix="out.append(",
+            suffix=")",
+            indent="            ",
+        )
+        used |= region_used
+        lines.extend(region_lines)
     lines.append("        except XlError as err:")
     lines.append("            out.append(err.code)")
     lines.append("    return tuple(out)")
@@ -516,24 +573,9 @@ def _emit_scan_body(
     graph: DependencyGraph,
     seq_params: list[str],
 ) -> tuple[list[str], set[str]]:
-    peel = member_peel_stop(series, graph)
-    template_index = peel if peel < len(series.cells) else 0
+    runs = formula_shape_runs(series, graph)
     seed = deps.seed_id
-    ctx = EmitContext(
-        host=series,
-        catalog=catalog,
-        deps=deps,
-        host_index=template_index,
-        host_cell=series.cells[template_index],
-        index_var="i",
-        prior_var="prior",
-    )
-    ast = node_formula_ast(graph, series.cells[template_index])
-    expr = emit_expr(ast, ctx)
-    used = set(ctx.used_runtime)
-    used.add("as_measure")
-    used.add("XlError")
-    used.add("is_error")
+    used: set[str] = {"as_measure", "XlError", "is_error"}
     lines: list[str] = []
     if seq_params:
         used.add("require_aligned")
@@ -542,45 +584,26 @@ def _emit_scan_body(
         lines.append(f"    n = {len(series.cells)}")
     seed_expr = seed if seed is not None else "0"
     measure = python_measure_type(series)
-    coerce = (
-        f"as_measure({expr})"
-        if series.python_dtype == "float"
-        else f"as_measure({expr}, {series.python_dtype!r})"
-    )
     lines.append(f"    path: list[{measure}] = []")
-    if peel > 0:
-        peel_ctx = EmitContext(
-            host=series,
-            catalog=catalog,
-            deps=deps,
-            host_index=0,
-            host_cell=series.cells[0],
-            index_var="i",
-            prior_var=None,
-        )
-        peel_expr = emit_expr(node_formula_ast(graph, series.cells[0]), peel_ctx)
-        used |= peel_ctx.used_runtime
-        peel_coerce = (
-            f"as_measure({peel_expr})"
-            if series.python_dtype == "float"
-            else f"as_measure({peel_expr}, {series.python_dtype!r})"
-        )
-        lines.append(f"    prior: {measure} = {seed_expr}")
-        lines.append(f"    for i in range({peel}):")
-        lines.append("        try:")
-        lines.append(f"            prior = {peel_coerce}")
-        lines.append("        except XlError as err:")
-        lines.append("            prior = err.code")
-        lines.append("        path.append(prior)")
-        lines.append(f"    for i in range({peel}, n):")
-    else:
-        lines.append(f"    prior: {measure} = {seed_expr}")
-        lines.append("    for i in range(n):")
+    lines.append(f"    prior: {measure} = {seed_expr}")
+    lines.append("    for i in range(n):")
     lines.append("        if is_error(prior):")
     lines.append("            path.append(prior)")
     lines.append("            continue")
     lines.append("        try:")
-    lines.append(f"            prior = {coerce}")
+    region_lines, region_used = _emit_region_chain(
+        series,
+        catalog=catalog,
+        deps=deps,
+        graph=graph,
+        runs=runs or [("", 0, len(series.cells))],
+        prior_var="prior",
+        prefix="prior = ",
+        suffix="",
+        indent="            ",
+    )
+    used |= region_used
+    lines.extend(region_lines)
     lines.append("        except XlError as err:")
     lines.append("            prior = err.code")
     lines.append("        path.append(prior)")
