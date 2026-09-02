@@ -114,6 +114,8 @@ def test_helper_inventory_matches_bound_formula_series(tiny_dsa_pkg) -> None:
     assert "def cell_" not in source
     assert "def make_context" not in inspect.getsource(tiny_dsa_pkg.api)
     assert "def set_" not in inspect.getsource(tiny_dsa_pkg.api)
+    api_src = inspect.getsource(tiny_dsa_pkg.api)
+    assert api_src.count("internals.shocked_path_internal(") == 1
 
 
 def test_baseline_leaf_closure_excludes_shock_args(tiny_dsa_pkg) -> None:
