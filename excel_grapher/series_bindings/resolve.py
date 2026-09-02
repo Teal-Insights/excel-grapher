@@ -60,13 +60,15 @@ _TRAILING_UNIT_RE = re.compile(r"\s*\([^)]*\)\s*$")
 class _WorkbookValues:
     """Lazy cached value reader for bind cells outside the dependency graph.
 
-    Opens the workbook with `read_only=False` because label and header binds
-    perform random cell access, which is inefficient in read-only mode.
+    Opens the workbook in `read_only` mode so unused sheets are never bound.
+    Each touched sheet is streamed only through the last requested row; the
+    rest of that sheet and every unread sheet stay unparsed.
     """
 
     def __init__(self, path: Path | str) -> None:
         self._path = Path(path)
         self._workbook_cache: fastpyxl.Workbook | None = None
+        self._sheet_values: dict[str, dict[str, Any]] = {}
 
     def _workbook(self) -> fastpyxl.Workbook:
         if self._workbook_cache is not None:
@@ -75,29 +77,154 @@ class _WorkbookValues:
         self._workbook_cache = fastpyxl.load_workbook(
             self._path,
             data_only=True,
-            read_only=False,
+            read_only=True,
             keep_vba=keep_vba,
         )
         return self._workbook_cache
 
+    def prefetch(self, addresses: Iterable[str], *, graph: DependencyGraph | None = None) -> None:
+        """Stream each touched sheet only through the last requested row."""
+        wanted_by_sheet: dict[str, set[str]] = {}
+        for address in addresses:
+            if graph is not None and address in graph:
+                continue
+            sheet, coord = parse_address(address)
+            wanted_by_sheet.setdefault(sheet, set()).add(coord)
+        for sheet, wanted in wanted_by_sheet.items():
+            cached = self._sheet_values.get(sheet)
+            if cached is not None and wanted <= cached.keys():
+                continue
+            values = _stream_sheet_values(self._workbook(), sheet, wanted)
+            self._sheet_values.setdefault(sheet, {}).update(values)
+
     def read(self, address: str) -> Any:
         sheet, coord = parse_address(address)
-        wb = self._workbook()
-        if sheet not in wb.sheetnames:
-            raise KeyError(f"Sheet {sheet!r} not found in workbook")
-        return wb[sheet][coord].value
+        cached = self._sheet_values.get(sheet)
+        if cached is None or coord not in cached:
+            self.prefetch((address,))
+            cached = self._sheet_values.get(sheet, {})
+        return cached.get(coord)
 
     def close(self) -> None:
         """Close the cached workbook, if open."""
         if self._workbook_cache is not None:
             self._workbook_cache.close()
             self._workbook_cache = None
+        self._sheet_values.clear()
 
     def __enter__(self) -> _WorkbookValues:
         return self
 
     def __exit__(self, *args: object) -> None:
         self.close()
+
+
+def _stream_sheet_values(
+    workbook: fastpyxl.Workbook,
+    sheet: str,
+    wanted: set[str],
+) -> dict[str, Any]:
+    """Stream one worksheet until every requested coordinate's row is passed."""
+    from fastpyxl.worksheet._reader import WorkSheetParser
+
+    if not wanted:
+        return {}
+    if sheet not in workbook.sheetnames:
+        raise KeyError(f"Sheet {sheet!r} not found in workbook")
+    worksheet = workbook[sheet]
+    get_source = getattr(worksheet, "_get_source", None)
+    if get_source is None:
+        raise TypeError(f"worksheet {sheet!r} does not support streamed reads")
+    max_row = max(fastpyxl.utils.cell.coordinate_from_string(coord)[1] for coord in wanted)
+    values: dict[str, Any] = {}
+    with get_source() as source:
+        parser = WorkSheetParser(
+            source,
+            getattr(worksheet, "_shared_strings", []),
+            data_only=True,
+            epoch=workbook.epoch,
+            date_formats=workbook._date_formats,
+            timedelta_formats=workbook._timedelta_formats,
+        )
+        for row_idx, cells in parser.parse():
+            for row, column, value, _dtype, _style, _cached in cells:
+                coord = f"{get_column_letter(column)}{row}"
+                if coord in wanted:
+                    values[coord] = value
+            if row_idx >= max_row:
+                break
+    for coord in wanted:
+        values.setdefault(coord, None)
+    return values
+
+
+def _bind_source_addresses(bind: dict[str, Any], data_address: str) -> list[str]:
+    """Return workbook cells `bind` may read for `data_address`."""
+    kind = bind.get("kind")
+    if kind == "data_cell":
+        return [data_address]
+    if kind == "cell":
+        return [str(bind["address"])]
+    if kind in {"constant", "value_map", "sheet_name"}:
+        return []
+    if kind not in {"column_header", "row_label"}:
+        return []
+    sheet, col, row = _parse_data_cell(data_address)
+    fill = bool(bind.get("fill", False))
+    if kind == "column_header":
+        header_row = int(bind["header_row"])
+        index = column_index_from_string(col)
+        sources, is_include = _label_source_indices(bind, axis="columns")
+        candidates = range(index, 0, -1) if fill else (index,)
+        return [
+            format_key(sheet, f"{get_column_letter(candidate)}{header_row}")
+            for candidate in candidates
+            if _is_label_source(candidate, sources, is_include=is_include)
+        ]
+    label_column = str(bind["label_column"])
+    sources, is_include = _label_source_indices(bind, axis="rows")
+    candidates = range(row, 0, -1) if fill else (row,)
+    return [
+        format_key(sheet, f"{label_column}{candidate}")
+        for candidate in candidates
+        if _is_label_source(candidate, sources, is_include=is_include)
+    ]
+
+
+def _structure_source_addresses(
+    series: dict[str, Any],
+    cells: Sequence[str],
+    *,
+    include_measure: bool = False,
+    include_attributes: bool = False,
+) -> list[str]:
+    """Collect label and header cells for `cells` from `series` structure."""
+    structure = series.get("structure") or {}
+    addresses: list[str] = []
+    if include_measure:
+        measure = structure.get("measure") or {}
+        measure_bind = measure.get("bind") or {"kind": "data_cell"}
+        if isinstance(measure_bind, dict):
+            for cell in cells:
+                addresses.extend(_bind_source_addresses(measure_bind, cell))
+    for dim in structure.get("dimensions") or []:
+        if not isinstance(dim, dict):
+            continue
+        bind = dim.get("bind")
+        if not isinstance(bind, dict):
+            continue
+        for cell in cells:
+            addresses.extend(_bind_source_addresses(bind, cell))
+    if include_attributes:
+        for attr in structure.get("attributes") or []:
+            if not isinstance(attr, dict):
+                continue
+            bind = _attribute_bind(attr)
+            if bind is None:
+                continue
+            for cell in cells:
+                addresses.extend(_bind_source_addresses(bind, cell))
+    return addresses
 
 
 def _read_cell_value(graph: DependencyGraph | None, reader: _WorkbookValues, address: str) -> Any:
@@ -520,6 +647,7 @@ def resolve_key_domain(
     structure = series.get("structure") or {}
     points: list[dict[str, Scalar]] = []
     with _WorkbookValues(workbook) as reader:
+        reader.prefetch(_structure_source_addresses(series, cells), graph=graph)
         series_coordinates: dict[str, Scalar] = {}
         for address in cells:
             coordinates: dict[str, Scalar] = {}
@@ -834,6 +962,15 @@ def resolve_series_binding(
         build_record = _build_input_record if direction == "input" else _build_output_record
 
         bind_failures: dict[str, list[str]] = {}
+        active_reader.prefetch(
+            _structure_source_addresses(
+                series,
+                addresses,
+                include_measure=direction == "input",
+                include_attributes=True,
+            ),
+            graph=graph,
+        )
         for address in addresses:
             coordinates: dict[str, Scalar] = {}
             try:
