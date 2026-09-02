@@ -57,7 +57,11 @@ class BoundSeries:
 
     @property
     def is_time_series(self) -> bool:
-        """True when the series is keyed by `TIME_PERIOD`."""
+        """True when the series is a 1-D `TIME_PERIOD` sequence.
+
+        Country×year `layout: matrix` series include `TIME_PERIOD` in
+        `key_fields` but are not treated as 1-D year prefixes.
+        """
         return "TIME_PERIOD" in self.key_fields and self.layout == "series"
 
     @property
@@ -145,16 +149,17 @@ def _direction_of(entry: Mapping[str, Any]) -> Direction:
 
 
 def _layout_of(entry: Mapping[str, Any]) -> Layout:
+    """Return the catalog layout.
+
+    `matrix` is a 1-D sequence in `expand_data_range` order (issue #599).
+    Nested 2-D Python types are not emitted.
+    """
     layout = str(entry.get("layout") or "scalar")
     if layout == "row_series":
         layout = "series"
     if layout not in {"scalar", "series", "matrix"}:
         raise InvertedTreeExportError(
             f"series {entry.get('id')!r} has unsupported layout {layout!r}"
-        )
-    if layout == "matrix":
-        raise InvertedTreeExportError(
-            f"series {entry.get('id')!r}: matrix layout is out of inverted-tree v1"
         )
     return cast(Layout, layout)
 
