@@ -194,6 +194,40 @@ def predecessor_address(series: BoundSeries, index: int, catalog: SeriesCatalog)
     return prev
 
 
+def successor_address(series: BoundSeries, index: int, catalog: SeriesCatalog) -> str | None:
+    """Return the look-ahead successor of `series.cells[index]`, if any.
+
+    For index < len(series.cells) - 1 this is the next cell in the series. For
+    index == len(series.cells) - 1 it is the next adjacent cell when that cell
+    belongs to a different bound series (the terminal scalar of a backward path).
+    """
+    if index < 0 or index >= len(series.cells):
+        return None
+    if index < len(series.cells) - 1:
+        return series.cells[index + 1]
+    sheet, row, col = parse_cell_coords(series.cells[-1])
+    is_vertical = (
+        len(series.cells) > 1
+        and parse_cell_coords(series.cells[0])[1] != parse_cell_coords(series.cells[1])[1]
+    )
+    if is_vertical:
+        next_cell = format_cell_key(sheet, get_column_letter(col), row + 1)
+    else:
+        next_cell = format_cell_key(sheet, get_column_letter(col + 1), row)
+    owner = catalog.series_for(next_cell)
+    if owner is None or owner.series_id == series.series_id:
+        return None
+    from excel_grapher.exporter.inverted_tree.schedule import _preferred_fields, schedule_coord
+
+    if (
+        _preferred_fields(owner, catalog) is not None
+        and _preferred_fields(series, catalog) is not None
+        and schedule_coord(next_cell, catalog) != schedule_coord(series.cells[-1], catalog) + 1
+    ):
+        return None
+    return next_cell
+
+
 @dataclass
 class SeriesDeps:
     """First-level bound-series dependencies of one formula series.
@@ -213,6 +247,7 @@ class SeriesDeps:
     lagged_ids: frozenset[str]
     index_maps: dict[str, tuple[int, ...]]
     affine_maps: dict[str, tuple[int, int]]
+    scan_direction: Literal["forward", "reversed"] = "forward"
 
 
 @dataclass(frozen=True, slots=True)
@@ -504,21 +539,41 @@ def requires_demand_driven(
     catalog: SeriesCatalog,
     graph: DependencyGraph,
 ) -> bool:
-    """True when a same-series ref is not a unit predecessor lag.
+    """True when a same-series ref is not a unit predecessor or successor lag.
 
-    Backward recursion (`value_t = value_{t+1} * k`) and irregular self-refs
-    cannot use the rung-1 scan; they fall through to demand-driven evaluation.
+    Backward recursion (`value_t = value_{t+1} * k`) uses a reversed scan;
+    mixed directions and irregular self-refs fall through to demand-driven.
     """
-    for edge in collect_series_edges(series, catalog=catalog, graph=graph):
-        if edge.producer_id != series.series_id:
-            continue
+    self_edges = [
+        edge
+        for edge in collect_series_edges(series, catalog=catalog, graph=graph)
+        if edge.producer_id == series.series_id
+    ]
+    if not self_edges:
+        return False
+
+    is_forward = True
+    for edge in self_edges:
         host_index = series.index_of(edge.consumer_cell)
         if host_index is None:
             return True
         pred = predecessor_address(series, host_index, catalog)
         if pred is None or normalize_address(edge.producer_cell) != normalize_address(pred):
+            is_forward = False
+            break
+    if is_forward:
+        return False
+
+    is_backward = True
+    for edge in self_edges:
+        host_index = series.index_of(edge.consumer_cell)
+        if host_index is None:
             return True
-    return False
+        succ = successor_address(series, host_index, catalog)
+        if succ is None or normalize_address(edge.producer_cell) != normalize_address(succ):
+            is_backward = False
+            break
+    return not is_backward
 
 
 def collect_all_dependence_edges(
@@ -542,7 +597,9 @@ def series_deps_from_edges(
     lookup_ids: set[str] = set()
     aligned_hits: dict[str, list[tuple[int, int]]] = {}
     saw_self_lag = False
+    saw_backward_lag = False
     seed_id: str | None = None
+    terminal_seed_id: str | None = None
     for edge in edges:
         if edge.consumer_id != host.series_id:
             continue
@@ -555,6 +612,11 @@ def series_deps_from_edges(
                 pred
             ):
                 saw_self_lag = True
+            succ = successor_address(host, host_index, catalog)
+            if succ is not None and normalize_address(edge.producer_cell) == normalize_address(
+                succ
+            ):
+                saw_backward_lag = True
             continue
         params.setdefault(edge.producer_id, None)
         if edge.access in {"whole", "dynamic"}:
@@ -573,7 +635,22 @@ def series_deps_from_edges(
                 pred
             ):
                 seed_id = edge.producer_id
-    is_scan = saw_self_lag or seed_id is not None
+        if host_index == len(host.cells) - 1:
+            succ = successor_address(host, len(host.cells) - 1, catalog)
+            if succ is not None and normalize_address(edge.producer_cell) == normalize_address(
+                succ
+            ):
+                terminal_seed_id = edge.producer_id
+    scan_direction: Literal["forward", "reversed"] = "forward"
+    if saw_backward_lag and not saw_self_lag:
+        scan_direction = "reversed"
+        is_scan = True
+        seed_id = terminal_seed_id
+    elif saw_self_lag or seed_id is not None:
+        scan_direction = "forward"
+        is_scan = True
+    else:
+        is_scan = False
     remaining = [sid for sid in catalog.order if sid in params]
     if seed_id is not None and seed_id in remaining:
         remaining.remove(seed_id)
@@ -660,6 +737,7 @@ def series_deps_from_edges(
         lagged_ids=frozenset(lagged),
         index_maps=index_maps,
         affine_maps=affine_maps,
+        scan_direction=scan_direction,
     )
 
 

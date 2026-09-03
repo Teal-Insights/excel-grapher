@@ -30,6 +30,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
     node_formula_ast,
     predecessor_address,
     range_column_addresses,
+    successor_address,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.schedule import (
@@ -37,6 +38,7 @@ from excel_grapher.exporter.inverted_tree.schedule import (
     FusedRegion,
     collect_dependence_edges,
     plan_fused_scc,
+    schedule_coord,
 )
 
 if TYPE_CHECKING:
@@ -168,6 +170,9 @@ def _emit_cell_ref(node: CellRefNode, ctx: EmitContext) -> str:
     pred = predecessor_address(ctx.host, ctx.host_index, ctx.catalog)
     if pred is not None and normalize_address(address) == normalize_address(pred) and ctx.prior_var:
         return ctx.prior_var
+    succ = successor_address(ctx.host, ctx.host_index, ctx.catalog)
+    if succ is not None and normalize_address(address) == normalize_address(succ) and ctx.prior_var:
+        return ctx.prior_var
     owner = ctx.catalog.require_series_for(address)
     if owner.series_id == ctx.host.series_id:
         if ctx.prior_var is not None:
@@ -213,12 +218,15 @@ def _emit_fused_ref(address: str, ctx: EmitContext) -> str:
             f"series {ctx.host.series_id!r}: fused ref {address} is unbound"
         )
     plan = ctx.fused_plan
-    host_union = plan.domain[ctx.host.series_id][0] + ctx.host_index
+    coord_to_t = plan.coord_to_t
+    host_coord = schedule_coord(ctx.host_cell, ctx.catalog)
+    prod_coord = schedule_coord(address, ctx.catalog)
+    host_union = coord_to_t[host_coord]
+    prod_union = coord_to_t[prod_coord]
     index_var = ctx.index_var or "t"
     ctx.use("live_measure")
     if owner.series_id in ctx.scc_ids:
-        prod_start = plan.domain[owner.series_id][0]
-        delta = prod_start + idx - host_union
+        delta = prod_union - host_union
         if delta == 0:
             if owner.series_id not in ctx.fused_ready:
                 raise InvertedTreeExportError(
@@ -226,6 +234,7 @@ def _emit_fused_ref(address: str, ctx: EmitContext) -> str:
                     f"{owner.series_id!r} before it is written"
                 )
             return f"live_measure({owner.series_id}_t)"
+        prod_start = plan.domain[owner.series_id][0]
         index_expr = _index_expr(delta - prod_start, index_var)
         return f"live_measure({owner.series_id}[{index_expr}])"
     name = ctx.param(owner.series_id)
@@ -602,7 +611,10 @@ def _emit_scan_body(
     measure = python_measure_type(series)
     lines.append(f"    path: list[{measure}] = []")
     lines.append(f"    prior: {measure} = {seed_expr}")
-    lines.append("    for i in range(n):")
+    if deps.scan_direction == "reversed":
+        lines.append("    for i in reversed(range(n)):")
+    else:
+        lines.append("    for i in range(n):")
     lines.append("        if is_error(prior):")
     lines.append("            path.append(prior)")
     lines.append("            continue")
@@ -623,7 +635,10 @@ def _emit_scan_body(
     lines.append("        except XlError as err:")
     lines.append("            prior = err.code")
     lines.append("        path.append(prior)")
-    lines.append("    return tuple(path)")
+    if deps.scan_direction == "reversed":
+        lines.append("    return tuple(reversed(path))")
+    else:
+        lines.append("    return tuple(path)")
     return lines, used
 
 
@@ -741,12 +756,17 @@ def _fused_template_index(
     series: BoundSeries,
     plan: FusedPlan,
     region: FusedRegion,
+    catalog: SeriesCatalog,
 ) -> int:
     start, stop = plan.domain[series.series_id]
     union_t = max(region.start, start)
     if union_t >= min(region.stop, stop):
-        return max(0, stop - start - 1)
-    return union_t - start
+        union_t = max(0, stop - start - 1)
+    target_coord = plan.schedule[union_t]
+    for i, cell in enumerate(series.cells):
+        if schedule_coord(cell, catalog) == target_coord:
+            return i
+    return max(0, stop - start - 1)
 
 
 def _region_guard(region: FusedRegion) -> str:
@@ -814,7 +834,7 @@ def _emit_fused_region(
             catalog=catalog,
             deps=deps,
             graph=graph,
-            host_index=_fused_template_index(series, plan, region),
+            host_index=_fused_template_index(series, plan, region, catalog),
             plan=plan,
             ready=ready,
         )
@@ -872,6 +892,16 @@ def emit_rung2_scc(
             lines.extend(_indented(body, 12))
         else:
             lines.extend(_indented(body, 8))
-    returned = ", ".join(f"tuple({sid})" for sid in scc)
+    returned_items: list[str] = []
+    for sid in scc:
+        series = catalog.get(sid)
+        if len(series.cells) > 1:
+            u_first = plan.coord_to_t[schedule_coord(series.cells[0], catalog)]
+            u_last = plan.coord_to_t[schedule_coord(series.cells[-1], catalog)]
+            if u_first > u_last:
+                returned_items.append(f"tuple(reversed({sid}))")
+                continue
+        returned_items.append(f"tuple({sid})")
+    returned = ", ".join(returned_items)
     lines.append(f"    return {returned}")
     return lines, used

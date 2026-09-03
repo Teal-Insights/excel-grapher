@@ -307,7 +307,7 @@ def test_qcraft_identity_flip_emits_and_matches_evaluator(tmp_path: Path) -> Non
     )
 
 
-def test_look_ahead_stays_on_rung3(tmp_path: Path) -> None:
+def test_look_ahead_fuses_with_reversed_loop(tmp_path: Path) -> None:
     workbook = write_workbook(
         tmp_path / "a13_lookahead.xlsx",
         {
@@ -322,14 +322,36 @@ def test_look_ahead_stays_on_rung3(tmp_path: Path) -> None:
         },
     )
     catalog, _deps, graph = inverted_graph_parts(workbook, _two_series_bindings())
+    plan = plan_fused_scc(("x", "y"), catalog=catalog, graph=graph)
+    assert plan is not None
+    assert plan.direction == "reversed"
+    modules = generate_inverted(workbook, _two_series_bindings())
+    internals = modules["internals.py"]
+    assert "eval_instance" not in internals
+    pkg = load_package(modules, tmp_path, name="a13_lookahead")
+    assert pkg.compute_x() == (10.0, 10.0)
+    assert pkg.compute_y() == (1.0, 10.0)
+
+
+def test_mixed_direction_stays_on_rung3(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "a13_mixed.xlsx",
+        {
+            "Engine": {
+                "A1": 2009,
+                "B1": 2010,
+                "A2": "=B4",
+                "B2": "=A4",
+                "A4": "=1",
+                "B4": "=A2",
+            },
+        },
+    )
+    catalog, _deps, graph = inverted_graph_parts(workbook, _two_series_bindings())
     assert plan_fused_scc(("x", "y"), catalog=catalog, graph=graph) is None
     modules = generate_inverted(workbook, _two_series_bindings())
     internals = modules["internals.py"]
     assert "eval_instance" in internals
-    assert "reversed(range(" in internals
-    pkg = load_package(modules, tmp_path, name="a13_lookahead")
-    assert pkg.compute_x() == (10.0, 10.0)
-    assert pkg.compute_y() == (1.0, 10.0)
 
 
 def test_same_column_cycle_still_fail_closed(tmp_path: Path) -> None:

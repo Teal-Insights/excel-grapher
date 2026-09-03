@@ -20,7 +20,12 @@ from excel_grapher.exporter.inverted_tree.schedule import (
     residual_body_order,
     schedule_coord,
 )
-from tests.unit.exporter.inverted_tree.helpers import inverted_graph_parts
+from tests.unit.exporter.inverted_tree.helpers import (
+    bindings_document,
+    inverted_graph_parts,
+    series_entry,
+    write_workbook,
+)
 from tests.unit.exporter.inverted_tree.test_shape_a11_zipper import (
     _cross_sheet_zipper_bindings,
     _cross_sheet_zipper_workbook,
@@ -191,3 +196,61 @@ def test_identity_join_does_not_rescan_join_domain(tmp_path: Path, monkeypatch) 
     assert identity_join_indices(host, producer, catalog) == (1, 2)
     assert domain_calls["n"] == 0
     assert distance_calls["n"] == 0
+
+
+def test_plan_fused_scc_for_lookahead_reversed_direction(tmp_path: Path) -> None:
+    wb = write_workbook(
+        tmp_path / "lookahead_plan.xlsx",
+        {
+            "Engine": {
+                "A1": 2009,
+                "B1": 2010,
+                "C1": 2011,
+                "A2": "=B2*0.9+A3",
+                "B2": "=C2*0.9+B3",
+                "C2": "=100",
+                "A3": "=B2*0.01",
+                "B3": "=C2*0.01",
+            },
+        },
+    )
+    doc = bindings_document(
+        series_entry("value", "Engine!A2:C2", layout="series", direction="output", header_row=1),
+        series_entry("flow", "Engine!A3:B3", layout="series", direction="internal", header_row=1),
+    )
+    catalog, _deps, graph = inverted_graph_parts(wb, doc)
+    plan = plan_fused_scc(("value", "flow"), catalog=catalog, graph=graph)
+    assert plan is not None
+    assert plan.direction == "reversed"
+    assert plan.schedule == (2, 1, 0)
+    assert plan.domain["value"] == (0, 3)
+    assert plan.domain["flow"] == (1, 3)
+    assert plan.regions == (
+        FusedRegion(start=0, stop=1, body_order=("value",)),
+        FusedRegion(start=1, stop=3, body_order=("flow", "value")),
+    )
+
+
+def test_plan_fused_scc_rejects_mixed_signs(tmp_path: Path) -> None:
+    wb = write_workbook(
+        tmp_path / "mixed_plan.xlsx",
+        {
+            "Engine": {
+                "A1": 2009,
+                "B1": 2010,
+                "C1": 2011,
+                "A2": "=100",
+                "B2": "=A2+C3",
+                "C2": "=B2+10",
+                "A3": "=B2*0.1",
+                "B3": "=A2*0.1",
+                "C3": "=10",
+            },
+        },
+    )
+    doc = bindings_document(
+        series_entry("s1", "Engine!A2:C2", layout="series", direction="output", header_row=1),
+        series_entry("s2", "Engine!A3:C3", layout="series", direction="internal", header_row=1),
+    )
+    catalog, _deps, graph = inverted_graph_parts(wb, doc)
+    assert plan_fused_scc(("s1", "s2"), catalog=catalog, graph=graph) is None

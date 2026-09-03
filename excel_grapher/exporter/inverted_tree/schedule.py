@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from excel_grapher.core.address_keys import (
     normalize_key as normalize_address,
@@ -513,6 +513,12 @@ class FusedPlan:
     schedule: tuple[int, ...]
     domain: dict[str, tuple[int, int]]
     regions: tuple[FusedRegion, ...]
+    direction: Literal["forward", "reversed"] = "forward"
+
+    @property
+    def coord_to_t(self) -> dict[int, int]:
+        """Map each schedule coordinate to its union index `t`."""
+        return {coord: index for index, coord in enumerate(self.schedule)}
 
     @property
     def body_order(self) -> tuple[str, ...]:
@@ -539,8 +545,8 @@ def _contiguous_domain(
         locals_.append(coord_to_t[coord])
     if not locals_:
         return None
-    start, stop = locals_[0], locals_[-1] + 1
-    if locals_ != list(range(start, stop)):
+    start, stop = min(locals_), max(locals_) + 1
+    if len(locals_) != stop - start or set(locals_) != set(range(start, stop)):
         return None
     return start, stop
 
@@ -549,14 +555,16 @@ def _statement_at_union(
     catalog: SeriesCatalog,
     series_id: str,
     union_t: int,
-    domain_start: int,
+    column: int,
 ) -> str:
     """Return the statement covering union index `union_t`."""
-    host_index = union_t - domain_start
     series = catalog.get(series_id)
+    if len(series.statements) <= 1:
+        return series_id
     for stmt in series.statements:
-        if stmt.start <= host_index < stmt.stop:
-            return stmt.statement_id
+        for cell in stmt.cells:
+            if schedule_coord(cell, catalog) == column:
+                return stmt.statement_id
     return series_id
 
 
@@ -612,9 +620,7 @@ def _column_region_key(
     order = _residual_order_at_column(active, edges, column, catalog)
     if order is None:
         return None
-    shape_sig = tuple(
-        (sid, _statement_at_union(catalog, sid, union_t, domain[sid][0])) for sid in active
-    )
+    shape_sig = tuple((sid, _statement_at_union(catalog, sid, union_t, column)) for sid in active)
     return order, shape_sig, _access_signature(active, edges, column, catalog)
 
 
@@ -665,9 +671,11 @@ def plan_fused_scc(
 ) -> FusedPlan | None:
     """Return a fused loop plan, or None when the SCC must stay on rung 3.
 
-    Requires no look-ahead edges and a contiguous domain per statement on the
-    union schedule. Residual order, formula shape, and access class may change
-    along the schedule; each distinct span becomes a `FusedRegion`.
+    Requires uniform loop direction (all intra-SCC nonzero distances positive
+    for a forward loop, or all negative for a reversed loop) and a contiguous
+    domain per statement on the union schedule. Residual order, formula shape,
+    and access class may change along the schedule; each distinct span becomes
+    a `FusedRegion`.
 
     Raises:
         InvertedTreeExportError: Some index's residual is a real same-index
@@ -678,11 +686,16 @@ def plan_fused_scc(
     members = set(scc)
     edges = collect_dependence_edges(catalog, graph, scc)
     intra = [edge for edge in edges if edge.consumer_id in members and edge.producer_id in members]
-    if any(edge.distance < 0 for edge in intra):
+    nonzero = [edge.distance for edge in intra if edge.distance != 0]
+    has_pos = any(d > 0 for d in nonzero)
+    has_neg = any(d < 0 for d in nonzero)
+    if has_pos and has_neg:
         return None
+    direction: Literal["forward", "reversed"] = "reversed" if has_neg else "forward"
     assert_distance_zero_legal(scc, edges, catalog)
     coords = sorted(
-        {schedule_coord(addr, catalog) for sid in scc for addr in catalog.get(sid).cells}
+        {schedule_coord(addr, catalog) for sid in scc for addr in catalog.get(sid).cells},
+        reverse=(direction == "reversed"),
     )
     if not coords:
         return None
@@ -701,6 +714,7 @@ def plan_fused_scc(
         schedule=tuple(coords),
         domain=domain,
         regions=regions,
+        direction=direction,
     )
 
 

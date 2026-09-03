@@ -75,6 +75,37 @@ def _vertical_terminal_bindings() -> dict:
     )
 
 
+def _stride2_terminal_workbook(tmp_path: Path) -> Path:
+    """Non-unit stride (distance -2) cannot use a scan; falls through to rung 3."""
+    return write_workbook(
+        tmp_path / "a19_stride2.xlsx",
+        {
+            "Engine": {
+                "A1": 2009,
+                "B1": 2010,
+                "C1": 2011,
+                "D1": 2012,
+                "A2": "=C2*0.5",
+                "B2": "=D2*0.5",
+                "C2": "=100",
+                "D2": "=200",
+            },
+        },
+    )
+
+
+def _stride2_terminal_bindings() -> dict:
+    return bindings_document(
+        series_entry(
+            "value",
+            "Engine!A2:D2",
+            layout="series",
+            direction="output",
+            header_row=1,
+        ),
+    )
+
+
 @pytest.mark.parametrize(
     ("workbook_fn", "bindings_fn", "cells", "pkg_name"),
     [
@@ -93,7 +124,7 @@ def _vertical_terminal_bindings() -> dict:
     ],
     ids=["horizontal", "vertical"],
 )
-def test_backward_recursion_emits_rung3_and_matches_evaluator(
+def test_backward_recursion_emits_reversed_scan_and_matches_evaluator(
     tmp_path: Path,
     workbook_fn,
     bindings_fn,
@@ -103,8 +134,8 @@ def test_backward_recursion_emits_rung3_and_matches_evaluator(
     workbook = workbook_fn(tmp_path)
     modules = generate_inverted(workbook, bindings_fn())
     internals = modules["internals.py"]
-    assert "eval_instance" in internals
-    assert "non-lag cell" not in internals
+    assert "eval_instance" not in internals
+    assert "reversed(range(" in internals
     pkg = load_package(modules, tmp_path, name=pkg_name)
     graph = create_dependency_graph(workbook, cells, load_values=True)
     assert graph.cycle_report().has_must_cycles is False
@@ -114,8 +145,24 @@ def test_backward_recursion_emits_rung3_and_matches_evaluator(
     assert got == pytest.approx((81.0, 90.0, 100.0))
 
 
+def test_irregular_recurrence_emits_rung3_and_matches_evaluator(tmp_path: Path) -> None:
+    """Stride-2 look-ahead cannot use Rung 1; falls through to demand floor."""
+    workbook = _stride2_terminal_workbook(tmp_path)
+    doc = _stride2_terminal_bindings()
+    cells = ["Engine!A2", "Engine!B2", "Engine!C2", "Engine!D2"]
+    modules = generate_inverted(workbook, doc)
+    internals = modules["internals.py"]
+    assert "eval_instance" in internals
+    pkg = load_package(modules, tmp_path, name="a19_stride2")
+    graph = create_dependency_graph(workbook, cells, load_values=True)
+    expected = FormulaEvaluator(graph).evaluate(cells)
+    got = pkg.compute_value()
+    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
+    assert got == pytest.approx((50.0, 100.0, 100.0, 200.0))
+
+
 def test_backward_chain_large_n_matches_closed_form(tmp_path: Path) -> None:
-    """Rung-3 backward chain must not hit RecursionError at large N (gh #615)."""
+    """Backward chain must not hit RecursionError at large N (gh #614, #615)."""
     n = 5000
     cells: dict[str, object] = {}
     for c in range(1, n + 1):
@@ -138,7 +185,7 @@ def test_backward_chain_large_n_matches_closed_form(tmp_path: Path) -> None:
     )
     modules = generate_inverted(workbook, doc)
     internals = modules["internals.py"]
-    assert "eval_instance" in internals
+    assert "eval_instance" not in internals
     assert "reversed(range(" in internals
     pkg = load_package(modules, tmp_path, name="a19_back_5000")
     got = pkg.compute_value()
