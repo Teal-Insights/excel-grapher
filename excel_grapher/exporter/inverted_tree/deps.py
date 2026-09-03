@@ -57,16 +57,48 @@ def _layout_distance(consumer: str, producer: str, catalog: SeriesCatalog) -> in
     return schedule_coord(consumer, catalog) - schedule_coord(producer, catalog)
 
 
+def identity_join_indices(
+    host: BoundSeries,
+    producer: BoundSeries,
+    catalog: SeriesCatalog,
+) -> tuple[int, ...]:
+    """Return producer catalog slots for each host member on the schedule axis.
+
+    A hole is `-1` when no producer member shares the host's schedule
+    coordinate. The join uses the same distance as `DependenceEdge` (`0`
+    means identity).
+
+    Raises:
+        InvertedTreeExportError: Two producer members share one host
+            coordinate.
+    """
+    slots: list[int] = []
+    for host_cell in host.cells:
+        matches = [
+            index
+            for index, producer_cell in enumerate(producer.cells)
+            if _layout_distance(host_cell, producer_cell, catalog) == 0
+        ]
+        if len(matches) > 1:
+            raise InvertedTreeExportError(
+                f"identity join of {host.series_id!r} onto {producer.series_id!r} "
+                f"is ambiguous at {host_cell}: duplicate schedule keys "
+                f"{tuple(producer.cells[index] for index in matches)}"
+            )
+        slots.append(-1 if not matches else matches[0])
+    return tuple(slots)
+
+
 def _member_access(
-    host_index: int,
+    consumer_cell: str,
     producer: BoundSeries,
     producer_cell: str,
+    catalog: SeriesCatalog,
 ) -> AccessClass:
-    """Classify a cell-ref by series member indices (`f(i) = i` vs `i - k`)."""
-    prod_index = producer.index_of(producer_cell)
-    if prod_index is None:
+    """Classify a cell-ref by schedule distance (`0` is identity)."""
+    if producer.index_of(producer_cell) is None:
         return "gather"
-    if host_index == prod_index:
+    if _layout_distance(consumer_cell, producer_cell, catalog) == 0:
         return "identity"
     return "shift"
 
@@ -160,8 +192,10 @@ class DependenceEdge:
 
     `distance` is `coord(consumer) - coord(producer)` in the schedule domain
     (position in the ordered key-point join, or expansion order). Positive
-    means the producer is an earlier period (a `pre` / lag). `access` is the
-    series-index map: `identity` is `f(i) = i`, `shift` is `f(i) = i - k`.
+    means the producer is an earlier period (a `pre` / lag). `access` is
+    `identity` when that distance is `0`, `shift` when it is a nonzero
+    regular step, and catalog-index `f(i) = i` only as a fallback when
+    key fields do not join.
     """
 
     consumer_id: str
@@ -208,7 +242,7 @@ class _DepCollector:
                     producer_id=owner.series_id,
                     host_cell=host_cell,
                     producer_cell=address,
-                    access=_member_access(host_index, owner, address),
+                    access=_member_access(host_cell, owner, address, self.catalog),
                 )
                 return
             if normalize_address(address) == self.host.cells[host_index]:
@@ -221,7 +255,7 @@ class _DepCollector:
             producer_id=owner.series_id,
             host_cell=host_cell,
             producer_cell=address,
-            access=_member_access(host_index, owner, address),
+            access=_member_access(host_cell, owner, address, self.catalog),
         )
 
     def emit_lookup(
@@ -467,6 +501,14 @@ def series_deps_from_edges(
     aligned: set[str] = set()
     lagged: set[str] = set()
     host_n = len(host.cells)
+    identity_by_producer: dict[str, list[DependenceEdge]] = {}
+    for edge in edges:
+        if (
+            edge.consumer_id == host.series_id
+            and edge.access == "identity"
+            and edge.producer_id != host.series_id
+        ):
+            identity_by_producer.setdefault(edge.producer_id, []).append(edge)
     for series_id, pairs in aligned_hits.items():
         if series_id in lookup_ids or series_id == seed_id:
             continue
@@ -495,11 +537,25 @@ def series_deps_from_edges(
                 slots[host_i] = hi
             else:
                 slots[host_i] = next(iter(indices))
+        joined = identity_join_indices(host, dep, catalog)
+        for edge in identity_by_producer.get(series_id, ()):
+            host_index = host.index_of(edge.consumer_cell)
+            if host_index is None:
+                continue
+            slot = joined[host_index]
+            if slot < 0 or normalize_address(dep.cells[slot]) != normalize_address(
+                edge.producer_cell
+            ):
+                raise InvertedTreeExportError(
+                    f"series {host.series_id!r} cell {edge.consumer_cell} "
+                    f"identity-reads {edge.producer_cell}, not the join slot "
+                    f"of {series_id!r}"
+                )
         if saw_lag:
             lagged.add(series_id)
             continue
-        if all(slot >= 0 for slot in slots):
-            index_maps[series_id] = tuple(slots)
+        if all(slot >= 0 for slot in slots) and tuple(slots) == joined:
+            index_maps[series_id] = joined
             aligned.add(series_id)
     return SeriesDeps(
         host_id=host.series_id,
