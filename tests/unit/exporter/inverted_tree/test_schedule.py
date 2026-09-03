@@ -57,6 +57,15 @@ def test_distance_zero_cycle_is_illegal() -> None:
         residual_body_order(("debt", "adjustment"), edges)
 
 
+def test_distance_zero_guarded_cycle_is_legal_and_demotes() -> None:
+    edges = (
+        DependenceEdge("debt", "adjustment", "Engine!B2", "Engine!B3", 0, guarded=True),
+        DependenceEdge("adjustment", "debt", "Engine!B3", "Engine!B2", 0, guarded=False),
+    )
+    schedule_mod.assert_distance_zero_legal(("debt", "adjustment"), edges)
+    assert residual_body_order(("debt", "adjustment"), edges) is None
+
+
 def test_identity_flip_has_no_single_body_order() -> None:
     edges = (
         DependenceEdge("x", "y", "Engine!A2", "Engine!A4", 0),

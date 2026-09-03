@@ -17,7 +17,12 @@ from excel_grapher.exporter.inverted_tree.schedule import (
     plan_fused_scc,
     residual_body_order,
 )
-from tests.unit.exporter.inverted_tree.helpers import inverted_graph_parts
+from tests.unit.exporter.inverted_tree.helpers import (
+    bindings_document,
+    inverted_graph_parts,
+    series_entry,
+    write_workbook,
+)
 from tests.unit.exporter.inverted_tree.test_shape_a1_leaf_closure import (
     _a1_bindings,
     _a1_workbook,
@@ -129,3 +134,27 @@ def test_simultaneous_workbook_residual_names_cells(tmp_path: Path) -> None:
     assert "adjustment" in message
     assert "Engine!B2" in message or "Engine!C2" in message
     assert "index 1" in message or "index 2" in message
+
+
+def test_collect_dependence_edges_records_guarded_flag(tmp_path: Path) -> None:
+    wb = write_workbook(
+        tmp_path / "guarded_edges.xlsx",
+        {
+            "Engine": {
+                "A1": 0,
+                "B1": "=IF($A$1=1, C1, 10)",
+                "C1": "=B1*2",
+            },
+        },
+    )
+    bindings = bindings_document(
+        series_entry("flag", "Engine!A1", layout="scalar", direction="input"),
+        series_entry("b", "Engine!B1", layout="scalar", direction="output"),
+        series_entry("c", "Engine!C1", layout="scalar", direction="output"),
+    )
+    catalog, _deps, graph = inverted_graph_parts(wb, bindings)
+    edges = collect_all_dependence_edges(catalog, graph)
+    b_to_c = next(e for e in edges if e.consumer_id == "b" and e.producer_id == "c")
+    c_to_b = next(e for e in edges if e.consumer_id == "c" and e.producer_id == "b")
+    assert b_to_c.guarded is True
+    assert c_to_b.guarded is False

@@ -259,7 +259,8 @@ class DependenceEdge:
     means the producer is an earlier period (a `pre` / lag). `access` is
     `identity` when that distance is `0`, `shift` when it is a nonzero
     regular step, and `affine` when catalog-index `f(i) = coeff * i + offset`
-    has `coeff != 1`.
+    has `coeff != 1`. `guarded` is True when the read is guarded by a
+    conditional in the dependency graph.
     """
 
     consumer_id: str
@@ -270,12 +271,14 @@ class DependenceEdge:
     access: AccessClass = "identity"
     coeff: int | None = None
     offset: int | None = None
+    guarded: bool = False
 
 
 @dataclass
 class _DepCollector:
     host: BoundSeries
     catalog: SeriesCatalog
+    graph: DependencyGraph | None = None
     edges: list[DependenceEdge] = field(default_factory=list)
 
     def _emit(
@@ -288,6 +291,9 @@ class _DepCollector:
     ) -> None:
         consumer_cell = normalize_address(host_cell)
         producer_cell = normalize_address(producer_cell)
+        guarded = (
+            self.graph.is_guarded(consumer_cell, producer_cell) if self.graph is not None else False
+        )
         self.edges.append(
             DependenceEdge(
                 consumer_id=self.host.series_id,
@@ -296,6 +302,7 @@ class _DepCollector:
                 producer_cell=producer_cell,
                 distance=_layout_distance(consumer_cell, producer_cell, self.catalog),
                 access=access,
+                guarded=guarded,
             )
         )
 
@@ -526,7 +533,7 @@ def collect_series_edges(
     graph: DependencyGraph,
 ) -> list[DependenceEdge]:
     """Walk `series` formulas and return classified instance-level edges."""
-    collector = _DepCollector(host=series, catalog=catalog)
+    collector = _DepCollector(host=series, catalog=catalog, graph=graph)
     for index, address in enumerate(series.cells):
         ast = node_formula_ast(graph, address)
         collector.visit(ast, host_cell=address, host_index=index)

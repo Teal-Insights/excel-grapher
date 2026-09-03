@@ -732,9 +732,12 @@ def emit_rung3_scc(
     )
     returned: list[str] = []
     for sid in scc:
-        n = len(catalog.get(sid).cells)
+        series = catalog.get(sid)
+        n = len(series.cells)
         fn = compute_names[sid]
-        if reverse_drive:
+        if series.is_scalar:
+            lines.append(f"    {sid} = eval_instance({sid!r}, 0, {fn}, memo, stack)")
+        elif reverse_drive:
             lines.append(
                 f"    {sid} = tuple(eval_instance({sid!r}, i, {fn}, memo, stack) for i in reversed(range({n})))[::-1]"
             )
@@ -895,6 +898,9 @@ def emit_rung2_scc(
     returned_items: list[str] = []
     for sid in scc:
         series = catalog.get(sid)
+        if series.is_scalar:
+            returned_items.append(f"{sid}[0]")
+            continue
         if len(series.cells) > 1:
             u_first = plan.coord_to_t[schedule_coord(series.cells[0], catalog)]
             u_last = plan.coord_to_t[schedule_coord(series.cells[-1], catalog)]

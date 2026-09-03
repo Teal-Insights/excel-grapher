@@ -581,7 +581,7 @@ def _residual_order_at_column(
     for edge in _zero_distance_edges(members, edges):
         if schedule_coord(edge.consumer_cell, catalog) != column:
             continue
-        _add_residual_edge(residual, edge, members, index=column)
+        _add_residual_edge(residual, edge)
     return _topo_order(members, residual)
 
 
@@ -693,6 +693,8 @@ def plan_fused_scc(
         return None
     direction: Literal["forward", "reversed"] = "reversed" if has_neg else "forward"
     assert_distance_zero_legal(scc, edges, catalog)
+    if has_residual_may_cycle(scc, edges, catalog):
+        return None
     coords = sorted(
         {schedule_coord(addr, catalog) for sid in scc for addr in catalog.get(sid).cells},
         reverse=(direction == "reversed"),
@@ -740,16 +742,7 @@ def _empty_residual(scc: tuple[str, ...]) -> dict[str, list[str]]:
 def _add_residual_edge(
     residual: dict[str, list[str]],
     edge: DependenceEdge,
-    scc: tuple[str, ...],
-    *,
-    index: int,
 ) -> None:
-    if edge.consumer_id == edge.producer_id:
-        raise InvertedTreeExportError(
-            f"distance-zero residual of zipper series {list(scc)!r} is cyclic "
-            f"at index {index} ({edge.consumer_id} {edge.consumer_cell} reads "
-            f"{edge.producer_id} {edge.producer_cell})"
-        )
     residual[edge.consumer_id].append(edge.producer_id)
 
 
@@ -820,6 +813,16 @@ def _residual_cycle_message(
             if schedule_coord(edge.consumer_cell, catalog) == index
             and edge.consumer_id == consumer_id
             and edge.producer_id == producer_id
+            and not edge.guarded
+        ),
+        None,
+    ) or next(
+        (
+            edge
+            for edge in _zero_distance_edges(scc, edges)
+            if schedule_coord(edge.consumer_cell, catalog) == index
+            and edge.consumer_id == consumer_id
+            and edge.producer_id == producer_id
         ),
         None,
     )
@@ -836,25 +839,41 @@ def assert_distance_zero_legal(
     edges: Sequence[DependenceEdge],
     catalog: SeriesCatalog | None = None,
 ) -> None:
-    """Fail closed when some schedule index has a same-index cycle.
+    """Fail closed when some schedule index has an unconditional same-index cycle.
 
-    Distance-zero edges from different index points are not contracted. A
-    cycle in the union of those edges is a regime flip, not a circular
-    reference.
+    A cycle with no guarded edges is a must-cycle and raises at plan time.
+    A cycle passing through at least one guarded edge is a may-cycle and
+    is decided at runtime (demoted to rung 3).
 
     Raises:
-        InvertedTreeExportError: Some index's residual still has a cycle.
+        InvertedTreeExportError: Some index's residual has an unconditional cycle.
     """
     by_index: dict[int, dict[str, list[str]]] = {}
     for edge in _zero_distance_edges(scc, edges):
+        if edge.guarded:
+            continue
         index = schedule_coord(edge.consumer_cell, catalog)
         residual = by_index.setdefault(index, _empty_residual(scc))
-        _add_residual_edge(residual, edge, scc, index=index)
+        _add_residual_edge(residual, edge)
     for index, residual in by_index.items():
         if _topo_order(scc, residual) is None:
             raise InvertedTreeExportError(
                 _residual_cycle_message(scc, index, residual, edges, catalog)
             )
+
+
+def has_residual_may_cycle(
+    scc: tuple[str, ...],
+    edges: Sequence[DependenceEdge],
+    catalog: SeriesCatalog | None = None,
+) -> bool:
+    """Return True if any schedule index has a residual cycle using guarded edges."""
+    by_index: dict[int, dict[str, list[str]]] = {}
+    for edge in _zero_distance_edges(scc, edges):
+        index = schedule_coord(edge.consumer_cell, catalog)
+        residual = by_index.setdefault(index, _empty_residual(scc))
+        _add_residual_edge(residual, edge)
+    return any(_topo_order(scc, residual) is None for residual in by_index.values())
 
 
 def residual_body_order(
@@ -871,7 +890,7 @@ def residual_body_order(
     assert_distance_zero_legal(scc, edges, catalog)
     union = _empty_residual(scc)
     for edge in _zero_distance_edges(scc, edges):
-        _add_residual_edge(union, edge, scc, index=schedule_coord(edge.consumer_cell, catalog))
+        _add_residual_edge(union, edge)
     return _topo_order(scc, union)
 
 
@@ -882,9 +901,9 @@ def build_scc_map(
 ) -> dict[str, tuple[str, ...]]:
     """Map each formula series to its SCC (bindings order).
 
-    Multi-series SCCs fail closed only when some schedule index has a
-    same-index cycle. A residual order that changes across index points is
-    legal and is fused region-locally when each span has a residual DAG.
+    Multi-series SCCs fail closed only when some schedule index has an
+    unconditional same-index must-cycle. May-cycles through guarded edges
+    do not raise here; they demote to rung 3 in plan_fused_scc.
     """
     ids = [series.series_id for series in catalog.formula_series()]
     mapping: dict[str, tuple[str, ...]] = {}
