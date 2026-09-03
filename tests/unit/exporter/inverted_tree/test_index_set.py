@@ -5,9 +5,9 @@ from __future__ import annotations
 import pytest
 
 from excel_grapher.exporter.inverted_tree.catalog import fit_affine_map
+from excel_grapher.exporter.inverted_tree.deps import DependenceEdge
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.schedule import (
-    DependenceEdge,
     IndexSet,
     indices_to_source,
 )

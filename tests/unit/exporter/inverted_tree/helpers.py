@@ -20,7 +20,12 @@ from excel_grapher.core.address_keys import (
     parse_address,
     split_address_on_colon,
 )
-from excel_grapher.exporter.inverted_tree.catalog import SeriesCatalog, build_catalog
+from excel_grapher.exporter.inverted_tree.catalog import (
+    BoundSeries,
+    SeriesCatalog,
+    build_catalog,
+    build_schedule_index,
+)
 from excel_grapher.exporter.inverted_tree.deps import SeriesDeps, collect_all_deps
 from excel_grapher.exporter.inverted_tree.emit import generate_inverted_tree_modules
 from excel_grapher.grapher import create_dependency_graph
@@ -37,6 +42,20 @@ _FORMULA_A1_RE = re.compile(
     r"(?P<coord>\$?[A-Za-z]{1,3}\$?\d+)"
     r"(?![A-Za-z0-9_(])"
 )
+
+
+def make_catalog(
+    series: dict[str, BoundSeries],
+    order: tuple[str, ...],
+    address_to_id: dict[str, str],
+) -> SeriesCatalog:
+    """Assemble a catalog, computing the schedule index from `series`."""
+    return SeriesCatalog(
+        series=series,
+        order=order,
+        address_to_id=address_to_id,
+        schedule=build_schedule_index(series),
+    )
 
 
 def write_workbook(path: Path, sheets: Mapping[str, Mapping[str, object]]) -> Path:

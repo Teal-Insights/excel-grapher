@@ -7,13 +7,13 @@ from pathlib import Path
 import pytest
 
 from excel_grapher.exporter.inverted_tree.deps import (
+    DependenceEdge,
     collect_all_dependence_edges,
     collect_all_deps,
     series_deps_from_edges,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.schedule import (
-    DependenceEdge,
     plan_fused_scc,
     residual_body_order,
 )
@@ -23,6 +23,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     series_entry,
     write_workbook,
 )
+from tests.unit.exporter.inverted_tree.test_schedule import _catalog_from_edges
 from tests.unit.exporter.inverted_tree.test_shape_a1_leaf_closure import (
     _a1_bindings,
     _a1_workbook,
@@ -63,6 +64,8 @@ def test_a10_lag_edges_are_identity_and_shift(tmp_path: Path) -> None:
     assert derived.lagged_ids == frozenset({"debt"})
     assert derived.aligned_ids == frozenset()
     assert derived.lookup_ids == frozenset()
+    assert derived.edges
+    assert all(edge.consumer_id == "direction" for edge in derived.edges)
     assert derived == deps["direction"]
 
 
@@ -113,8 +116,9 @@ def test_distance_zero_cycle_names_statements_and_index() -> None:
         DependenceEdge("debt", "adjustment", "Engine!B2", "Engine!B3", 0),
         DependenceEdge("adjustment", "debt", "Engine!B3", "Engine!B2", 0),
     )
+    catalog = _catalog_from_edges(edges)
     with pytest.raises(InvertedTreeExportError, match="distance-zero residual") as exc:
-        residual_body_order(("debt", "adjustment"), edges)
+        residual_body_order(("debt", "adjustment"), edges, catalog)
     message = str(exc.value)
     assert "debt" in message
     assert "adjustment" in message
