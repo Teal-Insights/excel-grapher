@@ -8,6 +8,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from excel_grapher.core.address_keys import normalize_key as normalize_address
+from excel_grapher.core.formula_ast import (
+    BinaryOpNode,
+    CellRefNode,
+    FunctionCallNode,
+    UnaryOpNode,
+    resolve_cell_ref,
+)
 from excel_grapher.core.formula_shape import fingerprint_formula_shape
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.series_bindings.normalize import (
@@ -261,14 +268,61 @@ def _formula_shape_key(graph: DependencyGraph, address: str) -> str | None:
     return fingerprint_formula_shape(ast).shape_key
 
 
-def _shape_partition(series: BoundSeries, graph: DependencyGraph) -> tuple[Statement, ...]:
+def _iter_cell_refs(node: object) -> Iterable[CellRefNode]:
+    match node:
+        case CellRefNode():
+            yield node
+        case BinaryOpNode(left=left, right=right):
+            yield from _iter_cell_refs(left)
+            yield from _iter_cell_refs(right)
+        case UnaryOpNode(operand=operand):
+            yield from _iter_cell_refs(operand)
+        case FunctionCallNode(args=args):
+            for arg in args:
+                yield from _iter_cell_refs(arg)
+        case _:
+            return
+
+
+def _cell_access_sig(
+    catalog: SeriesCatalog,
+    graph: DependencyGraph,
+    host_index: int,
+    address: str,
+) -> tuple[tuple[str, int], ...]:
+    """Return `(producer_id, catalog_index - host_index)` for each cell ref."""
+    node = graph.get_node(normalize_address(address))
+    ast = getattr(node, "formula_ast", None) if node is not None else None
+    if ast is None:
+        return ()
+    found: list[tuple[str, int]] = []
+    for ref in _iter_cell_refs(ast):
+        resolved = resolve_cell_ref(ref, address)
+        owner_id = catalog.series_id_for(resolved)
+        if owner_id is None:
+            found.append(("?", 0))
+            continue
+        idx = catalog.get(owner_id).index_of(resolved)
+        offset = 0 if idx is None else idx - host_index
+        found.append((owner_id, offset))
+    return tuple(found)
+
+
+def _shape_partition(
+    series: BoundSeries,
+    catalog: SeriesCatalog,
+    graph: DependencyGraph,
+) -> tuple[Statement, ...]:
     runs: list[tuple[str | None, int, int]] = []
+    prev_group: tuple[str | None, tuple[tuple[str, int], ...]] | None = None
     for index, address in enumerate(series.cells):
-        key = _formula_shape_key(graph, address)
-        if runs and runs[-1][0] == key:
-            runs[-1] = (key, runs[-1][1], index + 1)
+        shape = _formula_shape_key(graph, address)
+        group = (shape, _cell_access_sig(catalog, graph, index, address))
+        if runs and prev_group == group:
+            runs[-1] = (shape, runs[-1][1], index + 1)
         else:
-            runs.append((key, index, index + 1))
+            runs.append((shape, index, index + 1))
+            prev_group = group
     if not runs:
         return (_whole_statement(series.series_id, series.cells, series.domain),)
     if len(runs) == 1:
@@ -291,7 +345,7 @@ def _shape_partition(series: BoundSeries, graph: DependencyGraph) -> tuple[State
 def partition_catalog(catalog: SeriesCatalog, graph: DependencyGraph) -> SeriesCatalog:
     """Split each series into consecutive formula-shape statements."""
     series_map = {
-        series_id: replace(series, statements=_shape_partition(series, graph))
+        series_id: replace(series, statements=_shape_partition(series, catalog, graph))
         for series_id, series in catalog.series.items()
     }
     return SeriesCatalog(

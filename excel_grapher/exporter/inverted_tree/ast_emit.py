@@ -187,12 +187,12 @@ def _emit_cell_ref(node: CellRefNode, ctx: EmitContext) -> str:
         return f"{name}[{ctx.index_var} - {-offset}]"
     if owner.series_id in ctx.deps.aligned_ids and ctx.index_var is not None:
         return f"{name}[{ctx.index_var}]"
+    if idx is not None and ctx.index_var is not None and owner.is_sequence:
+        return f"{name}[{_index_expr(idx - ctx.host_index, ctx.index_var)}]"
     if idx is not None and ctx.index_var is None:
         return f"{name}[{idx}]" if not owner.is_scalar else name
     if owner.series_id in ctx.deps.lookup_ids:
         return name
-    if ctx.index_var is not None and owner.is_sequence:
-        return f"{name}[{ctx.index_var}]"
     return name
 
 
