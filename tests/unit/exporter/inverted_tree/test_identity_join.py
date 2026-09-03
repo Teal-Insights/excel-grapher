@@ -26,6 +26,11 @@ from tests.unit.exporter.inverted_tree.test_shape_a18_splice import (
     _splice_bindings,
     _splice_workbook,
 )
+from tests.unit.exporter.inverted_tree.test_shape_a20_matrix_join import (
+    _elementwise_bindings,
+    _elementwise_workbook,
+    _matrix_entry,
+)
 
 
 def _time_series(series_id: str, data_range: str, *, internal: bool = False) -> dict:
@@ -71,6 +76,59 @@ def test_splice_prefix_is_identity_join_to_last_growth_year(tmp_path: Path) -> N
     )
     assert prefix.access == "identity"
     assert prefix.producer_cell == "Engine!D3"
+
+
+def test_matrix_identity_join_uses_full_key_tuple(tmp_path: Path) -> None:
+    """A (REF_AREA, TIME_PERIOD) matrix joins on the full key tuple (#612).
+
+    The schedule coordinate is the position of the whole key tuple, so two
+    countries in the same year no longer collide on one coordinate.
+    """
+    catalog, deps, _graph = inverted_graph_parts(
+        _elementwise_workbook(tmp_path), _elementwise_bindings()
+    )
+    ratio = catalog.get("ratio")
+    revenue = catalog.get("revenue")
+    gdp = catalog.get("gdp")
+    assert identity_join_indices(ratio, revenue, catalog) == (0, 1, 2, 3)
+    assert identity_join_indices(ratio, gdp, catalog) == (0, 1, 2, 3)
+    assert deps["ratio"].index_maps["revenue"] == (0, 1, 2, 3)
+    coords = [schedule_coord(cell, catalog) for cell in revenue.cells]
+    assert coords == [0, 1, 2, 3]
+    assert len(set(coords)) == len(coords)
+
+
+def test_duplicate_matrix_key_identity_join_fails_closed(tmp_path: Path) -> None:
+    """Two producer members with one full key tuple stay ambiguous (#612)."""
+    workbook = write_workbook(
+        tmp_path / "dup_matrix_key.xlsx",
+        {
+            "Engine": {
+                "B1": 2020,
+                "A2": "France",
+                "B2": 100.0,
+                "A3": "France",
+                "B3": 110.0,
+                "B4": 2020,
+                "A5": "France",
+                "B5": 10.0,
+                "A6": "France",
+                "B6": 11.0,
+                "B7": 2020,
+                "A8": "France",
+                "B8": "=B5/B2",
+                "A9": "France",
+                "B9": "=B6/B3",
+            },
+        },
+    )
+    bindings = bindings_document(
+        _matrix_entry("gdp", "Engine!B2:B3", header_row=1),
+        _matrix_entry("revenue", "Engine!B5:B6", header_row=4),
+        _matrix_entry("ratio", "Engine!B8:B9", header_row=7, direction="output"),
+    )
+    with pytest.raises(InvertedTreeExportError, match="duplicate schedule keys"):
+        inverted_graph_parts(workbook, bindings)
 
 
 def test_duplicate_time_period_identity_join_fails_closed(tmp_path: Path) -> None:

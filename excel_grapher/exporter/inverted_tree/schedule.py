@@ -311,16 +311,19 @@ class ScheduleIndex:
 def _compute_preferred_fields(series: BoundSeries) -> tuple[str, ...] | None:
     """Return join fields for `series` when every member's KeyPoint resolves.
 
-    `TIME_PERIOD` is the schedule axis when it is present and resolved.
+    The preferred fields are the full key tuple, so a matrix is a loop nest —
+    outer over the leading key fields, inner over `TIME_PERIOD` — and the
+    identity join is unambiguous by construction (#612). `TIME_PERIOD` alone
+    is the fallback when a non-time key field does not resolve.
     """
     if not series.key_fields or len(series.domain) != len(series.cells):
         return None
+    if all(_join_key(point, series.key_fields) is not None for point in series.domain):
+        return tuple(series.key_fields)
     if "TIME_PERIOD" in series.key_fields and all(
         _join_key(point, ("TIME_PERIOD",)) is not None for point in series.domain
     ):
         return ("TIME_PERIOD",)
-    if all(_join_key(point, series.key_fields) is not None for point in series.domain):
-        return series.key_fields
     return None
 
 
@@ -393,11 +396,12 @@ def schedule_coord(address: str, catalog: SeriesCatalog | None = None) -> int:
     """Return the member's position in the catalog's ordered index domain.
 
     When `catalog` is given and the cell's `KeyPoint` resolves, the coordinate
-    is the position of that key in the joined domain (`TIME_PERIOD` when it
-    is present). Otherwise the coordinate is the member's expansion-order
-    index. Without a catalog the spreadsheet column is the only available
-    proxy, and is not valid across sheets. Coordinates are computed once per
-    catalog and reused.
+    is the position of the full key tuple in the joined domain — a loop nest
+    with `TIME_PERIOD` as the inner schedule axis (#612). When only
+    `TIME_PERIOD` resolves, its position is the coordinate. Otherwise the
+    coordinate is the member's expansion-order index. Without a catalog the
+    spreadsheet column is the only available proxy, and is not valid across
+    sheets. Coordinates are computed once per catalog and reused.
     """
     if catalog is None:
         return parse_cell_coords(address)[2]
