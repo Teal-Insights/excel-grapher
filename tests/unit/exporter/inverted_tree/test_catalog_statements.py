@@ -21,7 +21,11 @@ from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.node import make_cell_node
 from excel_grapher.series_bindings import validate_bindings_document
-from excel_grapher.series_bindings.resolve import UnknownBindKindError, resolve_key_domain
+from excel_grapher.series_bindings.resolve import (
+    PartialKeyDomainError,
+    UnknownBindKindError,
+    resolve_key_domain,
+)
 from excel_grapher.series_bindings.workflow import all_series_targets
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
@@ -125,11 +129,71 @@ def test_typo_bind_kind_fails_closed_instead_of_empty_domain(tmp_path: Path) -> 
     document = _a12_bindings()
     document["series"][0]["structure"]["dimensions"][0]["bind"]["kind"] = "colum_header"
     entry = document["series"][0]
-    with pytest.raises(ValueError, match="key field") as exc:
+    with pytest.raises(UnknownBindKindError, match="key field") as exc_info:
         resolve_key_domain(workbook, entry, ("Engine!A2", "Engine!B2", "Engine!C2"))
-    assert isinstance(exc.value.__cause__, UnknownBindKindError)
+    assert exc_info.value.kind == "colum_header"
+    assert exc_info.value.series_id == "path"
     with pytest.raises(InvertedTreeExportError, match="key field"):
         build_catalog(document, workbook=workbook)
+
+
+def test_empty_key_domain_is_one_empty_dict_per_cell(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "empty_key.xlsx",
+        {
+            "Engine": {
+                "A1": 2009,
+                "B1": 2010,
+                "A2": 1.0,
+                "B2": 2.0,
+            },
+        },
+    )
+    entry = series_entry(
+        "values",
+        "Engine!A2:B2",
+        layout="series",
+        direction="input",
+        header_row=1,
+        key=[],
+    )
+    assert resolve_key_domain(workbook, entry, ("Engine!A2", "Engine!B2")) == ({}, {})
+    catalog = build_catalog(bindings_document(entry), workbook=workbook)
+    assert catalog.get("values").key_fields == ()
+    assert [point.as_mapping() for point in catalog.get("values").domain] == [{}, {}]
+
+
+def test_blank_time_period_header_fails_closed_with_cell_named(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "blank_header.xlsx",
+        {
+            "Engine": {
+                "A1": 2009,
+                "B1": "",
+                "C1": 2011,
+                "A2": 1.0,
+                "B2": 2.0,
+                "C2": 3.0,
+            },
+        },
+    )
+    document = bindings_document(
+        series_entry(
+            "values",
+            "Engine!A2:C2",
+            layout="series",
+            direction="input",
+            header_row=1,
+        ),
+    )
+    entry = document["series"][0]
+    with pytest.raises(PartialKeyDomainError) as exc_info:
+        resolve_key_domain(workbook, entry, ("Engine!A2", "Engine!B2", "Engine!C2"))
+    assert exc_info.value.series_id == "values"
+    assert "Engine!B2" in exc_info.value.unresolved
+    assert "TIME_PERIOD" in exc_info.value.unresolved["Engine!B2"]
+    with pytest.raises(InvertedTreeExportError, match="Engine!B2"):
+        build_catalog(validate_bindings_document(document), workbook=workbook)
 
 
 def test_partition_catalog_large_constant_series_performance() -> None:

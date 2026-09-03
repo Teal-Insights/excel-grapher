@@ -87,7 +87,7 @@ def series_entry(
                 "bind": {"kind": "column_header", "header_row": header_row, "read": key_read},
             }
         )
-        if not key_fields:
+        if key is None:
             key_fields = [key_concept]
     elif layout in {"series", "row_series"} and label_column is not None:
         dimensions.append(
@@ -98,7 +98,7 @@ def series_entry(
                 "bind": {"kind": "row_label", "label_column": label_column, "read": key_read},
             }
         )
-        if not key_fields:
+        if key is None:
             key_fields = [key_concept]
     entry: dict[str, Any] = {
         "id": series_id,

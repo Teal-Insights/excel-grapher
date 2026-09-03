@@ -9,11 +9,16 @@ import pytest
 
 from excel_grapher.core.address_keys import normalize_key as normalize_address
 from excel_grapher.core.address_keys import parse_cell_coords
+from excel_grapher.exporter.codegen import CodeGenerator
 from excel_grapher.exporter.inverted_tree import catalog as catalog_mod
 from excel_grapher.exporter.inverted_tree import deps as deps_mod
 from excel_grapher.exporter.inverted_tree.catalog import (
+    BoundSeries,
+    KeyPoint,
     ScheduleIndex,
     SeriesCatalog,
+    Statement,
+    build_catalog,
     schedule_coord,
 )
 from excel_grapher.exporter.inverted_tree.deps import (
@@ -28,9 +33,13 @@ from excel_grapher.exporter.inverted_tree.schedule import (
     plan_scc,
     residual_body_order,
 )
+from excel_grapher.grapher import create_dependency_graph
+from excel_grapher.series_bindings.workflow import all_series_targets
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     inverted_graph_parts,
+    load_package,
+    make_catalog,
     series_entry,
     write_workbook,
 )
@@ -266,6 +275,94 @@ def test_plan_fused_scc_for_lookahead_reversed_direction(tmp_path: Path) -> None
         FusedRegion(start=0, stop=1, body_order=("value",)),
         FusedRegion(start=1, stop=3, body_order=("flow", "value")),
     )
+
+
+def test_empty_key_emits_on_expansion_order(tmp_path: Path) -> None:
+    """`key: []` is positional; headers must not silently become the schedule.
+
+    Schema `SeriesBindingLayoutKeyRules` still requires a non-empty key on
+    non-scalar layouts, so this document is not schema-validated. The catalog
+    and emit contract is expansion order once `key` is empty.
+    """
+    workbook = write_workbook(
+        tmp_path / "keyless_expansion.xlsx",
+        {
+            "Engine": {
+                "A1": 2009,
+                "B1": 2010,
+                "C1": 2011,
+                "D1": 2012,
+                "A2": 1.0,
+                "B2": 2.0,
+                "C2": 3.0,
+                "B3": "=A2",
+                "C3": "=B2",
+                "D3": "=C2",
+            },
+        },
+    )
+    document = bindings_document(
+        series_entry(
+            "values",
+            "Engine!A2:C2",
+            layout="series",
+            direction="input",
+            header_row=1,
+            key=[],
+        ),
+        series_entry(
+            "path",
+            "Engine!B3:D3",
+            layout="series",
+            direction="output",
+            header_row=1,
+            key=[],
+        ),
+    )
+    catalog = build_catalog(document, workbook=workbook)
+    assert [point.as_mapping() for point in catalog.get("values").domain] == [{}, {}, {}]
+    assert catalog.get("values").domain == (
+        KeyPoint(()),
+        KeyPoint(()),
+        KeyPoint(()),
+    )
+    assert schedule_coord("Engine!A2", catalog) == 0
+    assert schedule_coord("Engine!B3", catalog) == 0
+    targets = all_series_targets(document, workbook=workbook)
+    graph = create_dependency_graph(workbook, targets, load_values=True)
+    with CodeGenerator(graph) as gen:
+        modules = gen.generate_modules(
+            targets,
+            series_bindings=document,
+            bindings_workbook=workbook,
+            paradigm="inverted_tree",
+        )
+    pkg = load_package(modules, tmp_path, "keyless_expansion")
+    assert pkg.compute_path(values=(1.0, 2.0, 3.0)) == pytest.approx((1.0, 2.0, 3.0))
+    assert pkg.compute_path(values=(10.0, 20.0, 30.0)) == pytest.approx((10.0, 20.0, 30.0))
+
+
+def test_partial_key_domain_fails_closed_in_schedule() -> None:
+    cells = ("Engine!A2", "Engine!B2")
+    domain = (KeyPoint((("TIME_PERIOD", 2009),)), KeyPoint(()))
+    series = BoundSeries(
+        series_id="values",
+        layout="series",
+        direction="input",
+        cells=cells,
+        key_fields=("TIME_PERIOD",),
+        dtype="float",
+        compute_name=None,
+        raw={},
+        domain=domain,
+        statements=(Statement("values", "values", None, 0, 2, cells, domain),),
+    )
+    with pytest.raises(InvertedTreeExportError, match="Engine!B2"):
+        make_catalog(
+            series={"values": series},
+            order=("values",),
+            address_to_id={cell: "values" for cell in cells},
+        )
 
 
 def test_plan_fused_scc_rejects_mixed_signs(tmp_path: Path) -> None:

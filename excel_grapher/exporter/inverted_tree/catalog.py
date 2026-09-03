@@ -148,22 +148,32 @@ def _join_key(point: KeyPoint, fields: Sequence[str]) -> tuple[Scalar, ...] | No
 
 
 def _compute_preferred_fields(series: BoundSeries) -> tuple[str, ...] | None:
-    """Return join fields for `series` when every member's KeyPoint resolves.
+    """Return join fields for `series`, or None when no key is declared.
 
     The preferred fields are the full key tuple, so a matrix is a loop nest —
     outer over the leading key fields, inner over `TIME_PERIOD` — and the
-    identity join is unambiguous by construction (#612). `TIME_PERIOD` alone
-    is the fallback when a non-time key field does not resolve.
+    identity join is unambiguous by construction (#612). Expansion order is
+    the schedule only for `key: []`. A declared key that does not resolve on
+    every member raises rather than dropping to a partial join (#620).
     """
-    if not series.key_fields or len(series.domain) != len(series.cells):
+    if not series.key_fields:
         return None
-    if all(_join_key(point, series.key_fields) is not None for point in series.domain):
-        return tuple(series.key_fields)
-    if "TIME_PERIOD" in series.key_fields and all(
-        _join_key(point, ("TIME_PERIOD",)) is not None for point in series.domain
-    ):
-        return ("TIME_PERIOD",)
-    return None
+    if len(series.domain) != len(series.cells):
+        raise InvertedTreeExportError(
+            f"series {series.series_id!r}: key domain length {len(series.domain)} "
+            f"does not match cell count {len(series.cells)}"
+        )
+    unresolved = [
+        series.cells[index]
+        for index, point in enumerate(series.domain)
+        if _join_key(point, series.key_fields) is None
+    ]
+    if unresolved:
+        raise InvertedTreeExportError(
+            f"series {series.series_id!r}: key did not fully resolve for cells "
+            f"{', '.join(unresolved)}"
+        )
+    return tuple(series.key_fields)
 
 
 def _ordered_domain(
@@ -241,11 +251,10 @@ def preferred_fields(series: BoundSeries, catalog: SeriesCatalog) -> tuple[str, 
 def schedule_coord(address: str, catalog: SeriesCatalog) -> int:
     """Return the member's position in the catalog's ordered index domain.
 
-    When the cell's `KeyPoint` resolves, the coordinate is the position of the
+    When the series declares a key, the coordinate is the position of the
     full key tuple in the joined domain — a loop nest with `TIME_PERIOD` as
-    the inner schedule axis (#612). When only `TIME_PERIOD` resolves, its
-    position is the coordinate. Otherwise the coordinate is the member's
-    expansion-order index.
+    the inner schedule axis (#612). When no key is declared (`key: []`), the
+    coordinate is the member's expansion-order index.
 
     Raises:
         InvertedTreeExportError: `address` is not a bound catalog cell.
