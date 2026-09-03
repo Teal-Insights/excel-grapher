@@ -24,6 +24,8 @@ def _a5_workbook(tmp_path: Path) -> Path:
                 "B1": 2,
             },
             "Engine": {
+                "C4": 1,
+                "D4": 2,
                 "C5": 1,
                 "D5": 2,
                 "C6": "=Inputs!A1",

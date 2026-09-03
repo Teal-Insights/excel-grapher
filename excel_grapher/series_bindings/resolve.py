@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import warnings
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -55,6 +55,57 @@ from excel_grapher.series_bindings.types import (
 BindingDirection = Literal["input", "output", "internal", "constant"]
 
 _TRAILING_UNIT_RE = re.compile(r"\s*\([^)]*\)\s*$")
+
+
+class UnknownBindKindError(ValueError):
+    """Bind mapping used a `kind` that `_execute_bind` does not implement.
+
+    Attributes:
+        kind: The unimplemented bind `kind` value.
+        series_id: Binding series id when raised from `resolve_key_domain`.
+        address: Data cell that triggered the bind.
+        field_name: Key field whose bind used `kind`.
+    """
+
+    def __init__(
+        self,
+        kind: object,
+        *,
+        series_id: str = "",
+        address: str = "",
+        field_name: str = "",
+    ) -> None:
+        self.kind = kind
+        self.series_id = series_id
+        self.address = address
+        self.field_name = field_name
+        message = f"Unknown bind kind: {kind!r}"
+        if series_id and address and field_name:
+            message = (
+                f"series {series_id!r} cell {address}: key field "
+                f"{field_name!r} bind failed: {message}"
+            )
+        super().__init__(message)
+
+
+class PartialKeyDomainError(ValueError):
+    """A declared key field resolved for some members and not others.
+
+    Attributes:
+        series_id: Binding series id.
+        unresolved: Data-cell address to the key fields missing on that cell.
+    """
+
+    def __init__(self, series_id: str, unresolved: Mapping[str, Sequence[str]]) -> None:
+        self.series_id = series_id
+        self.unresolved = {addr: tuple(fields) for addr, fields in unresolved.items()}
+        parts = [
+            f"{addr} ({', '.join(repr(field) for field in fields)})"
+            for addr, fields in self.unresolved.items()
+        ]
+        super().__init__(
+            f"series {series_id!r}: key did not fully resolve for cells {', '.join(parts)}"
+        )
 
 
 class _WorkbookValues:
@@ -496,7 +547,7 @@ def _execute_bind(
             return _normalize_string(raw, normalize)
         return coerce_constant(raw, read_as=read_as)
 
-    raise ValueError(f"Unknown bind kind: {kind!r}")
+    raise UnknownBindKindError(kind)
 
 
 def _parse_data_cell(address: str) -> tuple[str, str, int]:
@@ -635,11 +686,27 @@ def resolve_key_domain(
 ) -> tuple[dict[str, Scalar], ...]:
     """Resolve per-cell key coordinates for `cells` in expansion order.
 
+    Three outcomes, distinguished by type rather than message matching:
+
+    * No key (`key: []`): one empty dict per cell. Expansion order is the
+      schedule.
+    * Fully resolved: one dict with every declared key field on every cell.
+    * Partially resolved: raises `PartialKeyDomainError` naming the series
+      and the data cells whose key fields did not resolve.
+
     Uses the same dimension binds as `resolve_series_binding`, but does not
-    intersect with the dependency graph. Missing labels are omitted so
-    layout position remains the schedule default. Structural bind failures
-    (unknown `kind`, missing bind keys) raise: an empty domain is no longer
-    a silent fallback once the scheduler joins on `KeyPoint`s.
+    intersect with the dependency graph. Structural bind failures
+    (`UnknownBindKindError`, missing bind keys) raise immediately.
+
+    Returns:
+        Per-cell key dicts in `cells` order. Empty dicts iff no key is
+        declared.
+
+    Raises:
+        UnknownBindKindError: A key-field bind used an unimplemented kind.
+        PartialKeyDomainError: A declared key field is missing on at least
+            one cell.
+        ValueError: Other key-field bind failures (missing bind keys).
     """
     key_fields = [str(c) for c in (series.get("key") or [])]
     series_id = str(series.get("id") or "")
@@ -649,6 +716,7 @@ def resolve_key_domain(
         return tuple({} for _ in cells)
     structure = series.get("structure") or {}
     points: list[dict[str, Scalar]] = []
+    unresolved: dict[str, list[str]] = {}
     with _WorkbookValues(workbook) as reader:
         reader.prefetch(_structure_source_addresses(series, cells), graph=graph)
         series_coordinates: dict[str, Scalar] = {}
@@ -674,6 +742,15 @@ def resolve_key_domain(
                         data_address=address,
                         inferred_read_as=inferred,
                     )
+                except UnknownBindKindError as exc:
+                    if field_name in key_fields:
+                        raise UnknownBindKindError(
+                            exc.kind,
+                            series_id=series_id,
+                            address=address,
+                            field_name=field_name,
+                        ) from exc
+                    continue
                 except (KeyError, TypeError) as exc:
                     if field_name in key_fields:
                         raise ValueError(
@@ -681,19 +758,20 @@ def resolve_key_domain(
                             f"{field_name!r} bind failed: {exc}"
                         ) from exc
                     continue
-                except ValueError as exc:
-                    if field_name in key_fields and "Unknown bind kind" in str(exc):
-                        raise ValueError(
-                            f"series {series_id!r} cell {address}: key field "
-                            f"{field_name!r} bind failed: {exc}"
-                        ) from exc
+                except ValueError:
                     continue
                 if field_name in key_fields and value is None:
                     continue
                 coordinates[field_name] = value
                 if scope == "series":
                     series_coordinates[field_name] = value
-            points.append(_extract_key(coordinates, key_fields))
+            point = _extract_key(coordinates, key_fields)
+            missing = [field for field in key_fields if field not in point]
+            if missing:
+                unresolved[address] = missing
+            points.append(point)
+    if unresolved:
+        raise PartialKeyDomainError(series_id, unresolved)
     return tuple(points)
 
 
