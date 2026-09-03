@@ -197,8 +197,12 @@ def _emit_cell_ref(node: CellRefNode, ctx: EmitContext) -> str:
         if offset > 0:
             return f"{name}[{ctx.index_var} + {offset}]"
         return f"{name}[{ctx.index_var} - {-offset}]"
-    if owner.series_id in ctx.deps.aligned_ids and ctx.index_var is not None:
-        return f"{name}[{ctx.index_var}]"
+    if owner.series_id in ctx.deps.aligned_ids:
+        if ctx.index_var is not None:
+            return f"{name}[{ctx.index_var}]"
+        if idx is not None:
+            return f"{name}[{_aligned_taken_index(owner.series_id, idx, ctx)}]"
+        return name
     if idx is not None and ctx.index_var is not None and owner.is_sequence:
         return f"{name}[{_index_expr(idx - ctx.host_index, ctx.index_var)}]"
     if idx is not None and ctx.index_var is None:
@@ -206,6 +210,27 @@ def _emit_cell_ref(node: CellRefNode, ctx: EmitContext) -> str:
     if owner.series_id in ctx.deps.lookup_ids:
         return name
     return name
+
+
+def _aligned_taken_index(producer_id: str, catalog_idx: int, ctx: EmitContext) -> int:
+    """Return `catalog_idx` in the window `_aligned_call_arg` takes to.
+
+    Aligned arguments are remapped into the host's index space. A non-looping
+    helper (`index_var` is `None`) must honour that window, not the producer
+    catalog slot.
+    """
+    index_map = ctx.deps.index_maps.get(producer_id)
+    if index_map is None:
+        raise InvertedTreeExportError(
+            f"series {ctx.host.series_id!r}: aligned {producer_id!r} has no index map"
+        )
+    try:
+        return index_map.index(catalog_idx)
+    except ValueError:
+        raise InvertedTreeExportError(
+            f"series {ctx.host.series_id!r}: {producer_id}[{catalog_idx}] "
+            f"is outside the aligned window {index_map}"
+        ) from None
 
 
 def _index_expr(offset: int, index_var: str) -> str:
