@@ -49,6 +49,7 @@ def series_entry(
     direction: str = "input",
     dtype: str = "float",
     header_row: int | None = None,
+    label_column: str | None = None,
     compute_name: str | None = None,
     key: Sequence[str] | None = None,
     key_concept: str = "TIME_PERIOD",
@@ -65,6 +66,17 @@ def series_entry(
                 "role": "key",
                 "scope": "cell",
                 "bind": {"kind": "column_header", "header_row": header_row, "read": key_read},
+            }
+        )
+        if not key_fields:
+            key_fields = [key_concept]
+    elif layout in {"series", "row_series"} and label_column is not None:
+        dimensions.append(
+            {
+                "concept": key_concept,
+                "role": "key",
+                "scope": "cell",
+                "bind": {"kind": "row_label", "label_column": label_column, "read": key_read},
             }
         )
         if not key_fields:

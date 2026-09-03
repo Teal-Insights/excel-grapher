@@ -35,9 +35,26 @@ if TYPE_CHECKING:
 AccessClass = Literal["identity", "shift", "affine", "gather", "whole", "dynamic"]
 
 
-def _layout_distance(consumer: str, producer: str) -> int:
-    """Return layout-column distance (`coord(consumer) - coord(producer)`)."""
-    return parse_cell_coords(consumer)[2] - parse_cell_coords(producer)[2]
+def _layout_distance(consumer: str, producer: str, catalog: SeriesCatalog) -> int:
+    """Return schedule-domain distance (`coord(consumer) - coord(producer)`)."""
+    from excel_grapher.exporter.inverted_tree.schedule import (
+        _preferred_fields,
+        schedule_coord,
+    )
+
+    consumer_series = catalog.series_for(consumer)
+    producer_series = catalog.series_for(producer)
+    if (
+        consumer_series is not None
+        and producer_series is not None
+        and _preferred_fields(consumer_series) != _preferred_fields(producer_series)
+    ):
+        consumer_index = consumer_series.index_of(consumer)
+        producer_index = producer_series.index_of(producer)
+        return (0 if consumer_index is None else consumer_index) - (
+            0 if producer_index is None else producer_index
+        )
+    return schedule_coord(consumer, catalog) - schedule_coord(producer, catalog)
 
 
 def _member_access(
@@ -141,10 +158,10 @@ class SeriesDeps:
 class DependenceEdge:
     """One instance-level read, annotated with access class and schedule distance.
 
-    `distance` is `coord(consumer) - coord(producer)` in the layout schedule
-    (column index for `layout: series` TIME_PERIOD rows). Positive means the
-    producer is an earlier period (a `pre` / lag). `access` is the series-index
-    map: `identity` is `f(i) = i`, `shift` is `f(i) = i - k`.
+    `distance` is `coord(consumer) - coord(producer)` in the schedule domain
+    (position in the ordered key-point join, or expansion order). Positive
+    means the producer is an earlier period (a `pre` / lag). `access` is the
+    series-index map: `identity` is `f(i) = i`, `shift` is `f(i) = i - k`.
     """
 
     consumer_id: str
@@ -177,7 +194,7 @@ class _DepCollector:
                 producer_id=producer_id,
                 consumer_cell=consumer_cell,
                 producer_cell=producer_cell,
-                distance=_layout_distance(consumer_cell, producer_cell),
+                distance=_layout_distance(consumer_cell, producer_cell, self.catalog),
                 access=access,
             )
         )
