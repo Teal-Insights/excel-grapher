@@ -35,7 +35,7 @@ _FORMULA_A1_RE = re.compile(
     r"(?<![A-Za-z0-9_])"
     r"(?P<sheet>'(?:[^']|'')+'!|[A-Za-z_][\w.]*!)?"
     r"(?P<coord>\$?[A-Za-z]{1,3}\$?\d+)"
-    r"(?![A-Za-z0-9_])"
+    r"(?![A-Za-z0-9_(])"
 )
 
 
@@ -229,7 +229,7 @@ def transpose_cell_coord(coord: str) -> str:
     abs_col, col, abs_row, row = match.groups()
     new_col = get_column_letter(int(row))
     new_row = column_index_from_string(col.upper())
-    return f"{abs_col}{new_col}{abs_row}{new_row}"
+    return f"{abs_row}{new_col}{abs_col}{new_row}"
 
 
 def _order_cell_pair(start: str, end: str) -> tuple[str, str]:

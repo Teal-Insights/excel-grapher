@@ -8,6 +8,7 @@ import pytest
 from fastpyxl.utils.cell import get_column_letter
 
 from excel_grapher.evaluator import FormulaEvaluator
+from excel_grapher.exporter.inverted_tree.deps import requires_demand_driven
 from excel_grapher.exporter.inverted_tree.schedule import plan_fused_scc
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
@@ -155,7 +156,7 @@ def test_irregular_recurrence_emits_rung3_and_matches_evaluator(tmp_path: Path) 
     cells = ["Engine!A2", "Engine!B2", "Engine!C2", "Engine!D2"]
     modules = generate_inverted(workbook, doc)
     catalog, _deps, graph_bound = inverted_graph_parts(workbook, doc)
-    assert plan_fused_scc(("value",), catalog=catalog, graph=graph_bound) is None
+    assert requires_demand_driven(catalog.get("value"), catalog=catalog, graph=graph_bound)
     pkg = load_package(modules, tmp_path, name="a19_stride2")
     graph = create_dependency_graph(workbook, cells, load_values=True)
     expected = FormulaEvaluator(graph).evaluate(cells)
