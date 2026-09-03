@@ -6,7 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from excel_grapher.exporter.inverted_tree.deps import collect_all_dependence_edges
+from excel_grapher.exporter.inverted_tree import deps as deps_mod
+from excel_grapher.exporter.inverted_tree import schedule as schedule_mod
+from excel_grapher.exporter.inverted_tree.deps import (
+    collect_all_dependence_edges,
+    identity_join_indices,
+)
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.schedule import (
     DependenceEdge,
@@ -145,3 +150,44 @@ def test_cross_sheet_coords_are_not_column_subtraction(tmp_path: Path) -> None:
     plan = plan_fused_scc(("debt", "adjustment"), catalog=catalog, graph=graph)
     assert plan is not None
     assert "eval_instance" not in str(plan)
+
+
+def test_schedule_coord_does_not_rebuild_join_domain(tmp_path: Path, monkeypatch) -> None:
+    catalog, _deps, _graph = inverted_graph_parts(_zipper_workbook(tmp_path), _zipper_bindings())
+    assert schedule_coord("Engine!B2", catalog) == 1
+    calls = {"n": 0}
+    original = schedule_mod._ordered_domain
+
+    def counting(catalog_arg, fields):
+        calls["n"] += 1
+        return original(catalog_arg, fields)
+
+    monkeypatch.setattr(schedule_mod, "_ordered_domain", counting)
+    for address in ("Engine!A2", "Engine!B2", "Engine!C2", "Engine!B3", "Engine!C3"):
+        schedule_coord(address, catalog)
+    assert calls["n"] == 0
+
+
+def test_identity_join_does_not_rescan_join_domain(tmp_path: Path, monkeypatch) -> None:
+    catalog, _deps, _graph = inverted_graph_parts(_zipper_workbook(tmp_path), _zipper_bindings())
+    host = catalog.get("adjustment")
+    producer = catalog.get("debt")
+    assert identity_join_indices(host, producer, catalog) == (1, 2)
+    domain_calls = {"n": 0}
+    distance_calls = {"n": 0}
+    original_domain = schedule_mod._ordered_domain
+    original_distance = deps_mod._layout_distance
+
+    def counting_domain(catalog_arg, fields):
+        domain_calls["n"] += 1
+        return original_domain(catalog_arg, fields)
+
+    def counting_distance(*args, **kwargs):
+        distance_calls["n"] += 1
+        return original_distance(*args, **kwargs)
+
+    monkeypatch.setattr(schedule_mod, "_ordered_domain", counting_domain)
+    monkeypatch.setattr(deps_mod, "_layout_distance", counting_distance)
+    assert identity_join_indices(host, producer, catalog) == (1, 2)
+    assert domain_calls["n"] == 0
+    assert distance_calls["n"] == 0

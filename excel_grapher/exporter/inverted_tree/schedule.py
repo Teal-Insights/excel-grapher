@@ -12,7 +12,12 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from excel_grapher.core.address_keys import parse_cell_coords
+from excel_grapher.core.address_keys import (
+    normalize_key as normalize_address,
+)
+from excel_grapher.core.address_keys import (
+    parse_cell_coords,
+)
 from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, KeyPoint, SeriesCatalog
 from excel_grapher.exporter.inverted_tree.deps import (
     DependenceEdge,
@@ -295,7 +300,15 @@ def _join_key(point: KeyPoint, fields: Sequence[str]) -> tuple[Scalar, ...] | No
         return None
 
 
-def _preferred_fields(series: BoundSeries) -> tuple[str, ...] | None:
+@dataclass(frozen=True, slots=True)
+class ScheduleIndex:
+    """Precomputed schedule coordinates and join fields for one catalog."""
+
+    preferred: dict[str, tuple[str, ...] | None]
+    coord_of: dict[str, int]
+
+
+def _compute_preferred_fields(series: BoundSeries) -> tuple[str, ...] | None:
     """Return join fields for `series` when every member's KeyPoint resolves.
 
     `TIME_PERIOD` is the schedule axis when it is present and resolved.
@@ -329,6 +342,53 @@ def _ordered_domain(
         return None
 
 
+def build_schedule_index(catalog: SeriesCatalog) -> ScheduleIndex:
+    """Walk the catalog once and index join keys and per-cell coordinates."""
+    preferred = {
+        series_id: _compute_preferred_fields(series) for series_id, series in catalog.series.items()
+    }
+    positions: dict[tuple[str, ...], dict[tuple[Scalar, ...], int]] = {}
+    for fields in {item for item in preferred.values() if item is not None}:
+        ordered = _ordered_domain(catalog, fields)
+        if ordered is None:
+            continue
+        positions[fields] = {key: index for index, key in enumerate(ordered)}
+    coord_of: dict[str, int] = {}
+    for series in catalog.series.values():
+        fields = preferred[series.series_id]
+        if fields is None:
+            for index, address in enumerate(series.cells):
+                coord_of[normalize_address(address)] = index
+            continue
+        lookup = positions.get(fields)
+        for index, address in enumerate(series.cells):
+            coord = index
+            if lookup is not None and index < len(series.domain):
+                key = _join_key(series.domain[index], fields)
+                if key is not None and key in lookup:
+                    coord = lookup[key]
+            coord_of[normalize_address(address)] = coord
+    return ScheduleIndex(preferred=preferred, coord_of=coord_of)
+
+
+def _ensure_index(catalog: SeriesCatalog) -> ScheduleIndex:
+    cached = catalog._schedule
+    if isinstance(cached, ScheduleIndex):
+        return cached
+    built = build_schedule_index(catalog)
+    object.__setattr__(catalog, "_schedule", built)
+    return built
+
+
+def _preferred_fields(
+    series: BoundSeries, catalog: SeriesCatalog | None = None
+) -> tuple[str, ...] | None:
+    """Return cached join fields when `catalog` is given."""
+    if catalog is not None:
+        return _ensure_index(catalog).preferred.get(series.series_id)
+    return _compute_preferred_fields(series)
+
+
 def schedule_coord(address: str, catalog: SeriesCatalog | None = None) -> int:
     """Return the member's position in the catalog's ordered index domain.
 
@@ -336,26 +396,15 @@ def schedule_coord(address: str, catalog: SeriesCatalog | None = None) -> int:
     is the position of that key in the joined domain (`TIME_PERIOD` when it
     is present). Otherwise the coordinate is the member's expansion-order
     index. Without a catalog the spreadsheet column is the only available
-    proxy, and is not valid across sheets.
+    proxy, and is not valid across sheets. Coordinates are computed once per
+    catalog and reused.
     """
     if catalog is None:
         return parse_cell_coords(address)[2]
-    series = catalog.series_for(address)
-    if series is None:
-        return parse_cell_coords(address)[2]
-    index = series.index_of(address)
-    if index is None:
-        return parse_cell_coords(address)[2]
-    fields = _preferred_fields(series)
-    if fields is not None and index < len(series.domain):
-        key = _join_key(series.domain[index], fields)
-        domain = _ordered_domain(catalog, fields) if key is not None else None
-        if key is not None and domain is not None:
-            try:
-                return domain.index(key)
-            except ValueError:
-                pass
-    return index
+    found = _ensure_index(catalog).coord_of.get(normalize_address(address))
+    if found is not None:
+        return found
+    return parse_cell_coords(address)[2]
 
 
 def tarjan_series_sccs(

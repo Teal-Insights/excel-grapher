@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -141,6 +141,7 @@ class SeriesCatalog:
     series: dict[str, BoundSeries]
     order: tuple[str, ...]
     address_to_id: dict[str, str]
+    _schedule: object | None = field(default=None, repr=False, compare=False)
 
     def get(self, series_id: str) -> BoundSeries:
         """Return the series named `series_id`."""

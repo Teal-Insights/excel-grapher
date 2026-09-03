@@ -52,7 +52,8 @@ def _layout_distance(consumer: str, producer: str, catalog: SeriesCatalog) -> in
     if (
         consumer_series is not None
         and producer_series is not None
-        and _preferred_fields(consumer_series) != _preferred_fields(producer_series)
+        and _preferred_fields(consumer_series, catalog)
+        != _preferred_fields(producer_series, catalog)
     ):
         consumer_index = consumer_series.index_of(consumer)
         producer_index = producer_series.index_of(producer)
@@ -77,13 +78,21 @@ def identity_join_indices(
         InvertedTreeExportError: Two producer members share one host
             coordinate.
     """
+    from excel_grapher.exporter.inverted_tree.schedule import (
+        _preferred_fields,
+        schedule_coord,
+    )
+
+    if _preferred_fields(host, catalog) != _preferred_fields(producer, catalog):
+        return tuple(
+            index if index < len(producer.cells) else -1 for index in range(len(host.cells))
+        )
+    by_coord: dict[int, list[int]] = {}
+    for index, producer_cell in enumerate(producer.cells):
+        by_coord.setdefault(schedule_coord(producer_cell, catalog), []).append(index)
     slots: list[int] = []
     for host_cell in host.cells:
-        matches = [
-            index
-            for index, producer_cell in enumerate(producer.cells)
-            if _layout_distance(host_cell, producer_cell, catalog) == 0
-        ]
+        matches = by_coord.get(schedule_coord(host_cell, catalog), ())
         if len(matches) > 1:
             raise InvertedTreeExportError(
                 f"identity join of {host.series_id!r} onto {producer.series_id!r} "
@@ -177,8 +186,8 @@ def predecessor_address(series: BoundSeries, index: int, catalog: SeriesCatalog)
     from excel_grapher.exporter.inverted_tree.schedule import _preferred_fields, schedule_coord
 
     if (
-        _preferred_fields(owner) is not None
-        and _preferred_fields(series) is not None
+        _preferred_fields(owner, catalog) is not None
+        and _preferred_fields(series, catalog) is not None
         and schedule_coord(prev, catalog) != schedule_coord(series.cells[0], catalog) - 1
     ):
         return None
