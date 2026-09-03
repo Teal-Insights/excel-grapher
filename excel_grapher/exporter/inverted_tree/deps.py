@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 
 from fastpyxl.utils.cell import get_column_letter
@@ -26,7 +26,12 @@ from excel_grapher.core.formula_ast import (
     UnaryOpNode,
     resolve_cell_ref,
 )
-from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, SeriesCatalog, covering_series
+from excel_grapher.exporter.inverted_tree.catalog import (
+    BoundSeries,
+    SeriesCatalog,
+    covering_series,
+    fit_affine_map,
+)
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 
 if TYPE_CHECKING:
@@ -45,13 +50,27 @@ def _member_access(
     producer: BoundSeries,
     producer_cell: str,
 ) -> AccessClass:
-    """Classify a cell-ref by series member indices (`f(i) = i` vs `i - k`)."""
+    """Classify a cell-ref by series member indices (`f(i) = i` vs `i - k`).
+
+    Instance labels are identity or shift. `refine_access_classes` upgrades a
+    consumer-producer bundle to `affine` when the pairs lie on `f(i) = a*i + b`
+    with `a != 1`.
+    """
     prod_index = producer.index_of(producer_cell)
     if prod_index is None:
         return "gather"
     if host_index == prod_index:
         return "identity"
     return "shift"
+
+
+def _access_class(coeff: int, offset: int) -> AccessClass:
+    """Return the access class for `f(i) = coeff * i + offset`."""
+    if coeff == 1 and offset == 0:
+        return "identity"
+    if coeff == 1:
+        return "shift"
+    return "affine"
 
 
 def iter_range_addresses(start: str, end: str) -> list[str]:
@@ -124,7 +143,8 @@ class SeriesDeps:
 
     `lagged_ids` are 1-D deps a host cell reads at the aligned index and at
     `index - 1` (other-series lag). They are passed as a full `Sequence` and
-    indexed twice; they are not `require_aligned` zips.
+    indexed twice; they are not `require_aligned` zips. `affine_maps` stores
+    `(coeff, offset)` for `f(i) = coeff * i + offset` when `coeff != 1`.
     """
 
     host_id: str
@@ -135,6 +155,7 @@ class SeriesDeps:
     lookup_ids: frozenset[str]
     lagged_ids: frozenset[str]
     index_maps: dict[str, tuple[int, ...]]
+    affine_maps: dict[str, tuple[int, int]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,7 +165,8 @@ class DependenceEdge:
     `distance` is `coord(consumer) - coord(producer)` in the layout schedule
     (column index for `layout: series` TIME_PERIOD rows). Positive means the
     producer is an earlier period (a `pre` / lag). `access` is the series-index
-    map: `identity` is `f(i) = i`, `shift` is `f(i) = i - k`.
+    map: `identity` is `f(i) = i`, `shift` is `f(i) = i - k`, `affine` is
+    `f(i) = coeff * i + offset` with `coeff != 1`.
     """
 
     consumer_id: str
@@ -153,6 +175,8 @@ class DependenceEdge:
     producer_cell: str
     distance: int
     access: AccessClass = "identity"
+    coeff: int | None = None
+    offset: int | None = None
 
 
 @dataclass
@@ -373,6 +397,42 @@ class _DepCollector:
         )
 
 
+def refine_access_classes(
+    edges: Sequence[DependenceEdge],
+    catalog: SeriesCatalog,
+) -> list[DependenceEdge]:
+    """Rewrite identity/shift bundles that lie on an integer affine map."""
+    groups: dict[tuple[str, str], list[int]] = {}
+    result = list(edges)
+    for index, edge in enumerate(result):
+        if edge.access in {"whole", "dynamic", "gather"}:
+            continue
+        groups.setdefault((edge.consumer_id, edge.producer_id), []).append(index)
+    for (consumer_id, producer_id), indexes in groups.items():
+        consumer = catalog.get(consumer_id)
+        producer = catalog.get(producer_id)
+        pairs: list[tuple[int, int]] = []
+        valid = True
+        for index in indexes:
+            edge = result[index]
+            host = consumer.index_of(edge.consumer_cell)
+            prod = producer.index_of(edge.producer_cell)
+            if host is None or prod is None:
+                valid = False
+                break
+            pairs.append((host, prod))
+        if not valid:
+            continue
+        fitted = fit_affine_map(pairs)
+        if fitted is None:
+            continue
+        coeff, offset = fitted
+        access = _access_class(coeff, offset)
+        for index in indexes:
+            result[index] = replace(result[index], access=access, coeff=coeff, offset=offset)
+    return result
+
+
 def collect_series_edges(
     series: BoundSeries,
     *,
@@ -384,7 +444,7 @@ def collect_series_edges(
     for index, address in enumerate(series.cells):
         ast = node_formula_ast(graph, address)
         collector.visit(ast, host_cell=address, host_index=index)
-    return collector.edges
+    return refine_access_classes(collector.edges, catalog)
 
 
 def collect_all_dependence_edges(
@@ -447,6 +507,7 @@ def series_deps_from_edges(
     else:
         param_ids = tuple(remaining)
     index_maps: dict[str, tuple[int, ...]] = {}
+    affine_maps: dict[str, tuple[int, int]] = {}
     aligned: set[str] = set()
     lagged: set[str] = set()
     host_n = len(host.cells)
@@ -484,6 +545,9 @@ def series_deps_from_edges(
         if all(slot >= 0 for slot in slots):
             index_maps[series_id] = tuple(slots)
             aligned.add(series_id)
+            fitted = fit_affine_map([(index, slots[index]) for index in range(host_n)])
+            if fitted is not None and fitted[0] != 1:
+                affine_maps[series_id] = fitted
     return SeriesDeps(
         host_id=host.series_id,
         param_ids=param_ids,
@@ -493,6 +557,7 @@ def series_deps_from_edges(
         lookup_ids=frozenset(lookup_ids),
         lagged_ids=frozenset(lagged),
         index_maps=index_maps,
+        affine_maps=affine_maps,
     )
 
 
@@ -659,6 +724,16 @@ def _propagate_param_indices(
             continue
         if dep.is_scalar:
             add_result(param_id, tuple(range(len(dep.cells))))
+            continue
+        affine = info.affine_maps.get(param_id)
+        if affine is not None:
+            from excel_grapher.exporter.inverted_tree.schedule import IndexSet
+
+            coeff, offset = affine
+            add_result(
+                param_id,
+                IndexSet.from_indices(host_call).map_affine(coeff, offset).materialize(),
+            )
             continue
         index_map = info.index_maps.get(param_id)
         if index_map is None:
