@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import pytest
 
+from excel_grapher.exporter.inverted_tree.catalog import fit_affine_map
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
-from excel_grapher.exporter.inverted_tree.schedule import DependenceEdge, IndexSet
+from excel_grapher.exporter.inverted_tree.schedule import (
+    DependenceEdge,
+    IndexSet,
+    indices_to_source,
+)
 
 
 def test_from_indices_compresses_contiguous_range() -> None:
@@ -51,6 +56,23 @@ def test_affine_constructor_normalizes() -> None:
     assert IndexSet.affine(base, 2, 1) == IndexSet.interval(1, 11, 2)
     assert IndexSet.affine(IndexSet.empty(), 2, 1) == IndexSet.empty()
     assert IndexSet.affine(IndexSet.interval(0, 3), 0, 4) == IndexSet.interval(4, 5)
+
+
+def test_fit_affine_map_recovers_integer_line() -> None:
+    assert fit_affine_map(((0, 0), (1, 2), (2, 4))) == (2, 0)
+    assert fit_affine_map(((0, 2), (1, 1), (2, 0))) == (-1, 2)
+    assert fit_affine_map(((0, 0), (1, 1))) == (1, 0)
+    assert fit_affine_map(((0, 4),)) is None
+    assert fit_affine_map(((0, 0), (1, 2), (2, 3))) is None
+    assert fit_affine_map(((0, 0), (0, 1))) is None
+
+
+def test_indices_to_source_preserves_decreasing_range() -> None:
+    assert indices_to_source((0, 2, 4)) == "range(0, 6, 2)"
+    assert indices_to_source((2, 1, 0)) == "range(2, -1, -1)"
+    assert indices_to_source((3, 3, 3)) == "(3, 3, 3)"
+    assert indices_to_source((7,)) == "(7,)"
+    assert indices_to_source(()) == "()"
 
 
 def test_residue_predicate_compresses_to_slice() -> None:

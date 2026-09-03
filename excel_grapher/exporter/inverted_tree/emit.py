@@ -29,6 +29,7 @@ from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.schedule import (
     IndexSet,
     build_scc_map,
+    indices_to_source,
     plan_fused_scc,
     scan_function_name,
     scc_external_params,
@@ -299,24 +300,30 @@ def _aligned_call_arg(
     """Return a call-site argument, `take`n to this host walk's aligned window."""
     if param_id not in info.aligned_ids:
         return param_id
+    affine = info.affine_maps.get(param_id)
     index_map = info.index_maps.get(param_id)
-    if index_map is None:
+    if affine is not None:
+        coeff, offset = affine
+        needed = tuple(coeff * index + offset for index in host_call)
+    elif index_map is not None:
+        needed = tuple(index_map[index] for index in host_call)
+    else:
         return param_id
-    needed = tuple(index_map[index] for index in host_call)
     producer = catalog.get(param_id)
     current = local_indices.get(param_id, _identity_indices(producer))
     if needed == current:
         return param_id
+    pos = {value: index for index, value in enumerate(current)}
     try:
-        work = IndexSet.from_indices(needed).positions_in(IndexSet.from_indices(current))
-    except InvertedTreeExportError as exc:
+        work = tuple(pos[index] for index in needed)
+    except KeyError as exc:
         raise InvertedTreeExportError(
             f"series {info.host_id!r}: cannot take {param_id!r} at {needed} from {current}"
         ) from exc
-    if work.materialize() == tuple(range(len(current))):
+    if work == tuple(range(len(current))):
         return param_id
     runtime.add("take")
-    return f"take({param_id}, {work.to_source()})"
+    return f"take({param_id}, {indices_to_source(work)})"
 
 
 def _group_key(

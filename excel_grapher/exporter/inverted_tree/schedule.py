@@ -243,6 +243,27 @@ class IndexSet:
         return base.map_affine(coeff, offset)
 
 
+def indices_to_source(indices: Sequence[int]) -> str:
+    """Return a Python expression for an ordered index sequence.
+
+    Unlike `IndexSet.to_source`, this preserves decreasing progressions so
+    `take` can realign an anti-monotone affine map.
+    """
+    items = tuple(indices)
+    if len(items) <= 1:
+        if not items:
+            return "()"
+        return f"({items[0]},)"
+    step = items[1] - items[0]
+    if step != 0:
+        stop = items[-1] + step
+        if items == tuple(range(items[0], stop, step)):
+            if step == 1:
+                return f"range({items[0]}, {stop})"
+            return f"range({items[0]}, {stop}, {step})"
+    return f"({', '.join(str(i) for i in items)})"
+
+
 def scan_function_name(scc: tuple[str, ...]) -> str:
     """Return the internals helper name for a fused or demand-driven SCC."""
     return "scan_" + "_".join(scc)

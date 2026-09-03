@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -284,28 +284,88 @@ def _iter_cell_refs(node: object) -> Iterable[CellRefNode]:
             return
 
 
-def _cell_access_sig(
+def fit_affine_map(pairs: Sequence[tuple[int, int]]) -> tuple[int, int] | None:
+    """Return `(coeff, offset)` when `prod = coeff * host + offset` for every pair.
+
+    A single host is underdetermined. Two products at one host, a non-integer
+    slope, or a point off the line return `None`.
+    """
+    by_host: dict[int, int] = {}
+    for host, prod in pairs:
+        previous = by_host.get(host)
+        if previous is not None and previous != prod:
+            return None
+        by_host[host] = prod
+    if len(by_host) < 2:
+        return None
+    hosts = sorted(by_host)
+    first, second = hosts[0], hosts[1]
+    delta_host = second - first
+    delta_prod = by_host[second] - by_host[first]
+    if delta_host == 0 or delta_prod % delta_host != 0:
+        return None
+    coeff = delta_prod // delta_host
+    offset = by_host[first] - coeff * first
+    if any(by_host[host] != coeff * host + offset for host in hosts):
+        return None
+    return coeff, offset
+
+
+def _cell_access_pairs(
     catalog: SeriesCatalog,
     graph: DependencyGraph,
-    host_index: int,
     address: str,
-) -> tuple[tuple[str, int], ...]:
-    """Return `(producer_id, catalog_index - host_index)` for each cell ref."""
+) -> tuple[tuple[str, int | None], ...]:
+    """Return `(producer_id, catalog_index)` for each cell ref at `address`."""
     node = graph.get_node(normalize_address(address))
     ast = getattr(node, "formula_ast", None) if node is not None else None
     if ast is None:
         return ()
-    found: list[tuple[str, int]] = []
+    found: list[tuple[str, int | None]] = []
     for ref in _iter_cell_refs(ast):
         resolved = resolve_cell_ref(ref, address)
         owner_id = catalog.series_id_for(resolved)
         if owner_id is None:
-            found.append(("?", 0))
+            found.append(("?", None))
             continue
-        idx = catalog.get(owner_id).index_of(resolved)
-        offset = 0 if idx is None else idx - host_index
-        found.append((owner_id, offset))
+        found.append((owner_id, catalog.get(owner_id).index_of(resolved)))
     return tuple(found)
+
+
+def _access_run_holds(
+    meta: Sequence[tuple[str | None, tuple[tuple[str, int | None], ...]]],
+    start: int,
+    stop: int,
+) -> bool:
+    """True when `meta[start:stop]` share shape and each producer slot is affine."""
+    shape0, pairs0 = meta[start]
+    producers = tuple(producer_id for producer_id, _ in pairs0)
+    n_slots = len(pairs0)
+    none_slots = [False] * n_slots
+    int_slots: list[list[tuple[int, int]]] = [[] for _ in range(n_slots)]
+    for index in range(start, stop):
+        shape, pairs = meta[index]
+        if shape != shape0:
+            return False
+        if tuple(producer_id for producer_id, _ in pairs) != producers:
+            return False
+        if len(pairs) != n_slots:
+            return False
+        for slot, (_producer_id, prod_idx) in enumerate(pairs):
+            if prod_idx is None:
+                none_slots[slot] = True
+            else:
+                int_slots[slot].append((index, prod_idx))
+    if stop - start == 1:
+        return True
+    for slot in range(n_slots):
+        if none_slots[slot]:
+            if int_slots[slot]:
+                return False
+            continue
+        if fit_affine_map(int_slots[slot]) is None:
+            return False
+    return True
 
 
 def _shape_partition(
@@ -313,18 +373,20 @@ def _shape_partition(
     catalog: SeriesCatalog,
     graph: DependencyGraph,
 ) -> tuple[Statement, ...]:
-    runs: list[tuple[str | None, int, int]] = []
-    prev_group: tuple[str | None, tuple[tuple[str, int], ...]] | None = None
-    for index, address in enumerate(series.cells):
-        shape = _formula_shape_key(graph, address)
-        group = (shape, _cell_access_sig(catalog, graph, index, address))
-        if runs and prev_group == group:
-            runs[-1] = (shape, runs[-1][1], index + 1)
-        else:
-            runs.append((shape, index, index + 1))
-            prev_group = group
-    if not runs:
+    meta = [
+        (_formula_shape_key(graph, address), _cell_access_pairs(catalog, graph, address))
+        for address in series.cells
+    ]
+    if not meta:
         return (_whole_statement(series.series_id, series.cells, series.domain),)
+    runs: list[tuple[str | None, int, int]] = []
+    run_start = 0
+    for index in range(1, len(meta)):
+        if _access_run_holds(meta, run_start, index + 1):
+            continue
+        runs.append((meta[run_start][0], run_start, index))
+        run_start = index
+    runs.append((meta[run_start][0], run_start, len(meta)))
     if len(runs) == 1:
         key = runs[0][0]
         return (_whole_statement(series.series_id, series.cells, series.domain, shape_key=key),)
