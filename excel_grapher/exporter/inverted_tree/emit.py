@@ -193,28 +193,6 @@ def _scan_signature(
     return f"def {name}({joined}) -> {ret}:"
 
 
-def _emit_scc_wrapper(
-    series: BoundSeries,
-    scc: tuple[str, ...],
-    param_ids: tuple[str, ...],
-    catalog: SeriesCatalog,
-) -> str:
-    args = ", ".join(param_ids)
-    unpack = ", ".join(scc)
-    idx = scc.index(series.series_id)
-    params = [f"{pid}: {python_annotation(catalog.get(pid))}" for pid in param_ids]
-    joined = ", ".join(params)
-    ret = python_return_annotation(series)
-    fn = scan_function_name(scc)
-    lines = [
-        f"def {series.series_id}({joined}) -> {ret}:",
-        f'    """First-level helper for bound series `{series.series_id}`."""',
-        f"    {unpack} = {fn}({args})",
-        f"    return {scc[idx]}",
-    ]
-    return "\n".join(lines)
-
-
 def emit_internals_module(
     catalog: SeriesCatalog,
     deps: Mapping[str, SeriesDeps],
@@ -244,7 +222,6 @@ def emit_internals_module(
                 joined = ", ".join(f"`{sid}`" for sid in scc)
                 doc = f'    """{kind} of zipper series {joined}."""'
                 functions.append("\n".join([_scan_signature(scc, param_ids, catalog), doc, *body]))
-            functions.append(_emit_scc_wrapper(series, scc, param_ids, catalog))
             continue
         if requires_demand_driven(series, catalog=catalog, graph=graph):
             body, used = emit_rung3_scc(
@@ -332,7 +309,7 @@ def _aligned_call_arg(
         return param_id
     try:
         work = IndexSet.from_indices(needed).positions_in(IndexSet.from_indices(current))
-    except ValueError as exc:
+    except InvertedTreeExportError as exc:
         raise InvertedTreeExportError(
             f"series {info.host_id!r}: cannot take {param_id!r} at {needed} from {current}"
         ) from exc
