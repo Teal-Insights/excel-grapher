@@ -323,8 +323,13 @@ def test_look_ahead_stays_on_rung3(tmp_path: Path) -> None:
     )
     catalog, _deps, graph = inverted_graph_parts(workbook, _two_series_bindings())
     assert plan_fused_scc(("x", "y"), catalog=catalog, graph=graph) is None
-    internals = generate_inverted(workbook, _two_series_bindings())["internals.py"]
+    modules = generate_inverted(workbook, _two_series_bindings())
+    internals = modules["internals.py"]
     assert "eval_instance" in internals
+    assert "reversed(range(" in internals
+    pkg = load_package(modules, tmp_path, name="a13_lookahead")
+    assert pkg.compute_x() == (10.0, 10.0)
+    assert pkg.compute_y() == (1.0, 10.0)
 
 
 def test_same_column_cycle_still_fail_closed(tmp_path: Path) -> None:

@@ -35,6 +35,7 @@ from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.schedule import (
     FusedPlan,
     FusedRegion,
+    collect_dependence_edges,
     plan_fused_scc,
 )
 
@@ -707,13 +708,25 @@ def emit_rung3_scc(
             lines.append(f"{indent}except XlError as err:")
             lines.append(f"{indent}    return err.code")
         lines.append("")
+    edges = collect_dependence_edges(catalog, graph, scc)
+    intra = [edge for edge in edges if edge.consumer_id in scc_ids and edge.producer_id in scc_ids]
+    reverse_drive = (
+        bool(intra)
+        and all(edge.distance <= 0 for edge in intra)
+        and any(edge.distance < 0 for edge in intra)
+    )
     returned: list[str] = []
     for sid in scc:
         n = len(catalog.get(sid).cells)
         fn = compute_names[sid]
-        lines.append(
-            f"    {sid} = tuple(eval_instance({sid!r}, i, {fn}, memo, stack) for i in range({n}))"
-        )
+        if reverse_drive:
+            lines.append(
+                f"    {sid} = tuple(eval_instance({sid!r}, i, {fn}, memo, stack) for i in reversed(range({n})))[::-1]"
+            )
+        else:
+            lines.append(
+                f"    {sid} = tuple(eval_instance({sid!r}, i, {fn}, memo, stack) for i in range({n}))"
+            )
         returned.append(sid)
     lines.append(f"    return {', '.join(returned)}")
     return lines, used
