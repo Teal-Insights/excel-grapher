@@ -224,10 +224,17 @@ def emit_internals_module(
                 doc = f'    """{kind} of zipper series {joined}."""'
                 functions.append("\n".join([_scan_signature(scc, param_ids, catalog), doc, *body]))
             continue
+        singleton = (series.series_id,)
+        deps_map = dict(deps)
+        plan = plan_fused_scc(singleton, catalog=catalog, graph=graph)
+        if plan is not None and plan.direction == "forward":
+            body, used = emit_rung2_scc(singleton, catalog=catalog, deps=deps_map, graph=graph)
+            used_runtime |= used
+            doc = f'    """First-level helper for bound series `{series.series_id}`."""'
+            functions.append("\n".join([_helper_signature(series, info, catalog), doc, *body]))
+            continue
         if requires_demand_driven(series, catalog=catalog, graph=graph):
-            body, used = emit_rung3_scc(
-                (series.series_id,), catalog=catalog, deps=dict(deps), graph=graph
-            )
+            body, used = emit_rung3_scc(singleton, catalog=catalog, deps=deps_map, graph=graph)
             used_runtime |= used
             doc = f'    """Demand-driven evaluation of series `{series.series_id}`."""'
             functions.append("\n".join([_helper_signature(series, info, catalog), doc, *body]))

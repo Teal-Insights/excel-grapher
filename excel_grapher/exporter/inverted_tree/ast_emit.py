@@ -860,7 +860,8 @@ def emit_rung2_scc(
 
     Each `FusedRegion` is one residual-order / access-class span. The union
     schedule is the loop; look-ahead or non-contiguous domains must use
-    `emit_rung3_scc`.
+    `emit_rung3_scc`. A singleton SCC reuses this body as the rung-1 scan:
+    self-lags index the growing buffer at compile-time offsets.
 
     Raises:
         InvertedTreeExportError: The SCC is not fusible, or the residual is a
@@ -877,7 +878,20 @@ def emit_rung2_scc(
         series = catalog.get(sid)
         lines.append(f"    {sid}: list[{python_measure_type(series)}] = []")
     n = len(plan.schedule)
-    lines.append(f"    for t in range({n}):")
+    seq_params: list[str] = []
+    if len(scc) == 1:
+        info = deps[scc[0]]
+        seq_params = [
+            sid
+            for sid in info.param_ids
+            if catalog.get(sid).is_sequence and sid in info.aligned_ids
+        ]
+    if seq_params:
+        used.add("require_aligned")
+        lines.append(f"    n = require_aligned({', '.join(seq_params)})")
+        lines.append("    for t in range(n):")
+    else:
+        lines.append(f"    for t in range({n}):")
     multi = len(plan.regions) > 1
     for index, region in enumerate(plan.regions):
         body, body_used = _emit_fused_region(plan, region, catalog=catalog, deps=deps, graph=graph)
