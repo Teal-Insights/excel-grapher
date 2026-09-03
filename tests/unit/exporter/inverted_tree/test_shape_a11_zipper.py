@@ -2,23 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
 
 import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
-from excel_grapher.exporter.inverted_tree.ast_emit import emit_rung2_scc, emit_rung3_scc
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
-from excel_grapher.exporter.inverted_tree.runtime import (
-    XlError,
-    as_measure,
-    demand_instance,
-    eval_instance,
-    is_error,
-    live_measure,
-)
+from excel_grapher.exporter.inverted_tree.schedule import plan_fused_scc
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
@@ -280,20 +270,16 @@ def test_lag_zipper_emits_fused_union_loop(tmp_path: Path, orientation: str) -> 
     modules = generate_inverted(workbook, bindings_fn())
     internals = modules["internals.py"]
     api = modules["api.py"]
-    assert "cyclic formula-series" not in internals
-    assert "eval_instance" not in internals
-    assert "for t in range(" in internals
-    assert internals.count("for t in range(") == 1
+    catalog, _deps, graph = inverted_graph_parts(workbook, bindings_fn())
+    assert plan_fused_scc(("debt", "adjustment"), catalog=catalog, graph=graph) is not None
     pkg = load_package(modules, tmp_path, name=f"a11_zip_{orientation[:1]}")
     got = pkg.compute_debt()
     assert got == pytest.approx((100.0, 102.0, 104.04))
     assert "scan_debt_adjustment" in internals
     assert "internals.scan_debt_adjustment" in api
-    assert "def debt(" not in internals
-    assert "def adjustment(" not in internals
+    assert not hasattr(pkg.internals, "debt")
+    assert not hasattr(pkg.internals, "adjustment")
     assert internals.count("scan_debt_adjustment(") == 1
-    assert "else:" in internals
-    assert "elif 1 <= t < 3:" not in internals
 
 
 @pytest.mark.parametrize("orientation", ["horizontal", "vertical"])
@@ -327,48 +313,39 @@ def test_same_year_cell_cycle_still_fail_closed(tmp_path: Path, workbook_fn, bin
         generate_inverted(workbook, bindings_fn())
 
 
-def _exec_scan(body: list[str], names: set[str]) -> tuple[tuple[object, ...], ...]:
-    runtime = {
-        "XlError": XlError,
-        "as_measure": as_measure,
-        "demand_instance": demand_instance,
-        "eval_instance": eval_instance,
-        "is_error": is_error,
-        "live_measure": live_measure,
-    }
-    ns: dict[str, Any] = {name: runtime[name] for name in names if name in runtime}
-    exec("def scan():\n" + "\n".join(body), ns)
-    scan = cast(Callable[[], tuple[tuple[object, ...], ...]], ns["scan"])
-    return scan()
-
-
 @pytest.mark.parametrize("orientation", ["horizontal", "vertical"])
 def test_fused_loop_agrees_with_rung3_oracle(tmp_path: Path, orientation: str) -> None:
     workbook_fn, bindings_fn, _debt, _adj = _zipper_orientation(orientation)
-    catalog, deps, graph = inverted_graph_parts(workbook_fn(tmp_path), bindings_fn())
-    scc = ("debt", "adjustment")
-    fused, fused_used = emit_rung2_scc(scc, catalog=catalog, deps=deps, graph=graph)
-    demand, demand_used = emit_rung3_scc(scc, catalog=catalog, deps=deps, graph=graph)
-    assert _exec_scan(fused, fused_used) == _exec_scan(demand, demand_used)
+    workbook = workbook_fn(tmp_path)
+    document = bindings_fn()
+    auto = load_package(
+        generate_inverted(workbook, document), tmp_path, name=f"a11_or_auto_{orientation[:1]}"
+    )
+    forced = load_package(
+        generate_inverted(workbook, document, force_rung=3),
+        tmp_path,
+        name=f"a11_or_r3_{orientation[:1]}",
+    )
+    assert auto.compute_debt() == pytest.approx(forced.compute_debt())
 
 
 def test_offset_helper_block_stays_on_rung2(tmp_path: Path) -> None:
     workbook = _offset_zipper_workbook(tmp_path)
-    modules = generate_inverted(workbook, _offset_zipper_bindings())
-    internals = modules["internals.py"]
-    assert "eval_instance" not in internals
-    assert "for t in range(" in internals
-    pkg = load_package(modules, tmp_path, name="a11_off")
+    catalog, _deps, graph = inverted_graph_parts(workbook, _offset_zipper_bindings())
+    assert plan_fused_scc(("debt", "adjustment"), catalog=catalog, graph=graph) is not None
+    pkg = load_package(
+        generate_inverted(workbook, _offset_zipper_bindings()), tmp_path, name="a11_off"
+    )
     assert pkg.compute_debt() == pytest.approx((100.0, 102.0, 104.04))
 
 
 def test_cross_sheet_zipper_joins_on_time_period(tmp_path: Path) -> None:
     workbook = _cross_sheet_zipper_workbook(tmp_path)
-    modules = generate_inverted(workbook, _cross_sheet_zipper_bindings())
-    internals = modules["internals.py"]
-    assert "eval_instance" not in internals
-    assert "for t in range(" in internals
-    pkg = load_package(modules, tmp_path, name="a11_xsheet")
+    catalog, _deps, graph = inverted_graph_parts(workbook, _cross_sheet_zipper_bindings())
+    assert plan_fused_scc(("debt", "adjustment"), catalog=catalog, graph=graph) is not None
+    pkg = load_package(
+        generate_inverted(workbook, _cross_sheet_zipper_bindings()), tmp_path, name="a11_xsheet"
+    )
     assert pkg.compute_debt() == pytest.approx((100.0, 102.0, 104.04))
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from excel_grapher.exporter.inverted_tree.ast_emit import (
     emit_helper_body,
@@ -17,6 +17,7 @@ from excel_grapher.exporter.inverted_tree.ast_emit import (
 from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, SeriesCatalog, build_catalog
 from excel_grapher.exporter.inverted_tree.deps import (
     CatalogEdges,
+    DependenceEdge,
     SeriesDeps,
     all_formula_root_cells,
     assert_subgraph_bound,
@@ -196,14 +197,40 @@ def _scan_signature(
     return f"def {name}({joined}) -> {ret}:"
 
 
+def _forced_rung_body(
+    scc: tuple[str, ...],
+    *,
+    catalog: SeriesCatalog,
+    deps: dict[str, SeriesDeps],
+    graph: DependencyGraph,
+    edges: Sequence[DependenceEdge],
+    force_rung: Literal[2, 3] | None,
+) -> tuple[list[str], set[str]] | None:
+    """Emit a forced rung, or `None` when `force_rung` is unset."""
+    if force_rung is None:
+        return None
+    if force_rung == 3:
+        return emit_rung3_scc(scc, catalog=catalog, deps=deps, graph=graph, edges=edges)
+    plan = plan_fused_scc(scc, catalog=catalog, edges=edges)
+    if plan is None:
+        raise InvertedTreeExportError(
+            f"force_rung=2 requires a fusible SCC; {list(scc)!r} is not fusible"
+        )
+    return emit_rung2_scc(scc, catalog=catalog, deps=deps, graph=graph, edges=edges)
+
+
 def emit_internals_module(
     catalog: SeriesCatalog,
     deps: Mapping[str, SeriesDeps],
     graph: DependencyGraph,
     scc_map: Mapping[str, tuple[str, ...]],
     catalog_edges: CatalogEdges,
+    *,
+    force_rung: Literal[2, 3] | None = None,
 ) -> str:
     """Emit `internals.py` with per-series helpers and fused or demand-driven SCCs."""
+    if force_rung not in (None, 2, 3):
+        raise ValueError(f"force_rung must be 2, 3, or None; got {force_rung!r}")
     used_runtime: set[str] = set()
     functions: list[str] = []
     emitted_scans: set[tuple[str, ...]] = set()
@@ -216,17 +243,33 @@ def emit_internals_module(
             if scc not in emitted_scans:
                 emitted_scans.add(scc)
                 deps_map = dict(deps)
-                plan = plan_fused_scc(scc, catalog=catalog, edges=edges)
-                if plan is not None:
-                    body, used = emit_rung2_scc(
-                        scc, catalog=catalog, deps=deps_map, graph=graph, edges=edges
+                forced = _forced_rung_body(
+                    scc,
+                    catalog=catalog,
+                    deps=deps_map,
+                    graph=graph,
+                    edges=edges,
+                    force_rung=force_rung,
+                )
+                if forced is not None:
+                    body, used = forced
+                    kind = (
+                        "Demand-driven co-evaluation"
+                        if force_rung == 3
+                        else "Fused union-domain evaluation"
                     )
-                    kind = "Fused union-domain evaluation"
                 else:
-                    body, used = emit_rung3_scc(
-                        scc, catalog=catalog, deps=deps_map, graph=graph, edges=edges
-                    )
-                    kind = "Demand-driven co-evaluation"
+                    plan = plan_fused_scc(scc, catalog=catalog, edges=edges)
+                    if plan is not None:
+                        body, used = emit_rung2_scc(
+                            scc, catalog=catalog, deps=deps_map, graph=graph, edges=edges
+                        )
+                        kind = "Fused union-domain evaluation"
+                    else:
+                        body, used = emit_rung3_scc(
+                            scc, catalog=catalog, deps=deps_map, graph=graph, edges=edges
+                        )
+                        kind = "Demand-driven co-evaluation"
                 used_runtime |= used
                 joined = ", ".join(f"`{sid}`" for sid in scc)
                 doc = f'    """{kind} of zipper series {joined}."""'
@@ -234,6 +277,23 @@ def emit_internals_module(
             continue
         singleton = (series.series_id,)
         deps_map = dict(deps)
+        forced = _forced_rung_body(
+            singleton,
+            catalog=catalog,
+            deps=deps_map,
+            graph=graph,
+            edges=edges,
+            force_rung=force_rung,
+        )
+        if forced is not None:
+            body, used = forced
+            used_runtime |= used
+            if force_rung == 3:
+                doc = f'    """Demand-driven evaluation of series `{series.series_id}`."""'
+            else:
+                doc = f'    """First-level helper for bound series `{series.series_id}`."""'
+            functions.append("\n".join([_helper_signature(series, info, catalog), doc, *body]))
+            continue
         plan = plan_fused_scc(singleton, catalog=catalog, edges=edges)
         if plan is not None and plan.direction == "forward":
             body, used = emit_rung2_scc(
@@ -768,6 +828,7 @@ def generate_inverted_tree_modules(
     series_bindings: WorkbookSeriesBindings,
     bindings_workbook: Path | str,
     targets: Sequence[str] | None = None,
+    force_rung: Literal[2, 3] | None = None,
 ) -> dict[str, str]:
     """Generate api/internals/runtime/data modules for the inverted-tree paradigm.
 
@@ -776,6 +837,8 @@ def generate_inverted_tree_modules(
         series_bindings: Bindings catalog (inputs, constants, internals, outputs).
         bindings_workbook: Workbook path used to expand `data_range`s.
         targets: Ignored; outputs come from the bindings catalog.
+        force_rung: Pin every formula SCC to rung 2 (fused) or rung 3
+            (demand-driven). `None` selects the strongest legal rung.
 
     Returns:
         Mapping of package filenames to file contents.
@@ -802,6 +865,11 @@ def generate_inverted_tree_modules(
         "data.py": emit_data_module(catalog, graph),
         "runtime.py": runtime_py if runtime_py.endswith("\n") else runtime_py + "\n",
         "internals.py": emit_internals_module(
-            catalog, deps, graph, scc_map, catalog_edges=catalog_edges
+            catalog,
+            deps,
+            graph,
+            scc_map,
+            catalog_edges=catalog_edges,
+            force_rung=force_rung,
         ),
     }

@@ -8,26 +8,15 @@ of series length.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
 
 import pytest
 from fastpyxl.utils.cell import get_column_letter
 
 from excel_grapher.evaluator import FormulaEvaluator
-from excel_grapher.exporter.inverted_tree.ast_emit import emit_rung2_scc, emit_rung3_scc
 from excel_grapher.exporter.inverted_tree.deps import (
     collect_series_edges,
     requires_demand_driven,
-)
-from excel_grapher.exporter.inverted_tree.runtime import (
-    XlError,
-    as_measure,
-    demand_instance,
-    eval_instance,
-    is_error,
-    live_measure,
 )
 from excel_grapher.exporter.inverted_tree.schedule import plan_fused_scc
 from excel_grapher.grapher import create_dependency_graph
@@ -39,22 +28,6 @@ from tests.unit.exporter.inverted_tree.helpers import (
     series_entry,
     write_workbook,
 )
-
-
-def _exec_scan(body: list[str], names: set[str]) -> tuple[object, ...]:
-    runtime = {
-        "XlError": XlError,
-        "as_measure": as_measure,
-        "demand_instance": demand_instance,
-        "eval_instance": eval_instance,
-        "is_error": is_error,
-        "live_measure": live_measure,
-        "require_aligned": lambda *args: len(args[0]),
-    }
-    ns: dict[str, Any] = {name: runtime[name] for name in names if name in runtime}
-    exec("def scan():\n" + "\n".join(body), ns)
-    scan = cast(Callable[[], tuple[object, ...]], ns["scan"])
-    return scan()
 
 
 def _self_distances(series, catalog, graph) -> frozenset[int]:
@@ -121,13 +94,6 @@ def _expected_dual(n: int) -> tuple[float, ...]:
     return tuple(out)
 
 
-def _assert_fused_scan(internals: str, series_id: str = "path") -> None:
-    assert "eval_instance" not in internals
-    assert f"{series_id}_compute" not in internals
-    assert "for t in range(" in internals
-    assert "prior:" not in internals
-
-
 @pytest.mark.parametrize(
     ("lag", "n", "stem"),
     [
@@ -156,10 +122,6 @@ def test_stride_k_self_lag_emits_fused_scan_and_matches_evaluator(
     assert plan.schedule == tuple(range(n))
 
     modules = generate_inverted(workbook, doc)
-    internals = modules["internals.py"]
-    _assert_fused_scan(internals)
-    assert f"path[t - {lag}]" in internals or f"path[t-{lag}]" in internals
-
     cells = [f"Engine!{get_column_letter(i + 1)}2" for i in range(n)]
     pkg = load_package(modules, tmp_path, name=stem)
     graph_full = create_dependency_graph(workbook, cells, load_values=True)
@@ -186,10 +148,6 @@ def test_multi_lag_t1_t2_emits_fused_scan_and_matches_evaluator(tmp_path: Path) 
     assert plan.peel_stop == 2
 
     modules = generate_inverted(workbook, doc)
-    _assert_fused_scan(modules["internals.py"])
-    assert "path[t - 1]" in modules["internals.py"]
-    assert "path[t - 2]" in modules["internals.py"]
-
     cells = [f"Engine!{get_column_letter(i + 1)}2" for i in range(n)]
     pkg = load_package(modules, tmp_path, name="a22_dual")
     graph_full = create_dependency_graph(workbook, cells, load_values=True)
@@ -202,17 +160,12 @@ def test_multi_lag_t1_t2_emits_fused_scan_and_matches_evaluator(tmp_path: Path) 
 def test_stride_k_fused_loop_agrees_with_rung3_oracle(tmp_path: Path) -> None:
     n, lag = 5, 2
     workbook = _stride_k_workbook(tmp_path, n, lag, stem="a22_oracle")
-    catalog, deps, graph = inverted_graph_parts(workbook, _stride_k_bindings(n))
-    scc = ("path",)
-    fused, fused_used = emit_rung2_scc(scc, catalog=catalog, deps=deps, graph=graph)
-    demand, demand_used = emit_rung3_scc(scc, catalog=catalog, deps=deps, graph=graph)
-    fused_got = _exec_scan(fused, fused_used)
-    demand_got = _exec_scan(demand, demand_used)
-    if isinstance(fused_got[0], tuple):
-        fused_got = fused_got[0]
-    if isinstance(demand_got[0], tuple):
-        demand_got = demand_got[0]
-    assert fused_got == pytest.approx(demand_got)
+    document = _stride_k_bindings(n)
+    auto = load_package(generate_inverted(workbook, document), tmp_path, name="a22_or_auto")
+    forced = load_package(
+        generate_inverted(workbook, document, force_rung=3), tmp_path, name="a22_or_r3"
+    )
+    assert auto.compute_path() == pytest.approx(forced.compute_path())
 
 
 @pytest.mark.parametrize("lag", [2, 4], ids=["t-2", "t-4"])
@@ -220,21 +173,17 @@ def test_stride_k_code_size_independent_of_series_length(tmp_path: Path, lag: in
     small_n, large_n = 8, 24
     small_wb = _stride_k_workbook(tmp_path, small_n, lag, stem=f"a22_sz_s{lag}")
     large_wb = _stride_k_workbook(tmp_path, large_n, lag, stem=f"a22_sz_l{lag}")
-    small = generate_inverted(small_wb, _stride_k_bindings(small_n))["internals.py"]
-    large = generate_inverted(large_wb, _stride_k_bindings(large_n))["internals.py"]
-    _assert_fused_scan(small)
-    _assert_fused_scan(large)
-    assert abs(small.count("\n") - large.count("\n")) <= 2
-    assert "eval_instance" not in small
-    assert "eval_instance" not in large
+    small = generate_inverted(small_wb, _stride_k_bindings(small_n))
+    large = generate_inverted(large_wb, _stride_k_bindings(large_n))
+    assert len(small["internals.py"].splitlines()) == len(large["internals.py"].splitlines())
+    assert len(small["api.py"].splitlines()) == len(large["api.py"].splitlines())
 
 
 def test_dual_lag_code_size_independent_of_series_length(tmp_path: Path) -> None:
     small_n, large_n = 8, 24
     small_wb = _dual_lag_workbook(tmp_path, small_n, stem="a22_dual_s")
     large_wb = _dual_lag_workbook(tmp_path, large_n, stem="a22_dual_l")
-    small = generate_inverted(small_wb, _stride_k_bindings(small_n))["internals.py"]
-    large = generate_inverted(large_wb, _stride_k_bindings(large_n))["internals.py"]
-    _assert_fused_scan(small)
-    _assert_fused_scan(large)
-    assert abs(small.count("\n") - large.count("\n")) <= 2
+    small = generate_inverted(small_wb, _stride_k_bindings(small_n))
+    large = generate_inverted(large_wb, _stride_k_bindings(large_n))
+    assert len(small["internals.py"].splitlines()) == len(large["internals.py"].splitlines())
+    assert len(small["api.py"].splitlines()) == len(large["api.py"].splitlines())

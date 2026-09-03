@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 import pytest
@@ -108,13 +109,12 @@ def test_leaf_closure_excludes_unused_flag_and_ctx(tmp_path: Path) -> None:
 def test_no_setters_or_make_context(tmp_path: Path) -> None:
     workbook = _a1_workbook(tmp_path)
     modules = generate_inverted(workbook, _a1_bindings())
-    api = modules["api.py"]
-    assert "def make_context" not in api
-    assert "def set_" not in api
     pkg = load_package(modules, tmp_path, name="a1_api")
     assert not hasattr(pkg, "make_context")
     assert not hasattr(pkg, "set_growth")
     assert not hasattr(pkg, "set_initial_debt")
+    public = inspect.signature(pkg.compute_output_path).parameters
+    assert "ctx" not in public
 
 
 def test_numeric_matches_formula_evaluator(tmp_path: Path) -> None:
