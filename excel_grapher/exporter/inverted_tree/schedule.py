@@ -173,7 +173,7 @@ class IndexSet:
         """Return this set's positions inside `universe`'s materialized order.
 
         Raises:
-            ValueError: An index is missing from `universe`.
+            InvertedTreeExportError: An index is missing from `universe`.
         """
         if self.is_empty():
             return self
@@ -193,7 +193,7 @@ class IndexSet:
         try:
             return IndexSet.from_indices(pos[index] for index in self.materialize())
         except KeyError as exc:
-            raise ValueError(f"index {exc.args[0]} is not in the universe") from exc
+            raise InvertedTreeExportError(f"index {exc.args[0]} is not in the universe") from exc
 
     def _max(self) -> int:
         if self.is_empty():

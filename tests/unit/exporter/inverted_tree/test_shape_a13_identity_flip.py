@@ -8,7 +8,11 @@ import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
-from excel_grapher.exporter.inverted_tree.schedule import FusedRegion, plan_fused_scc
+from excel_grapher.exporter.inverted_tree.schedule import (
+    FusedRegion,
+    plan_fused_scc,
+    scan_function_name,
+)
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
@@ -178,7 +182,8 @@ def test_identity_flip_emits_region_local_fused_scan(
     assert "eval_instance" not in internals
     assert "for t in range(" in internals
     assert "if t == 0:" in internals
-    assert "elif t == 1:" in internals
+    assert "else:" in internals
+    assert "elif t == 1:" not in internals
     catalog, _deps, graph = inverted_graph_parts(workbook, bindings_fn())
     plan = plan_fused_scc(("x", "y"), catalog=catalog, graph=graph)
     assert plan is not None
@@ -296,7 +301,8 @@ def test_qcraft_identity_flip_emits_and_matches_evaluator(tmp_path: Path) -> Non
     assert pkg.compute_real_gdp_growth() == pytest.approx(
         (expected["Engine!A5"], expected["Engine!B5"], expected["Engine!C5"])
     )
-    assert pkg.internals.real_gdp_lcu() == pytest.approx(
+    real_gdp_lcu, *_rest = getattr(pkg.internals, scan_function_name(_qcraft_scc()))()
+    assert real_gdp_lcu == pytest.approx(
         (expected["Engine!A2"], expected["Engine!B2"], expected["Engine!C2"])
     )
 

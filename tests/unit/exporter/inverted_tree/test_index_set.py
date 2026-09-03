@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
 from excel_grapher.exporter.inverted_tree.catalog import fit_affine_map
+from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.schedule import (
     DependenceEdge,
     IndexSet,
@@ -143,6 +146,11 @@ def test_positions_in_strided_universe() -> None:
     wanted = IndexSet.interval(4, 8, 2)
     universe = IndexSet.interval(2, 10, 2)
     assert wanted.positions_in(universe) == IndexSet.interval(1, 3)
+
+
+def test_positions_in_missing_index_is_export_error() -> None:
+    with pytest.raises(InvertedTreeExportError, match="not in the universe"):
+        IndexSet.interval(0, 2).positions_in(IndexSet.interval(3, 5))
 
 
 def test_long_range_source_is_independent_of_member_count() -> None:

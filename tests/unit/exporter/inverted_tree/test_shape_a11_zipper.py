@@ -289,6 +289,11 @@ def test_lag_zipper_emits_fused_union_loop(tmp_path: Path, orientation: str) -> 
     assert got == pytest.approx((100.0, 102.0, 104.04))
     assert "scan_debt_adjustment" in internals
     assert "internals.scan_debt_adjustment" in api
+    assert "def debt(" not in internals
+    assert "def adjustment(" not in internals
+    assert internals.count("scan_debt_adjustment(") == 1
+    assert "else:" in internals
+    assert "elif 1 <= t < 3:" not in internals
 
 
 @pytest.mark.parametrize("orientation", ["horizontal", "vertical"])
@@ -304,7 +309,7 @@ def test_lag_zipper_matches_formula_evaluator(tmp_path: Path, orientation: str) 
     expected = FormulaEvaluator(graph).evaluate(targets)
     got = pkg.compute_debt()
     assert got == pytest.approx(tuple(expected[cell] for cell in debt_cells))
-    adj = pkg.internals.adjustment()
+    _debt, adj = pkg.internals.scan_debt_adjustment()
     assert adj == pytest.approx(tuple(expected[cell] for cell in adj_cells))
 
 

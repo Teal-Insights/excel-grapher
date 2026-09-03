@@ -850,8 +850,12 @@ def emit_rung2_scc(
         body, body_used = _emit_fused_region(plan, region, catalog=catalog, deps=deps, graph=graph)
         used |= body_used
         if multi:
-            keyword = "if" if index == 0 else "elif"
-            lines.append(f"        {keyword} {_region_guard(region)}:")
+            if index == 0:
+                lines.append(f"        if {_region_guard(region)}:")
+            elif index + 1 == len(plan.regions):
+                lines.append("        else:")
+            else:
+                lines.append(f"        elif {_region_guard(region)}:")
             lines.extend(_indented(body, 12))
         else:
             lines.extend(_indented(body, 8))
