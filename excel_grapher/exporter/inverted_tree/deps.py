@@ -546,10 +546,12 @@ def requires_demand_driven(
     catalog: SeriesCatalog,
     graph: DependencyGraph,
 ) -> bool:
-    """True when a same-series ref is not a unit predecessor or successor lag.
+    """True when a same-series ref cannot be discharged by a scan.
 
-    Backward recursion (`value_t = value_{t+1} * k`) uses a reversed scan;
-    mixed directions and irregular self-refs fall through to demand-driven.
+    Forward self-lags whose schedule distances are all positive (`t-k`,
+    including mixed `{t-1, t-2}`) use a fused scan. Unit backward recursion
+    (`value_t = value_{t+1} * k`) uses a reversed scan. Mixed directions and
+    irregular self-refs fall through to demand-driven.
     """
     self_edges = [
         edge
@@ -558,17 +560,7 @@ def requires_demand_driven(
     ]
     if not self_edges:
         return False
-
-    is_forward = True
-    for edge in self_edges:
-        host_index = series.index_of(edge.consumer_cell)
-        if host_index is None:
-            return True
-        pred = predecessor_address(series, host_index, catalog)
-        if pred is None or normalize_address(edge.producer_cell) != normalize_address(pred):
-            is_forward = False
-            break
-    if is_forward:
+    if all(edge.distance > 0 for edge in self_edges):
         return False
 
     is_backward = True
@@ -614,10 +606,7 @@ def series_deps_from_edges(
             host_index = host.index_of(edge.consumer_cell)
             if host_index is None:
                 continue
-            pred = predecessor_address(host, host_index, catalog)
-            if pred is not None and normalize_address(edge.producer_cell) == normalize_address(
-                pred
-            ):
+            if edge.distance > 0:
                 saw_self_lag = True
             succ = successor_address(host, host_index, catalog)
             if succ is not None and normalize_address(edge.producer_cell) == normalize_address(

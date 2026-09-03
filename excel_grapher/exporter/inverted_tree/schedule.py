@@ -503,7 +503,7 @@ class FusedRegion:
 
 @dataclass(frozen=True, slots=True)
 class FusedPlan:
-    """Union-domain loop for a fusible multi-series SCC (rung 2).
+    """Union-domain loop for a fusible SCC (rung 2, and rung-1 as a singleton).
 
     `regions` is the source of truth. `body_order` and `peel_stop` describe
     the last region: its residual order and the union index where it starts.
@@ -675,17 +675,20 @@ def plan_fused_scc(
     for a forward loop, or all negative for a reversed loop) and a contiguous
     domain per statement on the union schedule. Residual order, formula shape,
     and access class may change along the schedule; each distinct span becomes
-    a `FusedRegion`.
+    a `FusedRegion`. A singleton SCC with positive-distance self-lags is the
+    rung-1 scan: peel the first `max(D)` members and index the growing buffer.
 
     Raises:
         InvertedTreeExportError: Some index's residual is a real same-index
             cycle.
     """
-    if len(scc) < 2:
+    if not scc:
         return None
     members = set(scc)
     edges = collect_dependence_edges(catalog, graph, scc)
     intra = [edge for edge in edges if edge.consumer_id in members and edge.producer_id in members]
+    if len(scc) < 2 and not any(edge.distance != 0 for edge in intra):
+        return None
     nonzero = [edge.distance for edge in intra if edge.distance != 0]
     has_pos = any(d > 0 for d in nonzero)
     has_neg = any(d < 0 for d in nonzero)
