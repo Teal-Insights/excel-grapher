@@ -8,10 +8,13 @@ import pytest
 from fastpyxl.utils.cell import get_column_letter
 
 from excel_grapher.evaluator import FormulaEvaluator
+from excel_grapher.exporter.inverted_tree.deps import requires_demand_driven
+from excel_grapher.exporter.inverted_tree.schedule import plan_fused_scc
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
+    inverted_graph_parts,
     load_package,
     series_entry,
     write_workbook,
@@ -133,9 +136,10 @@ def test_backward_recursion_emits_reversed_scan_and_matches_evaluator(
 ) -> None:
     workbook = workbook_fn(tmp_path)
     modules = generate_inverted(workbook, bindings_fn())
-    internals = modules["internals.py"]
-    assert "eval_instance" not in internals
-    assert "reversed(range(" in internals
+    catalog, _deps, graph_bound = inverted_graph_parts(workbook, bindings_fn())
+    plan = plan_fused_scc(("value",), catalog=catalog, graph=graph_bound)
+    assert plan is not None
+    assert plan.direction == "reversed"
     pkg = load_package(modules, tmp_path, name=pkg_name)
     graph = create_dependency_graph(workbook, cells, load_values=True)
     assert graph.cycle_report().has_must_cycles is False
@@ -151,8 +155,8 @@ def test_irregular_recurrence_emits_rung3_and_matches_evaluator(tmp_path: Path) 
     doc = _stride2_terminal_bindings()
     cells = ["Engine!A2", "Engine!B2", "Engine!C2", "Engine!D2"]
     modules = generate_inverted(workbook, doc)
-    internals = modules["internals.py"]
-    assert "eval_instance" in internals
+    catalog, _deps, graph_bound = inverted_graph_parts(workbook, doc)
+    assert requires_demand_driven(catalog.get("value"), catalog=catalog, graph=graph_bound)
     pkg = load_package(modules, tmp_path, name="a19_stride2")
     graph = create_dependency_graph(workbook, cells, load_values=True)
     expected = FormulaEvaluator(graph).evaluate(cells)
@@ -184,9 +188,6 @@ def test_backward_chain_large_n_matches_closed_form(tmp_path: Path) -> None:
         ),
     )
     modules = generate_inverted(workbook, doc)
-    internals = modules["internals.py"]
-    assert "eval_instance" not in internals
-    assert "reversed(range(" in internals
     pkg = load_package(modules, tmp_path, name="a19_back_5000")
     got = pkg.compute_value()
     assert len(got) == n

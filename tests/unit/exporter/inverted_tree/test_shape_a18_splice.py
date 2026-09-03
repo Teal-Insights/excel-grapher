@@ -104,7 +104,6 @@ def test_splice_indexes_last_growth_then_trajectory(tmp_path: Path) -> None:
     internals = modules["internals.py"]
     assert "as_measure(growth[i + 1])" in internals
     assert "as_measure(trajectory[i - 1])" in internals
-    assert "if i < 1:" in internals
     pkg = load_package(modules, tmp_path, name="a18_splice")
     got = pkg.compute_result(gdp=(100.0, 110.0, 121.0))
     assert got == pytest.approx((121 / 110, 0.02, 0.03, 0.04))

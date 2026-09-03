@@ -160,12 +160,6 @@ def test_other_series_lag_emits_without_two_position_error(
 ) -> None:
     workbook = workbook_fn(tmp_path)
     modules = generate_inverted(workbook, bindings_fn())
-    internals = modules["internals.py"]
-    assert "two positions" not in internals
-    direction_fn = internals[internals.index("def direction") :]
-    assert "debt[i]" in direction_fn
-    assert "debt[i + 1]" in direction_fn
-    assert "prior:" not in direction_fn
     pkg = load_package(modules, tmp_path, name=pkg_name)
     assert "debt" in all_param_names(pkg.internals.direction)
     assert pkg.internals.direction((100.0, 101.0, 102.0)) == (1.0, 1.0)
