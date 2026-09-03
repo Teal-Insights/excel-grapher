@@ -7,6 +7,193 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v12.5.0 (2026-09-03)
+
+### Bug Fixes
+
+- **export**: Allow inverted-tree other-series t and t-1 reads
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Apply exclude_rows in inverted-tree catalog
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Cache inverted-tree schedule coordinates
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Define inverted-tree xl_exp for EXP
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Derive inverted-tree identity maps from the key-point join
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Drive rung-3 backward chains in reverse to avoid recursion
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Emit lag-zipper series as a co-scan
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Emit live_measure for fused refs off the SCC union (#623)
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Fail closed on partially resolved inverted-tree keys
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Gather inverted-tree series with take, not trim
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Index taken windows in 1-cell inverted-tree helpers
+  ([#629](https://github.com/Teal-Insights/excel-grapher/pull/629),
+  [`063f1b1`](https://github.com/Teal-Insights/excel-grapher/commit/063f1b11205d1db86023aada01c536eff0aa8e2a))
+
+- **export**: Inverted-tree emit nits for errors, SCC call, and else
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Join inverted-tree matrix schedules on the full key tuple
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Join inverted-tree schedule on key-point domain
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Keep IMF sentinels in float inverted-tree constants
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Make inverted-tree rung 3 the demand floor
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Partition catalog statements incrementally in linear time
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Schedule zipper SCCs as demand-driven instances
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Splice mixed-source inverted-tree series by access
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Stream only catalog label cells, stop at last needed row
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Take overlapping series windows at inverted-tree call sites
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Treat residual cycles per schedule column
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Type the fused-scan exec helper for ty
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+### Code Style
+
+- **export**: Format shared-orchestrator unpack join
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+### Documentation
+
+- **export**: Inverted-tree scheduling research memo
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+### Features
+
+- **export**: Accept inverted-tree layout matrix as 1-D sequence
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Add opt-in inverted-tree codegen paradigm
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Add symbolic IndexSet algebra for inverted-tree slices
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Classify inverted-tree affine access maps
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Demote guarded residual may-cycles to rung 3
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Emit fusible zipper SCCs as a union-domain loop
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Emit take() with range and slice forms
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Fuse inverted-tree SCCs by residual-order region
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Generalize rung-1 scan to shift-k self-lags
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Inverted-tree measures are number or error code
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Make DependenceEdge the inverted-tree dep source of truth
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Partition inverted-tree series into statements
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Select reversed loop direction for negative-distance SCCs
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Share inverted-tree orchestrator bodies
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Symbolic IndexSet and take() range/slice forms
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+### Performance Improvements
+
+- **export**: Walk inverted-tree ASTs once and fuse regions in O(E)
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+### Refactoring
+
+- **export**: Inverted-tree layering cleanup (#619)
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+- **export**: Move schedule index into catalog and drop column fallback
+  ([#628](https://github.com/Teal-Insights/excel-grapher/pull/628),
+  [`9d30182`](https://github.com/Teal-Insights/excel-grapher/commit/9d3018220085f390ce6f1627a843d3094e72dc24))
+
+
 ## v12.4.0 (2026-09-03)
 
 ### Bug Fixes
