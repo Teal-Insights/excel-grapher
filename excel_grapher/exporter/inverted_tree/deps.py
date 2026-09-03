@@ -31,6 +31,8 @@ from excel_grapher.exporter.inverted_tree.catalog import (
     SeriesCatalog,
     covering_series,
     fit_affine_map,
+    preferred_fields,
+    schedule_coord,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 
@@ -42,18 +44,12 @@ AccessClass = Literal["identity", "shift", "affine", "gather", "whole", "dynamic
 
 def _layout_distance(consumer: str, producer: str, catalog: SeriesCatalog) -> int:
     """Return schedule-domain distance (`coord(consumer) - coord(producer)`)."""
-    from excel_grapher.exporter.inverted_tree.schedule import (
-        _preferred_fields,
-        schedule_coord,
-    )
-
     consumer_series = catalog.series_for(consumer)
     producer_series = catalog.series_for(producer)
     if (
         consumer_series is not None
         and producer_series is not None
-        and _preferred_fields(consumer_series, catalog)
-        != _preferred_fields(producer_series, catalog)
+        and preferred_fields(consumer_series, catalog) != preferred_fields(producer_series, catalog)
     ):
         consumer_index = consumer_series.index_of(consumer)
         producer_index = producer_series.index_of(producer)
@@ -77,22 +73,16 @@ def identity_join_indices(
 
     Raises:
         InvertedTreeExportError: Two producer members share one host
-            coordinate.
+            coordinate, or a host cell has no schedule coordinate.
     """
-    from excel_grapher.exporter.inverted_tree.schedule import (
-        _ensure_index,
-        schedule_coord,
-    )
-
-    index = _ensure_index(catalog)
-    if index.preferred.get(host.series_id) != index.preferred.get(producer.series_id):
+    if preferred_fields(host, catalog) != preferred_fields(producer, catalog):
         return tuple(slot if slot < len(producer.cells) else -1 for slot in range(len(host.cells)))
-    producer_by_coord = index.index_by_coord[producer.series_id]
+    producer_by_coord = catalog.schedule.index_by_coord[producer.series_id]
     slots: list[int] = []
     for host_cell in host.cells:
-        host_coord = index.coord_of.get(normalize_address(host_cell))
+        host_coord = catalog.schedule.coord_of.get(normalize_address(host_cell))
         if host_coord is None:
-            host_coord = schedule_coord(host_cell, catalog)
+            raise InvertedTreeExportError(f"cell {host_cell} has no schedule coordinate")
         matches = producer_by_coord.get(host_coord, ())
         if len(matches) > 1:
             raise InvertedTreeExportError(
@@ -184,11 +174,9 @@ def predecessor_address(series: BoundSeries, index: int, catalog: SeriesCatalog)
     owner = catalog.series_for(prev)
     if owner is None or owner.series_id == series.series_id:
         return None
-    from excel_grapher.exporter.inverted_tree.schedule import _preferred_fields, schedule_coord
-
     if (
-        _preferred_fields(owner, catalog) is not None
-        and _preferred_fields(series, catalog) is not None
+        preferred_fields(owner, catalog) is not None
+        and preferred_fields(series, catalog) is not None
         and schedule_coord(prev, catalog) != schedule_coord(series.cells[0], catalog) - 1
     ):
         return None
@@ -218,37 +206,13 @@ def successor_address(series: BoundSeries, index: int, catalog: SeriesCatalog) -
     owner = catalog.series_for(next_cell)
     if owner is None or owner.series_id == series.series_id:
         return None
-    from excel_grapher.exporter.inverted_tree.schedule import _preferred_fields, schedule_coord
-
     if (
-        _preferred_fields(owner, catalog) is not None
-        and _preferred_fields(series, catalog) is not None
+        preferred_fields(owner, catalog) is not None
+        and preferred_fields(series, catalog) is not None
         and schedule_coord(next_cell, catalog) != schedule_coord(series.cells[-1], catalog) + 1
     ):
         return None
     return next_cell
-
-
-@dataclass
-class SeriesDeps:
-    """First-level bound-series dependencies of one formula series.
-
-    `lagged_ids` are 1-D deps a host cell reads at the aligned index and at
-    `index - 1` (other-series lag). They are passed as a full `Sequence` and
-    indexed twice; they are not `require_aligned` zips. `affine_maps` stores
-    `(coeff, offset)` for `f(i) = coeff * i + offset` when `coeff != 1`.
-    """
-
-    host_id: str
-    param_ids: tuple[str, ...]
-    is_scan: bool
-    seed_id: str | None
-    aligned_ids: frozenset[str]
-    lookup_ids: frozenset[str]
-    lagged_ids: frozenset[str]
-    index_maps: dict[str, tuple[int, ...]]
-    affine_maps: dict[str, tuple[int, int]]
-    scan_direction: Literal["forward", "reversed"] = "forward"
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,6 +249,35 @@ class CatalogEdges:
 
     edges: tuple[DependenceEdge, ...]
     by_consumer: dict[str, tuple[DependenceEdge, ...]]
+
+
+@dataclass
+class SeriesDeps:
+    """Emit-facing projection of one host's `DependenceEdge`s.
+
+    `DependenceEdge` is the source of truth. This view groups those edges by
+    access class so helpers can zip, lag-index, and scan without walking the
+    edge list again:
+
+    - `aligned_ids` / `index_maps` / `affine_maps` — identity (or affine)
+      joins already taken to the host walk
+    - `lagged_ids` — a producer read at both `i` and `i-1`
+    - `lookup_ids` — `whole` / `dynamic` table reads
+    - `is_scan` / `seed_id` / `scan_direction` — self-lags discharged by
+      loop order
+    """
+
+    host_id: str
+    param_ids: tuple[str, ...]
+    is_scan: bool
+    seed_id: str | None
+    aligned_ids: frozenset[str]
+    lookup_ids: frozenset[str]
+    lagged_ids: frozenset[str]
+    index_maps: dict[str, tuple[int, ...]]
+    affine_maps: dict[str, tuple[int, int]]
+    scan_direction: Literal["forward", "reversed"] = "forward"
+    edges: tuple[DependenceEdge, ...] = ()
 
 
 @dataclass
@@ -770,6 +763,7 @@ def series_deps_from_edges(
         index_maps=index_maps,
         affine_maps=affine_maps,
         scan_direction=scan_direction,
+        edges=tuple(edge for edge in edges if edge.consumer_id == host.series_id),
     )
 
 

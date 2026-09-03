@@ -29,6 +29,7 @@ from excel_grapher.series_bindings.resolve import (
 from excel_grapher.series_bindings.workflow import all_series_targets
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
+    make_catalog,
     series_entry,
     write_workbook,
 )
@@ -221,7 +222,7 @@ def test_partition_catalog_large_constant_series_performance() -> None:
             ),
         ),
     )
-    catalog = SeriesCatalog(
+    catalog = make_catalog(
         series={"large_const": series},
         order=("large_const",),
         address_to_id={cell: "large_const" for cell in cells},
@@ -278,7 +279,7 @@ def _make_formula_catalog_and_graph(
     )
     addr_to_id = {c: "src" for c in src_cells}
     addr_to_id.update({c: "dst" for c in dst_cells})
-    catalog = SeriesCatalog(
+    catalog = make_catalog(
         series={"src": src_series, "dst": dst_series},
         order=("src", "dst"),
         address_to_id=addr_to_id,
@@ -371,7 +372,7 @@ def test_partition_catalog_splits_on_shape_and_producer_changes() -> None:
     addr_to_id = {c: "src_a" for c in src_a_cells}
     addr_to_id.update({c: "src_b" for c in src_b_cells})
     addr_to_id.update({c: "dst" for c in dst_cells})
-    catalog = SeriesCatalog(
+    catalog = make_catalog(
         series={"src_a": src_a, "src_b": src_b, "dst": dst},
         order=("src_a", "src_b", "dst"),
         address_to_id=addr_to_id,
@@ -407,7 +408,7 @@ def test_partition_catalog_handles_unbound_cell_refs() -> None:
         domain=domain,
         statements=(Statement("dst", "dst", None, 0, 2, dst_cells, domain),),
     )
-    catalog = SeriesCatalog(
+    catalog = make_catalog(
         series={"dst": dst},
         order=("dst",),
         address_to_id={c: "dst" for c in dst_cells},
@@ -455,7 +456,7 @@ def test_partition_catalog_empty_and_single_cell_series() -> None:
         domain=single_domain,
         statements=(Statement("single", "single", None, 0, 1, single_cell, single_domain),),
     )
-    catalog = SeriesCatalog(
+    catalog = make_catalog(
         series={"empty": empty_series, "single": single_series},
         order=("empty", "single"),
         address_to_id={"Sheet1!A1": "single"},

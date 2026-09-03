@@ -12,16 +12,14 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from excel_grapher.core.address_keys import (
-    normalize_key as normalize_address,
+from excel_grapher.exporter.inverted_tree.catalog import (
+    SeriesCatalog,
+    schedule_coord,
 )
-from excel_grapher.core.address_keys import (
-    parse_cell_coords,
-)
-from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, KeyPoint, SeriesCatalog
 from excel_grapher.exporter.inverted_tree.deps import (
     DependenceEdge,
     collect_series_edges,
+    requires_demand_driven,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 
@@ -30,7 +28,6 @@ if TYPE_CHECKING:
 
     from excel_grapher.exporter.inverted_tree.deps import SeriesDeps
     from excel_grapher.grapher.graph import DependencyGraph
-    from excel_grapher.series_bindings.types import Scalar
 
 
 @dataclass(frozen=True, slots=True)
@@ -292,145 +289,6 @@ def scc_external_params(
     return tuple(sid for sid in catalog_order if sid in ids)
 
 
-def _join_key(point: KeyPoint, fields: Sequence[str]) -> tuple[Scalar, ...] | None:
-    """Return `point` projected onto `fields`, or None if a field is missing."""
-    try:
-        return tuple(point[field] for field in fields)
-    except KeyError:
-        return None
-
-
-@dataclass(frozen=True, slots=True)
-class ScheduleIndex:
-    """Precomputed schedule coordinates and join fields for one catalog."""
-
-    preferred: dict[str, tuple[str, ...] | None]
-    coord_of: dict[str, int]
-    index_by_coord: dict[str, dict[int, tuple[int, ...]]]
-
-
-def _compute_preferred_fields(series: BoundSeries) -> tuple[str, ...] | None:
-    """Return join fields for `series`, or None when no key is declared.
-
-    The preferred fields are the full key tuple, so a matrix is a loop nest —
-    outer over the leading key fields, inner over `TIME_PERIOD` — and the
-    identity join is unambiguous by construction (#612). Expansion order is
-    the schedule only for `key: []`. A declared key that does not resolve on
-    every member raises rather than dropping to a partial join (#620).
-    """
-    if not series.key_fields:
-        return None
-    if len(series.domain) != len(series.cells):
-        raise InvertedTreeExportError(
-            f"series {series.series_id!r}: key domain length {len(series.domain)} "
-            f"does not match cell count {len(series.cells)}"
-        )
-    unresolved = [
-        series.cells[index]
-        for index, point in enumerate(series.domain)
-        if _join_key(point, series.key_fields) is None
-    ]
-    if unresolved:
-        raise InvertedTreeExportError(
-            f"series {series.series_id!r}: key did not fully resolve for cells "
-            f"{', '.join(unresolved)}"
-        )
-    return tuple(series.key_fields)
-
-
-def _ordered_domain(
-    catalog: SeriesCatalog, fields: Sequence[str]
-) -> tuple[tuple[Scalar, ...], ...] | None:
-    """Return the sorted union of resolved join keys, or None if unsortable."""
-    keys: set[tuple[Scalar, ...]] = set()
-    for series in catalog.series.values():
-        for point in series.domain:
-            key = _join_key(point, fields)
-            if key is not None:
-                keys.add(key)
-    if not keys:
-        return None
-    try:
-        return tuple(sorted(keys))
-    except TypeError:
-        return None
-
-
-def build_schedule_index(catalog: SeriesCatalog) -> ScheduleIndex:
-    """Walk the catalog once and index join keys and per-cell coordinates."""
-    preferred = {
-        series_id: _compute_preferred_fields(series) for series_id, series in catalog.series.items()
-    }
-    positions: dict[tuple[str, ...], dict[tuple[Scalar, ...], int]] = {}
-    for fields in {item for item in preferred.values() if item is not None}:
-        ordered = _ordered_domain(catalog, fields)
-        if ordered is None:
-            continue
-        positions[fields] = {key: index for index, key in enumerate(ordered)}
-    coord_of: dict[str, int] = {}
-    for series in catalog.series.values():
-        fields = preferred[series.series_id]
-        if fields is None:
-            for index, address in enumerate(series.cells):
-                coord_of[normalize_address(address)] = index
-            continue
-        lookup = positions.get(fields)
-        for index, address in enumerate(series.cells):
-            coord = index
-            if lookup is not None and index < len(series.domain):
-                key = _join_key(series.domain[index], fields)
-                if key is not None and key in lookup:
-                    coord = lookup[key]
-            coord_of[normalize_address(address)] = coord
-    index_by_coord: dict[str, dict[int, tuple[int, ...]]] = {}
-    for series in catalog.series.values():
-        buckets: dict[int, list[int]] = {}
-        for member_index, address in enumerate(series.cells):
-            coord = coord_of[normalize_address(address)]
-            buckets.setdefault(coord, []).append(member_index)
-        index_by_coord[series.series_id] = {
-            coord: tuple(members) for coord, members in buckets.items()
-        }
-    return ScheduleIndex(preferred=preferred, coord_of=coord_of, index_by_coord=index_by_coord)
-
-
-def _ensure_index(catalog: SeriesCatalog) -> ScheduleIndex:
-    cached = catalog._schedule
-    if isinstance(cached, ScheduleIndex):
-        return cached
-    built = build_schedule_index(catalog)
-    object.__setattr__(catalog, "_schedule", built)
-    return built
-
-
-def _preferred_fields(
-    series: BoundSeries, catalog: SeriesCatalog | None = None
-) -> tuple[str, ...] | None:
-    """Return cached join fields when `catalog` is given."""
-    if catalog is not None:
-        return _ensure_index(catalog).preferred.get(series.series_id)
-    return _compute_preferred_fields(series)
-
-
-def schedule_coord(address: str, catalog: SeriesCatalog | None = None) -> int:
-    """Return the member's position in the catalog's ordered index domain.
-
-    When `catalog` is given and the series declares a key, the coordinate is
-    the position of the full key tuple in the joined domain — a loop nest
-    with `TIME_PERIOD` as the inner schedule axis (#612). When no key is
-    declared (`key: []`), the coordinate is the member's expansion-order
-    index. Without a catalog the spreadsheet column is the only available
-    proxy, and is not valid across sheets. Coordinates are computed once per
-    catalog and reused.
-    """
-    if catalog is None:
-        return parse_cell_coords(address)[2]
-    found = _ensure_index(catalog).coord_of.get(normalize_address(address))
-    if found is not None:
-        return found
-    return parse_cell_coords(address)[2]
-
-
 def tarjan_series_sccs(
     series_ids: Sequence[str],
     deps: Mapping[str, SeriesDeps],
@@ -535,8 +393,7 @@ class FusedRegion:
 class FusedPlan:
     """Union-domain loop for a fusible SCC (rung 2, and rung-1 as a singleton).
 
-    `regions` is the source of truth. `body_order` and `peel_stop` describe
-    the last region: its residual order and the union index where it starts.
+    `regions` is the source of truth for residual order along the schedule.
     """
 
     scc: tuple[str, ...]
@@ -549,16 +406,6 @@ class FusedPlan:
     def coord_to_t(self) -> dict[int, int]:
         """Map each schedule coordinate to its union index `t`."""
         return {coord: index for index, coord in enumerate(self.schedule)}
-
-    @property
-    def body_order(self) -> tuple[str, ...]:
-        """In-loop statement order of the last region."""
-        return self.regions[-1].body_order
-
-    @property
-    def peel_stop(self) -> int:
-        """Union index where the last region begins."""
-        return self.regions[-1].start
 
 
 def _contiguous_domain(
@@ -585,7 +432,7 @@ def _statement_at_union(
     catalog: SeriesCatalog,
     series_id: str,
     union_t: int,
-    column: int,
+    index: int,
 ) -> str:
     """Return the statement covering union index `union_t`."""
     series = catalog.get(series_id)
@@ -593,21 +440,21 @@ def _statement_at_union(
         return series_id
     for stmt in series.statements:
         for cell in stmt.cells:
-            if schedule_coord(cell, catalog) == column:
+            if schedule_coord(cell, catalog) == index:
                 return stmt.statement_id
     return series_id
 
 
-def _residual_order_at_column(
+def _residual_order_at_index(
     members: tuple[str, ...],
-    column_edges: Sequence[DependenceEdge],
+    index_edges: Sequence[DependenceEdge],
 ) -> tuple[str, ...] | None:
-    """Return the distance-zero topo among `members` in one schedule column."""
+    """Return the distance-zero topo among `members` at one schedule index."""
     if not members:
         return ()
     residual = _empty_residual(members)
     active = set(members)
-    for edge in column_edges:
+    for edge in index_edges:
         if edge.distance != 0:
             continue
         if edge.consumer_id not in active or edge.producer_id not in active:
@@ -618,37 +465,37 @@ def _residual_order_at_column(
 
 def _access_signature(
     members: tuple[str, ...],
-    column_edges: Sequence[DependenceEdge],
+    index_edges: Sequence[DependenceEdge],
 ) -> tuple[tuple[str, str, str], ...]:
-    """Return intra-member access classes at one column, sorted for grouping."""
+    """Return intra-member access classes at `index`, sorted for grouping."""
     active = set(members)
     sig = [
         (edge.consumer_id, edge.producer_id, edge.access)
-        for edge in column_edges
+        for edge in index_edges
         if edge.consumer_id in active and edge.producer_id in active
     ]
     sig.sort()
     return tuple(sig)
 
 
-def _column_region_key(
+def _index_region_key(
     scc: tuple[str, ...],
     *,
     catalog: SeriesCatalog,
     domain: Mapping[str, tuple[int, int]],
-    column_edges: Sequence[DependenceEdge],
+    index_edges: Sequence[DependenceEdge],
     union_t: int,
-    column: int,
+    index: int,
 ) -> tuple[tuple[str, ...], tuple[tuple[str, str], ...], tuple[tuple[str, str, str], ...]] | None:
     """Return `(body_order, shape_sig, access_sig)` for one union index."""
     active = tuple(sid for sid in scc if domain[sid][0] <= union_t < domain[sid][1])
     if not active:
         return None
-    order = _residual_order_at_column(active, column_edges)
+    order = _residual_order_at_index(active, index_edges)
     if order is None:
         return None
-    shape_sig = tuple((sid, _statement_at_union(catalog, sid, union_t, column)) for sid in active)
-    return order, shape_sig, _access_signature(active, column_edges)
+    shape_sig = tuple((sid, _statement_at_union(catalog, sid, union_t, index)) for sid in active)
+    return order, shape_sig, _access_signature(active, index_edges)
 
 
 def _bucket_edges_by_consumer_coord(
@@ -678,14 +525,14 @@ def _fuse_regions(
     run_key: (
         tuple[tuple[str, ...], tuple[tuple[str, str], ...], tuple[tuple[str, str, str], ...]] | None
     ) = None
-    for union_t, column in enumerate(coords):
-        key = _column_region_key(
+    for union_t, index in enumerate(coords):
+        key = _index_region_key(
             scc,
             catalog=catalog,
             domain=domain,
-            column_edges=by_coord.get(column, ()),
+            index_edges=by_coord.get(index, ()),
             union_t=union_t,
-            column=column,
+            index=index,
         )
         if key is None:
             return None
@@ -766,6 +613,51 @@ def plan_fused_scc(
     )
 
 
+Rung = Literal[0, 1, 2, 3]
+
+
+@dataclass(frozen=True, slots=True)
+class SccPlan:
+    """Evaluation rung for one SCC, plus the fused plan when the SCC is fusible.
+
+    Rungs:
+        0: first-level helper (`emit_helper_body`), including reversed unit scans
+        1: singleton fused forward scan (`emit_rung2_scc`)
+        2: multi-series fused loop (`emit_rung2_scc`)
+        3: demand-driven instance evaluation (`emit_rung3_scc`)
+    """
+
+    rung: Rung
+    plan: FusedPlan | None = None
+
+
+def plan_scc(
+    scc: tuple[str, ...],
+    *,
+    catalog: SeriesCatalog,
+    graph: DependencyGraph | None = None,
+    edges: Sequence[DependenceEdge] | None = None,
+) -> SccPlan:
+    """Select the emit rung for `scc`.
+
+    Fused classification is `plan_fused_scc`. A singleton that is not a
+    forward fused scan uses `requires_demand_driven` to choose rung 3 vs 0.
+    Tests should assert `plan_scc(...).rung` rather than grepping emitted
+    source for `eval_instance`. Pass `edges` when the catalog has already
+    been walked.
+    """
+    fused = plan_fused_scc(scc, catalog=catalog, graph=graph, edges=edges)
+    if len(scc) > 1:
+        if fused is not None:
+            return SccPlan(rung=2, plan=fused)
+        return SccPlan(rung=3)
+    if fused is not None and fused.direction == "forward":
+        return SccPlan(rung=1, plan=fused)
+    if requires_demand_driven(catalog.get(scc[0]), catalog=catalog, graph=graph, edges=edges):
+        return SccPlan(rung=3)
+    return SccPlan(rung=0)
+
+
 def _zero_distance_edges(
     scc: tuple[str, ...],
     edges: Sequence[DependenceEdge],
@@ -844,7 +736,7 @@ def _residual_cycle_message(
     index: int,
     residual: dict[str, list[str]],
     edges: Sequence[DependenceEdge],
-    catalog: SeriesCatalog | None = None,
+    catalog: SeriesCatalog,
 ) -> str:
     """Name the two statements and the index point of a residual cycle."""
     pair = _first_cyclic_pair(residual)
@@ -883,7 +775,7 @@ def _residual_cycle_message(
 def assert_distance_zero_legal(
     scc: tuple[str, ...],
     edges: Sequence[DependenceEdge],
-    catalog: SeriesCatalog | None = None,
+    catalog: SeriesCatalog,
 ) -> None:
     """Fail closed when some schedule index has an unconditional same-index cycle.
 
@@ -911,7 +803,7 @@ def assert_distance_zero_legal(
 def has_residual_may_cycle(
     scc: tuple[str, ...],
     edges: Sequence[DependenceEdge],
-    catalog: SeriesCatalog | None = None,
+    catalog: SeriesCatalog,
 ) -> bool:
     """Return True if any schedule index has a residual cycle using guarded edges."""
     by_index: dict[int, dict[str, list[str]]] = {}
@@ -925,7 +817,7 @@ def has_residual_may_cycle(
 def residual_body_order(
     scc: tuple[str, ...],
     edges: Sequence[DependenceEdge],
-    catalog: SeriesCatalog | None = None,
+    catalog: SeriesCatalog,
 ) -> tuple[str, ...] | None:
     """Return one in-loop statement order, or None if index points disagree.
 

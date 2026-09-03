@@ -139,14 +139,145 @@ class BoundSeries:
         return self._cell_indices.get(normalize_address(address))
 
 
+def _join_key(point: KeyPoint, fields: Sequence[str]) -> tuple[Scalar, ...] | None:
+    """Return `point` projected onto `fields`, or None if a field is missing."""
+    try:
+        return tuple(point[field] for field in fields)
+    except KeyError:
+        return None
+
+
+def _compute_preferred_fields(series: BoundSeries) -> tuple[str, ...] | None:
+    """Return join fields for `series`, or None when no key is declared.
+
+    The preferred fields are the full key tuple, so a matrix is a loop nest —
+    outer over the leading key fields, inner over `TIME_PERIOD` — and the
+    identity join is unambiguous by construction (#612). Expansion order is
+    the schedule only for `key: []`. A declared key that does not resolve on
+    every member raises rather than dropping to a partial join (#620).
+    """
+    if not series.key_fields:
+        return None
+    if len(series.domain) != len(series.cells):
+        raise InvertedTreeExportError(
+            f"series {series.series_id!r}: key domain length {len(series.domain)} "
+            f"does not match cell count {len(series.cells)}"
+        )
+    unresolved = [
+        series.cells[index]
+        for index, point in enumerate(series.domain)
+        if _join_key(point, series.key_fields) is None
+    ]
+    if unresolved:
+        raise InvertedTreeExportError(
+            f"series {series.series_id!r}: key did not fully resolve for cells "
+            f"{', '.join(unresolved)}"
+        )
+    return tuple(series.key_fields)
+
+
+def _ordered_domain(
+    series: Mapping[str, BoundSeries], fields: Sequence[str]
+) -> tuple[tuple[Scalar, ...], ...] | None:
+    """Return the sorted union of resolved join keys, or None if unsortable."""
+    keys: set[tuple[Scalar, ...]] = set()
+    for item in series.values():
+        for point in item.domain:
+            key = _join_key(point, fields)
+            if key is not None:
+                keys.add(key)
+    if not keys:
+        return None
+    try:
+        return tuple(sorted(keys))
+    except TypeError:
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class ScheduleIndex:
+    """Precomputed schedule coordinates and join fields for one catalog.
+
+    `index_by_coord` maps series id to schedule coordinate to member indices
+    so identity joins do not rescan producer cells.
+    """
+
+    preferred: dict[str, tuple[str, ...] | None]
+    coord_of: dict[str, int]
+    index_by_coord: dict[str, dict[int, tuple[int, ...]]]
+
+
+def build_schedule_index(series: Mapping[str, BoundSeries]) -> ScheduleIndex:
+    """Walk bound series once and index join keys and per-cell coordinates."""
+    preferred = {series_id: _compute_preferred_fields(item) for series_id, item in series.items()}
+    positions: dict[tuple[str, ...], dict[tuple[Scalar, ...], int]] = {}
+    for fields in {item for item in preferred.values() if item is not None}:
+        ordered = _ordered_domain(series, fields)
+        if ordered is None:
+            continue
+        positions[fields] = {key: index for index, key in enumerate(ordered)}
+    coord_of: dict[str, int] = {}
+    for item in series.values():
+        fields = preferred[item.series_id]
+        if fields is None:
+            for index, address in enumerate(item.cells):
+                coord_of[normalize_address(address)] = index
+            continue
+        lookup = positions.get(fields)
+        for index, address in enumerate(item.cells):
+            coord = index
+            if lookup is not None and index < len(item.domain):
+                key = _join_key(item.domain[index], fields)
+                if key is not None and key in lookup:
+                    coord = lookup[key]
+            coord_of[normalize_address(address)] = coord
+    index_by_coord: dict[str, dict[int, tuple[int, ...]]] = {}
+    for item in series.values():
+        buckets: dict[int, list[int]] = {}
+        for member_index, address in enumerate(item.cells):
+            coord = coord_of[normalize_address(address)]
+            buckets.setdefault(coord, []).append(member_index)
+        index_by_coord[item.series_id] = {
+            coord: tuple(members) for coord, members in buckets.items()
+        }
+    return ScheduleIndex(preferred=preferred, coord_of=coord_of, index_by_coord=index_by_coord)
+
+
+def preferred_fields(series: BoundSeries, catalog: SeriesCatalog) -> tuple[str, ...] | None:
+    """Return cached join fields for `series` from `catalog.schedule`."""
+    return catalog.schedule.preferred.get(series.series_id)
+
+
+def schedule_coord(address: str, catalog: SeriesCatalog) -> int:
+    """Return the member's position in the catalog's ordered index domain.
+
+    When the series declares a key, the coordinate is the position of the
+    full key tuple in the joined domain — a loop nest with `TIME_PERIOD` as
+    the inner schedule axis (#612). When no key is declared (`key: []`), the
+    coordinate is the member's expansion-order index.
+
+    Raises:
+        InvertedTreeExportError: `address` is not a bound catalog cell.
+    """
+    found = catalog.schedule.coord_of.get(normalize_address(address))
+    if found is None:
+        raise InvertedTreeExportError(f"cell {address} has no schedule coordinate")
+    return found
+
+
 @dataclass(frozen=True, slots=True)
 class SeriesCatalog:
-    """Bindings series keyed by id, with reverse address lookup."""
+    """Bindings series keyed by id, with reverse address lookup.
+
+    `schedule` is built once in `build_catalog` (and copied by
+    `partition_catalog`). Join coordinates are a catalog property, not a
+    lazily cached attribute of scheduling.
+    """
 
     series: dict[str, BoundSeries]
     order: tuple[str, ...]
     address_to_id: dict[str, str]
-    _schedule: object | None = field(default=None, repr=False, compare=False)
+    schedule: ScheduleIndex = field(repr=False, compare=False)
 
     def get(self, series_id: str) -> BoundSeries:
         """Return the series named `series_id`."""
@@ -434,6 +565,7 @@ def partition_catalog(catalog: SeriesCatalog, graph: DependencyGraph) -> SeriesC
         series=series_map,
         order=catalog.order,
         address_to_id=catalog.address_to_id,
+        schedule=catalog.schedule,
     )
 
 
@@ -504,6 +636,7 @@ def build_catalog(
         series=series_map,
         order=tuple(order),
         address_to_id=address_to_id,
+        schedule=build_schedule_index(series_map),
     )
     if graph is None:
         return catalog

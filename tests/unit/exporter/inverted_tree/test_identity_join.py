@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 
+from excel_grapher.exporter.inverted_tree.catalog import schedule_coord
 from excel_grapher.exporter.inverted_tree.deps import (
     collect_all_dependence_edges,
     identity_join_indices,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
-from excel_grapher.exporter.inverted_tree.schedule import schedule_coord
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     inverted_graph_parts,

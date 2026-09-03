@@ -18,7 +18,7 @@ from excel_grapher.exporter.inverted_tree.catalog import (
 )
 from excel_grapher.exporter.inverted_tree.deps import DependenceEdge
 from excel_grapher.exporter.inverted_tree.schedule import plan_fused_scc
-from tests.unit.exporter.inverted_tree.helpers import generate_inverted
+from tests.unit.exporter.inverted_tree.helpers import generate_inverted, make_catalog
 from tests.unit.exporter.inverted_tree.test_shape_a1_leaf_closure import (
     _a1_bindings,
     _a1_workbook,
@@ -81,7 +81,7 @@ def _synthetic_zipper(n: int) -> tuple[SeriesCatalog, tuple[DependenceEdge, ...]
     adj_cells = tuple(f"Engine!B{i}" for i in range(2, n + 1))
     debt = _synthetic_series("debt", debt_cells, range(n), direction="output")
     adj = _synthetic_series("adjustment", adj_cells, range(1, n), direction="internal")
-    catalog = SeriesCatalog(
+    catalog = make_catalog(
         series={"debt": debt, "adjustment": adj},
         order=("debt", "adjustment"),
         address_to_id={
@@ -134,6 +134,6 @@ def test_plan_fused_scc_5k_periods_under_a_second() -> None:
     plan = plan_fused_scc(("debt", "adjustment"), catalog=catalog, edges=edges)
     elapsed = time.perf_counter() - start
     assert plan is not None
-    assert plan.body_order == ("adjustment", "debt")
+    assert plan.regions[-1].body_order == ("adjustment", "debt")
     assert len(plan.schedule) == 5_000
     assert elapsed < 1.0, f"planning took {elapsed:.3f}s"
