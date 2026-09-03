@@ -11,7 +11,12 @@ from pathlib import Path
 from typing import Any
 
 from excel_grapher.exporter.codegen import CodeGenerator
-from excel_grapher.exporter.inverted_tree.catalog import SeriesCatalog, build_catalog
+from excel_grapher.exporter.inverted_tree.catalog import (
+    BoundSeries,
+    SeriesCatalog,
+    build_catalog,
+    build_schedule_index,
+)
 from excel_grapher.exporter.inverted_tree.deps import SeriesDeps, collect_all_deps
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.grapher.dynamic_refs import DynamicRefConfig
@@ -19,6 +24,20 @@ from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings import validate_bindings_document
 from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 from excel_grapher.series_bindings.workflow import all_series_targets
+
+
+def make_catalog(
+    series: dict[str, BoundSeries],
+    order: tuple[str, ...],
+    address_to_id: dict[str, str],
+) -> SeriesCatalog:
+    """Assemble a catalog, computing the schedule index from `series`."""
+    return SeriesCatalog(
+        series=series,
+        order=order,
+        address_to_id=address_to_id,
+        schedule=build_schedule_index(series),
+    )
 
 
 def write_workbook(path: Path, sheets: Mapping[str, Mapping[str, object]]) -> Path:

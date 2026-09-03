@@ -23,14 +23,13 @@ from excel_grapher.exporter.inverted_tree.deps import (
     formula_closure,
     leaf_closure,
     plan_indices,
-    requires_demand_driven,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.schedule import (
     IndexSet,
     build_scc_map,
     indices_to_source,
-    plan_fused_scc,
+    plan_scc,
     scan_function_name,
     scc_external_params,
 )
@@ -207,14 +206,16 @@ def emit_internals_module(
     for series in catalog.formula_series():
         info = deps[series.series_id]
         scc = scc_map.get(series.series_id, (series.series_id,))
+        choice = plan_scc(scc, catalog=catalog, graph=graph)
         if len(scc) > 1:
             param_ids = scc_external_params(scc, deps, catalog.order)
             if scc not in emitted_scans:
                 emitted_scans.add(scc)
                 deps_map = dict(deps)
-                plan = plan_fused_scc(scc, catalog=catalog, graph=graph)
-                if plan is not None:
-                    body, used = emit_rung2_scc(scc, catalog=catalog, deps=deps_map, graph=graph)
+                if choice.rung == 2:
+                    body, used = emit_rung2_scc(
+                        scc, catalog=catalog, deps=deps_map, graph=graph, plan=choice.plan
+                    )
                     kind = "Fused union-domain evaluation"
                 else:
                     body, used = emit_rung3_scc(scc, catalog=catalog, deps=deps_map, graph=graph)
@@ -224,17 +225,23 @@ def emit_internals_module(
                 doc = f'    """{kind} of zipper series {joined}."""'
                 functions.append("\n".join([_scan_signature(scc, param_ids, catalog), doc, *body]))
             continue
-        singleton = (series.series_id,)
         deps_map = dict(deps)
-        plan = plan_fused_scc(singleton, catalog=catalog, graph=graph)
-        if plan is not None and plan.direction == "forward":
-            body, used = emit_rung2_scc(singleton, catalog=catalog, deps=deps_map, graph=graph)
+        if choice.rung == 1:
+            body, used = emit_rung2_scc(
+                (series.series_id,),
+                catalog=catalog,
+                deps=deps_map,
+                graph=graph,
+                plan=choice.plan,
+            )
             used_runtime |= used
             doc = f'    """First-level helper for bound series `{series.series_id}`."""'
             functions.append("\n".join([_helper_signature(series, info, catalog), doc, *body]))
             continue
-        if requires_demand_driven(series, catalog=catalog, graph=graph):
-            body, used = emit_rung3_scc(singleton, catalog=catalog, deps=deps_map, graph=graph)
+        if choice.rung == 3:
+            body, used = emit_rung3_scc(
+                (series.series_id,), catalog=catalog, deps=deps_map, graph=graph
+            )
             used_runtime |= used
             doc = f'    """Demand-driven evaluation of series `{series.series_id}`."""'
             functions.append("\n".join([_helper_signature(series, info, catalog), doc, *body]))

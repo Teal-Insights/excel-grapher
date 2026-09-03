@@ -23,7 +23,12 @@ from excel_grapher.core.formula_ast import (
 )
 from excel_grapher.core.formula_shape import fingerprint_formula_shape
 from excel_grapher.exporter.inverted_tree import runtime as inverted_runtime
-from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, SeriesCatalog, covering_series
+from excel_grapher.exporter.inverted_tree.catalog import (
+    BoundSeries,
+    SeriesCatalog,
+    covering_series,
+    schedule_coord,
+)
 from excel_grapher.exporter.inverted_tree.deps import (
     SeriesDeps,
     iter_range_addresses,
@@ -38,7 +43,6 @@ from excel_grapher.exporter.inverted_tree.schedule import (
     FusedRegion,
     collect_dependence_edges,
     plan_fused_scc,
-    schedule_coord,
 )
 
 if TYPE_CHECKING:
@@ -880,6 +884,7 @@ def emit_rung2_scc(
     catalog: SeriesCatalog,
     deps: dict[str, SeriesDeps],
     graph: DependencyGraph,
+    plan: FusedPlan | None = None,
 ) -> tuple[list[str], set[str]]:
     """Emit a fused union-domain loop for a fusible zipper SCC.
 
@@ -892,7 +897,8 @@ def emit_rung2_scc(
         InvertedTreeExportError: The SCC is not fusible, or the residual is a
             real same-index cycle.
     """
-    plan = plan_fused_scc(scc, catalog=catalog, graph=graph)
+    if plan is None:
+        plan = plan_fused_scc(scc, catalog=catalog, graph=graph)
     if plan is None:
         raise InvertedTreeExportError(
             f"zipper series {list(scc)!r} is not fusible; use demand-driven evaluation"

@@ -411,6 +411,14 @@ def _resolve_label(
     return raw
 
 
+class UnknownBindKindError(ValueError):
+    """Bind mapping used a `kind` the resolver does not implement."""
+
+    def __init__(self, kind: object) -> None:
+        self.kind = kind
+        super().__init__(f"Unknown bind kind: {kind!r}")
+
+
 def _execute_bind(
     bind: dict[str, Any],
     *,
@@ -496,7 +504,7 @@ def _execute_bind(
             return _normalize_string(raw, normalize)
         return coerce_constant(raw, read_as=read_as)
 
-    raise ValueError(f"Unknown bind kind: {kind!r}")
+    raise UnknownBindKindError(kind)
 
 
 def _parse_data_cell(address: str) -> tuple[str, str, int]:
@@ -681,12 +689,14 @@ def resolve_key_domain(
                             f"{field_name!r} bind failed: {exc}"
                         ) from exc
                     continue
-                except ValueError as exc:
-                    if field_name in key_fields and "Unknown bind kind" in str(exc):
+                except UnknownBindKindError as exc:
+                    if field_name in key_fields:
                         raise ValueError(
                             f"series {series_id!r} cell {address}: key field "
                             f"{field_name!r} bind failed: {exc}"
                         ) from exc
+                    continue
+                except ValueError:
                     continue
                 if field_name in key_fields and value is None:
                     continue

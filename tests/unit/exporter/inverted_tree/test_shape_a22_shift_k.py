@@ -152,7 +152,7 @@ def test_stride_k_self_lag_emits_fused_scan_and_matches_evaluator(
     plan = plan_fused_scc(("path",), catalog=catalog, graph=graph)
     assert plan is not None
     assert plan.direction == "forward"
-    assert plan.peel_stop == lag
+    assert plan.regions[-1].start == lag
     assert plan.schedule == tuple(range(n))
 
     modules = generate_inverted(workbook, doc)
@@ -183,7 +183,7 @@ def test_multi_lag_t1_t2_emits_fused_scan_and_matches_evaluator(tmp_path: Path) 
     plan = plan_fused_scc(("path",), catalog=catalog, graph=graph)
     assert plan is not None
     assert plan.direction == "forward"
-    assert plan.peel_stop == 2
+    assert plan.regions[-1].start == 2
 
     modules = generate_inverted(workbook, doc)
     _assert_fused_scan(modules["internals.py"])
