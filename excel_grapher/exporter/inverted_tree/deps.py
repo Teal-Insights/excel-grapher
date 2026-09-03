@@ -161,8 +161,16 @@ def predecessor_address(series: BoundSeries, index: int, catalog: SeriesCatalog)
     if col <= 1:
         return None
     prev = format_cell_key(sheet, get_column_letter(col - 1), row)
-    owner = catalog.series_id_for(prev)
-    if owner is None or owner == series.series_id:
+    owner = catalog.series_for(prev)
+    if owner is None or owner.series_id == series.series_id:
+        return None
+    from excel_grapher.exporter.inverted_tree.schedule import _preferred_fields, schedule_coord
+
+    if (
+        _preferred_fields(owner) is not None
+        and _preferred_fields(series) is not None
+        and schedule_coord(prev, catalog) != schedule_coord(series.cells[0], catalog) - 1
+    ):
         return None
     return prev
 
@@ -236,21 +244,15 @@ class _DepCollector:
     def emit_cell(self, address: str, host_cell: str, host_index: int) -> None:
         owner = self.catalog.require_series_for(address)
         if owner.series_id == self.host.series_id:
-            pred = predecessor_address(self.host, host_index, self.catalog)
-            if pred is not None and normalize_address(address) == normalize_address(pred):
-                self._emit(
-                    producer_id=owner.series_id,
-                    host_cell=host_cell,
-                    producer_cell=address,
-                    access=_member_access(host_cell, owner, address, self.catalog),
-                )
-                return
             if normalize_address(address) == self.host.cells[host_index]:
                 return
-            raise InvertedTreeExportError(
-                f"series {self.host.series_id!r} cell {self.host.cells[host_index]} "
-                f"references non-lag cell {address} in the same series"
+            self._emit(
+                producer_id=owner.series_id,
+                host_cell=host_cell,
+                producer_cell=address,
+                access=_member_access(host_cell, owner, address, self.catalog),
             )
+            return
         self._emit(
             producer_id=owner.series_id,
             host_cell=host_cell,
@@ -436,6 +438,29 @@ def collect_series_edges(
         ast = node_formula_ast(graph, address)
         collector.visit(ast, host_cell=address, host_index=index)
     return collector.edges
+
+
+def requires_demand_driven(
+    series: BoundSeries,
+    *,
+    catalog: SeriesCatalog,
+    graph: DependencyGraph,
+) -> bool:
+    """True when a same-series ref is not a unit predecessor lag.
+
+    Backward recursion (`value_t = value_{t+1} * k`) and irregular self-refs
+    cannot use the rung-1 scan; they fall through to demand-driven evaluation.
+    """
+    for edge in collect_series_edges(series, catalog=catalog, graph=graph):
+        if edge.producer_id != series.series_id:
+            continue
+        host_index = series.index_of(edge.consumer_cell)
+        if host_index is None:
+            return True
+        pred = predecessor_address(series, host_index, catalog)
+        if pred is None or normalize_address(edge.producer_cell) != normalize_address(pred):
+            return True
+    return False
 
 
 def collect_all_dependence_edges(

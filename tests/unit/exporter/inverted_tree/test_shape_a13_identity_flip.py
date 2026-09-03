@@ -47,6 +47,42 @@ def _two_series_workbook(tmp_path: Path) -> Path:
     )
 
 
+def _vertical_two_series_workbook(tmp_path: Path) -> Path:
+    """`B1` is the residual of `C1`; `C2` is the residual of `B2`."""
+    return write_workbook(
+        tmp_path / "a13_two_series_vertical.xlsx",
+        {
+            "Engine": {
+                "A1": 2009,
+                "A2": 2010,
+                "B1": "=C1",
+                "B2": "=10",
+                "C1": "=2",
+                "C2": "=B2",
+            },
+        },
+    )
+
+
+def _vertical_two_series_bindings() -> dict:
+    return bindings_document(
+        series_entry(
+            "x",
+            "Engine!B1:B2",
+            layout="series",
+            direction="output",
+            label_column="A",
+        ),
+        series_entry(
+            "y",
+            "Engine!C1:C2",
+            layout="series",
+            direction="output",
+            label_column="A",
+        ),
+    )
+
+
 def _two_series_bindings() -> dict:
     return bindings_document(
         _time_series("x", "Engine!A2:B2"),
@@ -108,41 +144,88 @@ def test_identity_flip_is_not_a_cell_cycle(tmp_path: Path) -> None:
     assert graph.cycle_report().has_must_cycles is False
 
 
-def test_identity_flip_emits_region_local_fused_scan(tmp_path: Path) -> None:
-    workbook = _two_series_workbook(tmp_path)
-    modules = generate_inverted(workbook, _two_series_bindings())
+@pytest.mark.parametrize(
+    ("workbook_fn", "bindings_fn", "x_cells", "y_cells", "pkg_name"),
+    [
+        (
+            _two_series_workbook,
+            _two_series_bindings,
+            ["Engine!A2", "Engine!B2"],
+            ["Engine!A4", "Engine!B4"],
+            "a13_h",
+        ),
+        (
+            _vertical_two_series_workbook,
+            _vertical_two_series_bindings,
+            ["Engine!B1", "Engine!B2"],
+            ["Engine!C1", "Engine!C2"],
+            "a13_v",
+        ),
+    ],
+    ids=["horizontal", "vertical"],
+)
+def test_identity_flip_emits_region_local_fused_scan(
+    tmp_path: Path,
+    workbook_fn,
+    bindings_fn,
+    x_cells: list[str],
+    y_cells: list[str],
+    pkg_name: str,
+) -> None:
+    workbook = workbook_fn(tmp_path)
+    modules = generate_inverted(workbook, bindings_fn())
     internals = modules["internals.py"]
     assert "eval_instance" not in internals
     assert "for t in range(" in internals
     assert "if t == 0:" in internals
     assert "elif t == 1:" in internals
-    catalog, _deps, graph = inverted_graph_parts(workbook, _two_series_bindings())
+    catalog, _deps, graph = inverted_graph_parts(workbook, bindings_fn())
     plan = plan_fused_scc(("x", "y"), catalog=catalog, graph=graph)
     assert plan is not None
     assert plan.regions == (
         FusedRegion(start=0, stop=1, body_order=("y", "x")),
         FusedRegion(start=1, stop=2, body_order=("x", "y")),
     )
-    pkg = load_package(modules, tmp_path, name="a13_two")
+    pkg = load_package(modules, tmp_path, name=pkg_name)
     assert pkg.compute_x() == pytest.approx((2.0, 10.0))
     assert pkg.compute_y() == pytest.approx((2.0, 10.0))
 
 
-def test_identity_flip_matches_formula_evaluator(tmp_path: Path) -> None:
-    workbook = _two_series_workbook(tmp_path)
-    pkg = load_package(
-        generate_inverted(workbook, _two_series_bindings()), tmp_path, name="a13_num"
-    )
-    graph = create_dependency_graph(
-        workbook,
-        ["Engine!A2", "Engine!B2", "Engine!A4", "Engine!B4"],
-        load_values=True,
-    )
-    expected = FormulaEvaluator(graph).evaluate(
-        ["Engine!A2", "Engine!B2", "Engine!A4", "Engine!B4"]
-    )
-    assert pkg.compute_x() == pytest.approx((expected["Engine!A2"], expected["Engine!B2"]))
-    assert pkg.compute_y() == pytest.approx((expected["Engine!A4"], expected["Engine!B4"]))
+@pytest.mark.parametrize(
+    ("workbook_fn", "bindings_fn", "x_cells", "y_cells", "pkg_name"),
+    [
+        (
+            _two_series_workbook,
+            _two_series_bindings,
+            ["Engine!A2", "Engine!B2"],
+            ["Engine!A4", "Engine!B4"],
+            "a13_num_h",
+        ),
+        (
+            _vertical_two_series_workbook,
+            _vertical_two_series_bindings,
+            ["Engine!B1", "Engine!B2"],
+            ["Engine!C1", "Engine!C2"],
+            "a13_num_v",
+        ),
+    ],
+    ids=["horizontal", "vertical"],
+)
+def test_identity_flip_matches_formula_evaluator(
+    tmp_path: Path,
+    workbook_fn,
+    bindings_fn,
+    x_cells: list[str],
+    y_cells: list[str],
+    pkg_name: str,
+) -> None:
+    workbook = workbook_fn(tmp_path)
+    pkg = load_package(generate_inverted(workbook, bindings_fn()), tmp_path, name=pkg_name)
+    targets = [*x_cells, *y_cells]
+    graph = create_dependency_graph(workbook, targets, load_values=True)
+    expected = FormulaEvaluator(graph).evaluate(targets)
+    assert pkg.compute_x() == pytest.approx(tuple(expected[cell] for cell in x_cells))
+    assert pkg.compute_y() == pytest.approx(tuple(expected[cell] for cell in y_cells))
 
 
 def test_qcraft_identity_flip_emits_and_matches_evaluator(tmp_path: Path) -> None:

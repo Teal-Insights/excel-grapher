@@ -33,6 +33,34 @@ def _a12_workbook(tmp_path: Path) -> Path:
     )
 
 
+def _a12_vertical_workbook(tmp_path: Path) -> Path:
+    return write_workbook(
+        tmp_path / "a12_shapes_vertical.xlsx",
+        {
+            "Engine": {
+                "A1": 2009,
+                "A2": 2010,
+                "A3": 2011,
+                "B1": "=1",
+                "B2": "=B1*2",
+                "B3": "=B2+100",
+            },
+        },
+    )
+
+
+def _a12_vertical_bindings() -> dict:
+    return bindings_document(
+        series_entry(
+            "path",
+            "Engine!B1:B3",
+            layout="series",
+            direction="output",
+            label_column="A",
+        ),
+    )
+
+
 def _a12_bindings() -> dict:
     return bindings_document(
         series_entry(
@@ -81,21 +109,32 @@ def _a12_elementwise_bindings() -> dict:
     )
 
 
-def test_mixed_member_formulas_emit_correct_values(tmp_path: Path) -> None:
-    workbook = _a12_workbook(tmp_path)
-    modules = generate_inverted(workbook, _a12_bindings())
+@pytest.mark.parametrize(
+    ("workbook_fn", "bindings_fn", "cells", "pkg_name"),
+    [
+        (_a12_workbook, _a12_bindings, ["Engine!A2", "Engine!B2", "Engine!C2"], "a12_h"),
+        (
+            _a12_vertical_workbook,
+            _a12_vertical_bindings,
+            ["Engine!B1", "Engine!B2", "Engine!B3"],
+            "a12_v",
+        ),
+    ],
+    ids=["horizontal", "vertical"],
+)
+def test_mixed_member_formulas_emit_correct_values(
+    tmp_path: Path, workbook_fn, bindings_fn, cells: list[str], pkg_name: str
+) -> None:
+    workbook = workbook_fn(tmp_path)
+    modules = generate_inverted(workbook, bindings_fn())
     assert "formula shape" not in modules["internals.py"]
-    pkg = load_package(modules, tmp_path, name="a12_scan")
+    pkg = load_package(modules, tmp_path, name=pkg_name)
     assert pkg.compute_path() == pytest.approx((1.0, 2.0, 102.0))
 
-    graph = create_dependency_graph(
-        workbook, ["Engine!A2", "Engine!B2", "Engine!C2"], load_values=True
-    )
+    graph = create_dependency_graph(workbook, cells, load_values=True)
     evaluator = FormulaEvaluator(graph)
-    got = evaluator.evaluate(["Engine!A2", "Engine!B2", "Engine!C2"])
-    assert (got["Engine!A2"], got["Engine!B2"], got["Engine!C2"]) == pytest.approx(
-        (1.0, 2.0, 102.0)
-    )
+    got = evaluator.evaluate(cells)
+    assert tuple(got[cell] for cell in cells) == pytest.approx((1.0, 2.0, 102.0))
 
 
 def test_mixed_elementwise_formulas_emit_correct_values(tmp_path: Path) -> None:

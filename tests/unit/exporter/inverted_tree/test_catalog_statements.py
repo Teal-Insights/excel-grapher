@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from excel_grapher.exporter.inverted_tree.catalog import build_catalog
+from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings import validate_bindings_document
+from excel_grapher.series_bindings.resolve import resolve_key_domain
 from excel_grapher.series_bindings.workflow import all_series_targets
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
@@ -102,3 +106,14 @@ def test_uniform_formula_series_is_one_statement(tmp_path: Path) -> None:
     assert series.statements[0].shape_key is not None
     assert series.statements[0].start == 0
     assert series.statements[0].stop == 2
+
+
+def test_typo_bind_kind_fails_closed_instead_of_empty_domain(tmp_path: Path) -> None:
+    workbook = _a12_workbook(tmp_path)
+    document = _a12_bindings()
+    document["series"][0]["structure"]["dimensions"][0]["bind"]["kind"] = "colum_header"
+    entry = document["series"][0]
+    with pytest.raises(ValueError, match="key field"):
+        resolve_key_domain(workbook, entry, ("Engine!A2", "Engine!B2", "Engine!C2"))
+    with pytest.raises(InvertedTreeExportError, match="key field"):
+        build_catalog(document, workbook=workbook)

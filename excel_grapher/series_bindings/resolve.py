@@ -636,10 +636,13 @@ def resolve_key_domain(
     """Resolve per-cell key coordinates for `cells` in expansion order.
 
     Uses the same dimension binds as `resolve_series_binding`, but does not
-    intersect with the dependency graph. Bind failures and missing key
-    fields are omitted so layout position remains the schedule default.
+    intersect with the dependency graph. Missing labels are omitted so
+    layout position remains the schedule default. Structural bind failures
+    (unknown `kind`, missing bind keys) raise: an empty domain is no longer
+    a silent fallback once the scheduler joins on `KeyPoint`s.
     """
     key_fields = [str(c) for c in (series.get("key") or [])]
+    series_id = str(series.get("id") or "")
     if not cells:
         return ()
     if not key_fields:
@@ -671,7 +674,21 @@ def resolve_key_domain(
                         data_address=address,
                         inferred_read_as=inferred,
                     )
-                except (KeyError, ValueError, TypeError):
+                except (KeyError, TypeError) as exc:
+                    if field_name in key_fields:
+                        raise ValueError(
+                            f"series {series_id!r} cell {address}: key field "
+                            f"{field_name!r} bind failed: {exc}"
+                        ) from exc
+                    continue
+                except ValueError as exc:
+                    if field_name in key_fields and "Unknown bind kind" in str(exc):
+                        raise ValueError(
+                            f"series {series_id!r} cell {address}: key field "
+                            f"{field_name!r} bind failed: {exc}"
+                        ) from exc
+                    continue
+                if field_name in key_fields and value is None:
                     continue
                 coordinates[field_name] = value
                 if scope == "series":

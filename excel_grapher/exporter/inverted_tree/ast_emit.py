@@ -669,7 +669,7 @@ def emit_rung3_scc(
     deps: dict[str, SeriesDeps],
     graph: DependencyGraph,
 ) -> tuple[list[str], set[str]]:
-    """Emit demand-driven instance evaluation for a multi-series SCC."""
+    """Emit demand-driven instance evaluation for an SCC (the rung-3 floor)."""
     used: set[str] = {"as_measure", "XlError", "eval_instance"}
     scc_ids = frozenset(scc)
     compute_names = {sid: _compute_fn_name(sid) for sid in scc}
