@@ -57,7 +57,7 @@ def _catalog_from_edges(edges: Sequence[DependenceEdge]) -> SeriesCatalog:
         series={},
         order=(),
         address_to_id={},
-        schedule=ScheduleIndex(preferred={}, coord_of=coord_of),
+        schedule=ScheduleIndex(preferred={}, coord_of=coord_of, index_by_coord={}),
     )
 
 

@@ -350,24 +350,34 @@ def tarjan_series_sccs(
 
 def collect_dependence_edges(
     catalog: SeriesCatalog,
-    graph: DependencyGraph,
+    graph: DependencyGraph | None,
     series_ids: Sequence[str],
+    *,
+    edges: Sequence[DependenceEdge] | None = None,
 ) -> tuple[DependenceEdge, ...]:
     """Collect instance-level cell-ref edges among `series_ids`.
 
     `whole` and `dynamic` accesses have no fixed distance and are omitted so
-    the residual test stays over concrete instance reads.
+    the residual test stays over concrete instance reads. Pass `edges` to
+    filter an already-walked catalog instead of re-visiting formula ASTs.
     """
     wanted = set(series_ids)
-    edges: list[DependenceEdge] = []
-    for series_id in series_ids:
-        for edge in collect_series_edges(catalog.get(series_id), catalog=catalog, graph=graph):
-            if edge.producer_id not in wanted:
-                continue
-            if edge.access in {"whole", "dynamic"}:
-                continue
-            edges.append(edge)
-    return tuple(edges)
+    if edges is None:
+        if graph is None:
+            raise TypeError("collect_dependence_edges requires edges or graph")
+        collected: list[DependenceEdge] = []
+        for series_id in series_ids:
+            collected.extend(
+                collect_series_edges(catalog.get(series_id), catalog=catalog, graph=graph)
+            )
+        edges = collected
+    return tuple(
+        edge
+        for edge in edges
+        if edge.consumer_id in wanted
+        and edge.producer_id in wanted
+        and edge.access not in {"whole", "dynamic"}
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -437,16 +447,17 @@ def _statement_at_union(
 
 def _residual_order_at_index(
     members: tuple[str, ...],
-    edges: Sequence[DependenceEdge],
-    index: int,
-    catalog: SeriesCatalog,
+    index_edges: Sequence[DependenceEdge],
 ) -> tuple[str, ...] | None:
     """Return the distance-zero topo among `members` at one schedule index."""
     if not members:
         return ()
     residual = _empty_residual(members)
-    for edge in _zero_distance_edges(members, edges):
-        if schedule_coord(edge.consumer_cell, catalog) != index:
+    active = set(members)
+    for edge in index_edges:
+        if edge.distance != 0:
+            continue
+        if edge.consumer_id not in active or edge.producer_id not in active:
             continue
         _add_residual_edge(residual, edge)
     return _topo_order(members, residual)
@@ -454,18 +465,14 @@ def _residual_order_at_index(
 
 def _access_signature(
     members: tuple[str, ...],
-    edges: Sequence[DependenceEdge],
-    index: int,
-    catalog: SeriesCatalog,
+    index_edges: Sequence[DependenceEdge],
 ) -> tuple[tuple[str, str, str], ...]:
     """Return intra-member access classes at `index`, sorted for grouping."""
     active = set(members)
     sig = [
         (edge.consumer_id, edge.producer_id, edge.access)
-        for edge in edges
-        if edge.consumer_id in active
-        and edge.producer_id in active
-        and schedule_coord(edge.consumer_cell, catalog) == index
+        for edge in index_edges
+        if edge.consumer_id in active and edge.producer_id in active
     ]
     sig.sort()
     return tuple(sig)
@@ -476,7 +483,7 @@ def _index_region_key(
     *,
     catalog: SeriesCatalog,
     domain: Mapping[str, tuple[int, int]],
-    edges: Sequence[DependenceEdge],
+    index_edges: Sequence[DependenceEdge],
     union_t: int,
     index: int,
 ) -> tuple[tuple[str, ...], tuple[tuple[str, str], ...], tuple[tuple[str, str, str], ...]] | None:
@@ -484,11 +491,23 @@ def _index_region_key(
     active = tuple(sid for sid in scc if domain[sid][0] <= union_t < domain[sid][1])
     if not active:
         return None
-    order = _residual_order_at_index(active, edges, index, catalog)
+    order = _residual_order_at_index(active, index_edges)
     if order is None:
         return None
     shape_sig = tuple((sid, _statement_at_union(catalog, sid, union_t, index)) for sid in active)
-    return order, shape_sig, _access_signature(active, edges, index, catalog)
+    return order, shape_sig, _access_signature(active, index_edges)
+
+
+def _bucket_edges_by_consumer_coord(
+    edges: Sequence[DependenceEdge],
+    catalog: SeriesCatalog,
+) -> dict[int, list[DependenceEdge]]:
+    """Group intra-SCC edges by the consumer's schedule coordinate."""
+    buckets: dict[int, list[DependenceEdge]] = {}
+    for edge in edges:
+        coord = schedule_coord(edge.consumer_cell, catalog)
+        buckets.setdefault(coord, []).append(edge)
+    return buckets
 
 
 def _fuse_regions(
@@ -500,6 +519,7 @@ def _fuse_regions(
     coords: Sequence[int],
 ) -> tuple[FusedRegion, ...] | None:
     """Group contiguous union indices that share residual order and access."""
+    by_coord = _bucket_edges_by_consumer_coord(edges, catalog)
     regions: list[FusedRegion] = []
     run_start = 0
     run_key: (
@@ -510,7 +530,7 @@ def _fuse_regions(
             scc,
             catalog=catalog,
             domain=domain,
-            edges=edges,
+            index_edges=by_coord.get(index, ()),
             union_t=union_t,
             index=index,
         )
@@ -534,7 +554,8 @@ def plan_fused_scc(
     scc: tuple[str, ...],
     *,
     catalog: SeriesCatalog,
-    graph: DependencyGraph,
+    graph: DependencyGraph | None = None,
+    edges: Sequence[DependenceEdge] | None = None,
 ) -> FusedPlan | None:
     """Return a fused loop plan, or None when the SCC must stay on rung 3.
 
@@ -545,6 +566,8 @@ def plan_fused_scc(
     a `FusedRegion`. A singleton SCC with positive-distance self-lags is the
     rung-1 scan: peel the first `max(D)` members and index the growing buffer.
 
+    Pass `edges` when the catalog has already been walked.
+
     Raises:
         InvertedTreeExportError: Some index's residual is a real same-index
             cycle.
@@ -552,7 +575,7 @@ def plan_fused_scc(
     if not scc:
         return None
     members = set(scc)
-    edges = collect_dependence_edges(catalog, graph, scc)
+    edges = collect_dependence_edges(catalog, graph, scc, edges=edges)
     intra = [edge for edge in edges if edge.consumer_id in members and edge.producer_id in members]
     if len(scc) < 2 and not any(edge.distance != 0 for edge in intra):
         return None
@@ -612,23 +635,25 @@ def plan_scc(
     scc: tuple[str, ...],
     *,
     catalog: SeriesCatalog,
-    graph: DependencyGraph,
+    graph: DependencyGraph | None = None,
+    edges: Sequence[DependenceEdge] | None = None,
 ) -> SccPlan:
     """Select the emit rung for `scc`.
 
     Fused classification is `plan_fused_scc`. A singleton that is not a
     forward fused scan uses `requires_demand_driven` to choose rung 3 vs 0.
     Tests should assert `plan_scc(...).rung` rather than grepping emitted
-    source for `eval_instance`.
+    source for `eval_instance`. Pass `edges` when the catalog has already
+    been walked.
     """
-    fused = plan_fused_scc(scc, catalog=catalog, graph=graph)
+    fused = plan_fused_scc(scc, catalog=catalog, graph=graph, edges=edges)
     if len(scc) > 1:
         if fused is not None:
             return SccPlan(rung=2, plan=fused)
         return SccPlan(rung=3)
     if fused is not None and fused.direction == "forward":
         return SccPlan(rung=1, plan=fused)
-    if requires_demand_driven(catalog.get(scc[0]), catalog=catalog, graph=graph):
+    if requires_demand_driven(catalog.get(scc[0]), catalog=catalog, graph=graph, edges=edges):
         return SccPlan(rung=3)
     return SccPlan(rung=0)
 
@@ -810,20 +835,24 @@ def residual_body_order(
 def build_scc_map(
     catalog: SeriesCatalog,
     deps: Mapping[str, SeriesDeps],
-    graph: DependencyGraph,
+    graph: DependencyGraph | None = None,
+    *,
+    edges: Sequence[DependenceEdge] | None = None,
 ) -> dict[str, tuple[str, ...]]:
     """Map each formula series to its SCC (bindings order).
 
     Multi-series SCCs fail closed only when some schedule index has an
     unconditional same-index must-cycle. May-cycles through guarded edges
     do not raise here; they demote to rung 3 in plan_fused_scc.
+
+    Pass `edges` when the catalog has already been walked.
     """
     ids = [series.series_id for series in catalog.formula_series()]
     mapping: dict[str, tuple[str, ...]] = {}
     for scc in tarjan_series_sccs(ids, deps):
         if len(scc) > 1:
-            edges = collect_dependence_edges(catalog, graph, scc)
-            assert_distance_zero_legal(scc, edges, catalog)
+            scc_edges = collect_dependence_edges(catalog, graph, scc, edges=edges)
+            assert_distance_zero_legal(scc, scc_edges, catalog)
         for sid in scc:
             mapping[sid] = scc
     return mapping

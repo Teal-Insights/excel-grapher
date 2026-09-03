@@ -186,10 +186,15 @@ def _ordered_domain(
 
 @dataclass(frozen=True, slots=True)
 class ScheduleIndex:
-    """Precomputed schedule coordinates and join fields for one catalog."""
+    """Precomputed schedule coordinates and join fields for one catalog.
+
+    `index_by_coord` maps series id to schedule coordinate to member indices
+    so identity joins do not rescan producer cells.
+    """
 
     preferred: dict[str, tuple[str, ...] | None]
     coord_of: dict[str, int]
+    index_by_coord: dict[str, dict[int, tuple[int, ...]]]
 
 
 def build_schedule_index(series: Mapping[str, BoundSeries]) -> ScheduleIndex:
@@ -216,7 +221,16 @@ def build_schedule_index(series: Mapping[str, BoundSeries]) -> ScheduleIndex:
                 if key is not None and key in lookup:
                     coord = lookup[key]
             coord_of[normalize_address(address)] = coord
-    return ScheduleIndex(preferred=preferred, coord_of=coord_of)
+    index_by_coord: dict[str, dict[int, tuple[int, ...]]] = {}
+    for item in series.values():
+        buckets: dict[int, list[int]] = {}
+        for member_index, address in enumerate(item.cells):
+            coord = coord_of[normalize_address(address)]
+            buckets.setdefault(coord, []).append(member_index)
+        index_by_coord[item.series_id] = {
+            coord: tuple(members) for coord, members in buckets.items()
+        }
+    return ScheduleIndex(preferred=preferred, coord_of=coord_of, index_by_coord=index_by_coord)
 
 
 def preferred_fields(series: BoundSeries, catalog: SeriesCatalog) -> tuple[str, ...] | None:
