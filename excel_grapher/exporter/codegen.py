@@ -8,7 +8,7 @@ from collections.abc import Iterable, Mapping, Sequence, Set
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, cast
 
 import fastpyxl.utils.cell
 
@@ -2881,6 +2881,7 @@ class CodeGenerator:
         docstring_renderer: SeriesDocstringRendererSpec = "google",
         address_helpers: Mapping[str, OutputHelperSpec] | None = None,
         include_compute_all: bool | None = None,
+        paradigm: Literal["ctx", "inverted_tree"] = "ctx",
     ) -> dict[str, str]:
         """Generate a multi-module Python package for target cells.
 
@@ -2907,7 +2908,24 @@ class CodeGenerator:
         `compute_all` is omitted by default when every export target is covered by an
         output series binding. Pass `include_compute_all=True` to keep it, or
         `include_compute_all=False` to omit it unconditionally.
+
+        `paradigm="inverted_tree"` emits leaf-closure `compute_*` functions and
+        first-level-dep internals (issue #597). Default `ctx` export is unchanged.
         """
+        if paradigm == "inverted_tree":
+            from excel_grapher.exporter.inverted_tree import generate_inverted_tree_modules
+
+            if series_bindings is None or bindings_workbook is None:
+                raise ValueError(
+                    "paradigm='inverted_tree' requires series_bindings and bindings_workbook"
+                )
+            return generate_inverted_tree_modules(
+                cast("DependencyGraph", self._public_graph()),
+                series_bindings=series_bindings,
+                bindings_workbook=bindings_workbook,
+                targets=targets,
+            )
+
         normalized_targets = self._resolve_targets(targets)
 
         parts = self._generate_parts(

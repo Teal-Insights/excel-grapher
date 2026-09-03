@@ -272,7 +272,7 @@ def test_resolve_series_bindings_loads_workbook_once(tmp_path: Path) -> None:
     assert len(report["series"]) == 2
     assert len(calls) == 1
     assert calls[0].get("data_only") is True
-    assert calls[0].get("read_only") is False
+    assert calls[0].get("read_only") is True
 
 
 def _write_bool_workbook(path: Path) -> None:

@@ -230,6 +230,26 @@ def _parse_cell_rc(address: str) -> tuple[str, int, int]:
     return sheet, int(row), column_index_from_string(col_letters)
 
 
+def apply_series_excludes(
+    addresses: Sequence[str],
+    series: Mapping[str, Any],
+) -> list[str]:
+    """Drop addresses excluded by series-level `exclude_rows` / `exclude_columns`.
+
+    Same filter `resolve_series_binding` applies after expanding `data_range`.
+    """
+    kept = list(addresses)
+    exclude_rows = series.get("exclude_rows")
+    exclude_columns = series.get("exclude_columns")
+    if exclude_rows:
+        excluded_rows = expand_row_specs(exclude_rows)
+        kept = [address for address in kept if _parse_cell_rc(address)[1] not in excluded_rows]
+    if exclude_columns:
+        excluded_cols = expand_column_specs(exclude_columns)
+        kept = [address for address in kept if _parse_cell_rc(address)[2] not in excluded_cols]
+    return kept
+
+
 def _solid_rectangle_address(addresses: Sequence[str]) -> str | None:
     """Return a sheet-qualified A1 range when `addresses` form one solid rectangle."""
     if not addresses:
@@ -280,21 +300,14 @@ def effective_reader_range_address(
     if not exclude_rows and not exclude_columns:
         return data_range
 
-    addresses = expand_data_range(
-        data_range,
-        workbook=workbook,
-        named_ranges=named_ranges,
-        named_range_ranges=named_range_ranges,
-        max_range_cells=max_range_cells,
+    addresses = apply_series_excludes(
+        expand_data_range(
+            data_range,
+            workbook=workbook,
+            named_ranges=named_ranges,
+            named_range_ranges=named_range_ranges,
+            max_range_cells=max_range_cells,
+        ),
+        series,
     )
-    if exclude_rows:
-        excluded_rows = expand_row_specs(exclude_rows)
-        addresses = [
-            address for address in addresses if _parse_cell_rc(address)[1] not in excluded_rows
-        ]
-    if exclude_columns:
-        excluded_cols = expand_column_specs(exclude_columns)
-        addresses = [
-            address for address in addresses if _parse_cell_rc(address)[2] not in excluded_cols
-        ]
     return _solid_rectangle_address(addresses)

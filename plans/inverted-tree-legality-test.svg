@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 322" width="940" height="322" role="img" aria-label="Two comparisons. On the left, a lagged zipper whose distance-one edge is discharged by loop order, leaving an acyclic residual and a valid body order. On the right, the issue 603 MCVE where both edges have distance zero, so the residual is still a cycle and codegen fails closed.">
+  <style>
+    .s { stroke: #4d626e; fill: none; }
+    .t { fill: #4d626e; font-family: "IBM Plex Mono", ui-monospace, monospace; }
+    .teal { stroke: #0d6d70; fill: none; }
+    .tealt { fill: #0d6d70; font-family: "IBM Plex Mono", ui-monospace, monospace; }
+    .r { stroke: #a94526; fill: none; }
+    .rt { fill: #a94526; font-family: "IBM Plex Mono", ui-monospace, monospace; }
+    .head-s { fill: #4d626e; }
+    .head-t { fill: #0d6d70; }
+    .head-r { fill: #a94526; }
+    @media (prefers-color-scheme: dark) {
+      .s { stroke: #93a7ab; }
+      .t { fill: #93a7ab; }
+      .head-s { fill: #93a7ab; }
+      .teal { stroke: #52c3c2; }
+      .tealt, .head-t { fill: #52c3c2; }
+      .r { stroke: #e08a68; }
+      .rt, .head-r { fill: #e08a68; }
+    }
+  </style>
+  <defs>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <polygon class="head-s" points="0,1 10,5 0,9"/>
+    </marker>
+    <marker id="a2t" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <polygon class="head-t" points="0,1 10,5 0,9"/>
+    </marker>
+    <marker id="a2r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <polygon class="head-r" points="0,1 10,5 0,9"/>
+    </marker>
+  </defs>
+
+  <line class="s" x1="470" y1="14" x2="470" y2="308" stroke-width="1" opacity=".3"/>
+
+  <text class="tealt" x="20" y="26" font-size="11.5" letter-spacing="1.4">LAGGED ZIPPER — FUSIBLE</text>
+  <text class="t" x="20" y="46" font-size="11" opacity=".8">adj_t = debt_{t−1}·r</text>
+
+  <rect class="s" x="46" y="70" width="150" height="44" rx="2" stroke-width="1.4"/>
+  <text class="t" x="121" y="98" text-anchor="middle" font-size="12.5">debt</text>
+  <rect class="s" x="46" y="186" width="150" height="44" rx="2" stroke-width="1.4"/>
+  <text class="t" x="121" y="214" text-anchor="middle" font-size="12.5">adjustment</text>
+
+  <path class="teal" d="M 78 186 L 78 119" stroke-width="1.5" marker-end="url(#a2t)"/>
+  <path class="s" d="M 164 114 L 164 181" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#a2)"/>
+  <text class="tealt" x="68" y="156" text-anchor="end" font-size="11">d=0</text>
+  <text class="t" x="174" y="156" font-size="11" opacity=".85">d=1</text>
+
+  <line class="s" x1="236" y1="150" x2="296" y2="150" stroke-width="1.2" stroke-dasharray="4 4" marker-end="url(#a2)"/>
+  <text class="t" x="266" y="138" text-anchor="middle" font-size="10" opacity=".85">drop d≻0</text>
+
+  <rect class="s" x="330" y="70" width="112" height="44" rx="2" stroke-width="1.4"/>
+  <text class="t" x="386" y="98" text-anchor="middle" font-size="12.5">debt</text>
+  <rect class="s" x="330" y="186" width="112" height="44" rx="2" stroke-width="1.4"/>
+  <text class="t" x="386" y="214" text-anchor="middle" font-size="12.5">adjustment</text>
+  <path class="teal" d="M 386 186 L 386 119" stroke-width="1.5" marker-end="url(#a2t)"/>
+
+  <text class="tealt" x="244" y="268" text-anchor="middle" font-size="11">residual acyclic</text>
+  <text class="t" x="244" y="290" text-anchor="middle" font-size="11" opacity=".85">body order: adjustment, debt</text>
+
+  <text class="rt" x="512" y="26" font-size="11.5" letter-spacing="1.4">#603 MCVE — TRUE CYCLE</text>
+  <text class="t" x="512" y="46" font-size="11" opacity=".8">adj_t = debt_t − debt_{t−1}</text>
+
+  <rect class="s" x="538" y="70" width="150" height="44" rx="2" stroke-width="1.4"/>
+  <text class="t" x="613" y="98" text-anchor="middle" font-size="12.5">debt</text>
+  <rect class="s" x="538" y="186" width="150" height="44" rx="2" stroke-width="1.4"/>
+  <text class="t" x="613" y="214" text-anchor="middle" font-size="12.5">adjustment</text>
+
+  <path class="r" d="M 570 186 L 570 119" stroke-width="1.5" marker-end="url(#a2r)"/>
+  <path class="r" d="M 656 114 L 656 181" stroke-width="1.5" marker-end="url(#a2r)"/>
+  <text class="rt" x="560" y="156" text-anchor="end" font-size="11">d=0</text>
+  <text class="rt" x="666" y="156" font-size="11">d=0</text>
+
+  <line class="s" x1="728" y1="150" x2="788" y2="150" stroke-width="1.2" stroke-dasharray="4 4" marker-end="url(#a2)"/>
+  <text class="t" x="758" y="138" text-anchor="middle" font-size="10" opacity=".85">drop d≻0</text>
+
+  <rect class="r" x="822" y="70" width="112" height="44" rx="2" stroke-width="1.4"/>
+  <text class="t" x="878" y="98" text-anchor="middle" font-size="12.5">debt</text>
+  <rect class="r" x="822" y="186" width="112" height="44" rx="2" stroke-width="1.4"/>
+  <text class="t" x="878" y="214" text-anchor="middle" font-size="12.5">adjustment</text>
+  <path class="r" d="M 854 186 L 854 119" stroke-width="1.5" marker-end="url(#a2r)"/>
+  <path class="r" d="M 906 114 L 906 181" stroke-width="1.5" marker-end="url(#a2r)"/>
+
+  <text class="rt" x="736" y="268" text-anchor="middle" font-size="11">residual still cyclic</text>
+  <text class="t" x="736" y="290" text-anchor="middle" font-size="11" opacity=".85">fail closed — Excel refuses it too</text>
+</svg>

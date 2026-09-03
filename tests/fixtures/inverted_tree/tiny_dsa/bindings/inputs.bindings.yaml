@@ -1,0 +1,327 @@
+schema_version: 1.13.0
+workbook: ../tiny-dsa.xlsx
+concept_scheme:
+  id: tiny_dsa
+  concepts:
+    - id: PARAMETER
+      name: Parameter
+      dtype: string
+    - id: INDICATOR
+      name: Indicator
+      dtype: string
+    - id: COUNTRY
+      name: Country
+      dtype: string
+    - id: TIME_PERIOD
+      name: Projection year
+      dtype: int
+      sdmx_concept: TIME_PERIOD
+    - id: SHOCK_PARAMETER
+      name: Shock parameter
+      dtype: string
+    - id: UNIT_MEASURE
+      name: Unit of measure
+      dtype: string
+      sdmx_concept: UNIT_MEASURE
+    - id: OBS_VALUE
+      name: Observation value
+      dtype: number
+      sdmx_concept: OBS_VALUE
+series:
+  - id: country_name
+    sheet: Inputs
+    data_range: Inputs!B5
+    layout: scalar
+    input:
+      setter:
+        name: set_country_name
+        record_contract: records
+        strict: true
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: string
+        bind:
+          kind: data_cell
+          read: string
+      dimensions: []
+      attributes:
+        - concept: PARAMETER
+          role: attribute
+          value: country_name
+          include_in_record: false
+    key: []
+    series_context:
+      PARAMETER: country_name
+    notes: Selected country name from the country profile table.
+
+  - id: country_initial_debt
+    sheet: Inputs
+    data_range: Inputs!B10:B12
+    layout: row_series
+    input:
+      setter:
+        name: set_country_initial_debt
+        record_contract: records
+        strict: true
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - id: COUNTRY
+          concept: COUNTRY
+          role: key
+          scope: cell
+          bind:
+            kind: row_label
+            label_column: A
+            read: string
+            normalize: strip
+        - id: INDICATOR
+          concept: INDICATOR
+          role: key
+          scope: series
+          bind:
+            kind: constant
+            value: initial_debt_to_gdp
+          include_in_record: false
+      attributes:
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: PC_GDP
+          include_in_record: true
+    key: [COUNTRY]
+    series_context:
+      INDICATOR: initial_debt_to_gdp
+    notes: Initial debt-to-GDP values in the country profile lookup table.
+
+  - id: growth_baseline
+    sheet: Inputs
+    data_range: Inputs!C16:G16
+    layout: row_series
+    input:
+      setter:
+        name: set_growth_baseline
+        record_contract: records
+        strict: true
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - id: TIME_PERIOD
+          concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 15
+            read: int
+        - id: INDICATOR
+          concept: INDICATOR
+          role: key
+          scope: series
+          bind:
+            kind: constant
+            value: real_gdp_growth
+          include_in_record: false
+      attributes:
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: PERCENT_PER_ANNUM
+          include_in_record: true
+    key: [TIME_PERIOD]
+    series_context:
+      INDICATOR: real_gdp_growth
+    notes: Baseline real GDP growth rates for projection years 1 through 5.
+
+  - id: interest_baseline
+    sheet: Inputs
+    data_range: Inputs!C17:G17
+    layout: row_series
+    input:
+      setter:
+        name: set_interest_baseline
+        record_contract: records
+        strict: true
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - id: TIME_PERIOD
+          concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 15
+            read: int
+        - id: INDICATOR
+          concept: INDICATOR
+          role: key
+          scope: series
+          bind:
+            kind: constant
+            value: real_interest_rate
+          include_in_record: false
+      attributes:
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: PERCENT_PER_ANNUM
+          include_in_record: true
+    key: [TIME_PERIOD]
+    series_context:
+      INDICATOR: real_interest_rate
+    notes: Baseline real interest rates for projection years 1 through 5.
+
+  - id: primary_balance_baseline
+    sheet: Inputs
+    data_range: Inputs!C18:G18
+    layout: row_series
+    input:
+      setter:
+        name: set_primary_balance_baseline
+        record_contract: records
+        strict: true
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - id: TIME_PERIOD
+          concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 15
+            read: int
+        - id: INDICATOR
+          concept: INDICATOR
+          role: key
+          scope: series
+          bind:
+            kind: constant
+            value: primary_balance
+          include_in_record: false
+      attributes:
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: PC_GDP
+          include_in_record: true
+    key: [TIME_PERIOD]
+    series_context:
+      INDICATOR: primary_balance
+    notes: Baseline primary balance path for projection years 1 through 5.
+
+  - id: shock_year
+    sheet: Inputs
+    data_range: Inputs!B21
+    layout: scalar
+    input:
+      setter:
+        name: set_shock_year
+        record_contract: records
+        strict: true
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: int
+        bind:
+          kind: data_cell
+          read: int
+      dimensions: []
+      attributes:
+        - concept: PARAMETER
+          role: attribute
+          value: shock_year
+          include_in_record: false
+    key: []
+    series_context:
+      PARAMETER: shock_year
+    notes: First projection year in which the selected shock applies.
+
+  - id: shock_type
+    sheet: Inputs
+    data_range: Inputs!B22
+    layout: scalar
+    input:
+      setter:
+        name: set_shock_type
+        record_contract: records
+        strict: true
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: int
+        bind:
+          kind: data_cell
+          read: int
+      dimensions: []
+      attributes:
+        - concept: PARAMETER
+          role: attribute
+          value: shock_type
+          include_in_record: false
+    key: []
+    series_context:
+      PARAMETER: shock_type
+    notes: "Shock type code: 1 for growth, 2 for interest, 3 for primary balance."
+
+  - id: shock_magnitudes
+    sheet: Inputs
+    data_range: Inputs!B26:D26
+    layout: row_series
+    input:
+      setter:
+        name: set_shock_magnitudes
+        record_contract: records
+        strict: true
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - id: SHOCK_PARAMETER
+          concept: SHOCK_PARAMETER
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 25
+            read: string
+            normalize: strip_trailing_unit
+        - id: PARAMETER
+          concept: PARAMETER
+          role: key
+          scope: series
+          bind:
+            kind: constant
+            value: shock_magnitude
+          include_in_record: false
+      attributes:
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: PP
+          include_in_record: true
+    key: [SHOCK_PARAMETER]
+    series_context:
+      PARAMETER: shock_magnitude
+    notes: Shock magnitudes keyed by affected parameter.

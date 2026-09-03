@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import warnings
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -38,6 +38,7 @@ from excel_grapher.series_bindings.normalize import (
     input_mode,
 )
 from excel_grapher.series_bindings.ranges import (
+    apply_series_excludes,
     expand_series_data_ranges_for_graph,
     series_data_ranges,
 )
@@ -56,16 +57,69 @@ BindingDirection = Literal["input", "output", "internal", "constant"]
 _TRAILING_UNIT_RE = re.compile(r"\s*\([^)]*\)\s*$")
 
 
+class UnknownBindKindError(ValueError):
+    """Bind mapping used a `kind` that `_execute_bind` does not implement.
+
+    Attributes:
+        kind: The unimplemented bind `kind` value.
+        series_id: Binding series id when raised from `resolve_key_domain`.
+        address: Data cell that triggered the bind.
+        field_name: Key field whose bind used `kind`.
+    """
+
+    def __init__(
+        self,
+        kind: object,
+        *,
+        series_id: str = "",
+        address: str = "",
+        field_name: str = "",
+    ) -> None:
+        self.kind = kind
+        self.series_id = series_id
+        self.address = address
+        self.field_name = field_name
+        message = f"Unknown bind kind: {kind!r}"
+        if series_id and address and field_name:
+            message = (
+                f"series {series_id!r} cell {address}: key field "
+                f"{field_name!r} bind failed: {message}"
+            )
+        super().__init__(message)
+
+
+class PartialKeyDomainError(ValueError):
+    """A declared key field resolved for some members and not others.
+
+    Attributes:
+        series_id: Binding series id.
+        unresolved: Data-cell address to the key fields missing on that cell.
+    """
+
+    def __init__(self, series_id: str, unresolved: Mapping[str, Sequence[str]]) -> None:
+        self.series_id = series_id
+        self.unresolved = {addr: tuple(fields) for addr, fields in unresolved.items()}
+        parts = [
+            f"{addr} ({', '.join(repr(field) for field in fields)})"
+            for addr, fields in self.unresolved.items()
+        ]
+        super().__init__(
+            f"series {series_id!r}: key did not fully resolve for cells {', '.join(parts)}"
+        )
+
+
 class _WorkbookValues:
     """Lazy cached value reader for bind cells outside the dependency graph.
 
-    Opens the workbook with `read_only=False` because label and header binds
-    perform random cell access, which is inefficient in read-only mode.
+    Opens the workbook in `read_only` mode so unused sheets are never bound.
+    Each touched sheet is streamed only through the last requested row; the
+    rest of that sheet and every unread sheet stay unparsed.
     """
 
     def __init__(self, path: Path | str) -> None:
         self._path = Path(path)
         self._workbook_cache: fastpyxl.Workbook | None = None
+        self._sheet_values: dict[str, dict[str, Any]] = {}
 
     def _workbook(self) -> fastpyxl.Workbook:
         if self._workbook_cache is not None:
@@ -74,23 +128,40 @@ class _WorkbookValues:
         self._workbook_cache = fastpyxl.load_workbook(
             self._path,
             data_only=True,
-            read_only=False,
+            read_only=True,
             keep_vba=keep_vba,
         )
         return self._workbook_cache
 
+    def prefetch(self, addresses: Iterable[str], *, graph: DependencyGraph | None = None) -> None:
+        """Stream each touched sheet only through the last requested row."""
+        wanted_by_sheet: dict[str, set[str]] = {}
+        for address in addresses:
+            if graph is not None and address in graph:
+                continue
+            sheet, coord = parse_address(address)
+            wanted_by_sheet.setdefault(sheet, set()).add(coord)
+        for sheet, wanted in wanted_by_sheet.items():
+            cached = self._sheet_values.get(sheet)
+            if cached is not None and wanted <= cached.keys():
+                continue
+            values = _stream_sheet_values(self._workbook(), sheet, wanted)
+            self._sheet_values.setdefault(sheet, {}).update(values)
+
     def read(self, address: str) -> Any:
         sheet, coord = parse_address(address)
-        wb = self._workbook()
-        if sheet not in wb.sheetnames:
-            raise KeyError(f"Sheet {sheet!r} not found in workbook")
-        return wb[sheet][coord].value
+        cached = self._sheet_values.get(sheet)
+        if cached is None or coord not in cached:
+            self.prefetch((address,))
+            cached = self._sheet_values.get(sheet, {})
+        return cached.get(coord)
 
     def close(self) -> None:
         """Close the cached workbook, if open."""
         if self._workbook_cache is not None:
             self._workbook_cache.close()
             self._workbook_cache = None
+        self._sheet_values.clear()
 
     def __enter__(self) -> _WorkbookValues:
         return self
@@ -99,8 +170,116 @@ class _WorkbookValues:
         self.close()
 
 
-def _read_cell_value(graph: DependencyGraph, reader: _WorkbookValues, address: str) -> Any:
-    if address in graph:
+def _stream_sheet_values(
+    workbook: fastpyxl.Workbook,
+    sheet: str,
+    wanted: set[str],
+) -> dict[str, Any]:
+    """Stream one worksheet until every requested coordinate's row is passed."""
+    from fastpyxl.worksheet._reader import WorkSheetParser
+
+    if not wanted:
+        return {}
+    if sheet not in workbook.sheetnames:
+        raise KeyError(f"Sheet {sheet!r} not found in workbook")
+    worksheet = workbook[sheet]
+    get_source = getattr(worksheet, "_get_source", None)
+    if get_source is None:
+        raise TypeError(f"worksheet {sheet!r} does not support streamed reads")
+    max_row = max(fastpyxl.utils.cell.coordinate_from_string(coord)[1] for coord in wanted)
+    values: dict[str, Any] = {}
+    with get_source() as source:
+        parser = WorkSheetParser(
+            source,
+            getattr(worksheet, "_shared_strings", []),
+            data_only=True,
+            epoch=workbook.epoch,
+            date_formats=workbook._date_formats,
+            timedelta_formats=workbook._timedelta_formats,
+        )
+        for row_idx, cells in parser.parse():
+            for row, column, value, _dtype, _style, _cached in cells:
+                coord = f"{get_column_letter(column)}{row}"
+                if coord in wanted:
+                    values[coord] = value
+            if row_idx >= max_row:
+                break
+    for coord in wanted:
+        values.setdefault(coord, None)
+    return values
+
+
+def _bind_source_addresses(bind: dict[str, Any], data_address: str) -> list[str]:
+    """Return workbook cells `bind` may read for `data_address`."""
+    kind = bind.get("kind")
+    if kind == "data_cell":
+        return [data_address]
+    if kind == "cell":
+        return [str(bind["address"])]
+    if kind in {"constant", "value_map", "sheet_name"}:
+        return []
+    if kind not in {"column_header", "row_label"}:
+        return []
+    sheet, col, row = _parse_data_cell(data_address)
+    fill = bool(bind.get("fill", False))
+    if kind == "column_header":
+        header_row = int(bind["header_row"])
+        index = column_index_from_string(col)
+        sources, is_include = _label_source_indices(bind, axis="columns")
+        candidates = range(index, 0, -1) if fill else (index,)
+        return [
+            format_key(sheet, f"{get_column_letter(candidate)}{header_row}")
+            for candidate in candidates
+            if _is_label_source(candidate, sources, is_include=is_include)
+        ]
+    label_column = str(bind["label_column"])
+    sources, is_include = _label_source_indices(bind, axis="rows")
+    candidates = range(row, 0, -1) if fill else (row,)
+    return [
+        format_key(sheet, f"{label_column}{candidate}")
+        for candidate in candidates
+        if _is_label_source(candidate, sources, is_include=is_include)
+    ]
+
+
+def _structure_source_addresses(
+    series: dict[str, Any],
+    cells: Sequence[str],
+    *,
+    include_measure: bool = False,
+    include_attributes: bool = False,
+) -> list[str]:
+    """Collect label and header cells for `cells` from `series` structure."""
+    structure = series.get("structure") or {}
+    addresses: list[str] = []
+    if include_measure:
+        measure = structure.get("measure") or {}
+        measure_bind = measure.get("bind") or {"kind": "data_cell"}
+        if isinstance(measure_bind, dict):
+            for cell in cells:
+                addresses.extend(_bind_source_addresses(measure_bind, cell))
+    for dim in structure.get("dimensions") or []:
+        if not isinstance(dim, dict):
+            continue
+        bind = dim.get("bind")
+        if not isinstance(bind, dict):
+            continue
+        for cell in cells:
+            addresses.extend(_bind_source_addresses(bind, cell))
+    if include_attributes:
+        for attr in structure.get("attributes") or []:
+            if not isinstance(attr, dict):
+                continue
+            bind = _attribute_bind(attr)
+            if bind is None:
+                continue
+            for cell in cells:
+                addresses.extend(_bind_source_addresses(bind, cell))
+    return addresses
+
+
+def _read_cell_value(graph: DependencyGraph | None, reader: _WorkbookValues, address: str) -> Any:
+    if graph is not None and address in graph:
         node = graph.get_node(address)
         if node is not None:
             return node.value
@@ -232,7 +411,7 @@ def _is_label_source(index: int, sources: set[int] | None, *, is_include: bool) 
 def _resolve_label(
     bind: dict[str, Any],
     *,
-    graph: DependencyGraph,
+    graph: DependencyGraph | None,
     reader: _WorkbookValues,
     axis: str,
     index: int,
@@ -286,7 +465,7 @@ def _resolve_label(
 def _execute_bind(
     bind: dict[str, Any],
     *,
-    graph: DependencyGraph,
+    graph: DependencyGraph | None,
     reader: _WorkbookValues,
     data_address: str,
     inferred_read_as: str | None = None,
@@ -368,35 +547,13 @@ def _execute_bind(
             return _normalize_string(raw, normalize)
         return coerce_constant(raw, read_as=read_as)
 
-    raise ValueError(f"Unknown bind kind: {kind!r}")
+    raise UnknownBindKindError(kind)
 
 
 def _parse_data_cell(address: str) -> tuple[str, str, int]:
     sheet, coord = parse_address(address)
     col, row = fastpyxl.utils.cell.coordinate_from_string(coord)
     return sheet, col, row
-
-
-def _apply_exclude_rows(addresses: list[str], series: dict[str, Any]) -> list[str]:
-    """Drop addresses on rows the series declares as never-data via `exclude_rows`."""
-    specs = series.get("exclude_rows")
-    if not specs:
-        return addresses
-    excluded = expand_row_specs(specs)
-    return [address for address in addresses if _parse_data_cell(address)[2] not in excluded]
-
-
-def _apply_exclude_columns(addresses: list[str], series: dict[str, Any]) -> list[str]:
-    """Drop addresses in columns the series declares as never-data via `exclude_columns`."""
-    specs = series.get("exclude_columns")
-    if not specs:
-        return addresses
-    excluded = expand_column_specs(specs)
-    return [
-        address
-        for address in addresses
-        if column_index_from_string(_parse_data_cell(address)[1]) not in excluded
-    ]
 
 
 def _include_in_record(field: dict[str, Any], default: bool) -> bool:
@@ -517,6 +674,105 @@ def _build_output_record(
 
 def _extract_key(coordinates: dict[str, Scalar], key_fields: list[str]) -> dict[str, Scalar]:
     return {field: coordinates[field] for field in key_fields if field in coordinates}
+
+
+def resolve_key_domain(
+    workbook: Path | str,
+    series: dict[str, Any],
+    cells: Sequence[str],
+    *,
+    concept_scheme: dict[str, Any] | None = None,
+    graph: DependencyGraph | None = None,
+) -> tuple[dict[str, Scalar], ...]:
+    """Resolve per-cell key coordinates for `cells` in expansion order.
+
+    Three outcomes, distinguished by type rather than message matching:
+
+    * No key (`key: []`): one empty dict per cell. Expansion order is the
+      schedule.
+    * Fully resolved: one dict with every declared key field on every cell.
+    * Partially resolved: raises `PartialKeyDomainError` naming the series
+      and the data cells whose key fields did not resolve.
+
+    Uses the same dimension binds as `resolve_series_binding`, but does not
+    intersect with the dependency graph. Structural bind failures
+    (`UnknownBindKindError`, missing bind keys) raise immediately.
+
+    Returns:
+        Per-cell key dicts in `cells` order. Empty dicts iff no key is
+        declared.
+
+    Raises:
+        UnknownBindKindError: A key-field bind used an unimplemented kind.
+        PartialKeyDomainError: A declared key field is missing on at least
+            one cell.
+        ValueError: Other key-field bind failures (missing bind keys).
+    """
+    key_fields = [str(c) for c in (series.get("key") or [])]
+    series_id = str(series.get("id") or "")
+    if not cells:
+        return ()
+    if not key_fields:
+        return tuple({} for _ in cells)
+    structure = series.get("structure") or {}
+    points: list[dict[str, Scalar]] = []
+    unresolved: dict[str, list[str]] = {}
+    with _WorkbookValues(workbook) as reader:
+        reader.prefetch(_structure_source_addresses(series, cells), graph=graph)
+        series_coordinates: dict[str, Scalar] = {}
+        for address in cells:
+            coordinates: dict[str, Scalar] = {}
+            for dim in structure.get("dimensions") or []:
+                if not isinstance(dim, dict):
+                    continue
+                field_name = effective_dimension_id(dim)
+                bind = dim.get("bind")
+                if not isinstance(bind, dict):
+                    continue
+                scope = dim.get("scope")
+                if scope == "series" and field_name in series_coordinates:
+                    coordinates[field_name] = series_coordinates[field_name]
+                    continue
+                inferred = _component_dtype(concept_scheme, series, dim)
+                try:
+                    value = _execute_bind(
+                        bind,
+                        graph=graph,
+                        reader=reader,
+                        data_address=address,
+                        inferred_read_as=inferred,
+                    )
+                except UnknownBindKindError as exc:
+                    if field_name in key_fields:
+                        raise UnknownBindKindError(
+                            exc.kind,
+                            series_id=series_id,
+                            address=address,
+                            field_name=field_name,
+                        ) from exc
+                    continue
+                except (KeyError, TypeError) as exc:
+                    if field_name in key_fields:
+                        raise ValueError(
+                            f"series {series_id!r} cell {address}: key field "
+                            f"{field_name!r} bind failed: {exc}"
+                        ) from exc
+                    continue
+                except ValueError:
+                    continue
+                if field_name in key_fields and value is None:
+                    continue
+                coordinates[field_name] = value
+                if scope == "series":
+                    series_coordinates[field_name] = value
+            point = _extract_key(coordinates, key_fields)
+            missing = [field for field in key_fields if field not in point]
+            if missing:
+                unresolved[address] = missing
+            points.append(point)
+    if unresolved:
+        raise PartialKeyDomainError(series_id, unresolved)
+    return tuple(points)
 
 
 def warn_series_resolution_issues(resolved: SeriesResolution, *, stacklevel: int = 3) -> None:
@@ -724,9 +980,10 @@ def resolve_series_binding(
         }
 
     try:
-        expanded_addresses = expand_series_data_ranges_for_graph(graph, series, workbook=workbook)
-        expanded_addresses = _apply_exclude_rows(expanded_addresses, series)
-        expanded_addresses = _apply_exclude_columns(expanded_addresses, series)
+        expanded_addresses = apply_series_excludes(
+            expand_series_data_ranges_for_graph(graph, series, workbook=workbook),
+            series,
+        )
     except (ValueError, TypeError) as exc:
         return {
             "series_id": series_id,
@@ -800,6 +1057,15 @@ def resolve_series_binding(
         build_record = _build_input_record if direction == "input" else _build_output_record
 
         bind_failures: dict[str, list[str]] = {}
+        active_reader.prefetch(
+            _structure_source_addresses(
+                series,
+                addresses,
+                include_measure=direction == "input",
+                include_attributes=True,
+            ),
+            graph=graph,
+        )
         for address in addresses:
             coordinates: dict[str, Scalar] = {}
             try:

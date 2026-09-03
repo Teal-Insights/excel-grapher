@@ -461,4 +461,4 @@ def test_validate_series_bindings_loads_workbook_once(tmp_path: Path) -> None:
     assert report["ok"] is True
     assert len(calls) == 1
     assert calls[0].get("data_only") is True
-    assert calls[0].get("read_only") is False
+    assert calls[0].get("read_only") is True

@@ -227,6 +227,7 @@ def test_console_script_is_registered() -> None:
     )
     assert result.returncode == 0
     assert "--smoke-test" in result.stdout
+    assert "--paradigm" in result.stdout
     assert "--verbose" in result.stdout
 
 
@@ -302,3 +303,64 @@ def test_main_validate_bind_resolution_failed_for_row_label_in_measure_cell(
         "error [bind_resolution_failed] puka_targets:Sheet1!A4: "
         "could not convert string to float: 'Tgts'"
     ) in captured.out
+
+
+def test_main_emit_inverted_tree_paradigm(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import yaml
+
+    from tests.unit.exporter.inverted_tree.helpers import (
+        bindings_document,
+        series_entry,
+        write_workbook,
+    )
+
+    workbook = write_workbook(
+        tmp_path / "inv.xlsx",
+        {
+            "Inputs": {"A1": 2},
+            "Engine": {"A1": "=Inputs!A1*3"},
+            "Outputs": {"A1": "=Engine!A1"},
+        },
+    )
+    document = bindings_document(
+        series_entry("x", "Inputs!A1", layout="scalar", direction="input"),
+        series_entry("y", "Engine!A1", layout="scalar", direction="internal"),
+        series_entry(
+            "z",
+            "Outputs!A1",
+            layout="scalar",
+            direction="output",
+            compute_name="compute_z",
+        ),
+    )
+    document["workbook"] = "inv.xlsx"
+    bindings = tmp_path / "inv.bindings.yaml"
+    bindings.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    emit_dir = tmp_path / "out"
+
+    exit_code = main(
+        [
+            "bindings",
+            "validate",
+            str(workbook),
+            "--bindings",
+            str(bindings),
+            "--paradigm",
+            "inverted_tree",
+            "--emit-dir",
+            str(emit_dir),
+            "--package-name",
+            "inv_pkg",
+            "--smoke-test",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+    assert "setter smoke skipped" in captured.out
+    api = (emit_dir / "inv_pkg" / "api.py").read_text(encoding="utf-8")
+    assert "def make_context" not in api
+    assert "def set_" not in api
+    assert "def compute_z" in api

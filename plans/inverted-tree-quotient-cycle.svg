@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 300" width="940" height="300" role="img" aria-label="Five workbook cells with directed edges forming an acyclic graph; contracting them into two bound series produces a two-node cycle between debt and adjustment.">
+  <style>
+    .s { stroke: #4d626e; fill: none; }
+    .t { fill: #4d626e; font-family: "IBM Plex Mono", ui-monospace, monospace; }
+    .p { fill: #4d626e; font-family: "IBM Plex Sans", system-ui, sans-serif; }
+    .r { stroke: #a94526; fill: none; }
+    .rt { fill: #a94526; font-family: "IBM Plex Mono", ui-monospace, monospace; }
+    .head-r { fill: #a94526; }
+    .head-s { fill: #4d626e; }
+    @media (prefers-color-scheme: dark) {
+      .s { stroke: #93a7ab; }
+      .t, .p { fill: #93a7ab; }
+      .head-s { fill: #93a7ab; }
+      .r { stroke: #e08a68; }
+      .rt, .head-r { fill: #e08a68; }
+    }
+  </style>
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <polygon class="head-s" points="0,1 10,5 0,9"/>
+    </marker>
+    <marker id="ar-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <polygon class="head-r" points="0,1 10,5 0,9"/>
+    </marker>
+  </defs>
+
+  <text class="t" x="20" y="26" font-size="11.5" letter-spacing="1.4">CELL GRAIN — ACYCLIC</text>
+  <text class="t" x="20" y="105" font-size="11" opacity=".75">debt</text>
+  <text class="t" x="20" y="235" font-size="11" opacity=".75">adj</text>
+
+  <rect class="s" x="88" y="82" width="62" height="34" rx="2" stroke-width="1.2"/>
+  <text class="t" x="119" y="104" text-anchor="middle" font-size="12.5">A2</text>
+  <rect class="s" x="228" y="82" width="62" height="34" rx="2" stroke-width="1.2"/>
+  <text class="t" x="259" y="104" text-anchor="middle" font-size="12.5">B2</text>
+  <rect class="s" x="368" y="82" width="62" height="34" rx="2" stroke-width="1.2"/>
+  <text class="t" x="399" y="104" text-anchor="middle" font-size="12.5">C2</text>
+
+  <rect class="s" x="228" y="212" width="62" height="34" rx="2" stroke-width="1.2"/>
+  <text class="t" x="259" y="234" text-anchor="middle" font-size="12.5">B3</text>
+  <rect class="s" x="368" y="212" width="62" height="34" rx="2" stroke-width="1.2"/>
+  <text class="t" x="399" y="234" text-anchor="middle" font-size="12.5">C3</text>
+
+  <line class="s" x1="150" y1="99" x2="222" y2="99" stroke-width="1.2" marker-end="url(#ar)"/>
+  <line class="s" x1="290" y1="99" x2="362" y2="99" stroke-width="1.2" marker-end="url(#ar)"/>
+  <line class="s" x1="128" y1="118" x2="248" y2="207" stroke-width="1.2" marker-end="url(#ar)"/>
+  <line class="s" x1="268" y1="118" x2="388" y2="207" stroke-width="1.2" marker-end="url(#ar)"/>
+  <line class="r" x1="259" y1="207" x2="259" y2="121" stroke-width="1.4" marker-end="url(#ar-r)"/>
+  <line class="r" x1="399" y1="207" x2="399" y2="121" stroke-width="1.4" marker-end="url(#ar-r)"/>
+
+  <text class="t" x="186" y="90" text-anchor="middle" font-size="10.5" opacity=".8">t−1</text>
+  <text class="t" x="326" y="90" text-anchor="middle" font-size="10.5" opacity=".8">t−1</text>
+  <text class="t" x="180" y="172" font-size="10.5" opacity=".8">t−1</text>
+  <text class="rt" x="268" y="166" font-size="10.5">t</text>
+  <text class="rt" x="408" y="166" font-size="10.5">t</text>
+
+  <line class="s" x1="478" y1="164" x2="578" y2="164" stroke-width="1.2" stroke-dasharray="4 4" marker-end="url(#ar)"/>
+  <text class="t" x="528" y="152" text-anchor="middle" font-size="10.5" opacity=".85">contract</text>
+  <text class="t" x="528" y="182" text-anchor="middle" font-size="10.5" opacity=".85">by binding</text>
+
+  <text class="rt" x="620" y="26" font-size="11.5" letter-spacing="1.4">SERIES GRAIN — 2-CYCLE</text>
+
+  <rect class="s" x="640" y="72" width="200" height="52" rx="2" stroke-width="1.6"/>
+  <text class="t" x="740" y="104" text-anchor="middle" font-size="13.5">debt</text>
+  <rect class="s" x="640" y="204" width="200" height="52" rx="2" stroke-width="1.6"/>
+  <text class="t" x="740" y="236" text-anchor="middle" font-size="13.5">adjustment</text>
+
+  <path class="r" d="M 686 204 L 686 129" stroke-width="1.5" marker-end="url(#ar-r)"/>
+  <path class="r" d="M 794 124 L 794 199" stroke-width="1.5" marker-end="url(#ar-r)"/>
+  <text class="rt" x="676" y="169" text-anchor="end" font-size="10.5">reads</text>
+  <text class="rt" x="804" y="169" font-size="10.5">reads</text>
+
+  <text class="p" x="740" y="286" text-anchor="middle" font-size="12" opacity=".85">no topological order exists</text>
+</svg>

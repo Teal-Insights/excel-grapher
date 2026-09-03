@@ -1,0 +1,125 @@
+schema_version: 1.13.0
+workbook: ../tiny-dsa.xlsx
+series:
+  - id: output_baseline
+    sheet: Outputs
+    data_range: Outputs!B12:F12
+    layout: row_series
+    output:
+      compute:
+        name: compute_output_baseline
+        record_contract: records
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - id: TIME_PERIOD
+          concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 11
+            read: int
+        - id: SCENARIO
+          concept: SCENARIO
+          role: key
+          scope: series
+          bind:
+            kind: constant
+            value: baseline
+      attributes:
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: PC_GDP
+          include_in_record: true
+    key: [TIME_PERIOD]
+    series_context:
+      SCENARIO: baseline
+    notes: Baseline debt-to-GDP path for projection years 1 through 5.
+
+  - id: output_shocked
+    sheet: Outputs
+    data_range: Outputs!B13:F13
+    layout: row_series
+    output:
+      compute:
+        name: compute_output_shocked
+        record_contract: records
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - id: TIME_PERIOD
+          concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 11
+            read: int
+        - id: SCENARIO
+          concept: SCENARIO
+          role: key
+          scope: series
+          bind:
+            kind: constant
+            value: shocked
+      attributes:
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: PC_GDP
+          include_in_record: true
+    key: [TIME_PERIOD]
+    series_context:
+      SCENARIO: shocked
+    notes: Shocked debt-to-GDP path for projection years 1 through 5.
+
+  - id: output_delta
+    sheet: Outputs
+    data_range: Outputs!B14:F14
+    layout: row_series
+    output:
+      compute:
+        name: compute_output_delta
+        record_contract: records
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind:
+          kind: data_cell
+          read: float
+      dimensions:
+        - id: TIME_PERIOD
+          concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind:
+            kind: column_header
+            header_row: 11
+            read: int
+        - id: SCENARIO
+          concept: SCENARIO
+          role: key
+          scope: series
+          bind:
+            kind: constant
+            value: shocked_minus_baseline
+      attributes:
+        - concept: UNIT_MEASURE
+          role: attribute
+          value: PP
+          include_in_record: true
+    key: [TIME_PERIOD]
+    series_context:
+      SCENARIO: shocked_minus_baseline
+    notes: Difference between the shocked and baseline paths in percentage points.
