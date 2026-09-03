@@ -72,32 +72,33 @@ def identity_join_indices(
 
     A hole is `-1` when no producer member shares the host's schedule
     coordinate. The join uses the same distance as `DependenceEdge` (`0`
-    means identity).
+    means identity). The producer's coordinate -> index map is cached on
+    the catalog `ScheduleIndex`.
 
     Raises:
         InvertedTreeExportError: Two producer members share one host
             coordinate.
     """
     from excel_grapher.exporter.inverted_tree.schedule import (
-        _preferred_fields,
+        _ensure_index,
         schedule_coord,
     )
 
-    if _preferred_fields(host, catalog) != _preferred_fields(producer, catalog):
-        return tuple(
-            index if index < len(producer.cells) else -1 for index in range(len(host.cells))
-        )
-    by_coord: dict[int, list[int]] = {}
-    for index, producer_cell in enumerate(producer.cells):
-        by_coord.setdefault(schedule_coord(producer_cell, catalog), []).append(index)
+    index = _ensure_index(catalog)
+    if index.preferred.get(host.series_id) != index.preferred.get(producer.series_id):
+        return tuple(slot if slot < len(producer.cells) else -1 for slot in range(len(host.cells)))
+    producer_by_coord = index.index_by_coord[producer.series_id]
     slots: list[int] = []
     for host_cell in host.cells:
-        matches = by_coord.get(schedule_coord(host_cell, catalog), ())
+        host_coord = index.coord_of.get(normalize_address(host_cell))
+        if host_coord is None:
+            host_coord = schedule_coord(host_cell, catalog)
+        matches = producer_by_coord.get(host_coord, ())
         if len(matches) > 1:
             raise InvertedTreeExportError(
                 f"identity join of {host.series_id!r} onto {producer.series_id!r} "
                 f"is ambiguous at {host_cell}: duplicate schedule keys "
-                f"{tuple(producer.cells[index] for index in matches)}"
+                f"{tuple(producer.cells[slot] for slot in matches)}"
             )
         slots.append(-1 if not matches else matches[0])
     return tuple(slots)
@@ -272,6 +273,18 @@ class DependenceEdge:
     coeff: int | None = None
     offset: int | None = None
     guarded: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogEdges:
+    """Instance-level edges for every formula series, walked once.
+
+    `by_consumer` groups `edges` by `DependenceEdge.consumer_id` so later
+    planning steps do not re-walk formula ASTs.
+    """
+
+    edges: tuple[DependenceEdge, ...]
+    by_consumer: dict[str, tuple[DependenceEdge, ...]]
 
 
 @dataclass
@@ -544,7 +557,8 @@ def requires_demand_driven(
     series: BoundSeries,
     *,
     catalog: SeriesCatalog,
-    graph: DependencyGraph,
+    graph: DependencyGraph | None = None,
+    edges: Sequence[DependenceEdge] | None = None,
 ) -> bool:
     """True when a same-series ref cannot be discharged by a scan.
 
@@ -552,11 +566,22 @@ def requires_demand_driven(
     including mixed `{t-1, t-2}`) use a fused scan. Unit backward recursion
     (`value_t = value_{t+1} * k`) uses a reversed scan. Mixed directions and
     irregular self-refs fall through to demand-driven.
+
+    `edges` should be the already-collected edges of `series` (or the
+    catalog). When omitted, the formulas are walked via `graph`.
     """
+    if edges is None:
+        if graph is None:
+            raise TypeError("requires_demand_driven requires edges or graph")
+        series_edges: Sequence[DependenceEdge] = collect_series_edges(
+            series, catalog=catalog, graph=graph
+        )
+    else:
+        series_edges = edges
     self_edges = [
         edge
-        for edge in collect_series_edges(series, catalog=catalog, graph=graph)
-        if edge.producer_id == series.series_id
+        for edge in series_edges
+        if edge.consumer_id == series.series_id and edge.producer_id == series.series_id
     ]
     if not self_edges:
         return False
@@ -575,15 +600,26 @@ def requires_demand_driven(
     return not is_backward
 
 
+def collect_catalog_edges(
+    catalog: SeriesCatalog,
+    graph: DependencyGraph,
+) -> CatalogEdges:
+    """Walk each formula series once and return catalog-wide classified edges."""
+    by_consumer: dict[str, tuple[DependenceEdge, ...]] = {}
+    collected: list[DependenceEdge] = []
+    for series in catalog.formula_series():
+        series_edges = tuple(collect_series_edges(series, catalog=catalog, graph=graph))
+        by_consumer[series.series_id] = series_edges
+        collected.extend(series_edges)
+    return CatalogEdges(edges=tuple(collected), by_consumer=by_consumer)
+
+
 def collect_all_dependence_edges(
     catalog: SeriesCatalog,
     graph: DependencyGraph,
 ) -> tuple[DependenceEdge, ...]:
     """Collect instance-level edges from every formula series to bound producers."""
-    edges: list[DependenceEdge] = []
-    for series in catalog.formula_series():
-        edges.extend(collect_series_edges(series, catalog=catalog, graph=graph))
-    return tuple(edges)
+    return collect_catalog_edges(catalog, graph).edges
 
 
 def series_deps_from_edges(
@@ -754,11 +790,20 @@ def collect_series_deps(
 def collect_all_deps(
     catalog: SeriesCatalog,
     graph: DependencyGraph,
+    *,
+    catalog_edges: CatalogEdges | None = None,
 ) -> dict[str, SeriesDeps]:
-    """Collect first-level deps for every formula series."""
-    edges = collect_all_dependence_edges(catalog, graph)
+    """Collect first-level deps for every formula series.
+
+    Pass `catalog_edges` when the catalog has already been walked so this
+    step does not re-visit formula ASTs.
+    """
+    if catalog_edges is None:
+        catalog_edges = collect_catalog_edges(catalog, graph)
     return {
-        series.series_id: series_deps_from_edges(series, edges, catalog)
+        series.series_id: series_deps_from_edges(
+            series, catalog_edges.by_consumer.get(series.series_id, ()), catalog
+        )
         for series in catalog.formula_series()
     }
 
