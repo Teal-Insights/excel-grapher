@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from excel_grapher.core.address_keys import parse_cell_coords
+from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, KeyPoint, SeriesCatalog
 from excel_grapher.exporter.inverted_tree.deps import (
     DependenceEdge,
     collect_series_edges,
@@ -22,9 +23,9 @@ from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from excel_grapher.exporter.inverted_tree.catalog import SeriesCatalog
     from excel_grapher.exporter.inverted_tree.deps import SeriesDeps
     from excel_grapher.grapher.graph import DependencyGraph
+    from excel_grapher.series_bindings.types import Scalar
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,10 +287,75 @@ def scc_external_params(
     return tuple(sid for sid in catalog_order if sid in ids)
 
 
-def schedule_coord(address: str) -> int:
-    """Return the layout schedule coordinate of `address` (1-based column)."""
-    _sheet, _row, col = parse_cell_coords(address)
-    return col
+def _join_key(point: KeyPoint, fields: Sequence[str]) -> tuple[Scalar, ...] | None:
+    """Return `point` projected onto `fields`, or None if a field is missing."""
+    try:
+        return tuple(point[field] for field in fields)
+    except KeyError:
+        return None
+
+
+def _preferred_fields(series: BoundSeries) -> tuple[str, ...] | None:
+    """Return join fields for `series` when every member's KeyPoint resolves.
+
+    `TIME_PERIOD` is the schedule axis when it is present and resolved.
+    """
+    if not series.key_fields or len(series.domain) != len(series.cells):
+        return None
+    if "TIME_PERIOD" in series.key_fields and all(
+        _join_key(point, ("TIME_PERIOD",)) is not None for point in series.domain
+    ):
+        return ("TIME_PERIOD",)
+    if all(_join_key(point, series.key_fields) is not None for point in series.domain):
+        return series.key_fields
+    return None
+
+
+def _ordered_domain(
+    catalog: SeriesCatalog, fields: Sequence[str]
+) -> tuple[tuple[Scalar, ...], ...] | None:
+    """Return the sorted union of resolved join keys, or None if unsortable."""
+    keys: set[tuple[Scalar, ...]] = set()
+    for series in catalog.series.values():
+        for point in series.domain:
+            key = _join_key(point, fields)
+            if key is not None:
+                keys.add(key)
+    if not keys:
+        return None
+    try:
+        return tuple(sorted(keys))
+    except TypeError:
+        return None
+
+
+def schedule_coord(address: str, catalog: SeriesCatalog | None = None) -> int:
+    """Return the member's position in the catalog's ordered index domain.
+
+    When `catalog` is given and the cell's `KeyPoint` resolves, the coordinate
+    is the position of that key in the joined domain (`TIME_PERIOD` when it
+    is present). Otherwise the coordinate is the member's expansion-order
+    index. Without a catalog the spreadsheet column is the only available
+    proxy, and is not valid across sheets.
+    """
+    if catalog is None:
+        return parse_cell_coords(address)[2]
+    series = catalog.series_for(address)
+    if series is None:
+        return parse_cell_coords(address)[2]
+    index = series.index_of(address)
+    if index is None:
+        return parse_cell_coords(address)[2]
+    fields = _preferred_fields(series)
+    if fields is not None and index < len(series.domain):
+        key = _join_key(series.domain[index], fields)
+        domain = _ordered_domain(catalog, fields) if key is not None else None
+        if key is not None and domain is not None:
+            try:
+                return domain.index(key)
+            except ValueError:
+                pass
+    return index
 
 
 def tarjan_series_sccs(
@@ -414,7 +480,7 @@ def _contiguous_domain(
     """Return `[start, stop)` in union-index space, or None if the domain has holes."""
     locals_: list[int] = []
     for address in catalog.get(series_id).cells:
-        coord = schedule_coord(address)
+        coord = schedule_coord(address, catalog)
         if coord not in coord_to_t:
             return None
         locals_.append(coord_to_t[coord])
@@ -445,15 +511,16 @@ def _residual_order_at_column(
     members: tuple[str, ...],
     edges: Sequence[DependenceEdge],
     column: int,
+    catalog: SeriesCatalog | None = None,
 ) -> tuple[str, ...] | None:
     """Return the distance-zero topo among `members` in one schedule column."""
     if not members:
         return ()
     residual = _empty_residual(members)
     for edge in _zero_distance_edges(members, edges):
-        if schedule_coord(edge.consumer_cell) != column:
+        if schedule_coord(edge.consumer_cell, catalog) != column:
             continue
-        _add_residual_edge(residual, edge, members, column=column)
+        _add_residual_edge(residual, edge, members, index=column)
     return _topo_order(members, residual)
 
 
@@ -461,6 +528,7 @@ def _access_signature(
     members: tuple[str, ...],
     edges: Sequence[DependenceEdge],
     column: int,
+    catalog: SeriesCatalog | None = None,
 ) -> tuple[tuple[str, str, str], ...]:
     """Return intra-member access classes at `column`, sorted for grouping."""
     active = set(members)
@@ -469,7 +537,7 @@ def _access_signature(
         for edge in edges
         if edge.consumer_id in active
         and edge.producer_id in active
-        and schedule_coord(edge.consumer_cell) == column
+        and schedule_coord(edge.consumer_cell, catalog) == column
     ]
     sig.sort()
     return tuple(sig)
@@ -488,13 +556,13 @@ def _column_region_key(
     active = tuple(sid for sid in scc if domain[sid][0] <= union_t < domain[sid][1])
     if not active:
         return None
-    order = _residual_order_at_column(active, edges, column)
+    order = _residual_order_at_column(active, edges, column, catalog)
     if order is None:
         return None
     shape_sig = tuple(
         (sid, _statement_at_union(catalog, sid, union_t, domain[sid][0])) for sid in active
     )
-    return order, shape_sig, _access_signature(active, edges, column)
+    return order, shape_sig, _access_signature(active, edges, column, catalog)
 
 
 def _fuse_regions(
@@ -549,7 +617,7 @@ def plan_fused_scc(
     along the schedule; each distinct span becomes a `FusedRegion`.
 
     Raises:
-        InvertedTreeExportError: Some column's residual is a real same-index
+        InvertedTreeExportError: Some index's residual is a real same-index
             cycle.
     """
     if len(scc) < 2:
@@ -559,8 +627,10 @@ def plan_fused_scc(
     intra = [edge for edge in edges if edge.consumer_id in members and edge.producer_id in members]
     if any(edge.distance < 0 for edge in intra):
         return None
-    assert_distance_zero_legal(scc, edges)
-    coords = sorted({schedule_coord(addr) for sid in scc for addr in catalog.get(sid).cells})
+    assert_distance_zero_legal(scc, edges, catalog)
+    coords = sorted(
+        {schedule_coord(addr, catalog) for sid in scc for addr in catalog.get(sid).cells}
+    )
     if not coords:
         return None
     coord_to_t = {coord: index for index, coord in enumerate(coords)}
@@ -605,12 +675,12 @@ def _add_residual_edge(
     edge: DependenceEdge,
     scc: tuple[str, ...],
     *,
-    column: int,
+    index: int,
 ) -> None:
     if edge.consumer_id == edge.producer_id:
         raise InvertedTreeExportError(
             f"distance-zero residual of zipper series {list(scc)!r} is cyclic "
-            f"at column {column} ({edge.consumer_id} {edge.consumer_cell} reads "
+            f"at index {index} ({edge.consumer_id} {edge.consumer_cell} reads "
             f"{edge.producer_id} {edge.producer_cell})"
         )
     residual[edge.consumer_id].append(edge.producer_id)
@@ -665,13 +735,14 @@ def _first_cyclic_pair(residual: dict[str, list[str]]) -> tuple[str, str] | None
 
 def _residual_cycle_message(
     scc: tuple[str, ...],
-    column: int,
+    index: int,
     residual: dict[str, list[str]],
     edges: Sequence[DependenceEdge],
+    catalog: SeriesCatalog | None = None,
 ) -> str:
     """Name the two statements and the index point of a residual cycle."""
     pair = _first_cyclic_pair(residual)
-    prefix = f"distance-zero residual of zipper series {list(scc)!r} is cyclic at column {column}"
+    prefix = f"distance-zero residual of zipper series {list(scc)!r} is cyclic at index {index}"
     if pair is None:
         return prefix
     consumer_id, producer_id = pair
@@ -679,7 +750,7 @@ def _residual_cycle_message(
         (
             edge
             for edge in _zero_distance_edges(scc, edges)
-            if schedule_coord(edge.consumer_cell) == column
+            if schedule_coord(edge.consumer_cell, catalog) == index
             and edge.consumer_id == consumer_id
             and edge.producer_id == producer_id
         ),
@@ -696,39 +767,44 @@ def _residual_cycle_message(
 def assert_distance_zero_legal(
     scc: tuple[str, ...],
     edges: Sequence[DependenceEdge],
+    catalog: SeriesCatalog | None = None,
 ) -> None:
-    """Fail closed when some schedule column has a same-index cycle.
+    """Fail closed when some schedule index has a same-index cycle.
 
-    Distance-zero edges from different columns are not contracted. A cycle in
-    the union of those edges is a regime flip, not a circular reference.
+    Distance-zero edges from different index points are not contracted. A
+    cycle in the union of those edges is a regime flip, not a circular
+    reference.
 
     Raises:
-        InvertedTreeExportError: Some column's residual still has a cycle.
+        InvertedTreeExportError: Some index's residual still has a cycle.
     """
-    by_column: dict[int, dict[str, list[str]]] = {}
+    by_index: dict[int, dict[str, list[str]]] = {}
     for edge in _zero_distance_edges(scc, edges):
-        column = schedule_coord(edge.consumer_cell)
-        residual = by_column.setdefault(column, _empty_residual(scc))
-        _add_residual_edge(residual, edge, scc, column=column)
-    for column, residual in by_column.items():
+        index = schedule_coord(edge.consumer_cell, catalog)
+        residual = by_index.setdefault(index, _empty_residual(scc))
+        _add_residual_edge(residual, edge, scc, index=index)
+    for index, residual in by_index.items():
         if _topo_order(scc, residual) is None:
-            raise InvertedTreeExportError(_residual_cycle_message(scc, column, residual, edges))
+            raise InvertedTreeExportError(
+                _residual_cycle_message(scc, index, residual, edges, catalog)
+            )
 
 
 def residual_body_order(
     scc: tuple[str, ...],
     edges: Sequence[DependenceEdge],
+    catalog: SeriesCatalog | None = None,
 ) -> tuple[str, ...] | None:
-    """Return one in-loop statement order, or None if columns disagree.
+    """Return one in-loop statement order, or None if index points disagree.
 
     Raises:
         InvertedTreeExportError: A real same-index circular reference exists
-            in some schedule column.
+            at some schedule index.
     """
-    assert_distance_zero_legal(scc, edges)
+    assert_distance_zero_legal(scc, edges, catalog)
     union = _empty_residual(scc)
     for edge in _zero_distance_edges(scc, edges):
-        _add_residual_edge(union, edge, scc, column=schedule_coord(edge.consumer_cell))
+        _add_residual_edge(union, edge, scc, index=schedule_coord(edge.consumer_cell, catalog))
     return _topo_order(scc, union)
 
 
@@ -739,16 +815,16 @@ def build_scc_map(
 ) -> dict[str, tuple[str, ...]]:
     """Map each formula series to its SCC (bindings order).
 
-    Multi-series SCCs fail closed only when some schedule column has a
-    same-index cycle. A residual order that changes across columns is legal
-    and is fused region-locally when each span has a residual DAG.
+    Multi-series SCCs fail closed only when some schedule index has a
+    same-index cycle. A residual order that changes across index points is
+    legal and is fused region-locally when each span has a residual DAG.
     """
     ids = [series.series_id for series in catalog.formula_series()]
     mapping: dict[str, tuple[str, ...]] = {}
     for scc in tarjan_series_sccs(ids, deps):
         if len(scc) > 1:
             edges = collect_dependence_edges(catalog, graph, scc)
-            assert_distance_zero_legal(scc, edges)
+            assert_distance_zero_legal(scc, edges, catalog)
         for sid in scc:
             mapping[sid] = scc
     return mapping
