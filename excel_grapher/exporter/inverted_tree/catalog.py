@@ -96,6 +96,14 @@ class BoundSeries:
     raw: Mapping[str, Any]
     domain: tuple[KeyPoint, ...]
     statements: tuple[Statement, ...]
+    _cell_indices: dict[str, int] = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "_cell_indices",
+            {normalize_address(cell): idx for idx, cell in enumerate(self.cells)},
+        )
 
     @property
     def is_scalar(self) -> bool:
@@ -128,10 +136,7 @@ class BoundSeries:
 
     def index_of(self, address: str) -> int | None:
         """Return the 0-based index of `address` in `cells`, if present."""
-        try:
-            return self.cells.index(normalize_address(address))
-        except ValueError:
-            return None
+        return self._cell_indices.get(normalize_address(address))
 
 
 @dataclass(frozen=True, slots=True)
@@ -333,40 +338,7 @@ def _cell_access_pairs(
     return tuple(found)
 
 
-def _access_run_holds(
-    meta: Sequence[tuple[str | None, tuple[tuple[str, int | None], ...]]],
-    start: int,
-    stop: int,
-) -> bool:
-    """True when `meta[start:stop]` share shape and each producer slot is affine."""
-    shape0, pairs0 = meta[start]
-    producers = tuple(producer_id for producer_id, _ in pairs0)
-    n_slots = len(pairs0)
-    none_slots = [False] * n_slots
-    int_slots: list[list[tuple[int, int]]] = [[] for _ in range(n_slots)]
-    for index in range(start, stop):
-        shape, pairs = meta[index]
-        if shape != shape0:
-            return False
-        if tuple(producer_id for producer_id, _ in pairs) != producers:
-            return False
-        if len(pairs) != n_slots:
-            return False
-        for slot, (_producer_id, prod_idx) in enumerate(pairs):
-            if prod_idx is None:
-                none_slots[slot] = True
-            else:
-                int_slots[slot].append((index, prod_idx))
-    if stop - start == 1:
-        return True
-    for slot in range(n_slots):
-        if none_slots[slot]:
-            if int_slots[slot]:
-                return False
-            continue
-        if fit_affine_map(int_slots[slot]) is None:
-            return False
-    return True
+SlotState = tuple[int, int] | int | None
 
 
 def _shape_partition(
@@ -374,6 +346,7 @@ def _shape_partition(
     catalog: SeriesCatalog,
     graph: DependencyGraph,
 ) -> tuple[Statement, ...]:
+    """Split a formula series into consecutive affine formula-shape statements."""
     meta = [
         (_formula_shape_key(graph, address), _cell_access_pairs(catalog, graph, address))
         for address in series.cells
@@ -382,12 +355,54 @@ def _shape_partition(
         return (_whole_statement(series.series_id, series.cells, series.domain),)
     runs: list[tuple[str | None, int, int]] = []
     run_start = 0
+    active_shape, active_pairs = meta[0]
+    active_producers = tuple(producer_id for producer_id, _ in active_pairs)
+    slot_states: list[SlotState] = [prod for _, prod in active_pairs]
+
     for index in range(1, len(meta)):
-        if _access_run_holds(meta, run_start, index + 1):
+        shape, pairs = meta[index]
+        can_extend = (
+            shape == active_shape
+            and len(pairs) == len(active_pairs)
+            and tuple(producer_id for producer_id, _ in pairs) == active_producers
+        )
+
+        next_slot_states: list[SlotState] = []
+        if can_extend:
+            for slot, (_producer_id, prod_idx) in enumerate(pairs):
+                state = slot_states[slot]
+                if state is None:
+                    if prod_idx is not None:
+                        can_extend = False
+                        break
+                    next_slot_states.append(None)
+                elif isinstance(state, int):
+                    if prod_idx is None:
+                        can_extend = False
+                        break
+                    fit = fit_affine_map(((run_start, state), (index, prod_idx)))
+                    if fit is None:
+                        can_extend = False
+                        break
+                    next_slot_states.append(fit)
+                else:
+                    coeff, offset = state
+                    if prod_idx is None or prod_idx != coeff * index + offset:
+                        can_extend = False
+                        break
+                    next_slot_states.append(state)
+
+        if can_extend:
+            slot_states = next_slot_states
             continue
-        runs.append((meta[run_start][0], run_start, index))
+
+        runs.append((active_shape, run_start, index))
         run_start = index
-    runs.append((meta[run_start][0], run_start, len(meta)))
+        active_shape, active_pairs = meta[index]
+        active_producers = tuple(producer_id for producer_id, _ in active_pairs)
+        slot_states = [prod for _, prod in active_pairs]
+
+    runs.append((active_shape, run_start, len(meta)))
     if len(runs) == 1:
         key = runs[0][0]
         return (_whole_statement(series.series_id, series.cells, series.domain, shape_key=key),)
@@ -408,7 +423,11 @@ def _shape_partition(
 def partition_catalog(catalog: SeriesCatalog, graph: DependencyGraph) -> SeriesCatalog:
     """Split each series into consecutive formula-shape statements."""
     series_map = {
-        series_id: replace(series, statements=_shape_partition(series, catalog, graph))
+        series_id: (
+            replace(series, statements=_shape_partition(series, catalog, graph))
+            if series.is_formula_series
+            else series
+        )
         for series_id, series in catalog.series.items()
     }
     return SeriesCatalog(
