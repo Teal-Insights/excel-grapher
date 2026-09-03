@@ -115,7 +115,7 @@ def test_distance_zero_cycle_names_statements_and_index() -> None:
     assert "adjustment" in message
     assert "Engine!B2" in message
     assert "Engine!B3" in message
-    assert "column 2" in message
+    assert "index 2" in message
 
 
 def test_simultaneous_workbook_residual_names_cells(tmp_path: Path) -> None:
@@ -128,4 +128,4 @@ def test_simultaneous_workbook_residual_names_cells(tmp_path: Path) -> None:
     assert "debt" in message
     assert "adjustment" in message
     assert "Engine!B2" in message or "Engine!C2" in message
-    assert "column 2" in message or "column 3" in message
+    assert "index 1" in message or "index 2" in message
