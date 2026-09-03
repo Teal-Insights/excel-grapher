@@ -301,6 +301,38 @@ def _take_after_call(
     return f"    {series_id} = take({series_id}, {work.to_source()})"
 
 
+def _aligned_call_arg(
+    param_id: str,
+    info: SeriesDeps,
+    *,
+    catalog: SeriesCatalog,
+    host_call: Sequence[int],
+    local_indices: Mapping[str, tuple[int, ...]],
+    runtime: set[str],
+) -> str:
+    """Return a call-site argument, `take`n to this host walk's aligned window."""
+    if param_id not in info.aligned_ids:
+        return param_id
+    index_map = info.index_maps.get(param_id)
+    if index_map is None:
+        return param_id
+    needed = tuple(index_map[index] for index in host_call)
+    producer = catalog.get(param_id)
+    current = local_indices.get(param_id, _identity_indices(producer))
+    if needed == current:
+        return param_id
+    try:
+        work = IndexSet.from_indices(needed).positions_in(IndexSet.from_indices(current))
+    except ValueError as exc:
+        raise InvertedTreeExportError(
+            f"series {info.host_id!r}: cannot take {param_id!r} at {needed} from {current}"
+        ) from exc
+    if work.materialize() == tuple(range(len(current))):
+        return param_id
+    runtime.add("take")
+    return f"take({param_id}, {work.to_source()})"
+
+
 def _group_key(
     output: BoundSeries,
     *,
@@ -411,8 +443,11 @@ def _emit_evaluation_body(
     """Emit `require_length` / `take` / `internals.*` lines for one evaluation walk."""
     runtime: set[str] = set()
     body: list[str] = []
+    local_indices: dict[str, tuple[int, ...]] = {}
     for sid in leaves:
         series = catalog.get(sid)
+        identity = _identity_indices(series)
+        local_indices[sid] = identity
         if not series.is_sequence:
             continue
         runtime.add("require_length")
@@ -420,11 +455,11 @@ def _emit_evaluation_body(
         wanted = result_indices.get(sid)
         if wanted is None:
             continue
-        identity = _identity_indices(series)
         if wanted == identity:
             continue
         runtime.add("take")
         body.append(f"    {sid} = take({sid}, {IndexSet.from_indices(wanted).to_source()})")
+        local_indices[sid] = wanted
     locals_bound: set[str] = set(leaves)
     seen_sccs: set[tuple[str, ...]] = set()
     mapping = scc_map or {}
@@ -440,6 +475,8 @@ def _emit_evaluation_body(
             body.append(f"    {unpack} = internals.{fn}({', '.join(ext)})")
             for sid in scc:
                 locals_bound.add(sid)
+                computed = call_indices.get(sid, _identity_indices(catalog.get(sid)))
+                local_indices[sid] = computed
                 taken = _take_after_call(
                     sid,
                     result_indices=result_indices,
@@ -448,11 +485,27 @@ def _emit_evaluation_body(
                 )
                 if taken is not None:
                     body.append(taken)
+                    wanted = result_indices.get(sid)
+                    if wanted is not None:
+                        local_indices[sid] = wanted
             continue
         info = deps[series_id]
-        call = f"internals.{series_id}({', '.join(info.param_ids)})"
-        body.append(f"    {series_id} = {call}")
+        host_call = call_indices.get(series_id, _identity_indices(catalog.get(series_id)))
+        args = ", ".join(
+            _aligned_call_arg(
+                param_id,
+                info,
+                catalog=catalog,
+                host_call=host_call,
+                local_indices=local_indices,
+                runtime=runtime,
+            )
+            for param_id in info.param_ids
+        )
+        body.append(f"    {series_id} = internals.{series_id}({args})")
         locals_bound.add(series_id)
+        computed = call_indices.get(series_id, _identity_indices(catalog.get(series_id)))
+        local_indices[series_id] = computed
         taken = _take_after_call(
             series_id,
             result_indices=result_indices,
@@ -461,6 +514,9 @@ def _emit_evaluation_body(
         )
         if taken is not None:
             body.append(taken)
+            wanted = result_indices.get(series_id)
+            if wanted is not None:
+                local_indices[series_id] = wanted
     return body, runtime, locals_bound
 
 
