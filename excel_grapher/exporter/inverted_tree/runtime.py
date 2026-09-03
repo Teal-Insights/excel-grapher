@@ -93,11 +93,13 @@ def _as_number(value: object) -> float:
     raise XlError("#VALUE!")
 
 
-def xl_div(numerator: float, denominator: float) -> float:
-    """Excel `/` with `#DIV/0!` on a zero denominator."""
-    if denominator == 0:
+def xl_div(numerator: object, denominator: object) -> float:
+    """Excel `/` with `#DIV/0!` on zero and `#VALUE!` on non-numeric measures."""
+    left = _as_number(numerator)
+    right = _as_number(denominator)
+    if right == 0:
         raise XlError("#DIV/0!")
-    return numerator / denominator
+    return left / right
 
 
 def xl_exp(*args: object) -> float:
