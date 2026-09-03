@@ -386,13 +386,16 @@ def build_catalog(
         cells = apply_series_excludes(cells, entry)
         cell_tuple = tuple(cells)
         key_fields = _key_fields_of(entry)
-        raw_domain = resolve_key_domain(
-            workbook,
-            entry,
-            cell_tuple,
-            concept_scheme=concept_scheme,
-            graph=graph,
-        )
+        try:
+            raw_domain = resolve_key_domain(
+                workbook,
+                entry,
+                cell_tuple,
+                concept_scheme=concept_scheme,
+                graph=graph,
+            )
+        except ValueError as exc:
+            raise InvertedTreeExportError(str(exc)) from exc
         domain = tuple(_key_point(values, key_fields) for values in raw_domain)
         bound = BoundSeries(
             series_id=series_id,
