@@ -16,10 +16,12 @@ from excel_grapher.exporter.inverted_tree.ast_emit import (
 )
 from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, SeriesCatalog, build_catalog
 from excel_grapher.exporter.inverted_tree.deps import (
+    CatalogEdges,
     SeriesDeps,
     all_formula_root_cells,
     assert_subgraph_bound,
     collect_all_deps,
+    collect_catalog_edges,
     formula_closure,
     leaf_closure,
     plan_indices,
@@ -199,11 +201,13 @@ def emit_internals_module(
     deps: Mapping[str, SeriesDeps],
     graph: DependencyGraph,
     scc_map: Mapping[str, tuple[str, ...]],
+    catalog_edges: CatalogEdges,
 ) -> str:
     """Emit `internals.py` with per-series helpers and fused or demand-driven SCCs."""
     used_runtime: set[str] = set()
     functions: list[str] = []
     emitted_scans: set[tuple[str, ...]] = set()
+    edges = catalog_edges.edges
     for series in catalog.formula_series():
         info = deps[series.series_id]
         scc = scc_map.get(series.series_id, (series.series_id,))
@@ -212,12 +216,16 @@ def emit_internals_module(
             if scc not in emitted_scans:
                 emitted_scans.add(scc)
                 deps_map = dict(deps)
-                plan = plan_fused_scc(scc, catalog=catalog, graph=graph)
+                plan = plan_fused_scc(scc, catalog=catalog, edges=edges)
                 if plan is not None:
-                    body, used = emit_rung2_scc(scc, catalog=catalog, deps=deps_map, graph=graph)
+                    body, used = emit_rung2_scc(
+                        scc, catalog=catalog, deps=deps_map, graph=graph, edges=edges
+                    )
                     kind = "Fused union-domain evaluation"
                 else:
-                    body, used = emit_rung3_scc(scc, catalog=catalog, deps=deps_map, graph=graph)
+                    body, used = emit_rung3_scc(
+                        scc, catalog=catalog, deps=deps_map, graph=graph, edges=edges
+                    )
                     kind = "Demand-driven co-evaluation"
                 used_runtime |= used
                 joined = ", ".join(f"`{sid}`" for sid in scc)
@@ -226,15 +234,23 @@ def emit_internals_module(
             continue
         singleton = (series.series_id,)
         deps_map = dict(deps)
-        plan = plan_fused_scc(singleton, catalog=catalog, graph=graph)
+        plan = plan_fused_scc(singleton, catalog=catalog, edges=edges)
         if plan is not None and plan.direction == "forward":
-            body, used = emit_rung2_scc(singleton, catalog=catalog, deps=deps_map, graph=graph)
+            body, used = emit_rung2_scc(
+                singleton, catalog=catalog, deps=deps_map, graph=graph, edges=edges
+            )
             used_runtime |= used
             doc = f'    """First-level helper for bound series `{series.series_id}`."""'
             functions.append("\n".join([_helper_signature(series, info, catalog), doc, *body]))
             continue
-        if requires_demand_driven(series, catalog=catalog, graph=graph):
-            body, used = emit_rung3_scc(singleton, catalog=catalog, deps=deps_map, graph=graph)
+        if requires_demand_driven(
+            series,
+            catalog=catalog,
+            edges=catalog_edges.by_consumer.get(series.series_id, ()),
+        ):
+            body, used = emit_rung3_scc(
+                singleton, catalog=catalog, deps=deps_map, graph=graph, edges=edges
+            )
             used_runtime |= used
             doc = f'    """Demand-driven evaluation of series `{series.series_id}`."""'
             functions.append("\n".join([_helper_signature(series, info, catalog), doc, *body]))
@@ -771,8 +787,9 @@ def generate_inverted_tree_modules(
     catalog = build_catalog(series_bindings, workbook=bindings_workbook, graph=graph)
     if not catalog.output_series():
         raise InvertedTreeExportError("inverted-tree codegen requires at least one output series")
-    deps = collect_all_deps(catalog, graph)
-    scc_map = build_scc_map(catalog, deps, graph)
+    catalog_edges = collect_catalog_edges(catalog, graph)
+    deps = collect_all_deps(catalog, graph, catalog_edges=catalog_edges)
+    scc_map = build_scc_map(catalog, deps, edges=catalog_edges.edges)
     assert_subgraph_bound(
         catalog=catalog,
         graph=graph,
@@ -784,5 +801,7 @@ def generate_inverted_tree_modules(
         "api.py": emit_api_module(catalog, deps, scc_map),
         "data.py": emit_data_module(catalog, graph),
         "runtime.py": runtime_py if runtime_py.endswith("\n") else runtime_py + "\n",
-        "internals.py": emit_internals_module(catalog, deps, graph, scc_map),
+        "internals.py": emit_internals_module(
+            catalog, deps, graph, scc_map, catalog_edges=catalog_edges
+        ),
     }

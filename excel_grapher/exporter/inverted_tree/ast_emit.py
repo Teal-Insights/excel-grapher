@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -25,6 +26,7 @@ from excel_grapher.core.formula_shape import fingerprint_formula_shape
 from excel_grapher.exporter.inverted_tree import runtime as inverted_runtime
 from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, SeriesCatalog, covering_series
 from excel_grapher.exporter.inverted_tree.deps import (
+    DependenceEdge,
     SeriesDeps,
     iter_range_addresses,
     node_formula_ast,
@@ -706,6 +708,7 @@ def emit_rung3_scc(
     catalog: SeriesCatalog,
     deps: dict[str, SeriesDeps],
     graph: DependencyGraph,
+    edges: Sequence[DependenceEdge] | None = None,
 ) -> tuple[list[str], set[str]]:
     """Emit demand-driven instance evaluation for an SCC (the rung-3 floor)."""
     used: set[str] = {"as_measure", "XlError", "eval_instance"}
@@ -745,7 +748,7 @@ def emit_rung3_scc(
             lines.append(f"{indent}except XlError as err:")
             lines.append(f"{indent}    return err.code")
         lines.append("")
-    edges = collect_dependence_edges(catalog, graph, scc)
+    edges = collect_dependence_edges(catalog, graph, scc, edges=edges)
     intra = [edge for edge in edges if edge.consumer_id in scc_ids and edge.producer_id in scc_ids]
     reverse_drive = (
         bool(intra)
@@ -880,6 +883,7 @@ def emit_rung2_scc(
     catalog: SeriesCatalog,
     deps: dict[str, SeriesDeps],
     graph: DependencyGraph,
+    edges: Sequence[DependenceEdge] | None = None,
 ) -> tuple[list[str], set[str]]:
     """Emit a fused union-domain loop for a fusible zipper SCC.
 
@@ -892,7 +896,7 @@ def emit_rung2_scc(
         InvertedTreeExportError: The SCC is not fusible, or the residual is a
             real same-index cycle.
     """
-    plan = plan_fused_scc(scc, catalog=catalog, graph=graph)
+    plan = plan_fused_scc(scc, catalog=catalog, graph=graph, edges=edges)
     if plan is None:
         raise InvertedTreeExportError(
             f"zipper series {list(scc)!r} is not fusible; use demand-driven evaluation"
