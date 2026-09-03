@@ -210,6 +210,28 @@ def _index_expr(offset: int, index_var: str) -> str:
     return f"{index_var} - {-offset}"
 
 
+def _affine_index_expr(offset: int, index_var: str, *, step: int) -> str:
+    """Return `offset + step * index_var` for a fused live-measure subscript."""
+    if step == 1:
+        return _index_expr(offset, index_var)
+    if step == -1:
+        if offset == 0:
+            return f"-{index_var}"
+        return f"{offset} - {index_var}"
+    raise InvertedTreeExportError(f"unsupported fused index step {step}")
+
+
+def _union_t(plan: FusedPlan, address: str, ctx: EmitContext) -> int:
+    """Return the union index of `address`, or fail closed naming the host."""
+    coord = schedule_coord(address, ctx.catalog)
+    mapped = plan.coord_to_t.get(coord)
+    if mapped is None:
+        raise InvertedTreeExportError(
+            f"series {ctx.host.series_id!r}: fused ref {address} is not on the union schedule"
+        )
+    return mapped
+
+
 def _emit_fused_ref(address: str, ctx: EmitContext) -> str:
     owner = ctx.catalog.require_series_for(address)
     idx = owner.index_of(address)
@@ -218,14 +240,11 @@ def _emit_fused_ref(address: str, ctx: EmitContext) -> str:
             f"series {ctx.host.series_id!r}: fused ref {address} is unbound"
         )
     plan = ctx.fused_plan
-    coord_to_t = plan.coord_to_t
-    host_coord = schedule_coord(ctx.host_cell, ctx.catalog)
-    prod_coord = schedule_coord(address, ctx.catalog)
-    host_union = coord_to_t[host_coord]
-    prod_union = coord_to_t[prod_coord]
     index_var = ctx.index_var or "t"
     ctx.use("live_measure")
     if owner.series_id in ctx.scc_ids:
+        host_union = _union_t(plan, ctx.host_cell, ctx)
+        prod_union = _union_t(plan, address, ctx)
         delta = prod_union - host_union
         if delta == 0:
             if owner.series_id not in ctx.fused_ready:
@@ -240,7 +259,10 @@ def _emit_fused_ref(address: str, ctx: EmitContext) -> str:
     name = ctx.param(owner.series_id)
     if owner.is_scalar:
         return f"live_measure({name})"
-    return f"live_measure({name}[{_index_expr(idx - host_union, index_var)}])"
+    host_union = _union_t(plan, ctx.host_cell, ctx)
+    step = -1 if plan.direction == "reversed" else 1
+    index_expr = _affine_index_expr(idx - step * host_union, index_var, step=step)
+    return f"live_measure({name}[{index_expr}])"
 
 
 def _emit_instance_ref(address: str, ctx: EmitContext) -> str:
