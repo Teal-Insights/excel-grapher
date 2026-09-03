@@ -161,7 +161,9 @@ def predecessor_address(series: BoundSeries, index: int, catalog: SeriesCatalog)
 
     For index > 0 this is the previous cell in the series. For index 0 it is the
     same-row previous column when that cell belongs to a different bound series
-    (the year-0 scalar of a recursive path).
+    (a candidate year-0 scalar of a recursive path). Callers must still check
+    that later members do not also read that cell; a shared selector is not a
+    seed.
     """
     if index < 0 or index >= len(series.cells):
         return None
@@ -264,7 +266,9 @@ class SeriesDeps:
     - `lagged_ids` — a producer read at both `i` and `i-1`
     - `lookup_ids` — `whole` / `dynamic` table reads
     - `is_scan` / `seed_id` / `scan_direction` — self-lags discharged by
-      loop order
+      loop order. A previous-column (or next-column) neighbor is a seed
+      only when the first (last) member reads it. A selector read by every
+      member is a scalar parameter, not a scan seed.
     """
 
     host_id: str
@@ -628,6 +632,13 @@ def series_deps_from_edges(
     saw_backward_lag = False
     seed_id: str | None = None
     terminal_seed_id: str | None = None
+    pred0 = predecessor_address(host, 0, catalog)
+    pred0_norm = normalize_address(pred0) if pred0 is not None else None
+    succ_last = successor_address(host, len(host.cells) - 1, catalog) if host.cells else None
+    succ_last_norm = normalize_address(succ_last) if succ_last is not None else None
+    pred_used_after_first = False
+    succ_used_before_last = False
+    last_index = len(host.cells) - 1
     for edge in edges:
         if edge.consumer_id != host.series_id:
             continue
@@ -654,18 +665,21 @@ def series_deps_from_edges(
         idx = owner.index_of(edge.producer_cell)
         if idx is not None:
             aligned_hits.setdefault(edge.producer_id, []).append((host_index, idx))
-        if host_index == 0:
-            pred = predecessor_address(host, 0, catalog)
-            if pred is not None and normalize_address(edge.producer_cell) == normalize_address(
-                pred
-            ):
+        producer_norm = normalize_address(edge.producer_cell)
+        if pred0_norm is not None and producer_norm == pred0_norm:
+            if host_index == 0:
                 seed_id = edge.producer_id
-        if host_index == len(host.cells) - 1:
-            succ = successor_address(host, len(host.cells) - 1, catalog)
-            if succ is not None and normalize_address(edge.producer_cell) == normalize_address(
-                succ
-            ):
+            else:
+                pred_used_after_first = True
+        if succ_last_norm is not None and producer_norm == succ_last_norm:
+            if host_index == last_index:
                 terminal_seed_id = edge.producer_id
+            else:
+                succ_used_before_last = True
+    if pred_used_after_first:
+        seed_id = None
+    if succ_used_before_last:
+        terminal_seed_id = None
     scan_direction: Literal["forward", "reversed"] = "forward"
     if saw_backward_lag and not saw_self_lag:
         scan_direction = "reversed"
