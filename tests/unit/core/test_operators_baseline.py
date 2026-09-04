@@ -127,10 +127,10 @@ def test_top_level_error_propagates_before_array_compare() -> None:
     assert xl_eq(left, XlError.VALUE) == XlError.VALUE
 
 
-def test_string_compare_uses_casefolded_fallback_when_numeric_coercion_fails() -> None:
+def test_string_compare_uses_type_rank_against_logicals() -> None:
     left = np.array([["TRUE", "AbC"]], dtype=object)
     right = np.array([[True, "aBc"]], dtype=object)
-    assert array_tolist(xl_eq(left, right)) == [[True, True]]
+    assert array_tolist(xl_eq(left, right)) == [[False, True]]
 
 
 def test_baseline_fixture_exists_and_matches_schema() -> None:

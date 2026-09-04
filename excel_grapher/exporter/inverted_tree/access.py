@@ -256,7 +256,7 @@ def is_seed_access(
     if overlapping_schedule_peer(host, producer, catalog):
         return False
     if not _has_schedule_axis(producer, catalog):
-        return True
+        return producer.is_scalar
     if not _has_schedule_axis(host, catalog):
         return False
     return (

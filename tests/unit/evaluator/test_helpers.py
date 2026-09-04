@@ -63,15 +63,14 @@ def test_helpers_accept_numpy_scalars() -> None:
 @pytest.mark.parametrize(
     ("left", "right", "expected"),
     [
-        # --- Numeric-string coercion (matches FormulaEvaluator behavior) ---
-        ("0", 0, True),
-        ("  2.0 ", 2, True),
-        ("", 0, True),  # exact empty text compares as 0 (Excel); not via to_number
-        (None, 0, True),  # None coerces to 0.0 via to_number
-        # --- Non-numeric strings fall back to case-insensitive string comparison ---
-        ("TRUE", True, True),  # to_number("TRUE") fails -> compare to_string values
-        ("FALSE", False, True),
-        ("abc", 0, False),  # compare "abc" vs "0" as strings
+        # --- Type-rank: comparison never coerces across types (#651) ---
+        ("0", 0, False),
+        ("  2.0 ", 2, False),
+        ("", 0, False),  # empty string is text; a blank cell (`None`) is 0
+        (None, 0, True),
+        ("TRUE", True, False),  # text vs logical
+        ("FALSE", False, False),
+        ("abc", 0, False),
         ("AbC", "aBc", True),
         # --- Error propagation ---
         (XlError.NA, 0, XlError.NA),
@@ -85,14 +84,13 @@ def test_xl_eq_semantics(left: CellValue, right: CellValue, expected: bool | XlE
 @pytest.mark.parametrize(
     ("left", "right", "expected"),
     [
-        # Numeric-string coercion
+        # Type-rank: text > number, so text < number is False
         ("0", 0, False),
-        ("-1", 0, True),
+        ("-1", 0, False),
         ("", 0, False),
         (None, 0, False),
-        # Fallback-to-string
-        ("abc", 0, False),  # "abc" < "0" is False (string compare)
-        ("0", "abc", True),  # "0" < "abc" is True (string compare)
+        ("abc", 0, False),
+        ("0", "abc", True),  # same-type text
         ("AbC", "b", True),
         # Errors
         (XlError.VALUE, 0, XlError.VALUE),
@@ -106,13 +104,12 @@ def test_xl_lt_semantics(left: CellValue, right: CellValue, expected: bool | XlE
 @pytest.mark.parametrize(
     ("left", "right", "expected"),
     [
-        # Numeric-string coercion
-        ("0", 0, False),
+        # Type-rank: text > number
+        ("0", 0, True),
         ("1", 0, True),
-        ("", 0, False),
+        ("", 0, True),
         (None, 0, False),
-        # Fallback-to-string
-        ("abc", 0, True),  # "abc" > "0" is True (string compare)
+        ("abc", 0, True),
         ("0", "abc", False),
         ("b", "AbC", True),
         # Errors
@@ -127,10 +124,10 @@ def test_xl_gt_semantics(left: CellValue, right: CellValue, expected: bool | XlE
 @pytest.mark.parametrize(
     ("left", "right", "expected"),
     [
-        ("0", 0, True),  # numeric coercion
-        ("", 0, True),
-        ("0", 1, True),
-        ("abc", 0, False),  # "abc" <= "0" is False (string compare)
+        ("0", 0, False),  # text > number
+        ("", 0, False),
+        ("0", 1, False),
+        ("abc", 0, False),
         (XlError.NA, 0, XlError.NA),
     ],
 )
@@ -141,11 +138,11 @@ def test_xl_le_semantics(left: CellValue, right: CellValue, expected: bool | XlE
 @pytest.mark.parametrize(
     ("left", "right", "expected"),
     [
-        ("0", 0, True),  # numeric coercion
+        ("0", 0, True),  # text > number
         ("", 0, True),
         ("1", 0, True),
-        ("0", 1, False),
-        ("abc", 0, True),  # "abc" >= "0" is True (string compare)
+        ("0", 1, True),
+        ("abc", 0, True),
         (XlError.REF, 0, XlError.REF),
     ],
 )
@@ -156,8 +153,8 @@ def test_xl_ge_semantics(left: CellValue, right: CellValue, expected: bool | XlE
 @pytest.mark.parametrize(
     ("left", "right", "expected"),
     [
-        ("0", 0, False),
-        ("", 0, False),
+        ("0", 0, True),
+        ("", 0, True),
         ("AbC", "aBc", False),
         ("abc", 0, True),
         (XlError.NA, 0, XlError.NA),
