@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v12.6.2 (2026-09-04)
+
+### Bug Fixes
+
+- **export**: Lower INDEX/OFFSET into a 2-D block without dropping the column
+  ([`88f1647`](https://github.com/Teal-Insights/excel-grapher/commit/88f1647ebf7bf17665db39a4531a2cc5c00d9d06))
+
+- **export**: Tighten 2-D INDEX fixtures and emitted flat-index terms
+  ([`53c61dd`](https://github.com/Teal-Insights/excel-grapher/commit/53c61dd8f078f218d2e87f4648799db4bffde4ac))
+
+### Documentation
+
+- **export**: Inverted-tree plan §11–§12 — graph-derived lowering and local corpus (#656)
+  ([#657](https://github.com/Teal-Insights/excel-grapher/pull/657),
+  [`6a186e6`](https://github.com/Teal-Insights/excel-grapher/commit/6a186e62b9312f31db069fb75edaff8bcb28e70b))
+
+### Testing
+
+- **export**: Cover INDEX/OFFSET into a 2-D bound block
+  ([`9ad9b1e`](https://github.com/Teal-Insights/excel-grapher/commit/9ad9b1e8465e5510c44359b6671a2b17e5f78520))
+
+
 ## v12.6.1 (2026-09-04)
 
 ### Bug Fixes
