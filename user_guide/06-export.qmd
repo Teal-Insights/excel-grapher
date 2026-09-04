@@ -168,8 +168,10 @@ Bindings features that already apply before codegen — complementary shards / l
 ranges in `data_range` — work with inverted-tree because the catalog consumes the merged sidecar.
 
 Shapes that **fail closed** (export error, not a silent wrong answer): `INDIRECT` still in the
-formula AST, `SUMPRODUCT` / `SUM` of a range, `IFERROR`, whole-column / whole-row refs, cross-sheet
-3-D ranges, and any `xl_<name>` with no inverted-tree runtime helper. Port those per workbook
+formula AST ([issue 668](https://github.com/Teal-Insights/excel-grapher/issues/668)),
+`SUMPRODUCT` / `SUM` of a range, `IFERROR`, whole-column / whole-row refs, cross-sheet
+3-D ranges ([issue 667](https://github.com/Teal-Insights/excel-grapher/issues/667)), and any
+`xl_<name>` with no inverted-tree runtime helper. Port those per workbook
 corpus, the same way `EXP` and 2-D `INDEX` landed. Array spill ([issue 284](https://github.com/Teal-Insights/excel-grapher/issues/284))
 and array-style `SUM(IF(…))` ([issue 483](https://github.com/Teal-Insights/excel-grapher/issues/483))
 stay open for both paradigms.
