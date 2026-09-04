@@ -21,6 +21,7 @@ from excel_grapher.core.lookup_funcs import match_cells
 from excel_grapher.core.math_funcs import exp_number
 from excel_grapher.core.types import CellValue, FormulaValue
 from excel_grapher.core.types import XlError as CoreXlError
+from excel_grapher.series_bindings.input_coerce import require_input_domain as require_input_domain
 
 T = TypeVar("T")
 

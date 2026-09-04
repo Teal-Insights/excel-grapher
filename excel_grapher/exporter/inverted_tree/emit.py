@@ -39,6 +39,7 @@ from excel_grapher.exporter.inverted_tree.schedule import (
     scan_function_name,
     scc_external_params,
 )
+from excel_grapher.series_bindings.input_coerce import measure_domain_from_series
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
@@ -479,6 +480,25 @@ def _leaf_signature_parts(
     return required, defaulted, params, data_imports
 
 
+def _emit_input_domain_checks(
+    leaves: Sequence[str],
+    catalog: SeriesCatalog,
+) -> tuple[list[str], set[str]]:
+    """Emit `require_input_domain` calls for input leaves that declare a domain."""
+    lines: list[str] = []
+    runtime: set[str] = set()
+    for series_id in leaves:
+        series = catalog.get(series_id)
+        if series.direction != "input":
+            continue
+        domain = measure_domain_from_series(series.raw)
+        if domain is None:
+            continue
+        runtime.add("require_input_domain")
+        lines.append(f"    require_input_domain({series_id}, {domain!r}, series_id={series_id!r})")
+    return lines, runtime
+
+
 def _keyword_signature(name: str, params: Sequence[str], returns: str) -> str:
     if params:
         param_block = ",\n    ".join(params)
@@ -502,9 +522,10 @@ def _emit_evaluation_body(
     deps: Mapping[str, SeriesDeps],
     scc_map: Mapping[str, tuple[str, ...]] | None,
 ) -> tuple[list[str], set[str], set[str]]:
-    """Emit `require_length` / `take` / `internals.*` lines for one evaluation walk."""
+    """Emit `require_input_domain` / `require_length` / `take` / `internals.*` lines."""
     runtime: set[str] = set()
-    body: list[str] = []
+    body, domain_runtime = _emit_input_domain_checks(leaves, catalog)
+    runtime |= domain_runtime
     local_indices: dict[str, tuple[int, ...]] = {}
     for sid in leaves:
         series = catalog.get(sid)
@@ -593,7 +614,9 @@ def emit_orchestrator(
 
     Returns the function source, runtime symbols used, and data constants imported.
 
-    Multi-series lag zippers call the co-scan once and unpack members.
+    Input leaves that declare `input.domain` are checked with
+    `require_input_domain` before the evaluation walk. Multi-series lag zippers
+    call the co-scan once and unpack members.
     """
     deps_map = dict(deps)
     scc_map_dict = dict(scc_map) if scc_map is not None else None
@@ -666,7 +689,7 @@ def _emit_thin_orchestrator(
     runner_leaves: Sequence[str],
     catalog: SeriesCatalog,
     deps: dict[str, SeriesDeps],
-) -> tuple[str, set[str]]:
+) -> tuple[str, set[str], set[str]]:
     """Emit a `compute_*` that unpacks one slot from a shared runner."""
     leaves = leaf_closure(output.series_id, catalog=catalog, deps=deps)
     _required, _defaulted, params, data_imports = _leaf_signature_parts(leaves, catalog)
@@ -681,12 +704,14 @@ def _emit_thin_orchestrator(
         member.series_id if member.series_id == output.series_id else "_" for member in outputs
     )
     call = f"{runner_name}({', '.join(call_args)})"
+    domain_lines, domain_runtime = _emit_input_domain_checks(leaves, catalog)
     body = [
+        *domain_lines,
         f"    {unpack} = {call}",
         _emit_result_return(output),
     ]
     doc = f'    """Compute `{output.series_id}` from its subgraph leaf closure."""'
-    return "\n".join([signature, doc, *body]), data_imports
+    return "\n".join([signature, doc, *body]), data_imports, domain_runtime
 
 
 def emit_api_module(
@@ -743,7 +768,7 @@ def emit_api_module(
         data_imports |= used_data
         runner_leaves = _union_leaves(members, catalog=catalog, deps=deps_map)
         for output in members:
-            source, used_data = _emit_thin_orchestrator(
+            source, used_data, used_runtime = _emit_thin_orchestrator(
                 output,
                 runner_name=runner_name,
                 outputs=members,
@@ -753,6 +778,7 @@ def emit_api_module(
             )
             functions.append(source)
             data_imports |= used_data
+            runtime |= used_runtime
     lines = [
         '"""Output orchestrators for the inverted graph.',
         "",

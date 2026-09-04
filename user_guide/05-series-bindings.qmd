@@ -792,8 +792,9 @@ Generated code imports `datetime` and emits `datetime.datetime(...)` literals on
 
 ## Input domains (1.13.0)
 
-Declare an allowed measure domain on an input binding so generated setters fail at the
-call site instead of accepting bad values and surfacing Excel errors later in `compute_*`:
+Declare an allowed measure domain on an input binding so generated setters and
+inverted-tree `compute_*` arguments fail at the call site instead of accepting
+bad values and surfacing Excel errors later:
 
 ```yaml
 input:
@@ -818,6 +819,8 @@ input:
 
 Domain checks run after dtype coercion on every measure value in the setter batch
 (scalar shorthand, records, positional series values, and DataFrame columns).
+Inverted-tree export checks the same domain on each required `compute_*` argument
+(scalar or every sequence member) before the evaluation walk.
 
 ## Dimension ids vs concepts (1.8.0)
 
