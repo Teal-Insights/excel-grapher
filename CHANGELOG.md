@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v12.5.2 (2026-09-04)
+
+### Bug Fixes
+
+- **export**: O(1) statement lookup for fused-region planning
+  ([#642](https://github.com/Teal-Insights/excel-grapher/pull/642),
+  [`4285341`](https://github.com/Teal-Insights/excel-grapher/commit/4285341187a07f017e75caa49b2417ac0ff8c150))
+
+- **export**: Skip statement-map rebuild when partition is unchanged
+  ([#642](https://github.com/Teal-Insights/excel-grapher/pull/642),
+  [`4285341`](https://github.com/Teal-Insights/excel-grapher/commit/4285341187a07f017e75caa49b2417ac0ff8c150))
+
+### Testing
+
+- **export**: Clarify N=5000 backward-chain docstring
+  ([#642](https://github.com/Teal-Insights/excel-grapher/pull/642),
+  [`4285341`](https://github.com/Teal-Insights/excel-grapher/commit/4285341187a07f017e75caa49b2417ac0ff8c150))
+
+
 ## v12.5.1 (2026-09-04)
 
 ### Bug Fixes
