@@ -817,8 +817,10 @@ def emit_rung3_scc(
         if series.is_scalar:
             lines.append(f"    {sid} = eval_instance({sid!r}, 0, {fn}, memo, stack)")
         elif reverse_drive:
+            lines.append(f"    for i in reversed(range({n})):")
+            lines.append(f"        eval_instance({sid!r}, i, {fn}, memo, stack)")
             lines.append(
-                f"    {sid} = tuple(eval_instance({sid!r}, i, {fn}, memo, stack) for i in reversed(range({n})))[::-1]"
+                f"    {sid} = tuple(eval_instance({sid!r}, i, {fn}, memo, stack) for i in range({n}))"
             )
         else:
             lines.append(

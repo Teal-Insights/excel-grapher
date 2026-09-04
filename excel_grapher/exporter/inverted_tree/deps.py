@@ -259,7 +259,8 @@ class SeriesDeps:
 
     `DependenceEdge` is the source of truth. This view groups those edges by
     access class so helpers can zip, lag-index, and scan without walking the
-    edge list again:
+    edge list again. It does not retain the `DependencyGraph` it was
+    projected from; `edges` is the host-local source of truth:
 
     - `aligned_ids` / `index_maps` / `affine_maps` — identity (or affine)
       joins already taken to the host walk

@@ -9,7 +9,7 @@ from fastpyxl.utils.cell import get_column_letter
 
 from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter.inverted_tree.deps import requires_demand_driven
-from excel_grapher.exporter.inverted_tree.schedule import plan_fused_scc
+from excel_grapher.exporter.inverted_tree.schedule import plan_fused_scc, plan_scc
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
@@ -140,6 +140,10 @@ def test_backward_recursion_emits_reversed_scan_and_matches_evaluator(
     plan = plan_fused_scc(("value",), catalog=catalog, graph=graph_bound)
     assert plan is not None
     assert plan.direction == "reversed"
+    choice = plan_scc(("value",), catalog=catalog, graph=graph_bound)
+    assert choice.rung == 1
+    assert choice.plan is not None
+    assert choice.plan.direction == "reversed"
     pkg = load_package(modules, tmp_path, name=pkg_name)
     graph = create_dependency_graph(workbook, cells, load_values=True)
     assert graph.cycle_report().has_must_cycles is False

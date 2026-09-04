@@ -2,7 +2,7 @@
 
 An SCC whose intra-SCC distances are all <= 0 is fusible with the loop run in
 reverse (Allen-Kennedy loop direction selection). Single-series backward
-recurrence emits a reversed scan with prior (Rung 1).
+recurrence is a rung-1 reversed scan.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from excel_grapher.exporter.inverted_tree.runtime import (
     is_error,
     live_measure,
 )
-from excel_grapher.exporter.inverted_tree.schedule import plan_fused_scc
+from excel_grapher.exporter.inverted_tree.schedule import plan_fused_scc, plan_scc
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
@@ -144,11 +144,14 @@ def test_terminal_backward_recursion_emits_reversed_scan_and_matches_evaluator(
     assert requires_demand_driven(series, catalog=catalog, graph=graph) is False
     assert deps["value"].is_scan is True
     assert deps["value"].scan_direction == "reversed"
+    choice = plan_scc(("value",), catalog=catalog, graph=graph)
+    assert choice.rung == 1
+    assert choice.plan is not None
+    assert choice.plan.direction == "reversed"
 
     modules = generate_inverted(workbook, doc)
     internals = modules["internals.py"]
     assert "eval_instance" not in internals
-    assert "reversed(range(" in internals
 
     pkg = load_package(modules, tmp_path, name=pkg_name)
     graph_full = create_dependency_graph(workbook, cells, load_values=True)
@@ -401,6 +404,18 @@ def test_differential_oracle_runs_over_both_directions(tmp_path: Path) -> None:
         scc_rev, catalog=catalog_rev, deps=deps_rev, graph=graph_rev
     )
     assert _exec_scan(fused_rev, used_fr) == _exec_scan(demand_rev, used_dr)
+
+
+def test_rung3_reverse_drive_warms_memo_then_builds_forward(tmp_path: Path) -> None:
+    catalog, deps, graph = inverted_graph_parts(
+        _lookahead_zipper_workbook(tmp_path), _lookahead_zipper_bindings()
+    )
+    demand, _used = emit_rung3_scc(("value", "flow"), catalog=catalog, deps=deps, graph=graph)
+    source = "\n".join(demand)
+    assert "for i in reversed(range(" in source
+    assert "[::-1]" not in source
+    assert "tuple(eval_instance(" in source
+    assert "for i in range(" in source
 
 
 # ---------------------------------------------------------------------------

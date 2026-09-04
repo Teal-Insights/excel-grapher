@@ -1,10 +1,10 @@
 """Design properties from `plans/inverted-tree-scheduling.md` (§7–§8).
 
 These replace emission-syntax greps: a corpus-wide differential oracle
-(auto rung vs forced rung 3 vs `FormulaEvaluator`), Θ(S+E) size
-invariance, orientation via the transpose helper, schedule-order safety
-for lexically mis-ordered keys, and `inspect.signature` leaf-closure
-contracts.
+(auto rung vs forced fused vs forced rung 3 vs `FormulaEvaluator`),
+Θ(S+E) size invariance, orientation via the transpose helper,
+schedule-order safety for lexically mis-ordered keys, and
+`inspect.signature` leaf-closure contracts.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ from fastpyxl.utils.cell import get_column_letter
 
 from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter.inverted_tree.catalog import SeriesCatalog
-from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.schedule import plan_fused_scc
 from excel_grapher.grapher.graph import DependencyGraph
 from tests.unit.exporter.inverted_tree.helpers import (
@@ -34,6 +33,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     series_entry,
     transpose_sheets,
     write_oriented_workbook,
+    write_workbook,
 )
 from tests.unit.exporter.inverted_tree.test_shape_a1_leaf_closure import (
     _a1_bindings,
@@ -182,26 +182,63 @@ def test_exp_rung3_matches_evaluator(tmp_path: Path) -> None:
     _emit_and_compare(workbook, _exp_bindings(), tmp_path, "a16_r3", force_rung=3)
 
 
-def test_force_rung_2_raises_on_mixed_direction_scc(tmp_path: Path) -> None:
-    workbook = write_oriented_workbook(
+@pytest.mark.parametrize(
+    ("case", "workbook_fn", "bindings_fn"),
+    _CORPUS,
+    ids=[item[0] for item in _CORPUS],
+)
+def test_corpus_rung2_matches_evaluator_and_auto(
+    tmp_path: Path,
+    case: str,
+    workbook_fn: Callable[[Path], Path],
+    bindings_fn: Callable[[], dict[str, Any]],
+) -> None:
+    workbook = workbook_fn(tmp_path)
+    document = bindings_fn()
+    catalog, _deps, graph = inverted_graph_parts(workbook, document)
+    auto = load_package(generate_inverted(workbook, document), tmp_path, name=f"{case}_r2_auto")
+    forced = load_package(
+        generate_inverted(workbook, document, force_rung=2),
+        tmp_path,
+        name=f"{case}_r2",
+    )
+    _package_matches_evaluator(auto, catalog, graph)
+    _package_matches_evaluator(forced, catalog, graph)
+    kwargs = input_kwargs(catalog, graph)
+    for series in catalog.output_series():
+        _values_close(
+            call_compute(auto, series.series_id, kwargs),
+            call_compute(forced, series.series_id, kwargs),
+        )
+
+
+def test_force_rung_2_falls_through_when_not_fusible(tmp_path: Path) -> None:
+    workbook = write_workbook(
         tmp_path / "mixed_rung2.xlsx",
         {
             "Engine": {
                 "A1": 2009,
                 "B1": 2010,
-                "A2": "=B4",
-                "B2": "=A4",
-                "A4": "=1",
-                "B4": "=A2",
-            }
+                "C1": 2011,
+                "A2": "=100",
+                "B2": "=A2+C3",
+                "C2": "=B2+10",
+                "A3": "=B2*0.1",
+                "B3": "=A2*0.1",
+                "C3": "=10",
+            },
         },
-        orientation="horizontal",
     )
-    document = _two_series_bindings()
+    document = bindings_document(
+        series_entry("x", "Engine!A2:C2", layout="series", direction="output", header_row=1),
+        series_entry("y", "Engine!A3:C3", layout="series", direction="internal", header_row=1),
+    )
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     assert plan_fused_scc(("x", "y"), catalog=catalog, graph=graph) is None
-    with pytest.raises(InvertedTreeExportError, match="force_rung=2"):
-        generate_inverted(workbook, document, force_rung=2)
+    modules = generate_inverted(workbook, document, force_rung=2)
+    assert "eval_instance" in modules["internals.py"]
+    pkg = load_package(modules, tmp_path, name="mixed_rung2")
+    _package_matches_evaluator(pkg, catalog, graph)
 
 
 _ORIENTABLE = [
