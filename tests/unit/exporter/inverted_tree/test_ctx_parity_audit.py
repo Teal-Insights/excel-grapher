@@ -232,29 +232,14 @@ def test_named_range_formula_expands_to_bound_cell(tmp_path: Path) -> None:
     [
         ('=INDIRECT("Inputs!A1")', {}, r"no inverted-tree runtime helper|INDIRECT"),
         (
-            "=SUMPRODUCT(Inputs!A1:A2,Inputs!B1:B2)",
-            {"A2": 2.0, "B1": 3.0, "B2": 4.0},
-            r"bare range|no inverted-tree runtime helper|SUMPRODUCT",
-        ),
-        (
             "=IFERROR(1/Inputs!A1,0)",
             {},
             r"no inverted-tree runtime helper|IFERROR",
         ),
         (
-            "=SUM(Inputs!A1:A2)",
-            {"A2": 2.0},
-            r"bare range|no inverted-tree runtime helper|SUM",
-        ),
-        (
             "=SUM(IF(Inputs!A1:A2>0,Inputs!A1:A2))",
             {"A2": 2.0},
             r"bare range|no inverted-tree runtime helper|unsupported",
-        ),
-        (
-            "=SUM(Inputs!A:A)",
-            {},
-            r"unsupported AST node|WholeColumn|no inverted-tree runtime helper|bare range",
         ),
     ],
 )
@@ -300,7 +285,7 @@ def test_ctx_library_shapes_fail_closed(
         generate_inverted(workbook, document)
 
 
-def test_cross_sheet_range_fails_closed(tmp_path: Path) -> None:
+def test_cross_sheet_range_matches_evaluator(tmp_path: Path) -> None:
     workbook = write_workbook(
         tmp_path / "cross.xlsx",
         {
@@ -314,8 +299,48 @@ def test_cross_sheet_range_fails_closed(tmp_path: Path) -> None:
         series_entry("right", "Other!A1", layout="scalar", direction="input"),
         series_entry("out", "Outputs!A1", layout="scalar", direction="output"),
     )
-    with pytest.raises(InvertedTreeExportError, match=r"cross-sheet range|unsupported|not a bound"):
-        generate_inverted(workbook, document)
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_cross")
+    catalog, _deps, graph = inverted_graph_parts(workbook, document)
+    expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])["Outputs!A1"]
+    assert _scalar(pkg.compute_out(left=1.0, right=2.0)) == pytest.approx(expected)
+
+
+def test_sum_and_sumproduct_of_bound_series_match_evaluator(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "agg.xlsx",
+        {
+            "Inputs": {"A1": 1.0, "A2": 2.0, "B1": 3.0, "B2": 4.0, "A10": 1, "B10": 2},
+            "Outputs": {
+                "A1": "=SUM(Inputs!A1:A2)",
+                "B1": "=SUMPRODUCT(Inputs!A1:A2,Inputs!B1:B2)",
+            },
+        },
+    )
+    document = bindings_document(
+        series_entry(
+            "left",
+            "Inputs!A1:A2",
+            layout="series",
+            direction="input",
+            header_row=10,
+        ),
+        series_entry(
+            "right",
+            "Inputs!B1:B2",
+            layout="series",
+            direction="input",
+            header_row=10,
+        ),
+        series_entry("sum_out", "Outputs!A1", layout="scalar", direction="output"),
+        series_entry("prod_out", "Outputs!B1", layout="scalar", direction="output"),
+    )
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_agg")
+    catalog, _deps, graph = inverted_graph_parts(workbook, document)
+    expected = FormulaEvaluator(graph).evaluate(["Outputs!A1", "Outputs!B1"])
+    assert _scalar(pkg.compute_sum_out(left=(1.0, 2.0))) == pytest.approx(expected["Outputs!A1"])
+    assert _scalar(pkg.compute_prod_out(left=(1.0, 2.0), right=(3.0, 4.0))) == pytest.approx(
+        expected["Outputs!B1"]
+    )
 
 
 def test_input_domain_rejects_out_of_range_argument(tmp_path: Path) -> None:
