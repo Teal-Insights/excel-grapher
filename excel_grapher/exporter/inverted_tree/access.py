@@ -447,6 +447,9 @@ def overlapping_schedule_peer(
     prod_fields = preferred_fields(producer, catalog)
     if host_fields is None or host_fields != prod_fields:
         return False
+    cached = catalog.schedule.coords_of
+    if host.series_id in cached and producer.series_id in cached:
+        return not cached[host.series_id].isdisjoint(cached[producer.series_id])
     host_coords = {schedule_coord(cell, catalog) for cell in host.cells}
     prod_coords = {schedule_coord(cell, catalog) for cell in producer.cells}
     return bool(host_coords & prod_coords)

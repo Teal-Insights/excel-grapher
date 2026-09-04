@@ -39,6 +39,8 @@ from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
     SeriesCatalog,
     covering_series,
+    covering_series_of_column,
+    covering_series_of_range,
     fit_affine_map,
     preferred_fields,
     schedule_axis_coord,
@@ -47,11 +49,9 @@ from excel_grapher.exporter.inverted_tree.catalog import (
 from excel_grapher.exporter.inverted_tree.deps import (
     DependenceEdge,
     SeriesDeps,
-    iter_range_addresses,
     iter_ref_addresses,
     node_formula_ast,
     predecessor_address,
-    range_column_addresses,
     successor_address,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
@@ -948,7 +948,7 @@ def _emit_index(node: FunctionCallNode, ctx: EmitContext) -> str:
     if isinstance(node.args[0], RangeNode):
         start = as_canonical(resolve_cell_ref(node.args[0].start_ref, ctx.host_cell))
         end = as_canonical(resolve_cell_ref(node.args[0].end_ref, ctx.host_cell))
-        covered_full = covering_series(ctx.catalog, iter_range_addresses(start, end))
+        covered_full = covering_series_of_range(ctx.catalog, start, end)
         if covered_full is not None:
             slot = ctx.lookup_anchor_slot
             ctx.lookup_anchor_slot += 1
@@ -957,8 +957,7 @@ def _emit_index(node: FunctionCallNode, ctx: EmitContext) -> str:
             raise _host_export_error(
                 ctx, "INDEX column is not a literal and the range is not one bound block"
             )
-        column_cells = range_column_addresses(start, end, col_literal)
-        covered = covering_series(ctx.catalog, column_cells)
+        covered = covering_series_of_column(ctx.catalog, start, end, col_literal)
         if covered is None:
             raise _host_export_error(ctx, "INDEX column is not a bound series")
         if covered.layout == "matrix" or covered.block_width > 1:

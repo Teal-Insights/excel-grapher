@@ -7,10 +7,13 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from fastpyxl.utils.cell import get_column_letter
+
 from excel_grapher.core.address_keys import (
     CanonicalAddress,
     as_canonical,
     canonical_address,
+    format_cell_key,
     parse_cell_coords,
 )
 from excel_grapher.core.formula_ast import (
@@ -35,7 +38,11 @@ from excel_grapher.series_bindings.ranges import (
     format_series_data_range,
     series_data_ranges,
 )
-from excel_grapher.series_bindings.resolve import resolve_key_domain
+from excel_grapher.series_bindings.resolve import (
+    _structure_source_addresses,
+    _WorkbookValues,
+    resolve_key_domain,
+)
 from excel_grapher.series_bindings.types import Scalar, WorkbookSeriesBindings
 
 if TYPE_CHECKING:
@@ -107,6 +114,7 @@ class BoundSeries:
     domain: tuple[KeyPoint, ...]
     statements: tuple[Statement, ...]
     _cell_indices: dict[CanonicalAddress, int] = field(init=False, repr=False, compare=False)
+    _rect: tuple[str, int, int, int, int] | None = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -114,6 +122,7 @@ class BoundSeries:
             "_cell_indices",
             {cell: idx for idx, cell in enumerate(self.cells)},
         )
+        object.__setattr__(self, "_rect", _dense_rect(self.cells))
 
     @property
     def is_scalar(self) -> bool:
@@ -149,6 +158,14 @@ class BoundSeries:
         return self._cell_indices.get(address)
 
     @property
+    def rect(self) -> tuple[str, int, int, int, int] | None:
+        """Axis-aligned dense rectangle `(sheet, row1, col1, row2, col2)`.
+
+        `None` when `cells` is empty, spans sheets, or has holes.
+        """
+        return self._rect
+
+    @property
     def block_width(self) -> int:
         """Column count of the row-major bound block.
 
@@ -165,6 +182,32 @@ class BoundSeries:
                 break
             width += 1
         return max(width, 1)
+
+
+def _dense_rect(
+    cells: Sequence[CanonicalAddress],
+) -> tuple[str, int, int, int, int] | None:
+    """Return the filled rectangle of `cells`, or `None` if it is not dense."""
+    if not cells:
+        return None
+    sheet0, row0, col0 = parse_cell_coords(cells[0])
+    row1 = row2 = row0
+    col1 = col2 = col0
+    for cell in cells[1:]:
+        sheet, row, col = parse_cell_coords(cell)
+        if sheet != sheet0:
+            return None
+        if row < row1:
+            row1 = row
+        elif row > row2:
+            row2 = row
+        if col < col1:
+            col1 = col
+        elif col > col2:
+            col2 = col
+    if (row2 - row1 + 1) * (col2 - col1 + 1) != len(cells):
+        return None
+    return sheet0, row1, col1, row2, col2
 
 
 def _join_key(point: KeyPoint, fields: Sequence[str]) -> tuple[Scalar, ...] | None:
@@ -245,6 +288,8 @@ class ScheduleIndex:
     fused-region planning is an O(1) lookup per union index.
     `partition_of` / `axis_of` split a multi-key domain into the outer
     instance partition and the inner `TIME_PERIOD` schedule axis (#638).
+    `coords_of` is the set of schedule coordinates per series so peer tests
+    do not rebuild those sets on every call.
     """
 
     preferred: dict[str, tuple[str, ...] | None]
@@ -253,6 +298,7 @@ class ScheduleIndex:
     statement_id_by_coord: dict[str, dict[int, str]] = field(default_factory=dict)
     partition_of: dict[CanonicalAddress, tuple[Scalar, ...]] = field(default_factory=dict)
     axis_of: dict[CanonicalAddress, int] = field(default_factory=dict)
+    coords_of: dict[str, frozenset[int]] = field(default_factory=dict)
 
 
 def _series_statement_id_by_coord(
@@ -348,6 +394,7 @@ def build_schedule_index(series: Mapping[str, BoundSeries]) -> ScheduleIndex:
                 continue
             partition_of[addr] = part
             axis_of[addr] = axis_lookup.get(axis_value, fallback)
+    coords_of = {series_id: frozenset(coords) for series_id, coords in index_by_coord.items()}
     return ScheduleIndex(
         preferred=preferred,
         coord_of=coord_of,
@@ -355,6 +402,7 @@ def build_schedule_index(series: Mapping[str, BoundSeries]) -> ScheduleIndex:
         statement_id_by_coord=_statement_id_by_coord(series, coord_of),
         partition_of=partition_of,
         axis_of=axis_of,
+        coords_of=coords_of,
     )
 
 
@@ -740,58 +788,69 @@ def build_catalog(
     order: list[str] = []
     address_to_id: dict[CanonicalAddress, str] = {}
     concept_scheme = bindings.get("concept_scheme")
+    pending: list[tuple[str, dict[str, Any], tuple[CanonicalAddress, ...]]] = []
+    seen_raw: dict[str, Mapping[str, Any]] = {}
     for entry in bindings.get("series", []):
         if not isinstance(entry, dict):
             continue
         series_id = str(entry.get("id") or "")
         if not series_id:
             raise InvertedTreeExportError("series entry missing id")
-        if series_id in series_map:
-            previous = series_map[series_id]
+        if series_id in seen_raw:
+            previous = seen_raw[series_id]
             raise InvertedTreeExportError(
                 f"duplicate series id {series_id!r}: "
-                f"{format_series_data_range(previous.raw)} and {format_series_data_range(entry)}"
+                f"{format_series_data_range(previous)} and {format_series_data_range(entry)}"
             )
+        seen_raw[series_id] = entry
         cells: list[CanonicalAddress] = []
         for data_range in series_data_ranges(entry):
             cells.extend(
                 canonical_address(addr) for addr in expand_data_range(data_range, workbook=workbook)
             )
         cells = [as_canonical(addr) for addr in apply_series_excludes(cells, entry)]
-        cell_tuple = tuple(cells)
-        key_fields = _key_fields_of(entry)
-        try:
-            raw_domain = resolve_key_domain(
-                workbook,
-                entry,
-                cell_tuple,
-                concept_scheme=concept_scheme,
-                graph=graph,
-            )
-        except ValueError as exc:
-            raise InvertedTreeExportError(str(exc)) from exc
-        domain = tuple(_key_point(values, key_fields) for values in raw_domain)
-        bound = BoundSeries(
-            series_id=series_id,
-            layout=_layout_of(entry),
-            direction=_direction_of(entry),
-            cells=cell_tuple,
-            key_fields=key_fields,
-            dtype=_dtype_of(entry),
-            compute_name=_compute_name_of(entry, series_id),
-            raw=entry,
-            domain=domain,
-            statements=(_whole_statement(series_id, cell_tuple, domain),),
-        )
-        series_map[series_id] = bound
-        order.append(series_id)
-        for address in bound.cells:
-            existing = address_to_id.get(address)
-            if existing is not None and existing != series_id:
-                raise InvertedTreeExportError(
-                    f"cell {address} is bound to both {existing!r} and {series_id!r}"
+        pending.append((series_id, entry, tuple(cells)))
+    with _WorkbookValues(workbook) as reader:
+        sources: list[str] = []
+        for _series_id, entry, cell_tuple in pending:
+            if entry.get("key"):
+                sources.extend(_structure_source_addresses(entry, cell_tuple))
+        reader.prefetch(sources, graph=graph)
+        for series_id, entry, cell_tuple in pending:
+            key_fields = _key_fields_of(entry)
+            try:
+                raw_domain = resolve_key_domain(
+                    workbook,
+                    entry,
+                    cell_tuple,
+                    concept_scheme=concept_scheme,
+                    graph=graph,
+                    reader=reader,
                 )
-            address_to_id[address] = series_id
+            except ValueError as exc:
+                raise InvertedTreeExportError(str(exc)) from exc
+            domain = tuple(_key_point(values, key_fields) for values in raw_domain)
+            bound = BoundSeries(
+                series_id=series_id,
+                layout=_layout_of(entry),
+                direction=_direction_of(entry),
+                cells=cell_tuple,
+                key_fields=key_fields,
+                dtype=_dtype_of(entry),
+                compute_name=_compute_name_of(entry, series_id),
+                raw=entry,
+                domain=domain,
+                statements=(_whole_statement(series_id, cell_tuple, domain),),
+            )
+            series_map[series_id] = bound
+            order.append(series_id)
+            for address in bound.cells:
+                existing = address_to_id.get(address)
+                if existing is not None and existing != series_id:
+                    raise InvertedTreeExportError(
+                        f"cell {address} is bound to both {existing!r} and {series_id!r}"
+                    )
+                address_to_id[address] = series_id
     catalog = SeriesCatalog(
         series=series_map,
         order=tuple(order),
@@ -817,3 +876,95 @@ def covering_series(
     if len(ids) != 1:
         return None
     return catalog.get(next(iter(ids)))
+
+
+def _normalize_rect(start: str, end: str) -> tuple[str, int, int, int, int]:
+    """Return `(sheet, row1, col1, row2, col2)` for a same-sheet A1 range."""
+    sheet1, row1, col1 = parse_cell_coords(start)
+    sheet2, row2, col2 = parse_cell_coords(end)
+    if sheet1 != sheet2:
+        raise InvertedTreeExportError(f"cross-sheet range {start}:{end} is not supported")
+    return sheet1, min(row1, row2), min(col1, col2), max(row1, row2), max(col1, col2)
+
+
+def _rect_contains(
+    rect: tuple[str, int, int, int, int],
+    sheet: str,
+    row1: int,
+    col1: int,
+    row2: int,
+    col2: int,
+) -> bool:
+    r_sheet, r_row1, r_col1, r_row2, r_col2 = rect
+    return (
+        sheet == r_sheet and r_row1 <= row1 <= row2 <= r_row2 and r_col1 <= col1 <= col2 <= r_col2
+    )
+
+
+def _covering_rect(
+    catalog: SeriesCatalog,
+    sheet: str,
+    row1: int,
+    col1: int,
+    row2: int,
+    col2: int,
+    *,
+    lookup: CanonicalAddress,
+) -> BoundSeries | None:
+    """Return the unique dense series that owns the rectangle, if any."""
+    series = catalog.series_for(lookup)
+    if series is None:
+        return None
+    rect = series.rect
+    if rect is None:
+        return covering_series(
+            catalog,
+            (
+                as_canonical(format_cell_key(sheet, get_column_letter(col), row))
+                for row in range(row1, row2 + 1)
+                for col in range(col1, col2 + 1)
+            ),
+        )
+    if not _rect_contains(rect, sheet, row1, col1, row2, col2):
+        return None
+    return series
+
+
+def covering_series_of_range(
+    catalog: SeriesCatalog,
+    start: str,
+    end: str,
+) -> BoundSeries | None:
+    """Return the unique series that owns every cell of `start:end`.
+
+    Tests rectangle containment against the candidate block of the start
+    corner. Does not materialize the range.
+    """
+    sheet, row1, col1, row2, col2 = _normalize_rect(start, end)
+    return _covering_rect(catalog, sheet, row1, col1, row2, col2, lookup=as_canonical(start))
+
+
+def covering_series_of_column(
+    catalog: SeriesCatalog,
+    start: str,
+    end: str,
+    col_index: int,
+) -> BoundSeries | None:
+    """Return the unique series that owns column `col_index` of `start:end`."""
+    sheet, row1, range_col1, row2, range_col2 = _normalize_rect(start, end)
+    width = range_col2 - range_col1 + 1
+    if col_index < 1 or col_index > width:
+        raise InvertedTreeExportError(f"INDEX column {col_index} is outside range {start}:{end}")
+    col = range_col1 + col_index - 1
+    lookup = as_canonical(format_cell_key(sheet, get_column_letter(col), row1))
+    return _covering_rect(catalog, sheet, row1, col, row2, col, lookup=lookup)
+
+
+def range_column_origin(start: str, end: str, col_index: int) -> CanonicalAddress:
+    """Return the top cell of 1-based column `col_index` in `start:end`."""
+    sheet, row1, range_col1, _row2, range_col2 = _normalize_rect(start, end)
+    width = range_col2 - range_col1 + 1
+    if col_index < 1 or col_index > width:
+        raise InvertedTreeExportError(f"INDEX column {col_index} is outside range {start}:{end}")
+    col = range_col1 + col_index - 1
+    return as_canonical(format_cell_key(sheet, get_column_letter(col), row1))
