@@ -76,6 +76,12 @@ from tests.unit.exporter.inverted_tree.test_shape_a19_demand_floor import (
     _stride2_terminal_bindings,
     _stride2_terminal_workbook,
 )
+from tests.unit.exporter.inverted_tree.test_shape_a26_index_block import (
+    _country_table_bindings,
+    _country_table_workbook,
+    country_table_bindings,
+    country_table_sheets,
+)
 
 
 def _values_close(got: object, expected: object) -> None:
@@ -169,6 +175,7 @@ _CORPUS: list[tuple[str, Callable[[Path], Path], Callable[[], dict[str, Any]]]] 
     ("a20_zipper", a20._zipper_workbook, a20._zipper_bindings),
     ("a22_guarded", a22_guarded._series_may_cycle_workbook, a22_guarded._series_may_cycle_bindings),
     ("a22_shift_k", _a22_shift_k_workbook, _a22_shift_k_bindings),
+    ("country_table", _country_table_workbook, _country_table_bindings),
 ]
 
 
@@ -291,6 +298,7 @@ _ORIENTABLE = [
     ("a20_zipper", a20._zipper_workbook, a20._zipper_bindings),
     ("a22_guarded", a22_guarded._series_may_cycle_workbook, a22_guarded._series_may_cycle_bindings),
     ("a22_shift_k", _a22_shift_k_workbook, _a22_shift_k_bindings),
+    ("country_table", _country_table_workbook, _country_table_bindings),
 ]
 
 
@@ -397,6 +405,7 @@ _SIZE_CASES: list[
     ("scan", _scan_sheets, lambda n: _series_bindings("path", n)),
     ("zipper", _zipper_sheets, _zipper_bindings_n),
     ("backward", _backward_sheets, lambda n: _series_bindings("value", n)),
+    ("country_table", country_table_sheets, country_table_bindings),
 ]
 
 
