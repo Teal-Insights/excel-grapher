@@ -505,6 +505,12 @@ def _lookup_anchors(node: AstNode, host_cell: CanonicalAddress) -> list[Canonica
     return found
 
 
+def _join_index_terms(terms: tuple[str, ...]) -> str:
+    """Join additive index terms, dropping literal zeros."""
+    kept = [term for term in terms if term not in {"0", "0.0", "(0)", "(0.0)"}]
+    return " + ".join(kept) if kept else "0"
+
+
 def _linear_index_expr(coeff: int, offset: int, index_var: str | None) -> str:
     """Return `coeff * index_var + offset` for a flat-block subscript."""
     if index_var is None or coeff == 0:
@@ -581,9 +587,7 @@ def _emit_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
     anchor_expr = _linear_index_expr(coeff, offset, ctx.index_var)
     if table.layout == "matrix":
         width = table.block_width
-        index = f"({rows}) * {width} + ({cols})"
-        if anchor_expr != "0":
-            index = f"{index} + ({anchor_expr})"
+        index = _join_index_terms((f"({rows}) * {width}", f"({cols})", anchor_expr))
         return f"{ctx.use('xl_at')}({name}, {index})"
     if rows not in {"0", "0.0"}:
         raise _host_export_error(
@@ -605,9 +609,8 @@ def _emit_index_into_block(
     width = block.block_width
     coeff, offset = _block_anchor_map(block, ctx, slot, start)
     anchor_expr = _linear_index_expr(coeff, offset, ctx.index_var)
-    index = f"({row_expr} - 1) * {width} + ({col_expr} - 1)"
-    if anchor_expr != "0":
-        index = f"{index} + ({anchor_expr})"
+    col_term = "0" if col_expr in {"1", "1.0"} else f"({col_expr} - 1)"
+    index = _join_index_terms((f"({row_expr} - 1) * {width}", col_term, anchor_expr))
     name = ctx.param(block.series_id)
     return f"{ctx.use('xl_at')}({name}, {index})"
 
