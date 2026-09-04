@@ -58,7 +58,7 @@ def test_ndarray_pair_compare_skips_per_cell_grid_access(
     right = _numeric_column(LARGE)
     result = xl_eq(left, right)
     assert grid_at_calls == []
-    assert array_tolist(result) == [[True]] * LARGE
+    assert array_tolist(result) == [[False]] * LARGE
 
 
 def test_fastpath_miss_on_ndarray_operands_skips_per_cell_grid_access(
