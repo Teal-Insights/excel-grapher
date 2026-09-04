@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from excel_grapher.core.address_keys import normalize_key as normalize_address
+from excel_grapher.core.address_keys import CanonicalAddress, as_canonical
 from excel_grapher.core.excel_function_names import normalize_excel_function_name
 from excel_grapher.core.formula_ast import (
     AstNode,
@@ -52,15 +52,25 @@ from excel_grapher.series_bindings.types import Scalar
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
 
-_COMPARE_OPS = {
-    "=": "==",
-    "<>": "!=",
-    "<": "<",
-    ">": ">",
-    "<=": "<=",
-    ">=": ">=",
+_ARITHMETIC_HELPERS = {
+    "+": "xl_add",
+    "-": "xl_sub",
+    "*": "xl_mul",
+    "/": "xl_div",
+    "^": "xl_pow",
 }
-_ARITHMETIC_OPS = {"+", "-", "*", "/"}
+_COMPARE_HELPERS = {
+    "=": "xl_eq",
+    "<>": "xl_ne",
+    "<": "xl_lt",
+    ">": "xl_gt",
+    "<=": "xl_le",
+    ">=": "xl_ge",
+}
+_UNARY_HELPERS = {
+    "-": "xl_neg",
+    "+": "xl_pos",
+}
 _RUNTIME_FUNCTIONS = frozenset(
     name
     for name, value in vars(inverted_runtime).items()
@@ -76,7 +86,7 @@ class EmitContext:
     catalog: SeriesCatalog
     deps: SeriesDeps
     host_index: int
-    host_cell: str
+    host_cell: CanonicalAddress
     index_var: str | None
     prior_var: str | None
     used_runtime: set[str] = field(default_factory=set)
@@ -172,22 +182,21 @@ def emit_expr(node: AstNode, ctx: EmitContext) -> str:
             )
 
 
-def _is_scan_prior_ref(address: str, ctx: EmitContext) -> bool:
+def _is_scan_prior_ref(address: CanonicalAddress, ctx: EmitContext) -> bool:
     """True when `address` is the scan accumulator, not a shared selector.
 
     Index 0 (or the last member of a reversed scan) may sit next to a bound
     scalar. That neighbor is `prior` only when `SeriesDeps` classified it as
     the seed. An absolute selector read by every member stays a parameter.
     """
-    norm = normalize_address(address)
     pred = predecessor_address(ctx.host, ctx.host_index, ctx.catalog, ctx.graph)
-    if pred is not None and norm == normalize_address(pred):
+    if pred is not None and address == pred:
         if ctx.host_index > 0:
             return True
         owner = ctx.catalog.series_for(address)
         return owner is not None and owner.series_id == ctx.deps.seed_id
     succ = successor_address(ctx.host, ctx.host_index, ctx.catalog, ctx.graph)
-    if succ is not None and norm == normalize_address(succ):
+    if succ is not None and address == succ:
         if ctx.host_index < len(ctx.host.cells) - 1:
             return True
         owner = ctx.catalog.series_for(address)
@@ -196,7 +205,7 @@ def _is_scan_prior_ref(address: str, ctx: EmitContext) -> bool:
 
 
 def _emit_cell_ref(node: CellRefNode, ctx: EmitContext) -> str:
-    address = resolve_cell_ref(node, ctx.host_cell)
+    address = as_canonical(resolve_cell_ref(node, ctx.host_cell))
     if ctx.fused_mode:
         return _emit_fused_ref(address, ctx)
     if ctx.instance_mode:
@@ -276,7 +285,7 @@ def _affine_index_expr(offset: int, index_var: str, *, step: int) -> str:
     raise InvertedTreeExportError(f"unsupported fused index step {step}")
 
 
-def _union_t(plan: FusedPlan, address: str, ctx: EmitContext) -> int:
+def _union_t(plan: FusedPlan, address: CanonicalAddress, ctx: EmitContext) -> int:
     """Return the union index of `address`, or fail closed naming the host."""
     coord = schedule_axis_coord(address, ctx.catalog)
     mapped = plan.coord_to_t.get(coord)
@@ -287,7 +296,7 @@ def _union_t(plan: FusedPlan, address: str, ctx: EmitContext) -> int:
     return mapped
 
 
-def _emit_fused_ref(address: str, ctx: EmitContext) -> str:
+def _emit_fused_ref(address: CanonicalAddress, ctx: EmitContext) -> str:
     owner = ctx.catalog.require_series_for(address)
     idx = owner.index_of(address)
     if idx is None or ctx.fused_plan is None:
@@ -330,7 +339,7 @@ def _emit_fused_ref(address: str, ctx: EmitContext) -> str:
     return f"live_measure({name}[{index_expr}])"
 
 
-def _emit_instance_ref(address: str, ctx: EmitContext) -> str:
+def _emit_instance_ref(address: CanonicalAddress, ctx: EmitContext) -> str:
     owner = ctx.catalog.require_series_for(address)
     idx = owner.index_of(address)
     if idx is None:
@@ -391,27 +400,21 @@ def _emit_binary(node: BinaryOpNode, ctx: EmitContext) -> str:
     left = emit_expr(node.left, ctx)
     right = emit_expr(node.right, ctx)
     op = node.op
-    if op == "/":
-        return f"{ctx.use('xl_div')}({left}, {right})"
-    if op == "^":
-        return f"({left} ** {right})"
     if op == "&":
         return f"(str({left}) + str({right}))"
-    if op in _ARITHMETIC_OPS:
-        return f"({left} {op} {right})"
-    if op in _COMPARE_OPS:
-        return f"({left} {_COMPARE_OPS[op]} {right})"
+    helper = _ARITHMETIC_HELPERS.get(op) or _COMPARE_HELPERS.get(op)
+    if helper is not None:
+        return f"{ctx.use(helper)}({left}, {right})"
     raise InvertedTreeExportError(f"series {ctx.host.series_id!r}: unsupported operator {op!r}")
 
 
 def _emit_unary(node: UnaryOpNode, ctx: EmitContext) -> str:
     operand = emit_expr(node.operand, ctx)
-    if node.op == "-":
-        return f"(-{operand})"
-    if node.op == "+":
-        return operand
+    helper = _UNARY_HELPERS.get(node.op)
+    if helper is not None:
+        return f"{ctx.use(helper)}({operand})"
     if node.op == "%":
-        return f"({operand} / 100.0)"
+        return f"{ctx.use('xl_div')}({operand}, 100)"
     raise InvertedTreeExportError(
         f"series {ctx.host.series_id!r}: unsupported unary operator {node.op!r}"
     )
@@ -514,7 +517,7 @@ def _emit_match(node: FunctionCallNode, ctx: EmitContext) -> str:
 
 def _series_for_ref(node: AstNode, ctx: EmitContext) -> BoundSeries:
     if isinstance(node, CellRefNode):
-        return ctx.catalog.require_series_for(resolve_cell_ref(node, ctx.host_cell))
+        return ctx.catalog.require_series_for(as_canonical(resolve_cell_ref(node, ctx.host_cell)))
     if isinstance(node, RangeNode):
         start = resolve_cell_ref(node.start_ref, ctx.host_cell)
         end = resolve_cell_ref(node.end_ref, ctx.host_cell)

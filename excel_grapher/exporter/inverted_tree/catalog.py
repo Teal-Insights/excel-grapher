@@ -7,7 +7,11 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from excel_grapher.core.address_keys import normalize_key as normalize_address
+from excel_grapher.core.address_keys import (
+    CanonicalAddress,
+    as_canonical,
+    canonical_address,
+)
 from excel_grapher.core.formula_ast import (
     BinaryOpNode,
     CellRefNode,
@@ -79,7 +83,7 @@ class Statement:
     shape_key: str | None
     start: int
     stop: int
-    cells: tuple[str, ...]
+    cells: tuple[CanonicalAddress, ...]
     domain: tuple[KeyPoint, ...]
 
 
@@ -90,20 +94,20 @@ class BoundSeries:
     series_id: str
     layout: Layout
     direction: Direction
-    cells: tuple[str, ...]
+    cells: tuple[CanonicalAddress, ...]
     key_fields: tuple[str, ...]
     dtype: str
     compute_name: str | None
     raw: Mapping[str, Any]
     domain: tuple[KeyPoint, ...]
     statements: tuple[Statement, ...]
-    _cell_indices: dict[str, int] = field(init=False, repr=False, compare=False)
+    _cell_indices: dict[CanonicalAddress, int] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self,
             "_cell_indices",
-            {normalize_address(cell): idx for idx, cell in enumerate(self.cells)},
+            {cell: idx for idx, cell in enumerate(self.cells)},
         )
 
     @property
@@ -135,9 +139,9 @@ class BoundSeries:
         """Annotation fragment for a scalar of this series (`float`, `int`, …)."""
         return _DTYPE_READ.get(self.dtype, "float")
 
-    def index_of(self, address: str) -> int | None:
-        """Return the 0-based index of `address` in `cells`, if present."""
-        return self._cell_indices.get(normalize_address(address))
+    def index_of(self, address: CanonicalAddress) -> int | None:
+        """Return the 0-based index of canonical `address` in `cells`, if present."""
+        return self._cell_indices.get(address)
 
 
 def _join_key(point: KeyPoint, fields: Sequence[str]) -> tuple[Scalar, ...] | None:
@@ -221,31 +225,31 @@ class ScheduleIndex:
     """
 
     preferred: dict[str, tuple[str, ...] | None]
-    coord_of: dict[str, int]
+    coord_of: dict[CanonicalAddress, int]
     index_by_coord: dict[str, dict[int, tuple[int, ...]]]
     statement_id_by_coord: dict[str, dict[int, str]] = field(default_factory=dict)
-    partition_of: dict[str, tuple[Scalar, ...]] = field(default_factory=dict)
-    axis_of: dict[str, int] = field(default_factory=dict)
+    partition_of: dict[CanonicalAddress, tuple[Scalar, ...]] = field(default_factory=dict)
+    axis_of: dict[CanonicalAddress, int] = field(default_factory=dict)
 
 
 def _series_statement_id_by_coord(
     item: BoundSeries,
-    coord_of: Mapping[str, int],
+    coord_of: Mapping[CanonicalAddress, int],
 ) -> dict[int, str]:
     """Map schedule coordinates of `item` to the covering statement id."""
     mapping: dict[int, str] = {}
     for stmt in item.statements:
         for cell in stmt.cells:
-            mapping.setdefault(coord_of[normalize_address(cell)], stmt.statement_id)
+            mapping.setdefault(coord_of[cell], stmt.statement_id)
     if not mapping:
         for address in item.cells:
-            mapping.setdefault(coord_of[normalize_address(address)], item.series_id)
+            mapping.setdefault(coord_of[address], item.series_id)
     return mapping
 
 
 def _statement_id_by_coord(
     series: Mapping[str, BoundSeries],
-    coord_of: Mapping[str, int],
+    coord_of: Mapping[CanonicalAddress, int],
 ) -> dict[str, dict[int, str]]:
     """Map each series id to schedule coordinate to covering statement id."""
     return {
@@ -262,12 +266,12 @@ def build_schedule_index(series: Mapping[str, BoundSeries]) -> ScheduleIndex:
         if ordered is None:
             continue
         positions[fields] = {key: index for index, key in enumerate(ordered)}
-    coord_of: dict[str, int] = {}
+    coord_of: dict[CanonicalAddress, int] = {}
     for item in series.values():
         fields = preferred[item.series_id]
         if fields is None:
             for index, address in enumerate(item.cells):
-                coord_of[normalize_address(address)] = index
+                coord_of[address] = index
             continue
         lookup = positions.get(fields)
         for index, address in enumerate(item.cells):
@@ -276,12 +280,12 @@ def build_schedule_index(series: Mapping[str, BoundSeries]) -> ScheduleIndex:
                 key = _join_key(item.domain[index], fields)
                 if key is not None and key in lookup:
                     coord = lookup[key]
-            coord_of[normalize_address(address)] = coord
+            coord_of[address] = coord
     index_by_coord: dict[str, dict[int, tuple[int, ...]]] = {}
     for item in series.values():
         buckets: dict[int, list[int]] = {}
         for member_index, address in enumerate(item.cells):
-            coord = coord_of[normalize_address(address)]
+            coord = coord_of[address]
             buckets.setdefault(coord, []).append(member_index)
         index_by_coord[item.series_id] = {
             coord: tuple(members) for coord, members in buckets.items()
@@ -300,12 +304,12 @@ def build_schedule_index(series: Mapping[str, BoundSeries]) -> ScheduleIndex:
         axis_lookup = {value: index for index, value in enumerate(sorted(axis_values))}
     except TypeError:
         axis_lookup = {}
-    partition_of: dict[str, tuple[Scalar, ...]] = {}
-    axis_of: dict[str, int] = {}
+    partition_of: dict[CanonicalAddress, tuple[Scalar, ...]] = {}
+    axis_of: dict[CanonicalAddress, int] = {}
     for item in series.values():
         outer, axis = _axis_fields(preferred[item.series_id])
         for index, address in enumerate(item.cells):
-            addr = normalize_address(address)
+            addr = address
             fallback = coord_of[addr]
             if axis is None or index >= len(item.domain):
                 partition_of[addr] = ()
@@ -336,7 +340,7 @@ def preferred_fields(series: BoundSeries, catalog: SeriesCatalog) -> tuple[str, 
     return catalog.schedule.preferred.get(series.series_id)
 
 
-def schedule_coord(address: str, catalog: SeriesCatalog) -> int:
+def schedule_coord(address: CanonicalAddress, catalog: SeriesCatalog) -> int:
     """Return the member's position in the catalog's ordered index domain.
 
     When the series declares a key, the coordinate is the position of the
@@ -344,27 +348,30 @@ def schedule_coord(address: str, catalog: SeriesCatalog) -> int:
     the inner schedule axis (#612). When no key is declared (`key: []`), the
     coordinate is the member's expansion-order index.
 
+    `address` must already be canonical (`BoundSeries.cells`,
+    `DependenceEdge` endpoints, or `canonical_address` at a public boundary).
+
     Raises:
         InvertedTreeExportError: `address` is not a bound catalog cell.
     """
-    found = catalog.schedule.coord_of.get(normalize_address(address))
+    found = catalog.schedule.coord_of.get(address)
     if found is None:
         raise InvertedTreeExportError(f"cell {address} has no schedule coordinate")
     return found
 
 
-def schedule_partition(address: str, catalog: SeriesCatalog) -> tuple[Scalar, ...]:
+def schedule_partition(address: CanonicalAddress, catalog: SeriesCatalog) -> tuple[Scalar, ...]:
     """Return the outer-key tuple for `address`, or `()` when there is no nest."""
-    return catalog.schedule.partition_of.get(normalize_address(address), ())
+    return catalog.schedule.partition_of.get(address, ())
 
 
-def schedule_axis_coord(address: str, catalog: SeriesCatalog) -> int:
+def schedule_axis_coord(address: CanonicalAddress, catalog: SeriesCatalog) -> int:
     """Return the inner schedule-axis coordinate of `address`.
 
     For a `TIME_PERIOD` nest this is the year position, shared by every
     outer-key block. Otherwise it is `schedule_coord`.
     """
-    found = catalog.schedule.axis_of.get(normalize_address(address))
+    found = catalog.schedule.axis_of.get(address)
     if found is not None:
         return found
     return schedule_coord(address, catalog)
@@ -381,7 +388,7 @@ class SeriesCatalog:
 
     series: dict[str, BoundSeries]
     order: tuple[str, ...]
-    address_to_id: dict[str, str]
+    address_to_id: dict[CanonicalAddress, str]
     schedule: ScheduleIndex = field(repr=False, compare=False)
 
     def get(self, series_id: str) -> BoundSeries:
@@ -391,16 +398,16 @@ class SeriesCatalog:
         except KeyError as exc:
             raise InvertedTreeExportError(f"unknown series {series_id!r}") from exc
 
-    def series_id_for(self, address: str) -> str | None:
-        """Return the bound series owning `address`, if any."""
-        return self.address_to_id.get(normalize_address(address))
+    def series_id_for(self, address: CanonicalAddress) -> str | None:
+        """Return the bound series owning canonical `address`, if any."""
+        return self.address_to_id.get(address)
 
-    def series_for(self, address: str) -> BoundSeries | None:
-        """Return the bound series owning `address`, if any."""
+    def series_for(self, address: CanonicalAddress) -> BoundSeries | None:
+        """Return the bound series owning canonical `address`, if any."""
         series_id = self.series_id_for(address)
         return None if series_id is None else self.series[series_id]
 
-    def require_series_for(self, address: str) -> BoundSeries:
+    def require_series_for(self, address: CanonicalAddress) -> BoundSeries:
         """Return the series owning `address`, or fail closed."""
         found = self.series_for(address)
         if found is None:
@@ -486,7 +493,7 @@ def _key_point(values: Mapping[str, Scalar], key_fields: tuple[str, ...]) -> Key
 
 def _whole_statement(
     series_id: str,
-    cells: tuple[str, ...],
+    cells: tuple[CanonicalAddress, ...],
     domain: tuple[KeyPoint, ...],
     *,
     shape_key: str | None = None,
@@ -502,7 +509,7 @@ def _whole_statement(
     )
 
 
-def _formula_shape_key(graph: DependencyGraph, address: str) -> str | None:
+def _formula_shape_key(graph: DependencyGraph, address: CanonicalAddress) -> str | None:
     node = graph.get_node(address)
     ast = getattr(node, "formula_ast", None) if node is not None else None
     if ast is None:
@@ -556,16 +563,16 @@ def fit_affine_map(pairs: Sequence[tuple[int, int]]) -> tuple[int, int] | None:
 def _cell_access_pairs(
     catalog: SeriesCatalog,
     graph: DependencyGraph,
-    address: str,
+    address: CanonicalAddress,
 ) -> tuple[tuple[str, int | None], ...]:
     """Return `(producer_id, catalog_index)` for each cell ref at `address`."""
-    node = graph.get_node(normalize_address(address))
+    node = graph.get_node(address)
     ast = getattr(node, "formula_ast", None) if node is not None else None
     if ast is None:
         return ()
     found: list[tuple[str, int | None]] = []
     for ref in _iter_cell_refs(ast):
-        resolved = resolve_cell_ref(ref, address)
+        resolved = as_canonical(resolve_cell_ref(ref, address))
         owner_id = catalog.series_id_for(resolved)
         if owner_id is None:
             found.append(("?", None))
@@ -700,7 +707,7 @@ def build_catalog(
     """
     series_map: dict[str, BoundSeries] = {}
     order: list[str] = []
-    address_to_id: dict[str, str] = {}
+    address_to_id: dict[CanonicalAddress, str] = {}
     concept_scheme = bindings.get("concept_scheme")
     for entry in bindings.get("series", []):
         if not isinstance(entry, dict):
@@ -708,12 +715,12 @@ def build_catalog(
         series_id = str(entry.get("id") or "")
         if not series_id:
             raise InvertedTreeExportError("series entry missing id")
-        cells: list[str] = []
+        cells: list[CanonicalAddress] = []
         for data_range in series_data_ranges(entry):
             cells.extend(
-                normalize_address(addr) for addr in expand_data_range(data_range, workbook=workbook)
+                canonical_address(addr) for addr in expand_data_range(data_range, workbook=workbook)
             )
-        cells = apply_series_excludes(cells, entry)
+        cells = [as_canonical(addr) for addr in apply_series_excludes(cells, entry)]
         cell_tuple = tuple(cells)
         key_fields = _key_fields_of(entry)
         try:
@@ -761,7 +768,7 @@ def build_catalog(
 
 def covering_series(
     catalog: SeriesCatalog,
-    addresses: Iterable[str],
+    addresses: Iterable[CanonicalAddress],
 ) -> BoundSeries | None:
     """Return the unique series that owns every address in `addresses`."""
     ids: set[str] = set()

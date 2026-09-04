@@ -75,7 +75,12 @@ def as_measure(value: object, dtype: str = "float") -> int | float | str | bool:
 
 
 def _as_number(value: object) -> float:
-    """Coerce `value` to a float the way Excel numeric functions do."""
+    """Coerce `value` to a float the way Excel numeric operators do.
+
+    Blank (`None`) and empty / whitespace-only text are `0`. Booleans are
+    `1` / `0`. A stored error code is re-raised; any other non-numeric string
+    is `#VALUE!`.
+    """
     if isinstance(value, str) and is_error(value):
         raise XlError(value)
     if value is None:
@@ -86,11 +91,44 @@ def _as_number(value: object) -> float:
         return float(value)
     if isinstance(value, str):
         text = value.replace("\u00a0", "").replace(" ", "")
+        if text == "":
+            return 0.0
         try:
             return float(text)
         except ValueError:
             raise XlError("#VALUE!") from None
     raise XlError("#VALUE!")
+
+
+def _try_number(value: object) -> float | None:
+    """Return `_as_number(value)`, or `None` when coercion is `#VALUE!`.
+
+    Stored error-code measures (including `#VALUE!`) are re-raised so
+    comparisons do not treat a cached error as failed numeric coercion.
+    """
+    if isinstance(value, str) and is_error(value):
+        raise XlError(value)
+    try:
+        return _as_number(value)
+    except XlError as err:
+        if err.code == "#VALUE!":
+            return None
+        raise
+
+
+def xl_add(left: object, right: object) -> float:
+    """Excel `+` with numeric coercion of both operands."""
+    return _as_number(left) + _as_number(right)
+
+
+def xl_sub(left: object, right: object) -> float:
+    """Excel `-` with numeric coercion of both operands."""
+    return _as_number(left) - _as_number(right)
+
+
+def xl_mul(left: object, right: object) -> float:
+    """Excel `*` with numeric coercion of both operands."""
+    return _as_number(left) * _as_number(right)
 
 
 def xl_div(numerator: object, denominator: object) -> float:
@@ -100,6 +138,92 @@ def xl_div(numerator: object, denominator: object) -> float:
     if right == 0:
         raise XlError("#DIV/0!")
     return left / right
+
+
+def xl_pow(left: object, right: object) -> float:
+    """Excel `^` with numeric coercion; overflow or complex is `#NUM!`."""
+    try:
+        value = _as_number(left) ** _as_number(right)
+    except (ValueError, OverflowError):
+        raise XlError("#NUM!") from None
+    if isinstance(value, complex):
+        raise XlError("#NUM!")
+    return float(value)
+
+
+def xl_neg(value: object) -> float:
+    """Excel unary `-` with numeric coercion."""
+    return -_as_number(value)
+
+
+def xl_pos(value: object) -> float:
+    """Excel unary `+` with numeric coercion."""
+    return _as_number(value)
+
+
+def _compare_key(value: object) -> tuple[int, float | str | bool]:
+    """Return `(type_rank, key)` using Excel's number < text < logical order."""
+    if isinstance(value, str) and is_error(value):
+        raise XlError(value)
+    if isinstance(value, bool):
+        return 2, value
+    number = _try_number(value)
+    if number is not None:
+        return 0, number
+    if isinstance(value, str):
+        return 1, value.casefold()
+    raise XlError("#VALUE!")
+
+
+def _cmp(left: object, right: object) -> int:
+    """Return `-1`, `0`, or `1` using Excel type ranking."""
+    left_rank, left_key = _compare_key(left)
+    right_rank, right_key = _compare_key(right)
+    if left_rank != right_rank:
+        return -1 if left_rank < right_rank else 1
+    if left_key == right_key:
+        return 0
+    if left_rank == 0:
+        return -1 if float(left_key) < float(right_key) else 1
+    if left_rank == 1:
+        return -1 if str(left_key) < str(right_key) else 1
+    return -1 if bool(left_key) < bool(right_key) else 1
+
+
+def xl_eq(left: object, right: object) -> bool:
+    """Excel `=`: numeric coercion when both sides are numbers, else text."""
+    left_n = _try_number(left)
+    right_n = _try_number(right)
+    if left_n is not None and right_n is not None:
+        return left_n == right_n
+    if isinstance(left, str) and isinstance(right, str):
+        return left.casefold() == right.casefold()
+    return False
+
+
+def xl_ne(left: object, right: object) -> bool:
+    """Excel `<>`."""
+    return not xl_eq(left, right)
+
+
+def xl_lt(left: object, right: object) -> bool:
+    """Excel `<` using number < text < logical ordering."""
+    return _cmp(left, right) < 0
+
+
+def xl_gt(left: object, right: object) -> bool:
+    """Excel `>` using number < text < logical ordering."""
+    return _cmp(left, right) > 0
+
+
+def xl_le(left: object, right: object) -> bool:
+    """Excel `<=` using number < text < logical ordering."""
+    return _cmp(left, right) <= 0
+
+
+def xl_ge(left: object, right: object) -> bool:
+    """Excel `>=` using number < text < logical ordering."""
+    return _cmp(left, right) >= 0
 
 
 def xl_exp(*args: object) -> float:
@@ -112,11 +236,12 @@ def xl_exp(*args: object) -> float:
         raise XlError("#NUM!") from None
 
 
-def xl_choose(index: int, *choices: float) -> float:
+def xl_choose(index: object, *choices: float) -> float:
     """Excel `CHOOSE`: 1-based selection over already-evaluated arguments."""
-    if index < 1 or index > len(choices):
+    position = int(_as_number(index))
+    if position < 1 or position > len(choices):
         raise XlError("#VALUE!")
-    return choices[index - 1]
+    return choices[position - 1]
 
 
 def xl_match(lookup: object, lookup_array: Sequence[object], match_type: int = 0) -> int:
@@ -129,11 +254,16 @@ def xl_match(lookup: object, lookup_array: Sequence[object], match_type: int = 0
     raise XlError("#N/A")
 
 
-def xl_at(values: Sequence[T], index: int) -> T:
-    """Return `values[index]` (0-based), raising `#VALUE!` when out of range."""
-    if index < 0 or index >= len(values):
+def xl_at(values: Sequence[T], index: object) -> T:
+    """Return `values[index]` (0-based), raising `#VALUE!` when out of range.
+
+    `index` is coerced with `_as_number` and truncated toward zero, matching
+    Excel INDEX/OFFSET when an arithmetic expression yields a float.
+    """
+    position = int(_as_number(index))
+    if position < 0 or position >= len(values):
         raise XlError("#VALUE!")
-    return values[index]
+    return values[position]
 
 
 def xl_raise(code: str) -> NoReturn:

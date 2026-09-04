@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v12.5.3 (2026-09-04)
+
+### Bug Fixes
+
+- **export**: Classify seed/terminal lags by schedule and relative refs
+  ([#644](https://github.com/Teal-Insights/excel-grapher/pull/644),
+  [`c747e8f`](https://github.com/Teal-Insights/excel-grapher/commit/c747e8f49bb75bea1f74dda1a300f548bee98441))
+
+
 ## v12.5.2 (2026-09-04)
 
 ### Bug Fixes
