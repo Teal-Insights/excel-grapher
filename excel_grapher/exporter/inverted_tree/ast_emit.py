@@ -84,6 +84,7 @@ class EmitContext:
     fused_mode: bool = False
     fused_plan: FusedPlan | None = None
     fused_ready: frozenset[str] = field(default_factory=frozenset)
+    graph: DependencyGraph | None = None
 
     def param(self, series_id: str) -> str:
         return series_id
@@ -174,13 +175,13 @@ def _is_scan_prior_ref(address: CanonicalAddress, ctx: EmitContext) -> bool:
     scalar. That neighbor is `prior` only when `SeriesDeps` classified it as
     the seed. An absolute selector read by every member stays a parameter.
     """
-    pred = predecessor_address(ctx.host, ctx.host_index, ctx.catalog)
+    pred = predecessor_address(ctx.host, ctx.host_index, ctx.catalog, ctx.graph)
     if pred is not None and address == pred:
         if ctx.host_index > 0:
             return True
         owner = ctx.catalog.series_for(address)
         return owner is not None and owner.series_id == ctx.deps.seed_id
-    succ = successor_address(ctx.host, ctx.host_index, ctx.catalog)
+    succ = successor_address(ctx.host, ctx.host_index, ctx.catalog, ctx.graph)
     if succ is not None and address == succ:
         if ctx.host_index < len(ctx.host.cells) - 1:
             return True
@@ -531,6 +532,7 @@ def _region_measure(
         host_cell=series.cells[host_index],
         index_var=index_var,
         prior_var=prior_var,
+        graph=graph,
     )
     expr = emit_expr(node_formula_ast(graph, series.cells[host_index]), ctx)
     return _as_measure_call(expr, series), set(ctx.used_runtime)
@@ -596,6 +598,7 @@ def emit_helper_body(
             host_cell=series.cells[0],
             index_var=None,
             prior_var=None,
+            graph=graph,
         )
         ast = node_formula_ast(graph, series.cells[0])
         expr = emit_expr(ast, ctx)
@@ -750,6 +753,7 @@ def _emit_region_return(
         scc_ids=scc_ids,
         instance_mode=True,
         compute_names=compute_names,
+        graph=graph,
     )
     expr = emit_expr(node_formula_ast(graph, series.cells[host_index]), ctx)
     return _as_measure_call(expr, series), set(ctx.used_runtime)
@@ -878,6 +882,7 @@ def _emit_fused_expr(
         fused_mode=True,
         fused_plan=plan,
         fused_ready=frozenset(ready),
+        graph=graph,
     )
     expr = emit_expr(node_formula_ast(graph, series.cells[host_index]), ctx)
     return _as_measure_call(expr, series), set(ctx.used_runtime)
