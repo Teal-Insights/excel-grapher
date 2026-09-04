@@ -1,8 +1,9 @@
 ---
-status: research
+status: living
 tracking: https://github.com/Teal-Insights/excel-grapher/issues/603
-branch: cursor/inverted-tree-codegen-a356
-pin: 49ec069071fe55f07fc430b911f6e953f7137b41
+branch: main (merged from cursor/inverted-tree-codegen-a356 in #598)
+pin: 49ec069071fe55f07fc430b911f6e953f7137b41 (findings in §1); §11–§12 written against e92185c
+updated: 2026-09-03
 ---
 
 # Scheduling the inverted tree
@@ -324,8 +325,13 @@ is that the *last* rung has no preconditions, so the exporter is total.
 | ---- | ------------ | ------------ | ------ |
 | 0 | Singleton statement, no self-edge | Direct call in dependency order | shipped |
 | 1 | Self-recurrence, uniform shift | One scan with a `prior` accumulator; hard-coded to shift 1 today via `predecessor_address` | shipped |
-| 2 | SCC with statically positive distances | One fused loop over the union domain; statements guarded and topologically ordered inside the body by the distance-zero residual. Generalizes to loop nests for 2-D domains (#602), since the test is lexicographic | missing |
-| 3 | Everything else | Demand-driven memoized instance evaluation: one generic dispatcher plus one member function per statement, a memo keyed by `(statement, index)`, and an on-stack set that raises on a real cycle at runtime | missing |
+| 2 | SCC with uniform-sign distances | One fused loop over the union domain, forward or reversed (#614); statements guarded and topologically ordered inside the body by the distance-zero residual; loop nest over outer key fields for matrices (#612, #638) | shipped |
+| 3 | Everything else | Demand-driven memoized instance evaluation: one generic dispatcher plus one member function per statement, a memo keyed by `(statement, index)`, and an on-stack set that raises on a real cycle at runtime; guarded residual cycles demote here (#616) | shipped — but re-lowers the AST, see §11 |
+
+**Status (2026-09-03).** Rungs 0–3, loop-direction selection, shift-*k* scans,
+guard-aware residuals, matrix loop nests, the key-point schedule join, symbolic
+`IndexSet`, shared orchestrators, and the design-property suite have all
+landed (#603–#653). The remaining risk is not scheduling; it is lowering.
 
 > **Sequencing recommendation. Build rung 3 first.** It is the smallest of the
 > four to implement, it makes the exporter total immediately, and — because it
@@ -430,3 +436,137 @@ the optimization it is.
   dirty-marking, cell-grain, with runtime circularity detection. Since parity
   with Excel is the project's stated bar, matching its scheduling strategy in
   the fallback is the strongest possible position to fall back to.
+
+## 11. Lowering — derive access functions from the graph, not the formula
+
+Every silent wrong answer found so far lives in one layer. Shape uniformity
+(§1 Finding 2), the matrix identity join (#612), the absolute selector (#631),
+and the 2-D `INDEX` / `OFFSET` collapse (#654) were all in the AST → Python
+lowering — `_emit_index`, `_emit_offset`, `_emit_cell_ref`,
+`predecessor_address`, `_non_peer_seed_ref`. Every one **defaulted** instead of
+failing closed, and every one was fixed with a narrower heuristic on top of the
+last. Scheduling bugs, by contrast, failed closed with a named cell. That
+asymmetry is the diagnosis: the scheduling layer has a model; the lowering
+layer has a growing list of cases.
+
+### Why: two models of the same reference
+
+The inverted-tree collector re-derives references by re-parsing formula text
+with its own partial model of Excel. But the dependency graph already resolved
+every reference — including `INDEX` / `OFFSET` / `MATCH` under the
+`DynamicRefConfig` constraints — into concrete cell edges. For the Q-CRAFT
+shape `K3 = INDEX(AH67:BI264, MATCH($A$1, …), 1)`, the graph records exactly
+the candidate column per host cell:
+
+```text
+S!B2 → {S!B5, S!B6, S!B7}      # year 1: column B of the block, row selected at runtime
+S!C2 → {S!C5, S!C6, S!C7}      # year 2: column C
+```
+
+The column axis is affine in the member index; the row axis is the dynamic one.
+That is the whole access function, and it is readable from the edges. The
+exporter ignored it and re-parsed `INDEX(...)` assuming a 1-D range.
+
+Rung 3 shares the defect: it re-lowers the AST too, so the "correct by
+construction" oracle carried the same bug and the differential suite stayed
+green while Q-CRAFT was wrong in 796 of 796 cells.
+
+### The model: one access function per (statement, producer block)
+
+For a host statement `S` and a producer block `P` (any bound series; a matrix
+has two axes, a series one), the **access function** is, per producer axis:
+
+| Axis class | Meaning | Derived from | Emitted as |
+| ---------- | ------- | ------------ | ---------- |
+| `static` | one producer member per host member, affine in `i` (`a·i + b`) | `fit_affine_map` over the resolved edge sets across host members | subscript `a*i + b` |
+| `dynamic` | several candidate members per host member; the choice is a runtime value | edge set per host member is the *candidate domain*; the selecting expression is the lowered AST argument | lowered argument (`xl_match(...) - 1`, a cell read, …) |
+| `whole` | every member (aggregate argument) | edge set is the whole block | the block itself |
+
+The flat subscript for a row-major matrix is then `row_expr * W + col_expr`,
+where `W` is the block width from the catalog and each `*_expr` is one row of
+the table above. `INDEX` with a literal column, `INDEX` with a `MATCH`'d
+column, a window that slides one column per year, `OFFSET`, and a plain range
+reference become **one case**. The function-specific emitters shrink to
+lowering *arguments*; the AST node's only remaining job is to say which
+argument selects which dynamic axis. `capture_dependency_provenance` already
+maps each edge back to the AST node that produced it, which is how the two
+views are joined.
+
+Access functions are per `(statement, producer)`, not per cell, so the Θ(S+E)
+bound of §8 is preserved.
+
+### The rule: fail closed on anything without a proven lowering
+
+No default column. No default seed. No default window. If the resolved edge
+sets for a producer do not fit `static | dynamic | whole` on every axis — a
+range that spans two bound blocks, a non-affine window, a dynamic selector
+over an unbound header — `InvertedTreeExportError` names the host cell and
+the producer. "Column 1" is what turned a lookup bug into a 796-cell parity
+miss with no error; the cost of a refusal is one binding edit, the cost of a
+silent default is a wrong model.
+
+### Rung 3 is the evaluator, restricted
+
+The floor of the ladder should not re-implement Excel. Build rung 3 as
+instance-level demand evaluation over the **graph's resolved edges**, using
+`core/operators` for every operator and function (#651), keyed by
+`(statement, index)`, with the on-stack cycle check it already has. That is
+`FormulaEvaluator` restricted to the bound closure and indexed by instance —
+identical to it by construction, so the differential oracle cannot lie. Rungs
+0–2 are then optimizations with one obligation: match rung 3 on every bound
+cell.
+
+After this, the remaining per-shape work is Excel *functions* (`SUMIF`,
+`VLOOKUP`, text functions, …), each implemented once in `core/` for both
+runtimes — the same bounded cost any exporter pays, and largely paid already.
+
+## 12. Corpus — distilled shapes plus an uncommitted pool of real workbooks
+
+`_CORPUS` in `test_design_properties.py` is nine hand-made three-cell
+workbooks. The single most common shape in a DSA model — a country-table
+lookup, `INDEX(block, MATCH(country, names), col)` — was not in it, which is
+why 326 green tests said nothing about Q-CRAFT. Generalization is measured,
+not reasoned to.
+
+Two tiers:
+
+**Tier 1 — distilled shapes (committed).** One toy per shape, fast, in
+`_CORPUS`, run in every orientation and forced rung. This is the unit layer
+and it stays.
+
+**Tier 2 — the local pool (not committed).** Real workbooks with their
+bindings and constraint modules, under `tests/fixtures/local/`, gitignored:
+
+```text
+tests/fixtures/local/
+  corpus.toml                    # manifest, committed
+  qcraft/qcraft-toolv10.xlsx     # workbook, NOT committed
+  qcraft/bindings/*.bindings.yaml
+  qcraft/constraints.py          # DynamicRefConfig constraints + canonical inputs
+  lic_dsf/...
+  tiny_dsa/...                   # may symlink the committed fixture
+```
+
+`corpus.toml` lists each entry's workbook path, bindings directory,
+constraints module, canonical `compute_*` inputs, and a `max_cells` hint.
+Tests carry `@pytest.mark.local_corpus` and `pytest.skip` with the missing
+path when a workbook is absent — the same run-if-available contract the live
+Excel parity tests use (`.cursor/rules/parity.mdc`). Opt in with
+`-m local_corpus`; run nightly or on a runner that has the pool. `tests/paths.py`
+gains `LOCAL_CORPUS = FIXTURES_ROOT / "local"`.
+
+**The gate.** For every workbook in the pool, for every bound formula series:
+
+1. rung 3 equals `FormulaEvaluator` on every cell at the canonical inputs;
+2. the auto rung equals rung 3;
+3. package size in bytes is independent of period count and partition count.
+
+Report divergences **in topological order of the statement graph**, so the
+first line names the root series, not a compounded output. The Q-CRAFT report
+named debt/GDP and growth; the root was `macrofiscal_real_gdp_lcu` three
+levels down.
+
+**The distillation loop.** When a pool workbook fails, the first-diverging
+series' shape becomes a Tier 1 toy before the fix lands. That is how #654's
+shape should have entered `_CORPUS` — from a failing pool run, not from a
+parity report in another repository.
