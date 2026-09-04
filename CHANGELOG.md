@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v13.6.3 (2026-09-04)
+
+### Bug Fixes
+
+- **export**: Narrow as_measure return type with dtype overloads
+  ([#692](https://github.com/Teal-Insights/excel-grapher/pull/692),
+  [`6658fa0`](https://github.com/Teal-Insights/excel-grapher/commit/6658fa09a884b2069ce5d4ad3a2abd97f9944d0c))
+
+
 ## v13.6.2 (2026-09-04)
 
 ### Bug Fixes
