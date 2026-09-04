@@ -463,7 +463,9 @@ class SeriesDeps:
 
     - `aligned_ids` / `index_maps` / `affine_maps` — identity (or affine)
       joins already taken to the host walk
-    - `lagged_ids` — a producer read at both `i` and `i-1`
+    - `lagged_ids` — a producer read at both `i` and `i-1` whose
+      positions shift with the host. A constant pair (`$A$8` / `$A$9`
+      from every member) is a static catalog read, not a lag (#681).
     - `lookup_ids` — `whole` / `dynamic` table reads
     - `is_scan` / `seed_id` / `scan_direction` — self-lags discharged by
       loop order. A relative other-series read at `schedule_coord` ± 1 is
@@ -972,6 +974,14 @@ def series_deps_from_edges(
             per_host.setdefault(host_i, set()).add(dep_i)
         slots = [-1] * host_n
         saw_lag = False
+        origin = fit_affine_map(
+            [(host_i, min(indices)) for host_i, indices in per_host.items() if indices]
+        )
+        static_catalog = origin is not None and origin[0] == 0
+        if static_catalog and any(len(indices) > 1 for indices in per_host.values()):
+            # Same catalog slots from every member (`labels[0]` / `labels[1]`),
+            # or a mixed absolute + relative read of one producer (#681).
+            continue
         for host_i, indices in per_host.items():
             if len(indices) > 2:
                 raise InvertedTreeExportError(

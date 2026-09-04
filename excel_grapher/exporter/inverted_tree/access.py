@@ -1,22 +1,27 @@
 """Access functions derived from the graph's resolved edges.
 
-One function per `(host statement, producer block)`. Each producer axis is
-`static` (affine in the host index), `dynamic` (candidate set + runtime
-selector), or `whole` (the block itself). Anything else fails closed.
+Lookups classify one function per `(host statement, producer block)`.
+Plain cell references classify one function per formula site of that
+producer — a mixed relative and absolute read is two accesses. Each
+producer axis is `static` (affine in the host index), `dynamic`
+(candidate set + runtime selector), or `whole` (the block itself).
+Anything else fails closed.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from excel_grapher.core.address_keys import CanonicalAddress, as_canonical
 from excel_grapher.core.formula_ast import (
     AstNode,
+    BinaryOpNode,
     CellRefNode,
     FunctionCallNode,
     NumberNode,
+    UnaryOpNode,
     resolve_cell_ref,
 )
 from excel_grapher.exporter.inverted_tree.catalog import (
@@ -261,6 +266,166 @@ def classify_producer_access(
         row=row,
         col=col,
         width=width,
+    )
+
+
+def _formula_ast(graph: DependencyGraph, address: CanonicalAddress) -> AstNode:
+    node = graph.get_node(address)
+    ast = getattr(node, "formula_ast", None) if node is not None else None
+    if ast is None:
+        raise InvertedTreeExportError(
+            f"bound cell {address} has no formula AST (cannot classify cell-ref access)"
+        )
+    return ast
+
+
+def _iter_direct_cell_refs(node: AstNode) -> Iterator[CellRefNode]:
+    """Yield each `CellRefNode` in `node` (not range endpoints)."""
+    match node:
+        case CellRefNode():
+            yield node
+        case BinaryOpNode(left=left, right=right):
+            yield from _iter_direct_cell_refs(left)
+            yield from _iter_direct_cell_refs(right)
+        case UnaryOpNode(operand=operand):
+            yield from _iter_direct_cell_refs(operand)
+        case FunctionCallNode(args=args):
+            for arg in args:
+                yield from _iter_direct_cell_refs(arg)
+        case _:
+            return
+
+
+def _cell_ref_walk_slot(ast: AstNode, ref: CellRefNode) -> int:
+    for index, node in enumerate(_iter_direct_cell_refs(ast)):
+        if node is ref:
+            return index
+    for index, node in enumerate(_iter_direct_cell_refs(ast)):
+        if node == ref:
+            return index
+    raise InvertedTreeExportError("cell reference is not a leaf of the host formula")
+
+
+def catalog_index_affine(access: AccessFunction) -> tuple[int, int]:
+    """Return `(coeff, offset)` of the flat catalog index `a*i + b`.
+
+    A cell-ref site is one catalog slot, stored as a static column affine
+    with a static zero row so `row.coeff * width + col.coeff` reconstructs
+    the catalog map.
+    """
+    if access.row.kind != "static" or access.col.kind != "static":
+        raise InvertedTreeExportError(
+            f"series {access.host_id!r}: producer {access.producer_id!r} "
+            "cell-ref access is not static on both axes"
+        )
+    return (
+        access.row.coeff * access.width + access.col.coeff,
+        access.row.offset * access.width + access.col.offset,
+    )
+
+
+def _access_from_catalog_pairs(
+    host: BoundSeries,
+    producer: BoundSeries,
+    pairs: Sequence[tuple[int, int]],
+) -> AccessFunction:
+    if not pairs:
+        raise InvertedTreeExportError(
+            f"series {host.series_id!r}: no resolved cell-ref edges into {producer.series_id!r}"
+        )
+    fitted = fit_affine_map(pairs)
+    if fitted is None:
+        raise InvertedTreeExportError(
+            f"series {host.series_id!r}: producer {producer.series_id!r} "
+            "cell-ref site is not an affine static map"
+        )
+    coeff, offset = fitted
+    return AccessFunction(
+        host_id=host.series_id,
+        producer_id=producer.series_id,
+        row=AxisAccess("static", 0, 0),
+        col=AxisAccess("static", coeff, offset),
+        width=producer.block_width,
+    )
+
+
+def _catalog_pairs_for_slot(
+    host: BoundSeries,
+    producer: BoundSeries,
+    graph: DependencyGraph,
+    cells: Sequence[CanonicalAddress],
+    slot: int,
+) -> list[tuple[int, int]]:
+    pairs: list[tuple[int, int]] = []
+    for cell in cells:
+        refs = list(_iter_direct_cell_refs(_formula_ast(graph, cell)))
+        if slot >= len(refs):
+            continue
+        host_index = host.index_of(cell)
+        prod_index = producer.index_of(as_canonical(resolve_cell_ref(refs[slot], cell)))
+        if host_index is None or prod_index is None:
+            continue
+        pairs.append((host_index, prod_index))
+    return pairs
+
+
+def classify_cell_ref_accesses(
+    host: BoundSeries,
+    producer: BoundSeries,
+    catalog: SeriesCatalog,
+    graph: DependencyGraph,
+    *,
+    cells: Sequence[CanonicalAddress] | None = None,
+) -> tuple[AccessFunction, ...]:
+    """Return one access function per `CellRefNode` site of `producer`.
+
+    Sites are matched by walk order. A mixed relative and absolute read of
+    the same producer is two accesses, not one merged edge set.
+
+    Raises:
+        InvertedTreeExportError: A site is not an affine static catalog map.
+    """
+    del catalog
+    members = tuple(host.cells if cells is None else cells)
+    if not members:
+        return ()
+    found: list[AccessFunction] = []
+    for slot, ref in enumerate(_iter_direct_cell_refs(_formula_ast(graph, members[0]))):
+        address = as_canonical(resolve_cell_ref(ref, members[0]))
+        if producer.index_of(address) is None:
+            continue
+        found.append(
+            _access_from_catalog_pairs(
+                host,
+                producer,
+                _catalog_pairs_for_slot(host, producer, graph, members, slot),
+            )
+        )
+    return tuple(found)
+
+
+def classify_cell_ref_access(
+    host: BoundSeries,
+    producer: BoundSeries,
+    catalog: SeriesCatalog,
+    graph: DependencyGraph,
+    *,
+    host_cell: CanonicalAddress,
+    ref: CellRefNode,
+    cells: Sequence[CanonicalAddress] | None = None,
+) -> AccessFunction:
+    """Classify the catalog-index map of one `CellRefNode` site.
+
+    Raises:
+        InvertedTreeExportError: The site is not an affine static catalog map.
+    """
+    del catalog
+    members = tuple(host.cells if cells is None else cells)
+    slot = _cell_ref_walk_slot(_formula_ast(graph, host_cell), ref)
+    return _access_from_catalog_pairs(
+        host,
+        producer,
+        _catalog_pairs_for_slot(host, producer, graph, members, slot),
     )
 
 
