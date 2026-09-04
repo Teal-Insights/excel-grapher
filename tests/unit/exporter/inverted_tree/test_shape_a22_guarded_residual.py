@@ -13,10 +13,12 @@ import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
+from excel_grapher.exporter.inverted_tree.schedule import plan_scc
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
+    inverted_graph_parts,
     load_package,
     series_entry,
     write_workbook,
@@ -111,10 +113,10 @@ def test_scalar_may_cycle_demotes_to_rung3_and_evaluates_at_runtime(tmp_path: Pa
     expected = FormulaEvaluator(graph).evaluate(["Engine!B2", "Engine!C2"])
     assert expected == {"Engine!B2": 10.0, "Engine!C2": 20.0}
 
-    modules = generate_inverted(wb, bindings)
-    internals = modules["internals.py"]
-    assert "eval_instance" in internals
+    catalog, _deps, graph_bound = inverted_graph_parts(wb, bindings)
+    assert plan_scc(("x", "y"), catalog=catalog, graph=graph_bound).rung == 3
 
+    modules = generate_inverted(wb, bindings)
     pkg = load_package(modules, tmp_path, name="a22_repro_pkg")
     assert pkg.compute_x(flag=0) == (10.0,)
     assert pkg.compute_y(flag=0) == (20.0,)
@@ -142,10 +144,10 @@ def test_series_may_cycle_demotes_to_rung3_and_evaluates_at_runtime(tmp_path: Pa
     assert expected["Engine!C3"] == 22.0
     assert expected["Engine!D3"] == 24.0
 
-    modules = generate_inverted(wb, bindings)
-    internals = modules["internals.py"]
-    assert "eval_instance" in internals
+    catalog, _deps, graph_bound = inverted_graph_parts(wb, bindings)
+    assert plan_scc(("x", "y"), catalog=catalog, graph=graph_bound).rung == 3
 
+    modules = generate_inverted(wb, bindings)
     pkg = load_package(modules, tmp_path, name="a22_series_pkg")
     assert pkg.compute_x(flag=0) == pytest.approx((10.0, 11.0, 12.0))
     assert pkg.compute_y(flag=0) == pytest.approx((20.0, 22.0, 24.0))
