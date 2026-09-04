@@ -44,6 +44,7 @@ _AST_SPECIAL_FUNCS = frozenset(
         "COLUMN",
         "COLUMNS",
         "INDEX",
+        "INDIRECT",
         "TRUE",
         "FALSE",
     }
@@ -56,8 +57,9 @@ def compile_formula_shape(evaluator: Any, skeleton: SkeletonNode) -> ShapeEvalFn
     Cell/range holes dispatch to `evaluator._evaluate_ast` on the bound leaf.
     Generic functions and operators close over compiled children so a shape is
     walked/dispatched once at compile time rather than on every evaluation.
-    Functions that inspect argument ASTs (OFFSET, INDEX, ROW, …) fill holes in
-    those arg subtrees and reuse the evaluator's existing special-case methods.
+    Functions that inspect argument ASTs (OFFSET, INDEX, INDIRECT, ROW, …) fill
+    holes in those arg subtrees and reuse the evaluator's existing special-case
+    methods.
     """
 
     def compile_node(node: SkeletonNode) -> ShapeEvalFn:
@@ -196,7 +198,7 @@ def _compile_special_function(
     if name == "CHOOSE":
         return _compile_choose(evaluator, args, compile_node)
 
-    # OFFSET / INDEX / ROW / COLUMN / COLUMNS inspect argument ASTs for geometry.
+    # OFFSET / INDEX / INDIRECT / ROW / COLUMN / COLUMNS inspect argument ASTs.
     skeletons = tuple(cast(SkeletonNode, arg) for arg in args)
 
     def eval_ref_fn(params: tuple[AddressLeaf, ...]) -> FormulaValue:
@@ -205,6 +207,8 @@ def _compile_special_function(
             return evaluator._eval_offset(filled)
         if name == "INDEX":
             return evaluator._eval_index(filled)
+        if name == "INDIRECT":
+            return evaluator._eval_indirect(filled)
         if name == "ROW":
             return evaluator._eval_row(filled)
         if name == "COLUMN":

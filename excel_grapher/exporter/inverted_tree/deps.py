@@ -33,7 +33,12 @@ from excel_grapher.core.formula_ast import (
     resolve_whole_row_ref,
 )
 from excel_grapher.core.range_shorthand import expand_whole_column_deps, expand_whole_row_deps
-from excel_grapher.exporter.inverted_tree.access import is_seed_access, unique_seed_or_none
+from excel_grapher.exporter.inverted_tree.access import (
+    indirect_argument_addresses,
+    indirect_target_addresses,
+    is_seed_access,
+    unique_seed_or_none,
+)
 from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
     SeriesCatalog,
@@ -607,6 +612,9 @@ class _DepCollector:
         if name == "INDEX":
             self._visit_index(node, host_cell=host_cell, host_index=host_index)
             return
+        if name == "INDIRECT":
+            self._visit_indirect(node, host_cell=host_cell, host_index=host_index)
+            return
         if name == "MATCH":
             self._visit_match(node, host_cell=host_cell, host_index=host_index)
             return
@@ -628,6 +636,33 @@ class _DepCollector:
         self.emit_lookup(table, host_cell, self._ref_anchor(node.args[0], host_cell), "dynamic")
         for arg in node.args[1:]:
             self.visit(arg, host_cell=host_cell, host_index=host_index)
+
+    def _visit_indirect(
+        self,
+        node: FunctionCallNode,
+        *,
+        host_cell: CanonicalAddress,
+        host_index: int,
+    ) -> None:
+        del host_index
+        if self.graph is None:
+            raise InvertedTreeExportError(
+                f"series {self.host.series_id!r} cell {host_cell}: "
+                "INDIRECT has no graph to classify"
+            )
+        exclude = indirect_argument_addresses(node, host_cell)
+        targets = indirect_target_addresses(self.graph, host_cell, exclude=tuple(exclude))
+        if not targets:
+            raise InvertedTreeExportError(
+                f"series {self.host.series_id!r} cell {host_cell}: INDIRECT has no resolved edges"
+            )
+        covered = covering_series(self.catalog, targets)
+        if covered is None:
+            raise InvertedTreeExportError(
+                f"series {self.host.series_id!r} cell {host_cell}: "
+                "INDIRECT targets are not one bound series"
+            )
+        self.emit_lookup(covered, host_cell, targets[0], "dynamic")
 
     def _visit_index(
         self,

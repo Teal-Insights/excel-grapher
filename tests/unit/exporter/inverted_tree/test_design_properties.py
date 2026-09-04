@@ -84,6 +84,10 @@ from tests.unit.exporter.inverted_tree.test_shape_a26_index_block import (
     country_table_bindings,
     country_table_sheets,
 )
+from tests.unit.exporter.inverted_tree.test_shape_a27_indirect import (
+    _literal_bindings,
+    _literal_workbook,
+)
 from tests.unit.exporter.inverted_tree.test_shape_a27_range_aggregates import (
     range_sum_bindings,
     range_sum_workbook,
@@ -229,6 +233,7 @@ _CORPUS: list[tuple[str, Callable[[Path], Path], Callable[[], dict[str, Any]]]] 
     ("a22_guarded", a22_guarded._series_may_cycle_workbook, a22_guarded._series_may_cycle_bindings),
     ("a22_shift_k", _a22_shift_k_workbook, _a22_shift_k_bindings),
     ("country_table", _country_table_workbook, _country_table_bindings),
+    ("indirect_literal", _literal_workbook, _literal_bindings),
     ("compare_rank", _compare_workbook, _compare_bindings),
     ("range_sum", range_sum_workbook, range_sum_bindings),
 ]

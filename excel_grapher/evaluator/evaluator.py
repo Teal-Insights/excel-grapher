@@ -15,7 +15,11 @@ from excel_grapher.core.address_keys import (
 from excel_grapher.core.address_keys import (
     normalize_key as normalize_address,
 )
-from excel_grapher.core.addressing import index_excel_range
+from excel_grapher.core.addressing import (
+    index_excel_range,
+    indirect_text_to_range,
+    split_sheet_qualified_address,
+)
 from excel_grapher.core.excel_function_meta import grid_range_arg_indices
 from excel_grapher.core.formula_ast import (
     bind_axes,
@@ -51,6 +55,7 @@ from .helpers import (
     get_error,
     to_bool,
     to_number,
+    to_string,
     xl_add,
     xl_column,
     xl_columns,
@@ -123,6 +128,17 @@ _SKIP_ERROR_PRECHECK = {
 
 if TYPE_CHECKING:
     from excel_grapher.grapher import DependencyGraph
+
+
+@dataclass(frozen=True)
+class _IndirectSheetBounds:
+    """Workbook bounds for `indirect_text_to_range`, keyed to the target sheet."""
+
+    sheet: str
+    min_row: int = 1
+    max_row: int = 1_048_576
+    min_col: int = 1
+    max_col: int = 16_384
 
 
 @dataclass
@@ -510,6 +526,8 @@ class FormulaEvaluator:
                 return self._eval_choose(node.args)
             if name == "OFFSET":
                 return self._eval_offset(node.args)
+            if name == "INDIRECT":
+                return self._eval_indirect(node.args)
             if name == "ROW":
                 return self._eval_row(node.args)
             if name == "COLUMN":
@@ -810,6 +828,31 @@ class FormulaEvaluator:
             cast(CellValue, height_val) if height_val is not None else None,
             cast(CellValue, width_val) if width_val is not None else None,
         )
+
+    def _eval_indirect(self, args: Sequence[AstNode]) -> FormulaValue:
+        if len(args) < 1 or isinstance(args[0], EmptyArgNode):
+            return XlError.VALUE
+        text_val = self._evaluate_ast(args[0])
+        if isinstance(text_val, XlError):
+            return text_val
+        text = to_string(text_val)
+        a1 = True
+        if len(args) >= 2 and not isinstance(args[1], EmptyArgNode):
+            a1_val = self._evaluate_ast(args[1])
+            if isinstance(a1_val, XlError):
+                return a1_val
+            flag = to_bool(a1_val)
+            if isinstance(flag, XlError):
+                return flag
+            a1 = flag
+        parsed = split_sheet_qualified_address(text.strip())
+        if parsed is not None:
+            sheet = parsed[0]
+        else:
+            anchor = self._formula_anchor()
+            sheet = parse_address(anchor)[0] if anchor is not None else "Sheet1"
+        bounds = _IndirectSheetBounds(sheet=sheet)
+        return indirect_text_to_range(text, a1, bounds=bounds)
 
     def _formula_anchor(self) -> str | None:
         return self._call_stack[-1] if self._call_stack else None
