@@ -20,6 +20,8 @@ from excel_grapher.core.formula_ast import (
     RangeNode,
     StringNode,
     UnaryOpNode,
+    WholeColumnNode,
+    WholeRowNode,
     resolve_cell_ref,
 )
 from excel_grapher.core.formula_shape import fingerprint_formula_shape
@@ -41,6 +43,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
     DependenceEdge,
     SeriesDeps,
     iter_range_addresses,
+    iter_ref_addresses,
     node_formula_ast,
     predecessor_address,
     range_column_addresses,
@@ -51,6 +54,7 @@ from excel_grapher.exporter.inverted_tree.schedule import (
     FusedPlan,
     FusedRegion,
     collect_dependence_edges,
+    indices_to_source,
     plan_fused_scc,
 )
 from excel_grapher.series_bindings.types import Scalar
@@ -82,6 +86,7 @@ _RUNTIME_FUNCTIONS = frozenset(
     for name, value in vars(inverted_runtime).items()
     if name.startswith("xl_") and callable(value)
 )
+_AGGREGATE_FUNCTIONS = frozenset({"SUM", "SUMPRODUCT"})
 
 
 @dataclass
@@ -213,7 +218,10 @@ def _is_scan_prior_ref(address: CanonicalAddress, ctx: EmitContext) -> bool:
 
 
 def _emit_cell_ref(node: CellRefNode, ctx: EmitContext) -> str:
-    address = as_canonical(resolve_cell_ref(node, ctx.host_cell))
+    return _emit_address(as_canonical(resolve_cell_ref(node, ctx.host_cell)), ctx)
+
+
+def _emit_address(address: CanonicalAddress, ctx: EmitContext) -> str:
     if ctx.fused_mode:
         return _emit_fused_ref(address, ctx)
     if ctx.instance_mode:
@@ -539,6 +547,8 @@ def _emit_function(node: FunctionCallNode, ctx: EmitContext) -> str:
         return "True"
     if name == "FALSE":
         return "False"
+    if name in _AGGREGATE_FUNCTIONS:
+        return _emit_aggregate(node, ctx)
     args = ", ".join(emit_expr(arg, ctx) for arg in node.args)
     func = f"xl_{name.lower()}"
     if func not in _RUNTIME_FUNCTIONS:
@@ -565,6 +575,63 @@ def _emit_choose(node: FunctionCallNode, ctx: EmitContext) -> str:
     index = emit_expr(node.args[0], ctx)
     choices = ", ".join(emit_expr(arg, ctx) for arg in node.args[1:])
     return f"{ctx.use('xl_choose')}({index}, {choices})"
+
+
+def _emit_aggregate(node: FunctionCallNode, ctx: EmitContext) -> str:
+    name = normalize_excel_function_name(node.name)
+    func = f"xl_{name.lower()}"
+    if func not in _RUNTIME_FUNCTIONS:
+        raise InvertedTreeExportError(
+            f"series {ctx.host.series_id!r}: Excel function {name} has no "
+            "inverted-tree runtime helper"
+        )
+    args = ", ".join(_emit_aggregate_arg(arg, ctx) for arg in node.args)
+    ctx.use(func)
+    return f"{func}({args})"
+
+
+def _emit_aggregate_arg(node: AstNode, ctx: EmitContext) -> str:
+    if isinstance(node, (RangeNode, WholeColumnNode, WholeRowNode)):
+        return _emit_range_values(node, ctx)
+    return emit_expr(node, ctx)
+
+
+def _emit_range_values(node: AstNode, ctx: EmitContext) -> str:
+    addresses = iter_ref_addresses(node, ctx.host_cell, ctx.graph)
+    if not addresses:
+        raise _host_export_error(ctx, "range is empty")
+    covered = covering_series(ctx.catalog, addresses)
+    if covered is not None:
+        _access_or_fail(covered, ctx)
+        return _emit_covering_values(covered, addresses, ctx)
+    missing = [addr for addr in addresses if ctx.catalog.series_id_for(addr) is None]
+    if missing:
+        raise _host_export_error(ctx, f"range is not a bound series (unbound cells: {missing[:8]})")
+    parts = [_emit_address(addr, ctx) for addr in addresses]
+    if len(parts) == 1:
+        return parts[0]
+    return f"({', '.join(parts)})"
+
+
+def _emit_covering_values(
+    covered: BoundSeries,
+    addresses: Sequence[CanonicalAddress],
+    ctx: EmitContext,
+) -> str:
+    name = ctx.param(covered.series_id)
+    if covered.is_scalar:
+        return name
+    indices: list[int] = []
+    for addr in addresses:
+        idx = covered.index_of(addr)
+        if idx is None:
+            raise _host_export_error(
+                ctx, f"range cell {addr} is not inside bound series {covered.series_id!r}"
+            )
+        indices.append(idx)
+    if indices == list(range(len(covered.cells))):
+        return name
+    return f"{ctx.use('take')}({name}, {indices_to_source(indices)})"
 
 
 def _host_export_error(ctx: EmitContext, message: str) -> InvertedTreeExportError:
@@ -799,12 +866,11 @@ def _emit_match(node: FunctionCallNode, ctx: EmitContext) -> str:
 def _series_for_ref(node: AstNode, ctx: EmitContext) -> BoundSeries:
     if isinstance(node, CellRefNode):
         return ctx.catalog.require_series_for(as_canonical(resolve_cell_ref(node, ctx.host_cell)))
-    if isinstance(node, RangeNode):
-        start = resolve_cell_ref(node.start_ref, ctx.host_cell)
-        end = resolve_cell_ref(node.end_ref, ctx.host_cell)
-        covered = covering_series(ctx.catalog, iter_range_addresses(start, end))
+    if isinstance(node, (RangeNode, WholeColumnNode, WholeRowNode)):
+        addresses = iter_ref_addresses(node, ctx.host_cell, ctx.graph)
+        covered = covering_series(ctx.catalog, addresses)
         if covered is None:
-            raise _host_export_error(ctx, f"reference {start}:{end} is not bound")
+            raise _host_export_error(ctx, "reference is not a bound series")
         return covered
     raise _host_export_error(ctx, "OFFSET/MATCH base must be a cell or range")
 

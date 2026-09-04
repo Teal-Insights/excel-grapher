@@ -34,6 +34,8 @@ from excel_grapher.exporter.inverted_tree.runtime import (
     xl_pow,
     xl_raise,
     xl_sub,
+    xl_sum,
+    xl_sumproduct,
 )
 
 
@@ -271,3 +273,18 @@ def test_live_measure_reraises_error_codes() -> None:
     with pytest.raises(XlError) as exc:
         live_measure("#REF!")
     assert exc.value.code == "#REF!"
+
+
+def test_xl_sum_over_sequence_and_stored_errors() -> None:
+    assert xl_sum((1.0, 2.0, 3.0)) == 6.0
+    assert xl_sum(1.0, 2.0) == 3.0
+    with pytest.raises(XlError) as exc:
+        xl_sum((1.0, "#DIV/0!"))
+    assert exc.value.code == "#DIV/0!"
+
+
+def test_xl_sumproduct_over_aligned_sequences() -> None:
+    assert xl_sumproduct((1.0, 2.0), (3.0, 4.0)) == 11.0
+    with pytest.raises(XlError) as exc:
+        xl_sumproduct((1.0, "#N/A"), (1.0, 1.0))
+    assert exc.value.code == "#N/A"

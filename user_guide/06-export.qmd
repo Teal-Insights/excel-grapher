@@ -110,7 +110,7 @@ emitted in `data.py` (`SERIES_DEFAULT`). Setter smoke is ctx-only; inverted-tree
 | `api.py` | Keyword-only `compute_*` orchestrators. The signature is the **input** leaf closure; **constant** leaves are read from `data` (`data.CONSTANT_X`, listed on `__constants__`) rather than passed as defaulted kwargs. |
 | `data.py` | Catalog-order tuples (and scalars) for constants and `*_DEFAULT` inputs. Measure dtypes include `int`, `float`, `str`, `bool`, and `datetime`. |
 | `internals.py` | First-level-dependency helpers and fused / demand-driven scans. |
-| `runtime.py` | Excel operators shared with `core/` (comparisons, arithmetic, `EXP`, `MATCH`, …). Missing worksheet functions **fail closed** at export rather than embedding the ctx `xl_*` library. |
+| `runtime.py` | Excel operators shared with `core/` (comparisons, arithmetic, `EXP`, `SUM`, `SUMPRODUCT`, `MATCH`, …). Missing worksheet functions **fail closed** at export rather than embedding the ctx `xl_*` library. |
 
 Call a compute with sequences in catalog order (the expansion order of `data_range`, after
 `exclude_rows` / `exclude_columns`):
@@ -168,9 +168,10 @@ Bindings features that already apply before codegen — complementary shards / l
 ranges in `data_range` — work with inverted-tree because the catalog consumes the merged sidecar.
 
 Shapes that **fail closed** (export error, not a silent wrong answer): `INDIRECT` still in the
-formula AST, `SUMPRODUCT` / `SUM` of a range, `IFERROR`, whole-column / whole-row refs, cross-sheet
-3-D ranges, and any `xl_<name>` with no inverted-tree runtime helper. Port those per workbook
-corpus, the same way `EXP` and 2-D `INDEX` landed. Array spill ([issue 284](https://github.com/Teal-Insights/excel-grapher/issues/284))
+formula AST, `IFERROR`, and any `xl_<name>` with no inverted-tree runtime helper. `SUM` /
+`SUMPRODUCT` of a covering series, whole-column / whole-row refs, and cross-sheet 3-D ranges
+lower when every referenced cell is bound ([issue 667](https://github.com/Teal-Insights/excel-grapher/issues/667)).
+Array spill ([issue 284](https://github.com/Teal-Insights/excel-grapher/issues/284))
 and array-style `SUM(IF(…))` ([issue 483](https://github.com/Teal-Insights/excel-grapher/issues/483))
 stay open for both paradigms.
 
