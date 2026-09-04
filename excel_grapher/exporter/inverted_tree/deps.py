@@ -205,6 +205,12 @@ def _ref_shifts_with_host(ref: CellRefNode, host_cell: str) -> bool:
     return not col_locked and not row_locked
 
 
+def _has_schedule_axis(series: BoundSeries, catalog: SeriesCatalog) -> bool:
+    """True when `series` declares `TIME_PERIOD` as a key field."""
+    fields = preferred_fields(series, catalog)
+    return fields is not None and "TIME_PERIOD" in fields
+
+
 def _overlapping_schedule_peer(
     host: BoundSeries,
     producer: BoundSeries,
@@ -235,7 +241,14 @@ def _non_peer_seed_ref(
     series: BoundSeries,
     catalog: SeriesCatalog,
 ) -> CanonicalAddress | None:
-    """Return the unique relative read of a series outside the host key domain."""
+    """Return the unique relative year-0 read of a series outside the host key.
+
+    A unique relative read of a differently keyed series is a seed only when
+    it is not the same `TIME_PERIOD` as `host_cell`. Copying one matrix row
+    (`B4=B2`, `C4=C2`) is an identity join on the inner axis, not a scan of
+    the whole matrix sequence (#649). A scalar or unkeyed neighbor has no
+    schedule axis and remains a year-0 seed.
+    """
     host_fields = preferred_fields(series, catalog)
     found: list[CanonicalAddress] = []
     for ref in _iter_cell_ref_nodes(ast):
@@ -246,6 +259,12 @@ def _non_peer_seed_ref(
         if owner is None or owner.series_id == series.series_id:
             continue
         if preferred_fields(owner, catalog) == host_fields:
+            continue
+        if (
+            _has_schedule_axis(series, catalog)
+            and _has_schedule_axis(owner, catalog)
+            and schedule_axis_coord(address, catalog) == schedule_axis_coord(host_cell, catalog)
+        ):
             continue
         found.append(address)
     if len(found) == 1:
@@ -265,7 +284,9 @@ def _adjacent_schedule_ref(
 
     When the host and producer do not share join fields, a unique relative
     read of that producer at the series' schedule boundary is the seed or
-    terminal. An overlapping keyed peer is a lagged read, not a seed.
+    terminal. An overlapping keyed peer is a lagged read, not a seed. A
+    same-`TIME_PERIOD` read of a richer key nest (a matrix row) is an
+    identity join, not a year-0 seed (#649).
     """
     if graph is None or index < 0 or index >= len(series.cells):
         return None
@@ -390,7 +411,8 @@ class SeriesDeps:
     - `is_scan` / `seed_id` / `scan_direction` — self-lags discharged by
       loop order. A relative other-series read at `schedule_coord` ± 1 is
       a seed; an absolute selector read by every member is a scalar
-      parameter, not a scan seed.
+      parameter, not a scan seed. A same-`TIME_PERIOD` slice of a matrix
+      is an aligned take, not a seed (#649).
     """
 
     host_id: str
@@ -871,10 +893,13 @@ def series_deps_from_edges(
             aligned.add(series_id)
             if fitted is not None and fitted[0] != 1:
                 affine_maps[series_id] = fitted
-        elif fitted is not None and fitted[0] != 1:
+        elif fitted is not None and (
+            fitted[0] != 1 or preferred_fields(host, catalog) != preferred_fields(dep, catalog)
+        ):
             index_maps[series_id] = tuple(slots)
             aligned.add(series_id)
-            affine_maps[series_id] = fitted
+            if fitted[0] != 1:
+                affine_maps[series_id] = fitted
     return SeriesDeps(
         host_id=host.series_id,
         param_ids=param_ids,
