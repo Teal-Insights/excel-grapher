@@ -488,10 +488,19 @@ def _contiguous_domain(
 def _statement_at_union(
     catalog: SeriesCatalog,
     series_id: str,
-    union_t: int,
+    _union_t: int,
     index: int,
 ) -> str:
-    """Return the statement covering union index `union_t`."""
+    """Return the statement covering schedule coordinate `index`.
+
+    `_union_t` is the position of `index` on the fused union schedule. Lookup
+    is an O(1) hit on `catalog.schedule.statement_id_by_coord` (flattened
+    join keys). A miss falls back to the inner `TIME_PERIOD` axis so a
+    matrix nest can resolve the covering statement per outer-key block.
+    """
+    found = catalog.schedule.statement_id_by_coord.get(series_id, {}).get(index)
+    if found is not None:
+        return found
     series = catalog.get(series_id)
     if len(series.statements) <= 1:
         return series_id
