@@ -15,6 +15,7 @@ from excel_grapher.exporter.inverted_tree.catalog import (
     Statement,
     build_catalog,
     partition_catalog,
+    schedule_coord,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.grapher import create_dependency_graph
@@ -86,6 +87,23 @@ def test_mixed_formulas_partition_into_one_statement_per_shape_run(tmp_path: Pat
         "path__2",
     ]
     assert series.statements[0].domain[0]["TIME_PERIOD"] == 2009
+
+
+def test_partitioned_catalog_indexes_statement_id_by_coord(tmp_path: Path) -> None:
+    workbook = _a12_workbook(tmp_path)
+    bindings = validate_bindings_document(_a12_bindings())
+    graph = create_dependency_graph(
+        workbook,
+        all_series_targets(bindings, workbook=workbook),
+        load_values=True,
+    )
+    catalog = build_catalog(bindings, workbook=workbook, graph=graph)
+    series = catalog.get("path")
+    mapping = catalog.schedule.statement_id_by_coord["path"]
+    assert len(series.statements) > 1
+    for stmt in series.statements:
+        for cell in stmt.cells:
+            assert mapping[schedule_coord(cell, catalog)] == stmt.statement_id
 
 
 def test_uniform_formula_series_is_one_statement(tmp_path: Path) -> None:
@@ -237,6 +255,7 @@ def test_partition_catalog_large_constant_series_performance() -> None:
     assert res.statements[0].statement_id == "large_const"
     assert res.statements[0].start == 0
     assert res.statements[0].stop == n
+    assert partitioned.schedule.statement_id_by_coord is catalog.schedule.statement_id_by_coord
 
 
 def _make_formula_catalog_and_graph(
