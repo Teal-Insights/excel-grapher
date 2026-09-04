@@ -166,6 +166,7 @@ def test_xl_match_exact_and_na() -> None:
 
 def test_xl_at_and_out_of_range() -> None:
     assert xl_at((10.0, 20.0, 30.0), 1) == 20.0
+    assert xl_at((10.0, 20.0, 30.0), xl_sub(2, 1)) == 20.0
     with pytest.raises(XlError) as exc:
         xl_at((10.0,), -1)
     assert exc.value.code == "#VALUE!"

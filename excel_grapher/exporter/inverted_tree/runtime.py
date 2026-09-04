@@ -236,11 +236,12 @@ def xl_exp(*args: object) -> float:
         raise XlError("#NUM!") from None
 
 
-def xl_choose(index: int, *choices: float) -> float:
+def xl_choose(index: object, *choices: float) -> float:
     """Excel `CHOOSE`: 1-based selection over already-evaluated arguments."""
-    if index < 1 or index > len(choices):
+    position = int(_as_number(index))
+    if position < 1 or position > len(choices):
         raise XlError("#VALUE!")
-    return choices[index - 1]
+    return choices[position - 1]
 
 
 def xl_match(lookup: object, lookup_array: Sequence[object], match_type: int = 0) -> int:
@@ -253,11 +254,16 @@ def xl_match(lookup: object, lookup_array: Sequence[object], match_type: int = 0
     raise XlError("#N/A")
 
 
-def xl_at(values: Sequence[T], index: int) -> T:
-    """Return `values[index]` (0-based), raising `#VALUE!` when out of range."""
-    if index < 0 or index >= len(values):
+def xl_at(values: Sequence[T], index: object) -> T:
+    """Return `values[index]` (0-based), raising `#VALUE!` when out of range.
+
+    `index` is coerced with `_as_number` and truncated toward zero, matching
+    Excel INDEX/OFFSET when an arithmetic expression yields a float.
+    """
+    position = int(_as_number(index))
+    if position < 0 or position >= len(values):
         raise XlError("#VALUE!")
-    return values[index]
+    return values[position]
 
 
 def xl_raise(code: str) -> NoReturn:

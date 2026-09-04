@@ -14,16 +14,9 @@ from typing import Any, cast
 import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
+from excel_grapher.exporter.inverted_tree import runtime as inverted_runtime
 from excel_grapher.exporter.inverted_tree.ast_emit import emit_rung2_scc, emit_rung3_scc
 from excel_grapher.exporter.inverted_tree.deps import requires_demand_driven
-from excel_grapher.exporter.inverted_tree.runtime import (
-    XlError,
-    as_measure,
-    demand_instance,
-    eval_instance,
-    is_error,
-    live_measure,
-)
 from excel_grapher.exporter.inverted_tree.schedule import plan_fused_scc
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
@@ -37,15 +30,9 @@ from tests.unit.exporter.inverted_tree.helpers import (
 
 
 def _exec_scan(body: list[str], names: set[str]) -> tuple[tuple[object, ...], ...]:
-    runtime = {
-        "XlError": XlError,
-        "as_measure": as_measure,
-        "demand_instance": demand_instance,
-        "eval_instance": eval_instance,
-        "is_error": is_error,
-        "live_measure": live_measure,
+    ns: dict[str, Any] = {
+        name: getattr(inverted_runtime, name) for name in names if hasattr(inverted_runtime, name)
     }
-    ns: dict[str, Any] = {name: runtime[name] for name in names if name in runtime}
     exec("def scan():\n" + "\n".join(body), ns)
     scan = cast(Callable[[], tuple[tuple[object, ...], ...]], ns["scan"])
     return scan()
