@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import keyword
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -11,11 +13,13 @@ from excel_grapher.series_bindings.normalize import (
     has_constant_direction,
     has_input_direction,
     has_internal_direction,
+    has_output_direction,
     input_mode,
     is_override_input,
 )
 from excel_grapher.series_bindings.ranges import (
     expand_series_data_ranges_for_graph,
+    format_series_data_range,
     series_data_ranges,
     series_sheets,
     sheet_from_data_range,
@@ -29,6 +33,8 @@ from excel_grapher.series_bindings.types import (
 from excel_grapher.series_bindings.versions import IMPLEMENTED_BIND_KINDS, IMPLEMENTED_LAYOUTS
 
 _KNOWN_BIND_KINDS = IMPLEMENTED_BIND_KINDS
+_A1_RECTANGLE_RE = re.compile(r"_[a-z]{1,3}\d+_[a-z]{1,3}\d+")
+_A1_TRAILING_CELL_RE = re.compile(r"_[a-z]{1,3}\d+$")
 
 
 def _issue(
@@ -46,6 +52,65 @@ def _issue(
         series_id=series_id,
         address=address,
     )
+
+
+def _contains_a1_geometry(text: str) -> bool:
+    """Return True when `text` embeds an A1 cell or rectangle slug."""
+    return (
+        _A1_RECTANGLE_RE.search(text) is not None or _A1_TRAILING_CELL_RE.search(text) is not None
+    )
+
+
+def _is_valid_python_id(name: str) -> bool:
+    return name.isidentifier() and not keyword.iskeyword(name)
+
+
+def _geometry_issue_level(series: dict[str, Any]) -> Literal["error", "warning"]:
+    """Public input/output ids are errors; internal/constant ids are warnings."""
+    if has_input_direction(series) or has_output_direction(series):
+        return "error"
+    if has_internal_direction(series) or has_constant_direction(series):
+        return "warning"
+    return "error"
+
+
+def _validate_series_identity(series: dict[str, Any]) -> list[ValidationIssue]:
+    """Lint series ids and `series_context` values for Python and A1 geometry."""
+    issues: list[ValidationIssue] = []
+    series_id = str(series.get("id") or "")
+    issue_series_id = series_id or None
+    if not _is_valid_python_id(series_id):
+        issues.append(
+            _issue(
+                "error",
+                "invalid_python_id",
+                f"series id {series_id!r} is not a valid Python identifier",
+                series_id=issue_series_id,
+            )
+        )
+    if _contains_a1_geometry(series_id):
+        issues.append(
+            _issue(
+                _geometry_issue_level(series),
+                "geometry_in_id",
+                f"series id {series_id!r} contains an A1 cell or rectangle token",
+                series_id=issue_series_id,
+            )
+        )
+    context = series.get("series_context")
+    if isinstance(context, dict):
+        for field, value in context.items():
+            if isinstance(value, str) and _contains_a1_geometry(value):
+                issues.append(
+                    _issue(
+                        "warning",
+                        "geometry_in_id",
+                        f"series_context[{field!r}] value {value!r} contains an A1 "
+                        "cell or rectangle token",
+                        series_id=issue_series_id,
+                    )
+                )
+    return issues
 
 
 def _series_validation_flags(series: dict[str, Any]) -> tuple[bool, bool]:
@@ -641,18 +706,38 @@ def validate_series_bindings(
     *,
     workbook: Path | str | None = None,
 ) -> ValidationReport:
-    """Validate binding manifests against an extracted dependency graph."""
+    """Validate binding manifests against an extracted dependency graph.
+
+    Document-level checks include `duplicate_series_id`, `invalid_python_id`,
+    and `geometry_in_id` (A1 cell or rectangle tokens in series ids and
+    `series_context` values).
+    """
     from excel_grapher.series_bindings.resolve import _WorkbookValues, resolve_series_binding
 
     issues: list[ValidationIssue] = []
     concept_dtypes = _concept_dtype_map(bindings)
     shared_reader: _WorkbookValues | None = None
+    seen_ranges: dict[str, str] = {}
 
     try:
         for series in bindings.get("series", []):
             if not isinstance(series, dict):
                 continue
-            series_id = str(series.get("id", ""))
+            series_id = str(series.get("id") or "")
+            issues.extend(_validate_series_identity(series))
+            data_range_text = format_series_data_range(series)
+            if series_id and series_id in seen_ranges:
+                issues.append(
+                    _issue(
+                        "error",
+                        "duplicate_series_id",
+                        f"series id {series_id!r} is bound to both "
+                        f"{seen_ranges[series_id]} and {data_range_text}",
+                        series_id=series_id,
+                    )
+                )
+            elif series_id:
+                seen_ranges[series_id] = data_range_text
             issues.extend(_validate_series_structure(series))
             issues.extend(_validate_layout_intent(series))
             issues.extend(_validate_implementation_support(series))
