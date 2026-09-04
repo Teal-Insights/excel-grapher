@@ -196,6 +196,54 @@ def test_formula_evaluator_parity_still_holds() -> None:
     assert shocked == pytest.approx(_DEFAULT_SHOCKED, abs=1e-9)
 
 
+def test_time_period_domain_matches_output_header(tiny_dsa_pkg) -> None:
+    from fastpyxl import load_workbook
+
+    book = load_workbook(_WORKBOOK, data_only=True)
+    header = tuple(book["Outputs"][f"{col}11"].value for col in "BCDEF")
+    assert header == tiny_dsa_pkg.data.TIME_PERIOD_DOMAIN
+    data = tiny_dsa_pkg.data
+    computes = (
+        tiny_dsa_pkg.compute_output_baseline,
+        tiny_dsa_pkg.compute_output_shocked,
+        tiny_dsa_pkg.compute_output_delta,
+    )
+    kwargs = {
+        "country_name": data.COUNTRY_NAME_DEFAULT,
+        "country_initial_debt": data.COUNTRY_INITIAL_DEBT_DEFAULT,
+        "growth_baseline": data.GROWTH_BASELINE_DEFAULT,
+        "interest_baseline": data.INTEREST_BASELINE_DEFAULT,
+        "primary_balance_baseline": data.PRIMARY_BALANCE_BASELINE_DEFAULT,
+    }
+    shock = {
+        "shock_year": data.SHOCK_YEAR_DEFAULT,
+        "shock_type": data.SHOCK_TYPE_DEFAULT,
+        "shock_magnitudes": data.SHOCK_MAGNITUDES_DEFAULT,
+    }
+    for compute in computes:
+        assert compute.__key__ == ("TIME_PERIOD",)
+        assert compute.__domain__ == header
+        args = kwargs if compute is tiny_dsa_pkg.compute_output_baseline else {**kwargs, **shock}
+        result = compute(**args)
+        assert len(compute.__domain__) == len(result)
+        last_year = header[-1]
+        assert result[data.TIME_PERIOD_DOMAIN.index(last_year)] == result[-1]
+
+
+def test_internals_helpers_publish_key_domains(tiny_dsa_pkg) -> None:
+    for name in (
+        "output_baseline",
+        "output_shocked",
+        "output_delta",
+        "baseline_path_internal",
+        "shocked_path_internal",
+        "shock_active",
+    ):
+        helper = getattr(tiny_dsa_pkg.internals, name)
+        assert helper.__key__ == ("TIME_PERIOD",)
+        assert len(helper.__domain__) > 0
+
+
 def test_public_computes_require_catalog_order_arrays(tiny_dsa_pkg) -> None:
     source = inspect.getsource(tiny_dsa_pkg.api)
     assert "trim(" not in source
