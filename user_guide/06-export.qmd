@@ -100,6 +100,10 @@ uv run excel-grapher bindings validate model.xlsx \
   --paradigm inverted_tree --smoke-test --emit-dir ./generated
 ```
 
+Models with non-literal `OFFSET` / `INDEX` / `INDIRECT` also need
+`--constraints path/to/constraints.py` (or `--use-cached-dynamic-refs`). See
+[Command-line interface](cli.qmd).
+
 `--smoke-test` with inverted-tree calls each `compute_*` using the workbook-default input arrays
 emitted in `data.py` (`SERIES_DEFAULT`). Setter smoke is ctx-only; inverted-tree has no setters.
 

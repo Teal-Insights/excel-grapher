@@ -5,7 +5,6 @@ See `plans/inverted-tree-scheduling.md` §12 and `tests/fixtures/local/corpus.to
 
 from __future__ import annotations
 
-import importlib.util
 import inspect
 import tomllib
 from collections.abc import Mapping, Sequence
@@ -22,6 +21,12 @@ from excel_grapher.exporter.inverted_tree.deps import SeriesDeps, collect_all_de
 from excel_grapher.exporter.inverted_tree.emit import generate_inverted_tree_modules
 from excel_grapher.exporter.inverted_tree.schedule import tarjan_series_sccs
 from excel_grapher.grapher import create_dependency_graph
+from excel_grapher.grapher.constraints import (
+    constraints_table,
+)
+from excel_grapher.grapher.constraints import (
+    load_constraints_module as load_constraints_module_required,
+)
 from excel_grapher.grapher.dynamic_refs import DynamicRefConfig
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings.load import load_series_bindings
@@ -88,18 +93,13 @@ def load_constraints_module(path: Path | None) -> ModuleType | None:
     """Import a constraints module from `path`, or return None."""
     if path is None or not path.is_file():
         return None
-    spec = importlib.util.spec_from_file_location(f"corpus_constraints_{path.stem}", path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load constraints module {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return load_constraints_module_required(path)
 
 
 def _dynamic_refs(constraints: ModuleType | None) -> DynamicRefConfig | None:
     if constraints is None:
         return None
-    table = getattr(constraints, "CONSTRAINTS", None)
+    table = constraints_table(constraints)
     if not table:
         return None
     return DynamicRefConfig.from_constraints(table, {})

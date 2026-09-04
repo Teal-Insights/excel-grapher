@@ -25,6 +25,7 @@ from excel_grapher.series_bindings.types import (
 from excel_grapher.series_bindings.validate import validate_series_bindings
 
 if TYPE_CHECKING:
+    from excel_grapher.grapher.dynamic_refs import DynamicRefConfig
     from excel_grapher.grapher.graph import DependencyGraph
 
 
@@ -242,15 +243,28 @@ def resolve_bindings_path(workbook: Path, bindings: Path | None = None) -> Path:
 def validate_bindings_workbook(
     workbook: Path,
     bindings_path: Path,
+    *,
+    dynamic_refs: DynamicRefConfig | None = None,
+    use_cached_dynamic_refs: bool = True,
 ) -> BindingsCheckResult:
-    """Load bindings, build the graph, and validate against the workbook."""
+    """Load bindings, build the graph, and validate against the workbook.
+
+    Args:
+        workbook: Path to the `.xlsx` workbook.
+        bindings_path: Binding sidecar file or shard directory.
+        dynamic_refs: Constraint-based OFFSET/INDEX/INDIRECT config. Ignored
+            when `use_cached_dynamic_refs` is True.
+        use_cached_dynamic_refs: Resolve dynamic refs from cached workbook
+            values. Default True preserves the previous library behavior.
+    """
     bindings = load_series_bindings(bindings_path)
     targets = all_series_targets(bindings, workbook=workbook)
     graph = create_dependency_graph(
         workbook,
         targets,
         load_values=True,
-        use_cached_dynamic_refs=True,
+        use_cached_dynamic_refs=use_cached_dynamic_refs,
+        dynamic_refs=dynamic_refs,
     )
     report = validate_series_bindings(graph, bindings, workbook=workbook)
     return {
@@ -294,9 +308,16 @@ def run_binding_checks(
     package_name: str = "bindings_module",
     smoke_test: bool = True,
     paradigm: Literal["ctx", "inverted_tree"] = "ctx",
+    dynamic_refs: DynamicRefConfig | None = None,
+    use_cached_dynamic_refs: bool = True,
 ) -> BindingsCheckResult:
     """Validate bindings, optionally smoke-test generated public functions."""
-    result = validate_bindings_workbook(workbook, bindings_path)
+    result = validate_bindings_workbook(
+        workbook,
+        bindings_path,
+        dynamic_refs=dynamic_refs,
+        use_cached_dynamic_refs=use_cached_dynamic_refs,
+    )
     report = result["report"]
     if not report["ok"]:
         errors = [issue for issue in report["issues"] if issue["level"] == "error"]
