@@ -668,6 +668,13 @@ def _emit_index(node: FunctionCallNode, ctx: EmitContext) -> str:
         covered = covering_series(ctx.catalog, column_cells)
         if covered is None:
             raise _host_export_error(ctx, "INDEX column is not a bound series")
+        if covered.layout == "matrix" or covered.block_width > 1:
+            # The range overhangs the bound block (Q-CRAFT: a 28-column window
+            # over a 22-column block) but the accessed column is inside it.
+            # Index the block by row stride and column, never the flat row.
+            slot = ctx.lookup_anchor_slot
+            ctx.lookup_anchor_slot += 1
+            return _emit_index_into_block(covered, start, row_expr, col_expr, ctx, slot)
         name = ctx.param(covered.series_id)
         return f"{ctx.use('xl_at')}({name}, ({row_expr}) - 1)"
     table = emit_expr(node.args[0], ctx)
