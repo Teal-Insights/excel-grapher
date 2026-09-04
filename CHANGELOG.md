@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v12.7.0 (2026-09-04)
+
+### Bug Fixes
+
+- **core**: Compare with Excel type-rank, including the array fastpath
+  ([#658](https://github.com/Teal-Insights/excel-grapher/pull/658),
+  [`24a9196`](https://github.com/Teal-Insights/excel-grapher/commit/24a91964c4395d7a5c63c5e4aa4a47b0ed97edef))
+
+- **core**: Share type-rank comparison with inverted-tree runtime
+  ([#658](https://github.com/Teal-Insights/excel-grapher/pull/658),
+  [`24a9196`](https://github.com/Teal-Insights/excel-grapher/commit/24a91964c4395d7a5c63c5e4aa4a47b0ed97edef))
+
+- **export**: Classify INDEX/OFFSET access then emit via affine anchors
+  ([#658](https://github.com/Teal-Insights/excel-grapher/pull/658),
+  [`24a9196`](https://github.com/Teal-Insights/excel-grapher/commit/24a91964c4395d7a5c63c5e4aa4a47b0ed97edef))
+
+- **export**: Fail closed only on several host±1 seeds
+  ([#658](https://github.com/Teal-Insights/excel-grapher/pull/658),
+  [`24a9196`](https://github.com/Teal-Insights/excel-grapher/commit/24a91964c4395d7a5c63c5e4aa4a47b0ed97edef))
+
+- **export**: Type inverted-tree operator wrappers as FormulaValue
+  ([#658](https://github.com/Teal-Insights/excel-grapher/pull/658),
+  [`24a9196`](https://github.com/Teal-Insights/excel-grapher/commit/24a91964c4395d7a5c63c5e4aa4a47b0ed97edef))
+
+### Features
+
+- **export**: Add local inverted-tree workbook corpus harness
+  ([#658](https://github.com/Teal-Insights/excel-grapher/pull/658),
+  [`24a9196`](https://github.com/Teal-Insights/excel-grapher/commit/24a91964c4395d7a5c63c5e4aa4a47b0ed97edef))
+
+- **export**: Derive inverted-tree INDEX/OFFSET access from graph edges
+  ([#658](https://github.com/Teal-Insights/excel-grapher/pull/658),
+  [`24a9196`](https://github.com/Teal-Insights/excel-grapher/commit/24a91964c4395d7a5c63c5e4aa4a47b0ed97edef))
+
+### Testing
+
+- **core**: Type-rank equality for numeric-string ndarray pairs
+  ([#658](https://github.com/Teal-Insights/excel-grapher/pull/658),
+  [`24a9196`](https://github.com/Teal-Insights/excel-grapher/commit/24a91964c4395d7a5c63c5e4aa4a47b0ed97edef))
+
+
 ## v12.6.2 (2026-09-04)
 
 ### Bug Fixes
