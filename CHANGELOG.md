@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v12.7.2 (2026-09-04)
+
+### Bug Fixes
+
+- **export**: Index fused partition seeds with _area
+  ([#661](https://github.com/Teal-Insights/excel-grapher/pull/661),
+  [`959bd1a`](https://github.com/Teal-Insights/excel-grapher/commit/959bd1a1b1b21db91055cdfa6dac4e0f6b8527e2))
+
+### Testing
+
+- **export**: Replace inverted-tree generator wall-clock bounds with op counts
+  ([#660](https://github.com/Teal-Insights/excel-grapher/pull/660),
+  [`a83b75d`](https://github.com/Teal-Insights/excel-grapher/commit/a83b75d857c86bab16fe69353f1765a3505b1769))
+
+
 ## v12.7.1 (2026-09-04)
 
 ### Bug Fixes
