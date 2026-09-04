@@ -39,58 +39,59 @@ def broadcast_pair(
     raise TypeError("expected at least one ndarray operand")
 
 
+def _compare_rank_key(value: FormulaValue) -> tuple[int, float | str | bool]:
+    """Return `(type_rank, key)` using Excel's number < text < logical order.
+
+    A blank (`None`) compares as the number `0`. The empty string is text.
+    Comparison never coerces across types.
+    """
+    if value is None:
+        return 0, 0.0
+    if isinstance(value, bool):
+        return 2, value
+    if isinstance(value, int | float):
+        return 0, float(value)
+    if isinstance(value, str):
+        return 1, excel_casefold(value)
+    return 1, excel_casefold(to_string(value))
+
+
+def _apply_cmp(op: str, cmp: int) -> bool:
+    if op == "=":
+        return cmp == 0
+    if op == "<>":
+        return cmp != 0
+    if op == "<":
+        return cmp < 0
+    if op == ">":
+        return cmp > 0
+    if op == "<=":
+        return cmp <= 0
+    if op == ">=":
+        return cmp >= 0
+    raise ValueError(f"Unknown comparison operator: {op}")
+
+
 def compare_scalars(op: str, left: FormulaValue, right: FormulaValue) -> bool | XlError:
-    """Compare two scalar cell values using Excel coercion rules."""
+    """Compare two scalar cell values using Excel type-rank rules."""
     if isinstance(left, XlError):
         return left
     if isinstance(right, XlError):
         return right
 
-    def _cmp_str(a: str, b: str) -> bool:
-        if op == "=":
-            return a == b
-        if op == "<>":
-            return a != b
-        if op == "<":
-            return a < b
-        if op == ">":
-            return a > b
-        if op == "<=":
-            return a <= b
-        if op == ">=":
-            return a >= b
-        raise ValueError(f"Unknown comparison operator: {op}")
-
-    def _cmp_float(a: float, b: float) -> bool:
-        if op == "=":
-            return a == b
-        if op == "<>":
-            return a != b
-        if op == "<":
-            return a < b
-        if op == ">":
-            return a > b
-        if op == "<=":
-            return a <= b
-        if op == ">=":
-            return a >= b
-        raise ValueError(f"Unknown comparison operator: {op}")
-
-    if isinstance(left, str) and isinstance(right, str):
-        return _cmp_str(excel_casefold(left), excel_casefold(right))
-
-    # Exact empty text compares as 0 (Excel); whitespace-only does not coerce.
-    if isinstance(left, str) and left == "":
-        left = 0.0
-    if isinstance(right, str) and right == "":
-        right = 0.0
-
-    ln = to_number(left)
-    rn = to_number(right)
-    if isinstance(ln, XlError) or isinstance(rn, XlError):
-        return _cmp_str(excel_casefold(to_string(left)), excel_casefold(to_string(right)))
-
-    return _cmp_float(float(ln), float(rn))
+    left_rank, left_key = _compare_rank_key(left)
+    right_rank, right_key = _compare_rank_key(right)
+    if left_rank != right_rank:
+        cmp = -1 if left_rank < right_rank else 1
+    elif left_key == right_key:
+        cmp = 0
+    elif left_rank == 0:
+        cmp = -1 if float(left_key) < float(right_key) else 1
+    elif left_rank == 1:
+        cmp = -1 if str(left_key) < str(right_key) else 1
+    else:
+        cmp = -1 if bool(left_key) < bool(right_key) else 1
+    return _apply_cmp(op, cmp)
 
 
 def concat_scalars(left: CellValue, right: CellValue) -> str:

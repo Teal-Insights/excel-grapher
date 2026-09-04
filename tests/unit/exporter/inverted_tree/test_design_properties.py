@@ -159,6 +159,46 @@ def _a22_shift_k_bindings() -> dict[str, Any]:
     return a22_shift_k._stride_k_bindings(5)
 
 
+def _compare_workbook(tmp_path: Path) -> Path:
+    """Type-rank comparison + arithmetic coercion (#651)."""
+    return write_workbook(
+        tmp_path / "compare_rank.xlsx",
+        {
+            "Engine": {
+                "A1": True,
+                "B1": 100,
+                "C1": "=A1>B1",
+                "A2": "10",
+                "B2": 10,
+                "C2": "=A2=B2",
+                "A3": "",
+                "B3": 0,
+                "C3": "=A3=B3",
+                "A4": "abc",
+                "B4": "ABC",
+                "C4": "=A4=B4",
+                "A5": "a",
+                "B5": 1,
+                "C5": "=A5<B5",
+                "A6": "10",
+                "B6": 2,
+                "C6": "=A6+B6",
+                "A7": True,
+                "B7": 1,
+                "C7": "=A7=B7",
+            }
+        },
+    )
+
+
+def _compare_bindings() -> dict[str, Any]:
+    return bindings_document(
+        series_entry("left", "Engine!A1:A7", layout="series", direction="input"),
+        series_entry("right", "Engine!B1:B7", layout="series", direction="input"),
+        series_entry("result", "Engine!C1:C7", layout="series", direction="output"),
+    )
+
+
 # Cases a property test cannot yet pass must use `pytest.mark.xfail(strict=True)`,
 # not a silent filter (#633, #640). `_CORPUS` is the full oracle.
 _CORPUS: list[tuple[str, Callable[[Path], Path], Callable[[], dict[str, Any]]]] = [
@@ -176,6 +216,7 @@ _CORPUS: list[tuple[str, Callable[[Path], Path], Callable[[], dict[str, Any]]]] 
     ("a22_guarded", a22_guarded._series_may_cycle_workbook, a22_guarded._series_may_cycle_bindings),
     ("a22_shift_k", _a22_shift_k_workbook, _a22_shift_k_bindings),
     ("country_table", _country_table_workbook, _country_table_bindings),
+    ("compare_rank", _compare_workbook, _compare_bindings),
 ]
 
 
