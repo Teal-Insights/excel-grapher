@@ -51,7 +51,8 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     validate_parser.add_argument(
         "--smoke-test",
         action="store_true",
-        help="Generate modules and smoke-test setters/computes after validation",
+        help="Generate modules and smoke-test after validation "
+        "(ctx: setters/computes; inverted_tree: compute_* with data.py defaults)",
     )
     validate_parser.add_argument(
         "--emit-dir",
@@ -68,7 +69,8 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         "--paradigm",
         choices=("ctx", "inverted_tree"),
         default="ctx",
-        help="Codegen paradigm (default: ctx). inverted_tree emits leaf-closure computes.",
+        help="Codegen paradigm. inverted_tree is recommended for series-binding packages; "
+        "the library default remains ctx until the #662 default-flip gate.",
     )
 
 
@@ -156,7 +158,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
     if not args.json and args.smoke_test:
         if args.paradigm == "inverted_tree":
-            print("Generated inverted-tree modules (setter smoke skipped).")
+            print("All inverted-tree compute functions passed smoke checks.")
         else:
             print("All setter and compute functions passed smoke checks.")
     return 0

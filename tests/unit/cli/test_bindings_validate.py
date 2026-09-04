@@ -359,7 +359,7 @@ def test_main_emit_inverted_tree_paradigm(
 
     captured = capsys.readouterr()
     assert exit_code == 0, captured.err
-    assert "setter smoke skipped" in captured.out
+    assert "inverted-tree compute functions passed smoke checks" in captured.out
     api = (emit_dir / "inv_pkg" / "api.py").read_text(encoding="utf-8")
     assert "def make_context" not in api
     assert "def set_" not in api

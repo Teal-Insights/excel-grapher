@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import inspect
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings.normalize import effective_dimension_id
@@ -373,6 +374,67 @@ def smoke_test_computes(
                     raise BindingsSmokeError(f"Compute {name!r} record missing key field {field!r}")
 
 
+def smoke_test_inverted_tree_computes(
+    pkg: Any,
+    compute_function_names: list[str],
+    *,
+    bindings: WorkbookSeriesBindings,
+    graph: DependencyGraph,
+    workbook: Path,
+) -> None:
+    """Call each inverted-tree `compute_*` with workbook-default input leaves."""
+    data = importlib.import_module(f"{pkg.__name__}.data")
+    concept_scheme = bindings.get("concept_scheme")
+    scheme = concept_scheme if isinstance(concept_scheme, dict) else None
+    for name in compute_function_names:
+        compute = getattr(pkg, name)
+        series = _series_for_compute(bindings, name)
+        resolved = resolve_series_binding(
+            graph,
+            workbook,
+            series,
+            concept_scheme=scheme,
+            direction="output",
+        )
+        if not resolved["ok"]:
+            raise BindingsSmokeError(f"Compute {name!r} resolution failed: {resolved['issues']}")
+        expected_count = len(resolved["leaves"])
+        kwargs = _inverted_tree_default_kwargs(compute, data)
+        try:
+            result = compute(**kwargs)
+        except Exception as exc:
+            raise BindingsSmokeError(
+                f"Compute {name!r} raised {type(exc).__name__}: {exc}"
+            ) from exc
+        if not isinstance(result, tuple):
+            raise BindingsSmokeError(
+                f"Compute {name!r} did not return a tuple (got {type(result).__name__})"
+            )
+        if len(result) != expected_count:
+            raise BindingsSmokeError(
+                f"Compute {name!r} returned {len(result)} values, expected {expected_count}"
+            )
+
+
+def _inverted_tree_default_kwargs(compute: Callable[..., Any], data: Any) -> dict[str, Any]:
+    """Bind required compute parameters from `data.py` `*_DEFAULT` leaves."""
+    kwargs: dict[str, Any] = {}
+    for name, param in inspect.signature(compute).parameters.items():
+        if param.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}:
+            continue
+        if param.default is not inspect.Parameter.empty:
+            continue
+        default_name = f"{name.upper()}_DEFAULT"
+        if not hasattr(data, default_name):
+            compute_name = getattr(compute, "__name__", "compute")
+            raise BindingsSmokeError(
+                f"Compute {compute_name!r} required argument {name!r} has no "
+                f"{default_name} in data.py"
+            )
+        kwargs[name] = getattr(data, default_name)
+    return kwargs
+
+
 def smoke_test_bindings_module(
     files: dict[str, str],
     *,
@@ -381,10 +443,20 @@ def smoke_test_bindings_module(
     workbook: Path,
     module_dir: Path,
     package_name: str,
+    paradigm: Literal["ctx", "inverted_tree"] = "ctx",
 ) -> None:
-    """Import generated modules and smoke-test all declared setters and computes."""
+    """Import generated modules and smoke-test the paradigm's public computes."""
     pkg = _import_generated_package(files, package_name=package_name, output_dir=module_dir)
     try:
+        if paradigm == "inverted_tree":
+            smoke_test_inverted_tree_computes(
+                pkg,
+                compute_names(bindings),
+                bindings=bindings,
+                graph=graph,
+                workbook=workbook,
+            )
+            return
         ctx = pkg.make_context()
         smoke_test_computes(
             pkg,
