@@ -52,6 +52,8 @@ _DTYPE_READ = {
     "string": "str",
     "str": "str",
     "bool": "bool",
+    "datetime": "datetime",
+    "date": "datetime",
 }
 
 

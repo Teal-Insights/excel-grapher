@@ -57,11 +57,145 @@ For a multi-file package, `generate_modules()` returns a `dict[str, str]` keyed 
 (`__init__.py`, `api.py`, `data.py`, `runtime.py`, `internals.py`). Write those files into a package
 directory of your choice, then import the package as usual.
 
-Every export — single-file and modular — also emits two zero-argument discovery helpers,
+**Series-binding packages should use inverted-tree.** Pass
+`paradigm="inverted_tree"` (CLI: `--paradigm inverted_tree`). Each `compute_*` is an ordinary
+function whose arguments are the input leaf closure of that output; there is no `EvalContext`, no
+`set_*` / `read_*`, and no `make_context`. The library default is still `paradigm="ctx"` until the
+default-flip gate in [issue 662](https://github.com/Teal-Insights/excel-grapher/issues/662) (local
+workbook pool green on tiny-DSA, Q-CRAFT, **and LIC-DSF**, plus the port follow-ups below).
+
+Single-file `generate()` stays the cell-function export (`cell_*` + `compute_all`). Return-line
+unpacking, sparse `DEFAULT_INPUTS`, and `make_context(inputs=…)` apply to that path and to
+`paradigm="ctx"` modules.
+
+Every **ctx** export — single-file and modular — also emits two zero-argument discovery helpers,
 `list_setters()` and `list_computes()`, that return the names of the generated series-binding
 `set_*` and `compute_*` functions (empty lists when no series bindings are supplied). In the
-modular build they live in `api.py` and are re-exported from the package root, so downstream
-tooling can enumerate the generated callable surface without parsing source.
+modular build they live in `api.py` and are re-exported from the package root. Inverted-tree
+packages expose computes via `api.__all__` instead.
+
+## Inverted-tree packages
+
+```python
+from pathlib import Path
+
+from excel_grapher.exporter import CodeGenerator
+from excel_grapher.series_bindings import load_series_bindings
+
+workbook_path = Path("model.xlsx")
+bindings = load_series_bindings(workbook_path.with_suffix(".bindings.yaml"))
+
+with CodeGenerator(graph) as gen:
+    modules = gen.generate_modules(
+        series_bindings=bindings,
+        bindings_workbook=workbook_path,
+        paradigm="inverted_tree",
+    )
+```
+
+CLI equivalent:
+
+```bash
+uv run excel-grapher bindings validate model.xlsx \
+  --paradigm inverted_tree --smoke-test --emit-dir ./generated
+```
+
+`--smoke-test` with inverted-tree calls each `compute_*` using the workbook-default input arrays
+emitted in `data.py` (`SERIES_DEFAULT`). Setter smoke is ctx-only; inverted-tree has no setters.
+
+### What the package looks like
+
+| Module | Role |
+|--------|------|
+| `api.py` | Keyword-only `compute_*` orchestrators. The signature is the **input** leaf closure; **constant** leaves are read from `data` (`data.CONSTANT_X`, listed on `__constants__`) rather than passed as defaulted kwargs. |
+| `data.py` | Catalog-order tuples (and scalars) for constants and `*_DEFAULT` inputs. Measure dtypes include `int`, `float`, `str`, `bool`, and `datetime`. |
+| `internals.py` | First-level-dependency helpers and fused / demand-driven scans. |
+| `runtime.py` | Excel operators shared with `core/` (comparisons, arithmetic, `EXP`, `MATCH`, …). Missing worksheet functions **fail closed** at export rather than embedding the ctx `xl_*` library. |
+
+Call a compute with sequences in catalog order (the expansion order of `data_range`, after
+`exclude_rows` / `exclude_columns`):
+
+```python
+from generated import compute_output_baseline
+
+result = compute_output_baseline(
+    country_name="Borvelia",
+    growth_baseline=(3.5, 3.5, 3.5, 3.5, 3.5),
+    interest_baseline=(5.0, 5.0, 5.0, 5.0, 5.0),
+    primary_balance_baseline=(-1.0, -1.0, -1.0, -1.0, -1.0),
+    country_initial_debt=60.0,
+)
+# result is a tuple of measures (numbers or Excel error-code strings such as "#DIV/0!")
+```
+
+### Records view (`as_records` recipe)
+
+Inverted-tree computes return **tuples**, not ctx `Records` (`list[dict]`). Zip the tuple with the
+dimension keys you already have from the sidecar (header row, scenario list, …):
+
+```python
+def as_records(
+    values: tuple[object, ...],
+    *,
+    time_periods: tuple[int, ...],
+    measure: str = "OBS_VALUE",
+) -> list[dict[str, object]]:
+    return [
+        {"TIME_PERIOD": period, measure: value}
+        for period, value in zip(time_periods, values, strict=True)
+    ]
+```
+
+For a matrix, nest or flatten the same way `expand_data_range` ordered the cells. Do not expect a
+generated `read_*` or `compute_*(ctx) -> Records` wrapper; that is the ctx façade.
+
+## Migrating from ctx
+
+| ctx | inverted-tree |
+|-----|----------------|
+| `make_context()` then `set_<series>(ctx, records)` | Pass the series as a `compute_*` argument (scalar or `tuple` / `Sequence` in catalog order). |
+| `input.mode: override` non-leaf setters | Bind the cells as **inputs** if callers must vary them; otherwise they stay formula internals. |
+| `read_<series>()` / `input.reader` | Import `data.SERIES` (constants) or pass the value you would have read. |
+| `input.domain` on setters | Not applied to arguments yet (port follow-up). Validate at the call site, or keep ctx until that ports. |
+| `compute_*(ctx) -> Records` | `compute_*(*, input_leaves…) -> tuple[…]`. Use the `as_records` recipe above. |
+| `output.compute.helper` collapsed helpers | Every output is already a leaf-closure function; drop the helper name. |
+| `CONSTANTS` `MappingProxyType` / sparse leaf store | Dense `data.py` tuples. Mutating a constant is a `data.py` override ([issue 663](https://github.com/Teal-Insights/excel-grapher/issues/663)). |
+| Range-watch invalidation on `EvalContext` | N/A — arguments are immutable for the call. Pass new values. |
+| `list_setters()` / `list_computes()` | `api.__all__` (compute names only). |
+
+Bindings features that already apply before codegen — complementary shards / list `data_range`,
+`sheet_name` and `value_map` keys, `exclude_rows` / `exclude_columns`, `layout: matrix`, named
+ranges in `data_range` — work with inverted-tree because the catalog consumes the merged sidecar.
+
+Shapes that **fail closed** (export error, not a silent wrong answer): `INDIRECT` still in the
+formula AST, `SUMPRODUCT` / `SUM` of a range, `IFERROR`, whole-column / whole-row refs, cross-sheet
+3-D ranges, and any `xl_<name>` with no inverted-tree runtime helper. Port those per workbook
+corpus, the same way `EXP` and 2-D `INDEX` landed. Array spill ([issue 284](https://github.com/Teal-Insights/excel-grapher/issues/284))
+and array-style `SUM(IF(…))` ([issue 483](https://github.com/Teal-Insights/excel-grapher/issues/483))
+stay open for both paradigms.
+
+Projection, `embed`, and visualization exports are not codegen paradigms; they are unchanged.
+
+## Deprecation plan for `ctx`
+
+The default does **not** flip in this release. Gate (all required):
+
+1. Local inverted-tree workbook pool ([issue 656](https://github.com/Teal-Insights/excel-grapher/issues/656) §12) green on tiny-DSA, Q-CRAFT, **and LIC-DSF**.
+2. Shared operator / comparison implementation ([issue 651](https://github.com/Teal-Insights/excel-grapher/issues/651)) — landed.
+3. Audit [issue 662](https://github.com/Teal-Insights/excel-grapher/issues/662) closed; `port` rows shipped or linked.
+
+Then, in **three** subsequent library releases:
+
+| Release | Behavior |
+|---------|----------|
+| Flip | `generate_modules` / `--paradigm` default becomes `inverted_tree`. Passing `paradigm="ctx"` emits `DeprecationWarning`. |
+| Warn | Default stays `inverted_tree`; `ctx` still works with the warning. |
+| Remove | `paradigm="ctx"` is an error; `exporter/codegen.py` ctx series-binding emission and `pass1/` can be deleted. |
+
+Single-file `generate()` is out of that sequence until a separate decision; it has no inverted-tree
+equivalent today.
+
+The completed audit table lives in [`plans/ctx-to-inverted-tree-audit.md`](../plans/ctx-to-inverted-tree-audit.md).
 
 ## Series bindings
 
@@ -87,7 +221,7 @@ code = CodeGenerator(graph).generate(
 
 ## Series docstring callbacks
 
-When exporting series bindings, you can attach structured docstrings to generated `set_*` and
+When exporting **ctx** series bindings, you can attach structured docstrings to generated `set_*` and
 series output `compute_*` functions by passing a callback directly or by registering a reusable
 callback name for project-wide use:
 
@@ -209,9 +343,10 @@ In-place `DependencyGraph.compress_identity_transits()` remains available for de
 graph simplification; prefer projections for Python codegen, Excel write-back, and viz
 workflows.
 
-## Exported code sketch
+## Exported code sketch (`generate()`, ctx)
 
-Build a tiny two-cell graph (`S!A1` leaf, `S!B1 = S!A1*2`) and generate standalone code:
+Build a tiny two-cell graph (`S!A1` leaf, `S!B1 = S!A1*2`) and generate standalone **single-file**
+code. This is the ctx cell-function export, not an inverted-tree package:
 
 ```{python}
 from excel_grapher import DependencyGraph, Node

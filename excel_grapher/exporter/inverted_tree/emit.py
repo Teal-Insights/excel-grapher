@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -59,6 +60,15 @@ def _py_literal(value: object) -> str:
         return "True" if value else "False"
     if isinstance(value, int | float | str):
         return repr(value)
+    if isinstance(value, datetime):
+        return (
+            "datetime("
+            f"{value.year}, {value.month}, {value.day}, "
+            f"{value.hour}, {value.minute}, {value.second}"
+            f"{f', {value.microsecond}' if value.microsecond else ''})"
+        )
+    if isinstance(value, date):
+        return f"datetime({value.year}, {value.month}, {value.day})"
     if isinstance(value, tuple | list):
         parts = ", ".join(_py_literal(item) for item in value)
         if isinstance(value, list):
@@ -124,6 +134,12 @@ def _cell_value(graph: DependencyGraph, address: str, dtype: str) -> object:
             return str(value)
         if dtype == "bool":
             return bool(value)
+        if dtype in {"datetime", "date"}:
+            if isinstance(value, datetime):
+                return value
+            if isinstance(value, date):
+                return datetime(value.year, value.month, value.day)
+            raise ValueError(f"{value!r} is not a datetime")
     except (TypeError, ValueError) as exc:
         raise InvertedTreeExportError(
             f"cell {address}: cannot read {dtype} value {value!r}"
@@ -140,6 +156,10 @@ def _series_values(series: BoundSeries, graph: DependencyGraph) -> object:
     return tuple(values)
 
 
+def _uses_datetime(catalog: SeriesCatalog) -> bool:
+    return any(series.python_dtype == "datetime" for series in catalog.series.values())
+
+
 def emit_data_module(catalog: SeriesCatalog, graph: DependencyGraph) -> str:
     """Emit `data.py` with constant series and workbook-default input arrays."""
     constants = catalog.constant_series()
@@ -149,14 +169,18 @@ def emit_data_module(catalog: SeriesCatalog, graph: DependencyGraph) -> str:
         "from __future__ import annotations",
         "",
     ]
+    stdlib: list[str] = []
     if constants:
-        lines.extend(
+        stdlib.extend(
             [
                 "from collections.abc import Iterator",
                 "from contextlib import contextmanager",
-                "",
             ]
         )
+    if _uses_datetime(catalog):
+        stdlib.append("from datetime import datetime")
+    if stdlib:
+        lines.extend([*stdlib, ""])
     constant_names: list[str] = []
     for series in constants:
         name = _data_const_name(series.series_id)
@@ -340,6 +364,8 @@ def emit_internals_module(
         "from collections.abc import Sequence",
         "",
     ]
+    if _uses_datetime(catalog):
+        lines.extend(["from datetime import datetime", ""])
     if runtime_names:
         names = ", ".join(runtime_names)
         lines.append(f"from .runtime import {names}")
@@ -805,9 +831,13 @@ def emit_api_module(
         "from __future__ import annotations",
         "",
     ]
+    stdlib: list[str] = []
     if needs_sequence:
-        lines.append("from collections.abc import Sequence")
-        lines.append("")
+        stdlib.append("from collections.abc import Sequence")
+    if _uses_datetime(catalog):
+        stdlib.append("from datetime import datetime")
+    if stdlib:
+        lines.extend([*stdlib, ""])
     if uses_data:
         lines.append("from . import data")
     lines.append("from . import internals")

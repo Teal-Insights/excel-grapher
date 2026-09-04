@@ -13,6 +13,7 @@ the tuple.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from datetime import date, datetime
 from typing import NoReturn, TypeGuard, TypeVar, cast
 
 from excel_grapher.core import operators as _core_ops
@@ -49,7 +50,7 @@ def is_error(value: object) -> TypeGuard[str]:
     return isinstance(value, str) and value in XL_ERROR_CODES
 
 
-def as_measure(value: object, dtype: str = "float") -> int | float | str | bool:
+def as_measure(value: object, dtype: str = "float") -> int | float | str | bool | datetime:
     """Coerce a helper result to a measure: number or cached text.
 
     Operators still raise `XlError`. Series-member boundaries catch that and
@@ -72,6 +73,12 @@ def as_measure(value: object, dtype: str = "float") -> int | float | str | bool:
         return str(value)
     if dtype == "bool":
         return bool(value)
+    if dtype == "datetime":
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, date):
+            return datetime(value.year, value.month, value.day)
+        raise TypeError(f"cannot coerce {type(value).__name__} to datetime measure")
     if isinstance(value, bool):
         return float(value)
     if isinstance(value, int | float):

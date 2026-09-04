@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v12.8.0 (2026-09-04)
+
+### Documentation
+
+- Inverted-tree as primary paradigm and ctx deprecation plan
+  ([#665](https://github.com/Teal-Insights/excel-grapher/pull/665),
+  [`32d4174`](https://github.com/Teal-Insights/excel-grapher/commit/32d4174d0c47abdb464ffb91aae142251a5ab5c3))
+
+### Features
+
+- **export**: Smoke inverted-tree computes and emit datetime leaves
+  ([#665](https://github.com/Teal-Insights/excel-grapher/pull/665),
+  [`32d4174`](https://github.com/Teal-Insights/excel-grapher/commit/32d4174d0c47abdb464ffb91aae142251a5ab5c3))
+
+### Testing
+
+- **export**: Probe ctx features against inverted-tree export
+  ([#665](https://github.com/Teal-Insights/excel-grapher/pull/665),
+  [`32d4174`](https://github.com/Teal-Insights/excel-grapher/commit/32d4174d0c47abdb464ffb91aae142251a5ab5c3))
+
+
 ## v12.7.2 (2026-09-04)
 
 ### Bug Fixes
