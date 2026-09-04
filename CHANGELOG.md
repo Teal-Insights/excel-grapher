@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v13.3.0 (2026-09-04)
+
+### Bug Fixes
+
+- **export**: Drop zero row terms from INDIRECT catalog indexes
+  ([#672](https://github.com/Teal-Insights/excel-grapher/pull/672),
+  [`0a7b3c5`](https://github.com/Teal-Insights/excel-grapher/commit/0a7b3c584ffc308157bc397a39f68fcd8d5ad20a))
+
+### Features
+
+- **export**: Lower inverted-tree INDIRECT from graph edges
+  ([#672](https://github.com/Teal-Insights/excel-grapher/pull/672),
+  [`0a7b3c5`](https://github.com/Teal-Insights/excel-grapher/commit/0a7b3c584ffc308157bc397a39f68fcd8d5ad20a))
+
+
 ## v13.2.1 (2026-09-04)
 
 ### Bug Fixes
