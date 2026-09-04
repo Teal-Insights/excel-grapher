@@ -341,3 +341,28 @@ def test_sum_and_sumproduct_of_bound_series_match_evaluator(tmp_path: Path) -> N
     assert _scalar(pkg.compute_prod_out(left=(1.0, 2.0), right=(3.0, 4.0))) == pytest.approx(
         expected["Outputs!B1"]
     )
+
+
+def test_input_domain_rejects_out_of_range_argument(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "domain.xlsx",
+        {
+            "Inputs": {"A1": 0},
+            "Outputs": {"A1": "=Inputs!A1"},
+        },
+    )
+    document = bindings_document(
+        series_entry(
+            "flag",
+            "Inputs!A1",
+            layout="scalar",
+            direction="input",
+            dtype="int",
+            domain={"enum": [0, 1]},
+        ),
+        series_entry("out", "Outputs!A1", layout="scalar", direction="output", dtype="int"),
+    )
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_domain")
+    assert pkg.compute_out(flag=0) == (0,)
+    with pytest.raises(ValueError, match=r"flag out of domain"):
+        pkg.compute_out(flag=2)

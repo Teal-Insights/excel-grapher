@@ -19,7 +19,11 @@ from excel_grapher.series_bindings import (
     load_series_bindings,
     resolve_series_binding,
 )
-from excel_grapher.series_bindings.input_coerce import coerce_setter_input
+from excel_grapher.series_bindings.input_coerce import (
+    coerce_setter_input,
+    measure_domain_from_series,
+    require_input_domain,
+)
 from excel_grapher.series_bindings.schema import (
     SeriesBindingsSchemaError,
     validate_bindings_document,
@@ -397,3 +401,24 @@ series:
         for name in list(sys.modules):
             if name == "gen" or name.startswith("gen."):
                 sys.modules.pop(name, None)
+
+
+def test_measure_domain_from_series_normalizes_enum() -> None:
+    series = _scalar_string_doc(domain={"enum": ["Alpha", "Beta"]})["series"][0]
+    assert measure_domain_from_series(series) == {"enum": frozenset({"Alpha", "Beta"})}
+    assert measure_domain_from_series(_scalar_string_doc()["series"][0]) is None
+
+
+def test_require_input_domain_scalar_and_sequence() -> None:
+    enum_domain = {"enum": frozenset({0, 1})}
+    require_input_domain(0, enum_domain, series_id="flag")
+    require_input_domain(1, enum_domain, series_id="flag")
+    with pytest.raises(ValueError, match=r"flag out of domain: 2 not in \{0, 1\}"):
+        require_input_domain(2, enum_domain, series_id="flag")
+
+    bounds = {"real_between": {"min": 0, "max": 1}}
+    require_input_domain((0.0, 1.0), bounds, series_id="rate")
+    with pytest.raises(ValueError, match=r"rate\[1\] out of domain"):
+        require_input_domain((0.0, 1.1), bounds, series_id="rate")
+    with pytest.raises(ValueError, match=r"not in real_between"):
+        require_input_domain((0.0, 1.1), bounds, series_id="rate")

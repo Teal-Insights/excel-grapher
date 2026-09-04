@@ -23,7 +23,7 @@ Legend: **port** = inverted-tree should grow the feature; **bindings-equivalent*
 | --- | --- | --- | --- |
 | `set_<series>` input setters, `input.mode` for non-leaf inputs | yes | inputs are arguments | **drop** — by design (#597). Override-mode cells should be bound as `input`. |
 | `read_<series>` / `input.reader` | yes | none | **drop** — import `data.py` or pass the value. |
-| `input.domain` on setters | yes | not applied to arguments | **port** — follow-up: validate required `compute_*` arguments. Until then, validate at the call site. |
+| `input.domain` on setters | yes | yes (#666) | **port shipped** — `require_input_domain` on `compute_*` / `_run_N` arguments. |
 | `make_context` / `inputs=` overlay | yes | none | **drop** — by design. |
 | `output.compute.helper` | yes | every output is a leaf-closure function | **drop**. |
 | Tidy `Records` / `as_records` | yes | tuples only | **bindings-equivalent** — documented recipe in `06-export.qmd`. |
@@ -51,8 +51,6 @@ Legend: **port** = inverted-tree should grow the feature; **bindings-equivalent*
 
 ## Port follow-ups (not shipped here)
 
-1. **`input.domain` on inverted-tree arguments** — [#666](https://github.com/Teal-Insights/excel-grapher/issues/666).
-2. **Whole-column / whole-row / 3-D range / range-aggregate lowering** — shipped in [#667](https://github.com/Teal-Insights/excel-grapher/issues/667).
-3. **`INDIRECT` graph-derived access** — [#668](https://github.com/Teal-Insights/excel-grapher/issues/668).
+1. **`INDIRECT` graph-derived access** — [#668](https://github.com/Teal-Insights/excel-grapher/issues/668).
 
-Already filed: #663 (constants), #593 (façade), #379 (concept names), #284 (spill), #483 (`SUM(IF)`).
+Shipped: #666 (`input.domain`), #667 (range aggregates / remaining refs). Already filed: #663 (constants), #593 (façade), #379 (concept names), #284 (spill), #483 (`SUM(IF)`).
