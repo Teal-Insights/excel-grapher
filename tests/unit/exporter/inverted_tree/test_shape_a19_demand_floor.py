@@ -204,7 +204,7 @@ def test_backward_chain_large_n_matches_closed_form(tmp_path: Path) -> None:
 
 @pytest.mark.slow
 def test_backward_chain_5k_matches_closed_form(tmp_path: Path) -> None:
-    """N=5000 peeled-seed scan; marked slow until planning is O(T + cells) (#637)."""
+    """Backward chain at N=5000 matches the closed form (gh #614, #615, #637)."""
     n = 5000
     got, expected = _backward_chain_closed_form(tmp_path, n)
     assert len(got) == n
