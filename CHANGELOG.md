@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v12.5.1 (2026-09-04)
+
+### Bug Fixes
+
+- **export**: Absolute IF selector is not a year-0 scan seed
+  ([#632](https://github.com/Teal-Insights/excel-grapher/pull/632),
+  [`61f354c`](https://github.com/Teal-Insights/excel-grapher/commit/61f354ce88753b728d9a4cf04349d30f27520442))
+
+- **export**: Coerce string measures in inverted-tree xl_div
+  ([#632](https://github.com/Teal-Insights/excel-grapher/pull/632),
+  [`61f354c`](https://github.com/Teal-Insights/excel-grapher/commit/61f354ce88753b728d9a4cf04349d30f27520442))
+
+- **export**: Do not treat absolute selectors as year-0 scan seeds
+  ([#632](https://github.com/Teal-Insights/excel-grapher/pull/632),
+  [`61f354c`](https://github.com/Teal-Insights/excel-grapher/commit/61f354ce88753b728d9a4cf04349d30f27520442))
+
+- **export**: Index taken windows in rung-3 inverted-tree helpers
+  ([#641](https://github.com/Teal-Insights/excel-grapher/pull/641),
+  [`abadaec`](https://github.com/Teal-Insights/excel-grapher/commit/abadaeca1e511d12a5d92f9bda16723c1fe5e3a2))
+
+### Testing
+
+- **export**: Fix orientation rewrite and rung-3 corpus gaps
+  ([#630](https://github.com/Teal-Insights/excel-grapher/pull/630),
+  [`a07cfb3`](https://github.com/Teal-Insights/excel-grapher/commit/a07cfb3e9f2b8012ea6a829c5d95d700fd24cf41))
+
+- **export**: Inverted-tree design-property suite (#621)
+  ([#630](https://github.com/Teal-Insights/excel-grapher/pull/630),
+  [`a07cfb3`](https://github.com/Teal-Insights/excel-grapher/commit/a07cfb3e9f2b8012ea6a829c5d95d700fd24cf41))
+
+- **export**: Pin inverted-tree design properties
+  ([#630](https://github.com/Teal-Insights/excel-grapher/pull/630),
+  [`a07cfb3`](https://github.com/Teal-Insights/excel-grapher/commit/a07cfb3e9f2b8012ea6a829c5d95d700fd24cf41))
+
+
 ## v12.5.0 (2026-09-03)
 
 ### Bug Fixes
