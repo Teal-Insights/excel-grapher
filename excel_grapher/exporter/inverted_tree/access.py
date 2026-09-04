@@ -19,6 +19,7 @@ from excel_grapher.exporter.inverted_tree.catalog import (
     fit_affine_map,
     preferred_fields,
     schedule_axis_coord,
+    schedule_coord,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 
@@ -217,6 +218,24 @@ def _has_schedule_axis(series: BoundSeries, catalog: SeriesCatalog) -> bool:
     return fields is not None and "TIME_PERIOD" in fields
 
 
+def overlapping_schedule_peer(
+    host: BoundSeries,
+    producer: BoundSeries,
+    catalog: SeriesCatalog,
+) -> bool:
+    """True when `host` and `producer` share a key domain and a schedule coord.
+
+    An overlapping peer is a lagged or aligned series, not a year-0 seed.
+    """
+    host_fields = preferred_fields(host, catalog)
+    prod_fields = preferred_fields(producer, catalog)
+    if host_fields is None or host_fields != prod_fields:
+        return False
+    host_coords = {schedule_coord(cell, catalog) for cell in host.cells}
+    prod_coords = {schedule_coord(cell, catalog) for cell in producer.cells}
+    return bool(host_coords & prod_coords)
+
+
 def is_seed_access(
     host: BoundSeries,
     producer: BoundSeries,
@@ -229,14 +248,12 @@ def is_seed_access(
     """True when this read is a seed: no schedule axis, or host axis ± 1.
 
     A seed is a relative read of a producer with no schedule axis (scalar
-    or unkeyed), or of one at schedule-axis coordinate `host ± 1`.
-    Everything else is an aligned read.
+    or unkeyed), or of one at schedule-axis coordinate `host ± 1` that is
+    not an overlapping keyed peer. Everything else is an aligned read.
     """
     if producer.series_id == host.series_id:
         return False
-    host_fields = preferred_fields(host, catalog)
-    prod_fields = preferred_fields(producer, catalog)
-    if host_fields is not None and host_fields == prod_fields:
+    if overlapping_schedule_peer(host, producer, catalog):
         return False
     if not _has_schedule_axis(producer, catalog):
         return True
@@ -246,6 +263,41 @@ def is_seed_access(
         schedule_axis_coord(producer_cell, catalog)
         == schedule_axis_coord(host_cell, catalog) + delta
     )
+
+
+def unique_seed_or_none(
+    host: BoundSeries,
+    host_cell: CanonicalAddress,
+    catalog: SeriesCatalog,
+    matched: Sequence[CanonicalAddress],
+    *,
+    delta: int,
+) -> CanonicalAddress | None:
+    """Return the unique seed, or `None` when several unkeyed scalars match.
+
+    Raises:
+        InvertedTreeExportError: Several candidate seeds at `host ± 1`.
+    """
+    matched = list(dict.fromkeys(matched))
+    if len(matched) == 1:
+        return matched[0]
+    if not matched:
+        return None
+    adjacent: list[CanonicalAddress] = []
+    for address in matched:
+        owner = catalog.series_for(address)
+        if owner is None or not _has_schedule_axis(owner, catalog):
+            continue
+        if schedule_axis_coord(address, catalog) == schedule_axis_coord(host_cell, catalog) + delta:
+            adjacent.append(address)
+    if len(adjacent) > 1:
+        raise InvertedTreeExportError(
+            f"series {host.series_id!r} cell {host_cell}: "
+            f"ambiguous seed candidates {tuple(matched)}"
+        )
+    if len(adjacent) == 1:
+        return adjacent[0]
+    return None
 
 
 def seed_address(
@@ -273,10 +325,4 @@ def seed_address(
         if not is_seed_access(host, owner, address, host_cell, catalog, delta=delta):
             continue
         matched.append(address)
-    if len(matched) == 1:
-        return matched[0]
-    if not matched:
-        return None
-    raise InvertedTreeExportError(
-        f"series {host.series_id!r} cell {host_cell}: ambiguous seed candidates {tuple(matched)}"
-    )
+    return unique_seed_or_none(host, host_cell, catalog, matched, delta=delta)

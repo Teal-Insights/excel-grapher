@@ -27,7 +27,7 @@ from excel_grapher.core.formula_ast import (
     UnaryOpNode,
     resolve_cell_ref,
 )
-from excel_grapher.exporter.inverted_tree.access import is_seed_access
+from excel_grapher.exporter.inverted_tree.access import is_seed_access, unique_seed_or_none
 from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
     SeriesCatalog,
@@ -212,24 +212,6 @@ def _has_schedule_axis(series: BoundSeries, catalog: SeriesCatalog) -> bool:
     return fields is not None and "TIME_PERIOD" in fields
 
 
-def _overlapping_schedule_peer(
-    host: BoundSeries,
-    producer: BoundSeries,
-    catalog: SeriesCatalog,
-) -> bool:
-    """True when `host` and `producer` share a key domain and a schedule coord.
-
-    An overlapping peer is a lagged or aligned series, not a year-0 seed.
-    """
-    host_fields = preferred_fields(host, catalog)
-    prod_fields = preferred_fields(producer, catalog)
-    if host_fields is None or host_fields != prod_fields:
-        return False
-    host_coords = {schedule_coord(cell, catalog) for cell in host.cells}
-    prod_coords = {schedule_coord(cell, catalog) for cell in producer.cells}
-    return bool(host_coords & prod_coords)
-
-
 def _boundary_index(series: BoundSeries, catalog: SeriesCatalog, *, delta: int) -> int:
     """Return the catalog index of the min (`delta < 0`) or max schedule coord."""
     key = min if delta < 0 else max
@@ -307,13 +289,9 @@ def _adjacent_schedule_ref(
         if not is_seed_access(series, owner, address, host_cell, catalog, delta=delta):
             continue
         matched.append(address)
-    if len(matched) == 1:
-        return matched[0]
-    if matched:
-        raise InvertedTreeExportError(
-            f"series {series.series_id!r} cell {host_cell}: "
-            f"ambiguous seed candidates {tuple(matched)}"
-        )
+    unique = unique_seed_or_none(series, host_cell, catalog, matched, delta=delta)
+    if unique is not None or matched:
+        return unique
     if index != _boundary_index(series, catalog, delta=delta):
         return None
     return _non_peer_seed_ref(ast, host_cell, series, catalog)
