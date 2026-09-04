@@ -9,7 +9,13 @@ from excel_grapher.series_bindings.coerce import coerce_scalar, validate_binding
 from excel_grapher.series_bindings.setter_input_types import EmptyMeasure, Layout, SetterInput
 from excel_grapher.series_bindings.types import Record, Records
 
-__all__ = ["EmptyMeasure", "Layout", "coerce_setter_input"]
+__all__ = [
+    "EmptyMeasure",
+    "Layout",
+    "coerce_setter_input",
+    "measure_domain_from_series",
+    "require_input_domain",
+]
 
 
 def _is_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
@@ -268,6 +274,74 @@ def _value_in_measure_domain(value: object, domain: Mapping[str, Any]) -> bool:
     return True
 
 
+def _is_measure_sequence(value: object) -> TypeGuard[Sequence[object]]:
+    return isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray))
+
+
+def _reject_out_of_domain(
+    value: object,
+    domain: Mapping[str, Any],
+    *,
+    label: str,
+) -> None:
+    """Raise `ValueError` when a non-null `value` is outside `domain`."""
+    if value is None:
+        return
+    if not _value_in_measure_domain(value, domain):
+        raise ValueError(
+            f"{label} out of domain: {value!r} not in {_format_measure_domain(domain)}"
+        )
+
+
+def require_input_domain(
+    value: object,
+    domain: Mapping[str, Any],
+    *,
+    series_id: str,
+) -> None:
+    """Reject a scalar or sequence argument outside `input.domain`.
+
+    Args:
+        value: One measure, or a catalog-order sequence of measures.
+        domain: Normalized `enum` / `between` / `real_between` declaration.
+        series_id: Binding series id used in the error message.
+
+    Raises:
+        ValueError: When any non-`None` member is outside `domain`.
+    """
+    if _is_measure_sequence(value):
+        for index, member in enumerate(value):
+            _reject_out_of_domain(member, domain, label=f"{series_id}[{index}]")
+        return
+    _reject_out_of_domain(value, domain, label=series_id)
+
+
+def measure_domain_from_series(series: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Normalize `input.domain` for codegen and runtime checks."""
+    input_block = series.get("input")
+    if not isinstance(input_block, dict):
+        return None
+    domain = input_block.get("domain")
+    if not isinstance(domain, dict):
+        return None
+    if "enum" in domain:
+        values = domain["enum"]
+        if not isinstance(values, (list, tuple, set, frozenset)):
+            return None
+        return {"enum": frozenset(values)}
+    if "between" in domain:
+        bounds = domain["between"]
+        if not isinstance(bounds, dict):
+            return None
+        return {"between": dict(bounds)}
+    if "real_between" in domain:
+        bounds = domain["real_between"]
+        if not isinstance(bounds, dict):
+            return None
+        return {"real_between": dict(bounds)}
+    return None
+
+
 def _apply_measure_domain(
     records: Records,
     *,
@@ -280,14 +354,11 @@ def _apply_measure_domain(
     for index, record in enumerate(records):
         if measure_field not in record:
             continue
-        value = record[measure_field]
-        if value is None:
-            continue
-        if not _value_in_measure_domain(value, measure_domain):
-            raise ValueError(
-                f"record[{index}]: {measure_field} out of domain: "
-                f"{value!r} not in {_format_measure_domain(measure_domain)}"
-            )
+        _reject_out_of_domain(
+            record[measure_field],
+            measure_domain,
+            label=f"record[{index}]: {measure_field}",
+        )
     return records
 
 

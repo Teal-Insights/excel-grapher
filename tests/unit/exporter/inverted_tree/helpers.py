@@ -100,6 +100,7 @@ def series_entry(
     key: Sequence[str] | None = None,
     key_concept: str = "TIME_PERIOD",
     key_read: str = "int",
+    domain: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a minimal series dict that passes schema validation."""
     sheet = data_range.split("!", 1)[0]
@@ -144,6 +145,8 @@ def series_entry(
     }
     if direction == "input":
         entry["input"] = {"setter": {"name": f"set_{series_id}"}}
+        if domain is not None:
+            entry["input"]["domain"] = dict(domain)
     elif direction == "output":
         entry["output"] = {"compute": {"name": compute_name or f"compute_{series_id}"}}
     elif direction == "internal":

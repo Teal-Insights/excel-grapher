@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v13.1.0 (2026-09-04)
+
+### Features
+
+- **export**: Enforce input.domain on inverted-tree compute arguments
+  ([#670](https://github.com/Teal-Insights/excel-grapher/pull/670),
+  [`a746d4a`](https://github.com/Teal-Insights/excel-grapher/commit/a746d4a70397b531a1c960d191eb01357037f06d))
+
+
+## v13.0.0 (2026-09-04)
+
+### Features
+
+- Import inverted-tree constants from data instead of compute kwargs
+  ([#664](https://github.com/Teal-Insights/excel-grapher/pull/664),
+  [`c2a745c`](https://github.com/Teal-Insights/excel-grapher/commit/c2a745cc5338fc9b8e9b213b501c9bfe132a2016))
+
+- **export**: Import inverted-tree constants from data in compute bodies
+  ([#664](https://github.com/Teal-Insights/excel-grapher/pull/664),
+  [`c2a745c`](https://github.com/Teal-Insights/excel-grapher/commit/c2a745cc5338fc9b8e9b213b501c9bfe132a2016))
+
+### Testing
+
+- **export**: Type inverted-tree constant-count helper as ModuleType
+  ([#664](https://github.com/Teal-Insights/excel-grapher/pull/664),
+  [`c2a745c`](https://github.com/Teal-Insights/excel-grapher/commit/c2a745cc5338fc9b8e9b213b501c9bfe132a2016))
+
+
 ## v12.8.0 (2026-09-04)
 
 ### Documentation

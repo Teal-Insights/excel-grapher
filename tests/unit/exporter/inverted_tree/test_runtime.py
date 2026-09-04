@@ -60,6 +60,18 @@ def test_require_length_rejects_mismatch() -> None:
         require_length((1, 2), 3)
 
 
+def test_require_input_domain_reexports_shared_helper() -> None:
+    from excel_grapher.exporter.inverted_tree.runtime import require_input_domain
+    from excel_grapher.series_bindings.input_coerce import (
+        require_input_domain as shared,
+    )
+
+    assert require_input_domain is shared
+    require_input_domain(0, {"enum": frozenset({0, 1})}, series_id="flag")
+    with pytest.raises(ValueError, match=r"flag out of domain"):
+        require_input_domain(2, {"enum": frozenset({0, 1})}, series_id="flag")
+
+
 def test_take_gathers_by_index() -> None:
     assert take((10, 20, 30, 40, 50), (0, 1, 2)) == (10, 20, 30)
     assert take((10, 20, 30, 40, 50), (1, 3)) == (20, 40)

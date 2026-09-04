@@ -225,6 +225,59 @@ def test_run_binding_checks_smokes_inverted_tree_computes(tmp_path: Path) -> Non
     assert "def compute_z" in result["generated_files"]["api.py"]
 
 
+def test_run_binding_checks_inverted_tree_smoke_with_in_domain_default(
+    tmp_path: Path,
+) -> None:
+    import yaml
+
+    from tests.unit.exporter.inverted_tree.helpers import (
+        bindings_document,
+        series_entry,
+        write_workbook,
+    )
+
+    workbook = write_workbook(
+        tmp_path / "inv.xlsx",
+        {
+            "Inputs": {"A1": 0},
+            "Engine": {"A1": "=Inputs!A1"},
+            "Outputs": {"A1": "=Engine!A1"},
+        },
+    )
+    document = bindings_document(
+        series_entry(
+            "flag",
+            "Inputs!A1",
+            layout="scalar",
+            direction="input",
+            dtype="int",
+            domain={"enum": [0, 1]},
+        ),
+        series_entry("y", "Engine!A1", layout="scalar", direction="internal", dtype="int"),
+        series_entry(
+            "z",
+            "Outputs!A1",
+            layout="scalar",
+            direction="output",
+            dtype="int",
+            compute_name="compute_z",
+        ),
+    )
+    document["workbook"] = "inv.xlsx"
+    bindings_path = tmp_path / "inv.bindings.yaml"
+    bindings_path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+    result = run_binding_checks(
+        workbook,
+        bindings_path,
+        module_dir=tmp_path / "inv_domain_pkg",
+        package_name="inv_domain_pkg",
+        smoke_test=True,
+        paradigm="inverted_tree",
+    )
+    assert "require_input_domain" in result["generated_files"]["api.py"]
+
+
 def test_inverted_tree_smoke_fails_when_compute_returns_wrong_length(tmp_path: Path) -> None:
     from tests.unit.exporter.inverted_tree.helpers import (
         bindings_document,
