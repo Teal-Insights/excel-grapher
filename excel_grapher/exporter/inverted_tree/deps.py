@@ -17,6 +17,7 @@ from excel_grapher.core.address_keys import (
 )
 from excel_grapher.core.excel_function_names import normalize_excel_function_name
 from excel_grapher.core.formula_ast import (
+    AbsoluteAxis,
     AstNode,
     BinaryOpNode,
     CellRefNode,
@@ -156,65 +157,168 @@ def node_formula_ast(graph: DependencyGraph, address: str) -> AstNode:
     return ast
 
 
-def predecessor_address(series: BoundSeries, index: int, catalog: SeriesCatalog) -> str | None:
+def _iter_cell_ref_nodes(node: AstNode) -> Iterator[CellRefNode]:
+    """Yield every `CellRefNode` in `node` (not range endpoints)."""
+    match node:
+        case CellRefNode():
+            yield node
+        case BinaryOpNode(left=left, right=right):
+            yield from _iter_cell_ref_nodes(left)
+            yield from _iter_cell_ref_nodes(right)
+        case UnaryOpNode(operand=operand):
+            yield from _iter_cell_ref_nodes(operand)
+        case FunctionCallNode(args=args):
+            for arg in args:
+                yield from _iter_cell_ref_nodes(arg)
+        case _:
+            return
+
+
+def _ref_shifts_with_host(ref: CellRefNode, host_cell: str) -> bool:
+    """True when `ref` moves with `host_cell` on every axis that differs.
+
+    An absolute axis (`$A$2`, `A$2`, `$A2` on the axis that changes) is a
+    scalar read every period and cannot be a lag.
+    """
+    address = resolve_cell_ref(ref, host_cell)
+    _host_sheet, host_row, host_col = parse_cell_coords(host_cell)
+    _addr_sheet, addr_row, addr_col = parse_cell_coords(address)
+    cell = ref.ref
+    col_locked = addr_col != host_col and isinstance(cell.col, AbsoluteAxis)
+    row_locked = addr_row != host_row and isinstance(cell.row, AbsoluteAxis)
+    return not col_locked and not row_locked
+
+
+def _overlapping_schedule_peer(
+    host: BoundSeries,
+    producer: BoundSeries,
+    catalog: SeriesCatalog,
+) -> bool:
+    """True when `host` and `producer` share a key domain and a schedule coord.
+
+    An overlapping peer is a lagged or aligned series, not a year-0 seed.
+    """
+    host_fields = preferred_fields(host, catalog)
+    prod_fields = preferred_fields(producer, catalog)
+    if host_fields is None or host_fields != prod_fields:
+        return False
+    host_coords = {schedule_coord(cell, catalog) for cell in host.cells}
+    prod_coords = {schedule_coord(cell, catalog) for cell in producer.cells}
+    return bool(host_coords & prod_coords)
+
+
+def _boundary_index(series: BoundSeries, catalog: SeriesCatalog, *, delta: int) -> int:
+    """Return the catalog index of the min (`delta < 0`) or max schedule coord."""
+    key = min if delta < 0 else max
+    return key(range(len(series.cells)), key=lambda i: schedule_coord(series.cells[i], catalog))
+
+
+def _non_peer_seed_ref(
+    ast: AstNode,
+    host_cell: str,
+    series: BoundSeries,
+    catalog: SeriesCatalog,
+) -> str | None:
+    """Return the unique relative read of a series outside the host key domain."""
+    host_fields = preferred_fields(series, catalog)
+    found: list[str] = []
+    for ref in _iter_cell_ref_nodes(ast):
+        if not _ref_shifts_with_host(ref, host_cell):
+            continue
+        address = resolve_cell_ref(ref, host_cell)
+        owner = catalog.series_for(address)
+        if owner is None or owner.series_id == series.series_id:
+            continue
+        if preferred_fields(owner, catalog) == host_fields:
+            continue
+        found.append(normalize_address(address))
+    if len(found) == 1:
+        return found[0]
+    return None
+
+
+def _adjacent_schedule_ref(
+    series: BoundSeries,
+    index: int,
+    catalog: SeriesCatalog,
+    graph: DependencyGraph | None,
+    *,
+    delta: int,
+) -> str | None:
+    """Return a relative other-series ref at `schedule_coord` + `delta`.
+
+    When the host and producer do not share join fields, a unique relative
+    read of that producer at the series' schedule boundary is the seed or
+    terminal. An overlapping keyed peer is a lagged read, not a seed.
+    """
+    if graph is None or index < 0 or index >= len(series.cells):
+        return None
+    host_cell = series.cells[index]
+    try:
+        ast = node_formula_ast(graph, host_cell)
+    except InvertedTreeExportError:
+        return None
+    host_coord = schedule_coord(host_cell, catalog)
+    matched: list[str] = []
+    for ref in _iter_cell_ref_nodes(ast):
+        if not _ref_shifts_with_host(ref, host_cell):
+            continue
+        address = resolve_cell_ref(ref, host_cell)
+        owner = catalog.series_for(address)
+        if owner is None or owner.series_id == series.series_id:
+            continue
+        if schedule_coord(address, catalog) != host_coord + delta:
+            continue
+        if _overlapping_schedule_peer(series, owner, catalog):
+            continue
+        matched.append(normalize_address(address))
+    if len(matched) == 1:
+        return matched[0]
+    if matched:
+        return matched[0]
+    if index != _boundary_index(series, catalog, delta=delta):
+        return None
+    return _non_peer_seed_ref(ast, host_cell, series, catalog)
+
+
+def predecessor_address(
+    series: BoundSeries,
+    index: int,
+    catalog: SeriesCatalog,
+    graph: DependencyGraph | None = None,
+) -> str | None:
     """Return the lagged predecessor of `series.cells[index]`, if any.
 
-    For index > 0 this is the previous cell in the series. For index 0 it is the
-    same-row previous column when that cell belongs to a different bound series
-    (a candidate year-0 scalar of a recursive path). Callers must still check
-    that later members do not also read that cell; a shared selector is not a
-    seed.
+    For index > 0 this is the previous cell in the series. For index 0 it is a
+    relative read of another bound series whose `schedule_coord` is the host's
+    coordinate - 1 (the year-0 seed of a recursive path). An absolute selector
+    read by every member is not a seed.
     """
     if index < 0 or index >= len(series.cells):
         return None
     if index > 0:
         return series.cells[index - 1]
-    sheet, row, col = parse_cell_coords(series.cells[0])
-    if col <= 1:
-        return None
-    prev = format_cell_key(sheet, get_column_letter(col - 1), row)
-    owner = catalog.series_for(prev)
-    if owner is None or owner.series_id == series.series_id:
-        return None
-    if (
-        preferred_fields(owner, catalog) is not None
-        and preferred_fields(series, catalog) is not None
-        and schedule_coord(prev, catalog) != schedule_coord(series.cells[0], catalog) - 1
-    ):
-        return None
-    return prev
+    return _adjacent_schedule_ref(series, index, catalog, graph, delta=-1)
 
 
-def successor_address(series: BoundSeries, index: int, catalog: SeriesCatalog) -> str | None:
+def successor_address(
+    series: BoundSeries,
+    index: int,
+    catalog: SeriesCatalog,
+    graph: DependencyGraph | None = None,
+) -> str | None:
     """Return the look-ahead successor of `series.cells[index]`, if any.
 
     For index < len(series.cells) - 1 this is the next cell in the series. For
-    index == len(series.cells) - 1 it is the next adjacent cell when that cell
-    belongs to a different bound series (the terminal scalar of a backward path).
+    the last index it is a relative read of another bound series whose
+    `schedule_coord` is the host's coordinate + 1 (the terminal of a backward
+    path).
     """
     if index < 0 or index >= len(series.cells):
         return None
     if index < len(series.cells) - 1:
         return series.cells[index + 1]
-    sheet, row, col = parse_cell_coords(series.cells[-1])
-    is_vertical = (
-        len(series.cells) > 1
-        and parse_cell_coords(series.cells[0])[1] != parse_cell_coords(series.cells[1])[1]
-    )
-    if is_vertical:
-        next_cell = format_cell_key(sheet, get_column_letter(col), row + 1)
-    else:
-        next_cell = format_cell_key(sheet, get_column_letter(col + 1), row)
-    owner = catalog.series_for(next_cell)
-    if owner is None or owner.series_id == series.series_id:
-        return None
-    if (
-        preferred_fields(owner, catalog) is not None
-        and preferred_fields(series, catalog) is not None
-        and schedule_coord(next_cell, catalog) != schedule_coord(series.cells[-1], catalog) + 1
-    ):
-        return None
-    return next_cell
+    return _adjacent_schedule_ref(series, index, catalog, graph, delta=+1)
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,9 +370,9 @@ class SeriesDeps:
     - `lagged_ids` — a producer read at both `i` and `i-1`
     - `lookup_ids` — `whole` / `dynamic` table reads
     - `is_scan` / `seed_id` / `scan_direction` — self-lags discharged by
-      loop order. A previous-column (or next-column) neighbor is a seed
-      only when the first (last) member reads it. A selector read by every
-      member is a scalar parameter, not a scan seed.
+      loop order. A relative other-series read at `schedule_coord` ± 1 is
+      a seed; an absolute selector read by every member is a scalar
+      parameter, not a scan seed.
     """
 
     host_id: str
@@ -590,7 +694,7 @@ def requires_demand_driven(
         host_index = series.index_of(edge.consumer_cell)
         if host_index is None:
             return True
-        succ = successor_address(series, host_index, catalog)
+        succ = successor_address(series, host_index, catalog, graph)
         if succ is None or normalize_address(edge.producer_cell) != normalize_address(succ):
             is_backward = False
             break
@@ -623,22 +727,17 @@ def series_deps_from_edges(
     host: BoundSeries,
     edges: Sequence[DependenceEdge],
     catalog: SeriesCatalog,
+    graph: DependencyGraph | None = None,
 ) -> SeriesDeps:
     """Derive the emit-facing `SeriesDeps` view from classified edges of `host`."""
     params: dict[str, None] = {}
     lookup_ids: set[str] = set()
     aligned_hits: dict[str, list[tuple[int, int]]] = {}
     saw_self_lag = False
+    saw_forward_lag = False
     saw_backward_lag = False
     seed_id: str | None = None
     terminal_seed_id: str | None = None
-    pred0 = predecessor_address(host, 0, catalog)
-    pred0_norm = normalize_address(pred0) if pred0 is not None else None
-    succ_last = successor_address(host, len(host.cells) - 1, catalog) if host.cells else None
-    succ_last_norm = normalize_address(succ_last) if succ_last is not None else None
-    pred_used_after_first = False
-    succ_used_before_last = False
-    last_index = len(host.cells) - 1
     for edge in edges:
         if edge.consumer_id != host.series_id:
             continue
@@ -648,7 +747,12 @@ def series_deps_from_edges(
                 continue
             if edge.distance > 0:
                 saw_self_lag = True
-            succ = successor_address(host, host_index, catalog)
+            pred = predecessor_address(host, host_index, catalog, graph)
+            if pred is not None and normalize_address(edge.producer_cell) == normalize_address(
+                pred
+            ):
+                saw_forward_lag = True
+            succ = successor_address(host, host_index, catalog, graph)
             if succ is not None and normalize_address(edge.producer_cell) == normalize_address(
                 succ
             ):
@@ -665,26 +769,18 @@ def series_deps_from_edges(
         idx = owner.index_of(edge.producer_cell)
         if idx is not None:
             aligned_hits.setdefault(edge.producer_id, []).append((host_index, idx))
-        producer_norm = normalize_address(edge.producer_cell)
-        if pred0_norm is not None and producer_norm == pred0_norm:
-            if host_index == 0:
-                seed_id = edge.producer_id
-            else:
-                pred_used_after_first = True
-        if succ_last_norm is not None and producer_norm == succ_last_norm:
-            if host_index == last_index:
-                terminal_seed_id = edge.producer_id
-            else:
-                succ_used_before_last = True
-    if pred_used_after_first:
-        seed_id = None
-    if succ_used_before_last:
-        terminal_seed_id = None
+        pred = _adjacent_schedule_ref(host, host_index, catalog, graph, delta=-1)
+        if pred is not None and normalize_address(edge.producer_cell) == normalize_address(pred):
+            seed_id = edge.producer_id
+        succ = _adjacent_schedule_ref(host, host_index, catalog, graph, delta=+1)
+        if succ is not None and normalize_address(edge.producer_cell) == normalize_address(succ):
+            terminal_seed_id = edge.producer_id
     scan_direction: Literal["forward", "reversed"] = "forward"
-    if saw_backward_lag and not saw_self_lag:
+    if saw_backward_lag and not saw_forward_lag:
         scan_direction = "reversed"
         is_scan = True
-        seed_id = terminal_seed_id
+        if terminal_seed_id is not None:
+            seed_id = terminal_seed_id
     elif saw_self_lag or seed_id is not None:
         scan_direction = "forward"
         is_scan = True
@@ -792,6 +888,7 @@ def collect_series_deps(
         series,
         collect_series_edges(series, catalog=catalog, graph=graph),
         catalog,
+        graph,
     )
 
 
@@ -810,7 +907,7 @@ def collect_all_deps(
         catalog_edges = collect_catalog_edges(catalog, graph)
     return {
         series.series_id: series_deps_from_edges(
-            series, catalog_edges.by_consumer.get(series.series_id, ()), catalog
+            series, catalog_edges.by_consumer.get(series.series_id, ()), catalog, graph
         )
         for series in catalog.formula_series()
     }
