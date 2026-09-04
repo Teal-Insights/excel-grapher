@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable
-from typing import Annotated, Literal
 
 import pytest
 
-from excel_grapher.core.cell_types import Between, RealBetween
 from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter.codegen import CodeGenerator
 from excel_grapher.grapher import create_dependency_graph
@@ -21,6 +19,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     load_package,
     required_param_names,
 )
+from tests.unit.exporter.inverted_tree.local_corpus import load_constraints_module
 
 _WORKBOOK = INVERTED_TREE_TINY_DSA / "tiny-dsa.xlsx"
 _BINDINGS_DIR = INVERTED_TREE_TINY_DSA / "bindings"
@@ -45,29 +44,9 @@ def _required(function: Callable[..., object]) -> tuple[str, ...]:
     return required_param_names(function)
 
 
-_COLS = ("C", "D", "E", "F", "G")
-_TINY_DSA_CONSTRAINTS: dict[str, object] = {
-    "Inputs!A10": Literal["Borvelia"],
-    "Inputs!A11": Literal["Litellia"],
-    "Inputs!A12": Literal["Aurelium"],
-    "Inputs!B22": Literal[1, 2, 3],
-    "Inputs!B5": Literal["Borvelia", "Litellia", "Aurelium"],
-    "Engine!C5": Literal[1],
-    "Engine!D5": Literal[2],
-    "Engine!E5": Literal[3],
-    "Engine!F5": Literal[4],
-    "Engine!G5": Literal[5],
-    "Inputs!B10": Annotated[float, RealBetween(0.0, 200.0)],
-    "Inputs!B11": Annotated[float, RealBetween(0.0, 200.0)],
-    "Inputs!B12": Annotated[float, RealBetween(0.0, 200.0)],
-    "Inputs!B21": Annotated[int, Between(1, 5)],
-    "Inputs!B26": Annotated[float, RealBetween(-30.0, 30.0)],
-    "Inputs!C26": Annotated[float, RealBetween(-30.0, 30.0)],
-    "Inputs!D26": Annotated[float, RealBetween(-30.0, 30.0)],
-    **{f"Inputs!{c}16": Annotated[float, RealBetween(-10.0, 15.0)] for c in _COLS},
-    **{f"Inputs!{c}17": Annotated[float, RealBetween(0.0, 20.0)] for c in _COLS},
-    **{f"Inputs!{c}18": Annotated[float, RealBetween(-15.0, 15.0)] for c in _COLS},
-}
+_tiny_dsa_constraints_mod = load_constraints_module(INVERTED_TREE_TINY_DSA / "constraints.py")
+assert _tiny_dsa_constraints_mod is not None
+_TINY_DSA_CONSTRAINTS = _tiny_dsa_constraints_mod.CONSTRAINTS
 
 
 def _tiny_dsa_graph():

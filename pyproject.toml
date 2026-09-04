@@ -157,10 +157,11 @@ unresolved-reference = "ignore"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = ["--import-mode=importlib", "-m", "not slow"]
+addopts = ["--import-mode=importlib", "-m", "not slow and not local_corpus"]
 xfail_strict = true
 markers = [
-    "slow: opt-in tests that are long-running (deselected by default)"
+    "slow: opt-in tests that are long-running (deselected by default)",
+    "local_corpus: opt-in tests against the uncommitted local workbook pool",
 ]
 
 

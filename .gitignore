@@ -28,3 +28,7 @@ _great_docs_build/
 
 # Examples
 sandbox/
+
+# Local inverted-tree workbook pool (#656). corpus.toml is committed.
+tests/fixtures/local/**
+!tests/fixtures/local/corpus.toml
