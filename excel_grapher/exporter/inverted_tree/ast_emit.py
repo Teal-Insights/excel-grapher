@@ -578,7 +578,13 @@ def _block_anchor_map(
 def _access_or_fail(producer: BoundSeries, ctx: EmitContext) -> AccessFunction:
     if ctx.graph is None:
         raise _host_export_error(ctx, f"producer {producer.series_id!r} has no graph to classify")
-    return classify_producer_access(ctx.host, producer, ctx.catalog, ctx.graph)
+    # Classify over the statement that owns the host cell, not the whole series:
+    # an INDEX seed followed by a recurrence has block reads in one statement only.
+    cells = next(
+        (stmt.cells for stmt in ctx.host.statements if ctx.host_cell in stmt.cells),
+        None,
+    )
+    return classify_producer_access(ctx.host, producer, ctx.catalog, ctx.graph, cells=cells)
 
 
 def _emit_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
@@ -668,6 +674,13 @@ def _emit_index(node: FunctionCallNode, ctx: EmitContext) -> str:
         covered = covering_series(ctx.catalog, column_cells)
         if covered is None:
             raise _host_export_error(ctx, "INDEX column is not a bound series")
+        if covered.layout == "matrix" or covered.block_width > 1:
+            # The range overhangs the bound block (Q-CRAFT: a 28-column window
+            # over a 22-column block) but the accessed column is inside it.
+            # Index the block by row stride and column, never the flat row.
+            slot = ctx.lookup_anchor_slot
+            ctx.lookup_anchor_slot += 1
+            return _emit_index_into_block(covered, start, row_expr, col_expr, ctx, slot)
         name = ctx.param(covered.series_id)
         return f"{ctx.use('xl_at')}({name}, ({row_expr}) - 1)"
     table = emit_expr(node.args[0], ctx)

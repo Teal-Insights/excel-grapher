@@ -213,6 +213,52 @@ def _offset_sheets() -> dict[str, dict[str, object]]:
     )
 
 
+def _overhang_sheets() -> dict[str, dict[str, object]]:
+    """Q-CRAFT geometry: the INDEX window is wider than the bound block.
+
+    `Macrofiscal!J3 = INDEX(AG67:BH264, MATCH(...), 1)` references 28 columns
+    while the bindings bound the 22 year columns `AG67:BB264`. Excel only
+    reads column 1 of each window, and every read cell is inside the block.
+    """
+    return _case_sheets(
+        lambda _col, index: (
+            f"=INDEX(${get_column_letter(2 + index)}$5:"
+            f"${get_column_letter(5 + index)}$7,MATCH($A$1,$A$5:$A$7,0),1)"
+        ),
+        extra={"G5": 15, "G6": 25, "G7": 35},
+    )
+
+
+def _overhang_bindings() -> dict[str, Any]:
+    return _case_bindings("Engine!B5:D7")
+
+
+def _seed_then_scan_sheets() -> dict[str, dict[str, object]]:
+    """Q-CRAFT `productivity_level`: an INDEX seed, then a recurrence.
+
+    `Productivity!W3 = INDEX(AG63:BK260, MATCH($A$1, ...), 1)` and
+    `X3 = W3 * (1 + $C$21 / 100)`. The block access belongs to the seed
+    statement only; the recurrence members never read the block.
+    """
+    return _case_sheets(
+        lambda col, index: (
+            "=INDEX($B$5:$D$7,MATCH($A$1,$A$5:$A$7,0),1)"
+            if index == 0
+            else f"={get_column_letter(1 + index)}2*(1+$A$9/100)"
+        ),
+        extra={"A9": 10},
+    )
+
+
+def _seed_then_scan_bindings() -> dict[str, Any]:
+    return _case_bindings(
+        "Engine!B5:D7",
+        extra_series=(
+            series_entry("growth", "Engine!A9", layout="scalar", direction="input", dtype="float"),
+        ),
+    )
+
+
 def _slide_bindings() -> dict[str, Any]:
     return _case_bindings("Engine!B5:F7")
 
@@ -276,6 +322,35 @@ def test_sliding_index_matches_evaluator(tmp_path: Path, orientation: str) -> No
     )
     if orientation == "horizontal":
         assert got == pytest.approx((20.0, 21.0, 22.0))
+
+
+def test_overhanging_index_window_matches_evaluator(tmp_path: Path, orientation: str) -> None:
+    """A window wider than the bound block still indexes the block by column.
+
+    Transposed, the overhang moves onto the accessed column itself (four rows
+    over a three-row block), so the exporter must refuse rather than guess.
+    """
+    if orientation == "vertical":
+        workbook = write_oriented_workbook(
+            tmp_path / "a26_overhang_v.xlsx", _overhang_sheets(), orientation=orientation
+        )
+        with pytest.raises(InvertedTreeExportError, match="picked.*not a bound series"):
+            generate_inverted(workbook, oriented_document(_overhang_bindings(), orientation))
+        return
+    _export_matches_evaluator(
+        tmp_path, _overhang_sheets(), _overhang_bindings(), orientation, "a26_overhang"
+    )
+
+
+def test_index_seed_then_scan_matches_evaluator(tmp_path: Path, orientation: str) -> None:
+    """Block access is classified per statement, not over the whole series."""
+    got, _want = _export_matches_evaluator(
+        tmp_path, _seed_then_scan_sheets(), _seed_then_scan_bindings(), orientation, "a26_seed"
+    )
+    if orientation == "horizontal":
+        # Transposed, INDEX(range, MATCH, 1) selects a different cell; the
+        # evaluator comparison above is the contract in both orientations.
+        assert got == pytest.approx((20.0, 22.0, 24.2))
 
 
 def test_literal_index_column_matches_evaluator(tmp_path: Path, orientation: str) -> None:

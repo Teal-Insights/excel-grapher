@@ -74,10 +74,11 @@ def _producer_hits(
     host: BoundSeries,
     producer: BoundSeries,
     graph: DependencyGraph,
+    cells: Sequence[CanonicalAddress] | None = None,
 ) -> list[set[int]]:
-    """Return catalog indices of `producer` read by each host member."""
+    """Return catalog indices of `producer` read by each host member in `cells`."""
     hits: list[set[int]] = []
-    for cell in host.cells:
+    for cell in host.cells if cells is None else cells:
         found: set[int] = set()
         for dep in graph.get_dependencies(cell):
             idx = producer.index_of(_canonical(str(dep)))
@@ -186,8 +187,14 @@ def classify_producer_access(
     producer: BoundSeries,
     catalog: SeriesCatalog,
     graph: DependencyGraph,
+    *,
+    cells: Sequence[CanonicalAddress] | None = None,
 ) -> AccessFunction:
     """Classify each producer axis from resolved host→producer edge sets.
+
+    One access function per `(statement, producer)`: pass the statement's
+    `cells` so members of another statement (a recurrence after an `INDEX`
+    seed, say) do not contribute empty hit-sets. Defaults to every member.
 
     Raises:
         InvertedTreeExportError: An axis is not `static`, `dynamic`, or `whole`.
@@ -195,7 +202,7 @@ def classify_producer_access(
     """
     del catalog
     width = producer.block_width
-    hits = _producer_hits(host, producer, graph)
+    hits = _producer_hits(host, producer, graph, cells)
     n_rows = max(1, (len(producer.cells) + width - 1) // width)
     n_cols = width
     row = _classify_axis(
