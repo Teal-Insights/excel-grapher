@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v13.6.1 (2026-09-04)
+
+### Bug Fixes
+
+- **export**: Cut inverted-tree generate time on large catalogs
+  ([#686](https://github.com/Teal-Insights/excel-grapher/pull/686),
+  [`4efff1c`](https://github.com/Teal-Insights/excel-grapher/commit/4efff1c8023cbb686400ee6f2a515525371ec5d4))
+
+
 ## v13.6.0 (2026-09-04)
 
 ### Bug Fixes
