@@ -1,7 +1,13 @@
-"""Issue 676 — key domains in data.py and __key__/__domain__ on compute_*."""
+"""Issue 676 — key domains in data.py and __key__/__domain__ on compute_*.
+
+Issue 688 publishes that metadata with setattr so type checkers accept the
+generated modules.
+"""
 
 from __future__ import annotations
 
+import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +17,8 @@ from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter.inverted_tree.catalog import build_catalog
 from excel_grapher.exporter.inverted_tree.domains import (
     collect_field_domains,
+    constants_attr_source,
+    key_domain_attr_source,
     series_domain_points,
 )
 from excel_grapher.grapher import create_dependency_graph
@@ -188,6 +196,33 @@ def _late_start_bindings() -> dict:
     )
 
 
+_DIRECT_DUNDER_ASSIGN = re.compile(
+    r"^[A-Za-z_]\w*\.__(?:key|domain|constants)__\s*=",
+    re.MULTILINE,
+)
+_KEYED_META_NAMES = ("__key__", "__domain__", "__constants__")
+
+
+def test_key_domain_attr_source_uses_setattr() -> None:
+    source = key_domain_attr_source(
+        "compute_gdp",
+        keys=("TIME_PERIOD",),
+        domain_expr="data.TIME_PERIOD_DOMAIN[8:]",
+    )
+    assert source == (
+        "setattr(compute_gdp, '__key__', ('TIME_PERIOD',))\n"
+        "setattr(compute_gdp, '__domain__', data.TIME_PERIOD_DOMAIN[8:])"
+    )
+    assert _DIRECT_DUNDER_ASSIGN.search(source) is None
+
+
+def test_constants_attr_source_uses_setattr() -> None:
+    assert constants_attr_source("compute_gdp", ("gdp_deflator",)) == (
+        "setattr(compute_gdp, '__constants__', ('gdp_deflator',))"
+    )
+    assert constants_attr_source("compute_path", ()) == "setattr(compute_path, '__constants__', ())"
+
+
 def test_collect_field_domains_is_first_seen_catalog_order(tmp_path: Path) -> None:
     years = (2008, 2009, 2010)
     workbook = _years_workbook(tmp_path, years)
@@ -313,3 +348,53 @@ def test_domain_literals_stay_out_of_api_and_internals(tmp_path: Path) -> None:
     assert "2008, 2009, 2010, 2011, 2012, 2013" not in modules["internals.py"]
     assert "data.TIME_PERIOD_DOMAIN" in modules["api.py"]
     assert "data.TIME_PERIOD_DOMAIN" in modules["internals.py"]
+
+
+def test_generated_modules_publish_keyed_meta_via_setattr(tmp_path: Path) -> None:
+    years = (2008, 2009, 2010)
+    year_modules = generate_inverted(_years_workbook(tmp_path, years), _years_bindings(years))
+    matrix_modules = generate_inverted(_matrix_workbook(tmp_path), _matrix_bindings())
+    for modules in (year_modules, matrix_modules):
+        for filename in ("api.py", "internals.py"):
+            source = modules[filename]
+            assert _DIRECT_DUNDER_ASSIGN.search(source) is None, source
+            assert "setattr(" in source
+            assert "'__key__'" in source
+            assert "'__domain__'" in source
+    assert "setattr(compute_path, '__constants__', ())" in year_modules["api.py"]
+    assert "setattr(path, '__key__', ('TIME_PERIOD',))" in year_modules["internals.py"]
+    assert "setattr(compute_ratio, '__constants__', ('gdp', 'revenue'))" in matrix_modules["api.py"]
+
+
+def test_ty_check_generated_keyed_meta_has_no_unresolved_attribute(tmp_path: Path) -> None:
+    years = (2008, 2009)
+    modules = generate_inverted(_years_workbook(tmp_path, years), _years_bindings(years))
+    pkg = tmp_path / "keyed_meta_ty"
+    pkg.mkdir()
+    for filename, content in modules.items():
+        (pkg / filename).write_text(content, encoding="utf-8")
+    repo_root = Path(__file__).resolve().parents[4]
+    result = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--no-sync",
+            "ty",
+            "check",
+            "--project",
+            str(repo_root),
+            str(pkg / "api.py"),
+            str(pkg / "internals.py"),
+        ],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    combined = f"{result.stdout}\n{result.stderr}"
+    hits = [
+        line
+        for line in combined.splitlines()
+        if "unresolved-attribute" in line and any(name in line for name in _KEYED_META_NAMES)
+    ]
+    assert hits == [], combined
