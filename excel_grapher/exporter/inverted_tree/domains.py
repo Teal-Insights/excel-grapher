@@ -349,11 +349,26 @@ def plan_domain_emission(
     )
 
 
+def publish_attr_source(name: str, attr: str, value_expr: str) -> str:
+    """Return a setattr publication line for generated function metadata."""
+    return f"setattr({name}, {attr!r}, {value_expr})"
+
+
 def key_domain_attr_source(
     name: str,
     *,
     keys: tuple[str, ...],
     domain_expr: str,
 ) -> str:
-    """Return `{name}.__key__` / `{name}.__domain__` assignment lines."""
-    return f"{name}.__key__ = {keys!r}\n{name}.__domain__ = {domain_expr}"
+    """Return setattr lines that publish `{name}` `__key__` and `__domain__`."""
+    return "\n".join(
+        (
+            publish_attr_source(name, "__key__", repr(keys)),
+            publish_attr_source(name, "__domain__", domain_expr),
+        )
+    )
+
+
+def constants_attr_source(name: str, constants: Sequence[str]) -> str:
+    """Return a setattr line that publishes `{name}` `__constants__`."""
+    return publish_attr_source(name, "__constants__", repr(tuple(constants)))

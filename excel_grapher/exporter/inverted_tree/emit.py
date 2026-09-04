@@ -30,6 +30,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
 )
 from excel_grapher.exporter.inverted_tree.domains import (
     DomainEmitPlan,
+    constants_attr_source,
     domain_annotation,
     domain_const_name,
     key_domain_attr_source,
@@ -569,10 +570,6 @@ def _leaf_signature_parts(
     return required, constants, params
 
 
-def _constants_attr(name: str, constants: Sequence[str]) -> str:
-    return f"{name}.__constants__ = {tuple(constants)!r}"
-
-
 def _compute_attrs(
     name: str,
     constants: Sequence[str],
@@ -581,7 +578,7 @@ def _compute_attrs(
 ) -> str:
     return "\n".join(
         [
-            _constants_attr(name, constants),
+            constants_attr_source(name, constants),
             _key_domain_attrs(name, series_id=series.series_id, plan=plan),
         ]
     )
