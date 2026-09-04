@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v12.6.0 (2026-09-04)
+
+### Features
+
+- **export**: Fuse matrix SCCs on per-partition TIME_PERIOD
+  ([#646](https://github.com/Teal-Insights/excel-grapher/pull/646),
+  [`3b71aac`](https://github.com/Teal-Insights/excel-grapher/commit/3b71aac5db08e1c12c7691f151ac83e01dde8de4))
+
+
 ## v12.5.4 (2026-09-04)
 
 ### Bug Fixes
