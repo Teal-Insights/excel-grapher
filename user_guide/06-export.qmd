@@ -156,7 +156,7 @@ generated `read_*` or `compute_*(ctx) -> Records` wrapper; that is the ctx faça
 | `make_context()` then `set_<series>(ctx, records)` | Pass the series as a `compute_*` argument (scalar or `tuple` / `Sequence` in catalog order). |
 | `input.mode: override` non-leaf setters | Bind the cells as **inputs** if callers must vary them; otherwise they stay formula internals. |
 | `read_<series>()` / `input.reader` | Import `data.SERIES` (constants) or pass the value you would have read. |
-| `input.domain` on setters | Not applied to arguments yet (port follow-up). Validate at the call site, or keep ctx until that ports. |
+| `input.domain` on setters | Applied to `compute_*` / `_run_N` arguments (`enum`, `between`, `real_between`). Out-of-domain values raise `ValueError` naming the series. |
 | `compute_*(ctx) -> Records` | `compute_*(*, input_leaves…) -> tuple[…]`. Use the `as_records` recipe above. |
 | `output.compute.helper` collapsed helpers | Every output is already a leaf-closure function; drop the helper name. |
 | `CONSTANTS` `MappingProxyType` / sparse leaf store | Dense `data.py` tuples. Mutating a constant is a `data.py` override ([issue 663](https://github.com/Teal-Insights/excel-grapher/issues/663)). |

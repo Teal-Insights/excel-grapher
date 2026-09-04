@@ -23,7 +23,7 @@ Legend: **port** = inverted-tree should grow the feature; **bindings-equivalent*
 | --- | --- | --- | --- |
 | `set_<series>` input setters, `input.mode` for non-leaf inputs | yes | inputs are arguments | **drop** — by design (#597). Override-mode cells should be bound as `input`. |
 | `read_<series>` / `input.reader` | yes | none | **drop** — import `data.py` or pass the value. |
-| `input.domain` on setters | yes | not applied to arguments | **port** — follow-up: validate required `compute_*` arguments. Until then, validate at the call site. |
+| `input.domain` on setters | yes | yes (#666) | **port shipped** — `require_input_domain` on `compute_*` / `_run_N` arguments. |
 | `make_context` / `inputs=` overlay | yes | none | **drop** — by design. |
 | `output.compute.helper` | yes | every output is a leaf-closure function | **drop**. |
 | Tidy `Records` / `as_records` | yes | tuples only | **bindings-equivalent** — documented recipe in `06-export.qmd`. |
@@ -53,8 +53,7 @@ Legend: **port** = inverted-tree should grow the feature; **bindings-equivalent*
 
 GitHub issues could not be opened from this agent (read-only `gh`). File these if they do not already exist:
 
-1. **`input.domain` on inverted-tree arguments** — enum / between / real_between on `compute_*` required inputs.
-2. **Whole-column / whole-row / 3-D range / range-aggregate lowering** — only when a pool workbook fails closed on them; distill a `_CORPUS` toy first.
-3. **`INDIRECT` graph-derived access** — same bar as (2).
+1. **Whole-column / whole-row / 3-D range / range-aggregate lowering** — only when a pool workbook fails closed on them; distill a `_CORPUS` toy first.
+2. **`INDIRECT` graph-derived access** — same bar as (1).
 
 Already filed: #663 (constants), #593 (façade), #379 (concept names), #284 (spill), #483 (`SUM(IF)`).

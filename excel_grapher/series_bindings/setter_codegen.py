@@ -21,6 +21,7 @@ from excel_grapher.series_bindings.docstrings import (
     emit_docstring_literal,
     resolve_series_function_docstring,
 )
+from excel_grapher.series_bindings.input_coerce import measure_domain_from_series
 from excel_grapher.series_bindings.normalize import (
     effective_dimension_id,
     has_constant_direction,
@@ -76,32 +77,6 @@ def _measure_dtype_for_codegen(
     read = bind.get("read")
     if read is not None and read != "auto":
         return str(read)
-    return None
-
-
-def _measure_domain_for_codegen(series: dict[str, Any]) -> dict[str, Any] | None:
-    """Normalize `input.domain` for emitted `coerce_setter_input` calls."""
-    input_block = series.get("input")
-    if not isinstance(input_block, dict):
-        return None
-    domain = input_block.get("domain")
-    if not isinstance(domain, dict):
-        return None
-    if "enum" in domain:
-        values = domain["enum"]
-        if not isinstance(values, (list, tuple, set, frozenset)):
-            return None
-        return {"enum": frozenset(values)}
-    if "between" in domain:
-        bounds = domain["between"]
-        if not isinstance(bounds, dict):
-            return None
-        return {"between": dict(bounds)}
-    if "real_between" in domain:
-        bounds = domain["real_between"]
-        if not isinstance(bounds, dict):
-            return None
-        return {"real_between": dict(bounds)}
     return None
 
 
@@ -429,7 +404,7 @@ def _coerce_setter_input_call(
     )
     key_dtypes = _key_dtypes_for_codegen(series, key_fields)
     measure_dtype = _measure_dtype_for_codegen(series, concept_scheme=concept_scheme)
-    measure_domain = _measure_domain_for_codegen(series)
+    measure_domain = measure_domain_from_series(series)
     parts = [
         "coerce_setter_input(",
         "            records,",

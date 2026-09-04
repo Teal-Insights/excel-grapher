@@ -316,3 +316,28 @@ def test_cross_sheet_range_fails_closed(tmp_path: Path) -> None:
     )
     with pytest.raises(InvertedTreeExportError, match=r"cross-sheet range|unsupported|not a bound"):
         generate_inverted(workbook, document)
+
+
+def test_input_domain_rejects_out_of_range_argument(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "domain.xlsx",
+        {
+            "Inputs": {"A1": 0},
+            "Outputs": {"A1": "=Inputs!A1"},
+        },
+    )
+    document = bindings_document(
+        series_entry(
+            "flag",
+            "Inputs!A1",
+            layout="scalar",
+            direction="input",
+            dtype="int",
+            domain={"enum": [0, 1]},
+        ),
+        series_entry("out", "Outputs!A1", layout="scalar", direction="output", dtype="int"),
+    )
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_domain")
+    assert pkg.compute_out(flag=0) == (0,)
+    with pytest.raises(ValueError, match=r"flag out of domain"):
+        pkg.compute_out(flag=2)
