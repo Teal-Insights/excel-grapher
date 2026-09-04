@@ -28,6 +28,13 @@ from excel_grapher.exporter.inverted_tree.deps import (
     leaf_closure,
     plan_indices,
 )
+from excel_grapher.exporter.inverted_tree.domains import (
+    DomainEmitPlan,
+    domain_annotation,
+    domain_const_name,
+    key_domain_attr_source,
+    plan_domain_emission,
+)
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.schedule import (
     IndexSet,
@@ -157,15 +164,36 @@ def _series_values(series: BoundSeries, graph: DependencyGraph) -> object:
     return tuple(values)
 
 
-def _uses_datetime(catalog: SeriesCatalog) -> bool:
-    return any(series.python_dtype == "datetime" for series in catalog.series.values())
+def _uses_datetime(catalog: SeriesCatalog, plan: DomainEmitPlan | None = None) -> bool:
+    if any(series.python_dtype == "datetime" for series in catalog.series.values()):
+        return True
+    return bool(plan is not None and plan.uses_datetime)
 
 
-def emit_data_module(catalog: SeriesCatalog, graph: DependencyGraph) -> str:
-    """Emit `data.py` with constant series and workbook-default input arrays."""
+def _emit_domain_constants(plan: DomainEmitPlan) -> list[str]:
+    """Emit one tuple per distinct key domain, then interned subset domains."""
+    lines: list[str] = []
+    for field, values in plan.field_domains.items():
+        name = domain_const_name(field)
+        lines.append(f"{name}: {domain_annotation(values)} = {_py_literal(values)}")
+        lines.append("")
+    for name, values in plan.interned:
+        lines.append(f"{name}: {domain_annotation(values)} = {_py_literal(values)}")
+        lines.append("")
+    return lines
+
+
+def emit_data_module(
+    catalog: SeriesCatalog,
+    graph: DependencyGraph,
+    *,
+    domains: DomainEmitPlan | None = None,
+) -> str:
+    """Emit `data.py` with key domains, constants, and workbook-default inputs."""
+    plan = domains if domains is not None else plan_domain_emission(catalog)
     constants = catalog.constant_series()
     lines = [
-        '"""Constant leaves and workbook-default input arrays."""',
+        '"""Constant leaves, key domains, and workbook-default input arrays."""',
         "",
         "from __future__ import annotations",
         "",
@@ -178,10 +206,11 @@ def emit_data_module(catalog: SeriesCatalog, graph: DependencyGraph) -> str:
                 "from contextlib import contextmanager",
             ]
         )
-    if _uses_datetime(catalog):
+    if _uses_datetime(catalog, plan):
         stdlib.append("from datetime import datetime")
     if stdlib:
         lines.extend([*stdlib, ""])
+    lines.extend(_emit_domain_constants(plan))
     constant_names: list[str] = []
     for series in constants:
         name = _data_const_name(series.series_id)
@@ -296,6 +325,22 @@ def _emit_by_rung(
             raise ValueError(f"unknown rung {rung!r}")
 
 
+def _key_domain_attrs(
+    name: str,
+    *,
+    series_id: str | None = None,
+    scc: tuple[str, ...] | None = None,
+    plan: DomainEmitPlan,
+) -> str:
+    if scc is not None:
+        return key_domain_attr_source(name, keys=plan.scc_key[scc], domain_expr=plan.scc_expr[scc])
+    if series_id is None:
+        raise ValueError("series_id or scc is required")
+    return key_domain_attr_source(
+        name, keys=plan.series_key[series_id], domain_expr=plan.series_expr[series_id]
+    )
+
+
 def emit_internals_module(
     catalog: SeriesCatalog,
     deps: Mapping[str, SeriesDeps],
@@ -304,15 +349,18 @@ def emit_internals_module(
     catalog_edges: CatalogEdges,
     *,
     force_rung: Literal[2, 3] | None = None,
+    domains: DomainEmitPlan | None = None,
 ) -> str:
     """Emit `internals.py` with per-series helpers and fused or demand-driven SCCs."""
     if force_rung not in (None, 2, 3):
         raise ValueError(f"force_rung must be 2, 3, or None; got {force_rung!r}")
+    plan = domains if domains is not None else plan_domain_emission(catalog, scc_map)
     used_runtime: set[str] = set()
     functions: list[str] = []
     emitted_scans: set[tuple[str, ...]] = set()
     edges = catalog_edges.edges
     deps_map = dict(deps)
+    needs_data = False
     for series in catalog.formula_series():
         info = deps[series.series_id]
         scc = scc_map.get(series.series_id, (series.series_id,))
@@ -337,7 +385,10 @@ def emit_internals_module(
             kind = "Demand-driven co-evaluation" if rung == 3 else "Fused union-domain evaluation"
             joined = ", ".join(f"`{sid}`" for sid in scc)
             doc = f'    """{kind} of zipper series {joined}."""'
-            functions.append("\n".join([_scan_signature(scc, param_ids, catalog), doc, *body]))
+            source = "\n".join([_scan_signature(scc, param_ids, catalog), doc, *body])
+            source = f"{source}\n{_key_domain_attrs(scan_function_name(scc), scc=scc, plan=plan)}"
+            functions.append(source)
+            needs_data = needs_data or plan.uses_data_scc(scc)
             continue
         if rung == 0 and any(
             catalog.get(param).is_sequence and param in info.aligned_ids for param in info.param_ids
@@ -347,7 +398,10 @@ def emit_internals_module(
             doc = f'    """Demand-driven evaluation of series `{series.series_id}`."""'
         else:
             doc = f'    """First-level helper for bound series `{series.series_id}`."""'
-        functions.append("\n".join([_helper_signature(series, info, catalog), doc, *body]))
+        source = "\n".join([_helper_signature(series, info, catalog), doc, *body])
+        source = f"{source}\n{_key_domain_attrs(series.series_id, series_id=series.series_id, plan=plan)}"
+        functions.append(source)
+        needs_data = needs_data or plan.uses_data(series.series_id)
     runtime_names = sorted(used_runtime)
     lines = [
         '"""First-level-dependency internals for the inverted graph."""',
@@ -357,8 +411,11 @@ def emit_internals_module(
         "from collections.abc import Sequence",
         "",
     ]
-    if _uses_datetime(catalog):
+    if _uses_datetime(catalog, plan):
         lines.extend(["from datetime import datetime", ""])
+    if needs_data:
+        lines.append("from . import data")
+        lines.append("")
     if runtime_names:
         names = ", ".join(runtime_names)
         lines.append(f"from .runtime import {names}")
@@ -513,6 +570,20 @@ def _constants_attr(name: str, constants: Sequence[str]) -> str:
     return f"{name}.__constants__ = {tuple(constants)!r}"
 
 
+def _compute_attrs(
+    name: str,
+    constants: Sequence[str],
+    series: BoundSeries,
+    plan: DomainEmitPlan,
+) -> str:
+    return "\n".join(
+        [
+            _constants_attr(name, constants),
+            _key_domain_attrs(name, series_id=series.series_id, plan=plan),
+        ]
+    )
+
+
 def _leaf_source_map(leaves: Sequence[str], catalog: SeriesCatalog) -> dict[str, str]:
     """Map leaf ids to the expression the orchestrator passes to internals."""
     sources: dict[str, str] = {}
@@ -663,6 +734,7 @@ def emit_orchestrator(
     catalog: SeriesCatalog,
     deps: Mapping[str, SeriesDeps],
     scc_map: Mapping[str, tuple[str, ...]] | None = None,
+    domains: DomainEmitPlan | None = None,
 ) -> tuple[str, set[str], bool]:
     """Emit one public `compute_*` function.
 
@@ -675,6 +747,7 @@ def emit_orchestrator(
     """
     deps_map = dict(deps)
     scc_map_dict = dict(scc_map) if scc_map is not None else None
+    plan = domains if domains is not None else plan_domain_emission(catalog, scc_map_dict)
     leaves = leaf_closure(output.series_id, catalog=catalog, deps=deps_map)
     formula_ids = formula_closure(
         output.series_id, catalog=catalog, deps=deps_map, scc_map=scc_map_dict
@@ -700,8 +773,8 @@ def emit_orchestrator(
         body.append(f"    return internals.{output.series_id}()")
     doc = f'    """Compute `{output.series_id}` from its input leaf closure."""'
     source = "\n".join([signature, doc, *body])
-    source = f"{source}\n{_constants_attr(compute_name, constants)}"
-    return source, runtime, bool(constants)
+    source = f"{source}\n{_compute_attrs(compute_name, constants, output, plan)}"
+    return source, runtime, bool(constants) or plan.uses_data(output.series_id)
 
 
 def _emit_shared_runner(
@@ -745,6 +818,7 @@ def _emit_thin_orchestrator(
     runner_leaves: Sequence[str],
     catalog: SeriesCatalog,
     deps: dict[str, SeriesDeps],
+    domains: DomainEmitPlan,
 ) -> tuple[str, set[str]]:
     """Emit a `compute_*` that unpacks one slot from a shared runner."""
     leaves = leaf_closure(output.series_id, catalog=catalog, deps=deps)
@@ -767,20 +841,26 @@ def _emit_thin_orchestrator(
     ]
     doc = f'    """Compute `{output.series_id}` from its input leaf closure."""'
     source = "\n".join([signature, doc, *body])
-    return f"{source}\n{_constants_attr(compute_name, constants)}", domain_runtime
+    return (
+        f"{source}\n{_compute_attrs(compute_name, constants, output, domains)}",
+        domain_runtime,
+    )
 
 
 def emit_api_module(
     catalog: SeriesCatalog,
     deps: Mapping[str, SeriesDeps],
     scc_map: Mapping[str, tuple[str, ...]] | None = None,
+    *,
+    domains: DomainEmitPlan | None = None,
 ) -> str:
     """Emit `api.py` with keyword-only output orchestrators.
 
     Outputs that share the same required input leaves share one private
     runner; each `compute_*` keeps its own input-leaf signature and unpacks
     its slot. Baseline and shocked closures stay apart because their required
-    inputs differ. Constant leaves are read from `data`.
+    inputs differ. Constant leaves are read from `data`. Each `compute_*`
+    publishes `__key__` / `__domain__` alongside `__constants__`.
     """
     functions: list[str] = []
     runtime: set[str] = set()
@@ -789,6 +869,7 @@ def emit_api_module(
     compute_names: list[str] = []
     deps_map = dict(deps)
     scc_map_dict = dict(scc_map) if scc_map is not None else None
+    plan = domains if domains is not None else plan_domain_emission(catalog, scc_map_dict)
     groups: dict[tuple[str, ...], list[BoundSeries]] = {}
     group_order: list[tuple[str, ...]] = []
     for output in catalog.output_series():
@@ -807,7 +888,7 @@ def emit_api_module(
             needs_sequence = True
         if len(members) == 1:
             source, used_runtime, used_data = emit_orchestrator(
-                members[0], catalog=catalog, deps=deps, scc_map=scc_map
+                members[0], catalog=catalog, deps=deps, scc_map=scc_map, domains=plan
             )
             functions.append(source)
             runtime |= used_runtime
@@ -834,14 +915,17 @@ def emit_api_module(
                 runner_leaves=runner_leaves,
                 catalog=catalog,
                 deps=deps_map,
+                domains=plan,
             )
             functions.append(source)
             runtime |= used_runtime
+            uses_data = uses_data or plan.uses_data(output.series_id)
     lines = [
         '"""Output orchestrators for the inverted graph.',
         "",
         "Each `compute_*` function takes the input leaf closure of its subgraph.",
         "Constant leaves are read from `data` and listed on `__constants__`.",
+        "Key domains are listed on `__key__` / `__domain__`.",
         "There is no evaluation context and no input setters.",
         '"""',
         "",
@@ -851,7 +935,7 @@ def emit_api_module(
     stdlib: list[str] = []
     if needs_sequence:
         stdlib.append("from collections.abc import Sequence")
-    if _uses_datetime(catalog):
+    if _uses_datetime(catalog, plan):
         stdlib.append("from datetime import datetime")
     if stdlib:
         lines.extend([*stdlib, ""])
@@ -886,12 +970,14 @@ def emit_init_module(catalog: SeriesCatalog) -> str:
         "from __future__ import annotations",
         "",
         "from . import data",
+        "from .runtime import as_records",
         "",
     ]
     if import_line:
         lines.append(import_line)
         lines.append("")
     lines.append("__all__ = [")
+    lines.append(f"    {'as_records'!r},")
     for name in names:
         lines.append(f"    {name!r},")
     lines.append("]")
@@ -931,6 +1017,7 @@ def generate_inverted_tree_modules(
     catalog_edges = collect_catalog_edges(catalog, graph)
     deps = collect_all_deps(catalog, graph, catalog_edges=catalog_edges)
     scc_map = build_scc_map(catalog, deps, edges=catalog_edges.edges)
+    domains = plan_domain_emission(catalog, scc_map)
     assert_subgraph_bound(
         catalog=catalog,
         graph=graph,
@@ -939,8 +1026,8 @@ def generate_inverted_tree_modules(
     runtime_py = _RUNTIME_PATH.read_text(encoding="utf-8")
     return {
         "__init__.py": emit_init_module(catalog),
-        "api.py": emit_api_module(catalog, deps, scc_map),
-        "data.py": emit_data_module(catalog, graph),
+        "api.py": emit_api_module(catalog, deps, scc_map, domains=domains),
+        "data.py": emit_data_module(catalog, graph, domains=domains),
         "runtime.py": runtime_py if runtime_py.endswith("\n") else runtime_py + "\n",
         "internals.py": emit_internals_module(
             catalog,
@@ -949,5 +1036,6 @@ def generate_inverted_tree_modules(
             scc_map,
             catalog_edges=catalog_edges,
             force_rung=force_rung,
+            domains=domains,
         ),
     }
