@@ -12,7 +12,7 @@ from excel_grapher.exporter.inverted_tree.ast_emit import (
     emit_rung2_scc,
     emit_rung3_scc,
     python_annotation,
-    python_measure_type,
+    python_data_annotation,
     python_return_annotation,
 )
 from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, SeriesCatalog, build_catalog
@@ -187,20 +187,12 @@ def emit_data_module(catalog: SeriesCatalog, graph: DependencyGraph) -> str:
         name = _data_const_name(series.series_id)
         constant_names.append(name)
         value = _series_values(series, graph)
-        anno = python_measure_type(series)
-        if series.is_scalar:
-            lines.append(f"{name}: {anno} = {_py_literal(value)}")
-        else:
-            lines.append(f"{name}: tuple[{anno}, ...] = {_py_literal(value)}")
+        lines.append(f"{name}: {python_data_annotation(series)} = {_py_literal(value)}")
         lines.append("")
     for series in catalog.input_series():
         name = _default_name(series.series_id)
         value = _series_values(series, graph)
-        anno = python_measure_type(series)
-        if series.is_scalar:
-            lines.append(f"{name}: {anno} = {_py_literal(value)}")
-        else:
-            lines.append(f"{name}: tuple[{anno}, ...] = {_py_literal(value)}")
+        lines.append(f"{name}: {python_data_annotation(series)} = {_py_literal(value)}")
         lines.append("")
     if constant_names:
         names_literal = ", ".join(repr(name) for name in constant_names)
