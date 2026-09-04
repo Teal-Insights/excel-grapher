@@ -2909,8 +2909,9 @@ class CodeGenerator:
         output series binding. Pass `include_compute_all=True` to keep it, or
         `include_compute_all=False` to omit it unconditionally.
 
-        `paradigm="inverted_tree"` emits leaf-closure `compute_*` functions and
-        first-level-dep internals (issue #597). Default `ctx` export is unchanged.
+        `paradigm="inverted_tree"` emits input-leaf `compute_*` functions (constants
+        are read from `data`) and first-level-dep internals (issue #597, #663).
+        Default `ctx` export is unchanged.
         """
         if paradigm == "inverted_tree":
             from excel_grapher.exporter.inverted_tree import generate_inverted_tree_modules

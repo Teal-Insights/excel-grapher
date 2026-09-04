@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tests.unit.exporter.inverted_tree.helpers import (
     all_param_names,
     bindings_document,
@@ -95,8 +97,28 @@ def test_year_labels_appear_only_on_shocked_compute(tmp_path: Path) -> None:
     shocked_all = all_param_names(pkg.compute_output_shocked)
     assert "shock_year" not in baseline_all
     assert "engine_year_labels" not in baseline_all
+    assert "engine_year_labels" not in shocked_all
     assert required_param_names(pkg.compute_output_baseline) == ("value",)
     assert "shock_year" in required_param_names(pkg.compute_output_shocked)
     assert "value" in required_param_names(pkg.compute_output_shocked)
-    assert "engine_year_labels" in shocked_all
-    assert "engine_year_labels" not in required_param_names(pkg.compute_output_shocked)
+    assert pkg.compute_output_baseline.__constants__ == ()
+    assert pkg.compute_output_shocked.__constants__ == ("engine_year_labels",)
+    assert "engine_year_labels" in all_param_names(pkg.internals.shocked_path)
+
+
+def test_overriding_data_constant_changes_compute_and_restores(tmp_path: Path) -> None:
+    workbook = _a5_workbook(tmp_path)
+    pkg = load_package(generate_inverted(workbook, _a5_bindings()), tmp_path, name="a5_ov")
+    baseline = pkg.compute_output_shocked(value=10.0, shock_year=1)
+    assert baseline == pytest.approx((11.0, 11.0))
+    pkg.data.ENGINE_YEAR_LABELS = (0, 0)
+    assert pkg.compute_output_shocked(value=10.0, shock_year=1) == pytest.approx((10.0, 10.0))
+    pkg.data.ENGINE_YEAR_LABELS = (1, 2)
+    with pkg.data.overrides(ENGINE_YEAR_LABELS=(0, 0)):
+        assert pkg.compute_output_shocked(value=10.0, shock_year=1) == pytest.approx((10.0, 10.0))
+    assert pkg.compute_output_shocked(value=10.0, shock_year=1) == pytest.approx((11.0, 11.0))
+    with (
+        pytest.raises(AttributeError, match="unknown constant"),
+        pkg.data.overrides(NOT_A_CONSTANT=(0, 0)),
+    ):
+        pass
