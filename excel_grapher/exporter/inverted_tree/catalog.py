@@ -32,6 +32,7 @@ from excel_grapher.series_bindings.normalize import (
 from excel_grapher.series_bindings.ranges import (
     apply_series_excludes,
     expand_data_range,
+    format_series_data_range,
     series_data_ranges,
 )
 from excel_grapher.series_bindings.resolve import resolve_key_domain
@@ -729,6 +730,11 @@ def build_catalog(
     matching `resolve_series_binding` (issue #600). Each series carries an
     ordered key-point domain. When `graph` is provided, mixed formula shapes
     partition into one `Statement` per consecutive run.
+
+    Raises:
+        InvertedTreeExportError: A series is missing `id`, two series share an
+            id (message names both `data_range`s), two series claim the same
+            cell, or key-domain resolution fails.
     """
     series_map: dict[str, BoundSeries] = {}
     order: list[str] = []
@@ -740,6 +746,12 @@ def build_catalog(
         series_id = str(entry.get("id") or "")
         if not series_id:
             raise InvertedTreeExportError("series entry missing id")
+        if series_id in series_map:
+            previous = series_map[series_id]
+            raise InvertedTreeExportError(
+                f"duplicate series id {series_id!r}: "
+                f"{format_series_data_range(previous.raw)} and {format_series_data_range(entry)}"
+            )
         cells: list[CanonicalAddress] = []
         for data_range in series_data_ranges(entry):
             cells.extend(
