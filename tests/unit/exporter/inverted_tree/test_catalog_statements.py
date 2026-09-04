@@ -502,6 +502,8 @@ def test_bound_series_index_of() -> None:
         statements=(Statement("s", "s", None, 0, 3, cells, domain),),
     )
     assert series.index_of("Sheet1!A1") == 0
-    assert series.index_of("Sheet1!$A$2") == 1
-    assert series.index_of("Sheet1!a3") == 2
+    assert series.index_of("Sheet1!A2") == 1
+    assert series.index_of("Sheet1!A3") == 2
     assert series.index_of("Sheet1!A4") is None
+    assert series.index_of("Sheet1!$A$2") is None
+    assert series.index_of("Sheet1!a3") is None

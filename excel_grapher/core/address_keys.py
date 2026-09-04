@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterable, Sequence
 from enum import StrEnum
-from typing import TypeAlias
+from typing import NewType, TypeAlias
 
 from fastpyxl.utils.cell import (
     column_index_from_string,
@@ -24,6 +24,11 @@ from fastpyxl.utils.exceptions import CellCoordinatesException
 
 # Canonical sheet-qualified cell (`Sheet1!B1`) or same-sheet range (`Sheet1!C4:D4`).
 NormalizedAddress: TypeAlias = str
+CanonicalAddress = NewType("CanonicalAddress", str)
+
+# Already-canonical unquoted single cell (`Sheet1!A1`). Quoted sheets, `$`,
+# lowercase columns, and leading-zero rows fall through to full parse.
+_CANONICAL_UNQUOTED_CELL_RE = re.compile(r"^[A-Za-z0-9_.]+![A-Z]{1,3}[1-9]\d*$")
 
 _A1_CELL_COORD_RE = re.compile(r"^\$?([A-Za-z]{1,3})\$?(\d+)$")
 _WHOLE_COL_COORD_RE = re.compile(r"^\$?([A-Za-z]{1,3})$")
@@ -213,6 +218,25 @@ def _split_top_level_comma(address: str) -> list[str]:
     return parts
 
 
+def as_canonical(address: str) -> CanonicalAddress:
+    """Mark `address` as already canonical without parsing.
+
+    Use `canonical_address` at public boundaries. Call this only when
+    `address` is produced by `normalize_key`, `format_cell_key`, or
+    `resolve_cell_ref`.
+    """
+    return CanonicalAddress(address)
+
+
+def canonical_address(address: str) -> CanonicalAddress:
+    """Normalize a user-supplied address to a `CanonicalAddress`.
+
+    This is the public-boundary wrapper. Internal catalog lookups take
+    `CanonicalAddress` and must not call `normalize_key` again.
+    """
+    return CanonicalAddress(normalize_key(address))
+
+
 def normalize_key(key: str) -> NormalizedAddress:
     """Normalize an address to canonical :data:`NormalizedAddress` form.
 
@@ -222,6 +246,7 @@ def normalize_key(key: str) -> NormalizedAddress:
     Ranges and unions use `parse_node_key` (1x1 ranges collapse to cells).
     Non-parseable colon forms fall back to `format_range_key` for same-sheet
     ranges or keep both sheet-qualified endpoints when sheets differ.
+    Already-canonical unquoted cells (`Sheet1!A1`) return immediately.
 
     Examples:
         >>> normalize_key("'Sheet1'!A1")
@@ -239,6 +264,8 @@ def normalize_key(key: str) -> NormalizedAddress:
         >>> normalize_key("Sheet1!D63:D63")
         'Sheet1!D63'
     """
+    if _CANONICAL_UNQUOTED_CELL_RE.fullmatch(key):
+        return key
     if "," in key and len(_split_top_level_comma(key)) > 1:
         return str(parse_node_key(key))
 

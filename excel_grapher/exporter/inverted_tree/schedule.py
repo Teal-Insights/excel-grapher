@@ -14,7 +14,8 @@ from typing import TYPE_CHECKING, Literal
 
 from excel_grapher.exporter.inverted_tree.catalog import (
     SeriesCatalog,
-    schedule_coord,
+    schedule_axis_coord,
+    schedule_partition,
 )
 from excel_grapher.exporter.inverted_tree.deps import (
     DependenceEdge,
@@ -22,6 +23,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
     requires_demand_driven,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
+from excel_grapher.series_bindings.types import Scalar
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -394,6 +396,9 @@ class FusedPlan:
     """Union-domain loop for a fusible SCC (rung 2, and rung-1 as a singleton).
 
     `regions` is the source of truth for residual order along the schedule.
+    `partitions` is the ordered outer-key nest (`()` when the SCC is 1-D).
+    When partitions are not isomorphic, `unroll` is True and
+    `partition_regions` holds one region tuple per outer key.
     """
 
     scc: tuple[str, ...]
@@ -401,31 +406,83 @@ class FusedPlan:
     domain: dict[str, tuple[int, int]]
     regions: tuple[FusedRegion, ...]
     direction: Literal["forward", "reversed"] = "forward"
+    partitions: tuple[tuple[Scalar, ...], ...] = ()
+    unroll: bool = False
+    partition_regions: tuple[tuple[FusedRegion, ...], ...] = ()
 
     @property
     def coord_to_t(self) -> dict[int, int]:
-        """Map each schedule coordinate to its union index `t`."""
+        """Map each schedule-axis coordinate to its union index `t`."""
         return {coord: index for index, coord in enumerate(self.schedule)}
 
+    @property
+    def is_nested(self) -> bool:
+        """True when emission wraps the fused body in an outer partition loop."""
+        return len(self.partitions) > 1
 
-def _contiguous_domain(
-    series_id: str,
-    catalog: SeriesCatalog,
-    coord_to_t: dict[int, int],
-) -> tuple[int, int] | None:
-    """Return `[start, stop)` in union-index space, or None if the domain has holes."""
-    locals_: list[int] = []
-    for address in catalog.get(series_id).cells:
-        coord = schedule_coord(address, catalog)
-        if coord not in coord_to_t:
-            return None
-        locals_.append(coord_to_t[coord])
+
+def _contiguous_span(locals_: Sequence[int]) -> tuple[int, int] | None:
+    """Return `[start, stop)` when `locals_` is a hole-free interval."""
     if not locals_:
         return None
     start, stop = min(locals_), max(locals_) + 1
     if len(locals_) != stop - start or set(locals_) != set(range(start, stop)):
         return None
     return start, stop
+
+
+def _scc_partitions(scc: tuple[str, ...], catalog: SeriesCatalog) -> tuple[tuple[Scalar, ...], ...]:
+    """Return outer-key blocks in catalog appearance order."""
+    seen: list[tuple[Scalar, ...]] = []
+    seen_set: set[tuple[Scalar, ...]] = set()
+    for series_id in scc:
+        for address in catalog.get(series_id).cells:
+            part = schedule_partition(address, catalog)
+            if part not in seen_set:
+                seen_set.add(part)
+                seen.append(part)
+    return tuple(seen)
+
+
+def _contiguous_domain(
+    series_id: str,
+    catalog: SeriesCatalog,
+    coord_to_t: dict[int, int],
+    partitions: Sequence[tuple[Scalar, ...]],
+) -> tuple[int, int] | None:
+    """Return `[start, stop)` in union-index space, or None if a domain has holes.
+
+    Contiguity is checked per outer-key block (#638). A late-start `adj`
+    that is `[1, 2]` in France and `[1, 2]` in Kenya fuses; the flattened
+    `[1, 2, 4, 5]` does not have to be a single interval. Every partition
+    must carry the same span so one inner loop can serve all blocks.
+    """
+    series = catalog.get(series_id)
+    nested = len(partitions) > 1
+    if not nested:
+        locals_: list[int] = []
+        for address in series.cells:
+            coord = schedule_axis_coord(address, catalog)
+            if coord not in coord_to_t:
+                return None
+            locals_.append(coord_to_t[coord])
+        return _contiguous_span(locals_)
+    by_part: dict[tuple[Scalar, ...], list[int]] = {part: [] for part in partitions}
+    for address in series.cells:
+        part = schedule_partition(address, catalog)
+        coord = schedule_axis_coord(address, catalog)
+        if coord not in coord_to_t or part not in by_part:
+            return None
+        by_part[part].append(coord_to_t[coord])
+    spans: list[tuple[int, int]] = []
+    for part in partitions:
+        span = _contiguous_span(by_part[part])
+        if span is None:
+            return None
+        spans.append(span)
+    if len(set(spans)) != 1:
+        return None
+    return spans[0]
 
 
 def _statement_at_union(
@@ -437,11 +494,20 @@ def _statement_at_union(
     """Return the statement covering schedule coordinate `index`.
 
     `_union_t` is the position of `index` on the fused union schedule. Lookup
-    is an O(1) hit on `catalog.schedule.statement_id_by_coord`.
+    is an O(1) hit on `catalog.schedule.statement_id_by_coord` (flattened
+    join keys). A miss falls back to the inner `TIME_PERIOD` axis so a
+    matrix nest can resolve the covering statement per outer-key block.
     """
     found = catalog.schedule.statement_id_by_coord.get(series_id, {}).get(index)
     if found is not None:
         return found
+    series = catalog.get(series_id)
+    if len(series.statements) <= 1:
+        return series_id
+    for stmt in series.statements:
+        for cell in stmt.cells:
+            if schedule_axis_coord(cell, catalog) == index:
+                return stmt.statement_id
     return series_id
 
 
@@ -501,11 +567,17 @@ def _index_region_key(
 def _bucket_edges_by_consumer_coord(
     edges: Sequence[DependenceEdge],
     catalog: SeriesCatalog,
+    *,
+    partition: tuple[Scalar, ...] | None = None,
 ) -> dict[int, list[DependenceEdge]]:
-    """Group intra-SCC edges by the consumer's schedule coordinate."""
+    """Group same-partition intra-SCC edges by the consumer's axis coordinate."""
     buckets: dict[int, list[DependenceEdge]] = {}
     for edge in edges:
-        coord = schedule_coord(edge.consumer_cell, catalog)
+        if edge.access == "cross_partition":
+            continue
+        if partition is not None and schedule_partition(edge.consumer_cell, catalog) != partition:
+            continue
+        coord = schedule_axis_coord(edge.consumer_cell, catalog)
         buckets.setdefault(coord, []).append(edge)
     return buckets
 
@@ -517,9 +589,10 @@ def _fuse_regions(
     domain: Mapping[str, tuple[int, int]],
     edges: Sequence[DependenceEdge],
     coords: Sequence[int],
+    partition: tuple[Scalar, ...] | None = None,
 ) -> tuple[FusedRegion, ...] | None:
     """Group contiguous union indices that share residual order and access."""
-    by_coord = _bucket_edges_by_consumer_coord(edges, catalog)
+    by_coord = _bucket_edges_by_consumer_coord(edges, catalog, partition=partition)
     regions: list[FusedRegion] = []
     run_start = 0
     run_key: (
@@ -550,6 +623,93 @@ def _fuse_regions(
     return tuple(regions)
 
 
+def _cross_partition_cycle_message(
+    scc: tuple[str, ...],
+    pair: tuple[tuple[Scalar, ...], tuple[Scalar, ...]],
+    edges: Sequence[DependenceEdge],
+    catalog: SeriesCatalog,
+) -> str:
+    """Name both cells of a mutual same-index cross-partition cycle."""
+    consumer_part, producer_part = pair
+    matches = [
+        edge
+        for edge in edges
+        if edge.access == "cross_partition"
+        and schedule_partition(edge.consumer_cell, catalog) == consumer_part
+        and schedule_partition(edge.producer_cell, catalog) == producer_part
+    ]
+    reverse = [
+        edge
+        for edge in edges
+        if edge.access == "cross_partition"
+        and schedule_partition(edge.consumer_cell, catalog) == producer_part
+        and schedule_partition(edge.producer_cell, catalog) == consumer_part
+    ]
+    prefix = f"distance-zero residual of zipper series {list(scc)!r} is cyclic"
+    if matches and reverse:
+        first, second = matches[0], reverse[0]
+        return (
+            f"{prefix} ({first.consumer_id} {first.consumer_cell} reads "
+            f"{first.producer_id} {first.producer_cell}, "
+            f"{second.consumer_id} {second.consumer_cell} reads "
+            f"{second.producer_id} {second.producer_cell})"
+        )
+    if matches:
+        edge = matches[0]
+        return (
+            f"{prefix} ({edge.consumer_id} {edge.consumer_cell} reads "
+            f"{edge.producer_id} {edge.producer_cell})"
+        )
+    return prefix
+
+
+def _assert_cross_partition_legal(
+    scc: tuple[str, ...],
+    edges: Sequence[DependenceEdge],
+    catalog: SeriesCatalog,
+    partitions: Sequence[tuple[Scalar, ...]],
+) -> bool:
+    """Fail closed on a partition cycle; return False for a forward outer read.
+
+    A `cross_partition` edge is legal only when it points at an already
+    completed outer iteration under `partitions` order. Mutual same-index
+    reads are a real circular reference and raise.
+
+    Raises:
+        InvertedTreeExportError: Two partitions read each other at the same
+            index.
+    """
+    members = set(scc)
+    cross = [
+        edge
+        for edge in edges
+        if edge.access == "cross_partition"
+        and edge.consumer_id in members
+        and edge.producer_id in members
+    ]
+    if not cross:
+        return True
+    residual: dict[tuple[Scalar, ...], list[tuple[Scalar, ...]]] = {part: [] for part in partitions}
+    for edge in cross:
+        consumer_part = schedule_partition(edge.consumer_cell, catalog)
+        producer_part = schedule_partition(edge.producer_cell, catalog)
+        if consumer_part == producer_part:
+            continue
+        if consumer_part not in residual or producer_part not in residual:
+            return False
+        residual[consumer_part].append(producer_part)
+    pair = _first_partition_cycle(residual)
+    if pair is not None:
+        raise InvertedTreeExportError(_cross_partition_cycle_message(scc, pair, cross, catalog))
+    rank = {part: index for index, part in enumerate(partitions)}
+    for edge in cross:
+        consumer_part = schedule_partition(edge.consumer_cell, catalog)
+        producer_part = schedule_partition(edge.producer_cell, catalog)
+        if rank[producer_part] > rank[consumer_part]:
+            return False
+    return True
+
+
 def plan_fused_scc(
     scc: tuple[str, ...],
     *,
@@ -559,27 +719,34 @@ def plan_fused_scc(
 ) -> FusedPlan | None:
     """Return a fused loop plan, or None when the SCC must stay on rung 3.
 
-    Requires uniform loop direction (all intra-SCC nonzero distances positive
-    for a forward loop, or all negative for a reversed loop) and a contiguous
-    domain per statement on the union schedule. Residual order, formula shape,
-    and access class may change along the schedule; each distinct span becomes
-    a `FusedRegion`. A singleton SCC with positive-distance self-lags is the
-    rung-1 scan: peel the first `max(D)` members and index the growing buffer.
+    Requires uniform loop direction (all intra-SCC nonzero same-partition
+    distances positive for a forward loop, or all negative for a reversed
+    loop) and a contiguous domain per statement on the union schedule.
+    Contiguity is per outer-key block when the key is a nest (#638).
+    Residual order, formula shape, and access class may change along the
+    schedule; each distinct span becomes a `FusedRegion`. A singleton SCC
+    with positive-distance self-lags is the rung-1 scan: peel the first
+    `max(D)` members and index the growing buffer.
 
     Pass `edges` when the catalog has already been walked.
 
     Raises:
         InvertedTreeExportError: Some index's residual is a real same-index
-            cycle.
+            cycle, including a mutual cross-partition read.
     """
     if not scc:
         return None
     members = set(scc)
     edges = collect_dependence_edges(catalog, graph, scc, edges=edges)
     intra = [edge for edge in edges if edge.consumer_id in members and edge.producer_id in members]
-    if len(scc) < 2 and not any(edge.distance != 0 for edge in intra):
+    same_part = [edge for edge in intra if edge.access != "cross_partition"]
+    if (
+        len(scc) < 2
+        and not any(edge.distance != 0 for edge in same_part)
+        and not any(edge.access == "cross_partition" for edge in intra)
+    ):
         return None
-    nonzero = [edge.distance for edge in intra if edge.distance != 0]
+    nonzero = [edge.distance for edge in same_part if edge.distance != 0]
     has_pos = any(d > 0 for d in nonzero)
     has_neg = any(d < 0 for d in nonzero)
     if has_pos and has_neg:
@@ -588,8 +755,12 @@ def plan_fused_scc(
     assert_distance_zero_legal(scc, edges, catalog)
     if has_residual_may_cycle(scc, edges, catalog):
         return None
+    partitions = _scc_partitions(scc, catalog)
+    nested = len(partitions) > 1
+    if nested and not _assert_cross_partition_legal(scc, intra, catalog, partitions):
+        return None
     coords = sorted(
-        {schedule_coord(addr, catalog) for sid in scc for addr in catalog.get(sid).cells},
+        {schedule_axis_coord(addr, catalog) for sid in scc for addr in catalog.get(sid).cells},
         reverse=(direction == "reversed"),
     )
     if not coords:
@@ -597,19 +768,50 @@ def plan_fused_scc(
     coord_to_t = {coord: index for index, coord in enumerate(coords)}
     domain: dict[str, tuple[int, int]] = {}
     for sid in scc:
-        span = _contiguous_domain(sid, catalog, coord_to_t)
+        span = _contiguous_domain(sid, catalog, coord_to_t, partitions if nested else ())
         if span is None:
             return None
         domain[sid] = span
-    regions = _fuse_regions(scc, catalog=catalog, domain=domain, edges=edges, coords=coords)
+    representative = partitions[0] if nested else None
+    regions = _fuse_regions(
+        scc,
+        catalog=catalog,
+        domain=domain,
+        edges=edges,
+        coords=coords,
+        partition=representative,
+    )
     if regions is None:
         return None
+    unroll = False
+    partition_regions: tuple[tuple[FusedRegion, ...], ...] = ()
+    if nested:
+        per_part: list[tuple[FusedRegion, ...]] = []
+        for part in partitions:
+            part_regions = _fuse_regions(
+                scc,
+                catalog=catalog,
+                domain=domain,
+                edges=edges,
+                coords=coords,
+                partition=part,
+            )
+            if part_regions is None:
+                return None
+            per_part.append(part_regions)
+        has_cross = any(edge.access == "cross_partition" for edge in intra)
+        if has_cross or any(part_regions != regions for part_regions in per_part):
+            unroll = True
+            partition_regions = tuple(per_part)
     return FusedPlan(
         scc=scc,
         schedule=tuple(coords),
         domain=domain,
         regions=regions,
         direction=direction,
+        partitions=partitions if nested else (),
+        unroll=unroll,
+        partition_regions=partition_regions,
     )
 
 
@@ -667,6 +869,8 @@ def _zero_distance_edges(
     for edge in edges:
         if edge.consumer_id not in members or edge.producer_id not in members:
             continue
+        if edge.access == "cross_partition":
+            continue
         if edge.distance != 0:
             continue
         zero.append(edge)
@@ -703,6 +907,34 @@ def _topo_order(
             remaining.remove(sid)
             ordered.append(sid)
     return tuple(ordered)
+
+
+def _first_partition_cycle(
+    residual: dict[tuple[Scalar, ...], list[tuple[Scalar, ...]]],
+) -> tuple[tuple[Scalar, ...], tuple[Scalar, ...]] | None:
+    """Return one partition edge that participates in a cycle."""
+    visiting: set[tuple[Scalar, ...]] = set()
+    visited: set[tuple[Scalar, ...]] = set()
+
+    def dfs(node: tuple[Scalar, ...]) -> tuple[tuple[Scalar, ...], tuple[Scalar, ...]] | None:
+        visiting.add(node)
+        for pred in residual.get(node, []):
+            if pred in visiting:
+                return node, pred
+            if pred not in visited:
+                found = dfs(pred)
+                if found is not None:
+                    return found
+        visiting.remove(node)
+        visited.add(node)
+        return None
+
+    for start in residual:
+        if start not in visited:
+            pair = dfs(start)
+            if pair is not None:
+                return pair
+    return None
 
 
 def _first_cyclic_pair(residual: dict[str, list[str]]) -> tuple[str, str] | None:
@@ -748,7 +980,7 @@ def _residual_cycle_message(
         (
             edge
             for edge in _zero_distance_edges(scc, edges)
-            if schedule_coord(edge.consumer_cell, catalog) == index
+            if schedule_axis_coord(edge.consumer_cell, catalog) == index
             and edge.consumer_id == consumer_id
             and edge.producer_id == producer_id
             and not edge.guarded
@@ -758,7 +990,7 @@ def _residual_cycle_message(
         (
             edge
             for edge in _zero_distance_edges(scc, edges)
-            if schedule_coord(edge.consumer_cell, catalog) == index
+            if schedule_axis_coord(edge.consumer_cell, catalog) == index
             and edge.consumer_id == consumer_id
             and edge.producer_id == producer_id
         ),
@@ -790,7 +1022,7 @@ def assert_distance_zero_legal(
     for edge in _zero_distance_edges(scc, edges):
         if edge.guarded:
             continue
-        index = schedule_coord(edge.consumer_cell, catalog)
+        index = schedule_axis_coord(edge.consumer_cell, catalog)
         residual = by_index.setdefault(index, _empty_residual(scc))
         _add_residual_edge(residual, edge)
     for index, residual in by_index.items():
@@ -808,7 +1040,7 @@ def has_residual_may_cycle(
     """Return True if any schedule index has a residual cycle using guarded edges."""
     by_index: dict[int, dict[str, list[str]]] = {}
     for edge in _zero_distance_edges(scc, edges):
-        index = schedule_coord(edge.consumer_cell, catalog)
+        index = schedule_axis_coord(edge.consumer_cell, catalog)
         residual = by_index.setdefault(index, _empty_residual(scc))
         _add_residual_edge(residual, edge)
     return any(_topo_order(scc, residual) is None for residual in by_index.values())
