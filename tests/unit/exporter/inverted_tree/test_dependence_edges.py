@@ -67,7 +67,7 @@ def test_a10_lag_edges_are_identity_and_shift(tmp_path: Path) -> None:
     edges = collect_all_dependence_edges(catalog, graph)
     assert _accesses(edges, "direction", "debt") == {"identity", "shift"}
     direction = catalog.get("direction")
-    derived = series_deps_from_edges(direction, edges, catalog)
+    derived = series_deps_from_edges(direction, edges, catalog, graph)
     assert derived.lagged_ids == frozenset({"debt"})
     assert derived.aligned_ids == frozenset()
     assert derived.lookup_ids == frozenset()
@@ -88,7 +88,7 @@ def test_a2_offset_table_is_dynamic_or_whole(tmp_path: Path) -> None:
         "whole",
     }
     assert _accesses(edges, "shock_magnitude_resolved", "shock_magnitudes")
-    derived = series_deps_from_edges(catalog.get("shock_magnitude_resolved"), edges, catalog)
+    derived = series_deps_from_edges(catalog.get("shock_magnitude_resolved"), edges, catalog, graph)
     assert derived.lookup_ids == frozenset({"shock_magnitudes"})
     assert derived == deps["shock_magnitude_resolved"]
 
@@ -99,7 +99,7 @@ def test_a1_aligned_path_is_identity(tmp_path: Path) -> None:
     assert _accesses(edges, "engine_path", "growth") == {"identity"}
     assert _accesses(edges, "engine_path", "interest") == {"identity"}
     assert _accesses(edges, "engine_path", "engine_path") == {"shift"}
-    derived = series_deps_from_edges(catalog.get("engine_path"), edges, catalog)
+    derived = series_deps_from_edges(catalog.get("engine_path"), edges, catalog, graph)
     assert derived.aligned_ids == frozenset({"growth", "interest"})
     assert derived.index_maps == {"interest": (0, 1), "growth": (0, 1)}
     assert derived.is_scan is True
@@ -111,7 +111,7 @@ def test_derived_series_deps_match_collect_all_deps(tmp_path: Path) -> None:
     catalog, deps, graph = inverted_graph_parts(_a1_workbook(tmp_path), _a1_bindings())
     edges = collect_all_dependence_edges(catalog, graph)
     derived = {
-        series.series_id: series_deps_from_edges(series, edges, catalog)
+        series.series_id: series_deps_from_edges(series, edges, catalog, graph)
         for series in catalog.formula_series()
     }
     assert derived == deps

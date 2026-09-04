@@ -504,8 +504,8 @@ def test_statement_at_union_is_precomputed_coord_map_hit(
     )
 
     def boom(address: str, _catalog: SeriesCatalog) -> int:
-        raise AssertionError(f"schedule_coord should not run during lookup: {address}")
+        raise AssertionError(f"schedule coordinate walk should not run during lookup: {address}")
 
-    monkeypatch.setattr(schedule_mod, "schedule_coord", boom)
+    monkeypatch.setattr(schedule_mod, "schedule_axis_coord", boom)
     assert schedule_mod._statement_at_union(catalog, "value", 0, 0) == "value__0"
     assert schedule_mod._statement_at_union(catalog, "value", 1, 3) == "value__1"

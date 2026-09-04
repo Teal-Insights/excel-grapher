@@ -132,7 +132,7 @@ def test_absolute_selector_emits_identity_loop_reading_mode(tmp_path: Path) -> N
     internals = modules["internals.py"]
     assert "prior: float | str = mode" not in internals
     assert "prior == label_nominal" not in internals
-    assert "mode == label_nominal" in internals
+    assert "xl_eq(mode, label_nominal)" in internals
     assert "for i in range(n):" in internals
     assert "out.append(" in internals
 

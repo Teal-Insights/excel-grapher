@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v12.6.0 (2026-09-04)
+
+### Features
+
+- **export**: Fuse matrix SCCs on per-partition TIME_PERIOD
+  ([#646](https://github.com/Teal-Insights/excel-grapher/pull/646),
+  [`3b71aac`](https://github.com/Teal-Insights/excel-grapher/commit/3b71aac5db08e1c12c7691f151ac83e01dde8de4))
+
+
+## v12.5.4 (2026-09-04)
+
+### Bug Fixes
+
+- **export**: Coerce inverted-tree arithmetic and comparison operands
+  ([#643](https://github.com/Teal-Insights/excel-grapher/pull/643),
+  [`f8db842`](https://github.com/Teal-Insights/excel-grapher/commit/f8db842b1a45777ae96571cf633085becedd792a))
+
+- **export**: Coerce inverted-tree operator operands (#635)
+  ([#643](https://github.com/Teal-Insights/excel-grapher/pull/643),
+  [`f8db842`](https://github.com/Teal-Insights/excel-grapher/commit/f8db842b1a45777ae96571cf633085becedd792a))
+
+- **export**: Keep inverted-tree indexes integral after coercion
+  ([#643](https://github.com/Teal-Insights/excel-grapher/pull/643),
+  [`f8db842`](https://github.com/Teal-Insights/excel-grapher/commit/f8db842b1a45777ae96571cf633085becedd792a))
+
+- **export**: Normalize inverted-tree catalog addresses once
+  ([#645](https://github.com/Teal-Insights/excel-grapher/pull/645),
+  [`effb353`](https://github.com/Teal-Insights/excel-grapher/commit/effb3537e73bf4c623553259fbcdc72b44175f20))
+
+
+## v12.5.3 (2026-09-04)
+
+### Bug Fixes
+
+- **export**: Classify seed/terminal lags by schedule and relative refs
+  ([#644](https://github.com/Teal-Insights/excel-grapher/pull/644),
+  [`c747e8f`](https://github.com/Teal-Insights/excel-grapher/commit/c747e8f49bb75bea1f74dda1a300f548bee98441))
+
+
 ## v12.5.2 (2026-09-04)
 
 ### Bug Fixes
