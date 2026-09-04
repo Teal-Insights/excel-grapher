@@ -199,12 +199,33 @@ class ScheduleIndex:
     """Precomputed schedule coordinates and join fields for one catalog.
 
     `index_by_coord` maps series id to schedule coordinate to member indices
-    so identity joins do not rescan producer cells.
+    so identity joins do not rescan producer cells. `statement_id_by_coord`
+    maps series id to schedule coordinate to the covering statement id so
+    fused-region planning is an O(1) lookup per union index.
     """
 
     preferred: dict[str, tuple[str, ...] | None]
     coord_of: dict[str, int]
     index_by_coord: dict[str, dict[int, tuple[int, ...]]]
+    statement_id_by_coord: dict[str, dict[int, str]] = field(default_factory=dict)
+
+
+def _statement_id_by_coord(
+    series: Mapping[str, BoundSeries],
+    coord_of: Mapping[str, int],
+) -> dict[str, dict[int, str]]:
+    """Map each series id to schedule coordinate to covering statement id."""
+    indexed: dict[str, dict[int, str]] = {}
+    for item in series.values():
+        mapping: dict[int, str] = {}
+        for stmt in item.statements:
+            for cell in stmt.cells:
+                mapping.setdefault(coord_of[normalize_address(cell)], stmt.statement_id)
+        if not mapping:
+            for address in item.cells:
+                mapping.setdefault(coord_of[normalize_address(address)], item.series_id)
+        indexed[item.series_id] = mapping
+    return indexed
 
 
 def build_schedule_index(series: Mapping[str, BoundSeries]) -> ScheduleIndex:
@@ -240,7 +261,12 @@ def build_schedule_index(series: Mapping[str, BoundSeries]) -> ScheduleIndex:
         index_by_coord[item.series_id] = {
             coord: tuple(members) for coord, members in buckets.items()
         }
-    return ScheduleIndex(preferred=preferred, coord_of=coord_of, index_by_coord=index_by_coord)
+    return ScheduleIndex(
+        preferred=preferred,
+        coord_of=coord_of,
+        index_by_coord=index_by_coord,
+        statement_id_by_coord=_statement_id_by_coord(series, coord_of),
+    )
 
 
 def preferred_fields(series: BoundSeries, catalog: SeriesCatalog) -> tuple[str, ...] | None:
@@ -565,7 +591,10 @@ def partition_catalog(catalog: SeriesCatalog, graph: DependencyGraph) -> SeriesC
         series=series_map,
         order=catalog.order,
         address_to_id=catalog.address_to_id,
-        schedule=catalog.schedule,
+        schedule=replace(
+            catalog.schedule,
+            statement_id_by_coord=_statement_id_by_coord(series_map, catalog.schedule.coord_of),
+        ),
     )
 
 
