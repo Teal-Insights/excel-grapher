@@ -2910,7 +2910,9 @@ class CodeGenerator:
         `include_compute_all=False` to omit it unconditionally.
 
         `paradigm="inverted_tree"` emits leaf-closure `compute_*` functions and
-        first-level-dep internals (issue #597). Default `ctx` export is unchanged.
+        first-level-dep internals (issue #597). That is the recommended
+        series-binding export. The default remains `ctx` until the issue 662
+        default-flip gate (local pool green on LIC-DSF, port follow-ups shipped).
         """
         if paradigm == "inverted_tree":
             from excel_grapher.exporter.inverted_tree import generate_inverted_tree_modules

@@ -1,7 +1,8 @@
 """Inverted-tree codegen: leaf-closure functions, no `EvalContext`.
 
-This is the competing export paradigm from issue #597. Default ctx export is
-unchanged; callers opt in with `generate_modules(..., paradigm="inverted_tree")`.
+Opt in with `generate_modules(..., paradigm="inverted_tree")`. That is the
+recommended series-binding export; the library default remains `ctx` until
+the issue 662 default-flip gate.
 """
 
 from __future__ import annotations

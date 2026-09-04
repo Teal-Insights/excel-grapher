@@ -35,6 +35,7 @@ Validate a workbook and its binding sidecar before export or CI.
 ```bash
 excel-grapher bindings validate WORKBOOK [--bindings PATH] [--json] [-v]
   [--smoke-test] [--emit-dir DIR] [--package-name NAME]
+  [--paradigm {ctx,inverted_tree}]
 ```
 
 ### Arguments
@@ -45,9 +46,10 @@ excel-grapher bindings validate WORKBOOK [--bindings PATH] [--json] [-v]
 | `--bindings PATH` | Binding sidecar **file** or **shard directory**. When omitted, the CLI looks for a colocated sidecar (see below). |
 | `--json` | Print the full validation `report` object as JSON (includes every issue). |
 | `-v`, `--verbose` | Print **warnings** in human-readable output. **Errors** are always printed when validation fails. |
-| `--smoke-test` | After a successful validation, generate binding modules and run setter/compute smoke checks. |
+| `--smoke-test` | After a successful validation, generate binding modules and run paradigm-specific smoke checks (ctx: setters/computes; inverted-tree: `compute_*` with workbook-default inputs). |
 | `--emit-dir DIR` | Write generated module files under `DIR` (see `--package-name`). Implied when combined with `--smoke-test` and an emit directory. |
 | `--package-name NAME` | Package directory name for smoke tests and emitted files (default: `bindings_module`). |
+| `--paradigm {ctx,inverted_tree}` | Codegen paradigm. `inverted_tree` is the recommended series-binding export; the default remains `ctx` until the [issue 662](https://github.com/Teal-Insights/excel-grapher/issues/662) default-flip gate. |
 
 Validation-only is the default: no code is generated unless you pass `--smoke-test` or `--emit-dir`.
 
@@ -105,11 +107,18 @@ Each issue in the JSON report has `level`, `code`, `message`, and optional `seri
 
 ### Smoke test and code generation
 
-After validation succeeds, `--smoke-test` generates modular binding code, imports each declared
-`set_*` and `compute_*` function, and runs lightweight round-trip checks:
+After validation succeeds, `--smoke-test` generates modular binding code and runs a lightweight
+round-trip:
+
+- **`ctx` (default):** import each declared `set_*` and `compute_*`, bump one record through a
+  setter, and check that computes return `Records` of the expected length.
+- **`inverted_tree`:** call each `compute_*` with the workbook-default input arrays from `data.py`
+  and check that the result tuple length matches the output series.
 
 ```bash
 uv run excel-grapher bindings validate lic_inputs.xlsx --smoke-test
+uv run excel-grapher bindings validate lic_inputs.xlsx \
+  --paradigm inverted_tree --smoke-test --emit-dir ./generated
 ```
 
 To persist generated files:
@@ -129,6 +138,12 @@ When smoke checks pass, the CLI prints:
 
 ```text
 All setter and compute functions passed smoke checks.
+```
+
+or, with `--paradigm inverted_tree`:
+
+```text
+All inverted-tree compute functions passed smoke checks.
 ```
 
 ### Error output
@@ -191,8 +206,10 @@ run_binding_checks(
     module_dir=Path("./generated/lic_bindings"),
     package_name="lic_bindings",
     smoke_test=True,
+    paradigm="inverted_tree",
 )
 ```
 
 See [Series bindings](series-bindings.qmd) for manifest authoring, bind kinds, and export
-integration.
+integration, and [Exporting standalone Python](06-export.qmd) for inverted-tree packages and
+the ctx migration.
