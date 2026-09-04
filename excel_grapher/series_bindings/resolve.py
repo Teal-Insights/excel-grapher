@@ -683,6 +683,7 @@ def resolve_key_domain(
     *,
     concept_scheme: dict[str, Any] | None = None,
     graph: DependencyGraph | None = None,
+    reader: _WorkbookValues | None = None,
 ) -> tuple[dict[str, Scalar], ...]:
     """Resolve per-cell key coordinates for `cells` in expansion order.
 
@@ -697,6 +698,9 @@ def resolve_key_domain(
     Uses the same dimension binds as `resolve_series_binding`, but does not
     intersect with the dependency graph. Structural bind failures
     (`UnknownBindKindError`, missing bind keys) raise immediately.
+
+    Pass `reader` to reuse a shared `_WorkbookValues` across series. When
+    omitted, a reader is created for this call and closed before returning.
 
     Returns:
         Per-cell key dicts in `cells` order. Empty dicts iff no key is
@@ -717,8 +721,12 @@ def resolve_key_domain(
     structure = series.get("structure") or {}
     points: list[dict[str, Scalar]] = []
     unresolved: dict[str, list[str]] = {}
-    with _WorkbookValues(workbook) as reader:
-        reader.prefetch(_structure_source_addresses(series, cells), graph=graph)
+    owns_reader = reader is None
+    if owns_reader:
+        reader = _WorkbookValues(workbook)
+    active_reader = reader
+    try:
+        active_reader.prefetch(_structure_source_addresses(series, cells), graph=graph)
         series_coordinates: dict[str, Scalar] = {}
         for address in cells:
             coordinates: dict[str, Scalar] = {}
@@ -738,7 +746,7 @@ def resolve_key_domain(
                     value = _execute_bind(
                         bind,
                         graph=graph,
-                        reader=reader,
+                        reader=active_reader,
                         data_address=address,
                         inferred_read_as=inferred,
                     )
@@ -770,6 +778,9 @@ def resolve_key_domain(
             if missing:
                 unresolved[address] = missing
             points.append(point)
+    finally:
+        if owns_reader:
+            active_reader.close()
     if unresolved:
         raise PartialKeyDomainError(series_id, unresolved)
     return tuple(points)

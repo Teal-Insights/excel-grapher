@@ -1,4 +1,4 @@
-"""Generator-side inverted-tree hot spots (#618, #636, #653)."""
+"""Generator-side inverted-tree hot spots (#618, #636, #653, #683)."""
 
 from __future__ import annotations
 
@@ -6,23 +6,33 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import pytest
+from fastpyxl.utils.cell import get_column_letter
 
 from excel_grapher.core import address_keys as address_keys_mod
+from excel_grapher.exporter.inverted_tree import access as access_mod
+from excel_grapher.exporter.inverted_tree import catalog as catalog_mod
 from excel_grapher.exporter.inverted_tree import deps as deps_mod
 from excel_grapher.exporter.inverted_tree import schedule as schedule_mod
+from excel_grapher.exporter.inverted_tree.access import overlapping_schedule_peer
 from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
     KeyPoint,
     SeriesCatalog,
     Statement,
     build_catalog,
+    covering_series,
+    covering_series_of_column,
+    covering_series_of_range,
     schedule_coord,
 )
-from excel_grapher.exporter.inverted_tree.deps import DependenceEdge
+from excel_grapher.exporter.inverted_tree.deps import DependenceEdge, iter_range_addresses
 from excel_grapher.exporter.inverted_tree.schedule import plan_fused_scc
+from excel_grapher.series_bindings import resolve as resolve_mod
 from tests.unit.exporter.inverted_tree.helpers import (
+    bindings_document,
     generate_inverted,
     make_catalog,
+    series_entry,
     write_workbook,
 )
 from tests.unit.exporter.inverted_tree.test_shape_a1_leaf_closure import (
@@ -307,3 +317,164 @@ def test_plan_fused_scc_edge_exams_scale_with_edges(
     assert counts["index_edges"] == len(edges_large), counts
     assert small["zero_distance"] == counts["zero_distance"] == 2
     assert small["buckets"] == counts["buckets"] == 1
+
+
+def _count_load_workbook(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    counts = {"n": 0}
+    original = resolve_mod.fastpyxl.load_workbook
+
+    def counting(*args: object, **kwargs: object) -> object:
+        counts["n"] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(resolve_mod.fastpyxl, "load_workbook", counting)
+    return counts
+
+
+def test_build_catalog_loads_workbook_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cells = {"A1": 2009, "B1": 2010, "C1": 2011}
+    for row in range(2, 8):
+        for col in "ABC":
+            cells[f"{col}{row}"] = float(row)
+    workbook = write_workbook(tmp_path / "keyed.xlsx", {"Inputs": cells})
+    document = bindings_document(
+        *(
+            series_entry(
+                f"row_{row}",
+                f"Inputs!A{row}:C{row}",
+                layout="series",
+                direction="input",
+                header_row=1,
+            )
+            for row in range(2, 8)
+        )
+    )
+    loads = _count_load_workbook(monkeypatch)
+    catalog = build_catalog(document, workbook=workbook)
+    assert len(catalog.order) == 6
+    assert all(point["TIME_PERIOD"] == 2009 for point in catalog.get("row_2").domain[:1])
+    assert loads["n"] == 1, loads
+
+
+def _count_schedule_coord(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    counts = {"n": 0}
+    original = access_mod.schedule_coord
+
+    def counting(address: object, catalog: SeriesCatalog) -> int:
+        counts["n"] += 1
+        return original(address, catalog)
+
+    monkeypatch.setattr(access_mod, "schedule_coord", counting)
+    return counts
+
+
+def test_overlapping_schedule_peer_uses_cached_coords(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog, _edges = _synthetic_zipper(200)
+    other = _synthetic_series("other", ("Engine!Z1", "Engine!Z2"), (1000, 1001))
+    catalog = make_catalog(
+        series={**catalog.series, "other": other},
+        order=(*catalog.order, "other"),
+        address_to_id={**catalog.address_to_id, "Engine!Z1": "other", "Engine!Z2": "other"},
+    )
+    host = catalog.get("debt")
+    producer = catalog.get("adjustment")
+    assert overlapping_schedule_peer(host, producer, catalog)
+    assert not overlapping_schedule_peer(host, other, catalog)
+    calls = _count_schedule_coord(monkeypatch)
+    for _ in range(1_000):
+        assert overlapping_schedule_peer(host, producer, catalog)
+        assert not overlapping_schedule_peer(host, other, catalog)
+    assert calls["n"] == 0, calls
+
+
+def _block_cells(rows: int, cols: int, *, sheet: str = "Sheet1") -> tuple[str, ...]:
+    return tuple(
+        f"{sheet}!{get_column_letter(col)}{row}"
+        for row in range(1, rows + 1)
+        for col in range(1, cols + 1)
+    )
+
+
+def _block_series(series_id: str, rows: int, cols: int) -> BoundSeries:
+    cells = _block_cells(rows, cols)
+    domain = tuple(KeyPoint(()) for _ in cells)
+    return BoundSeries(
+        series_id=series_id,
+        layout="matrix",
+        direction="constant",
+        cells=cells,
+        key_fields=(),
+        dtype="float",
+        compute_name=None,
+        raw={},
+        domain=domain,
+        statements=(Statement(series_id, series_id, None, 0, len(cells), cells, domain),),
+    )
+
+
+def _block_catalog(rows: int, cols: int) -> SeriesCatalog:
+    block = _block_series("block", rows, cols)
+    return make_catalog(
+        series={"block": block},
+        order=("block",),
+        address_to_id={cell: "block" for cell in block.cells},
+    )
+
+
+def _count_covering_address_ops(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    counts = {"parse": 0, "format": 0}
+    original_parse = catalog_mod.parse_cell_coords
+    original_format = catalog_mod.format_cell_key
+
+    def counting_parse(address: str) -> object:
+        counts["parse"] += 1
+        return original_parse(address)
+
+    def counting_format(sheet: str, column: str, row: int) -> str:
+        counts["format"] += 1
+        return original_format(sheet, column, row)
+
+    monkeypatch.setattr(catalog_mod, "parse_cell_coords", counting_parse)
+    monkeypatch.setattr(catalog_mod, "format_cell_key", counting_format)
+    return counts
+
+
+def test_covering_series_range_parses_are_o1(monkeypatch: pytest.MonkeyPatch) -> None:
+    catalog = _block_catalog(200, 30)
+    start, end = "Sheet1!A1", "Sheet1!AD200"
+    assert covering_series(catalog, iter_range_addresses(start, end)) is catalog.get("block")
+    counts = _count_covering_address_ops(monkeypatch)
+    assert covering_series_of_range(catalog, start, end) is catalog.get("block")
+    full = dict(counts)
+    counts["parse"] = counts["format"] = 0
+    assert covering_series_of_range(catalog, "Sheet1!B2", "Sheet1!C10") is catalog.get("block")
+    sub = dict(counts)
+    counts["parse"] = counts["format"] = 0
+    assert covering_series_of_range(catalog, "Sheet1!A1", "Sheet1!AE200") is None
+    overhang = dict(counts)
+    assert full["parse"] == sub["parse"] == overhang["parse"]
+    assert full["parse"] <= 4, full
+    assert full["format"] <= 2, full
+    assert sub["format"] == full["format"]
+    assert overhang["format"] == full["format"]
+
+
+def test_covering_series_column_parses_are_o1(monkeypatch: pytest.MonkeyPatch) -> None:
+    catalog = _block_catalog(200, 30)
+    start, end = "Sheet1!A1", "Sheet1!AH200"
+    counts = _count_covering_address_ops(monkeypatch)
+    assert covering_series_of_column(catalog, start, end, 1) is catalog.get("block")
+    first = dict(counts)
+    counts["parse"] = counts["format"] = 0
+    assert covering_series_of_column(catalog, start, end, 30) is catalog.get("block")
+    last_in_block = dict(counts)
+    counts["parse"] = counts["format"] = 0
+    assert covering_series_of_column(catalog, start, end, 31) is None
+    outside = dict(counts)
+    assert first["parse"] == last_in_block["parse"] == outside["parse"]
+    assert first["parse"] <= 4, first
+    assert first["format"] <= 2, first
+    assert last_in_block["format"] == first["format"]
+    assert outside["format"] == first["format"]

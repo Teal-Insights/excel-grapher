@@ -43,8 +43,11 @@ from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
     SeriesCatalog,
     covering_series,
+    covering_series_of_column,
+    covering_series_of_range,
     fit_affine_map,
     preferred_fields,
+    range_column_origin,
     schedule_axis_coord,
     schedule_coord,
     schedule_partition,
@@ -701,7 +704,7 @@ class _DepCollector:
         if isinstance(node.args[0], RangeNode):
             start = resolve_cell_ref(node.args[0].start_ref, host_cell)
             end = resolve_cell_ref(node.args[0].end_ref, host_cell)
-            covered_full = covering_series(self.catalog, iter_range_addresses(start, end))
+            covered_full = covering_series_of_range(self.catalog, start, end)
             if covered_full is not None:
                 self.emit_lookup(covered_full, host_cell, as_canonical(start), "dynamic")
             elif not col_literal:
@@ -710,14 +713,15 @@ class _DepCollector:
                     "INDEX column cannot be lowered"
                 )
             else:
-                column_cells = range_column_addresses(start, end, col_index)
-                covered = covering_series(self.catalog, column_cells)
+                covered = covering_series_of_column(self.catalog, start, end, col_index)
                 if covered is None:
                     raise InvertedTreeExportError(
                         f"series {self.host.series_id!r} cell {host_cell}: "
                         f"INDEX column {col_index} of {start}:{end} is not a bound series"
                     )
-                self.emit_lookup(covered, host_cell, column_cells[0], "dynamic")
+                self.emit_lookup(
+                    covered, host_cell, range_column_origin(start, end, col_index), "dynamic"
+                )
         else:
             self.visit(node.args[0], host_cell=host_cell, host_index=host_index)
 
