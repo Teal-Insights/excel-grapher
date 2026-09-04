@@ -4,8 +4,8 @@ Maps canonical Excel function names to shared runtime callables in
 ``excel_grapher.runtime``. Implementations live in runtime; this module is
 the explicit allowlist for ``FormulaEvaluator`` dispatch.
 
-ROW, COLUMN, COLUMNS, and OFFSET need range context and are special-cased in
-``excel_grapher.evaluator.evaluator`` instead of appearing here.
+ROW, COLUMN, COLUMNS, OFFSET, and INDIRECT need range context and are
+special-cased in ``excel_grapher.evaluator.evaluator`` instead of appearing here.
 """
 
 from __future__ import annotations
@@ -106,7 +106,7 @@ FUNCTIONS: dict[str, Callable[..., CellValue]] = {
     "LARGE": xl_large,
     "RANK": xl_rank,
     "NORMDIST": xl_normdist,
-    # reference (ROW / COLUMN / COLUMNS / OFFSET are special-cased in evaluator)
+    # reference (ROW / COLUMN / COLUMNS / OFFSET / INDIRECT are special-cased in evaluator)
     "ADDRESS": xl_address,
     # text
     "LEFT": xl_left,

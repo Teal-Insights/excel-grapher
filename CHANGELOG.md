@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v13.3.0 (2026-09-04)
+
+### Bug Fixes
+
+- **export**: Drop zero row terms from INDIRECT catalog indexes
+  ([#672](https://github.com/Teal-Insights/excel-grapher/pull/672),
+  [`0a7b3c5`](https://github.com/Teal-Insights/excel-grapher/commit/0a7b3c584ffc308157bc397a39f68fcd8d5ad20a))
+
+### Features
+
+- **export**: Lower inverted-tree INDIRECT from graph edges
+  ([#672](https://github.com/Teal-Insights/excel-grapher/pull/672),
+  [`0a7b3c5`](https://github.com/Teal-Insights/excel-grapher/commit/0a7b3c584ffc308157bc397a39f68fcd8d5ad20a))
+
+
+## v13.2.1 (2026-09-04)
+
+### Bug Fixes
+
+- **export**: Align inverted-tree data.py annotations with compute_* params
+  ([#674](https://github.com/Teal-Insights/excel-grapher/pull/674),
+  [`43448dc`](https://github.com/Teal-Insights/excel-grapher/commit/43448dccde859c121cd0776e45f27856ad71e36a))
+
+
+## v13.2.0 (2026-09-04)
+
+### Features
+
+- **export**: Lower inverted-tree SUM/SUMPRODUCT and remaining ref shapes
+  ([#671](https://github.com/Teal-Insights/excel-grapher/pull/671),
+  [`14057d4`](https://github.com/Teal-Insights/excel-grapher/commit/14057d463649fec3d2860557729b1f4de43f8451))
+
+
+## v13.1.0 (2026-09-04)
+
+### Features
+
+- **export**: Enforce input.domain on inverted-tree compute arguments
+  ([#670](https://github.com/Teal-Insights/excel-grapher/pull/670),
+  [`a746d4a`](https://github.com/Teal-Insights/excel-grapher/commit/a746d4a70397b531a1c960d191eb01357037f06d))
+
+
+## v13.0.0 (2026-09-04)
+
+### Features
+
+- Import inverted-tree constants from data instead of compute kwargs
+  ([#664](https://github.com/Teal-Insights/excel-grapher/pull/664),
+  [`c2a745c`](https://github.com/Teal-Insights/excel-grapher/commit/c2a745cc5338fc9b8e9b213b501c9bfe132a2016))
+
+- **export**: Import inverted-tree constants from data in compute bodies
+  ([#664](https://github.com/Teal-Insights/excel-grapher/pull/664),
+  [`c2a745c`](https://github.com/Teal-Insights/excel-grapher/commit/c2a745cc5338fc9b8e9b213b501c9bfe132a2016))
+
+### Testing
+
+- **export**: Type inverted-tree constant-count helper as ModuleType
+  ([#664](https://github.com/Teal-Insights/excel-grapher/pull/664),
+  [`c2a745c`](https://github.com/Teal-Insights/excel-grapher/commit/c2a745cc5338fc9b8e9b213b501c9bfe132a2016))
+
+
+## v12.8.0 (2026-09-04)
+
+### Documentation
+
+- Inverted-tree as primary paradigm and ctx deprecation plan
+  ([#665](https://github.com/Teal-Insights/excel-grapher/pull/665),
+  [`32d4174`](https://github.com/Teal-Insights/excel-grapher/commit/32d4174d0c47abdb464ffb91aae142251a5ab5c3))
+
+### Features
+
+- **export**: Smoke inverted-tree computes and emit datetime leaves
+  ([#665](https://github.com/Teal-Insights/excel-grapher/pull/665),
+  [`32d4174`](https://github.com/Teal-Insights/excel-grapher/commit/32d4174d0c47abdb464ffb91aae142251a5ab5c3))
+
+### Testing
+
+- **export**: Probe ctx features against inverted-tree export
+  ([#665](https://github.com/Teal-Insights/excel-grapher/pull/665),
+  [`32d4174`](https://github.com/Teal-Insights/excel-grapher/commit/32d4174d0c47abdb464ffb91aae142251a5ab5c3))
+
+
 ## v12.7.2 (2026-09-04)
 
 ### Bug Fixes

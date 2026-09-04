@@ -12,7 +12,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from excel_grapher.core.address_keys import CanonicalAddress, as_canonical
-from excel_grapher.core.formula_ast import AstNode, NumberNode
+from excel_grapher.core.formula_ast import (
+    AstNode,
+    CellRefNode,
+    FunctionCallNode,
+    NumberNode,
+    resolve_cell_ref,
+)
 from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
     SeriesCatalog,
@@ -22,6 +28,7 @@ from excel_grapher.exporter.inverted_tree.catalog import (
     schedule_coord,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
+from excel_grapher.grapher.dependency_provenance import DependencyCause
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
@@ -68,6 +75,43 @@ class AccessFunction:
 
 def _canonical(address: str) -> CanonicalAddress:
     return as_canonical(address)
+
+
+def indirect_argument_addresses(
+    node: FunctionCallNode, host_cell: CanonicalAddress
+) -> set[CanonicalAddress]:
+    """Return cell addresses that feed `INDIRECT`'s text or A1-flag arguments."""
+    found: set[CanonicalAddress] = set()
+    for arg in node.args:
+        if isinstance(arg, CellRefNode):
+            found.add(as_canonical(resolve_cell_ref(arg, host_cell)))
+    return found
+
+
+def indirect_target_addresses(
+    graph: DependencyGraph,
+    host_cell: CanonicalAddress,
+    *,
+    exclude: Sequence[CanonicalAddress] = (),
+) -> list[CanonicalAddress]:
+    """Return `dynamic_indirect` precedents of `host_cell`, minus `exclude`.
+
+    Argument cells of `INDIRECT(ref)` are also tagged `dynamic_indirect` at
+    graph-build time. Pass those addresses as `exclude` so the remaining set
+    is the resolved target, not the address-text producer.
+    """
+    skipped = set(exclude)
+    found: list[CanonicalAddress] = []
+    for dep in graph.get_dependencies(host_cell):
+        addr = _canonical(str(dep))
+        if addr in skipped:
+            continue
+        provenance = graph.get_edge_attrs(host_cell, dep).provenance
+        if provenance is None:
+            continue
+        if DependencyCause.dynamic_indirect in provenance.causes:
+            found.append(addr)
+    return found
 
 
 def _producer_hits(

@@ -28,6 +28,7 @@ from .parser import (
     _find_function_calls_with_spans,
     _split_function_args,
     expand_range,
+    expand_range_ref,
     format_key,
     mask_ref_only_function_calls,
     mask_spans,
@@ -43,6 +44,16 @@ from .parser import (
 
 _NAME_TOKEN_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*!)")
 _DYNAMIC_REF_FNS = frozenset({"OFFSET", "INDIRECT", "INDEX"})
+
+
+def _sheet_bounds_from_workbook(wb: fastpyxl.Workbook) -> dict[str, tuple[int, int]]:
+    """Return `(max_row, max_col)` per sheet for whole-column/row expansion."""
+    bounds: dict[str, tuple[int, int]] = {}
+    for worksheet in wb.worksheets:
+        max_row = getattr(worksheet, "max_row", None) or 1
+        max_col = getattr(worksheet, "max_column", None) or 1
+        bounds[worksheet.title] = (max(max_row, 1), max(max_col, 1))
+    return bounds
 
 
 def _dynamic_cause(fn_name: str) -> DependencyCause:
@@ -320,15 +331,14 @@ def _flat_provenance_one_string(
     masked = mask_ref_only_function_calls(masked)
 
     if expand_ranges:
+        bounds = _sheet_bounds_from_workbook(wb_formulas)
         for start, end, _span in parse_range_refs_with_spans(masked):
-            sheet = start.sheet if start.sheet is not None else current_sheet
-            for dep_sheet, dep_a1 in expand_range(
-                sheet=sheet,
-                start_col=start.column,
-                start_row=start.row,
-                end_col=end.column,
-                end_row=end.row,
+            for dep_sheet, dep_a1 in expand_range_ref(
+                start=start,
+                end=end,
+                default_sheet=current_sheet,
                 max_cells=max_range_cells,
+                sheet_bounds=bounds,
             ):
                 k = format_key(dep_sheet, dep_a1)
                 _merge_into(acc, k, EdgeProvenance(causes=DependencyCause.static_range))

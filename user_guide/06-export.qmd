@@ -107,10 +107,10 @@ emitted in `data.py` (`SERIES_DEFAULT`). Setter smoke is ctx-only; inverted-tree
 
 | Module | Role |
 |--------|------|
-| `api.py` | Keyword-only `compute_*` orchestrators. Required parameters are **input** leaves; **constant** leaves are defaulted from `data.py` (see [issue 663](https://github.com/Teal-Insights/excel-grapher/issues/663) to drop those defaults and import constants in the body). |
+| `api.py` | Keyword-only `compute_*` orchestrators. The signature is the **input** leaf closure; **constant** leaves are read from `data` (`data.CONSTANT_X`, listed on `__constants__`) rather than passed as defaulted kwargs. |
 | `data.py` | Catalog-order tuples (and scalars) for constants and `*_DEFAULT` inputs. Measure dtypes include `int`, `float`, `str`, `bool`, and `datetime`. |
 | `internals.py` | First-level-dependency helpers and fused / demand-driven scans. |
-| `runtime.py` | Excel operators shared with `core/` (comparisons, arithmetic, `EXP`, `MATCH`, …). Missing worksheet functions **fail closed** at export rather than embedding the ctx `xl_*` library. |
+| `runtime.py` | Excel operators shared with `core/` (comparisons, arithmetic, `EXP`, `SUM`, `SUMPRODUCT`, `MATCH`, …). Missing worksheet functions **fail closed** at export rather than embedding the ctx `xl_*` library. |
 
 Call a compute with sequences in catalog order (the expansion order of `data_range`, after
 `exclude_rows` / `exclude_columns`):
@@ -156,7 +156,7 @@ generated `read_*` or `compute_*(ctx) -> Records` wrapper; that is the ctx faça
 | `make_context()` then `set_<series>(ctx, records)` | Pass the series as a `compute_*` argument (scalar or `tuple` / `Sequence` in catalog order). |
 | `input.mode: override` non-leaf setters | Bind the cells as **inputs** if callers must vary them; otherwise they stay formula internals. |
 | `read_<series>()` / `input.reader` | Import `data.SERIES` (constants) or pass the value you would have read. |
-| `input.domain` on setters | Not applied to arguments yet ([issue 666](https://github.com/Teal-Insights/excel-grapher/issues/666)). Validate at the call site, or keep ctx until that ports. |
+| `input.domain` on setters | Applied to `compute_*` / `_run_N` arguments (`enum`, `between`, `real_between`) ([issue 666](https://github.com/Teal-Insights/excel-grapher/issues/666)). Out-of-domain values raise `ValueError` naming the series. |
 | `compute_*(ctx) -> Records` | `compute_*(*, input_leaves…) -> tuple[…]`. Use the `as_records` recipe above. |
 | `output.compute.helper` collapsed helpers | Every output is already a leaf-closure function; drop the helper name. |
 | `CONSTANTS` `MappingProxyType` / sparse leaf store | Dense `data.py` tuples. Mutating a constant is a `data.py` override ([issue 663](https://github.com/Teal-Insights/excel-grapher/issues/663)). |
@@ -168,11 +168,10 @@ Bindings features that already apply before codegen — complementary shards / l
 ranges in `data_range` — work with inverted-tree because the catalog consumes the merged sidecar.
 
 Shapes that **fail closed** (export error, not a silent wrong answer): `INDIRECT` still in the
-formula AST ([issue 668](https://github.com/Teal-Insights/excel-grapher/issues/668)),
-`SUMPRODUCT` / `SUM` of a range, `IFERROR`, whole-column / whole-row refs, cross-sheet
-3-D ranges ([issue 667](https://github.com/Teal-Insights/excel-grapher/issues/667)), and any
-`xl_<name>` with no inverted-tree runtime helper. Port those per workbook
-corpus, the same way `EXP` and 2-D `INDEX` landed. Array spill ([issue 284](https://github.com/Teal-Insights/excel-grapher/issues/284))
+formula AST ([issue 668](https://github.com/Teal-Insights/excel-grapher/issues/668)), `IFERROR`, and any `xl_<name>` with no inverted-tree runtime helper. `SUM` /
+`SUMPRODUCT` of a covering series, whole-column / whole-row refs, and cross-sheet 3-D ranges
+lower when every referenced cell is bound ([issue 667](https://github.com/Teal-Insights/excel-grapher/issues/667)).
+Array spill ([issue 284](https://github.com/Teal-Insights/excel-grapher/issues/284))
 and array-style `SUM(IF(…))` ([issue 483](https://github.com/Teal-Insights/excel-grapher/issues/483))
 stay open for both paradigms.
 

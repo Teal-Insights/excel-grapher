@@ -13,6 +13,7 @@ from excel_grapher.core.address_keys import (
     as_canonical,
     canonical_address,
     format_cell_key,
+    format_key,
     parse_cell_coords,
 )
 from excel_grapher.core.excel_function_names import normalize_excel_function_name
@@ -25,9 +26,19 @@ from excel_grapher.core.formula_ast import (
     NumberNode,
     RangeNode,
     UnaryOpNode,
+    WholeColumnNode,
+    WholeRowNode,
     resolve_cell_ref,
+    resolve_whole_column_ref,
+    resolve_whole_row_ref,
 )
-from excel_grapher.exporter.inverted_tree.access import is_seed_access, unique_seed_or_none
+from excel_grapher.core.range_shorthand import expand_whole_column_deps, expand_whole_row_deps
+from excel_grapher.exporter.inverted_tree.access import (
+    indirect_argument_addresses,
+    indirect_target_addresses,
+    is_seed_access,
+    unique_seed_or_none,
+)
 from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
     SeriesCatalog,
@@ -141,6 +152,75 @@ def iter_range_addresses(start: str, end: str) -> list[CanonicalAddress]:
         for row in range(r1, r2 + 1)
         for col in range(c1, c2 + 1)
     ]
+
+
+def iter_cross_sheet_addresses(
+    start: str,
+    end: str,
+    graph: DependencyGraph,
+) -> list[CanonicalAddress]:
+    """Expand a 3-D range across workbook `sheet_order` (row-major per sheet)."""
+    sheet1, row1, col1 = parse_cell_coords(start)
+    sheet2, row2, col2 = parse_cell_coords(end)
+    order = graph.sheet_order
+    if not order:
+        raise InvertedTreeExportError(f"cross-sheet range {start}:{end} is not supported")
+    try:
+        first = order.index(sheet1)
+        last = order.index(sheet2)
+    except ValueError as exc:
+        raise InvertedTreeExportError(f"cross-sheet range {start}:{end} is not supported") from exc
+    lo, hi = (first, last) if first <= last else (last, first)
+    r1, r2 = min(row1, row2), max(row1, row2)
+    c1, c2 = min(col1, col2), max(col1, col2)
+    return [
+        as_canonical(format_cell_key(sheet, get_column_letter(col), row))
+        for sheet in order[lo : hi + 1]
+        for row in range(r1, r2 + 1)
+        for col in range(c1, c2 + 1)
+    ]
+
+
+def iter_ref_addresses(
+    node: AstNode,
+    host_cell: CanonicalAddress,
+    graph: DependencyGraph | None,
+) -> list[CanonicalAddress]:
+    """Expand a range, whole-column, or whole-row leaf to canonical cells.
+
+    Same-sheet rectangles use `iter_range_addresses`. Cross-sheet ranges walk
+    `graph.sheet_order` between the endpoints. Whole-column / whole-row refs
+    expand to the workbook used extent in `graph.sheet_bounds`.
+    """
+    if isinstance(node, RangeNode):
+        start = resolve_cell_ref(node.start_ref, host_cell)
+        end = resolve_cell_ref(node.end_ref, host_cell)
+        sheet1, _row1, _col1 = parse_cell_coords(start)
+        sheet2, _row2, _col2 = parse_cell_coords(end)
+        if sheet1 == sheet2:
+            return iter_range_addresses(start, end)
+        if graph is None:
+            raise InvertedTreeExportError(f"cross-sheet range {start}:{end} is not supported")
+        return iter_cross_sheet_addresses(start, end, graph)
+    if isinstance(node, WholeColumnNode):
+        if graph is None or graph.sheet_bounds is None:
+            raise InvertedTreeExportError("whole-column ref requires workbook used-range bounds")
+        sheet, letter = resolve_whole_column_ref(node, host_cell)
+        return [
+            as_canonical(format_key(dep_sheet, a1))
+            for dep_sheet, a1 in expand_whole_column_deps(sheet, letter, graph.sheet_bounds)
+        ]
+    if isinstance(node, WholeRowNode):
+        if graph is None or graph.sheet_bounds is None:
+            raise InvertedTreeExportError("whole-row ref requires workbook used-range bounds")
+        sheet, row = resolve_whole_row_ref(node, host_cell)
+        return [
+            as_canonical(format_key(dep_sheet, a1))
+            for dep_sheet, a1 in expand_whole_row_deps(sheet, row, graph.sheet_bounds)
+        ]
+    raise InvertedTreeExportError(
+        f"expected a range, whole-column, or whole-row ref, got {type(node).__name__}"
+    )
 
 
 def range_column_addresses(start: str, end: str, col_index: int) -> list[CanonicalAddress]:
@@ -473,25 +553,41 @@ class _DepCollector:
             access=access,
         )
 
+    def _visit_range_addresses(
+        self,
+        addresses: list[CanonicalAddress],
+        host_cell: CanonicalAddress,
+    ) -> None:
+        if not addresses:
+            raise InvertedTreeExportError(f"series {self.host.series_id!r}: empty range")
+        covered = covering_series(self.catalog, addresses)
+        if covered is not None:
+            self.emit_lookup(covered, host_cell, addresses[0], "whole")
+            return
+        missing = [addr for addr in addresses if self.catalog.series_id_for(addr) is None]
+        if missing:
+            raise InvertedTreeExportError(
+                f"series {self.host.series_id!r} range is not a bound series "
+                f"(unbound cells: {missing[:8]})"
+            )
+        seen: set[str] = set()
+        for addr in addresses:
+            series_id = self.catalog.series_id_for(addr)
+            if series_id is None or series_id in seen:
+                continue
+            seen.add(series_id)
+            self.emit_lookup(self.catalog.get(series_id), host_cell, addr, "whole")
+
     def visit(self, node: AstNode, *, host_cell: CanonicalAddress, host_index: int) -> None:
         match node:
             case CellRefNode():
                 address = as_canonical(resolve_cell_ref(node, host_cell))
                 self.emit_cell(address, host_cell, host_index)
-            case RangeNode():
-                start = resolve_cell_ref(node.start_ref, host_cell)
-                end = resolve_cell_ref(node.end_ref, host_cell)
-                addresses = iter_range_addresses(start, end)
-                covered = covering_series(self.catalog, addresses)
-                if covered is None:
-                    missing = [
-                        addr for addr in addresses if self.catalog.series_id_for(addr) is None
-                    ]
-                    raise InvertedTreeExportError(
-                        f"series {self.host.series_id!r} range {start}:{end} is not a "
-                        f"bound series (unbound cells: {missing[:8]})"
-                    )
-                self.emit_lookup(covered, host_cell, as_canonical(start), "whole")
+            case RangeNode() | WholeColumnNode() | WholeRowNode():
+                self._visit_range_addresses(
+                    iter_ref_addresses(node, host_cell, self.graph),
+                    host_cell,
+                )
             case FunctionCallNode():
                 self._visit_function(node, host_cell=host_cell, host_index=host_index)
             case BinaryOpNode():
@@ -516,6 +612,9 @@ class _DepCollector:
         if name == "INDEX":
             self._visit_index(node, host_cell=host_cell, host_index=host_index)
             return
+        if name == "INDIRECT":
+            self._visit_indirect(node, host_cell=host_cell, host_index=host_index)
+            return
         if name == "MATCH":
             self._visit_match(node, host_cell=host_cell, host_index=host_index)
             return
@@ -537,6 +636,33 @@ class _DepCollector:
         self.emit_lookup(table, host_cell, self._ref_anchor(node.args[0], host_cell), "dynamic")
         for arg in node.args[1:]:
             self.visit(arg, host_cell=host_cell, host_index=host_index)
+
+    def _visit_indirect(
+        self,
+        node: FunctionCallNode,
+        *,
+        host_cell: CanonicalAddress,
+        host_index: int,
+    ) -> None:
+        del host_index
+        if self.graph is None:
+            raise InvertedTreeExportError(
+                f"series {self.host.series_id!r} cell {host_cell}: "
+                "INDIRECT has no graph to classify"
+            )
+        exclude = indirect_argument_addresses(node, host_cell)
+        targets = indirect_target_addresses(self.graph, host_cell, exclude=tuple(exclude))
+        if not targets:
+            raise InvertedTreeExportError(
+                f"series {self.host.series_id!r} cell {host_cell}: INDIRECT has no resolved edges"
+            )
+        covered = covering_series(self.catalog, targets)
+        if covered is None:
+            raise InvertedTreeExportError(
+                f"series {self.host.series_id!r} cell {host_cell}: "
+                "INDIRECT targets are not one bound series"
+            )
+        self.emit_lookup(covered, host_cell, targets[0], "dynamic")
 
     def _visit_index(
         self,
@@ -615,13 +741,12 @@ class _DepCollector:
     def _series_for_ref(self, node: AstNode, host_cell: CanonicalAddress) -> BoundSeries:
         if isinstance(node, CellRefNode):
             return self.catalog.require_series_for(as_canonical(resolve_cell_ref(node, host_cell)))
-        if isinstance(node, RangeNode):
-            start = resolve_cell_ref(node.start_ref, host_cell)
-            end = resolve_cell_ref(node.end_ref, host_cell)
-            covered = covering_series(self.catalog, iter_range_addresses(start, end))
+        if isinstance(node, (RangeNode, WholeColumnNode, WholeRowNode)):
+            addresses = iter_ref_addresses(node, host_cell, self.graph)
+            covered = covering_series(self.catalog, addresses)
             if covered is None:
                 raise InvertedTreeExportError(
-                    f"series {self.host.series_id!r}: reference {start}:{end} is not a bound series"
+                    f"series {self.host.series_id!r}: reference is not a bound series"
                 )
             return covered
         raise InvertedTreeExportError(

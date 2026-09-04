@@ -34,6 +34,8 @@ from excel_grapher.exporter.inverted_tree.runtime import (
     xl_pow,
     xl_raise,
     xl_sub,
+    xl_sum,
+    xl_sumproduct,
 )
 
 
@@ -58,6 +60,18 @@ def test_require_length_accepts_catalog_size() -> None:
 def test_require_length_rejects_mismatch() -> None:
     with pytest.raises(ValueError, match="expected length 3"):
         require_length((1, 2), 3)
+
+
+def test_require_input_domain_reexports_shared_helper() -> None:
+    from excel_grapher.exporter.inverted_tree.runtime import require_input_domain
+    from excel_grapher.series_bindings.input_coerce import (
+        require_input_domain as shared,
+    )
+
+    assert require_input_domain is shared
+    require_input_domain(0, {"enum": frozenset({0, 1})}, series_id="flag")
+    with pytest.raises(ValueError, match=r"flag out of domain"):
+        require_input_domain(2, {"enum": frozenset({0, 1})}, series_id="flag")
 
 
 def test_take_gathers_by_index() -> None:
@@ -271,3 +285,18 @@ def test_live_measure_reraises_error_codes() -> None:
     with pytest.raises(XlError) as exc:
         live_measure("#REF!")
     assert exc.value.code == "#REF!"
+
+
+def test_xl_sum_over_sequence_and_stored_errors() -> None:
+    assert xl_sum((1.0, 2.0, 3.0)) == 6.0
+    assert xl_sum(1.0, 2.0) == 3.0
+    with pytest.raises(XlError) as exc:
+        xl_sum((1.0, "#DIV/0!"))
+    assert exc.value.code == "#DIV/0!"
+
+
+def test_xl_sumproduct_over_aligned_sequences() -> None:
+    assert xl_sumproduct((1.0, 2.0), (3.0, 4.0)) == 11.0
+    with pytest.raises(XlError) as exc:
+        xl_sumproduct((1.0, "#N/A"), (1.0, 1.0))
+    assert exc.value.code == "#N/A"
