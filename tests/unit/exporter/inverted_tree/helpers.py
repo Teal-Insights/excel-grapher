@@ -58,9 +58,15 @@ def make_catalog(
     )
 
 
-def write_workbook(path: Path, sheets: Mapping[str, Mapping[str, object]]) -> Path:
+def write_workbook(
+    path: Path,
+    sheets: Mapping[str, Mapping[str, object]],
+    *,
+    defined_names: Mapping[str, str] | None = None,
+) -> Path:
     """Write a multi-sheet workbook with `fastpyxl` (formulas as `=...` strings)."""
     from fastpyxl import Workbook
+    from fastpyxl.workbook.defined_name import DefinedName
 
     wb = Workbook()
     default = wb.active
@@ -74,6 +80,9 @@ def write_workbook(path: Path, sheets: Mapping[str, Mapping[str, object]]) -> Pa
             ws = wb.create_sheet(title)
         for addr, value in cells.items():
             ws[addr] = value
+    if defined_names:
+        for name, attr_text in defined_names.items():
+            wb.defined_names.add(DefinedName(name, attr_text=attr_text))
     wb.save(path)
     return path
 

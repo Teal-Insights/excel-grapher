@@ -12,6 +12,12 @@ The machine source of truth is a **sidecar manifest** next to the workbook, not 
 Validation uses the JSON Schema shipped with the package at
 `excel_grapher/series_bindings/series_binding.schema.json`.
 
+The sidecar is paradigm-agnostic. **Inverted-tree** (`generate_modules(..., paradigm="inverted_tree")`)
+is the recommended export for binding packages: `compute_*` functions take input arrays and return
+tuples. **ctx** export still emits `set_*` / `read_*` / `Records` and remains the library default
+until the [issue 662](https://github.com/Teal-Insights/excel-grapher/issues/662) gate. See
+[Exporting standalone Python](06-export.qmd) for the migration and `as_records` recipe.
+
 **Example workbook:** [series_bindings.xlsx](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/series_bindings.xlsx)
 with [series_bindings.bindings.yaml](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/series_bindings.bindings.yaml)
 

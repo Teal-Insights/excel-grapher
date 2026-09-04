@@ -181,6 +181,107 @@ def test_run_binding_checks_raises_when_validation_fails(
         )
 
 
+def test_run_binding_checks_smokes_inverted_tree_computes(tmp_path: Path) -> None:
+    import yaml
+
+    from tests.unit.exporter.inverted_tree.helpers import (
+        bindings_document,
+        series_entry,
+        write_workbook,
+    )
+
+    workbook = write_workbook(
+        tmp_path / "inv.xlsx",
+        {
+            "Inputs": {"A1": 2.0},
+            "Engine": {"A1": "=Inputs!A1*3"},
+            "Outputs": {"A1": "=Engine!A1"},
+        },
+    )
+    document = bindings_document(
+        series_entry("x", "Inputs!A1", layout="scalar", direction="input"),
+        series_entry("y", "Engine!A1", layout="scalar", direction="internal"),
+        series_entry(
+            "z",
+            "Outputs!A1",
+            layout="scalar",
+            direction="output",
+            compute_name="compute_z",
+        ),
+    )
+    document["workbook"] = "inv.xlsx"
+    bindings_path = tmp_path / "inv.bindings.yaml"
+    bindings_path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+    result = run_binding_checks(
+        workbook,
+        bindings_path,
+        module_dir=tmp_path / "inv_pkg",
+        package_name="inv_pkg",
+        smoke_test=True,
+        paradigm="inverted_tree",
+    )
+    assert "api.py" in result["generated_files"]
+    assert "def compute_z" in result["generated_files"]["api.py"]
+
+
+def test_inverted_tree_smoke_fails_when_compute_returns_wrong_length(tmp_path: Path) -> None:
+    from tests.unit.exporter.inverted_tree.helpers import (
+        bindings_document,
+        series_entry,
+        write_workbook,
+    )
+
+    workbook = write_workbook(
+        tmp_path / "inv.xlsx",
+        {
+            "Inputs": {"A1": 2.0},
+            "Engine": {"A1": "=Inputs!A1*3"},
+            "Outputs": {"A1": "=Engine!A1"},
+        },
+    )
+    document = bindings_document(
+        series_entry("x", "Inputs!A1", layout="scalar", direction="input"),
+        series_entry("y", "Engine!A1", layout="scalar", direction="internal"),
+        series_entry(
+            "z",
+            "Outputs!A1",
+            layout="scalar",
+            direction="output",
+            compute_name="compute_z",
+        ),
+    )
+    result = validate_bindings_workbook(workbook, _write_inv_sidecar(tmp_path, document))
+    files = generate_bindings_modules(
+        result["graph"],
+        targets=result["targets"],
+        bindings=result["bindings"],
+        workbook=workbook,
+        paradigm="inverted_tree",
+    )
+    files["api.py"] = files["api.py"].replace("    return (z,)", "    return (z, z)")
+    with pytest.raises(BindingsSmokeError, match=r"returned 2 values, expected 1"):
+        smoke_test_bindings_module(
+            files,
+            bindings=result["bindings"],
+            graph=result["graph"],
+            workbook=workbook,
+            module_dir=tmp_path / "inv_pkg",
+            package_name="inv_pkg",
+            paradigm="inverted_tree",
+        )
+
+
+def _write_inv_sidecar(tmp_path: Path, document: dict[str, Any]) -> Path:
+    import yaml
+
+    document = dict(document)
+    document["workbook"] = "inv.xlsx"
+    path = tmp_path / "inv.bindings.yaml"
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    return path
+
+
 def test_smoke_fails_when_compute_returns_wrong_record_count(
     ffv2_workbook: Path,
     tmp_path: Path,

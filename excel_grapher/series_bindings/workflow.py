@@ -295,7 +295,7 @@ def run_binding_checks(
     smoke_test: bool = True,
     paradigm: Literal["ctx", "inverted_tree"] = "ctx",
 ) -> BindingsCheckResult:
-    """Validate bindings, optionally smoke-test generated setters and computes."""
+    """Validate bindings, optionally smoke-test generated public functions."""
     result = validate_bindings_workbook(workbook, bindings_path)
     report = result["report"]
     if not report["ok"]:
@@ -309,8 +309,7 @@ def run_binding_checks(
         workbook=workbook,
         paradigm=paradigm,
     )
-    # Setter/compute smoke is ctx-export only; inverted-tree packages have no set_*.
-    if smoke_test and paradigm == "ctx":
+    if smoke_test:
         from excel_grapher.series_bindings.smoke import smoke_test_bindings_module
 
         smoke_test_bindings_module(
@@ -320,6 +319,7 @@ def run_binding_checks(
             workbook=workbook,
             module_dir=module_dir,
             package_name=package_name,
+            paradigm=paradigm,
         )
     else:
         module_dir.mkdir(parents=True, exist_ok=True)
