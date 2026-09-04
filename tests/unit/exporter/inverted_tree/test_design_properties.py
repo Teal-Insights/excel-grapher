@@ -12,6 +12,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import pytest
@@ -556,7 +557,7 @@ def test_code_size_independent_of_constant_series_count(tmp_path: Path) -> None:
     large_unused = generate_with_unused(12)
     assert small_unused["api.py"] == large_unused["api.py"]
 
-    def generate_with_used(count: int) -> tuple[dict[str, str], object]:
+    def generate_with_used(count: int) -> tuple[dict[str, str], ModuleType]:
         inputs: dict[str, object] = {"A1": 1.0}
         terms = ["Inputs!A1"]
         extras: list[dict[str, Any]] = []
