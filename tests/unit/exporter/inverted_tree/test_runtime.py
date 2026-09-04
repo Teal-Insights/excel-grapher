@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 
 import pytest
 
@@ -17,12 +18,22 @@ from excel_grapher.exporter.inverted_tree.runtime import (
     require_aligned,
     require_length,
     take,
+    xl_add,
     xl_at,
     xl_choose,
     xl_div,
+    xl_eq,
     xl_exp,
+    xl_ge,
+    xl_gt,
+    xl_le,
+    xl_lt,
     xl_match,
+    xl_mul,
+    xl_ne,
+    xl_pow,
     xl_raise,
+    xl_sub,
 )
 
 
@@ -86,6 +97,57 @@ def test_xl_div_and_div_zero() -> None:
     with pytest.raises(XlError) as exc:
         xl_div(1.0, 0.0)
     assert exc.value.code == "#DIV/0!"
+
+
+@pytest.mark.parametrize(
+    ("op", "left", "right", "expected"),
+    [
+        (xl_div, "abc", 2, "#VALUE!"),
+        (xl_div, '"', 100, "#VALUE!"),
+        (xl_add, "n/a", 1, "#VALUE!"),
+        (xl_sub, 5, "--", "#VALUE!"),
+        (xl_mul, "..", 2, "#VALUE!"),
+        (xl_pow, "abc", 2, "#VALUE!"),
+    ],
+)
+def test_arithmetic_non_numeric_text_is_value_error(
+    op: Callable[[object, object], float], left: object, right: object, expected: str
+) -> None:
+    with pytest.raises(XlError) as exc:
+        op(left, right)
+    assert exc.value.code == expected
+
+
+def test_xl_div_coerces_empty_blank_and_bool() -> None:
+    assert xl_div("", 2) == 0.0
+    assert xl_div(None, 2) == 0.0
+    assert xl_div(True, 2) == 0.5
+    assert xl_div(False, 2) == 0.0
+    assert xl_add("", 5) == 5.0
+    assert xl_mul(True, 4) == 4.0
+
+
+def test_live_measure_does_not_coerce_text() -> None:
+    assert live_measure('"') == '"'
+    assert live_measure("abc") == "abc"
+    with pytest.raises(XlError) as exc:
+        live_measure("#REF!")
+    assert exc.value.code == "#REF!"
+    with pytest.raises(XlError) as exc:
+        xl_div(live_measure('"'), 100)
+    assert exc.value.code == "#VALUE!"
+
+
+def test_comparisons_use_excel_type_ordering() -> None:
+    assert xl_lt(1, "a") is True
+    assert xl_lt("a", True) is True
+    assert xl_lt(100, True) is True
+    assert xl_gt(True, "z") is True
+    assert xl_eq("abc", 1) is False
+    assert xl_ne("abc", 1) is True
+    assert xl_eq("Nominal", "nominal") is True
+    assert xl_le(1, 1) is True
+    assert xl_ge("b", "a") is True
 
 
 def test_xl_choose_and_out_of_range() -> None:
