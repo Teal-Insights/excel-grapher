@@ -165,9 +165,9 @@ def test_irregular_recurrence_emits_rung3_and_matches_evaluator(tmp_path: Path) 
     assert got == pytest.approx((50.0, 100.0, 100.0, 200.0))
 
 
-def test_backward_chain_large_n_matches_closed_form(tmp_path: Path) -> None:
-    """Backward chain must not hit RecursionError at large N (gh #614, #615)."""
-    n = 5000
+def _backward_chain_closed_form(
+    tmp_path: Path, n: int
+) -> tuple[tuple[float, ...], tuple[float, ...]]:
     cells: dict[str, object] = {}
     for c in range(1, n + 1):
         cells[f"{get_column_letter(c)}1"] = 2000 + c
@@ -176,7 +176,7 @@ def test_backward_chain_large_n_matches_closed_form(tmp_path: Path) -> None:
         else:
             cells[f"{get_column_letter(c)}2"] = "=100"
 
-    workbook = write_workbook(tmp_path / "a19_back_5000.xlsx", {"Engine": cells})
+    workbook = write_workbook(tmp_path / f"a19_back_{n}.xlsx", {"Engine": cells})
     last_col = get_column_letter(n)
     doc = bindings_document(
         series_entry(
@@ -188,8 +188,24 @@ def test_backward_chain_large_n_matches_closed_form(tmp_path: Path) -> None:
         ),
     )
     modules = generate_inverted(workbook, doc)
-    pkg = load_package(modules, tmp_path, name="a19_back_5000")
+    pkg = load_package(modules, tmp_path, name=f"a19_back_{n}")
     got = pkg.compute_value()
-    assert len(got) == n
     expected = tuple(100.0 * (0.99 ** (n - 1 - i)) for i in range(n))
+    return got, expected
+
+
+def test_backward_chain_large_n_matches_closed_form(tmp_path: Path) -> None:
+    """Backward chain must not hit RecursionError at large N (gh #614, #615)."""
+    n = 500
+    got, expected = _backward_chain_closed_form(tmp_path, n)
+    assert len(got) == n
+    assert got == pytest.approx(expected)
+
+
+@pytest.mark.slow
+def test_backward_chain_5k_matches_closed_form(tmp_path: Path) -> None:
+    """Backward chain at N=5000 matches the closed form (gh #614, #615, #637)."""
+    n = 5000
+    got, expected = _backward_chain_closed_form(tmp_path, n)
+    assert len(got) == n
     assert got == pytest.approx(expected)

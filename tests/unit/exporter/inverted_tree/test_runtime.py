@@ -127,6 +127,23 @@ def test_xl_div_coerces_empty_blank_and_bool() -> None:
     assert xl_mul(True, 4) == 4.0
 
 
+def test_xl_div_coerces_numeric_text() -> None:
+    assert xl_div("10", "2") == 5.0
+    assert xl_div(True, 2) == 0.5
+
+
+def test_xl_div_string_measure_is_value_error() -> None:
+    with pytest.raises(XlError) as exc:
+        xl_div('"', 100)
+    assert exc.value.code == "#VALUE!"
+    with pytest.raises(XlError) as exc:
+        xl_div(1, '"')
+    assert exc.value.code == "#VALUE!"
+    with pytest.raises(XlError) as exc:
+        xl_div(live_measure('"'), 100)
+    assert exc.value.code == "#VALUE!"
+
+
 def test_live_measure_does_not_coerce_text() -> None:
     assert live_measure('"') == '"'
     assert live_measure("abc") == "abc"

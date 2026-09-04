@@ -132,7 +132,7 @@ def xl_mul(left: object, right: object) -> float:
 
 
 def xl_div(numerator: object, denominator: object) -> float:
-    """Excel `/` with numeric coercion and `#DIV/0!` on a zero denominator."""
+    """Excel `/` with `#DIV/0!` on zero and `#VALUE!` on non-numeric measures."""
     left = _as_number(numerator)
     right = _as_number(denominator)
     if right == 0:
