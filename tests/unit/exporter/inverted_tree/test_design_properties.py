@@ -18,9 +18,12 @@ import pytest
 from fastpyxl.utils.cell import get_column_letter
 
 from excel_grapher.evaluator import FormulaEvaluator
-from excel_grapher.exporter.inverted_tree.catalog import SeriesCatalog
-from excel_grapher.exporter.inverted_tree.schedule import plan_fused_scc
+from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, SeriesCatalog
+from excel_grapher.exporter.inverted_tree.schedule import plan_fused_scc, plan_scc
 from excel_grapher.grapher.graph import DependencyGraph
+from tests.unit.exporter.inverted_tree import test_shape_a20_matrix_join as a20
+from tests.unit.exporter.inverted_tree import test_shape_a22_guarded_residual as a22_guarded
+from tests.unit.exporter.inverted_tree import test_shape_a22_shift_k as a22_shift_k
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     call_compute,
@@ -87,6 +90,28 @@ def _values_close(got: object, expected: object) -> None:
     assert got == pytest.approx(expected)
 
 
+def _output_cells_in_export_order(series: BoundSeries) -> tuple[str, ...]:
+    """Cells in the order `compute_*` returns values.
+
+    1-D `layout: series` helpers follow catalog expansion order (lexical-key
+    safety: `Y9` then `Y10`). A `layout: matrix` series is a key-field nest —
+    leading keys outer, `TIME_PERIOD` inner — which matches
+    `sorted(domain, key=key_fields)` and diverges from sheet order when the
+    matrix is transposed.
+    """
+    if series.layout != "matrix" or not series.key_fields:
+        return series.cells
+    keyed = [
+        (tuple(point[field] for field in series.key_fields), cell)
+        for point, cell in zip(series.domain, series.cells, strict=True)
+    ]
+    try:
+        keyed.sort(key=lambda item: item[0])
+    except TypeError:
+        return series.cells
+    return tuple(cell for _key, cell in keyed)
+
+
 def _package_matches_evaluator(
     pkg: object,
     catalog: SeriesCatalog,
@@ -102,7 +127,7 @@ def _package_matches_evaluator(
         got = function(**{key: value for key, value in kwargs.items() if key in accepted})
         if not isinstance(got, tuple):
             got = (got,)
-        want = tuple(expected[cell] for cell in series.cells)
+        want = tuple(expected[cell] for cell in _output_cells_in_export_order(series))
         _values_close(got, want)
 
 
@@ -120,6 +145,16 @@ def _emit_and_compare(
     _package_matches_evaluator(pkg, catalog, graph)
 
 
+def _a22_shift_k_workbook(tmp_path: Path) -> Path:
+    return a22_shift_k._stride_k_workbook(tmp_path, 5, 2, stem="a22_orient_k")
+
+
+def _a22_shift_k_bindings() -> dict[str, Any]:
+    return a22_shift_k._stride_k_bindings(5)
+
+
+# Cases a property test cannot yet pass must use `pytest.mark.xfail(strict=True)`,
+# not a silent filter (#633, #640). `_CORPUS` is the full oracle.
 _CORPUS: list[tuple[str, Callable[[Path], Path], Callable[[], dict[str, Any]]]] = [
     ("a1_leaf", _a1_workbook, _a1_bindings),
     ("a5_constants", _a5_workbook, _a5_bindings),
@@ -130,6 +165,10 @@ _CORPUS: list[tuple[str, Callable[[Path], Path], Callable[[], dict[str, Any]]]] 
     ("a17_overlap", _overlap_workbook, _overlap_bindings),
     ("a19_terminal", _horizontal_terminal_workbook, _horizontal_terminal_bindings),
     ("a19_stride2", _stride2_terminal_workbook, _stride2_terminal_bindings),
+    ("a20_elementwise", a20._elementwise_workbook, a20._elementwise_bindings),
+    ("a20_zipper", a20._zipper_workbook, a20._zipper_bindings),
+    ("a22_guarded", a22_guarded._series_may_cycle_workbook, a22_guarded._series_may_cycle_bindings),
+    ("a22_shift_k", _a22_shift_k_workbook, _a22_shift_k_bindings),
 ]
 
 
@@ -235,8 +274,8 @@ def test_force_rung_2_falls_through_when_not_fusible(tmp_path: Path) -> None:
     )
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     assert plan_fused_scc(("x", "y"), catalog=catalog, graph=graph) is None
+    assert plan_scc(("x", "y"), catalog=catalog, graph=graph).rung == 3
     modules = generate_inverted(workbook, document, force_rung=2)
-    assert "eval_instance" in modules["internals.py"]
     pkg = load_package(modules, tmp_path, name="mixed_rung2")
     _package_matches_evaluator(pkg, catalog, graph)
 
@@ -248,6 +287,10 @@ _ORIENTABLE = [
     ("a13_flip", _two_series_workbook, _two_series_bindings),
     ("a17_overlap", _overlap_workbook, _overlap_bindings),
     ("a19_terminal", _horizontal_terminal_workbook, _horizontal_terminal_bindings),
+    ("a20_elementwise", a20._elementwise_workbook, a20._elementwise_bindings),
+    ("a20_zipper", a20._zipper_workbook, a20._zipper_bindings),
+    ("a22_guarded", a22_guarded._series_may_cycle_workbook, a22_guarded._series_may_cycle_bindings),
+    ("a22_shift_k", _a22_shift_k_workbook, _a22_shift_k_bindings),
 ]
 
 

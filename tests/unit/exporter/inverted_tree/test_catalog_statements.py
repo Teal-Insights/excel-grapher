@@ -313,19 +313,22 @@ def test_partition_catalog_uniform_formula_is_linear_in_size() -> None:
     partition_catalog(cat_small, g_small)
     partition_catalog(cat_large, g_large)
 
-    t0 = time.perf_counter()
+    def _elapsed(catalog: SeriesCatalog, graph: DependencyGraph) -> float:
+        start = time.perf_counter()
+        partition_catalog(catalog, graph)
+        return time.perf_counter() - start
+
+    small_times = [_elapsed(cat_small, g_small) for _ in range(3)]
+    large_times = [_elapsed(cat_large, g_large) for _ in range(3)]
     res_small = partition_catalog(cat_small, g_small)
-    t_small = time.perf_counter() - t0
-
-    t0 = time.perf_counter()
     res_large = partition_catalog(cat_large, g_large)
-    t_large = time.perf_counter() - t0
-
     assert len(res_small.get("dst").statements) == 1
     assert len(res_large.get("dst").statements) == 1
-    # 4x members should stay linear (quadratic is ~16x). Slack absorbs timer
-    # noise when the small case is fast.
-    assert t_large <= t_small * 5 + 0.25, (
+    # 4x cells should be ~4x time; take the fastest sample and allow slack
+    # for CI timer noise.
+    t_small = min(small_times)
+    t_large = min(large_times)
+    assert t_large <= t_small * 7 + 0.05, (
         f"partition 10k took {t_large:.3f}s vs 2.5k {t_small:.3f}s"
     )
 
