@@ -152,6 +152,61 @@ def _validate_input_mode(series: dict[str, Any]) -> list[ValidationIssue]:
     ]
 
 
+def _validate_input_value_map(series: dict[str, Any]) -> list[ValidationIssue]:
+    """Reject `input.value_map` on non-scalar series and domain/key mismatches."""
+    input_block = series.get("input")
+    if not isinstance(input_block, dict):
+        return []
+    mapping = input_block.get("value_map")
+    if mapping is None:
+        return []
+    series_id = str(series.get("id", ""))
+    issues: list[ValidationIssue] = []
+    if not isinstance(mapping, dict) or not mapping:
+        issues.append(
+            _issue(
+                "error",
+                "invalid_input_value_map",
+                "input.value_map must be a non-empty mapping",
+                series_id=series_id,
+            )
+        )
+        return issues
+    if series.get("layout") != "scalar":
+        issues.append(
+            _issue(
+                "error",
+                "invalid_input_value_map",
+                "input.value_map is only allowed on scalar input series",
+                series_id=series_id,
+            )
+        )
+    domain = input_block.get("domain")
+    if isinstance(domain, dict) and "enum" in domain:
+        values = domain["enum"]
+        if isinstance(values, (list, tuple, set, frozenset)):
+            missing = [value for value in values if value not in mapping]
+            if missing:
+                issues.append(
+                    _issue(
+                        "error",
+                        "invalid_input_value_map",
+                        f"input.domain enum values must be keys of input.value_map: {missing!r}",
+                        series_id=series_id,
+                    )
+                )
+    elif isinstance(domain, dict) and ("between" in domain or "real_between" in domain):
+        issues.append(
+            _issue(
+                "error",
+                "invalid_input_value_map",
+                "input.value_map cannot be combined with a between/real_between domain",
+                series_id=series_id,
+            )
+        )
+    return issues
+
+
 def _dimension_field_ids(series: dict[str, Any]) -> set[str]:
     """Effective dimension ids (declared id, else concept) for key matching."""
     structure = series.get("structure") or {}
@@ -740,6 +795,7 @@ def validate_series_bindings(
                 seen_ranges[series_id] = data_range_text
             issues.extend(_validate_series_structure(series))
             issues.extend(_validate_layout_intent(series))
+            issues.extend(_validate_input_value_map(series))
             issues.extend(_validate_implementation_support(series))
             issues.extend(_validate_dtype_read_consistency(series, concept_dtypes=concept_dtypes))
 

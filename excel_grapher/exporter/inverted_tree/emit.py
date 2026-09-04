@@ -39,7 +39,10 @@ from excel_grapher.exporter.inverted_tree.schedule import (
     scan_function_name,
     scc_external_params,
 )
-from excel_grapher.series_bindings.input_coerce import measure_domain_from_series
+from excel_grapher.series_bindings.input_coerce import (
+    input_value_map_from_series,
+    measure_domain_from_series,
+)
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
@@ -543,6 +546,28 @@ def _emit_input_domain_checks(
     return lines, runtime
 
 
+def _emit_input_value_maps(
+    leaves: Sequence[str],
+    catalog: SeriesCatalog,
+) -> tuple[list[str], set[str]]:
+    """Emit `apply_input_value_map` after domain checks, before evaluation."""
+    lines: list[str] = []
+    runtime: set[str] = set()
+    for series_id in leaves:
+        series = catalog.get(series_id)
+        if series.direction != "input":
+            continue
+        mapping = input_value_map_from_series(series.raw)
+        if mapping is None:
+            continue
+        runtime.add("apply_input_value_map")
+        lines.append(
+            f"    {series_id} = apply_input_value_map("
+            f"{series_id}, {mapping!r}, series_id={series_id!r})"
+        )
+    return lines, runtime
+
+
 def _keyword_signature(name: str, params: Sequence[str], returns: str) -> str:
     if params:
         param_block = ",\n    ".join(params)
@@ -566,10 +591,13 @@ def _emit_evaluation_body(
     deps: Mapping[str, SeriesDeps],
     scc_map: Mapping[str, tuple[str, ...]] | None,
 ) -> tuple[list[str], set[str], set[str]]:
-    """Emit `require_input_domain` / `require_length` / `take` / `internals.*` lines."""
+    """Emit domain/map guards, length checks, takes, and internals calls."""
     runtime: set[str] = set()
     body, domain_runtime = _emit_input_domain_checks(leaves, catalog)
     runtime |= domain_runtime
+    map_lines, map_runtime = _emit_input_value_maps(leaves, catalog)
+    body.extend(map_lines)
+    runtime |= map_runtime
     local_indices: dict[str, tuple[int, ...]] = {}
     leaf_source = _leaf_source_map(leaves, catalog)
     for sid in leaves:
@@ -670,8 +698,10 @@ def emit_orchestrator(
     reads `data`.
 
     Input leaves that declare `input.domain` are checked with
-    `require_input_domain` before the evaluation walk. Multi-series lag zippers
-    call the co-scan once and unpack members.
+    `require_input_domain` before the evaluation walk. Scalar inputs that
+    declare `input.value_map` are rewritten with `apply_input_value_map` after
+    that check, still before any expression sees the value. Multi-series lag
+    zippers call the co-scan once and unpack members.
     """
     deps_map = dict(deps)
     scc_map_dict = dict(scc_map) if scc_map is not None else None

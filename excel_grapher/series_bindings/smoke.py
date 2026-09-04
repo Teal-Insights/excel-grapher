@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.series_bindings.input_coerce import input_value_map_from_series
 from excel_grapher.series_bindings.normalize import effective_dimension_id
 from excel_grapher.series_bindings.resolve import resolve_series_binding
 from excel_grapher.series_bindings.setter_codegen import _canonical_key_order
@@ -278,6 +279,17 @@ def smoke_test_setters(
         key = leaf["key"]
         address = leaf["address"]
         measure = _measure_concept(series)
+        mapping = input_value_map_from_series(series)
+        if mapping is not None:
+            public_key, needle = next(iter(mapping.items()))
+            records = [{**key, measure: public_key}]
+            setter(ctx, records)
+            if ctx.inputs[address] != needle:
+                raise BindingsSmokeError(
+                    f"Setter {name!r} did not update {address!r} "
+                    f"(expected mapped {needle!r}, got {ctx.inputs[address]!r})"
+                )
+            continue
         bumped = _bump_value(leaf["record"][measure])
         records: list[dict[str, object]] = [{**key, measure: bumped}]
         setter(ctx, records)
@@ -399,7 +411,7 @@ def smoke_test_inverted_tree_computes(
         if not resolved["ok"]:
             raise BindingsSmokeError(f"Compute {name!r} resolution failed: {resolved['issues']}")
         expected_count = len(resolved["leaves"])
-        kwargs = _inverted_tree_default_kwargs(compute, data)
+        kwargs = _inverted_tree_default_kwargs(compute, data, bindings)
         try:
             result = compute(**kwargs)
         except Exception as exc:
@@ -416,8 +428,28 @@ def smoke_test_inverted_tree_computes(
             )
 
 
-def _inverted_tree_default_kwargs(compute: Callable[..., Any], data: Any) -> dict[str, Any]:
+def _public_compute_arg(series: dict[str, Any], workbook_value: object) -> object:
+    """Invert `input.value_map` so smoke calls use public keys, not needles."""
+    mapping = input_value_map_from_series(series)
+    if mapping is None:
+        return workbook_value
+    for key, needle in mapping.items():
+        if needle == workbook_value:
+            return key
+    return workbook_value
+
+
+def _inverted_tree_default_kwargs(
+    compute: Callable[..., Any],
+    data: Any,
+    bindings: WorkbookSeriesBindings,
+) -> dict[str, Any]:
     """Bind required compute parameters from `data.py` `*_DEFAULT` leaves."""
+    series_by_id = {
+        str(series["id"]): series
+        for series in bindings.get("series", [])
+        if isinstance(series, dict) and series.get("id") is not None
+    }
     kwargs: dict[str, Any] = {}
     for name, param in inspect.signature(compute).parameters.items():
         if param.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}:
@@ -431,7 +463,11 @@ def _inverted_tree_default_kwargs(compute: Callable[..., Any], data: Any) -> dic
                 f"Compute {compute_name!r} required argument {name!r} has no "
                 f"{default_name} in data.py"
             )
-        kwargs[name] = getattr(data, default_name)
+        workbook_value = getattr(data, default_name)
+        series = series_by_id.get(name)
+        kwargs[name] = (
+            _public_compute_arg(series, workbook_value) if series is not None else workbook_value
+        )
     return kwargs
 
 
