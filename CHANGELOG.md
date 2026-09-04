@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v13.3.1 (2026-09-04)
+
+### Bug Fixes
+
+- **series_bindings**: Reject duplicate ids and A1 geometry in public names
+  ([#678](https://github.com/Teal-Insights/excel-grapher/pull/678),
+  [`865369f`](https://github.com/Teal-Insights/excel-grapher/commit/865369f028bc75406a658610c96c0a1e666841bc))
+
+### Documentation
+
+- Cite #667 and #668 from the inverted-tree fail-closed list
+  ([#669](https://github.com/Teal-Insights/excel-grapher/pull/669),
+  [`12abaeb`](https://github.com/Teal-Insights/excel-grapher/commit/12abaebe9a902e60fe57c9c0bbd4d44ce49777e8))
+
+- Link #662 port follow-ups to #666 #667 #668
+  ([#669](https://github.com/Teal-Insights/excel-grapher/pull/669),
+  [`12abaeb`](https://github.com/Teal-Insights/excel-grapher/commit/12abaebe9a902e60fe57c9c0bbd4d44ce49777e8))
+
+- Link #662 port follow-ups to #666–#668
+  ([#669](https://github.com/Teal-Insights/excel-grapher/pull/669),
+  [`12abaeb`](https://github.com/Teal-Insights/excel-grapher/commit/12abaebe9a902e60fe57c9c0bbd4d44ce49777e8))
+
+
 ## v13.3.0 (2026-09-04)
 
 ### Bug Fixes
