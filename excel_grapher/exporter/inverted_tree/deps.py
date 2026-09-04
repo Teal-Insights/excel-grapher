@@ -291,7 +291,8 @@ def predecessor_address(
 
     For index > 0 this is the previous cell in the series. For index 0 it is a
     relative read of another bound series whose `schedule_coord` is the host's
-    coordinate - 1 (the year-0 seed of a recursive path).
+    coordinate - 1 (the year-0 seed of a recursive path). An absolute selector
+    read by every member is not a seed.
     """
     if index < 0 or index >= len(series.cells):
         return None
@@ -369,7 +370,9 @@ class SeriesDeps:
     - `lagged_ids` — a producer read at both `i` and `i-1`
     - `lookup_ids` — `whole` / `dynamic` table reads
     - `is_scan` / `seed_id` / `scan_direction` — self-lags discharged by
-      loop order
+      loop order. A relative other-series read at `schedule_coord` ± 1 is
+      a seed; an absolute selector read by every member is a scalar
+      parameter, not a scan seed.
     """
 
     host_id: str

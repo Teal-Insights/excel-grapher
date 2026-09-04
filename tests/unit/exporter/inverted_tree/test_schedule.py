@@ -12,6 +12,7 @@ from excel_grapher.core.address_keys import parse_cell_coords
 from excel_grapher.exporter.codegen import CodeGenerator
 from excel_grapher.exporter.inverted_tree import catalog as catalog_mod
 from excel_grapher.exporter.inverted_tree import deps as deps_mod
+from excel_grapher.exporter.inverted_tree import schedule as schedule_mod
 from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
     KeyPoint,
@@ -96,8 +97,6 @@ def test_distance_zero_guarded_cycle_is_legal_and_demotes() -> None:
         DependenceEdge("adjustment", "debt", "Engine!B3", "Engine!B2", 0, guarded=False),
     )
     catalog = _catalog_from_edges(edges)
-    from excel_grapher.exporter.inverted_tree import schedule as schedule_mod
-
     schedule_mod.assert_distance_zero_legal(("debt", "adjustment"), edges, catalog)
     assert residual_body_order(("debt", "adjustment"), edges, catalog) is None
 
@@ -452,3 +451,37 @@ def test_plan_scc_classifies_self_lag_as_rung_1(tmp_path: Path) -> None:
     assert choice.rung == 1
     assert choice.plan is not None
     assert choice.plan.direction == "forward"
+
+
+def test_statement_at_union_is_precomputed_coord_map_hit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cells = tuple(f"Engine!A{i}" for i in range(1, 6))
+    domain = tuple(KeyPoint((("TIME_PERIOD", year),)) for year in range(5))
+    series = BoundSeries(
+        series_id="value",
+        layout="series",
+        direction="output",
+        cells=cells,
+        key_fields=("TIME_PERIOD",),
+        dtype="float",
+        compute_name=None,
+        raw={},
+        domain=domain,
+        statements=(
+            Statement("value__0", "value", None, 0, 1, cells[:1], domain[:1]),
+            Statement("value__1", "value", None, 1, 5, cells[1:], domain[1:]),
+        ),
+    )
+    catalog = make_catalog(
+        series={"value": series},
+        order=("value",),
+        address_to_id={cell: "value" for cell in cells},
+    )
+
+    def boom(address: str, _catalog: SeriesCatalog) -> int:
+        raise AssertionError(f"schedule_coord should not run during lookup: {address}")
+
+    monkeypatch.setattr(schedule_mod, "schedule_coord", boom)
+    assert schedule_mod._statement_at_union(catalog, "value", 0, 0) == "value__0"
+    assert schedule_mod._statement_at_union(catalog, "value", 1, 3) == "value__1"

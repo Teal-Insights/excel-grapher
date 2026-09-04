@@ -431,17 +431,17 @@ def _contiguous_domain(
 def _statement_at_union(
     catalog: SeriesCatalog,
     series_id: str,
-    union_t: int,
+    _union_t: int,
     index: int,
 ) -> str:
-    """Return the statement covering union index `union_t`."""
-    series = catalog.get(series_id)
-    if len(series.statements) <= 1:
-        return series_id
-    for stmt in series.statements:
-        for cell in stmt.cells:
-            if schedule_coord(cell, catalog) == index:
-                return stmt.statement_id
+    """Return the statement covering schedule coordinate `index`.
+
+    `_union_t` is the position of `index` on the fused union schedule. Lookup
+    is an O(1) hit on `catalog.schedule.statement_id_by_coord`.
+    """
+    found = catalog.schedule.statement_id_by_coord.get(series_id, {}).get(index)
+    if found is not None:
+        return found
     return series_id
 
 
