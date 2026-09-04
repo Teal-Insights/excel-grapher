@@ -9,11 +9,11 @@ from typing import TYPE_CHECKING, Literal
 from fastpyxl.utils.cell import get_column_letter
 
 from excel_grapher.core.address_keys import (
+    CanonicalAddress,
+    as_canonical,
+    canonical_address,
     format_cell_key,
     parse_cell_coords,
-)
-from excel_grapher.core.address_keys import (
-    normalize_key as normalize_address,
 )
 from excel_grapher.core.excel_function_names import normalize_excel_function_name
 from excel_grapher.core.formula_ast import (
@@ -43,7 +43,9 @@ if TYPE_CHECKING:
 AccessClass = Literal["identity", "shift", "affine", "gather", "whole", "dynamic"]
 
 
-def _layout_distance(consumer: str, producer: str, catalog: SeriesCatalog) -> int:
+def _layout_distance(
+    consumer: CanonicalAddress, producer: CanonicalAddress, catalog: SeriesCatalog
+) -> int:
     """Return schedule-domain distance (`coord(consumer) - coord(producer)`)."""
     consumer_series = catalog.series_for(consumer)
     producer_series = catalog.series_for(producer)
@@ -81,7 +83,7 @@ def identity_join_indices(
     producer_by_coord = catalog.schedule.index_by_coord[producer.series_id]
     slots: list[int] = []
     for host_cell in host.cells:
-        host_coord = catalog.schedule.coord_of.get(normalize_address(host_cell))
+        host_coord = catalog.schedule.coord_of.get(host_cell)
         if host_coord is None:
             raise InvertedTreeExportError(f"cell {host_cell} has no schedule coordinate")
         matches = producer_by_coord.get(host_coord, ())
@@ -96,9 +98,9 @@ def identity_join_indices(
 
 
 def _member_access(
-    consumer_cell: str,
+    consumer_cell: CanonicalAddress,
     producer: BoundSeries,
-    producer_cell: str,
+    producer_cell: CanonicalAddress,
     catalog: SeriesCatalog,
 ) -> AccessClass:
     """Classify a cell-ref by schedule distance (`0` is identity).
@@ -114,7 +116,7 @@ def _member_access(
     return "shift"
 
 
-def iter_range_addresses(start: str, end: str) -> list[str]:
+def iter_range_addresses(start: str, end: str) -> list[CanonicalAddress]:
     """Expand a same-sheet A1 range into canonical cell addresses (row-major)."""
     sheet1, row1, col1 = parse_cell_coords(start)
     sheet2, row2, col2 = parse_cell_coords(end)
@@ -123,13 +125,13 @@ def iter_range_addresses(start: str, end: str) -> list[str]:
     r1, r2 = min(row1, row2), max(row1, row2)
     c1, c2 = min(col1, col2), max(col1, col2)
     return [
-        format_cell_key(sheet1, get_column_letter(col), row)
+        as_canonical(format_cell_key(sheet1, get_column_letter(col), row))
         for row in range(r1, r2 + 1)
         for col in range(c1, c2 + 1)
     ]
 
 
-def range_column_addresses(start: str, end: str, col_index: int) -> list[str]:
+def range_column_addresses(start: str, end: str, col_index: int) -> list[CanonicalAddress]:
     """Return the 1-based column `col_index` of the rectangle `start:end`."""
     sheet1, row1, col1 = parse_cell_coords(start)
     sheet2, row2, col2 = parse_cell_coords(end)
@@ -141,12 +143,15 @@ def range_column_addresses(start: str, end: str, col_index: int) -> list[str]:
     if col_index < 1 or col_index > width:
         raise InvertedTreeExportError(f"INDEX column {col_index} is outside range {start}:{end}")
     col = c1 + col_index - 1
-    return [format_cell_key(sheet1, get_column_letter(col), row) for row in range(r1, r2 + 1)]
+    return [
+        as_canonical(format_cell_key(sheet1, get_column_letter(col), row))
+        for row in range(r1, r2 + 1)
+    ]
 
 
-def node_formula_ast(graph: DependencyGraph, address: str) -> AstNode:
+def node_formula_ast(graph: DependencyGraph, address: CanonicalAddress) -> AstNode:
     """Return the formula AST for `address`, or fail closed."""
-    node = graph.get_node(normalize_address(address))
+    node = graph.get_node(address)
     if node is None:
         raise InvertedTreeExportError(f"graph is missing bound cell {address}")
     ast = getattr(node, "formula_ast", None)
@@ -215,23 +220,23 @@ def _boundary_index(series: BoundSeries, catalog: SeriesCatalog, *, delta: int) 
 
 def _non_peer_seed_ref(
     ast: AstNode,
-    host_cell: str,
+    host_cell: CanonicalAddress,
     series: BoundSeries,
     catalog: SeriesCatalog,
-) -> str | None:
+) -> CanonicalAddress | None:
     """Return the unique relative read of a series outside the host key domain."""
     host_fields = preferred_fields(series, catalog)
-    found: list[str] = []
+    found: list[CanonicalAddress] = []
     for ref in _iter_cell_ref_nodes(ast):
         if not _ref_shifts_with_host(ref, host_cell):
             continue
-        address = resolve_cell_ref(ref, host_cell)
+        address = as_canonical(resolve_cell_ref(ref, host_cell))
         owner = catalog.series_for(address)
         if owner is None or owner.series_id == series.series_id:
             continue
         if preferred_fields(owner, catalog) == host_fields:
             continue
-        found.append(normalize_address(address))
+        found.append(address)
     if len(found) == 1:
         return found[0]
     return None
@@ -244,7 +249,7 @@ def _adjacent_schedule_ref(
     graph: DependencyGraph | None,
     *,
     delta: int,
-) -> str | None:
+) -> CanonicalAddress | None:
     """Return a relative other-series ref at `schedule_coord` + `delta`.
 
     When the host and producer do not share join fields, a unique relative
@@ -259,11 +264,11 @@ def _adjacent_schedule_ref(
     except InvertedTreeExportError:
         return None
     host_coord = schedule_coord(host_cell, catalog)
-    matched: list[str] = []
+    matched: list[CanonicalAddress] = []
     for ref in _iter_cell_ref_nodes(ast):
         if not _ref_shifts_with_host(ref, host_cell):
             continue
-        address = resolve_cell_ref(ref, host_cell)
+        address = as_canonical(resolve_cell_ref(ref, host_cell))
         owner = catalog.series_for(address)
         if owner is None or owner.series_id == series.series_id:
             continue
@@ -271,7 +276,7 @@ def _adjacent_schedule_ref(
             continue
         if _overlapping_schedule_peer(series, owner, catalog):
             continue
-        matched.append(normalize_address(address))
+        matched.append(address)
     if len(matched) == 1:
         return matched[0]
     if matched:
@@ -286,7 +291,7 @@ def predecessor_address(
     index: int,
     catalog: SeriesCatalog,
     graph: DependencyGraph | None = None,
-) -> str | None:
+) -> CanonicalAddress | None:
     """Return the lagged predecessor of `series.cells[index]`, if any.
 
     For index > 0 this is the previous cell in the series. For index 0 it is a
@@ -306,7 +311,7 @@ def successor_address(
     index: int,
     catalog: SeriesCatalog,
     graph: DependencyGraph | None = None,
-) -> str | None:
+) -> CanonicalAddress | None:
     """Return the look-ahead successor of `series.cells[index]`, if any.
 
     For index < len(series.cells) - 1 this is the next cell in the series. For
@@ -336,8 +341,8 @@ class DependenceEdge:
 
     consumer_id: str
     producer_id: str
-    consumer_cell: str
-    producer_cell: str
+    consumer_cell: CanonicalAddress
+    producer_cell: CanonicalAddress
     distance: int
     access: AccessClass = "identity"
     coeff: int | None = None
@@ -399,12 +404,11 @@ class _DepCollector:
         self,
         *,
         producer_id: str,
-        host_cell: str,
-        producer_cell: str,
+        host_cell: CanonicalAddress,
+        producer_cell: CanonicalAddress,
         access: AccessClass,
     ) -> None:
-        consumer_cell = normalize_address(host_cell)
-        producer_cell = normalize_address(producer_cell)
+        consumer_cell = host_cell
         guarded = (
             self.graph.is_guarded(consumer_cell, producer_cell) if self.graph is not None else False
         )
@@ -420,10 +424,12 @@ class _DepCollector:
             )
         )
 
-    def emit_cell(self, address: str, host_cell: str, host_index: int) -> None:
+    def emit_cell(
+        self, address: CanonicalAddress, host_cell: CanonicalAddress, host_index: int
+    ) -> None:
         owner = self.catalog.require_series_for(address)
         if owner.series_id == self.host.series_id:
-            if normalize_address(address) == self.host.cells[host_index]:
+            if address == self.host.cells[host_index]:
                 return
             self._emit(
                 producer_id=owner.series_id,
@@ -442,8 +448,8 @@ class _DepCollector:
     def emit_lookup(
         self,
         producer: BoundSeries,
-        host_cell: str,
-        producer_cell: str,
+        host_cell: CanonicalAddress,
+        producer_cell: CanonicalAddress,
         access: AccessClass,
     ) -> None:
         if producer.series_id == self.host.series_id:
@@ -455,10 +461,10 @@ class _DepCollector:
             access=access,
         )
 
-    def visit(self, node: AstNode, *, host_cell: str, host_index: int) -> None:
+    def visit(self, node: AstNode, *, host_cell: CanonicalAddress, host_index: int) -> None:
         match node:
             case CellRefNode():
-                address = resolve_cell_ref(node, host_cell)
+                address = as_canonical(resolve_cell_ref(node, host_cell))
                 self.emit_cell(address, host_cell, host_index)
             case RangeNode():
                 start = resolve_cell_ref(node.start_ref, host_cell)
@@ -473,7 +479,7 @@ class _DepCollector:
                         f"series {self.host.series_id!r} range {start}:{end} is not a "
                         f"bound series (unbound cells: {missing[:8]})"
                     )
-                self.emit_lookup(covered, host_cell, start, "whole")
+                self.emit_lookup(covered, host_cell, as_canonical(start), "whole")
             case FunctionCallNode():
                 self._visit_function(node, host_cell=host_cell, host_index=host_index)
             case BinaryOpNode():
@@ -488,7 +494,7 @@ class _DepCollector:
         self,
         node: FunctionCallNode,
         *,
-        host_cell: str,
+        host_cell: CanonicalAddress,
         host_index: int,
     ) -> None:
         name = normalize_excel_function_name(node.name)
@@ -508,7 +514,7 @@ class _DepCollector:
         self,
         node: FunctionCallNode,
         *,
-        host_cell: str,
+        host_cell: CanonicalAddress,
         host_index: int,
     ) -> None:
         if not node.args:
@@ -524,7 +530,7 @@ class _DepCollector:
         self,
         node: FunctionCallNode,
         *,
-        host_cell: str,
+        host_cell: CanonicalAddress,
         host_index: int,
     ) -> None:
         if len(node.args) < 2:
@@ -562,7 +568,7 @@ class _DepCollector:
         self,
         node: FunctionCallNode,
         *,
-        host_cell: str,
+        host_cell: CanonicalAddress,
         host_index: int,
     ) -> None:
         if len(node.args) < 2:
@@ -577,9 +583,9 @@ class _DepCollector:
         for arg in node.args[2:]:
             self.visit(arg, host_cell=host_cell, host_index=host_index)
 
-    def _series_for_ref(self, node: AstNode, host_cell: str) -> BoundSeries:
+    def _series_for_ref(self, node: AstNode, host_cell: CanonicalAddress) -> BoundSeries:
         if isinstance(node, CellRefNode):
-            return self.catalog.require_series_for(resolve_cell_ref(node, host_cell))
+            return self.catalog.require_series_for(as_canonical(resolve_cell_ref(node, host_cell)))
         if isinstance(node, RangeNode):
             start = resolve_cell_ref(node.start_ref, host_cell)
             end = resolve_cell_ref(node.end_ref, host_cell)
@@ -594,11 +600,11 @@ class _DepCollector:
             f"got {type(node).__name__}"
         )
 
-    def _ref_anchor(self, node: AstNode, host_cell: str) -> str:
+    def _ref_anchor(self, node: AstNode, host_cell: CanonicalAddress) -> CanonicalAddress:
         if isinstance(node, CellRefNode):
-            return resolve_cell_ref(node, host_cell)
+            return as_canonical(resolve_cell_ref(node, host_cell))
         if isinstance(node, RangeNode):
-            return resolve_cell_ref(node.start_ref, host_cell)
+            return as_canonical(resolve_cell_ref(node.start_ref, host_cell))
         raise InvertedTreeExportError(
             f"series {self.host.series_id!r}: expected a cell or range reference, "
             f"got {type(node).__name__}"
@@ -695,7 +701,7 @@ def requires_demand_driven(
         if host_index is None:
             return True
         succ = successor_address(series, host_index, catalog, graph)
-        if succ is None or normalize_address(edge.producer_cell) != normalize_address(succ):
+        if succ is None or edge.producer_cell != succ:
             is_backward = False
             break
     return not is_backward
@@ -748,14 +754,10 @@ def series_deps_from_edges(
             if edge.distance > 0:
                 saw_self_lag = True
             pred = predecessor_address(host, host_index, catalog, graph)
-            if pred is not None and normalize_address(edge.producer_cell) == normalize_address(
-                pred
-            ):
+            if pred is not None and edge.producer_cell == pred:
                 saw_forward_lag = True
             succ = successor_address(host, host_index, catalog, graph)
-            if succ is not None and normalize_address(edge.producer_cell) == normalize_address(
-                succ
-            ):
+            if succ is not None and edge.producer_cell == succ:
                 saw_backward_lag = True
             continue
         params.setdefault(edge.producer_id, None)
@@ -770,10 +772,10 @@ def series_deps_from_edges(
         if idx is not None:
             aligned_hits.setdefault(edge.producer_id, []).append((host_index, idx))
         pred = _adjacent_schedule_ref(host, host_index, catalog, graph, delta=-1)
-        if pred is not None and normalize_address(edge.producer_cell) == normalize_address(pred):
+        if pred is not None and edge.producer_cell == pred:
             seed_id = edge.producer_id
         succ = _adjacent_schedule_ref(host, host_index, catalog, graph, delta=+1)
-        if succ is not None and normalize_address(edge.producer_cell) == normalize_address(succ):
+        if succ is not None and edge.producer_cell == succ:
             terminal_seed_id = edge.producer_id
     scan_direction: Literal["forward", "reversed"] = "forward"
     if saw_backward_lag and not saw_forward_lag:
@@ -839,9 +841,7 @@ def series_deps_from_edges(
             if host_index is None:
                 continue
             slot = joined[host_index]
-            if slot < 0 or normalize_address(dep.cells[slot]) != normalize_address(
-                edge.producer_cell
-            ):
+            if slot < 0 or dep.cells[slot] != edge.producer_cell:
                 raise InvertedTreeExportError(
                     f"series {host.series_id!r} cell {edge.consumer_cell} "
                     f"identity-reads {edge.producer_cell}, not the join slot "
@@ -1174,7 +1174,7 @@ def assert_subgraph_bound(
     """Fail closed when an unbound formula cell sits in a bound target subgraph."""
     bound = catalog.bound_addresses()
     seen: set[str] = set()
-    stack = [normalize_address(addr) for addr in roots]
+    stack = [canonical_address(addr) for addr in roots]
     while stack:
         address = stack.pop()
         if address in seen:
@@ -1189,7 +1189,7 @@ def assert_subgraph_bound(
                 f"unbound formula cell {address} is in the target subgraph"
             )
         for dep in graph.get_dependencies(address):
-            stack.append(normalize_address(dep))
+            stack.append(as_canonical(dep))
 
 
 def all_formula_root_cells(catalog: SeriesCatalog) -> Iterator[str]:
