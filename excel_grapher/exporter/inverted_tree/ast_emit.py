@@ -134,10 +134,12 @@ def python_measure_type(series: BoundSeries) -> str:
 
 
 def _python_param_inner(series: BoundSeries) -> str:
-    """Inner type of a helper parameter for `series`."""
-    if series.is_formula_series:
-        return python_measure_type(series)
-    return series.python_dtype
+    """Inner type of a helper parameter for `series`.
+
+    Numeric leaves use the measure type (`float | str` / `int | str`) so
+    cached text and error-code strings in `data.py` stay assignable.
+    """
+    return python_measure_type(series)
 
 
 def python_annotation(series: BoundSeries) -> str:
