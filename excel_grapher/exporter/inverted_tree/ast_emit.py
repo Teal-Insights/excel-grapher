@@ -33,6 +33,7 @@ from excel_grapher.exporter.inverted_tree.catalog import (
     SeriesCatalog,
     covering_series,
     fit_affine_map,
+    preferred_fields,
     schedule_axis_coord,
     schedule_partition,
 )
@@ -103,6 +104,7 @@ class EmitContext:
     fused_ready: frozenset[str] = field(default_factory=frozenset)
     fused_buffer_suffix: str = ""
     fused_partition: tuple[Scalar, ...] | None = None
+    fused_use_area: bool = False
     graph: DependencyGraph | None = None
     lookup_anchor_slot: int = 0
 
@@ -302,6 +304,86 @@ def _union_t(plan: FusedPlan, address: CanonicalAddress, ctx: EmitContext) -> in
     return mapped
 
 
+def _host_outer_fields(host: BoundSeries, catalog: SeriesCatalog) -> tuple[str, ...]:
+    """Return the host's instance-partition key fields (`TIME_PERIOD` stripped)."""
+    fields = preferred_fields(host, catalog)
+    if fields is None:
+        return ()
+    return tuple(name for name in fields if name != "TIME_PERIOD")
+
+
+def _producer_partition_of(
+    owner: BoundSeries,
+    address: CanonicalAddress,
+    catalog: SeriesCatalog,
+    host_outer: Sequence[str],
+) -> tuple[Scalar, ...] | None:
+    """Return the plan-partition key of `address`, including REF_AREA-only seeds."""
+    part = schedule_partition(address, catalog)
+    if part:
+        return part
+    idx = owner.index_of(address)
+    if idx is None or idx >= len(owner.domain) or not host_outer:
+        return None
+    point = owner.domain[idx]
+    try:
+        return tuple(point[field] for field in host_outer)
+    except KeyError:
+        return None
+
+
+def _aligned_area_index(
+    owner: BoundSeries,
+    address: CanonicalAddress,
+    ctx: EmitContext,
+    plan: FusedPlan,
+) -> tuple[int, int] | None:
+    """Return `(area_index, stride)` when `address` lines up with `plan.partitions`.
+
+    A producer keyed by the outer partition fields — with or without
+    `TIME_PERIOD` — has one block per area. Uniform block length is the
+    catalog stride so `_area * stride + t` is identical across partitions.
+    """
+    host_outer = _host_outer_fields(ctx.host, ctx.catalog)
+    if not host_outer or not plan.partitions:
+        return None
+    prod_part = _producer_partition_of(owner, address, ctx.catalog, host_outer)
+    if prod_part not in plan.partitions:
+        return None
+    counts = [
+        sum(
+            1
+            for cell in owner.cells
+            if _producer_partition_of(owner, cell, ctx.catalog, host_outer) == part
+        )
+        for part in plan.partitions
+    ]
+    if not counts or counts[0] == 0 or len(set(counts)) != 1:
+        return None
+    return plan.partitions.index(prod_part), counts[0]
+
+
+def _combine_area_index(area_expr: str, inner: str) -> str:
+    """Join `_area * stride` with a schedule-axis term."""
+    if inner in {"0", "0.0"}:
+        return area_expr
+    if area_expr in {"0", "0.0"}:
+        return inner
+    if inner.startswith("-"):
+        return f"{area_expr} - {inner[1:]}"
+    return f"{area_expr} + {inner}"
+
+
+def _area_stride_expr(stride: int, delta_area: int) -> str:
+    """Return `(_area + delta_area) * stride`."""
+    area = "_area" if delta_area == 0 else _index_expr(delta_area, "_area")
+    if stride == 1:
+        return area if area == "_area" else f"({area})"
+    if area == "_area":
+        return f"_area * {stride}"
+    return f"({area}) * {stride}"
+
+
 def _emit_fused_ref(address: CanonicalAddress, ctx: EmitContext) -> str:
     owner = ctx.catalog.require_series_for(address)
     idx = owner.index_of(address)
@@ -341,6 +423,21 @@ def _emit_fused_ref(address: CanonicalAddress, ctx: EmitContext) -> str:
         return f"live_measure({name})"
     host_union = _union_t(plan, ctx.host_cell, ctx)
     step = -1 if plan.direction == "reversed" else 1
+    if ctx.fused_use_area:
+        aligned = _aligned_area_index(owner, address, ctx, plan)
+        if aligned is not None:
+            area_i, stride = aligned
+            host_part = schedule_partition(ctx.host_cell, ctx.catalog)
+            host_i = plan.partitions.index(host_part) if host_part in plan.partitions else 0
+            fields = preferred_fields(owner, ctx.catalog) or ()
+            if "TIME_PERIOD" in fields:
+                local = idx - step * host_union - area_i * stride
+                inner = _affine_index_expr(local, index_var, step=step)
+            else:
+                local = idx - area_i * stride
+                inner = str(local)
+            index_expr = _combine_area_index(_area_stride_expr(stride, area_i - host_i), inner)
+            return f"live_measure({name}[{index_expr}])"
     index_expr = _affine_index_expr(idx - step * host_union, index_var, step=step)
     return f"live_measure({name}[{index_expr}])"
 
@@ -1075,6 +1172,7 @@ def _emit_fused_expr(
     ready: set[str],
     suffix: str = "",
     partition: tuple[Scalar, ...] | None = None,
+    use_area_var: bool = False,
 ) -> tuple[str, set[str]]:
     ctx = EmitContext(
         host=series,
@@ -1090,6 +1188,7 @@ def _emit_fused_expr(
         fused_ready=frozenset(ready),
         fused_buffer_suffix=suffix,
         fused_partition=partition,
+        fused_use_area=use_area_var,
         graph=graph,
     )
     expr = emit_expr(node_formula_ast(graph, series.cells[host_index]), ctx)
@@ -1167,6 +1266,7 @@ def _emit_fused_region(
                     ready=ready,
                     suffix=suffix,
                     partition=part,
+                    use_area_var=True,
                 )
                 used |= expr_used
                 exprs.append(expr)

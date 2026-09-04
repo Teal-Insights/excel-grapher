@@ -1010,6 +1010,8 @@ def plan_indices(
 
     Multi-series lag zippers are one call: every member is computed for the
     full catalog (the year loop cannot skip a prefix). Consumers then `take`.
+    A nested fused nest indexes external producers with `_area` in catalog
+    space, so those leaves stay identity too.
     """
     result: dict[str, tuple[int, ...]] = {
         output.series_id: tuple(range(len(output.cells))),
@@ -1047,6 +1049,14 @@ def plan_indices(
                     skip=members,
                     add_result=add_result,
                 )
+            if _scc_is_nested(scc, catalog):
+                for sid in scc:
+                    for param_id in deps[sid].param_ids:
+                        if param_id in members:
+                            continue
+                        dep = catalog.get(param_id)
+                        if dep.is_sequence:
+                            add_result(param_id, tuple(range(len(dep.cells))))
             continue
         info = deps[host_id]
         if host_id not in result:
@@ -1062,6 +1072,19 @@ def plan_indices(
             add_result=add_result,
         )
     return result, call
+
+
+def _scc_is_nested(scc: tuple[str, ...], catalog: SeriesCatalog) -> bool:
+    """True when `scc` spans more than one outer-key partition."""
+    seen: set[tuple[object, ...]] = set()
+    for sid in scc:
+        for address in catalog.get(sid).cells:
+            part = schedule_partition(address, catalog)
+            if part:
+                seen.add(part)
+            if len(seen) > 1:
+                return True
+    return False
 
 
 def _propagate_param_indices(
