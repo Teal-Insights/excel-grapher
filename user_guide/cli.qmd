@@ -36,6 +36,7 @@ Validate a workbook and its binding sidecar before export or CI.
 excel-grapher bindings validate WORKBOOK [--bindings PATH] [--json] [-v]
   [--smoke-test] [--emit-dir DIR] [--package-name NAME]
   [--paradigm {ctx,inverted_tree}]
+  [--constraints PATH] [--use-cached-dynamic-refs]
 ```
 
 ### Arguments
@@ -50,6 +51,8 @@ excel-grapher bindings validate WORKBOOK [--bindings PATH] [--json] [-v]
 | `--emit-dir DIR` | Write generated module files under `DIR` (see `--package-name`). Implied when combined with `--smoke-test` and an emit directory. |
 | `--package-name NAME` | Package directory name for smoke tests and emitted files (default: `bindings_module`). |
 | `--paradigm {ctx,inverted_tree}` | Codegen paradigm. `inverted_tree` is the recommended series-binding export; the default remains `ctx` until the [issue 662](https://github.com/Teal-Insights/excel-grapher/issues/662) default-flip gate. |
+| `--constraints PATH` | Path to a `constraints.py` module exposing `CONSTRAINTS: Mapping[str, type]` (the same shape `corpus.toml` entries point at). Required for workbooks whose `OFFSET` / `INDEX` / `INDIRECT` arguments are not integer literals. |
+| `--use-cached-dynamic-refs` | Resolve those dynamic refs from the workbook's cached values instead of a constraints module. |
 
 Validation-only is the default: no code is generated unless you pass `--smoke-test` or `--emit-dir`.
 
@@ -120,6 +123,20 @@ uv run excel-grapher bindings validate lic_inputs.xlsx --smoke-test
 uv run excel-grapher bindings validate lic_inputs.xlsx \
   --paradigm inverted_tree --smoke-test --emit-dir ./generated
 ```
+
+Workbooks that contain `OFFSET` / `INDEX` / `INDIRECT` with non-literal arguments need an
+explicit resolution strategy. Pass the same `constraints.py` the local corpus uses:
+
+```bash
+uv run excel-grapher bindings validate \
+  tests/fixtures/inverted_tree/tiny_dsa/tiny-dsa.xlsx \
+  --bindings tests/fixtures/inverted_tree/tiny_dsa/bindings \
+  --constraints tests/fixtures/inverted_tree/tiny_dsa/constraints.py \
+  --paradigm inverted_tree --smoke-test
+```
+
+Without `--constraints` or `--use-cached-dynamic-refs`, graph building fails with a message that
+names the cell and the flag to pass.
 
 To persist generated files:
 
@@ -192,12 +209,19 @@ The CLI wraps the same workflow as:
 ```python
 from pathlib import Path
 
+from excel_grapher.grapher import dynamic_refs_from_path
 from excel_grapher.series_bindings import validate_bindings_workbook, run_binding_checks
 
 workbook = Path("lic_inputs.xlsx")
 bindings_path = workbook.with_suffix(".bindings.yaml")
+dynamic_refs = dynamic_refs_from_path(Path("constraints.py"))
 
-result = validate_bindings_workbook(workbook, bindings_path)
+result = validate_bindings_workbook(
+    workbook,
+    bindings_path,
+    dynamic_refs=dynamic_refs,
+    use_cached_dynamic_refs=False,
+)
 assert result["report"]["ok"]
 
 run_binding_checks(
@@ -207,6 +231,8 @@ run_binding_checks(
     package_name="lic_bindings",
     smoke_test=True,
     paradigm="inverted_tree",
+    dynamic_refs=dynamic_refs,
+    use_cached_dynamic_refs=False,
 )
 ```
 

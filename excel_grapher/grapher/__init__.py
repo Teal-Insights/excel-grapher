@@ -22,6 +22,12 @@ from .cache import (
     save_graph_cache,
     try_load_graph_cache,
 )
+from .constraints import (
+    ConstraintsLoadError,
+    dynamic_refs_from_path,
+    load_constraints_module,
+    resolve_constraints_path,
+)
 from .dependency_provenance import DependencyCause, EdgeProvenance
 from .dynamic_refs import (
     DynamicRefConfig,
@@ -95,6 +101,10 @@ __all__ = [
     "load_graph",
     "GraphReadView",
     "EdgeProvenance",
+    "ConstraintsLoadError",
+    "dynamic_refs_from_path",
+    "load_constraints_module",
+    "resolve_constraints_path",
     "DynamicRefConfig",
     "DynamicRefError",
     "DynamicRefLimits",

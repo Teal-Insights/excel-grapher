@@ -11,6 +11,7 @@ import pytest
 
 from excel_grapher.cli import main
 from tests.integration.user_flows.utils import write_ffv2_workbook
+from tests.paths import INVERTED_TREE_TINY_DSA
 from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
 
@@ -229,6 +230,8 @@ def test_console_script_is_registered() -> None:
     assert "--smoke-test" in result.stdout
     assert "--paradigm" in result.stdout
     assert "--verbose" in result.stdout
+    assert "--constraints" in result.stdout
+    assert "--use-cached-dynamic-refs" in result.stdout
 
 
 def test_main_schema_error_is_human_readable(
@@ -364,3 +367,144 @@ def test_main_emit_inverted_tree_paradigm(
     assert "def make_context" not in api
     assert "def set_" not in api
     assert "def compute_z" in api
+
+
+_TINY_DSA_WORKBOOK = INVERTED_TREE_TINY_DSA / "tiny-dsa.xlsx"
+_TINY_DSA_BINDINGS = INVERTED_TREE_TINY_DSA / "bindings"
+_TINY_DSA_CONSTRAINTS = INVERTED_TREE_TINY_DSA / "constraints.py"
+
+
+def test_main_tiny_dsa_without_constraints_is_actionable(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = main(
+        [
+            "bindings",
+            "validate",
+            str(_TINY_DSA_WORKBOOK),
+            "--bindings",
+            str(_TINY_DSA_BINDINGS),
+            "--paradigm",
+            "inverted_tree",
+            "--smoke-test",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code != 0
+    combined = f"{captured.out}\n{captured.err}"
+    assert "OFFSET rows/cols must be integer literals or cached numeric refs" not in combined
+    assert "Engine!" in combined
+    assert "--constraints" in captured.err
+    assert "--use-cached-dynamic-refs" in captured.err
+
+
+def test_main_tiny_dsa_constraints_smoke_test(capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = main(
+        [
+            "bindings",
+            "validate",
+            str(_TINY_DSA_WORKBOOK),
+            "--bindings",
+            str(_TINY_DSA_BINDINGS),
+            "--constraints",
+            str(_TINY_DSA_CONSTRAINTS),
+            "--paradigm",
+            "inverted_tree",
+            "--smoke-test",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+    assert "inverted-tree compute functions passed smoke checks" in captured.out
+
+
+def test_main_missing_constraints_file_is_actionable(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    workbook = tmp_path / "ffv2.xlsx"
+    write_ffv2_workbook(workbook)
+    missing = tmp_path / "missing_constraints.py"
+
+    exit_code = main(
+        [
+            "bindings",
+            "validate",
+            str(workbook),
+            "--bindings",
+            str(FIXTURES / "ffv2.yaml"),
+            "--constraints",
+            str(missing),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "Constraints module not found" in captured.err
+    assert str(missing) in captured.err
+
+
+def test_main_use_cached_dynamic_refs_resolves_offset(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import yaml
+
+    from tests.unit.exporter.inverted_tree.helpers import (
+        bindings_document,
+        series_entry,
+        write_workbook,
+    )
+
+    workbook = write_workbook(
+        tmp_path / "offset.xlsx",
+        {
+            "Inputs": {"A1": 10, "B1": 0},
+            "Engine": {"A1": "=OFFSET(Inputs!A1,Inputs!B1,0)"},
+            "Outputs": {"A1": "=Engine!A1"},
+        },
+    )
+    document = bindings_document(
+        series_entry("base", "Inputs!A1", layout="scalar", direction="input"),
+        series_entry("rows", "Inputs!B1", layout="scalar", direction="input"),
+        series_entry(
+            "result",
+            "Outputs!A1",
+            layout="scalar",
+            direction="output",
+            compute_name="compute_result",
+        ),
+    )
+    document["workbook"] = "offset.xlsx"
+    bindings = tmp_path / "offset.bindings.yaml"
+    bindings.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+    without_flag = main(
+        [
+            "bindings",
+            "validate",
+            str(workbook),
+            "--bindings",
+            str(bindings),
+        ]
+    )
+    captured_without = capsys.readouterr()
+    assert without_flag != 0
+    assert "--constraints" in captured_without.err
+    assert "--use-cached-dynamic-refs" in captured_without.err
+
+    with_flag = main(
+        [
+            "bindings",
+            "validate",
+            str(workbook),
+            "--bindings",
+            str(bindings),
+            "--use-cached-dynamic-refs",
+        ]
+    )
+    captured_with = capsys.readouterr()
+    assert with_flag == 0, captured_with.err
+    assert "ok=True" in captured_with.out

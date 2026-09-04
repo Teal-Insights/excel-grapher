@@ -10,6 +10,12 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from excel_grapher.grapher.constraints import (
+    ConstraintsLoadError,
+    dynamic_refs_from_path,
+    resolve_constraints_path,
+)
+from excel_grapher.grapher.dynamic_refs import DynamicRefConfig, DynamicRefError
 from excel_grapher.series_bindings.load import SeriesBindingsLoadError
 from excel_grapher.series_bindings.schema import SeriesBindingsSchemaError
 from excel_grapher.series_bindings.smoke import BindingsSmokeError
@@ -20,6 +26,11 @@ from excel_grapher.series_bindings.workflow import (
     run_binding_checks,
     validate_bindings_workbook,
 )
+
+_PY_DYNAMIC_REF_HINT = (
+    "Pass dynamic_refs=DynamicRefConfig.from_constraints(...) or set use_cached_dynamic_refs=True."
+)
+_CLI_DYNAMIC_REF_HINT = "Pass --constraints path/to/constraints.py or --use-cached-dynamic-refs."
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -72,6 +83,19 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         help="Codegen paradigm. inverted_tree is recommended for series-binding packages; "
         "the library default remains ctx until the #662 default-flip gate.",
     )
+    validate_parser.add_argument(
+        "--constraints",
+        type=Path,
+        default=None,
+        help="Path to a constraints.py module exposing CONSTRAINTS: Mapping[str, type] "
+        "(same contract as corpus.toml entries). Used to resolve OFFSET/INDEX/INDIRECT.",
+    )
+    validate_parser.add_argument(
+        "--use-cached-dynamic-refs",
+        action="store_true",
+        help="Resolve OFFSET/INDEX/INDIRECT from the workbook's cached values instead of "
+        "a constraints module.",
+    )
 
 
 def dispatch(args: argparse.Namespace) -> int:
@@ -96,12 +120,23 @@ def cmd_validate(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        result = validate_bindings_workbook(workbook, bindings_path)
+        dynamic_refs = _load_dynamic_refs(workbook, args.constraints)
+        graph_kwargs = {
+            "dynamic_refs": dynamic_refs,
+            "use_cached_dynamic_refs": args.use_cached_dynamic_refs,
+        }
+        result = validate_bindings_workbook(workbook, bindings_path, **graph_kwargs)
     except SeriesBindingsLoadError as exc:
         print(str(exc), file=sys.stderr)
         return 1
     except SeriesBindingsSchemaError as exc:
         print(f"Binding sidecar schema error:\n  {exc}", file=sys.stderr)
+        return 1
+    except ConstraintsLoadError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except (DynamicRefError, ValueError) as exc:
+        print(_format_cli_dynamic_ref_error(exc), file=sys.stderr)
         return 1
 
     report = result["report"]
@@ -129,6 +164,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
                         package_name=args.package_name,
                         smoke_test=True,
                         paradigm=args.paradigm,
+                        **graph_kwargs,
                     )
             else:
                 module_dir = _module_dir(args.emit_dir, args.package_name)
@@ -139,6 +175,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
                     package_name=args.package_name,
                     smoke_test=True,
                     paradigm=args.paradigm,
+                    **graph_kwargs,
                 )
                 if not args.json:
                     _write_generated_files(check_result, module_dir)
@@ -152,8 +189,11 @@ def cmd_validate(args: argparse.Namespace) -> int:
                 paradigm=args.paradigm,
             )
             _write_generated_files({"generated_files": files}, module_dir)
-    except (BindingsSmokeError, ValueError) as exc:
+    except BindingsSmokeError as exc:
         print(str(exc), file=sys.stderr)
+        return 1
+    except (DynamicRefError, ValueError) as exc:
+        print(_format_cli_dynamic_ref_error(exc), file=sys.stderr)
         return 1
 
     if not args.json and args.smoke_test:
@@ -162,6 +202,19 @@ def cmd_validate(args: argparse.Namespace) -> int:
         else:
             print("All setter and compute functions passed smoke checks.")
     return 0
+
+
+def _load_dynamic_refs(workbook: Path, constraints: Path | None) -> DynamicRefConfig | None:
+    if constraints is None:
+        return None
+    return dynamic_refs_from_path(resolve_constraints_path(workbook, constraints))
+
+
+def _format_cli_dynamic_ref_error(exc: BaseException) -> str:
+    text = str(exc)
+    if _PY_DYNAMIC_REF_HINT in text:
+        return text.replace(_PY_DYNAMIC_REF_HINT, _CLI_DYNAMIC_REF_HINT)
+    return f"{text}\n{_CLI_DYNAMIC_REF_HINT}"
 
 
 def _module_dir(emit_dir: Path, package_name: str) -> Path:
