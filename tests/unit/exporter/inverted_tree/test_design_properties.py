@@ -484,6 +484,7 @@ def test_code_size_independent_of_period_count(
             f"{filename} grew from {len(small_lines)} to {len(large_lines)} lines"
         )
         assert abs(len(small[filename]) - len(large[filename])) <= 48
+        assert abs(max(map(len, small_lines)) - max(map(len, large_lines))) <= 8
 
 
 def test_lexically_misordered_string_keys_match_evaluator(tmp_path: Path) -> None:

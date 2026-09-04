@@ -15,6 +15,7 @@ emit an outer loop over the instance partition.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     load_package,
     oriented_addresses,
     oriented_document,
+    series_entry,
     write_oriented_workbook,
     write_workbook,
 )
@@ -219,14 +221,17 @@ def test_matrix_zipper_emits_rung_2_and_matches_evaluator(tmp_path: Path, orient
     assert pkg.compute_debt() == pytest.approx(tuple(expected[addr] for addr in addresses))
 
 
-def _sized_zipper_sheets(n_areas: int, n_years: int) -> dict[str, dict[str, object]]:
+def _sized_zipper_sheets(
+    n_areas: int, n_years: int, *, uniform_seed: int | None = None
+) -> dict[str, dict[str, object]]:
     cells: dict[str, object] = {}
     for year_i in range(n_years):
         cells[f"{get_column_letter(year_i + 2)}1"] = 2020 + year_i
     for area_i in range(n_areas):
         row = 2 + area_i
         cells[f"A{row}"] = f"C{area_i:02d}"
-        cells[f"B{row}"] = f"={1000 + 100 * area_i}"
+        seed = 1000 if uniform_seed is not None else 1000 + 100 * area_i
+        cells[f"B{row}"] = f"={seed}"
         adj_row = 3 + n_areas + area_i
         for year_i in range(1, n_years):
             col = get_column_letter(year_i + 2)
@@ -267,6 +272,12 @@ def _sized_zipper_bindings(n_areas: int, n_years: int) -> dict[str, Any]:
     )
 
 
+def _normalize_fused_loop_bounds(source: str) -> str:
+    """Drop partition/year count literals so isomorphic nests compare equal."""
+    text = re.sub(r"for _area in range\(\d+\):", "for _area in range(N):", source)
+    return re.sub(r"for t in range\(\d+\):", "for t in range(T):", text)
+
+
 def test_matrix_zipper_code_size_independent_of_countries_and_years(tmp_path: Path) -> None:
     small_wb = write_workbook(
         tmp_path / "a20_size_small.xlsx", _sized_zipper_sheets(n_areas=2, n_years=3)
@@ -283,6 +294,215 @@ def test_matrix_zipper_code_size_independent_of_countries_and_years(tmp_path: Pa
             f"{filename} grew from {len(small_lines)} to {len(large_lines)} lines"
         )
         assert abs(len(small[filename]) - len(large[filename])) <= 48
+        assert abs(max(map(len, small_lines)) - max(map(len, large_lines))) <= 8
+
+
+def test_matrix_zipper_internals_identical_across_partition_counts(tmp_path: Path) -> None:
+    """Isomorphic country blocks must not grow internals with country count (#652)."""
+    small_wb = write_workbook(
+        tmp_path / "a20_part_small.xlsx",
+        _sized_zipper_sheets(n_areas=2, n_years=4, uniform_seed=1000),
+    )
+    large_wb = write_workbook(
+        tmp_path / "a20_part_large.xlsx",
+        _sized_zipper_sheets(n_areas=8, n_years=4, uniform_seed=1000),
+    )
+    small = generate_inverted(small_wb, _sized_zipper_bindings(2, 4))
+    large = generate_inverted(large_wb, _sized_zipper_bindings(8, 4))
+    assert _normalize_fused_loop_bounds(small["internals.py"]) == _normalize_fused_loop_bounds(
+        large["internals.py"]
+    )
+    assert len(small["internals.py"]) == len(large["internals.py"])
+
+
+def _country_seed_sheets(n_areas: int, n_years: int) -> dict[str, dict[str, object]]:
+    """Country × year zipper whose year-0 seed is a REF_AREA-only series (#652)."""
+    cells: dict[str, object] = {}
+    for year_i in range(n_years):
+        cells[f"{get_column_letter(year_i + 2)}1"] = 2020 + year_i
+    adj_header = 2 + n_areas
+    for year_i in range(n_years):
+        cells[f"{get_column_letter(year_i + 2)}{adj_header}"] = 2020 + year_i
+    init_start = 4 + 2 * n_areas
+    for area_i in range(n_areas):
+        name = f"C{area_i:02d}"
+        debt_row = 2 + area_i
+        adj_row = 3 + n_areas + area_i
+        init_row = init_start + area_i
+        cells[f"A{debt_row}"] = name
+        cells[f"A{adj_row}"] = name
+        cells[f"A{init_row}"] = name
+        cells[f"B{init_row}"] = 1000 + 100 * area_i
+        cells[f"B{debt_row}"] = f"=B{init_row}"
+        for year_i in range(1, n_years):
+            col = get_column_letter(year_i + 2)
+            pred = get_column_letter(year_i + 1)
+            cells[f"{col}{debt_row}"] = f"={pred}{debt_row}+{col}{adj_row}"
+            cells[f"{col}{adj_row}"] = f"={pred}{debt_row}*0.02"
+    return {"Engine": cells}
+
+
+def _country_seed_bindings(n_areas: int, n_years: int) -> dict[str, Any]:
+    last_col = get_column_letter(n_years + 1)
+    last_debt_row = 1 + n_areas
+    adj_header = 2 + n_areas
+    last_adj_row = adj_header + n_areas
+    init_start = 4 + 2 * n_areas
+    init_end = init_start + n_areas - 1
+    document = bindings_document(
+        _matrix_entry(
+            "adjustment",
+            f"Engine!C{adj_header + 1}:{last_col}{last_adj_row}",
+            header_row=adj_header,
+            direction="internal",
+        ),
+        _matrix_entry(
+            "debt",
+            f"Engine!B2:{last_col}{last_debt_row}",
+            header_row=1,
+            direction="output",
+        ),
+        series_entry(
+            "initial",
+            f"Engine!B{init_start}:B{init_end}",
+            layout="series",
+            direction="input",
+            label_column="A",
+            key_concept="REF_AREA",
+            key_read="string",
+        ),
+    )
+    document["concept_scheme"]["concepts"].append({"id": "REF_AREA", "dtype": "string"})
+    return document
+
+
+def _country_seed_debt_addresses(n_areas: int, n_years: int) -> list[str]:
+    return [
+        f"Engine!{get_column_letter(year_i + 2)}{2 + area_i}"
+        for area_i in range(n_areas)
+        for year_i in range(n_years)
+    ]
+
+
+def _country_seed_initial(n_areas: int) -> tuple[float, ...]:
+    return tuple(float(1000 + 100 * area_i) for area_i in range(n_areas))
+
+
+@pytest.mark.parametrize("orientation", ["horizontal", "vertical"])
+def test_per_country_seed_fuses_without_area_if_chain(tmp_path: Path, orientation: str) -> None:
+    n_areas, n_years = 4, 3
+    sheets = _country_seed_sheets(n_areas, n_years)
+    workbook = write_oriented_workbook(
+        tmp_path / f"a20_seed_{orientation}.xlsx", sheets, orientation=orientation
+    )
+    document = oriented_document(_country_seed_bindings(n_areas, n_years), orientation)
+    catalog, _deps, graph = inverted_graph_parts(workbook, document)
+    choice = plan_scc(("debt", "adjustment"), catalog=catalog, graph=graph)
+    assert choice.rung == 2
+    modules = generate_inverted(workbook, document)
+    internals = modules["internals.py"]
+    assert "if _area ==" not in internals
+    assert "live_measure(initial[_area])" in internals
+    pkg = load_package(modules, tmp_path, name=f"a20_seed_{orientation[:1]}")
+    addresses = list(
+        oriented_addresses(_country_seed_debt_addresses(n_areas, n_years), orientation)
+    )
+    expected = _evaluator_values(workbook, addresses)
+    got = pkg.compute_debt(initial=_country_seed_initial(n_areas))
+    assert got == pytest.approx(tuple(expected[addr] for addr in addresses))
+
+
+def test_per_country_seed_internals_identical_across_partition_counts(tmp_path: Path) -> None:
+    small_wb = write_workbook(
+        tmp_path / "a20_seed_part_small.xlsx", _country_seed_sheets(n_areas=2, n_years=3)
+    )
+    large_wb = write_workbook(
+        tmp_path / "a20_seed_part_large.xlsx", _country_seed_sheets(n_areas=8, n_years=3)
+    )
+    small = generate_inverted(small_wb, _country_seed_bindings(2, 3))
+    large = generate_inverted(large_wb, _country_seed_bindings(8, 3))
+    assert "if _area ==" not in small["internals.py"]
+    assert "if _area ==" not in large["internals.py"]
+    assert _normalize_fused_loop_bounds(small["internals.py"]) == _normalize_fused_loop_bounds(
+        large["internals.py"]
+    )
+    assert len(small["internals.py"]) == len(large["internals.py"])
+
+
+def _aligned_rate_sheets(n_areas: int, n_years: int) -> dict[str, dict[str, object]]:
+    """Zipper whose adj reads a REF_AREA×TIME_PERIOD rate matrix (#652)."""
+    cells: dict[str, object] = {}
+    for year_i in range(n_years):
+        cells[f"{get_column_letter(year_i + 2)}1"] = 2020 + year_i
+    rate_header = 2 + n_areas
+    adj_header = 3 + 2 * n_areas
+    for year_i in range(n_years):
+        cells[f"{get_column_letter(year_i + 2)}{rate_header}"] = 2020 + year_i
+        cells[f"{get_column_letter(year_i + 2)}{adj_header}"] = 2020 + year_i
+    for area_i in range(n_areas):
+        name = f"C{area_i:02d}"
+        debt_row = 2 + area_i
+        rate_row = 3 + n_areas + area_i
+        adj_row = 4 + 2 * n_areas + area_i
+        cells[f"A{debt_row}"] = name
+        cells[f"A{rate_row}"] = name
+        cells[f"A{adj_row}"] = name
+        cells[f"B{debt_row}"] = "=1000"
+        for year_i in range(n_years):
+            cells[f"{get_column_letter(year_i + 2)}{rate_row}"] = 0.02 + 0.001 * area_i
+        for year_i in range(1, n_years):
+            col = get_column_letter(year_i + 2)
+            pred = get_column_letter(year_i + 1)
+            cells[f"{col}{debt_row}"] = f"={pred}{debt_row}+{col}{adj_row}"
+            cells[f"{col}{adj_row}"] = f"={pred}{debt_row}*{col}{rate_row}"
+    return {"Engine": cells}
+
+
+def _aligned_rate_bindings(n_areas: int, n_years: int) -> dict[str, Any]:
+    last_col = get_column_letter(n_years + 1)
+    last_debt = 1 + n_areas
+    rate_header = 2 + n_areas
+    last_rate = rate_header + n_areas
+    adj_header = 3 + 2 * n_areas
+    last_adj = adj_header + n_areas
+    return bindings_document(
+        _matrix_entry(
+            "rate", f"Engine!B{rate_header + 1}:{last_col}{last_rate}", header_row=rate_header
+        ),
+        _matrix_entry(
+            "adjustment",
+            f"Engine!C{adj_header + 1}:{last_col}{last_adj}",
+            header_row=adj_header,
+            direction="internal",
+        ),
+        _matrix_entry(
+            "debt",
+            f"Engine!B2:{last_col}{last_debt}",
+            header_row=1,
+            direction="output",
+        ),
+    )
+
+
+def test_aligned_matrix_producer_uses_area_stride_index(tmp_path: Path) -> None:
+    """A REF_AREA×TIME_PERIOD producer indexes as `_area * stride + t` (#652)."""
+    n_areas, n_years = 4, 3
+    workbook = write_workbook(
+        tmp_path / "a20_aligned_rate.xlsx", _aligned_rate_sheets(n_areas, n_years)
+    )
+    document = _aligned_rate_bindings(n_areas, n_years)
+    catalog, _deps, graph = inverted_graph_parts(workbook, document)
+    choice = plan_scc(("debt", "adjustment"), catalog=catalog, graph=graph)
+    assert choice.rung == 2
+    modules = generate_inverted(workbook, document)
+    internals = modules["internals.py"]
+    assert "if _area ==" not in internals
+    assert f"rate[_area * {n_years} + t]" in internals
+    assert "take(" not in modules["api.py"]
+    pkg = load_package(modules, tmp_path, name="a20_aligned_rate")
+    addresses = _country_seed_debt_addresses(n_areas, n_years)
+    expected = _evaluator_values(workbook, addresses)
+    assert pkg.compute_debt() == pytest.approx(tuple(expected[addr] for addr in addresses))
 
 
 def _cross_country_legal_sheets() -> dict[str, dict[str, object]]:
