@@ -167,17 +167,36 @@ def emit_expr(node: AstNode, ctx: EmitContext) -> str:
             )
 
 
+def _is_scan_prior_ref(address: str, ctx: EmitContext) -> bool:
+    """True when `address` is the scan accumulator, not a shared selector.
+
+    Index 0 (or the last member of a reversed scan) may sit next to a bound
+    scalar. That neighbor is `prior` only when `SeriesDeps` classified it as
+    the seed. An absolute selector read by every member stays a parameter.
+    """
+    norm = normalize_address(address)
+    pred = predecessor_address(ctx.host, ctx.host_index, ctx.catalog)
+    if pred is not None and norm == normalize_address(pred):
+        if ctx.host_index > 0:
+            return True
+        owner = ctx.catalog.series_for(address)
+        return owner is not None and owner.series_id == ctx.deps.seed_id
+    succ = successor_address(ctx.host, ctx.host_index, ctx.catalog)
+    if succ is not None and norm == normalize_address(succ):
+        if ctx.host_index < len(ctx.host.cells) - 1:
+            return True
+        owner = ctx.catalog.series_for(address)
+        return owner is not None and owner.series_id == ctx.deps.seed_id
+    return False
+
+
 def _emit_cell_ref(node: CellRefNode, ctx: EmitContext) -> str:
     address = resolve_cell_ref(node, ctx.host_cell)
     if ctx.fused_mode:
         return _emit_fused_ref(address, ctx)
     if ctx.instance_mode:
         return _emit_instance_ref(address, ctx)
-    pred = predecessor_address(ctx.host, ctx.host_index, ctx.catalog)
-    if pred is not None and normalize_address(address) == normalize_address(pred) and ctx.prior_var:
-        return ctx.prior_var
-    succ = successor_address(ctx.host, ctx.host_index, ctx.catalog)
-    if succ is not None and normalize_address(address) == normalize_address(succ) and ctx.prior_var:
+    if ctx.prior_var and _is_scan_prior_ref(address, ctx):
         return ctx.prior_var
     owner = ctx.catalog.require_series_for(address)
     if owner.series_id == ctx.host.series_id:
