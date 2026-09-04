@@ -210,22 +210,29 @@ class ScheduleIndex:
     statement_id_by_coord: dict[str, dict[int, str]] = field(default_factory=dict)
 
 
+def _series_statement_id_by_coord(
+    item: BoundSeries,
+    coord_of: Mapping[str, int],
+) -> dict[int, str]:
+    """Map schedule coordinates of `item` to the covering statement id."""
+    mapping: dict[int, str] = {}
+    for stmt in item.statements:
+        for cell in stmt.cells:
+            mapping.setdefault(coord_of[normalize_address(cell)], stmt.statement_id)
+    if not mapping:
+        for address in item.cells:
+            mapping.setdefault(coord_of[normalize_address(address)], item.series_id)
+    return mapping
+
+
 def _statement_id_by_coord(
     series: Mapping[str, BoundSeries],
     coord_of: Mapping[str, int],
 ) -> dict[str, dict[int, str]]:
     """Map each series id to schedule coordinate to covering statement id."""
-    indexed: dict[str, dict[int, str]] = {}
-    for item in series.values():
-        mapping: dict[int, str] = {}
-        for stmt in item.statements:
-            for cell in stmt.cells:
-                mapping.setdefault(coord_of[normalize_address(cell)], stmt.statement_id)
-        if not mapping:
-            for address in item.cells:
-                mapping.setdefault(coord_of[normalize_address(address)], item.series_id)
-        indexed[item.series_id] = mapping
-    return indexed
+    return {
+        item.series_id: _series_statement_id_by_coord(item, coord_of) for item in series.values()
+    }
 
 
 def build_schedule_index(series: Mapping[str, BoundSeries]) -> ScheduleIndex:
@@ -579,22 +586,30 @@ def _shape_partition(
 
 def partition_catalog(catalog: SeriesCatalog, graph: DependencyGraph) -> SeriesCatalog:
     """Split each series into consecutive formula-shape statements."""
-    series_map = {
-        series_id: (
-            replace(series, statements=_shape_partition(series, catalog, graph))
-            if series.is_formula_series
-            else series
-        )
-        for series_id, series in catalog.series.items()
-    }
+    series_map: dict[str, BoundSeries] = {}
+    statement_id_by_coord = catalog.schedule.statement_id_by_coord
+    refreshed: dict[str, dict[int, str]] | None = None
+    for series_id, series in catalog.series.items():
+        if not series.is_formula_series:
+            series_map[series_id] = series
+            continue
+        partitioned = replace(series, statements=_shape_partition(series, catalog, graph))
+        series_map[series_id] = partitioned
+        if partitioned.statements == series.statements:
+            continue
+        if refreshed is None:
+            refreshed = dict(statement_id_by_coord)
+        refreshed[series_id] = _series_statement_id_by_coord(partitioned, catalog.schedule.coord_of)
+    schedule = (
+        catalog.schedule
+        if refreshed is None
+        else replace(catalog.schedule, statement_id_by_coord=refreshed)
+    )
     return SeriesCatalog(
         series=series_map,
         order=catalog.order,
         address_to_id=catalog.address_to_id,
-        schedule=replace(
-            catalog.schedule,
-            statement_id_by_coord=_statement_id_by_coord(series_map, catalog.schedule.coord_of),
-        ),
+        schedule=schedule,
     )
 
 

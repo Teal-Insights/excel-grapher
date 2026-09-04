@@ -255,6 +255,7 @@ def test_partition_catalog_large_constant_series_performance() -> None:
     assert res.statements[0].statement_id == "large_const"
     assert res.statements[0].start == 0
     assert res.statements[0].stop == n
+    assert partitioned.schedule.statement_id_by_coord is catalog.schedule.statement_id_by_coord
 
 
 def _make_formula_catalog_and_graph(
