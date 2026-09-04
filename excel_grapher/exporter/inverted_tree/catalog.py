@@ -11,11 +11,13 @@ from excel_grapher.core.address_keys import (
     CanonicalAddress,
     as_canonical,
     canonical_address,
+    parse_cell_coords,
 )
 from excel_grapher.core.formula_ast import (
     BinaryOpNode,
     CellRefNode,
     FunctionCallNode,
+    RangeNode,
     UnaryOpNode,
     resolve_cell_ref,
 )
@@ -142,6 +144,24 @@ class BoundSeries:
     def index_of(self, address: CanonicalAddress) -> int | None:
         """Return the 0-based index of canonical `address` in `cells`, if present."""
         return self._cell_indices.get(address)
+
+    @property
+    def block_width(self) -> int:
+        """Column count of the row-major bound block.
+
+        A 1-D column is width 1. A 1-D row and a `layout: matrix` series
+        use the number of cells that share the first row. INDEX/OFFSET
+        lowering uses this as the flat-index row stride.
+        """
+        if len(self.cells) <= 1:
+            return 1
+        first_row = parse_cell_coords(self.cells[0])[1]
+        width = 0
+        for cell in self.cells:
+            if parse_cell_coords(cell)[1] != first_row:
+                break
+            width += 1
+        return max(width, 1)
 
 
 def _join_key(point: KeyPoint, fields: Sequence[str]) -> tuple[Scalar, ...] | None:
@@ -521,6 +541,9 @@ def _iter_cell_refs(node: object) -> Iterable[CellRefNode]:
     match node:
         case CellRefNode():
             yield node
+        case RangeNode():
+            yield CellRefNode(node.start_ref)
+            yield CellRefNode(node.end_ref)
         case BinaryOpNode(left=left, right=right):
             yield from _iter_cell_refs(left)
             yield from _iter_cell_refs(right)
@@ -565,7 +588,7 @@ def _cell_access_pairs(
     graph: DependencyGraph,
     address: CanonicalAddress,
 ) -> tuple[tuple[str, int | None], ...]:
-    """Return `(producer_id, catalog_index)` for each cell ref at `address`."""
+    """Return `(producer_id, catalog_index)` for each cell or range endpoint."""
     node = graph.get_node(address)
     ast = getattr(node, "formula_ast", None) if node is not None else None
     if ast is None:
