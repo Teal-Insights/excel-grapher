@@ -6,7 +6,9 @@ import typing
 import pytest
 
 from excel_grapher.core.address_keys import (
+    CanonicalAddress,
     NormalizedAddress,
+    canonical_address,
     canonical_cell_coord,
     format_cell_key,
     format_key,
@@ -31,6 +33,13 @@ def test_normalize_key_returns_normalized_address() -> None:
     assert hints["return"] is NormalizedAddress
     result: NormalizedAddress = normalize_key("'Sheet1'!A1")
     assert result == "Sheet1!A1"
+
+
+def test_canonical_address_is_public_boundary() -> None:
+    hints = typing.get_type_hints(canonical_address)
+    assert hints["return"] is CanonicalAddress
+    assert canonical_address("'Sheet1'!$a$1") == "Sheet1!A1"
+    assert canonical_address("Sheet1!A1") == "Sheet1!A1"
 
 
 @pytest.mark.parametrize(

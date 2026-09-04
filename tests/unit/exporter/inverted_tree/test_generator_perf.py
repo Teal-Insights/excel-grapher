@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from excel_grapher.core import address_keys as address_keys_mod
 from excel_grapher.exporter.inverted_tree import deps as deps_mod
 from excel_grapher.exporter.inverted_tree import schedule as schedule_mod
 from excel_grapher.exporter.inverted_tree.catalog import (
@@ -15,10 +16,16 @@ from excel_grapher.exporter.inverted_tree.catalog import (
     KeyPoint,
     SeriesCatalog,
     Statement,
+    build_catalog,
+    schedule_coord,
 )
 from excel_grapher.exporter.inverted_tree.deps import DependenceEdge
 from excel_grapher.exporter.inverted_tree.schedule import plan_fused_scc
-from tests.unit.exporter.inverted_tree.helpers import generate_inverted, make_catalog
+from tests.unit.exporter.inverted_tree.helpers import (
+    generate_inverted,
+    make_catalog,
+    write_workbook,
+)
 from tests.unit.exporter.inverted_tree.test_shape_a1_leaf_closure import (
     _a1_bindings,
     _a1_workbook,
@@ -27,6 +34,41 @@ from tests.unit.exporter.inverted_tree.test_shape_a11_zipper import (
     _zipper_bindings,
     _zipper_workbook,
 )
+
+_CATALOG_CONSTANT_CELLS = 45_000
+
+
+def _constant_series_bindings(n: int = _CATALOG_CONSTANT_CELLS) -> dict:
+    """Minimal catalog bindings: one constant series, no declared key.
+
+    Schema validation requires a non-empty `key` on `layout: series`.
+    `build_catalog` accepts `key: []` and treats expansion order as the
+    schedule, which is the 45k-cell case in #636.
+    """
+    return {
+        "series": [
+            {
+                "id": "consts",
+                "data_range": f"Sheet1!A1:A{n}",
+                "layout": "series",
+                "constant": {},
+                "key": [],
+                "structure": {"measure": {"dtype": "float"}},
+            }
+        ]
+    }
+
+
+def _count_normalize_key_calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    calls = {"n": 0}
+    original = address_keys_mod.normalize_key
+
+    def counting(key: str) -> str:
+        calls["n"] += 1
+        return original(key)
+
+    monkeypatch.setattr(address_keys_mod, "normalize_key", counting)
+    return calls
 
 
 def test_generate_modules_walks_each_series_ast_once(
@@ -50,6 +92,38 @@ def test_generate_modules_walks_each_series_ast_once(
     generate_inverted(_zipper_workbook(tmp_path), _zipper_bindings())
     assert walks, "expected collect_series_edges to run during generate_modules"
     assert all(count == 1 for count in walks.values()), walks
+
+
+def test_build_catalog_normalizes_each_cell_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workbook = write_workbook(tmp_path / "const.xlsx", {"Sheet1": {"A1": 1}})
+    calls = _count_normalize_key_calls(monkeypatch)
+    catalog = build_catalog(_constant_series_bindings(), workbook=workbook)
+    assert len(catalog.get("consts").cells) == _CATALOG_CONSTANT_CELLS
+    assert calls["n"] == _CATALOG_CONSTANT_CELLS, calls["n"]
+
+
+def test_build_catalog_45k_constant_series_under_half_second(tmp_path: Path) -> None:
+    workbook = write_workbook(tmp_path / "const.xlsx", {"Sheet1": {"A1": 1}})
+    start = time.perf_counter()
+    catalog = build_catalog(_constant_series_bindings(), workbook=workbook)
+    elapsed = time.perf_counter() - start
+    assert len(catalog.get("consts").cells) == _CATALOG_CONSTANT_CELLS
+    assert elapsed < 0.5, f"build_catalog took {elapsed:.3f}s"
+
+
+def test_schedule_coord_does_not_renormalize_catalog_cells(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workbook = write_workbook(tmp_path / "const.xlsx", {"Sheet1": {"A1": 1}})
+    catalog = build_catalog(_constant_series_bindings(n=8), workbook=workbook)
+    calls = _count_normalize_key_calls(monkeypatch)
+    for cell in catalog.get("consts").cells:
+        schedule_coord(cell, catalog)
+        assert catalog.series_for(cell) is catalog.get("consts")
+        assert catalog.get("consts").index_of(cell) is not None
+    assert calls["n"] == 0, calls["n"]
 
 
 def _synthetic_series(
