@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v13.6.2 (2026-09-04)
+
+### Bug Fixes
+
+- **export**: Publish inverted-tree keyed meta via setattr
+  ([#691](https://github.com/Teal-Insights/excel-grapher/pull/691),
+  [`3b2c82c`](https://github.com/Teal-Insights/excel-grapher/commit/3b2c82c617896b430eb9cf51fd613e5240cab666))
+
+- **export**: Widen numeric inverted-tree leaf annotations with | str
+  ([#690](https://github.com/Teal-Insights/excel-grapher/pull/690),
+  [`baa6bf7`](https://github.com/Teal-Insights/excel-grapher/commit/baa6bf7b32917f3e1bfe912208ce735da47fa140))
+
+
 ## v13.6.1 (2026-09-04)
 
 ### Bug Fixes
