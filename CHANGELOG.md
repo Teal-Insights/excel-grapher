@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v13.6.0 (2026-09-04)
+
+### Bug Fixes
+
+- Lower absolute series refs as static catalog indexes
+  ([#685](https://github.com/Teal-Insights/excel-grapher/pull/685),
+  [`e10a17d`](https://github.com/Teal-Insights/excel-grapher/commit/e10a17d6571923cfa3bffde280b1b64a9226c96e))
+
+### Features
+
+- **cli**: Apply DynamicRefConfig constraints in bindings validate
+  ([#684](https://github.com/Teal-Insights/excel-grapher/pull/684),
+  [`8b1669e`](https://github.com/Teal-Insights/excel-grapher/commit/8b1669ea94da799bd2203da26726024a8c7a4c72))
+
+
 ## v13.5.0 (2026-09-04)
 
 ### Features
