@@ -228,6 +228,26 @@ def load_package(
     return pkg
 
 
+def load_forced_rung_packages(
+    workbook: Path,
+    document: dict[str, Any],
+    tmp_path: Path,
+    stem: str,
+) -> tuple[types.ModuleType, types.ModuleType]:
+    """Load packages generated at `force_rung=2` and `force_rung=3`."""
+    fused = load_package(
+        generate_inverted(workbook, document, force_rung=2),
+        tmp_path,
+        name=f"{stem}_r2",
+    )
+    demand = load_package(
+        generate_inverted(workbook, document, force_rung=3),
+        tmp_path,
+        name=f"{stem}_r3",
+    )
+    return fused, demand
+
+
 def required_param_names(function: Callable[..., object]) -> tuple[str, ...]:
     names: list[str] = []
     for name, parameter in inspect.signature(function).parameters.items():
