@@ -13,11 +13,12 @@ the tuple.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import NoReturn, TypeGuard, TypeVar
+from typing import NoReturn, TypeGuard, TypeVar, cast
 
 from excel_grapher.core import operators as _core_ops
 from excel_grapher.core.lookup_funcs import match_cells
 from excel_grapher.core.math_funcs import exp_number
+from excel_grapher.core.types import CellValue, FormulaValue
 from excel_grapher.core.types import XlError as CoreXlError
 
 T = TypeVar("T")
@@ -91,19 +92,24 @@ def _adapt_core(value: object) -> object:
     return value
 
 
-def _arith_operand(value: object) -> object:
+def _as_formula(value: object) -> FormulaValue:
+    """Narrow a generated-code operand to a `core` formula value."""
+    return cast(FormulaValue, value)
+
+
+def _arith_operand(value: object) -> FormulaValue:
     """Prepare an arithmetic operand for `core` (blank text is `0`)."""
     _raise_stored_error(value)
     if isinstance(value, str) and value.replace("\u00a0", "").strip() == "":
         return 0.0
-    return value
+    return _as_formula(value)
 
 
 def _as_number(value: object) -> float:
     """Coerce `value` via core `to_number`, re-raising stored error codes."""
     from excel_grapher.core.coercions import to_number
 
-    number = to_number(_arith_operand(value))  # type: ignore[arg-type]
+    number = to_number(_arith_operand(value))
     if isinstance(number, CoreXlError):
         raise XlError(number.value)
     return float(number)
@@ -148,42 +154,42 @@ def xl_eq(left: object, right: object) -> object:
     """Excel `=` via `core.operators.xl_eq`."""
     _raise_stored_error(left)
     _raise_stored_error(right)
-    return _adapt_core(_core_ops.xl_eq(left, right))
+    return _adapt_core(_core_ops.xl_eq(_as_formula(left), _as_formula(right)))
 
 
 def xl_ne(left: object, right: object) -> object:
     """Excel `<>` via `core.operators.xl_ne`."""
     _raise_stored_error(left)
     _raise_stored_error(right)
-    return _adapt_core(_core_ops.xl_ne(left, right))
+    return _adapt_core(_core_ops.xl_ne(_as_formula(left), _as_formula(right)))
 
 
 def xl_lt(left: object, right: object) -> object:
     """Excel `<` via `core.operators.xl_lt`."""
     _raise_stored_error(left)
     _raise_stored_error(right)
-    return _adapt_core(_core_ops.xl_lt(left, right))
+    return _adapt_core(_core_ops.xl_lt(_as_formula(left), _as_formula(right)))
 
 
 def xl_gt(left: object, right: object) -> object:
     """Excel `>` via `core.operators.xl_gt`."""
     _raise_stored_error(left)
     _raise_stored_error(right)
-    return _adapt_core(_core_ops.xl_gt(left, right))
+    return _adapt_core(_core_ops.xl_gt(_as_formula(left), _as_formula(right)))
 
 
 def xl_le(left: object, right: object) -> object:
     """Excel `<=` via `core.operators.xl_le`."""
     _raise_stored_error(left)
     _raise_stored_error(right)
-    return _adapt_core(_core_ops.xl_le(left, right))
+    return _adapt_core(_core_ops.xl_le(_as_formula(left), _as_formula(right)))
 
 
 def xl_ge(left: object, right: object) -> object:
     """Excel `>=` via `core.operators.xl_ge`."""
     _raise_stored_error(left)
     _raise_stored_error(right)
-    return _adapt_core(_core_ops.xl_ge(left, right))
+    return _adapt_core(_core_ops.xl_ge(_as_formula(left), _as_formula(right)))
 
 
 OPERATOR_TABLE = {
@@ -207,7 +213,7 @@ def xl_exp(*args: object) -> object:
     """Excel `EXP` via `core.math_funcs.exp_number`."""
     for arg in args:
         _raise_stored_error(arg)
-    return _adapt_core(exp_number(*args))  # type: ignore[arg-type]
+    return _adapt_core(exp_number(*cast(tuple[CellValue, ...], args)))
 
 
 def xl_choose(index: object, *choices: float) -> float:
@@ -223,7 +229,9 @@ def xl_match(lookup: object, lookup_array: Sequence[object], match_type: int = 0
     _raise_stored_error(lookup)
     result = match_cells(lookup, list(lookup_array), match_type)
     adapted = _adapt_core(result)
-    return int(adapted)  # type: ignore[arg-type]
+    if not isinstance(adapted, int | float):
+        raise TypeError(f"MATCH returned {type(adapted).__name__}")
+    return int(adapted)
 
 
 def xl_at(values: Sequence[T], index: object) -> T:

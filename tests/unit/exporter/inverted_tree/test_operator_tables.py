@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import cast
+
 from excel_grapher.core.operators import OPERATOR_TABLE as CORE_OPERATOR_TABLE
 from excel_grapher.core.types import XlError as CoreXlError
 from excel_grapher.exporter.inverted_tree import runtime as inverted_runtime
+
+_Binary = Callable[[object, object], object]
 
 
 def test_operator_tables_have_the_same_keys() -> None:
@@ -27,8 +32,8 @@ def test_operator_tables_agree_on_scalar_samples() -> None:
         ("<>", "abc", 1, True),
     ]
     for op, left, right, expected in samples:
-        core = CORE_OPERATOR_TABLE[op](left, right)
+        core = cast(_Binary, CORE_OPERATOR_TABLE[op])(left, right)
         if isinstance(core, CoreXlError):
             raise AssertionError(f"core {op} returned {core}")
-        inverted = inverted_runtime.OPERATOR_TABLE[op](left, right)
+        inverted = cast(_Binary, inverted_runtime.OPERATOR_TABLE[op])(left, right)
         assert inverted == core == expected, (op, left, right, inverted, core)
