@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v13.5.0 (2026-09-04)
+
+### Features
+
+- **series_bindings**: Map scalar input needles via input.value_map
+  ([#680](https://github.com/Teal-Insights/excel-grapher/pull/680),
+  [`0212339`](https://github.com/Teal-Insights/excel-grapher/commit/02123398a3487f089c885071114fc540a9df03b9))
+
+
 ## v13.4.0 (2026-09-04)
 
 ### Features
