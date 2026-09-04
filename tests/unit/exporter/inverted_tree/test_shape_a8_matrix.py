@@ -117,23 +117,25 @@ def test_catalog_accepts_matrix_as_row_major_sequence(tmp_path: Path) -> None:
     assert series.key_fields == ("COUNTRY", "TIME_PERIOD")
 
 
-def test_matrix_constant_is_defaulted_keyword_only_sequence(tmp_path: Path) -> None:
+def test_matrix_constant_is_imported_not_passed(tmp_path: Path) -> None:
     workbook = _profile_workbook(tmp_path)
     modules = generate_inverted(workbook, _profile_bindings())
     assert "EvalContext" not in modules["api.py"]
     assert "ctx" not in modules["api.py"]
+    assert "from .data import" not in modules["api.py"]
     assert "PROFILE_TABLE" in modules["data.py"]
     assert "(10.0, 11.0, 20.0, 21.0)" in modules["data.py"]
     pkg = load_package(modules, tmp_path, name="a8_kw")
     params = inspect.signature(pkg.compute_output_cell).parameters
     assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
     assert required_param_names(pkg.compute_output_cell) == ()
-    assert "profile_table" in all_param_names(pkg.compute_output_cell)
+    assert "profile_table" not in all_param_names(pkg.compute_output_cell)
+    assert pkg.compute_output_cell.__constants__ == ("profile_table",)
     assert "ctx" not in all_param_names(pkg.compute_output_cell)
     assert _measure(pkg.compute_output_cell()) == pytest.approx(10.0)
-    assert _measure(
-        pkg.compute_output_cell(profile_table=(99.0, 11.0, 20.0, 21.0))
-    ) == pytest.approx(99.0)
+    with pkg.data.overrides(PROFILE_TABLE=(99.0, 11.0, 20.0, 21.0)):
+        assert _measure(pkg.compute_output_cell()) == pytest.approx(99.0)
+    assert _measure(pkg.compute_output_cell()) == pytest.approx(10.0)
 
 
 def test_matrix_cell_ref_matches_formula_evaluator(tmp_path: Path) -> None:

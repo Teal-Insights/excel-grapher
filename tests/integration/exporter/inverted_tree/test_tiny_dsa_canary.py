@@ -112,7 +112,8 @@ def test_baseline_leaf_closure_excludes_shock_args(tiny_dsa_pkg) -> None:
     assert "shock_magnitudes" not in names
     assert "engine_year_labels" not in names
     assert "ctx" not in names
-    assert "country_profile_names" in names
+    assert "country_profile_names" not in names
+    assert tiny_dsa_pkg.compute_output_baseline.__constants__ == ("country_profile_names",)
 
 
 def test_shocked_leaf_closure_includes_shock_args(tiny_dsa_pkg) -> None:
@@ -128,10 +129,18 @@ def test_shocked_leaf_closure_includes_shock_args(tiny_dsa_pkg) -> None:
         "shock_type",
         "shock_magnitudes",
     )
-    assert "engine_year_labels" in names
-    assert "country_profile_names" in names
+    assert "engine_year_labels" not in names
+    assert "country_profile_names" not in names
     assert "ctx" not in names
     assert _required(tiny_dsa_pkg.compute_output_delta) == required
+    assert tiny_dsa_pkg.compute_output_shocked.__constants__ == (
+        "country_profile_names",
+        "engine_year_labels",
+    )
+    assert tiny_dsa_pkg.compute_output_delta.__constants__ == (
+        "country_profile_names",
+        "engine_year_labels",
+    )
 
 
 def test_shocked_path_internal_first_level_deps(tiny_dsa_pkg) -> None:

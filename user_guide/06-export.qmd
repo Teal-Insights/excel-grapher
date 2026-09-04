@@ -107,7 +107,7 @@ emitted in `data.py` (`SERIES_DEFAULT`). Setter smoke is ctx-only; inverted-tree
 
 | Module | Role |
 |--------|------|
-| `api.py` | Keyword-only `compute_*` orchestrators. Required parameters are **input** leaves; **constant** leaves are defaulted from `data.py` (see [issue 663](https://github.com/Teal-Insights/excel-grapher/issues/663) to drop those defaults and import constants in the body). |
+| `api.py` | Keyword-only `compute_*` orchestrators. The signature is the **input** leaf closure; **constant** leaves are read from `data` (`data.CONSTANT_X`, listed on `__constants__`) rather than passed as defaulted kwargs. |
 | `data.py` | Catalog-order tuples (and scalars) for constants and `*_DEFAULT` inputs. Measure dtypes include `int`, `float`, `str`, `bool`, and `datetime`. |
 | `internals.py` | First-level-dependency helpers and fused / demand-driven scans. |
 | `runtime.py` | Excel operators shared with `core/` (comparisons, arithmetic, `EXP`, `MATCH`, …). Missing worksheet functions **fail closed** at export rather than embedding the ctx `xl_*` library. |
