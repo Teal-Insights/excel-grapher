@@ -128,12 +128,31 @@ def python_measure_type(series: BoundSeries) -> str:
     return series.python_dtype
 
 
+def _python_param_inner(series: BoundSeries) -> str:
+    """Inner type of a helper parameter for `series`."""
+    if series.is_formula_series:
+        return python_measure_type(series)
+    return series.python_dtype
+
+
 def python_annotation(series: BoundSeries) -> str:
     """Return a typing annotation for a helper parameter."""
-    inner = python_measure_type(series) if series.is_formula_series else series.python_dtype
+    inner = _python_param_inner(series)
     if series.is_scalar:
         return inner
     return f"Sequence[{inner}]"
+
+
+def python_data_annotation(series: BoundSeries) -> str:
+    """Return a typing annotation for a `data.py` constant or default.
+
+    Uses the same inner type as `python_annotation` so workbook defaults are
+    assignable to `compute_*` parameters. Sequence leaves are stored as tuples.
+    """
+    inner = _python_param_inner(series)
+    if series.is_scalar:
+        return inner
+    return f"tuple[{inner}, ...]"
 
 
 def python_return_annotation(series: BoundSeries) -> str:
