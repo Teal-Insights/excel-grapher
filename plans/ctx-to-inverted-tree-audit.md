@@ -26,7 +26,7 @@ Legend: **port** = inverted-tree should grow the feature; **bindings-equivalent*
 | `input.domain` on setters | yes | yes ([#666](https://github.com/Teal-Insights/excel-grapher/issues/666)) | **port shipped** — `require_input_domain` on `compute_*` / `_run_N` arguments. |
 | `make_context` / `inputs=` overlay | yes | none | **drop** — by design. |
 | `output.compute.helper` | yes | every output is a leaf-closure function | **drop**. |
-| Tidy `Records` / `as_records` | yes | tuples only | **bindings-equivalent** — documented recipe in `06-export.qmd`. |
+| Tidy `Records` / `as_records` | yes | `as_records(compute, result)` from `__key__` / `__domain__` | **port shipped** — [#676](https://github.com/Teal-Insights/excel-grapher/issues/676); tuples stay the ABI. |
 | Concept-based naming (#379) | partial | series `id` | **port** — keep [#379](https://github.com/Teal-Insights/excel-grapher/issues/379); applies to both paradigms. |
 | Series-keyed object façade (#593) | planned | none | **port** — retarget [#593](https://github.com/Teal-Insights/excel-grapher/issues/593) at inverted-tree (`compute_*` wrapper, not `EvalContext`). |
 | `constant` direction `read_*` | yes | imported from `data` | **port shipped** — [#663](https://github.com/teal-insights/excel-grapher/issues/663) (`data.CONSTANT_X` / `data.overrides`). |

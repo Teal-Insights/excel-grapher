@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v13.4.0 (2026-09-04)
+
+### Features
+
+- **export**: Publish inverted-tree key domains on compute_*
+  ([#679](https://github.com/Teal-Insights/excel-grapher/pull/679),
+  [`8c309d7`](https://github.com/Teal-Insights/excel-grapher/commit/8c309d72622e27504c58a8b6268abb3e0a03ed0b))
+
+
 ## v13.3.1 (2026-09-04)
 
 ### Bug Fixes

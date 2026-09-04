@@ -11,6 +11,7 @@ from excel_grapher.exporter.inverted_tree.runtime import (
     InstanceCycleError,
     XlError,
     as_measure,
+    as_records,
     demand_instance,
     eval_instance,
     is_error,
@@ -305,6 +306,31 @@ def test_xl_sum_over_sequence_and_stored_errors() -> None:
     with pytest.raises(XlError) as exc:
         xl_sum((1.0, "#DIV/0!"))
     assert exc.value.code == "#DIV/0!"
+
+
+def test_as_records_zips_one_key_and_matrix_keys() -> None:
+    series = type("SeriesCompute", (), {"__key__": ("TIME_PERIOD",), "__domain__": (2008, 2009)})()
+    assert as_records(series, (1.5, 2.5)) == [
+        {"TIME_PERIOD": 2008, "OBS_VALUE": 1.5},
+        {"TIME_PERIOD": 2009, "OBS_VALUE": 2.5},
+    ]
+    matrix = type(
+        "MatrixCompute",
+        (),
+        {
+            "__key__": ("SCENARIO", "TIME_PERIOD"),
+            "__domain__": (("paris", 2050), ("paris", 2075), ("baseline", 2050)),
+        },
+    )()
+    records = as_records(matrix, (10.0, 11.0, 12.0), measure="GAP")
+    assert records[0] == {"SCENARIO": "paris", "TIME_PERIOD": 2050, "GAP": 10.0}
+    assert records[-1] == {"SCENARIO": "baseline", "TIME_PERIOD": 2050, "GAP": 12.0}
+
+
+def test_as_records_rejects_length_mismatch() -> None:
+    compute = type("Compute", (), {"__key__": ("TIME_PERIOD",), "__domain__": (1, 2, 3)})()
+    with pytest.raises(ValueError, match="length"):
+        as_records(compute, (1.0, 2.0))
 
 
 def test_xl_sumproduct_over_aligned_sequences() -> None:

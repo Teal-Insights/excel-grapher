@@ -107,8 +107,8 @@ emitted in `data.py` (`SERIES_DEFAULT`). Setter smoke is ctx-only; inverted-tree
 
 | Module | Role |
 |--------|------|
-| `api.py` | Keyword-only `compute_*` orchestrators. The signature is the **input** leaf closure; **constant** leaves are read from `data` (`data.CONSTANT_X`, listed on `__constants__`) rather than passed as defaulted kwargs. |
-| `data.py` | Catalog-order tuples (and scalars) for constants and `*_DEFAULT` inputs. Measure dtypes include `int`, `float`, `str`, `bool`, and `datetime`. |
+| `api.py` | Keyword-only `compute_*` orchestrators. The signature is the **input** leaf closure; **constant** leaves are read from `data` (`data.CONSTANT_X`, listed on `__constants__`) rather than passed as defaulted kwargs. Each function also publishes `__key__` and `__domain__`. |
+| `data.py` | Catalog-order tuples (and scalars) for constants and `*_DEFAULT` inputs, plus one `{FIELD}_DOMAIN` tuple per distinct key field (`TIME_PERIOD_DOMAIN`, `SCENARIO_DOMAIN`, …). Measure dtypes include `int`, `float`, `str`, `bool`, and `datetime`. |
 | `internals.py` | First-level-dependency helpers and fused / demand-driven scans. |
 | `runtime.py` | Excel operators shared with `core/` (comparisons, arithmetic, `EXP`, `SUM`, `SUMPRODUCT`, `MATCH`, …). Missing worksheet functions **fail closed** at export rather than embedding the ctx `xl_*` library. |
 
@@ -126,28 +126,26 @@ result = compute_output_baseline(
     country_initial_debt=60.0,
 )
 # result is a tuple of measures (numbers or Excel error-code strings such as "#DIV/0!")
+# index by key, not by column count:
+# result[data.TIME_PERIOD_DOMAIN.index(2050)]
+# result[compute_output_baseline.__domain__.index(2050)]
 ```
 
-### Records view (`as_records` recipe)
+Each `compute_*` (and each `internals.*` helper) publishes `__key__` and `__domain__` next to `__constants__`. A one-key series uses the field tuple from `data.py`; a matrix uses row-major key tuples over the nest. A series that does not cover the whole field (late-start `adj`) publishes its own `__domain__` slice.
 
-Inverted-tree computes return **tuples**, not ctx `Records` (`list[dict]`). Zip the tuple with the
-dimension keys you already have from the sidecar (header row, scenario list, …):
+### Records view (`as_records`)
+
+Inverted-tree computes return **tuples**, not ctx `Records` (`list[dict]`). Zip a result with the published domain:
 
 ```python
-def as_records(
-    values: tuple[object, ...],
-    *,
-    time_periods: tuple[int, ...],
-    measure: str = "OBS_VALUE",
-) -> list[dict[str, object]]:
-    return [
-        {"TIME_PERIOD": period, measure: value}
-        for period, value in zip(time_periods, values, strict=True)
-    ]
+from generated import as_records, compute_output_baseline
+
+result = compute_output_baseline(...)
+records = as_records(compute_output_baseline, result)
+# [{'TIME_PERIOD': 2008, 'OBS_VALUE': ...}, ...]
 ```
 
-For a matrix, nest or flatten the same way `expand_data_range` ordered the cells. Do not expect a
-generated `read_*` or `compute_*(ctx) -> Records` wrapper; that is the ctx façade.
+`as_records` reads `compute.__key__` / `compute.__domain__`. For a matrix, each domain point is a key tuple and each record has one column per key field. Do not expect a generated `read_*` or `compute_*(ctx) -> Records` wrapper; that is the ctx façade.
 
 ## Migrating from ctx
 
@@ -158,7 +156,7 @@ generated `read_*` or `compute_*(ctx) -> Records` wrapper; that is the ctx faça
 | `read_<series>()` / `input.reader` | Import `data.SERIES` (constants) or pass the value you would have read. |
 | `input.domain` on setters | Applied to `compute_*` / `_run_N` arguments (`enum`, `between`, `real_between`) ([issue 666](https://github.com/Teal-Insights/excel-grapher/issues/666)). Out-of-domain values raise `ValueError` naming the series. |
 | `input.value_map` on scalar inputs | Applied after the domain check, before any expression ([issue 677](https://github.com/Teal-Insights/excel-grapher/issues/677)). Callers pass map keys; internals see workbook needles. |
-| `compute_*(ctx) -> Records` | `compute_*(*, input_leaves…) -> tuple[…]`. Use the `as_records` recipe above. |
+| `compute_*(ctx) -> Records` | `compute_*(*, input_leaves…) -> tuple[…]`. Use `as_records(compute, result)` ([issue 676](https://github.com/Teal-Insights/excel-grapher/issues/676)). |
 | `output.compute.helper` collapsed helpers | Every output is already a leaf-closure function; drop the helper name. |
 | `CONSTANTS` `MappingProxyType` / sparse leaf store | Dense `data.py` tuples. Mutating a constant is a `data.py` override ([issue 663](https://github.com/Teal-Insights/excel-grapher/issues/663)). |
 | Range-watch invalidation on `EvalContext` | N/A — arguments are immutable for the call. Pass new values. |

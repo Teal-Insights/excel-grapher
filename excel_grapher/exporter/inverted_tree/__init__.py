@@ -3,7 +3,9 @@
 Opt in with `generate_modules(..., paradigm="inverted_tree")`. That is the
 recommended series-binding export; the library default remains `ctx` until
 the issue 662 default-flip gate. Constant leaves are read from `data` rather
-than passed as defaulted keyword arguments (#663).
+than passed as defaulted keyword arguments (#663). Key domains are published
+on `data.{FIELD}_DOMAIN` and as `__key__` / `__domain__` on each `compute_*`
+(#676).
 """
 
 from __future__ import annotations

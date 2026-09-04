@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from datetime import date, datetime
-from typing import NoReturn, TypeGuard, TypeVar, cast
+from typing import NoReturn, Protocol, TypeGuard, TypeVar, cast
 
 from excel_grapher.core import operators as _core_ops
 from excel_grapher.core.lookup_funcs import match_cells
@@ -28,6 +28,14 @@ from excel_grapher.series_bindings.input_coerce import (
 from excel_grapher.series_bindings.input_coerce import require_input_domain as require_input_domain
 
 T = TypeVar("T")
+
+
+class KeyedCompute(Protocol):
+    """A generated `compute_*` or internals helper with published key metadata."""
+
+    __key__: tuple[str, ...]
+    __domain__: tuple[object, ...]
+
 
 XL_ERROR_CODES = frozenset(
     {
@@ -327,6 +335,37 @@ def take(values: Sequence[T], indices: Sequence[int] | slice) -> tuple[T, ...]:
             raise ValueError(f"take index {index} is outside series of length {length}")
         result.append(values[index])
     return tuple(result)
+
+
+def as_records(
+    compute: KeyedCompute,
+    result: Sequence[object],
+    *,
+    measure: str = "OBS_VALUE",
+) -> list[dict[str, object]]:
+    """Zip a compute result with `__key__` / `__domain__` into records.
+
+    Tuples stay the ABI; this helper is for docs, tests, and tidy views.
+    A one-key domain is a tuple of scalars (`TIME_PERIOD_DOMAIN.index(2050)`).
+    A multi-key domain is a tuple of key tuples aligned with `__key__`.
+    """
+    keys = compute.__key__
+    domain = compute.__domain__
+    if len(domain) != len(result):
+        raise ValueError(f"result length {len(result)} does not match domain length {len(domain)}")
+    records: list[dict[str, object]] = []
+    for point, value in zip(domain, result, strict=True):
+        if not keys:
+            record: dict[str, object] = {measure: value}
+        elif len(keys) == 1:
+            record = {keys[0]: point, measure: value}
+        else:
+            if not isinstance(point, tuple) or len(point) != len(keys):
+                raise ValueError(f"domain point {point!r} does not match key {keys!r}")
+            record = dict(zip(keys, point, strict=True))
+            record[measure] = value
+        records.append(record)
+    return records
 
 
 class InstanceCycleError(ValueError):
