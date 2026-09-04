@@ -7,8 +7,10 @@ from typing import TYPE_CHECKING, cast, overload
 import fastpyxl.utils.cell
 
 from excel_grapher.core.address_keys import (
+    format_cell_key,
     format_key,
     parse_address,
+    parse_cell_coords,
 )
 from excel_grapher.core.address_keys import (
     normalize_key as normalize_address,
@@ -501,6 +503,10 @@ class FormulaEvaluator:
         if isinstance(node, RangeNode):
             start = resolve_cell_ref(node.start_ref, self._formula_anchor())
             end = resolve_cell_ref(node.end_ref, self._formula_anchor())
+            start_sheet, _start_coord = parse_address(start)
+            end_sheet = parse_address(end)[0] if "!" in end else start_sheet
+            if start_sheet != end_sheet:
+                return self._evaluate_cross_sheet_range(start, end)
             return _range_from_a1(start, end)
         if isinstance(node, FunctionCallNode):
             name = normalize_excel_function_name(node.name)
@@ -615,6 +621,35 @@ class FormulaEvaluator:
 
     def _resolve_whole_row(self, sheet: str, row: int) -> ExcelRange:
         return resolve_whole_row(sheet, row, self._sheet_bounds())
+
+    def _evaluate_cross_sheet_range(self, start: str, end: str) -> FormulaValue:
+        """Evaluate a 3-D range to a nested grid of cell values.
+
+        `ExcelRange` is single-sheet geometry, so 3-D refs cannot be a lazy
+        range. `SUM` / `SUMPRODUCT` consume the nested grid via `Grid.wrap`.
+        """
+        sheet1, row1, col1 = parse_cell_coords(start)
+        sheet2, row2, col2 = parse_cell_coords(end)
+        order = list(self.graph.sheet_order or [])
+        try:
+            first = order.index(sheet1)
+            last = order.index(sheet2)
+        except ValueError as exc:
+            raise ValueError("Cross-sheet ranges are not supported") from exc
+        lo, hi = (first, last) if first <= last else (last, first)
+        r1, r2 = min(row1, row2), max(row1, row2)
+        c1, c2 = min(col1, col2), max(col1, col2)
+        grid: list[list[CellValue]] = []
+        for sheet in order[lo : hi + 1]:
+            for row in range(r1, r2 + 1):
+                row_values: list[CellValue] = []
+                for col in range(c1, c2 + 1):
+                    letter = fastpyxl.utils.cell.get_column_letter(col)
+                    row_values.append(
+                        cast(CellValue, self._evaluate_cell(format_cell_key(sheet, letter, row)))
+                    )
+                grid.append(row_values)
+        return grid
 
     def _resolve_binary_operand(self, value: FormulaValue) -> FormulaValue:
         """Bind range geometry for element-wise operators.

@@ -18,7 +18,8 @@ from typing import NoReturn, TypeGuard, TypeVar, cast
 
 from excel_grapher.core import operators as _core_ops
 from excel_grapher.core.lookup_funcs import match_cells
-from excel_grapher.core.math_funcs import exp_number
+from excel_grapher.core.math_funcs import exp_number, sum_cells
+from excel_grapher.core.sumproduct import sumproduct_cells
 from excel_grapher.core.types import CellValue, FormulaValue
 from excel_grapher.core.types import XlError as CoreXlError
 from excel_grapher.series_bindings.input_coerce import require_input_domain as require_input_domain
@@ -91,6 +92,15 @@ def _raise_stored_error(value: object) -> None:
     """Re-raise a cached Excel error-code measure."""
     if isinstance(value, str) and is_error(value):
         raise XlError(value)
+
+
+def _raise_stored_errors_in(value: object) -> None:
+    """Re-raise stored error-code measures in scalars and nested sequences."""
+    if isinstance(value, str) or not isinstance(value, Sequence):
+        _raise_stored_error(value)
+        return
+    for item in value:
+        _raise_stored_errors_in(item)
 
 
 def _adapt_core(value: object) -> object:
@@ -222,6 +232,20 @@ def xl_exp(*args: object) -> object:
     for arg in args:
         _raise_stored_error(arg)
     return _adapt_core(exp_number(*cast(tuple[CellValue, ...], args)))
+
+
+def xl_sum(*args: object) -> object:
+    """Excel `SUM` via `core.math_funcs.sum_cells`."""
+    for arg in args:
+        _raise_stored_errors_in(arg)
+    return _adapt_core(sum_cells(*cast(tuple[CellValue, ...], args)))
+
+
+def xl_sumproduct(*args: object) -> object:
+    """Excel `SUMPRODUCT` via `core.sumproduct.sumproduct_cells`."""
+    for arg in args:
+        _raise_stored_errors_in(arg)
+    return _adapt_core(sumproduct_cells(*cast(tuple[CellValue, ...], args)))
 
 
 def xl_choose(index: object, *choices: float) -> float:
