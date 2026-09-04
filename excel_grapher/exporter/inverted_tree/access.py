@@ -30,16 +30,19 @@ AxisKind = Literal["static", "dynamic", "whole"]
 
 @dataclass(frozen=True, slots=True)
 class AxisAccess:
-    """One producer-axis classification."""
+    """One producer-axis classification.
+
+    `coeff` / `offset` map the host index to the origin (minimum coordinate)
+    of the candidate set on this axis. A static singleton's origin is the
+    member itself. A sliding window stores the window start.
+    """
 
     kind: AxisKind
-    coeff: int | None = None
-    offset: int | None = None
+    coeff: int = 0
+    offset: int = 0
 
     def linear_terms(self) -> tuple[int, int]:
-        """Return `(coeff, offset)` for a static axis."""
-        if self.kind != "static" or self.coeff is None or self.offset is None:
-            raise ValueError(f"axis {self.kind} has no static map")
+        """Return `(coeff, offset)` for the candidate-set origin."""
         return self.coeff, self.offset
 
 
@@ -118,21 +121,27 @@ def _classify_axis(
             f"series {host.series_id!r} cell {host.cells[empty_at]}: "
             f"producer {producer.series_id!r} {axis} is not static, dynamic, or whole"
         )
+    mins = [min(item) for item in sets]
+    origin_pairs = list(enumerate(mins))
+    origin_values = set(mins)
+    origin = (
+        (0, next(iter(origin_values))) if len(origin_values) == 1 else fit_affine_map(origin_pairs)
+    )
     if full_size > 0 and all(item == set(range(full_size)) for item in sets):
-        return AxisAccess("whole")
+        return AxisAccess("whole", 0, 0)
     if all(len(item) == 1 for item in sets):
-        pairs = [(index, next(iter(item))) for index, item in enumerate(sets)]
-        values = {prod for _host, prod in pairs}
-        if len(values) == 1:
-            return AxisAccess("static", coeff=0, offset=next(iter(values)))
-        fitted = fit_affine_map(pairs)
-        if fitted is not None:
-            return AxisAccess("static", coeff=fitted[0], offset=fitted[1])
+        if origin is None:
+            raise InvertedTreeExportError(
+                f"series {host.series_id!r} cell {host.cells[0]}: "
+                f"producer {producer.series_id!r} {axis} is not an affine static map"
+            )
+        return AxisAccess("static", coeff=origin[0], offset=origin[1])
+    if origin is None:
         raise InvertedTreeExportError(
             f"series {host.series_id!r} cell {host.cells[0]}: "
-            f"producer {producer.series_id!r} {axis} is not an affine static map"
+            f"producer {producer.series_id!r} {axis} window is not an affine origin"
         )
-    return AxisAccess("dynamic")
+    return AxisAccess("dynamic", coeff=origin[0], offset=origin[1])
 
 
 def _is_runtime_selector(node: AstNode | None) -> bool:
@@ -154,14 +163,14 @@ def refine_access_with_selectors(
         or _is_runtime_selector(row_arg)
         and row.kind == "static"
     ):
-        row = AxisAccess("dynamic")
+        row = AxisAccess("dynamic", 0, 0)
     if (
         col.kind == "whole"
         and col_arg is not None
         or _is_runtime_selector(col_arg)
         and col.kind == "static"
     ):
-        col = AxisAccess("dynamic")
+        col = AxisAccess("dynamic", 0, 0)
     return AccessFunction(
         host_id=access.host_id,
         producer_id=access.producer_id,

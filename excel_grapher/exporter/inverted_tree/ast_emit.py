@@ -26,9 +26,7 @@ from excel_grapher.core.formula_shape import fingerprint_formula_shape
 from excel_grapher.exporter.inverted_tree import runtime as inverted_runtime
 from excel_grapher.exporter.inverted_tree.access import (
     AccessFunction,
-    AxisAccess,
     classify_producer_access,
-    refine_access_with_selectors,
 )
 from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
@@ -577,19 +575,6 @@ def _block_anchor_map(
     return fit
 
 
-def _axis_term(
-    access_axis: AxisAccess, index_var: str | None, lowered: str | None, *, one_based: bool
-) -> str:
-    """Return a 0-based axis expression from a classified access axis."""
-    if access_axis.kind == "dynamic":
-        if lowered is None:
-            raise ValueError("dynamic axis requires a lowered selector")
-        return f"({lowered} - 1)" if one_based else f"({lowered})"
-    if access_axis.kind == "static":
-        return _linear_index_expr(*access_axis.linear_terms(), index_var)
-    raise ValueError(f"cannot subscript a {access_axis.kind} axis")
-
-
 def _access_or_fail(producer: BoundSeries, ctx: EmitContext) -> AccessFunction:
     if ctx.graph is None:
         raise _host_export_error(ctx, f"producer {producer.series_id!r} has no graph to classify")
@@ -600,31 +585,54 @@ def _emit_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
     if len(node.args) < 3:
         raise _host_export_error(ctx, "OFFSET expects anchor, rows, cols")
     table = _series_for_ref(node.args[0], ctx)
-    rows_arg = node.args[1]
-    cols_arg = node.args[2]
-    access = refine_access_with_selectors(
-        _access_or_fail(table, ctx),
-        row_arg=rows_arg,
-        col_arg=cols_arg,
-    )
-    if table.layout != "matrix" and access.row.kind == "dynamic":
+    try:
+        _access_or_fail(table, ctx)
+    except InvertedTreeExportError as exc:
+        if table.layout != "matrix":
+            raise _host_export_error(
+                ctx,
+                f"OFFSET row offset into non-matrix series {table.series_id!r} is not supported",
+            ) from exc
+        raise
+    rows = emit_expr(node.args[1], ctx)
+    cols = emit_expr(node.args[2], ctx)
+    name = ctx.param(table.series_id)
+    anchor = _ref_anchor_address(node.args[0], ctx.host_cell)
+    if anchor is None:
+        raise _host_export_error(ctx, "OFFSET anchor must be a cell or range")
+    slot = ctx.lookup_anchor_slot
+    ctx.lookup_anchor_slot += 1
+    coeff, offset = _block_anchor_map(table, ctx, slot, anchor)
+    anchor_expr = _linear_index_expr(coeff, offset, ctx.index_var)
+    if table.layout == "matrix":
+        width = table.block_width
+        index = _join_index_terms((f"({rows}) * {width}", f"({cols})", anchor_expr))
+        return f"{ctx.use('xl_at')}({name}, {index})"
+    if rows not in {"0", "0.0"}:
         raise _host_export_error(
             ctx,
             f"OFFSET row offset into non-matrix series {table.series_id!r} is not supported",
         )
-    if table.layout != "matrix" and access.row.kind == "static":
-        coeff, offset = access.row.linear_terms()
-        if coeff != 0 or offset != 0:
-            raise _host_export_error(
-                ctx,
-                f"OFFSET row offset into non-matrix series {table.series_id!r} is not supported",
-            )
-    rows = emit_expr(rows_arg, ctx) if access.row.kind == "dynamic" else None
-    cols = emit_expr(cols_arg, ctx) if access.col.kind == "dynamic" else None
-    row_term = _axis_term(access.row, ctx.index_var, rows, one_based=False)
-    col_term = _axis_term(access.col, ctx.index_var, cols, one_based=False)
-    name = ctx.param(table.series_id)
-    return f"{ctx.use('xl_at')}({name}, {access.flat_index_expr(row_term, col_term)})"
+    index = f"({cols})" if anchor_expr == "0" else f"({cols}) + ({anchor_expr})"
+    return f"{ctx.use('xl_at')}({name}, {index})"
+
+
+def _emit_index_into_block(
+    block: BoundSeries,
+    start: CanonicalAddress,
+    row_expr: str,
+    col_expr: str,
+    ctx: EmitContext,
+    slot: int,
+) -> str:
+    _access_or_fail(block, ctx)
+    width = block.block_width
+    coeff, offset = _block_anchor_map(block, ctx, slot, start)
+    anchor_expr = _linear_index_expr(coeff, offset, ctx.index_var)
+    col_term = "0" if col_expr in {"1", "1.0"} else f"({col_expr} - 1)"
+    index = _join_index_terms((f"({row_expr} - 1) * {width}", col_term, anchor_expr))
+    name = ctx.param(block.series_id)
+    return f"{ctx.use('xl_at')}({name}, {index})"
 
 
 def _emit_index_column_arg(col_arg: AstNode | None, ctx: EmitContext) -> tuple[str, int | None]:
@@ -649,25 +657,9 @@ def _emit_index(node: FunctionCallNode, ctx: EmitContext) -> str:
         end = as_canonical(resolve_cell_ref(node.args[0].end_ref, ctx.host_cell))
         covered_full = covering_series(ctx.catalog, iter_range_addresses(start, end))
         if covered_full is not None:
-            access = refine_access_with_selectors(
-                _access_or_fail(covered_full, ctx),
-                row_arg=row_arg,
-                col_arg=col_arg,
-            )
-            row_term = _axis_term(
-                access.row,
-                ctx.index_var,
-                row_expr if access.row.kind == "dynamic" else None,
-                one_based=True,
-            )
-            col_term = _axis_term(
-                access.col,
-                ctx.index_var,
-                col_expr if access.col.kind == "dynamic" else None,
-                one_based=True,
-            )
-            name = ctx.param(covered_full.series_id)
-            return f"{ctx.use('xl_at')}({name}, {access.flat_index_expr(row_term, col_term)})"
+            slot = ctx.lookup_anchor_slot
+            ctx.lookup_anchor_slot += 1
+            return _emit_index_into_block(covered_full, start, row_expr, col_expr, ctx, slot)
         if col_literal is None:
             raise _host_export_error(
                 ctx, "INDEX column is not a literal and the range is not one bound block"
