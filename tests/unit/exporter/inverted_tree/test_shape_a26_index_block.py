@@ -18,9 +18,9 @@ from fastpyxl.utils.cell import get_column_letter
 
 from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
-from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
+    call_compute,
     generate_inverted,
     input_kwargs,
     inverted_graph_parts,
@@ -45,36 +45,47 @@ _TIME = {
 }
 
 
-def _const(
-    series_id: str,
-    data_range: str,
-    *,
-    dtype: str = "float",
-    layout: str = "series",
-) -> dict[str, Any]:
-    read = {"string": "string", "int": "int"}.get(dtype, "float")
+def _country_names() -> dict[str, Any]:
+    return series_entry(
+        "names",
+        "Engine!A5:A7",
+        layout="series",
+        direction="constant",
+        dtype="string",
+        label_column="A",
+        key_concept="COUNTRY",
+        key_read="string",
+    )
+
+
+def _country_block(data_range: str) -> dict[str, Any]:
     return {
-        "id": series_id,
+        "id": "block",
         "sheet": data_range.split("!", 1)[0],
         "data_range": data_range,
-        "layout": layout,
+        "layout": "matrix",
         "constant": {},
         "structure": {
-            "measure": {
-                "concept": series_id.upper(),
-                "dtype": dtype,
-                "bind": {"kind": "data_cell", "read": read},
-            },
-            "dimensions": [],
+            "measure": _MEASURE,
+            "dimensions": [
+                {
+                    "id": "COUNTRY",
+                    "concept": "COUNTRY",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "row_label", "label_column": "A", "read": "string"},
+                },
+                _TIME,
+            ],
         },
-        "key": [],
+        "key": ["COUNTRY", "TIME_PERIOD"],
     }
 
 
 def country_table_sheets(n: int) -> dict[str, dict[str, object]]:
     """Country×year block with a sliding `INDEX(..., MATCH(country), 1)` window."""
     cells: dict[str, object] = {"A1": "Kenya"}
-    for index in range(n):
+    for index in range(n + 2):
         col = get_column_letter(index + 2)
         cells[f"{col}1"] = 2008 + index
     cells["A5"] = "France"
@@ -99,8 +110,8 @@ def country_table_bindings(n: int) -> dict[str, Any]:
     last_block = get_column_letter(n + 3)
     return bindings_document(
         series_entry("country", "Engine!A1", layout="scalar", direction="input", dtype="string"),
-        _const("names", "Engine!A5:A7", dtype="string"),
-        _const("block", f"Engine!B5:{last_block}7", layout="matrix"),
+        _country_names(),
+        _country_block(f"Engine!B5:{last_block}7"),
         {
             "id": "picked",
             "sheet": "Engine",
@@ -135,6 +146,8 @@ def _case_sheets(
         "B1": 2008,
         "C1": 2009,
         "D1": 2010,
+        "E1": 2011,
+        "F1": 2012,
         "A5": "France",
         "B5": 10,
         "C5": 11,
@@ -163,8 +176,8 @@ def _case_sheets(
 def _case_bindings(block_range: str, *, extra_series: tuple[dict[str, Any], ...] = ()) -> dict:
     return bindings_document(
         series_entry("country", "Engine!A1", layout="scalar", direction="input", dtype="string"),
-        _const("names", "Engine!A5:A7", dtype="string"),
-        _const("block", block_range, layout="matrix"),
+        _country_names(),
+        _country_block(block_range),
         *extra_series,
         {
             "id": "picked",
@@ -235,10 +248,8 @@ def _export_matches_evaluator(
         generate_inverted(workbook, bound), tmp_path, name=f"{stem}_{orientation[0]}"
     )
     cells = oriented_addresses(("Engine!B2", "Engine!C2", "Engine!D2"), orientation)
-    expected = FormulaEvaluator(
-        create_dependency_graph(workbook, list(cells), load_values=True)
-    ).evaluate(list(cells))
-    got = pkg.compute_picked(**input_kwargs(catalog, graph))
+    expected = FormulaEvaluator(graph).evaluate(list(cells))
+    got = call_compute(pkg, "picked", input_kwargs(catalog, graph))
     want = tuple(expected[cell] for cell in cells)
     assert got == pytest.approx(want)
     return got, want
