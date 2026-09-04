@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v12.6.1 (2026-09-04)
+
+### Bug Fixes
+
+- **export**: Do not treat matrix row copies as year-0 scan seeds
+  ([`ffef793`](https://github.com/Teal-Insights/excel-grapher/commit/ffef79364b33474c4e4e3df122c062a0a175f3fe))
+
+### Chores
+
+- Retrigger CI after unrelated catalog timing flake
+  ([#647](https://github.com/Teal-Insights/excel-grapher/pull/647),
+  [`a42bfaa`](https://github.com/Teal-Insights/excel-grapher/commit/a42bfaa275273d39b8e11b3b7486c69ac2ac6fbd))
+
+### Refactoring
+
+- **export**: Inverted-tree rung symmetry and force_rung=2 fallthrough
+  ([#647](https://github.com/Teal-Insights/excel-grapher/pull/647),
+  [`a42bfaa`](https://github.com/Teal-Insights/excel-grapher/commit/a42bfaa275273d39b8e11b3b7486c69ac2ac6fbd))
+
+- **export**: Symmetric inverted-tree rungs and force_rung=2 fallthrough
+  ([#647](https://github.com/Teal-Insights/excel-grapher/pull/647),
+  [`a42bfaa`](https://github.com/Teal-Insights/excel-grapher/commit/a42bfaa275273d39b8e11b3b7486c69ac2ac6fbd))
+
+### Testing
+
+- **export**: Absorb timer noise in catalog partition linearity check
+  ([#647](https://github.com/Teal-Insights/excel-grapher/pull/647),
+  [`a42bfaa`](https://github.com/Teal-Insights/excel-grapher/commit/a42bfaa275273d39b8e11b3b7486c69ac2ac6fbd))
+
+- **export**: Retire inverted-tree _exec_scan and eval_instance greps
+  ([#648](https://github.com/Teal-Insights/excel-grapher/pull/648),
+  [`eb8b0de`](https://github.com/Teal-Insights/excel-grapher/commit/eb8b0de7ee530ec9c841c04c30a9b5c9b505c07f))
+
+- **export**: Retire inverted-tree `_exec_scan` and `eval_instance` greps
+  ([#648](https://github.com/Teal-Insights/excel-grapher/pull/648),
+  [`eb8b0de`](https://github.com/Teal-Insights/excel-grapher/commit/eb8b0de7ee530ec9c841c04c30a9b5c9b505c07f))
+
+- **export**: Stabilize partition_catalog linearity timing
+  ([#648](https://github.com/Teal-Insights/excel-grapher/pull/648),
+  [`eb8b0de`](https://github.com/Teal-Insights/excel-grapher/commit/eb8b0de7ee530ec9c841c04c30a9b5c9b505c07f))
+
+
 ## v12.6.0 (2026-09-04)
 
 ### Features
