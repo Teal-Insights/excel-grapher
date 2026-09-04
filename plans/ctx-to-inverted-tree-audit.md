@@ -23,7 +23,7 @@ Legend: **port** = inverted-tree should grow the feature; **bindings-equivalent*
 | --- | --- | --- | --- |
 | `set_<series>` input setters, `input.mode` for non-leaf inputs | yes | inputs are arguments | **drop** — by design (#597). Override-mode cells should be bound as `input`. |
 | `read_<series>` / `input.reader` | yes | none | **drop** — import `data.py` or pass the value. |
-| `input.domain` on setters | yes | yes (#666) | **port shipped** — `require_input_domain` on `compute_*` / `_run_N` arguments. |
+| `input.domain` on setters | yes | yes ([#666](https://github.com/Teal-Insights/excel-grapher/issues/666)) | **port shipped** — `require_input_domain` on `compute_*` / `_run_N` arguments. |
 | `make_context` / `inputs=` overlay | yes | none | **drop** — by design. |
 | `output.compute.helper` | yes | every output is a leaf-closure function | **drop**. |
 | Tidy `Records` / `as_records` | yes | tuples only | **bindings-equivalent** — documented recipe in `06-export.qmd`. |
@@ -41,7 +41,7 @@ Legend: **port** = inverted-tree should grow the feature; **bindings-equivalent*
 | Whole-column / whole-row refs | yes | covering series + used-range expansion | **port shipped** ([#667](https://github.com/Teal-Insights/excel-grapher/issues/667)). Unbound used-range cells still fail closed. |
 | Cross-sheet / 3-D ranges | yes | `sheet_order` between endpoints; `xl_sum` of bound cells | **port shipped** ([#667](https://github.com/Teal-Insights/excel-grapher/issues/667)). |
 | Unions / `SUM` of a range | yes | `xl_sum` / `xl_sumproduct` of covering series (`take` for a window) | **port shipped** ([#667](https://github.com/Teal-Insights/excel-grapher/issues/667)). `SUM(IF(…))` stays fail-closed ([#483](https://github.com/Teal-Insights/excel-grapher/issues/483)). |
-| `INDIRECT` | `DynamicRefConfig` + runtime | graph-derived access (`xl_at` / catalog index); fail closed when edges do not fit | **port shipped** (#668). Literal address and bound-cell argument; no `xl_indirect`. |
+| `INDIRECT` | `DynamicRefConfig` + runtime | graph-derived access (`xl_at` / catalog index); fail closed when edges do not fit | **port shipped** ([#668](https://github.com/Teal-Insights/excel-grapher/issues/668)). Literal address and bound-cell argument; no `xl_indirect`. |
 | Array formulas / spill (#284), `SUMPRODUCT`, `SUM(IF(…))` (#483) | yes / partial | `SUMPRODUCT` of covering series; spill / `SUM(IF)` fail closed | **port** mechanical `SUMPRODUCT` shipped ([#667](https://github.com/Teal-Insights/excel-grapher/issues/667)); spill / `SUM(IF)` remain [#284](https://github.com/Teal-Insights/excel-grapher/issues/284) / [#483](https://github.com/Teal-Insights/excel-grapher/issues/483). |
 | Excel function coverage | `core/` + `export_runtime/` library | generic `xl_<name>` only when `runtime.py` defines it; `IF`/`CHOOSE`/`INDEX`/`MATCH`/`OFFSET`/`INDIRECT`/`EXP`/`SUM`/`SUMPRODUCT` special-cased | **port** incrementally, fail closed otherwise. Do not embed the ctx library. |
 | Error semantics (#326) | `XlErrorException` raise-only | `XlError` at operators; series members store `err.code` measures | **drop** as a ctx convention. Inverted-tree's measure+raise split is intentional (#597 A7). [#326](https://github.com/Teal-Insights/excel-grapher/issues/326) remains ctx-export work. |
@@ -49,6 +49,6 @@ Legend: **port** = inverted-tree should grow the feature; **bindings-equivalent*
 | `--smoke-test` in `bindings validate` | setter + Records compute smoke | skipped → **shipped**: calls `compute_*` with `data.py` defaults | **port shipped**. |
 | Projection / `embed` / viz | separate | unaffected | **drop** from this audit. |
 
-## Port follow-ups (not shipped here)
+## Port follow-ups (not shipped in #665)
 
-Already filed: #663 (constants), #593 (façade), #379 (concept names), #284 (spill), #483 (`SUM(IF)`). Shipped: #666 (`input.domain`), #667 (range aggregates / remaining refs), #668 (`INDIRECT`).
+Already filed: #663 (constants), #593 (façade), #379 (concept names), #284 (spill), #483 (`SUM(IF)`). Shipped: [#666](https://github.com/Teal-Insights/excel-grapher/issues/666) (`input.domain`), [#667](https://github.com/Teal-Insights/excel-grapher/issues/667) (range aggregates / remaining refs), [#668](https://github.com/Teal-Insights/excel-grapher/issues/668) (`INDIRECT`).
