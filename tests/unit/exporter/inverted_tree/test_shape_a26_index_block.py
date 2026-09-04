@@ -233,6 +233,32 @@ def _overhang_bindings() -> dict[str, Any]:
     return _case_bindings("Engine!B5:D7")
 
 
+def _seed_then_scan_sheets() -> dict[str, dict[str, object]]:
+    """Q-CRAFT `productivity_level`: an INDEX seed, then a recurrence.
+
+    `Productivity!W3 = INDEX(AG63:BK260, MATCH($A$1, ...), 1)` and
+    `X3 = W3 * (1 + $C$21 / 100)`. The block access belongs to the seed
+    statement only; the recurrence members never read the block.
+    """
+    return _case_sheets(
+        lambda col, index: (
+            "=INDEX($B$5:$D$7,MATCH($A$1,$A$5:$A$7,0),1)"
+            if index == 0
+            else f"={get_column_letter(1 + index)}2*(1+$A$9/100)"
+        ),
+        extra={"A9": 10},
+    )
+
+
+def _seed_then_scan_bindings() -> dict[str, Any]:
+    return _case_bindings(
+        "Engine!B5:D7",
+        extra_series=(
+            series_entry("growth", "Engine!A9", layout="scalar", direction="input", dtype="float"),
+        ),
+    )
+
+
 def _slide_bindings() -> dict[str, Any]:
     return _case_bindings("Engine!B5:F7")
 
@@ -314,6 +340,17 @@ def test_overhanging_index_window_matches_evaluator(tmp_path: Path, orientation:
     _export_matches_evaluator(
         tmp_path, _overhang_sheets(), _overhang_bindings(), orientation, "a26_overhang"
     )
+
+
+def test_index_seed_then_scan_matches_evaluator(tmp_path: Path, orientation: str) -> None:
+    """Block access is classified per statement, not over the whole series."""
+    got, _want = _export_matches_evaluator(
+        tmp_path, _seed_then_scan_sheets(), _seed_then_scan_bindings(), orientation, "a26_seed"
+    )
+    if orientation == "horizontal":
+        # Transposed, INDEX(range, MATCH, 1) selects a different cell; the
+        # evaluator comparison above is the contract in both orientations.
+        assert got == pytest.approx((20.0, 22.0, 24.2))
 
 
 def test_literal_index_column_matches_evaluator(tmp_path: Path, orientation: str) -> None:

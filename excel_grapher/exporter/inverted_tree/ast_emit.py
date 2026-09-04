@@ -578,7 +578,13 @@ def _block_anchor_map(
 def _access_or_fail(producer: BoundSeries, ctx: EmitContext) -> AccessFunction:
     if ctx.graph is None:
         raise _host_export_error(ctx, f"producer {producer.series_id!r} has no graph to classify")
-    return classify_producer_access(ctx.host, producer, ctx.catalog, ctx.graph)
+    # Classify over the statement that owns the host cell, not the whole series:
+    # an INDEX seed followed by a recurrence has block reads in one statement only.
+    cells = next(
+        (stmt.cells for stmt in ctx.host.statements if ctx.host_cell in stmt.cells),
+        None,
+    )
+    return classify_producer_access(ctx.host, producer, ctx.catalog, ctx.graph, cells=cells)
 
 
 def _emit_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
