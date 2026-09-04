@@ -28,7 +28,8 @@ from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
     SeriesCatalog,
     covering_series,
-    schedule_coord,
+    schedule_axis_coord,
+    schedule_partition,
 )
 from excel_grapher.exporter.inverted_tree.deps import (
     DependenceEdge,
@@ -46,6 +47,7 @@ from excel_grapher.exporter.inverted_tree.schedule import (
     collect_dependence_edges,
     plan_fused_scc,
 )
+from excel_grapher.series_bindings.types import Scalar
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
@@ -84,6 +86,8 @@ class EmitContext:
     fused_mode: bool = False
     fused_plan: FusedPlan | None = None
     fused_ready: frozenset[str] = field(default_factory=frozenset)
+    fused_buffer_suffix: str = ""
+    fused_partition: tuple[Scalar, ...] | None = None
 
     def param(self, series_id: str) -> str:
         return series_id
@@ -254,7 +258,7 @@ def _affine_index_expr(offset: int, index_var: str, *, step: int) -> str:
 
 def _union_t(plan: FusedPlan, address: str, ctx: EmitContext) -> int:
     """Return the union index of `address`, or fail closed naming the host."""
-    coord = schedule_coord(address, ctx.catalog)
+    coord = schedule_axis_coord(address, ctx.catalog)
     mapped = plan.coord_to_t.get(coord)
     if mapped is None:
         raise InvertedTreeExportError(
@@ -273,20 +277,30 @@ def _emit_fused_ref(address: str, ctx: EmitContext) -> str:
     plan = ctx.fused_plan
     index_var = ctx.index_var or "t"
     ctx.use("live_measure")
+    suffix = ctx.fused_buffer_suffix
     if owner.series_id in ctx.scc_ids:
+        host_part = schedule_partition(ctx.host_cell, ctx.catalog)
+        prod_part = schedule_partition(address, ctx.catalog)
         host_union = _union_t(plan, ctx.host_cell, ctx)
         prod_union = _union_t(plan, address, ctx)
         delta = prod_union - host_union
+        if prod_part != host_part and plan.partitions:
+            prod_start = plan.domain[owner.series_id][0]
+            domain_len = plan.domain[owner.series_id][1] - prod_start
+            prod_i = plan.partitions.index(prod_part)
+            index_expr = _index_expr(prod_i * domain_len + delta - prod_start, index_var)
+            return f"live_measure({owner.series_id}[{index_expr}])"
+        local = f"{owner.series_id}{suffix}"
         if delta == 0:
             if owner.series_id not in ctx.fused_ready:
                 raise InvertedTreeExportError(
                     f"series {ctx.host.series_id!r}: same-index read of "
                     f"{owner.series_id!r} before it is written"
                 )
-            return f"live_measure({owner.series_id}_t)"
+            return f"live_measure({local}_t)"
         prod_start = plan.domain[owner.series_id][0]
         index_expr = _index_expr(delta - prod_start, index_var)
-        return f"live_measure({owner.series_id}[{index_expr}])"
+        return f"live_measure({local}[{index_expr}])"
     name = ctx.param(owner.series_id)
     if owner.is_scalar:
         return f"live_measure({name})"
@@ -814,6 +828,7 @@ def _fused_template_index(
     plan: FusedPlan,
     region: FusedRegion,
     catalog: SeriesCatalog,
+    partition: tuple[Scalar, ...] | None = None,
 ) -> int:
     start, stop = plan.domain[series.series_id]
     union_t = max(region.start, start)
@@ -821,8 +836,11 @@ def _fused_template_index(
         union_t = max(0, stop - start - 1)
     target_coord = plan.schedule[union_t]
     for i, cell in enumerate(series.cells):
-        if schedule_coord(cell, catalog) == target_coord:
-            return i
+        if schedule_axis_coord(cell, catalog) != target_coord:
+            continue
+        if partition is not None and schedule_partition(cell, catalog) != partition:
+            continue
+        return i
     return max(0, stop - start - 1)
 
 
@@ -841,6 +859,8 @@ def _emit_fused_expr(
     host_index: int,
     plan: FusedPlan,
     ready: set[str],
+    suffix: str = "",
+    partition: tuple[Scalar, ...] | None = None,
 ) -> tuple[str, set[str]]:
     ctx = EmitContext(
         host=series,
@@ -854,13 +874,43 @@ def _emit_fused_expr(
         fused_mode=True,
         fused_plan=plan,
         fused_ready=frozenset(ready),
+        fused_buffer_suffix=suffix,
+        fused_partition=partition,
     )
     expr = emit_expr(node_formula_ast(graph, series.cells[host_index]), ctx)
     return _as_measure_call(expr, series), set(ctx.used_runtime)
 
 
-def _emit_fused_assign(series: BoundSeries, expr: str) -> list[str]:
-    sid = series.series_id
+def _as_measure_literal(expr: str) -> str | None:
+    """Return the inner literal of `as_measure(<literal>)`, if that is all it is."""
+    prefix = "as_measure("
+    if not expr.startswith(prefix) or not expr.endswith(")"):
+        return None
+    inner = expr[len(prefix) : -1]
+    if not inner or inner[0] in {"(", "["} or "live_measure" in inner or "(" in inner:
+        return None
+    return inner
+
+
+def _unify_area_exprs(exprs: Sequence[str]) -> str:
+    """Return one expression, or an `_area`-indexed literal tuple.
+
+    Structurally different expressions are joined with a short-circuiting
+    `if/else` so side-effecting reads are not evaluated for every area.
+    """
+    if len(exprs) == 1 or len(set(exprs)) == 1:
+        return exprs[0]
+    literals = [_as_measure_literal(expr) for expr in exprs]
+    if all(item is not None for item in literals):
+        return f"as_measure(({', '.join(item for item in literals if item is not None)})[_area])"
+    chain = exprs[0]
+    for index, expr in enumerate(exprs[1:], start=1):
+        chain = f"{chain} if _area == {index - 1} else {expr}"
+    return chain
+
+
+def _emit_fused_assign(series: BoundSeries, expr: str, suffix: str = "") -> list[str]:
+    sid = f"{series.series_id}{suffix}"
     return [
         "try:",
         f"    {sid}_t = {expr}",
@@ -877,6 +927,9 @@ def _emit_fused_region(
     catalog: SeriesCatalog,
     deps: dict[str, SeriesDeps],
     graph: DependencyGraph,
+    suffix: str = "",
+    partition: tuple[Scalar, ...] | None = None,
+    area_partitions: Sequence[tuple[Scalar, ...]] = (),
 ) -> tuple[list[str], set[str]]:
     used: set[str] = set()
     lines: list[str] = []
@@ -886,23 +939,87 @@ def _emit_fused_region(
         if stop <= region.start or start >= region.stop:
             continue
         series = catalog.get(sid)
-        expr, expr_used = _emit_fused_expr(
-            series,
-            catalog=catalog,
-            deps=deps,
-            graph=graph,
-            host_index=_fused_template_index(series, plan, region, catalog),
-            plan=plan,
-            ready=ready,
-        )
-        used |= expr_used
-        assign = _emit_fused_assign(series, expr)
+        if area_partitions:
+            exprs: list[str] = []
+            for part in area_partitions:
+                expr, expr_used = _emit_fused_expr(
+                    series,
+                    catalog=catalog,
+                    deps=deps,
+                    graph=graph,
+                    host_index=_fused_template_index(series, plan, region, catalog, part),
+                    plan=plan,
+                    ready=ready,
+                    suffix=suffix,
+                    partition=part,
+                )
+                used |= expr_used
+                exprs.append(expr)
+            expr = _unify_area_exprs(exprs)
+        else:
+            expr, expr_used = _emit_fused_expr(
+                series,
+                catalog=catalog,
+                deps=deps,
+                graph=graph,
+                host_index=_fused_template_index(series, plan, region, catalog, partition),
+                plan=plan,
+                ready=ready,
+                suffix=suffix,
+                partition=partition,
+            )
+            used |= expr_used
+        assign = _emit_fused_assign(series, expr, suffix)
         if start <= region.start and stop >= region.stop:
             lines.extend(assign)
         else:
             lines.append(f"if {start} <= t < {stop}:")
             lines.extend(_indented(assign, 4))
         ready.add(sid)
+    return lines, used
+
+
+def _emit_fused_loop(
+    plan: FusedPlan,
+    regions: Sequence[FusedRegion],
+    *,
+    catalog: SeriesCatalog,
+    deps: dict[str, SeriesDeps],
+    graph: DependencyGraph,
+    n: int,
+    t_header: str,
+    suffix: str = "",
+    partition: tuple[Scalar, ...] | None = None,
+    area_partitions: Sequence[tuple[Scalar, ...]] = (),
+    indent: int = 4,
+) -> tuple[list[str], set[str]]:
+    """Emit `for t in ...` plus region bodies at `indent` spaces."""
+    used: set[str] = set()
+    lines = [t_header]
+    multi = len(regions) > 1
+    inner_indent = indent + 4
+    for index, region in enumerate(regions):
+        body, body_used = _emit_fused_region(
+            plan,
+            region,
+            catalog=catalog,
+            deps=deps,
+            graph=graph,
+            suffix=suffix,
+            partition=partition,
+            area_partitions=area_partitions,
+        )
+        used |= body_used
+        if multi:
+            if index == 0:
+                lines.append(f"{' ' * inner_indent}if {_region_guard(region)}:")
+            elif index + 1 == len(regions):
+                lines.append(f"{' ' * inner_indent}else:")
+            else:
+                lines.append(f"{' ' * inner_indent}elif {_region_guard(region)}:")
+            lines.extend(_indented(body, inner_indent + 4))
+        else:
+            lines.extend(_indented(body, inner_indent))
     return lines, used
 
 
@@ -920,7 +1037,9 @@ def emit_rung2_scc(
     Each `FusedRegion` is one residual-order / access-class span. The union
     schedule is the loop; look-ahead or non-contiguous domains must use
     `emit_rung3_scc`. A singleton SCC reuses this body as the rung-1 scan:
-    self-lags index the growing buffer at compile-time offsets.
+    self-lags index the growing buffer at compile-time offsets. A matrix
+    nest wraps that body in `for _area in range(n)` (or unrolls when
+    partitions are not isomorphic).
 
     Raises:
         InvertedTreeExportError: The SCC is not fusible, or the residual is a
@@ -939,7 +1058,7 @@ def emit_rung2_scc(
         lines.append(f"    {sid}: list[{python_measure_type(series)}] = []")
     n = len(plan.schedule)
     seq_params: list[str] = []
-    if len(scc) == 1:
+    if len(scc) == 1 and not plan.is_nested:
         info = deps[scc[0]]
         seq_params = [
             sid
@@ -948,33 +1067,78 @@ def emit_rung2_scc(
         ]
     if seq_params:
         used.add("require_aligned")
+        t_header = "    for t in range(n):"
         lines.append(f"    n = require_aligned({', '.join(seq_params)})")
-        lines.append("    for t in range(n):")
     else:
-        lines.append(f"    for t in range({n}):")
-    multi = len(plan.regions) > 1
-    for index, region in enumerate(plan.regions):
-        body, body_used = _emit_fused_region(plan, region, catalog=catalog, deps=deps, graph=graph)
-        used |= body_used
-        if multi:
-            if index == 0:
-                lines.append(f"        if {_region_guard(region)}:")
-            elif index + 1 == len(plan.regions):
-                lines.append("        else:")
-            else:
-                lines.append(f"        elif {_region_guard(region)}:")
-            lines.extend(_indented(body, 12))
-        else:
-            lines.extend(_indented(body, 8))
+        t_header = f"    for t in range({n}):"
+
+    def _part_locals(indent: str) -> list[str]:
+        return [
+            f"{indent}{sid}_p: list[{python_measure_type(catalog.get(sid))}] = []" for sid in scc
+        ]
+
+    def _part_extend(indent: str) -> list[str]:
+        return [f"{indent}{sid}.extend({sid}_p)" for sid in scc]
+
+    if plan.unroll and plan.is_nested:
+        for part, regions in zip(plan.partitions, plan.partition_regions, strict=True):
+            lines.extend(_part_locals("    "))
+            loop, loop_used = _emit_fused_loop(
+                plan,
+                regions,
+                catalog=catalog,
+                deps=deps,
+                graph=graph,
+                n=n,
+                t_header=t_header,
+                suffix="_p",
+                partition=part,
+            )
+            used |= loop_used
+            lines.extend(loop)
+            lines.extend(_part_extend("    "))
+    elif plan.is_nested:
+        lines.append(f"    for _area in range({len(plan.partitions)}):")
+        lines.extend(_part_locals("        "))
+        loop, loop_used = _emit_fused_loop(
+            plan,
+            plan.regions,
+            catalog=catalog,
+            deps=deps,
+            graph=graph,
+            n=n,
+            t_header="        for t in range(n):"
+            if seq_params
+            else f"        for t in range({n}):",
+            suffix="_p",
+            partition=plan.partitions[0],
+            area_partitions=plan.partitions,
+            indent=8,
+        )
+        used |= loop_used
+        lines.extend(loop)
+        lines.extend(_part_extend("        "))
+    else:
+        loop, loop_used = _emit_fused_loop(
+            plan,
+            plan.regions,
+            catalog=catalog,
+            deps=deps,
+            graph=graph,
+            n=n,
+            t_header=t_header,
+        )
+        used |= loop_used
+        lines.extend(loop)
     returned_items: list[str] = []
     for sid in scc:
         series = catalog.get(sid)
         if series.is_scalar:
             returned_items.append(f"{sid}[0]")
             continue
-        if len(series.cells) > 1:
-            u_first = plan.coord_to_t[schedule_coord(series.cells[0], catalog)]
-            u_last = plan.coord_to_t[schedule_coord(series.cells[-1], catalog)]
+        if len(series.cells) > 1 and not plan.is_nested:
+            u_first = plan.coord_to_t[schedule_axis_coord(series.cells[0], catalog)]
+            u_last = plan.coord_to_t[schedule_axis_coord(series.cells[-1], catalog)]
             if u_first > u_last:
                 returned_items.append(f"tuple(reversed({sid}))")
                 continue

@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 
 Direction = Literal["input", "constant", "internal", "output"]
 Layout = Literal["scalar", "series", "matrix"]
+_SCHEDULE_AXIS = "TIME_PERIOD"
 
 _DTYPE_READ = {
     "int": "int",
@@ -147,6 +148,19 @@ def _join_key(point: KeyPoint, fields: Sequence[str]) -> tuple[Scalar, ...] | No
         return None
 
 
+def _axis_fields(
+    fields: tuple[str, ...] | None,
+) -> tuple[tuple[str, ...], str | None]:
+    """Return `(outer_key_fields, schedule_axis)` for a declared key.
+
+    `TIME_PERIOD` is the inner schedule axis when present; every other key
+    field is the instance partition of the loop nest (#612 / #638).
+    """
+    if fields is None or _SCHEDULE_AXIS not in fields:
+        return (), None
+    return tuple(name for name in fields if name != _SCHEDULE_AXIS), _SCHEDULE_AXIS
+
+
 def _compute_preferred_fields(series: BoundSeries) -> tuple[str, ...] | None:
     """Return join fields for `series`, or None when no key is declared.
 
@@ -199,12 +213,16 @@ class ScheduleIndex:
     """Precomputed schedule coordinates and join fields for one catalog.
 
     `index_by_coord` maps series id to schedule coordinate to member indices
-    so identity joins do not rescan producer cells.
+    so identity joins do not rescan producer cells. `partition_of` / `axis_of`
+    split a multi-key domain into the outer instance partition and the inner
+    `TIME_PERIOD` schedule axis (#638).
     """
 
     preferred: dict[str, tuple[str, ...] | None]
     coord_of: dict[str, int]
     index_by_coord: dict[str, dict[int, tuple[int, ...]]]
+    partition_of: dict[str, tuple[Scalar, ...]] = field(default_factory=dict)
+    axis_of: dict[str, int] = field(default_factory=dict)
 
 
 def build_schedule_index(series: Mapping[str, BoundSeries]) -> ScheduleIndex:
@@ -240,7 +258,48 @@ def build_schedule_index(series: Mapping[str, BoundSeries]) -> ScheduleIndex:
         index_by_coord[item.series_id] = {
             coord: tuple(members) for coord, members in buckets.items()
         }
-    return ScheduleIndex(preferred=preferred, coord_of=coord_of, index_by_coord=index_by_coord)
+    axis_values: set[Scalar] = set()
+    for item in series.values():
+        _outer, axis = _axis_fields(preferred[item.series_id])
+        if axis is None:
+            continue
+        for point in item.domain:
+            try:
+                axis_values.add(point[axis])
+            except KeyError:
+                continue
+    try:
+        axis_lookup = {value: index for index, value in enumerate(sorted(axis_values))}
+    except TypeError:
+        axis_lookup = {}
+    partition_of: dict[str, tuple[Scalar, ...]] = {}
+    axis_of: dict[str, int] = {}
+    for item in series.values():
+        outer, axis = _axis_fields(preferred[item.series_id])
+        for index, address in enumerate(item.cells):
+            addr = normalize_address(address)
+            fallback = coord_of[addr]
+            if axis is None or index >= len(item.domain):
+                partition_of[addr] = ()
+                axis_of[addr] = fallback
+                continue
+            point = item.domain[index]
+            try:
+                part = tuple(point[name] for name in outer)
+                axis_value = point[axis]
+            except KeyError:
+                partition_of[addr] = ()
+                axis_of[addr] = fallback
+                continue
+            partition_of[addr] = part
+            axis_of[addr] = axis_lookup.get(axis_value, fallback)
+    return ScheduleIndex(
+        preferred=preferred,
+        coord_of=coord_of,
+        index_by_coord=index_by_coord,
+        partition_of=partition_of,
+        axis_of=axis_of,
+    )
 
 
 def preferred_fields(series: BoundSeries, catalog: SeriesCatalog) -> tuple[str, ...] | None:
@@ -263,6 +322,23 @@ def schedule_coord(address: str, catalog: SeriesCatalog) -> int:
     if found is None:
         raise InvertedTreeExportError(f"cell {address} has no schedule coordinate")
     return found
+
+
+def schedule_partition(address: str, catalog: SeriesCatalog) -> tuple[Scalar, ...]:
+    """Return the outer-key tuple for `address`, or `()` when there is no nest."""
+    return catalog.schedule.partition_of.get(normalize_address(address), ())
+
+
+def schedule_axis_coord(address: str, catalog: SeriesCatalog) -> int:
+    """Return the inner schedule-axis coordinate of `address`.
+
+    For a `TIME_PERIOD` nest this is the year position, shared by every
+    outer-key block. Otherwise it is `schedule_coord`.
+    """
+    found = catalog.schedule.axis_of.get(normalize_address(address))
+    if found is not None:
+        return found
+    return schedule_coord(address, catalog)
 
 
 @dataclass(frozen=True, slots=True)

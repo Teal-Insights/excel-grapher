@@ -32,18 +32,27 @@ from excel_grapher.exporter.inverted_tree.catalog import (
     covering_series,
     fit_affine_map,
     preferred_fields,
+    schedule_axis_coord,
     schedule_coord,
+    schedule_partition,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
 
-AccessClass = Literal["identity", "shift", "affine", "gather", "whole", "dynamic"]
+AccessClass = Literal[
+    "identity", "shift", "affine", "gather", "whole", "dynamic", "cross_partition"
+]
 
 
 def _layout_distance(consumer: str, producer: str, catalog: SeriesCatalog) -> int:
-    """Return schedule-domain distance (`coord(consumer) - coord(producer)`)."""
+    """Return schedule-axis distance (`axis(consumer) - axis(producer)`).
+
+    Distance is the `TIME_PERIOD` component when both cells sit on a key
+    nest (#638). Flattened full-tuple coordinates are not used here — a
+    Kenya 2021 read of Kenya 2020 is distance 1, not the gap across France.
+    """
     consumer_series = catalog.series_for(consumer)
     producer_series = catalog.series_for(producer)
     if (
@@ -56,7 +65,7 @@ def _layout_distance(consumer: str, producer: str, catalog: SeriesCatalog) -> in
         return (0 if consumer_index is None else consumer_index) - (
             0 if producer_index is None else producer_index
         )
-    return schedule_coord(consumer, catalog) - schedule_coord(producer, catalog)
+    return schedule_axis_coord(consumer, catalog) - schedule_axis_coord(producer, catalog)
 
 
 def identity_join_indices(
@@ -108,6 +117,8 @@ def _member_access(
     """
     if producer.index_of(producer_cell) is None:
         return "gather"
+    if schedule_partition(consumer_cell, catalog) != schedule_partition(producer_cell, catalog):
+        return "cross_partition"
     if _layout_distance(consumer_cell, producer_cell, catalog) == 0:
         return "identity"
     return "shift"
@@ -219,11 +230,12 @@ def successor_address(series: BoundSeries, index: int, catalog: SeriesCatalog) -
 class DependenceEdge:
     """One instance-level read, annotated with access class and schedule distance.
 
-    `distance` is `coord(consumer) - coord(producer)` in the schedule domain
-    (position in the ordered key-point join, or expansion order). Positive
-    means the producer is an earlier period (a `pre` / lag). `access` is
-    `identity` when that distance is `0`, `shift` when it is a nonzero
-    regular step, and `affine` when catalog-index `f(i) = coeff * i + offset`
+    `distance` is `axis(consumer) - axis(producer)` on the inner schedule
+    axis (`TIME_PERIOD` when the key is a nest). Positive means the
+    producer is an earlier period (a `pre` / lag). `access` is `identity`
+    when that distance is `0` and the outer keys match, `shift` when it is
+    a nonzero same-partition step, `cross_partition` when the outer keys
+    differ, and `affine` when catalog-index `f(i) = coeff * i + offset`
     has `coeff != 1`. `guarded` is True when the read is guarded by a
     conditional in the dependency graph.
     """
@@ -505,7 +517,7 @@ def refine_access_classes(
     groups: dict[tuple[str, str], list[int]] = {}
     result = list(edges)
     for index, edge in enumerate(result):
-        if edge.access in {"whole", "dynamic", "gather"}:
+        if edge.access in {"whole", "dynamic", "gather", "cross_partition"}:
             continue
         groups.setdefault((edge.consumer_id, edge.producer_id), []).append(index)
     for (consumer_id, producer_id), indexes in groups.items():
