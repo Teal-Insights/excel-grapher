@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from datetime import date, datetime
-from typing import NoReturn, Protocol, TypeGuard, TypeVar, cast
+from typing import Literal, NoReturn, Protocol, TypeGuard, TypeVar, cast, overload
 
 from excel_grapher.core import operators as _core_ops
 from excel_grapher.core.lookup_funcs import match_cells
@@ -63,12 +63,25 @@ def is_error(value: object) -> TypeGuard[str]:
     return isinstance(value, str) and value in XL_ERROR_CODES
 
 
+@overload
+def as_measure(value: object, dtype: Literal["float"] = "float") -> float | str: ...
+@overload
+def as_measure(value: object, dtype: Literal["int"]) -> int | str: ...
+@overload
+def as_measure(value: object, dtype: Literal["str"]) -> str: ...
+@overload
+def as_measure(value: object, dtype: Literal["bool"]) -> bool | str: ...
+@overload
+def as_measure(value: object, dtype: Literal["datetime"]) -> datetime | str: ...
 def as_measure(value: object, dtype: str = "float") -> int | float | str | bool | datetime:
     """Coerce a helper result to a measure: number or cached text.
 
     Operators still raise `XlError`. Series-member boundaries catch that and
     store `err.code` here so a `#REF!` cell does not abort the rest of a series.
     Non-numeric cached strings (`n/a`, `..`) pass through as measures.
+
+    Overloads narrow the return by `dtype`: the default `float` path is
+    `float | str` so generated `list[float | str]` accumulators type-check.
     """
     if isinstance(value, str):
         return value
