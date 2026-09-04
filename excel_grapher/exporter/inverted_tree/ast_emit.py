@@ -752,7 +752,13 @@ def _emit_indirect(node: FunctionCallNode, ctx: EmitContext) -> str:
     n_rows = max(1, (len(covered.cells) + width - 1) // width)
     row_expr = _indirect_axis_index(access.row, n_rows, ctx)
     col_expr = _indirect_axis_index(access.col, width, ctx)
-    index = access.flat_index_expr(row_expr, col_expr)
+    if row_expr in {"0", "0.0"}:
+        row_term = "0"
+    elif width <= 1:
+        row_term = row_expr
+    else:
+        row_term = f"{row_expr} * {width}"
+    index = _join_index_terms((row_term, col_expr))
     return f"{ctx.use('xl_at')}({name}, {index})"
 
 

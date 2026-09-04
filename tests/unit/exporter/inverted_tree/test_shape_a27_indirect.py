@@ -134,6 +134,7 @@ def test_literal_into_series_emits_xl_at(tmp_path: Path) -> None:
     modules = generate_inverted(workbook, document)
     _assert_no_xl_indirect(modules)
     assert "xl_at(" in modules["internals.py"]
+    assert "xl_at(src, 1)" in modules["internals.py"]
     pkg = load_package(modules, tmp_path, name="a27_series")
     _catalog, _deps, graph = inverted_graph_parts(workbook, document)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])["Outputs!A1"]
