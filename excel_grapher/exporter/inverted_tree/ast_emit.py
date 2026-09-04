@@ -28,6 +28,7 @@ from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
     SeriesCatalog,
     covering_series,
+    fit_affine_map,
     schedule_axis_coord,
     schedule_partition,
 )
@@ -99,6 +100,7 @@ class EmitContext:
     fused_buffer_suffix: str = ""
     fused_partition: tuple[Scalar, ...] | None = None
     graph: DependencyGraph | None = None
+    lookup_anchor_slot: int = 0
 
     def param(self, series_id: str) -> str:
         return series_id
@@ -464,39 +466,185 @@ def _emit_choose(node: FunctionCallNode, ctx: EmitContext) -> str:
     return f"{ctx.use('xl_choose')}({index}, {choices})"
 
 
+def _host_export_error(ctx: EmitContext, message: str) -> InvertedTreeExportError:
+    return InvertedTreeExportError(f"series {ctx.host.series_id!r} cell {ctx.host_cell}: {message}")
+
+
+def _ref_anchor_address(node: AstNode, host_cell: CanonicalAddress) -> CanonicalAddress | None:
+    if isinstance(node, CellRefNode):
+        return as_canonical(resolve_cell_ref(node, host_cell))
+    if isinstance(node, RangeNode):
+        return as_canonical(resolve_cell_ref(node.start_ref, host_cell))
+    return None
+
+
+def _lookup_anchors(node: AstNode, host_cell: CanonicalAddress) -> list[CanonicalAddress]:
+    """Return INDEX range starts and OFFSET anchors in preorder."""
+    found: list[CanonicalAddress] = []
+
+    def walk(item: AstNode) -> None:
+        if isinstance(item, FunctionCallNode):
+            name = normalize_excel_function_name(item.name)
+            if item.args and (
+                name == "OFFSET" or (name == "INDEX" and isinstance(item.args[0], RangeNode))
+            ):
+                start = _ref_anchor_address(item.args[0], host_cell)
+                if start is not None:
+                    found.append(start)
+            for arg in item.args:
+                walk(arg)
+            return
+        if isinstance(item, BinaryOpNode):
+            walk(item.left)
+            walk(item.right)
+            return
+        if isinstance(item, UnaryOpNode):
+            walk(item.operand)
+
+    walk(node)
+    return found
+
+
+def _linear_index_expr(coeff: int, offset: int, index_var: str | None) -> str:
+    """Return `coeff * index_var + offset` for a flat-block subscript."""
+    if index_var is None or coeff == 0:
+        return str(offset)
+    if coeff == 1:
+        var = index_var
+    elif coeff == -1:
+        if offset == 0:
+            return f"-{index_var}"
+        return f"{offset} - {index_var}"
+    else:
+        var = f"{coeff} * {index_var}"
+    if offset == 0:
+        return var
+    if offset > 0:
+        return f"{var} + {offset}"
+    return f"{var} - {-offset}"
+
+
+def _block_anchor_map(
+    block: BoundSeries,
+    ctx: EmitContext,
+    slot: int,
+    current_anchor: CanonicalAddress,
+) -> tuple[int, int]:
+    """Return `(coeff, offset)` mapping host index to the lookup's block slot."""
+    current_idx = block.index_of(current_anchor)
+    if current_idx is None:
+        raise _host_export_error(
+            ctx,
+            f"range {current_anchor} is not inside bound block {block.series_id!r}",
+        )
+    if ctx.graph is None or ctx.index_var is None:
+        return 0, current_idx
+    shape = fingerprint_formula_shape(node_formula_ast(ctx.graph, ctx.host_cell)).shape_key
+    pairs: list[tuple[int, int]] = []
+    for index, cell in enumerate(ctx.host.cells):
+        ast = node_formula_ast(ctx.graph, cell)
+        if fingerprint_formula_shape(ast).shape_key != shape:
+            continue
+        anchors = _lookup_anchors(ast, cell)
+        if slot >= len(anchors):
+            continue
+        idx = block.index_of(anchors[slot])
+        if idx is None:
+            raise InvertedTreeExportError(
+                f"series {ctx.host.series_id!r} cell {cell}: "
+                f"range {anchors[slot]} is not inside bound block {block.series_id!r}"
+            )
+        pairs.append((index, idx))
+    if len(pairs) < 2:
+        return 0, current_idx
+    fit = fit_affine_map(pairs)
+    if fit is None:
+        raise _host_export_error(
+            ctx, "INDEX/OFFSET window is not an affine function of the host index"
+        )
+    return fit
+
+
 def _emit_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
     if len(node.args) < 3:
-        raise InvertedTreeExportError(
-            f"series {ctx.host.series_id!r}: OFFSET expects anchor, rows, cols"
-        )
+        raise _host_export_error(ctx, "OFFSET expects anchor, rows, cols")
     table = _series_for_ref(node.args[0], ctx)
     rows = emit_expr(node.args[1], ctx)
     cols = emit_expr(node.args[2], ctx)
     name = ctx.param(table.series_id)
-    # 1-row table: OFFSET(anchor, 0, n) → table[n] with 0-based n.
-    index = f"({cols})" if rows == "0" or rows == "0.0" else f"(({rows}) * len({name}) + ({cols}))"
+    anchor = _ref_anchor_address(node.args[0], ctx.host_cell)
+    if anchor is None:
+        raise _host_export_error(ctx, "OFFSET anchor must be a cell or range")
+    slot = ctx.lookup_anchor_slot
+    ctx.lookup_anchor_slot += 1
+    coeff, offset = _block_anchor_map(table, ctx, slot, anchor)
+    anchor_expr = _linear_index_expr(coeff, offset, ctx.index_var)
+    if table.layout == "matrix":
+        width = table.block_width
+        index = f"({rows}) * {width} + ({cols})"
+        if anchor_expr != "0":
+            index = f"{index} + ({anchor_expr})"
+        return f"{ctx.use('xl_at')}({name}, {index})"
+    if rows not in {"0", "0.0"}:
+        raise _host_export_error(
+            ctx,
+            f"OFFSET row offset into non-matrix series {table.series_id!r} is not supported",
+        )
+    index = f"({cols})" if anchor_expr == "0" else f"({cols}) + ({anchor_expr})"
     return f"{ctx.use('xl_at')}({name}, {index})"
+
+
+def _emit_index_into_block(
+    block: BoundSeries,
+    start: CanonicalAddress,
+    row_expr: str,
+    col_expr: str,
+    ctx: EmitContext,
+    slot: int,
+) -> str:
+    width = block.block_width
+    coeff, offset = _block_anchor_map(block, ctx, slot, start)
+    anchor_expr = _linear_index_expr(coeff, offset, ctx.index_var)
+    index = f"({row_expr} - 1) * {width} + ({col_expr} - 1)"
+    if anchor_expr != "0":
+        index = f"{index} + ({anchor_expr})"
+    name = ctx.param(block.series_id)
+    return f"{ctx.use('xl_at')}({name}, {index})"
+
+
+def _emit_index_column_arg(col_arg: AstNode | None, ctx: EmitContext) -> tuple[str, int | None]:
+    if col_arg is None or isinstance(col_arg, EmptyArgNode):
+        return "1", 1
+    col_literal = int(col_arg.value) if isinstance(col_arg, NumberNode) else None
+    try:
+        return emit_expr(col_arg, ctx), col_literal
+    except InvertedTreeExportError as exc:
+        raise _host_export_error(ctx, f"INDEX column cannot be lowered ({exc})") from exc
 
 
 def _emit_index(node: FunctionCallNode, ctx: EmitContext) -> str:
     if len(node.args) < 2:
-        raise InvertedTreeExportError(
-            f"series {ctx.host.series_id!r}: INDEX expects a range and row"
-        )
+        raise _host_export_error(ctx, "INDEX expects a range and row")
     row_expr = emit_expr(node.args[1], ctx)
-    col_arg = node.args[2] if len(node.args) > 2 else None
-    col_index = 1
-    if isinstance(col_arg, NumberNode):
-        col_index = int(col_arg.value)
+    col_expr, col_literal = _emit_index_column_arg(
+        node.args[2] if len(node.args) > 2 else None, ctx
+    )
     if isinstance(node.args[0], RangeNode):
-        start = resolve_cell_ref(node.args[0].start_ref, ctx.host_cell)
-        end = resolve_cell_ref(node.args[0].end_ref, ctx.host_cell)
-        column_cells = range_column_addresses(start, end, col_index)
+        slot = ctx.lookup_anchor_slot
+        ctx.lookup_anchor_slot += 1
+        start = as_canonical(resolve_cell_ref(node.args[0].start_ref, ctx.host_cell))
+        end = as_canonical(resolve_cell_ref(node.args[0].end_ref, ctx.host_cell))
+        covered_full = covering_series(ctx.catalog, iter_range_addresses(start, end))
+        if covered_full is not None:
+            return _emit_index_into_block(covered_full, start, row_expr, col_expr, ctx, slot)
+        if col_literal is None:
+            raise _host_export_error(
+                ctx, "INDEX column is not a literal and the range is not one bound block"
+            )
+        column_cells = range_column_addresses(start, end, col_literal)
         covered = covering_series(ctx.catalog, column_cells)
         if covered is None:
-            raise InvertedTreeExportError(
-                f"series {ctx.host.series_id!r}: INDEX column is not a bound series"
-            )
+            raise _host_export_error(ctx, "INDEX column is not a bound series")
         name = ctx.param(covered.series_id)
         return f"{ctx.use('xl_at')}({name}, ({row_expr}) - 1)"
     table = emit_expr(node.args[0], ctx)
@@ -523,13 +671,9 @@ def _series_for_ref(node: AstNode, ctx: EmitContext) -> BoundSeries:
         end = resolve_cell_ref(node.end_ref, ctx.host_cell)
         covered = covering_series(ctx.catalog, iter_range_addresses(start, end))
         if covered is None:
-            raise InvertedTreeExportError(
-                f"series {ctx.host.series_id!r}: reference {start}:{end} is not bound"
-            )
+            raise _host_export_error(ctx, f"reference {start}:{end} is not bound")
         return covered
-    raise InvertedTreeExportError(
-        f"series {ctx.host.series_id!r}: OFFSET/MATCH base must be a cell or range"
-    )
+    raise _host_export_error(ctx, "OFFSET/MATCH base must be a cell or range")
 
 
 def _region_measure(

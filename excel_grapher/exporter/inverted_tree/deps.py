@@ -581,21 +581,38 @@ class _DepCollector:
         else:
             self.visit(row_arg, host_cell=host_cell, host_index=host_index)
         col_index = 1
+        col_literal = True
         if isinstance(col_arg, NumberNode):
             col_index = int(col_arg.value)
         elif col_arg is not None:
-            self.visit(col_arg, host_cell=host_cell, host_index=host_index)
+            col_literal = False
+            try:
+                self.visit(col_arg, host_cell=host_cell, host_index=host_index)
+            except InvertedTreeExportError as exc:
+                raise InvertedTreeExportError(
+                    f"series {self.host.series_id!r} cell {host_cell}: "
+                    f"INDEX column cannot be lowered ({exc})"
+                ) from exc
         if isinstance(node.args[0], RangeNode):
             start = resolve_cell_ref(node.args[0].start_ref, host_cell)
             end = resolve_cell_ref(node.args[0].end_ref, host_cell)
-            column_cells = range_column_addresses(start, end, col_index)
-            covered = covering_series(self.catalog, column_cells)
-            if covered is None:
+            covered_full = covering_series(self.catalog, iter_range_addresses(start, end))
+            if covered_full is not None:
+                self.emit_lookup(covered_full, host_cell, as_canonical(start), "dynamic")
+            elif not col_literal:
                 raise InvertedTreeExportError(
-                    f"series {self.host.series_id!r}: INDEX column {col_index} of "
-                    f"{start}:{end} is not a bound series"
+                    f"series {self.host.series_id!r} cell {host_cell}: "
+                    "INDEX column cannot be lowered"
                 )
-            self.emit_lookup(covered, host_cell, column_cells[0], "dynamic")
+            else:
+                column_cells = range_column_addresses(start, end, col_index)
+                covered = covering_series(self.catalog, column_cells)
+                if covered is None:
+                    raise InvertedTreeExportError(
+                        f"series {self.host.series_id!r} cell {host_cell}: "
+                        f"INDEX column {col_index} of {start}:{end} is not a bound series"
+                    )
+                self.emit_lookup(covered, host_cell, column_cells[0], "dynamic")
         else:
             self.visit(node.args[0], host_cell=host_cell, host_index=host_index)
 
