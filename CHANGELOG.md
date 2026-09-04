@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v12.7.1 (2026-09-04)
+
+### Bug Fixes
+
+- **export**: Classify block access per statement, not per series
+  ([#659](https://github.com/Teal-Insights/excel-grapher/pull/659),
+  [`ca0bd62`](https://github.com/Teal-Insights/excel-grapher/commit/ca0bd621adfb587474068f85b1945c19c159a32d))
+
+- **export**: Lower INDEX into a block when the range overhangs it
+  ([#659](https://github.com/Teal-Insights/excel-grapher/pull/659),
+  [`ca0bd62`](https://github.com/Teal-Insights/excel-grapher/commit/ca0bd621adfb587474068f85b1945c19c159a32d))
+
+
 ## v12.7.0 (2026-09-04)
 
 ### Bug Fixes
