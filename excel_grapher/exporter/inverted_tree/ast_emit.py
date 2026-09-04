@@ -216,8 +216,8 @@ def _aligned_taken_index(producer_id: str, catalog_idx: int, ctx: EmitContext) -
     """Return `catalog_idx` in the window `_aligned_call_arg` takes to.
 
     Aligned arguments are remapped into the host's index space. A non-looping
-    helper (`index_var` is `None`) must honour that window, not the producer
-    catalog slot.
+    helper (`index_var` is `None`) and a rung-3 instance subscript must honour
+    that window, not the producer catalog slot.
     """
     index_map = ctx.deps.index_maps.get(producer_id)
     if index_map is None:
@@ -303,6 +303,12 @@ def _emit_instance_ref(address: str, ctx: EmitContext) -> str:
         raise InvertedTreeExportError(
             f"series {ctx.host.series_id!r}: instance ref {address} is unbound"
         )
+    if (
+        owner.series_id not in ctx.scc_ids
+        and owner.series_id in ctx.deps.aligned_ids
+        and not owner.is_scalar
+    ):
+        idx = _aligned_taken_index(owner.series_id, idx, ctx)
     offset = idx - ctx.host_index
     index_var = ctx.index_var or "i"
     index_expr = _index_expr(offset, index_var)
