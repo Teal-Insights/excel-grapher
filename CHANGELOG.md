@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v13.2.0 (2026-09-04)
+
+### Features
+
+- **export**: Lower inverted-tree SUM/SUMPRODUCT and remaining ref shapes
+  ([#671](https://github.com/Teal-Insights/excel-grapher/pull/671),
+  [`14057d4`](https://github.com/Teal-Insights/excel-grapher/commit/14057d463649fec3d2860557729b1f4de43f8451))
+
+
 ## v13.1.0 (2026-09-04)
 
 ### Features
