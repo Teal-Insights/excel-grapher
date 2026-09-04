@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v13.1.0 (2026-09-04)
+
+### Features
+
+- **export**: Enforce input.domain on inverted-tree compute arguments
+  ([#670](https://github.com/Teal-Insights/excel-grapher/pull/670),
+  [`a746d4a`](https://github.com/Teal-Insights/excel-grapher/commit/a746d4a70397b531a1c960d191eb01357037f06d))
+
+
 ## v13.0.0 (2026-09-04)
 
 ### Features
