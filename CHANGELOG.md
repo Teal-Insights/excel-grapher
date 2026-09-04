@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v12.5.4 (2026-09-04)
+
+### Bug Fixes
+
+- **export**: Coerce inverted-tree arithmetic and comparison operands
+  ([#643](https://github.com/Teal-Insights/excel-grapher/pull/643),
+  [`f8db842`](https://github.com/Teal-Insights/excel-grapher/commit/f8db842b1a45777ae96571cf633085becedd792a))
+
+- **export**: Coerce inverted-tree operator operands (#635)
+  ([#643](https://github.com/Teal-Insights/excel-grapher/pull/643),
+  [`f8db842`](https://github.com/Teal-Insights/excel-grapher/commit/f8db842b1a45777ae96571cf633085becedd792a))
+
+- **export**: Keep inverted-tree indexes integral after coercion
+  ([#643](https://github.com/Teal-Insights/excel-grapher/pull/643),
+  [`f8db842`](https://github.com/Teal-Insights/excel-grapher/commit/f8db842b1a45777ae96571cf633085becedd792a))
+
+- **export**: Normalize inverted-tree catalog addresses once
+  ([#645](https://github.com/Teal-Insights/excel-grapher/pull/645),
+  [`effb353`](https://github.com/Teal-Insights/excel-grapher/commit/effb3537e73bf4c623553259fbcdc72b44175f20))
+
+
 ## v12.5.3 (2026-09-04)
 
 ### Bug Fixes
