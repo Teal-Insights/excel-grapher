@@ -29,7 +29,7 @@ Legend: **port** = inverted-tree should grow the feature; **bindings-equivalent*
 | Tidy `Records` / `as_records` | yes | tuples only | **bindings-equivalent** — documented recipe in `06-export.qmd`. |
 | Concept-based naming (#379) | partial | series `id` | **port** — keep [#379](https://github.com/Teal-Insights/excel-grapher/issues/379); applies to both paradigms. |
 | Series-keyed object façade (#593) | planned | none | **port** — retarget [#593](https://github.com/Teal-Insights/excel-grapher/issues/593) at inverted-tree (`compute_*` wrapper, not `EvalContext`). |
-| `constant` direction `read_*` | yes | defaulted kwargs | **port** — [#663](https://github.com/Teal-Insights/excel-grapher/issues/663) (import constants in the body). |
+| `constant` direction `read_*` | yes | imported from `data` | **port shipped** — [#663](https://github.com/teal-insights/excel-grapher/issues/663) (`data.CONSTANT_X` / `data.overrides`). |
 | `CONSTANTS` `MappingProxyType` (#582); sparse leaf store (#578) | yes | `data.py` tuples | **drop** — dense catalog-order tuples are the inverted-tree store. |
 | Range-watch export invalidation (#585) | yes | n/a | **drop** — no mutable `EvalContext`; pass new arguments. |
 | Complementary shards / list `data_range` (#591) | yes | catalog concatenates `series_data_ranges` after merge | **bindings-equivalent**. Probe: sheet_name keys and four-cell catalog; a formula may still fail closed if it gathers two non-adjacent members of that series (same as any series). |

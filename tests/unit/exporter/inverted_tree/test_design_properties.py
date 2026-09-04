@@ -12,6 +12,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import pytest
@@ -25,6 +26,7 @@ from tests.unit.exporter.inverted_tree import test_shape_a20_matrix_join as a20
 from tests.unit.exporter.inverted_tree import test_shape_a22_guarded_residual as a22_guarded
 from tests.unit.exporter.inverted_tree import test_shape_a22_shift_k as a22_shift_k
 from tests.unit.exporter.inverted_tree.helpers import (
+    all_param_names,
     bindings_document,
     call_compute,
     generate_inverted,
@@ -447,6 +449,45 @@ def _zipper_bindings_n(n: int) -> dict[str, Any]:
     )
 
 
+def _constant_label_sheets(n: int) -> dict[str, dict[str, object]]:
+    cells: dict[str, object] = {}
+    for index in range(n):
+        col = get_column_letter(index + 1)
+        cells[f"{col}1"] = 2009 + index
+        cells[f"{col}2"] = index + 1
+        cells[f"{col}3"] = 10.0
+        cells[f"{col}4"] = f"={col}3+IF({col}2>=1,1,0)"
+    return {"Engine": cells}
+
+
+def _constant_label_bindings(n: int) -> dict[str, Any]:
+    last = get_column_letter(n)
+    return bindings_document(
+        series_entry(
+            "labels",
+            f"Engine!A2:{last}2",
+            layout="series",
+            direction="constant",
+            dtype="int",
+            header_row=1,
+        ),
+        series_entry(
+            "values",
+            f"Engine!A3:{last}3",
+            layout="series",
+            direction="input",
+            header_row=1,
+        ),
+        series_entry(
+            "result",
+            f"Engine!A4:{last}4",
+            layout="series",
+            direction="output",
+            header_row=1,
+        ),
+    )
+
+
 _SIZE_CASES: list[
     tuple[str, Callable[[int], Mapping[str, Mapping[str, object]]], Callable[[int], dict[str, Any]]]
 ] = [
@@ -454,6 +495,7 @@ _SIZE_CASES: list[
     ("zipper", _zipper_sheets, _zipper_bindings_n),
     ("backward", _backward_sheets, lambda n: _series_bindings("value", n)),
     ("country_table", country_table_sheets, country_table_bindings),
+    ("constants", _constant_label_sheets, _constant_label_bindings),
 ]
 
 
@@ -485,6 +527,83 @@ def test_code_size_independent_of_period_count(
         )
         assert abs(len(small[filename]) - len(large[filename])) <= 48
         assert abs(max(map(len, small_lines)) - max(map(len, large_lines))) <= 8
+
+
+def test_code_size_independent_of_constant_series_count(tmp_path: Path) -> None:
+    """`api.py` does not grow with unused catalog constants or used-constant arity."""
+
+    def generate_with_unused(count: int) -> dict[str, str]:
+        sub = tmp_path / f"unused_{count}"
+        sub.mkdir()
+        workbook = _a1_workbook(sub)
+        from fastpyxl import load_workbook
+
+        book = load_workbook(workbook)
+        for index in range(count):
+            book["Inputs"][f"Z{index + 1}"] = 0.0
+        book.save(workbook)
+        extras = [
+            series_entry(
+                f"unused_const_{index}",
+                f"Inputs!Z{index + 1}",
+                layout="scalar",
+                direction="constant",
+            )
+            for index in range(count)
+        ]
+        return generate_inverted(workbook, bindings_document(*_a1_bindings()["series"], *extras))
+
+    small_unused = generate_with_unused(2)
+    large_unused = generate_with_unused(12)
+    assert small_unused["api.py"] == large_unused["api.py"]
+
+    def generate_with_used(count: int) -> tuple[dict[str, str], ModuleType]:
+        inputs: dict[str, object] = {"A1": 1.0}
+        terms = ["Inputs!A1"]
+        extras: list[dict[str, Any]] = []
+        for index in range(count):
+            cell = f"B{index + 1}"
+            inputs[cell] = float(index + 1)
+            terms.append(f"Inputs!{cell}")
+            extras.append(
+                series_entry(
+                    f"const_{index}",
+                    f"Inputs!{cell}",
+                    layout="scalar",
+                    direction="constant",
+                )
+            )
+        workbook = write_workbook(
+            tmp_path / f"used_{count}.xlsx",
+            {"Inputs": inputs, "Outputs": {"A1": "=" + "+".join(terms)}},
+        )
+        document = bindings_document(
+            series_entry("value", "Inputs!A1", layout="scalar", direction="input"),
+            *extras,
+            series_entry("result", "Outputs!A1", layout="scalar", direction="output"),
+        )
+        modules = generate_inverted(workbook, document)
+        pkg = load_package(modules, tmp_path, name=f"used_c{count}")
+        return modules, pkg
+
+    small_used, small_pkg = generate_with_used(2)
+    large_used, large_pkg = generate_with_used(8)
+    assert all_param_names(small_pkg.compute_result) == ("value",)
+    assert all_param_names(large_pkg.compute_result) == ("value",)
+    assert small_pkg.compute_result.__constants__ == ("const_0", "const_1")
+    assert large_pkg.compute_result.__constants__ == tuple(f"const_{i}" for i in range(8))
+    assert "require_length" not in small_used["api.py"]
+    assert "require_length" not in large_used["api.py"]
+    assert "from .data import" not in large_used["api.py"]
+    small_sig_lines = [
+        line for line in small_used["api.py"].splitlines() if line.startswith("    ")
+    ]
+    large_sig_lines = [
+        line for line in large_used["api.py"].splitlines() if line.startswith("    ")
+    ]
+    small_params = [line for line in small_sig_lines if line.strip().startswith("value:")]
+    large_params = [line for line in large_sig_lines if line.strip().startswith("value:")]
+    assert small_params == large_params
 
 
 def test_lexically_misordered_string_keys_match_evaluator(tmp_path: Path) -> None:
@@ -533,6 +652,18 @@ def test_leaf_closure_signatures_use_inspect(tmp_path: Path) -> None:
     assert "ctx" not in path_sig.parameters
     assert "unused_flag" not in year_sig.parameters
     assert "ctx" not in year_sig.parameters
+    assert pkg.compute_output_path.__constants__ == ()
+    assert pkg.compute_output_year1.__constants__ == ()
     public = [name for name in dir(pkg) if inspect.isfunction(getattr(pkg, name, None))]
     assert not any(name.startswith("set_") for name in public)
     assert "make_context" not in public
+
+    pkg5 = load_package(
+        generate_inverted(_a5_workbook(tmp_path), _a5_bindings()), tmp_path, name="sig_a5"
+    )
+    shocked_sig = inspect.signature(pkg5.compute_output_shocked)
+    assert set(required_param_names(pkg5.compute_output_shocked)) == {"value", "shock_year"}
+    assert "engine_year_labels" not in shocked_sig.parameters
+    assert "engine_year_labels" not in inspect.signature(pkg5.compute_output_baseline).parameters
+    assert pkg5.compute_output_shocked.__constants__ == ("engine_year_labels",)
+    assert pkg5.compute_output_baseline.__constants__ == ()

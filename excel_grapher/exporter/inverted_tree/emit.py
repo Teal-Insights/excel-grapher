@@ -162,16 +162,29 @@ def _uses_datetime(catalog: SeriesCatalog) -> bool:
 
 def emit_data_module(catalog: SeriesCatalog, graph: DependencyGraph) -> str:
     """Emit `data.py` with constant series and workbook-default input arrays."""
+    constants = catalog.constant_series()
     lines = [
         '"""Constant leaves and workbook-default input arrays."""',
         "",
         "from __future__ import annotations",
         "",
     ]
+    stdlib: list[str] = []
+    if constants:
+        stdlib.extend(
+            [
+                "from collections.abc import Iterator",
+                "from contextlib import contextmanager",
+            ]
+        )
     if _uses_datetime(catalog):
-        lines.extend(["from datetime import datetime", ""])
-    for series in catalog.constant_series():
+        stdlib.append("from datetime import datetime")
+    if stdlib:
+        lines.extend([*stdlib, ""])
+    constant_names: list[str] = []
+    for series in constants:
         name = _data_const_name(series.series_id)
+        constant_names.append(name)
         value = _series_values(series, graph)
         anno = python_measure_type(series)
         if series.is_scalar:
@@ -188,6 +201,35 @@ def emit_data_module(catalog: SeriesCatalog, graph: DependencyGraph) -> str:
         else:
             lines.append(f"{name}: tuple[{anno}, ...] = {_py_literal(value)}")
         lines.append("")
+    if constant_names:
+        names_literal = ", ".join(repr(name) for name in constant_names)
+        lines.extend(
+            [
+                f"_CONSTANT_NAMES = frozenset({{{names_literal}}})",
+                "",
+                "",
+                "@contextmanager",
+                "def overrides(**values: object) -> Iterator[None]:",
+                '    """Replace constant attributes for the duration of the `with` block.',
+                "",
+                "    Args:",
+                "        **values: Mapping of this module's constant names to replacements.",
+                "            Unknown names raise `AttributeError`.",
+                '    """',
+                "    unknown = [name for name in values if name not in _CONSTANT_NAMES]",
+                "    if unknown:",
+                '        joined = ", ".join(repr(name) for name in unknown)',
+                '        raise AttributeError("unknown constant(s): " + joined)',
+                "    namespace = globals()",
+                "    saved = {name: namespace[name] for name in values}",
+                "    namespace.update(values)",
+                "    try:",
+                "        yield",
+                "    finally:",
+                "        namespace.update(saved)",
+                "",
+            ]
+        )
     if len(lines) == 4:
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
@@ -364,11 +406,13 @@ def _aligned_call_arg(
     catalog: SeriesCatalog,
     host_call: Sequence[int],
     local_indices: Mapping[str, tuple[int, ...]],
+    leaf_source: Mapping[str, str],
     runtime: set[str],
 ) -> str:
     """Return a call-site argument, `take`n to this host walk's aligned window."""
+    expr = leaf_source.get(param_id, param_id)
     if param_id not in info.aligned_ids:
-        return param_id
+        return expr
     affine = info.affine_maps.get(param_id)
     index_map = info.index_maps.get(param_id)
     if affine is not None:
@@ -377,11 +421,11 @@ def _aligned_call_arg(
     elif index_map is not None:
         needed = tuple(index_map[index] for index in host_call)
     else:
-        return param_id
+        return expr
     producer = catalog.get(param_id)
     current = local_indices.get(param_id, _identity_indices(producer))
     if needed == current:
-        return param_id
+        return expr
     pos = {value: index for index, value in enumerate(current)}
     try:
         work = tuple(pos[index] for index in needed)
@@ -390,9 +434,9 @@ def _aligned_call_arg(
             f"series {info.host_id!r}: cannot take {param_id!r} at {needed} from {current}"
         ) from exc
     if work == tuple(range(len(current))):
-        return param_id
+        return expr
     runtime.add("take")
-    return f"take({param_id}, {indices_to_source(work)})"
+    return f"take({expr}, {indices_to_source(work)})"
 
 
 def _group_key(
@@ -464,19 +508,27 @@ def _union_plan_indices(
 def _leaf_signature_parts(
     leaves: Sequence[str],
     catalog: SeriesCatalog,
-) -> tuple[list[str], list[str], list[str], set[str]]:
-    """Return required ids, defaulted ids, parameter lines, and `data.py` imports."""
+) -> tuple[list[str], list[str], list[str]]:
+    """Return input ids, constant ids, and input-only parameter lines."""
     required = [sid for sid in leaves if catalog.get(sid).direction == "input"]
-    defaulted = [sid for sid in leaves if catalog.get(sid).direction == "constant"]
-    params: list[str] = []
-    data_imports: set[str] = set()
-    for sid in required:
-        params.append(f"{sid}: {python_annotation(catalog.get(sid))}")
-    for sid in defaulted:
-        const_name = _data_const_name(sid)
-        data_imports.add(const_name)
-        params.append(f"{sid}: {python_annotation(catalog.get(sid))} = {const_name}")
-    return required, defaulted, params, data_imports
+    constants = [sid for sid in leaves if catalog.get(sid).direction == "constant"]
+    params = [f"{sid}: {python_annotation(catalog.get(sid))}" for sid in required]
+    return required, constants, params
+
+
+def _constants_attr(name: str, constants: Sequence[str]) -> str:
+    return f"{name}.__constants__ = {tuple(constants)!r}"
+
+
+def _leaf_source_map(leaves: Sequence[str], catalog: SeriesCatalog) -> dict[str, str]:
+    """Map leaf ids to the expression the orchestrator passes to internals."""
+    sources: dict[str, str] = {}
+    for sid in leaves:
+        if catalog.get(sid).direction == "constant":
+            sources[sid] = f"data.{_data_const_name(sid)}"
+        else:
+            sources[sid] = sid
+    return sources
 
 
 def _keyword_signature(name: str, params: Sequence[str], returns: str) -> str:
@@ -506,23 +558,29 @@ def _emit_evaluation_body(
     runtime: set[str] = set()
     body: list[str] = []
     local_indices: dict[str, tuple[int, ...]] = {}
+    leaf_source = _leaf_source_map(leaves, catalog)
     for sid in leaves:
         series = catalog.get(sid)
         identity = _identity_indices(series)
         local_indices[sid] = identity
+        is_constant = series.direction == "constant"
         if not series.is_sequence:
             continue
-        runtime.add("require_length")
-        body.append(f"    require_length({sid}, {len(series.cells)})")
+        if not is_constant:
+            runtime.add("require_length")
+            body.append(f"    require_length({sid}, {len(series.cells)})")
         wanted = result_indices.get(sid)
-        if wanted is None:
-            continue
-        if wanted == identity:
+        if wanted is None or wanted == identity:
             continue
         runtime.add("take")
-        body.append(f"    {sid} = take({sid}, {IndexSet.from_indices(wanted).to_source()})")
+        body.append(
+            f"    {sid} = take({leaf_source[sid]}, {IndexSet.from_indices(wanted).to_source()})"
+        )
+        leaf_source[sid] = sid
         local_indices[sid] = wanted
-    locals_bound: set[str] = set(leaves)
+    locals_bound: set[str] = {
+        sid for sid in leaves if catalog.get(sid).direction != "constant" or leaf_source[sid] == sid
+    }
     seen_sccs: set[tuple[str, ...]] = set()
     mapping = scc_map or {}
     for series_id in formula_ids:
@@ -534,9 +592,11 @@ def _emit_evaluation_body(
             ext = scc_external_params(scc, deps, catalog.order)
             fn = scan_function_name(scc)
             unpack = ", ".join(scc)
-            body.append(f"    {unpack} = internals.{fn}({', '.join(ext)})")
+            args = ", ".join(leaf_source.get(param_id, param_id) for param_id in ext)
+            body.append(f"    {unpack} = internals.{fn}({args})")
             for sid in scc:
                 locals_bound.add(sid)
+                leaf_source[sid] = sid
                 computed = call_indices.get(sid, _identity_indices(catalog.get(sid)))
                 local_indices[sid] = computed
                 taken = _take_after_call(
@@ -560,12 +620,14 @@ def _emit_evaluation_body(
                 catalog=catalog,
                 host_call=host_call,
                 local_indices=local_indices,
+                leaf_source=leaf_source,
                 runtime=runtime,
             )
             for param_id in info.param_ids
         )
         body.append(f"    {series_id} = internals.{series_id}({args})")
         locals_bound.add(series_id)
+        leaf_source[series_id] = series_id
         computed = call_indices.get(series_id, _identity_indices(catalog.get(series_id)))
         local_indices[series_id] = computed
         taken = _take_after_call(
@@ -588,10 +650,11 @@ def emit_orchestrator(
     catalog: SeriesCatalog,
     deps: Mapping[str, SeriesDeps],
     scc_map: Mapping[str, tuple[str, ...]] | None = None,
-) -> tuple[str, set[str], set[str]]:
+) -> tuple[str, set[str], bool]:
     """Emit one public `compute_*` function.
 
-    Returns the function source, runtime symbols used, and data constants imported.
+    Returns the function source, runtime symbols used, and whether the body
+    reads `data`.
 
     Multi-series lag zippers call the co-scan once and unpack members.
     """
@@ -604,7 +667,7 @@ def emit_orchestrator(
     result_indices, call_indices = plan_indices(
         output, catalog=catalog, deps=deps_map, scc_map=scc_map_dict
     )
-    _required, _defaulted, params, data_imports = _leaf_signature_parts(leaves, catalog)
+    _required, constants, params = _leaf_signature_parts(leaves, catalog)
     compute_name = output.compute_name or f"compute_{output.series_id}"
     signature = _keyword_signature(compute_name, params, python_return_annotation(output))
     body, runtime, locals_bound = _emit_evaluation_body(
@@ -620,9 +683,10 @@ def emit_orchestrator(
         body.append(_emit_result_return(output))
     else:
         body.append(f"    return internals.{output.series_id}()")
-    doc = f'    """Compute `{output.series_id}` from its subgraph leaf closure."""'
+    doc = f'    """Compute `{output.series_id}` from its input leaf closure."""'
     source = "\n".join([signature, doc, *body])
-    return source, runtime, data_imports
+    source = f"{source}\n{_constants_attr(compute_name, constants)}"
+    return source, runtime, bool(constants)
 
 
 def _emit_shared_runner(
@@ -632,14 +696,14 @@ def _emit_shared_runner(
     catalog: SeriesCatalog,
     deps: dict[str, SeriesDeps],
     scc_map: dict[str, tuple[str, ...]] | None,
-) -> tuple[str, set[str], set[str]]:
+) -> tuple[str, set[str], bool]:
     """Emit one private evaluation walk shared by `outputs`."""
     leaves = _union_leaves(outputs, catalog=catalog, deps=deps)
     formula_ids = _union_formula_ids(outputs, catalog=catalog, deps=deps, scc_map=scc_map)
     result_indices, call_indices = _union_plan_indices(
         outputs, catalog=catalog, deps=deps, scc_map=scc_map
     )
-    _required, _defaulted, params, data_imports = _leaf_signature_parts(leaves, catalog)
+    _required, constants, params = _leaf_signature_parts(leaves, catalog)
     returns = ", ".join(python_return_annotation(output) for output in outputs)
     signature = _keyword_signature(name, params, f"tuple[{returns}]")
     body, runtime, _bound = _emit_evaluation_body(
@@ -655,7 +719,7 @@ def _emit_shared_runner(
     body.append(f"    return {returned}")
     joined = ", ".join(f"`{output.series_id}`" for output in outputs)
     doc = f'    """Evaluate the shared formula closure of {joined}."""'
-    return "\n".join([signature, doc, *body]), runtime, data_imports
+    return "\n".join([signature, doc, *body]), runtime, bool(constants)
 
 
 def _emit_thin_orchestrator(
@@ -666,16 +730,15 @@ def _emit_thin_orchestrator(
     runner_leaves: Sequence[str],
     catalog: SeriesCatalog,
     deps: dict[str, SeriesDeps],
-) -> tuple[str, set[str]]:
+) -> str:
     """Emit a `compute_*` that unpacks one slot from a shared runner."""
     leaves = leaf_closure(output.series_id, catalog=catalog, deps=deps)
-    _required, _defaulted, params, data_imports = _leaf_signature_parts(leaves, catalog)
+    _required, constants, params = _leaf_signature_parts(leaves, catalog)
     compute_name = output.compute_name or f"compute_{output.series_id}"
     signature = _keyword_signature(compute_name, params, python_return_annotation(output))
-    output_leaves = set(leaves)
     call_args: list[str] = []
     for sid in runner_leaves:
-        if catalog.get(sid).direction == "input" or sid in output_leaves:
+        if catalog.get(sid).direction == "input":
             call_args.append(f"{sid}={sid}")
     unpack = ", ".join(
         member.series_id if member.series_id == output.series_id else "_" for member in outputs
@@ -685,8 +748,9 @@ def _emit_thin_orchestrator(
         f"    {unpack} = {call}",
         _emit_result_return(output),
     ]
-    doc = f'    """Compute `{output.series_id}` from its subgraph leaf closure."""'
-    return "\n".join([signature, doc, *body]), data_imports
+    doc = f'    """Compute `{output.series_id}` from its input leaf closure."""'
+    source = "\n".join([signature, doc, *body])
+    return f"{source}\n{_constants_attr(compute_name, constants)}"
 
 
 def emit_api_module(
@@ -697,13 +761,14 @@ def emit_api_module(
     """Emit `api.py` with keyword-only output orchestrators.
 
     Outputs that share the same required input leaves share one private
-    runner; each `compute_*` keeps its own leaf signature and unpacks its
-    slot. Baseline and shocked closures stay apart because their required
-    inputs differ.
+    runner; each `compute_*` keeps its own input-leaf signature and unpacks
+    its slot. Baseline and shocked closures stay apart because their required
+    inputs differ. Constant leaves are read from `data`.
     """
     functions: list[str] = []
     runtime: set[str] = set()
-    data_imports: set[str] = set()
+    uses_data = False
+    needs_sequence = False
     compute_names: list[str] = []
     deps_map = dict(deps)
     scc_map_dict = dict(scc_map) if scc_map is not None else None
@@ -721,13 +786,15 @@ def emit_api_module(
         compute_names.extend(
             output.compute_name or f"compute_{output.series_id}" for output in members
         )
+        if any(not catalog.get(sid).is_scalar for sid in key):
+            needs_sequence = True
         if len(members) == 1:
             source, used_runtime, used_data = emit_orchestrator(
                 members[0], catalog=catalog, deps=deps, scc_map=scc_map
             )
             functions.append(source)
             runtime |= used_runtime
-            data_imports |= used_data
+            uses_data = uses_data or used_data
             continue
         runner_name = f"_run_{runner_index}"
         runner_index += 1
@@ -740,37 +807,40 @@ def emit_api_module(
         )
         functions.append(runner_source)
         runtime |= used_runtime
-        data_imports |= used_data
+        uses_data = uses_data or used_data
         runner_leaves = _union_leaves(members, catalog=catalog, deps=deps_map)
         for output in members:
-            source, used_data = _emit_thin_orchestrator(
-                output,
-                runner_name=runner_name,
-                outputs=members,
-                runner_leaves=runner_leaves,
-                catalog=catalog,
-                deps=deps_map,
+            functions.append(
+                _emit_thin_orchestrator(
+                    output,
+                    runner_name=runner_name,
+                    outputs=members,
+                    runner_leaves=runner_leaves,
+                    catalog=catalog,
+                    deps=deps_map,
+                )
             )
-            functions.append(source)
-            data_imports |= used_data
     lines = [
         '"""Output orchestrators for the inverted graph.',
         "",
-        "Each `compute_*` function takes the leaf closure of its subgraph.",
+        "Each `compute_*` function takes the input leaf closure of its subgraph.",
+        "Constant leaves are read from `data` and listed on `__constants__`.",
         "There is no evaluation context and no input setters.",
         '"""',
         "",
         "from __future__ import annotations",
         "",
-        "from collections.abc import Sequence",
-        "",
     ]
+    stdlib: list[str] = []
+    if needs_sequence:
+        stdlib.append("from collections.abc import Sequence")
     if _uses_datetime(catalog):
-        lines.extend(["from datetime import datetime", ""])
+        stdlib.append("from datetime import datetime")
+    if stdlib:
+        lines.extend([*stdlib, ""])
+    if uses_data:
+        lines.append("from . import data")
     lines.append("from . import internals")
-    if data_imports:
-        imported = ", ".join(sorted(data_imports))
-        lines.append(f"from .data import {imported}")
     if runtime:
         lines.append(f"from .runtime import {', '.join(sorted(runtime))}")
     lines.append("")
@@ -797,6 +867,8 @@ def emit_init_module(catalog: SeriesCatalog) -> str:
         '"""Inverted-tree mechanical extraction."""',
         "",
         "from __future__ import annotations",
+        "",
+        "from . import data",
         "",
     ]
     if import_line:
