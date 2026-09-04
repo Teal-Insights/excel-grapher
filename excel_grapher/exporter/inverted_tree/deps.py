@@ -27,6 +27,7 @@ from excel_grapher.core.formula_ast import (
     UnaryOpNode,
     resolve_cell_ref,
 )
+from excel_grapher.exporter.inverted_tree.access import is_seed_access
 from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
     SeriesCatalog,
@@ -295,7 +296,6 @@ def _adjacent_schedule_ref(
         ast = node_formula_ast(graph, host_cell)
     except InvertedTreeExportError:
         return None
-    host_coord = schedule_coord(host_cell, catalog)
     matched: list[CanonicalAddress] = []
     for ref in _iter_cell_ref_nodes(ast):
         if not _ref_shifts_with_host(ref, host_cell):
@@ -304,15 +304,16 @@ def _adjacent_schedule_ref(
         owner = catalog.series_for(address)
         if owner is None or owner.series_id == series.series_id:
             continue
-        if schedule_coord(address, catalog) != host_coord + delta:
-            continue
-        if _overlapping_schedule_peer(series, owner, catalog):
+        if not is_seed_access(series, owner, address, host_cell, catalog, delta=delta):
             continue
         matched.append(address)
     if len(matched) == 1:
         return matched[0]
     if matched:
-        return matched[0]
+        raise InvertedTreeExportError(
+            f"series {series.series_id!r} cell {host_cell}: "
+            f"ambiguous seed candidates {tuple(matched)}"
+        )
     if index != _boundary_index(series, catalog, delta=delta):
         return None
     return _non_peer_seed_ref(ast, host_cell, series, catalog)
@@ -326,10 +327,9 @@ def predecessor_address(
 ) -> CanonicalAddress | None:
     """Return the lagged predecessor of `series.cells[index]`, if any.
 
-    For index > 0 this is the previous cell in the series. For index 0 it is a
-    relative read of another bound series whose `schedule_coord` is the host's
-    coordinate - 1 (the year-0 seed of a recursive path). An absolute selector
-    read by every member is not a seed.
+    For index > 0 this is the previous cell in the series. For index 0 a seed
+    is a relative read of a producer with no schedule axis, or of one at
+    schedule-axis coordinate host - 1. Everything else is an aligned read.
     """
     if index < 0 or index >= len(series.cells):
         return None
@@ -347,9 +347,8 @@ def successor_address(
     """Return the look-ahead successor of `series.cells[index]`, if any.
 
     For index < len(series.cells) - 1 this is the next cell in the series. For
-    the last index it is a relative read of another bound series whose
-    `schedule_coord` is the host's coordinate + 1 (the terminal of a backward
-    path).
+    the last index a terminal is a relative read of a producer with no
+    schedule axis, or of one at schedule-axis coordinate host + 1.
     """
     if index < 0 or index >= len(series.cells):
         return None

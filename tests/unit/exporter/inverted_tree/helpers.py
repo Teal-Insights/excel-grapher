@@ -178,6 +178,7 @@ def inverted_graph_parts(
         load_values=True,
         use_cached_dynamic_refs=dynamic_refs is None,
         dynamic_refs=dynamic_refs,
+        capture_dependency_provenance=True,
     )
     catalog = build_catalog(bindings, workbook=workbook, graph=graph)
     return catalog, collect_all_deps(catalog, graph), graph
@@ -198,6 +199,7 @@ def generate_inverted(
         load_values=True,
         use_cached_dynamic_refs=dynamic_refs is None,
         dynamic_refs=dynamic_refs,
+        capture_dependency_provenance=True,
     )
     return generate_inverted_tree_modules(
         graph,
