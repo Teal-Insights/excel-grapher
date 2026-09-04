@@ -29,6 +29,8 @@ from excel_grapher.exporter.inverted_tree import runtime as inverted_runtime
 from excel_grapher.exporter.inverted_tree.access import (
     AccessFunction,
     AxisAccess,
+    catalog_index_affine,
+    classify_cell_ref_access,
     classify_producer_access,
     indirect_argument_addresses,
     indirect_target_addresses,
@@ -240,14 +242,60 @@ def _is_scan_prior_ref(address: CanonicalAddress, ctx: EmitContext) -> bool:
 
 
 def _emit_cell_ref(node: CellRefNode, ctx: EmitContext) -> str:
-    return _emit_address(as_canonical(resolve_cell_ref(node, ctx.host_cell)), ctx)
+    return _emit_address(as_canonical(resolve_cell_ref(node, ctx.host_cell)), ctx, ref=node)
 
 
-def _emit_address(address: CanonicalAddress, ctx: EmitContext) -> str:
+def _statement_cells(ctx: EmitContext) -> tuple[CanonicalAddress, ...] | None:
+    return next(
+        (stmt.cells for stmt in ctx.host.statements if ctx.host_cell in stmt.cells),
+        None,
+    )
+
+
+def _static_catalog_literal(
+    owner: BoundSeries,
+    address: CanonicalAddress,
+    ctx: EmitContext,
+    ref: CellRefNode | None,
+) -> str | None:
+    """Return a literal catalog index when `ref` is static with `coeff = 0`."""
+    if (
+        ref is None
+        or ctx.graph is None
+        or ctx.fused_mode
+        or owner.is_scalar
+        or owner.series_id == ctx.host.series_id
+        or owner.series_id in ctx.deps.aligned_ids
+    ):
+        return None
+    idx = owner.index_of(address)
+    if idx is None:
+        return None
+    try:
+        access = classify_cell_ref_access(
+            ctx.host,
+            owner,
+            ctx.catalog,
+            ctx.graph,
+            host_cell=ctx.host_cell,
+            ref=ref,
+            cells=_statement_cells(ctx),
+        )
+        coeff, offset = catalog_index_affine(access)
+    except InvertedTreeExportError:
+        return None
+    if coeff != 0:
+        return None
+    return str(offset)
+
+
+def _emit_address(
+    address: CanonicalAddress, ctx: EmitContext, *, ref: CellRefNode | None = None
+) -> str:
     if ctx.fused_mode:
-        return _emit_fused_ref(address, ctx)
+        return _emit_fused_ref(address, ctx, ref=ref)
     if ctx.instance_mode:
-        return _emit_instance_ref(address, ctx)
+        return _emit_instance_ref(address, ctx, ref=ref)
     if ctx.prior_var and _is_scan_prior_ref(address, ctx):
         return ctx.prior_var
     owner = ctx.catalog.require_series_for(address)
@@ -260,6 +308,9 @@ def _emit_address(address: CanonicalAddress, ctx: EmitContext) -> str:
     name = ctx.param(owner.series_id)
     if owner.is_scalar:
         return name
+    literal = _static_catalog_literal(owner, address, ctx, ref)
+    if literal is not None:
+        return f"{name}[{literal}]"
     idx = owner.index_of(address)
     if owner.series_id in ctx.deps.lagged_ids and ctx.index_var is not None and idx is not None:
         offset = idx - ctx.host_index
@@ -414,8 +465,14 @@ def _area_stride_expr(stride: int, delta_area: int) -> str:
     return f"({area}) * {stride}"
 
 
-def _emit_fused_ref(address: CanonicalAddress, ctx: EmitContext) -> str:
+def _emit_fused_ref(
+    address: CanonicalAddress, ctx: EmitContext, *, ref: CellRefNode | None = None
+) -> str:
     owner = ctx.catalog.require_series_for(address)
+    literal = _static_catalog_literal(owner, address, ctx, ref)
+    if literal is not None:
+        ctx.use("live_measure")
+        return f"live_measure({ctx.param(owner.series_id)}[{literal}])"
     idx = owner.index_of(address)
     if idx is None or ctx.fused_plan is None:
         raise InvertedTreeExportError(
@@ -472,8 +529,13 @@ def _emit_fused_ref(address: CanonicalAddress, ctx: EmitContext) -> str:
     return f"live_measure({name}[{index_expr}])"
 
 
-def _emit_instance_ref(address: CanonicalAddress, ctx: EmitContext) -> str:
+def _emit_instance_ref(
+    address: CanonicalAddress, ctx: EmitContext, *, ref: CellRefNode | None = None
+) -> str:
     owner = ctx.catalog.require_series_for(address)
+    literal = _static_catalog_literal(owner, address, ctx, ref)
+    if literal is not None and owner.series_id not in ctx.scc_ids:
+        return f"{ctx.param(owner.series_id)}[{literal}]"
     idx = owner.index_of(address)
     if idx is None:
         raise InvertedTreeExportError(

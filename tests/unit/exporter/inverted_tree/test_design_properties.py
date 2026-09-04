@@ -92,6 +92,10 @@ from tests.unit.exporter.inverted_tree.test_shape_a27_range_aggregates import (
     range_sum_bindings,
     range_sum_workbook,
 )
+from tests.unit.exporter.inverted_tree.test_shape_a28_label_ladder import (
+    label_ladder_bindings,
+    label_ladder_workbook,
+)
 
 
 def _values_close(got: object, expected: object) -> None:
@@ -236,6 +240,7 @@ _CORPUS: list[tuple[str, Callable[[Path], Path], Callable[[], dict[str, Any]]]] 
     ("indirect_literal", _literal_workbook, _literal_bindings),
     ("compare_rank", _compare_workbook, _compare_bindings),
     ("range_sum", range_sum_workbook, range_sum_bindings),
+    ("label_ladder", label_ladder_workbook, label_ladder_bindings),
 ]
 
 
@@ -360,6 +365,7 @@ _ORIENTABLE = [
     ("a22_shift_k", _a22_shift_k_workbook, _a22_shift_k_bindings),
     ("country_table", _country_table_workbook, _country_table_bindings),
     ("range_sum", range_sum_workbook, range_sum_bindings),
+    ("label_ladder", label_ladder_workbook, label_ladder_bindings),
 ]
 
 
