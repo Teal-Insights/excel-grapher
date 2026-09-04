@@ -50,15 +50,25 @@ from excel_grapher.exporter.inverted_tree.schedule import (
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
 
-_COMPARE_OPS = {
-    "=": "==",
-    "<>": "!=",
-    "<": "<",
-    ">": ">",
-    "<=": "<=",
-    ">=": ">=",
+_ARITHMETIC_HELPERS = {
+    "+": "xl_add",
+    "-": "xl_sub",
+    "*": "xl_mul",
+    "/": "xl_div",
+    "^": "xl_pow",
 }
-_ARITHMETIC_OPS = {"+", "-", "*", "/"}
+_COMPARE_HELPERS = {
+    "=": "xl_eq",
+    "<>": "xl_ne",
+    "<": "xl_lt",
+    ">": "xl_gt",
+    "<=": "xl_le",
+    ">=": "xl_ge",
+}
+_UNARY_HELPERS = {
+    "-": "xl_neg",
+    "+": "xl_pos",
+}
 _RUNTIME_FUNCTIONS = frozenset(
     name
     for name, value in vars(inverted_runtime).items()
@@ -377,27 +387,21 @@ def _emit_binary(node: BinaryOpNode, ctx: EmitContext) -> str:
     left = emit_expr(node.left, ctx)
     right = emit_expr(node.right, ctx)
     op = node.op
-    if op == "/":
-        return f"{ctx.use('xl_div')}({left}, {right})"
-    if op == "^":
-        return f"({left} ** {right})"
     if op == "&":
         return f"(str({left}) + str({right}))"
-    if op in _ARITHMETIC_OPS:
-        return f"({left} {op} {right})"
-    if op in _COMPARE_OPS:
-        return f"({left} {_COMPARE_OPS[op]} {right})"
+    helper = _ARITHMETIC_HELPERS.get(op) or _COMPARE_HELPERS.get(op)
+    if helper is not None:
+        return f"{ctx.use(helper)}({left}, {right})"
     raise InvertedTreeExportError(f"series {ctx.host.series_id!r}: unsupported operator {op!r}")
 
 
 def _emit_unary(node: UnaryOpNode, ctx: EmitContext) -> str:
     operand = emit_expr(node.operand, ctx)
-    if node.op == "-":
-        return f"(-{operand})"
-    if node.op == "+":
-        return operand
+    helper = _UNARY_HELPERS.get(node.op)
+    if helper is not None:
+        return f"{ctx.use(helper)}({operand})"
     if node.op == "%":
-        return f"({operand} / 100.0)"
+        return f"{ctx.use('xl_div')}({operand}, 100)"
     raise InvertedTreeExportError(
         f"series {ctx.host.series_id!r}: unsupported unary operator {node.op!r}"
     )
