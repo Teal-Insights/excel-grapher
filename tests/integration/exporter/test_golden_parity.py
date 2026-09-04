@@ -42,7 +42,7 @@ def test_golden_parity_mixed_features_small_graph() -> None:
         _make_node("S!A1", None, "0"),  # numeric string
         _make_node("S!A2", None, 0),
         _make_node("S!A3", None, "FALSE"),
-        _make_node("S!B1", "=S!A1=S!A2", None),  # True via numeric-string coercion
+        _make_node("S!B1", "=S!A1=S!A2", None),  # False: text vs number (type-rank)
         _make_node("S!B2", "=IF(S!A3,1,2)", None),  # 2 via Excel boolean coercion
         _make_node("S!B3", "=IFERROR(1/0,99)", None),  # 99 (DIV/0! caught)
         _make_node("S!B4", "=SUM(S!B2,S!B3)", None),  # 101
@@ -54,7 +54,7 @@ def test_golden_parity_mixed_features_small_graph() -> None:
     targets = ["S!B1", "S!B2", "S!B3", "S!B4", "S!C1"]
     result = assert_codegen_matches_evaluator(graph, targets)
 
-    assert result.generated_results["S!B1"] is True
+    assert result.generated_results["S!B1"] is False
     assert result.generated_results["S!B2"] == 2
     assert result.generated_results["S!B3"] == 99
     assert result.generated_results["S!B4"] == 101.0

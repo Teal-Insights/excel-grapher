@@ -275,3 +275,20 @@ def xl_pos(value: FormulaValue) -> FormulaValue:
 def xl_percent(value: FormulaValue) -> FormulaValue:
     """Excel postfix percent operator (%): divide a numeric value by 100."""
     return cast(FormulaValue, map_unary("%", value))
+
+
+OPERATOR_TABLE = {
+    "+": xl_add,
+    "-": xl_sub,
+    "*": xl_mul,
+    "/": xl_div,
+    "^": xl_pow,
+    "=": xl_eq,
+    "<>": xl_ne,
+    "<": xl_lt,
+    ">": xl_gt,
+    "<=": xl_le,
+    ">=": xl_ge,
+    "-u": xl_neg,
+    "+u": xl_pos,
+}

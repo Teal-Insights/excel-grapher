@@ -159,6 +159,53 @@ def _a22_shift_k_bindings() -> dict[str, Any]:
     return a22_shift_k._stride_k_bindings(5)
 
 
+def _compare_workbook(tmp_path: Path) -> Path:
+    """Type-rank comparison + arithmetic coercion (#651)."""
+    return write_workbook(
+        tmp_path / "compare_rank.xlsx",
+        {
+            "Engine": {
+                "A1": 1,
+                "B1": 2,
+                "C1": 3,
+                "D1": 4,
+                "E1": 5,
+                "F1": 6,
+                "G1": 7,
+                "A2": True,
+                "B2": "10",
+                "C2": "",
+                "D2": "abc",
+                "E2": "a",
+                "F2": "10",
+                "G2": True,
+                "A3": 100,
+                "B3": 10,
+                "C3": 0,
+                "D3": "ABC",
+                "E3": 1,
+                "F3": 2,
+                "G3": 1,
+                "A4": "=IF(A2>A3,1,0)",
+                "B4": "=IF(B2=B3,1,0)",
+                "C4": "=IF(C2=C3,1,0)",
+                "D4": "=IF(D2=D3,1,0)",
+                "E4": "=IF(E2<E3,1,0)",
+                "F4": "=F2+F3",
+                "G4": "=IF(G2=G3,1,0)",
+            }
+        },
+    )
+
+
+def _compare_bindings() -> dict[str, Any]:
+    return bindings_document(
+        series_entry("left", "Engine!A2:G2", layout="series", direction="input", header_row=1),
+        series_entry("right", "Engine!A3:G3", layout="series", direction="input", header_row=1),
+        series_entry("result", "Engine!A4:G4", layout="series", direction="output", header_row=1),
+    )
+
+
 # Cases a property test cannot yet pass must use `pytest.mark.xfail(strict=True)`,
 # not a silent filter (#633, #640). `_CORPUS` is the full oracle.
 _CORPUS: list[tuple[str, Callable[[Path], Path], Callable[[], dict[str, Any]]]] = [
@@ -176,6 +223,7 @@ _CORPUS: list[tuple[str, Callable[[Path], Path], Callable[[], dict[str, Any]]]] 
     ("a22_guarded", a22_guarded._series_may_cycle_workbook, a22_guarded._series_may_cycle_bindings),
     ("a22_shift_k", _a22_shift_k_workbook, _a22_shift_k_bindings),
     ("country_table", _country_table_workbook, _country_table_bindings),
+    ("compare_rank", _compare_workbook, _compare_bindings),
 ]
 
 

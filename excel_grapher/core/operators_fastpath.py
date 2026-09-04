@@ -40,6 +40,40 @@ def _may_hold_error(cell_types: frozenset[type] | None) -> bool:
     return cell_types is None or any(issubclass(kind, XlError) for kind in cell_types)
 
 
+def _is_number_type(kind: type) -> bool:
+    """True for int/float (including NumPy), excluding `bool`."""
+    if issubclass(kind, bool):
+        return False
+    return issubclass(kind, (int, float))
+
+
+def _all_numbers_or_blank(cell_types: frozenset[type] | None) -> bool:
+    """True when every cell is a number or blank (`None`).
+
+    Comparison does not coerce text or logicals to numbers (Excel type-rank).
+    """
+    if cell_types is None:
+        return False
+    return all(kind is type(None) or _is_number_type(kind) for kind in cell_types)
+
+
+def _as_compare_float64(arr: np.ndarray) -> np.ndarray | None:
+    """Map number/blank cells to float64 (`None` → `0`) without cross-type coerce."""
+    direct = _try_asarray_float64(arr)
+    if direct is not None:
+        return direct
+    flat = arr.ravel()
+    out = np.empty(flat.size, dtype=np.float64)
+    for index, value in enumerate(flat):
+        if value is None:
+            out[index] = 0.0
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        out[index] = float(value)
+    return out.reshape(arr.shape)
+
+
 def _all_plain_strings(cell_types: frozenset[type] | None) -> bool:
     """Whether every cell is text; ``XlError`` is a ``str`` subclass but not text."""
     if cell_types is None:
@@ -369,8 +403,7 @@ def try_fastpath_compare_array(
 
     1. Fail-fast scan for embedded ``XlError`` values (C-order, left wins per cell).
     2. String path when both sides are plain ``str`` cells (scalar-broadcast aware).
-    3. Numeric path when both sides batch-coerce to float64 (including all-string
-       numeric text columns).
+    3. Numeric path when both sides are numbers or blanks (no text/logical coerce).
 
     Smaller arrays and mixed-type cells fall through to the per-cell reference loop.
     """
@@ -390,13 +423,13 @@ def try_fastpath_compare_array(
         if string_result is not None:
             return string_result
 
-    left_numeric = batch_coerce_to_float64(arr_left, left_types)
-    if left_numeric is None:
-        return None
-    right_numeric = batch_coerce_to_float64(arr_right, right_types)
-    if right_numeric is None:
-        return None
-    return _numpy_compare(op, left_numeric, right_numeric)
+    if _all_numbers_or_blank(left_types) and _all_numbers_or_blank(right_types):
+        left_numeric = _as_compare_float64(arr_left)
+        right_numeric = _as_compare_float64(arr_right)
+        if left_numeric is None or right_numeric is None:
+            return None
+        return _numpy_compare(op, left_numeric, right_numeric)
+    return None
 
 
 def try_fastpath_arithmetic_array(

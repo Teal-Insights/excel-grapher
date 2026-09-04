@@ -27,6 +27,7 @@ from excel_grapher.core.formula_ast import (
     UnaryOpNode,
     resolve_cell_ref,
 )
+from excel_grapher.exporter.inverted_tree.access import is_seed_access, unique_seed_or_none
 from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
     SeriesCatalog,
@@ -211,24 +212,6 @@ def _has_schedule_axis(series: BoundSeries, catalog: SeriesCatalog) -> bool:
     return fields is not None and "TIME_PERIOD" in fields
 
 
-def _overlapping_schedule_peer(
-    host: BoundSeries,
-    producer: BoundSeries,
-    catalog: SeriesCatalog,
-) -> bool:
-    """True when `host` and `producer` share a key domain and a schedule coord.
-
-    An overlapping peer is a lagged or aligned series, not a year-0 seed.
-    """
-    host_fields = preferred_fields(host, catalog)
-    prod_fields = preferred_fields(producer, catalog)
-    if host_fields is None or host_fields != prod_fields:
-        return False
-    host_coords = {schedule_coord(cell, catalog) for cell in host.cells}
-    prod_coords = {schedule_coord(cell, catalog) for cell in producer.cells}
-    return bool(host_coords & prod_coords)
-
-
 def _boundary_index(series: BoundSeries, catalog: SeriesCatalog, *, delta: int) -> int:
     """Return the catalog index of the min (`delta < 0`) or max schedule coord."""
     key = min if delta < 0 else max
@@ -295,7 +278,6 @@ def _adjacent_schedule_ref(
         ast = node_formula_ast(graph, host_cell)
     except InvertedTreeExportError:
         return None
-    host_coord = schedule_coord(host_cell, catalog)
     matched: list[CanonicalAddress] = []
     for ref in _iter_cell_ref_nodes(ast):
         if not _ref_shifts_with_host(ref, host_cell):
@@ -304,15 +286,12 @@ def _adjacent_schedule_ref(
         owner = catalog.series_for(address)
         if owner is None or owner.series_id == series.series_id:
             continue
-        if schedule_coord(address, catalog) != host_coord + delta:
-            continue
-        if _overlapping_schedule_peer(series, owner, catalog):
+        if not is_seed_access(series, owner, address, host_cell, catalog, delta=delta):
             continue
         matched.append(address)
-    if len(matched) == 1:
-        return matched[0]
-    if matched:
-        return matched[0]
+    unique = unique_seed_or_none(series, host_cell, catalog, matched, delta=delta)
+    if unique is not None or matched:
+        return unique
     if index != _boundary_index(series, catalog, delta=delta):
         return None
     return _non_peer_seed_ref(ast, host_cell, series, catalog)
@@ -326,10 +305,9 @@ def predecessor_address(
 ) -> CanonicalAddress | None:
     """Return the lagged predecessor of `series.cells[index]`, if any.
 
-    For index > 0 this is the previous cell in the series. For index 0 it is a
-    relative read of another bound series whose `schedule_coord` is the host's
-    coordinate - 1 (the year-0 seed of a recursive path). An absolute selector
-    read by every member is not a seed.
+    For index > 0 this is the previous cell in the series. For index 0 a seed
+    is a relative read of a producer with no schedule axis, or of one at
+    schedule-axis coordinate host - 1. Everything else is an aligned read.
     """
     if index < 0 or index >= len(series.cells):
         return None
@@ -347,9 +325,8 @@ def successor_address(
     """Return the look-ahead successor of `series.cells[index]`, if any.
 
     For index < len(series.cells) - 1 this is the next cell in the series. For
-    the last index it is a relative read of another bound series whose
-    `schedule_coord` is the host's coordinate + 1 (the terminal of a backward
-    path).
+    the last index a terminal is a relative read of a producer with no
+    schedule axis, or of one at schedule-axis coordinate host + 1.
     """
     if index < 0 or index >= len(series.cells):
         return None

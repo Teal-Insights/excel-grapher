@@ -18,6 +18,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
     predecessor_address,
     successor_address,
 )
+from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
@@ -291,3 +292,104 @@ def test_successor_terminal_uses_schedule_not_orientation_guess(tmp_path: Path) 
     assert successor_address(value, last, catalog, graph) == catalog.get("terminal").cells[0]
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a24_term")
     assert pkg.compute_value(terminal=100.0) == pytest.approx((72.9, 81.0, 90.0))
+
+
+def test_two_unkeyed_scalars_are_not_an_ambiguous_seed(tmp_path: Path) -> None:
+    """A formula that reads two scalars has no unique seed (a5 shocked_path)."""
+    workbook = write_oriented_workbook(
+        tmp_path / "a24_two_scalars.xlsx",
+        {
+            "Inputs": {"A1": 10.0, "B1": 2},
+            "Engine": {
+                "C4": 1,
+                "D4": 2,
+                "C5": 1,
+                "D5": 2,
+                "C7": "=Inputs!A1+IF(Engine!C5>=Inputs!B1,1,0)",
+                "D7": "=Inputs!A1+IF(Engine!D5>=Inputs!B1,1,0)",
+            },
+        },
+        orientation="horizontal",
+    )
+    document = bindings_document(
+        series_entry("value", "Inputs!A1", layout="scalar", direction="input"),
+        series_entry("shock_year", "Inputs!B1", layout="scalar", direction="input", dtype="int"),
+        series_entry(
+            "engine_year_labels",
+            "Engine!C5:D5",
+            layout="series",
+            direction="constant",
+            dtype="int",
+            header_row=4,
+        ),
+        series_entry(
+            "shocked_path",
+            "Engine!C7:D7",
+            layout="series",
+            direction="output",
+            header_row=5,
+        ),
+    )
+    catalog, deps, graph = inverted_graph_parts(workbook, document)
+    assert predecessor_address(catalog.get("shocked_path"), 0, catalog, graph) is None
+    assert deps["shocked_path"].seed_id is None
+    assert deps["shocked_path"].is_scan is False
+
+
+def _nest_entry(series_id: str, data_range: str, *, header_row: int, label_column: str) -> dict:
+    sheet = data_range.split("!", 1)[0]
+    return {
+        "id": series_id,
+        "sheet": sheet,
+        "data_range": data_range,
+        "layout": "matrix",
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "float",
+                "bind": {"kind": "data_cell", "read": "float"},
+            },
+            "dimensions": [
+                {
+                    "concept": "COUNTRY",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "row_label", "label_column": label_column, "read": "string"},
+                },
+                {
+                    "concept": "TIME_PERIOD",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "column_header", "header_row": header_row, "read": "int"},
+                },
+            ],
+        },
+        "key": ["COUNTRY", "TIME_PERIOD"],
+        "input": {"setter": {"name": f"set_{series_id}"}},
+    }
+
+
+def test_two_schedule_adjacent_seeds_fail_closed(tmp_path: Path) -> None:
+    """Two producers at host − 1 are an ambiguous seed, not a first-wins pick."""
+    workbook = write_oriented_workbook(
+        tmp_path / "a24_two_seeds.xlsx",
+        {
+            "Engine": {
+                "B1": 2008,
+                "C1": 2009,
+                "A2": "US",
+                "A3": "EU",
+                "B2": 10.0,
+                "B3": 20.0,
+                "C2": "=B2+B3",
+            },
+        },
+        orientation="horizontal",
+    )
+    document = bindings_document(
+        _nest_entry("seed_a", "Engine!B2", header_row=1, label_column="A"),
+        _nest_entry("seed_b", "Engine!B3", header_row=1, label_column="A"),
+        series_entry("path", "Engine!C2", layout="series", direction="output", header_row=1),
+    )
+    with pytest.raises(InvertedTreeExportError, match="ambiguous seed"):
+        inverted_graph_parts(workbook, document)

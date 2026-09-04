@@ -24,6 +24,10 @@ from excel_grapher.core.formula_ast import (
 )
 from excel_grapher.core.formula_shape import fingerprint_formula_shape
 from excel_grapher.exporter.inverted_tree import runtime as inverted_runtime
+from excel_grapher.exporter.inverted_tree.access import (
+    AccessFunction,
+    classify_producer_access,
+)
 from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
     SeriesCatalog,
@@ -571,10 +575,25 @@ def _block_anchor_map(
     return fit
 
 
+def _access_or_fail(producer: BoundSeries, ctx: EmitContext) -> AccessFunction:
+    if ctx.graph is None:
+        raise _host_export_error(ctx, f"producer {producer.series_id!r} has no graph to classify")
+    return classify_producer_access(ctx.host, producer, ctx.catalog, ctx.graph)
+
+
 def _emit_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
     if len(node.args) < 3:
         raise _host_export_error(ctx, "OFFSET expects anchor, rows, cols")
     table = _series_for_ref(node.args[0], ctx)
+    try:
+        _access_or_fail(table, ctx)
+    except InvertedTreeExportError as exc:
+        if table.layout != "matrix":
+            raise _host_export_error(
+                ctx,
+                f"OFFSET row offset into non-matrix series {table.series_id!r} is not supported",
+            ) from exc
+        raise
     rows = emit_expr(node.args[1], ctx)
     cols = emit_expr(node.args[2], ctx)
     name = ctx.param(table.series_id)
@@ -606,6 +625,7 @@ def _emit_index_into_block(
     ctx: EmitContext,
     slot: int,
 ) -> str:
+    _access_or_fail(block, ctx)
     width = block.block_width
     coeff, offset = _block_anchor_map(block, ctx, slot, start)
     anchor_expr = _linear_index_expr(coeff, offset, ctx.index_var)
@@ -628,17 +648,17 @@ def _emit_index_column_arg(col_arg: AstNode | None, ctx: EmitContext) -> tuple[s
 def _emit_index(node: FunctionCallNode, ctx: EmitContext) -> str:
     if len(node.args) < 2:
         raise _host_export_error(ctx, "INDEX expects a range and row")
-    row_expr = emit_expr(node.args[1], ctx)
-    col_expr, col_literal = _emit_index_column_arg(
-        node.args[2] if len(node.args) > 2 else None, ctx
-    )
+    row_arg = node.args[1]
+    col_arg = node.args[2] if len(node.args) > 2 else None
+    row_expr = emit_expr(row_arg, ctx)
+    col_expr, col_literal = _emit_index_column_arg(col_arg, ctx)
     if isinstance(node.args[0], RangeNode):
-        slot = ctx.lookup_anchor_slot
-        ctx.lookup_anchor_slot += 1
         start = as_canonical(resolve_cell_ref(node.args[0].start_ref, ctx.host_cell))
         end = as_canonical(resolve_cell_ref(node.args[0].end_ref, ctx.host_cell))
         covered_full = covering_series(ctx.catalog, iter_range_addresses(start, end))
         if covered_full is not None:
+            slot = ctx.lookup_anchor_slot
+            ctx.lookup_anchor_slot += 1
             return _emit_index_into_block(covered_full, start, row_expr, col_expr, ctx, slot)
         if col_literal is None:
             raise _host_export_error(
