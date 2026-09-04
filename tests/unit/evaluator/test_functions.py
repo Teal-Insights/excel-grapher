@@ -821,3 +821,22 @@ def test_xlfn_prefixed_formulas_match_bare_spellings(
     assert bare_result == expected
     assert prefixed_result == expected
     assert bare_result == prefixed_result
+
+
+def test_indirect_literal_address_returns_target_value() -> None:
+    graph = _make_graph(
+        _make_node("S!A1", None, 42),
+        _make_node("S!B1", '=INDIRECT("S!A1")', None),
+    )
+    with FormulaEvaluator(graph) as ev:
+        assert ev.evaluate("S!B1") == 42
+
+
+def test_indirect_cell_argument_returns_target_value() -> None:
+    graph = _make_graph(
+        _make_node("S!A1", None, 42),
+        _make_node("S!B1", None, "S!A1"),
+        _make_node("S!C1", "=INDIRECT(S!B1)", None),
+    )
+    with FormulaEvaluator(graph) as ev:
+        assert ev.evaluate("S!C1") == 42

@@ -41,9 +41,9 @@ Legend: **port** = inverted-tree should grow the feature; **bindings-equivalent*
 | Whole-column / whole-row refs | yes | fail closed (`WholeColumnNode` / `WholeRowNode`) | **port** if a corpus workbook needs them; fail closed until then. |
 | Cross-sheet / 3-D ranges | yes | fail closed | **port** if a corpus workbook needs them; fail closed until then. |
 | Unions / `SUM` of a range | yes | fail closed (bare range or missing `xl_sum`) | **port** per function as the corpus requires (same as #606 `EXP`). |
-| `INDIRECT` | `DynamicRefConfig` + runtime | graph may resolve edges; AST still `INDIRECT` → fail closed | **port** as graph-derived access (INDEX/OFFSET pattern from #656) when a corpus needs it. |
+| `INDIRECT` | `DynamicRefConfig` + runtime | graph-derived access (`xl_at` / catalog index); fail closed when edges do not fit | **port shipped** (#668). Literal address and bound-cell argument; no `xl_indirect`. |
 | Array formulas / spill (#284), `SUMPRODUCT`, `SUM(IF(…))` (#483) | yes / partial | fail closed | **port** with [#284](https://github.com/Teal-Insights/excel-grapher/issues/284) / [#483](https://github.com/Teal-Insights/excel-grapher/issues/483); not inverted-tree-specific. |
-| Excel function coverage | `core/` + `export_runtime/` library | generic `xl_<name>` only when `runtime.py` defines it; `IF`/`CHOOSE`/`INDEX`/`MATCH`/`OFFSET`/`EXP` special-cased | **port** incrementally, fail closed otherwise. Do not embed the ctx library. |
+| Excel function coverage | `core/` + `export_runtime/` library | generic `xl_<name>` only when `runtime.py` defines it; `IF`/`CHOOSE`/`INDEX`/`MATCH`/`OFFSET`/`INDIRECT`/`EXP` special-cased | **port** incrementally, fail closed otherwise. Do not embed the ctx library. |
 | Error semantics (#326) | `XlErrorException` raise-only | `XlError` at operators; series members store `err.code` measures | **drop** as a ctx convention. Inverted-tree's measure+raise split is intentional (#597 A7). [#326](https://github.com/Teal-Insights/excel-grapher/issues/326) remains ctx-export work. |
 | Pass-1 semantic internals (#595) | yes | inverted-tree helpers replace them | **drop**. Pass-2 LLM naming stays a pipeline concern. |
 | `--smoke-test` in `bindings validate` | setter + Records compute smoke | skipped → **shipped**: calls `compute_*` with `data.py` defaults | **port shipped**. |
@@ -55,6 +55,5 @@ GitHub issues could not be opened from this agent (read-only `gh`). File these i
 
 1. **`input.domain` on inverted-tree arguments** — enum / between / real_between on `compute_*` required inputs.
 2. **Whole-column / whole-row / 3-D range / range-aggregate lowering** — only when a pool workbook fails closed on them; distill a `_CORPUS` toy first.
-3. **`INDIRECT` graph-derived access** — same bar as (2).
 
-Already filed: #663 (constants), #593 (façade), #379 (concept names), #284 (spill), #483 (`SUM(IF)`).
+Already filed: #663 (constants), #593 (façade), #379 (concept names), #284 (spill), #483 (`SUM(IF)`). #668 (`INDIRECT`) shipped.

@@ -26,7 +26,10 @@ from excel_grapher.core.formula_shape import fingerprint_formula_shape
 from excel_grapher.exporter.inverted_tree import runtime as inverted_runtime
 from excel_grapher.exporter.inverted_tree.access import (
     AccessFunction,
+    AxisAccess,
     classify_producer_access,
+    indirect_argument_addresses,
+    indirect_target_addresses,
 )
 from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
@@ -533,6 +536,8 @@ def _emit_function(node: FunctionCallNode, ctx: EmitContext) -> str:
         return _emit_offset(node, ctx)
     if name == "INDEX":
         return _emit_index(node, ctx)
+    if name == "INDIRECT":
+        return _emit_indirect(node, ctx)
     if name == "MATCH":
         return _emit_match(node, ctx)
     if name == "TRUE":
@@ -717,6 +722,37 @@ def _emit_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
             f"OFFSET row offset into non-matrix series {table.series_id!r} is not supported",
         )
     index = f"({cols})" if anchor_expr == "0" else f"({cols}) + ({anchor_expr})"
+    return f"{ctx.use('xl_at')}({name}, {index})"
+
+
+def _indirect_axis_index(axis: AxisAccess, size: int, ctx: EmitContext) -> str:
+    """Return a catalog-axis subscript, or fail closed when it is not static."""
+    if axis.kind == "static":
+        return _linear_index_expr(axis.coeff, axis.offset, ctx.index_var)
+    if axis.kind == "whole" and size == 1:
+        return "0"
+    raise _host_export_error(ctx, "INDIRECT edge sets do not fit a static catalog index")
+
+
+def _emit_indirect(node: FunctionCallNode, ctx: EmitContext) -> str:
+    if ctx.graph is None:
+        raise _host_export_error(ctx, "INDIRECT has no graph to classify")
+    exclude = indirect_argument_addresses(node, ctx.host_cell)
+    targets = indirect_target_addresses(ctx.graph, ctx.host_cell, exclude=tuple(exclude))
+    if not targets:
+        raise _host_export_error(ctx, "INDIRECT has no resolved edges")
+    covered = covering_series(ctx.catalog, targets)
+    if covered is None:
+        raise _host_export_error(ctx, "INDIRECT targets are not one bound series")
+    access = _access_or_fail(covered, ctx)
+    name = ctx.param(covered.series_id)
+    if covered.is_scalar:
+        return name
+    width = covered.block_width
+    n_rows = max(1, (len(covered.cells) + width - 1) // width)
+    row_expr = _indirect_axis_index(access.row, n_rows, ctx)
+    col_expr = _indirect_axis_index(access.col, width, ctx)
+    index = access.flat_index_expr(row_expr, col_expr)
     return f"{ctx.use('xl_at')}({name}, {index})"
 
 

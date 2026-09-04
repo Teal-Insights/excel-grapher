@@ -230,7 +230,11 @@ def test_named_range_formula_expands_to_bound_cell(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("formula", "extra_cells", "match"),
     [
-        ('=INDIRECT("Inputs!A1")', {}, r"no inverted-tree runtime helper|INDIRECT"),
+        (
+            '=INDIRECT("Inputs!Z99")',
+            {"Z99": 9.0},
+            r"INDIRECT|not one bound series|no resolved edges",
+        ),
         (
             "=SUMPRODUCT(Inputs!A1:A2,Inputs!B1:B2)",
             {"A2": 2.0, "B1": 3.0, "B2": 4.0},
