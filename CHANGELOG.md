@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v13.2.1 (2026-09-04)
+
+### Bug Fixes
+
+- **export**: Align inverted-tree data.py annotations with compute_* params
+  ([#674](https://github.com/Teal-Insights/excel-grapher/pull/674),
+  [`43448dc`](https://github.com/Teal-Insights/excel-grapher/commit/43448dccde859c121cd0776e45f27856ad71e36a))
+
+
 ## v13.2.0 (2026-09-04)
 
 ### Features
