@@ -453,6 +453,30 @@ def test_plan_scc_classifies_self_lag_as_rung_1(tmp_path: Path) -> None:
     assert choice.plan.direction == "forward"
 
 
+def test_plan_scc_classifies_reversed_self_lag_as_rung_1(tmp_path: Path) -> None:
+    wb = write_workbook(
+        tmp_path / "rung1_rev.xlsx",
+        {
+            "Engine": {
+                "A1": 2009,
+                "B1": 2010,
+                "C1": 2011,
+                "A2": "=B2*0.9",
+                "B2": "=C2*0.9",
+                "C2": "=100",
+            },
+        },
+    )
+    doc = bindings_document(
+        series_entry("value", "Engine!A2:C2", layout="series", direction="output", header_row=1),
+    )
+    catalog, _deps, graph = inverted_graph_parts(wb, doc)
+    choice = plan_scc(("value",), catalog=catalog, graph=graph)
+    assert choice.rung == 1
+    assert choice.plan is not None
+    assert choice.plan.direction == "reversed"
+
+
 def test_statement_at_union_is_precomputed_coord_map_hit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

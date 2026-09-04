@@ -823,9 +823,9 @@ class SccPlan:
     """Evaluation rung for one SCC, plus the fused plan when the SCC is fusible.
 
     Rungs:
-        0: first-level helper (`emit_helper_body`), including reversed unit scans
-        1: singleton fused forward scan (`emit_rung2_scc`)
-        2: multi-series fused loop (`emit_rung2_scc`)
+        0: first-level helper (`emit_helper_body`)
+        1: single-statement scan (`emit_rung2_scc`), either direction
+        2: multi-statement fused loop (`emit_rung2_scc`)
         3: demand-driven instance evaluation (`emit_rung3_scc`)
     """
 
@@ -843,19 +843,17 @@ def plan_scc(
     """Select the emit rung for `scc`.
 
     Fused classification is `plan_fused_scc`. A singleton that is not a
-    forward fused scan uses `requires_demand_driven` to choose rung 3 vs 0.
-    Tests should assert `plan_scc(...).rung` rather than grepping emitted
-    source for `eval_instance`. Pass `edges` when the catalog has already
-    been walked.
+    fused scan uses `requires_demand_driven` to choose rung 3 vs 0. Tests
+    should assert `plan_scc(...).rung` rather than grepping emitted source
+    for `eval_instance`. Pass `edges` when the catalog has already been
+    walked.
     """
     fused = plan_fused_scc(scc, catalog=catalog, graph=graph, edges=edges)
-    if len(scc) > 1:
-        if fused is not None:
-            return SccPlan(rung=2, plan=fused)
-        return SccPlan(rung=3)
-    if fused is not None and fused.direction == "forward":
-        return SccPlan(rung=1, plan=fused)
-    if requires_demand_driven(catalog.get(scc[0]), catalog=catalog, graph=graph, edges=edges):
+    if fused is not None:
+        return SccPlan(rung=2 if len(scc) > 1 else 1, plan=fused)
+    if len(scc) > 1 or requires_demand_driven(
+        catalog.get(scc[0]), catalog=catalog, graph=graph, edges=edges
+    ):
         return SccPlan(rung=3)
     return SccPlan(rung=0)
 

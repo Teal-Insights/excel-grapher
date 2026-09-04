@@ -30,9 +30,10 @@ from excel_grapher.exporter.inverted_tree.deps import (
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.schedule import (
     IndexSet,
+    Rung,
+    SccPlan,
     build_scc_map,
     indices_to_source,
-    plan_fused_scc,
     plan_scc,
     scan_function_name,
     scc_external_params,
@@ -197,26 +198,45 @@ def _scan_signature(
     return f"def {name}({joined}) -> {ret}:"
 
 
-def _forced_rung_body(
+def _effective_rung(choice: SccPlan, force_rung: Literal[2, 3] | None) -> Rung:
+    """Resolve the emit rung, applying `force_rung` when it is legal."""
+    if force_rung == 3:
+        return 3
+    if force_rung == 2 and choice.plan is not None:
+        return 2 if len(choice.plan.scc) > 1 else 1
+    return choice.rung
+
+
+def _emit_by_rung(
     scc: tuple[str, ...],
     *,
+    series: BoundSeries,
     catalog: SeriesCatalog,
     deps: dict[str, SeriesDeps],
     graph: DependencyGraph,
     edges: Sequence[DependenceEdge],
-    force_rung: Literal[2, 3] | None,
-) -> tuple[list[str], set[str]] | None:
-    """Emit a forced rung, or `None` when `force_rung` is unset."""
-    if force_rung is None:
-        return None
-    if force_rung == 3:
-        return emit_rung3_scc(scc, catalog=catalog, deps=deps, graph=graph, edges=edges)
-    plan = plan_fused_scc(scc, catalog=catalog, graph=graph, edges=edges)
-    if plan is None:
-        raise InvertedTreeExportError(
-            f"force_rung=2 requires a fusible SCC; {list(scc)!r} is not fusible"
-        )
-    return emit_rung2_scc(scc, catalog=catalog, deps=deps, graph=graph, plan=plan, edges=edges)
+    choice: SccPlan,
+    rung: Rung,
+) -> tuple[list[str], set[str]]:
+    """Emit one SCC body by resolved rung."""
+    match rung:
+        case 3:
+            return emit_rung3_scc(scc, catalog=catalog, deps=deps, graph=graph, edges=edges)
+        case 1 | 2:
+            return emit_rung2_scc(
+                scc,
+                catalog=catalog,
+                deps=deps,
+                graph=graph,
+                plan=choice.plan,
+                edges=edges,
+            )
+        case 0:
+            return emit_helper_body(
+                series, catalog=catalog, deps=deps[series.series_id], graph=graph
+            )
+        case _:
+            raise ValueError(f"unknown rung {rung!r}")
 
 
 def emit_internals_module(
@@ -235,98 +255,42 @@ def emit_internals_module(
     functions: list[str] = []
     emitted_scans: set[tuple[str, ...]] = set()
     edges = catalog_edges.edges
+    deps_map = dict(deps)
     for series in catalog.formula_series():
         info = deps[series.series_id]
         scc = scc_map.get(series.series_id, (series.series_id,))
+        if len(scc) > 1 and scc in emitted_scans:
+            continue
         choice = plan_scc(scc, catalog=catalog, graph=graph, edges=edges)
-        deps_map = dict(deps)
-        forced = _forced_rung_body(
+        rung = _effective_rung(choice, force_rung)
+        body, used = _emit_by_rung(
             scc,
+            series=series,
             catalog=catalog,
             deps=deps_map,
             graph=graph,
             edges=edges,
-            force_rung=force_rung,
+            choice=choice,
+            rung=rung,
         )
-        if len(scc) > 1:
-            param_ids = scc_external_params(scc, deps, catalog.order)
-            if scc not in emitted_scans:
-                emitted_scans.add(scc)
-                if forced is not None:
-                    body, used = forced
-                    kind = (
-                        "Demand-driven co-evaluation"
-                        if force_rung == 3
-                        else "Fused union-domain evaluation"
-                    )
-                elif choice.rung == 2:
-                    body, used = emit_rung2_scc(
-                        scc,
-                        catalog=catalog,
-                        deps=deps_map,
-                        graph=graph,
-                        plan=choice.plan,
-                        edges=edges,
-                    )
-                    kind = "Fused union-domain evaluation"
-                else:
-                    body, used = emit_rung3_scc(
-                        scc, catalog=catalog, deps=deps_map, graph=graph, edges=edges
-                    )
-                    kind = "Demand-driven co-evaluation"
-                used_runtime |= used
-                joined = ", ".join(f"`{sid}`" for sid in scc)
-                doc = f'    """{kind} of zipper series {joined}."""'
-                functions.append("\n".join([_scan_signature(scc, param_ids, catalog), doc, *body]))
-            continue
-        if forced is not None:
-            body, used = forced
-            used_runtime |= used
-            if force_rung == 3:
-                doc = f'    """Demand-driven evaluation of series `{series.series_id}`."""'
-            else:
-                doc = f'    """First-level helper for bound series `{series.series_id}`."""'
-            functions.append("\n".join([_helper_signature(series, info, catalog), doc, *body]))
-            continue
-        if choice.rung == 1:
-            body, used = emit_rung2_scc(
-                (series.series_id,),
-                catalog=catalog,
-                deps=deps_map,
-                graph=graph,
-                plan=choice.plan,
-                edges=edges,
-            )
-            used_runtime |= used
-            doc = f'    """First-level helper for bound series `{series.series_id}`."""'
-            functions.append("\n".join([_helper_signature(series, info, catalog), doc, *body]))
-            continue
-        if choice.rung == 3:
-            body, used = emit_rung3_scc(
-                (series.series_id,),
-                catalog=catalog,
-                deps=deps_map,
-                graph=graph,
-                edges=edges,
-            )
-            used_runtime |= used
-            doc = f'    """Demand-driven evaluation of series `{series.series_id}`."""'
-            functions.append("\n".join([_helper_signature(series, info, catalog), doc, *body]))
-            continue
-        body, used = emit_helper_body(series, catalog=catalog, deps=info, graph=graph)
         used_runtime |= used
-        if any(catalog.get(p).is_sequence and p in info.aligned_ids for p in info.param_ids):
+        if len(scc) > 1:
+            emitted_scans.add(scc)
+            param_ids = scc_external_params(scc, deps, catalog.order)
+            kind = "Demand-driven co-evaluation" if rung == 3 else "Fused union-domain evaluation"
+            joined = ", ".join(f"`{sid}`" for sid in scc)
+            doc = f'    """{kind} of zipper series {joined}."""'
+            functions.append("\n".join([_scan_signature(scc, param_ids, catalog), doc, *body]))
+            continue
+        if rung == 0 and any(
+            catalog.get(param).is_sequence and param in info.aligned_ids for param in info.param_ids
+        ):
             used_runtime.add("require_aligned")
-        doc = f'    """First-level helper for bound series `{series.series_id}`."""'
-        functions.append(
-            "\n".join(
-                [
-                    _helper_signature(series, info, catalog),
-                    doc,
-                    *body,
-                ]
-            )
-        )
+        if rung == 3:
+            doc = f'    """Demand-driven evaluation of series `{series.series_id}`."""'
+        else:
+            doc = f'    """First-level helper for bound series `{series.series_id}`."""'
+        functions.append("\n".join([_helper_signature(series, info, catalog), doc, *body]))
     runtime_names = sorted(used_runtime)
     lines = [
         '"""First-level-dependency internals for the inverted graph."""',
@@ -835,8 +799,9 @@ def generate_inverted_tree_modules(
         series_bindings: Bindings catalog (inputs, constants, internals, outputs).
         bindings_workbook: Workbook path used to expand `data_range`s.
         targets: Ignored; outputs come from the bindings catalog.
-        force_rung: Pin every formula SCC to rung 2 (fused) or rung 3
-            (demand-driven). `None` selects the strongest legal rung.
+        force_rung: Pin every formula SCC to rung 3 (demand-driven), or
+            fuse wherever legal (`2`) and fall through to the auto rung
+            otherwise. `None` selects the strongest legal rung.
 
     Returns:
         Mapping of package filenames to file contents.

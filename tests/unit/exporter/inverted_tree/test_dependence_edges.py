@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
 from pathlib import Path
 
 import pytest
 
 from excel_grapher.exporter.inverted_tree.deps import (
     DependenceEdge,
+    SeriesDeps,
     collect_all_dependence_edges,
     collect_all_deps,
     series_deps_from_edges,
@@ -53,6 +55,11 @@ def _accesses(
         for edge in edges
         if edge.consumer_id == consumer_id and edge.producer_id == producer_id
     }
+
+
+def test_series_deps_does_not_retain_graph() -> None:
+    assert "graph" not in {field.name for field in fields(SeriesDeps)}
+    assert "edges" in {field.name for field in fields(SeriesDeps)}
 
 
 def test_a10_lag_edges_are_identity_and_shift(tmp_path: Path) -> None:

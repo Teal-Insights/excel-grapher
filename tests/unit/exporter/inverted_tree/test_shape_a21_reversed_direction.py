@@ -2,7 +2,7 @@
 
 An SCC whose intra-SCC distances are all <= 0 is fusible with the loop run in
 reverse (Allen-Kennedy loop direction selection). Single-series backward
-recurrence emits a reversed scan with prior (Rung 1).
+recurrence is a rung-1 reversed scan.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
+from excel_grapher.exporter.inverted_tree.ast_emit import emit_rung3_scc
 from excel_grapher.exporter.inverted_tree.deps import requires_demand_driven
 from excel_grapher.exporter.inverted_tree.schedule import plan_fused_scc, plan_scc
 from excel_grapher.grapher import create_dependency_graph
@@ -118,7 +119,10 @@ def test_terminal_backward_recursion_emits_reversed_scan_and_matches_evaluator(
     assert requires_demand_driven(series, catalog=catalog, graph=graph) is False
     assert deps["value"].is_scan is True
     assert deps["value"].scan_direction == "reversed"
-    assert plan_scc(("value",), catalog=catalog, graph=graph).rung == 0
+    choice = plan_scc(("value",), catalog=catalog, graph=graph)
+    assert choice.rung == 1
+    assert choice.plan is not None
+    assert choice.plan.direction == "reversed"
 
     modules = generate_inverted(workbook, doc)
     pkg = load_package(modules, tmp_path, name=pkg_name)
@@ -354,6 +358,17 @@ def test_differential_oracle_runs_over_both_directions(tmp_path: Path) -> None:
     assert choice_rev.plan.direction == "reversed"
     fused_rev, demand_rev = load_forced_rung_packages(wb_rev, doc_rev, tmp_path, "a21_or_rev")
     assert fused_rev.compute_value() == pytest.approx(demand_rev.compute_value())
+
+
+def test_rung3_reverse_drive_warms_memo_then_builds_forward(tmp_path: Path) -> None:
+    catalog, deps, graph = inverted_graph_parts(
+        _lookahead_zipper_workbook(tmp_path), _lookahead_zipper_bindings()
+    )
+    demand, _used = emit_rung3_scc(("value", "flow"), catalog=catalog, deps=deps, graph=graph)
+    source = "\n".join(demand)
+    assert "for i in reversed(range(" in source
+    assert "[::-1]" not in source
+    assert "for i in range(" in source
 
 
 # ---------------------------------------------------------------------------
