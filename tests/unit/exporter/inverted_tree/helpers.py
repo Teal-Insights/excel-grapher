@@ -101,6 +101,7 @@ def series_entry(
     key_concept: str = "TIME_PERIOD",
     key_read: str = "int",
     domain: Mapping[str, Any] | None = None,
+    value_map: Mapping[Any, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a minimal series dict that passes schema validation."""
     sheet = data_range.split("!", 1)[0]
@@ -147,6 +148,8 @@ def series_entry(
         entry["input"] = {"setter": {"name": f"set_{series_id}"}}
         if domain is not None:
             entry["input"]["domain"] = dict(domain)
+        if value_map is not None:
+            entry["input"]["value_map"] = dict(value_map)
     elif direction == "output":
         entry["output"] = {"compute": {"name": compute_name or f"compute_{series_id}"}}
     elif direction == "internal":

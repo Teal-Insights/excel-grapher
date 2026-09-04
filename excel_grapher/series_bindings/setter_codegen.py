@@ -21,7 +21,10 @@ from excel_grapher.series_bindings.docstrings import (
     emit_docstring_literal,
     resolve_series_function_docstring,
 )
-from excel_grapher.series_bindings.input_coerce import measure_domain_from_series
+from excel_grapher.series_bindings.input_coerce import (
+    input_value_map_from_series,
+    measure_domain_from_series,
+)
 from excel_grapher.series_bindings.normalize import (
     effective_dimension_id,
     has_constant_direction,
@@ -405,6 +408,7 @@ def _coerce_setter_input_call(
     key_dtypes = _key_dtypes_for_codegen(series, key_fields)
     measure_dtype = _measure_dtype_for_codegen(series, concept_scheme=concept_scheme)
     measure_domain = measure_domain_from_series(series)
+    value_map = input_value_map_from_series(series)
     parts = [
         "coerce_setter_input(",
         "            records,",
@@ -424,6 +428,9 @@ def _coerce_setter_input_call(
         parts.append(f"            measure_dtype={measure_dtype!r},")
     if measure_domain is not None:
         parts.append(f"            measure_domain={measure_domain!r},")
+    if value_map is not None:
+        parts.append(f"            value_map={value_map!r},")
+        parts.append(f"            series_id={resolved['series_id']!r},")
     parts.append("        )")
     return "\n".join(parts)
 

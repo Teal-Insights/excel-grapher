@@ -33,7 +33,8 @@ Legend: **port** = inverted-tree should grow the feature; **bindings-equivalent*
 | `CONSTANTS` `MappingProxyType` (#582); sparse leaf store (#578) | yes | `data.py` tuples | **drop** — dense catalog-order tuples are the inverted-tree store. |
 | Range-watch export invalidation (#585) | yes | n/a | **drop** — no mutable `EvalContext`; pass new arguments. |
 | Complementary shards / list `data_range` (#591) | yes | catalog concatenates `series_data_ranges` after merge | **bindings-equivalent**. Probe: sheet_name keys and four-cell catalog; a formula may still fail closed if it gathers two non-adjacent members of that series (same as any series). |
-| `sheet_name`, `value_map`, `datetime` / `bool` dtypes | yes | catalog via `resolve_key_domain`; bool measured; datetime leaves emitted | **bindings-equivalent** (keys) + **port shipped** (`datetime` literals in `data.py`). |
+| `sheet_name`, bind `value_map`, `datetime` / `bool` dtypes | yes | catalog via `resolve_key_domain`; bool measured; datetime leaves emitted | **bindings-equivalent** (keys) + **port shipped** (`datetime` literals in `data.py`). |
+| `input.value_map` on scalar inputs | yes (setters) | yes ([#677](https://github.com/Teal-Insights/excel-grapher/issues/677)) | **port shipped** — rewrite public keys to workbook needles after `input.domain`. |
 | `exclude_rows` / `exclude_columns` | yes | yes (#600) | done. |
 | `layout: matrix` | yes | yes (#599, #612, #638) | done. |
 | Named ranges as `data_range` | yes | yes (`expand_data_range`) | **bindings-equivalent**. Probe green vs `FormulaEvaluator`. |
@@ -51,4 +52,4 @@ Legend: **port** = inverted-tree should grow the feature; **bindings-equivalent*
 
 ## Port follow-ups (not shipped in #665)
 
-Already filed: #663 (constants), #593 (façade), #379 (concept names), #284 (spill), #483 (`SUM(IF)`). Shipped: [#666](https://github.com/Teal-Insights/excel-grapher/issues/666) (`input.domain`), [#667](https://github.com/Teal-Insights/excel-grapher/issues/667) (range aggregates / remaining refs), [#668](https://github.com/Teal-Insights/excel-grapher/issues/668) (`INDIRECT`).
+Already filed: #663 (constants), #593 (façade), #379 (concept names), #284 (spill), #483 (`SUM(IF)`). Shipped: [#666](https://github.com/Teal-Insights/excel-grapher/issues/666) (`input.domain`), [#667](https://github.com/Teal-Insights/excel-grapher/issues/667) (range aggregates / remaining refs), [#668](https://github.com/Teal-Insights/excel-grapher/issues/668) (`INDIRECT`), [#677](https://github.com/Teal-Insights/excel-grapher/issues/677) (`input.value_map`).

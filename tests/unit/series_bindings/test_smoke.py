@@ -278,6 +278,58 @@ def test_run_binding_checks_inverted_tree_smoke_with_in_domain_default(
     assert "require_input_domain" in result["generated_files"]["api.py"]
 
 
+def test_run_binding_checks_inverted_tree_smoke_with_value_map(tmp_path: Path) -> None:
+    import yaml
+
+    from tests.unit.exporter.inverted_tree.helpers import (
+        bindings_document,
+        series_entry,
+        write_workbook,
+    )
+
+    workbook = write_workbook(
+        tmp_path / "inv.xlsx",
+        {
+            "Inputs": {"A1": "High "},
+            "Engine": {"A1": '=IF(Inputs!A1="High ",10,0)'},
+            "Outputs": {"A1": "=Engine!A1"},
+        },
+    )
+    document = bindings_document(
+        series_entry(
+            "selector",
+            "Inputs!A1",
+            layout="scalar",
+            direction="input",
+            dtype="string",
+            value_map={"High": "High ", "Medium": "Medium", "Low": "Low "},
+        ),
+        series_entry("y", "Engine!A1", layout="scalar", direction="internal", dtype="float"),
+        series_entry(
+            "z",
+            "Outputs!A1",
+            layout="scalar",
+            direction="output",
+            dtype="float",
+            compute_name="compute_z",
+        ),
+        schema_version="1.15.0",
+    )
+    document["workbook"] = "inv.xlsx"
+    bindings_path = tmp_path / "inv.bindings.yaml"
+    bindings_path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+    result = run_binding_checks(
+        workbook,
+        bindings_path,
+        module_dir=tmp_path / "inv_value_map_pkg",
+        package_name="inv_value_map_pkg",
+        smoke_test=True,
+        paradigm="inverted_tree",
+    )
+    assert "apply_input_value_map" in result["generated_files"]["api.py"]
+
+
 def test_inverted_tree_smoke_fails_when_compute_returns_wrong_length(tmp_path: Path) -> None:
     from tests.unit.exporter.inverted_tree.helpers import (
         bindings_document,

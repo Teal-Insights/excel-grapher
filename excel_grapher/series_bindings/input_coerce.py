@@ -12,7 +12,9 @@ from excel_grapher.series_bindings.types import Record, Records
 __all__ = [
     "EmptyMeasure",
     "Layout",
+    "apply_input_value_map",
     "coerce_setter_input",
+    "input_value_map_from_series",
     "measure_domain_from_series",
     "require_input_domain",
 ]
@@ -293,6 +295,34 @@ def _reject_out_of_domain(
         )
 
 
+def apply_input_value_map(
+    value: object,
+    mapping: Mapping[Any, Any],
+    *,
+    series_id: str,
+) -> object:
+    """Rewrite a public scalar input to its workbook needle.
+
+    Args:
+        value: Caller-facing measure (`input.value_map` key).
+        mapping: Public value to workbook cell value.
+        series_id: Binding series id used in the error message.
+
+    Returns:
+        The mapped workbook value.
+
+    Raises:
+        ValueError: When `value` is not a key of `mapping`.
+    """
+    try:
+        return mapping[value]
+    except (KeyError, TypeError):
+        keys = ", ".join(repr(key) for key in sorted(mapping, key=repr))
+        raise ValueError(
+            f"{series_id} value {value!r} is not in value_map; expected one of {{{keys}}}"
+        ) from None
+
+
 def require_input_domain(
     value: object,
     domain: Mapping[str, Any],
@@ -316,29 +346,47 @@ def require_input_domain(
     _reject_out_of_domain(value, domain, label=series_id)
 
 
+def input_value_map_from_series(series: Mapping[str, Any]) -> dict[Any, Any] | None:
+    """Return `input.value_map` as a dict, or `None` when absent."""
+    input_block = series.get("input")
+    if not isinstance(input_block, dict):
+        return None
+    raw = input_block.get("value_map")
+    if not isinstance(raw, dict) or not raw:
+        return None
+    return dict(raw)
+
+
 def measure_domain_from_series(series: Mapping[str, Any]) -> dict[str, Any] | None:
-    """Normalize `input.domain` for codegen and runtime checks."""
+    """Normalize `input.domain` for codegen and runtime checks.
+
+    When `input.value_map` is present and `input.domain` is omitted, the domain
+    is the map keys so callers are checked against public values.
+    """
     input_block = series.get("input")
     if not isinstance(input_block, dict):
         return None
     domain = input_block.get("domain")
-    if not isinstance(domain, dict):
+    if isinstance(domain, dict):
+        if "enum" in domain:
+            values = domain["enum"]
+            if not isinstance(values, (list, tuple, set, frozenset)):
+                return None
+            return {"enum": frozenset(values)}
+        if "between" in domain:
+            bounds = domain["between"]
+            if not isinstance(bounds, dict):
+                return None
+            return {"between": dict(bounds)}
+        if "real_between" in domain:
+            bounds = domain["real_between"]
+            if not isinstance(bounds, dict):
+                return None
+            return {"real_between": dict(bounds)}
         return None
-    if "enum" in domain:
-        values = domain["enum"]
-        if not isinstance(values, (list, tuple, set, frozenset)):
-            return None
-        return {"enum": frozenset(values)}
-    if "between" in domain:
-        bounds = domain["between"]
-        if not isinstance(bounds, dict):
-            return None
-        return {"between": dict(bounds)}
-    if "real_between" in domain:
-        bounds = domain["real_between"]
-        if not isinstance(bounds, dict):
-            return None
-        return {"real_between": dict(bounds)}
+    mapping = input_value_map_from_series(series)
+    if mapping is not None:
+        return {"enum": frozenset(mapping)}
     return None
 
 
@@ -360,6 +408,31 @@ def _apply_measure_domain(
             label=f"record[{index}]: {measure_field}",
         )
     return records
+
+
+def _apply_measure_value_map(
+    records: Records,
+    *,
+    measure_field: str,
+    value_map: Mapping[Any, Any] | None,
+    series_id: str,
+) -> Records:
+    """Rewrite measure values through `input.value_map` after the domain check."""
+    if value_map is None:
+        return records
+    mapped: list[dict[str, object]] = []
+    for index, record in enumerate(records):
+        if measure_field not in record:
+            mapped.append(record)
+            continue
+        updated = dict(record)
+        updated[measure_field] = apply_input_value_map(
+            record[measure_field],
+            value_map,
+            series_id=f"{series_id}[{index}]" if series_id else f"record[{index}]",
+        )
+        mapped.append(updated)
+    return mapped
 
 
 def _coerce_dataframe_records(
@@ -512,8 +585,10 @@ def coerce_setter_input(
     key_dtypes: Mapping[str, str] | None = None,
     measure_dtype: str | None = None,
     measure_domain: Mapping[str, Any] | None = None,
+    value_map: Mapping[Any, Any] | None = None,
     empty_measure: EmptyMeasure = "write",
     requires_address: bool = False,
+    series_id: str = "",
 ) -> Records:
     """Normalize caller input into records for ``_apply_series_records``.
 
@@ -528,8 +603,10 @@ def coerce_setter_input(
         measure_dtype: Optional binding dtype enforced for `measure_field` values.
         measure_domain: Optional `input.domain` (`enum` / `between` / `real_between`)
             enforced after dtype coercion.
+        value_map: Optional `input.value_map` applied after the domain check.
         empty_measure: How to treat rows with missing/NaN measure values.
         requires_address: When true, reject DataFrame input (records must carry addresses).
+        series_id: Binding series id used in `value_map` error messages.
 
     Returns:
         List of record dicts ready for leaf resolution.
@@ -549,10 +626,16 @@ def coerce_setter_input(
             measure_field=measure_field,
             measure_dtype=measure_dtype,
         )
-        return _apply_measure_domain(
+        records = _apply_measure_domain(
             records,
             measure_field=measure_field,
             measure_domain=measure_domain,
+        )
+        return _apply_measure_value_map(
+            records,
+            measure_field=measure_field,
+            value_map=value_map,
+            series_id=series_id or measure_field,
         )
 
     if requires_address and _is_tabular_dataframe(data):
@@ -583,6 +666,12 @@ def coerce_setter_input(
         records,
         measure_field=measure_field,
         measure_domain=measure_domain,
+    )
+    records = _apply_measure_value_map(
+        records,
+        measure_field=measure_field,
+        value_map=value_map,
+        series_id=series_id or measure_field,
     )
     return _apply_empty_measure(
         records,
