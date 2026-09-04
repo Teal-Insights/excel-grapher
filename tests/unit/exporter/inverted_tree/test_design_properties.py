@@ -132,10 +132,6 @@ _CORPUS: list[tuple[str, Callable[[Path], Path], Callable[[], dict[str, Any]]]] 
     ("a19_stride2", _stride2_terminal_workbook, _stride2_terminal_bindings),
 ]
 
-# Overlapping `take` windows still emit catalog-relative indexes in rung-3
-# helpers (#626); the auto rung matches the evaluator for those shapes.
-_RUNG3_CORPUS = [item for item in _CORPUS if item[0] != "a17_overlap"]
-
 
 @pytest.mark.parametrize(
     ("case", "workbook_fn", "bindings_fn"),
@@ -153,8 +149,8 @@ def test_corpus_auto_rung_matches_evaluator(
 
 @pytest.mark.parametrize(
     ("case", "workbook_fn", "bindings_fn"),
-    _RUNG3_CORPUS,
-    ids=[item[0] for item in _RUNG3_CORPUS],
+    _CORPUS,
+    ids=[item[0] for item in _CORPUS],
 )
 def test_corpus_rung3_matches_evaluator_and_auto(
     tmp_path: Path,
