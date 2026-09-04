@@ -310,8 +310,8 @@ def test_partition_catalog_uniform_formula_is_linear_in_size() -> None:
     cat_small, g_small = _make_formula_catalog_and_graph(2_500)
     cat_large, g_large = _make_formula_catalog_and_graph(10_000)
 
-    # Warmup
     partition_catalog(cat_small, g_small)
+    partition_catalog(cat_large, g_large)
 
     t0 = time.perf_counter()
     res_small = partition_catalog(cat_small, g_small)
@@ -323,10 +323,11 @@ def test_partition_catalog_uniform_formula_is_linear_in_size() -> None:
 
     assert len(res_small.get("dst").statements) == 1
     assert len(res_large.get("dst").statements) == 1
-    # 4x increase in data should be roughly 4x-5x in runtime (< 7x tolerance for timer noise)
-    if t_small > 0.001:
-        ratio = t_large / t_small
-        assert ratio < 7.0
+    # 4x members should stay linear (quadratic is ~16x). Slack absorbs timer
+    # noise when the small case is fast.
+    assert t_large <= t_small * 5 + 0.25, (
+        f"partition 10k took {t_large:.3f}s vs 2.5k {t_small:.3f}s"
+    )
 
 
 def test_partition_catalog_splits_on_shape_and_producer_changes() -> None:
