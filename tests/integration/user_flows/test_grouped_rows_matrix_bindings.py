@@ -6,7 +6,6 @@ from pathlib import Path
 
 from excel_grapher.series_bindings import (
     load_series_bindings,
-    run_binding_checks,
     validate_bindings_workbook,
 )
 from excel_grapher.series_bindings.workflow import setter_names
@@ -26,14 +25,9 @@ def test_grouped_rows_matrix_bindings_validate(tmp_path: Path) -> None:
     assert len(result["input_series"]) == len(setter_names(bindings))
 
 
-def test_grouped_rows_matrix_bindings_run_checks(tmp_path: Path) -> None:
+def test_grouped_rows_matrix_bindings_catalog(tmp_path: Path) -> None:
     workbook = tmp_path / "grouped_inputs.xlsx"
     write_grouped_matrix_workbook(workbook)
-    result = run_binding_checks(
-        workbook,
-        MATRIX_GROUPED_ROWS_BINDINGS,
-        module_dir=tmp_path / "bindings_module_grouped",
-        package_name="bindings_module_grouped",
-    )
+    result = validate_bindings_workbook(workbook, MATRIX_GROUPED_ROWS_BINDINGS)
     assert result["setters"] == ["set_discrete_risks"]
     assert result["computes"] == []

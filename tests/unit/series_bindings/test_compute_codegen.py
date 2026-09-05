@@ -1023,7 +1023,6 @@ def test_emit_compute_matrix_bindings_module_smoke(tmp_path: Path) -> None:
 
     files = generate_bindings_modules(
         graph,
-        targets=targets,
         bindings=bindings,
         workbook=wb_path,
     )

@@ -1,23 +1,23 @@
 # ctx → inverted-tree feature audit (issue 662)
 
+Historical audit: the context-based **package** exporter has been removed.
+`generate_modules()` and binding smoke checks use inverted-tree exclusively;
+`paradigm` and `--paradigm` are no longer accepted.
+
+Single-file `generate()` remains the ctx cell-function exporter (`make_context`,
+`set_*` / `read_*`, Records). That is a later cut, not this one.
+
+The #662 default-flip gate (LIC-DSF pool green) was waived for package removal:
+inverted-tree was already the only package path that matched the product, and
+keeping a `paradigm="ctx"` shim would have preserved a dead emitter. LIC-DSF
+corpus work continues independently.
+
 Pin: `3fe65d3` (12.7.2) plus this change. Probes live in
 `tests/unit/exporter/inverted_tree/test_ctx_parity_audit.py`.
 
-**Gate for flipping the library default** (all three):
-
-1. Local workbook pool (#656 §12) green on tiny-DSA, Q-CRAFT, **and LIC-DSF**.
-   tiny-DSA is committed; Q-CRAFT 796/796 via #659; LIC-DSF has not been through
-   the gate. **Default stays `ctx`.**
-2. #651 landed (shared comparison / operator core).
-3. This table decided; `port` rows shipped or linked.
-
-**Deprecation sequence** (after the gate, not this release): default flip +
-`DeprecationWarning` on `paradigm="ctx"` for one release, then removal. Documented
-in `user_guide/06-export.qmd`.
-
 Legend: **port** = inverted-tree should grow the feature; **bindings-equivalent**
 = already true at sidecar/catalog load, or a documented caller recipe;
-**drop** = ctx-only by design.
+**drop** = ctx-only by design (including `generate()` leftovers).
 
 | Feature | ctx | inverted-tree | decision |
 | --- | --- | --- | --- |

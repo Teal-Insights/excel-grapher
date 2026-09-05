@@ -12,7 +12,7 @@ code = CodeGenerator(graph).generate(targets)
 print("\n".join(code.splitlines()[:120]))
 ```
 
-When graph nodes are target-marked (`Node.is_target=True`), `generate()` and `generate_modules()` can infer export targets directly from the graph:
+When graph nodes are target-marked (`Node.is_target=True`), `generate()` can infer export targets directly from the graph:
 
 ```python
 with CodeGenerator(graph) as gen:
@@ -57,22 +57,12 @@ For a multi-file package, `generate_modules()` returns a `dict[str, str]` keyed 
 (`__init__.py`, `api.py`, `data.py`, `runtime.py`, `internals.py`). Write those files into a package
 directory of your choice, then import the package as usual.
 
-**Series-binding packages should use inverted-tree.** Pass
-`paradigm="inverted_tree"` (CLI: `--paradigm inverted_tree`). Each `compute_*` is an ordinary
-function whose arguments are the input leaf closure of that output; there is no `EvalContext`, no
-`set_*` / `read_*`, and no `make_context`. The library default is still `paradigm="ctx"` until the
-default-flip gate in [issue 662](https://github.com/Teal-Insights/excel-grapher/issues/662) (local
-workbook pool green on tiny-DSA, Q-CRAFT, **and LIC-DSF**, plus the port follow-ups below).
+Package exports use inverted-tree: each `compute_*` takes the input leaves of its output
+as ordinary arguments. `generate_modules()` requires `series_bindings` and
+`bindings_workbook`. The `paradigm` argument and CLI `--paradigm` option have been removed.
 
-Single-file `generate()` stays the cell-function export (`cell_*` + `compute_all`). Return-line
-unpacking, sparse `DEFAULT_INPUTS`, and `make_context(inputs=…)` apply to that path and to
-`paradigm="ctx"` modules.
-
-Every **ctx** export — single-file and modular — also emits two zero-argument discovery helpers,
-`list_setters()` and `list_computes()`, that return the names of the generated series-binding
-`set_*` and `compute_*` functions (empty lists when no series bindings are supplied). In the
-modular build they live in `api.py` and are re-exported from the package root. Inverted-tree
-packages expose computes via `api.__all__` instead.
+Single-file `generate()` retains the cell-function API, including `compute_all`,
+`make_context`, return-line unpacking, and optional series-binding helpers.
 
 ## Inverted-tree packages
 
@@ -89,7 +79,6 @@ with CodeGenerator(graph) as gen:
     modules = gen.generate_modules(
         series_bindings=bindings,
         bindings_workbook=workbook_path,
-        paradigm="inverted_tree",
     )
 ```
 
@@ -97,7 +86,7 @@ CLI equivalent:
 
 ```bash
 uv run excel-grapher bindings validate model.xlsx \
-  --paradigm inverted_tree --smoke-test --emit-dir ./generated
+  --smoke-test --emit-dir ./generated
 ```
 
 Models with non-literal `OFFSET` / `INDEX` / `INDIRECT` also need
@@ -105,7 +94,7 @@ Models with non-literal `OFFSET` / `INDEX` / `INDIRECT` also need
 [Command-line interface](cli.qmd).
 
 `--smoke-test` with inverted-tree calls each `compute_*` using the workbook-default input arrays
-emitted in `data.py` (`SERIES_DEFAULT`). Setter smoke is ctx-only; inverted-tree has no setters.
+emitted in `data.py` (`SERIES_DEFAULT`). Smoke checks call the generated compute functions.
 
 ### What the package looks like
 
@@ -176,30 +165,13 @@ formula AST ([issue 668](https://github.com/Teal-Insights/excel-grapher/issues/6
 lower when every referenced cell is bound ([issue 667](https://github.com/Teal-Insights/excel-grapher/issues/667)).
 Array spill ([issue 284](https://github.com/Teal-Insights/excel-grapher/issues/284))
 and array-style `SUM(IF(…))` ([issue 483](https://github.com/Teal-Insights/excel-grapher/issues/483))
-stay open for both paradigms.
+remain unsupported.
 
 Projection, `embed`, and visualization exports are not codegen paradigms; they are unchanged.
 
-## Deprecation plan for `ctx`
-
-The default does **not** flip in this release. Gate (all required):
-
-1. Local inverted-tree workbook pool ([issue 656](https://github.com/Teal-Insights/excel-grapher/issues/656) §12) green on tiny-DSA, Q-CRAFT, **and LIC-DSF**.
-2. Shared operator / comparison implementation ([issue 651](https://github.com/Teal-Insights/excel-grapher/issues/651)) — landed.
-3. Audit [issue 662](https://github.com/Teal-Insights/excel-grapher/issues/662) closed; `port` rows shipped or linked.
-
-Then, in **three** subsequent library releases:
-
-| Release | Behavior |
-|---------|----------|
-| Flip | `generate_modules` / `--paradigm` default becomes `inverted_tree`. Passing `paradigm="ctx"` emits `DeprecationWarning`. |
-| Warn | Default stays `inverted_tree`; `ctx` still works with the warning. |
-| Remove | `paradigm="ctx"` is an error; `exporter/codegen.py` ctx series-binding emission and `pass1/` can be deleted. |
-
-Single-file `generate()` is out of that sequence until a separate decision; it has no inverted-tree
-equivalent today.
-
-The completed audit table lives in [`plans/ctx-to-inverted-tree-audit.md`](../plans/ctx-to-inverted-tree-audit.md).
+The deprecated context-based package exporter has been removed. Use the migration
+table above to replace package setters and context calls with explicit compute arguments.
+Single-file `generate()` remains available.
 
 ## Series bindings
 
@@ -225,7 +197,7 @@ code = CodeGenerator(graph).generate(
 
 ## Series docstring callbacks
 
-When exporting **ctx** series bindings, you can attach structured docstrings to generated `set_*` and
+When exporting single-file series bindings, you can attach structured docstrings to generated `set_*` and
 series output `compute_*` functions by passing a callback directly or by registering a reusable
 callback name for project-wide use:
 
@@ -309,7 +281,6 @@ projection = IdentityTransitCompression(
     bindings_workbook=workbook_path,
 ).project(graph)
 modules = CodeGenerator(projection).generate_modules(
-    targets,
     series_bindings=series_bindings,
     bindings_workbook=workbook_path,
 )

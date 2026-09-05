@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from excel_grapher.exporter.inverted_tree import InvertedTreeExportError
 from excel_grapher.grapher.constraints import (
     ConstraintsLoadError,
     dynamic_refs_from_path,
@@ -62,8 +63,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     validate_parser.add_argument(
         "--smoke-test",
         action="store_true",
-        help="Generate modules and smoke-test after validation "
-        "(ctx: setters/computes; inverted_tree: compute_* with data.py defaults)",
+        help="Generate modules and smoke-test after validation (compute_* with data.py defaults)",
     )
     validate_parser.add_argument(
         "--emit-dir",
@@ -75,13 +75,6 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         "--package-name",
         default="bindings_module",
         help="Package directory name for smoke tests (default: bindings_module)",
-    )
-    validate_parser.add_argument(
-        "--paradigm",
-        choices=("ctx", "inverted_tree"),
-        default="ctx",
-        help="Codegen paradigm. inverted_tree is recommended for series-binding packages; "
-        "the library default remains ctx until the #662 default-flip gate.",
     )
     validate_parser.add_argument(
         "--constraints",
@@ -163,7 +156,6 @@ def cmd_validate(args: argparse.Namespace) -> int:
                         module_dir=module_dir,
                         package_name=args.package_name,
                         smoke_test=True,
-                        paradigm=args.paradigm,
                         **graph_kwargs,
                     )
             else:
@@ -174,7 +166,6 @@ def cmd_validate(args: argparse.Namespace) -> int:
                     module_dir=module_dir,
                     package_name=args.package_name,
                     smoke_test=True,
-                    paradigm=args.paradigm,
                     **graph_kwargs,
                 )
                 if not args.json:
@@ -183,13 +174,11 @@ def cmd_validate(args: argparse.Namespace) -> int:
             module_dir = _module_dir(args.emit_dir, args.package_name)
             files = generate_bindings_modules(
                 result["graph"],
-                targets=result["targets"],
                 bindings=result["bindings"],
                 workbook=workbook,
-                paradigm=args.paradigm,
             )
             _write_generated_files({"generated_files": files}, module_dir)
-    except BindingsSmokeError as exc:
+    except (BindingsSmokeError, InvertedTreeExportError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     except (DynamicRefError, ValueError) as exc:
@@ -197,10 +186,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
         return 1
 
     if not args.json and args.smoke_test:
-        if args.paradigm == "inverted_tree":
-            print("All inverted-tree compute functions passed smoke checks.")
-        else:
-            print("All setter and compute functions passed smoke checks.")
+        print("All compute functions passed smoke checks.")
     return 0
 
 

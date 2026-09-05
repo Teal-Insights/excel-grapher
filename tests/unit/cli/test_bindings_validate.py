@@ -15,6 +15,12 @@ from tests.paths import INVERTED_TREE_TINY_DSA
 from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
 
+def test_main_rejects_removed_ctx_paradigm() -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["bindings", "validate", "model.xlsx", "--paradigm", "ctx"])
+    assert exc.value.code == 2
+
+
 def test_main_missing_workbook(tmp_path: Path) -> None:
     missing = tmp_path / "missing.xlsx"
     exit_code = main(["bindings", "validate", str(missing)])
@@ -166,59 +172,6 @@ def test_main_validate_prints_errors_without_verbose(
     assert "error [" in captured.out
 
 
-def test_main_smoke_test_ffv2_fixture(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    workbook = tmp_path / "ffv2.xlsx"
-    write_ffv2_workbook(workbook)
-    bindings = FIXTURES / "ffv2.yaml"
-
-    exit_code = main(
-        [
-            "bindings",
-            "validate",
-            str(workbook),
-            "--bindings",
-            str(bindings),
-            "--smoke-test",
-        ]
-    )
-
-    captured = capsys.readouterr()
-    assert exit_code == 0
-    assert "passed smoke checks" in captured.out
-
-
-def test_main_smoke_test_exits_nonzero_when_setters_collide(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    import yaml
-
-    workbook = tmp_path / "ffv2.xlsx"
-    write_ffv2_workbook(workbook)
-    bindings = tmp_path / "dup_setter.yaml"
-    document = yaml.safe_load((FIXTURES / "ffv2.yaml").read_text(encoding="utf-8"))
-    document["series"][1]["input"]["setter"]["name"] = document["series"][0]["input"]["setter"][
-        "name"
-    ]
-    bindings.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-
-    exit_code = main(
-        [
-            "bindings",
-            "validate",
-            str(workbook),
-            "--bindings",
-            str(bindings),
-            "--smoke-test",
-        ]
-    )
-
-    captured = capsys.readouterr()
-    assert exit_code == 1
-    assert "passed smoke checks" not in captured.out
-    assert "Setter 'set_puka_receptions' did not update" in captured.err
-
-
 def test_console_script_is_registered() -> None:
     result = subprocess.run(
         [sys.executable, "-m", "excel_grapher.cli", "bindings", "validate", "--help"],
@@ -228,7 +181,7 @@ def test_console_script_is_registered() -> None:
     )
     assert result.returncode == 0
     assert "--smoke-test" in result.stdout
-    assert "--paradigm" in result.stdout
+    assert "--paradigm" not in result.stdout
     assert "--verbose" in result.stdout
     assert "--constraints" in result.stdout
     assert "--use-cached-dynamic-refs" in result.stdout
@@ -308,7 +261,7 @@ def test_main_validate_bind_resolution_failed_for_row_label_in_measure_cell(
     ) in captured.out
 
 
-def test_main_emit_inverted_tree_paradigm(
+def test_main_emit_writes_compute_package(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     import yaml
@@ -350,8 +303,6 @@ def test_main_emit_inverted_tree_paradigm(
             str(workbook),
             "--bindings",
             str(bindings),
-            "--paradigm",
-            "inverted_tree",
             "--emit-dir",
             str(emit_dir),
             "--package-name",
@@ -362,7 +313,7 @@ def test_main_emit_inverted_tree_paradigm(
 
     captured = capsys.readouterr()
     assert exit_code == 0, captured.err
-    assert "inverted-tree compute functions passed smoke checks" in captured.out
+    assert "compute functions passed smoke checks" in captured.out
     api = (emit_dir / "inv_pkg" / "api.py").read_text(encoding="utf-8")
     assert "def make_context" not in api
     assert "def set_" not in api
@@ -384,8 +335,6 @@ def test_main_tiny_dsa_without_constraints_is_actionable(
             str(_TINY_DSA_WORKBOOK),
             "--bindings",
             str(_TINY_DSA_BINDINGS),
-            "--paradigm",
-            "inverted_tree",
             "--smoke-test",
         ]
     )
@@ -409,15 +358,13 @@ def test_main_tiny_dsa_constraints_smoke_test(capsys: pytest.CaptureFixture[str]
             str(_TINY_DSA_BINDINGS),
             "--constraints",
             str(_TINY_DSA_CONSTRAINTS),
-            "--paradigm",
-            "inverted_tree",
             "--smoke-test",
         ]
     )
 
     captured = capsys.readouterr()
     assert exit_code == 0, captured.err
-    assert "inverted-tree compute functions passed smoke checks" in captured.out
+    assert "compute functions passed smoke checks" in captured.out
 
 
 def test_main_missing_constraints_file_is_actionable(

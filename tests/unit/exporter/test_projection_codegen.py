@@ -108,34 +108,6 @@ def test_projected_codegen_emits_compute_for_removed_public_mirror(tmp_path: Pat
     assert records[0]["OBS_VALUE"] == 10
 
 
-def test_projected_generate_modules_emits_alias_resolver(tmp_path: Path) -> None:
-    workbook_path = tmp_path / "identity_target.xlsx"
-    _write_identity_workbook(workbook_path)
-
-    graph = create_dependency_graph(
-        workbook_path,
-        ["Outputs!B14"],
-        load_values=True,
-        capture_dependency_provenance=True,
-    )
-    bindings = _baseline_bindings(workbook_path)
-
-    projection = IdentityTransitCompression().project(graph)
-    modules = CodeGenerator(projection).generate_modules(
-        ["Outputs!B12", "Outputs!B14"],
-        series_bindings=bindings,
-        bindings_workbook=workbook_path,
-    )
-
-    internals = modules["internals.py"]
-    api = modules["api.py"]
-    assert "def compute_baseline(" in api
-    # Projected leaf aliases resolve through `xl_cell`; formula→formula `xl_eval`
-    # is only imported when a body actually references another formula cell.
-    assert "xl_cell" in internals
-    assert "Outputs!B12" in internals or "outputs_b12" in internals.lower()
-
-
 def test_projected_codegen_omits_unrelated_public_aliases_outside_export_closure(
     tmp_path: Path,
 ) -> None:

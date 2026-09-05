@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from excel_grapher.series_bindings import run_binding_checks, validate_bindings_workbook
+from excel_grapher.series_bindings import validate_bindings_workbook
 from excel_grapher.series_bindings.workflow import setter_names
 from tests.integration.user_flows.utils import write_ffv2_workbook
 from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
@@ -34,17 +34,11 @@ def test_ffv2_bindings_validate(workbook: Path, bindings_path: Path) -> None:
     assert len(result["input_series"]) == len(setter_names(bindings))
 
 
-def test_ffv2_all_setters_and_computes(
+def test_ffv2_declared_setters_and_computes(
     workbook: Path,
     bindings_path: Path,
-    tmp_path: Path,
 ) -> None:
-    result = run_binding_checks(
-        workbook,
-        bindings_path,
-        module_dir=tmp_path / "bindings_module",
-        package_name="bindings_module",
-    )
+    result = validate_bindings_workbook(workbook, bindings_path)
     assert result["setters"] == [
         "set_puka_longest_reception",
         "set_puka_receptions",

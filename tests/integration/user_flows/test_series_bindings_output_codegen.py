@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
-import re
-import sys
 from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
@@ -177,61 +174,3 @@ def test_generate_applies_series_docstring_callback_to_output_compute(
     assert compute.__doc__ is not None
     assert "Compute borvelia_primary_balance." in compute.__doc__
     assert "Examples:" in compute.__doc__
-
-
-def test_generate_modules_exports_output_compute(
-    tmp_path: Path,
-    workbook: Path,
-) -> None:
-    bindings = validate_bindings_document(deepcopy(BINDINGS_DOCUMENT))
-    targets = expand_data_range("Sheet1!F5:J5", workbook=workbook)
-    graph = create_dependency_graph(workbook, targets, load_values=True)
-
-    files = CodeGenerator(graph).generate_modules(
-        targets,
-        series_bindings=bindings,
-        bindings_workbook=workbook,
-    )
-    assert "def compute_borvelia_primary_balance(" in files["api.py"]
-    assert "_readers.py" in files
-    assert "def read_borvelia_primary_balance(" in files["_readers.py"]
-    assert "def read_borvelia_primary_balance_range(" in files["_readers.py"]
-    assert "from ._readers import" in files["api.py"]
-    assert "XlErrorException" in files["api.py"]
-    assert "from .runtime import" in files["api.py"]
-    assert re.search(
-        r"from \.runtime import[\s\S]*?\bXlErrorException\b",
-        files["api.py"],
-    )
-    assert "except XlErrorException as err:" in files["api.py"]
-    assert "def list_setters() -> list[str]:" in files["api.py"]
-    assert "def list_readers() -> list[str]:" in files["api.py"]
-    assert "def list_computes() -> list[str]:" in files["api.py"]
-    assert "compute_borvelia_primary_balance" in files["__init__.py"]
-    assert "read_borvelia_primary_balance" in files["__init__.py"]
-    assert "read_borvelia_primary_balance_range" in files["__init__.py"]
-    assert "list_setters" in files["__init__.py"]
-    assert "list_readers" in files["__init__.py"]
-    assert "list_computes" in files["__init__.py"]
-    assert "Record" in files["api.py"] or "Record" in files.get("_api_helpers.py", "")
-
-    pkg_dir = tmp_path / "exported_series_output"
-    for filename, content in files.items():
-        pkg_dir.mkdir(parents=True, exist_ok=True)
-        (pkg_dir / filename).write_text(content, encoding="utf-8")
-
-    sys.path.insert(0, str(tmp_path))
-    try:
-        pkg = importlib.import_module("exported_series_output")
-        ctx = pkg.make_context()
-        assert pkg.list_setters() == ["set_borvelia_primary_balance"]
-        assert pkg.list_readers() == ["read_borvelia_primary_balance"]
-        assert pkg.list_computes() == ["compute_borvelia_primary_balance"]
-        records = pkg.compute_borvelia_primary_balance(ctx=ctx)
-        assert len(records) == 5
-        assert all("OBS_VALUE" in r for r in records)
-    finally:
-        sys.path.remove(str(tmp_path))
-        for name in list(sys.modules):
-            if name == "exported_series_output" or name.startswith("exported_series_output."):
-                sys.modules.pop(name, None)

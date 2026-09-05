@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -424,42 +422,6 @@ def test_build_reader_index_keyed_and_range(tmp_path: Path) -> None:
     rng = index["ranges"]["Inputs!F5:J5"]
     assert rng["reader"] == "read_borvelia_primary_balance_range"
     assert rng["call_form"] == "read_borvelia_primary_balance_range(ctx)"
-
-
-def test_generated_modules_emit_list_reader_leaves(tmp_path: Path) -> None:
-    wb_path = tmp_path / "lic_inputs.xlsx"
-    _write_borvelia_workbook(wb_path)
-    graph = create_dependency_graph(wb_path, expand_data_range("Inputs!F5:J5"), load_values=True)
-    bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
-    files = CodeGenerator(graph).generate_modules(
-        expand_data_range("Inputs!F5:J5"),
-        series_bindings=bindings,
-        bindings_workbook=wb_path,
-    )
-    assert "def list_reader_leaves(" in files["api.py"]
-    assert "def list_reader_ranges(" in files["api.py"]
-    assert "list_reader_leaves" in files["__init__.py"]
-    assert "list_reader_ranges" in files["__init__.py"]
-
-    pkg_dir = tmp_path / "exported_readers"
-    for filename, content in files.items():
-        pkg_dir.mkdir(parents=True, exist_ok=True)
-        (pkg_dir / filename).write_text(content, encoding="utf-8")
-
-    sys.path.insert(0, str(tmp_path))
-    try:
-        pkg = importlib.import_module("exported_readers")
-        leaves = pkg.list_reader_leaves()
-        ranges = pkg.list_reader_ranges()
-        assert leaves["Inputs!H5"]["call_form"] == (
-            "read_borvelia_primary_balance(ctx, time_period=3)"
-        )
-        assert ranges["Inputs!F5:J5"]["call_form"] == ("read_borvelia_primary_balance_range(ctx)")
-    finally:
-        sys.path.remove(str(tmp_path))
-        for name in list(sys.modules):
-            if name == "exported_readers" or name.startswith("exported_readers."):
-                sys.modules.pop(name, None)
 
 
 def test_resolve_reader_name_override(tmp_path: Path) -> None:

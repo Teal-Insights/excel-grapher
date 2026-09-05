@@ -134,7 +134,10 @@ and optional `preserve` keys stay in the projected graph:
 
 ```python
 projection = IdentityTransitCompression().project(graph)
-CodeGenerator(projection).generate_modules(...)
+CodeGenerator(projection).generate_modules(
+    series_bindings=series_bindings,
+    bindings_workbook=workbook_path,
+)
 write_workbook(projection, Path("projected.xlsx"))
 to_web_viz_payload(to_networkx(projection))
 ```

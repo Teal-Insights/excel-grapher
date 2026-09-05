@@ -4,7 +4,7 @@ guide-section: "Export & quality"
 ---
 
 The `excel-grapher` command-line tool validates series-binding sidecars against workbooks,
-optionally smoke-tests generated setters and computes, and can write export modules to disk.
+optionally smoke-tests generated `compute_*` functions, and can write export modules to disk.
 It complements the Python APIs documented in [Series bindings](series-bindings.qmd).
 
 Run it from the project environment:
@@ -35,7 +35,6 @@ Validate a workbook and its binding sidecar before export or CI.
 ```bash
 excel-grapher bindings validate WORKBOOK [--bindings PATH] [--json] [-v]
   [--smoke-test] [--emit-dir DIR] [--package-name NAME]
-  [--paradigm {ctx,inverted_tree}]
   [--constraints PATH] [--use-cached-dynamic-refs]
 ```
 
@@ -47,10 +46,9 @@ excel-grapher bindings validate WORKBOOK [--bindings PATH] [--json] [-v]
 | `--bindings PATH` | Binding sidecar **file** or **shard directory**. When omitted, the CLI looks for a colocated sidecar (see below). |
 | `--json` | Print the full validation `report` object as JSON (includes every issue). |
 | `-v`, `--verbose` | Print **warnings** in human-readable output. **Errors** are always printed when validation fails. |
-| `--smoke-test` | After a successful validation, generate binding modules and run paradigm-specific smoke checks (ctx: setters/computes; inverted-tree: `compute_*` with workbook-default inputs). |
+| `--smoke-test` | After a successful validation, generate binding modules and run `compute_*` smoke checks with workbook-default inputs. |
 | `--emit-dir DIR` | Write generated module files under `DIR` (see `--package-name`). Implied when combined with `--smoke-test` and an emit directory. |
 | `--package-name NAME` | Package directory name for smoke tests and emitted files (default: `bindings_module`). |
-| `--paradigm {ctx,inverted_tree}` | Codegen paradigm. `inverted_tree` is the recommended series-binding export; the default remains `ctx` until the [issue 662](https://github.com/Teal-Insights/excel-grapher/issues/662) default-flip gate. |
 | `--constraints PATH` | Path to a `constraints.py` module exposing `CONSTRAINTS: Mapping[str, type]` (the same shape `corpus.toml` entries point at). Required for workbooks whose `OFFSET` / `INDEX` / `INDIRECT` arguments are not integer literals. |
 | `--use-cached-dynamic-refs` | Resolve those dynamic refs from the workbook's cached values instead of a constraints module. |
 
@@ -73,7 +71,10 @@ uv run excel-grapher bindings validate examples/micro_workbooks/ffv2.xlsx \
 ### Example: ffv2 game log
 
 The [ffv2](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/ffv2.xlsx)
-micro-workbook uses datetime column headers as `TIME_PERIOD` keys. With a valid sidecar:
+micro-workbook uses datetime column headers as `TIME_PERIOD` keys. It is a **bindings
+validation** demo: the published output rows are typed-in values, not formulas, so do not
+pass `--smoke-test` or `--emit-dir` (those need a formula output series; see tiny-DSA below).
+With a valid sidecar:
 
 ```bash
 uv run excel-grapher bindings validate examples/micro_workbooks/ffv2.xlsx \
@@ -110,18 +111,14 @@ Each issue in the JSON report has `level`, `code`, `message`, and optional `seri
 
 ### Smoke test and code generation
 
-After validation succeeds, `--smoke-test` generates modular binding code and runs a lightweight
-round-trip:
-
-- **`ctx` (default):** import each declared `set_*` and `compute_*`, bump one record through a
-  setter, and check that computes return `Records` of the expected length.
-- **`inverted_tree`:** call each `compute_*` with the workbook-default input arrays from `data.py`
-  and check that the result tuple length matches the output series.
+After validation succeeds, `--smoke-test` generates an inverted-tree package, calls each
+`compute_*` with the workbook-default inputs from `data.py`, and checks that the result tuple
+length matches the output series. Export requires at least one formula output series.
 
 ```bash
 uv run excel-grapher bindings validate lic_inputs.xlsx --smoke-test
 uv run excel-grapher bindings validate lic_inputs.xlsx \
-  --paradigm inverted_tree --smoke-test --emit-dir ./generated
+  --smoke-test --emit-dir ./generated
 ```
 
 Workbooks that contain `OFFSET` / `INDEX` / `INDIRECT` with non-literal arguments need an
@@ -132,7 +129,7 @@ uv run excel-grapher bindings validate \
   tests/fixtures/inverted_tree/tiny_dsa/tiny-dsa.xlsx \
   --bindings tests/fixtures/inverted_tree/tiny_dsa/bindings \
   --constraints tests/fixtures/inverted_tree/tiny_dsa/constraints.py \
-  --paradigm inverted_tree --smoke-test
+  --smoke-test
 ```
 
 Without `--constraints` or `--use-cached-dynamic-refs`, graph building fails with a message that
@@ -154,13 +151,7 @@ uv run excel-grapher bindings validate lic_inputs.xlsx --emit-dir ./generated
 When smoke checks pass, the CLI prints:
 
 ```text
-All setter and compute functions passed smoke checks.
-```
-
-or, with `--paradigm inverted_tree`:
-
-```text
-All inverted-tree compute functions passed smoke checks.
+All compute functions passed smoke checks.
 ```
 
 ### Error output
@@ -230,7 +221,6 @@ run_binding_checks(
     module_dir=Path("./generated/lic_bindings"),
     package_name="lic_bindings",
     smoke_test=True,
-    paradigm="inverted_tree",
     dynamic_refs=dynamic_refs,
     use_cached_dynamic_refs=False,
 )

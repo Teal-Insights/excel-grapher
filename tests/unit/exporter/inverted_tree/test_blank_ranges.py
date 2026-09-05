@@ -158,10 +158,8 @@ def test_generate_modules_forwards_blank_ranges_to_inverted_tree(tmp_path: Path)
     )
     with CodeGenerator(graph) as generator:
         modules = generator.generate_modules(
-            ["Outputs!B1"],
             series_bindings=bindings,
             bindings_workbook=workbook,
-            paradigm="inverted_tree",
             blank_ranges=_BLANK,
         )
     assert "xl_vlookup(" in modules["internals.py"]

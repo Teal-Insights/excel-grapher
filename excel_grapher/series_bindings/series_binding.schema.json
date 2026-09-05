@@ -658,7 +658,7 @@
         "groups": {
           "type": "array",
           "items": { "$ref": "#/$defs/GroupRef" },
-          "description": "Optional view-level groups sequencing the generated set_*/compute_* API. Omitted or empty reproduces the flat export."
+          "description": "Optional view-level groups sequencing the single-file generate() set_*/compute_* API (list_groups). Package exports omit this discovery helper. Omitted or empty reproduces the flat export."
         },
         "structure": {
           "type": "object",

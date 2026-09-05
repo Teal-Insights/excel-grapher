@@ -1,8 +1,9 @@
 """View-level series binding groups: export sequencing and group manifest.
 
-Groups are a presentation concern of the generated `set_*`/`compute_*`/`read_*` API.
-They sequence code export and power `list_groups()` discovery; they never affect
-graph extraction, binding resolution, or record semantics.
+Groups are a presentation concern of the single-file `generate()` `set_*` /
+`compute_*` / `read_*` API. They sequence code export and power `list_groups()`
+discovery; they never affect graph extraction, binding resolution, or record
+semantics. Inverted-tree packages from `generate_modules()` omit `list_groups()`.
 """
 
 from __future__ import annotations

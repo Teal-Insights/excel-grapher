@@ -47,4 +47,4 @@ This is a pure Python **library + CLI** (`excel-grapher`) managed with `uv`; the
 - `pytest` deselects the `slow` marker by default (see `[tool.pytest.ini_options]`); opt in with `uv run pytest -m slow`.
 - Live-Excel parity tests (`xlwings`) `pytest.skip` on this Linux VM since Excel automation is unavailable — this is expected, not a failure.
 - The `graphviz` Python package is installed, but the system Graphviz binary is not; rendering visualizations to images needs `apt-get install -y graphviz` (only for viz/docs, not for tests or core use).
-- CLI smoke check: `uv run excel-grapher bindings validate examples/micro_workbooks/ffv2.xlsx --bindings examples/micro_workbooks/ff.bindings.yaml --smoke-test` (note the colocated sidecar declares `workbook: ff.xlsx`, so pass the workbook explicitly as shown).
+- CLI smoke check: `uv run excel-grapher bindings validate tests/fixtures/inverted_tree/tiny_dsa/tiny-dsa.xlsx --bindings tests/fixtures/inverted_tree/tiny_dsa/bindings --constraints tests/fixtures/inverted_tree/tiny_dsa/constraints.py --smoke-test`

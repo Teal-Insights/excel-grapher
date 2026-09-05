@@ -331,10 +331,8 @@ def test_empty_key_emits_on_expansion_order(tmp_path: Path) -> None:
     graph = create_dependency_graph(workbook, targets, load_values=True)
     with CodeGenerator(graph) as gen:
         modules = gen.generate_modules(
-            targets,
             series_bindings=document,
             bindings_workbook=workbook,
-            paradigm="inverted_tree",
         )
     pkg = load_package(modules, tmp_path, "keyless_expansion")
     assert pkg.compute_path(values=(1.0, 2.0, 3.0)) == pytest.approx((1.0, 2.0, 3.0))

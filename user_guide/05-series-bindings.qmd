@@ -12,10 +12,9 @@ The machine source of truth is a **sidecar manifest** next to the workbook, not 
 Validation uses the JSON Schema shipped with the package at
 `excel_grapher/series_bindings/series_binding.schema.json`.
 
-The sidecar is paradigm-agnostic. **Inverted-tree** (`generate_modules(..., paradigm="inverted_tree")`)
-is the recommended export for binding packages: `compute_*` functions take input arrays and return
-tuples. **ctx** export still emits `set_*` / `read_*` / `Records` and remains the library default
-until the [issue 662](https://github.com/Teal-Insights/excel-grapher/issues/662) gate. See
+Package exports (`generate_modules(...)`) use **inverted-tree**: `compute_*` functions take
+explicit inputs and return tuples. Single-file `generate()` supports `set_*` / `read_*` /
+`Records`. The context-based package exporter has been removed. See
 [Exporting standalone Python](06-export.qmd) for the migration and `as_records` recipe.
 
 **Example workbook:** [series_bindings.xlsx](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/series_bindings.xlsx)
@@ -42,10 +41,7 @@ schema_text = (
     .read_text(encoding="utf-8")
 )
 display(
-    Markdown(
-        "<details><summary>JSON Schema</summary>\n\n"
-        f"```json\n{schema_text}\n```\n</details>"
-    )
+    Markdown(f"<details><summary>JSON Schema</summary>\n\n```json\n{schema_text}\n```\n</details>")
 )
 ```
 
@@ -307,7 +303,7 @@ Suggested workflow:
 | Setter name | `setter.name` |
 
 4. **Validate** against the dependency graph (see [Python API](#python-api)).
-5. **Export** with `CodeGenerator(..., series_bindings=..., bindings_workbook=...)` to emit `set_*` / `compute_*` functions (see [Code export](export.qmd)).
+5. **Export.** Package: `CodeGenerator.generate_modules(series_bindings=..., bindings_workbook=...)` emits inverted-tree `compute_*` (explicit inputs, tuples). Single-file: `generate(...)` still emits `set_*` / `read_*` / Records (see [Code export](export.qmd)).
 
 Offset projection years (1..5) vs calendar years (1999..2000) are distinguished only by what you bind in `column_header` — declare the intended semantics in `sdmx_notes`. Use `read: int` for offset-style headers and `read: datetime` (or `read: auto` when Excel stores native date cells) for calendar `TIME_PERIOD` keys.
 
@@ -318,17 +314,16 @@ Offset projection years (1..5) vs calendar years (1999..2000) are distinguished 
 1. Extract a dependency graph whose targets include the cells you need (targets seed extraction; output bindings may also cover intermediate formula cells present in the graph).
 2. Declare `data_range`, `layout`, `structure.measure`, `structure.dimensions`, and `key` (input matching uses `key` only).
 3. Add dimension binds (`column_header`, `row_label`, `cell`, `constant`, …). Use `bind.kind: constant` for fixed dimensions such as `FREQUENCY: A`.
-4. Add `output.compute.name` (e.g. `compute_borvelia_primary_balance`) to emit a records-shaped `compute_*` function.
-5. Optionally set `output.compute.helper` (`name`, optional `dims`) so `compute_*` calls a parameterized internals helper from record dims instead of `xl_cell(address)`. Omit it (or leave leaves uncovered) to keep the `xl_cell` path.
-6. Optionally add `input.setter` in the same series or a mergeable shard for symmetric input APIs.
-7. Pass `series_bindings` and `bindings_workbook` to `CodeGenerator.generate()` / `generate_modules()`; call the generated `compute_*` function to obtain `Records` with `OBS_VALUE` and dimensions.
+4. Add `output.compute.name` (e.g. `compute_borvelia_primary_balance`). Package `compute_*` functions take input leaves and return measure tuples; use `as_records` for a Records view. Single-file `generate()` still emits Records-shaped `compute_*`.
+5. `output.compute.helper` applies to single-file `generate()` only (dim-keyed internals instead of `xl_cell`). Inverted-tree packages already emit one leaf-closure function per output.
+6. Optionally add `input.setter` in the same series or a mergeable shard. Setters are emitted by `generate()`, not by `generate_modules()`.
+7. Pass `series_bindings` and `bindings_workbook` to `generate()` or `generate_modules()`. For packages, call `compute_*` with catalog-order arguments (or `as_records` afterward). For single-file, call `set_*` / `compute_*` with `ctx`.
 
-### Upgrade notes (1.10.0): helper-backed compute
+### Upgrade notes (1.10.0): helper-backed compute (`generate()` only)
 
-- **Default unchanged:** without `output.compute.helper` (and without an address overlay passed to `generate_modules(..., address_helpers=...)`), `compute_*` still fills measures via `xl_cell(ctx, address)`.
-- **Helper coverage:** when a helper covers the published leaves, codegen emits dim-keyed calls such as `helper(ctx, time_period=static_record['TIME_PERIOD'])`. Provide that callable in `internals` (post-refactor). Partial coverage keeps `xl_cell` for uncovered leaves.
-- **Leaf tables:** modular packages emit `_OUTPUT_LEAVES_*` in `_output_leaves.py` rather than inlining them in `api.py`.
-- **Projection aliases:** once a helper covers a full published span, per-address `cell_*` projection aliases for those leaves are no longer required for the Records API path.
+- **Default unchanged on single-file export:** without `output.compute.helper`, `compute_*` still fills measures via `xl_cell(ctx, address)`.
+- **Helper coverage:** when a helper covers the published leaves, codegen emits dim-keyed calls such as `helper(ctx, time_period=static_record['TIME_PERIOD'])`. Partial coverage keeps `xl_cell` for uncovered leaves.
+- Package exports do not use `output.compute.helper` or address overlays; every output is already a leaf-closure function.
 
 ## Records contract
 
@@ -390,7 +385,9 @@ Setters accept **long/tidy** tables only. Convert wide Excel-shaped grids before
 tidy = df_wide.T.reset_index().rename(columns={"index": "TIME_PERIOD", 0: "OBS_VALUE"})
 
 # pandas melt (multi-column wide grid)
-tidy = df_wide.reset_index().melt(id_vars=["INDICATOR"], var_name="TIME_PERIOD", value_name="OBS_VALUE")
+tidy = df_wide.reset_index().melt(
+    id_vars=["INDICATOR"], var_name="TIME_PERIOD", value_name="OBS_VALUE"
+)
 
 # polars
 tidy = df_wide.unpivot(on="TIME_PERIOD", index="INDICATOR", value_name="OBS_VALUE")
@@ -522,10 +519,13 @@ series:
 Generated setters accept long/tidy `list[dict]` records or a tidy DataFrame:
 
 ```python
-set_macro_matrix(ctx, [
-    {"INDICATOR": "GDP growth", "TIME_PERIOD": 2024, "OBS_VALUE": 1.5},
-    {"INDICATOR": "Inflation", "TIME_PERIOD": 2025, "OBS_VALUE": 2.8},
-])
+set_macro_matrix(
+    ctx,
+    [
+        {"INDICATOR": "GDP growth", "TIME_PERIOD": 2024, "OBS_VALUE": 1.5},
+        {"INDICATOR": "Inflation", "TIME_PERIOD": 2025, "OBS_VALUE": 2.8},
+    ],
+)
 
 import pandas as pd
 
@@ -628,9 +628,12 @@ This emits **one** `set_discrete_risks` accepting the full composite key — no 
 group names smuggled through `series_context`:
 
 ```python
-set_discrete_risks(ctx, [
-    {"SCENARIO": "Paris", "SHOCK_TYPE": "Revenue", "TIME_PERIOD": 2024, "OBS_VALUE": 9.9},
-])
+set_discrete_risks(
+    ctx,
+    [
+        {"SCENARIO": "Paris", "SHOCK_TYPE": "Revenue", "TIME_PERIOD": 2024, "OBS_VALUE": 9.9},
+    ],
+)
 ```
 
 For the simpler sparse/merged variant — group labels in their own column, blank (or merge-covered)
@@ -971,18 +974,18 @@ records = compute_borvelia_primary_balance(ctx=ctx)
 
 When every export target is covered by an output series binding, address-keyed
 `compute_all` is omitted from the public API (prefer the semantic `compute_*`
-functions). Pass `include_compute_all=True` to `generate` / `generate_modules`
-to keep it anyway.
+functions). Pass `include_compute_all=True` to `generate()` to keep it anyway.
 
 The generated module also exposes two zero-argument discovery helpers for enumerating the series
 API without parsing source:
 
 ```python
-list_setters()   # ["set_borvelia_primary_balance"]
+list_setters()  # ["set_borvelia_primary_balance"]
 list_computes()  # ["compute_borvelia_primary_balance"]
 ```
 
-For modular package exports, generated series setters and output compute functions are emitted from the package entrypoint and re-exported from the package root, alongside `make_context`, `list_setters`, and `list_computes` (and `compute_all` when emitted).
+`list_groups()` is emitted by `generate()` when the sidecar declares view-level `groups`.
+Package exports (`generate_modules`) omit setters, readers, `make_context`, and `list_groups`.
 
 ## Command-line validation
 
@@ -999,8 +1002,8 @@ excel-grapher bindings validate lic_inputs.xlsx --smoke-test --emit-dir ./genera
 
 By default the command resolves `lic_inputs.bindings.yaml` or a `lic_inputs.bindings/` shard
 directory colocated with the workbook. Use `--bindings` to override. Validation-only is the default;
-`--smoke-test` generates modular export code and exercises every declared `set_*` / `compute_*`
-function; `--emit-dir` writes generated module files to disk.
+`--smoke-test` generates inverted-tree package code and exercises every declared `compute_*`
+function with `data.py` defaults; `--emit-dir` writes generated module files to disk.
 
 ## Design note
 
