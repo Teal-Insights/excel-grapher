@@ -658,7 +658,7 @@ def _cell_access_pairs(
     return tuple(found)
 
 
-SlotState = tuple[int, int] | int | None
+SlotState = tuple[int, int] | int | None | Literal["irregular"]
 
 
 def _shape_partition(
@@ -666,7 +666,12 @@ def _shape_partition(
     catalog: SeriesCatalog,
     graph: DependencyGraph,
 ) -> tuple[Statement, ...]:
-    """Split a formula series into consecutive affine formula-shape statements."""
+    """Split a formula series into consecutive formula-shape statements.
+
+    Same-shape cells that read the same producers stay in one run even when
+    the producer catalog slots are not an affine function of the host index
+    (#695). A shape or producer change still starts a new statement.
+    """
     meta = [
         (_formula_shape_key(graph, address), _cell_access_pairs(catalog, graph, address))
         for address in series.cells
@@ -696,21 +701,30 @@ def _shape_partition(
                         can_extend = False
                         break
                     next_slot_states.append(None)
+                elif state == "irregular":
+                    if prod_idx is None:
+                        can_extend = False
+                        break
+                    next_slot_states.append("irregular")
                 elif isinstance(state, int):
                     if prod_idx is None:
                         can_extend = False
                         break
                     fit = fit_affine_map(((run_start, state), (index, prod_idx)))
                     if fit is None:
-                        can_extend = False
-                        break
-                    next_slot_states.append(fit)
+                        next_slot_states.append("irregular")
+                    else:
+                        next_slot_states.append(fit)
                 else:
                     coeff, offset = state
-                    if prod_idx is None or prod_idx != coeff * index + offset:
+                    if prod_idx is None:
                         can_extend = False
                         break
-                    next_slot_states.append(state)
+                    if prod_idx != coeff * index + offset:
+                        # Same shape and producers; keep one gather run (#695).
+                        next_slot_states.append("irregular")
+                    else:
+                        next_slot_states.append(state)
 
         if can_extend:
             slot_states = next_slot_states

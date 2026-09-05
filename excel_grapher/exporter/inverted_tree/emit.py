@@ -751,7 +751,14 @@ def _emit_evaluation_body(
         body.append(f"    {series_id} = internals.{series_id}({args})")
         locals_bound.add(series_id)
         leaf_source[series_id] = series_id
-        computed = call_indices.get(series_id, _identity_indices(catalog.get(series_id)))
+        # Non-scan helpers always return the full catalog. `call_indices` may
+        # still be a consumer subset (an irregular gather, #695); take at the
+        # next call site from this full window.
+        computed = (
+            call_indices.get(series_id, _identity_indices(catalog.get(series_id)))
+            if info.is_scan
+            else _identity_indices(catalog.get(series_id))
+        )
         local_indices[series_id] = computed
         taken = _take_after_call(
             series_id,
