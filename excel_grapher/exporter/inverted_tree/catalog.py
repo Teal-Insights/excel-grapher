@@ -15,6 +15,8 @@ from excel_grapher.core.address_keys import (
     as_canonical,
     canonical_address,
     format_cell_key,
+    format_key,
+    parse_address,
     parse_cell_coords,
 )
 from excel_grapher.core.formula_ast import (
@@ -27,7 +29,10 @@ from excel_grapher.core.formula_ast import (
 )
 from excel_grapher.core.formula_shape import fingerprint_formula_shape
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
-from excel_grapher.series_bindings.graph_predicates import is_graph_formula_node
+from excel_grapher.series_bindings.graph_predicates import (
+    is_graph_formula_node,
+    is_graph_leaf,
+)
 from excel_grapher.series_bindings.normalize import (
     effective_validation,
     has_constant_direction,
@@ -53,7 +58,9 @@ if TYPE_CHECKING:
 
 Direction = Literal["input", "constant", "internal", "output"]
 Layout = Literal["scalar", "series", "matrix"]
+HoleKind = Literal["blank", "off_closure", "literal", "graph_leaf"]
 _SCHEDULE_AXIS = "TIME_PERIOD"
+_NONE_HOLE_KINDS = frozenset({"blank", "off_closure"})
 
 _DTYPE_READ = {
     "int": "int",
@@ -103,6 +110,16 @@ class Statement:
 
 
 @dataclass(frozen=True, slots=True)
+class SeriesHole:
+    """One catalog cell that is not an on-graph formula."""
+
+    index: int
+    address: CanonicalAddress
+    kind: HoleKind
+    literal: object | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class BoundSeries:
     """One bindings-catalog series with expanded cells and an index domain."""
 
@@ -116,8 +133,10 @@ class BoundSeries:
     raw: Mapping[str, Any]
     domain: tuple[KeyPoint, ...]
     statements: tuple[Statement, ...]
+    holes: tuple[SeriesHole, ...] = ()
     _cell_indices: dict[CanonicalAddress, int] = field(init=False, repr=False, compare=False)
     _rect: tuple[str, int, int, int, int] | None = field(init=False, repr=False, compare=False)
+    _holes_by_index: dict[int, SeriesHole] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -126,6 +145,7 @@ class BoundSeries:
             {cell: idx for idx, cell in enumerate(self.cells)},
         )
         object.__setattr__(self, "_rect", _dense_rect(self.cells))
+        object.__setattr__(self, "_holes_by_index", {hole.index: hole for hole in self.holes})
 
     @property
     def is_scalar(self) -> bool:
@@ -159,6 +179,20 @@ class BoundSeries:
     def index_of(self, address: CanonicalAddress) -> int | None:
         """Return the 0-based index of canonical `address` in `cells`, if present."""
         return self._cell_indices.get(address)
+
+    @property
+    def hole_indices(self) -> tuple[int, ...]:
+        """0-based catalog indexes of cells that are not on-graph formulas."""
+        return tuple(hole.index for hole in self.holes)
+
+    @property
+    def has_none_holes(self) -> bool:
+        """True when a retained hole emits `None` (blank or off-closure formula)."""
+        return any(hole.kind in _NONE_HOLE_KINDS for hole in self.holes)
+
+    def hole_at(self, index: int) -> SeriesHole | None:
+        """Return the hole recorded at catalog `index`, if any."""
+        return self._holes_by_index.get(index)
 
     @property
     def rect(self) -> tuple[str, int, int, int, int] | None:
@@ -682,7 +716,9 @@ def _shape_partition(
     for index in range(1, len(meta)):
         shape, pairs = meta[index]
         can_extend = (
-            shape == active_shape
+            active_shape is not None
+            and shape is not None
+            and shape == active_shape
             and len(pairs) == len(active_pairs)
             and tuple(producer_id for producer_id, _ in pairs) == active_producers
         )
@@ -769,6 +805,90 @@ def partition_catalog(catalog: SeriesCatalog, graph: DependencyGraph) -> SeriesC
     )
 
 
+def _value_is_formula(value: object) -> bool:
+    """True when a non-`data_only` workbook cell stores a formula."""
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return value.startswith("=")
+    return getattr(value, "text", None) is not None
+
+
+def _stored_formula_addresses(
+    workbook: Path | str, addresses: Sequence[CanonicalAddress]
+) -> frozenset[CanonicalAddress]:
+    """Return addresses among `addresses` that store a workbook formula."""
+    if not addresses:
+        return frozenset()
+    from fastpyxl import load_workbook
+
+    wanted_by_sheet: dict[str, set[str]] = {}
+    for address in addresses:
+        sheet, coord = parse_address(address)
+        wanted_by_sheet.setdefault(sheet, set()).add(coord)
+    found: set[CanonicalAddress] = set()
+    book = load_workbook(workbook, data_only=False, read_only=True)
+    try:
+        for sheet, wanted in wanted_by_sheet.items():
+            if sheet not in book.sheetnames:
+                continue
+            for row in book[sheet].iter_rows():
+                for cell in row:
+                    coord = getattr(cell, "coordinate", None)
+                    if coord is None or coord not in wanted:
+                        continue
+                    data_type = getattr(cell, "data_type", None)
+                    if data_type == "f" or _value_is_formula(cell.value):
+                        found.add(as_canonical(format_key(sheet, coord)))
+    finally:
+        book.close()
+    return frozenset(found)
+
+
+def _classify_formula_holes(
+    cells: Sequence[CanonicalAddress],
+    graph: DependencyGraph,
+    *,
+    series_id: str,
+    workbook: Path | str,
+    reader: _WorkbookValues,
+) -> tuple[SeriesHole, ...]:
+    """Record retained matrix cells that are not on-graph formulas."""
+    candidates = [
+        (index, cell) for index, cell in enumerate(cells) if not is_graph_formula_node(graph, cell)
+    ]
+    if not candidates:
+        return ()
+    formulas = _stored_formula_addresses(workbook, [cell for _, cell in candidates])
+    holes: list[SeriesHole] = []
+    for index, cell in candidates:
+        if is_graph_leaf(graph, cell):
+            node = graph.get_node(cell)
+            value = None if node is None else node.value
+            if value is not None:
+                holes.append(SeriesHole(index=index, address=cell, kind="graph_leaf"))
+                continue
+            if cell in formulas:
+                holes.append(SeriesHole(index=index, address=cell, kind="off_closure"))
+                continue
+            raw = reader.read(cell)
+            if raw is None:
+                holes.append(SeriesHole(index=index, address=cell, kind="blank"))
+                continue
+            raise InvertedTreeExportError(
+                f"series {series_id!r} cell {cell}: graph leaf has no cached value"
+            )
+        if cell in formulas:
+            holes.append(SeriesHole(index=index, address=cell, kind="off_closure"))
+            continue
+        raw = reader.read(cell)
+        if raw is None:
+            holes.append(SeriesHole(index=index, address=cell, kind="blank"))
+        else:
+            holes.append(SeriesHole(index=index, address=cell, kind="literal", literal=raw))
+    return tuple(holes)
+
+
 def _filter_formula_series_cells(
     cells: Sequence[CanonicalAddress],
     entry: Mapping[str, Any],
@@ -785,8 +905,7 @@ def _filter_formula_series_cells(
     `validate_series_bindings`.
 
     Raises:
-        InvertedTreeExportError: Filtering leaves no cells, or a `matrix`
-            series has holes after filtering.
+        InvertedTreeExportError: Filtering leaves no graph formula cells.
     """
     if direction not in {"internal", "output"}:
         return tuple(cells)
@@ -815,10 +934,8 @@ def _filter_formula_series_cells(
         raise InvertedTreeExportError(
             f"series {series_id!r}: data_range has no graph formula cells"
         )
-    if layout == "matrix" and skipped > 0:
-        raise InvertedTreeExportError(
-            f"series {series_id!r}: graph-formula filtering left holes in a matrix series"
-        )
+    if layout == "matrix":
+        return tuple(cells)
     return selected
 
 
@@ -835,14 +952,14 @@ def build_catalog(
     ordered key-point domain. When `graph` is provided, mixed formula shapes
     partition into one `Statement` per consecutive run, and internal/output
     series keep only graph formula cells (issue #693). Input and constant
-    series stay unfiltered.
+    series stay unfiltered. `layout: matrix` keeps hole cells so the
+    rectangle, stride, and key domain stay intact (issue #696).
 
     Raises:
         InvertedTreeExportError: A series is missing `id`, two series share an
             id (message names both `data_range`s), two series claim the same
             cell, key-domain resolution fails, a formula series has no graph
-            formula cells, or graph-formula filtering leaves holes in a
-            `matrix` series.
+            formula cells, or a retained matrix graph leaf has no cached value.
     """
     series_map: dict[str, BoundSeries] = {}
     order: list[str] = []
@@ -901,10 +1018,21 @@ def build_catalog(
             except ValueError as exc:
                 raise InvertedTreeExportError(str(exc)) from exc
             domain = tuple(_key_point(values, key_fields) for values in raw_domain)
+            layout = _layout_of(entry)
+            direction = _direction_of(entry)
+            holes: tuple[SeriesHole, ...] = ()
+            if graph is not None and layout == "matrix" and direction in {"internal", "output"}:
+                holes = _classify_formula_holes(
+                    cell_tuple,
+                    graph,
+                    series_id=series_id,
+                    workbook=workbook,
+                    reader=reader,
+                )
             bound = BoundSeries(
                 series_id=series_id,
-                layout=_layout_of(entry),
-                direction=_direction_of(entry),
+                layout=layout,
+                direction=direction,
                 cells=cell_tuple,
                 key_fields=key_fields,
                 dtype=_dtype_of(entry),
@@ -912,6 +1040,7 @@ def build_catalog(
                 raw=entry,
                 domain=domain,
                 statements=(_whole_statement(series_id, cell_tuple, domain),),
+                holes=holes,
             )
             series_map[series_id] = bound
             order.append(series_id)
