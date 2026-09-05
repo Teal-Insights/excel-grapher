@@ -804,7 +804,7 @@ def _filter_formula_series_cells(
             UserWarning,
             stacklevel=3,
         )
-    if skipped > 0 and len(cells) > 1 and len(selected) == 1:
+    if skipped > 0 and layout == "series" and len(cells) > 1 and len(selected) == 1:
         warnings.warn(
             f"series {series_id!r}: on-graph subset is a single cell; "
             "helper return type becomes scalar",
@@ -817,8 +817,7 @@ def _filter_formula_series_cells(
         )
     if layout == "matrix" and skipped > 0:
         raise InvertedTreeExportError(
-            f"series {series_id!r}: graph-formula filtering left holes in a "
-            "matrix series"
+            f"series {series_id!r}: graph-formula filtering left holes in a matrix series"
         )
     return selected
 

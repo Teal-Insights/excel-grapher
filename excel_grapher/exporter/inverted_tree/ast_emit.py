@@ -1081,10 +1081,11 @@ def emit_sequence_length_guards(
 ) -> tuple[list[str], set[str]]:
     """Emit length guards so helpers reject producer arrays of the wrong size.
 
-    Identity-aligned params still use `require_aligned`, then pin `n` to this
-    series' cell count. Affine and index-mapped params are taken to the host
-    walk at the call site, so the helper requires host length. Other sequence
-    params (lags, lookups) must be dense over the producer's `__domain__`.
+    Identity-aligned params use `require_aligned` so scan helpers still accept
+    a shorter working buffer. Affine and index-mapped params are taken to the
+    host walk at the call site, so the helper requires host length. Other
+    sequence params (lags, lookups, mixed reads) must be dense over the
+    producer's `__domain__`.
     """
     host_n = len(series.cells)
     used: set[str] = set()
@@ -1105,11 +1106,10 @@ def emit_sequence_length_guards(
         lines.append(f"    require_length({param_id}, {len(producer.cells)})")
     if identity:
         used.add("require_aligned")
-        used.add("require_length")
         if emit_n:
             lines.append(f"    n = require_aligned({', '.join(identity)})")
-            lines.append(f"    require_length({identity[0]}, {host_n})")
         else:
+            used.add("require_length")
             for param_id in identity:
                 lines.append(f"    require_length({param_id}, {host_n})")
     elif emit_n:
@@ -1127,9 +1127,7 @@ def emit_helper_body(
     """Return indented body lines and the runtime symbols they use."""
     used: set[str] = set()
     if series.is_scalar:
-        guard_lines, guard_used = emit_sequence_length_guards(
-            series, deps, catalog, emit_n=False
-        )
+        guard_lines, guard_used = emit_sequence_length_guards(series, deps, catalog, emit_n=False)
         used |= guard_used
         ctx = EmitContext(
             host=series,

@@ -105,6 +105,11 @@ def _year_workbook(tmp_path: Path) -> Path:
                 "F2": 5.0,
             },
             "Engine": {
+                "B1": 2021,
+                "C1": 2022,
+                "D1": 2023,
+                "E1": 2024,
+                "F1": 2025,
                 "B2": "=Inputs!B2+1",
                 "C2": "=Inputs!C2+1",
                 "D2": "=Inputs!D2+99",
@@ -112,6 +117,11 @@ def _year_workbook(tmp_path: Path) -> Path:
                 "F2": "=Inputs!F2+1",
             },
             "Outputs": {
+                "B1": 2021,
+                "C1": 2022,
+                "D1": 2023,
+                "E1": 2024,
+                "F1": 2025,
                 "B2": "=Engine!B2",
                 "C2": "=Engine!C2",
                 "D2": "=Inputs!D2",

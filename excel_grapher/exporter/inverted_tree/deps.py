@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastpyxl.utils.cell import get_column_letter
 
@@ -1385,7 +1385,7 @@ def assert_subgraph_bound(
                     f"unbound formula cell {address} is in the target subgraph"
                 )
             if not owner.is_formula_series and not (
-                owner.direction == "input" and is_override_input(owner.raw)
+                owner.direction == "input" and is_override_input(cast(dict[str, Any], owner.raw))
             ):
                 raise InvertedTreeExportError(
                     f"formula cell {address} is bound to {owner.direction} series "

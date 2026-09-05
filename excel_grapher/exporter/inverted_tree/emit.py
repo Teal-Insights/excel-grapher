@@ -1026,18 +1026,35 @@ def emit_init_module(catalog: SeriesCatalog) -> str:
     return "\n".join(lines)
 
 
+_REFUSE_BINDING_CODES = frozenset(
+    {
+        "non_leaf_input_overlap",
+        "no_formula_override_targets",
+    }
+)
+
+
 def _refuse_invalid_bindings(
     graph: DependencyGraph,
     series_bindings: WorkbookSeriesBindings,
     bindings_workbook: Path | str,
 ) -> None:
-    """Fail closed when bindings would not pass `validate_series_bindings`."""
+    """Fail closed when bindings would emit a formula cell as a plain input.
+
+    Other validator errors (`duplicate_key`, `bind_resolution_failed`, unbound
+    ranges) stay with emit's own fail-closed checks so their messages remain
+    specific.
+    """
     report = validate_series_bindings(graph, series_bindings, workbook=bindings_workbook)
-    if report["ok"]:
-        return
-    errors = [issue for issue in report["issues"] if issue["level"] == "error"]
-    codes = ", ".join(sorted({issue["code"] for issue in errors}))
-    raise InvertedTreeExportError(f"invalid series bindings ({codes})")
+    codes = sorted(
+        {
+            issue["code"]
+            for issue in report["issues"]
+            if issue["level"] == "error" and issue["code"] in _REFUSE_BINDING_CODES
+        }
+    )
+    if codes:
+        raise InvertedTreeExportError(f"invalid series bindings ({', '.join(codes)})")
 
 
 def generate_inverted_tree_modules(
@@ -1064,7 +1081,8 @@ def generate_inverted_tree_modules(
 
     Raises:
         InvertedTreeExportError: A bound series cannot be inverted fail-closed,
-            or `series_bindings` fail `validate_series_bindings`.
+            or an input range overlaps an on-graph formula cell without
+            `input.mode: override`.
     """
     del targets
     _refuse_invalid_bindings(graph, series_bindings, bindings_workbook)
