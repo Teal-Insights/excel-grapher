@@ -35,6 +35,7 @@ class KeyedCompute(Protocol):
 
     __key__: tuple[str, ...]
     __domain__: tuple[object, ...]
+    __holes__: tuple[int, ...]
 
 
 XL_ERROR_CODES = frozenset(

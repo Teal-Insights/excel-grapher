@@ -53,6 +53,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
     node_formula_ast,
     predecessor_address,
     successor_address,
+    try_formula_ast,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.schedule import (
@@ -129,8 +130,12 @@ class EmitContext:
 def python_measure_type(series: BoundSeries) -> str:
     """Return the Python type of one observation (`float | str` for numbers)."""
     if series.python_dtype in {"float", "int"}:
-        return f"{series.python_dtype} | str"
-    return series.python_dtype
+        base = f"{series.python_dtype} | str"
+    else:
+        base = series.python_dtype
+    if series.has_none_holes:
+        return f"{base} | None"
+    return base
 
 
 def _python_param_inner(series: BoundSeries) -> str:
@@ -572,7 +577,8 @@ def formula_shape_runs(
         return [(stmt.shape_key or "", stmt.start, stmt.stop) for stmt in statements]
     runs: list[tuple[str, int, int]] = []
     for index, address in enumerate(series.cells):
-        key = fingerprint_formula_shape(node_formula_ast(graph, address)).shape_key
+        ast = try_formula_ast(graph, address)
+        key = fingerprint_formula_shape(ast).shape_key if ast is not None else ""
         if runs and runs[-1][0] == key:
             runs[-1] = (key, runs[-1][1], index + 1)
         else:
@@ -804,7 +810,9 @@ def _block_anchor_map(
     shape = fingerprint_formula_shape(node_formula_ast(ctx.graph, ctx.host_cell)).shape_key
     pairs: list[tuple[int, int]] = []
     for index, cell in enumerate(ctx.host.cells):
-        ast = node_formula_ast(ctx.graph, cell)
+        ast = try_formula_ast(ctx.graph, cell)
+        if ast is None:
+            continue
         if fingerprint_formula_shape(ast).shape_key != shape:
             continue
         anchors = _lookup_anchors(ast, cell)
@@ -999,6 +1007,32 @@ def _series_for_ref(node: AstNode, ctx: EmitContext) -> BoundSeries:
     raise _host_export_error(ctx, "OFFSET/MATCH base must be a cell or range")
 
 
+def _emit_hole_expr(series: BoundSeries, host_index: int, graph: DependencyGraph) -> str:
+    """Return a Python literal for a retained matrix hole cell."""
+    from excel_grapher.exporter.inverted_tree.emit import (
+        _cell_value,
+        _coerce_cached_value,
+        _py_literal,
+    )
+
+    hole = series.hole_at(host_index)
+    address = series.cells[host_index]
+    if hole is None or hole.kind in {"blank", "off_closure"}:
+        return "None"
+    if hole.kind == "graph_leaf":
+        node = graph.get_node(address)
+        if node is None or node.value is None:
+            raise InvertedTreeExportError(
+                f"series {series.series_id!r} cell {address}: graph leaf has no cached value"
+            )
+        return _py_literal(_cell_value(graph, address, series.dtype))
+    if hole.literal is None:
+        raise InvertedTreeExportError(
+            f"series {series.series_id!r} cell {address}: cached value is unavailable"
+        )
+    return _py_literal(_coerce_cached_value(hole.literal, series.dtype, address))
+
+
 def _region_measure(
     series: BoundSeries,
     *,
@@ -1009,6 +1043,8 @@ def _region_measure(
     index_var: str | None,
     prior_var: str | None,
 ) -> tuple[str, set[str]]:
+    if try_formula_ast(graph, series.cells[host_index]) is None:
+        return _emit_hole_expr(series, host_index, graph), set()
     ctx = EmitContext(
         host=series,
         catalog=catalog,
@@ -1285,6 +1321,8 @@ def _emit_region_return(
         compute_names=compute_names,
         graph=graph,
     )
+    if try_formula_ast(graph, series.cells[host_index]) is None:
+        return _emit_hole_expr(series, host_index, graph), set()
     expr = emit_expr(node_formula_ast(graph, series.cells[host_index]), ctx)
     return _as_measure_call(expr, series), set(ctx.used_runtime)
 
@@ -1426,6 +1464,8 @@ def _emit_fused_expr(
         fused_use_area=use_area_var,
         graph=graph,
     )
+    if try_formula_ast(graph, series.cells[host_index]) is None:
+        return _emit_hole_expr(series, host_index, graph), set()
     expr = emit_expr(node_formula_ast(graph, series.cells[host_index]), ctx)
     return _as_measure_call(expr, series), set(ctx.used_runtime)
 

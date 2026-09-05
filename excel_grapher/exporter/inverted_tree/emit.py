@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from excel_grapher.exporter.inverted_tree.ast_emit import (
     _is_identity_aligned,
@@ -36,6 +36,7 @@ from excel_grapher.exporter.inverted_tree.domains import (
     domain_const_name,
     key_domain_attr_source,
     plan_domain_emission,
+    publish_attr_source,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.schedule import (
@@ -116,17 +117,13 @@ def _parse_numeric_text(text: str) -> float | None:
             return None
 
 
-def _cell_value(graph: DependencyGraph, address: str, dtype: str) -> object:
-    """Read one cached cell as a catalog value.
+def _coerce_cached_value(value: Any, dtype: str, address: str) -> object:
+    """Coerce a cached workbook value to a catalog dtype.
 
     Float series keep non-numeric cached text (`n/a`, `..`, `--`, empty) as
     strings so IMF-style sentinels survive emit. Grouped numeric text such as
     `1 000` becomes a float. Remaining coercion failures name `address`.
     """
-    node = graph.get_node(address)
-    value = getattr(node, "value", None) if node is not None else None
-    if value is None:
-        return 0 if dtype in {"int", "integer", "float", "number"} else ""
     try:
         if dtype in {"int", "integer"}:
             if isinstance(value, str):
@@ -161,6 +158,15 @@ def _cell_value(graph: DependencyGraph, address: str, dtype: str) -> object:
     if isinstance(value, int | float | str | bool):
         return value
     return value
+
+
+def _cell_value(graph: DependencyGraph, address: str, dtype: str) -> object:
+    """Read one cached cell as a catalog value."""
+    node = graph.get_node(address)
+    value = getattr(node, "value", None) if node is not None else None
+    if value is None:
+        return 0 if dtype in {"int", "integer", "float", "number"} else ""
+    return _coerce_cached_value(value, dtype, address)
 
 
 def _series_values(series: BoundSeries, graph: DependencyGraph) -> object:
@@ -337,14 +343,19 @@ def _key_domain_attrs(
     series_id: str | None = None,
     scc: tuple[str, ...] | None = None,
     plan: DomainEmitPlan,
+    holes: tuple[int, ...] = (),
 ) -> str:
     if scc is not None:
-        return key_domain_attr_source(name, keys=plan.scc_key[scc], domain_expr=plan.scc_expr[scc])
-    if series_id is None:
+        source = key_domain_attr_source(
+            name, keys=plan.scc_key[scc], domain_expr=plan.scc_expr[scc]
+        )
+    elif series_id is None:
         raise ValueError("series_id or scc is required")
-    return key_domain_attr_source(
-        name, keys=plan.series_key[series_id], domain_expr=plan.series_expr[series_id]
-    )
+    else:
+        source = key_domain_attr_source(
+            name, keys=plan.series_key[series_id], domain_expr=plan.series_expr[series_id]
+        )
+    return f"{source}\n{publish_attr_source(name, '__holes__', repr(holes))}"
 
 
 def emit_internals_module(
@@ -390,13 +401,7 @@ def emit_internals_module(
             param_ids = scc_external_params(scc, deps, catalog.order)
             kind = "Demand-driven co-evaluation" if rung == 3 else "Fused union-domain evaluation"
             joined = ", ".join(f"`{sid}`" for sid in scc)
-            doc = (
-                f'    """{kind} of zipper series {joined}.\n'
-                "\n"
-                "    Each sequence argument must be dense over the producer's `__domain__`.\n"
-                "    Holed series are shorter than the public domain.\n"
-                '    """'
-            )
+            doc = _helper_docstring(f"{kind} of zipper series {joined}.")
             source = "\n".join([_scan_signature(scc, param_ids, catalog), doc, *body])
             source = f"{source}\n{_key_domain_attrs(scan_function_name(scc), scc=scc, plan=plan)}"
             functions.append(source)
@@ -410,15 +415,15 @@ def emit_internals_module(
             summary = f"Demand-driven evaluation of series `{series.series_id}`."
         else:
             summary = f"First-level helper for bound series `{series.series_id}`."
-        doc = (
-            f'    """{summary}\n'
-            "\n"
-            "    Each sequence argument must be dense over the producer's `__domain__`.\n"
-            "    Holed series are shorter than the public domain.\n"
-            '    """'
-        )
+        doc = _helper_docstring(summary, series)
         source = "\n".join([_helper_signature(series, info, catalog), doc, *body])
-        source = f"{source}\n{_key_domain_attrs(series.series_id, series_id=series.series_id, plan=plan)}"
+        attrs = _key_domain_attrs(
+            series.series_id,
+            series_id=series.series_id,
+            plan=plan,
+            holes=series.hole_indices,
+        )
+        source = f"{source}\n{attrs}"
         functions.append(source)
         needs_data = needs_data or plan.uses_data(series.series_id)
     runtime_names = sorted(used_runtime)
@@ -443,6 +448,40 @@ def emit_internals_module(
     lines.append("\n\n".join(functions))
     lines.append("")
     return "\n".join(lines).rstrip() + "\n"
+
+
+_HOLE_DOC_LABELS = {
+    "blank": "blank",
+    "off_closure": "not computed",
+    "literal": "cached literal",
+    "graph_leaf": "cached literal",
+}
+
+
+def _hole_doc_lines(series: BoundSeries) -> list[str]:
+    """Return indented docstring lines naming retained hole cells by category."""
+    if not series.holes:
+        return []
+    grouped: dict[str, list[str]] = {}
+    for hole in series.holes:
+        grouped.setdefault(_HOLE_DOC_LABELS[hole.kind], []).append(f"`{hole.address}`")
+    lines = ["", "    Hole cells kept in the bound rectangle:"]
+    for label, addresses in grouped.items():
+        lines.append(f"    {label}: {', '.join(addresses)}")
+    return lines
+
+
+def _helper_docstring(summary: str, series: BoundSeries | None = None) -> str:
+    lines = [
+        f'    """{summary}',
+        "",
+        "    Each sequence argument must be dense over the producer's `__domain__`.",
+        "    Holed series are shorter than the public domain.",
+    ]
+    if series is not None:
+        lines.extend(_hole_doc_lines(series))
+    lines.append('    """')
+    return "\n".join(lines)
 
 
 def _identity_indices(series: BoundSeries) -> tuple[int, ...]:
@@ -594,7 +633,12 @@ def _compute_attrs(
     return "\n".join(
         [
             constants_attr_source(name, constants),
-            _key_domain_attrs(name, series_id=series.series_id, plan=plan),
+            _key_domain_attrs(
+                name,
+                series_id=series.series_id,
+                plan=plan,
+                holes=series.hole_indices,
+            ),
         ]
     )
 

@@ -5,6 +5,10 @@ warning, not an export error. Filtering happens in `build_catalog` before
 the key domain is resolved (not by shrinking `formula_series()`). Input and
 constant series stay unfiltered. Helpers reject sequence arguments that are
 not dense over the producer's `__domain__`.
+
+`layout: matrix` keeps hole cells in the catalog (issue 696) so the
+rectangle, stride, and `__domain__` stay intact. Helpers emit `None` or a
+cached literal at those positions.
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ from typing import Any
 
 import pytest
 
+from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter.inverted_tree.catalog import build_catalog
 from excel_grapher.exporter.inverted_tree.emit import generate_inverted_tree_modules
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
@@ -323,27 +328,11 @@ def test_emit_refuses_non_leaf_input_overlap(tmp_path: Path) -> None:
         )
 
 
-def test_matrix_holes_fail_closed(tmp_path: Path) -> None:
-    workbook = write_workbook(
-        tmp_path / "matrix_hole.xlsx",
-        {
-            "Profile": {
-                "B1": 2020,
-                "C1": 2021,
-                "A2": "France",
-                "B2": "=1",
-                "C2": "=2",
-                "A3": "Kenya",
-                "B3": "=3",
-                "C3": "=4",
-            },
-            "Outputs": {"A1": "=Profile!B2"},
-        },
-    )
-    table = {
+def _matrix_table(data_range: str = "Profile!B2:C3") -> dict[str, Any]:
+    return {
         "id": "profile_table",
-        "sheet": "Profile",
-        "data_range": "Profile!B2:C3",
+        "sheet": data_range.split("!", 1)[0],
+        "data_range": data_range,
         "layout": "matrix",
         "internal": {},
         "structure": {
@@ -371,11 +360,211 @@ def test_matrix_holes_fail_closed(tmp_path: Path) -> None:
         },
         "key": ["COUNTRY", "TIME_PERIOD"],
     }
-    document = bindings_document(
-        table,
+
+
+def _matrix_document(*outputs: dict[str, Any]) -> dict[str, Any]:
+    return bindings_document(_matrix_table(), *outputs)
+
+
+def _matrix_profile_cells(**overrides: object) -> dict[str, object]:
+    cells: dict[str, object] = {
+        "B1": 2020,
+        "C1": 2021,
+        "A2": "France",
+        "B2": "=1",
+        "C2": "=2",
+        "A3": "Kenya",
+        "B3": "=3",
+        "C3": "=4",
+    }
+    cells.update(overrides)
+    return cells
+
+
+def test_matrix_holes_are_retained(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "matrix_hole.xlsx",
+        {
+            "Profile": _matrix_profile_cells(),
+            "Outputs": {"A1": "=Profile!B2"},
+        },
+    )
+    document = _matrix_document(
         series_entry("output_cell", "Outputs!A1", layout="scalar", direction="output"),
     )
     bindings = validate_bindings_document(document)
     graph = _output_graph(workbook, document)
-    with pytest.raises(InvertedTreeExportError, match="matrix"):
+    with pytest.warns(UserWarning, match="not graph formula cells"):
+        catalog = build_catalog(bindings, workbook=workbook, graph=graph)
+    series = catalog.get("profile_table")
+    assert series.cells == ("Profile!B2", "Profile!C2", "Profile!B3", "Profile!C3")
+    assert series.rect == ("Profile", 2, 2, 3, 3)
+    assert series.block_width == 2
+    assert len(series.domain) == 4
+    assert series.hole_indices == (1, 2, 3)
+    assert [hole.kind for hole in series.holes] == [
+        "off_closure",
+        "off_closure",
+        "off_closure",
+    ]
+
+
+def test_matrix_interior_blank_emits_none_and_keeps_stride(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "matrix_blank.xlsx",
+        {
+            "Profile": _matrix_profile_cells(C2=None),
+            "Outputs": {"A1": "=INDEX(Profile!B2:C3,2,1)"},
+        },
+    )
+    document = _matrix_document(
+        series_entry("output_cell", "Outputs!A1", layout="scalar", direction="output"),
+    )
+    bindings = validate_bindings_document(document)
+    graph = _output_graph(workbook, document)
+    with pytest.warns(UserWarning, match="not graph formula cells"):
+        catalog = build_catalog(bindings, workbook=workbook, graph=graph)
+    series = catalog.get("profile_table")
+    assert series.cells == ("Profile!B2", "Profile!C2", "Profile!B3", "Profile!C3")
+    assert series.rect is not None
+    assert series.block_width == 2
+    assert series.hole_indices == (1,)
+    assert series.holes[0].kind == "blank"
+    assert series.holes[0].address == "Profile!C2"
+
+    with pytest.warns(UserWarning):
+        modules = _emit_from_outputs(workbook, document)
+    internals = modules["internals.py"]
+    assert "Profile!C2" in internals
+    assert "blank" in internals
+    assert "float | str | None" in internals
+    pkg = load_package(modules, tmp_path, name="matrix_blank")
+    helper = pkg.internals.profile_table
+    assert helper.__domain__ == (
+        ("France", 2020),
+        ("France", 2021),
+        ("Kenya", 2020),
+        ("Kenya", 2021),
+    )
+    assert len(helper.__domain__) == 4
+    assert helper.__holes__ == (1,)
+    got = helper()
+    assert got[0] == pytest.approx(1.0)
+    assert got[1] is None
+    assert got[2] == pytest.approx(3.0)
+    assert got[3] == pytest.approx(4.0)
+    records = pkg.runtime.as_records(helper, got)
+    filled = [record for index, record in enumerate(records) if index not in helper.__holes__]
+    assert [record["OBS_VALUE"] for record in filled] == pytest.approx([1.0, 3.0, 4.0])
+    expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])
+    assert pkg.compute_output_cell() == pytest.approx((expected["Outputs!A1"],))
+
+
+def test_matrix_off_closure_formula_is_named_in_docstring(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "matrix_off_closure.xlsx",
+        {
+            "Profile": _matrix_profile_cells(),
+            "Outputs": {"A1": "=Profile!B2"},
+        },
+    )
+    document = _matrix_document(
+        series_entry("output_cell", "Outputs!A1", layout="scalar", direction="output"),
+    )
+    with pytest.warns(UserWarning):
+        modules = _emit_from_outputs(workbook, document)
+    internals = modules["internals.py"]
+    assert "Profile!C2" in internals
+    assert "not computed" in internals
+    pkg = load_package(modules, tmp_path, name="matrix_off_closure")
+    got = pkg.internals.profile_table()
+    assert got[0] == pytest.approx(1.0)
+    assert got[1] is None
+    assert got[2] is None
+    assert got[3] is None
+    assert pkg.internals.profile_table.__holes__ == (1, 2, 3)
+
+
+def test_matrix_graph_leaf_literal_matches_evaluator(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "matrix_literal.xlsx",
+        {
+            "Profile": _matrix_profile_cells(C2=99.0),
+            "Outputs": {
+                "A1": "=Profile!B2",
+                "A2": "=Profile!C2+1",
+            },
+        },
+    )
+    document = _matrix_document(
+        series_entry("on_graph", "Outputs!A1", layout="scalar", direction="output"),
+        series_entry("from_literal", "Outputs!A2", layout="scalar", direction="output"),
+    )
+    bindings = validate_bindings_document(document)
+    graph = _output_graph(workbook, document)
+    with pytest.warns(UserWarning, match="not graph formula cells"):
+        catalog = build_catalog(bindings, workbook=workbook, graph=graph)
+    series = catalog.get("profile_table")
+    assert series.cells == ("Profile!B2", "Profile!C2", "Profile!B3", "Profile!C3")
+    assert series.hole_indices == (1, 2, 3)
+    assert series.holes[0].kind == "graph_leaf"
+    assert series.holes[0].address == "Profile!C2"
+
+    with pytest.warns(UserWarning):
+        modules = _emit_from_outputs(workbook, document)
+    assert "99.0" in modules["internals.py"]
+    pkg = load_package(modules, tmp_path, name="matrix_literal")
+    got = pkg.internals.profile_table()
+    assert got[1] == pytest.approx(99.0)
+    expected = FormulaEvaluator(graph).evaluate(["Outputs!A1", "Outputs!A2"])
+    assert pkg.compute_on_graph() == pytest.approx((expected["Outputs!A1"],))
+    assert pkg.compute_from_literal() == pytest.approx((expected["Outputs!A2"],))
+
+
+def test_matrix_graph_leaf_without_cached_value_raises(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "matrix_missing_cache.xlsx",
+        {
+            "Profile": _matrix_profile_cells(C2=99.0),
+            "Outputs": {
+                "A1": "=Profile!B2",
+                "A2": "=Profile!C2+1",
+            },
+        },
+    )
+    document = _matrix_document(
+        series_entry("on_graph", "Outputs!A1", layout="scalar", direction="output"),
+        series_entry("from_literal", "Outputs!A2", layout="scalar", direction="output"),
+    )
+    bindings = validate_bindings_document(document)
+    graph = _output_graph(workbook, document)
+    leaf = graph.get_node("Profile!C2")
+    assert leaf is not None
+    graph.set_node_value("Profile!C2", None)
+    with pytest.raises(InvertedTreeExportError, match="cached value"):
         build_catalog(bindings, workbook=workbook, graph=graph)
+
+
+def test_matrix_unreferenced_literal_is_embedded(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "matrix_unref_literal.xlsx",
+        {
+            "Profile": _matrix_profile_cells(C2=42.0),
+            "Outputs": {"A1": "=Profile!B2"},
+        },
+    )
+    document = _matrix_document(
+        series_entry("output_cell", "Outputs!A1", layout="scalar", direction="output"),
+    )
+    bindings = validate_bindings_document(document)
+    graph = _output_graph(workbook, document)
+    with pytest.warns(UserWarning, match="not graph formula cells"):
+        catalog = build_catalog(bindings, workbook=workbook, graph=graph)
+    series = catalog.get("profile_table")
+    assert series.holes[0].kind == "literal"
+    assert series.holes[0].address == "Profile!C2"
+    with pytest.warns(UserWarning):
+        modules = _emit_from_outputs(workbook, document)
+    pkg = load_package(modules, tmp_path, name="matrix_unref_literal")
+    got = pkg.internals.profile_table()
+    assert got[1] == pytest.approx(42.0)

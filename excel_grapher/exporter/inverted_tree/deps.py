@@ -245,13 +245,21 @@ def range_column_addresses(start: str, end: str, col_index: int) -> list[Canonic
     ]
 
 
-def node_formula_ast(graph: DependencyGraph, address: CanonicalAddress) -> AstNode:
-    """Return the formula AST for `address`, or fail closed."""
+def try_formula_ast(graph: DependencyGraph, address: CanonicalAddress) -> AstNode | None:
+    """Return the formula AST for `address`, or `None` when the cell is a hole."""
     node = graph.get_node(address)
     if node is None:
-        raise InvertedTreeExportError(f"graph is missing bound cell {address}")
-    ast = getattr(node, "formula_ast", None)
+        return None
+    return getattr(node, "formula_ast", None)
+
+
+def node_formula_ast(graph: DependencyGraph, address: CanonicalAddress) -> AstNode:
+    """Return the formula AST for `address`, or fail closed."""
+    ast = try_formula_ast(graph, address)
     if ast is None:
+        node = graph.get_node(address)
+        if node is None:
+            raise InvertedTreeExportError(f"graph is missing bound cell {address}")
         raise InvertedTreeExportError(
             f"bound cell {address} has no formula AST (cannot verify first-level refs)"
         )
@@ -818,7 +826,9 @@ def collect_series_edges(
     """Walk `series` formulas and return classified instance-level edges."""
     collector = _DepCollector(host=series, catalog=catalog, graph=graph)
     for index, address in enumerate(series.cells):
-        ast = node_formula_ast(graph, address)
+        ast = try_formula_ast(graph, address)
+        if ast is None:
+            continue
         collector.visit(ast, host_cell=address, host_index=index)
     return refine_access_classes(collector.edges, catalog)
 
