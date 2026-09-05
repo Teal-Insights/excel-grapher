@@ -465,8 +465,10 @@ class SeriesDeps:
     edge list again. It does not retain the `DependencyGraph` it was
     projected from; `edges` is the host-local source of truth:
 
-    - `aligned_ids` / `index_maps` / `affine_maps` — identity (or affine)
-      joins already taken to the host walk
+    - `aligned_ids` / `index_maps` / `affine_maps` — identity, affine, or
+      irregular-gather joins already taken to the host walk. When
+      `fit_affine_map` is `None`, `index_maps` keeps the observed catalog
+      slots (#695).
     - `lagged_ids` — a producer read at both `i` and `i-1` whose
       positions shift with the host. A constant pair (`$A$8` / `$A$9`
       from every member) is a static catalog read, not a lag (#681).
@@ -1022,15 +1024,19 @@ def series_deps_from_edges(
         if not all(slot >= 0 for slot in slots):
             continue
         fitted = fit_affine_map([(index, slots[index]) for index in range(host_n)])
-        if tuple(slots) == joined:
+        observed = tuple(slots)
+        fields_differ = preferred_fields(host, catalog) != preferred_fields(dep, catalog)
+        if observed == joined:
             index_maps[series_id] = joined
             aligned.add(series_id)
             if fitted is not None and fitted[0] != 1:
                 affine_maps[series_id] = fitted
-        elif fitted is not None and (
-            fitted[0] != 1 or preferred_fields(host, catalog) != preferred_fields(dep, catalog)
-        ):
-            index_maps[series_id] = tuple(slots)
+        elif fitted is None and fields_differ:
+            # Positional join is dummy `(0, 1, …)`; keep the observed slots (#695).
+            index_maps[series_id] = observed
+            aligned.add(series_id)
+        elif fitted is not None and (fitted[0] != 1 or fields_differ):
+            index_maps[series_id] = observed
             aligned.add(series_id)
             if fitted[0] != 1:
                 affine_maps[series_id] = fitted
