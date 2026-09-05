@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from excel_grapher.core.address_keys import CanonicalAddress, as_canonical
+from excel_grapher.core.address_keys import CanonicalAddress, as_canonical, parse_cell_coords
 from excel_grapher.core.excel_function_names import normalize_excel_function_name
 from excel_grapher.core.formula_ast import (
     AstNode,
@@ -49,6 +49,8 @@ from excel_grapher.exporter.inverted_tree.catalog import (
 from excel_grapher.exporter.inverted_tree.deps import (
     DependenceEdge,
     SeriesDeps,
+    addresses_outside_blank_ranges,
+    current_blank_rects,
     iter_ref_addresses,
     node_formula_ast,
     predecessor_address,
@@ -63,6 +65,7 @@ from excel_grapher.exporter.inverted_tree.schedule import (
     indices_to_source,
     plan_fused_scc,
 )
+from excel_grapher.grapher.blank_ranges import BlankRangeRect, address_in_blank_ranges
 from excel_grapher.series_bindings.types import Scalar
 
 if TYPE_CHECKING:
@@ -93,6 +96,7 @@ _RUNTIME_FUNCTIONS = frozenset(
     if name.startswith("xl_") and callable(value)
 )
 _AGGREGATE_FUNCTIONS = frozenset({"SUM", "SUMPRODUCT"})
+_LOOKUP_TABLE_FUNCTIONS = frozenset({"VLOOKUP", "HLOOKUP", "LOOKUP", "XLOOKUP"})
 
 
 @dataclass
@@ -118,6 +122,7 @@ class EmitContext:
     fused_use_area: bool = False
     graph: DependencyGraph | None = None
     lookup_anchor_slot: int = 0
+    blank_rects: tuple[BlankRangeRect, ...] = field(default_factory=current_blank_rects)
 
     def param(self, series_id: str) -> str:
         return series_id
@@ -643,7 +648,10 @@ def _emit_function(node: FunctionCallNode, ctx: EmitContext) -> str:
         return "False"
     if name in _AGGREGATE_FUNCTIONS:
         return _emit_aggregate(node, ctx)
-    args = ", ".join(emit_expr(arg, ctx) for arg in node.args)
+    if name in _LOOKUP_TABLE_FUNCTIONS:
+        args = ", ".join(_emit_lookup_arg(arg, ctx) for arg in node.args)
+    else:
+        args = ", ".join(emit_expr(arg, ctx) for arg in node.args)
     func = f"xl_{name.lower()}"
     if func not in _RUNTIME_FUNCTIONS:
         raise InvertedTreeExportError(
@@ -691,9 +699,12 @@ def _emit_aggregate_arg(node: AstNode, ctx: EmitContext) -> str:
 
 
 def _emit_range_values(node: AstNode, ctx: EmitContext) -> str:
-    addresses = iter_ref_addresses(node, ctx.host_cell, ctx.graph)
+    addresses = addresses_outside_blank_ranges(
+        iter_ref_addresses(node, ctx.host_cell, ctx.graph),
+        ctx.blank_rects,
+    )
     if not addresses:
-        raise _host_export_error(ctx, "range is empty")
+        return "()"
     covered = covering_series(ctx.catalog, addresses)
     if covered is not None:
         _access_or_fail(covered, ctx)
@@ -705,6 +716,48 @@ def _emit_range_values(node: AstNode, ctx: EmitContext) -> str:
     if len(parts) == 1:
         return parts[0]
     return f"({', '.join(parts)})"
+
+
+def _emit_lookup_arg(node: AstNode, ctx: EmitContext) -> str:
+    if isinstance(node, (RangeNode, WholeColumnNode, WholeRowNode)):
+        return _emit_range_table(node, ctx)
+    return emit_expr(node, ctx)
+
+
+def _emit_range_table(node: AstNode, ctx: EmitContext) -> str:
+    """Emit a nested-tuple grid, filling declared blanks with `None`."""
+    addresses = iter_ref_addresses(node, ctx.host_cell, ctx.graph)
+    if not addresses:
+        raise _host_export_error(ctx, "range is empty")
+    missing = [
+        addr
+        for addr in addresses
+        if ctx.catalog.series_id_for(addr) is None
+        and not address_in_blank_ranges(addr, ctx.blank_rects)
+    ]
+    if missing:
+        raise _host_export_error(ctx, f"range is not a bound series (unbound cells: {missing[:8]})")
+    rows: list[list[str]] = []
+    current_row: int | None = None
+    current: list[str] = []
+    for addr in addresses:
+        _sheet, row, _col = parse_cell_coords(addr)
+        cell = (
+            "None" if address_in_blank_ranges(addr, ctx.blank_rects) else _emit_address(addr, ctx)
+        )
+        if current_row is None or row != current_row:
+            if current:
+                rows.append(current)
+            current = [cell]
+            current_row = row
+        else:
+            current.append(cell)
+    if current:
+        rows.append(current)
+    row_srcs = [f"({', '.join(row)})" for row in rows]
+    if len(row_srcs) == 1:
+        return f"({row_srcs[0]},)"
+    return f"({', '.join(row_srcs)})"
 
 
 def _emit_covering_values(
@@ -999,8 +1052,11 @@ def _series_for_ref(node: AstNode, ctx: EmitContext) -> BoundSeries:
     if isinstance(node, CellRefNode):
         return ctx.catalog.require_series_for(as_canonical(resolve_cell_ref(node, ctx.host_cell)))
     if isinstance(node, (RangeNode, WholeColumnNode, WholeRowNode)):
-        addresses = iter_ref_addresses(node, ctx.host_cell, ctx.graph)
-        covered = covering_series(ctx.catalog, addresses)
+        addresses = addresses_outside_blank_ranges(
+            iter_ref_addresses(node, ctx.host_cell, ctx.graph),
+            ctx.blank_rects,
+        )
+        covered = covering_series(ctx.catalog, addresses) if addresses else None
         if covered is None:
             raise _host_export_error(ctx, "reference is not a bound series")
         return covered

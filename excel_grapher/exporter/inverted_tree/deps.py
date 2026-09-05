@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Sequence
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -53,10 +54,46 @@ from excel_grapher.exporter.inverted_tree.catalog import (
     schedule_partition,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
+from excel_grapher.grapher.blank_ranges import (
+    BlankRangeRect,
+    address_in_blank_ranges,
+)
 from excel_grapher.series_bindings.normalize import is_override_input
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
+
+_BLANK_RECTS: ContextVar[tuple[BlankRangeRect, ...]] = ContextVar(
+    "excel_grapher_inverted_tree_blank_rects",
+    default=(),
+)
+
+
+def bind_blank_rects(rects: tuple[BlankRangeRect, ...]) -> Token[tuple[BlankRangeRect, ...]]:
+    """Install `rects` for the current inverted-tree emit walk."""
+    return _BLANK_RECTS.set(rects)
+
+
+def reset_blank_rects(token: Token[tuple[BlankRangeRect, ...]]) -> None:
+    """Restore the blank-range context installed by `bind_blank_rects`."""
+    _BLANK_RECTS.reset(token)
+
+
+def current_blank_rects() -> tuple[BlankRangeRect, ...]:
+    """Blank-range rectangles for the current inverted-tree emit walk."""
+    return _BLANK_RECTS.get()
+
+
+def addresses_outside_blank_ranges(
+    addresses: Sequence[CanonicalAddress],
+    blank_rects: Sequence[BlankRangeRect] | None = None,
+) -> list[CanonicalAddress]:
+    """Drop addresses that lie in declared structural blank rectangles."""
+    rects = current_blank_rects() if blank_rects is None else blank_rects
+    if not rects:
+        return list(addresses)
+    return [addr for addr in addresses if not address_in_blank_ranges(addr, rects)]
+
 
 AccessClass = Literal[
     "identity", "shift", "affine", "gather", "whole", "dynamic", "cross_partition"
@@ -507,6 +544,7 @@ class _DepCollector:
     catalog: SeriesCatalog
     graph: DependencyGraph | None = None
     edges: list[DependenceEdge] = field(default_factory=list)
+    blank_rects: tuple[BlankRangeRect, ...] = field(default_factory=current_blank_rects)
 
     def _emit(
         self,
@@ -574,20 +612,21 @@ class _DepCollector:
         addresses: list[CanonicalAddress],
         host_cell: CanonicalAddress,
     ) -> None:
-        if not addresses:
-            raise InvertedTreeExportError(f"series {self.host.series_id!r}: empty range")
-        covered = covering_series(self.catalog, addresses)
-        if covered is not None:
-            self.emit_lookup(covered, host_cell, addresses[0], "whole")
+        owned = addresses_outside_blank_ranges(addresses, self.blank_rects)
+        if not owned:
             return
-        missing = [addr for addr in addresses if self.catalog.series_id_for(addr) is None]
+        covered = covering_series(self.catalog, owned)
+        if covered is not None:
+            self.emit_lookup(covered, host_cell, owned[0], "whole")
+            return
+        missing = [addr for addr in owned if self.catalog.series_id_for(addr) is None]
         if missing:
             raise InvertedTreeExportError(
                 f"series {self.host.series_id!r} range is not a bound series "
                 f"(unbound cells: {missing[:8]})"
             )
         seen: set[str] = set()
-        for addr in addresses:
+        for addr in owned:
             series_id = self.catalog.series_id_for(addr)
             if series_id is None or series_id in seen:
                 continue
@@ -759,8 +798,11 @@ class _DepCollector:
         if isinstance(node, CellRefNode):
             return self.catalog.require_series_for(as_canonical(resolve_cell_ref(node, host_cell)))
         if isinstance(node, (RangeNode, WholeColumnNode, WholeRowNode)):
-            addresses = iter_ref_addresses(node, host_cell, self.graph)
-            covered = covering_series(self.catalog, addresses)
+            addresses = addresses_outside_blank_ranges(
+                iter_ref_addresses(node, host_cell, self.graph),
+                self.blank_rects,
+            )
+            covered = covering_series(self.catalog, addresses) if addresses else None
             if covered is None:
                 raise InvertedTreeExportError(
                     f"series {self.host.series_id!r}: reference is not a bound series"
@@ -822,9 +864,11 @@ def collect_series_edges(
     *,
     catalog: SeriesCatalog,
     graph: DependencyGraph,
+    blank_rects: tuple[BlankRangeRect, ...] | None = None,
 ) -> list[DependenceEdge]:
     """Walk `series` formulas and return classified instance-level edges."""
-    collector = _DepCollector(host=series, catalog=catalog, graph=graph)
+    rects = current_blank_rects() if blank_rects is None else blank_rects
+    collector = _DepCollector(host=series, catalog=catalog, graph=graph, blank_rects=rects)
     for index, address in enumerate(series.cells):
         ast = try_formula_ast(graph, address)
         if ast is None:
@@ -883,12 +927,16 @@ def requires_demand_driven(
 def collect_catalog_edges(
     catalog: SeriesCatalog,
     graph: DependencyGraph,
+    *,
+    blank_rects: tuple[BlankRangeRect, ...] | None = None,
 ) -> CatalogEdges:
     """Walk each formula series once and return catalog-wide classified edges."""
     by_consumer: dict[str, tuple[DependenceEdge, ...]] = {}
     collected: list[DependenceEdge] = []
     for series in catalog.formula_series():
-        series_edges = tuple(collect_series_edges(series, catalog=catalog, graph=graph))
+        series_edges = tuple(
+            collect_series_edges(series, catalog=catalog, graph=graph, blank_rects=blank_rects)
+        )
         by_consumer[series.series_id] = series_edges
         collected.extend(series_edges)
     return CatalogEdges(edges=tuple(collected), by_consumer=by_consumer)
@@ -1085,6 +1133,7 @@ def collect_all_deps(
     graph: DependencyGraph,
     *,
     catalog_edges: CatalogEdges | None = None,
+    blank_rects: tuple[BlankRangeRect, ...] | None = None,
 ) -> dict[str, SeriesDeps]:
     """Collect first-level deps for every formula series.
 
@@ -1092,7 +1141,7 @@ def collect_all_deps(
     step does not re-visit formula ASTs.
     """
     if catalog_edges is None:
-        catalog_edges = collect_catalog_edges(catalog, graph)
+        catalog_edges = collect_catalog_edges(catalog, graph, blank_rects=blank_rects)
     return {
         series.series_id: series_deps_from_edges(
             series, catalog_edges.by_consumer.get(series.series_id, ()), catalog, graph

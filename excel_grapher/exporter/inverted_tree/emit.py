@@ -23,11 +23,13 @@ from excel_grapher.exporter.inverted_tree.deps import (
     SeriesDeps,
     all_formula_root_cells,
     assert_subgraph_bound,
+    bind_blank_rects,
     collect_all_deps,
     collect_catalog_edges,
     formula_closure,
     leaf_closure,
     plan_indices,
+    reset_blank_rects,
 )
 from excel_grapher.exporter.inverted_tree.domains import (
     DomainEmitPlan,
@@ -49,6 +51,7 @@ from excel_grapher.exporter.inverted_tree.schedule import (
     scan_function_name,
     scc_external_params,
 )
+from excel_grapher.grapher.blank_ranges import normalize_blank_range_specs
 from excel_grapher.series_bindings.input_coerce import (
     input_value_map_from_series,
     measure_domain_from_series,
@@ -1122,6 +1125,7 @@ def generate_inverted_tree_modules(
     bindings_workbook: Path | str,
     targets: Sequence[str] | None = None,
     force_rung: Literal[2, 3] | None = None,
+    blank_ranges: Sequence[str] | None = None,
 ) -> dict[str, str]:
     """Generate api/internals/runtime/data modules for the inverted-tree paradigm.
 
@@ -1133,6 +1137,10 @@ def generate_inverted_tree_modules(
         force_rung: Pin every formula SCC to rung 3 (demand-driven), or
             fuse wherever legal (`2`) and fall through to the auto rung
             otherwise. `None` selects the strongest legal rung.
+        blank_ranges: Sheet-qualified rectangles omitted from the graph that
+            resolve as empty (`None`) rather than unbound catalog cells.
+            Must match the specs passed to `create_dependency_graph` and
+            `FormulaEvaluator`.
 
     Returns:
         Mapping of package filenames to file contents.
@@ -1143,32 +1151,39 @@ def generate_inverted_tree_modules(
             `input.mode: override`.
     """
     del targets
-    _refuse_invalid_bindings(graph, series_bindings, bindings_workbook)
-    catalog = build_catalog(series_bindings, workbook=bindings_workbook, graph=graph)
-    if not catalog.output_series():
-        raise InvertedTreeExportError("inverted-tree codegen requires at least one output series")
-    catalog_edges = collect_catalog_edges(catalog, graph)
-    deps = collect_all_deps(catalog, graph, catalog_edges=catalog_edges)
-    scc_map = build_scc_map(catalog, deps, edges=catalog_edges.edges)
-    domains = plan_domain_emission(catalog, scc_map)
-    assert_subgraph_bound(
-        catalog=catalog,
-        graph=graph,
-        roots=list(all_formula_root_cells(catalog)),
-    )
-    runtime_py = _RUNTIME_PATH.read_text(encoding="utf-8")
-    return {
-        "__init__.py": emit_init_module(catalog),
-        "api.py": emit_api_module(catalog, deps, scc_map, domains=domains),
-        "data.py": emit_data_module(catalog, graph, domains=domains),
-        "runtime.py": runtime_py if runtime_py.endswith("\n") else runtime_py + "\n",
-        "internals.py": emit_internals_module(
-            catalog,
-            deps,
-            graph,
-            scc_map,
-            catalog_edges=catalog_edges,
-            force_rung=force_rung,
-            domains=domains,
-        ),
-    }
+    blank_rects = normalize_blank_range_specs(blank_ranges)
+    token = bind_blank_rects(blank_rects)
+    try:
+        _refuse_invalid_bindings(graph, series_bindings, bindings_workbook)
+        catalog = build_catalog(series_bindings, workbook=bindings_workbook, graph=graph)
+        if not catalog.output_series():
+            raise InvertedTreeExportError(
+                "inverted-tree codegen requires at least one output series"
+            )
+        catalog_edges = collect_catalog_edges(catalog, graph, blank_rects=blank_rects)
+        deps = collect_all_deps(catalog, graph, catalog_edges=catalog_edges)
+        scc_map = build_scc_map(catalog, deps, edges=catalog_edges.edges)
+        domains = plan_domain_emission(catalog, scc_map)
+        assert_subgraph_bound(
+            catalog=catalog,
+            graph=graph,
+            roots=list(all_formula_root_cells(catalog)),
+        )
+        runtime_py = _RUNTIME_PATH.read_text(encoding="utf-8")
+        return {
+            "__init__.py": emit_init_module(catalog),
+            "api.py": emit_api_module(catalog, deps, scc_map, domains=domains),
+            "data.py": emit_data_module(catalog, graph, domains=domains),
+            "runtime.py": runtime_py if runtime_py.endswith("\n") else runtime_py + "\n",
+            "internals.py": emit_internals_module(
+                catalog,
+                deps,
+                graph,
+                scc_map,
+                catalog_edges=catalog_edges,
+                force_rung=force_rung,
+                domains=domains,
+            ),
+        }
+    finally:
+        reset_blank_rects(token)

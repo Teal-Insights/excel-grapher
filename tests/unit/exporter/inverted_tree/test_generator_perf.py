@@ -140,9 +140,10 @@ def test_generate_modules_walks_each_series_ast_once(
         *,
         catalog: SeriesCatalog,
         graph: object,
+        blank_rects: object = None,
     ) -> list[DependenceEdge]:
         walks[series.series_id] = walks.get(series.series_id, 0) + 1
-        return original(series, catalog=catalog, graph=graph)
+        return original(series, catalog=catalog, graph=graph, blank_rects=blank_rects)
 
     monkeypatch.setattr(deps_mod, "collect_series_edges", counting)
     monkeypatch.setattr(schedule_mod, "collect_series_edges", counting)
