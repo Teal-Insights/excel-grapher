@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.0.0 (2026-09-05)
+
+### Features
+
+- **export**: Remove the ctx package exporter
+  ([#702](https://github.com/Teal-Insights/excel-grapher/pull/702),
+  [`24cb32e`](https://github.com/Teal-Insights/excel-grapher/commit/24cb32e86b53b38fed16f2fd636f4a8f4a0b8bbb))
+
+
 ## v13.7.1 (2026-09-05)
 
 ### Bug Fixes
