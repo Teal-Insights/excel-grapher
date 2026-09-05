@@ -148,9 +148,8 @@ def test_matrix_row_slice_emits_aligned_take(tmp_path: Path, orientation: str) -
     ]
     assert "prior: float | str = shocks" not in internals
     assert "prior = as_measure(prior)" not in internals
-    assert "require_aligned" in internals
+    assert "require_aligned" in internals or "require_length(shocks, 3)" in internals
     assert "shocks[i]" in internals
-    assert "n = 3" not in internals
 
 
 def test_matrix_row_slice_matches_evaluator(tmp_path: Path, orientation: str) -> None:

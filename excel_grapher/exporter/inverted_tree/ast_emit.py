@@ -1062,6 +1062,61 @@ def _emit_region_chain(
     return lines, used
 
 
+def _is_identity_aligned(deps: SeriesDeps, param_id: str, host_n: int) -> bool:
+    """True when `param_id` is identity-aligned to a `host_n`-long walk."""
+    if param_id not in deps.aligned_ids:
+        return False
+    if param_id in deps.affine_maps:
+        return False
+    index_map = deps.index_maps.get(param_id)
+    return index_map is None or index_map == tuple(range(host_n))
+
+
+def emit_sequence_length_guards(
+    series: BoundSeries,
+    deps: SeriesDeps,
+    catalog: SeriesCatalog,
+    *,
+    emit_n: bool = True,
+) -> tuple[list[str], set[str]]:
+    """Emit length guards so helpers reject producer arrays of the wrong size.
+
+    Identity-aligned params use `require_aligned` so scan helpers still accept
+    a shorter working buffer. Affine and index-mapped params are taken to the
+    host walk at the call site, so the helper requires host length. Other
+    sequence params (lags, lookups, mixed reads) must be dense over the
+    producer's `__domain__`.
+    """
+    host_n = len(series.cells)
+    used: set[str] = set()
+    lines: list[str] = []
+    identity: list[str] = []
+    for param_id in deps.param_ids:
+        producer = catalog.get(param_id)
+        if not producer.is_sequence:
+            continue
+        if param_id in deps.aligned_ids and _is_identity_aligned(deps, param_id, host_n):
+            identity.append(param_id)
+            continue
+        if param_id in deps.aligned_ids:
+            used.add("require_length")
+            lines.append(f"    require_length({param_id}, {host_n})")
+            continue
+        used.add("require_length")
+        lines.append(f"    require_length({param_id}, {len(producer.cells)})")
+    if identity:
+        used.add("require_aligned")
+        if emit_n:
+            lines.append(f"    n = require_aligned({', '.join(identity)})")
+        else:
+            used.add("require_length")
+            for param_id in identity:
+                lines.append(f"    require_length({param_id}, {host_n})")
+    elif emit_n:
+        lines.append(f"    n = {host_n}")
+    return lines, used
+
+
 def emit_helper_body(
     series: BoundSeries,
     *,
@@ -1071,10 +1126,9 @@ def emit_helper_body(
 ) -> tuple[list[str], set[str]]:
     """Return indented body lines and the runtime symbols they use."""
     used: set[str] = set()
-    seq_params = [
-        sid for sid in deps.param_ids if catalog.get(sid).is_sequence and sid in deps.aligned_ids
-    ]
     if series.is_scalar:
+        guard_lines, guard_used = emit_sequence_length_guards(series, deps, catalog, emit_n=False)
+        used |= guard_used
         ctx = EmitContext(
             host=series,
             catalog=catalog,
@@ -1105,20 +1159,15 @@ def emit_helper_body(
         return [f"    return {_cast_scalar(expr, series.python_dtype)}"], used
 
     if deps.is_scan:
-        return _emit_scan_body(
-            series, catalog=catalog, deps=deps, graph=graph, seq_params=seq_params
-        )
+        return _emit_scan_body(series, catalog=catalog, deps=deps, graph=graph)
 
     runs = formula_shape_runs(series, graph)
     used.add("as_measure")
     used.add("XlError")
+    guard_lines, guard_used = emit_sequence_length_guards(series, deps, catalog)
+    used |= guard_used
     lines: list[str] = []
-    if seq_params:
-        joined = ", ".join(seq_params)
-        used.add("require_aligned")
-        lines.append(f"    n = require_aligned({joined})")
-    else:
-        lines.append(f"    n = {len(series.cells)}")
+    lines.extend(guard_lines)
     measure = python_measure_type(series)
     lines.append(f"    out: list[{measure}] = []")
     lines.append("    for i in range(n):")
@@ -1161,17 +1210,13 @@ def _emit_scan_body(
     catalog: SeriesCatalog,
     deps: SeriesDeps,
     graph: DependencyGraph,
-    seq_params: list[str],
 ) -> tuple[list[str], set[str]]:
     runs = formula_shape_runs(series, graph)
     seed = deps.seed_id
     used: set[str] = {"as_measure", "XlError", "is_error"}
-    lines: list[str] = []
-    if seq_params:
-        used.add("require_aligned")
-        lines.append(f"    n = require_aligned({', '.join(seq_params)})")
-    else:
-        lines.append(f"    n = {len(series.cells)}")
+    guard_lines, guard_used = emit_sequence_length_guards(series, deps, catalog)
+    used |= guard_used
+    lines: list[str] = list(guard_lines)
     seed_expr = seed if seed is not None else "0"
     measure = python_measure_type(series)
     lines.append(f"    path: list[{measure}] = []")
@@ -1564,16 +1609,13 @@ def emit_rung2_scc(
     n = len(plan.schedule)
     seq_params: list[str] = []
     if len(scc) == 1 and not plan.is_nested:
-        info = deps[scc[0]]
-        seq_params = [
-            sid
-            for sid in info.param_ids
-            if catalog.get(sid).is_sequence and sid in info.aligned_ids
-        ]
-    if seq_params:
-        used.add("require_aligned")
+        guard_lines, guard_used = emit_sequence_length_guards(
+            catalog.get(scc[0]), deps[scc[0]], catalog
+        )
+        used |= guard_used
+        lines.extend(guard_lines)
+        seq_params = ["n"]
         t_header = "    for t in range(n):"
-        lines.append(f"    n = require_aligned({', '.join(seq_params)})")
     else:
         t_header = f"    for t in range({n}):"
 

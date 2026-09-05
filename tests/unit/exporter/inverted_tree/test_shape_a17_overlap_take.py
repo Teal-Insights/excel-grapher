@@ -85,7 +85,8 @@ def test_overlap_call_site_takes_gdp_window(tmp_path: Path) -> None:
     assert "internals.gdp_growth(gdp)" in api
     assert "internals.revenue_pct_gdp(take(gdp, range(1, 3)), revenue)" in api
     internals = modules["internals.py"]
-    assert "require_aligned(gdp, revenue)" in internals
+    assert "require_length(gdp, 2)" in internals
+    assert "require_aligned(revenue)" in internals
     pkg = load_package(modules, tmp_path, name="a17_overlap")
     got = pkg.compute_result(gdp=(100.0, 110.0, 121.0), revenue=(10.0, 12.0))
     assert got == pytest.approx((110 / 100 + 10 / 110, 121 / 110 + 12 / 121))

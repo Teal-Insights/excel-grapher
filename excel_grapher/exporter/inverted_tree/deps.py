@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastpyxl.utils.cell import get_column_letter
 
@@ -53,6 +53,7 @@ from excel_grapher.exporter.inverted_tree.catalog import (
     schedule_partition,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
+from excel_grapher.series_bindings.normalize import is_override_input
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
@@ -1365,8 +1366,7 @@ def assert_subgraph_bound(
     graph: DependencyGraph,
     roots: Iterable[str],
 ) -> None:
-    """Fail closed when an unbound formula cell sits in a bound target subgraph."""
-    bound = catalog.bound_addresses()
+    """Fail closed when a subgraph formula is unbound or bound as a plain input."""
     seen: set[str] = set()
     stack = [canonical_address(addr) for addr in roots]
     while stack:
@@ -1378,10 +1378,19 @@ def assert_subgraph_bound(
         if node is None:
             continue
         has_formula = bool(getattr(node, "has_formula", False))
-        if has_formula and address not in bound:
-            raise InvertedTreeExportError(
-                f"unbound formula cell {address} is in the target subgraph"
-            )
+        if has_formula:
+            owner = catalog.series_for(address)
+            if owner is None:
+                raise InvertedTreeExportError(
+                    f"unbound formula cell {address} is in the target subgraph"
+                )
+            if not owner.is_formula_series and not (
+                owner.direction == "input" and is_override_input(cast(dict[str, Any], owner.raw))
+            ):
+                raise InvertedTreeExportError(
+                    f"formula cell {address} is bound to {owner.direction} series "
+                    f"{owner.series_id!r}, not an internal or output series"
+                )
         for dep in graph.get_dependencies(address):
             stack.append(as_canonical(dep))
 
