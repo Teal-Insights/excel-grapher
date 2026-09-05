@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v13.6.4 (2026-09-05)
+
+### Bug Fixes
+
+- **export**: Keep partial_graph_overlap series in inverted-tree emit
+  ([#694](https://github.com/Teal-Insights/excel-grapher/pull/694),
+  [`40398c6`](https://github.com/Teal-Insights/excel-grapher/commit/40398c6064a8180c0eac9c8ad43df6894fc88322))
+
+- **export**: Narrow emit validation and keep scan working buffers
+  ([#694](https://github.com/Teal-Insights/excel-grapher/pull/694),
+  [`40398c6`](https://github.com/Teal-Insights/excel-grapher/commit/40398c6064a8180c0eac9c8ad43df6894fc88322))
+
+
 ## v13.6.3 (2026-09-04)
 
 ### Bug Fixes
