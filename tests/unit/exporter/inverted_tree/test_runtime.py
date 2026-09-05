@@ -37,6 +37,7 @@ from excel_grapher.exporter.inverted_tree.runtime import (
     xl_sub,
     xl_sum,
     xl_sumproduct,
+    xl_vlookup,
 )
 
 
@@ -205,6 +206,15 @@ def test_xl_match_exact_and_na() -> None:
     assert xl_match("Litellia", ("Borvelia", "Litellia", "Aurelium"), 0) == 2
     with pytest.raises(XlError) as exc:
         xl_match("Nope", ("Borvelia",), 0)
+    assert exc.value.code == "#N/A"
+
+
+def test_xl_vlookup_exact_and_empty_table() -> None:
+    table = ((1, 10, 100), (2, 20, 200))
+    assert xl_vlookup(1, table, 3, False) == 100
+    empty = ((None, None, None), (None, None, None), (None, None, None))
+    with pytest.raises(XlError) as exc:
+        xl_vlookup(1, empty, 3, False)
     assert exc.value.code == "#N/A"
 
 

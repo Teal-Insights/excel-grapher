@@ -17,7 +17,7 @@ from datetime import date, datetime
 from typing import Literal, NoReturn, Protocol, TypeGuard, TypeVar, cast, overload
 
 from excel_grapher.core import operators as _core_ops
-from excel_grapher.core.lookup_funcs import match_cells
+from excel_grapher.core.lookup_funcs import match_cells, vlookup_cells
 from excel_grapher.core.math_funcs import exp_number, sum_cells
 from excel_grapher.core.sumproduct import sumproduct_cells
 from excel_grapher.core.types import CellValue, FormulaValue
@@ -289,6 +289,19 @@ def xl_match(lookup: object, lookup_array: Sequence[object], match_type: int = 0
     if not isinstance(adapted, int | float):
         raise TypeError(f"MATCH returned {type(adapted).__name__}")
     return int(adapted)
+
+
+def xl_vlookup(
+    lookup: object,
+    table_array: object,
+    col_index_num: object,
+    range_lookup: object = True,
+) -> object:
+    """Excel `VLOOKUP` via `core.lookup_funcs.vlookup_cells`."""
+    _raise_stored_error(lookup)
+    _raise_stored_error(col_index_num)
+    _raise_stored_error(range_lookup)
+    return _adapt_core(vlookup_cells(lookup, table_array, col_index_num, range_lookup))
 
 
 def xl_at(values: Sequence[T], index: object) -> T:

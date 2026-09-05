@@ -29,6 +29,7 @@ from excel_grapher.exporter.inverted_tree.catalog import (
 from excel_grapher.exporter.inverted_tree.deps import SeriesDeps, collect_all_deps
 from excel_grapher.exporter.inverted_tree.emit import generate_inverted_tree_modules
 from excel_grapher.grapher import create_dependency_graph
+from excel_grapher.grapher.blank_ranges import normalize_blank_range_specs
 from excel_grapher.grapher.dynamic_refs import DynamicRefConfig
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings import validate_bindings_document
@@ -183,6 +184,7 @@ def inverted_graph_parts(
     document: dict[str, Any],
     *,
     dynamic_refs: DynamicRefConfig | None = None,
+    blank_ranges: Sequence[str] | None = None,
 ) -> tuple[SeriesCatalog, dict[str, SeriesDeps], DependencyGraph]:
     """Return catalog, first-level deps, and graph for inverted-tree emit tests."""
     bindings: WorkbookSeriesBindings = validate_bindings_document(document)
@@ -194,9 +196,14 @@ def inverted_graph_parts(
         use_cached_dynamic_refs=dynamic_refs is None,
         dynamic_refs=dynamic_refs,
         capture_dependency_provenance=True,
+        blank_ranges=blank_ranges,
     )
     catalog = build_catalog(bindings, workbook=workbook, graph=graph)
-    return catalog, collect_all_deps(catalog, graph), graph
+    return (
+        catalog,
+        collect_all_deps(catalog, graph, blank_rects=normalize_blank_range_specs(blank_ranges)),
+        graph,
+    )
 
 
 def generate_inverted(
@@ -205,6 +212,7 @@ def generate_inverted(
     *,
     dynamic_refs: DynamicRefConfig | None = None,
     force_rung: Literal[2, 3] | None = None,
+    blank_ranges: Sequence[str] | None = None,
 ) -> dict[str, str]:
     bindings: WorkbookSeriesBindings = validate_bindings_document(document)
     targets = all_series_targets(bindings, workbook=workbook)
@@ -215,6 +223,7 @@ def generate_inverted(
         use_cached_dynamic_refs=dynamic_refs is None,
         dynamic_refs=dynamic_refs,
         capture_dependency_provenance=True,
+        blank_ranges=blank_ranges,
     )
     return generate_inverted_tree_modules(
         graph,
@@ -222,6 +231,7 @@ def generate_inverted(
         bindings_workbook=workbook,
         targets=targets,
         force_rung=force_rung,
+        blank_ranges=blank_ranges,
     )
 
 

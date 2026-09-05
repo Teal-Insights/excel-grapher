@@ -2914,6 +2914,8 @@ class CodeGenerator:
         internals (issue #597). That is the recommended series-binding export.
         The default remains `ctx` until the issue 662 default-flip gate
         (local pool green on LIC-DSF, port follow-ups shipped).
+        `blank_ranges` is forwarded so formula ranges that name declared
+        structural blanks emit as empty cells instead of fail-closing.
         """
         if paradigm == "inverted_tree":
             from excel_grapher.exporter.inverted_tree import generate_inverted_tree_modules
@@ -2927,6 +2929,7 @@ class CodeGenerator:
                 series_bindings=series_bindings,
                 bindings_workbook=bindings_workbook,
                 targets=targets,
+                blank_ranges=blank_ranges,
             )
 
         normalized_targets = self._resolve_targets(targets)
