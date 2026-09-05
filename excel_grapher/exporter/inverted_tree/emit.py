@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from excel_grapher.exporter.inverted_tree.ast_emit import (
+    _is_identity_aligned,
     emit_helper_body,
     emit_rung2_scc,
     emit_rung3_scc,
@@ -751,13 +752,19 @@ def _emit_evaluation_body(
         body.append(f"    {series_id} = internals.{series_id}({args})")
         locals_bound.add(series_id)
         leaf_source[series_id] = series_id
-        # Non-scan helpers always return the full catalog. `call_indices` may
-        # still be a consumer subset (an irregular gather, #695); take at the
-        # next call site from this full window.
+        host_series = catalog.get(series_id)
+        host_n = len(host_series.cells)
+        # Identity-aligned helpers set `n` from the taken args, so the result
+        # window is `call_indices`. A helper with only `n = host_n` (scalar
+        # params, irregular gathers, #695) returns the full catalog.
+        uses_aligned_n = any(
+            catalog.get(param_id).is_sequence and _is_identity_aligned(info, param_id, host_n)
+            for param_id in info.param_ids
+        )
         computed = (
-            call_indices.get(series_id, _identity_indices(catalog.get(series_id)))
-            if info.is_scan
-            else _identity_indices(catalog.get(series_id))
+            call_indices.get(series_id, _identity_indices(host_series))
+            if info.is_scan or uses_aligned_n
+            else _identity_indices(host_series)
         )
         local_indices[series_id] = computed
         taken = _take_after_call(

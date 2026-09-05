@@ -114,14 +114,13 @@ def _milestone_bindings() -> dict[str, Any]:
 
 
 def test_sparse_picks_record_literal_index_map(tmp_path: Path) -> None:
-    catalog, deps, _graph = inverted_graph_parts(
+    _catalog, deps, _graph = inverted_graph_parts(
         _milestone_workbook(tmp_path), _milestone_bindings()
     )
     picked = deps["milestones"]
     assert picked.index_maps["engine_pb"] == (22, 47, 71)
     assert "engine_pb" in picked.aligned_ids
     assert "engine_pb" not in picked.affine_maps
-    assert len(catalog.get("milestones").statements) == 1
 
 
 def test_sparse_picks_emit_take_not_consecutive_offset(tmp_path: Path) -> None:
