@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from excel_grapher.exporter.inverted_tree.ast_emit import (
     emit_helper_body,
@@ -116,7 +116,7 @@ def _parse_numeric_text(text: str) -> float | None:
             return None
 
 
-def _coerce_cached_value(value: object, dtype: str, address: str) -> object:
+def _coerce_cached_value(value: Any, dtype: str, address: str) -> object:
     """Coerce a cached workbook value to a catalog dtype.
 
     Float series keep non-numeric cached text (`n/a`, `..`, `--`, empty) as
