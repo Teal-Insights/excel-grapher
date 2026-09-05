@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v13.7.1 (2026-09-05)
+
+### Bug Fixes
+
+- **export**: Honor blank_ranges in inverted-tree emit
+  ([#701](https://github.com/Teal-Insights/excel-grapher/pull/701),
+  [`94b3961`](https://github.com/Teal-Insights/excel-grapher/commit/94b39618e44659e839e7288414466774485efe14))
+
+
 ## v13.7.0 (2026-09-05)
 
 ### Bug Fixes
