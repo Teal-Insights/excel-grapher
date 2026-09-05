@@ -51,6 +51,7 @@ from excel_grapher.series_bindings.input_coerce import (
     input_value_map_from_series,
     measure_domain_from_series,
 )
+from excel_grapher.series_bindings.validate import validate_series_bindings
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
@@ -388,7 +389,13 @@ def emit_internals_module(
             param_ids = scc_external_params(scc, deps, catalog.order)
             kind = "Demand-driven co-evaluation" if rung == 3 else "Fused union-domain evaluation"
             joined = ", ".join(f"`{sid}`" for sid in scc)
-            doc = f'    """{kind} of zipper series {joined}."""'
+            doc = (
+                f'    """{kind} of zipper series {joined}.\n'
+                "\n"
+                "    Each sequence argument must be dense over the producer's `__domain__`.\n"
+                "    Holed series are shorter than the public domain.\n"
+                '    """'
+            )
             source = "\n".join([_scan_signature(scc, param_ids, catalog), doc, *body])
             source = f"{source}\n{_key_domain_attrs(scan_function_name(scc), scc=scc, plan=plan)}"
             functions.append(source)
@@ -399,9 +406,16 @@ def emit_internals_module(
         ):
             used_runtime.add("require_aligned")
         if rung == 3:
-            doc = f'    """Demand-driven evaluation of series `{series.series_id}`."""'
+            summary = f"Demand-driven evaluation of series `{series.series_id}`."
         else:
-            doc = f'    """First-level helper for bound series `{series.series_id}`."""'
+            summary = f"First-level helper for bound series `{series.series_id}`."
+        doc = (
+            f'    """{summary}\n'
+            "\n"
+            "    Each sequence argument must be dense over the producer's `__domain__`.\n"
+            "    Holed series are shorter than the public domain.\n"
+            '    """'
+        )
         source = "\n".join([_helper_signature(series, info, catalog), doc, *body])
         source = f"{source}\n{_key_domain_attrs(series.series_id, series_id=series.series_id, plan=plan)}"
         functions.append(source)
@@ -1012,6 +1026,20 @@ def emit_init_module(catalog: SeriesCatalog) -> str:
     return "\n".join(lines)
 
 
+def _refuse_invalid_bindings(
+    graph: DependencyGraph,
+    series_bindings: WorkbookSeriesBindings,
+    bindings_workbook: Path | str,
+) -> None:
+    """Fail closed when bindings would not pass `validate_series_bindings`."""
+    report = validate_series_bindings(graph, series_bindings, workbook=bindings_workbook)
+    if report["ok"]:
+        return
+    errors = [issue for issue in report["issues"] if issue["level"] == "error"]
+    codes = ", ".join(sorted({issue["code"] for issue in errors}))
+    raise InvertedTreeExportError(f"invalid series bindings ({codes})")
+
+
 def generate_inverted_tree_modules(
     graph: DependencyGraph,
     *,
@@ -1035,9 +1063,11 @@ def generate_inverted_tree_modules(
         Mapping of package filenames to file contents.
 
     Raises:
-        InvertedTreeExportError: A bound series cannot be inverted fail-closed.
+        InvertedTreeExportError: A bound series cannot be inverted fail-closed,
+            or `series_bindings` fail `validate_series_bindings`.
     """
     del targets
+    _refuse_invalid_bindings(graph, series_bindings, bindings_workbook)
     catalog = build_catalog(series_bindings, workbook=bindings_workbook, graph=graph)
     if not catalog.output_series():
         raise InvertedTreeExportError("inverted-tree codegen requires at least one output series")

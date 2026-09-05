@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -26,7 +27,9 @@ from excel_grapher.core.formula_ast import (
 )
 from excel_grapher.core.formula_shape import fingerprint_formula_shape
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
+from excel_grapher.series_bindings.graph_predicates import is_graph_formula_node
 from excel_grapher.series_bindings.normalize import (
+    effective_validation,
     has_constant_direction,
     has_input_direction,
     has_internal_direction,
@@ -766,6 +769,60 @@ def partition_catalog(catalog: SeriesCatalog, graph: DependencyGraph) -> SeriesC
     )
 
 
+def _filter_formula_series_cells(
+    cells: Sequence[CanonicalAddress],
+    entry: Mapping[str, Any],
+    graph: DependencyGraph,
+    *,
+    series_id: str,
+    direction: Direction,
+    layout: Layout,
+) -> tuple[CanonicalAddress, ...]:
+    """Keep graph formula cells for internal/output series.
+
+    Input and constant series are left unfiltered: their `data_range` is the
+    public contract. Respects the same `intersect_graph_*` flags as
+    `validate_series_bindings`.
+
+    Raises:
+        InvertedTreeExportError: Filtering leaves no cells, or a `matrix`
+            series has holes after filtering.
+    """
+    if direction not in {"internal", "output"}:
+        return tuple(cells)
+    validation = effective_validation(cast(dict[str, Any], entry))
+    if direction == "internal" and not validation.get("intersect_graph_formulas", True):
+        return tuple(cells)
+    if direction == "output" and not validation.get("intersect_graph_nodes", True):
+        return tuple(cells)
+    selected = tuple(cell for cell in cells if is_graph_formula_node(graph, cell))
+    skipped = len(cells) - len(selected)
+    if skipped > 0 and bool(validation.get("warn_on_partial_overlap", True)):
+        warnings.warn(
+            f"Skipped {skipped} cell(s) in data_range not graph formula cells "
+            f"(series {series_id!r})",
+            UserWarning,
+            stacklevel=3,
+        )
+    if skipped > 0 and len(cells) > 1 and len(selected) == 1:
+        warnings.warn(
+            f"series {series_id!r}: on-graph subset is a single cell; "
+            "helper return type becomes scalar",
+            UserWarning,
+            stacklevel=3,
+        )
+    if not selected:
+        raise InvertedTreeExportError(
+            f"series {series_id!r}: data_range has no graph formula cells"
+        )
+    if layout == "matrix" and skipped > 0:
+        raise InvertedTreeExportError(
+            f"series {series_id!r}: graph-formula filtering left holes in a "
+            "matrix series"
+        )
+    return selected
+
+
 def build_catalog(
     bindings: WorkbookSeriesBindings,
     *,
@@ -777,12 +834,16 @@ def build_catalog(
     Applies series-level `exclude_rows` / `exclude_columns` before indexing,
     matching `resolve_series_binding` (issue #600). Each series carries an
     ordered key-point domain. When `graph` is provided, mixed formula shapes
-    partition into one `Statement` per consecutive run.
+    partition into one `Statement` per consecutive run, and internal/output
+    series keep only graph formula cells (issue #693). Input and constant
+    series stay unfiltered.
 
     Raises:
         InvertedTreeExportError: A series is missing `id`, two series share an
             id (message names both `data_range`s), two series claim the same
-            cell, or key-domain resolution fails.
+            cell, key-domain resolution fails, a formula series has no graph
+            formula cells, or graph-formula filtering leaves holes in a
+            `matrix` series.
     """
     series_map: dict[str, BoundSeries] = {}
     order: list[str] = []
@@ -809,7 +870,18 @@ def build_catalog(
                 canonical_address(addr) for addr in expand_data_range(data_range, workbook=workbook)
             )
         cells = [as_canonical(addr) for addr in apply_series_excludes(cells, entry)]
-        pending.append((series_id, entry, tuple(cells)))
+        if graph is not None:
+            cell_tuple = _filter_formula_series_cells(
+                cells,
+                entry,
+                graph,
+                series_id=series_id,
+                direction=_direction_of(entry),
+                layout=_layout_of(entry),
+            )
+        else:
+            cell_tuple = tuple(cells)
+        pending.append((series_id, entry, cell_tuple))
     with _WorkbookValues(workbook) as reader:
         sources: list[str] = []
         for _series_id, entry, cell_tuple in pending:
