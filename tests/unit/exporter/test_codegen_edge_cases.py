@@ -517,8 +517,8 @@ class TestNamedRangeRegression:
         # GREEN: After normalization, NumRiskTable is expanded to a sheet-qualified
         # range in normalized_formula, so core.formula_ast.parse succeeds and
         # CodeGenerator can emit a runnable package without raising ParseError.
-        files = gen.generate_modules(["'Chart Data'!E11"])
-        assert "api.py" in files
+        code = gen.generate(["'Chart Data'!E11"])
+        assert "def compute_all" in code
 
     def test_offset_dynamic_cell_table_excludes_unreachable_sheets(self):
         """Dynamic OFFSET should not force _CELL_TABLE to include unrelated sheets."""

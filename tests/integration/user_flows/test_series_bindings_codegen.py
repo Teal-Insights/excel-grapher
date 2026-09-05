@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
-import sys
 from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
@@ -241,74 +239,3 @@ def test_generate_applies_google_docstring_renderer(workbook: Path) -> None:
     assert "Args:" in setter.__doc__
     assert "Returns:" in setter.__doc__
     assert "Required record fields:" in setter.__doc__
-
-
-def test_generate_modules_exports_series_binding_setters(
-    tmp_path: Path,
-    workbook: Path,
-) -> None:
-    bindings = validate_bindings_document(deepcopy(BINDINGS_DOCUMENT))
-    targets: list[str] = []
-    for series in bindings["series"]:
-        targets.extend(expand_data_range(series["data_range"], workbook=workbook))
-    graph = create_dependency_graph(workbook, targets, load_values=True)
-
-    files = CodeGenerator(graph).generate_modules(
-        targets,
-        series_bindings=bindings,
-        bindings_workbook=workbook,
-    )
-    assert "def set_borvelia_primary_balance(" in files["api.py"]
-    assert "set_borvelia_primary_balance" in files["__init__.py"]
-
-    pkg_dir = tmp_path / "exported_series"
-    for filename, content in files.items():
-        pkg_dir.mkdir(parents=True, exist_ok=True)
-        (pkg_dir / filename).write_text(content, encoding="utf-8")
-
-    sys.path.insert(0, str(tmp_path))
-    try:
-        pkg = importlib.import_module("exported_series")
-        ctx = pkg.make_context()
-        pkg.set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 4, "OBS_VALUE": 7.5}])
-        assert ctx.inputs["Sheet1!I5"] == 7.5
-    finally:
-        sys.path.remove(str(tmp_path))
-        for name in list(sys.modules):
-            if name == "exported_series" or name.startswith("exported_series."):
-                sys.modules.pop(name, None)
-
-
-def test_generate_modules_applies_google_docstring_renderer(
-    tmp_path: Path,
-    workbook: Path,
-) -> None:
-    callback_name = "_test_integration_modules_google_docstring"
-    register_series_docstring_callback(
-        callback_name,
-        lambda ctx: SeriesFunctionDoc(
-            summary=f"Set {ctx.contract.series_id}.",
-            purpose="Integration test purpose.",
-            record_matching="Match by TIME_PERIOD.",
-            field_descriptions={
-                "TIME_PERIOD": FieldDoc(description="Reporting year."),
-                "OBS_VALUE": FieldDoc(description="Observed value."),
-            },
-        ),
-    )
-    bindings = validate_bindings_document(deepcopy(BINDINGS_DOCUMENT))
-    targets: list[str] = []
-    for series in bindings["series"]:
-        targets.extend(expand_data_range(series["data_range"], workbook=workbook))
-    graph = create_dependency_graph(workbook, targets, load_values=True)
-
-    files = CodeGenerator(graph).generate_modules(
-        targets,
-        series_bindings=bindings,
-        bindings_workbook=workbook,
-        series_docstring_callback=callback_name,
-        docstring_renderer="google",
-    )
-    assert "Args:" in files["api.py"]
-    assert "Returns:" in files["api.py"]
-    assert "Required record fields:" in files["api.py"]

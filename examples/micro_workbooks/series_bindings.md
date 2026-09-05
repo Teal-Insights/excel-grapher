@@ -568,8 +568,8 @@ such as `REF_AREA` and `UNIT_MEASURE` from the binding. Because the
 output binding covers every export target, address-keyed `compute_all`
 is omitted from the public API by default;
 `compute_borvelia_primary_balance` is the tabular, dimension-keyed view
-of this series. Pass `include_compute_all=True` to `generate` /
-`generate_modules` if you still want the address-keyed map.
+of this series. Pass `include_compute_all=True` to `generate()`
+if you still want the address-keyed map.
 
 ### Discovering the generated API
 

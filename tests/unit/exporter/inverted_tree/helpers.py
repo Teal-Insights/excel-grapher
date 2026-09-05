@@ -229,7 +229,6 @@ def generate_inverted(
         graph,
         series_bindings=bindings,
         bindings_workbook=workbook,
-        targets=targets,
         force_rung=force_rung,
         blank_ranges=blank_ranges,
     )

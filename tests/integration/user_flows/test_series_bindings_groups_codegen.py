@@ -1,4 +1,8 @@
-"""Integration: view-level groups sequence the exported Records API without changing semantics."""
+"""View-level groups sequence single-file `generate()` setters (`list_groups`).
+
+Package exports (`generate_modules`) omit `list_groups`; groups remain a
+`generate()` presentation concern.
+"""
 
 from __future__ import annotations
 
@@ -43,9 +47,6 @@ def _row_series(series_id: str, row: int, groups: list[dict[str, Any]] | None) -
     return entry
 
 
-# Declaration order deliberately interleaves groups so grouped export must resequence:
-# primary_balance (Fiscal) is declared first but Macro/Growth groups appear first
-# in the group tree only if first-appearance ordering is honored.
 GROUPED_DOCUMENT: dict[str, Any] = {
     "schema_version": "1.5.0",
     "workbook": "series_bindings.xlsx",
@@ -64,93 +65,54 @@ def workbook(tmp_path: Path) -> Path:
     return path
 
 
-def _generate_modules(workbook: Path) -> dict[str, str]:
-    bindings = validate_bindings_document(deepcopy(GROUPED_DOCUMENT))
+def _generate(workbook: Path, document: dict[str, Any] = GROUPED_DOCUMENT) -> str:
+    bindings = validate_bindings_document(deepcopy(document))
     targets: list[str] = []
     for series in bindings["series"]:
         targets.extend(expand_data_range(series["data_range"], workbook=workbook))
     graph = create_dependency_graph(workbook, targets, load_values=True)
     with CodeGenerator(graph) as gen:
-        return gen.generate_modules(
+        return gen.generate(
             targets,
             series_bindings=bindings,
             bindings_workbook=workbook,
         )
 
 
-def test_grouped_export_sequences_definitions_and_all(workbook: Path) -> None:
-    modules = _generate_modules(workbook)
-    api = modules["api.py"]
-
-    # Grouped bindings first (Fiscal, then Macro/Growth), ungrouped trail.
+def test_grouped_export_sequences_definitions(workbook: Path) -> None:
+    code = _generate(workbook)
     assert (
-        api.index("def set_primary_balance(")
-        < api.index("def set_gdp_growth(")
-        < api.index("def set_interest_rate(")
+        code.index("def set_primary_balance(")
+        < code.index("def set_gdp_growth(")
+        < code.index("def set_interest_rate(")
     )
-
-    init = modules["__init__.py"]
-    all_line = next(line for line in init.splitlines() if line.startswith("__all__"))
-    assert all_line.index("set_primary_balance") < all_line.index("set_gdp_growth")
-    assert all_line.index("set_gdp_growth") < all_line.index("set_interest_rate")
 
 
 def test_grouped_export_emits_list_groups_discovery(workbook: Path) -> None:
-    modules = _generate_modules(workbook)
-
-    assert "groups.json" not in modules
-    assert "def list_groups(" in modules["api.py"]
-    assert "list_groups" in modules["__init__.py"]
-
-
-def test_grouped_export_preserves_setter_semantics(workbook: Path, tmp_path: Path) -> None:
-    modules = _generate_modules(workbook)
-    pkg_dir = tmp_path / "grouped_pkg"
-    pkg_dir.mkdir()
-    for filename, content in modules.items():
-        (pkg_dir / filename).write_text(content, encoding="utf-8")
-
-    import importlib
-    import sys
-
-    sys.path.insert(0, str(tmp_path))
-    try:
-        pkg = importlib.import_module("grouped_pkg")
-        ctx = pkg.make_context()
-        pkg.set_primary_balance(ctx, [{"TIME_PERIOD": 4, "OBS_VALUE": 7.5}])
-        assert ctx.inputs["Sheet1!I5"] == 7.5
-
-        groups = cast(dict[str, Any], pkg.list_groups())
-        assert [g["label"] for g in groups["groups"]] == ["Fiscal", "Macro"]
-    finally:
-        sys.path.remove(str(tmp_path))
-        for name in list(sys.modules):
-            if name == "grouped_pkg" or name.startswith("grouped_pkg."):
-                del sys.modules[name]
+    code = _generate(workbook)
+    assert "def list_groups(" in code
+    namespace: dict[str, Any] = {}
+    exec(code, namespace)
+    groups = cast(dict[str, Any], namespace["list_groups"]())
+    assert [g["label"] for g in groups["groups"]] == ["Fiscal", "Macro"]
 
 
-def test_ungrouped_bindings_export_is_unchanged(workbook: Path) -> None:
+def test_grouped_export_preserves_setter_semantics(workbook: Path) -> None:
+    namespace: dict[str, Any] = {}
+    exec(_generate(workbook), namespace)
+    ctx = namespace["make_context"]()
+    namespace["set_primary_balance"](ctx, [{"TIME_PERIOD": 4, "OBS_VALUE": 7.5}])
+    assert ctx.inputs["Sheet1!I5"] == 7.5
+
+
+def test_ungrouped_bindings_export_omits_list_groups(workbook: Path) -> None:
     document = deepcopy(GROUPED_DOCUMENT)
     for series in document["series"]:
         series.pop("groups", None)
-    bindings = validate_bindings_document(document)
-    targets: list[str] = []
-    for series in bindings["series"]:
-        targets.extend(expand_data_range(series["data_range"], workbook=workbook))
-    graph = create_dependency_graph(workbook, targets, load_values=True)
-    with CodeGenerator(graph) as gen:
-        modules = gen.generate_modules(
-            targets,
-            series_bindings=bindings,
-            bindings_workbook=workbook,
-        )
-
-    assert "groups.json" not in modules
-    assert "list_groups" not in modules["api.py"]
-    # Flat export keeps declaration order for definitions.
-    api = modules["api.py"]
+    code = _generate(workbook, document)
+    assert "def list_groups(" not in code
     assert (
-        api.index("def set_primary_balance(")
-        < api.index("def set_gdp_growth(")
-        < api.index("def set_interest_rate(")
+        code.index("def set_primary_balance(")
+        < code.index("def set_gdp_growth(")
+        < code.index("def set_interest_rate(")
     )

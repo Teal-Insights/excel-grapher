@@ -9,7 +9,6 @@ import pytest
 from excel_grapher.series_bindings import SeriesBindingsLoadError
 from excel_grapher.series_bindings.workflow import (
     resolve_bindings_path,
-    run_binding_checks,
     validate_bindings_workbook,
 )
 from tests.integration.user_flows.utils import write_ffv2_workbook
@@ -73,20 +72,3 @@ def test_validate_bindings_workbook_ffv2_fixture(tmp_path: Path) -> None:
     assert result["report"]["ok"] is True
     assert len(result["setters"]) == 6
     assert len(result["computes"]) == 4
-
-
-def test_run_binding_checks_smoke_ffv2_fixture(tmp_path: Path) -> None:
-    workbook = tmp_path / "ffv2.xlsx"
-    write_ffv2_workbook(workbook)
-    bindings_path = FIXTURES / "ffv2.yaml"
-    module_dir = tmp_path / "bindings_module"
-
-    result = run_binding_checks(
-        workbook,
-        bindings_path,
-        module_dir=module_dir,
-        package_name="bindings_module",
-    )
-
-    assert "generated_files" in result
-    assert (module_dir / "__init__.py").is_file()

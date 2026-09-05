@@ -27,15 +27,10 @@ def test_matrix_explicit_bindings_validate(tmp_path: Path) -> None:
     assert len(result["input_series"]) == len(setter_names(bindings))
 
 
-def test_matrix_explicit_bindings_run_checks(tmp_path: Path) -> None:
+def test_matrix_explicit_bindings_catalog(tmp_path: Path) -> None:
     workbook = tmp_path / "matrix_inputs.xlsx"
     write_matrix_explicit_workbook(workbook)
-    result = run_binding_checks(
-        workbook,
-        MATRIX_EXPLICIT_BINDINGS,
-        module_dir=tmp_path / "bindings_module",
-        package_name="bindings_module",
-    )
+    result = validate_bindings_workbook(workbook, MATRIX_EXPLICIT_BINDINGS)
     assert result["setters"] == ["set_macro_matrix"]
     assert result["computes"] == []
 

@@ -441,22 +441,21 @@ def _build_codegen_diamond_graph(*, reverse_insertion: bool) -> DependencyGraph:
 
 
 class TestDeterministicCodegenOrdering:
-    def test_generate_modules_emits_formula_functions_in_workbook_order(self) -> None:
+    def test_generate_emits_formula_functions_in_workbook_order(self) -> None:
         graph = _build_codegen_diamond_graph(reverse_insertion=True)
-        files = CodeGenerator(graph).generate_modules(["Sheet1!D1"])
-        internals = files["internals.py"]
+        internals = CodeGenerator(graph).generate(["Sheet1!D1"])
 
         positions = [internals.index(f"def cell_sheet1_{col}1(") for col in ("b", "c", "d")]
         assert positions == sorted(positions)
 
-    def test_generate_modules_formula_order_is_independent_of_node_insertion_order(self) -> None:
-        forward = CodeGenerator(
-            _build_codegen_diamond_graph(reverse_insertion=False)
-        ).generate_modules(["Sheet1!D1"])
-        reverse = CodeGenerator(
-            _build_codegen_diamond_graph(reverse_insertion=True)
-        ).generate_modules(["Sheet1!D1"])
-        assert forward["internals.py"] == reverse["internals.py"]
+    def test_generate_formula_order_is_independent_of_node_insertion_order(self) -> None:
+        forward = CodeGenerator(_build_codegen_diamond_graph(reverse_insertion=False)).generate(
+            ["Sheet1!D1"]
+        )
+        reverse = CodeGenerator(_build_codegen_diamond_graph(reverse_insertion=True)).generate(
+            ["Sheet1!D1"]
+        )
+        assert forward == reverse
 
 
 class TestEmitCell:
@@ -955,14 +954,13 @@ class TestGenerateNamedRanges:
         code = CodeGenerator(graph).generate(["BeeCol"])
         assert "'Sheet1!B1:B3': xl_range_rows" in code
 
-    def test_generate_modules_expands_defined_name(self):
+    def test_generate_expands_defined_name(self):
         graph = self._graph_with_named_ranges(
             _make_node("Sheet1!B1", None, 1.0),
             _make_node("Sheet1!B2", None, 2.0),
             _make_node("Sheet1!B3", None, 3.0),
         )
-        files = CodeGenerator(graph).generate_modules(["BeeCol"])
-        api_py = files["api.py"]
+        api_py = CodeGenerator(graph).generate(["BeeCol"])
         assert "'Sheet1!B1:B3': xl_range_rows" in api_py
 
     def test_generate_unknown_defined_name_raises(self):

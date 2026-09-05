@@ -63,13 +63,11 @@ def _tiny_dsa_graph():
 
 @pytest.fixture(scope="module")
 def tiny_dsa_pkg(tmp_path_factory: pytest.TempPathFactory):
-    bindings, targets, graph = _tiny_dsa_graph()
+    bindings, _targets, graph = _tiny_dsa_graph()
     with CodeGenerator(graph) as gen:
         modules = gen.generate_modules(
-            targets,
             series_bindings=bindings,
             bindings_workbook=_WORKBOOK,
-            paradigm="inverted_tree",
         )
     tmp_path = tmp_path_factory.mktemp("tiny_dsa_inverted")
     return load_package(modules, tmp_path, name="tiny_dsa_inverted")

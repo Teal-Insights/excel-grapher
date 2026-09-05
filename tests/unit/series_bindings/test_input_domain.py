@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
-import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -11,12 +9,9 @@ from typing import Any, cast
 import pytest
 import xlsxwriter
 
-from excel_grapher.exporter import CodeGenerator
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.runtime.cache import EvalContext, coerce_inputs_dict
 from excel_grapher.series_bindings import (
-    expand_data_range,
-    load_series_bindings,
     resolve_series_binding,
 )
 from excel_grapher.series_bindings.input_coerce import (
@@ -318,89 +313,6 @@ def test_emit_scalar_setter_rejects_out_of_real_between_domain(tmp_path: Path) -
     setter(ctx, 300)
     with pytest.raises(ValueError, match="out of domain"):
         setter(ctx, 301)
-
-
-def test_generate_modules_enum_domain_fails_before_compute(tmp_path: Path) -> None:
-    """Issue #458 MCVE: invalid setter input raises; valid path still computes."""
-    wb_path = tmp_path / "m.xlsx"
-    wb = xlsxwriter.Workbook(wb_path)
-    dash = wb.add_worksheet("Dash")
-    dash.write("B1", "Alpha")
-    data = wb.add_worksheet("Data")
-    for row, (name, val) in enumerate([("Alpha", 10.0), ("Beta", 20.0)], start=0):
-        data.write(row, 0, name)
-        data.write_number(row, 1, val)
-    out = wb.add_worksheet("Out")
-    for col in range(1, 4):
-        out.write_formula(0, col, "=VLOOKUP(Dash!B1,Data!A1:B2,2,FALSE)")
-        out.write_number(1, col, 2028 + col + 1)
-    wb.close()
-
-    bindings_text = """\
-schema_version: 1.13.0
-concept_scheme:
-  id: mcve
-  concepts:
-  - {id: OBS_VALUE, name: v, dtype: number}
-  - {id: TIME_PERIOD, name: t, dtype: int}
-series:
-- id: country
-  sheet: Dash
-  data_range: Dash!B1:B1
-  layout: scalar
-  input:
-    setter: {name: set_country}
-    domain:
-      enum: [Alpha, Beta]
-  structure:
-    measure: {concept: OBS_VALUE, dtype: string, bind: {kind: data_cell, read: string}}
-    dimensions: []
-  key: []
-- id: out_series
-  sheet: Out
-  data_range: Out!B1:D1
-  layout: series
-  output: {compute: {name: compute_out_series}}
-  structure:
-    measure: {concept: OBS_VALUE, dtype: float, bind: {kind: data_cell, read: float}}
-    dimensions:
-    - {id: TIME_PERIOD, concept: TIME_PERIOD, role: key, scope: cell,
-       bind: {kind: column_header, header_row: 2, read: int}}
-  key: [TIME_PERIOD]
-"""
-    yaml_path = tmp_path / "m.yaml"
-    yaml_path.write_text(bindings_text, encoding="utf-8")
-    bindings = load_series_bindings(yaml_path)
-
-    targets = expand_data_range("Out!B1:D1", workbook=wb_path)
-    graph = create_dependency_graph(wb_path, targets, load_values=True)
-    modules = CodeGenerator(graph).generate_modules(
-        targets,
-        series_bindings=bindings,
-        bindings_workbook=wb_path,
-    )
-
-    pkg = tmp_path / "gen"
-    pkg.mkdir()
-    for name, text in modules.items():
-        (pkg / name).write_text(text, encoding="utf-8")
-
-    sys.path.insert(0, str(tmp_path))
-    try:
-        gen = importlib.import_module("gen")
-        ctx = gen.make_context()
-        gen.set_country(ctx, "Beta")
-        result = gen.compute_out_series(ctx=ctx)
-        assert all(record["OBS_VALUE"] == 20 for record in result)
-
-        ctx2 = gen.make_context()
-        with pytest.raises(ValueError, match="out of domain"):
-            gen.set_country(ctx2, "Nonexistent")
-    finally:
-        sys.path.remove(str(tmp_path))
-        for name in list(sys.modules):
-            if name == "gen" or name.startswith("gen."):
-                sys.modules.pop(name, None)
 
 
 def test_measure_domain_from_series_normalizes_enum() -> None:

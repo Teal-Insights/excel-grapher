@@ -1080,6 +1080,7 @@ def emit_init_module(catalog: SeriesCatalog) -> str:
         lines.append("")
     lines.append("__all__ = [")
     lines.append(f"    {'as_records'!r},")
+    lines.append(f"    {'data'!r},")
     for name in names:
         lines.append(f"    {name!r},")
     lines.append("]")
@@ -1123,17 +1124,15 @@ def generate_inverted_tree_modules(
     *,
     series_bindings: WorkbookSeriesBindings,
     bindings_workbook: Path | str,
-    targets: Sequence[str] | None = None,
     force_rung: Literal[2, 3] | None = None,
     blank_ranges: Sequence[str] | None = None,
 ) -> dict[str, str]:
-    """Generate api/internals/runtime/data modules for the inverted-tree paradigm.
+    """Generate api/internals/runtime/data modules for inverted-tree export.
 
     Args:
         graph: Dependency graph covering the binding closure.
         series_bindings: Bindings catalog (inputs, constants, internals, outputs).
         bindings_workbook: Workbook path used to expand `data_range`s.
-        targets: Ignored; outputs come from the bindings catalog.
         force_rung: Pin every formula SCC to rung 3 (demand-driven), or
             fuse wherever legal (`2`) and fall through to the auto rung
             otherwise. `None` selects the strongest legal rung.
@@ -1150,7 +1149,6 @@ def generate_inverted_tree_modules(
             or an input range overlaps an on-graph formula cell without
             `input.mode: override`.
     """
-    del targets
     blank_rects = normalize_blank_range_specs(blank_ranges)
     token = bind_blank_rects(blank_rects)
     try:

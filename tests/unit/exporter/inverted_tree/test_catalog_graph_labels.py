@@ -109,10 +109,8 @@ def test_generate_modules_does_not_bind_full_workbook(tmp_path: Path) -> None:
         CodeGenerator(graph) as generator,
     ):
         modules = generator.generate_modules(
-            ["Store!C2"],
             series_bindings=bindings,
             bindings_workbook=path,
-            paradigm="inverted_tree",
         )
 
     assert "api.py" in modules

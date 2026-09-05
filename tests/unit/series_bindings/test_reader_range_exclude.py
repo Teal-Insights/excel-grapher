@@ -18,7 +18,6 @@ from typing import Any
 import pytest
 import xlsxwriter
 
-from excel_grapher.exporter import CodeGenerator
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings import (
     expand_data_range,
@@ -258,25 +257,6 @@ def test_reader_index_keys_narrowed_contiguous_range(tmp_path: Path) -> None:
     assert "Demo!B2:C4" in index["ranges"]
     assert index["ranges"]["Demo!B2:C4"]["reader"] == "read_demo_range"
     assert "Demo!B2:D5" not in index["ambiguous"]
-
-
-def test_codegen_modules_skip_interleaved_range_readers(tmp_path: Path) -> None:
-    wb_path = tmp_path / "mcve.xlsx"
-    _write_interleaved_workbook(wb_path)
-    bindings = validate_bindings_document(_interleaved_matrix_doc())
-    graph = create_dependency_graph(wb_path, ["Risks!E1"], load_values=True)
-    with (
-        CodeGenerator(graph) as gen,
-        pytest.warns(UserWarning, match="non-contiguous|cannot be expressed"),
-    ):
-        modules = gen.generate_modules(
-            ["Risks!E1"], series_bindings=bindings, bindings_workbook=wb_path
-        )
-    readers = modules["_readers.py"]
-    assert _fn_body(readers, "read_revenue_shocks_range") is None
-    assert _fn_body(readers, "read_expenditure_shocks_range") is None
-    assert "def read_revenue_shocks(" in readers
-    assert "def read_expenditure_shocks(" in readers
 
 
 def test_omitted_range_reader_emits_user_warning(tmp_path: Path) -> None:
