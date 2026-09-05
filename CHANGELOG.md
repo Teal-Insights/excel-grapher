@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v13.7.0 (2026-09-05)
+
+### Bug Fixes
+
+- **export**: Gather irregular inverted-tree year picks via literal index map
+  ([#697](https://github.com/Teal-Insights/excel-grapher/pull/697),
+  [`157e02f`](https://github.com/Teal-Insights/excel-grapher/commit/157e02f20bbfe13bf076238fbea9a09da464aa5a))
+
+- **export**: Gather sparse inverted-tree year picks via literal index map
+  ([#697](https://github.com/Teal-Insights/excel-grapher/pull/697),
+  [`157e02f`](https://github.com/Teal-Insights/excel-grapher/commit/157e02f20bbfe13bf076238fbea9a09da464aa5a))
+
+- **export**: Keep cached-value coerce typed as Any
+  ([#698](https://github.com/Teal-Insights/excel-grapher/pull/698),
+  [`9fac457`](https://github.com/Teal-Insights/excel-grapher/commit/9fac457877a340ec265ea70cfe02b0dda63bdcb9))
+
+- **export**: Take full-catalog helpers at irregular gather call sites
+  ([#697](https://github.com/Teal-Insights/excel-grapher/pull/697),
+  [`157e02f`](https://github.com/Teal-Insights/excel-grapher/commit/157e02f20bbfe13bf076238fbea9a09da464aa5a))
+
+### Features
+
+- **export**: Retain holes in matrix formula series
+  ([#698](https://github.com/Teal-Insights/excel-grapher/pull/698),
+  [`9fac457`](https://github.com/Teal-Insights/excel-grapher/commit/9fac457877a340ec265ea70cfe02b0dda63bdcb9))
+
+
 ## v13.6.4 (2026-09-05)
 
 ### Bug Fixes
