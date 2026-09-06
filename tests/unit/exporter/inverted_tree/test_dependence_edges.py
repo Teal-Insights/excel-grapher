@@ -69,6 +69,7 @@ def test_a10_lag_edges_are_identity_and_shift(tmp_path: Path) -> None:
     direction = catalog.get("direction")
     derived = series_deps_from_edges(direction, edges, catalog, graph)
     assert derived.lagged_ids == frozenset({"debt"})
+    assert derived.keyed_ids == frozenset()
     assert derived.aligned_ids == frozenset()
     assert derived.lookup_ids == frozenset()
     assert derived.edges

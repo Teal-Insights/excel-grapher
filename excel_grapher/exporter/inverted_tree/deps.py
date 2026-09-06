@@ -813,6 +813,9 @@ class SeriesDeps:
     - `lagged_ids` — a producer read at both `i` and `i-1` whose
       positions shift with the host. A constant pair (`$A$8` / `$A$9`
       from every member) is a static catalog read, not a lag (#681).
+    - `keyed_ids` — a producer read at two or more outer keys of the
+      same `TIME_PERIOD` (`gdp[Baseline, t]` and `gdp[Stress, t]`).
+      Catalog-slot adjacency is not a lag (#733).
     - `lookup_ids` — `whole` / `dynamic` table reads
     - `is_scan` / `seed_id` / `scan_direction` — self-lags discharged by
       loop order. A relative other-series read at `schedule_coord` ± 1 is
@@ -828,6 +831,7 @@ class SeriesDeps:
     aligned_ids: frozenset[str]
     lookup_ids: frozenset[str]
     lagged_ids: frozenset[str]
+    keyed_ids: frozenset[str]
     index_maps: dict[str, tuple[int, ...]]
     affine_maps: dict[str, tuple[int, int]]
     scan_direction: Literal["forward", "reversed"] = "forward"
@@ -1358,6 +1362,80 @@ def collect_all_dependence_edges(
     return collect_catalog_edges(catalog, graph).edges
 
 
+def _member_key_label(series: BoundSeries, index: int) -> str:
+    """Return `Sheet!A1 (FIELD=value, ...)` for catalog member `index`."""
+    cell = series.cells[index]
+    if index >= len(series.domain) or not series.key_fields:
+        return f"{cell} (catalog {index})"
+    point = series.domain[index]
+    parts: list[str] = []
+    for key_name in series.key_fields:
+        try:
+            parts.append(f"{key_name}={point[key_name]!r}")
+        except KeyError:
+            continue
+    if not parts:
+        return f"{cell} (catalog {index})"
+    return f"{cell} ({', '.join(parts)})"
+
+
+def _dual_read_error(
+    host: BoundSeries,
+    host_index: int,
+    producer: BoundSeries,
+    indices: set[int],
+) -> str:
+    """Name producer cells and keys for an unclassifiable multi-slot read."""
+    reads = ", ".join(_member_key_label(producer, index) for index in sorted(indices))
+    host_cell = host.cells[host_index]
+    if len(indices) > 2:
+        return (
+            f"series {host.series_id!r} cell {host_cell} "
+            f"reads {producer.series_id!r} at more than two positions {reads}"
+        )
+    return f"series {host.series_id!r} cell {host_cell} reads {producer.series_id!r} at {reads}"
+
+
+def _is_same_axis_keyed_read(
+    host: BoundSeries,
+    host_index: int,
+    producer: BoundSeries,
+    indices: set[int],
+) -> bool:
+    """True when each slot is a distinct outer key at the host `TIME_PERIOD`.
+
+    Catalog adjacency is ignored: two scenario blocks packed next to each
+    other (`hi - lo == 1`) are still keyed accesses, not a 1-period lag.
+    """
+    if len(indices) < 2:
+        return False
+    if "TIME_PERIOD" not in producer.key_fields or len(producer.key_fields) < 2:
+        return False
+    points = []
+    for index in indices:
+        if index >= len(producer.domain):
+            return False
+        points.append(producer.domain[index])
+    try:
+        years = {point["TIME_PERIOD"] for point in points}
+    except KeyError:
+        return False
+    if len(years) != 1:
+        return False
+    if host_index < len(host.domain) and "TIME_PERIOD" in host.key_fields:
+        try:
+            if host.domain[host_index]["TIME_PERIOD"] != next(iter(years)):
+                return False
+        except KeyError:
+            return False
+    outer_fields = tuple(field for field in producer.key_fields if field != "TIME_PERIOD")
+    try:
+        outers = {tuple(point[field] for field in outer_fields) for point in points}
+    except KeyError:
+        return False
+    return len(outers) == len(points)
+
+
 def series_deps_from_edges(
     host: BoundSeries,
     edges: Sequence[DependenceEdge],
@@ -1427,6 +1505,7 @@ def series_deps_from_edges(
     affine_maps: dict[str, tuple[int, int]] = {}
     aligned: set[str] = set()
     lagged: set[str] = set()
+    keyed: set[str] = set()
     host_n = len(host.cells)
     identity_by_producer: dict[str, list[DependenceEdge]] = {}
     for edge in edges:
@@ -1455,19 +1534,20 @@ def series_deps_from_edges(
             # Same catalog slots from every member (`labels[0]` / `labels[1]`),
             # or a mixed absolute + relative read of one producer (#681).
             continue
+        multi = {host_i: indices for host_i, indices in per_host.items() if len(indices) > 1}
+        if multi and all(
+            _is_same_axis_keyed_read(host, host_i, dep, indices)
+            for host_i, indices in multi.items()
+        ):
+            keyed.add(series_id)
+            continue
         for host_i, indices in per_host.items():
             if len(indices) > 2:
-                raise InvertedTreeExportError(
-                    f"series {host.series_id!r} cell {host.cells[host_i]} "
-                    f"reads {series_id!r} at more than two positions {tuple(sorted(indices))}"
-                )
+                raise InvertedTreeExportError(_dual_read_error(host, host_i, dep, indices))
             if len(indices) == 2:
                 lo, hi = sorted(indices)
                 if hi - lo != 1:
-                    raise InvertedTreeExportError(
-                        f"series {host.series_id!r} cell {host.cells[host_i]} "
-                        f"reads {series_id!r} at two positions ({hi}, {lo})"
-                    )
+                    raise InvertedTreeExportError(_dual_read_error(host, host_i, dep, indices))
                 saw_lag = True
                 slots[host_i] = hi
             else:
@@ -1514,6 +1594,7 @@ def series_deps_from_edges(
         aligned_ids=frozenset(aligned),
         lookup_ids=frozenset(lookup_ids),
         lagged_ids=frozenset(lagged),
+        keyed_ids=frozenset(keyed),
         index_maps=index_maps,
         affine_maps=affine_maps,
         scan_direction=scan_direction,
