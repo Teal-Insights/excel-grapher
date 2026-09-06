@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.2.3 (2026-09-06)
+
+### Performance Improvements
+
+- **grapher**: Reuse env membership, named-range regex, and sheet bounds
+  ([#718](https://github.com/Teal-Insights/excel-grapher/pull/718),
+  [`524a622`](https://github.com/Teal-Insights/excel-grapher/commit/524a62240b8810320d34a2227fc1a503f103490d))
+
+
 ## v14.2.2 (2026-09-06)
 
 ### Performance Improvements
