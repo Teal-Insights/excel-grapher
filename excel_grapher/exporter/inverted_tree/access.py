@@ -119,6 +119,33 @@ def indirect_target_addresses(
     return found
 
 
+def offset_target_addresses(
+    graph: DependencyGraph,
+    host_cell: CanonicalAddress,
+    *,
+    exclude: Sequence[CanonicalAddress] = (),
+) -> list[CanonicalAddress]:
+    """Return `dynamic_offset` precedents of `host_cell`, minus `exclude`.
+
+    `OFFSET(INDEX(range, ...), rows, cols)` writes the destination cells as
+    `dynamic_offset` edges. The INDEX array remains a static range in the
+    formula; pass those addresses as `exclude` so the remaining set is the
+    relocated window.
+    """
+    skipped = set(exclude)
+    found: list[CanonicalAddress] = []
+    for dep in graph.get_dependencies(host_cell):
+        addr = _canonical(str(dep))
+        if addr in skipped:
+            continue
+        provenance = graph.get_edge_attrs(host_cell, dep).provenance
+        if provenance is None:
+            continue
+        if DependencyCause.dynamic_offset in provenance.causes:
+            found.append(addr)
+    return found
+
+
 def _producer_hits(
     host: BoundSeries,
     producer: BoundSeries,
