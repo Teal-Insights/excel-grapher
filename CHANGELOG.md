@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.2.5 (2026-09-06)
+
+### Bug Fixes
+
+- **grapher**: Sound INDEX shape cache and unify FormulaShape parse
+  ([#728](https://github.com/Teal-Insights/excel-grapher/pull/728),
+  [`2fa5a92`](https://github.com/Teal-Insights/excel-grapher/commit/2fa5a92c5b93e70729f0e8d01112a29d5b5272c2))
+
+
 ## v14.2.4 (2026-09-06)
 
 ### Performance Improvements
