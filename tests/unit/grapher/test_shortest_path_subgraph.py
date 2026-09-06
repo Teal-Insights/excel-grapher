@@ -128,9 +128,9 @@ def _shared_input_and_distant_consumer() -> DependencyGraph:
             _formula("S!M2", "=B1"),
             _formula("S!M3", "=M4"),
             _formula("S!M4", "=C1"),
-            _formula("S!B1", "=In1"),
-            _formula("S!C1", "=In1"),
-            _leaf("S!In1", 1),
+            _formula("S!B1", "=I1"),
+            _formula("S!C1", "=I1"),
+            _leaf("S!I1", 1),
         ],
     )
     for frm, to in [
@@ -140,8 +140,8 @@ def _shared_input_and_distant_consumer() -> DependencyGraph:
         ("S!M2", "S!B1"),
         ("S!M3", "S!M4"),
         ("S!M4", "S!C1"),
-        ("S!B1", "S!In1"),
-        ("S!C1", "S!In1"),
+        ("S!B1", "S!I1"),
+        ("S!C1", "S!I1"),
     ]:
         g.add_edge(frm, to)
     return g
@@ -188,8 +188,8 @@ def test_select_shortest_path_subgraph_undirected_prefers_hop_shortest() -> None
 
     sub = select_shortest_path_subgraph(g, source_key="S!B1", target_key="S!C1", directed=False)
 
-    assert sorted(list(sub)) == ["S!B1", "S!C1", "S!In1"]
-    assert _sorted_edges(sub) == [("S!B1", "S!In1"), ("S!C1", "S!In1")]
+    assert sorted(list(sub)) == ["S!B1", "S!C1", "S!I1"]
+    assert _sorted_edges(sub) == [("S!B1", "S!I1"), ("S!C1", "S!I1")]
     assert "S!F9" not in sub
 
 
