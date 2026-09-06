@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.2.4 (2026-09-06)
+
+### Performance Improvements
+
+- **grapher**: Speed up LIC-DSF-scale extract (#716)
+  ([#719](https://github.com/Teal-Insights/excel-grapher/pull/719),
+  [`fd5379c`](https://github.com/Teal-Insights/excel-grapher/commit/fd5379c8037069dd5c3bfde0a2508f6a2cb39f11))
+
+
 ## v14.2.3 (2026-09-06)
 
 ### Performance Improvements
