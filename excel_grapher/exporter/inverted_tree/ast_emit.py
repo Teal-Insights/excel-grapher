@@ -609,14 +609,23 @@ def member_peel_stop(series: BoundSeries, graph: DependencyGraph) -> int:
     )
 
 
+def _emit_value_or_range(node: AstNode, ctx: EmitContext) -> str:
+    """Emit a scalar expression or a positional range table."""
+    if isinstance(node, (RangeNode, WholeColumnNode, WholeRowNode)):
+        return _emit_range_table(node, ctx)
+    return emit_expr(node, ctx)
+
+
 def _emit_binary(node: BinaryOpNode, ctx: EmitContext) -> str:
-    left = emit_expr(node.left, ctx)
-    right = emit_expr(node.right, ctx)
     op = node.op
     if op == "&":
+        left = emit_expr(node.left, ctx)
+        right = emit_expr(node.right, ctx)
         return f"(str({left}) + str({right}))"
     helper = _ARITHMETIC_HELPERS.get(op) or _COMPARE_HELPERS.get(op)
     if helper is not None:
+        left = _emit_value_or_range(node.left, ctx)
+        right = _emit_value_or_range(node.right, ctx)
         return f"{ctx.use(helper)}({left}, {right})"
     raise InvertedTreeExportError(f"series {ctx.host.series_id!r}: unsupported operator {op!r}")
 
@@ -758,7 +767,7 @@ def _emit_range_table(node: AstNode, ctx: EmitContext) -> str:
     addresses = iter_ref_addresses(node, ctx.host_cell, ctx.graph)
     if not addresses:
         raise _host_export_error(ctx, "range is empty")
-    cells, missing = resolve_positional_range(addresses, ctx.catalog, ctx.blank_rects)
+    cells, missing = resolve_positional_range(addresses, ctx.catalog, ctx.blank_rects, ctx.graph)
     if missing:
         label = range_ref_label(node, ctx.host_cell)
         raise _host_export_error(
@@ -1057,8 +1066,10 @@ def _emit_index(node: FunctionCallNode, ctx: EmitContext) -> str:
             return _emit_index_into_block(covered, start, row_expr, col_expr, ctx, slot)
         name = ctx.param(covered.series_id)
         return f"{ctx.use('xl_at')}({name}, ({row_expr}) - 1)"
-    table = emit_expr(node.args[0], ctx)
-    return f"{ctx.use('xl_at')}({table}, ({row_expr}) - 1)"
+    table = _emit_value_or_range(node.args[0], ctx)
+    if col_arg is None or isinstance(col_arg, EmptyArgNode):
+        return f"{ctx.use('xl_index')}({table}, {row_expr})"
+    return f"{ctx.use('xl_index')}({table}, {row_expr}, {col_expr})"
 
 
 def _emit_match_array(node: AstNode, ctx: EmitContext) -> str:
@@ -1069,7 +1080,9 @@ def _emit_match_array(node: AstNode, ctx: EmitContext) -> str:
         return name if not series.is_scalar else f"({name},)"
     if isinstance(node, (RangeNode, WholeColumnNode, WholeRowNode)):
         addresses = iter_ref_addresses(node, ctx.host_cell, ctx.graph)
-        cells, missing = resolve_positional_range(addresses, ctx.catalog, ctx.blank_rects)
+        cells, missing = resolve_positional_range(
+            addresses, ctx.catalog, ctx.blank_rects, ctx.graph
+        )
         if missing:
             label = range_ref_label(node, ctx.host_cell)
             raise _host_export_error(
@@ -1083,7 +1096,7 @@ def _emit_match_array(node: AstNode, ctx: EmitContext) -> str:
                 values = _emit_covering_values(covered, owned, ctx)
                 return values if not covered.is_scalar else f"({values},)"
         return _emit_range_table(node, ctx)
-    raise _host_export_error(ctx, "OFFSET/MATCH base must be a cell or range")
+    return emit_expr(node, ctx)
 
 
 def _emit_match(node: FunctionCallNode, ctx: EmitContext) -> str:
