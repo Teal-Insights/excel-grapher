@@ -662,8 +662,9 @@ def test_series_graph_leaf_strips_off_graph_and_keeps_leaf(tmp_path: Path) -> No
     series = catalog.get("engine_row")
     assert series.cells == ("Engine!B2", "Engine!C2", "Engine!D2")
     assert catalog.series_id_for("Engine!E2") is None
-    assert series.hole_at(1) is not None
-    assert series.hole_at(1).kind == "graph_leaf"
+    extra_hole = series.hole_at(1)
+    assert extra_hole is not None
+    assert extra_hole.kind == "graph_leaf"
 
     report = validate_series_bindings(graph, bindings, workbook=workbook)
     engine_codes = {i["code"] for i in report["issues"] if i.get("series_id") == "engine_row"}
