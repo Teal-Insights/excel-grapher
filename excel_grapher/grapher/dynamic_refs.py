@@ -146,11 +146,11 @@ are held alive.
 """
 
 _MAX_ANALYSIS_DEPTH = 600
-"""Max nested `cell_type_for` frames before raising `DynamicRefError`.
+"""Max nested argument-subgraph cells before raising `DynamicRefError`.
 
-Each analysis level costs roughly one Python frame, so this trips well inside
-CPython's default 1000-frame recursion limit: a pathologically deep argument
-chain fails with an actionable error instead of a bare `RecursionError`.
+This is a logical depth on `_analysis_stack`, not a Python call-stack bound.
+`expand_leaf_env_to_argument_env` walks the subgraph with an explicit worklist
+(issue #716) so a 400-cell chain does not consume 400 CPython frames.
 """
 
 
@@ -652,12 +652,9 @@ def expand_leaf_env_to_argument_env(
     def _resolve_ref_types(refs: Iterable[str]) -> dict[str, CellType]:
         """Resolve the type of every ref, serving already-inferred ones in bulk.
 
-        A long formula chain that repeatedly mentions a large static range would
-        otherwise re-enter `cell_type_for` for every cell of that range at every
-        level of the chain -- `O(depth x range_cells)` entries for work that is a
-        dict lookup after the first level (issue #465).  Cached refs are read
-        straight out of `cache` here; only their consumed-leaf propagation still
-        has to happen, and that is batched.
+        Cached refs are read straight out of `cache`; cycle back-edges (still
+        on `_analysis_stack`) resolve to `ANY`. Uncached deps are typed by the
+        worklist before `_infer_cell_type` runs, so this is a dict lookup.
         """
         nonlocal _bulk_hits
         ref_types: dict[str, CellType] = {}
@@ -668,36 +665,169 @@ def expand_leaf_env_to_argument_env(
                 ref_types[r] = cached_ct
                 bulk_served.append(r)
                 continue
-            ref_types[r] = cell_type_for(r)
+            # Cycle back-edge (still on the analysis stack) or a worklist miss.
+            ref_types[r] = CellType(kind=CellKind.ANY)
         if bulk_served:
             _bulk_hits += len(bulk_served)
             _note_progress(bulk_served[-1])
             _propagate_consumed_leaves_bulk(bulk_served)
         return ref_types
 
-    def cell_type_for(addr: str) -> CellType:
+    def _exit_cell(addr: str, formula: str | None, stored_ast: AstNode | None) -> None:
+        in_progress.discard(addr)
+        if _analysis_stack and _analysis_stack[-1] == addr:
+            _analysis_stack.pop()
+            if _track_consumed and _analysis_stack:
+                parent = _analysis_stack[-1]
+                child_leaves = _consumed_leaves.get(addr)
+                if child_leaves:
+                    _consumed_leaves.setdefault(parent, set()).update(child_leaves)
+        if addr in cache and formula is not None and addr not in _loaded_from_persistent:
+            _persist_result(addr, formula, stored_ast, cache[addr])
+
+    def _infer_cell_type(
+        addr: str,
+        formula: str,
+        ast_root: AstNode | None,
+        refs: set[str],
+    ) -> None:
+        ref_types = _resolve_ref_types(sorted(refs))
+        if ast_root is not None:
+            infer_result = _infer_numeric_domain_result(
+                ast_root,
+                ref_types,
+                limits,
+                context=None,
+                current_sheet=_sheet_from_addr(addr),
+            )
+            if infer_result.diagnostic is not None:
+                detail = infer_result.diagnostic
+                refs_text = ", ".join(sorted(detail.refs))
+                refs_clause = f" Constrain one or more of: {refs_text}." if refs_text else ""
+                expr_clause = (
+                    f" Divisor expression: {detail.expression}."
+                    if detail.expression is not None
+                    else ""
+                )
+                raise DynamicRefError(
+                    f"Formula cell {addr!r} is not covered by numeric abstract analysis: "
+                    f"{detail.reason}.{expr_clause}{refs_clause}"
+                )
+            inferred = infer_result.domain
+            if inferred is not None:
+                if isinstance(inferred, _FiniteInts):
+                    cache[addr] = CellType(
+                        kind=CellKind.NUMBER,
+                        enum=EnumDomain(values=inferred.values),
+                    )
+                else:
+                    span = inferred.hi - inferred.lo + 1
+                    if span <= limits.max_branches:
+                        cache[addr] = CellType(
+                            kind=CellKind.NUMBER,
+                            enum=EnumDomain(values=frozenset(range(inferred.lo, inferred.hi + 1))),
+                        )
+                    else:
+                        cache[addr] = CellType(
+                            kind=CellKind.NUMBER,
+                            interval=IntervalDomain(min=inferred.lo, max=inferred.hi),
+                        )
+                return
+        unsupported = _describe_unsupported_numeric_construct(ast_root)
+        domains: dict[str, list[Any]] = {}
+        for r, ct in ref_types.items():
+            if ct.enum is not None:
+                domains[r] = list(ct.enum.values)
+            elif ct.interval is not None:
+                try:
+                    domains[r] = _interval_to_values(ct.interval, limits)
+                except DynamicRefError as exc:
+                    detail = (
+                        f" First unsupported construct: {unsupported}."
+                        if unsupported is not None
+                        else ""
+                    )
+                    raise DynamicRefError(
+                        f"{exc} (while expanding types for formula cell {addr!r}, dependency {r!r}; "
+                        f"this formula is not covered by numeric abstract analysis.{detail} "
+                        f"constrain {r!r} more tightly, simplify the formula, or extend analysis "
+                        f"for the unsupported construct)"
+                    ) from exc
+            elif ct.real_interval is not None:
+                cache[addr] = CellType(kind=CellKind.ANY)
+                return
+            else:
+                cache[addr] = CellType(kind=CellKind.ANY)
+                return
+        total_branches = math.prod(len(v) for v in domains.values())
+        if total_branches > limits.max_branches:
+            dep_sizes = ", ".join(f"{r!r}: {len(domains[r])}" for r in sorted(domains))
+            unsupported_hint = (
+                f" First unsupported construct: {unsupported}." if unsupported is not None else ""
+            )
+            raise DynamicRefError(
+                f"Formula cell {addr!r} fallback enumeration would require "
+                f"{total_branches} branches (limit {limits.max_branches}). "
+                f"Dependency domain sizes: {dep_sizes}.{unsupported_hint} "
+                f"Tighten constraints on one or more dependencies, simplify "
+                f"the formula, or extend numeric abstract analysis to cover it."
+            )
+        result_values: set[Any] = set()
+        for assignment in product(*(domains[r] for r in refs)):
+            addr_to_val = dict(zip(refs, assignment, strict=False))
+
+            def get_cell_value(a: str, _av=addr_to_val) -> Any:
+                return _av.get(a)
+
+            try:
+                formula_parse = _formula_to_parse(formula)
+                ast = parse_ast(formula_parse)
+            except FormulaParseError:
+                cache[addr] = CellType(kind=CellKind.ANY)
+                return
+            val = evaluate_expr(
+                ast,
+                get_cell_value=get_cell_value,
+                max_depth=limits.max_depth,
+            )
+            if isinstance(val, Unsupported):
+                continue
+            if isinstance(val, XlError):
+                continue
+            result_values.add(val)
+        if not result_values:
+            cache[addr] = CellType(kind=CellKind.ANY)
+            return
+        cache[addr] = _values_to_cell_type(result_values)
+
+    def _enter_cell(
+        addr: str,
+    ) -> tuple[str, set[str], AstNode | None, AstNode | None] | None:
+        """Type `addr` or return a finish payload when deps still need walking.
+
+        Returns None when `addr` is already typed (or a cycle back-edge).
+        """
         nonlocal _calls
-        _calls += 1
-        _note_progress(addr)
         if addr in cache:
             _propagate_consumed_leaves_to_ancestors(addr)
-            return cache[addr]
+            return None
+        _calls += 1
+        _note_progress(addr)
         if addr in in_progress:
-            return CellType(kind=CellKind.ANY)
+            return None
         ct_resolved = _lookup_cell_type(leaf_env, addr)
         if ct_resolved is not None:
             cache[addr] = ct_resolved
             if _track_consumed:
                 norm_key = normalize_cell_type_env_key(addr)
-                # Record the leaf as its own consumed-leaf so that cache hits
-                # for this address can propagate it to future ancestors.
                 _consumed_leaves.setdefault(addr, set()).add(norm_key)
                 _record_consumed_leaf(norm_key)
-            return cache[addr]
+            return None
         in_progress.add(addr)
         formula = get_cell_formula(addr)
         stored_ast: AstNode | None = None
         ast_root: AstNode | None = None
+        keep_open = False
         try:
             if formula is None:
                 raise DynamicRefError(
@@ -707,7 +837,6 @@ def expand_leaf_env_to_argument_env(
             if get_cell_ast is not None:
                 fetched = get_cell_ast(addr)
                 stored_ast = fetched if isinstance(fetched, AstNode) else None
-            # Check persistent cache before expensive analysis / parse.
             _persistent_result = _try_persistent_lookup(addr, formula, stored_ast)
             if _persistent_result is not None:
                 cached_ct, cached_consumed = _persistent_result
@@ -715,7 +844,7 @@ def expand_leaf_env_to_argument_env(
                 _consumed_leaves[addr] = set(cached_consumed)
                 _loaded_from_persistent.add(addr)
                 _propagate_consumed_leaves_to_ancestors(addr)
-                return cache[addr]
+                return None
             ast_root = stored_ast
             if ast_root is None:
                 try:
@@ -742,7 +871,7 @@ def expand_leaf_env_to_argument_env(
             if not refs:
                 if ast_root is None:
                     cache[addr] = CellType(kind=CellKind.ANY)
-                    return cache[addr]
+                    return None
                 try:
                     val = evaluate_expr(
                         ast_root,
@@ -753,146 +882,52 @@ def expand_leaf_env_to_argument_env(
                     val = None
                 if isinstance(val, Unsupported):
                     cache[addr] = CellType(kind=CellKind.ANY)
-                    return cache[addr]
+                    return None
                 if val is None or isinstance(val, XlError):
                     cache[addr] = CellType(kind=CellKind.ANY)
-                    return cache[addr]
+                    return None
                 cache[addr] = _values_to_cell_type({val})
-                return cache[addr]
-            ref_types = _resolve_ref_types(sorted(refs))
-            if ast_root is not None:
-                infer_result = _infer_numeric_domain_result(
-                    ast_root,
-                    ref_types,
-                    limits,
-                    context=None,
-                    current_sheet=_sheet_from_addr(addr),
-                )
-                if infer_result.diagnostic is not None:
-                    detail = infer_result.diagnostic
-                    refs_text = ", ".join(sorted(detail.refs))
-                    refs_clause = f" Constrain one or more of: {refs_text}." if refs_text else ""
-                    expr_clause = (
-                        f" Divisor expression: {detail.expression}."
-                        if detail.expression is not None
-                        else ""
-                    )
-                    raise DynamicRefError(
-                        f"Formula cell {addr!r} is not covered by numeric abstract analysis: "
-                        f"{detail.reason}.{expr_clause}{refs_clause}"
-                    )
-                inferred = infer_result.domain
-                if inferred is not None:
-                    if isinstance(inferred, _FiniteInts):
-                        cache[addr] = CellType(
-                            kind=CellKind.NUMBER,
-                            enum=EnumDomain(values=inferred.values),
-                        )
-                    else:
-                        span = inferred.hi - inferred.lo + 1
-                        if span <= limits.max_branches:
-                            cache[addr] = CellType(
-                                kind=CellKind.NUMBER,
-                                enum=EnumDomain(
-                                    values=frozenset(range(inferred.lo, inferred.hi + 1))
-                                ),
-                            )
-                        else:
-                            cache[addr] = CellType(
-                                kind=CellKind.NUMBER,
-                                interval=IntervalDomain(min=inferred.lo, max=inferred.hi),
-                            )
-                    return cache[addr]
-            unsupported = _describe_unsupported_numeric_construct(ast_root)
-            domains: dict[str, list[Any]] = {}
-            for r, ct in ref_types.items():
-                if ct.enum is not None:
-                    domains[r] = list(ct.enum.values)
-                elif ct.interval is not None:
-                    try:
-                        domains[r] = _interval_to_values(ct.interval, limits)
-                    except DynamicRefError as exc:
-                        detail = (
-                            f" First unsupported construct: {unsupported}."
-                            if unsupported is not None
-                            else ""
-                        )
-                        raise DynamicRefError(
-                            f"{exc} (while expanding types for formula cell {addr!r}, dependency {r!r}; "
-                            f"this formula is not covered by numeric abstract analysis.{detail} "
-                            f"constrain {r!r} more tightly, simplify the formula, or extend analysis "
-                            f"for the unsupported construct)"
-                        ) from exc
-                elif ct.real_interval is not None:
-                    cache[addr] = CellType(kind=CellKind.ANY)
-                    return cache[addr]
-                else:
-                    cache[addr] = CellType(kind=CellKind.ANY)
-                    return cache[addr]
-            total_branches = math.prod(len(v) for v in domains.values())
-            if total_branches > limits.max_branches:
-                dep_sizes = ", ".join(f"{r!r}: {len(domains[r])}" for r in sorted(domains))
-                unsupported_hint = (
-                    f" First unsupported construct: {unsupported}."
-                    if unsupported is not None
-                    else ""
-                )
-                raise DynamicRefError(
-                    f"Formula cell {addr!r} fallback enumeration would require "
-                    f"{total_branches} branches (limit {limits.max_branches}). "
-                    f"Dependency domain sizes: {dep_sizes}.{unsupported_hint} "
-                    f"Tighten constraints on one or more dependencies, simplify "
-                    f"the formula, or extend numeric abstract analysis to cover it."
-                )
-            result_values: set[Any] = set()
-            last_unsupported: Unsupported | None = None
-            for assignment in product(*(domains[r] for r in refs)):
-                addr_to_val = dict(zip(refs, assignment, strict=False))
-
-                def get_cell_value(a: str, _av=addr_to_val) -> Any:
-                    return _av.get(a)
-
-                try:
-                    formula_parse = _formula_to_parse(formula)
-                    ast = parse_ast(formula_parse)
-                except FormulaParseError:
-                    cache[addr] = CellType(kind=CellKind.ANY)
-                    return cache[addr]
-                val = evaluate_expr(
-                    ast,
-                    get_cell_value=get_cell_value,
-                    max_depth=limits.max_depth,
-                )
-                if isinstance(val, Unsupported):
-                    last_unsupported = val
-                    continue
-                if isinstance(val, XlError):
-                    continue
-                result_values.add(val)
-            if not result_values:
-                if last_unsupported is not None:
-                    cache[addr] = CellType(kind=CellKind.ANY)
-                    return cache[addr]
-                cache[addr] = CellType(kind=CellKind.ANY)
-                return cache[addr]
-            cache[addr] = _values_to_cell_type(result_values)
-            return cache[addr]
+                return None
+            keep_open = True
+            return (formula, refs, stored_ast, ast_root)
         finally:
-            in_progress.discard(addr)
-            if _analysis_stack and _analysis_stack[-1] == addr:
-                _analysis_stack.pop()
-                # Propagate this cell's consumed leaves to the parent on the
-                # stack.  This covers the case where a child was served from
-                # the in-memory cache (so _record_consumed_leaf was never
-                # called for its leaves during *this* traversal).
-                if _track_consumed and _analysis_stack:
-                    parent = _analysis_stack[-1]
-                    child_leaves = _consumed_leaves.get(addr)
-                    if child_leaves:
-                        _consumed_leaves.setdefault(parent, set()).update(child_leaves)
-            # Persist successful result to SQLite cache (skip if loaded from persistent cache)
-            if addr in cache and formula is not None and addr not in _loaded_from_persistent:
-                _persist_result(addr, formula, stored_ast, cache[addr])
+            if not keep_open:
+                _exit_cell(addr, formula, stored_ast)
+
+    def cell_type_for(addr: str) -> CellType:
+        """Type `addr` with an explicit worklist (issue #716).
+
+        Argument subgraphs in LIC-DSF-scale workbooks are hundreds of cells
+        deep. Walking them with Python recursion blew the CPython stack; this
+        worklist keeps `_analysis_stack` as a logical depth counter only.
+        """
+        stack: list[tuple[str, str]] = [("enter", addr)]
+        finish_payload: dict[str, tuple[str, set[str], AstNode | None, AstNode | None]] = {}
+        while stack:
+            phase, current = stack.pop()
+            if phase == "enter":
+                payload = _enter_cell(current)
+                if payload is None:
+                    continue
+                formula, refs, stored_ast, ast_root = payload
+                finish_payload[current] = (formula, refs, stored_ast, ast_root)
+                stack.append(("finish", current))
+                # Push larger keys first so sorted order is popped first, matching
+                # the historical `_resolve_ref_types(sorted(refs))` walk. Re-push
+                # uncached deps even if another frame already queued them so they
+                # sit above this finish and are typed before inference.
+                for dep in reversed(sorted(refs)):
+                    if dep not in cache:
+                        stack.append(("enter", dep))
+                continue
+            formula, refs, stored_ast, ast_root = finish_payload.pop(current)
+            try:
+                _infer_cell_type(current, formula, ast_root, refs)
+            finally:
+                _exit_cell(current, formula, stored_ast)
+        if addr in cache:
+            return cache[addr]
+        return CellType(kind=CellKind.ANY)
 
     skipped_cached_refs = 0
     try:

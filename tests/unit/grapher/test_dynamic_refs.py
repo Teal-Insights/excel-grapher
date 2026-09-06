@@ -3193,15 +3193,11 @@ def test_shared_intermediate_env_expansion_cache(tmp_path: Path) -> None:
     # Track how many times B1 is already in the shared cache when
     # expand_leaf_env_to_argument_env is called.
     original_expand = expand_leaf_env_to_argument_env
-    b1_cache_hits = 0
     total_calls = 0
 
     def tracking_expand(*args, **kwargs):
-        nonlocal b1_cache_hits, total_calls
+        nonlocal total_calls
         total_calls += 1
-        shared_cache = kwargs.get("shared_cell_type_cache")
-        if shared_cache is not None and "Sheet1!B1" in shared_cache:
-            b1_cache_hits += 1
         return original_expand(*args, **kwargs)
 
     with patch(
@@ -3222,12 +3218,11 @@ def test_shared_intermediate_env_expansion_cache(tmp_path: Path) -> None:
         assert "Sheet1!B1" in deps, f"Missing B1 dep for F{row}"
         assert f"Sheet1!D{row}" in deps, f"Missing D leaf dep for F{row}"
 
-    # Optimization check: B1 should be inferred once (cache miss on first call)
-    # and served from the shared cache for all subsequent calls.
-    assert total_calls == n_rows, f"Expected {n_rows} expand calls, got {total_calls}"
-    assert b1_cache_hits == n_rows - 1, (
-        f"Expected B1 to be a cache hit on {n_rows - 1} of {n_rows} calls, "
-        f"but got {b1_cache_hits} hits. shared_cell_type_cache is not being reused."
+    # Optimization check: shape-keyed INDEX inference (issue #716) shares the
+    # target set, so expand runs once; B1 is inferred on that call and the
+    # remaining rows reuse `_dyn_shape_cache` without re-expanding.
+    assert total_calls == 1, (
+        f"Expected 1 expand call for identical-shape INDEX rows, got {total_calls}"
     )
 
 
