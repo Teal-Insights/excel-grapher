@@ -1069,7 +1069,7 @@ def _series_for_ref(node: AstNode, ctx: EmitContext) -> BoundSeries:
 
 
 def _emit_hole_expr(series: BoundSeries, host_index: int, graph: DependencyGraph) -> str:
-    """Return a Python literal for a retained matrix hole cell."""
+    """Return a Python literal for a retained hole cell."""
     from excel_grapher.exporter.inverted_tree.emit import (
         _cell_value,
         _coerce_cached_value,

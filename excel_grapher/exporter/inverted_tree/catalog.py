@@ -853,7 +853,7 @@ def _classify_formula_holes(
     workbook: Path | str,
     reader: _WorkbookValues,
 ) -> tuple[SeriesHole, ...]:
-    """Record retained matrix cells that are not on-graph formulas."""
+    """Record retained cells that are not on-graph formulas."""
     candidates = [
         (index, cell) for index, cell in enumerate(cells) if not is_graph_formula_node(graph, cell)
     ]
@@ -902,7 +902,9 @@ def _filter_formula_series_cells(
 
     Input and constant series are left unfiltered: their `data_range` is the
     public contract. Respects the same `intersect_graph_*` flags as
-    `validate_series_bindings`.
+    `validate_series_bindings`. For `layout: series`, on-graph leaves stay
+    alongside formulas so a consumer range can own them (issue #707).
+    Off-graph blanks, literals, and off-closure formulas are still stripped.
 
     Raises:
         InvertedTreeExportError: Filtering leaves no graph formula cells.
@@ -914,7 +916,24 @@ def _filter_formula_series_cells(
         return tuple(cells)
     if direction == "output" and not validation.get("intersect_graph_nodes", True):
         return tuple(cells)
-    selected = tuple(cell for cell in cells if is_graph_formula_node(graph, cell))
+    formula_cells = tuple(cell for cell in cells if is_graph_formula_node(graph, cell))
+    if layout == "matrix":
+        skipped = len(cells) - len(formula_cells)
+        if skipped > 0 and bool(validation.get("warn_on_partial_overlap", True)):
+            warnings.warn(
+                f"Skipped {skipped} cell(s) in data_range not graph formula cells "
+                f"(series {series_id!r})",
+                UserWarning,
+                stacklevel=3,
+            )
+        if not formula_cells:
+            raise InvertedTreeExportError(
+                f"series {series_id!r}: data_range has no graph formula cells"
+            )
+        return tuple(cells)
+    selected = tuple(
+        cell for cell in cells if is_graph_formula_node(graph, cell) or is_graph_leaf(graph, cell)
+    )
     skipped = len(cells) - len(selected)
     if skipped > 0 and bool(validation.get("warn_on_partial_overlap", True)):
         warnings.warn(
@@ -930,12 +949,10 @@ def _filter_formula_series_cells(
             UserWarning,
             stacklevel=3,
         )
-    if not selected:
+    if not formula_cells:
         raise InvertedTreeExportError(
             f"series {series_id!r}: data_range has no graph formula cells"
         )
-    if layout == "matrix":
-        return tuple(cells)
     return selected
 
 
@@ -951,15 +968,15 @@ def build_catalog(
     matching `resolve_series_binding` (issue #600). Each series carries an
     ordered key-point domain. When `graph` is provided, mixed formula shapes
     partition into one `Statement` per consecutive run, and internal/output
-    series keep only graph formula cells (issue #693). Input and constant
-    series stay unfiltered. `layout: matrix` keeps hole cells so the
-    rectangle, stride, and key domain stay intact (issue #696).
+    series keep graph formula cells and on-graph leaves (issues #693 / #707).
+    Input and constant series stay unfiltered. `layout: matrix` keeps hole
+    cells so the rectangle, stride, and key domain stay intact (issue #696).
 
     Raises:
         InvertedTreeExportError: A series is missing `id`, two series share an
             id (message names both `data_range`s), two series claim the same
             cell, key-domain resolution fails, a formula series has no graph
-            formula cells, or a retained matrix graph leaf has no cached value.
+            formula cells, or a retained graph leaf has no cached value.
     """
     series_map: dict[str, BoundSeries] = {}
     order: list[str] = []
@@ -1021,7 +1038,11 @@ def build_catalog(
             layout = _layout_of(entry)
             direction = _direction_of(entry)
             holes: tuple[SeriesHole, ...] = ()
-            if graph is not None and layout == "matrix" and direction in {"internal", "output"}:
+            if (
+                graph is not None
+                and layout in {"matrix", "series"}
+                and direction in {"internal", "output"}
+            ):
                 holes = _classify_formula_holes(
                     cell_tuple,
                     graph,

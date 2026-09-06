@@ -9,6 +9,10 @@ not dense over the producer's `__domain__`.
 `layout: matrix` keeps hole cells in the catalog (issue 696) so the
 rectangle, stride, and `__domain__` stay intact. Helpers emit `None` or a
 cached literal at those positions.
+
+`layout: series` internals keep on-graph leaves in `data_range` (issue 707)
+so a consumer range that names a literal leaf still has a catalog owner.
+Off-graph blanks, literals, and off-closure formulas stay stripped (#693).
 """
 
 from __future__ import annotations
@@ -568,3 +572,119 @@ def test_matrix_unreferenced_literal_is_embedded(tmp_path: Path) -> None:
     pkg = load_package(modules, tmp_path, name="matrix_unref_literal")
     got = pkg.internals.profile_table()
     assert got[1] == pytest.approx(42.0)
+
+
+def _series_leaf_workbook(tmp_path: Path, *, extra_off_graph: bool = False) -> tuple[Path, str]:
+    engine: dict[str, object] = {
+        "B1": 2021,
+        "C1": 2022,
+        "D1": 2023,
+        "B2": "=Inputs!B2+1",
+        "C2": 0,
+        "D2": "=Inputs!D2+3",
+    }
+    data_range = "Engine!B2:D2"
+    if extra_off_graph:
+        engine["E1"] = 2024
+        engine["E2"] = 99
+        data_range = "Engine!B2:E2"
+    return write_workbook(
+        tmp_path / ("series_leaf_extra.xlsx" if extra_off_graph else "series_graph_leaf.xlsx"),
+        {
+            "Inputs": {
+                "B1": 2021,
+                "C1": 2022,
+                "D1": 2023,
+                "B2": 1.0,
+                "C2": 2.0,
+                "D2": 3.0,
+            },
+            "Engine": engine,
+            "Outputs": {"A1": "=SUM(Engine!B2:D2)"},
+        },
+    ), data_range
+
+
+def _series_leaf_document(data_range: str) -> dict[str, Any]:
+    return bindings_document(
+        series_entry(
+            "rate",
+            "Inputs!B2:D2",
+            layout="series",
+            direction="input",
+            header_row=1,
+        ),
+        series_entry(
+            "engine_row",
+            data_range,
+            layout="series",
+            direction="internal",
+            header_row=1,
+        ),
+        series_entry("result", "Outputs!A1", layout="scalar", direction="output"),
+    )
+
+
+def test_series_graph_leaf_is_owned_and_sum_emits(tmp_path: Path) -> None:
+    workbook, data_range = _series_leaf_workbook(tmp_path)
+    document = _series_leaf_document(data_range)
+    bindings = validate_bindings_document(document)
+    graph = _output_graph(workbook, document)
+    catalog = build_catalog(bindings, workbook=workbook, graph=graph)
+    series = catalog.get("engine_row")
+    assert series.cells == ("Engine!B2", "Engine!C2", "Engine!D2")
+    assert catalog.series_id_for("Engine!C2") == "engine_row"
+    hole = series.hole_at(1)
+    assert hole is not None
+    assert hole.kind == "graph_leaf"
+    assert hole.address == "Engine!C2"
+
+    report = validate_series_bindings(graph, bindings, workbook=workbook)
+    assert report["ok"] is True
+    engine_issues = [i for i in report["issues"] if i.get("series_id") == "engine_row"]
+    assert any(i["code"] == "leaf_in_formula_series" for i in engine_issues)
+    assert not any(i["code"] == "partial_graph_overlap" for i in engine_issues)
+
+    modules = _emit_from_outputs(workbook, document)
+    pkg = load_package(modules, tmp_path, name="series_graph_leaf")
+    expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])
+    assert pkg.compute_result(rate=(1.0, 2.0, 3.0)) == pytest.approx((expected["Outputs!A1"],))
+    assert pkg.internals.engine_row(rate=(1.0, 2.0, 3.0))[1] == pytest.approx(0.0)
+
+
+def test_series_graph_leaf_strips_off_graph_and_keeps_leaf(tmp_path: Path) -> None:
+    workbook, data_range = _series_leaf_workbook(tmp_path, extra_off_graph=True)
+    document = _series_leaf_document(data_range)
+    bindings = validate_bindings_document(document)
+    graph = _output_graph(workbook, document)
+    with pytest.warns(UserWarning, match="not graph formula cells"):
+        catalog = build_catalog(bindings, workbook=workbook, graph=graph)
+    series = catalog.get("engine_row")
+    assert series.cells == ("Engine!B2", "Engine!C2", "Engine!D2")
+    assert catalog.series_id_for("Engine!E2") is None
+    extra_hole = series.hole_at(1)
+    assert extra_hole is not None
+    assert extra_hole.kind == "graph_leaf"
+
+    report = validate_series_bindings(graph, bindings, workbook=workbook)
+    engine_codes = {i["code"] for i in report["issues"] if i.get("series_id") == "engine_row"}
+    assert "leaf_in_formula_series" in engine_codes
+    assert "partial_graph_overlap" in engine_codes
+
+    with pytest.warns(UserWarning):
+        modules = _emit_from_outputs(workbook, document)
+    pkg = load_package(modules, tmp_path, name="series_leaf_extra")
+    expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])
+    assert pkg.compute_result(rate=(1.0, 2.0, 3.0)) == pytest.approx((expected["Outputs!A1"],))
+
+
+def test_series_graph_leaf_without_cached_value_raises(tmp_path: Path) -> None:
+    workbook, data_range = _series_leaf_workbook(tmp_path)
+    document = _series_leaf_document(data_range)
+    bindings = validate_bindings_document(document)
+    graph = _output_graph(workbook, document)
+    leaf = graph.get_node("Engine!C2")
+    assert leaf is not None
+    graph.set_node_value("Engine!C2", None)
+    with pytest.raises(InvertedTreeExportError, match="cached value"):
+        build_catalog(bindings, workbook=workbook, graph=graph)

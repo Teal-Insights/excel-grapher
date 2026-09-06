@@ -790,7 +790,11 @@ def warn_series_resolution_issues(resolved: SeriesResolution, *, stacklevel: int
     for issue in resolved["issues"]:
         if issue["level"] != "warning":
             continue
-        if issue["code"] in {"partial_graph_overlap", "partial_export_overlap"}:
+        if issue["code"] in {
+            "partial_graph_overlap",
+            "partial_export_overlap",
+            "leaf_in_formula_series",
+        }:
             warnings.warn(issue["message"], UserWarning, stacklevel=stacklevel)
 
 
@@ -842,16 +846,37 @@ def _select_internal_addresses(
     series_id: str,
     candidate_addresses: list[str] | None = None,
 ) -> tuple[list[str], list[ResolutionIssue]]:
-    """Select internal binding addresses and report skipped non-formula cells."""
+    """Select internal formula cells and report leaves vs off-graph skips."""
     issues: list[ResolutionIssue] = []
     pool = expanded_addresses if candidate_addresses is None else candidate_addresses
     intersect = bool(validation.get("intersect_graph_formulas", True))
+    formula_cells = [address for address in pool if is_graph_formula_node(graph, address)]
+    leaf_cells = [
+        address
+        for address in pool
+        if is_graph_leaf(graph, address) and not is_graph_formula_node(graph, address)
+    ]
     if not intersect:
         selected = list(pool)
-    else:
-        selected = [address for address in pool if is_graph_formula_node(graph, address)]
-    skipped = len(pool) - len(selected)
-    if skipped > 0 and bool(validation.get("warn_on_partial_overlap", True)):
+        return selected, issues
+    selected = formula_cells
+    warn = bool(validation.get("warn_on_partial_overlap", True))
+    if leaf_cells and warn:
+        issues.append(
+            make_issue(
+                "warning",
+                "leaf_in_formula_series",
+                f"Retained {len(leaf_cells)} graph leaf cell(s) in formula series "
+                "as cached literals",
+                series_id=series_id,
+            )
+        )
+    skipped = sum(
+        1
+        for address in pool
+        if not is_graph_formula_node(graph, address) and not is_graph_leaf(graph, address)
+    )
+    if skipped > 0 and warn:
         issues.append(
             make_issue(
                 "warning",
