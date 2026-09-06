@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.2.7 (2026-09-06)
+
+### Bug Fixes
+
+- **export**: Classify same-year dual reads as keyed accesses
+  ([#734](https://github.com/Teal-Insights/excel-grapher/pull/734),
+  [`fb75dbb`](https://github.com/Teal-Insights/excel-grapher/commit/fb75dbb105064f5622f0f12ef1eb490522db3a3f))
+
+### Documentation
+
+- Retarget SUM(IF) export gap from #483 to #732
+  ([#731](https://github.com/Teal-Insights/excel-grapher/pull/731),
+  [`df1d520`](https://github.com/Teal-Insights/excel-grapher/commit/df1d52018901c581217c8742264482a227ee7e67))
+
+- **grapher**: Record array-IF guard influence vs load
+  ([#731](https://github.com/Teal-Insights/excel-grapher/pull/731),
+  [`df1d520`](https://github.com/Teal-Insights/excel-grapher/commit/df1d52018901c581217c8742264482a227ee7e67))
+
+
 ## v14.2.6 (2026-09-06)
 
 ### Bug Fixes
