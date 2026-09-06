@@ -18,7 +18,7 @@ in `test_shape_a26_index_block.py` as `country_table`.
 #667 distilled shapes: `SUM` of a bound series (`range_sum` in
 `test_shape_a27_range_aggregates.py`), plus whole-column / whole-row,
 cross-sheet ranges, and `SUMPRODUCT` of covering series. `SUM(IF(...))`
-stays fail-closed (#483).
+stays fail-closed (#732).
 
 ## Local pool
 

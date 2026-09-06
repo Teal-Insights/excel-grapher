@@ -43,6 +43,12 @@ class RangeRef(GuardExpr):
     resolves it to a `CellRef` per element, and only the resolved scalar guards
     are ever attached to graph edges.
 
+    Those scalar guards mean the aligned value cell can change the result, not
+    that Excel omits it from the calc chain. The engine still treats the whole
+    value range as a precedent; the graph drops the edge from a value walk
+    when the aligned condition is false so evaluation stays Excel-correct
+    with fewer edges.
+
     Attributes:
         key: Canonical range address, e.g. `Sheet1!A1:A10`.
     """

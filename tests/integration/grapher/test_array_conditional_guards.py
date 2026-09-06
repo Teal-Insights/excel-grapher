@@ -1,8 +1,9 @@
 """Array-context `IF` yields per-element edge guards (issue #483, integration).
 
-`SUM(IF(A1:A10>0,B1:B10,0))` is evaluated element-wise by Excel, so `B3` is read
-only when `A3>0`. Each expanded range dependency therefore carries the condition
-instantiated at its own element rather than one guard for the whole range.
+`SUM(IF(A1:A10>0,B1:B10,0))` is evaluated element-wise by Excel, so `B3` can
+change the sum only when `A3>0`. Each expanded range dependency therefore
+carries the condition instantiated at its own element rather than one guard
+for the whole range. Guards record influence, not Excel's load/precedent set.
 """
 
 from __future__ import annotations
