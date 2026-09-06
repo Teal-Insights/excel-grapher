@@ -22,6 +22,7 @@ from excel_grapher.core.math_funcs import exp_number, sum_cells
 from excel_grapher.core.sumproduct import sumproduct_cells
 from excel_grapher.core.types import CellValue, FormulaValue
 from excel_grapher.core.types import XlError as CoreXlError
+from excel_grapher.runtime.info import xl_isnumber as _info_isnumber
 from excel_grapher.series_bindings.input_coerce import (
     apply_input_value_map as apply_input_value_map,
 )
@@ -302,6 +303,13 @@ def xl_vlookup(
     _raise_stored_error(col_index_num)
     _raise_stored_error(range_lookup)
     return _adapt_core(vlookup_cells(lookup, table_array, col_index_num, range_lookup))
+
+
+def xl_isnumber(value: object) -> bool:
+    """Excel `ISNUMBER`: True only for non-bool numbers; False for blanks and errors."""
+    if isinstance(value, str) and is_error(value):
+        return False
+    return _info_isnumber(cast(CellValue, value))
 
 
 def xl_at(values: Sequence[T], index: object) -> T:

@@ -304,6 +304,8 @@ def _static_catalog_literal(
 def _emit_address(
     address: CanonicalAddress, ctx: EmitContext, *, ref: CellRefNode | None = None
 ) -> str:
+    if address_in_blank_ranges(address, ctx.blank_rects):
+        return "None"
     if ctx.fused_mode:
         return _emit_fused_ref(address, ctx, ref=ref)
     if ctx.instance_mode:
@@ -1050,7 +1052,10 @@ def _emit_match(node: FunctionCallNode, ctx: EmitContext) -> str:
 
 def _series_for_ref(node: AstNode, ctx: EmitContext) -> BoundSeries:
     if isinstance(node, CellRefNode):
-        return ctx.catalog.require_series_for(as_canonical(resolve_cell_ref(node, ctx.host_cell)))
+        address = as_canonical(resolve_cell_ref(node, ctx.host_cell))
+        if address_in_blank_ranges(address, ctx.blank_rects):
+            raise _host_export_error(ctx, "reference is not a bound series")
+        return ctx.catalog.require_series_for(address)
     if isinstance(node, (RangeNode, WholeColumnNode, WholeRowNode)):
         addresses = addresses_outside_blank_ranges(
             iter_ref_addresses(node, ctx.host_cell, ctx.graph),
