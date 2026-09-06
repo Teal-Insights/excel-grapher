@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.2.6 (2026-09-06)
+
+### Bug Fixes
+
+- **export**: Lower OFFSET(INDEX(...)) to the destination series
+  ([#730](https://github.com/Teal-Insights/excel-grapher/pull/730),
+  [`1277455`](https://github.com/Teal-Insights/excel-grapher/commit/1277455863821b7977b304e779fc200e902c62f3))
+
+
 ## v14.2.5 (2026-09-06)
 
 ### Bug Fixes
