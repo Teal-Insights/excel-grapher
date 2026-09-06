@@ -78,7 +78,7 @@ from .parser import (
     split_top_level_ifs,
     split_top_level_switch,
 )
-from .provenance_collect import collect_provenance_for_formula
+from .provenance_collect import _sheet_bounds_from_workbook, collect_provenance_for_formula
 from .resolver import build_named_range_map
 from .target_expansion import expand_targets_to_roots
 from .type_analysis_cache import TypeAnalysisCache
@@ -604,7 +604,7 @@ def create_dependency_graph(
             _wb_sha256 = hashlib.file_digest(_f, "sha256").hexdigest()
 
     graph = DependencyGraph(sheet_order=list(wb_formulas.sheetnames))
-    sheet_bounds: dict[str, tuple[int, int]] = {}
+    sheet_bounds = _sheet_bounds_from_workbook(wb_formulas)
     for h in hooks or []:
         graph.register_hook(h)
 
@@ -676,6 +676,7 @@ def create_dependency_graph(
         stats=_dyn_stats,
         named_ranges=named_ranges,
         named_range_ranges=named_range_ranges,
+        name_state=normalizer.name_state,
     )
 
     def _get_ws_v(sheet: str) -> Worksheet:
@@ -1496,6 +1497,7 @@ def create_dependency_graph(
                     anchor=CellKey(key),
                     named_ranges=named_ranges,
                     named_range_ranges=named_range_ranges,
+                    name_state=normalizer.name_state,
                 )
                 if formula_ast is not None:
                     formula_ast = intern_formula_ast(formula_ast, formula_ast_intern)
@@ -1567,6 +1569,7 @@ def create_dependency_graph(
                         type_analysis_cache=type_analysis_cache,
                         workbook_sha256=_wb_sha256,
                         ref_walk=ref_walk,
+                        sheet_bounds=sheet_bounds,
                     )
                     _provenance_cache[provenance_cache_key] = prov_map
 
@@ -1962,6 +1965,7 @@ def list_dynamic_ref_constraint_candidates(
                                     anchor=addr,
                                     named_ranges=named_ranges,
                                     named_range_ranges=named_range_ranges,
+                                    name_state=normalizer.name_state,
                                 )
 
                             expanded_env = expand_leaf_env_to_argument_env(

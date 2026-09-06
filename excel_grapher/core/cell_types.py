@@ -237,9 +237,12 @@ def normalize_cell_type_env_key(address: str) -> str:
 def leaves_missing_cell_type_constraints(
     leaves: Iterable[str], cell_type_env: Mapping[str, CellType]
 ) -> set[str]:
-    """Leaves whose normalized address has no entry in `cell_type_env`."""
-    env_keys = frozenset(cell_type_env.keys())
-    return {addr for addr in leaves if normalize_cell_type_env_key(addr) not in env_keys}
+    """Leaves whose normalized address has no entry in `cell_type_env`.
+
+    Looks up normalized keys with `Mapping` membership so a large env is not
+    copied into a `frozenset` on every INDEX/OFFSET formula.
+    """
+    return {addr for addr in leaves if normalize_cell_type_env_key(addr) not in cell_type_env}
 
 
 _normalize_cell_address = normalize_cell_type_env_key

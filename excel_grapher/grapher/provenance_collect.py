@@ -133,6 +133,7 @@ def _flat_provenance_one_string(
     type_analysis_cache: TypeAnalysisCache | None = None,
     workbook_sha256: str | None = None,
     ref_walk: DynamicRefWalkContext | None = None,
+    sheet_bounds: dict[str, tuple[int, int]] | None = None,
 ) -> dict[str, EdgeProvenance]:
     """Mirror extract_expr_deps masking pipeline; accumulate provenance for one formula string starting with '='."""
     if normalizer is None:
@@ -331,7 +332,9 @@ def _flat_provenance_one_string(
     masked = mask_ref_only_function_calls(masked)
 
     if expand_ranges:
-        bounds = _sheet_bounds_from_workbook(wb_formulas)
+        bounds = (
+            sheet_bounds if sheet_bounds is not None else _sheet_bounds_from_workbook(wb_formulas)
+        )
         for start, end, _span in parse_range_refs_with_spans(masked):
             for dep_sheet, dep_a1 in expand_range_ref(
                 start=start,
@@ -414,6 +417,7 @@ def _flat_provenance_formula_and_normalized(
     dynamic_expansion_cache: dict[tuple[str, str, str], tuple[set[str], set[str], set[str]]]
     | None = None,
     ref_walk: DynamicRefWalkContext | None = None,
+    sheet_bounds: dict[str, tuple[int, int]] | None = None,
 ) -> dict[str, EdgeProvenance]:
     # When the extraction string already is the `normalized_formula` dialect
     # (AST render, or regex fallback when the AST parser failed), the single
@@ -441,6 +445,7 @@ def _flat_provenance_formula_and_normalized(
         type_analysis_cache=type_analysis_cache,
         workbook_sha256=workbook_sha256,
         ref_walk=ref_walk,
+        sheet_bounds=sheet_bounds,
     )
     if not normalized or normalized_matches_raw:
         return raw_map
@@ -464,6 +469,7 @@ def _flat_provenance_formula_and_normalized(
         type_analysis_cache=type_analysis_cache,
         workbook_sha256=workbook_sha256,
         ref_walk=ref_walk,
+        sheet_bounds=sheet_bounds,
     )
     out: dict[str, EdgeProvenance] = {}
     all_keys = set(raw_map) | set(norm_map)
@@ -512,10 +518,14 @@ def collect_provenance_for_formula(
     type_analysis_cache: TypeAnalysisCache | None = None,
     workbook_sha256: str | None = None,
     ref_walk: DynamicRefWalkContext | None = None,
+    sheet_bounds: dict[str, tuple[int, int]] | None = None,
 ) -> dict[str, EdgeProvenance]:
     """Build a dependency-key to `EdgeProvenance` map for one formula.
 
-    Includes IF/IFS/CHOOSE/SWITCH branch union semantics.
+    Includes IF/IFS/CHOOSE/SWITCH branch union semantics. `sheet_bounds` is the
+    builder's once-per-graph `(max_row, max_col)` map for whole-column/row
+    expansion. When it is omitted and `expand_ranges` is true, bounds are
+    scanned from `wb_formulas` once for this call tree.
     """
     if normalizer is None:
         normalizer = FormulaNormalizer(named_ranges, named_range_ranges)
@@ -532,6 +542,8 @@ def collect_provenance_for_formula(
             named_ranges=named_ranges,
             named_range_ranges=named_range_ranges,
         )
+    if expand_ranges and sheet_bounds is None:
+        sheet_bounds = _sheet_bounds_from_workbook(wb_formulas)
     f = _ensure_leading_equals(formula)
 
     def _collect_branch(branch_formula: str) -> dict[str, EdgeProvenance]:
@@ -554,6 +566,7 @@ def collect_provenance_for_formula(
             type_analysis_cache=type_analysis_cache,
             workbook_sha256=workbook_sha256,
             ref_walk=ref_walk,
+            sheet_bounds=sheet_bounds,
         )
 
     if_parts = split_top_level_if(f)
@@ -622,4 +635,5 @@ def collect_provenance_for_formula(
         type_analysis_cache=type_analysis_cache,
         workbook_sha256=workbook_sha256,
         ref_walk=ref_walk,
+        sheet_bounds=sheet_bounds,
     )

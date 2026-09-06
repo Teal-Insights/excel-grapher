@@ -21,6 +21,7 @@ from excel_grapher.core.address_keys import (
 from excel_grapher.core.excel_function_meta import ref_only_function_names
 from excel_grapher.core.excel_function_names import excel_function_call_prefixes
 from excel_grapher.core.formula_normalization import (
+    NamedRangeReplacementState,
     build_named_range_replacement_state,
     normalize_excel_formula,
     normalize_excel_formula_with_name_state,
@@ -558,7 +559,8 @@ class FormulaNormalizer:
     - Named-range substitution is done in a **single regex pass** over the
       formula string (one compiled alternation pattern for all names), rather
       than one `re.sub` call per name.  This reduces per-call cost from
-      O(names) to O(formula_length).
+      O(names) to O(formula_length). The compiled `name_state` is also reused
+      by `parse_preserving_axes` during graph extraction.
     - Results are **cached** by `(formula, current_sheet)` for the lifetime
       of the normalizer, so repeated calls (common during graph traversal) are
       O(1) dictionary lookups.
@@ -574,13 +576,20 @@ class FormulaNormalizer:
         named_ranges: dict[str, tuple[str, str]] | None = None,
         named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
     ) -> None:
-        self._replacements, self._names_re = build_named_range_replacement_state(
+        self._name_state = build_named_range_replacement_state(
             named_ranges,
             named_range_ranges,
         )
+        self._replacements = self._name_state.replacements
+        self._names_re = self._name_state.names_re
 
         # Per-instance cache: (formula, current_sheet) -> normalized string
         self._cache: dict[tuple[str, str], str] = {}
+
+    @property
+    def name_state(self) -> NamedRangeReplacementState:
+        """Compiled defined-name substitutions for this normalizer."""
+        return self._name_state
 
     def normalize(self, formula: str, current_sheet: str) -> str:
         """Return the normalized form of *formula*, using the cache when available."""
