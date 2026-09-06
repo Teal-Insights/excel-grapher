@@ -1,24 +1,16 @@
-"""Loose time budgets for large exact MATCH/VLOOKUP on FormulaEvaluator.
+"""Operation budgets for large exact MATCH/VLOOKUP on FormulaEvaluator.
 
-These ceilings catch catastrophic regressions (e.g. re-eagerizing whole
-ranges on the lookup path). They are not micro-benchmarks.
+The number of evaluated cells catches eager-range regressions without flaky
+wall-clock thresholds that vary with host load.
 """
 
 from __future__ import annotations
-
-import time
 
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.evaluator import FormulaEvaluator
 
 LARGE_LOOKUP_ROWS = 10_000
-# Calibrated ~0.1s for a full 10K leaf-key scan on CI-class hardware; 2s leaves
-# comfortable headroom without masking multi-second regressions.
-LARGE_LOOKUP_FULL_SCAN_BUDGET_SEC = 2.0
-# Early exact hits must remain selective even when the rectangle has many
-# trailing formula cells that would be expensive if eagerly resolved.
-LARGE_LOOKUP_EARLY_HIT_BUDGET_SEC = 1.0
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -55,41 +47,43 @@ def _lookup_table_graph(
     return graph
 
 
-def test_large_exact_match_last_key_under_time_budget() -> None:
-    """10K-row exact MATCH (last key) via FormulaEvaluator stays within budget."""
+def test_large_exact_match_last_key_evaluates_each_lookup_cell_once() -> None:
+    """A last-key exact MATCH evaluates the lookup column and target once."""
     graph = _lookup_table_graph(
         rows=LARGE_LOOKUP_ROWS,
         formula=f'=MATCH("k{LARGE_LOOKUP_ROWS}", S!A1:S!A{LARGE_LOOKUP_ROWS}, 0)',
     )
-    started = time.perf_counter()
-    with FormulaEvaluator(graph) as ev:
+    evaluated: list[str] = []
+    with FormulaEvaluator(
+        graph, on_cell_evaluated=lambda address, _value: evaluated.append(address)
+    ) as ev:
         result = ev.evaluate(["S!Z1"])
-    elapsed = time.perf_counter() - started
     assert result == {"S!Z1": LARGE_LOOKUP_ROWS}
-    assert elapsed < LARGE_LOOKUP_FULL_SCAN_BUDGET_SEC, (
-        f"10K exact MATCH (last key) took {elapsed:.2f}s, "
-        f"expected < {LARGE_LOOKUP_FULL_SCAN_BUDGET_SEC}s"
-    )
+    assert len(evaluated) == LARGE_LOOKUP_ROWS + 1
+    assert set(evaluated) == {"S!Z1", *(f"S!A{row}" for row in range(1, LARGE_LOOKUP_ROWS + 1))}
 
 
-def test_large_exact_vlookup_last_key_under_time_budget() -> None:
-    """10K-row exact VLOOKUP (last key) via FormulaEvaluator stays within budget."""
+def test_large_exact_vlookup_last_key_evaluates_lookup_column_and_result() -> None:
+    """A last-key exact VLOOKUP scans column A and reads one result cell."""
     graph = _lookup_table_graph(
         rows=LARGE_LOOKUP_ROWS,
         formula=(f'=VLOOKUP("k{LARGE_LOOKUP_ROWS}", S!A1:S!B{LARGE_LOOKUP_ROWS}, 2, FALSE)'),
     )
-    started = time.perf_counter()
-    with FormulaEvaluator(graph) as ev:
+    evaluated: list[str] = []
+    with FormulaEvaluator(
+        graph, on_cell_evaluated=lambda address, _value: evaluated.append(address)
+    ) as ev:
         result = ev.evaluate(["S!Z1"])
-    elapsed = time.perf_counter() - started
     assert result == {"S!Z1": LARGE_LOOKUP_ROWS}
-    assert elapsed < LARGE_LOOKUP_FULL_SCAN_BUDGET_SEC, (
-        f"10K exact VLOOKUP (last key) took {elapsed:.2f}s, "
-        f"expected < {LARGE_LOOKUP_FULL_SCAN_BUDGET_SEC}s"
-    )
+    assert len(evaluated) == LARGE_LOOKUP_ROWS + 2
+    assert set(evaluated) == {
+        "S!Z1",
+        f"S!B{LARGE_LOOKUP_ROWS}",
+        *(f"S!A{row}" for row in range(1, LARGE_LOOKUP_ROWS + 1)),
+    }
 
 
-def test_large_exact_match_early_hit_skips_trailing_formulas_under_budget() -> None:
+def test_large_exact_match_early_hit_evaluates_only_first_lookup_cell() -> None:
     """Early exact MATCH must not evaluate trailing formula rows."""
     rows = LARGE_LOOKUP_ROWS
     graph = _lookup_table_graph(
@@ -97,20 +91,18 @@ def test_large_exact_match_early_hit_skips_trailing_formulas_under_budget() -> N
         formula=f'=MATCH("k1", S!A1:S!A{rows}, 0)',
         fill_trailing_formulas=True,
     )
-    started = time.perf_counter()
-    with FormulaEvaluator(graph) as ev:
+    evaluated: list[str] = []
+    with FormulaEvaluator(
+        graph, on_cell_evaluated=lambda address, _value: evaluated.append(address)
+    ) as ev:
         result = ev.evaluate(["S!Z1"])
         assert result == {"S!Z1": 1}
         assert f"S!A{rows}" not in ev._cache
         assert f"S!B{rows}" not in ev._cache
-    elapsed = time.perf_counter() - started
-    assert elapsed < LARGE_LOOKUP_EARLY_HIT_BUDGET_SEC, (
-        f"10K exact MATCH (early hit) took {elapsed:.2f}s, "
-        f"expected < {LARGE_LOOKUP_EARLY_HIT_BUDGET_SEC}s"
-    )
+    assert evaluated == ["S!A1", "S!Z1"]
 
 
-def test_large_exact_vlookup_early_hit_skips_trailing_formulas_under_budget() -> None:
+def test_large_exact_vlookup_early_hit_evaluates_only_first_lookup_row() -> None:
     """Early exact VLOOKUP must not evaluate trailing formula rows."""
     rows = LARGE_LOOKUP_ROWS
     graph = _lookup_table_graph(
@@ -118,14 +110,12 @@ def test_large_exact_vlookup_early_hit_skips_trailing_formulas_under_budget() ->
         formula=f'=VLOOKUP("k1", S!A1:S!B{rows}, 2, FALSE)',
         fill_trailing_formulas=True,
     )
-    started = time.perf_counter()
-    with FormulaEvaluator(graph) as ev:
+    evaluated: list[str] = []
+    with FormulaEvaluator(
+        graph, on_cell_evaluated=lambda address, _value: evaluated.append(address)
+    ) as ev:
         result = ev.evaluate(["S!Z1"])
         assert result == {"S!Z1": 1}
         assert f"S!A{rows}" not in ev._cache
         assert f"S!B{rows}" not in ev._cache
-    elapsed = time.perf_counter() - started
-    assert elapsed < LARGE_LOOKUP_EARLY_HIT_BUDGET_SEC, (
-        f"10K exact VLOOKUP (early hit) took {elapsed:.2f}s, "
-        f"expected < {LARGE_LOOKUP_EARLY_HIT_BUDGET_SEC}s"
-    )
+    assert evaluated == ["S!A1", "S!B1", "S!Z1"]

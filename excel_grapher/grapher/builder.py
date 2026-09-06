@@ -624,6 +624,11 @@ def create_dependency_graph(
     # dynamic refs. Position-independent repeated formulas can share this before
     # rebuilding argument domains and rerunning INDEX/MATCH inference.
     _dyn_dep_cache: dict[_DynamicRefCacheKey, _DynamicRefDependencyCacheValue] = {}
+    # Provenance depends on the rendered absolute formula, its sheet, and only
+    # on the host cell when argument-less ROW()/COLUMN() makes evaluation
+    # position-sensitive. Repeated absolute formulas can therefore reuse the
+    # complete (and comparatively expensive) conditional provenance walk.
+    _provenance_cache: dict[_DynamicRefCacheKey, dict[str, EdgeProvenance]] = {}
     # Shared cell-type cache for expand_leaf_env_to_argument_env: intermediate
     # formula cells inferred once are reused across BFS nodes, avoiding redundant
     # recursive domain inference when many dynamic-ref formulas share intermediates.
@@ -1540,26 +1545,30 @@ def create_dependency_graph(
 
             prov_map: dict[str, EdgeProvenance] | None = None
             if capture_dependency_provenance:
-                prov_map = collect_provenance_for_formula(
-                    extraction_formula,
-                    normalized_formula=extraction_formula,
-                    current_sheet=sheet,
-                    current_a1=a1,
-                    named_ranges=named_ranges,
-                    named_range_ranges=named_range_ranges,
-                    normalizer=normalizer,
-                    defined_names=defined_names,
-                    expand_ranges=expand_ranges,
-                    max_range_cells=max_range_cells,
-                    use_cached_dynamic_refs=use_cached_dynamic_refs,
-                    dynamic_refs=dynamic_refs,
-                    wb_formulas=wb_formulas,
-                    resolve_cached_value=resolve_cached_value,
-                    dynamic_expansion_cache=_dyn_cache,
-                    type_analysis_cache=type_analysis_cache,
-                    workbook_sha256=_wb_sha256,
-                    ref_walk=ref_walk,
-                )
+                provenance_cache_key = _dynamic_ref_cache_key(extraction_formula, sheet, a1)
+                prov_map = _provenance_cache.get(provenance_cache_key)
+                if prov_map is None:
+                    prov_map = collect_provenance_for_formula(
+                        extraction_formula,
+                        normalized_formula=extraction_formula,
+                        current_sheet=sheet,
+                        current_a1=a1,
+                        named_ranges=named_ranges,
+                        named_range_ranges=named_range_ranges,
+                        normalizer=normalizer,
+                        defined_names=defined_names,
+                        expand_ranges=expand_ranges,
+                        max_range_cells=max_range_cells,
+                        use_cached_dynamic_refs=use_cached_dynamic_refs,
+                        dynamic_refs=dynamic_refs,
+                        wb_formulas=wb_formulas,
+                        resolve_cached_value=resolve_cached_value,
+                        dynamic_expansion_cache=_dyn_cache,
+                        type_analysis_cache=type_analysis_cache,
+                        workbook_sha256=_wb_sha256,
+                        ref_walk=ref_walk,
+                    )
+                    _provenance_cache[provenance_cache_key] = prov_map
 
             for dep_sheet, dep_a1, guard in deps_and_guards:
                 dep_key = format_key(dep_sheet, dep_a1)
