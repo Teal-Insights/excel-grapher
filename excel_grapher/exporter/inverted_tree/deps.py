@@ -819,10 +819,12 @@ class SeriesDeps:
     - `keyed_ids` — each producer slot is a key of host-aligned and/or
       literal fields: same-year outer keys (`gdp[Baseline, t]` /
       `gdp[Stress, t]`, #733), mixed relative + absolute years
-      (`baseline[t]` / `baseline[2026]`, #735), or same-sheet `$` pins
+      (`baseline[t]` / `baseline[2026]`, #735), same-sheet `$` pins
       of a `sheet_name` key (`stats[s, mean]` / `stats[s, stdev]`,
-      #737). `$` freezes the row/column bind axis, not the sheet.
-      Catalog-slot adjacency is not a lag.
+      #737), or a shared key whose host and producer vocabularies
+      differ (`B1` vs `Bounds Test 1: …`, #739). `$` freezes the
+      row/column bind axis, not the sheet. Catalog-slot adjacency is
+      not a lag.
     - `lookup_ids` — `whole` / `dynamic` table reads
     - `is_scan` / `seed_id` / `scan_direction` — self-lags discharged by
       loop order. A relative other-series read at `schedule_coord` ± 1 is
@@ -1630,6 +1632,80 @@ def _host_slot_pinned_fields(
     return {index: frozenset(fields) for index, fields in pinned.items()}
 
 
+_HOST_FOLLOW_UNSET = object()
+
+
+def _host_producer_slots(
+    host: BoundSeries,
+    producer: BoundSeries,
+    edges: Sequence[DependenceEdge],
+) -> dict[int, set[int]]:
+    """Group producer catalog slots by the host member that reads them."""
+    per_host: dict[int, set[int]] = {}
+    for edge in edges:
+        if edge.consumer_id != host.series_id or edge.producer_id != producer.series_id:
+            continue
+        host_index = host.index_of(edge.consumer_cell)
+        producer_index = producer.index_of(edge.producer_cell)
+        if host_index is None or producer_index is None:
+            continue
+        per_host.setdefault(host_index, set()).add(producer_index)
+    return per_host
+
+
+def _host_follow_key_maps(
+    host: BoundSeries,
+    producer: BoundSeries,
+    per_host: Mapping[int, set[int]],
+) -> dict[str, dict[object, object]]:
+    """Return host→producer value maps for keys that follow the host walk.
+
+    A shared key follows the host when every host member reads exactly one
+    producer value for that field and those values are a function of the
+    host value. The strings need not match: host `B1` may join producer
+    `Bounds Test 1: Real GDP Growth Shock` (#739). A host cell that reads
+    two producer values (`gdp[B1, t]` and `gdp[Baseline, t]`) does not
+    follow, so the foreign value stays a literal.
+    """
+    shared = [name for name in producer.key_fields if name in host.key_fields]
+    maps: dict[str, dict[object, object]] = {name: {} for name in shared}
+    valid = set(shared)
+    for host_index, indices in per_host.items():
+        if host_index >= len(host.domain):
+            return {}
+        host_point = host.domain[host_index]
+        for name in tuple(valid):
+            try:
+                host_value = host_point[name]
+            except KeyError:
+                valid.discard(name)
+                continue
+            producer_values: set[object] = set()
+            for index in indices:
+                if index >= len(producer.domain):
+                    valid.discard(name)
+                    producer_values = set()
+                    break
+                try:
+                    producer_values.add(producer.domain[index][name])
+                except KeyError:
+                    valid.discard(name)
+                    producer_values = set()
+                    break
+            if name not in valid:
+                continue
+            if len(producer_values) != 1:
+                valid.discard(name)
+                continue
+            producer_value = next(iter(producer_values))
+            existing = maps[name].get(host_value, _HOST_FOLLOW_UNSET)
+            if existing is not _HOST_FOLLOW_UNSET and existing != producer_value:
+                valid.discard(name)
+                continue
+            maps[name][host_value] = producer_value
+    return {name: maps[name] for name in valid}
+
+
 def _field_binding(
     host: BoundSeries,
     host_index: int,
@@ -1637,21 +1713,26 @@ def _field_binding(
     producer_index: int,
     *,
     pinned_fields: frozenset[str] = frozenset(),
+    host_follow: Mapping[str, Mapping[object, object]] | None = None,
 ) -> tuple[tuple[str, object], ...] | None:
     """Return `(field, 'host' | ('lit', value))` for each producer key field.
 
-    A field is `host` when it equals the consumer's value and is not frozen
-    by a `$` pin on that field's bind axis. `$F$2` keeps `TIME_PERIOD` a
-    literal even when that year equals the host year. A same-sheet `$D$2`
-    does not freeze `sheet_name` (`SCENARIO` stays `host`). Emit can replay
-    a binding across the host walk only when every member agrees on this
-    spec.
+    A field is `host` when it equals the consumer's value, or when
+    `host_follow` maps the host value onto this producer value, and the
+    field is not frozen by a `$` pin on that field's bind axis. `$F$2`
+    keeps `TIME_PERIOD` a literal even when that year equals the host
+    year. A same-sheet `$D$2` does not freeze `sheet_name` (`SCENARIO`
+    stays `host`). Distinct host/producer vocabularies still bind as
+    `host` when every slot of a member reads one producer value (#739).
+    Emit can replay a binding across the host walk only when every
+    member agrees on this spec.
     """
     if host_index >= len(host.domain) or producer_index >= len(producer.domain):
         return None
     host_point = host.domain[host_index]
     prod = producer.domain[producer_index]
     parts: list[tuple[str, object]] = []
+    follow = host_follow or {}
     for key_name in producer.key_fields:
         try:
             value = prod[key_name]
@@ -1659,11 +1740,17 @@ def _field_binding(
             return None
         if key_name not in pinned_fields and key_name in host.key_fields:
             try:
-                if host_point[key_name] == value:
+                host_value = host_point[key_name]
+            except KeyError:
+                host_value = _HOST_FOLLOW_UNSET
+            if host_value is not _HOST_FOLLOW_UNSET:
+                if host_value == value:
                     parts.append((key_name, "host"))
                     continue
-            except KeyError:
-                pass
+                mapped = follow.get(key_name)
+                if mapped is not None and mapped.get(host_value) == value:
+                    parts.append((key_name, "host"))
+                    continue
         parts.append((key_name, ("lit", value)))
     return tuple(parts)
 
@@ -1677,14 +1764,16 @@ def _is_keyed_multi_read(
     """True when every multi-slot host shares the same host-or-literal keys.
 
     Each slot is then `domain.index` of those fields: two scenarios at one
-    year, `baseline[t]` plus `baseline[2026]`, or two same-sheet variants
-    (`stats[s, mean]` / `stats[s, stdev]`). A `t-1` read is a literal that
+    year, `baseline[t]` plus `baseline[2026]`, two same-sheet variants
+    (`stats[s, mean]` / `stats[s, stdev]`), or two instruments at one
+    remapped host scenario (#739). A `t-1` read is a literal that
     changes per member and cannot be keyed. A `$` pin whose year happens
     to equal the host year is still a literal; a `$` pin on the host sheet
     is not a `SCENARIO` literal.
     """
     if not producer.key_fields:
         return False
+    host_follow = _host_follow_key_maps(host, producer, per_host)
     pattern_sets: list[frozenset[tuple[tuple[str, object], ...]]] = []
     for host_i, indices in per_host.items():
         if len(indices) < 2:
@@ -1693,7 +1782,14 @@ def _is_keyed_multi_read(
         patterns: list[tuple[tuple[str, object], ...]] = []
         for index in indices:
             pinned_fields = pin_map.get(index, frozenset()) if pin_map is not None else frozenset()
-            binding = _field_binding(host, host_i, producer, index, pinned_fields=pinned_fields)
+            binding = _field_binding(
+                host,
+                host_i,
+                producer,
+                index,
+                pinned_fields=pinned_fields,
+                host_follow=host_follow,
+            )
             if binding is None:
                 return False
             patterns.append(binding)
