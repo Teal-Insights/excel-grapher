@@ -810,12 +810,16 @@ class SeriesDeps:
       irregular-gather joins already taken to the host walk. When
       `fit_affine_map` is `None`, `index_maps` keeps the observed catalog
       slots (#695).
-    - `lagged_ids` — a producer read at both `i` and `i-1` whose
-      positions shift with the host. A constant pair (`$A$8` / `$A$9`
-      from every member) is a static catalog read, not a lag (#681).
-    - `keyed_ids` — a producer read at two or more outer keys of the
-      same `TIME_PERIOD` (`gdp[Baseline, t]` and `gdp[Stress, t]`).
-      Catalog-slot adjacency is not a lag (#733).
+    - `lagged_ids` — a producer read at two or more `TIME_PERIOD`s whose
+      positions both shift with the host (`t` and `t-1`). A constant pair
+      (`$A$8` / `$A$9` from every member) is a static catalog read, not a
+      lag (#681). An aligned year plus a pinned origin (`baseline[t]` and
+      `baseline[2026]`) is a keyed pair, not a lag (#735).
+    - `keyed_ids` — each producer slot is a key of host-aligned and/or
+      literal fields: same-year outer keys (`gdp[Baseline, t]` /
+      `gdp[Stress, t]`, #733) or mixed relative + absolute years
+      (`baseline[t]` / `baseline[2026]`, #735). Catalog-slot adjacency
+      is not a lag.
     - `lookup_ids` — `whole` / `dynamic` table reads
     - `is_scan` / `seed_id` / `scan_direction` — self-lags discharged by
       loop order. A relative other-series read at `schedule_coord` ± 1 is
@@ -1396,44 +1400,177 @@ def _dual_read_error(
     return f"series {host.series_id!r} cell {host_cell} reads {producer.series_id!r} at {reads}"
 
 
-def _is_same_axis_keyed_read(
+def _int_key(value: object) -> int | None:
+    """Return `value` when it is a non-bool integer year or offset."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _time_period_at(series: BoundSeries, index: int) -> int | None:
+    """Return the `TIME_PERIOD` of catalog member `index`, if present."""
+    if "TIME_PERIOD" not in series.key_fields or index >= len(series.domain):
+        return None
+    try:
+        return _int_key(series.domain[index]["TIME_PERIOD"])
+    except KeyError:
+        return None
+
+
+def _year_deltas(
     host: BoundSeries,
     host_index: int,
     producer: BoundSeries,
     indices: set[int],
-) -> bool:
-    """True when each slot is a distinct outer key at the host `TIME_PERIOD`.
-
-    Catalog adjacency is ignored: two scenario blocks packed next to each
-    other (`hi - lo == 1`) are still keyed accesses, not a 1-period lag.
-    """
-    if len(indices) < 2:
-        return False
-    if "TIME_PERIOD" not in producer.key_fields or len(producer.key_fields) < 2:
-        return False
-    points = []
+) -> set[int] | None:
+    """Return `producer_year - host_year` for each slot, or `None`."""
+    host_year = _time_period_at(host, host_index)
+    if host_year is None:
+        return None
+    deltas: set[int] = set()
     for index in indices:
-        if index >= len(producer.domain):
-            return False
-        points.append(producer.domain[index])
-    try:
-        years = {point["TIME_PERIOD"] for point in points}
-    except KeyError:
+        year = _time_period_at(producer, index)
+        if year is None:
+            return None
+        deltas.add(year - host_year)
+    return deltas
+
+
+def _host_ref_kinds(
+    host: BoundSeries,
+    host_index: int,
+    producer: BoundSeries,
+    indices: set[int],
+    graph: DependencyGraph | None,
+) -> tuple[set[int], set[int]] | None:
+    """Return `(shifting, pinned)` producer slots from formula `$` axes.
+
+    `None` means the host formula is unavailable, so callers must not treat
+    catalog adjacency as a lag.
+    """
+    if graph is None or host_index < 0 or host_index >= len(host.cells):
+        return None
+    host_cell = host.cells[host_index]
+    ast = try_formula_ast(graph, host_cell)
+    if ast is None:
+        return None
+    shifting: set[int] = set()
+    pinned: set[int] = set()
+    for ref in _iter_cell_ref_nodes(ast):
+        address = as_canonical(resolve_cell_ref(ref, host_cell))
+        index = producer.index_of(address)
+        if index is None or index not in indices:
+            continue
+        if _ref_shifts_with_host(ref, host_cell):
+            shifting.add(index)
+        else:
+            pinned.add(index)
+    return shifting, pinned
+
+
+def _is_consistent_lag(
+    host: BoundSeries,
+    producer: BoundSeries,
+    per_host: dict[int, set[int]],
+    graph: DependencyGraph | None,
+) -> bool:
+    """True when every multi-slot read is the same shifting year-delta set.
+
+    A lag requires both positions to move with the host. An absolute pin
+    (`$F$2`) is not a lag even when the catalog slots are adjacent
+    (`hi - lo == 1`). Same-year dual reads have one delta and are keyed
+    accesses, not a lag. Without a formula AST, a single multi-read host
+    is underdetermined and is not classified as a lag.
+    """
+    multi = {host_i: indices for host_i, indices in per_host.items() if len(indices) > 1}
+    if not multi:
         return False
-    if len(years) != 1:
-        return False
-    if host_index < len(host.domain) and "TIME_PERIOD" in host.key_fields:
-        try:
-            if host.domain[host_index]["TIME_PERIOD"] != next(iter(years)):
+    delta_sets: list[set[int]] = []
+    for host_i, indices in multi.items():
+        kinds = _host_ref_kinds(host, host_i, producer, indices, graph)
+        if kinds is not None:
+            shifting, pinned = kinds
+            if pinned & indices or not indices <= shifting:
                 return False
-        except KeyError:
+        elif graph is None and len(multi) < 2:
             return False
-    outer_fields = tuple(field for field in producer.key_fields if field != "TIME_PERIOD")
-    try:
-        outers = {tuple(point[field] for field in outer_fields) for point in points}
-    except KeyError:
+        deltas = _year_deltas(host, host_i, producer, indices)
+        if deltas is None or len(deltas) < 2:
+            return False
+        delta_sets.append(deltas)
+    first = delta_sets[0]
+    return all(item == first for item in delta_sets)
+
+
+def _field_binding(
+    host: BoundSeries,
+    host_index: int,
+    producer: BoundSeries,
+    producer_index: int,
+    *,
+    pinned: bool = False,
+) -> tuple[tuple[str, object], ...] | None:
+    """Return `(field, 'host' | ('lit', value))` for each producer key field.
+
+    Matches `_producer_field_binding` in `ast_emit`: a field is `host` when
+    it equals the consumer's value, otherwise a literal. An absolute ref
+    (`$F$2`) stays a literal even when that year equals the host year.
+    Emit can replay a binding across the host walk only when every member
+    agrees on this spec.
+    """
+    if host_index >= len(host.domain) or producer_index >= len(producer.domain):
+        return None
+    host_point = host.domain[host_index]
+    prod = producer.domain[producer_index]
+    parts: list[tuple[str, object]] = []
+    for key_name in producer.key_fields:
+        try:
+            value = prod[key_name]
+        except KeyError:
+            return None
+        if not pinned and key_name in host.key_fields:
+            try:
+                if host_point[key_name] == value:
+                    parts.append((key_name, "host"))
+                    continue
+            except KeyError:
+                pass
+        parts.append((key_name, ("lit", value)))
+    return tuple(parts)
+
+
+def _is_keyed_multi_read(
+    host: BoundSeries,
+    producer: BoundSeries,
+    per_host: dict[int, set[int]],
+    graph: DependencyGraph | None,
+) -> bool:
+    """True when every multi-slot host shares the same host-or-literal keys.
+
+    Each slot is then `domain.index` of those fields: two scenarios at one
+    year, or `baseline[t]` plus `baseline[2026]`. A `t-1` read is a literal
+    that changes per member and cannot be keyed. A `$` pin whose year
+    happens to equal the host year is still a literal.
+    """
+    if not producer.key_fields:
         return False
-    return len(outers) == len(points)
+    pattern_sets: list[frozenset[tuple[tuple[str, object], ...]]] = []
+    for host_i, indices in per_host.items():
+        if len(indices) < 2:
+            continue
+        kinds = _host_ref_kinds(host, host_i, producer, indices, graph)
+        pinned = kinds[1] if kinds is not None else set()
+        patterns: list[tuple[tuple[str, object], ...]] = []
+        for index in indices:
+            binding = _field_binding(host, host_i, producer, index, pinned=index in pinned)
+            if binding is None:
+                return False
+            patterns.append(binding)
+        unique = frozenset(patterns)
+        if len(unique) != len(indices):
+            return False
+        pattern_sets.append(unique)
+    return bool(pattern_sets) and all(item == pattern_sets[0] for item in pattern_sets)
 
 
 def series_deps_from_edges(
@@ -1525,7 +1662,6 @@ def series_deps_from_edges(
         for host_i, dep_i in pairs:
             per_host.setdefault(host_i, set()).add(dep_i)
         slots = [-1] * host_n
-        saw_lag = False
         origin = fit_affine_map(
             [(host_i, min(indices)) for host_i, indices in per_host.items() if indices]
         )
@@ -1535,23 +1671,17 @@ def series_deps_from_edges(
             # or a mixed absolute + relative read of one producer (#681).
             continue
         multi = {host_i: indices for host_i, indices in per_host.items() if len(indices) > 1}
-        if multi and all(
-            _is_same_axis_keyed_read(host, host_i, dep, indices)
-            for host_i, indices in multi.items()
-        ):
+        if multi and _is_consistent_lag(host, dep, per_host, graph):
+            lagged.add(series_id)
+            continue
+        if multi and _is_keyed_multi_read(host, dep, per_host, graph):
             keyed.add(series_id)
             continue
+        if multi:
+            host_i, indices = next(iter(multi.items()))
+            raise InvertedTreeExportError(_dual_read_error(host, host_i, dep, indices))
         for host_i, indices in per_host.items():
-            if len(indices) > 2:
-                raise InvertedTreeExportError(_dual_read_error(host, host_i, dep, indices))
-            if len(indices) == 2:
-                lo, hi = sorted(indices)
-                if hi - lo != 1:
-                    raise InvertedTreeExportError(_dual_read_error(host, host_i, dep, indices))
-                saw_lag = True
-                slots[host_i] = hi
-            else:
-                slots[host_i] = next(iter(indices))
+            slots[host_i] = next(iter(indices))
         joined = identity_join_indices(host, dep, catalog)
         for edge in identity_by_producer.get(series_id, ()):
             host_index = host.index_of(edge.consumer_cell)
@@ -1564,9 +1694,6 @@ def series_deps_from_edges(
                     f"identity-reads {edge.producer_cell}, not the join slot "
                     f"of {series_id!r}"
                 )
-        if saw_lag:
-            lagged.add(series_id)
-            continue
         if not all(slot >= 0 for slot in slots):
             continue
         fitted = fit_affine_map([(index, slots[index]) for index in range(host_n)])

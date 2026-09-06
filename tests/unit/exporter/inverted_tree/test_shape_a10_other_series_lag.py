@@ -13,6 +13,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     all_param_names,
     bindings_document,
     generate_inverted,
+    inverted_graph_parts,
     load_package,
     series_entry,
     write_workbook,
@@ -209,3 +210,60 @@ def test_non_adjacent_two_positions_still_fail_closed(tmp_path: Path) -> None:
     workbook = _non_lag_workbook(tmp_path)
     with pytest.raises(InvertedTreeExportError, match="Engine!A2"):
         generate_inverted(workbook, _non_lag_bindings())
+
+
+def _stride_two_lag_workbook(tmp_path: Path) -> Path:
+    return write_workbook(
+        tmp_path / "a10_stride2.xlsx",
+        {
+            "Engine": {
+                "A1": 2009,
+                "B1": 2010,
+                "C1": 2011,
+                "D1": 2012,
+                "A2": 100.0,
+                "B2": 101.0,
+                "C2": 102.0,
+                "D2": 103.0,
+                "C3": "=C2-A2",
+                "D3": "=D2-B2",
+            },
+        },
+    )
+
+
+def _stride_two_lag_bindings() -> dict:
+    return bindings_document(
+        series_entry(
+            "debt",
+            "Engine!A2:D2",
+            layout="series",
+            direction="input",
+            header_row=1,
+        ),
+        series_entry(
+            "delta",
+            "Engine!C3:D3",
+            layout="series",
+            direction="output",
+            header_row=1,
+        ),
+    )
+
+
+def test_consistent_two_period_lag_is_not_catalog_adjacency(tmp_path: Path) -> None:
+    """Both positions shift by the same year deltas (`t` and `t-2`)."""
+    workbook = _stride_two_lag_workbook(tmp_path)
+    document = _stride_two_lag_bindings()
+    _catalog, deps, _graph = inverted_graph_parts(workbook, document)
+    delta = deps["delta"]
+    assert "debt" in delta.lagged_ids
+    assert "debt" not in delta.keyed_ids
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a10_stride2")
+    cells = ["Engine!C3", "Engine!D3"]
+    expected = FormulaEvaluator(
+        create_dependency_graph(workbook, cells, load_values=True)
+    ).evaluate(cells)
+    got = pkg.compute_delta(debt=(100.0, 101.0, 102.0, 103.0))
+    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
+    assert got == pytest.approx((2.0, 2.0))
