@@ -1,13 +1,14 @@
 ---
-title: "Full vs Path-Induced Mermaid Graphs"
+title: "Full, Path-Induced, and Shortest-Path Graphs"
 format: gfm
 output: asis
 ---
 
 This example shows the difference between:
 
-1. exporting the full dependency graph for a target cell, and
-2. exporting an induced subgraph containing only nodes on directed paths between two node sets.
+1. exporting the full dependency graph for a target cell,
+2. exporting an induced subgraph containing only nodes on directed paths between two node sets, and
+3. exporting the hop-shortest undirected path between two sibling cells.
 
 The workbook is [`induced_graph.xlsx`](induced_graph.xlsx).
 
@@ -17,6 +18,7 @@ from pathlib import Path
 from excel_grapher.grapher import (
     create_dependency_graph,
     select_path_induced_subgraph,
+    select_shortest_path_subgraph,
     to_mermaid,
 )
 
@@ -53,3 +55,29 @@ print(f"```mermaid\n{to_mermaid(induced_graph, max_nodes=100)}\n```")
 ```
 
 The induced graph excludes the unrelated branch (`G1 -> H1`) because those nodes are not on any directed path from `F1` to `A1`.
+
+`D1` and `G1` are both first-level children of `F1`, so there is no directed path between them. An undirected shortest-path search finds the join at `F1`.
+
+```{python}
+try:
+    select_shortest_path_subgraph(
+        full_graph,
+        source_key="Sheet1!D1",
+        target_key="Sheet1!G1",
+    )
+except ValueError as exc:
+    print(f"```text\nDirected miss: {exc}\n```")
+
+sibling_graph = select_shortest_path_subgraph(
+    full_graph,
+    source_key="Sheet1!D1",
+    target_key="Sheet1!G1",
+    directed=False,
+)
+
+print(f"```text\nUndirected shortest-path node count: {len(sibling_graph)}\n```")
+```
+
+```{python}
+print(f"```mermaid\n{to_mermaid(sibling_graph, max_nodes=100)}\n```")
+```

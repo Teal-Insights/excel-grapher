@@ -9,6 +9,55 @@ from .graph import DependencyGraph
 from .node import NodeKey, copy_node
 
 
+def select_shortest_path_subgraph(
+    graph: DependencyGraph,
+    *,
+    source_key: NodeKey,
+    target_key: NodeKey,
+    directed: bool = True,
+    max_path_length: int | None = None,
+) -> DependencyGraph:
+    """Return the induced subgraph over all hop-shortest paths between two nodes.
+
+    Edge direction on the returned graph follows `DependencyGraph` semantics:
+    `A -> B` means `A` depends on `B`. `directed` affects search only.
+
+    Args:
+        graph: Dependency graph to search.
+        source_key: Path start node.
+        target_key: Path end node.
+        directed: If `True`, walk outgoing dependency edges only. If `False`,
+            treat each edge as bidirectional for reachability.
+        max_path_length: Optional hop-count ceiling. `0` allows only the
+            trivial same-key path.
+
+    Returns:
+        Induced subgraph of every hop-shortest path. Endpoints are always
+        included. Returned edges keep original direction, guards, and
+        provenance.
+
+    Raises:
+        ValueError: If a key is missing, `max_path_length` is negative, no
+            path exists under the requested directionality, or the shortest
+            path is longer than `max_path_length`. A directed miss that still
+            has an undirected path mentions `directed=False`.
+    """
+    sources = _normalize_existing_keys(graph, [source_key], arg_name="source_key")
+    targets = _normalize_existing_keys(graph, [target_key], arg_name="target_key")
+    source = sources[0]
+    target = targets[0]
+    _validate_limits(max_path_length=max_path_length, max_paths=None)
+
+    path_nodes = _collect_shortest_path_nodes(
+        graph,
+        source=source,
+        target=target,
+        directed=directed,
+        max_path_length=max_path_length,
+    )
+    return _induced_dependency_subgraph(graph, path_nodes)
+
+
 def select_path_induced_subgraph(
     graph: DependencyGraph,
     *,
@@ -70,6 +119,92 @@ def _validate_limits(*, max_path_length: int | None, max_paths: int | None) -> N
         raise ValueError("max_path_length must be >= 0 when provided")
     if max_paths is not None and max_paths <= 0:
         raise ValueError("max_paths must be > 0 when provided")
+
+
+def _resolved_neighbors(graph: DependencyGraph, key: NodeKey, *, directed: bool) -> list[NodeKey]:
+    raw_neighbors: Iterable[NodeKey] = graph.get_dependencies(key)
+    if not directed:
+        raw_neighbors = (*raw_neighbors, *graph.get_dependents(key))
+
+    neighbors: list[NodeKey] = []
+    seen: set[NodeKey] = set()
+    for raw in raw_neighbors:
+        resolved = graph.resolve_endpoint(raw)
+        if resolved is None or resolved in seen:
+            continue
+        seen.add(resolved)
+        neighbors.append(resolved)
+    return neighbors
+
+
+def _bfs_shortest_parents(
+    graph: DependencyGraph,
+    source: NodeKey,
+    *,
+    directed: bool,
+) -> tuple[dict[NodeKey, int], dict[NodeKey, list[NodeKey]]]:
+    dist: dict[NodeKey, int] = {source: 0}
+    parents: dict[NodeKey, list[NodeKey]] = {source: []}
+    q: deque[NodeKey] = deque([source])
+    while q:
+        current = q.popleft()
+        next_dist = dist[current] + 1
+        for neighbor in _resolved_neighbors(graph, current, directed=directed):
+            prior = dist.get(neighbor)
+            if prior is None:
+                dist[neighbor] = next_dist
+                parents[neighbor] = [current]
+                q.append(neighbor)
+                continue
+            if prior == next_dist:
+                parents[neighbor].append(current)
+    return dist, parents
+
+
+def _nodes_on_shortest_paths(
+    parents: dict[NodeKey, list[NodeKey]], target: NodeKey
+) -> set[NodeKey]:
+    keep: set[NodeKey] = set()
+    stack = [target]
+    while stack:
+        node = stack.pop()
+        if node in keep:
+            continue
+        keep.add(node)
+        stack.extend(parents[node])
+    return keep
+
+
+def _collect_shortest_path_nodes(
+    graph: DependencyGraph,
+    *,
+    source: NodeKey,
+    target: NodeKey,
+    directed: bool,
+    max_path_length: int | None,
+) -> set[NodeKey]:
+    if source == target:
+        return {source}
+
+    dist, parents = _bfs_shortest_parents(graph, source, directed=directed)
+    hop_length = dist.get(target)
+    if hop_length is None:
+        if directed:
+            undirected_dist, _undirected_parents = _bfs_shortest_parents(
+                graph, source, directed=False
+            )
+            if target in undirected_dist:
+                raise ValueError(
+                    f"no directed path from {source} to {target}; "
+                    f"pass directed=False to search undirected paths"
+                )
+        raise ValueError(f"no path from {source} to {target}")
+
+    if max_path_length is not None and hop_length > max_path_length:
+        raise ValueError(
+            f"max_path_length limit exceeded while collecting shortest paths: {max_path_length}"
+        )
+    return _nodes_on_shortest_paths(parents, target)
 
 
 def _collect_path_nodes(

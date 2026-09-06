@@ -22,7 +22,7 @@ from .lightweight_viz import (
     write_web_viz_html,
 )
 from .node import Node, NodeKey, NodeView
-from .subgraph import select_path_induced_subgraph
+from .subgraph import select_path_induced_subgraph, select_shortest_path_subgraph
 
 
 def _dot_escape(s: str) -> str:
@@ -249,6 +249,7 @@ __all__ = [
     "LightweightVizPayload",
     "LightweightVizStats",
     "select_path_induced_subgraph",
+    "select_shortest_path_subgraph",
     "to_graphviz",
     "to_mermaid",
     "to_networkx",
