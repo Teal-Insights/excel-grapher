@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.1.0 (2026-09-06)
+
+### Features
+
+- **grapher**: Add select_shortest_path_subgraph
+  ([#706](https://github.com/Teal-Insights/excel-grapher/pull/706),
+  [`7c542fe`](https://github.com/Teal-Insights/excel-grapher/commit/7c542feed053f23d1cab635ae1ec6b91426b5e67))
+
+### Testing
+
+- **grapher**: Use A1 keys that survive normalize_key
+  ([#706](https://github.com/Teal-Insights/excel-grapher/pull/706),
+  [`7c542fe`](https://github.com/Teal-Insights/excel-grapher/commit/7c542feed053f23d1cab635ae1ec6b91426b5e67))
+
+
 ## v14.0.1 (2026-09-06)
 
 ### Bug Fixes
