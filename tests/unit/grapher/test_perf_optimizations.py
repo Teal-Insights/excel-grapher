@@ -1,4 +1,4 @@
-"""Performance optimization tests for issue #73.
+"""Performance optimization tests for graph extraction.
 
 RED phase: these tests fail before the optimizations are applied.
 
@@ -9,6 +9,8 @@ Covers two improvements:
      of how many distinct workbooks or formula strings are processed.
   B. Per-BFS-session worksheet cache in create_dependency_graph
      — avoids O(#sheets) fastpyxl.__getitem__ scans on every node visit
+  C. Per-build provenance cache — avoids repeating the conditional provenance
+     walk for identical absolute formulas (issue #716)
 """
 
 from __future__ import annotations
@@ -251,3 +253,52 @@ def test_switch_formula_provenance_causes(tmp_path: Path) -> None:
         assert DependencyCause.direct_ref in prov.causes, (
             f"Expected direct_ref in causes for E1→{dep}, got {prov.causes}"
         )
+
+
+def test_repeated_absolute_formula_reuses_provenance_walk(tmp_path: Path) -> None:
+    """Identical absolute formulas should collect provenance once per build."""
+    import excel_grapher.grapher.builder as builder_mod
+
+    excel_path = tmp_path / "repeated_provenance.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(0, 0, 1)
+    ws.write_number(0, 1, 2)
+    ws.write_number(0, 2, 3)
+    for row in range(20):
+        ws.write_formula(
+            row,
+            3,
+            "=IF(Sheet1!$A$1>0,Sheet1!$B$1,Sheet1!$C$1)",
+        )
+    wb.close()
+
+    original_collect = builder_mod.collect_provenance_for_formula
+    collect_calls = 0
+
+    def counting_collect(*args: object, **kwargs: object):
+        nonlocal collect_calls
+        collect_calls += 1
+        return original_collect(*args, **kwargs)
+
+    with patch.object(
+        builder_mod,
+        "collect_provenance_for_formula",
+        side_effect=counting_collect,
+    ):
+        graph = create_dependency_graph(
+            excel_path,
+            [f"Sheet1!D{row}" for row in range(1, 21)],
+            capture_dependency_provenance=True,
+        )
+
+    assert collect_calls == 1
+    for row in range(1, 21):
+        target = f"Sheet1!D{row}"
+        assert set(graph.get_dependencies(target)) == {
+            "Sheet1!A1",
+            "Sheet1!B1",
+            "Sheet1!C1",
+        }
+        for dependency in graph.get_dependencies(target):
+            assert graph.get_edge_attrs(target, dependency).provenance is not None
