@@ -1,9 +1,9 @@
-"""Inverted-tree emit honors `blank_ranges` named in formula ranges (#700).
+"""Inverted-tree emit honors `blank_ranges` named in formulas (#700, #703).
 
 Declared structural blanks are omitted from the graph and from bindings
-coverage. Ctx codegen and `FormulaEvaluator` resolve them as empty. Range
-walks in inverted-tree emit must do the same instead of fail-closing on
-unowned catalog cells.
+coverage. `FormulaEvaluator` resolves them as empty. Range walks and
+single-cell `CellRef` sites in inverted-tree emit must do the same instead
+of fail-closing on unowned catalog cells.
 """
 
 from __future__ import annotations
@@ -322,6 +322,234 @@ def test_issue_mcve_generate_does_not_raise(tmp_path: Path) -> None:
     )
 
     blank = ("Lookup!A1:C3",)
+    graph = create_dependency_graph(
+        workbook_path,
+        ["Outputs!B1"],
+        load_values=True,
+        blank_ranges=blank,
+    )
+    assert set(graph.leaf_keys()) | set(graph.formula_keys()) == {
+        "Inputs!A1",
+        "Engine!B1",
+        "Outputs!B1",
+    }
+    assert graph.get_node("Lookup!A1") is None
+
+    bindings = load_series_bindings(bindings_path)
+    report = validate_series_bindings(graph, bindings, workbook=workbook_path)
+    assert report["ok"] is True
+
+    generate_inverted_tree_modules(
+        graph,
+        series_bindings=bindings,
+        bindings_workbook=workbook_path,
+        blank_ranges=blank,
+    )
+
+
+_BLANK_CELL = ("Lookup!A1",)
+
+
+def _cellref_workbook(tmp_path: Path) -> Path:
+    return write_workbook(
+        tmp_path / "blank_cellref.xlsx",
+        {
+            "Inputs": {"A1": 1},
+            "Lookup": {},
+            "Engine": {"B1": "=IF(ISNUMBER(Lookup!A1),Lookup!A1,0)+Inputs!A1"},
+            "Outputs": {"B1": "=Engine!B1"},
+        },
+    )
+
+
+def _cellref_bindings() -> dict[str, Any]:
+    return bindings_document(
+        series_entry("key", "Inputs!A1", layout="scalar", direction="input"),
+        series_entry("lookup_result", "Engine!B1", layout="scalar", direction="internal"),
+        series_entry("result", "Outputs!B1", layout="scalar", direction="output"),
+    )
+
+
+def test_blank_cellref_is_not_a_graph_node(tmp_path: Path) -> None:
+    workbook = _cellref_workbook(tmp_path)
+    bindings = validate_bindings_document(_cellref_bindings())
+    graph = create_dependency_graph(
+        workbook,
+        ["Outputs!B1"],
+        load_values=True,
+        blank_ranges=_BLANK_CELL,
+    )
+    assert set(graph.leaf_keys()) | set(graph.formula_keys()) == {
+        "Inputs!A1",
+        "Engine!B1",
+        "Outputs!B1",
+    }
+    assert graph.get_node("Lookup!A1") is None
+    report = validate_series_bindings(graph, bindings, workbook=workbook)
+    assert report["ok"] is True
+
+
+def test_blank_cellref_fail_closes_without_blank_ranges(tmp_path: Path) -> None:
+    workbook = _cellref_workbook(tmp_path)
+    with pytest.raises(InvertedTreeExportError, match="cell Lookup!A1 is not in any bound series"):
+        generate_inverted(workbook, _cellref_bindings())
+
+
+def test_generate_inverted_tree_modules_accepts_blank_cellref(tmp_path: Path) -> None:
+    workbook = _cellref_workbook(tmp_path)
+    modules = generate_inverted(workbook, _cellref_bindings(), blank_ranges=_BLANK_CELL)
+    internals = modules["internals.py"]
+    assert "Lookup!A1" not in internals
+    assert "None" in internals
+    assert "xl_isnumber(" in internals
+
+
+def test_generate_modules_forwards_blank_ranges_for_cellref(tmp_path: Path) -> None:
+    workbook = _cellref_workbook(tmp_path)
+    bindings = validate_bindings_document(_cellref_bindings())
+    graph = create_dependency_graph(
+        workbook,
+        ["Outputs!B1"],
+        load_values=True,
+        blank_ranges=_BLANK_CELL,
+    )
+    with CodeGenerator(graph) as generator:
+        modules = generator.generate_modules(
+            series_bindings=bindings,
+            bindings_workbook=workbook,
+            blank_ranges=_BLANK_CELL,
+        )
+    assert "None" in modules["internals.py"]
+
+
+def test_blank_cellref_package_matches_evaluator(tmp_path: Path) -> None:
+    workbook = _cellref_workbook(tmp_path)
+    catalog, _deps, graph = inverted_graph_parts(
+        workbook, _cellref_bindings(), blank_ranges=_BLANK_CELL
+    )
+    pkg = load_package(
+        generate_inverted(workbook, _cellref_bindings(), blank_ranges=_BLANK_CELL),
+        tmp_path,
+        name="blank_cellref",
+    )
+    with FormulaEvaluator(graph, blank_ranges=_BLANK_CELL) as ev:
+        expected = ev.evaluate(["Outputs!B1"])["Outputs!B1"]
+    got = call_compute(pkg, catalog.output_series()[0].series_id, input_kwargs(catalog, graph))
+    assert _scalar(got) == expected
+    assert _scalar(got) == pytest.approx(1)
+
+
+def test_issue_703_mcve_generate_does_not_raise(tmp_path: Path) -> None:
+    """Reproduce the self-contained MCVE from issue 703."""
+    import yaml
+    from fastpyxl import Workbook
+
+    from excel_grapher.exporter.inverted_tree.emit import generate_inverted_tree_modules
+
+    root = tmp_path / "mcve_blank_cellref"
+    root.mkdir()
+    workbook_path = root / "workbook.xlsx"
+    bindings_path = root / "bindings"
+    bindings_path.mkdir()
+
+    wb = Workbook()
+    default = wb.active
+    wb.remove(default)
+    inputs = wb.create_sheet("Inputs")
+    wb.create_sheet("Lookup")
+    engine = wb.create_sheet("Engine")
+    outputs = wb.create_sheet("Outputs")
+    inputs["A1"] = 1
+    engine["B1"] = "=IF(ISNUMBER(Lookup!A1),Lookup!A1,0)+Inputs!A1"
+    outputs["B1"] = "=Engine!B1"
+    wb.save(workbook_path)
+
+    scalar = {
+        "layout": "scalar",
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "float",
+                "bind": {"kind": "data_cell", "read": "float"},
+            },
+            "dimensions": [],
+        },
+        "key": [],
+    }
+    (bindings_path / "inputs.bindings.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "1.14.0",
+                "workbook": "workbook.xlsx",
+                "concept_scheme": {
+                    "id": "mcve",
+                    "concepts": [{"id": "OBS_VALUE", "name": "Observation", "dtype": "number"}],
+                },
+                "series": [
+                    {
+                        "id": "key",
+                        "sheet": "Inputs",
+                        "data_range": "Inputs!A1",
+                        "input": {
+                            "setter": {
+                                "name": "set_key",
+                                "record_contract": "records",
+                                "strict": True,
+                            }
+                        },
+                        **scalar,
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (bindings_path / "outputs.bindings.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "1.14.0",
+                "workbook": "workbook.xlsx",
+                "series": [
+                    {
+                        "id": "result",
+                        "sheet": "Outputs",
+                        "data_range": "Outputs!B1",
+                        "output": {
+                            "compute": {
+                                "name": "compute_result",
+                                "record_contract": "records",
+                            }
+                        },
+                        **scalar,
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (bindings_path / "internals.bindings.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "1.14.0",
+                "workbook": "workbook.xlsx",
+                "series": [
+                    {
+                        "id": "lookup_result",
+                        "sheet": "Engine",
+                        "data_range": "Engine!B1",
+                        "internal": {},
+                        **scalar,
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    blank = ("Lookup!A1",)
     graph = create_dependency_graph(
         workbook_path,
         ["Outputs!B1"],

@@ -573,6 +573,8 @@ class _DepCollector:
     def emit_cell(
         self, address: CanonicalAddress, host_cell: CanonicalAddress, host_index: int
     ) -> None:
+        if address_in_blank_ranges(address, self.blank_rects):
+            return
         owner = self.catalog.require_series_for(address)
         if owner.series_id == self.host.series_id:
             if address == self.host.cells[host_index]:
@@ -796,7 +798,12 @@ class _DepCollector:
 
     def _series_for_ref(self, node: AstNode, host_cell: CanonicalAddress) -> BoundSeries:
         if isinstance(node, CellRefNode):
-            return self.catalog.require_series_for(as_canonical(resolve_cell_ref(node, host_cell)))
+            address = as_canonical(resolve_cell_ref(node, host_cell))
+            if address_in_blank_ranges(address, self.blank_rects):
+                raise InvertedTreeExportError(
+                    f"series {self.host.series_id!r}: reference is not a bound series"
+                )
+            return self.catalog.require_series_for(address)
         if isinstance(node, (RangeNode, WholeColumnNode, WholeRowNode)):
             addresses = addresses_outside_blank_ranges(
                 iter_ref_addresses(node, host_cell, self.graph),
