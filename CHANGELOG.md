@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.2.1 (2026-09-06)
+
+### Bug Fixes
+
+- **export**: Lower sparse MATCH/INDEX next-non-blank idiom
+  ([#714](https://github.com/Teal-Insights/excel-grapher/pull/714),
+  [`bb5bcc2`](https://github.com/Teal-Insights/excel-grapher/commit/bb5bcc21c6662cefe3536c8193a3a87915cc06b0))
+
+
 ## v14.2.0 (2026-09-06)
 
 ### Features
