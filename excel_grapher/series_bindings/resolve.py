@@ -38,8 +38,7 @@ from excel_grapher.series_bindings.normalize import (
     input_mode,
 )
 from excel_grapher.series_bindings.ranges import (
-    apply_series_excludes,
-    expand_series_data_ranges_for_graph,
+    expand_bound_series_addresses_for_graph,
     series_data_ranges,
 )
 from excel_grapher.series_bindings.types import (
@@ -991,9 +990,8 @@ def resolve_series_binding(
         }
 
     try:
-        expanded_addresses = apply_series_excludes(
-            expand_series_data_ranges_for_graph(graph, series, workbook=workbook),
-            series,
+        expanded_addresses = expand_bound_series_addresses_for_graph(
+            graph, series, workbook=workbook
         )
     except (ValueError, TypeError) as exc:
         return {

@@ -236,7 +236,7 @@ def apply_series_excludes(
 ) -> list[str]:
     """Drop addresses excluded by series-level `exclude_rows` / `exclude_columns`.
 
-    Same filter `resolve_series_binding` applies after expanding `data_range`.
+    Resolve, validate, and coverage helpers apply this after expanding `data_range`.
     """
     kept = list(addresses)
     exclude_rows = series.get("exclude_rows")
@@ -248,6 +248,52 @@ def apply_series_excludes(
         excluded_cols = expand_column_specs(exclude_columns)
         kept = [address for address in kept if _parse_cell_rc(address)[2] not in excluded_cols]
     return kept
+
+
+def expand_bound_series_addresses(
+    series: Mapping[str, Any],
+    *,
+    workbook: Path | str | None = None,
+    sheetnames: Sequence[str] | None = None,
+    named_ranges: Mapping[str, tuple[str, str]] | None = None,
+    named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
+    max_range_cells: int = DEFAULT_MAX_RANGE_CELLS,
+) -> list[str]:
+    """Expand every series `data_range` and drop excluded rows and columns."""
+    return apply_series_excludes(
+        expand_series_data_ranges(
+            series,
+            workbook=workbook,
+            sheetnames=sheetnames,
+            named_ranges=named_ranges,
+            named_range_ranges=named_range_ranges,
+            max_range_cells=max_range_cells,
+        ),
+        series,
+    )
+
+
+def expand_bound_series_addresses_for_graph(
+    graph: DependencyGraph,
+    series: Mapping[str, Any],
+    *,
+    workbook: Path | str | None = None,
+    max_range_cells: int = DEFAULT_MAX_RANGE_CELLS,
+) -> list[str]:
+    """Expand series `data_range`s via a graph and drop excluded rows and columns.
+
+    Shared by `resolve_series_binding` and `validate_series_bindings` so overlap
+    checks and unique-key resolution see the same cells as resolve.
+    """
+    return apply_series_excludes(
+        expand_series_data_ranges_for_graph(
+            graph,
+            series,
+            workbook=workbook,
+            max_range_cells=max_range_cells,
+        ),
+        series,
+    )
 
 
 def _solid_rectangle_address(addresses: Sequence[str]) -> str | None:

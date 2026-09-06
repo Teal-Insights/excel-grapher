@@ -12,9 +12,8 @@ from excel_grapher.series_bindings.canonical import bindings_canonical_sha256
 from excel_grapher.series_bindings.input_series import derive_input_series
 from excel_grapher.series_bindings.load import SeriesBindingsLoadError, load_series_bindings
 from excel_grapher.series_bindings.ranges import (
-    expand_data_range,
-    expand_data_range_for_graph,
-    series_data_ranges,
+    expand_bound_series_addresses,
+    expand_bound_series_addresses_for_graph,
 )
 from excel_grapher.series_bindings.resolve import resolve_series_bindings
 from excel_grapher.series_bindings.types import (
@@ -103,11 +102,14 @@ def all_series_targets(
     *,
     workbook: Path,
 ) -> list[str]:
-    """Expand every series ``data_range`` into graph target addresses."""
+    """Expand every series `data_range` into graph target addresses.
+
+    Applies `exclude_rows` / `exclude_columns` so punched holes are not treated
+    as bound targets.
+    """
     targets: list[str] = []
     for series in bindings["series"]:
-        for data_range in series_data_ranges(series):
-            targets.extend(expand_data_range(data_range, workbook=workbook))
+        targets.extend(expand_bound_series_addresses(series, workbook=workbook))
     return sorted(set(targets))
 
 
@@ -119,25 +121,26 @@ def series_binding_public_addresses(
 ) -> frozenset[str]:
     """Return normalized addresses published by series binding `data_range`s.
 
-    Pass the result as `preserve` to `OptimalCompression` / `compress_optimal`
-    or `IdentityTransitCompression` / `compress_identity_transits` (or via
-    `series_bindings=...` on either projection) so series-bound leaves that
-    are not export targets stay in the projected graph. Both compressors
-    always union `preserve` with `target_keys()`.
+    Applies `exclude_rows` / `exclude_columns` so punched holes are not treated
+    as bound. Pass the result as `preserve` to `OptimalCompression` /
+    `compress_optimal` or `IdentityTransitCompression` /
+    `compress_identity_transits` (or via `series_bindings=...` on either
+    projection) so series-bound leaves that are not export targets stay in
+    the projected graph. Both compressors always union `preserve` with
+    `target_keys()`.
     """
     addresses: set[str] = set()
     for series in bindings.get("series", []):
         if not isinstance(series, dict):
             continue
-        for data_range in series_data_ranges(series):
-            addresses.update(
-                normalize_address(addr)
-                for addr in expand_data_range_for_graph(
-                    graph,
-                    data_range,
-                    workbook=workbook,
-                )
+        addresses.update(
+            normalize_address(addr)
+            for addr in expand_bound_series_addresses_for_graph(
+                graph,
+                series,
+                workbook=workbook,
             )
+        )
     return frozenset(addresses)
 
 
