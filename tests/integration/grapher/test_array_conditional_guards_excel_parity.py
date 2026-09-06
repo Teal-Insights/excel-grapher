@@ -1,8 +1,9 @@
 """Element guards for array `IF` match Excel's array evaluation (slow, run-if-available).
 
-A guard on edge `target -> dep` claims `dep` can only influence `target` when the
-guard holds. This checks that claim against the real engine: perturb one element
-of the value range, recalculate through Excel, and require the target to move
+A guard on edge `target -> dep` claims `dep` can only change `target`'s value
+when the guard holds (influence, not whether Excel lists `dep` as a precedent).
+This checks that claim against the real engine: perturb one element of the
+value range, recalculate through Excel, and require the target to move
 exactly when the graph's element guard is satisfied.
 
 Skips cleanly when Excel automation (xlwings / WSL+COM) is unavailable.

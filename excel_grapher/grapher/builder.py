@@ -100,6 +100,15 @@ _DYNAMIC_REF_FN_NAMES = frozenset({"OFFSET", "INDIRECT", "INDEX"})
 # (`SUM(IF(A1:A10>0,B1:B10,0))`), which is the array context that turns a
 # range-typed condition into per-element edge guards. See issue #483.
 #
+# Those guards record *influence*, not Excel's load/precedent set. Excel still
+# treats the whole value range as a precedent and typically materializes it
+# when evaluating the array `IF`. The graph nevertheless guards `B3` with
+# `A3>0` because changing `B3` cannot change the result unless that aligned
+# condition holds. That matches scalar `IF` (unused-branch cells stay in
+# Excel's calc chain) and is enough for an Excel-correct value, fewer edges
+# to walk, and tighter may-cycle classification. Condition cells stay
+# unguarded: they are always consumed to build the boolean array.
+#
 # Element alignment is positional, matching CSE and dynamic-array evaluation.
 # The one form it does not describe is legacy implicit intersection, where the
 # formula's own row/column selects a single element instead. Excel 2019+ writes
@@ -1368,11 +1377,15 @@ def create_dependency_graph(
             """Extract per-element deps for an array-context `IF`, else `None`.
 
             In array context Excel evaluates `IF` element-wise over its range
-            arguments, so element `i` of a value range is read only under element
-            `i` of the condition. The condition is parsed once into a template
-            (`RangeRef` placeholders) and instantiated per element; branch cells
-            that are not element-aligned with the condition — differently shaped
-            ranges, scalars, ranges under an aggregate — stay unconditional.
+            arguments, so element `i` of a value range can change the result
+            only under element `i` of the condition. The condition is parsed
+            once into a template (`RangeRef` placeholders) and instantiated
+            per element; branch cells that are not element-aligned with the
+            condition — differently shaped ranges, scalars, ranges under an
+            aggregate — stay unconditional.
+
+            This is influence, not load: Excel still names the whole value
+            range as a precedent. See the note on `_ARRAY_CONSUMING_FN_NAMES`.
 
             Returns `None` when the form is not an array-context `IF` (no
             parseable range-typed condition), leaving the scalar handling below

@@ -227,13 +227,18 @@ Conditionals evaluated in *array context* — a CSE array formula, or an
 `IF` nested inside a function that consumes a whole array such as `SUM`,
 `AVERAGE`, or `SUMPRODUCT` — are guarded element by element. Excel
 evaluates `=SUM(IF(A1:A10>0,B1:B10,0))` position by position, so
-`Sheet1!B3` is read only when `Sheet1!A3>0`; each expanded range
-dependency therefore carries the condition instantiated at its own
-element rather than one guard for the whole range. Cells that are not
-element-aligned with the condition (differently shaped ranges, scalars,
-ranges under a nested aggregate) stay unguarded, as do forms whose
-alignment is not well defined, such as a whole-column condition or one
-collapsed to a single boolean by `AND`/`OR`.
+`Sheet1!B3` can change the sum only when `Sheet1!A3>0`; each expanded
+range dependency therefore carries the condition instantiated at its own
+element rather than one guard for the whole range. The condition cells
+stay unguarded because they are always consumed to build the boolean
+array. Excel still lists the whole value range as a calc-engine
+precedent and typically materializes it; the graph records *influence*
+(enough for an Excel-correct value, and fewer edges to walk) rather than
+that load set. Cells that are not element-aligned with the condition
+(differently shaped ranges, scalars, ranges under a nested aggregate)
+stay unguarded, as do forms whose alignment is not well defined, such as
+a whole-column condition or one collapsed to a single boolean by
+`AND`/`OR`.
 
 ``` python
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!D4"], load_values=False)
