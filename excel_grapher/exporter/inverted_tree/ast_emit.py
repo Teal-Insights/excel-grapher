@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -51,6 +51,8 @@ from excel_grapher.exporter.inverted_tree.deps import (
     PositionalRangeCell,
     SeriesDeps,
     _field_binding,
+    _host_follow_key_maps,
+    _host_producer_slots,
     _ref_pinned_fields,
     addresses_outside_blank_ranges,
     covering_series_for_index_window,
@@ -311,16 +313,62 @@ def _static_catalog_literal(
     return str(offset)
 
 
-def _host_key_value_expr(field: str, ctx: EmitContext) -> str:
-    """Return a Python expr for `host[field]` as `index_var` walks the host."""
+def _host_follow_for(owner: BoundSeries, ctx: EmitContext) -> dict[str, dict[object, object]]:
+    """Return host→producer key maps for `owner` from resolved host edges."""
+    return _host_follow_key_maps(
+        ctx.host, owner, _host_producer_slots(ctx.host, owner, ctx.deps.edges)
+    )
+
+
+def _follow_is_identity(
+    host_follow: Mapping[str, Mapping[object, object]], fields: Sequence[str]
+) -> bool:
+    """True when every `fields` entry is missing from `host_follow` or is identity."""
+    for name in fields:
+        mapped = host_follow.get(name)
+        if mapped is not None and any(key != item for key, item in mapped.items()):
+            return False
+    return True
+
+
+def _remap_host_key(
+    value: object, field: str, host_follow: Mapping[str, Mapping[object, object]]
+) -> object:
+    """Rewrite `value` through `host_follow[field]`, or return `value` unchanged."""
+    mapped = host_follow.get(field)
+    if mapped is None:
+        return value
+    return mapped.get(value, value)
+
+
+def _host_key_value_expr(
+    field: str,
+    ctx: EmitContext,
+    *,
+    host_follow: Mapping[str, Mapping[object, object]] | None = None,
+) -> str:
+    """Return a Python expr for `host[field]` as `index_var` walks the host.
+
+    When `host_follow` remaps this field onto a distinct producer vocabulary
+    (`B1` -> `Bounds Test 1: …`), emit the producer values in host order.
+    """
+    follow = host_follow or {}
+
+    def _value(raw: object) -> object:
+        return _remap_host_key(raw, field, follow)
+
     if ctx.index_var is None or field not in ctx.host.key_fields:
-        return repr(ctx.host.domain[ctx.host_index][field])
+        return repr(_value(ctx.host.domain[ctx.host_index][field]))
     fields = ctx.host.key_fields
     points = series_domain_points(ctx.host)
     if len(fields) == 1:
-        return f"{points!r}[{ctx.index_var}]"
+        column = tuple(_value(point) for point in points)
+        if column == points:
+            return f"{points!r}[{ctx.index_var}]"
+        return f"{column!r}[{ctx.index_var}]"
     pos = fields.index(field)
-    column = tuple(point[pos] if isinstance(point, tuple) else point for point in points)
+    raw_column = tuple(point[pos] if isinstance(point, tuple) else point for point in points)
+    column = tuple(_value(item) for item in raw_column)
     return f"{column!r}[{ctx.index_var}]"
 
 
@@ -329,13 +377,23 @@ def _producer_field_binding(
     address: CanonicalAddress,
     ctx: EmitContext,
     ref: CellRefNode | None = None,
+    *,
+    host_follow: Mapping[str, Mapping[object, object]] | None = None,
 ) -> dict[str, str | tuple[str, object]] | None:
     """Map each producer key field to `host` or a literal from `address`."""
     idx = owner.index_of(address)
     if idx is None:
         return None
     pinned = _ref_pinned_fields(ref, ctx.host_cell, owner) if ref is not None else frozenset()
-    raw = _field_binding(ctx.host, ctx.host_index, owner, idx, pinned_fields=pinned)
+    follow = host_follow if host_follow is not None else _host_follow_for(owner, ctx)
+    raw = _field_binding(
+        ctx.host,
+        ctx.host_index,
+        owner,
+        idx,
+        pinned_fields=pinned,
+        host_follow=follow,
+    )
     if raw is None:
         return None
     binding: dict[str, str | tuple[str, object]] = {}
@@ -356,13 +414,16 @@ def _expected_producer_point(
     binding: dict[str, str | tuple[str, object]],
     host_index: int,
     host: BoundSeries,
+    *,
+    host_follow: Mapping[str, Mapping[object, object]] | None = None,
 ) -> object:
     values: list[object] = []
     host_point = host.domain[host_index]
+    follow = host_follow or {}
     for key_name in owner.key_fields:
         spec = binding[key_name]
         if spec == "host":
-            values.append(host_point[key_name])
+            values.append(_remap_host_key(host_point[key_name], key_name, follow))
         elif isinstance(spec, tuple):
             values.append(spec[1])
         else:
@@ -376,11 +437,14 @@ def _verify_keyed_binding(
     owner: BoundSeries,
     binding: dict[str, str | tuple[str, object]],
     ctx: EmitContext,
+    *,
+    host_follow: Mapping[str, Mapping[object, object]] | None = None,
 ) -> None:
     """Fail closed when a host member has no producer cell for `binding`."""
     domain = series_domain_points(owner)
     known = set(domain)
     seen: set[int] = set()
+    follow = host_follow if host_follow is not None else _host_follow_for(owner, ctx)
     for edge in ctx.deps.edges:
         if edge.producer_id != owner.series_id or edge.consumer_id != ctx.host.series_id:
             continue
@@ -388,7 +452,7 @@ def _verify_keyed_binding(
         if host_i is None or host_i in seen or host_i >= len(ctx.host.domain):
             continue
         seen.add(host_i)
-        expected = _expected_producer_point(owner, binding, host_i, ctx.host)
+        expected = _expected_producer_point(owner, binding, host_i, ctx.host, host_follow=follow)
         if expected not in known:
             raise InvertedTreeExportError(
                 f"series {ctx.host.series_id!r} cell {ctx.host.cells[host_i]} "
@@ -403,18 +467,20 @@ def _keyed_catalog_index_expr(
     ref: CellRefNode | None = None,
 ) -> str:
     """Return `domain.index(key)` for a keyed dual-read of `address`."""
-    binding = _producer_field_binding(owner, address, ctx, ref=ref)
+    follow = _host_follow_for(owner, ctx)
+    binding = _producer_field_binding(owner, address, ctx, ref=ref, host_follow=follow)
     if binding is None:
         raise InvertedTreeExportError(
             f"series {ctx.host.series_id!r}: cannot emit keyed read of "
             f"{owner.series_id!r} at {address}"
         )
-    _verify_keyed_binding(owner, binding, ctx)
+    _verify_keyed_binding(owner, binding, ctx, host_follow=follow)
     domain = series_domain_points(owner)
     if (
         ctx.index_var is not None
         and owner.key_fields == ctx.host.key_fields
         and all(binding[key_name] == "host" for key_name in owner.key_fields)
+        and _follow_is_identity(follow, owner.key_fields)
     ):
         host_domain = series_domain_points(ctx.host)
         return f"{domain!r}.index({host_domain!r}[{ctx.index_var}])"
@@ -422,7 +488,7 @@ def _keyed_catalog_index_expr(
     for key_name in owner.key_fields:
         spec = binding[key_name]
         if spec == "host":
-            key_parts.append(_host_key_value_expr(key_name, ctx))
+            key_parts.append(_host_key_value_expr(key_name, ctx, host_follow=follow))
         elif isinstance(spec, tuple):
             key_parts.append(repr(spec[1]))
         else:
