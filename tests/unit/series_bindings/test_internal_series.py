@@ -343,7 +343,7 @@ def test_schema_rejects_internal_with_legacy_setter() -> None:
         validate_bindings_document(doc)
 
 
-def test_resolve_internal_series_warns_on_partial_formula_overlap(tmp_path: Path) -> None:
+def test_resolve_internal_series_warns_on_leaf_in_formula_series(tmp_path: Path) -> None:
     wb_path = tmp_path / "formula_override.xlsx"
     _write_override_workbook(wb_path)
     graph = create_dependency_graph(
@@ -357,9 +357,30 @@ def test_resolve_internal_series_warns_on_partial_formula_overlap(tmp_path: Path
 
     assert [leaf["address"] for leaf in resolved["leaves"]] == ["Engine!B2"]
     assert any(
+        issue["code"] == "leaf_in_formula_series" and issue["level"] == "warning"
+        for issue in resolved["issues"]
+    )
+    assert not any(issue["code"] == "partial_graph_overlap" for issue in resolved["issues"])
+
+
+def test_resolve_internal_series_warns_on_off_graph_partial_overlap(tmp_path: Path) -> None:
+    wb_path = tmp_path / "formula_override.xlsx"
+    _write_override_workbook(wb_path)
+    graph = create_dependency_graph(
+        wb_path,
+        ["Engine!B2", "Engine!C2", "Engine!D2"],
+        load_values=True,
+    )
+    series = _internal_series_doc(data_range="Engine!C1:C2")["series"][0]
+
+    resolved = resolve_series_binding(graph, wb_path, series, direction="internal")
+
+    assert [leaf["address"] for leaf in resolved["leaves"]] == ["Engine!C2"]
+    assert any(
         issue["code"] == "partial_graph_overlap" and issue["level"] == "warning"
         for issue in resolved["issues"]
     )
+    assert not any(issue["code"] == "leaf_in_formula_series" for issue in resolved["issues"])
 
 
 def test_resolve_internal_series_includes_constants_when_intersect_disabled(
