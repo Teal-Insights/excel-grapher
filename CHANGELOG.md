@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.1.1 (2026-09-06)
+
+### Bug Fixes
+
+- **export**: Keep on-graph leaves in series formula catalog
+  ([#709](https://github.com/Teal-Insights/excel-grapher/pull/709),
+  [`01d17da`](https://github.com/Teal-Insights/excel-grapher/commit/01d17da20454056e32d8bbe5db15c17bc75ab50d))
+
+### Testing
+
+- **export**: Narrow series hole_at before reading kind
+  ([#709](https://github.com/Teal-Insights/excel-grapher/pull/709),
+  [`01d17da`](https://github.com/Teal-Insights/excel-grapher/commit/01d17da20454056e32d8bbe5db15c17bc75ab50d))
+
+
 ## v14.1.0 (2026-09-06)
 
 ### Features
