@@ -19,6 +19,7 @@ from excel_grapher.core.cell_types import CellType, leaves_missing_cell_type_con
 from excel_grapher.core.formula_ast import (
     AstNode,
     FormulaStyle,
+    formula_address_shape,
     intern_formula_ast,
     parse_preserving_axes_optional,
     render_formula,
@@ -29,7 +30,7 @@ from .blank_ranges import (
     cell_in_blank_ranges,
     normalize_blank_range_specs,
 )
-from .dependency_provenance import EdgeProvenance
+from .dependency_provenance import DependencyCause, EdgeProvenance
 from .dynamic_ref_walk import DynamicRefWalkContext
 from .dynamic_refs import (
     DynamicRefConfig,
@@ -72,6 +73,7 @@ from .parser import (
     parse_guard_expr,
     parse_range_refs_with_spans,
     parse_standalone_cell_refs,
+    parse_standalone_cell_refs_with_spans,
     split_top_level_choose,
     split_top_level_function,
     split_top_level_if,
@@ -181,6 +183,65 @@ def _dynamic_ref_cache_key(
     if _POSITION_DEPENDENT_DYNAMIC_REF_PATTERN.search(formula_for_infer):
         return (formula_for_infer, current_sheet, current_a1)
     return (formula_for_infer, current_sheet)
+
+
+def _index_offset_lookup_bases(
+    calls: list[tuple[str, str, tuple[int, int]]],
+) -> tuple[str, ...]:
+    """Return INDEX array / OFFSET base argument texts in call order."""
+    bases: list[str] = []
+    for fn_name, inner, _span in calls:
+        if fn_name not in {"INDEX", "OFFSET"}:
+            continue
+        args = _split_function_args(inner)
+        if not args:
+            continue
+        bases.append(args[0].strip())
+    return tuple(bases)
+
+
+def _dynamic_shape_cache_key(
+    formula_for_infer: str,
+    current_sheet: str,
+    current_a1: str,
+    lookup_bases: tuple[str, ...],
+    *,
+    has_indirect: bool,
+) -> tuple[object, ...]:
+    """Key inferred INDEX/OFFSET targets by relative shape and lookup bases.
+
+    Host A1 is omitted so row-wise copies over a fixed array share inference.
+    `INDIRECT` and argument-less `ROW()`/`COLUMN()` stay per-cell: their
+    targets depend on host position or on string domains that the punched
+    shape does not capture.
+    """
+    if has_indirect or _POSITION_DEPENDENT_DYNAMIC_REF_PATTERN.search(formula_for_infer):
+        return (formula_for_infer, current_sheet, current_a1)
+    return (formula_address_shape(formula_for_infer), lookup_bases, current_sheet)
+
+
+def _top_level_conditional_formula(formula: str) -> bool:
+    """Return True when `formula` is a top-level IF/IFS/CHOOSE/SWITCH."""
+    if split_top_level_if(formula) is not None:
+        return True
+    ifs_args = split_top_level_ifs(formula)
+    if ifs_args is not None and len(ifs_args) >= 2:
+        return True
+    choose_args = split_top_level_choose(formula)
+    if choose_args is not None and len(choose_args) >= 2:
+        return True
+    switch_args = split_top_level_switch(formula)
+    return switch_args is not None and len(switch_args) >= 3
+
+
+def _dynamic_cause(fn_name: str) -> DependencyCause:
+    if fn_name == "OFFSET":
+        return DependencyCause.dynamic_offset
+    if fn_name == "INDIRECT":
+        return DependencyCause.dynamic_indirect
+    if fn_name == "INDEX":
+        return DependencyCause.dynamic_index
+    return DependencyCause.dynamic_offset
 
 
 def _workbook_sorted_sheet_a1_pairs(
@@ -540,21 +601,29 @@ def create_dependency_graph(
     formula that needs a given set of argument cells pays for expansion;
     later formulas whose argument refs are already typed skip the expand call
     and reuse the env (issue #528).  That includes row-wise INDEX/MATCH and
-    OFFSET variants that share a MATCH lookup.  INDEX / OFFSET / INDIRECT
-    *target* inference still runs per formula so shifted arrays and bases
-    keep distinct deps.
+    OFFSET variants that share a MATCH lookup.  INDEX / OFFSET *target*
+    inference is keyed by relative formula shape plus lookup bases so
+    row-wise copies over a fixed array share the inferred set (issue #716).
+    Shifted arrays (distinct INDEX/OFFSET first-arg text) miss that cache
+    and keep per-cell deps. `INDIRECT` and argument-less `ROW()`/`COLUMN()`
+    stay per-cell.
 
     Provenance collection (`capture_dependency_provenance=True`) reads the
-    per-cell `_dyn_cache` of inferred targets filled during extraction
-    (keyed by normalized formula, sheet, and A1).  Row-wise variants miss
-    that key across cells, but extraction populates it before provenance
-    runs, so provenance does not re-expand.  Extraction and provenance also
-    share one `DynamicRefWalkContext` for argument-subgraph BFS and static
-    ref parsing, so a `_dyn_cache` hit skips the walk entirely and a miss
-    reuses extract's memoized `(formula, sheet)` ref sets (issue #539).
-    Callers doing iterative constraint-tuning workflows can still set
-    `capture_dependency_provenance=False` to avoid remaining provenance
-    overhead (formula-string span collection, branch-union merging, etc.).
+    per-cell `_dyn_cache` of inferred targets filled during extraction.
+    INDEX/OFFSET targets are also keyed by relative formula shape plus lookup
+    bases (the INDEX array / OFFSET base), so row-wise copies over a fixed
+    array share inference (issue #716).  Host A1 stays in the key only for
+    `INDIRECT` and argument-less `ROW()`/`COLUMN()`, where the shifted array
+    or host position actually changes the target set.
+
+    Top-level IF/IFS/CHOOSE/SWITCH provenance is accumulated during
+    `extract_deps_with_guards` (the same walk that builds guards). Other
+    formulas still use `collect_provenance_for_formula` for span-accurate
+    direct-ref sites. Extraction and provenance share one
+    `DynamicRefWalkContext` for argument-subgraph BFS and static ref parsing
+    (issue #539). Callers doing iterative constraint-tuning workflows can
+    leave `capture_dependency_provenance=False` (the default) to skip
+    remaining provenance overhead.
     """
     if not isinstance(workbook, (str, Path)):
         raise TypeError(
@@ -616,10 +685,13 @@ def create_dependency_graph(
     # Clear per-graph-build caches from previous invocations.
     clear_index_target_cache()
 
-    # Per-graph cache: (normalized_formula, current_sheet, current_a1) -> (offset_targets, indirect_targets, index_targets).
+    # Per-graph cache: (normalized_formula, current_sheet, current_a1) -> targets.
     # Populated by extract_expr_deps (constraint path); consumed by collect_provenance_for_formula
     # to avoid re-running the expensive expand_leaf_env_to_argument_env call.
     _dyn_cache: dict[tuple[str, str, str], _DynamicRefTargets] = {}
+    # Shape + INDEX/OFFSET lookup bases (issue #716): row-wise copies over a
+    # fixed array share inferred targets without keying on host A1.
+    _dyn_shape_cache: dict[tuple[object, ...], _DynamicRefTargets] = {}
     # Per-graph cache for the full dependency contribution of constraint-based
     # dynamic refs. Position-independent repeated formulas can share this before
     # rebuilding argument domains and rerunning INDEX/MATCH inference.
@@ -785,9 +857,9 @@ def create_dependency_graph(
 
     def extract_deps_with_guards(
         formula: str, current_sheet: str, current_a1: str, *, array_formula: bool = False
-    ) -> list[tuple[str, str, GuardExpr | None]]:
+    ) -> tuple[list[tuple[str, str, GuardExpr | None]], dict[str, EdgeProvenance] | None]:
         if not formula.startswith("="):
-            return []
+            return [], {} if capture_dependency_provenance else None
         try:
             return _extract_deps_with_guards_inner(
                 formula, current_sheet, current_a1, array_formula=array_formula
@@ -799,8 +871,26 @@ def create_dependency_graph(
 
     def _extract_deps_with_guards_inner(
         formula: str, current_sheet: str, current_a1: str, *, array_formula: bool = False
-    ) -> list[tuple[str, str, GuardExpr | None]]:
+    ) -> tuple[list[tuple[str, str, GuardExpr | None]], dict[str, EdgeProvenance] | None]:
         sheet_order = list(wb_formulas.sheetnames)
+        prov_acc: dict[str, EdgeProvenance] = {}
+
+        def _note_prov(
+            sheet: str,
+            a1: str,
+            cause: DependencyCause,
+            span: tuple[int, int] | None = None,
+        ) -> None:
+            if not capture_dependency_provenance:
+                return
+            key = format_key(sheet, a1)
+            new = (
+                EdgeProvenance(causes=cause, direct_sites_normalized=(span,))
+                if span is not None
+                else EdgeProvenance(causes=cause)
+            )
+            prev = prov_acc.get(key)
+            prov_acc[key] = prev.merge(new) if prev is not None else new
 
         def extract_expr_deps(expr: str) -> list[tuple[str, str]]:
             """Extract dependencies from an expression fragment (no leading '=')."""
@@ -823,19 +913,32 @@ def create_dependency_graph(
                 ):
                     dyn_spans.append(span)
                     sheet = start.sheet if start.sheet is not None else current_sheet
-                    deps.extend(
-                        expand_range(
-                            sheet=sheet,
-                            start_col=start.column,
-                            start_row=start.row,
-                            end_col=end.column,
-                            end_row=end.row,
-                            max_cells=max_range_cells,
+                    cause_dyn = _dynamic_cause(
+                        next(
+                            (
+                                fn
+                                for fn, _inner, sp in _find_function_calls_with_spans(
+                                    f, _DYNAMIC_REF_FN_NAMES
+                                )
+                                if sp == span
+                            ),
+                            "OFFSET",
                         )
                     )
+                    for dep_sheet, dep_a1 in expand_range(
+                        sheet=sheet,
+                        start_col=start.column,
+                        start_row=start.row,
+                        end_col=end.column,
+                        end_row=end.row,
+                        max_cells=max_range_cells,
+                    ):
+                        deps.append((dep_sheet, dep_a1))
+                        _note_prov(dep_sheet, dep_a1, cause_dyn)
                     for ref in arg_refs:
                         arg_sheet = ref.sheet if ref.sheet is not None else current_sheet
                         deps.append((arg_sheet, f"{ref.column}{ref.row}"))
+                        _note_prov(arg_sheet, f"{ref.column}{ref.row}", cause_dyn)
             else:
                 calls = _find_function_calls_with_spans(
                     f, frozenset({"OFFSET", "INDIRECT", "INDEX"})
@@ -901,21 +1004,23 @@ def create_dependency_graph(
                                     if start_ref.sheet is not None
                                     else current_sheet
                                 )
-                                deps.extend(
-                                    expand_range(
-                                        sheet=call_sheet,
-                                        start_col=start_ref.column,
-                                        start_row=start_ref.row,
-                                        end_col=end_ref.column,
-                                        end_row=end_ref.row,
-                                        max_cells=max_range_cells,
-                                    )
-                                )
+                                cause_dyn = _dynamic_cause(fn_name_check)
+                                for dep_sheet, dep_a1 in expand_range(
+                                    sheet=call_sheet,
+                                    start_col=start_ref.column,
+                                    start_row=start_ref.row,
+                                    end_col=end_ref.column,
+                                    end_row=end_ref.row,
+                                    max_cells=max_range_cells,
+                                ):
+                                    deps.append((dep_sheet, dep_a1))
+                                    _note_prov(dep_sheet, dep_a1, cause_dyn)
                                 for ref in arg_refs:
                                     arg_sheet = (
                                         ref.sheet if ref.sheet is not None else current_sheet
                                     )
                                     deps.append((arg_sheet, f"{ref.column}{ref.row}"))
+                                    _note_prov(arg_sheet, f"{ref.column}{ref.row}", cause_dyn)
                                 continue
                         dynamic_calls.append((fn_name_check, inner_check, span_check))
                     calls = dynamic_calls
@@ -956,7 +1061,8 @@ def create_dependency_graph(
                             dyn_spans.extend(span for _, _, span in calls)
                             _dyn_cache[_cell_cache_key] = cached_targets
                             _dyn_stats["dep_cache_hits"] += 1
-                            calls = []
+                            if not capture_dependency_provenance:
+                                calls = []
                     argument_addrs: set[str] = set()
                     if calls:
                         _deps_start = len(deps)
@@ -965,6 +1071,7 @@ def create_dependency_graph(
                             args = _split_function_args(inner)
                             if args is None:
                                 continue
+                            dyn_cause = _dynamic_cause(fn_name)
                             for i, arg in enumerate(args):
                                 normalized = normalizer.normalize(
                                     "=" + arg,
@@ -989,6 +1096,7 @@ def create_dependency_graph(
                                     sh = ref.sheet if ref.sheet is not None else current_sheet
                                     a1 = f"{ref.column}{ref.row}"
                                     deps.append((sh, a1))
+                                    _note_prov(sh, a1, dyn_cause)
                                     if is_variable:
                                         argument_addrs.add(format_key(sh, a1))
                                 if is_variable:
@@ -1009,6 +1117,7 @@ def create_dependency_graph(
                                             max_cells=max_range_cells,
                                         ):
                                             deps.append((dep_sheet, dep_a1))
+                                            _note_prov(dep_sheet, dep_a1, dyn_cause)
                                             argument_addrs.add(format_key(dep_sheet, dep_a1))
                     if calls:
                         all_refs, leaves = ref_walk.argument_subgraph_refs(argument_addrs)
@@ -1038,8 +1147,27 @@ def create_dependency_graph(
                         )
                         _current_col = fastpyxl.utils.cell.column_index_from_string(_col_letter)
                         _cache_key = (formula_for_infer, current_sheet, current_a1)
+                        _lookup_bases = _index_offset_lookup_bases(calls)
+                        _has_indirect = any(fn == "INDIRECT" for fn, _inner, _span in calls)
+                        _shape_key = _dynamic_shape_cache_key(
+                            formula_for_infer,
+                            current_sheet,
+                            current_a1,
+                            _lookup_bases,
+                            has_indirect=_has_indirect,
+                        )
                         if _cache_key in _dyn_cache:
                             offset_targets, indirect_targets, index_targets = _dyn_cache[_cache_key]
+                            _dyn_stats["cache_hits"] += 1
+                        elif _shape_key in _dyn_shape_cache:
+                            offset_targets, indirect_targets, index_targets = _dyn_shape_cache[
+                                _shape_key
+                            ]
+                            _dyn_cache[_cache_key] = (
+                                offset_targets,
+                                indirect_targets,
+                                index_targets,
+                            )
                             _dyn_stats["cache_hits"] += 1
                         else:
                             _dyn_stats["infer_calls"] += 1
@@ -1101,17 +1229,28 @@ def create_dependency_graph(
                                     f"{exc} (while analyzing dynamic OFFSET/INDIRECT/INDEX for {cell_key}; "
                                     f"normalized formula {formula_for_infer!r})"
                                 ) from exc
-                            _dyn_cache[_cache_key] = (
+                            targets = (
                                 offset_targets,
                                 indirect_targets,
                                 index_targets,
                             )
+                            _dyn_cache[_cache_key] = targets
+                            _dyn_shape_cache[_shape_key] = targets
                         for addr in sort_node_keys(
                             offset_targets | indirect_targets | index_targets,
                             sheet_order=sheet_order,
                         ):
                             sh, a1 = parse_address(addr)
                             deps.append((sh, a1))
+                        for addr in offset_targets:
+                            sh, a1 = parse_address(addr)
+                            _note_prov(sh, a1, DependencyCause.dynamic_offset)
+                        for addr in indirect_targets:
+                            sh, a1 = parse_address(addr)
+                            _note_prov(sh, a1, DependencyCause.dynamic_indirect)
+                        for addr in index_targets:
+                            sh, a1 = parse_address(addr)
+                            _note_prov(sh, a1, DependencyCause.dynamic_index)
                         _dyn_dep_cache[_dyn_dep_cache_key] = (
                             deps[_deps_start:],
                             (offset_targets, indirect_targets, index_targets),
@@ -1126,19 +1265,21 @@ def create_dependency_graph(
                 for start, end, _span in parse_range_refs_with_spans(masked):
                     sheet = start.sheet if start.sheet is not None else current_sheet
                     _ensure_sheet_bounds(sheet)
-                    deps.extend(
-                        expand_range_ref(
-                            start=start,
-                            end=end,
-                            default_sheet=sheet,
-                            max_cells=max_range_cells,
-                            sheet_bounds=sheet_bounds,
-                        )
-                    )
+                    for dep_sheet, dep_a1 in expand_range_ref(
+                        start=start,
+                        end=end,
+                        default_sheet=sheet,
+                        max_cells=max_range_cells,
+                        sheet_bounds=sheet_bounds,
+                    ):
+                        deps.append((dep_sheet, dep_a1))
+                        _note_prov(dep_sheet, dep_a1, DependencyCause.static_range)
 
-            for ref in parse_standalone_cell_refs(masked):
+            for ref, span in parse_standalone_cell_refs_with_spans(masked):
                 sh = ref.sheet if ref.sheet is not None else current_sheet
-                deps.append((sh, f"{ref.column}{ref.row}"))
+                a1 = f"{ref.column}{ref.row}"
+                deps.append((sh, a1))
+                _note_prov(sh, a1, DependencyCause.direct_ref, span)
 
             # 3) Named ranges
             for m in _NAME_TOKEN_RE.finditer(masked):
@@ -1146,6 +1287,7 @@ def create_dependency_graph(
                 resolved = named_ranges.get(token)
                 if resolved is not None:
                     deps.append(resolved)
+                    _note_prov(resolved[0], resolved[1], DependencyCause.direct_ref, m.span())
                     continue
                 resolved_range = named_range_ranges.get(token)
                 if resolved_range is not None:
@@ -1153,16 +1295,16 @@ def create_dependency_graph(
                         sheet, start_a1, end_a1 = resolved_range
                         start_col, start_row = fastpyxl.utils.cell.coordinate_from_string(start_a1)
                         end_col, end_row = fastpyxl.utils.cell.coordinate_from_string(end_a1)
-                        deps.extend(
-                            expand_range(
-                                sheet=sheet,
-                                start_col=start_col,
-                                start_row=int(start_row),
-                                end_col=end_col,
-                                end_row=int(end_row),
-                                max_cells=max_range_cells,
-                            )
-                        )
+                        for dep_sheet, dep_a1 in expand_range(
+                            sheet=sheet,
+                            start_col=start_col,
+                            start_row=int(start_row),
+                            end_col=end_col,
+                            end_row=int(end_row),
+                            max_cells=max_range_cells,
+                        ):
+                            deps.append((dep_sheet, dep_a1))
+                            _note_prov(dep_sheet, dep_a1, DependencyCause.static_range)
                     continue
                 if token in defined_names:
                     raise ValueError(f"Unsupported defined name referenced in formula: {token}")
@@ -1409,10 +1551,17 @@ def create_dependency_graph(
                 _merge_guarded_dep(out, (sh, a1), None)
             return out
 
-        return _sorted_guard_deps(
+        guarded = _sorted_guard_deps(
             extract_expr_deps_guarded(formula, array_context=array_formula),
             sheet_order=sheet_order,
         )
+        if not capture_dependency_provenance:
+            return guarded, None
+        if _top_level_conditional_formula(formula):
+            return guarded, {
+                key: EdgeProvenance(causes=prov.causes) for key, prov in prov_acc.items()
+            }
+        return guarded, prov_acc
 
     visited: set[str] = set()
     q: deque[tuple[str, str, int]] = deque()
@@ -1501,6 +1650,7 @@ def create_dependency_graph(
                 )
                 if formula_ast is not None:
                     formula_ast = intern_formula_ast(formula_ast, formula_ast_intern)
+                    ref_walk.store_cell_ast(key, formula_ast)
                     extraction_formula = render_formula(
                         formula_ast,
                         anchor=CellKey(key),
@@ -1541,7 +1691,7 @@ def create_dependency_graph(
             # (_dyn_cache) is populated before provenance collection reads from it.
             # Both extraction and provenance use the AST-rendered dialect (or the
             # regex fallback when the cell is unparseable).
-            deps_and_guards = extract_deps_with_guards(
+            deps_and_guards, extract_prov = extract_deps_with_guards(
                 extraction_formula, sheet, a1, array_formula=is_array_formula
             )
 
@@ -1550,27 +1700,30 @@ def create_dependency_graph(
                 provenance_cache_key = _dynamic_ref_cache_key(extraction_formula, sheet, a1)
                 prov_map = _provenance_cache.get(provenance_cache_key)
                 if prov_map is None:
-                    prov_map = collect_provenance_for_formula(
-                        extraction_formula,
-                        normalized_formula=extraction_formula,
-                        current_sheet=sheet,
-                        current_a1=a1,
-                        named_ranges=named_ranges,
-                        named_range_ranges=named_range_ranges,
-                        normalizer=normalizer,
-                        defined_names=defined_names,
-                        expand_ranges=expand_ranges,
-                        max_range_cells=max_range_cells,
-                        use_cached_dynamic_refs=use_cached_dynamic_refs,
-                        dynamic_refs=dynamic_refs,
-                        wb_formulas=wb_formulas,
-                        resolve_cached_value=resolve_cached_value,
-                        dynamic_expansion_cache=_dyn_cache,
-                        type_analysis_cache=type_analysis_cache,
-                        workbook_sha256=_wb_sha256,
-                        ref_walk=ref_walk,
-                        sheet_bounds=sheet_bounds,
-                    )
+                    if _top_level_conditional_formula(extraction_formula):
+                        prov_map = extract_prov if extract_prov is not None else {}
+                    else:
+                        prov_map = collect_provenance_for_formula(
+                            extraction_formula,
+                            normalized_formula=extraction_formula,
+                            current_sheet=sheet,
+                            current_a1=a1,
+                            named_ranges=named_ranges,
+                            named_range_ranges=named_range_ranges,
+                            normalizer=normalizer,
+                            defined_names=defined_names,
+                            expand_ranges=expand_ranges,
+                            max_range_cells=max_range_cells,
+                            use_cached_dynamic_refs=use_cached_dynamic_refs,
+                            dynamic_refs=dynamic_refs,
+                            wb_formulas=wb_formulas,
+                            resolve_cached_value=resolve_cached_value,
+                            dynamic_expansion_cache=_dyn_cache,
+                            type_analysis_cache=type_analysis_cache,
+                            workbook_sha256=_wb_sha256,
+                            ref_walk=ref_walk,
+                            sheet_bounds=sheet_bounds,
+                        )
                     _provenance_cache[provenance_cache_key] = prov_map
 
             for dep_sheet, dep_a1, guard in deps_and_guards:

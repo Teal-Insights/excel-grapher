@@ -130,6 +130,10 @@ class DynamicRefWalkContext:
         self._ast_cache[addr] = ast
         return ast
 
+    def store_cell_ast(self, addr: str, ast: AstNode | None) -> None:
+        """Remember an already-parsed axis-preserving AST for `addr`."""
+        self._ast_cache[addr] = ast
+
     def argument_node(self, addr: str) -> tuple[frozenset[str], bool]:
         """Return static child refs and whether `addr` is a non-formula leaf."""
         cached = self._arg_node_cache.get(addr)

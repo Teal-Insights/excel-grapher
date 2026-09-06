@@ -9,8 +9,9 @@ Covers two improvements:
      of how many distinct workbooks or formula strings are processed.
   B. Per-BFS-session worksheet cache in create_dependency_graph
      — avoids O(#sheets) fastpyxl.__getitem__ scans on every node visit
-  C. Per-build provenance cache — avoids repeating the conditional provenance
-     walk for identical absolute formulas (issue #716)
+  C. Per-build provenance cache — identical absolute non-conditional formulas
+     reuse `collect_provenance_for_formula`; top-level IF/IFS/CHOOSE/SWITCH
+     provenance is accumulated during extract (issue #716).
 """
 
 from __future__ import annotations
@@ -256,7 +257,7 @@ def test_switch_formula_provenance_causes(tmp_path: Path) -> None:
 
 
 def test_repeated_absolute_formula_reuses_provenance_walk(tmp_path: Path) -> None:
-    """Identical absolute formulas should collect provenance once per build."""
+    """Identical absolute IF formulas accumulate provenance during extract."""
     import excel_grapher.grapher.builder as builder_mod
 
     excel_path = tmp_path / "repeated_provenance.xlsx"
@@ -292,7 +293,7 @@ def test_repeated_absolute_formula_reuses_provenance_walk(tmp_path: Path) -> Non
             capture_dependency_provenance=True,
         )
 
-    assert collect_calls == 1
+    assert collect_calls == 0
     for row in range(1, 21):
         target = f"Sheet1!D{row}"
         assert set(graph.get_dependencies(target)) == {

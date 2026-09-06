@@ -5,7 +5,7 @@ Covers defences against the LIC-DSF hang:
 - Consumed-leaf bookkeeping is only maintained when a persistent
   `TypeAnalysisCache` is actually going to read it.
 - `expand-env-progress` traces so callers are not blind during a long expansion.
-- A depth guard that fails with `DynamicRefError` instead of `RecursionError`.
+- A depth guard that fails with `DynamicRefError` instead of unbounded analysis.
 - Already-inferred refs are served in bulk, so a long chain over a large static
   range costs `O(depth + range_cells)` `cell_type_for` entries, not
   `O(depth x range_cells)`.
@@ -17,7 +17,6 @@ Covers defences against the LIC-DSF hang:
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -414,9 +413,9 @@ class TestAnalysisDepthGuard:
         assert "depth" in message.lower()
         assert "Sheet1!A" in message
 
-    def test_default_depth_limit_leaves_recursion_headroom(self) -> None:
-        """The guard must trip before CPython's own recursion limit does."""
-        assert sys.getrecursionlimit() * 0.75 > dynamic_refs_mod._MAX_ANALYSIS_DEPTH
+    def test_default_depth_limit_is_finite(self) -> None:
+        """Logical analysis depth stays bounded; the walk is iterative (#716)."""
+        assert 1 < dynamic_refs_mod._MAX_ANALYSIS_DEPTH < 10_000
 
     def test_chain_within_limit_still_succeeds(self) -> None:
         _, env = _expand_with_trace(50)
