@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.2.0 (2026-09-06)
+
+### Features
+
+- **export**: Emit multi-owner MATCH/INDEX windows positionally
+  ([#711](https://github.com/Teal-Insights/excel-grapher/pull/711),
+  [`2d529e8`](https://github.com/Teal-Insights/excel-grapher/commit/2d529e873fd803cb7e69d67c9c022a3d37a1ccea))
+
+### Testing
+
+- **export**: Add multi-owner INDEX/MATCH inverted-tree regression
+  ([#711](https://github.com/Teal-Insights/excel-grapher/pull/711),
+  [`2d529e8`](https://github.com/Teal-Insights/excel-grapher/commit/2d529e873fd803cb7e69d67c9c022a3d37a1ccea))
+
+
 ## v14.1.1 (2026-09-06)
 
 ### Bug Fixes
