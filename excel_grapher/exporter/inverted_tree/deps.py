@@ -105,30 +105,67 @@ class PositionalRangeCell:
     blank: bool
 
 
+def _is_excel_blank_cell(
+    address: CanonicalAddress,
+    graph: DependencyGraph | None,
+) -> bool:
+    """True when `address` is an Excel blank, not an unbound catalog cell.
+
+    Range expansion may create graph leaves for empty cells. Those holes have
+    no formula and no cached value. A formula cell or a valued leaf in the
+    same window is a real catalog gap and must fail closed.
+    """
+    if graph is None:
+        return False
+    node = graph.get_node(address)
+    if node is None:
+        return True
+    if node.has_formula:
+        return False
+    return node.value is None
+
+
 def resolve_positional_range(
     addresses: Sequence[CanonicalAddress],
     catalog: SeriesCatalog,
     blank_rects: Sequence[BlankRangeRect] | None = None,
+    graph: DependencyGraph | None = None,
 ) -> tuple[tuple[PositionalRangeCell, ...], tuple[CanonicalAddress, ...]]:
-    """Map each address to a bound catalog cell or a declared blank.
+    """Map each address to a bound catalog cell or a positional blank.
 
     Returns `(cells, missing)`. `missing` lists addresses that are neither
-    bound nor declared blank. Worksheet order and rectangle size are
-    preserved; declared blanks stay in `cells` so MATCH/INDEX positions
-    do not shift. Unique cell ownership (`covering_series`) is unchanged.
+    bound, declared blank, nor an empty off-catalog hole in a window that
+    already has a bound cell. Worksheet order and rectangle size are
+    preserved; blanks stay in `cells` so MATCH/INDEX positions do not
+    shift. Unique cell ownership (`covering_series`) is unchanged.
+
+    An entirely unbound window still fails closed so empty VLOOKUP tables
+    require `blank_ranges`. On-graph formula cells and valued leaves
+    without a series are always missing.
     """
     rects = current_blank_rects() if blank_rects is None else blank_rects
     cells: list[PositionalRangeCell] = []
     missing: list[CanonicalAddress] = []
+    unbound_blanks: list[CanonicalAddress] = []
+    owned = False
     for address in addresses:
         if address_in_blank_ranges(address, rects):
             cells.append(PositionalRangeCell(address, None, None, True))
             continue
         owner = catalog.series_for(address)
-        if owner is None:
-            missing.append(address)
+        if owner is not None:
+            owned = True
+            cells.append(
+                PositionalRangeCell(address, owner.series_id, owner.index_of(address), False)
+            )
             continue
-        cells.append(PositionalRangeCell(address, owner.series_id, owner.index_of(address), False))
+        if _is_excel_blank_cell(address, graph):
+            unbound_blanks.append(address)
+            cells.append(PositionalRangeCell(address, None, None, True))
+            continue
+        missing.append(address)
+    if unbound_blanks and not owned:
+        missing.extend(unbound_blanks)
     return tuple(cells), tuple(missing)
 
 
@@ -665,7 +702,9 @@ class _DepCollector:
         ref: AstNode | None = None,
         access: AccessClass = "whole",
     ) -> None:
-        cells, missing = resolve_positional_range(addresses, self.catalog, self.blank_rects)
+        cells, missing = resolve_positional_range(
+            addresses, self.catalog, self.blank_rects, self.graph
+        )
         if missing:
             label = f"range {range_ref_label(ref, host_cell)}" if ref is not None else "range"
             raise InvertedTreeExportError(
