@@ -63,7 +63,7 @@ def _dynamic_cause(fn_name: str) -> DependencyCause:
         return DependencyCause.dynamic_indirect
     if fn_name == "INDEX":
         return DependencyCause.dynamic_index
-    return DependencyCause.dynamic_offset
+    raise ValueError(f"not a dynamic-ref function: {fn_name}")
 
 
 def _index_has_non_literal_row_col(inner: str) -> bool:
@@ -157,7 +157,10 @@ def _flat_provenance_one_string(
             value_resolver=resolve_cached_value,
         ):
             dyn_spans.append(span)
-            cause_dyn = _dynamic_cause(_call_kind_at_span(f, span))
+            kind = _call_kind_at_span(f, span)
+            if kind is None:
+                continue
+            cause_dyn = _dynamic_cause(kind)
             sheet = start.sheet if start.sheet is not None else current_sheet
             for dep_sheet, dep_a1 in expand_range(
                 sheet=sheet,
@@ -387,13 +390,13 @@ def _flat_provenance_one_string(
     return acc
 
 
-def _call_kind_at_span(formula: str, span: tuple[int, int]) -> str:
+def _call_kind_at_span(formula: str, span: tuple[int, int]) -> str | None:
     """Return OFFSET, INDIRECT, or INDEX for the dynamic call covering span."""
     calls = _find_function_calls_with_spans(formula, _DYNAMIC_REF_FNS)
     for fn, _inner, sp in calls:
         if sp == span:
             return fn
-    return "OFFSET"
+    return None
 
 
 def _flat_provenance_formula_and_normalized(
