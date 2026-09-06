@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.0.1 (2026-09-06)
+
+### Bug Fixes
+
+- **export**: Honor blank_ranges CellRef in inverted-tree emit
+  ([#704](https://github.com/Teal-Insights/excel-grapher/pull/704),
+  [`f43823f`](https://github.com/Teal-Insights/excel-grapher/commit/f43823f8a10b6bad62c86f77bfd198337840dacb))
+
+- **series_bindings**: Apply exclude_rows in validate (#594)
+  ([#705](https://github.com/Teal-Insights/excel-grapher/pull/705),
+  [`c2901d2`](https://github.com/Teal-Insights/excel-grapher/commit/c2901d2de6f34dc2ca1e8531daade16063b60b60))
+
+
 ## v14.0.0 (2026-09-05)
 
 ### Features
