@@ -49,10 +49,24 @@ def _unmask_string_literals(formula: str, literals: list[str]) -> str:
     return formula
 
 
+@dataclass(frozen=True, slots=True)
+class NamedRangeReplacementState:
+    """Compiled defined-name substitutions for regex normalize and parse.
+
+    `replacements` are sheet-qualified A1 without `$` (regex normalizer).
+    `absolute_replacements` keep `$` on both axes so `parse_preserving_axes`
+    treats defined names as absolute.
+    """
+
+    replacements: dict[str, str]
+    names_re: re.Pattern[str] | None
+    absolute_replacements: dict[str, str]
+
+
 def build_named_range_replacement_state(
     named_ranges: dict[str, tuple[str, str]] | None,
     named_range_ranges: dict[str, tuple[str, str, str]] | None,
-) -> tuple[dict[str, str], re.Pattern[str] | None]:
+) -> NamedRangeReplacementState:
     """Build replacement strings and a single alternation regex for defined names."""
     named_ranges = named_ranges or {}
     named_range_ranges = named_range_ranges or {}
@@ -73,12 +87,15 @@ def build_named_range_replacement_state(
             replacements[name] = format_range_key(sheet, start_cell, end_cell)
 
     if not replacements:
-        return {}, None
+        return NamedRangeReplacementState({}, None, {})
 
     names = sorted(replacements, key=len, reverse=True)
     alt = "|".join(re.escape(n) for n in names)
     names_re = re.compile(rf"\b(?:{alt})\b(?!\s*!)")
-    return replacements, names_re
+    absolute_replacements = {
+        name: _absolutize_defined_name_target(target) for name, target in replacements.items()
+    }
+    return NamedRangeReplacementState(replacements, names_re, absolute_replacements)
 
 
 def _apply_named_range_replacements(
@@ -395,19 +412,25 @@ def expand_defined_names(
     *,
     named_ranges: dict[str, tuple[str, str]] | None = None,
     named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
+    name_state: NamedRangeReplacementState | None = None,
 ) -> str:
     """Replace defined names with sheet-qualified A1, leaving `$` markers intact.
 
     Replacement targets are emitted with `$` on both axes so defined names stay
     absolute when parsed with `parse_preserving_axes`. String literals are
     masked so names inside quotes are not expanded.
+
+    Pass `name_state` to reuse a compiled alternation regex instead of
+    rebuilding it on every formula.
     """
     if not formula:
         return formula
+    if name_state is None:
+        name_state = build_named_range_replacement_state(named_ranges, named_range_ranges)
     masked, literals = _mask_string_literals(formula)
-    repl, names_re = build_named_range_replacement_state(named_ranges, named_range_ranges)
-    abs_repl = {name: _absolutize_defined_name_target(target) for name, target in repl.items()}
-    result = _apply_named_range_replacements(masked, abs_repl, names_re)
+    result = _apply_named_range_replacements(
+        masked, name_state.absolute_replacements, name_state.names_re
+    )
     return _unmask_string_literals(result, literals)
 
 
@@ -451,9 +474,12 @@ def normalize_excel_formula(
     """
     if not formula or not formula.startswith("="):
         return formula
-    repl, names_re = build_named_range_replacement_state(named_ranges, named_range_ranges)
+    state = build_named_range_replacement_state(named_ranges, named_range_ranges)
     return normalize_excel_formula_with_name_state(
-        formula, current_sheet, replacements=repl, names_re=names_re
+        formula,
+        current_sheet,
+        replacements=state.replacements,
+        names_re=state.names_re,
     )
 
 

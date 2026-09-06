@@ -13,6 +13,7 @@ from collections.abc import Callable, Collection, Iterable
 from excel_grapher.core.address_keys import CellKey, parse_address
 from excel_grapher.core.cell_types import CellType
 from excel_grapher.core.formula_ast import AstNode, parse_preserving_axes_optional
+from excel_grapher.core.formula_normalization import NamedRangeReplacementState
 
 from .parser import (
     FormulaNormalizer,
@@ -47,6 +48,7 @@ class DynamicRefWalkContext:
         stats: dict[str, int] | None = None,
         named_ranges: dict[str, tuple[str, str]] | None = None,
         named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
+        name_state: NamedRangeReplacementState | None = None,
     ) -> None:
         self._normalizer = normalizer
         self._max_range_cells = max_range_cells
@@ -60,6 +62,7 @@ class DynamicRefWalkContext:
         self._stats = stats
         self._named_ranges = named_ranges
         self._named_range_ranges = named_range_ranges
+        self._name_state = name_state if name_state is not None else normalizer.name_state
         self._refs_without_dynamic_cache: dict[tuple[str, str], frozenset[str]] = {}
         self._arg_subgraph_cache: dict[frozenset[str], tuple[frozenset[str], frozenset[str]]] = {}
         self._arg_node_cache: dict[str, tuple[frozenset[str], bool]] = {}
@@ -122,6 +125,7 @@ class DynamicRefWalkContext:
             anchor=CellKey(addr),
             named_ranges=self._named_ranges,
             named_range_ranges=self._named_range_ranges,
+            name_state=self._name_state,
         )
         self._ast_cache[addr] = ast
         return ast

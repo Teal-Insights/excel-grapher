@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TypeAlias
+from typing import TYPE_CHECKING, TypeAlias
 
 from fastpyxl.utils.cell import column_index_from_string, coordinate_from_string, get_column_letter
 
@@ -17,6 +17,9 @@ from excel_grapher.core.address_keys import (
 
 from .excel_function_names import normalize_excel_function_name
 from .types import XlError
+
+if TYPE_CHECKING:
+    from .formula_normalization import NamedRangeReplacementState
 
 
 class FormulaParseError(Exception):
@@ -1118,12 +1121,14 @@ def parse_preserving_axes(
     anchor: CellKey | str,
     named_ranges: dict[str, tuple[str, str]] | None = None,
     named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
+    name_state: NamedRangeReplacementState | None = None,
 ) -> AstNode:
     """Parse `formula` from raw workbook text, preserving `$` axis intent.
 
     Bare A1 refs resolve against `anchor`. Defined names expand to absolute
     sheet-qualified A1 before parsing. Whitespace and scientific literals follow
-    the same acceptance rules as `parse`.
+    the same acceptance rules as `parse`. Pass `name_state` to reuse a compiled
+    defined-name regex instead of rebuilding it on every call.
     """
     from excel_grapher.core.formula_normalization import expand_defined_names
 
@@ -1131,6 +1136,7 @@ def parse_preserving_axes(
         formula,
         named_ranges=named_ranges,
         named_range_ranges=named_range_ranges,
+        name_state=name_state,
     )
     return parse(expanded, anchor=anchor, preserve_axes=True)
 
@@ -1141,6 +1147,7 @@ def parse_preserving_axes_optional(
     anchor: CellKey | str,
     named_ranges: dict[str, tuple[str, str]] | None = None,
     named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
+    name_state: NamedRangeReplacementState | None = None,
 ) -> AstNode | None:
     """Like `parse_preserving_axes`, returning None on missing/blank/unparseable input."""
     if formula is None:
@@ -1154,6 +1161,7 @@ def parse_preserving_axes_optional(
             anchor=anchor,
             named_ranges=named_ranges,
             named_range_ranges=named_range_ranges,
+            name_state=name_state,
         )
     except FormulaParseError:
         return None
@@ -1165,6 +1173,7 @@ def parse_formula_text(
     anchor: CellKey | str | None = None,
     named_ranges: dict[str, tuple[str, str]] | None = None,
     named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
+    name_state: NamedRangeReplacementState | None = None,
 ) -> AstNode | None:
     """Parse `formula`, preserving `$` vs bare-A1 axes when `anchor` is set.
 
@@ -1179,6 +1188,7 @@ def parse_formula_text(
         anchor=anchor,
         named_ranges=named_ranges,
         named_range_ranges=named_range_ranges,
+        name_state=name_state,
     )
 
 
