@@ -88,6 +88,8 @@ def text_format(value: CellValue, format_text: CellValue) -> str | XlError:
     scalar = as_scalar(value)
     if isinstance(scalar, XlError):
         return scalar
+    if isinstance(format_text, XlError):
+        return format_text
     fmt = to_string(format_text)
     n = to_number(cast(CellValue, scalar))
     if isinstance(n, XlError):
