@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.2.9 (2026-09-06)
+
+### Bug Fixes
+
+- **export**: Pin keyed dual-reads by Excel axis, not every $
+  ([#738](https://github.com/Teal-Insights/excel-grapher/pull/738),
+  [`f151993`](https://github.com/Teal-Insights/excel-grapher/commit/f151993eb5ddaaa8fd38b287239c89890db60e98))
+
+
 ## v14.2.8 (2026-09-06)
 
 ### Bug Fixes
