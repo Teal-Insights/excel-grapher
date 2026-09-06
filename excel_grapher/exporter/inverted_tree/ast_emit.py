@@ -51,11 +51,15 @@ from excel_grapher.exporter.inverted_tree.deps import (
     PositionalRangeCell,
     SeriesDeps,
     addresses_outside_blank_ranges,
+    covering_series_for_index_window,
     current_blank_rects,
+    index_window_corners,
     iter_ref_addresses,
     node_formula_ast,
+    offset_index_destination,
     predecessor_address,
     range_ref_label,
+    resolve_offset_destination_series,
     resolve_positional_range,
     successor_address,
     try_formula_ast,
@@ -822,6 +826,16 @@ def _ref_anchor_address(node: AstNode, host_cell: CanonicalAddress) -> Canonical
         return as_canonical(resolve_cell_ref(node, host_cell))
     if isinstance(node, RangeNode):
         return as_canonical(resolve_cell_ref(node.start_ref, host_cell))
+    if isinstance(node, FunctionCallNode):
+        name = normalize_excel_function_name(node.name)
+        if name == "INDEX":
+            window = index_window_corners(node, host_cell)
+            if window is not None:
+                return window[0]
+        if name == "OFFSET":
+            dest = offset_index_destination(node, host_cell)
+            if dest is not None:
+                return dest[0]
     return None
 
 
@@ -833,7 +847,8 @@ def _lookup_anchors(node: AstNode, host_cell: CanonicalAddress) -> list[Canonica
         if isinstance(item, FunctionCallNode):
             name = normalize_excel_function_name(item.name)
             if item.args and (
-                name == "OFFSET" or (name == "INDEX" and isinstance(item.args[0], RangeNode))
+                (name == "OFFSET" and not isinstance(item.args[0], FunctionCallNode))
+                or (name == "INDEX" and isinstance(item.args[0], RangeNode))
             ):
                 start = _ref_anchor_address(item.args[0], host_cell)
                 if start is not None:
@@ -935,6 +950,8 @@ def _access_or_fail(producer: BoundSeries, ctx: EmitContext) -> AccessFunction:
 def _emit_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
     if len(node.args) < 3:
         raise _host_export_error(ctx, "OFFSET expects anchor, rows, cols")
+    if isinstance(node.args[0], FunctionCallNode):
+        return _emit_offset_from_expr(node, ctx)
     table = _series_for_ref(node.args[0], ctx)
     try:
         _access_or_fail(table, ctx)
@@ -968,6 +985,40 @@ def _emit_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
     return f"{ctx.use('xl_at')}({name}, {index})"
 
 
+def _emit_offset_from_expr(node: FunctionCallNode, ctx: EmitContext) -> str:
+    resolved = resolve_offset_destination_series(
+        node,
+        ctx.host_cell,
+        ctx.catalog,
+        ctx.graph,
+        blank_rects=ctx.blank_rects,
+    )
+    if resolved is None:
+        raise _host_export_error(ctx, "reference is not a bound series")
+    table, _anchor = resolved
+    return _emit_bound_series_lookup(table, ctx)
+
+
+def _emit_bound_series_lookup(covered: BoundSeries, ctx: EmitContext) -> str:
+    """Emit a catalog lookup of `covered` from graph-classified access."""
+    access = _access_or_fail(covered, ctx)
+    name = ctx.param(covered.series_id)
+    if covered.is_scalar:
+        return name
+    width = covered.block_width
+    n_rows = max(1, (len(covered.cells) + width - 1) // width)
+    row_expr = _indirect_axis_index(access.row, n_rows, ctx)
+    col_expr = _indirect_axis_index(access.col, width, ctx)
+    if row_expr in {"0", "0.0"}:
+        row_term = "0"
+    elif width <= 1:
+        row_term = row_expr
+    else:
+        row_term = f"{row_expr} * {width}"
+    index = _join_index_terms((row_term, col_expr))
+    return f"{ctx.use('xl_at')}({name}, {index})"
+
+
 def _indirect_axis_index(axis: AxisAccess, size: int, ctx: EmitContext) -> str:
     """Return a catalog-axis subscript, or fail closed when it is not static."""
     if axis.kind == "static":
@@ -987,22 +1038,7 @@ def _emit_indirect(node: FunctionCallNode, ctx: EmitContext) -> str:
     covered = covering_series(ctx.catalog, targets)
     if covered is None:
         raise _host_export_error(ctx, "INDIRECT targets are not one bound series")
-    access = _access_or_fail(covered, ctx)
-    name = ctx.param(covered.series_id)
-    if covered.is_scalar:
-        return name
-    width = covered.block_width
-    n_rows = max(1, (len(covered.cells) + width - 1) // width)
-    row_expr = _indirect_axis_index(access.row, n_rows, ctx)
-    col_expr = _indirect_axis_index(access.col, width, ctx)
-    if row_expr in {"0", "0.0"}:
-        row_term = "0"
-    elif width <= 1:
-        row_term = row_expr
-    else:
-        row_term = f"{row_expr} * {width}"
-    index = _join_index_terms((row_term, col_expr))
-    return f"{ctx.use('xl_at')}({name}, {index})"
+    return _emit_bound_series_lookup(covered, ctx)
 
 
 def _emit_index_into_block(
@@ -1125,6 +1161,26 @@ def _series_for_ref(node: AstNode, ctx: EmitContext) -> BoundSeries:
         if covered is None:
             raise _host_export_error(ctx, "reference is not a bound series")
         return covered
+    if isinstance(node, FunctionCallNode):
+        name = normalize_excel_function_name(node.name)
+        if name == "INDEX":
+            covered = covering_series_for_index_window(
+                node, ctx.host_cell, ctx.catalog, blank_rects=ctx.blank_rects
+            )
+            if covered is not None:
+                return covered
+            raise _host_export_error(ctx, "reference is not a bound series")
+        if name == "OFFSET":
+            resolved = resolve_offset_destination_series(
+                node,
+                ctx.host_cell,
+                ctx.catalog,
+                ctx.graph,
+                blank_rects=ctx.blank_rects,
+            )
+            if resolved is not None:
+                return resolved[0]
+            raise _host_export_error(ctx, "reference is not a bound series")
     raise _host_export_error(ctx, "OFFSET/MATCH base must be a cell or range")
 
 

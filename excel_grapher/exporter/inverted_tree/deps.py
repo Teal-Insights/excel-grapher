@@ -38,6 +38,7 @@ from excel_grapher.exporter.inverted_tree.access import (
     indirect_argument_addresses,
     indirect_target_addresses,
     is_seed_access,
+    offset_target_addresses,
     unique_seed_or_none,
 )
 from excel_grapher.exporter.inverted_tree.catalog import (
@@ -347,6 +348,216 @@ def iter_ref_addresses(
     raise InvertedTreeExportError(
         f"expected a range, whole-column, or whole-row ref, got {type(node).__name__}"
     )
+
+
+def ast_literal_int(node: AstNode) -> int | None:
+    """Return an integer encoded as `NumberNode` or unary `+` / `-`."""
+    if isinstance(node, NumberNode):
+        value = node.value
+        if isinstance(value, bool) or value != int(value):
+            return None
+        return int(value)
+    if isinstance(node, UnaryOpNode) and node.op in {"+", "-"}:
+        inner = ast_literal_int(node.operand)
+        if inner is None:
+            return None
+        return inner if node.op == "+" else -inner
+    return None
+
+
+def ref_window_corners(
+    node: AstNode, host_cell: CanonicalAddress
+) -> tuple[CanonicalAddress, CanonicalAddress] | None:
+    """Return `(start, end)` for a cell or range reference."""
+    if isinstance(node, CellRefNode):
+        address = as_canonical(resolve_cell_ref(node, host_cell))
+        return address, address
+    if isinstance(node, RangeNode):
+        start = as_canonical(resolve_cell_ref(node.start_ref, host_cell))
+        end = as_canonical(resolve_cell_ref(node.end_ref, host_cell))
+        return start, end
+    return None
+
+
+def index_window_corners(
+    node: FunctionCallNode, host_cell: CanonicalAddress
+) -> tuple[CanonicalAddress, CanonicalAddress] | None:
+    """Return the INDEX array window, narrowed to a literal column when present."""
+    if normalize_excel_function_name(node.name) != "INDEX" or len(node.args) < 2:
+        return None
+    corners = ref_window_corners(node.args[0], host_cell)
+    if corners is None:
+        return None
+    start, end = corners
+    col_arg = node.args[2] if len(node.args) > 2 else None
+    if col_arg is None:
+        return start, end
+    col_index = ast_literal_int(col_arg)
+    if col_index is None:
+        return start, end
+    sheet1, row1, col1 = parse_cell_coords(start)
+    sheet2, row2, col2 = parse_cell_coords(end)
+    if sheet1 != sheet2:
+        return None
+    r1, r2 = min(row1, row2), max(row1, row2)
+    c1, c2 = min(col1, col2), max(col1, col2)
+    width = c2 - c1 + 1
+    if col_index < 1 or col_index > width:
+        return None
+    col = c1 + col_index - 1
+    return (
+        as_canonical(format_cell_key(sheet1, get_column_letter(col), r1)),
+        as_canonical(format_cell_key(sheet1, get_column_letter(col), r2)),
+    )
+
+
+def shift_range_corners(
+    start: CanonicalAddress,
+    end: CanonicalAddress,
+    rows: int,
+    cols: int,
+) -> tuple[CanonicalAddress, CanonicalAddress] | None:
+    """Translate a same-sheet window by `rows` and `cols`, or `None` if off-grid."""
+    sheet1, row1, col1 = parse_cell_coords(start)
+    sheet2, row2, col2 = parse_cell_coords(end)
+    if sheet1 != sheet2:
+        return None
+    new_r1 = row1 + rows
+    new_c1 = col1 + cols
+    new_r2 = row2 + rows
+    new_c2 = col2 + cols
+    if min(new_r1, new_r2) < 1 or min(new_c1, new_c2) < 1:
+        return None
+    if max(new_r1, new_r2) > 1_048_576 or max(new_c1, new_c2) > 16_384:
+        return None
+    return (
+        as_canonical(format_cell_key(sheet1, get_column_letter(new_c1), new_r1)),
+        as_canonical(format_cell_key(sheet1, get_column_letter(new_c2), new_r2)),
+    )
+
+
+def offset_index_destination(
+    node: FunctionCallNode, host_cell: CanonicalAddress
+) -> tuple[CanonicalAddress, CanonicalAddress] | None:
+    """Return dest corners of `OFFSET(INDEX(...), rows, cols)` when static.
+
+    Classifies the INDEX window the same way as `_visit_index`, then applies
+    literal row/column offsets. Non-literal offsets return `None`.
+    """
+    if normalize_excel_function_name(node.name) != "OFFSET" or len(node.args) < 3:
+        return None
+    base = node.args[0]
+    if not isinstance(base, FunctionCallNode):
+        return None
+    if normalize_excel_function_name(base.name) != "INDEX":
+        return None
+    rows = ast_literal_int(node.args[1])
+    cols = ast_literal_int(node.args[2])
+    if rows is None or cols is None:
+        return None
+    if len(node.args) >= 4 and ast_literal_int(node.args[3]) is None:
+        return None
+    if len(node.args) >= 5 and ast_literal_int(node.args[4]) is None:
+        return None
+    window = index_window_corners(base, host_cell)
+    if window is None:
+        return None
+    dest = shift_range_corners(window[0], window[1], rows, cols)
+    if dest is None:
+        return None
+    start, end = dest
+    if len(node.args) >= 4:
+        height = ast_literal_int(node.args[3])
+        width = ast_literal_int(node.args[4]) if len(node.args) >= 5 else None
+        if height is None or height < 1:
+            return None
+        sheet, row, col = parse_cell_coords(start)
+        end_row = row + height - 1
+        end_col = (
+            col + (width - 1) if width is not None and width >= 1 else parse_cell_coords(end)[2]
+        )
+        if end_row < 1 or end_col < 1 or end_row > 1_048_576 or end_col > 16_384:
+            return None
+        end = as_canonical(format_cell_key(sheet, get_column_letter(end_col), end_row))
+    return start, end
+
+
+def offset_expr_exclude_addresses(
+    node: FunctionCallNode,
+    host_cell: CanonicalAddress,
+    graph: DependencyGraph | None,
+) -> list[CanonicalAddress]:
+    """Return INDEX-array and OFFSET-argument cells that are not the destination."""
+    found: list[CanonicalAddress] = []
+    if node.args:
+        base = node.args[0]
+        if isinstance(base, FunctionCallNode) and (
+            normalize_excel_function_name(base.name) == "INDEX" and base.args
+        ):
+            array = base.args[0]
+            corners = ref_window_corners(array, host_cell)
+            if corners is not None:
+                found.extend(iter_range_addresses(corners[0], corners[1]))
+            elif isinstance(array, (RangeNode, WholeColumnNode, WholeRowNode)):
+                found.extend(iter_ref_addresses(array, host_cell, graph))
+        for arg in node.args[1:]:
+            if isinstance(arg, CellRefNode):
+                found.append(as_canonical(resolve_cell_ref(arg, host_cell)))
+    return found
+
+
+def resolve_offset_destination_series(
+    node: FunctionCallNode,
+    host_cell: CanonicalAddress,
+    catalog: SeriesCatalog,
+    graph: DependencyGraph | None,
+    *,
+    blank_rects: Sequence[BlankRangeRect] | None = None,
+) -> tuple[BoundSeries, CanonicalAddress] | None:
+    """Return `(series, anchor)` for OFFSET whose base yields a reference.
+
+    Prefers a classified `OFFSET(INDEX(...), rows, cols)` window. Falls back
+    to graph `dynamic_offset` edges when the offset is not a literal.
+    """
+    dest = offset_index_destination(node, host_cell)
+    if dest is not None:
+        addresses = addresses_outside_blank_ranges(
+            iter_range_addresses(dest[0], dest[1]),
+            blank_rects,
+        )
+        covered = covering_series(catalog, addresses) if addresses else None
+        if covered is None:
+            return None
+        return covered, dest[0]
+    if graph is None:
+        return None
+    exclude = offset_expr_exclude_addresses(node, host_cell, graph)
+    targets = addresses_outside_blank_ranges(
+        offset_target_addresses(graph, host_cell, exclude=exclude),
+        blank_rects,
+    )
+    covered = covering_series(catalog, targets) if targets else None
+    if covered is None:
+        return None
+    return covered, targets[0]
+
+
+def covering_series_for_index_window(
+    node: FunctionCallNode,
+    host_cell: CanonicalAddress,
+    catalog: SeriesCatalog,
+    *,
+    blank_rects: Sequence[BlankRangeRect] | None = None,
+) -> BoundSeries | None:
+    """Return the unique series that owns an INDEX array window."""
+    window = index_window_corners(node, host_cell)
+    if window is None:
+        return None
+    addresses = addresses_outside_blank_ranges(
+        iter_range_addresses(window[0], window[1]),
+        blank_rects,
+    )
+    return covering_series(catalog, addresses) if addresses else None
 
 
 def range_column_addresses(start: str, end: str, col_index: int) -> list[CanonicalAddress]:
@@ -799,10 +1010,72 @@ class _DepCollector:
             raise InvertedTreeExportError(
                 f"series {self.host.series_id!r}: OFFSET with no arguments"
             )
-        table = self._series_for_ref(node.args[0], host_cell)
-        self.emit_lookup(table, host_cell, self._ref_anchor(node.args[0], host_cell), "dynamic")
+        base = node.args[0]
+        if isinstance(base, FunctionCallNode):
+            self._visit_offset_from_expr(node, host_cell=host_cell, host_index=host_index)
+            return
+        table = self._series_for_ref(base, host_cell)
+        self.emit_lookup(table, host_cell, self._ref_anchor(base, host_cell), "dynamic")
         for arg in node.args[1:]:
             self.visit(arg, host_cell=host_cell, host_index=host_index)
+
+    def _visit_offset_from_expr(
+        self,
+        node: FunctionCallNode,
+        *,
+        host_cell: CanonicalAddress,
+        host_index: int,
+    ) -> None:
+        base = node.args[0]
+        if isinstance(base, FunctionCallNode) and (
+            normalize_excel_function_name(base.name) == "INDEX"
+        ):
+            if len(base.args) < 2:
+                raise InvertedTreeExportError(
+                    f"series {self.host.series_id!r}: INDEX expects a range and row"
+                )
+            self._visit_index_selectors(base, host_cell=host_cell, host_index=host_index)
+        else:
+            self.visit(base, host_cell=host_cell, host_index=host_index)
+        resolved = resolve_offset_destination_series(
+            node,
+            host_cell,
+            self.catalog,
+            self.graph,
+            blank_rects=self.blank_rects,
+        )
+        if resolved is None:
+            raise InvertedTreeExportError(
+                f"series {self.host.series_id!r}: reference is not a bound series"
+            )
+        table, anchor = resolved
+        self.emit_lookup(table, host_cell, anchor, "dynamic")
+        for arg in node.args[1:]:
+            self.visit(arg, host_cell=host_cell, host_index=host_index)
+
+    def _visit_index_selectors(
+        self,
+        node: FunctionCallNode,
+        *,
+        host_cell: CanonicalAddress,
+        host_index: int,
+    ) -> None:
+        row_arg = node.args[1]
+        col_arg = node.args[2] if len(node.args) > 2 else None
+        if isinstance(row_arg, FunctionCallNode) and (
+            normalize_excel_function_name(row_arg.name) == "MATCH"
+        ):
+            self._visit_match(row_arg, host_cell=host_cell, host_index=host_index)
+        else:
+            self.visit(row_arg, host_cell=host_cell, host_index=host_index)
+        if col_arg is not None and ast_literal_int(col_arg) is None:
+            try:
+                self.visit(col_arg, host_cell=host_cell, host_index=host_index)
+            except InvertedTreeExportError as exc:
+                raise InvertedTreeExportError(
+                    f"series {self.host.series_id!r} cell {host_cell}: "
+                    f"INDEX column cannot be lowered ({exc})"
+                ) from exc
 
     def _visit_indirect(
         self,
@@ -842,27 +1115,12 @@ class _DepCollector:
             raise InvertedTreeExportError(
                 f"series {self.host.series_id!r}: INDEX expects a range and row"
             )
-        row_arg = node.args[1]
         col_arg = node.args[2] if len(node.args) > 2 else None
-        if isinstance(row_arg, FunctionCallNode) and (
-            normalize_excel_function_name(row_arg.name) == "MATCH"
-        ):
-            self._visit_match(row_arg, host_cell=host_cell, host_index=host_index)
-        else:
-            self.visit(row_arg, host_cell=host_cell, host_index=host_index)
-        col_index = 1
-        col_literal = True
-        if isinstance(col_arg, NumberNode):
-            col_index = int(col_arg.value)
-        elif col_arg is not None:
-            col_literal = False
-            try:
-                self.visit(col_arg, host_cell=host_cell, host_index=host_index)
-            except InvertedTreeExportError as exc:
-                raise InvertedTreeExportError(
-                    f"series {self.host.series_id!r} cell {host_cell}: "
-                    f"INDEX column cannot be lowered ({exc})"
-                ) from exc
+        self._visit_index_selectors(node, host_cell=host_cell, host_index=host_index)
+        col_index = ast_literal_int(col_arg) if col_arg is not None else 1
+        col_literal = col_index is not None
+        if col_index is None:
+            col_index = 1
         if isinstance(node.args[0], RangeNode):
             start = resolve_cell_ref(node.args[0].start_ref, host_cell)
             end = resolve_cell_ref(node.args[0].end_ref, host_cell)
@@ -924,6 +1182,30 @@ class _DepCollector:
                     f"series {self.host.series_id!r}: reference is not a bound series"
                 )
             return covered
+        if isinstance(node, FunctionCallNode):
+            name = normalize_excel_function_name(node.name)
+            if name == "INDEX":
+                covered = covering_series_for_index_window(
+                    node, host_cell, self.catalog, blank_rects=self.blank_rects
+                )
+                if covered is not None:
+                    return covered
+                raise InvertedTreeExportError(
+                    f"series {self.host.series_id!r}: reference is not a bound series"
+                )
+            if name == "OFFSET":
+                resolved = resolve_offset_destination_series(
+                    node,
+                    host_cell,
+                    self.catalog,
+                    self.graph,
+                    blank_rects=self.blank_rects,
+                )
+                if resolved is not None:
+                    return resolved[0]
+                raise InvertedTreeExportError(
+                    f"series {self.host.series_id!r}: reference is not a bound series"
+                )
         raise InvertedTreeExportError(
             f"series {self.host.series_id!r}: expected a cell or range reference, "
             f"got {type(node).__name__}"
@@ -934,6 +1216,16 @@ class _DepCollector:
             return as_canonical(resolve_cell_ref(node, host_cell))
         if isinstance(node, RangeNode):
             return as_canonical(resolve_cell_ref(node.start_ref, host_cell))
+        if isinstance(node, FunctionCallNode):
+            name = normalize_excel_function_name(node.name)
+            if name == "INDEX":
+                window = index_window_corners(node, host_cell)
+                if window is not None:
+                    return window[0]
+            if name == "OFFSET":
+                dest = offset_index_destination(node, host_cell)
+                if dest is not None:
+                    return dest[0]
         raise InvertedTreeExportError(
             f"series {self.host.series_id!r}: expected a cell or range reference, "
             f"got {type(node).__name__}"
