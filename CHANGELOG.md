@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.2.10 (2026-09-06)
+
+### Bug Fixes
+
+- **export**: Remap keyed dual-reads when SCENARIO vocabularies differ
+  ([#740](https://github.com/Teal-Insights/excel-grapher/pull/740),
+  [`78cc12b`](https://github.com/Teal-Insights/excel-grapher/commit/78cc12b0678a8388693e253ae9f4a21f0ad6f502))
+
+
 ## v14.2.9 (2026-09-06)
 
 ### Bug Fixes
