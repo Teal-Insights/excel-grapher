@@ -18,7 +18,7 @@ from excel_grapher.series_bindings.normalize import (
     is_override_input,
 )
 from excel_grapher.series_bindings.ranges import (
-    expand_series_data_ranges_for_graph,
+    expand_bound_series_addresses_for_graph,
     format_series_data_range,
     series_data_ranges,
     series_sheets,
@@ -804,7 +804,7 @@ def validate_series_bindings(
 
             _, require_unique_key = _series_validation_flags(series)
             try:
-                addresses = expand_series_data_ranges_for_graph(
+                addresses = expand_bound_series_addresses_for_graph(
                     graph,
                     series,
                     workbook=workbook,
