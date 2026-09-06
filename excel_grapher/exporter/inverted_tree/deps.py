@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -59,7 +59,8 @@ from excel_grapher.grapher.blank_ranges import (
     BlankRangeRect,
     address_in_blank_ranges,
 )
-from excel_grapher.series_bindings.normalize import is_override_input
+from excel_grapher.series_bindings.geometry import parse_value_map
+from excel_grapher.series_bindings.normalize import component_for_field, is_override_input
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
@@ -817,9 +818,11 @@ class SeriesDeps:
       `baseline[2026]`) is a keyed pair, not a lag (#735).
     - `keyed_ids` — each producer slot is a key of host-aligned and/or
       literal fields: same-year outer keys (`gdp[Baseline, t]` /
-      `gdp[Stress, t]`, #733) or mixed relative + absolute years
-      (`baseline[t]` / `baseline[2026]`, #735). Catalog-slot adjacency
-      is not a lag.
+      `gdp[Stress, t]`, #733), mixed relative + absolute years
+      (`baseline[t]` / `baseline[2026]`, #735), or same-sheet `$` pins
+      of a `sheet_name` key (`stats[s, mean]` / `stats[s, stdev]`,
+      #737). `$` freezes the row/column bind axis, not the sheet.
+      Catalog-slot adjacency is not a lag.
     - `lookup_ids` — `whole` / `dynamic` table reads
     - `is_scan` / `seed_id` / `scan_direction` — self-lags discharged by
       loop order. A relative other-series read at `schedule_coord` ± 1 is
@@ -1502,21 +1505,147 @@ def _is_consistent_lag(
     return all(item == first for item in delta_sets)
 
 
+def _dimension_bind(series: BoundSeries, field: str) -> Mapping[str, Any] | None:
+    """Return the bind mapping for `field`, if the series declares one."""
+    raw = dict(series.raw)
+    component = component_for_field(raw, field)
+    if component is None:
+        return None
+    bind = component.get("bind")
+    return bind if isinstance(bind, dict) else None
+
+
+def _infer_key_field_axis(series: BoundSeries, field: str) -> Literal["sheet", "row", "col"] | None:
+    """Infer the Excel axis that determines `field` from catalog geometry."""
+    by_sheet: dict[str, set[object]] = {}
+    by_row: dict[int, set[object]] = {}
+    by_col: dict[int, set[object]] = {}
+    for cell, point in zip(series.cells, series.domain, strict=False):
+        try:
+            value = point[field]
+        except KeyError:
+            return None
+        sheet, row, col = parse_cell_coords(cell)
+        by_sheet.setdefault(sheet, set()).add(value)
+        by_row.setdefault(row, set()).add(value)
+        by_col.setdefault(col, set()).add(value)
+
+    def _is_axis(groups: dict[Any, set[object]]) -> bool:
+        if not groups or not all(len(values) == 1 for values in groups.values()):
+            return False
+        return len({next(iter(values)) for values in groups.values()}) > 1
+
+    candidates: list[Literal["sheet", "row", "col"]] = []
+    if _is_axis(by_sheet):
+        candidates.append("sheet")
+    if _is_axis(by_row):
+        candidates.append("row")
+    if _is_axis(by_col):
+        candidates.append("col")
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _key_field_axis(series: BoundSeries, field: str) -> Literal["sheet", "row", "col"] | None:
+    """Return the Excel axis that binds `field`, or `None` when unknown.
+
+    Bind kind wins when declared (`sheet_name`, `column_header`, `row_label`,
+    `value_map`). Otherwise the catalog geometry is used: a field that is
+    constant on one axis and varies on another belongs to the varying axis.
+    """
+    bind = _dimension_bind(series, field)
+    if bind is not None:
+        kind = bind.get("kind")
+        if kind == "sheet_name":
+            return "sheet"
+        if kind == "column_header":
+            return "col"
+        if kind == "row_label":
+            return "row"
+        if kind == "value_map":
+            try:
+                axis, _parsed = parse_value_map(bind.get("values") or {})
+            except ValueError:
+                axis = None
+            if axis == "columns":
+                return "col"
+            if axis == "rows":
+                return "row"
+    return _infer_key_field_axis(series, field)
+
+
+def _ref_pinned_fields(
+    ref: CellRefNode,
+    host_cell: CanonicalAddress,
+    producer: BoundSeries,
+) -> frozenset[str]:
+    """Return producer keys frozen by `ref`'s `$` axes or a cross-sheet address.
+
+    `$` locks row and column. It does not lock the sheet: a same-sheet
+    `Stress!$D$2` still walks `sheet_name` with the host. A ref that
+    resolves onto another sheet freezes sheet-bound keys. An unknown axis
+    is frozen by any `$` so classification stays fail-closed.
+    """
+    address = as_canonical(resolve_cell_ref(ref, host_cell))
+    host_sheet, _host_row, _host_col = parse_cell_coords(host_cell)
+    addr_sheet, _addr_row, _addr_col = parse_cell_coords(address)
+    cell = ref.ref
+    col_locked = isinstance(cell.col, AbsoluteAxis)
+    row_locked = isinstance(cell.row, AbsoluteAxis)
+    same_sheet = addr_sheet == host_sheet
+    pinned: set[str] = set()
+    for key_name in producer.key_fields:
+        axis = _key_field_axis(producer, key_name)
+        axis_locked = (
+            (axis == "col" and col_locked)
+            or (axis == "row" and row_locked)
+            or (axis == "sheet" and not same_sheet)
+            or (axis is None and (col_locked or row_locked))
+        )
+        if axis_locked:
+            pinned.add(key_name)
+    return frozenset(pinned)
+
+
+def _host_slot_pinned_fields(
+    host: BoundSeries,
+    host_index: int,
+    producer: BoundSeries,
+    indices: set[int],
+    graph: DependencyGraph | None,
+) -> dict[int, frozenset[str]] | None:
+    """Map producer slots to keys frozen by the host formula, if available."""
+    if graph is None or host_index < 0 or host_index >= len(host.cells):
+        return None
+    host_cell = host.cells[host_index]
+    ast = try_formula_ast(graph, host_cell)
+    if ast is None:
+        return None
+    pinned: dict[int, set[str]] = {}
+    for ref in _iter_cell_ref_nodes(ast):
+        address = as_canonical(resolve_cell_ref(ref, host_cell))
+        index = producer.index_of(address)
+        if index is None or index not in indices:
+            continue
+        pinned.setdefault(index, set()).update(_ref_pinned_fields(ref, host_cell, producer))
+    return {index: frozenset(fields) for index, fields in pinned.items()}
+
+
 def _field_binding(
     host: BoundSeries,
     host_index: int,
     producer: BoundSeries,
     producer_index: int,
     *,
-    pinned: bool = False,
+    pinned_fields: frozenset[str] = frozenset(),
 ) -> tuple[tuple[str, object], ...] | None:
     """Return `(field, 'host' | ('lit', value))` for each producer key field.
 
-    Matches `_producer_field_binding` in `ast_emit`: a field is `host` when
-    it equals the consumer's value, otherwise a literal. An absolute ref
-    (`$F$2`) stays a literal even when that year equals the host year.
-    Emit can replay a binding across the host walk only when every member
-    agrees on this spec.
+    A field is `host` when it equals the consumer's value and is not frozen
+    by a `$` pin on that field's bind axis. `$F$2` keeps `TIME_PERIOD` a
+    literal even when that year equals the host year. A same-sheet `$D$2`
+    does not freeze `sheet_name` (`SCENARIO` stays `host`). Emit can replay
+    a binding across the host walk only when every member agrees on this
+    spec.
     """
     if host_index >= len(host.domain) or producer_index >= len(producer.domain):
         return None
@@ -1528,7 +1657,7 @@ def _field_binding(
             value = prod[key_name]
         except KeyError:
             return None
-        if not pinned and key_name in host.key_fields:
+        if key_name not in pinned_fields and key_name in host.key_fields:
             try:
                 if host_point[key_name] == value:
                     parts.append((key_name, "host"))
@@ -1548,9 +1677,11 @@ def _is_keyed_multi_read(
     """True when every multi-slot host shares the same host-or-literal keys.
 
     Each slot is then `domain.index` of those fields: two scenarios at one
-    year, or `baseline[t]` plus `baseline[2026]`. A `t-1` read is a literal
-    that changes per member and cannot be keyed. A `$` pin whose year
-    happens to equal the host year is still a literal.
+    year, `baseline[t]` plus `baseline[2026]`, or two same-sheet variants
+    (`stats[s, mean]` / `stats[s, stdev]`). A `t-1` read is a literal that
+    changes per member and cannot be keyed. A `$` pin whose year happens
+    to equal the host year is still a literal; a `$` pin on the host sheet
+    is not a `SCENARIO` literal.
     """
     if not producer.key_fields:
         return False
@@ -1558,11 +1689,11 @@ def _is_keyed_multi_read(
     for host_i, indices in per_host.items():
         if len(indices) < 2:
             continue
-        kinds = _host_ref_kinds(host, host_i, producer, indices, graph)
-        pinned = kinds[1] if kinds is not None else set()
+        pin_map = _host_slot_pinned_fields(host, host_i, producer, indices, graph)
         patterns: list[tuple[tuple[str, object], ...]] = []
         for index in indices:
-            binding = _field_binding(host, host_i, producer, index, pinned=index in pinned)
+            pinned_fields = pin_map.get(index, frozenset()) if pin_map is not None else frozenset()
+            binding = _field_binding(host, host_i, producer, index, pinned_fields=pinned_fields)
             if binding is None:
                 return False
             patterns.append(binding)

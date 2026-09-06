@@ -50,6 +50,8 @@ from excel_grapher.exporter.inverted_tree.deps import (
     DependenceEdge,
     PositionalRangeCell,
     SeriesDeps,
+    _field_binding,
+    _ref_pinned_fields,
     addresses_outside_blank_ranges,
     covering_series_for_index_window,
     current_blank_rects,
@@ -326,27 +328,26 @@ def _producer_field_binding(
     owner: BoundSeries,
     address: CanonicalAddress,
     ctx: EmitContext,
+    ref: CellRefNode | None = None,
 ) -> dict[str, str | tuple[str, object]] | None:
     """Map each producer key field to `host` or a literal from `address`."""
     idx = owner.index_of(address)
-    if idx is None or idx >= len(owner.domain) or ctx.host_index >= len(ctx.host.domain):
+    if idx is None:
         return None
-    prod = owner.domain[idx]
-    host_point = ctx.host.domain[ctx.host_index]
+    pinned = _ref_pinned_fields(ref, ctx.host_cell, owner) if ref is not None else frozenset()
+    raw = _field_binding(ctx.host, ctx.host_index, owner, idx, pinned_fields=pinned)
+    if raw is None:
+        return None
     binding: dict[str, str | tuple[str, object]] = {}
-    for key_name in owner.key_fields:
-        try:
-            value = prod[key_name]
-        except KeyError:
-            return None
-        if key_name in ctx.host.key_fields:
-            try:
-                if host_point[key_name] == value:
-                    binding[key_name] = "host"
-                    continue
-            except KeyError:
-                pass
-        binding[key_name] = ("lit", value)
+    for key, spec in raw:
+        if spec == "host":
+            binding[key] = "host"
+        elif isinstance(spec, tuple) and len(spec) == 2 and spec[0] == "lit":
+            binding[key] = ("lit", spec[1])
+        else:
+            raise InvertedTreeExportError(
+                f"series {ctx.host.series_id!r}: invalid keyed binding {spec!r} for {key}"
+            )
     return binding
 
 
@@ -399,9 +400,10 @@ def _keyed_catalog_index_expr(
     owner: BoundSeries,
     address: CanonicalAddress,
     ctx: EmitContext,
+    ref: CellRefNode | None = None,
 ) -> str:
     """Return `domain.index(key)` for a keyed dual-read of `address`."""
-    binding = _producer_field_binding(owner, address, ctx)
+    binding = _producer_field_binding(owner, address, ctx, ref=ref)
     if binding is None:
         raise InvertedTreeExportError(
             f"series {ctx.host.series_id!r}: cannot emit keyed read of "
@@ -456,7 +458,7 @@ def _emit_address(
     if literal is not None:
         return f"{name}[{literal}]"
     if owner.series_id in ctx.deps.keyed_ids:
-        return f"{name}[{_keyed_catalog_index_expr(owner, address, ctx)}]"
+        return f"{name}[{_keyed_catalog_index_expr(owner, address, ctx, ref=ref)}]"
     idx = owner.index_of(address)
     if owner.series_id in ctx.deps.lagged_ids and ctx.index_var is not None and idx is not None:
         offset = idx - ctx.host_index
@@ -621,7 +623,7 @@ def _emit_fused_ref(
         return f"live_measure({ctx.param(owner.series_id)}[{literal}])"
     if owner.series_id in ctx.deps.keyed_ids and owner.series_id not in ctx.scc_ids:
         ctx.use("live_measure")
-        return f"live_measure({ctx.param(owner.series_id)}[{_keyed_catalog_index_expr(owner, address, ctx)}])"
+        return f"live_measure({ctx.param(owner.series_id)}[{_keyed_catalog_index_expr(owner, address, ctx, ref=ref)}])"
     idx = owner.index_of(address)
     if idx is None or ctx.fused_plan is None:
         raise InvertedTreeExportError(
@@ -686,7 +688,7 @@ def _emit_instance_ref(
     if literal is not None and owner.series_id not in ctx.scc_ids:
         return f"{ctx.param(owner.series_id)}[{literal}]"
     if owner.series_id in ctx.deps.keyed_ids and owner.series_id not in ctx.scc_ids:
-        return f"{ctx.param(owner.series_id)}[{_keyed_catalog_index_expr(owner, address, ctx)}]"
+        return f"{ctx.param(owner.series_id)}[{_keyed_catalog_index_expr(owner, address, ctx, ref=ref)}]"
     idx = owner.index_of(address)
     if idx is None:
         raise InvertedTreeExportError(
