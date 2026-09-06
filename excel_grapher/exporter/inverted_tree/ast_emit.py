@@ -48,12 +48,15 @@ from excel_grapher.exporter.inverted_tree.catalog import (
 )
 from excel_grapher.exporter.inverted_tree.deps import (
     DependenceEdge,
+    PositionalRangeCell,
     SeriesDeps,
     addresses_outside_blank_ranges,
     current_blank_rects,
     iter_ref_addresses,
     node_formula_ast,
     predecessor_address,
+    range_ref_label,
+    resolve_positional_range,
     successor_address,
     try_formula_ast,
 )
@@ -726,40 +729,58 @@ def _emit_lookup_arg(node: AstNode, ctx: EmitContext) -> str:
     return emit_expr(node, ctx)
 
 
+def _python_tuple(items: Sequence[str]) -> str:
+    """Emit a Python tuple literal; one-element rows keep a trailing comma."""
+    if len(items) == 1:
+        return f"({items[0]},)"
+    return f"({', '.join(items)})"
+
+
+def _emit_positional_cell(cell: PositionalRangeCell, ctx: EmitContext) -> str:
+    """Emit one MATCH/INDEX window cell by catalog slot, not host index."""
+    if cell.blank:
+        return "None"
+    if cell.series_id is None:
+        raise _host_export_error(ctx, f"range cell {cell.address} is not a bound series")
+    owner = ctx.catalog.get(cell.series_id)
+    name = ctx.param(owner.series_id)
+    if owner.is_scalar:
+        return name
+    if cell.catalog_index is None:
+        raise _host_export_error(
+            ctx, f"range cell {cell.address} is not inside bound series {owner.series_id!r}"
+        )
+    return f"{name}[{cell.catalog_index}]"
+
+
 def _emit_range_table(node: AstNode, ctx: EmitContext) -> str:
     """Emit a nested-tuple grid, filling declared blanks with `None`."""
     addresses = iter_ref_addresses(node, ctx.host_cell, ctx.graph)
     if not addresses:
         raise _host_export_error(ctx, "range is empty")
-    missing = [
-        addr
-        for addr in addresses
-        if ctx.catalog.series_id_for(addr) is None
-        and not address_in_blank_ranges(addr, ctx.blank_rects)
-    ]
+    cells, missing = resolve_positional_range(addresses, ctx.catalog, ctx.blank_rects)
     if missing:
-        raise _host_export_error(ctx, f"range is not a bound series (unbound cells: {missing[:8]})")
+        label = range_ref_label(node, ctx.host_cell)
+        raise _host_export_error(
+            ctx,
+            f"range {label} is not a bound series (unbound cells: {list(missing[:8])})",
+        )
     rows: list[list[str]] = []
     current_row: int | None = None
     current: list[str] = []
-    for addr in addresses:
-        _sheet, row, _col = parse_cell_coords(addr)
-        cell = (
-            "None" if address_in_blank_ranges(addr, ctx.blank_rects) else _emit_address(addr, ctx)
-        )
+    for cell in cells:
+        _sheet, row, _col = parse_cell_coords(cell.address)
+        src = _emit_positional_cell(cell, ctx)
         if current_row is None or row != current_row:
             if current:
                 rows.append(current)
-            current = [cell]
+            current = [src]
             current_row = row
         else:
-            current.append(cell)
+            current.append(src)
     if current:
         rows.append(current)
-    row_srcs = [f"({', '.join(row)})" for row in rows]
-    if len(row_srcs) == 1:
-        return f"({row_srcs[0]},)"
-    return f"({', '.join(row_srcs)})"
+    return _python_tuple([_python_tuple(row) for row in rows])
 
 
 def _emit_covering_values(
@@ -1018,13 +1039,15 @@ def _emit_index(node: FunctionCallNode, ctx: EmitContext) -> str:
             slot = ctx.lookup_anchor_slot
             ctx.lookup_anchor_slot += 1
             return _emit_index_into_block(covered_full, start, row_expr, col_expr, ctx, slot)
-        if col_literal is None:
-            raise _host_export_error(
-                ctx, "INDEX column is not a literal and the range is not one bound block"
-            )
-        covered = covering_series_of_column(ctx.catalog, start, end, col_literal)
+        covered = None
+        if col_literal is not None:
+            try:
+                covered = covering_series_of_column(ctx.catalog, start, end, col_literal)
+            except InvertedTreeExportError:
+                covered = None
         if covered is None:
-            raise _host_export_error(ctx, "INDEX column is not a bound series")
+            table = _emit_range_table(node.args[0], ctx)
+            return f"{ctx.use('xl_index')}({table}, {row_expr}, {col_expr})"
         if covered.layout == "matrix" or covered.block_width > 1:
             # The range overhangs the bound block (Q-CRAFT: a 28-column window
             # over a 22-column block) but the accessed column is inside it.
@@ -1038,14 +1061,38 @@ def _emit_index(node: FunctionCallNode, ctx: EmitContext) -> str:
     return f"{ctx.use('xl_at')}({table}, ({row_expr}) - 1)"
 
 
+def _emit_match_array(node: AstNode, ctx: EmitContext) -> str:
+    """Emit a MATCH lookup vector that preserves Excel positions."""
+    if isinstance(node, CellRefNode):
+        series = _series_for_ref(node, ctx)
+        name = ctx.param(series.series_id)
+        return name if not series.is_scalar else f"({name},)"
+    if isinstance(node, (RangeNode, WholeColumnNode, WholeRowNode)):
+        addresses = iter_ref_addresses(node, ctx.host_cell, ctx.graph)
+        cells, missing = resolve_positional_range(addresses, ctx.catalog, ctx.blank_rects)
+        if missing:
+            label = range_ref_label(node, ctx.host_cell)
+            raise _host_export_error(
+                ctx,
+                f"range {label} is not a bound series (unbound cells: {list(missing[:8])})",
+            )
+        owned = [cell.address for cell in cells if not cell.blank]
+        if owned and not any(cell.blank for cell in cells):
+            covered = covering_series(ctx.catalog, owned)
+            if covered is not None:
+                values = _emit_covering_values(covered, owned, ctx)
+                return values if not covered.is_scalar else f"({values},)"
+        return _emit_range_table(node, ctx)
+    raise _host_export_error(ctx, "OFFSET/MATCH base must be a cell or range")
+
+
 def _emit_match(node: FunctionCallNode, ctx: EmitContext) -> str:
     if len(node.args) < 2:
         raise InvertedTreeExportError(
             f"series {ctx.host.series_id!r}: MATCH expects lookup and array"
         )
     lookup = emit_expr(node.args[0], ctx)
-    array_series = _series_for_ref(node.args[1], ctx)
-    array = ctx.param(array_series.series_id)
+    array = _emit_match_array(node.args[1], ctx)
     match_type = emit_expr(node.args[2], ctx) if len(node.args) > 2 else "0"
     return f"{ctx.use('xl_match')}({lookup}, {array}, {match_type})"
 

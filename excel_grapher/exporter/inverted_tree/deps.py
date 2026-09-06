@@ -95,6 +95,54 @@ def addresses_outside_blank_ranges(
     return [addr for addr in addresses if not address_in_blank_ranges(addr, rects)]
 
 
+@dataclass(frozen=True, slots=True)
+class PositionalRangeCell:
+    """One worksheet cell in a MATCH/INDEX window, in sheet order."""
+
+    address: CanonicalAddress
+    series_id: str | None
+    catalog_index: int | None
+    blank: bool
+
+
+def resolve_positional_range(
+    addresses: Sequence[CanonicalAddress],
+    catalog: SeriesCatalog,
+    blank_rects: Sequence[BlankRangeRect] | None = None,
+) -> tuple[tuple[PositionalRangeCell, ...], tuple[CanonicalAddress, ...]]:
+    """Map each address to a bound catalog cell or a declared blank.
+
+    Returns `(cells, missing)`. `missing` lists addresses that are neither
+    bound nor declared blank. Worksheet order and rectangle size are
+    preserved; declared blanks stay in `cells` so MATCH/INDEX positions
+    do not shift. Unique cell ownership (`covering_series`) is unchanged.
+    """
+    rects = current_blank_rects() if blank_rects is None else blank_rects
+    cells: list[PositionalRangeCell] = []
+    missing: list[CanonicalAddress] = []
+    for address in addresses:
+        if address_in_blank_ranges(address, rects):
+            cells.append(PositionalRangeCell(address, None, None, True))
+            continue
+        owner = catalog.series_for(address)
+        if owner is None:
+            missing.append(address)
+            continue
+        cells.append(PositionalRangeCell(address, owner.series_id, owner.index_of(address), False))
+    return tuple(cells), tuple(missing)
+
+
+def range_ref_label(node: AstNode, host_cell: CanonicalAddress) -> str:
+    """Return a sheet-qualified A1 label for a cell or range ref."""
+    if isinstance(node, CellRefNode):
+        return resolve_cell_ref(node, host_cell)
+    if isinstance(node, RangeNode):
+        start = resolve_cell_ref(node.start_ref, host_cell)
+        end = resolve_cell_ref(node.end_ref, host_cell)
+        return f"{start}:{end}"
+    return type(node).__name__
+
+
 AccessClass = Literal[
     "identity", "shift", "affine", "gather", "whole", "dynamic", "cross_partition"
 ]
@@ -613,27 +661,49 @@ class _DepCollector:
         self,
         addresses: list[CanonicalAddress],
         host_cell: CanonicalAddress,
+        *,
+        ref: AstNode | None = None,
+        access: AccessClass = "whole",
     ) -> None:
-        owned = addresses_outside_blank_ranges(addresses, self.blank_rects)
-        if not owned:
-            return
-        covered = covering_series(self.catalog, owned)
-        if covered is not None:
-            self.emit_lookup(covered, host_cell, owned[0], "whole")
-            return
-        missing = [addr for addr in owned if self.catalog.series_id_for(addr) is None]
+        cells, missing = resolve_positional_range(addresses, self.catalog, self.blank_rects)
         if missing:
+            label = f"range {range_ref_label(ref, host_cell)}" if ref is not None else "range"
             raise InvertedTreeExportError(
-                f"series {self.host.series_id!r} range is not a bound series "
-                f"(unbound cells: {missing[:8]})"
+                f"series {self.host.series_id!r} cell {host_cell}: "
+                f"{label} is not a bound series (unbound cells: {list(missing[:8])})"
             )
         seen: set[str] = set()
-        for addr in owned:
-            series_id = self.catalog.series_id_for(addr)
-            if series_id is None or series_id in seen:
+        for cell in cells:
+            if cell.blank or cell.series_id is None or cell.series_id in seen:
                 continue
-            seen.add(series_id)
-            self.emit_lookup(self.catalog.get(series_id), host_cell, addr, "whole")
+            seen.add(cell.series_id)
+            self.emit_lookup(self.catalog.get(cell.series_id), host_cell, cell.address, access)
+
+    def _visit_lookup_array(
+        self,
+        node: AstNode,
+        host_cell: CanonicalAddress,
+        host_index: int,
+    ) -> None:
+        if isinstance(node, (RangeNode, WholeColumnNode, WholeRowNode)):
+            self._visit_range_addresses(
+                iter_ref_addresses(node, host_cell, self.graph),
+                host_cell,
+                ref=node,
+                access="dynamic",
+            )
+            return
+        if isinstance(node, CellRefNode):
+            address = as_canonical(resolve_cell_ref(node, host_cell))
+            if address_in_blank_ranges(address, self.blank_rects):
+                raise InvertedTreeExportError(
+                    f"series {self.host.series_id!r} cell {host_cell}: "
+                    f"{address} is not a bound series"
+                )
+            owner = self.catalog.require_series_for(address)
+            self.emit_lookup(owner, host_cell, address, "dynamic")
+            return
+        self.visit(node, host_cell=host_cell, host_index=host_index)
 
     def visit(self, node: AstNode, *, host_cell: CanonicalAddress, host_index: int) -> None:
         match node:
@@ -644,6 +714,7 @@ class _DepCollector:
                 self._visit_range_addresses(
                     iter_ref_addresses(node, host_cell, self.graph),
                     host_cell,
+                    ref=node,
                 )
             case FunctionCallNode():
                 self._visit_function(node, host_cell=host_cell, host_index=host_index)
@@ -757,22 +828,24 @@ class _DepCollector:
             start = resolve_cell_ref(node.args[0].start_ref, host_cell)
             end = resolve_cell_ref(node.args[0].end_ref, host_cell)
             covered_full = covering_series_of_range(self.catalog, start, end)
+            covered_col = None
+            if col_literal:
+                try:
+                    covered_col = covering_series_of_column(self.catalog, start, end, col_index)
+                except InvertedTreeExportError:
+                    covered_col = None
             if covered_full is not None:
                 self.emit_lookup(covered_full, host_cell, as_canonical(start), "dynamic")
-            elif not col_literal:
-                raise InvertedTreeExportError(
-                    f"series {self.host.series_id!r} cell {host_cell}: "
-                    "INDEX column cannot be lowered"
+            elif covered_col is not None:
+                self.emit_lookup(
+                    covered_col, host_cell, range_column_origin(start, end, col_index), "dynamic"
                 )
             else:
-                covered = covering_series_of_column(self.catalog, start, end, col_index)
-                if covered is None:
-                    raise InvertedTreeExportError(
-                        f"series {self.host.series_id!r} cell {host_cell}: "
-                        f"INDEX column {col_index} of {start}:{end} is not a bound series"
-                    )
-                self.emit_lookup(
-                    covered, host_cell, range_column_origin(start, end, col_index), "dynamic"
+                self._visit_range_addresses(
+                    iter_range_addresses(start, end),
+                    host_cell,
+                    ref=node.args[0],
+                    access="dynamic",
                 )
         else:
             self.visit(node.args[0], host_cell=host_cell, host_index=host_index)
@@ -789,10 +862,7 @@ class _DepCollector:
                 f"series {self.host.series_id!r}: MATCH expects lookup and array"
             )
         self.visit(node.args[0], host_cell=host_cell, host_index=host_index)
-        array_series = self._series_for_ref(node.args[1], host_cell)
-        self.emit_lookup(
-            array_series, host_cell, self._ref_anchor(node.args[1], host_cell), "dynamic"
-        )
+        self._visit_lookup_array(node.args[1], host_cell, host_index)
         for arg in node.args[2:]:
             self.visit(arg, host_cell=host_cell, host_index=host_index)
 

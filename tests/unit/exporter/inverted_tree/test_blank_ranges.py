@@ -136,7 +136,7 @@ def test_blank_vlookup_table_is_not_a_graph_node(tmp_path: Path) -> None:
 
 def test_blank_vlookup_range_fail_closes_without_blank_ranges(tmp_path: Path) -> None:
     workbook = _mcve_workbook(tmp_path)
-    with pytest.raises(InvertedTreeExportError, match="range is not a bound series"):
+    with pytest.raises(InvertedTreeExportError, match="is not a bound series"):
         generate_inverted(workbook, _mcve_bindings())
 
 

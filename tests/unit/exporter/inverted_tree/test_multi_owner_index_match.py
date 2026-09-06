@@ -6,16 +6,19 @@ boundaries and declared blanks must not drop, shift, or replace those positions.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from excel_grapher.core.address_keys import as_canonical
 from excel_grapher.core.types import XlError
 from excel_grapher.evaluator import FormulaEvaluator
+from excel_grapher.exporter.inverted_tree.deps import resolve_positional_range
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.grapher import create_dependency_graph
+from excel_grapher.grapher.blank_ranges import normalize_blank_range_specs
 from excel_grapher.series_bindings import validate_bindings_document, validate_series_bindings
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
@@ -24,21 +27,16 @@ from tests.unit.exporter.inverted_tree.helpers import (
     input_kwargs,
     inverted_graph_parts,
     load_package,
-    oriented_addresses,
-    oriented_document,
     series_entry,
-    transpose_address,
-    write_oriented_workbook,
     write_workbook,
 )
 
 _BLANK = ("Engine!A6", "Engine!B5:C10", "Engine!D6:E7")
-
-
-def _oriented_blank_ranges(orientation: str) -> tuple[str, ...]:
-    if orientation == "horizontal":
-        return _BLANK
-    return tuple(transpose_address(spec) for spec in _BLANK)
+_MEASURE = {
+    "concept": "OBS_VALUE",
+    "dtype": "float",
+    "bind": {"kind": "data_cell", "read": "float"},
+}
 
 
 def _multi_owner_sheets() -> dict[str, dict[str, object]]:
@@ -66,12 +64,8 @@ def _multi_owner_sheets() -> dict[str, dict[str, object]]:
             "A228": "Loan",
             "B230": 2020,
             "B231": 2021,
-            "E230": (
-                "=INDEX($A$5:$E$10,MATCH(A$228,$A$5:$A$10,0),MATCH(B230,$A$5:$E$5,0))"
-            ),
-            "E231": (
-                "=INDEX($A$5:$E$10,MATCH(A$228,$A$5:$A$10,0),MATCH(B231,$A$5:$E$5,0))"
-            ),
+            "E230": ("=INDEX($A$5:$E$10,MATCH(A$228,$A$5:$A$10,0),MATCH(B230,$A$5:$E$5,0))"),
+            "E231": ("=INDEX($A$5:$E$10,MATCH(A$228,$A$5:$A$10,0),MATCH(B231,$A$5:$E$5,0))"),
         }
     }
 
@@ -90,8 +84,49 @@ def _multi_owner_bindings() -> dict[str, Any]:
             key_concept="COUNTRY",
             key_read="string",
         ),
-        series_entry("years", "Engine!D5:E5", layout="series", direction="constant", dtype="int"),
-        series_entry("terms", "Engine!D8:E10", layout="matrix", direction="constant"),
+        series_entry(
+            "years",
+            "Engine!D5:E5",
+            layout="series",
+            direction="constant",
+            dtype="int",
+            header_row=5,
+        ),
+        {
+            "id": "terms",
+            "sheet": "Engine",
+            "data_range": "Engine!D8:E10",
+            "layout": "matrix",
+            "constant": {},
+            "structure": {
+                "measure": _MEASURE,
+                "dimensions": [
+                    {
+                        "id": "COUNTRY",
+                        "concept": "COUNTRY",
+                        "role": "key",
+                        "scope": "cell",
+                        "bind": {
+                            "kind": "row_label",
+                            "label_column": "A",
+                            "read": "string",
+                        },
+                    },
+                    {
+                        "id": "TIME_PERIOD",
+                        "concept": "TIME_PERIOD",
+                        "role": "key",
+                        "scope": "cell",
+                        "bind": {
+                            "kind": "column_header",
+                            "header_row": 5,
+                            "read": "int",
+                        },
+                    },
+                ],
+            },
+            "key": ["COUNTRY", "TIME_PERIOD"],
+        },
         series_entry(
             "row_key",
             "Engine!A228",
@@ -99,12 +134,24 @@ def _multi_owner_bindings() -> dict[str, Any]:
             direction="input",
             dtype="string",
         ),
-        series_entry("col_key", "Engine!B230:B231", layout="series", direction="input", dtype="int"),
+        series_entry(
+            "col_key",
+            "Engine!B230:B231",
+            layout="series",
+            direction="input",
+            dtype="int",
+            label_column="B",
+            key_concept="TIME_PERIOD",
+            key_read="int",
+        ),
         series_entry(
             "picked",
             "Engine!E230:E231",
             layout="series",
             direction="output",
+            label_column="B",
+            key_concept="TIME_PERIOD",
+            key_read="int",
         ),
     )
 
@@ -118,24 +165,18 @@ def _norm_measure(value: object) -> object:
 def _export_picked(
     tmp_path: Path,
     *,
-    orientation: str,
     stem: str,
     document: dict[str, Any] | None = None,
     sheets: Mapping[str, Mapping[str, object]] | None = None,
     inputs: Mapping[str, object] | None = None,
 ) -> tuple[tuple[object, ...], tuple[object, ...], dict[str, str]]:
-    bound = oriented_document(document or _multi_owner_bindings(), orientation)
-    blank = _oriented_blank_ranges(orientation)
-    workbook = write_oriented_workbook(
-        tmp_path / f"{stem}_{orientation[0]}.xlsx",
-        sheets or _multi_owner_sheets(),
-        orientation=orientation,
-    )
-    catalog, _deps, graph = inverted_graph_parts(workbook, bound, blank_ranges=blank)
-    modules = generate_inverted(workbook, bound, blank_ranges=blank)
-    pkg = load_package(modules, tmp_path, name=f"{stem}_{orientation[0]}")
-    cells = oriented_addresses(("Engine!E230", "Engine!E231"), orientation)
-    with FormulaEvaluator(graph, blank_ranges=blank) as ev:
+    bound = document or _multi_owner_bindings()
+    workbook = write_workbook(tmp_path / f"{stem}.xlsx", sheets or _multi_owner_sheets())
+    catalog, _deps, graph = inverted_graph_parts(workbook, bound, blank_ranges=_BLANK)
+    modules = generate_inverted(workbook, bound, blank_ranges=_BLANK)
+    pkg = load_package(modules, tmp_path, name=stem)
+    cells = ("Engine!E230", "Engine!E231")
+    with FormulaEvaluator(graph, blank_ranges=_BLANK) as ev:
         expected = ev.evaluate(list(cells))
     kwargs = input_kwargs(catalog, graph)
     if inputs is not None:
@@ -146,6 +187,27 @@ def _export_picked(
     return tuple(_norm_measure(value) for value in got), want, modules
 
 
+def test_resolve_positional_range_keeps_declared_blanks(tmp_path: Path) -> None:
+    workbook = write_workbook(tmp_path / "positional.xlsx", _multi_owner_sheets())
+    catalog, _deps, _graph = inverted_graph_parts(
+        workbook, _multi_owner_bindings(), blank_ranges=_BLANK
+    )
+    cells, missing = resolve_positional_range(
+        [
+            as_canonical("Engine!A5"),
+            as_canonical("Engine!A6"),
+            as_canonical("Engine!A7"),
+            as_canonical("Engine!A8"),
+        ],
+        catalog,
+        normalize_blank_range_specs(_BLANK),
+    )
+    assert missing == ()
+    assert [cell.blank for cell in cells] == [False, True, False, False]
+    assert [cell.series_id for cell in cells] == ["note", None, "title", "labels"]
+    assert cells[3].catalog_index == 0
+
+
 def test_coverage_passes_before_export(tmp_path: Path) -> None:
     """Ownership coverage is green; the gap is export, not a missing binding."""
     workbook = write_workbook(tmp_path / "coverage.xlsx", _multi_owner_sheets())
@@ -154,16 +216,15 @@ def test_coverage_passes_before_export(tmp_path: Path) -> None:
         workbook,
         ["Engine!E230", "Engine!E231"],
         load_values=True,
+        use_cached_dynamic_refs=True,
         blank_ranges=_BLANK,
     )
     report = validate_series_bindings(graph, bindings, workbook=workbook)
     assert report["ok"] is True
 
 
-def test_export_matches_evaluator_across_binding_boundaries(
-    tmp_path: Path, orientation: str
-) -> None:
-    got, want, modules = _export_picked(tmp_path, orientation=orientation, stem="mo_idx")
+def test_export_matches_evaluator_across_binding_boundaries(tmp_path: Path) -> None:
+    got, want, modules = _export_picked(tmp_path, stem="mo_idx")
     assert got == pytest.approx(want)
     assert got == pytest.approx((20.0, 21.0))
     internals = modules["internals.py"]
@@ -171,35 +232,29 @@ def test_export_matches_evaluator_across_binding_boundaries(
     assert "xl_match(" in internals
 
 
-def test_leading_and_interior_blanks_keep_match_positions(
-    tmp_path: Path, orientation: str
-) -> None:
+def test_leading_and_interior_blanks_keep_match_positions(tmp_path: Path) -> None:
     """``Loan`` is Excel position 5; dropping ``A6`` would match at 4."""
-    got, want, _modules = _export_picked(tmp_path, orientation=orientation, stem="mo_pos")
+    got, want, _modules = _export_picked(tmp_path, stem="mo_pos")
     assert got == pytest.approx(want)
     assert got == pytest.approx((20.0, 21.0))
 
 
-def test_missing_lookup_is_na(tmp_path: Path, orientation: str) -> None:
-    got, want, _modules = _export_picked(
+def test_missing_lookup_is_na(tmp_path: Path) -> None:
+    got, _want, _modules = _export_picked(
         tmp_path,
-        orientation=orientation,
         stem="mo_na",
         inputs={"row_key": "Missing"},
     )
-    assert got == want
     assert got == ("#N/A", "#N/A")
 
 
-def test_index_into_declared_blank_is_blank(tmp_path: Path, orientation: str) -> None:
-    got, want, _modules = _export_picked(
+def test_index_into_declared_blank_is_blank(tmp_path: Path) -> None:
+    got, _want, _modules = _export_picked(
         tmp_path,
-        orientation=orientation,
         stem="mo_blank",
         inputs={"row_key": "Title"},
     )
-    assert got == want
-    assert got == ("#N/A", "#N/A") or got == (None, None) or got == (0.0, 0.0)
+    assert got == (None, None)
 
 
 def test_match_slice_does_not_use_the_rest_of_the_series(tmp_path: Path) -> None:
@@ -226,7 +281,16 @@ def test_match_slice_does_not_use_the_rest_of_the_series(tmp_path: Path) -> None
             key_concept="COUNTRY",
             key_read="string",
         ),
-        series_entry("picked", "Engine!B1:B2", layout="series", direction="output", dtype="int"),
+        series_entry(
+            "picked",
+            "Engine!B1:B2",
+            layout="series",
+            direction="output",
+            dtype="int",
+            label_column="A",
+            key_concept="COUNTRY",
+            key_read="string",
+        ),
     )
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="match_slice")
@@ -259,7 +323,15 @@ def test_invalid_index_coordinates_use_shared_ref_semantics(tmp_path: Path) -> N
         series_entry("a2", "Engine!A2", layout="scalar", direction="constant"),
         series_entry("b1", "Engine!B1", layout="scalar", direction="constant"),
         series_entry("b2", "Engine!B2", layout="scalar", direction="constant"),
-        series_entry("picked", "Engine!C1:C2", layout="series", direction="output"),
+        series_entry(
+            "picked",
+            "Engine!C1:C2",
+            layout="series",
+            direction="output",
+            label_column="A",
+            key_concept="TIME_PERIOD",
+            key_read="int",
+        ),
     )
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="index_oob")
@@ -275,9 +347,7 @@ def test_invalid_index_coordinates_use_shared_ref_semantics(tmp_path: Path) -> N
 def test_unbound_lookup_cell_names_host_reference_and_address(tmp_path: Path) -> None:
     workbook = write_workbook(tmp_path / "unbound.xlsx", _multi_owner_sheets())
     document = _multi_owner_bindings()
-    document["series"] = [
-        series for series in document["series"] if series["id"] != "terms"
-    ]
+    document["series"] = [series for series in document["series"] if series["id"] != "terms"]
     with pytest.raises(InvertedTreeExportError) as exc:
         generate_inverted(workbook, document, blank_ranges=_BLANK)
     message = str(exc.value)

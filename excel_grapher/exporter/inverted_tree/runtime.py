@@ -17,7 +17,7 @@ from datetime import date, datetime
 from typing import Literal, NoReturn, Protocol, TypeGuard, TypeVar, cast, overload
 
 from excel_grapher.core import operators as _core_ops
-from excel_grapher.core.lookup_funcs import match_cells, vlookup_cells
+from excel_grapher.core.lookup_funcs import index_cells, match_cells, vlookup_cells
 from excel_grapher.core.math_funcs import exp_number, sum_cells
 from excel_grapher.core.sumproduct import sumproduct_cells
 from excel_grapher.core.types import CellValue, FormulaValue
@@ -75,16 +75,19 @@ def as_measure(value: object, dtype: Literal["str"]) -> str: ...
 def as_measure(value: object, dtype: Literal["bool"]) -> bool | str: ...
 @overload
 def as_measure(value: object, dtype: Literal["datetime"]) -> datetime | str: ...
-def as_measure(value: object, dtype: str = "float") -> int | float | str | bool | datetime:
+def as_measure(value: object, dtype: str = "float") -> int | float | str | bool | datetime | None:
     """Coerce a helper result to a measure: number or cached text.
 
     Operators still raise `XlError`. Series-member boundaries catch that and
     store `err.code` here so a `#REF!` cell does not abort the rest of a series.
     Non-numeric cached strings (`n/a`, `..`) pass through as measures.
+    Blank cells (`None`) stay `None`.
 
     Overloads narrow the return by `dtype`: the default `float` path is
     `float | str` so generated `list[float | str]` accumulators type-check.
     """
+    if value is None:
+        return None
     if isinstance(value, str):
         return value
     if isinstance(value, XlError):
@@ -280,6 +283,11 @@ def xl_choose(index: object, *choices: float) -> float:
     if position < 1 or position > len(choices):
         raise XlError("#VALUE!")
     return choices[position - 1]
+
+
+def xl_index(array: object, row_num: object = None, col_num: object = None) -> object:
+    """Excel `INDEX` via `core.lookup_funcs.index_cells`."""
+    return _adapt_core(index_cells(array, row_num, col_num))
 
 
 def xl_match(lookup: object, lookup_array: Sequence[object], match_type: int = 0) -> int:
