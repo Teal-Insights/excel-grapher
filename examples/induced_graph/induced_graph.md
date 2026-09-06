@@ -1,11 +1,13 @@
-# Full vs Path-Induced Mermaid Graphs
+# Full, Path-Induced, and Shortest-Path Graphs
 
 
 This example shows the difference between:
 
-1.  exporting the full dependency graph for a target cell, and
+1.  exporting the full dependency graph for a target cell,
 2.  exporting an induced subgraph containing only nodes on directed
-    paths between two node sets.
+    paths between two node sets, and
+3.  exporting the hop-shortest undirected path between two sibling
+    cells.
 
 The workbook is [`induced_graph.xlsx`](induced_graph.xlsx).
 
@@ -15,6 +17,7 @@ from pathlib import Path
 from excel_grapher.grapher import (
     create_dependency_graph,
     select_path_induced_subgraph,
+    select_shortest_path_subgraph,
     to_mermaid,
 )
 
@@ -90,3 +93,48 @@ flowchart TD
 
 The induced graph excludes the unrelated branch (`G1 -> H1`) because
 those nodes are not on any directed path from `F1` to `A1`.
+
+`D1` and `G1` are both first-level children of `F1`, so there is no
+directed path between them. An undirected shortest-path search finds
+the join at `F1`.
+
+``` python
+try:
+    select_shortest_path_subgraph(
+        full_graph,
+        source_key="Sheet1!D1",
+        target_key="Sheet1!G1",
+    )
+except ValueError as exc:
+    print(f"```text\nDirected miss: {exc}\n```")
+
+sibling_graph = select_shortest_path_subgraph(
+    full_graph,
+    source_key="Sheet1!D1",
+    target_key="Sheet1!G1",
+    directed=False,
+)
+
+print(f"```text\nUndirected shortest-path node count: {len(sibling_graph)}\n```")
+```
+
+``` text
+Directed miss: no directed path from Sheet1!D1 to Sheet1!G1; pass directed=False to search undirected paths
+```
+
+``` text
+Undirected shortest-path node count: 3
+```
+
+``` python
+print(f"```mermaid\n{to_mermaid(sibling_graph, max_nodes=100)}\n```")
+```
+
+``` mermaid
+flowchart TD
+  Sheet1_D1("Sheet1!D1<br>=Sheet1!C1+1")
+  Sheet1_F1("Sheet1!F1<br>=Sheet1!D1+Sheet1!G1")
+  Sheet1_G1("Sheet1!G1<br>=Sheet1!H1+1")
+  Sheet1_F1 --> Sheet1_D1
+  Sheet1_F1 --> Sheet1_G1
+```

@@ -332,6 +332,7 @@ reference:
       - resolve_series_bindings
       - save_graph_cache
       - select_path_induced_subgraph
+      - select_shortest_path_subgraph
       - to_graphviz
       - to_mermaid
       - to_networkx

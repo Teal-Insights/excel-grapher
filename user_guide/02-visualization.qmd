@@ -38,6 +38,25 @@ dot = to_graphviz(focused, rankdir="LR")
 
 The path search follows graph edge direction (`A -> B` means `A` depends on `B`), validates that all requested keys exist in the graph, and preserves edge guards/provenance in the returned induced subgraph.
 
+### Shortest-path subgraphs
+
+Use `select_shortest_path_subgraph(...)` to keep only nodes on the hop-shortest paths between two cells. Search is directed by default. Pass `directed=False` when the cells are not ancestor/descendant — for example two inputs that share a consumer:
+
+```python
+from excel_grapher.grapher import select_shortest_path_subgraph, to_graphviz
+
+# A -> B and A -> C: no directed path B -> ... -> C
+related = select_shortest_path_subgraph(
+    g,
+    source_key="Sheet1!B1",
+    target_key="Sheet1!C1",
+    directed=False,
+)
+dot = to_graphviz(related, rankdir="LR")
+```
+
+`directed` affects reachability only. The returned graph keeps original edge direction, guards, and provenance. If several paths share the shortest hop count, all of them are kept. A directed miss that still has an undirected path raises `ValueError` and mentions `directed=False`.
+
 ### NetworkX (optional dependency)
 
 ```python
