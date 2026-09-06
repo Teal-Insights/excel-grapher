@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.2.2 (2026-09-06)
+
+### Performance Improvements
+
+- **grapher**: Cache repeated provenance walks
+  ([#717](https://github.com/Teal-Insights/excel-grapher/pull/717),
+  [`7137692`](https://github.com/Teal-Insights/excel-grapher/commit/71376922238447e38e28e70479c4fc4cf08faa95))
+
+
 ## v14.2.1 (2026-09-06)
 
 ### Bug Fixes
