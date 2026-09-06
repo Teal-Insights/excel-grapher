@@ -207,5 +207,5 @@ def test_other_series_lag_matches_formula_evaluator(
 
 def test_non_adjacent_two_positions_still_fail_closed(tmp_path: Path) -> None:
     workbook = _non_lag_workbook(tmp_path)
-    with pytest.raises(InvertedTreeExportError, match="two positions"):
+    with pytest.raises(InvertedTreeExportError, match="Engine!A2"):
         generate_inverted(workbook, _non_lag_bindings())
