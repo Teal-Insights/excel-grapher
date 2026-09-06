@@ -27,6 +27,7 @@ from excel_grapher.exporter.inverted_tree.runtime import (
     xl_exp,
     xl_ge,
     xl_gt,
+    xl_index,
     xl_isnumber,
     xl_le,
     xl_lt,
@@ -203,11 +204,35 @@ def test_xl_choose_and_out_of_range() -> None:
     assert exc.value.code == "#VALUE!"
 
 
+def test_as_measure_preserves_blank() -> None:
+    assert as_measure(None) is None
+    assert as_measure(None, "int") is None
+
+
 def test_xl_match_exact_and_na() -> None:
     assert xl_match("Litellia", ("Borvelia", "Litellia", "Aurelium"), 0) == 2
+    assert xl_match("Loan", (("Note",), (None,), ("Title",), ("Bond",), ("Loan",)), 0) == 5
     with pytest.raises(XlError) as exc:
         xl_match("Nope", ("Borvelia",), 0)
     assert exc.value.code == "#N/A"
+
+
+def test_xl_index_intersection_blank_and_ref() -> None:
+    table = (
+        ("Note", None, None, 2020, 2021),
+        (None, None, None, None, None),
+        ("Title", None, None, None, None),
+        ("Bond", None, None, 10.0, 11.0),
+        ("Loan", None, None, 20.0, 21.0),
+    )
+    assert xl_index(table, 5, 4) == pytest.approx(20.0)
+    assert xl_index(table, 3, 4) is None
+    with pytest.raises(XlError) as exc:
+        xl_index(table, 99, 1)
+    assert exc.value.code == "#REF!"
+    with pytest.raises(XlError) as exc:
+        xl_index(table, 1, 99)
+    assert exc.value.code == "#REF!"
 
 
 def test_xl_isnumber_blank_number_and_error() -> None:
