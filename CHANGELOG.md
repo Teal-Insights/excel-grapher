@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.2.8 (2026-09-06)
+
+### Bug Fixes
+
+- **export**: Classify dual reads from keys and shift, not catalog adjacency
+  ([#736](https://github.com/Teal-Insights/excel-grapher/pull/736),
+  [`77df96f`](https://github.com/Teal-Insights/excel-grapher/commit/77df96f13395c94ba661bfbeada505ac50db85c4))
+
+
 ## v14.2.7 (2026-09-06)
 
 ### Bug Fixes
