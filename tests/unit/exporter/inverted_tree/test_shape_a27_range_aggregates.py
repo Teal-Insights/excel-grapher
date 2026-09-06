@@ -4,7 +4,7 @@ Whole-column / whole-row, cross-sheet ranges, `SUM` of a bound series, and
 `SUMPRODUCT` fail closed today. Distill each shape as a Tier-1 toy and lower
 it with graph-derived access (`covering_series`, same as INDEX/OFFSET).
 `xl_sum` / `xl_sumproduct` live in inverted-tree `runtime.py` (core wrappers);
-do not embed ctx `export_runtime/`. `SUM(IF(...))` stays fail-closed (#483).
+do not embed ctx `export_runtime/`. `SUM(IF(...))` stays fail-closed (#732).
 """
 
 from __future__ import annotations

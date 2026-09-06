@@ -164,7 +164,7 @@ formula AST ([issue 668](https://github.com/Teal-Insights/excel-grapher/issues/6
 `SUMPRODUCT` of a covering series, whole-column / whole-row refs, and cross-sheet 3-D ranges
 lower when every referenced cell is bound ([issue 667](https://github.com/Teal-Insights/excel-grapher/issues/667)).
 Array spill ([issue 284](https://github.com/Teal-Insights/excel-grapher/issues/284))
-and array-style `SUM(IF(…))` ([issue 483](https://github.com/Teal-Insights/excel-grapher/issues/483))
+and array-style `SUM(IF(…))` ([issue 732](https://github.com/Teal-Insights/excel-grapher/issues/732))
 remain unsupported.
 
 Projection, `embed`, and visualization exports are not codegen paradigms; they are unchanged.
