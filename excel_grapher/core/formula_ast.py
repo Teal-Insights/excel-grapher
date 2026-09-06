@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -334,176 +333,6 @@ def intern_formula_ast(tree: AstNode, intern: dict[AstNode, AstNode]) -> AstNode
     encoding of `tree`.
     """
     return intern.setdefault(tree, tree)
-
-
-_SHAPE_HOLE_SHEET = "_EG_SHAPE_HOLE"
-_SHAPE_SHEET_PREFIX = r"(?:'(?:[^']|'')+'|[A-Za-z_][A-Za-z0-9_.]*)!"
-_SHAPE_COL = r"\$?[A-Za-z]{1,3}"
-_SHAPE_ROW = r"\$?\d+"
-_SHAPE_RANGE_RE = re.compile(
-    rf"(?:{_SHAPE_SHEET_PREFIX})?{_SHAPE_COL}{_SHAPE_ROW}\s*:\s*"
-    rf"(?:{_SHAPE_SHEET_PREFIX})?{_SHAPE_COL}{_SHAPE_ROW}"
-)
-_SHAPE_CELL_RE = re.compile(rf"(?:{_SHAPE_SHEET_PREFIX})?{_SHAPE_COL}{_SHAPE_ROW}")
-_SHAPE_WHOLE_COL_RE = re.compile(
-    rf"(?:{_SHAPE_SHEET_PREFIX})?{_SHAPE_COL}\s*:\s*(?:{_SHAPE_SHEET_PREFIX})?{_SHAPE_COL}(?!\d)"
-)
-_SHAPE_WHOLE_ROW_RE = re.compile(
-    rf"(?:{_SHAPE_SHEET_PREFIX})?{_SHAPE_ROW}\s*:\s*(?:{_SHAPE_SHEET_PREFIX})?{_SHAPE_ROW}(?!\d)"
-)
-_SHAPE_PARSE_CACHE: dict[str, AstNode] = {}
-_SHAPE_PARSE_HITS = 0
-_SHAPE_PARSE_MISSES = 0
-
-
-def clear_shape_parse_cache() -> None:
-    """Drop the punched-skeleton parse cache (tests)."""
-    global _SHAPE_PARSE_HITS, _SHAPE_PARSE_MISSES
-    _SHAPE_PARSE_CACHE.clear()
-    _SHAPE_PARSE_HITS = 0
-    _SHAPE_PARSE_MISSES = 0
-
-
-def shape_parse_cache_info() -> tuple[int, int]:
-    """Return `(hits, misses)` for punched-skeleton formula parses."""
-    return _SHAPE_PARSE_HITS, _SHAPE_PARSE_MISSES
-
-
-def formula_address_shape(formula: str) -> str:
-    """Return `formula` with cell/range addresses punched to typed holes.
-
-    Copied formulas that differ only in A1 coordinates share a shape string.
-    String literals are left intact. Function names that look like A1 (`LOG10(`)
-    are not punched.
-    """
-    skeleton, _holes = _skeletonize_formula_addresses(formula)
-    return skeleton
-
-
-def _mask_formula_strings_as_spaces(text: str) -> str:
-    """Replace Excel `"..."` literals with spaces so address regexes skip them."""
-    chars = list(text)
-    i = 0
-    n = len(text)
-    while i < n:
-        if text[i] != '"':
-            i += 1
-            continue
-        j = i + 1
-        while j < n:
-            if text[j] != '"':
-                j += 1
-                continue
-            if j + 1 < n and text[j + 1] == '"':
-                j += 2
-                continue
-            j += 1
-            break
-        for k in range(i, min(j, n)):
-            chars[k] = " "
-        i = j
-    return "".join(chars)
-
-
-def _is_function_call_span(text: str, end: int) -> bool:
-    rest = text[end:]
-    i = 0
-    while i < len(rest) and rest[i].isspace():
-        i += 1
-    return i < len(rest) and rest[i] == "("
-
-
-def _formula_address_spans(formula: str) -> list[tuple[int, int, bool]]:
-    """Return non-overlapping `(start, end, is_range)` address spans."""
-    masked = _mask_formula_strings_as_spaces(formula)
-    found: list[tuple[int, int, bool]] = []
-    for regex, is_range in (
-        (_SHAPE_RANGE_RE, True),
-        (_SHAPE_WHOLE_COL_RE, True),
-        (_SHAPE_WHOLE_ROW_RE, True),
-        (_SHAPE_CELL_RE, False),
-    ):
-        for match in regex.finditer(masked):
-            start, end = match.span()
-            if _is_function_call_span(masked, end):
-                continue
-            found.append((start, end, is_range))
-    found.sort(key=lambda item: (item[0], -(item[1] - item[0])))
-    spans: list[tuple[int, int, bool]] = []
-    last_end = -1
-    for start, end, is_range in found:
-        if start < last_end:
-            continue
-        spans.append((start, end, is_range))
-        last_end = end
-    return spans
-
-
-def _skeletonize_formula_addresses(formula: str) -> tuple[str, tuple[str, ...]]:
-    """Replace addresses with `_EG_SHAPE_HOLE` placeholders.
-
-    Returns the punched skeleton and the original address texts in left-to-right
-    order, matching AST preorder of those leaves.
-    """
-    spans = _formula_address_spans(formula)
-    if not spans:
-        return formula, ()
-    holes: list[str] = []
-    parts: list[str] = []
-    cursor = 0
-    for index, (start, end, is_range) in enumerate(spans):
-        parts.append(formula[cursor:start])
-        holes.append(formula[start:end])
-        n = index + 1
-        if is_range:
-            parts.append(f"{_SHAPE_HOLE_SHEET}!A{n}:B{n}")
-        else:
-            parts.append(f"{_SHAPE_HOLE_SHEET}!A{n}")
-        cursor = end
-    parts.append(formula[cursor:])
-    return "".join(parts), tuple(holes)
-
-
-def _fill_shape_holes(node: AstNode, holes: Sequence[AstNode]) -> AstNode:
-    """Replace `_EG_SHAPE_HOLE` leaves with the corresponding bound address nodes."""
-
-    def hole_index(axis: AxisRef) -> int | None:
-        if isinstance(axis, AbsoluteAxis) and 1 <= axis.index <= len(holes):
-            return axis.index - 1
-        return None
-
-    match node:
-        case CellRefNode(ref) if ref.sheet == _SHAPE_HOLE_SHEET:
-            index = hole_index(ref.row)
-            if index is None:
-                raise IndexError("shape hole index out of range")
-            return holes[index]
-        case RangeNode(start_ref=start, end_ref=_end) if start.sheet == _SHAPE_HOLE_SHEET:
-            index = hole_index(start.row)
-            if index is None:
-                raise IndexError("shape hole index out of range")
-            return holes[index]
-        case FunctionCallNode(name, args):
-            return FunctionCallNode(name, [_fill_shape_holes(arg, holes) for arg in args])
-        case BinaryOpNode(op, left, right):
-            return BinaryOpNode(op, _fill_shape_holes(left, holes), _fill_shape_holes(right, holes))
-        case UnaryOpNode(op, operand):
-            return UnaryOpNode(op, _fill_shape_holes(operand, holes))
-        case _:
-            return node
-
-
-def _parse_shape_skeleton(skeleton: str) -> AstNode:
-    """Parse a punched skeleton, caching the internable tree."""
-    global _SHAPE_PARSE_HITS, _SHAPE_PARSE_MISSES
-    cached = _SHAPE_PARSE_CACHE.get(skeleton)
-    if cached is not None:
-        _SHAPE_PARSE_HITS += 1
-        return cached
-    parsed = parse(skeleton)
-    _SHAPE_PARSE_CACHE[skeleton] = parsed
-    _SHAPE_PARSE_MISSES += 1
-    return parsed
 
 
 def iter_resolved_cell_keys(node: AstNode, anchor: CellKey | str) -> Iterator[str]:
@@ -1300,8 +1129,12 @@ def parse_preserving_axes(
     sheet-qualified A1 before parsing. Whitespace and scientific literals follow
     the same acceptance rules as `parse`. Pass `name_state` to reuse a compiled
     defined-name regex instead of rebuilding it on every call.
+
+    Copied formulas share a `FormulaShape` skeleton parse (typed `AddressHoleNode`
+    holes) so the tokenizer runs once per relative shape.
     """
     from excel_grapher.core.formula_normalization import expand_defined_names
+    from excel_grapher.core.formula_shape import try_parse_preserving_axes_from_shape
 
     expanded = expand_defined_names(
         formula,
@@ -1309,16 +1142,9 @@ def parse_preserving_axes(
         named_range_ranges=named_range_ranges,
         name_state=name_state,
     )
-    skeleton, hole_texts = _skeletonize_formula_addresses(expanded)
-    if hole_texts:
-        try:
-            skeleton_ast = _parse_shape_skeleton(skeleton)
-            holes = tuple(
-                parse("=" + hole, anchor=anchor, preserve_axes=True) for hole in hole_texts
-            )
-            return _fill_shape_holes(skeleton_ast, holes)
-        except (FormulaParseError, ValueError, IndexError):
-            pass
+    shaped = try_parse_preserving_axes_from_shape(expanded, anchor=anchor)
+    if shaped is not None:
+        return shaped
     return parse(expanded, anchor=anchor, preserve_axes=True)
 
 

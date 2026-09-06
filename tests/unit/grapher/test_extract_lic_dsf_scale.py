@@ -29,9 +29,16 @@ from excel_grapher.core.formula_ast import (
     BinaryOpNode,
     CellRef,
     CellRefNode,
+    FunctionCallNode,
+    RangeNode,
     RelativeAxis,
-    clear_shape_parse_cache,
+    WholeColumnNode,
+    parse,
     parse_preserving_axes,
+)
+from excel_grapher.core.formula_shape import (
+    clear_shape_parse_cache,
+    fingerprint_formula_shape,
     shape_parse_cache_info,
 )
 from excel_grapher.grapher import dynamic_refs as dynamic_refs_mod
@@ -224,9 +231,10 @@ def test_copied_formulas_share_shape_keyed_parse(tmp_path: Path) -> None:
         [f"Sheet1!B{row}" for row in range(1, n_rows + 1)],
         load_values=False,
     )
-    hits, misses = shape_parse_cache_info()
+    hits, misses, fallbacks = shape_parse_cache_info()
     assert misses == 1, f"expected one skeleton parse, got misses={misses} hits={hits}"
     assert hits >= n_rows - 1, f"copied IF formulas must hit the shape parse cache; hits={hits}"
+    assert fallbacks == 0
     b1 = graph._get_internal_node("Sheet1!B1")
     b2 = graph._get_internal_node("Sheet1!B2")
     assert b1 is not None and b2 is not None
@@ -246,9 +254,10 @@ def test_parse_preserving_axes_shape_cache_matches_direct_parse() -> None:
         col=RelativeAxis(-2),
         row=RelativeAxis(-2),
     )
-    hits, misses = shape_parse_cache_info()
+    hits, misses, fallbacks = shape_parse_cache_info()
     assert misses == 1
     assert hits == 1
+    assert fallbacks == 0
 
 
 def test_expand_env_is_iterative_not_recursive(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -285,3 +294,164 @@ def test_expand_env_is_iterative_not_recursive(monkeypatch: pytest.MonkeyPatch) 
 
     assert env[f"Sheet1!A{depth}"].enum is not None
     assert env["Sheet1!A1"].enum is not None
+
+
+def test_row_ref_index_copies_keep_per_row_targets(tmp_path: Path) -> None:
+    """`INDEX(..., ROW(A{row}))` copies must not share row 1's target set.
+
+    Shape-keyed inference omits host A1. `ROW(ref)` is position-dependent even
+    though it is not argument-less `ROW()`, so copies must stay per-cell.
+    """
+    excel_path = tmp_path / "row_ref_index.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    for row in range(1, 6):
+        ws.write_number(row - 1, 3, row * 10)  # D1:D5
+        ws.write_formula(row - 1, 4, f"=INDEX($D$1:$D$5,ROW(A{row}))")
+    wb.close()
+
+    graph = create_dependency_graph(
+        excel_path,
+        [f"Sheet1!E{row}" for row in range(1, 6)],
+        load_values=False,
+        dynamic_refs=DynamicRefConfig(cell_type_env={}, limits=DynamicRefLimits()),
+    )
+    for row in range(1, 6):
+        deps = {
+            dep for dep in graph.get_dependencies(f"Sheet1!E{row}") if dep.startswith("Sheet1!D")
+        }
+        assert deps == {f"Sheet1!D{row}"}, f"E{row} D-deps={sorted(deps)}"
+
+
+def test_offset_row_ref_copies_keep_per_row_targets(tmp_path: Path) -> None:
+    """`OFFSET($A$1, ROW(A{row}), 0)` copies must not share row 1's target."""
+    excel_path = tmp_path / "offset_row_ref.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    for row in range(1, 12):
+        ws.write_number(row - 1, 0, row)
+    for row in range(1, 6):
+        ws.write_formula(row - 1, 1, f"=OFFSET($A$1,ROW(A{row}),0)")
+    wb.close()
+
+    graph = create_dependency_graph(
+        excel_path,
+        [f"Sheet1!B{row}" for row in range(1, 6)],
+        load_values=False,
+        dynamic_refs=DynamicRefConfig(cell_type_env={}, limits=DynamicRefLimits()),
+    )
+    assert "Sheet1!A2" in graph.get_dependencies("Sheet1!B1")
+    assert "Sheet1!A6" in graph.get_dependencies("Sheet1!B5")
+    assert "Sheet1!A6" not in graph.get_dependencies("Sheet1!B1")
+    assert "Sheet1!A2" not in graph.get_dependencies("Sheet1!B5")
+
+
+def test_nested_if_provenance_has_causes_and_empty_spans(tmp_path: Path) -> None:
+    """Top-level IF provenance records causes and omits branch-relative spans."""
+    excel_path = tmp_path / "if_spans.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(0, 0, 1)
+    ws.write_number(1, 0, 10)
+    ws.write_number(2, 0, 20)
+    ws.write_formula(0, 1, "=IF(Sheet1!A1=1,Sheet1!A2,Sheet1!A3)")
+    wb.close()
+
+    graph = create_dependency_graph(
+        excel_path,
+        ["Sheet1!B1"],
+        capture_dependency_provenance=True,
+    )
+    for dep in ("Sheet1!A1", "Sheet1!A2", "Sheet1!A3"):
+        prov = graph.get_edge_attrs("Sheet1!B1", dep).provenance
+        assert prov is not None
+        assert DependencyCause.direct_ref in prov.causes
+        assert prov.direct_sites_normalized == ()
+
+
+def test_parse_preserving_axes_shape_cache_matches_direct_for_edge_forms() -> None:
+    """Skeleton fill must match a direct preserve-axes parse for common Excel forms."""
+    cases = (
+        ("=$A1+B$1", "Sheet1!C3"),
+        ("=SUM(A1:A3)", "Sheet1!B4"),
+        ("=SUM(A:A)", "Sheet1!B1"),
+        ("='My Sheet'!A1", "'My Sheet'!B2"),
+        ("=LOG10(A1)", "Sheet1!B1"),
+        ("=A1+LOG10(B1)", "Sheet1!C1"),
+    )
+    for formula, anchor in cases:
+        clear_shape_parse_cache()
+        via_shape = parse_preserving_axes(formula, anchor=anchor)
+        direct = parse(formula, anchor=anchor, preserve_axes=True)
+        assert via_shape == direct, formula
+        hits, misses, fallbacks = shape_parse_cache_info()
+        assert fallbacks == 0, formula
+        assert misses == 1, formula
+        assert isinstance(
+            via_shape,
+            (BinaryOpNode, FunctionCallNode, CellRefNode, RangeNode, WholeColumnNode),
+        )
+
+
+def test_parse_shape_cache_uses_formula_shape_keys() -> None:
+    """Filled copies share `FormulaShape.shape_key`; no parallel hole language."""
+    import excel_grapher.core.formula_ast as ast_mod
+
+    assert not hasattr(ast_mod, "formula_address_shape")
+    clear_shape_parse_cache()
+    ast = parse_preserving_axes("=A1+B1", anchor="Sheet1!C3")
+    copied = parse_preserving_axes("=A2+B2", anchor="Sheet1!C4")
+    first = fingerprint_formula_shape(ast)
+    second = fingerprint_formula_shape(copied)
+    assert first.shape_key == second.shape_key
+    assert "$CELL" in first.shape_key
+    assert "_EG_SHAPE_HOLE" not in first.shape_key
+
+
+def test_identical_absolute_index_with_provenance_still_skips_expand(
+    tmp_path: Path,
+) -> None:
+    """Dep-cache hits must not re-walk argument env when provenance is on."""
+    excel_path = tmp_path / "abs_index.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Sheet1")
+    for row in range(1, 6):
+        ws.write_number(row - 1, 2, row)
+        ws.write_number(row - 1, 3, row * 10)
+    for row in range(1, 11):
+        ws.write_formula(row - 1, 4, "=INDEX($D$1:$D$5,MATCH($C$1,$C$1:$C$5,0))")
+    wb.close()
+
+    env: CellTypeEnv = {}
+    for row in range(1, 6):
+        env[f"Sheet1!C{row}"] = CellType(
+            kind=CellKind.NUMBER,
+            interval=IntervalDomain(min=1, max=5),
+        )
+    original_expand = expand_leaf_env_to_argument_env
+    expand_calls = 0
+
+    def tracking_expand(*args: object, **kwargs: object):
+        nonlocal expand_calls
+        expand_calls += 1
+        return original_expand(*args, **kwargs)
+
+    with patch(
+        "excel_grapher.grapher.builder.expand_leaf_env_to_argument_env",
+        side_effect=tracking_expand,
+    ):
+        graph = create_dependency_graph(
+            excel_path,
+            [f"Sheet1!E{row}" for row in range(1, 11)],
+            load_values=False,
+            dynamic_refs=DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits()),
+            capture_dependency_provenance=True,
+        )
+
+    assert expand_calls == 1, f"expected one expand, got {expand_calls}"
+    for row in range(1, 11):
+        deps = graph.get_dependencies(f"Sheet1!E{row}")
+        assert "Sheet1!D1" in deps
+        prov = graph.get_edge_attrs(f"Sheet1!E{row}", "Sheet1!D1").provenance
+        assert prov is not None
+        assert DependencyCause.dynamic_index in prov.causes
