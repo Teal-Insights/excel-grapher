@@ -107,7 +107,7 @@ _RUNTIME_FUNCTIONS = frozenset(
     for name, value in vars(inverted_runtime).items()
     if name.startswith("xl_") and callable(value)
 )
-_AGGREGATE_FUNCTIONS = frozenset({"SUM", "SUMPRODUCT"})
+_AGGREGATE_FUNCTIONS = frozenset({"SUM", "SUMPRODUCT", "AVERAGE", "MAX"})
 _LOOKUP_TABLE_FUNCTIONS = frozenset({"VLOOKUP", "HLOOKUP", "LOOKUP", "XLOOKUP"})
 _ARRAY_IF_VALUE_OPS = frozenset(_ARITHMETIC_HELPERS) | frozenset(_COMPARE_HELPERS)
 _ARRAY_IF_UNSOUND_FNS = frozenset(

@@ -89,6 +89,10 @@ from tests.unit.exporter.inverted_tree.test_shape_a27_indirect import (
     _literal_workbook,
 )
 from tests.unit.exporter.inverted_tree.test_shape_a27_range_aggregates import (
+    range_average_if_bindings,
+    range_average_if_workbook,
+    range_max_if_bindings,
+    range_max_if_workbook,
     range_sum_bindings,
     range_sum_if_bindings,
     range_sum_if_workbook,
@@ -246,6 +250,8 @@ _CORPUS: list[tuple[str, Callable[[Path], Path], Callable[[], dict[str, Any]]]] 
     ("range_sum", range_sum_workbook, range_sum_bindings),
     ("range_sum_if", range_sum_if_workbook, range_sum_if_bindings),
     ("range_sumproduct_if", range_sumproduct_if_workbook, range_sumproduct_if_bindings),
+    ("range_average_if", range_average_if_workbook, range_average_if_bindings),
+    ("range_max_if", range_max_if_workbook, range_max_if_bindings),
     ("label_ladder", label_ladder_workbook, label_ladder_bindings),
 ]
 
@@ -373,6 +379,8 @@ _ORIENTABLE = [
     ("range_sum", range_sum_workbook, range_sum_bindings),
     ("range_sum_if", range_sum_if_workbook, range_sum_if_bindings),
     ("range_sumproduct_if", range_sumproduct_if_workbook, range_sumproduct_if_bindings),
+    ("range_average_if", range_average_if_workbook, range_average_if_bindings),
+    ("range_max_if", range_max_if_workbook, range_max_if_bindings),
     ("label_ladder", label_ladder_workbook, label_ladder_bindings),
 ]
 

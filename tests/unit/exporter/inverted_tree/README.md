@@ -19,8 +19,9 @@ in `test_shape_a26_index_block.py` as `country_table`.
 `test_shape_a27_range_aggregates.py`), plus whole-column / whole-row,
 cross-sheet ranges, and `SUMPRODUCT` of covering series. #732 distilled
 `SUM(IF(range,…))` as `range_sum_if` and `SUMPRODUCT(IF(range,…))` as
-`range_sumproduct_if` in the same file; unsound interiors and alignment
-stay fail-closed.
+`range_sumproduct_if` in the same file; #749 distilled `AVERAGE(IF)` as
+`range_average_if` and `MAX(IF)` as `range_max_if`. Unsound interiors
+and alignment stay fail-closed.
 
 ## Local pool
 

@@ -21,6 +21,7 @@ from excel_grapher.exporter.inverted_tree.runtime import (
     take,
     xl_add,
     xl_at,
+    xl_average,
     xl_choose,
     xl_div,
     xl_eq,
@@ -33,6 +34,7 @@ from excel_grapher.exporter.inverted_tree.runtime import (
     xl_le,
     xl_lt,
     xl_match,
+    xl_max,
     xl_mul,
     xl_ne,
     xl_pow,
@@ -390,4 +392,20 @@ def test_xl_sumproduct_over_aligned_sequences() -> None:
     assert xl_sumproduct((1.0, 2.0), (3.0, 4.0)) == 11.0
     with pytest.raises(XlError) as exc:
         xl_sumproduct((1.0, "#N/A"), (1.0, 1.0))
+    assert exc.value.code == "#N/A"
+
+
+def test_xl_average_skips_logicals_in_arrays() -> None:
+    assert xl_average((1.0, 3.0, 5.0)) == 3.0
+    assert xl_average([[False], [2.0]]) == 2.0
+    with pytest.raises(XlError) as exc:
+        xl_average((1.0, "#DIV/0!"))
+    assert exc.value.code == "#DIV/0!"
+
+
+def test_xl_max_skips_logicals_in_arrays() -> None:
+    assert xl_max((-10.0, -20.0)) == -10.0
+    assert xl_max([[False], [-20.0]]) == -20.0
+    with pytest.raises(XlError) as exc:
+        xl_max((1.0, "#N/A"))
     assert exc.value.code == "#N/A"

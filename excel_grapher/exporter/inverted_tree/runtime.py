@@ -19,7 +19,7 @@ from typing import Literal, NoReturn, Protocol, TypeGuard, TypeVar, cast, overlo
 from excel_grapher.core import operators as _core_ops
 from excel_grapher.core.logic_funcs import logical_if
 from excel_grapher.core.lookup_funcs import index_cells, match_cells, vlookup_cells
-from excel_grapher.core.math_funcs import exp_number, sum_cells
+from excel_grapher.core.math_funcs import average_cells, exp_number, max_cells, sum_cells
 from excel_grapher.core.sumproduct import sumproduct_cells
 from excel_grapher.core.types import CellValue, FormulaValue
 from excel_grapher.core.types import XlError as CoreXlError
@@ -269,6 +269,20 @@ def xl_sum(*args: object) -> object:
     for arg in args:
         _raise_stored_errors_in(arg)
     return _adapt_core(sum_cells(*cast(tuple[CellValue, ...], args)))
+
+
+def xl_average(*args: object) -> object:
+    """Excel `AVERAGE` via `core.math_funcs.average_cells`."""
+    for arg in args:
+        _raise_stored_errors_in(arg)
+    return _adapt_core(average_cells(*cast(tuple[CellValue, ...], args)))
+
+
+def xl_max(*args: object) -> object:
+    """Excel `MAX` via `core.math_funcs.max_cells`."""
+    for arg in args:
+        _raise_stored_errors_in(arg)
+    return _adapt_core(max_cells(*cast(tuple[CellValue, ...], args)))
 
 
 def xl_if(cond: object, then_value: object, else_value: object = False) -> object:

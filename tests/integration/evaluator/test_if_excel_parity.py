@@ -1,4 +1,4 @@
-"""Array-style SUM(IF): evaluator matches live Excel (integration, slow).
+"""Array-style SUM/AVERAGE/MAX(IF): evaluator matches live Excel (integration, slow).
 
 Complements `test_if_parity.py` (evaluator ↔ codegen). Requires xlwings or
 WSL/COM; skips cleanly when Excel automation is unavailable.
@@ -35,7 +35,11 @@ def test_sum_if_array_excel_parity(tmp_path: Path) -> None:
             LiveExcelCell("D4", formula="=SUM(IF(A1:A3=E1,B1:B3,0))"),
             LiveExcelCell("D5", formula="=SUM(IF(A1:A3>0,IF(B1:B3>15,C1:C3,0),0))"),
             LiveExcelCell("D6", formula="=SUMPRODUCT(IF(A1:A3>0,B1:B3,0))"),
+            LiveExcelCell("D7", formula="=AVERAGE(IF(A1:A3>0,A1:A3))"),
+            LiveExcelCell("D8", formula="=AVERAGE(IF(A1:A3>0,B1:B3,C1:C3))"),
+            LiveExcelCell("D9", formula="=MAX(IF(A1:A3>0,A1:A3))"),
+            LiveExcelCell("D10", formula="=MAX(IF(A1:A3>0,C1:C3))"),
         ),
-        targets=("S!D1", "S!D2", "S!D3", "S!D4", "S!D5", "S!D6"),
+        targets=("S!D1", "S!D2", "S!D3", "S!D4", "S!D5", "S!D6", "S!D7", "S!D8", "S!D9", "S!D10"),
         workbook_stem="sum_if_array",
     )
