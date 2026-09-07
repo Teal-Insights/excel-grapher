@@ -10,6 +10,7 @@ Anything else fails closed.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
@@ -519,10 +520,12 @@ def unique_seed_or_none(
     *,
     delta: int,
 ) -> CanonicalAddress | None:
-    """Return the unique seed, or `None` when several unkeyed scalars match.
+    """Return the unique seed, or `None` when no unique candidate exists.
 
-    Raises:
-        InvertedTreeExportError: Several candidate seeds at `host ± 1`.
+    Several unkeyed scalars, or several keyed cells at `host ± 1`, are not a
+    unique seed. The latter emits a `UserWarning` and returns `None` rather
+    than raising: `IF(cond, A+B, C)` reads multiple producers at one offset
+    by construction (#745).
     """
     matched = list(dict.fromkeys(matched))
     if len(matched) == 1:
@@ -537,10 +540,13 @@ def unique_seed_or_none(
         if schedule_axis_coord(address, catalog) == schedule_axis_coord(host_cell, catalog) + delta:
             adjacent.append(address)
     if len(adjacent) > 1:
-        raise InvertedTreeExportError(
+        warnings.warn(
             f"series {host.series_id!r} cell {host_cell}: "
-            f"ambiguous seed candidates {tuple(matched)}"
+            f"ambiguous seed candidates {tuple(matched)}",
+            UserWarning,
+            stacklevel=3,
         )
+        return None
     if len(adjacent) == 1:
         return adjacent[0]
     return None
@@ -556,8 +562,8 @@ def seed_address(
 ) -> CanonicalAddress | None:
     """Return the unique seed/terminal cell at `host` index, if any.
 
-    Raises:
-        InvertedTreeExportError: Several candidate seeds at `host ± 1`.
+    Several keyed cells at `host ± 1` are not a unique seed; the probe
+    degrades to `None` with a `UserWarning` (#745).
     """
     if graph is None or index < 0 or index >= len(host.cells):
         return None
