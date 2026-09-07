@@ -1660,16 +1660,19 @@ def _host_follow_key_maps(
 ) -> dict[str, dict[object, object]]:
     """Return host→producer value maps for keys that follow the host walk.
 
-    A shared key follows the host when every host member reads exactly one
-    producer value for that field and those values are a function of the
-    host value. The strings need not match: host `B1` may join producer
-    `Bounds Test 1: Real GDP Growth Shock` (#739). A host cell that reads
-    two producer values (`gdp[B1, t]` and `gdp[Baseline, t]`) does not
-    follow, so the foreign value stays a literal.
+    Shared producer values that every host member reads stay literals
+    (`Threshold` on every breach row). After dropping that intersection,
+    each member may have at most one remaining producer value, and those
+    remainders must be a function of the host value. The strings need not
+    match: host `Baseline breach` may join producer `Baseline` (#741);
+    host `B1` may join producer `Bounds Test 1: Real GDP Growth Shock`
+    (#739). Two remainders per member are not a function of the host, so
+    the field is not followed.
     """
     shared = [name for name in producer.key_fields if name in host.key_fields]
     maps: dict[str, dict[object, object]] = {name: {} for name in shared}
     valid = set(shared)
+    member_values: dict[str, list[tuple[object, set[object]]]] = {name: [] for name in shared}
     for host_index, indices in per_host.items():
         if host_index >= len(host.domain):
             return {}
@@ -1694,14 +1697,24 @@ def _host_follow_key_maps(
                     break
             if name not in valid:
                 continue
-            if len(producer_values) != 1:
+            member_values[name].append((host_value, producer_values))
+    for name in tuple(valid):
+        reads = member_values[name]
+        if not reads:
+            continue
+        intersection = set.intersection(*(values for _, values in reads))
+        for host_value, producer_values in reads:
+            remaining = producer_values - intersection
+            if len(remaining) > 1:
                 valid.discard(name)
+                break
+            if not remaining:
                 continue
-            producer_value = next(iter(producer_values))
+            producer_value = next(iter(remaining))
             existing = maps[name].get(host_value, _HOST_FOLLOW_UNSET)
             if existing is not _HOST_FOLLOW_UNSET and existing != producer_value:
                 valid.discard(name)
-                continue
+                break
             maps[name][host_value] = producer_value
     return {name: maps[name] for name in valid}
 
@@ -1722,10 +1735,9 @@ def _field_binding(
     field is not frozen by a `$` pin on that field's bind axis. `$F$2`
     keeps `TIME_PERIOD` a literal even when that year equals the host
     year. A same-sheet `$D$2` does not freeze `sheet_name` (`SCENARIO`
-    stays `host`). Distinct host/producer vocabularies still bind as
-    `host` when every slot of a member reads one producer value (#739).
-    Emit can replay a binding across the host walk only when every
-    member agrees on this spec.
+    stays `host`). Shared constants stay literals beside a remapped
+    path (#741). Emit can replay a binding across the host walk only
+    when every member agrees on this spec.
     """
     if host_index >= len(host.domain) or producer_index >= len(producer.domain):
         return None
@@ -1765,11 +1777,11 @@ def _is_keyed_multi_read(
 
     Each slot is then `domain.index` of those fields: two scenarios at one
     year, `baseline[t]` plus `baseline[2026]`, two same-sheet variants
-    (`stats[s, mean]` / `stats[s, stdev]`), or two instruments at one
-    remapped host scenario (#739). A `t-1` read is a literal that
-    changes per member and cannot be keyed. A `$` pin whose year happens
-    to equal the host year is still a literal; a `$` pin on the host sheet
-    is not a `SCENARIO` literal.
+    (`stats[s, mean]` / `stats[s, stdev]`), two instruments at one remapped
+    host scenario (#739), or a remapped path plus a constant cap (#741). A
+    `t-1` read is a literal that changes per member and cannot be keyed. A
+    `$` pin whose year happens to equal the host year is still a literal; a
+    `$` pin on the host sheet is not a `SCENARIO` literal.
     """
     if not producer.key_fields:
         return False
