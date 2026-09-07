@@ -831,11 +831,16 @@ class SeriesDeps:
       (`baseline[t]` / `baseline[2026]`, #735), same-sheet `$` pins
       of a `sheet_name` key (`stats[s, mean]` / `stats[s, stdev]`,
       #737), a shared key whose host and producer vocabularies
-      differ (`B1` vs `Bounds Test 1: …`, #739), or an `IF` then/else
+      differ (`B1` vs `Bounds Test 1: …`, #739), an `IF` then/else
       pair of producer `SCENARIO`s that is a function of the host
       row (`paths[B2.1, t]` / `paths[B2.2, t]` vs `B6.1` / `B6.2`,
-      #752). `$` freezes the row/column bind axis, not the sheet.
-      Catalog-slot adjacency is not a lag.
+      #752), or an N-way catalog along one lookup axis of a joined
+      producer (`CHOOSE(k, p[t0], …, p[tn])` / a sum of that
+      year-row, #754). A field whose value set is the same for every
+      multi-read member is a lookup axis and stays a literal even
+      when one value equals the host year. `$` freezes the
+      row/column bind axis, not the sheet. Catalog-slot adjacency is
+      not a lag.
     - `lookup_ids` — `whole` / `dynamic` table reads
     - `is_scan` / `seed_id` / `scan_direction` — self-lags discharged by
       loop order. A relative other-series read at `schedule_coord` ± 1 is
@@ -1876,6 +1881,51 @@ def _host_follow_pair_maps(
     return {field: maps}
 
 
+def _lookup_axis_fields(
+    _host: BoundSeries,
+    producer: BoundSeries,
+    per_host: Mapping[int, set[int]],
+) -> frozenset[str]:
+    """Return producer keys whose multi-read value set is host-invariant.
+
+    A field whose values are the same set for every multi-slot host
+    member, and that set has more than one value, is a catalog lookup
+    axis: the host indexes those values (`CHOOSE` / a listed year-row)
+    rather than following its own key. Bind the field as a literal even
+    when one value equals the host year (#754). A leftover that changes
+    with the host (`{t, t-1}` or `{t, 2026}`) is not a lookup axis. One
+    multi-read member cannot distinguish a lookup axis from a mixed
+    host-year plus pin, so at least two multi-read members are required.
+    """
+    multi = {host_i: indices for host_i, indices in per_host.items() if len(indices) > 1}
+    if len(multi) < 2:
+        return frozenset()
+    axes: set[str] = set()
+    for name in producer.key_fields:
+        value_sets: list[set[object]] = []
+        valid = True
+        for indices in multi.values():
+            values: set[object] = set()
+            for index in indices:
+                if index >= len(producer.domain):
+                    valid = False
+                    break
+                try:
+                    values.add(producer.domain[index][name])
+                except KeyError:
+                    valid = False
+                    break
+            if not valid:
+                break
+            value_sets.append(values)
+        if not valid or not value_sets:
+            continue
+        first = value_sets[0]
+        if len(first) > 1 and all(item == first for item in value_sets):
+            axes.add(name)
+    return frozenset(axes)
+
+
 def _field_binding(
     host: BoundSeries,
     host_index: int,
@@ -1883,6 +1933,7 @@ def _field_binding(
     producer_index: int,
     *,
     pinned_fields: frozenset[str] = frozenset(),
+    literal_fields: frozenset[str] = frozenset(),
     host_follow: Mapping[str, Mapping[object, object]] | None = None,
     pair_maps: Mapping[str, Mapping[object, tuple[object, object]]] | None = None,
 ) -> tuple[tuple[str, object], ...] | None:
@@ -1890,15 +1941,16 @@ def _field_binding(
 
     A field is `host` when it equals the consumer's value, or when
     `host_follow` maps the host value onto this producer value, and the
-    field is not frozen by a `$` pin on that field's bind axis. `$F$2`
-    keeps `TIME_PERIOD` a literal even when that year equals the host
-    year. A same-sheet `$D$2` does not freeze `sheet_name` (`SCENARIO`
-    stays `host`). Shared constants stay literals beside a remapped
-    path (#741). `pair_maps` mark an `IF` then/else leftover as
-    `('pair', 0)` / `('pair', 1)` so two host rows that dual-read
-    different producer pairs still share a pattern (#752). Emit can
-    replay a binding across the host walk only when every member agrees
-    on this spec.
+    field is not frozen by a `$` pin on that field's bind axis or by a
+    lookup axis (`literal_fields`). `$F$2` keeps `TIME_PERIOD` a literal
+    even when that year equals the host year. A same-sheet `$D$2` does
+    not freeze `sheet_name` (`SCENARIO` stays `host`). An invariant
+    multi-value year-row is a lookup axis even without `$` (#754).
+    Shared constants stay literals beside a remapped path (#741).
+    `pair_maps` mark an `IF` then/else leftover as `('pair', 0)` /
+    `('pair', 1)` so two host rows that dual-read different producer
+    pairs still share a pattern (#752). Emit can replay a binding
+    across the host walk only when every member agrees on this spec.
     """
     if host_index >= len(host.domain) or producer_index >= len(producer.domain):
         return None
@@ -1907,12 +1959,13 @@ def _field_binding(
     parts: list[tuple[str, object]] = []
     follow = host_follow or {}
     pairs = pair_maps or {}
+    frozen_fields = pinned_fields | literal_fields
     for key_name in producer.key_fields:
         try:
             value = prod[key_name]
         except KeyError:
             return None
-        if key_name not in pinned_fields and key_name in host.key_fields:
+        if key_name not in frozen_fields and key_name in host.key_fields:
             try:
                 host_value = host_point[key_name]
             except KeyError:
@@ -1948,6 +2001,7 @@ def _multi_read_pattern_sets(
     pair_maps: Mapping[str, Mapping[object, tuple[object, object]]] | None = None,
 ) -> list[frozenset[tuple[tuple[str, object], ...]]] | None:
     """Return per-member keyed pattern sets, or `None` when a slot is unbound."""
+    lookup_axes = _lookup_axis_fields(host, producer, per_host)
     pattern_sets: list[frozenset[tuple[tuple[str, object], ...]]] = []
     for host_i, indices in per_host.items():
         if len(indices) < 2:
@@ -1962,6 +2016,7 @@ def _multi_read_pattern_sets(
                 producer,
                 index,
                 pinned_fields=pinned_fields,
+                literal_fields=lookup_axes,
                 host_follow=host_follow,
                 pair_maps=pair_maps,
             )
@@ -1986,12 +2041,14 @@ def _is_keyed_multi_read(
     Each slot is then `domain.index` of those fields: two scenarios at one
     year, `baseline[t]` plus `baseline[2026]`, two same-sheet variants
     (`stats[s, mean]` / `stats[s, stdev]`), two instruments at one remapped
-    host scenario (#739), a remapped path plus a constant cap (#741), or
-    an `IF` then/else pair of producer scenarios that is a function of
-    the host row (#752). A `t-1` read is a literal that changes per
-    member and cannot be keyed. A `$` pin whose year happens to equal
-    the host year is still a literal; a `$` pin on the host sheet is
-    not a `SCENARIO` literal.
+    host scenario (#739), a remapped path plus a constant cap (#741), an
+    `IF` then/else pair of producer scenarios that is a function of the
+    host row (#752), or an N-way catalog along a lookup axis of a joined
+    producer (`CHOOSE(k, p[t0], …)` / a sum of that year-row, #754). A
+    `t-1` read is a literal that changes per member and cannot be keyed.
+    A `$` pin whose year happens to equal the host year is still a
+    literal; a `$` pin on the host sheet is not a `SCENARIO` literal.
+    An invariant year set is a lookup axis even without `$`.
     """
     if not producer.key_fields:
         return False
@@ -2108,17 +2165,17 @@ def series_deps_from_edges(
         origin = fit_affine_map(
             [(host_i, min(indices)) for host_i, indices in per_host.items() if indices]
         )
-        static_catalog = origin is not None and origin[0] == 0
-        if static_catalog and any(len(indices) > 1 for indices in per_host.values()):
-            # Same catalog slots from every member (`labels[0]` / `labels[1]`),
-            # or a mixed absolute + relative read of one producer (#681).
-            continue
         multi = {host_i: indices for host_i, indices in per_host.items() if len(indices) > 1}
         if multi and _is_consistent_lag(host, dep, per_host, graph):
             lagged.add(series_id)
             continue
         if multi and _is_keyed_multi_read(host, dep, per_host, graph):
             keyed.add(series_id)
+            continue
+        static_catalog = origin is not None and origin[0] == 0
+        if static_catalog and any(len(indices) > 1 for indices in per_host.values()):
+            # Same catalog slots from every member (`labels[0]` / `labels[1]`),
+            # or a mixed absolute + relative read of one producer (#681).
             continue
         if multi:
             host_i, indices = next(iter(multi.items()))

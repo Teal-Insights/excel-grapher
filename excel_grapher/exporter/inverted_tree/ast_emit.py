@@ -54,6 +54,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
     _host_follow_key_maps,
     _host_follow_pair_maps,
     _host_producer_slots,
+    _lookup_axis_fields,
     _ref_pinned_fields,
     addresses_outside_blank_ranges,
     covering_series_for_index_window,
@@ -348,6 +349,13 @@ def _host_pair_for(
     )
 
 
+def _lookup_axes_for(owner: BoundSeries, ctx: EmitContext) -> frozenset[str]:
+    """Return lookup-axis fields for `owner` from resolved host edges."""
+    return _lookup_axis_fields(
+        ctx.host, owner, _host_producer_slots(ctx.host, owner, ctx.deps.edges)
+    )
+
+
 def _follow_is_identity(
     host_follow: Mapping[str, Mapping[object, object]], fields: Sequence[str]
 ) -> bool:
@@ -465,6 +473,7 @@ def _producer_field_binding(
         owner,
         idx,
         pinned_fields=pinned,
+        literal_fields=_lookup_axes_for(owner, ctx),
         host_follow=follow,
         pair_maps=pairs,
     )
@@ -576,7 +585,7 @@ def _keyed_catalog_index_expr(
     ctx: EmitContext,
     ref: CellRefNode | None = None,
 ) -> str:
-    """Return `domain.index(key)` for a keyed dual-read of `address`."""
+    """Return `domain.index(key)` for a keyed multi-read of `address`."""
     follow = _host_follow_for(owner, ctx)
     pairs = _host_pair_for(owner, ctx)
     binding = _producer_field_binding(
