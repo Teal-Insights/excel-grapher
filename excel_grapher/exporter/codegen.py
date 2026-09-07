@@ -1555,20 +1555,16 @@ class CodeGenerator:
         return self._hoist_return_expr(expr)
 
     def _emit_if(self, node: FunctionCallNode) -> str:
-        """Emit IF as a Python conditional expression for lazy evaluation.
+        """Emit IF as a Python conditional or element-wise `xl_if`.
 
-        IF(condition, true_val, [false_val])
-
-        Emits as a nested conditional that:
-        1. Returns error if condition is an error
-        2. Otherwise lazily evaluates only the relevant branch
-
-        This ensures only the relevant branch is evaluated, which is critical
-        for breaking circular references that Excel handles via lazy evaluation.
+        Scalar `IF` stays a lazy ternary (`xl_bool`) so unused branches are
+        not evaluated. When any operand is a range/array, emit `xl_if` so
+        `SUM(IF(range,…))` matches `logical_if`.
         """
         if len(node.args) < 2:
             return "xl_raise(XlError.VALUE)"
 
+        array_if = any(self._ast_needs_array_operator_branch(arg) for arg in node.args)
         cond_expr = self._emit_ast_child(node.args[0])
         with self._return_unpack_lazy():
             # Empty IF branches (trailing/interior commas) are Excel blank -> 0.
@@ -1586,6 +1582,9 @@ class CodeGenerator:
                 )
             else:
                 false_expr = "False"
+
+        if array_if:
+            return f"xl_if({cond_expr}, {true_expr}, {false_expr})"
 
         # Excel-style boolean coercion is not Python truthiness:
         # - "FALSE" should behave like False
@@ -2447,7 +2446,10 @@ class CodeGenerator:
                 funcs.add("xl_raise")
             # IF, IFERROR, CHOOSE are special - emitted as native Python conditionals
             elif upper_name == "IF":
-                funcs.add("xl_bool")
+                if any(self._ast_needs_array_operator_branch(arg) for arg in node.args):
+                    funcs.add("xl_if")
+                else:
+                    funcs.add("xl_bool")
             elif upper_name == "IFERROR":
                 funcs.add("XlError")
                 funcs.add("xl_iferror")
