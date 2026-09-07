@@ -163,9 +163,11 @@ Shapes that **fail closed** (export error, not a silent wrong answer): `INDIRECT
 formula AST ([issue 668](https://github.com/Teal-Insights/excel-grapher/issues/668)), `IFERROR`, and any `xl_<name>` with no inverted-tree runtime helper. `SUM` /
 `SUMPRODUCT` of a covering series, whole-column / whole-row refs, and cross-sheet 3-D ranges
 lower when every referenced cell is bound ([issue 667](https://github.com/Teal-Insights/excel-grapher/issues/667)).
+Array-style `SUM(IF(…))` of covering series lowers when ranges are element-aligned
+([issue 732](https://github.com/Teal-Insights/excel-grapher/issues/732)); shape mismatch, nested
+aggregates, `AND`/`OR` collapse, `@`, and whole-column forms stay fail-closed.
 Array spill ([issue 284](https://github.com/Teal-Insights/excel-grapher/issues/284))
-and array-style `SUM(IF(…))` ([issue 732](https://github.com/Teal-Insights/excel-grapher/issues/732))
-remain unsupported.
+remains unsupported.
 
 Projection, `embed`, and visualization exports are not codegen paradigms; they are unchanged.
 
