@@ -109,6 +109,7 @@ _RUNTIME_FUNCTIONS = frozenset(
 )
 _AGGREGATE_FUNCTIONS = frozenset({"SUM", "SUMPRODUCT"})
 _LOOKUP_TABLE_FUNCTIONS = frozenset({"VLOOKUP", "HLOOKUP", "LOOKUP", "XLOOKUP"})
+_ARRAY_IF_VALUE_OPS = frozenset(_ARITHMETIC_HELPERS) | frozenset(_COMPARE_HELPERS)
 _ARRAY_IF_UNSOUND_FNS = frozenset(
     {
         "AND",
@@ -907,6 +908,7 @@ def _emit_if(node: FunctionCallNode, ctx: EmitContext) -> str:
         return f"{ctx.use('xl_if')}({cond}, {then}, {otherwise})"
     cond = emit_expr(node.args[0], ctx)
     then = emit_expr(node.args[1], ctx)
+    # Array omitted else is Excel FALSE; scalar emit still uses 0.
     otherwise = emit_expr(node.args[2], ctx) if len(node.args) > 2 else "0"
     return f"({then} if {cond} else {otherwise})"
 
@@ -943,7 +945,12 @@ def _range_shape(node: RangeNode, ctx: EmitContext) -> tuple[int, int]:
 
 
 def _assert_array_if_sound(node: FunctionCallNode, ctx: EmitContext) -> None:
-    """Fail closed when array `IF` alignment is not element-wise."""
+    """Fail closed when array `IF` alignment is not element-wise.
+
+    Supported interiors are ranges, cell refs, scalars, nested `IF`, and
+    binary arithmetic/compare. Unary operators, concatenation, and other
+    functions are rejected with an array-`IF`-specific message.
+    """
     shapes: set[tuple[int, int]] = set()
 
     def walk(item: AstNode) -> None:
@@ -954,12 +961,13 @@ def _assert_array_if_sound(node: FunctionCallNode, ctx: EmitContext) -> None:
             shapes.add(_range_shape(item, ctx))
             return
         if isinstance(item, BinaryOpNode):
+            if item.op not in _ARRAY_IF_VALUE_OPS:
+                raise _host_export_error(ctx, f"array IF operator {item.op!r} is unsupported")
             walk(item.left)
             walk(item.right)
             return
         if isinstance(item, UnaryOpNode):
-            walk(item.operand)
-            return
+            raise _host_export_error(ctx, f"array IF unary {item.op!r} is unsupported")
         if isinstance(item, FunctionCallNode):
             name = normalize_excel_function_name(item.name)
             if name in _ARRAY_IF_UNSOUND_FNS:
@@ -971,7 +979,7 @@ def _assert_array_if_sound(node: FunctionCallNode, ctx: EmitContext) -> None:
                     detail = name
                 raise _host_export_error(ctx, f"array IF {detail} is unsupported")
             if name != "IF":
-                return
+                raise _host_export_error(ctx, f"array IF interior {name} is unsupported")
             for arg in item.args:
                 walk(arg)
 

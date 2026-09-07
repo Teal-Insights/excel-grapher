@@ -1,11 +1,12 @@
 """Range aggregates over catalog covering series (#667, #732).
 
-Whole-column / whole-row, cross-sheet ranges, `SUM` of a bound series, and
-`SUMPRODUCT` fail closed today. Distill each shape as a Tier-1 toy and lower
-it with graph-derived access (`covering_series`, same as INDEX/OFFSET).
-`xl_sum` / `xl_sumproduct` live in inverted-tree `runtime.py` (core wrappers);
-do not embed ctx `export_runtime/`. Array-style `SUM(IF(range,…))` lowers
-when ranges are element-aligned (#732); unsound alignment stays fail-closed.
+`SUM` / `SUMPRODUCT` of a bound series, whole-column / whole-row refs, and
+cross-sheet ranges lower with graph-derived access (`covering_series`,
+`take` for a window). `xl_sum` / `xl_sumproduct` live in inverted-tree
+`runtime.py` (core wrappers); do not embed ctx `export_runtime/`.
+Array-style `SUM(IF(range,…))` and `SUMPRODUCT(IF(range,…))` lower as
+`xl_if` over positional range tables when interiors are element-aligned
+(#732); unsound alignment stays fail-closed.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from typing import Any
 import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
+from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, SeriesCatalog
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
@@ -36,17 +38,31 @@ def _scalar(value: object) -> object:
     return value
 
 
+def _output_series_for_cell(catalog: SeriesCatalog, cell: str) -> BoundSeries:
+    for series in catalog.output_series():
+        if cell in series.cells:
+            return series
+    raise AssertionError(f"no output series owns {cell}")
+
+
 def _package_matches_output(
     tmp_path: Path,
     workbook: Path,
     document: dict[str, Any],
     name: str,
     cell: str,
+    *,
+    pkg: object | None = None,
 ) -> None:
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
-    pkg = load_package(generate_inverted(workbook, document), tmp_path, name=name)
+    loaded = (
+        pkg
+        if pkg is not None
+        else load_package(generate_inverted(workbook, document), tmp_path, name=name)
+    )
     expected = FormulaEvaluator(graph).evaluate([cell])[cell]
-    got = call_compute(pkg, catalog.output_series()[0].series_id, input_kwargs(catalog, graph))
+    series = _output_series_for_cell(catalog, cell)
+    got = call_compute(loaded, series.series_id, input_kwargs(catalog, graph))
     assert _scalar(got) == pytest.approx(expected)
 
 
@@ -319,15 +335,124 @@ def test_sum_if_scalar_else_and_nested_if_match_evaluator(tmp_path: Path) -> Non
     assert pkg.compute_out_nest(
         flag=(-1.0, 2.0), then_s=(10.0, 20.0), else_s=(100.0, 200.0)
     ) == pytest.approx((200.0,))
-    _package_matches_output(tmp_path, workbook, document, "a27_sum_if_nested_eval", "Outputs!Z1")
-    catalog, _deps, graph = inverted_graph_parts(workbook, document)
-    expected = FormulaEvaluator(graph).evaluate(["Outputs!Z2"])["Outputs!Z2"]
-    got = call_compute(
-        load_package(generate_inverted(workbook, document), tmp_path, name="a27_sum_if_z2"),
-        catalog.output_series()[1].series_id,
-        input_kwargs(catalog, graph),
+    _package_matches_output(
+        tmp_path, workbook, document, "a27_sum_if_nested_eval", "Outputs!Z1", pkg=pkg
     )
-    assert _scalar(got) == pytest.approx(expected)
+    _package_matches_output(
+        tmp_path, workbook, document, "a27_sum_if_nested_eval", "Outputs!Z2", pkg=pkg
+    )
+
+
+def test_sum_if_2d_range_matches_evaluator(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "a27_sum_if_2d.xlsx",
+        {
+            "Inputs": {
+                "A1": 1.0,
+                "B1": -2.0,
+                "A2": 3.0,
+                "B2": 4.0,
+                "A10": 1,
+                "B10": 2,
+            },
+            "Outputs": {"Z1": "=SUM(IF(Inputs!A1:B2>0,Inputs!A1:B2,0))"},
+        },
+    )
+    document = bindings_document(
+        series_entry("left", "Inputs!A1:A2", layout="series", direction="input", header_row=10),
+        series_entry("right", "Inputs!B1:B2", layout="series", direction="input", header_row=10),
+        series_entry("out", "Outputs!Z1", layout="scalar", direction="output"),
+    )
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a27_sum_if_2d")
+    assert pkg.compute_out(left=(1.0, 3.0), right=(-2.0, 4.0)) == pytest.approx((8.0,))
+    _package_matches_output(tmp_path, workbook, document, "a27_sum_if_2d_eval", "Outputs!Z1")
+
+
+def test_sum_if_broadcast_scalar_equals_matches_evaluator(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "a27_sum_if_eq.xlsx",
+        {
+            "Inputs": {
+                "A1": -1.0,
+                "A2": 2.0,
+                "B1": 10.0,
+                "B2": 20.0,
+                "E1": 2.0,
+                "A10": 1,
+                "B10": 2,
+            },
+            "Outputs": {"Z1": "=SUM(IF(Inputs!A1:A2=Inputs!E1,Inputs!B1:B2,0))"},
+        },
+    )
+    document = bindings_document(
+        series_entry("flag", "Inputs!A1:A2", layout="series", direction="input", header_row=10),
+        series_entry("then_s", "Inputs!B1:B2", layout="series", direction="input", header_row=10),
+        series_entry("needle", "Inputs!E1", layout="scalar", direction="input"),
+        series_entry("out", "Outputs!Z1", layout="scalar", direction="output"),
+    )
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a27_sum_if_eq")
+    assert pkg.compute_out(flag=(-1.0, 2.0), then_s=(10.0, 20.0), needle=2.0) == pytest.approx(
+        (20.0,)
+    )
+    _package_matches_output(tmp_path, workbook, document, "a27_sum_if_eq_eval", "Outputs!Z1")
+
+
+def test_sum_if_window_of_longer_series_matches_evaluator(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "a27_sum_if_window.xlsx",
+        {
+            "Inputs": {"A1": -1.0, "A2": 2.0, "A3": 100.0, "A10": 1, "B10": 2, "C10": 3},
+            "Outputs": {"Z1": "=SUM(IF(Inputs!A1:A2>0,Inputs!A1:A2))"},
+        },
+    )
+    document = bindings_document(
+        series_entry("src", "Inputs!A1:A3", layout="series", direction="input", header_row=10),
+        series_entry("out", "Outputs!Z1", layout="scalar", direction="output"),
+    )
+    modules = generate_inverted(workbook, document)
+    assert "src[2]" not in modules["internals.py"]
+    pkg = load_package(modules, tmp_path, name="a27_sum_if_window")
+    assert pkg.compute_out(src=(-1.0, 2.0, 100.0)) == pytest.approx((2.0,))
+    _package_matches_output(tmp_path, workbook, document, "a27_sum_if_window_eval", "Outputs!Z1")
+
+
+def range_sumproduct_if_workbook(tmp_path: Path) -> Path:
+    """`SUMPRODUCT(IF(range>0, range))` over a two-cell bound series."""
+    return write_workbook(
+        tmp_path / "a27_sumproduct_if.xlsx",
+        {
+            "Inputs": {"A1": -1.0, "A2": 2.0, "A10": 1, "B10": 2},
+            "Outputs": {"Z1": "=SUMPRODUCT(IF(Inputs!A1:A2>0,Inputs!A1:A2))"},
+        },
+    )
+
+
+def range_sumproduct_if_bindings() -> dict[str, Any]:
+    return bindings_document(
+        series_entry("src", "Inputs!A1:A2", layout="series", direction="input", header_row=10),
+        series_entry("out", "Outputs!Z1", layout="scalar", direction="output"),
+    )
+
+
+def test_sumproduct_if_of_bound_series_emits_runtime_helper(tmp_path: Path) -> None:
+    workbook = range_sumproduct_if_workbook(tmp_path)
+    modules = generate_inverted(workbook, range_sumproduct_if_bindings())
+    assert "xl_if(" in modules["internals.py"]
+    assert "xl_sumproduct(" in modules["internals.py"]
+    pkg = load_package(modules, tmp_path, name="a27_sumproduct_if_emit")
+    assert pkg.compute_out(src=(-1.0, 2.0)) == pytest.approx((2.0,))
+    assert pkg.compute_out(src=(1.0, 2.0)) == pytest.approx((3.0,))
+
+
+def test_sumproduct_if_of_bound_series_matches_evaluator(tmp_path: Path) -> None:
+    workbook = range_sumproduct_if_workbook(tmp_path)
+    _package_matches_output(
+        tmp_path,
+        workbook,
+        range_sumproduct_if_bindings(),
+        "a27_sumproduct_if_eval",
+        "Outputs!Z1",
+    )
 
 
 @pytest.mark.parametrize(
@@ -335,19 +460,39 @@ def test_sum_if_scalar_else_and_nested_if_match_evaluator(tmp_path: Path) -> Non
     [
         (
             "=SUM(IF(Inputs!A1:A2>0,Inputs!B1:B5,0))",
-            r"shape mismatch|unaligned|unsupported",
+            r"array IF shape mismatch",
         ),
         (
             "=SUM(IF(Inputs!A1:A2>0,SUM(Inputs!B1:B2),0))",
-            r"nested aggregate|unsupported",
+            r"array IF nested aggregate is unsupported",
         ),
         (
             "=SUM(IF(AND(Inputs!A1:A2>0,Inputs!E1>0),Inputs!B1:B2,0))",
-            r"AND|OR|collapses|unsupported",
+            r"array IF AND/OR collapse is unsupported",
         ),
         (
-            "=SUM(IF(Inputs!A:A>0,Inputs!B:B,0))",
-            r"whole-column|whole-row|unbound|unsupported",
+            "=SUM(IF(Inputs!A1:A2>0,-Inputs!B1:B2,0))",
+            r"array IF unary '-' is unsupported",
+        ),
+        (
+            "=SUM(IF(Inputs!A1:A2>0,ABS(Inputs!B1:B2),0))",
+            r"array IF interior ABS is unsupported",
+        ),
+        (
+            '=SUM(IF(Inputs!A1:A2&"x"="1x",Inputs!B1:B2,0))',
+            r"array IF operator '&' is unsupported",
+        ),
+        (
+            "=SUM(IF(IFS(Inputs!A1:A2>0,TRUE),Inputs!B1:B2,0))",
+            r"array IF IFS is unsupported",
+        ),
+        (
+            "=SUM(IF(Inputs!A1:A2>0,CHOOSE(1,Inputs!B1:B2),0))",
+            r"array IF CHOOSE is unsupported",
+        ),
+        (
+            "=SUM(IF(Inputs!A1:A2>0,SWITCH(1,1,Inputs!B1:B2),0))",
+            r"array IF SWITCH is unsupported",
         ),
     ],
 )
@@ -377,4 +522,54 @@ def test_sum_if_unsound_alignment_fails_closed(tmp_path: Path, formula: str, mat
         series_entry("out", "Outputs!Z1", layout="scalar", direction="output"),
     )
     with pytest.raises(InvertedTreeExportError, match=match):
+        generate_inverted(workbook, document)
+
+
+def test_sum_if_whole_column_fails_closed(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "a27_sum_if_whole_col.xlsx",
+        {
+            "Inputs": {"A1": 1.0, "A2": 2.0, "B1": 10.0, "B2": 20.0},
+            "Outputs": {"Z1": "=SUM(IF(Inputs!A:A>0,Inputs!B:B,0))"},
+        },
+    )
+    document = bindings_document(
+        series_entry(
+            "flag",
+            "Inputs!A1:A2",
+            layout="series",
+            direction="input",
+            label_column="A",
+            key_concept="TIME_PERIOD",
+            key_read="int",
+        ),
+        series_entry(
+            "then_s",
+            "Inputs!B1:B2",
+            layout="series",
+            direction="input",
+            label_column="A",
+            key_concept="TIME_PERIOD",
+            key_read="int",
+        ),
+        series_entry("out", "Outputs!Z1", layout="scalar", direction="output"),
+    )
+    with pytest.raises(InvertedTreeExportError, match=r"array IF does not support whole-column"):
+        generate_inverted(workbook, document)
+
+
+def test_sum_if_at_operator_has_no_formula_ast(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "a27_sum_if_at.xlsx",
+        {
+            "Inputs": {"A1": 1.0, "A2": 2.0, "B1": 10.0, "B2": 20.0, "A10": 1, "B10": 2},
+            "Outputs": {"Z1": "=SUM(IF(@Inputs!A1:A2>0,Inputs!B1:B2,0))"},
+        },
+    )
+    document = bindings_document(
+        series_entry("flag", "Inputs!A1:A2", layout="series", direction="input", header_row=10),
+        series_entry("then_s", "Inputs!B1:B2", layout="series", direction="input", header_row=10),
+        series_entry("out", "Outputs!Z1", layout="scalar", direction="output"),
+    )
+    with pytest.raises(InvertedTreeExportError, match=r"no formula AST"):
         generate_inverted(workbook, document)
