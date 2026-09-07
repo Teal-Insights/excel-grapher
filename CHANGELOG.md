@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.2.12 (2026-09-07)
+
+### Bug Fixes
+
+- **export**: Degrade ambiguous T+1 seeds instead of raising
+  ([#746](https://github.com/Teal-Insights/excel-grapher/pull/746),
+  [`605da55`](https://github.com/Teal-Insights/excel-grapher/commit/605da5591b2ca220f82eb07af83b66406977005f))
+
+
 ## v14.2.11 (2026-09-07)
 
 ### Bug Fixes
