@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.4.2 (2026-09-07)
+
+### Bug Fixes
+
+- **export**: Classify CHOOSE year-row lookups as keyed
+  ([#755](https://github.com/Teal-Insights/excel-grapher/pull/755),
+  [`d34fa49`](https://github.com/Teal-Insights/excel-grapher/commit/d34fa49b728161d9429598bf800bb5e1165809f0))
+
+
 ## v14.4.1 (2026-09-07)
 
 ### Bug Fixes
