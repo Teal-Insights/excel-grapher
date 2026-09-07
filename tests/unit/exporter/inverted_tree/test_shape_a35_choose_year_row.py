@@ -8,8 +8,10 @@ so a matching host year bound as `host` (not `lit`) made the sets disagree and
 fail-closed at `more than two positions`.
 
 The same edge shape is a positional catalog along `TIME_PERIOD` when every
-multi-read member hits the same year set: join `INSTRUMENT`, select the year
-from the CHOOSE (or an explicit sum of that row). `INDEX(row, k)` is a
+multi-read member of a joined partition hits the same year set: join
+`INSTRUMENT`, select the year from the CHOOSE (or an explicit sum of that
+row). Partitions may have different widths (#760): IMF `{2024…2051}` and
+IDA's longer horizon are still one cumulative series. `INDEX(row, k)` is a
 lookup-window spelling of the same access; this shape covers the identity-hit
 form that LIC-DSF writes as `CHOOSE`.
 """
@@ -44,8 +46,10 @@ _TIME_DIM = {
 
 _IMF_CUMULATIVE = (10.0, 20.0, 30.0, 40.0)
 _IDA_CUMULATIVE = (100.0, 200.0, 300.0, 400.0)
+_IDA_RAGGED_CUMULATIVE = (100.0, 200.0, 300.0, 400.0, 500.0)
 _IMF_INDEX = (2, 3, 1, 4)
 _IDA_INDEX = (1, 4, 2, 3)
+_IDA_RAGGED_INDEX = (1, 5, 2, 3, 4)
 
 
 def _measure() -> dict[str, Any]:
@@ -78,8 +82,8 @@ def _document(*series: dict[str, Any]) -> dict[str, Any]:
     return doc
 
 
-def _choose_formula(index_cell: str, row: int) -> str:
-    args = ",".join(f"{col}{row}" for col in "DEFG")
+def _choose_formula(index_cell: str, row: int, cols: str = "DEFG") -> str:
+    args = ",".join(f"{col}{row}" for col in cols)
     return f"=IF({index_cell}=0,0,CHOOSE({index_cell},{args}))"
 
 
@@ -136,6 +140,34 @@ def _one_instrument_sheets() -> dict[str, dict[str, object]]:
     for col, idx in zip("DEFG", _IMF_INDEX, strict=True):
         cells[f"{col}3"] = idx
         cells[f"{col}4"] = _choose_formula(f"{col}3", 5)
+    return {"PV": cells}
+
+
+def _ragged_sheets() -> dict[str, dict[str, object]]:
+    """IMF CHOOSE lists four years; IDA lists five (#760)."""
+    cells: dict[str, object] = {
+        "D1": 2024,
+        "E1": 2025,
+        "F1": 2026,
+        "G1": 2027,
+        "H1": 2028,
+        "D5": 10,
+        "E5": 20,
+        "F5": 30,
+        "G5": 40,
+        "D10": 100,
+        "E10": 200,
+        "F10": 300,
+        "G10": 400,
+        "H10": 500,
+        "A12": "=D4",
+    }
+    for col, idx in zip("DEFG", _IMF_INDEX, strict=True):
+        cells[f"{col}3"] = idx
+        cells[f"{col}4"] = _choose_formula(f"{col}3", 5, "DEFG")
+    for col, idx in zip("DEFGH", _IDA_RAGGED_INDEX, strict=True):
+        cells[f"{col}8"] = idx
+        cells[f"{col}9"] = _choose_formula(f"{col}8", 10, "DEFGH")
     return {"PV": cells}
 
 
@@ -201,7 +233,7 @@ def _one_instrument_series(
     return entry
 
 
-def _mcve_bindings(*, one_instrument: bool = False) -> dict[str, Any]:
+def _mcve_bindings(*, one_instrument: bool = False, ragged: bool = False) -> dict[str, Any]:
     result = {
         "id": "result",
         "sheet": "PV",
@@ -218,25 +250,30 @@ def _mcve_bindings(*, one_instrument: bool = False) -> dict[str, Any]:
             _one_instrument_series("post_grace", "PV!D4:G4", row=4, direction="output"),
             result,
         )
+    if ragged:
+        return _document(
+            _series("index", ["PV!D3:G3", "PV!D8:H8"], rows=[3, 8], direction="input"),
+            _series("cumulative", ["PV!D5:G5", "PV!D10:H10"], rows=[5, 10], direction="input"),
+            _series("post_grace", ["PV!D4:G4", "PV!D9:H9"], rows=[4, 9], direction="output"),
+            result,
+        )
     return _document(
         _series("index", ["PV!D3:G3", "PV!D8:G8"], rows=[3, 8], direction="input"),
         _series("cumulative", ["PV!D5:G5", "PV!D10:G10"], rows=[5, 10], direction="input"),
         _series("post_grace", ["PV!D4:G4", "PV!D9:G9"], rows=[4, 9], direction="output"),
-        {
-            "id": "result",
-            "sheet": "PV",
-            "data_range": "PV!A12",
-            "layout": "scalar",
-            "output": {"compute": {"name": "compute_result"}},
-            "structure": {"measure": _measure(), "dimensions": []},
-            "key": [],
-        },
+        result,
     )
 
 
 def _choose_expected() -> tuple[float, ...]:
     imf = tuple(_IMF_CUMULATIVE[i - 1] for i in _IMF_INDEX)
     ida = tuple(_IDA_CUMULATIVE[i - 1] for i in _IDA_INDEX)
+    return imf + ida
+
+
+def _ragged_expected() -> tuple[float, ...]:
+    imf = tuple(_IMF_CUMULATIVE[i - 1] for i in _IMF_INDEX)
+    ida = tuple(_IDA_RAGGED_CUMULATIVE[i - 1] for i in _IDA_RAGGED_INDEX)
     return imf + ida
 
 
@@ -327,11 +364,48 @@ def test_year_row_sum_is_keyed_and_matches_evaluator(tmp_path: Path) -> None:
     assert got == pytest.approx(_sum_expected())
 
 
-def test_choose_year_row_fail_closed_when_year_sets_differ(tmp_path: Path) -> None:
+def test_choose_year_row_ragged_widths_is_keyed(tmp_path: Path) -> None:
+    workbook = write_workbook(tmp_path / "a35_ragged.xlsx", _ragged_sheets())
+    catalog, deps, _graph = inverted_graph_parts(workbook, _mcve_bindings(ragged=True))
+    host = deps["post_grace"]
+    assert "cumulative" in host.param_ids
+    assert "cumulative" in host.keyed_ids
+    assert "cumulative" not in host.lagged_ids
+    assert "cumulative" not in host.aligned_ids
+    assert catalog.get("cumulative").cells == (
+        "PV!D5",
+        "PV!E5",
+        "PV!F5",
+        "PV!G5",
+        "PV!D10",
+        "PV!E10",
+        "PV!F10",
+        "PV!G10",
+        "PV!H10",
+    )
+
+
+def test_choose_year_row_ragged_widths_emits_and_matches_evaluator(tmp_path: Path) -> None:
+    workbook = write_workbook(tmp_path / "a35_ragged_eval.xlsx", _ragged_sheets())
+    document = _mcve_bindings(ragged=True)
+    catalog, deps, graph = inverted_graph_parts(workbook, document)
+    assert "cumulative" in deps["post_grace"].keyed_ids
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a35_ragged")
+    cells = [f"PV!{col}4" for col in "DEFG"] + [f"PV!{col}9" for col in "DEFGH"]
+    expected = _eval_cells(workbook, cells)
+    kwargs = input_kwargs(catalog, graph)
+    got = call_compute(pkg, "post_grace", kwargs)
+    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
+    assert got == pytest.approx(_ragged_expected())
+    assert _unwrap(call_compute(pkg, "result", kwargs)) == pytest.approx(20.0)
+
+
+def test_choose_year_row_fail_closed_when_year_sets_differ_within_instrument(
+    tmp_path: Path,
+) -> None:
     sheets = _mcve_sheets()
-    # IDA lists three years, IMF lists four — TIME_PERIOD is not a lookup axis.
-    for col in "DEFG":
-        sheets["PV"][f"{col}9"] = f"=IF({col}8=0,0,CHOOSE({col}8,D10,E10,F10))"
+    # E4 lists three years while the rest of IMF lists four — not a lookup axis.
+    sheets["PV"]["E4"] = "=IF(E3=0,0,CHOOSE(E3,D5,E5,F5))"
     workbook = write_workbook(tmp_path / "a35_mismatch.xlsx", sheets)
     with pytest.raises(InvertedTreeExportError, match="more than two positions"):
         generate_inverted(workbook, _mcve_bindings())
