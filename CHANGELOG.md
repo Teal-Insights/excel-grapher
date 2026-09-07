@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.2.11 (2026-09-07)
+
+### Bug Fixes
+
+- **export**: Keep keyed dual-reads with a constant scenario coread
+  ([#742](https://github.com/Teal-Insights/excel-grapher/pull/742),
+  [`7e10c06`](https://github.com/Teal-Insights/excel-grapher/commit/7e10c06fc80c74458ca3bb65643ac751165dc9ac))
+
+### Testing
+
+- **export**: Assert remapped path and Threshold literal in a33 emit
+  ([#742](https://github.com/Teal-Insights/excel-grapher/pull/742),
+  [`7e10c06`](https://github.com/Teal-Insights/excel-grapher/commit/7e10c06fc80c74458ca3bb65643ac751165dc9ac))
+
+
 ## v14.2.10 (2026-09-06)
 
 ### Bug Fixes
