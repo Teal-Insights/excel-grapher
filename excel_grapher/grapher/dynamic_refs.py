@@ -83,8 +83,8 @@ class DynamicRefTraceEvent:
     """A single trace event emitted during dynamic-ref inference.
 
     Attributes:
-        kind: Event type (`"infer"`, `"expand-env"`, `"build-domains"`,
-            `"build-value-domains"`, `"offset-scalar-fallback"`,
+        kind: Event type (`"infer"`, `"expand-env"`, `"expand-env-skipped"`,
+            `"build-domains"`, `"build-value-domains"`, `"offset-scalar-fallback"`,
             `"offset-scalar-wide"`, plus `"-error"` variants).
         name: Function that emitted the event.
         elapsed_s: Wall-clock seconds spent in the traced operation.  Defaults
@@ -967,6 +967,104 @@ def expand_leaf_env_to_argument_env(
         )
     )
     return cache
+
+
+def dynamic_ref_selectors_boundable_without_expand(
+    formula: str,
+    *,
+    current_sheet: str,
+    limits: DynamicRefLimits | None = None,
+    current_row: int | None = None,
+    current_col: int | None = None,
+    ast: AstNode | None = None,
+) -> bool:
+    """Return True when INDEX/OFFSET selectors need no argument-env expansion.
+
+    `MATCH` over a static rectangular lookup, `ROWS`/`COLUMNS`, and numeric
+    literals get integer domains from range geometry without reading
+    `cell_type_env`. `INDIRECT`, cell selectors, and OFFSET height/width that
+    cannot be densified from geometry still need expand.
+    """
+    if not isinstance(formula, str) or not formula.startswith("="):
+        return False
+    lim = limits or DynamicRefLimits()
+    eval_context = (
+        {"row": current_row, "column": current_col}
+        if current_row is not None and current_col is not None
+        else None
+    )
+    empty_env: CellTypeEnv = {}
+    try:
+        root = ast if ast is not None else parse_ast(formula)
+    except FormulaParseError:
+        return False
+
+    found = False
+
+    def offset_base_ok(node: AstNode) -> bool:
+        if isinstance(node, (CellRefNode, RangeNode)):
+            return True
+        return isinstance(node, FunctionCallNode) and node.name.upper() == "INDEX"
+
+    def selector_ok(node: AstNode, *, for_offset: bool) -> bool:
+        if isinstance(node, EmptyArgNode):
+            return False
+        if for_offset:
+            return (
+                _infer_offset_scalar_domains_core(
+                    node,
+                    empty_env,
+                    lim,
+                    eval_context,
+                    current_sheet=current_sheet,
+                )
+                is not None
+            )
+        return (
+            _infer_numeric_domain(
+                node,
+                empty_env,
+                lim,
+                context=eval_context,
+                current_sheet=current_sheet,
+            )
+            is not None
+        )
+
+    def visit(node: AstNode) -> bool:
+        nonlocal found
+        if isinstance(node, FunctionCallNode):
+            name = node.name.upper()
+            if name == "INDIRECT":
+                found = True
+                return False
+            if name == "INDEX":
+                found = True
+                if len(node.args) < 2 or len(node.args) > 3:
+                    return False
+                if not isinstance(node.args[0], (CellRefNode, RangeNode)):
+                    return False
+                for sel in node.args[1:]:
+                    if not selector_ok(sel, for_offset=False):
+                        return False
+            elif name == "OFFSET":
+                found = True
+                if len(node.args) < 3 or len(node.args) > 5:
+                    return False
+                if not offset_base_ok(node.args[0]):
+                    return False
+                for sel in node.args[1:]:
+                    if not selector_ok(sel, for_offset=True):
+                        return False
+            return all(visit(arg) for arg in node.args)
+        if isinstance(node, BinaryOpNode):
+            return visit(node.left) and visit(node.right)
+        if isinstance(node, UnaryOpNode):
+            return visit(node.operand)
+        return True
+
+    ok = visit(root)
+    return found and ok
 
 
 def infer_dynamic_offset_targets(

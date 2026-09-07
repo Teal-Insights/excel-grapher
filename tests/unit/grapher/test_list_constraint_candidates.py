@@ -245,13 +245,13 @@ def test_static_index_only_no_candidates(tmp_path: Path) -> None:
 
 
 def test_index_match_range_argument_expands_all_cells(tmp_path: Path) -> None:
-    """MATCH lookup range contributes every cell in A10:A12 as candidates."""
+    """INDEX/MATCH abstract bounds do not require MATCH lookup constraints (#757)."""
     path = tmp_path / "index_match_range_arg.xlsx"
     _build_index_match_range_arg(path)
 
     result = list_dynamic_ref_constraint_candidates(path, ["Sheet1!D5"], dynamic_refs=None)
 
-    assert result == ["Sheet1!A10", "Sheet1!A11", "Sheet1!A12", "Sheet1!B5"]
+    assert result == []
 
 
 def test_collect_and_continue_through_static_deps(tmp_path: Path) -> None:
