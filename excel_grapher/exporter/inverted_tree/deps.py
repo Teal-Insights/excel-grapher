@@ -691,11 +691,13 @@ def _adjacent_schedule_ref(
 ) -> CanonicalAddress | None:
     """Return a relative other-series ref at `schedule_coord` + `delta`.
 
-    When the host and producer do not share join fields, a unique relative
+    When the host and producer do not share join fields, a     unique relative
     read of that producer at the series' schedule boundary is the seed or
     terminal. An overlapping keyed peer is a lagged read, not a seed. A
     same-`TIME_PERIOD` read of a richer key nest (a matrix row) is an
-    identity join, not a year-0 seed (#649).
+    identity join, not a year-0 seed (#649). A `T+1` `IF` look-ahead into
+    a richer-keyed producer is not a seed; callers must probe only at the
+    host boundary (#745).
     """
     if graph is None or index < 0 or index >= len(series.cells):
         return None
@@ -830,7 +832,10 @@ class SeriesDeps:
       loop order. A relative other-series read at `schedule_coord` ± 1 is
       a seed; an absolute selector read by every member is a scalar
       parameter, not a scan seed. A same-`TIME_PERIOD` slice of a matrix
-      is an aligned take, not a seed (#649).
+      is an aligned take, not a seed (#649). A `T+1` take of a richer
+      key nest is a lagged or cross-partition read, not competing scan
+      terminals (#745). Seed probes run only at the host schedule-coord
+      boundary (`_boundary_index`), not at every catalog index.
     """
 
     host_id: str
@@ -1827,6 +1832,14 @@ def series_deps_from_edges(
     saw_backward_lag = False
     seed_id: str | None = None
     terminal_seed_id: str | None = None
+    pred_boundary = succ_boundary = -1
+    pred_ref: CanonicalAddress | None = None
+    succ_ref: CanonicalAddress | None = None
+    if host.cells:
+        pred_boundary = _boundary_index(host, catalog, delta=-1)
+        succ_boundary = _boundary_index(host, catalog, delta=+1)
+        pred_ref = _adjacent_schedule_ref(host, pred_boundary, catalog, graph, delta=-1)
+        succ_ref = _adjacent_schedule_ref(host, succ_boundary, catalog, graph, delta=+1)
     for edge in edges:
         if edge.consumer_id != host.series_id:
             continue
@@ -1854,11 +1867,9 @@ def series_deps_from_edges(
         idx = owner.index_of(edge.producer_cell)
         if idx is not None:
             aligned_hits.setdefault(edge.producer_id, []).append((host_index, idx))
-        pred = _adjacent_schedule_ref(host, host_index, catalog, graph, delta=-1)
-        if pred is not None and edge.producer_cell == pred:
+        if host_index == pred_boundary and pred_ref is not None and edge.producer_cell == pred_ref:
             seed_id = edge.producer_id
-        succ = _adjacent_schedule_ref(host, host_index, catalog, graph, delta=+1)
-        if succ is not None and edge.producer_cell == succ:
+        if host_index == succ_boundary and succ_ref is not None and edge.producer_cell == succ_ref:
             terminal_seed_id = edge.producer_id
     scan_direction: Literal["forward", "reversed"] = "forward"
     if saw_backward_lag and not saw_forward_lag:

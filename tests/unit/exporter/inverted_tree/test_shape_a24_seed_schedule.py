@@ -18,7 +18,6 @@ from excel_grapher.exporter.inverted_tree.deps import (
     predecessor_address,
     successor_address,
 )
-from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
@@ -369,8 +368,8 @@ def _nest_entry(series_id: str, data_range: str, *, header_row: int, label_colum
     }
 
 
-def test_two_schedule_adjacent_seeds_fail_closed(tmp_path: Path) -> None:
-    """Two producers at host − 1 are an ambiguous seed, not a first-wins pick."""
+def test_two_schedule_adjacent_seeds_are_not_a_unique_seed(tmp_path: Path) -> None:
+    """Two producers at host − 1 degrade to no seed, not a first-wins pick."""
     workbook = write_oriented_workbook(
         tmp_path / "a24_two_seeds.xlsx",
         {
@@ -391,5 +390,10 @@ def test_two_schedule_adjacent_seeds_fail_closed(tmp_path: Path) -> None:
         _nest_entry("seed_b", "Engine!B3", header_row=1, label_column="A"),
         series_entry("path", "Engine!C2", layout="series", direction="output", header_row=1),
     )
-    with pytest.raises(InvertedTreeExportError, match="ambiguous seed"):
-        inverted_graph_parts(workbook, document)
+    with pytest.warns(UserWarning, match="ambiguous seed"):
+        _catalog, deps, _graph = inverted_graph_parts(workbook, document)
+        modules = generate_inverted(workbook, document)
+    assert deps["path"].seed_id is None
+    pkg = load_package(modules, tmp_path, name="a24_two_seeds")
+    got = pkg.compute_path(seed_a=10.0, seed_b=20.0)
+    assert got == pytest.approx((30.0,))
