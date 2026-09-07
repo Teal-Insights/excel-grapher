@@ -18,6 +18,7 @@ from .dynamic_refs import (
     DynamicRefConfig,
     DynamicRefError,
     GlobalWorkbookBounds,
+    dynamic_ref_selectors_boundable_without_expand,
     expand_leaf_env_to_argument_env,
     infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
@@ -242,39 +243,49 @@ def _flat_provenance_one_string(
                         _cache_key
                     ]
                 else:
-                    walk = ref_walk
-                    if walk is None:
-                        walk = DynamicRefWalkContext(
-                            normalizer=normalizer,
-                            max_range_cells=max_range_cells,
-                            get_cell_value=lambda sh, a1: wb_formulas[sh][a1].value,
-                            sheet_names=wb_formulas.sheetnames,
+                    skip_expand = dynamic_ref_selectors_boundable_without_expand(
+                        formula_for_infer,
+                        current_sheet=current_sheet,
+                        limits=dynamic_refs.limits,
+                        current_row=_current_row,
+                        current_col=_current_col,
+                    )
+                    if skip_expand:
+                        expanded_env = dynamic_refs.cell_type_env
+                    else:
+                        walk = ref_walk
+                        if walk is None:
+                            walk = DynamicRefWalkContext(
+                                normalizer=normalizer,
+                                max_range_cells=max_range_cells,
+                                get_cell_value=lambda sh, a1: wb_formulas[sh][a1].value,
+                                sheet_names=wb_formulas.sheetnames,
+                                named_ranges=named_ranges,
+                                named_range_ranges=named_range_ranges,
+                            )
+                        all_refs, leaves = walk.argument_subgraph_refs(argument_addrs)
+                        missing_leaves = leaves_missing_cell_type_constraints(
+                            leaves, dynamic_refs.cell_type_env
+                        )
+                        if missing_leaves:
+                            raise DynamicRefError(
+                                "Provenance: leaf cells feeding OFFSET/INDIRECT/INDEX have no "
+                                f"constraint: {sorted(missing_leaves)}"
+                            )
+                        expanded_env = expand_leaf_env_to_argument_env(
+                            all_refs,
+                            walk.cell_formula,
+                            walk.refs_in_formula_without_dynamic,
+                            dynamic_refs.cell_type_env,
+                            dynamic_refs.limits,
                             named_ranges=named_ranges,
                             named_range_ranges=named_range_ranges,
+                            max_range_cells=max_range_cells,
+                            shared_cell_type_cache=walk.shared_cell_type_cache,
+                            type_analysis_cache=type_analysis_cache,
+                            workbook_sha256=workbook_sha256,
+                            get_cell_ast=walk.cell_ast,
                         )
-                    all_refs, leaves = walk.argument_subgraph_refs(argument_addrs)
-                    missing_leaves = leaves_missing_cell_type_constraints(
-                        leaves, dynamic_refs.cell_type_env
-                    )
-                    if missing_leaves:
-                        raise DynamicRefError(
-                            "Provenance: leaf cells feeding OFFSET/INDIRECT/INDEX have no "
-                            f"constraint: {sorted(missing_leaves)}"
-                        )
-                    expanded_env = expand_leaf_env_to_argument_env(
-                        all_refs,
-                        walk.cell_formula,
-                        walk.refs_in_formula_without_dynamic,
-                        dynamic_refs.cell_type_env,
-                        dynamic_refs.limits,
-                        named_ranges=named_ranges,
-                        named_range_ranges=named_range_ranges,
-                        max_range_cells=max_range_cells,
-                        shared_cell_type_cache=walk.shared_cell_type_cache,
-                        type_analysis_cache=type_analysis_cache,
-                        workbook_sha256=workbook_sha256,
-                        get_cell_ast=walk.cell_ast,
-                    )
                     offset_targets = infer_dynamic_offset_targets(
                         formula_for_infer,
                         current_sheet=current_sheet,

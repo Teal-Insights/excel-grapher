@@ -35,10 +35,12 @@ from .dynamic_ref_walk import DynamicRefWalkContext
 from .dynamic_refs import (
     DynamicRefConfig,
     DynamicRefError,
+    DynamicRefLimits,
     DynamicRefTraceEvent,
     GlobalWorkbookBounds,
     _emit_trace,
     clear_index_target_cache,
+    dynamic_ref_selectors_boundable_without_expand,
     expand_leaf_env_to_argument_env,
     infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
@@ -614,15 +616,16 @@ def create_dependency_graph(
     `FormulaEvaluator` -- construct a new one (GitHub #560).
 
     **Cost model**: constraint-based dynamic-ref expansion (`dynamic_refs` set,
-    `use_cached_dynamic_refs=False`) runs `expand_leaf_env_to_argument_env`
-    only when some argument-subgraph ref (a cell feeding OFFSET / INDIRECT /
-    INDEX arguments) is not yet in the shared cell-type cache.  The first
-    formula that needs a given set of argument cells pays for expansion;
-    later formulas whose argument refs are already typed skip the expand call
-    and reuse the env (issue #528).  That includes row-wise INDEX/MATCH and
-    OFFSET variants that share a MATCH lookup.  INDEX / OFFSET *target*
-    inference is keyed by `FormulaShape.shape_key` plus lookup bases so
-    row-wise copies over a fixed array share the inferred set (issue #716).
+    `use_cached_dynamic_refs=False`) skips `argument_subgraph_refs` and
+    `expand_leaf_env_to_argument_env` when every INDEX/OFFSET selector can be
+    bounded from static range geometry (`MATCH` over a rectangular lookup,
+    `ROWS`/`COLUMNS`, literals) without cell types (issue #757).  Otherwise it
+    expands only when some argument-subgraph ref is not yet in the shared
+    cell-type cache.  The first formula that needs a given set of argument
+    cells pays for expansion; later formulas whose argument refs are already
+    typed skip the expand call and reuse the env (issue #528).  INDEX / OFFSET
+    *target* inference is keyed by `FormulaShape.shape_key` plus lookup bases
+    so row-wise copies over a fixed array share the inferred set (issue #716).
     Shifted arrays (distinct INDEX/OFFSET first-arg text) miss that cache
     and keep per-cell deps. `INDIRECT` and any `ROW(` / `COLUMN(` call stay
     per-cell.
@@ -730,6 +733,7 @@ def create_dependency_graph(
         "dep_cache_hits": 0,
         "env_cache_hits": 0,
         "arg_subgraph_hits": 0,
+        "geometry_skips": 0,
     }
     _NAME_TOKEN_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*!)")
 
@@ -1168,28 +1172,6 @@ def create_dependency_graph(
                                             _note_prov(dep_sheet, dep_a1, dyn_cause)
                                             argument_addrs.add(format_key(dep_sheet, dep_a1))
                     if calls:
-                        all_refs, leaves = ref_walk.argument_subgraph_refs(argument_addrs)
-                        missing_leaves = leaves_missing_cell_type_constraints(
-                            leaves, dynamic_refs.cell_type_env
-                        )
-                        if blank_rects:
-                            missing_leaves = {
-                                a
-                                for a in missing_leaves
-                                if not address_in_blank_ranges(a, blank_rects)
-                            }
-                        if missing_leaves:
-                            cell_key = format_key(current_sheet, current_a1)
-                            formatted_missing = _format_missing_leaves(missing_leaves)
-                            raise DynamicRefError(
-                                f"Formula at {cell_key} contains OFFSET, INDIRECT, or INDEX; the following leaf "
-                                f"cells that feed them have no constraint: {formatted_missing}. "
-                                "Add constraints only for leaf (non-formula) cells."
-                            )
-                        formula_for_infer = normalizer.normalize(
-                            f if f.startswith("=") else "=" + f,
-                            current_sheet,
-                        )
                         _col_letter, _current_row = fastpyxl.utils.cell.coordinate_from_string(
                             current_a1
                         )
@@ -1220,26 +1202,67 @@ def create_dependency_graph(
                             _dyn_stats["cache_hits"] += 1
                         else:
                             _dyn_stats["infer_calls"] += 1
-                            if all_refs and all(
-                                addr in _shared_cell_type_cache for addr in all_refs
-                            ):
-                                expanded_env = _shared_cell_type_cache
-                                _dyn_stats["env_cache_hits"] += 1
-                            else:
-                                expanded_env = expand_leaf_env_to_argument_env(
-                                    all_refs,
-                                    ref_walk.cell_formula,
-                                    ref_walk.refs_in_formula_without_dynamic,
-                                    dynamic_refs.cell_type_env,
-                                    dynamic_refs.limits,
-                                    named_ranges=named_ranges,
-                                    named_range_ranges=named_range_ranges,
-                                    max_range_cells=max_range_cells,
-                                    shared_cell_type_cache=_shared_cell_type_cache,
-                                    type_analysis_cache=type_analysis_cache,
-                                    workbook_sha256=_wb_sha256,
-                                    get_cell_ast=ref_walk.cell_ast,
+                            skip_expand = dynamic_ref_selectors_boundable_without_expand(
+                                formula_for_infer,
+                                current_sheet=current_sheet,
+                                limits=dynamic_refs.limits,
+                                current_row=_current_row,
+                                current_col=_current_col,
+                            )
+                            if skip_expand:
+                                _dyn_stats["geometry_skips"] += 1
+                                _emit_trace(
+                                    DynamicRefTraceEvent(
+                                        kind="expand-env-skipped",
+                                        name="dynamic_ref_selectors_boundable_without_expand",
+                                        detail={
+                                            "reason": "static-geometry",
+                                            "formula": formula_for_infer,
+                                            "current_sheet": current_sheet,
+                                        },
+                                    )
                                 )
+                                expanded_env = dynamic_refs.cell_type_env
+                            else:
+                                all_refs, leaves = ref_walk.argument_subgraph_refs(argument_addrs)
+                                missing_leaves = leaves_missing_cell_type_constraints(
+                                    leaves, dynamic_refs.cell_type_env
+                                )
+                                if blank_rects:
+                                    missing_leaves = {
+                                        a
+                                        for a in missing_leaves
+                                        if not address_in_blank_ranges(a, blank_rects)
+                                    }
+                                if missing_leaves:
+                                    cell_key = format_key(current_sheet, current_a1)
+                                    formatted_missing = _format_missing_leaves(missing_leaves)
+                                    raise DynamicRefError(
+                                        f"Formula at {cell_key} contains OFFSET, INDIRECT, or INDEX; "
+                                        "the following leaf "
+                                        f"cells that feed them have no constraint: {formatted_missing}. "
+                                        "Add constraints only for leaf (non-formula) cells."
+                                    )
+                                if all_refs and all(
+                                    addr in _shared_cell_type_cache for addr in all_refs
+                                ):
+                                    expanded_env = _shared_cell_type_cache
+                                    _dyn_stats["env_cache_hits"] += 1
+                                else:
+                                    expanded_env = expand_leaf_env_to_argument_env(
+                                        all_refs,
+                                        ref_walk.cell_formula,
+                                        ref_walk.refs_in_formula_without_dynamic,
+                                        dynamic_refs.cell_type_env,
+                                        dynamic_refs.limits,
+                                        named_ranges=named_ranges,
+                                        named_range_ranges=named_range_ranges,
+                                        max_range_cells=max_range_cells,
+                                        shared_cell_type_cache=_shared_cell_type_cache,
+                                        type_analysis_cache=type_analysis_cache,
+                                        workbook_sha256=_wb_sha256,
+                                        get_cell_ast=ref_walk.cell_ast,
+                                    )
                             try:
                                 offset_targets = infer_dynamic_offset_targets(
                                     formula_for_infer,
@@ -1811,6 +1834,7 @@ def create_dependency_graph(
             or _dyn_stats["dep_cache_hits"]
             or _dyn_stats["env_cache_hits"]
             or _dyn_stats["arg_subgraph_hits"]
+            or _dyn_stats["geometry_skips"]
         ):
             _emit_trace(
                 DynamicRefTraceEvent(
@@ -1824,6 +1848,7 @@ def create_dependency_graph(
                         "dep_cache_hits": _dyn_stats["dep_cache_hits"],
                         "env_cache_hits": _dyn_stats["env_cache_hits"],
                         "arg_subgraph_hits": _dyn_stats["arg_subgraph_hits"],
+                        "geometry_skips": _dyn_stats["geometry_skips"],
                         "env_cache_size": len(_shared_cell_type_cache),
                     },
                 )
@@ -2084,6 +2109,21 @@ def list_dynamic_ref_constraint_candidates(
                                     max_cells=max_range_cells,
                                 ):
                                     argument_addrs.add(format_key(dep_sheet, dep_a1))
+
+                formula_for_infer_cand = normalizer.normalize(f, current_sheet)
+                _col_letter, _current_row = fastpyxl.utils.cell.coordinate_from_string(current_a1)
+                _current_col = fastpyxl.utils.cell.column_index_from_string(_col_letter)
+                cand_limits = (
+                    dynamic_refs.limits if dynamic_refs is not None else DynamicRefLimits()
+                )
+                if dynamic_ref_selectors_boundable_without_expand(
+                    formula_for_infer_cand,
+                    current_sheet=current_sheet,
+                    limits=cand_limits,
+                    current_row=_current_row,
+                    current_col=_current_col,
+                ):
+                    argument_addrs = set()
 
                 # Walk argument_addrs to statically-reachable leaves.
                 arg_key = frozenset(argument_addrs)

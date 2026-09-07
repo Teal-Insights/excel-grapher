@@ -411,7 +411,7 @@ def test_parse_shape_cache_uses_formula_shape_keys() -> None:
 def test_identical_absolute_index_with_provenance_still_skips_expand(
     tmp_path: Path,
 ) -> None:
-    """Dep-cache hits must not re-walk argument env when provenance is on."""
+    """Geometry-only INDEX/MATCH must not expand MATCH lookup cells (issue #757)."""
     excel_path = tmp_path / "abs_index.xlsx"
     wb = xlsxwriter.Workbook(excel_path)
     ws = wb.add_worksheet("Sheet1")
@@ -448,7 +448,9 @@ def test_identical_absolute_index_with_provenance_still_skips_expand(
             capture_dependency_provenance=True,
         )
 
-    assert expand_calls == 1, f"expected one expand, got {expand_calls}"
+    assert expand_calls == 0, (
+        f"expected no expand for geometry-only INDEX/MATCH, got {expand_calls}"
+    )
     for row in range(1, 11):
         deps = graph.get_dependencies(f"Sheet1!E{row}")
         assert "Sheet1!D1" in deps

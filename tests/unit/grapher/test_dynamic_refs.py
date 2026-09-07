@@ -2939,7 +2939,8 @@ def test_repeated_identical_index_match_reuses_dynamic_ref_expansion(tmp_path: P
         assert "Lookup!A2" in deps
         assert "Lookup!B2" in deps
 
-    assert match_infer_calls == 1
+    # Geometry probe (issue #757) plus the first infer; remaining rows hit shape cache.
+    assert match_infer_calls == 2
 
 
 def _build_row_sensitive_index_workbook(path: Path) -> list[str]:
@@ -3303,10 +3304,10 @@ def test_shifted_index_variants_reuse_identical_argument_env(tmp_path: Path) -> 
         dynamic_refs=config,
     )
 
-    assert call_count == 1, (
+    assert call_count == 0, (
         f"expand_leaf_env_to_argument_env was called {call_count} times for "
-        f"{formula_count} INDEX variants with an identical MATCH subgraph; "
-        "expected 1 (issue #528)"
+        f"{formula_count} INDEX variants with static MATCH geometry; "
+        "expected 0 (issue #757)"
     )
 
     first_deps = set(graph.get_dependencies(targets[0]))
@@ -3394,10 +3395,10 @@ def test_shifted_offset_variants_reuse_identical_argument_env(tmp_path: Path) ->
         dynamic_refs=config,
     )
 
-    assert call_count == 1, (
+    assert call_count == 0, (
         f"expand_leaf_env_to_argument_env was called {call_count} times for "
-        f"{formula_count} OFFSET variants with an identical MATCH subgraph; "
-        "expected 1 (issue #528)"
+        f"{formula_count} OFFSET variants with static MATCH geometry; "
+        "expected 0 (issue #757)"
     )
 
     first_deps = set(graph.get_dependencies(targets[0]))
@@ -3416,21 +3417,28 @@ def test_argument_subgraph_memo_returns_independent_sets(tmp_path: Path) -> None
     `_argument_subgraph_refs` is cached by `frozenset(argument_addrs)`.  If the
     cache stores the live `all_refs` set, `expand_leaf_env_to_argument_env`'s
     caller (or a wrapper) mutating that set would change later lookups for the
-    same MATCH subgraph and defeat env reuse.
+    same selector subgraph and defeat env reuse.
     """
     from unittest.mock import patch
 
     from excel_grapher.grapher import builder as builder_mod
 
-    formula_count = 12
+    n_rows = 12
     excel_path = tmp_path / "subgraph_memo_isolation.xlsx"
-    targets, constraints = _build_shifted_offset_same_match_workbook(
-        excel_path,
-        formula_count=formula_count,
-    )
-    config = DynamicRefConfig.from_constraints(constraints, {})
+    _build_shared_intermediate_index_workbook(excel_path, n_rows=n_rows)
+    env: CellTypeEnv = {
+        "Sheet1!C1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=10))
+    }
+    for i in range(n_rows):
+        row = 2 + i
+        env[f"Sheet1!D{row}"] = CellType(
+            kind=CellKind.NUMBER,
+            interval=IntervalDomain(min=1, max=5),
+        )
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+    targets = [f"Sheet1!F{2 + i}" for i in range(n_rows)]
 
-    poison = "Outputs!ZZ999"
+    poison = "Sheet1!ZZ999"
     original_expand = expand_leaf_env_to_argument_env
     call_count = 0
 
@@ -3459,9 +3467,10 @@ def test_argument_subgraph_memo_returns_independent_sets(tmp_path: Path) -> None
     assert call_count == 1, (
         f"expand_leaf_env_to_argument_env was called {call_count} times; "
         "mutating the argument-subgraph set must not poison the memo "
-        f"(expected 1 expand for {formula_count} OFFSET variants)"
+        f"(expected 1 expand for {n_rows} INDEX rows sharing formula selector B1)"
     )
-    assert "'Chart Data'!A1" in graph.get_dependencies(targets[0])
+    assert "Sheet1!B1" in graph.get_dependencies(targets[0])
+    assert "Sheet1!D2" in graph.get_dependencies(targets[0])
 
 
 # ---------------------------------------------------------------------------
