@@ -14,7 +14,13 @@ import fastpyxl.utils.cell
 from fastpyxl.worksheet.formula import ArrayFormula
 from fastpyxl.worksheet.worksheet import Worksheet
 
-from excel_grapher.core.address_keys import CellKey, format_range_key, parse_address, sort_node_keys
+from excel_grapher.core.address_keys import (
+    CellKey,
+    format_range_key,
+    parse_address,
+    sort_node_keys,
+    sort_sheet_a1_pairs,
+)
 from excel_grapher.core.cell_types import CellType, leaves_missing_cell_type_constraints
 from excel_grapher.core.formula_ast import (
     AstNode,
@@ -269,14 +275,7 @@ def _workbook_sorted_sheet_a1_pairs(
     pairs: Iterable[tuple[str, str]], *, sheet_order: list[str]
 ) -> list[tuple[str, str]]:
     """Return `(sheet, a1)` pairs in workbook sheet/row/column order."""
-    materialized = list(pairs)
-    if not materialized:
-        return []
-    sorted_keys = sort_node_keys(
-        [format_key(sh, a1) for sh, a1 in materialized],
-        sheet_order=sheet_order,
-    )
-    return [parse_address(key) for key in sorted_keys]
+    return sort_sheet_a1_pairs(pairs, sheet_order=sheet_order)
 
 
 def _sorted_guard_deps(
@@ -694,7 +693,8 @@ def create_dependency_graph(
         with open(workbook, "rb") as _f:
             _wb_sha256 = hashlib.file_digest(_f, "sha256").hexdigest()
 
-    graph = DependencyGraph(sheet_order=list(wb_formulas.sheetnames))
+    sheet_order = list(wb_formulas.sheetnames)
+    graph = DependencyGraph(sheet_order=sheet_order)
     sheet_bounds = _sheet_bounds_from_workbook(wb_formulas)
     for h in hooks or []:
         graph.register_hook(h)
@@ -909,7 +909,6 @@ def create_dependency_graph(
         array_formula: bool = False,
         formula_ast: AstNode | None = None,
     ) -> tuple[list[tuple[str, str, GuardExpr | None]], dict[str, EdgeProvenance] | None]:
-        sheet_order = list(wb_formulas.sheetnames)
         prov_acc: dict[str, EdgeProvenance] = {}
         accumulate_extract_prov = capture_dependency_provenance and _top_level_conditional_formula(
             formula
@@ -1308,10 +1307,7 @@ def create_dependency_graph(
                             )
                             _dyn_cache[_cache_key] = targets
                             _dyn_shape_cache[_shape_key] = targets
-                        for addr in sort_node_keys(
-                            offset_targets | indirect_targets | index_targets,
-                            sheet_order=sheet_order,
-                        ):
+                        for addr in offset_targets | indirect_targets | index_targets:
                             sh, a1 = parse_address(addr)
                             deps.append((sh, a1))
                         for addr in offset_targets:
@@ -1394,7 +1390,9 @@ def create_dependency_graph(
                     continue
                 seen.add(d)
                 out.append(d)
-            return _workbook_sorted_sheet_a1_pairs(out, sheet_order=sheet_order)
+            # Intermediate fragment order is not observable; `_sorted_guard_deps`
+            # sorts once when emitting the formula's dependency list.
+            return out
 
         def extract_array_if_deps(f: str) -> dict[tuple[str, str], GuardExpr | None] | None:
             """Extract per-element deps for an array-context `IF`, else `None`.

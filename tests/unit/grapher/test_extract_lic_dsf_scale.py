@@ -1,12 +1,13 @@
-"""Regression for issue #716 (LIC-DSF-scale `create_dependency_graph`).
+"""Regression for LIC-DSF-scale `create_dependency_graph` (#716, #756).
 
-Ops counts are the oracle, not wall-clock. The tests encode the four extract
-hot-path wins:
+Ops counts are the oracle, not wall-clock. The tests encode extract hot-path
+wins:
 
 - Shape-keyed INDEX/OFFSET inference so row-wise copies share `_dyn_cache`.
 - Nested-IF provenance is not a second IF-splitting walk.
 - Copied formulas share one AST parse of the punched skeleton.
 - Argument-env expansion is iterative (not a 400-frame Python recursion).
+- Nested IF sorts `(sheet, a1)` pairs once per formula, not per fragment.
 """
 
 from __future__ import annotations
@@ -212,6 +213,90 @@ def test_nested_if_copies_do_not_resplit_for_provenance(tmp_path: Path) -> None:
         prov = graph.get_edge_attrs(target, dep).provenance
         assert prov is not None
         assert DependencyCause.direct_ref in prov.causes
+
+
+def test_nested_if_sorts_sheet_a1_pairs_once_per_formula(tmp_path: Path) -> None:
+    """Nested IF copies must sort deps once at emit, not on every fragment (#756)."""
+    import excel_grapher.grapher.builder as builder_mod
+
+    n_rows = 20
+    excel_path = tmp_path / "nested_if_sort.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Engine")
+    ws.write_number(0, 0, 1)
+    ws.write_number(0, 1, 2)
+    ws.write_number(0, 2, 3)
+    ws.write_number(0, 3, 4)
+    for row in range(2, n_rows + 2):
+        ws.write_formula(row - 1, 6, "=IF(A1>0,IF(B1>0,A1+B1,C1),IF(C1>0,D1,A1))")
+    wb.close()
+
+    original_sort = builder_mod._workbook_sorted_sheet_a1_pairs
+    sort_calls = 0
+
+    def counting_sort(*args: object, **kwargs: object):
+        nonlocal sort_calls
+        sort_calls += 1
+        return original_sort(*args, **kwargs)
+
+    with patch.object(builder_mod, "_workbook_sorted_sheet_a1_pairs", side_effect=counting_sort):
+        graph = create_dependency_graph(
+            excel_path,
+            [f"Engine!G{row}" for row in range(2, n_rows + 2)],
+            load_values=False,
+            capture_dependency_provenance=False,
+        )
+
+    assert sort_calls == n_rows, (
+        "nested IF extract should sort (sheet, a1) pairs once per formula, "
+        f"got {sort_calls} sorts for {n_rows} formulas"
+    )
+    assert graph.get_dependencies("Engine!G2") == {
+        "Engine!A1",
+        "Engine!B1",
+        "Engine!C1",
+        "Engine!D1",
+    }
+
+
+def test_nested_if_emits_deps_in_workbook_order(tmp_path: Path) -> None:
+    """Final nested-IF dep list is sheet/row/column order even without inner sorts."""
+    from excel_grapher.grapher.graph import DependencyGraph
+
+    excel_path = tmp_path / "nested_if_order.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    ws = wb.add_worksheet("Engine")
+    ws.write_number(0, 3, 4)  # D1 first so discovery order is not workbook order
+    ws.write_number(0, 2, 3)
+    ws.write_number(0, 1, 2)
+    ws.write_number(0, 0, 1)
+    ws.write_formula(1, 6, "=IF(D1>0,IF(C1>0,D1+C1,B1),IF(B1>0,A1,D1))")
+    wb.close()
+
+    emitted: list[str] = []
+    original_add_edge = DependencyGraph.add_edge
+
+    def spy_add_edge(
+        self: DependencyGraph,
+        from_key: str,
+        to_key: str,
+        *,
+        guard: object = None,
+        provenance: object = None,
+    ) -> None:
+        if from_key == "Engine!G2":
+            emitted.append(to_key)
+        return original_add_edge(self, from_key, to_key, guard=guard, provenance=provenance)
+
+    with patch.object(DependencyGraph, "add_edge", spy_add_edge):
+        create_dependency_graph(
+            excel_path,
+            ["Engine!G2"],
+            load_values=False,
+            capture_dependency_provenance=False,
+        )
+
+    assert emitted == ["Engine!A1", "Engine!B1", "Engine!C1", "Engine!D1"]
 
 
 def test_copied_formulas_share_shape_keyed_parse(tmp_path: Path) -> None:

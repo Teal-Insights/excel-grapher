@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterable, Sequence
 from enum import StrEnum
-from typing import NewType, TypeAlias
+from typing import Generic, NewType, TypeAlias, TypeVar
 
 from fastpyxl.utils.cell import (
     column_index_from_string,
@@ -295,6 +295,189 @@ def normalize_key(key: str) -> NormalizedAddress:
         return format_key(sheet, canonical_cell_coord(cell))
 
 
+_LATE_ROW_COL: tuple[int, int] = (10**9, 10**9)
+_SheetOrderFn = TypeVar("_SheetOrderFn")
+
+
+class _SheetOrderIdentityCache(Generic[_SheetOrderFn]):
+    """Remember the last function built for a given `sheet_order` object.
+
+    Holds a strong reference to that sequence so `is` stays valid; caching
+    on `id(sheet_order)` alone is unsafe because CPython reuses ids after GC.
+    """
+
+    __slots__ = ("_factory", "_order", "_fn")
+
+    def __init__(self, factory: Callable[[Sequence[str]], _SheetOrderFn]) -> None:
+        self._factory = factory
+        self._order: Sequence[str] | None = None
+        self._fn: _SheetOrderFn | None = None
+
+    def get(self, sheet_order: Sequence[str]) -> _SheetOrderFn:
+        fn = self._fn
+        if sheet_order is self._order and fn is not None:
+            return fn
+        built = self._factory(sheet_order)
+        self._order = sheet_order
+        self._fn = built
+        return built
+
+
+def a1_row_col(a1: str) -> tuple[int, int] | None:
+    """Parse an A1 cell coordinate into `(row, col)` (1-based).
+
+    Strips `$` and accepts lowercase columns. Returns `None` for non-cell
+    fragments (whole-column, ranges, junk).
+    """
+    n = len(a1)
+    i = 0
+    if i < n and a1[i] == "$":
+        i += 1
+    col = 0
+    letters = 0
+    while i < n:
+        o = ord(a1[i])
+        if 65 <= o <= 90:
+            col = col * 26 + (o - 64)
+        elif 97 <= o <= 122:
+            col = col * 26 + (o - 96)
+        else:
+            break
+        letters += 1
+        i += 1
+        if letters > 3:
+            return None
+    if letters == 0:
+        return None
+    if i < n and a1[i] == "$":
+        i += 1
+    if i >= n:
+        return None
+    row = 0
+    while i < n:
+        o = ord(a1[i])
+        if 48 <= o <= 57:
+            row = row * 10 + (o - 48)
+        else:
+            return None
+        i += 1
+    if row == 0:
+        return None
+    return (row, col)
+
+
+def _a1_anchor_row_col(a1: str) -> tuple[int, int]:
+    """Top-left `(row, col)` of a cell or `A1:B2` range fragment."""
+    colon = a1.find(":")
+    if colon == -1:
+        coords = a1_row_col(a1)
+        return coords if coords is not None else _LATE_ROW_COL
+    left = a1_row_col(a1[:colon])
+    right = a1_row_col(a1[colon + 1 :])
+    if left is None or right is None:
+        return _LATE_ROW_COL
+    return (min(left[0], right[0]), min(left[1], right[1]))
+
+
+def _sheet_rank_maps(
+    sheet_order: Sequence[str],
+) -> tuple[dict[str, int], int]:
+    """Return `{sheet: rank}` and the fallback rank for unknown sheets."""
+    sheet_rank = {name: idx for idx, name in enumerate(sheet_order)}
+    return sheet_rank, len(sheet_rank)
+
+
+def _build_sheet_a1_pair_sort_key(
+    sheet_order: Sequence[str],
+) -> Callable[[tuple[str, str]], tuple[int, str, int, int]]:
+    sheet_rank, fallback_rank = _sheet_rank_maps(sheet_order)
+
+    def _sort_key(pair: tuple[str, str]) -> tuple[int, str, int, int]:
+        sheet, a1 = pair
+        row, col = _a1_anchor_row_col(a1)
+        return (sheet_rank.get(sheet, fallback_rank), sheet, row, col)
+
+    return _sort_key
+
+
+_SHEET_A1_PAIR_SORT_KEY_CACHE = _SheetOrderIdentityCache(_build_sheet_a1_pair_sort_key)
+
+
+def make_sheet_a1_pair_sort_key(
+    sheet_order: Sequence[str],
+) -> Callable[[tuple[str, str]], tuple[int, str, int, int]]:
+    """Build a key function for workbook-aligned `(sheet, a1)` sorting.
+
+    Pairs are ordered by workbook sheet order, then top-left row, then
+    top-left column. Sheets not in `sheet_order` sort after known sheets
+    by name. The returned function is cached on `sheet_order` object identity.
+    """
+    return _SHEET_A1_PAIR_SORT_KEY_CACHE.get(sheet_order)
+
+
+def sort_sheet_a1_pairs(
+    pairs: Iterable[tuple[str, str]], *, sheet_order: Sequence[str]
+) -> list[tuple[str, str]]:
+    """Return `(sheet, a1)` pairs sorted by sheet order, then row, then column."""
+    materialized = list(pairs)
+    if not materialized:
+        return []
+    return sorted(materialized, key=make_sheet_a1_pair_sort_key(sheet_order))
+
+
+def _node_key_anchor(node_key: NormalizedAddress) -> tuple[str, int, int]:
+    """Return `(sheet, row, col)` for sorting a `NodeKey` string."""
+    if "," not in node_key:
+        bang = node_key.find("!")
+        if bang != -1 and "'" not in node_key:
+            coords = _a1_anchor_row_col(node_key[bang + 1 :])
+            if coords != _LATE_ROW_COL:
+                return (node_key[:bang], coords[0], coords[1])
+        try:
+            sheet, coord = parse_address(node_key)
+        except ValueError:
+            return ("\uffff", *_LATE_ROW_COL)
+        coords = _a1_anchor_row_col(coord)
+        if coords != _LATE_ROW_COL:
+            return (sheet, coords[0], coords[1])
+    try:
+        parsed = parse_node_key(node_key)
+    except ValueError:
+        return ("\uffff", *_LATE_ROW_COL)
+
+    if isinstance(parsed, CellKey):
+        return (parsed.sheet, parsed.row, int(column_index_from_string(parsed.column)))
+    if isinstance(parsed, RangeKey):
+        return (
+            parsed.sheet,
+            parsed.min_row,
+            int(column_index_from_string(parsed.min_col)),
+        )
+    first = parsed.members[0]
+    if isinstance(first, CellKey):
+        return (first.sheet, first.row, int(column_index_from_string(first.column)))
+    return (
+        first.sheet,
+        first.min_row,
+        int(column_index_from_string(first.min_col)),
+    )
+
+
+def _build_node_key_sort_key(
+    sheet_order: Sequence[str],
+) -> Callable[[NormalizedAddress], tuple[int, str, int, int]]:
+    sheet_rank, fallback_rank = _sheet_rank_maps(sheet_order)
+
+    def _sort_key(node_key: NormalizedAddress) -> tuple[int, str, int, int]:
+        sheet, row, col = _node_key_anchor(node_key)
+        return (sheet_rank.get(sheet, fallback_rank), sheet, row, col)
+
+    return _sort_key
+
+
+_NODE_KEY_SORT_KEY_CACHE = _SheetOrderIdentityCache(_build_node_key_sort_key)
+
+
 def make_node_key_sort_key(
     sheet_order: Sequence[str],
 ) -> Callable[[NormalizedAddress], tuple[int, str, int, int]]:
@@ -307,49 +490,10 @@ def make_node_key_sort_key(
 
     Sheets not present in `sheet_order` are placed after known sheets and
     sorted by sheet name. Cross-sheet unions sort by their first canonical
-    member's sheet.
+    member's sheet. The returned function is cached on `sheet_order` object
+    identity.
     """
-    sheet_rank = {name: idx for idx, name in enumerate(sheet_order)}
-    fallback_rank = len(sheet_rank)
-
-    def _anchor(node_key: NormalizedAddress) -> tuple[str, int, int]:
-        try:
-            parsed = parse_node_key(node_key)
-        except ValueError:
-            # Non-canonical junk (e.g. whole-column refs): sort late, stably.
-            return ("\uffff", 10**9, 10**9)
-
-        if isinstance(parsed, CellKey):
-            return (
-                parsed.sheet,
-                parsed.row,
-                int(column_index_from_string(parsed.column)),
-            )
-        if isinstance(parsed, RangeKey):
-            return (
-                parsed.sheet,
-                parsed.min_row,
-                int(column_index_from_string(parsed.min_col)),
-            )
-        # UnionKey — first member after canonical sort
-        first = parsed.members[0]
-        if isinstance(first, CellKey):
-            return (
-                first.sheet,
-                first.row,
-                int(column_index_from_string(first.column)),
-            )
-        return (
-            first.sheet,
-            first.min_row,
-            int(column_index_from_string(first.min_col)),
-        )
-
-    def _sort_key(node_key: NormalizedAddress) -> tuple[int, str, int, int]:
-        sheet, row, col = _anchor(node_key)
-        return (sheet_rank.get(sheet, fallback_rank), sheet, row, col)
-
-    return _sort_key
+    return _NODE_KEY_SORT_KEY_CACHE.get(sheet_order)
 
 
 def sort_node_keys(
