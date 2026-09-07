@@ -837,8 +837,9 @@ class SeriesDeps:
       #752), or an N-way catalog along one lookup axis of a joined
       producer (`CHOOSE(k, p[t0], …, p[tn])` / a sum of that
       year-row, #754). A field whose value set is the same for every
-      multi-read member is a lookup axis and stays a literal even
-      when one value equals the host year. `$` freezes the
+      multi-read member of a joined partition is a lookup axis and
+      stays a literal even when one value equals the host year.
+      Partitions may have different sets (#760). `$` freezes the
       row/column bind axis, not the sheet. Catalog-slot adjacency is
       not a lag.
     - `lookup_ids` — `whole` / `dynamic` table reads
@@ -1881,30 +1882,57 @@ def _host_follow_pair_maps(
     return {field: maps}
 
 
+def _host_join_key(
+    host: BoundSeries,
+    host_index: int,
+    fields: Sequence[str],
+) -> tuple[object, ...] | None:
+    """Return host values for `fields`, or `None` when a field is missing."""
+    if host_index >= len(host.domain):
+        return None
+    if not fields:
+        return ()
+    point = host.domain[host_index]
+    parts: list[object] = []
+    for name in fields:
+        try:
+            parts.append(point[name])
+        except KeyError:
+            return None
+    return tuple(parts)
+
+
 def _lookup_axis_fields(
-    _host: BoundSeries,
+    host: BoundSeries,
     producer: BoundSeries,
     per_host: Mapping[int, set[int]],
 ) -> frozenset[str]:
-    """Return producer keys whose multi-read value set is host-invariant.
+    """Return producer keys whose multi-read value set is partition-invariant.
 
     A field whose values are the same set for every multi-slot host
-    member, and that set has more than one value, is a catalog lookup
-    axis: the host indexes those values (`CHOOSE` / a listed year-row)
-    rather than following its own key. Bind the field as a literal even
-    when one value equals the host year (#754). A leftover that changes
+    member of a joined partition, and that set has more than one value,
+    is a catalog lookup axis: the host indexes those values (`CHOOSE` /
+    a listed year-row) rather than following its own key. Bind the field
+    as a literal even when one value equals the host year (#754).
+    Partitions may disagree on the set (#760): IMF `{2024…2051}` and
+    IDA's longer horizon are still lookup axes. A leftover that changes
     with the host (`{t, t-1}` or `{t, 2026}`) is not a lookup axis. One
     multi-read member cannot distinguish a lookup axis from a mixed
-    host-year plus pin, so at least two multi-read members are required.
+    host-year plus pin, so every partition that multi-reads needs at
+    least two members, and at least two multi-read members are required
+    overall.
     """
     multi = {host_i: indices for host_i, indices in per_host.items() if len(indices) > 1}
     if len(multi) < 2:
         return frozenset()
     axes: set[str] = set()
     for name in producer.key_fields:
-        value_sets: list[set[object]] = []
+        partition_fields = tuple(
+            field for field in producer.key_fields if field in host.key_fields and field != name
+        )
+        groups: dict[tuple[object, ...] | None, list[set[object]]] = {}
         valid = True
-        for indices in multi.values():
+        for host_i, indices in multi.items():
             values: set[object] = set()
             for index in indices:
                 if index >= len(producer.domain):
@@ -1917,12 +1945,21 @@ def _lookup_axis_fields(
                     break
             if not valid:
                 break
-            value_sets.append(values)
-        if not valid or not value_sets:
+            part = _host_join_key(host, host_i, partition_fields)
+            if part is None and partition_fields:
+                valid = False
+                break
+            groups.setdefault(part, []).append(values)
+        if not valid or not groups:
             continue
-        first = value_sets[0]
-        if len(first) > 1 and all(item == first for item in value_sets):
-            axes.add(name)
+        if any(len(value_sets) < 2 for value_sets in groups.values()):
+            continue
+        if any(
+            len(value_sets[0]) <= 1 or not all(item == value_sets[0] for item in value_sets)
+            for value_sets in groups.values()
+        ):
+            continue
+        axes.add(name)
     return frozenset(axes)
 
 
@@ -1945,7 +1982,8 @@ def _field_binding(
     lookup axis (`literal_fields`). `$F$2` keeps `TIME_PERIOD` a literal
     even when that year equals the host year. A same-sheet `$D$2` does
     not freeze `sheet_name` (`SCENARIO` stays `host`). An invariant
-    multi-value year-row is a lookup axis even without `$` (#754).
+    multi-value year-row is a lookup axis even without `$` (#754),
+    including when joined partitions list different years (#760).
     Shared constants stay literals beside a remapped path (#741).
     `pair_maps` mark an `IF` then/else leftover as `('pair', 0)` /
     `('pair', 1)` so two host rows that dual-read different producer
@@ -1999,10 +2037,10 @@ def _multi_read_pattern_sets(
     graph: DependencyGraph | None,
     host_follow: Mapping[str, Mapping[object, object]],
     pair_maps: Mapping[str, Mapping[object, tuple[object, object]]] | None = None,
-) -> list[frozenset[tuple[tuple[str, object], ...]]] | None:
+) -> dict[int, frozenset[tuple[tuple[str, object], ...]]] | None:
     """Return per-member keyed pattern sets, or `None` when a slot is unbound."""
     lookup_axes = _lookup_axis_fields(host, producer, per_host)
-    pattern_sets: list[frozenset[tuple[tuple[str, object], ...]]] = []
+    pattern_sets: dict[int, frozenset[tuple[tuple[str, object], ...]]] = {}
     for host_i, indices in per_host.items():
         if len(indices) < 2:
             continue
@@ -2026,8 +2064,38 @@ def _multi_read_pattern_sets(
         unique = frozenset(patterns)
         if len(unique) != len(indices):
             return None
-        pattern_sets.append(unique)
+        pattern_sets[host_i] = unique
     return pattern_sets
+
+
+def _keyed_patterns_agree(
+    host: BoundSeries,
+    producer: BoundSeries,
+    per_host: Mapping[int, set[int]],
+    pattern_sets: Mapping[int, frozenset[tuple[tuple[str, object], ...]]],
+) -> bool:
+    """True when multi-read pattern sets agree globally or per lookup partition.
+
+    Without a lookup axis, every host member must share one pattern set.
+    With a lookup axis, members of the same joined partition must share
+    a pattern; partitions may list different literal years (#760).
+    """
+    if not pattern_sets:
+        return False
+    lookup_axes = _lookup_axis_fields(host, producer, per_host)
+    if not lookup_axes:
+        first = next(iter(pattern_sets.values()))
+        return all(item == first for item in pattern_sets.values())
+    partition_fields = tuple(
+        name for name in producer.key_fields if name in host.key_fields and name not in lookup_axes
+    )
+    groups: dict[tuple[object, ...] | None, list[frozenset[tuple[tuple[str, object], ...]]]] = {}
+    for host_i, unique in pattern_sets.items():
+        part = _host_join_key(host, host_i, partition_fields)
+        if part is None and partition_fields:
+            return False
+        groups.setdefault(part, []).append(unique)
+    return all(all(item == group[0] for item in group) for group in groups.values())
 
 
 def _is_keyed_multi_read(
@@ -2048,23 +2116,22 @@ def _is_keyed_multi_read(
     `t-1` read is a literal that changes per member and cannot be keyed.
     A `$` pin whose year happens to equal the host year is still a
     literal; a `$` pin on the host sheet is not a `SCENARIO` literal.
-    An invariant year set is a lookup axis even without `$`.
+    An invariant year set is a lookup axis even without `$`. Joined
+    partitions may list different years on that axis (#760).
     """
     if not producer.key_fields:
         return False
     host_follow = _host_follow_key_maps(host, producer, per_host)
     pattern_sets = _multi_read_pattern_sets(host, producer, per_host, graph, host_follow)
-    if (
-        pattern_sets is not None
-        and pattern_sets
-        and all(item == pattern_sets[0] for item in pattern_sets)
-    ):
+    if pattern_sets is not None and _keyed_patterns_agree(host, producer, per_host, pattern_sets):
         return True
     pair_maps = _host_follow_pair_maps(host, producer, per_host, graph)
     if not pair_maps:
         return False
     pattern_sets = _multi_read_pattern_sets(host, producer, per_host, graph, host_follow, pair_maps)
-    return bool(pattern_sets) and all(item == pattern_sets[0] for item in pattern_sets)
+    return pattern_sets is not None and _keyed_patterns_agree(
+        host, producer, per_host, pattern_sets
+    )
 
 
 def series_deps_from_edges(

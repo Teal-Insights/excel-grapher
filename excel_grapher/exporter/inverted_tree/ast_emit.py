@@ -53,6 +53,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
     _field_binding,
     _host_follow_key_maps,
     _host_follow_pair_maps,
+    _host_join_key,
     _host_producer_slots,
     _lookup_axis_fields,
     _ref_pinned_fields,
@@ -556,17 +557,29 @@ def _verify_keyed_binding(
     host_follow: Mapping[str, Mapping[object, object]] | None = None,
     pair_maps: Mapping[str, Mapping[object, tuple[object, object]]] | None = None,
 ) -> None:
-    """Fail closed when a host member has no producer cell for `binding`."""
+    """Fail closed when a host member has no producer cell for `binding`.
+
+    Only members that share this formula's host-followed keys are
+    checked. A literal year listed by IDA need not exist on IMF (#760).
+    """
     domain = series_domain_points(owner)
     known = set(domain)
     seen: set[int] = set()
     follow = host_follow if host_follow is not None else _host_follow_for(owner, ctx)
     pairs = pair_maps if pair_maps is not None else _host_pair_for(owner, ctx)
+    follow_fields = tuple(
+        key
+        for key, spec in binding.items()
+        if spec == "host" or (isinstance(spec, tuple) and spec[0] == "pair")
+    )
+    current_part = _host_join_key(ctx.host, ctx.host_index, follow_fields)
     for edge in ctx.deps.edges:
         if edge.producer_id != owner.series_id or edge.consumer_id != ctx.host.series_id:
             continue
         host_i = ctx.host.index_of(edge.consumer_cell)
         if host_i is None or host_i in seen or host_i >= len(ctx.host.domain):
+            continue
+        if follow_fields and _host_join_key(ctx.host, host_i, follow_fields) != current_part:
             continue
         seen.add(host_i)
         expected = _expected_producer_point(
