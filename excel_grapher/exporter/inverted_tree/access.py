@@ -462,6 +462,23 @@ def _has_schedule_axis(series: BoundSeries, catalog: SeriesCatalog) -> bool:
     return fields is not None and "TIME_PERIOD" in fields
 
 
+def _axis_coords(series: BoundSeries, catalog: SeriesCatalog) -> set[int]:
+    axis_of = catalog.schedule.axis_of
+    return {axis_of[cell] for cell in series.cells if cell in axis_of}
+
+
+def _producer_covers_host_fields(
+    host_fields: tuple[str, ...],
+    prod_fields: tuple[str, ...],
+) -> bool:
+    """True when producer keys equal the host's or add only outer partition keys."""
+    if host_fields == prod_fields:
+        return True
+    host_set = frozenset(host_fields)
+    prod_set = frozenset(prod_fields)
+    return "TIME_PERIOD" in host_set and "TIME_PERIOD" in prod_set and host_set < prod_set
+
+
 def overlapping_schedule_peer(
     host: BoundSeries,
     producer: BoundSeries,
@@ -470,17 +487,24 @@ def overlapping_schedule_peer(
     """True when `host` and `producer` share a key domain and a schedule coord.
 
     An overlapping peer is a lagged or aligned series, not a year-0 seed.
+    A producer whose preferred fields are a superset of the host's is a
+    peer when they differ only in outer partition keys and share at least
+    one inner schedule-axis coordinate (`TIME_PERIOD`, #747).
     """
     host_fields = preferred_fields(host, catalog)
     prod_fields = preferred_fields(producer, catalog)
-    if host_fields is None or host_fields != prod_fields:
+    if host_fields is None or prod_fields is None:
         return False
-    cached = catalog.schedule.coords_of
-    if host.series_id in cached and producer.series_id in cached:
-        return not cached[host.series_id].isdisjoint(cached[producer.series_id])
-    host_coords = {schedule_coord(cell, catalog) for cell in host.cells}
-    prod_coords = {schedule_coord(cell, catalog) for cell in producer.cells}
-    return bool(host_coords & prod_coords)
+    if not _producer_covers_host_fields(host_fields, prod_fields):
+        return False
+    if host_fields == prod_fields:
+        cached = catalog.schedule.coords_of
+        if host.series_id in cached and producer.series_id in cached:
+            return not cached[host.series_id].isdisjoint(cached[producer.series_id])
+        host_coords = {schedule_coord(cell, catalog) for cell in host.cells}
+        prod_coords = {schedule_coord(cell, catalog) for cell in producer.cells}
+        return bool(host_coords & prod_coords)
+    return bool(_axis_coords(host, catalog) & _axis_coords(producer, catalog))
 
 
 def is_seed_access(
@@ -496,7 +520,9 @@ def is_seed_access(
 
     A seed is a relative read of a producer with no schedule axis (scalar
     or unkeyed), or of one at schedule-axis coordinate `host ± 1` that is
-    not an overlapping keyed peer. Everything else is an aligned read.
+    not an overlapping keyed peer. A richer-keyed producer that shares the
+    host's schedule axis is a peer, not a seed (#747). Everything else is
+    an aligned read.
     """
     if producer.series_id == host.series_id:
         return False
