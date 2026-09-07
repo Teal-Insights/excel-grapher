@@ -895,7 +895,7 @@ def _emit_function(node: FunctionCallNode, ctx: EmitContext) -> str:
 def _emit_if(node: FunctionCallNode, ctx: EmitContext) -> str:
     if len(node.args) < 2:
         return f"{ctx.use('xl_raise')}('#VALUE!')"
-    if _contains_multi_cell_ref(node):
+    if _contains_array_if_operand(node):
         if not ctx.array_context:
             raise InvertedTreeExportError(
                 f"series {ctx.host.series_id!r}: bare range in value position"
@@ -911,17 +911,23 @@ def _emit_if(node: FunctionCallNode, ctx: EmitContext) -> str:
     return f"({then} if {cond} else {otherwise})"
 
 
-def _contains_multi_cell_ref(node: AstNode) -> bool:
-    """True when `node` contains a range, whole-column, or whole-row ref."""
+def _contains_array_if_operand(node: AstNode) -> bool:
+    """True when `node` has a range in element-wise IF/operator position.
+
+    Ranges consumed by lookups or aggregates (`VLOOKUP`, `INDEX`, `SUM`, …)
+    are not array-`IF` operands; those functions keep their own lowering.
+    """
     match node:
         case RangeNode() | WholeColumnNode() | WholeRowNode():
             return True
         case BinaryOpNode(left=left, right=right):
-            return _contains_multi_cell_ref(left) or _contains_multi_cell_ref(right)
+            return _contains_array_if_operand(left) or _contains_array_if_operand(right)
         case UnaryOpNode(operand=operand):
-            return _contains_multi_cell_ref(operand)
-        case FunctionCallNode(args=args):
-            return any(_contains_multi_cell_ref(arg) for arg in args)
+            return _contains_array_if_operand(operand)
+        case FunctionCallNode(name=name, args=args):
+            if normalize_excel_function_name(name) != "IF":
+                return False
+            return any(_contains_array_if_operand(arg) for arg in args)
         case _:
             return False
 
@@ -964,6 +970,8 @@ def _assert_array_if_sound(node: FunctionCallNode, ctx: EmitContext) -> None:
                 else:
                     detail = name
                 raise _host_export_error(ctx, f"array IF {detail} is unsupported")
+            if name != "IF":
+                return
             for arg in item.args:
                 walk(arg)
 
