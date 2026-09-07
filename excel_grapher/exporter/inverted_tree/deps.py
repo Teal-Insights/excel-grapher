@@ -39,6 +39,7 @@ from excel_grapher.exporter.inverted_tree.access import (
     indirect_target_addresses,
     is_seed_access,
     offset_target_addresses,
+    overlapping_schedule_peer,
     unique_seed_or_none,
 )
 from excel_grapher.exporter.inverted_tree.catalog import (
@@ -655,8 +656,10 @@ def _non_peer_seed_ref(
     A unique relative read of a differently keyed series is a seed only when
     it is not the same `TIME_PERIOD` as `host_cell`. Copying one matrix row
     (`B4=B2`, `C4=C2`) is an identity join on the inner axis, not a scan of
-    the whole matrix sequence (#649). A scalar or unkeyed neighbor has no
-    schedule axis and remains a year-0 seed.
+    the whole matrix sequence (#649). A `T+1` take of a richer-keyed
+    overlapping peer is a lagged or cross-partition read, not a seed (#747).
+    A scalar or unkeyed neighbor has no schedule axis and remains a year-0
+    seed.
     """
     host_fields = preferred_fields(series, catalog)
     found: list[CanonicalAddress] = []
@@ -666,6 +669,8 @@ def _non_peer_seed_ref(
         address = as_canonical(resolve_cell_ref(ref, host_cell))
         owner = catalog.series_for(address)
         if owner is None or owner.series_id == series.series_id:
+            continue
+        if overlapping_schedule_peer(series, owner, catalog):
             continue
         if preferred_fields(owner, catalog) == host_fields:
             continue
@@ -691,10 +696,11 @@ def _adjacent_schedule_ref(
 ) -> CanonicalAddress | None:
     """Return a relative other-series ref at `schedule_coord` + `delta`.
 
-    When the host and producer do not share join fields, a     unique relative
+    When the host and producer do not share join fields, a unique relative
     read of that producer at the series' schedule boundary is the seed or
-    terminal. An overlapping keyed peer is a lagged read, not a seed. A
-    same-`TIME_PERIOD` read of a richer key nest (a matrix row) is an
+    terminal. An overlapping keyed peer is a lagged read, not a seed,
+    including a producer whose fields are a superset of the host's (#747).
+    A same-`TIME_PERIOD` read of a richer key nest (a matrix row) is an
     identity join, not a year-0 seed (#649). A `T+1` `IF` look-ahead into
     a richer-keyed producer is not a seed; callers must probe only at the
     host boundary (#745).
@@ -834,8 +840,9 @@ class SeriesDeps:
       parameter, not a scan seed. A same-`TIME_PERIOD` slice of a matrix
       is an aligned take, not a seed (#649). A `T+1` take of a richer
       key nest is a lagged or cross-partition read, not competing scan
-      terminals (#745). Seed probes run only at the host schedule-coord
-      boundary (`_boundary_index`), not at every catalog index.
+      terminals (#745, #747). Seed probes run only at the host
+      schedule-coord boundary (`_boundary_index`), not at every catalog
+      index.
     """
 
     host_id: str
