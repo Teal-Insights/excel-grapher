@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.4.5 (2026-09-07)
+
+### Bug Fixes
+
+- **export**: Keep vintage residual DAGs per outer partition (#762)
+  ([#763](https://github.com/Teal-Insights/excel-grapher/pull/763),
+  [`3ac7767`](https://github.com/Teal-Insights/excel-grapher/commit/3ac77671c5ccf72f9637d4a06f582b24f79a5467))
+
+
 ## v14.4.4 (2026-09-07)
 
 ### Bug Fixes
