@@ -27,7 +27,8 @@ from excel_grapher.core.formula_ast import (
     resolve_whole_column_ref,
     resolve_whole_row_ref,
 )
-from excel_grapher.core.grid import Range
+from excel_grapher.core.grid import Grid, Range
+from excel_grapher.core.logic_funcs import logical_if
 from excel_grapher.core.range_shorthand import (
     SheetBounds,
     resolve_whole_column,
@@ -736,7 +737,13 @@ class FormulaEvaluator:
     def _eval_if(self, args: Sequence[AstNode]) -> FormulaValue:
         if len(args) < 2:
             raise ParseError("IF(...)", "IF requires at least 2 arguments")
-        cond = self._evaluate_ast(args[0])
+        cond = self._resolve_binary_operand(self._evaluate_ast(args[0]))
+        if Grid.wrap(cond) is not None:
+            then = self._resolve_binary_operand(self._eval_if_branch(args[1]))
+            otherwise: FormulaValue = False
+            if len(args) >= 3:
+                otherwise = self._resolve_binary_operand(self._eval_if_branch(args[2]))
+            return cast(FormulaValue, logical_if(cond, then, otherwise))
         b = to_bool(cond)
         if isinstance(b, XlError):
             return b

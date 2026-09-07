@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from excel_grapher.core.address_keys import CanonicalAddress, as_canonical, parse_cell_coords
@@ -109,6 +109,19 @@ _RUNTIME_FUNCTIONS = frozenset(
 )
 _AGGREGATE_FUNCTIONS = frozenset({"SUM", "SUMPRODUCT"})
 _LOOKUP_TABLE_FUNCTIONS = frozenset({"VLOOKUP", "HLOOKUP", "LOOKUP", "XLOOKUP"})
+_ARRAY_IF_UNSOUND_FNS = frozenset(
+    {
+        "AND",
+        "OR",
+        "IFS",
+        "CHOOSE",
+        "SWITCH",
+        "SUM",
+        "SUMPRODUCT",
+        "AVERAGE",
+        "AGGREGATE",
+    }
+)
 
 
 @dataclass
@@ -135,6 +148,7 @@ class EmitContext:
     graph: DependencyGraph | None = None
     lookup_anchor_slot: int = 0
     blank_rects: tuple[BlankRangeRect, ...] = field(default_factory=current_blank_rects)
+    array_context: bool = False
 
     def param(self, series_id: str) -> str:
         return series_id
@@ -881,10 +895,82 @@ def _emit_function(node: FunctionCallNode, ctx: EmitContext) -> str:
 def _emit_if(node: FunctionCallNode, ctx: EmitContext) -> str:
     if len(node.args) < 2:
         return f"{ctx.use('xl_raise')}('#VALUE!')"
+    if _contains_multi_cell_ref(node):
+        if not ctx.array_context:
+            raise InvertedTreeExportError(
+                f"series {ctx.host.series_id!r}: bare range in value position"
+            )
+        _assert_array_if_sound(node, ctx)
+        cond = _emit_value_or_range(node.args[0], ctx)
+        then = _emit_value_or_range(node.args[1], ctx)
+        otherwise = _emit_value_or_range(node.args[2], ctx) if len(node.args) > 2 else "False"
+        return f"{ctx.use('xl_if')}({cond}, {then}, {otherwise})"
     cond = emit_expr(node.args[0], ctx)
     then = emit_expr(node.args[1], ctx)
     otherwise = emit_expr(node.args[2], ctx) if len(node.args) > 2 else "0"
     return f"({then} if {cond} else {otherwise})"
+
+
+def _contains_multi_cell_ref(node: AstNode) -> bool:
+    """True when `node` contains a range, whole-column, or whole-row ref."""
+    match node:
+        case RangeNode() | WholeColumnNode() | WholeRowNode():
+            return True
+        case BinaryOpNode(left=left, right=right):
+            return _contains_multi_cell_ref(left) or _contains_multi_cell_ref(right)
+        case UnaryOpNode(operand=operand):
+            return _contains_multi_cell_ref(operand)
+        case FunctionCallNode(args=args):
+            return any(_contains_multi_cell_ref(arg) for arg in args)
+        case _:
+            return False
+
+
+def _range_shape(node: RangeNode, ctx: EmitContext) -> tuple[int, int]:
+    start = resolve_cell_ref(node.start_ref, ctx.host_cell)
+    end = resolve_cell_ref(node.end_ref, ctx.host_cell)
+    sheet1, row1, col1 = parse_cell_coords(start)
+    sheet2, row2, col2 = parse_cell_coords(end)
+    if sheet1 != sheet2:
+        raise _host_export_error(ctx, "array IF does not support cross-sheet ranges")
+    return (abs(row2 - row1) + 1, abs(col2 - col1) + 1)
+
+
+def _assert_array_if_sound(node: FunctionCallNode, ctx: EmitContext) -> None:
+    """Fail closed when array `IF` alignment is not element-wise."""
+    shapes: set[tuple[int, int]] = set()
+
+    def walk(item: AstNode) -> None:
+        if isinstance(item, (WholeColumnNode, WholeRowNode)):
+            kind = "whole-column" if isinstance(item, WholeColumnNode) else "whole-row"
+            raise _host_export_error(ctx, f"array IF does not support {kind} refs")
+        if isinstance(item, RangeNode):
+            shapes.add(_range_shape(item, ctx))
+            return
+        if isinstance(item, BinaryOpNode):
+            walk(item.left)
+            walk(item.right)
+            return
+        if isinstance(item, UnaryOpNode):
+            walk(item.operand)
+            return
+        if isinstance(item, FunctionCallNode):
+            name = normalize_excel_function_name(item.name)
+            if name in _ARRAY_IF_UNSOUND_FNS:
+                if name in {"AND", "OR"}:
+                    detail = "AND/OR collapse"
+                elif name in {"SUM", "SUMPRODUCT", "AVERAGE", "AGGREGATE"}:
+                    detail = "nested aggregate"
+                else:
+                    detail = name
+                raise _host_export_error(ctx, f"array IF {detail} is unsupported")
+            for arg in item.args:
+                walk(arg)
+
+    for arg in node.args:
+        walk(arg)
+    if len(shapes) > 1:
+        raise _host_export_error(ctx, f"array IF shape mismatch: {sorted(shapes)}")
 
 
 def _emit_choose(node: FunctionCallNode, ctx: EmitContext) -> str:
@@ -903,7 +989,8 @@ def _emit_aggregate(node: FunctionCallNode, ctx: EmitContext) -> str:
             f"series {ctx.host.series_id!r}: Excel function {name} has no "
             "inverted-tree runtime helper"
         )
-    args = ", ".join(_emit_aggregate_arg(arg, ctx) for arg in node.args)
+    array_ctx = replace(ctx, array_context=True)
+    args = ", ".join(_emit_aggregate_arg(arg, array_ctx) for arg in node.args)
     ctx.use(func)
     return f"{func}({args})"
 
