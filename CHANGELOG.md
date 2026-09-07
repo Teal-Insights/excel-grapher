@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.3.1 (2026-09-07)
+
+### Bug Fixes
+
+- **export**: Treat richer-keyed schedule producers as peers
+  ([#748](https://github.com/Teal-Insights/excel-grapher/pull/748),
+  [`1d271a9`](https://github.com/Teal-Insights/excel-grapher/commit/1d271a99f49f54178bcb395a191d1eb0034b7bce))
+
+
 ## v14.3.0 (2026-09-07)
 
 ### Bug Fixes
