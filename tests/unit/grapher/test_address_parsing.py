@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from excel_grapher.core.address_keys import format_key, parse_address
 from excel_grapher.core.addressing import split_sheet_qualified_address
 from excel_grapher.core.cell_types import CellKind, CellType, IntIntervalDomain
@@ -34,6 +36,17 @@ def test_workbook_sorted_sheet_a1_pairs_handles_apostrophe_sheet_names() -> None
         ("Main", "B2"),
         (_APOSTROPHE_SHEET, "A1"),
     ]
+
+
+def test_workbook_sorted_sheet_a1_pairs_does_not_round_trip_node_keys() -> None:
+    pairs = [("Calc", "B2"), ("Inputs", "A1"), ("Calc", "A1")]
+    with patch("excel_grapher.grapher.builder.sort_node_keys") as mock_sort:
+        assert _workbook_sorted_sheet_a1_pairs(pairs, sheet_order=["Inputs", "Calc"]) == [
+            ("Inputs", "A1"),
+            ("Calc", "A1"),
+            ("Calc", "B2"),
+        ]
+    mock_sort.assert_not_called()
 
 
 def test_parse_blank_range_spec_handles_apostrophe_sheet_names() -> None:

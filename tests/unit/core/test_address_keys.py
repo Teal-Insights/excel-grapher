@@ -8,15 +8,19 @@ import pytest
 from excel_grapher.core.address_keys import (
     CanonicalAddress,
     NormalizedAddress,
+    a1_row_col,
     canonical_address,
     canonical_cell_coord,
     format_cell_key,
     format_key,
     make_node_key_sort_key,
+    make_sheet_a1_pair_sort_key,
     normalize_key,
+    parse_address,
     parse_cell_coords,
     quoted_sheet_prefix_regex,
     sort_node_keys,
+    sort_sheet_a1_pairs,
     split_address_on_colon,
     unescape_formula_sheet_name,
 )
@@ -202,3 +206,103 @@ def test_sort_node_keys_orders_row_keys_by_min_col() -> None:
         "Sheet1!D63:Y63",
         "Sheet1!B64",
     ]
+
+
+@pytest.mark.parametrize(
+    ("a1", "expected"),
+    [
+        ("A1", (1, 1)),
+        ("B2", (2, 2)),
+        ("$C$10", (10, 3)),
+        ("AA3", (3, 27)),
+        ("Z1", (1, 26)),
+        ("a1", (1, 1)),
+    ],
+)
+def test_a1_row_col_parses_cell_coordinates(a1: str, expected: tuple[int, int]) -> None:
+    assert a1_row_col(a1) == expected
+
+
+@pytest.mark.parametrize("a1", ["A", "1", "A1:B2", "A1B", ""])
+def test_a1_row_col_rejects_non_cells(a1: str) -> None:
+    assert a1_row_col(a1) is None
+
+
+def test_sort_sheet_a1_pairs_respects_workbook_sheet_order_then_row_then_column() -> None:
+    sheet_order = ["Inputs", "Calc", "Summary"]
+    pairs = [
+        ("Calc", "B2"),
+        ("Inputs", "C1"),
+        ("Inputs", "A1"),
+        ("Calc", "A2"),
+        ("Summary", "A1"),
+        ("Calc", "A1"),
+    ]
+
+    assert sort_sheet_a1_pairs(pairs, sheet_order=sheet_order) == [
+        ("Inputs", "A1"),
+        ("Inputs", "C1"),
+        ("Calc", "A1"),
+        ("Calc", "A2"),
+        ("Calc", "B2"),
+        ("Summary", "A1"),
+    ]
+
+
+def test_sort_sheet_a1_pairs_places_unknown_sheets_after_known() -> None:
+    key_fn = make_sheet_a1_pair_sort_key(["Known"])
+    pairs = [("Known", "A1"), ("Other", "A1"), ("Another", "A1")]
+
+    assert sorted(pairs, key=key_fn) == [
+        ("Known", "A1"),
+        ("Another", "A1"),
+        ("Other", "A1"),
+    ]
+
+
+def test_sort_sheet_a1_pairs_orders_range_fragments_by_min_row_col() -> None:
+    sheet_order = ["Sheet1"]
+    pairs = [
+        ("Sheet1", "B64"),
+        ("Sheet1", "D63:Y63"),
+        ("Sheet1", "A63"),
+    ]
+    assert sort_sheet_a1_pairs(pairs, sheet_order=sheet_order) == [
+        ("Sheet1", "A63"),
+        ("Sheet1", "D63:Y63"),
+        ("Sheet1", "B64"),
+    ]
+
+
+def test_sort_sheet_a1_pairs_matches_node_key_round_trip_for_cells() -> None:
+    sheet_order = ["Main", "Data Set", "O'Neil"]
+    pairs = [
+        ("Data Set", "A1"),
+        ("O'Neil", "A1"),
+        ("Main", "A1"),
+        ("Main", "C2"),
+        ("Main", "B1"),
+    ]
+    via_pairs = sort_sheet_a1_pairs(pairs, sheet_order=sheet_order)
+    via_keys = [
+        parse_address(key)
+        for key in sort_node_keys(
+            [format_key(sh, a1) for sh, a1 in pairs],
+            sheet_order=sheet_order,
+        )
+    ]
+    assert via_pairs == via_keys
+
+
+def test_make_sheet_a1_pair_sort_key_caches_by_sheet_order_identity() -> None:
+    sheet_order = ["Inputs", "Calc"]
+    assert make_sheet_a1_pair_sort_key(sheet_order) is make_sheet_a1_pair_sort_key(sheet_order)
+    assert make_sheet_a1_pair_sort_key(sheet_order) is not make_sheet_a1_pair_sort_key(
+        ["Inputs", "Calc"]
+    )
+
+
+def test_make_node_key_sort_key_caches_by_sheet_order_identity() -> None:
+    sheet_order = ["Inputs", "Calc"]
+    assert make_node_key_sort_key(sheet_order) is make_node_key_sort_key(sheet_order)
+    assert make_node_key_sort_key(sheet_order) is not make_node_key_sort_key(["Inputs", "Calc"])
