@@ -3,7 +3,8 @@
 A bound series is a statement. Excel's graph is over instances. Contracting
 statements invents cycles that do not exist at cell grain (#603). The legality
 test is: condense, drop lexicographically positive-distance edges, and require
-the distance-zero residual to be a DAG (Allen–Kennedy / Lustre causality).
+the distance-zero residual to be a DAG per outer-key partition
+(Allen–Kennedy / Lustre causality).
 """
 
 from __future__ import annotations
@@ -875,6 +876,29 @@ def _zero_distance_edges(
     return zero
 
 
+def _residual_by_index_partition(
+    scc: tuple[str, ...],
+    edges: Sequence[DependenceEdge],
+    catalog: SeriesCatalog,
+    *,
+    include_guarded: bool,
+) -> dict[tuple[int, tuple[Scalar, ...]], dict[str, list[str]]]:
+    """Group distance-zero residuals by `(TIME_PERIOD, outer partition)`.
+
+    Opposite orientations in different `ISSUANCE_YEAR` (or `INSTRUMENT` /
+    `HOLDER`) blocks must not share one series-id quotient (#762).
+    """
+    by_key: dict[tuple[int, tuple[Scalar, ...]], dict[str, list[str]]] = {}
+    for edge in _zero_distance_edges(scc, edges):
+        if edge.guarded and not include_guarded:
+            continue
+        index = schedule_axis_coord(edge.consumer_cell, catalog)
+        part = schedule_partition(edge.consumer_cell, catalog)
+        residual = by_key.setdefault((index, part), _empty_residual(scc))
+        _add_residual_edge(residual, edge)
+    return by_key
+
+
 def _empty_residual(scc: tuple[str, ...]) -> dict[str, list[str]]:
     return {sid: [] for sid in scc}
 
@@ -967,6 +991,7 @@ def _residual_cycle_message(
     residual: dict[str, list[str]],
     edges: Sequence[DependenceEdge],
     catalog: SeriesCatalog,
+    partition: tuple[Scalar, ...] = (),
 ) -> str:
     """Name the two statements and the index point of a residual cycle."""
     pair = _first_cyclic_pair(residual)
@@ -974,26 +999,22 @@ def _residual_cycle_message(
     if pair is None:
         return prefix
     consumer_id, producer_id = pair
-    match = next(
-        (
-            edge
-            for edge in _zero_distance_edges(scc, edges)
-            if schedule_axis_coord(edge.consumer_cell, catalog) == index
-            and edge.consumer_id == consumer_id
-            and edge.producer_id == producer_id
-            and not edge.guarded
-        ),
-        None,
-    ) or next(
-        (
-            edge
-            for edge in _zero_distance_edges(scc, edges)
-            if schedule_axis_coord(edge.consumer_cell, catalog) == index
-            and edge.consumer_id == consumer_id
-            and edge.producer_id == producer_id
-        ),
-        None,
-    )
+
+    def _match(*, require_unguarded: bool) -> DependenceEdge | None:
+        return next(
+            (
+                edge
+                for edge in _zero_distance_edges(scc, edges)
+                if schedule_axis_coord(edge.consumer_cell, catalog) == index
+                and schedule_partition(edge.consumer_cell, catalog) == partition
+                and edge.consumer_id == consumer_id
+                and edge.producer_id == producer_id
+                and (not require_unguarded or not edge.guarded)
+            ),
+            None,
+        )
+
+    match = _match(require_unguarded=True) or _match(require_unguarded=False)
     if match is not None:
         return (
             f"{prefix} ({consumer_id} {match.consumer_cell} reads "
@@ -1007,26 +1028,24 @@ def assert_distance_zero_legal(
     edges: Sequence[DependenceEdge],
     catalog: SeriesCatalog,
 ) -> None:
-    """Fail closed when some schedule index has an unconditional same-index cycle.
+    """Fail closed when some partition has an unconditional same-index cycle.
 
-    A cycle with no guarded edges is a must-cycle and raises at plan time.
-    A cycle passing through at least one guarded edge is a may-cycle and
-    is decided at runtime (demoted to rung 3).
+    Residual edges are a DAG per outer-key partition (`ISSUANCE_YEAR`, and
+    `INSTRUMENT` / `HOLDER` when present) at one `TIME_PERIOD`. Opposite
+    orientations across vintages are not a must-cycle (#762). A cycle with
+    no guarded edges raises at plan time. A cycle through a guarded edge
+    is a may-cycle and is decided at runtime (demoted to rung 3).
 
     Raises:
-        InvertedTreeExportError: Some index's residual has an unconditional cycle.
+        InvertedTreeExportError: Some partition's residual has an
+            unconditional cycle at a schedule index.
     """
-    by_index: dict[int, dict[str, list[str]]] = {}
-    for edge in _zero_distance_edges(scc, edges):
-        if edge.guarded:
-            continue
-        index = schedule_axis_coord(edge.consumer_cell, catalog)
-        residual = by_index.setdefault(index, _empty_residual(scc))
-        _add_residual_edge(residual, edge)
-    for index, residual in by_index.items():
+    for (index, part), residual in _residual_by_index_partition(
+        scc, edges, catalog, include_guarded=False
+    ).items():
         if _topo_order(scc, residual) is None:
             raise InvertedTreeExportError(
-                _residual_cycle_message(scc, index, residual, edges, catalog)
+                _residual_cycle_message(scc, index, residual, edges, catalog, part)
             )
 
 
@@ -1035,13 +1054,9 @@ def has_residual_may_cycle(
     edges: Sequence[DependenceEdge],
     catalog: SeriesCatalog,
 ) -> bool:
-    """Return True if any schedule index has a residual cycle using guarded edges."""
-    by_index: dict[int, dict[str, list[str]]] = {}
-    for edge in _zero_distance_edges(scc, edges):
-        index = schedule_axis_coord(edge.consumer_cell, catalog)
-        residual = by_index.setdefault(index, _empty_residual(scc))
-        _add_residual_edge(residual, edge)
-    return any(_topo_order(scc, residual) is None for residual in by_index.values())
+    """Return True if any partition has a residual cycle using guarded edges."""
+    residuals = _residual_by_index_partition(scc, edges, catalog, include_guarded=True)
+    return any(_topo_order(scc, residual) is None for residual in residuals.values())
 
 
 def residual_body_order(
@@ -1051,9 +1066,13 @@ def residual_body_order(
 ) -> tuple[str, ...] | None:
     """Return one in-loop statement order, or None if index points disagree.
 
+    Opposite residual orientations in different outer partitions are legal
+    and return None (no shared body order). A fused plan then unrolls per
+    partition (#762).
+
     Raises:
         InvertedTreeExportError: A real same-index circular reference exists
-            at some schedule index.
+            inside one outer partition at some schedule index.
     """
     assert_distance_zero_legal(scc, edges, catalog)
     union = _empty_residual(scc)
@@ -1071,9 +1090,11 @@ def build_scc_map(
 ) -> dict[str, tuple[str, ...]]:
     """Map each formula series to its SCC (bindings order).
 
-    Multi-series SCCs fail closed only when some schedule index has an
-    unconditional same-index must-cycle. May-cycles through guarded edges
-    do not raise here; they demote to rung 3 in plan_fused_scc.
+    Multi-series SCCs fail closed only when some (schedule index, outer
+    partition) has an unconditional same-index must-cycle. Opposite
+    residual orientations in different vintages are legal (#762).
+    May-cycles through guarded edges do not raise here; they demote to
+    rung 3 in plan_fused_scc.
 
     Pass `edges` when the catalog has already been walked.
     """

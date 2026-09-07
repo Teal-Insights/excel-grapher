@@ -104,6 +104,10 @@ from tests.unit.exporter.inverted_tree.test_shape_a28_label_ladder import (
     label_ladder_bindings,
     label_ladder_workbook,
 )
+from tests.unit.exporter.inverted_tree.test_shape_a36_vintage_residual import (
+    vintage_residual_bindings,
+    vintage_residual_workbook,
+)
 
 
 def _values_close(got: object, expected: object) -> None:
@@ -253,6 +257,7 @@ _CORPUS: list[tuple[str, Callable[[Path], Path], Callable[[], dict[str, Any]]]] 
     ("range_average_if", range_average_if_workbook, range_average_if_bindings),
     ("range_max_if", range_max_if_workbook, range_max_if_bindings),
     ("label_ladder", label_ladder_workbook, label_ladder_bindings),
+    ("a36_vintage", vintage_residual_workbook, vintage_residual_bindings),
 ]
 
 
