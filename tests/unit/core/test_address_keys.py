@@ -306,3 +306,9 @@ def test_make_node_key_sort_key_caches_by_sheet_order_identity() -> None:
     sheet_order = ["Inputs", "Calc"]
     assert make_node_key_sort_key(sheet_order) is make_node_key_sort_key(sheet_order)
     assert make_node_key_sort_key(sheet_order) is not make_node_key_sort_key(["Inputs", "Calc"])
+
+
+def test_sort_sheet_a1_pairs_does_not_reuse_stale_identity_cache() -> None:
+    pairs = [("B", "A1"), ("A", "A1")]
+    assert sort_sheet_a1_pairs(pairs, sheet_order=["A", "B"]) == [("A", "A1"), ("B", "A1")]
+    assert sort_sheet_a1_pairs(pairs, sheet_order=["B", "A"]) == [("B", "A1"), ("A", "A1")]

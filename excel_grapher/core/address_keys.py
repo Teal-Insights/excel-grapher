@@ -300,22 +300,25 @@ _SheetOrderFn = TypeVar("_SheetOrderFn")
 
 
 class _SheetOrderIdentityCache(Generic[_SheetOrderFn]):
-    """Remember the last function built for a given `id(sheet_order)`."""
+    """Remember the last function built for a given `sheet_order` object.
 
-    __slots__ = ("_factory", "_oid", "_fn")
+    Holds a strong reference to that sequence so `is` stays valid; caching
+    on `id(sheet_order)` alone is unsafe because CPython reuses ids after GC.
+    """
+
+    __slots__ = ("_factory", "_order", "_fn")
 
     def __init__(self, factory: Callable[[Sequence[str]], _SheetOrderFn]) -> None:
         self._factory = factory
-        self._oid: int | None = None
+        self._order: Sequence[str] | None = None
         self._fn: _SheetOrderFn | None = None
 
     def get(self, sheet_order: Sequence[str]) -> _SheetOrderFn:
-        oid = id(sheet_order)
         fn = self._fn
-        if oid == self._oid and fn is not None:
+        if sheet_order is self._order and fn is not None:
             return fn
         built = self._factory(sheet_order)
-        self._oid = oid
+        self._order = sheet_order
         self._fn = built
         return built
 
@@ -407,7 +410,7 @@ def make_sheet_a1_pair_sort_key(
 
     Pairs are ordered by workbook sheet order, then top-left row, then
     top-left column. Sheets not in `sheet_order` sort after known sheets
-    by name. The returned function is cached on `id(sheet_order)`.
+    by name. The returned function is cached on `sheet_order` object identity.
     """
     return _SHEET_A1_PAIR_SORT_KEY_CACHE.get(sheet_order)
 
@@ -487,7 +490,8 @@ def make_node_key_sort_key(
 
     Sheets not present in `sheet_order` are placed after known sheets and
     sorted by sheet name. Cross-sheet unions sort by their first canonical
-    member's sheet. The returned function is cached on `id(sheet_order)`.
+    member's sheet. The returned function is cached on `sheet_order` object
+    identity.
     """
     return _NODE_KEY_SORT_KEY_CACHE.get(sheet_order)
 
