@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.3.0 (2026-09-07)
+
+### Bug Fixes
+
+- **export**: Ignore lookup ranges when detecting array IF
+  ([#744](https://github.com/Teal-Insights/excel-grapher/pull/744),
+  [`19f8ea9`](https://github.com/Teal-Insights/excel-grapher/commit/19f8ea984f6c3b3dcbf7c3e57f4a4c75a8b2bfb9))
+
+- **export**: Whitelist array-IF interiors
+  ([#744](https://github.com/Teal-Insights/excel-grapher/pull/744),
+  [`19f8ea9`](https://github.com/Teal-Insights/excel-grapher/commit/19f8ea984f6c3b3dcbf7c3e57f4a4c75a8b2bfb9))
+
+### Features
+
+- **export**: Emit array IF via xl_if in codegen
+  ([#744](https://github.com/Teal-Insights/excel-grapher/pull/744),
+  [`19f8ea9`](https://github.com/Teal-Insights/excel-grapher/commit/19f8ea984f6c3b3dcbf7c3e57f4a4c75a8b2bfb9))
+
+- **export**: Lower inverted-tree array SUM(IF)
+  ([#744](https://github.com/Teal-Insights/excel-grapher/pull/744),
+  [`19f8ea9`](https://github.com/Teal-Insights/excel-grapher/commit/19f8ea984f6c3b3dcbf7c3e57f4a4c75a8b2bfb9))
+
+
 ## v14.2.12 (2026-09-07)
 
 ### Bug Fixes
