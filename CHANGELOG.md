@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.4.1 (2026-09-07)
+
+### Bug Fixes
+
+- **export**: Classify IF dual-reads of two SCENARIO pairs as keyed
+  ([#753](https://github.com/Teal-Insights/excel-grapher/pull/753),
+  [`fafa777`](https://github.com/Teal-Insights/excel-grapher/commit/fafa7778c03d643a5f048d82e61cbc11f1385187))
+
+
 ## v14.4.0 (2026-09-07)
 
 ### Features
