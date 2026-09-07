@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.4.3 (2026-09-07)
+
+### Bug Fixes
+
+- **grapher**: Pin sheet_order object in sort-key cache
+  ([#758](https://github.com/Teal-Insights/excel-grapher/pull/758),
+  [`ec1133a`](https://github.com/Teal-Insights/excel-grapher/commit/ec1133ab43e0afbe9a40accc3f6a8cbe6c5bece5))
+
+### Performance Improvements
+
+- **grapher**: Skip argument-env expansion for abstract INDEX/MATCH (#757)
+  ([#759](https://github.com/Teal-Insights/excel-grapher/pull/759),
+  [`b7b87c8`](https://github.com/Teal-Insights/excel-grapher/commit/b7b87c8dbe0e0495b48a3c70b595a4f7f7d37dd4))
+
+- **grapher**: Sort extract deps once without NodeKey round-trips
+  ([#758](https://github.com/Teal-Insights/excel-grapher/pull/758),
+  [`ec1133a`](https://github.com/Teal-Insights/excel-grapher/commit/ec1133ab43e0afbe9a40accc3f6a8cbe6c5bece5))
+
+
 ## v14.4.2 (2026-09-07)
 
 ### Bug Fixes
