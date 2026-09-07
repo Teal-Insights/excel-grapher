@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.4.0 (2026-09-07)
+
+### Features
+
+- **export**: Lower inverted-tree array AVERAGE(IF) and MAX(IF)
+  ([#751](https://github.com/Teal-Insights/excel-grapher/pull/751),
+  [`bf1c066`](https://github.com/Teal-Insights/excel-grapher/commit/bf1c066523a55a9c3ceafa848d7573d8c1959664))
+
+
 ## v14.3.1 (2026-09-07)
 
 ### Bug Fixes
