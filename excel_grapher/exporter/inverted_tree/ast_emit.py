@@ -52,6 +52,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
     SeriesDeps,
     _field_binding,
     _host_follow_key_maps,
+    _host_follow_pair_maps,
     _host_producer_slots,
     _ref_pinned_fields,
     addresses_outside_blank_ranges,
@@ -335,6 +336,18 @@ def _host_follow_for(owner: BoundSeries, ctx: EmitContext) -> dict[str, dict[obj
     )
 
 
+def _host_pair_for(
+    owner: BoundSeries, ctx: EmitContext
+) -> dict[str, dict[object, tuple[object, object]]]:
+    """Return host->`(then, else)` pair maps for `owner` from host edges."""
+    return _host_follow_pair_maps(
+        ctx.host,
+        owner,
+        _host_producer_slots(ctx.host, owner, ctx.deps.edges),
+        ctx.graph,
+    )
+
+
 def _follow_is_identity(
     host_follow: Mapping[str, Mapping[object, object]], fields: Sequence[str]
 ) -> bool:
@@ -387,6 +400,49 @@ def _host_key_value_expr(
     return f"{column!r}[{ctx.index_var}]"
 
 
+def _pair_key_value_expr(
+    field: str,
+    branch: int,
+    ctx: EmitContext,
+    pair_maps: Mapping[str, Mapping[object, tuple[object, object]]],
+) -> str:
+    """Return a Python expr for `pair_maps[field][host[field]][branch]`."""
+    mapped = pair_maps.get(field)
+    if mapped is None:
+        raise InvertedTreeExportError(f"series {ctx.host.series_id!r}: no IF pair map for {field}")
+    if ctx.index_var is None or field not in ctx.host.key_fields:
+        try:
+            host_value = ctx.host.domain[ctx.host_index][field]
+        except KeyError as exc:
+            raise InvertedTreeExportError(
+                f"series {ctx.host.series_id!r}: host member {ctx.host_index} "
+                f"has no {field} for an IF pair read"
+            ) from exc
+        pair = mapped.get(host_value)
+        if pair is None:
+            raise InvertedTreeExportError(
+                f"series {ctx.host.series_id!r}: host {field}={host_value!r} "
+                f"has no IF pair for {field}"
+            )
+        return repr(pair[branch])
+    column: list[tuple[object, object]] = []
+    for point in ctx.host.domain:
+        try:
+            host_value = point[field]
+        except KeyError as exc:
+            raise InvertedTreeExportError(
+                f"series {ctx.host.series_id!r}: host walk is missing {field} for an IF pair read"
+            ) from exc
+        pair = mapped.get(host_value)
+        if pair is None:
+            raise InvertedTreeExportError(
+                f"series {ctx.host.series_id!r}: host {field}={host_value!r} "
+                f"has no IF pair for {field}"
+            )
+        column.append(pair)
+    return f"{tuple(column)!r}[{ctx.index_var}][{branch}]"
+
+
 def _producer_field_binding(
     owner: BoundSeries,
     address: CanonicalAddress,
@@ -394,6 +450,7 @@ def _producer_field_binding(
     ref: CellRefNode | None = None,
     *,
     host_follow: Mapping[str, Mapping[object, object]] | None = None,
+    pair_maps: Mapping[str, Mapping[object, tuple[object, object]]] | None = None,
 ) -> dict[str, str | tuple[str, object]] | None:
     """Map each producer key field to `host` or a literal from `address`."""
     idx = owner.index_of(address)
@@ -401,6 +458,7 @@ def _producer_field_binding(
         return None
     pinned = _ref_pinned_fields(ref, ctx.host_cell, owner) if ref is not None else frozenset()
     follow = host_follow if host_follow is not None else _host_follow_for(owner, ctx)
+    pairs = pair_maps if pair_maps is not None else _host_pair_for(owner, ctx)
     raw = _field_binding(
         ctx.host,
         ctx.host_index,
@@ -408,6 +466,7 @@ def _producer_field_binding(
         idx,
         pinned_fields=pinned,
         host_follow=follow,
+        pair_maps=pairs,
     )
     if raw is None:
         return None
@@ -415,8 +474,16 @@ def _producer_field_binding(
     for key, spec in raw:
         if spec == "host":
             binding[key] = "host"
-        elif isinstance(spec, tuple) and len(spec) == 2 and spec[0] == "lit":
-            binding[key] = ("lit", spec[1])
+        elif isinstance(spec, tuple) and len(spec) == 2:
+            kind, payload = spec
+            if kind == "lit":
+                binding[key] = ("lit", payload)
+            elif kind == "pair":
+                binding[key] = ("pair", payload)
+            else:
+                raise InvertedTreeExportError(
+                    f"series {ctx.host.series_id!r}: invalid keyed binding {spec!r} for {key}"
+                )
         else:
             raise InvertedTreeExportError(
                 f"series {ctx.host.series_id!r}: invalid keyed binding {spec!r} for {key}"
@@ -431,15 +498,39 @@ def _expected_producer_point(
     host: BoundSeries,
     *,
     host_follow: Mapping[str, Mapping[object, object]] | None = None,
+    pair_maps: Mapping[str, Mapping[object, tuple[object, object]]] | None = None,
 ) -> object:
     values: list[object] = []
     host_point = host.domain[host_index]
     follow = host_follow or {}
+    pairs = pair_maps or {}
     for key_name in owner.key_fields:
         spec = binding[key_name]
         if spec == "host":
             values.append(_remap_host_key(host_point[key_name], key_name, follow))
-        elif isinstance(spec, tuple):
+        elif isinstance(spec, tuple) and spec[0] == "pair":
+            try:
+                host_value = host_point[key_name]
+            except KeyError as exc:
+                raise InvertedTreeExportError(
+                    f"series {host.series_id!r}: host member {host_index} "
+                    f"has no {key_name} for an IF pair read"
+                ) from exc
+            pair = pairs.get(key_name, {}).get(host_value)
+            if pair is None:
+                raise InvertedTreeExportError(
+                    f"series {host.series_id!r}: host {key_name}={host_value!r} "
+                    f"has no IF pair for {key_name}"
+                )
+            if spec[1] == 0:
+                values.append(pair[0])
+            elif spec[1] == 1:
+                values.append(pair[1])
+            else:
+                raise InvertedTreeExportError(
+                    f"series {host.series_id!r}: invalid IF pair branch {spec[1]!r}"
+                )
+        elif isinstance(spec, tuple) and spec[0] == "lit":
             values.append(spec[1])
         else:
             raise InvertedTreeExportError(
@@ -454,12 +545,14 @@ def _verify_keyed_binding(
     ctx: EmitContext,
     *,
     host_follow: Mapping[str, Mapping[object, object]] | None = None,
+    pair_maps: Mapping[str, Mapping[object, tuple[object, object]]] | None = None,
 ) -> None:
     """Fail closed when a host member has no producer cell for `binding`."""
     domain = series_domain_points(owner)
     known = set(domain)
     seen: set[int] = set()
     follow = host_follow if host_follow is not None else _host_follow_for(owner, ctx)
+    pairs = pair_maps if pair_maps is not None else _host_pair_for(owner, ctx)
     for edge in ctx.deps.edges:
         if edge.producer_id != owner.series_id or edge.consumer_id != ctx.host.series_id:
             continue
@@ -467,7 +560,9 @@ def _verify_keyed_binding(
         if host_i is None or host_i in seen or host_i >= len(ctx.host.domain):
             continue
         seen.add(host_i)
-        expected = _expected_producer_point(owner, binding, host_i, ctx.host, host_follow=follow)
+        expected = _expected_producer_point(
+            owner, binding, host_i, ctx.host, host_follow=follow, pair_maps=pairs
+        )
         if expected not in known:
             raise InvertedTreeExportError(
                 f"series {ctx.host.series_id!r} cell {ctx.host.cells[host_i]} "
@@ -483,13 +578,16 @@ def _keyed_catalog_index_expr(
 ) -> str:
     """Return `domain.index(key)` for a keyed dual-read of `address`."""
     follow = _host_follow_for(owner, ctx)
-    binding = _producer_field_binding(owner, address, ctx, ref=ref, host_follow=follow)
+    pairs = _host_pair_for(owner, ctx)
+    binding = _producer_field_binding(
+        owner, address, ctx, ref=ref, host_follow=follow, pair_maps=pairs
+    )
     if binding is None:
         raise InvertedTreeExportError(
             f"series {ctx.host.series_id!r}: cannot emit keyed read of "
             f"{owner.series_id!r} at {address}"
         )
-    _verify_keyed_binding(owner, binding, ctx, host_follow=follow)
+    _verify_keyed_binding(owner, binding, ctx, host_follow=follow, pair_maps=pairs)
     domain = series_domain_points(owner)
     if (
         ctx.index_var is not None
@@ -504,7 +602,16 @@ def _keyed_catalog_index_expr(
         spec = binding[key_name]
         if spec == "host":
             key_parts.append(_host_key_value_expr(key_name, ctx, host_follow=follow))
-        elif isinstance(spec, tuple):
+        elif isinstance(spec, tuple) and spec[0] == "pair":
+            if spec[1] == 0:
+                key_parts.append(_pair_key_value_expr(key_name, 0, ctx, pairs))
+            elif spec[1] == 1:
+                key_parts.append(_pair_key_value_expr(key_name, 1, ctx, pairs))
+            else:
+                raise InvertedTreeExportError(
+                    f"series {ctx.host.series_id!r}: invalid IF pair branch {spec[1]!r}"
+                )
+        elif isinstance(spec, tuple) and spec[0] == "lit":
             key_parts.append(repr(spec[1]))
         else:
             raise InvertedTreeExportError(

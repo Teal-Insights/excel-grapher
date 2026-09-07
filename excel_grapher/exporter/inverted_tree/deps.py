@@ -44,6 +44,7 @@ from excel_grapher.exporter.inverted_tree.access import (
 )
 from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
+    KeyPoint,
     SeriesCatalog,
     covering_series,
     covering_series_of_column,
@@ -829,10 +830,12 @@ class SeriesDeps:
       `gdp[Stress, t]`, #733), mixed relative + absolute years
       (`baseline[t]` / `baseline[2026]`, #735), same-sheet `$` pins
       of a `sheet_name` key (`stats[s, mean]` / `stats[s, stdev]`,
-      #737), or a shared key whose host and producer vocabularies
-      differ (`B1` vs `Bounds Test 1: …`, #739). `$` freezes the
-      row/column bind axis, not the sheet. Catalog-slot adjacency is
-      not a lag.
+      #737), a shared key whose host and producer vocabularies
+      differ (`B1` vs `Bounds Test 1: …`, #739), or an `IF` then/else
+      pair of producer `SCENARIO`s that is a function of the host
+      row (`paths[B2.1, t]` / `paths[B2.2, t]` vs `B6.1` / `B6.2`,
+      #752). `$` freezes the row/column bind axis, not the sheet.
+      Catalog-slot adjacency is not a lag.
     - `lookup_ids` — `whole` / `dynamic` table reads
     - `is_scan` / `seed_id` / `scan_direction` — self-lags discharged by
       loop order. A relative other-series read at `schedule_coord` ± 1 is
@@ -1731,6 +1734,148 @@ def _host_follow_key_maps(
     return {name: maps[name] for name in valid}
 
 
+def _producer_slots_in_node(
+    node: AstNode,
+    host_cell: CanonicalAddress,
+    producer: BoundSeries,
+    indices: set[int],
+) -> set[int]:
+    """Return producer catalog slots among `indices` referenced by `node`."""
+    slots: set[int] = set()
+    for ref in _iter_cell_ref_nodes(node):
+        address = as_canonical(resolve_cell_ref(ref, host_cell))
+        index = producer.index_of(address)
+        if index is not None and index in indices:
+            slots.add(index)
+    return slots
+
+
+def _if_pair_slot_candidates(
+    node: AstNode,
+    host_cell: CanonicalAddress,
+    producer: BoundSeries,
+    indices: set[int],
+) -> list[tuple[int, int]]:
+    """Collect `IF` then/else producer-slot pairs that cover `indices`."""
+    found: list[tuple[int, int]] = []
+    match node:
+        case FunctionCallNode(name=name, args=args):
+            if normalize_excel_function_name(name) == "IF" and len(args) >= 3:
+                then_slots = _producer_slots_in_node(args[1], host_cell, producer, indices)
+                else_slots = _producer_slots_in_node(args[2], host_cell, producer, indices)
+                if (
+                    len(then_slots) == 1
+                    and len(else_slots) == 1
+                    and then_slots != else_slots
+                    and then_slots | else_slots == indices
+                ):
+                    found.append((next(iter(then_slots)), next(iter(else_slots))))
+            for arg in args:
+                found.extend(_if_pair_slot_candidates(arg, host_cell, producer, indices))
+        case BinaryOpNode(left=left, right=right):
+            found.extend(_if_pair_slot_candidates(left, host_cell, producer, indices))
+            found.extend(_if_pair_slot_candidates(right, host_cell, producer, indices))
+        case UnaryOpNode(operand=operand):
+            found.extend(_if_pair_slot_candidates(operand, host_cell, producer, indices))
+        case _:
+            pass
+    return found
+
+
+def _if_pair_slots(
+    ast: AstNode,
+    host_cell: CanonicalAddress,
+    producer: BoundSeries,
+    indices: set[int],
+) -> tuple[int, int] | None:
+    """Return `(then_slot, else_slot)` when one `IF` covers `indices`.
+
+    Correspondence is then/else operand position, not catalog order. Two
+    matching `IF`s, or none, stay unclassifiable.
+    """
+    found = _if_pair_slot_candidates(ast, host_cell, producer, indices)
+    if len(found) != 1:
+        return None
+    return found[0]
+
+
+def _host_follow_pair_maps(
+    host: BoundSeries,
+    producer: BoundSeries,
+    per_host: Mapping[int, set[int]],
+    graph: DependencyGraph | None,
+) -> dict[str, dict[object, tuple[object, object]]]:
+    """Return host->`(then, else)` maps for one `IF`-aligned pair field.
+
+    A same-year dual of two producer `SCENARIO`s is keyed when each host
+    member reads its own pair (`B2` -> `B2.1`/`B2.2`, `B6` -> `B6.1`/`B6.2`).
+    `_host_follow_key_maps` cannot remap that 1:2 leftover. Branch order
+    comes from the host `IF`, not catalog adjacency or string prefixes
+    (#752). A single distinct pair stays on the literal path; two or more
+    distinct pairs are required here. Missing AST, a non-`IF` dual, or a
+    second differing key fail closed.
+    """
+    if graph is None or not producer.key_fields:
+        return {}
+    shared = [name for name in producer.key_fields if name in host.key_fields]
+    if not shared:
+        return {}
+    multi = {host_i: indices for host_i, indices in per_host.items() if len(indices) > 1}
+    if not multi or any(len(indices) != 2 for indices in multi.values()):
+        return {}
+    members: list[tuple[KeyPoint, KeyPoint, KeyPoint]] = []
+    for host_index, indices in multi.items():
+        if host_index >= len(host.domain) or host_index >= len(host.cells):
+            return {}
+        ast = try_formula_ast(graph, host.cells[host_index])
+        if ast is None:
+            return {}
+        ordered = _if_pair_slots(ast, host.cells[host_index], producer, indices)
+        if ordered is None:
+            return {}
+        then_index, else_index = ordered
+        if then_index >= len(producer.domain) or else_index >= len(producer.domain):
+            return {}
+        members.append(
+            (host.domain[host_index], producer.domain[then_index], producer.domain[else_index])
+        )
+    if len(members) < 2:
+        return {}
+    pair_fields: set[str] | None = None
+    for _host_point, then_point, else_point in members:
+        differing: set[str] = set()
+        for name in producer.key_fields:
+            try:
+                then_value = then_point[name]
+                else_value = else_point[name]
+            except KeyError:
+                return {}
+            if then_value != else_value:
+                differing.add(name)
+        differing &= set(shared)
+        if pair_fields is None:
+            pair_fields = differing
+        elif pair_fields != differing:
+            return {}
+    if pair_fields is None or len(pair_fields) != 1:
+        return {}
+    field = next(iter(pair_fields))
+    maps: dict[object, tuple[object, object]] = {}
+    for host_point, then_point, else_point in members:
+        try:
+            host_value = host_point[field]
+            pair = (then_point[field], else_point[field])
+        except KeyError:
+            return {}
+        existing = maps.get(host_value)
+        if existing is not None and existing != pair:
+            return {}
+        maps[host_value] = pair
+    if len(set(maps.values())) < 2:
+        return {}
+    return {field: maps}
+
+
 def _field_binding(
     host: BoundSeries,
     host_index: int,
@@ -1739,8 +1884,9 @@ def _field_binding(
     *,
     pinned_fields: frozenset[str] = frozenset(),
     host_follow: Mapping[str, Mapping[object, object]] | None = None,
+    pair_maps: Mapping[str, Mapping[object, tuple[object, object]]] | None = None,
 ) -> tuple[tuple[str, object], ...] | None:
-    """Return `(field, 'host' | ('lit', value))` for each producer key field.
+    """Return `(field, 'host' | ('lit', value) | ('pair', branch))` keys.
 
     A field is `host` when it equals the consumer's value, or when
     `host_follow` maps the host value onto this producer value, and the
@@ -1748,8 +1894,11 @@ def _field_binding(
     keeps `TIME_PERIOD` a literal even when that year equals the host
     year. A same-sheet `$D$2` does not freeze `sheet_name` (`SCENARIO`
     stays `host`). Shared constants stay literals beside a remapped
-    path (#741). Emit can replay a binding across the host walk only
-    when every member agrees on this spec.
+    path (#741). `pair_maps` mark an `IF` then/else leftover as
+    `('pair', 0)` / `('pair', 1)` so two host rows that dual-read
+    different producer pairs still share a pattern (#752). Emit can
+    replay a binding across the host walk only when every member agrees
+    on this spec.
     """
     if host_index >= len(host.domain) or producer_index >= len(producer.domain):
         return None
@@ -1757,6 +1906,7 @@ def _field_binding(
     prod = producer.domain[producer_index]
     parts: list[tuple[str, object]] = []
     follow = host_follow or {}
+    pairs = pair_maps or {}
     for key_name in producer.key_fields:
         try:
             value = prod[key_name]
@@ -1775,29 +1925,29 @@ def _field_binding(
                 if mapped is not None and mapped.get(host_value) == value:
                     parts.append((key_name, "host"))
                     continue
+                pair_mapped = pairs.get(key_name)
+                if pair_mapped is not None:
+                    pair = pair_mapped.get(host_value)
+                    if pair is not None:
+                        if value == pair[0]:
+                            parts.append((key_name, ("pair", 0)))
+                            continue
+                        if value == pair[1]:
+                            parts.append((key_name, ("pair", 1)))
+                            continue
         parts.append((key_name, ("lit", value)))
     return tuple(parts)
 
 
-def _is_keyed_multi_read(
+def _multi_read_pattern_sets(
     host: BoundSeries,
     producer: BoundSeries,
     per_host: dict[int, set[int]],
     graph: DependencyGraph | None,
-) -> bool:
-    """True when every multi-slot host shares the same host-or-literal keys.
-
-    Each slot is then `domain.index` of those fields: two scenarios at one
-    year, `baseline[t]` plus `baseline[2026]`, two same-sheet variants
-    (`stats[s, mean]` / `stats[s, stdev]`), two instruments at one remapped
-    host scenario (#739), or a remapped path plus a constant cap (#741). A
-    `t-1` read is a literal that changes per member and cannot be keyed. A
-    `$` pin whose year happens to equal the host year is still a literal; a
-    `$` pin on the host sheet is not a `SCENARIO` literal.
-    """
-    if not producer.key_fields:
-        return False
-    host_follow = _host_follow_key_maps(host, producer, per_host)
+    host_follow: Mapping[str, Mapping[object, object]],
+    pair_maps: Mapping[str, Mapping[object, tuple[object, object]]] | None = None,
+) -> list[frozenset[tuple[tuple[str, object], ...]]] | None:
+    """Return per-member keyed pattern sets, or `None` when a slot is unbound."""
     pattern_sets: list[frozenset[tuple[tuple[str, object], ...]]] = []
     for host_i, indices in per_host.items():
         if len(indices) < 2:
@@ -1813,14 +1963,50 @@ def _is_keyed_multi_read(
                 index,
                 pinned_fields=pinned_fields,
                 host_follow=host_follow,
+                pair_maps=pair_maps,
             )
             if binding is None:
-                return False
+                return None
             patterns.append(binding)
         unique = frozenset(patterns)
         if len(unique) != len(indices):
-            return False
+            return None
         pattern_sets.append(unique)
+    return pattern_sets
+
+
+def _is_keyed_multi_read(
+    host: BoundSeries,
+    producer: BoundSeries,
+    per_host: dict[int, set[int]],
+    graph: DependencyGraph | None,
+) -> bool:
+    """True when every multi-slot host shares the same host-or-literal keys.
+
+    Each slot is then `domain.index` of those fields: two scenarios at one
+    year, `baseline[t]` plus `baseline[2026]`, two same-sheet variants
+    (`stats[s, mean]` / `stats[s, stdev]`), two instruments at one remapped
+    host scenario (#739), a remapped path plus a constant cap (#741), or
+    an `IF` then/else pair of producer scenarios that is a function of
+    the host row (#752). A `t-1` read is a literal that changes per
+    member and cannot be keyed. A `$` pin whose year happens to equal
+    the host year is still a literal; a `$` pin on the host sheet is
+    not a `SCENARIO` literal.
+    """
+    if not producer.key_fields:
+        return False
+    host_follow = _host_follow_key_maps(host, producer, per_host)
+    pattern_sets = _multi_read_pattern_sets(host, producer, per_host, graph, host_follow)
+    if (
+        pattern_sets is not None
+        and pattern_sets
+        and all(item == pattern_sets[0] for item in pattern_sets)
+    ):
+        return True
+    pair_maps = _host_follow_pair_maps(host, producer, per_host, graph)
+    if not pair_maps:
+        return False
+    pattern_sets = _multi_read_pattern_sets(host, producer, per_host, graph, host_follow, pair_maps)
     return bool(pattern_sets) and all(item == pattern_sets[0] for item in pattern_sets)
 
 
