@@ -1,4 +1,4 @@
-"""Range aggregates over catalog covering series (#667, #732).
+"""Range aggregates over catalog covering series (#667, #732, #749).
 
 `SUM` / `SUMPRODUCT` of a bound series, whole-column / whole-row refs, and
 cross-sheet ranges lower with graph-derived access (`covering_series`,
@@ -6,7 +6,9 @@ cross-sheet ranges lower with graph-derived access (`covering_series`,
 `runtime.py` (core wrappers); do not embed ctx `export_runtime/`.
 Array-style `SUM(IF(range,…))` and `SUMPRODUCT(IF(range,…))` lower as
 `xl_if` over positional range tables when interiors are element-aligned
-(#732); unsound alignment stays fail-closed.
+(#732); `AVERAGE(IF)` / `MAX(IF)` reuse that emit (#749). Unsound
+alignment stays fail-closed. Workbooks that already use `AVERAGEIF` /
+`MAXIFS` stay on those functions.
 """
 
 from __future__ import annotations
@@ -453,6 +455,184 @@ def test_sumproduct_if_of_bound_series_matches_evaluator(tmp_path: Path) -> None
         "a27_sumproduct_if_eval",
         "Outputs!Z1",
     )
+
+
+def range_average_if_workbook(tmp_path: Path) -> Path:
+    """`AVERAGE(IF(range>0, range))` over a two-cell bound series."""
+    return write_workbook(
+        tmp_path / "a27_average_if.xlsx",
+        {
+            "Inputs": {"A1": -1.0, "A2": 2.0, "A10": 1, "B10": 2},
+            "Outputs": {"Z1": "=AVERAGE(IF(Inputs!A1:A2>0,Inputs!A1:A2))"},
+        },
+    )
+
+
+def range_average_if_bindings() -> dict[str, Any]:
+    return bindings_document(
+        series_entry("src", "Inputs!A1:A2", layout="series", direction="input", header_row=10),
+        series_entry("out", "Outputs!Z1", layout="scalar", direction="output"),
+    )
+
+
+def range_max_if_workbook(tmp_path: Path) -> Path:
+    """`MAX(IF(range>0, range))` over a two-cell bound series."""
+    return write_workbook(
+        tmp_path / "a27_max_if.xlsx",
+        {
+            "Inputs": {"A1": -1.0, "A2": 2.0, "A10": 1, "B10": 2},
+            "Outputs": {"Z1": "=MAX(IF(Inputs!A1:A2>0,Inputs!A1:A2))"},
+        },
+    )
+
+
+def range_max_if_bindings() -> dict[str, Any]:
+    return bindings_document(
+        series_entry("src", "Inputs!A1:A2", layout="series", direction="input", header_row=10),
+        series_entry("out", "Outputs!Z1", layout="scalar", direction="output"),
+    )
+
+
+def test_average_if_of_bound_series_emits_runtime_helper(tmp_path: Path) -> None:
+    workbook = range_average_if_workbook(tmp_path)
+    modules = generate_inverted(workbook, range_average_if_bindings())
+    assert "xl_if(" in modules["internals.py"]
+    assert "xl_average(" in modules["internals.py"]
+    assert "def xl_average" in modules["runtime.py"]
+    pkg = load_package(modules, tmp_path, name="a27_average_if_emit")
+    # Omitted else is FALSE; AVERAGE skips logicals, so only the matching 2.0.
+    assert pkg.compute_out(src=(-1.0, 2.0)) == pytest.approx((2.0,))
+    assert pkg.compute_out(src=(1.0, 2.0)) == pytest.approx((1.5,))
+
+
+def test_average_if_of_bound_series_matches_evaluator(tmp_path: Path) -> None:
+    workbook = range_average_if_workbook(tmp_path)
+    _package_matches_output(
+        tmp_path, workbook, range_average_if_bindings(), "a27_average_if_eval", "Outputs!Z1"
+    )
+
+
+def test_max_if_of_bound_series_emits_runtime_helper(tmp_path: Path) -> None:
+    workbook = range_max_if_workbook(tmp_path)
+    modules = generate_inverted(workbook, range_max_if_bindings())
+    assert "xl_if(" in modules["internals.py"]
+    assert "xl_max(" in modules["internals.py"]
+    assert "def xl_max" in modules["runtime.py"]
+    pkg = load_package(modules, tmp_path, name="a27_max_if_emit")
+    assert pkg.compute_out(src=(-1.0, 2.0)) == pytest.approx((2.0,))
+    assert pkg.compute_out(src=(1.0, 4.0)) == pytest.approx((4.0,))
+
+
+def test_max_if_of_bound_series_matches_evaluator(tmp_path: Path) -> None:
+    workbook = range_max_if_workbook(tmp_path)
+    _package_matches_output(
+        tmp_path, workbook, range_max_if_bindings(), "a27_max_if_eval", "Outputs!Z1"
+    )
+
+
+def test_average_if_then_else_ranges_match_evaluator(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "a27_average_if_else.xlsx",
+        {
+            "Inputs": {
+                "A1": -1.0,
+                "A2": 2.0,
+                "B1": 10.0,
+                "B2": 20.0,
+                "C1": 100.0,
+                "C2": 200.0,
+                "A10": 1,
+                "B10": 2,
+                "C10": 3,
+            },
+            "Outputs": {"Z1": "=AVERAGE(IF(Inputs!A1:A2>0,Inputs!B1:B2,Inputs!C1:C2))"},
+        },
+    )
+    document = bindings_document(
+        series_entry("flag", "Inputs!A1:A2", layout="series", direction="input", header_row=10),
+        series_entry("then_s", "Inputs!B1:B2", layout="series", direction="input", header_row=10),
+        series_entry("else_s", "Inputs!C1:C2", layout="series", direction="input", header_row=10),
+        series_entry("out", "Outputs!Z1", layout="scalar", direction="output"),
+    )
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a27_average_if_else")
+    assert pkg.compute_out(flag=(-1.0, 2.0), then_s=(10.0, 20.0), else_s=(100.0, 200.0)) == (
+        pytest.approx(60.0),
+    )
+    _package_matches_output(tmp_path, workbook, document, "a27_average_if_else_eval", "Outputs!Z1")
+
+
+def test_max_if_negative_then_skips_omitted_else(tmp_path: Path) -> None:
+    """Omitted else is FALSE, not 0, so a negative match stays the max."""
+    workbook = write_workbook(
+        tmp_path / "a27_max_if_neg.xlsx",
+        {
+            "Inputs": {
+                "A1": -1.0,
+                "A2": 2.0,
+                "B1": -10.0,
+                "B2": -20.0,
+                "A10": 1,
+                "B10": 2,
+            },
+            "Outputs": {"Z1": "=MAX(IF(Inputs!A1:A2>0,Inputs!B1:B2))"},
+        },
+    )
+    document = bindings_document(
+        series_entry("flag", "Inputs!A1:A2", layout="series", direction="input", header_row=10),
+        series_entry("then_s", "Inputs!B1:B2", layout="series", direction="input", header_row=10),
+        series_entry("out", "Outputs!Z1", layout="scalar", direction="output"),
+    )
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a27_max_if_neg")
+    assert pkg.compute_out(flag=(-1.0, 2.0), then_s=(-10.0, -20.0)) == pytest.approx((-20.0,))
+    _package_matches_output(tmp_path, workbook, document, "a27_max_if_neg_eval", "Outputs!Z1")
+
+
+def test_averageif_is_not_rewritten_as_array_if(tmp_path: Path) -> None:
+    """Native `AVERAGEIF` stays that function; it is not rewritten as `AVERAGE(IF)`."""
+    workbook = write_workbook(
+        tmp_path / "a27_averageif.xlsx",
+        {
+            "Inputs": {"A1": -1.0, "A2": 2.0, "A10": 1, "B10": 2},
+            "Outputs": {"Z1": '=AVERAGEIF(Inputs!A1:A2,">0")'},
+        },
+    )
+    document = bindings_document(
+        series_entry("src", "Inputs!A1:A2", layout="series", direction="input", header_row=10),
+        series_entry("out", "Outputs!Z1", layout="scalar", direction="output"),
+    )
+    with pytest.raises(
+        InvertedTreeExportError,
+        match=r"bare range in value position|no inverted-tree runtime helper",
+    ):
+        generate_inverted(workbook, document)
+
+
+@pytest.mark.parametrize("outer", ["AVERAGE", "MAX"])
+def test_average_and_max_if_unsound_alignment_fails_closed(tmp_path: Path, outer: str) -> None:
+    workbook = write_workbook(
+        tmp_path / "a27_avg_max_if_closed.xlsx",
+        {
+            "Inputs": {
+                "A1": 1.0,
+                "A2": 2.0,
+                "B1": 10.0,
+                "B2": 20.0,
+                "B3": 30.0,
+                "B4": 40.0,
+                "B5": 50.0,
+                "A10": 1,
+                "B10": 2,
+            },
+            "Outputs": {"Z1": f"={outer}(IF(Inputs!A1:A2>0,Inputs!B1:B5,0))"},
+        },
+    )
+    document = bindings_document(
+        series_entry("flag", "Inputs!A1:A2", layout="series", direction="input", header_row=10),
+        series_entry("then_s", "Inputs!B1:B5", layout="series", direction="input", header_row=10),
+        series_entry("out", "Outputs!Z1", layout="scalar", direction="output"),
+    )
+    with pytest.raises(InvertedTreeExportError, match=r"array IF shape mismatch"):
+        generate_inverted(workbook, document)
 
 
 @pytest.mark.parametrize(

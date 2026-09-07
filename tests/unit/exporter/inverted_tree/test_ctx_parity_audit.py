@@ -308,6 +308,54 @@ def test_sum_if_array_matches_evaluator(tmp_path: Path) -> None:
     assert _scalar(pkg.compute_out(src=(-1.0, 2.0))) == pytest.approx(expected)
 
 
+def test_average_if_array_matches_evaluator(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "average_if.xlsx",
+        {
+            "Inputs": {"A1": -1.0, "A2": 2.0, "A10": 1, "B10": 2},
+            "Outputs": {"A1": "=AVERAGE(IF(Inputs!A1:A2>0,Inputs!A1:A2))"},
+        },
+    )
+    document = bindings_document(
+        series_entry(
+            "src",
+            "Inputs!A1:A2",
+            layout="series",
+            direction="input",
+            header_row=10,
+        ),
+        series_entry("out", "Outputs!A1", layout="scalar", direction="output"),
+    )
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_average_if")
+    catalog, _deps, graph = inverted_graph_parts(workbook, document)
+    expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])["Outputs!A1"]
+    assert _scalar(pkg.compute_out(src=(-1.0, 2.0))) == pytest.approx(expected)
+
+
+def test_max_if_array_matches_evaluator(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "max_if.xlsx",
+        {
+            "Inputs": {"A1": -1.0, "A2": 2.0, "A10": 1, "B10": 2},
+            "Outputs": {"A1": "=MAX(IF(Inputs!A1:A2>0,Inputs!A1:A2))"},
+        },
+    )
+    document = bindings_document(
+        series_entry(
+            "src",
+            "Inputs!A1:A2",
+            layout="series",
+            direction="input",
+            header_row=10,
+        ),
+        series_entry("out", "Outputs!A1", layout="scalar", direction="output"),
+    )
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_max_if")
+    catalog, _deps, graph = inverted_graph_parts(workbook, document)
+    expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])["Outputs!A1"]
+    assert _scalar(pkg.compute_out(src=(-1.0, 2.0))) == pytest.approx(expected)
+
+
 def test_cross_sheet_range_matches_evaluator(tmp_path: Path) -> None:
     workbook = write_workbook(
         tmp_path / "cross.xlsx",
