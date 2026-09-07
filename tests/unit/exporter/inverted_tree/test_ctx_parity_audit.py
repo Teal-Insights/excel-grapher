@@ -240,11 +240,6 @@ def test_named_range_formula_expands_to_bound_cell(tmp_path: Path) -> None:
             {},
             r"no inverted-tree runtime helper|IFERROR",
         ),
-        (
-            "=SUM(IF(Inputs!A1:A2>0,Inputs!A1:A2))",
-            {"A2": 2.0},
-            r"bare range|no inverted-tree runtime helper|unsupported",
-        ),
     ],
 )
 def test_ctx_library_shapes_fail_closed(
@@ -287,6 +282,30 @@ def test_ctx_library_shapes_fail_closed(
         )
     with pytest.raises(InvertedTreeExportError, match=match):
         generate_inverted(workbook, document)
+
+
+def test_sum_if_array_matches_evaluator(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "sum_if.xlsx",
+        {
+            "Inputs": {"A1": -1.0, "A2": 2.0, "A10": 1, "B10": 2},
+            "Outputs": {"A1": "=SUM(IF(Inputs!A1:A2>0,Inputs!A1:A2))"},
+        },
+    )
+    document = bindings_document(
+        series_entry(
+            "src",
+            "Inputs!A1:A2",
+            layout="series",
+            direction="input",
+            header_row=10,
+        ),
+        series_entry("out", "Outputs!A1", layout="scalar", direction="output"),
+    )
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_sum_if")
+    catalog, _deps, graph = inverted_graph_parts(workbook, document)
+    expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])["Outputs!A1"]
+    assert _scalar(pkg.compute_out(src=(-1.0, 2.0))) == pytest.approx(expected)
 
 
 def test_cross_sheet_range_matches_evaluator(tmp_path: Path) -> None:

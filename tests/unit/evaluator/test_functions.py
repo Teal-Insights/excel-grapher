@@ -159,6 +159,34 @@ def test_sum() -> None:
         assert result["S!B2"] == 6.0
 
 
+def test_sum_if_array_selects_aligned_elements() -> None:
+    """Array-context `SUM(IF(range,...))` is element-wise (#732)."""
+    graph = _make_graph(
+        _make_node("S!A1", None, -1),
+        _make_node("S!A2", None, 2),
+        _make_node("S!A3", None, 3),
+        _make_node("S!B1", None, 10),
+        _make_node("S!B2", None, 20),
+        _make_node("S!B3", None, 30),
+        _make_node("S!C1", None, 100),
+        _make_node("S!C2", None, 200),
+        _make_node("S!C3", None, 300),
+        _make_node("S!E1", None, 2),
+        _make_node("S!D1", "=SUM(IF(S!A1:A3>0,S!A1:A3))", None),
+        _make_node("S!D2", "=SUM(IF(S!A1:A3>0,S!B1:B3,0))", None),
+        _make_node("S!D3", "=SUM(IF(S!A1:A3>0,S!B1:B3,S!C1:C3))", None),
+        _make_node("S!D4", "=SUM(IF(S!A1:A3=S!E1,S!B1:B3,0))", None),
+        _make_node("S!D5", "=SUM(IF(S!A1:A3>0,IF(S!B1:B3>15,S!C1:C3,0),0))", None),
+    )
+    with FormulaEvaluator(graph) as ev:
+        result = ev.evaluate(["S!D1", "S!D2", "S!D3", "S!D4", "S!D5"])
+        assert result["S!D1"] == 5.0
+        assert result["S!D2"] == 50.0
+        assert result["S!D3"] == 150.0
+        assert result["S!D4"] == 20.0
+        assert result["S!D5"] == 500.0
+
+
 def test_average() -> None:
     """Test AVERAGE function."""
     graph = _make_graph(

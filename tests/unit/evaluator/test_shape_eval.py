@@ -89,6 +89,35 @@ def test_shape_eval_if_short_circuits_like_string_path() -> None:
     assert result["S!C2"] == 20
 
 
+def test_shape_eval_sum_if_array_matches_string_path() -> None:
+    graph = DependencyGraph()
+    graph.add_node(_make_node("S!A1", None, -1))
+    graph.add_node(_make_node("S!A2", None, 2))
+    graph.add_node(_make_node("S!B1", None, 10))
+    graph.add_node(_make_node("S!B2", None, 20))
+    graph.add_node(_make_node("S!D1", "=SUM(IF(S!A1:A2>0,S!B1:B2,0))"))
+    graph.add_node(_make_node("S!D2", "=SUM(IF(S!A1:A2>0,S!B1:B2,0))"))
+    graph.add_edge("S!D1", "S!A1")
+    graph.add_edge("S!D1", "S!A2")
+    graph.add_edge("S!D1", "S!B1")
+    graph.add_edge("S!D1", "S!B2")
+    graph.add_edge("S!D2", "S!A1")
+    graph.add_edge("S!D2", "S!A2")
+    graph.add_edge("S!D2", "S!B1")
+    graph.add_edge("S!D2", "S!B2")
+    graph.formula_shapes = warm_formula_shapes(graph)
+
+    with FormulaEvaluator(graph) as ev:
+        shaped = ev.evaluate(["S!D1", "S!D2"])
+    assert shaped["S!D1"] == 20.0
+    assert shaped["S!D2"] == 20.0
+
+    graph.formula_shapes = None
+    with FormulaEvaluator(graph) as baseline:
+        plain = baseline.evaluate(["S!D1", "S!D2"])
+    assert plain == shaped
+
+
 def test_shape_eval_if_does_not_evaluate_unused_error_branch() -> None:
     graph = DependencyGraph()
     graph.add_node(_make_node("S!A1", None, 1))

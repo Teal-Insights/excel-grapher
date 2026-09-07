@@ -27,6 +27,7 @@ from excel_grapher.exporter.inverted_tree.runtime import (
     xl_exp,
     xl_ge,
     xl_gt,
+    xl_if,
     xl_index,
     xl_isnumber,
     xl_le,
@@ -266,6 +267,15 @@ def test_xl_raise() -> None:
     with pytest.raises(XlError) as exc:
         xl_raise("#N/A")
     assert exc.value.code == "#N/A"
+
+
+def test_xl_if_elementwise_and_scalar() -> None:
+    assert xl_if(True, 10, 20) == 10
+    assert xl_if(False, 10, 20) == 20
+    assert xl_if(((True,), (False,)), ((10,), (20,)), 0) == [[10], [0]]
+    with pytest.raises(XlError) as exc:
+        xl_if(((True,), (False,)), ((1,), (2,), (3,)), 0)
+    assert exc.value.code == "#VALUE!"
 
 
 def test_xl_exp_numeric_and_overflow() -> None:

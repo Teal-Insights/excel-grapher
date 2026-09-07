@@ -22,6 +22,8 @@ from excel_grapher.core.formula_shape import (
     SkeletonNode,
     fill_address_holes,
 )
+from excel_grapher.core.grid import Grid
+from excel_grapher.core.logic_funcs import logical_if
 from excel_grapher.core.types import FormulaValue, XlError
 from excel_grapher.evaluator.errors import ParseError
 from excel_grapher.evaluator.functions import FUNCTIONS
@@ -234,7 +236,14 @@ def _compile_if(
     else_empty = len(args) >= 3 and isinstance(args[2], EmptyArgNode)
 
     def eval_if(params: tuple[AddressLeaf, ...]) -> FormulaValue:
-        cond = cond_fn(params)
+        cond = _evaluator._resolve_binary_operand(cond_fn(params))
+        if Grid.wrap(cond) is not None:
+            then = _evaluator._resolve_binary_operand(0 if then_empty else then_fn(params))
+            if else_fn is None:
+                otherwise: FormulaValue = False
+            else:
+                otherwise = _evaluator._resolve_binary_operand(0 if else_empty else else_fn(params))
+            return cast(FormulaValue, logical_if(cond, then, otherwise))
         flag = to_bool(cond)
         if isinstance(flag, XlError):
             return flag

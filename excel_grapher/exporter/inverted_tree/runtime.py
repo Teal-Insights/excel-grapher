@@ -17,6 +17,7 @@ from datetime import date, datetime
 from typing import Literal, NoReturn, Protocol, TypeGuard, TypeVar, cast, overload
 
 from excel_grapher.core import operators as _core_ops
+from excel_grapher.core.logic_funcs import logical_if
 from excel_grapher.core.lookup_funcs import index_cells, match_cells, vlookup_cells
 from excel_grapher.core.math_funcs import exp_number, sum_cells
 from excel_grapher.core.sumproduct import sumproduct_cells
@@ -268,6 +269,11 @@ def xl_sum(*args: object) -> object:
     for arg in args:
         _raise_stored_errors_in(arg)
     return _adapt_core(sum_cells(*cast(tuple[CellValue, ...], args)))
+
+
+def xl_if(cond: object, then_value: object, else_value: object = False) -> object:
+    """Excel `IF` via `core.logic_funcs.logical_if` (scalar or element-wise)."""
+    return _adapt_core(logical_if(cond, then_value, else_value))
 
 
 def xl_sumproduct(*args: object) -> object:

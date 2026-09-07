@@ -21,6 +21,7 @@ from .error_funcs import (
     xl_istext,
 )
 from .errors import XlErrorException, xl_raise
+from .logic import xl_if
 from .lookup import xl_hlookup, xl_index, xl_lookup, xl_match, xl_vlookup, xl_xlookup
 from .offset import xl_offset, xl_range, xl_range_rows
 from .operators import (
@@ -47,6 +48,7 @@ __all__ = [
     "xl_bool",
     "xl_compare",
     "xl_hlookup",
+    "xl_if",
     "xl_iferror",
     "xl_ifna",
     "xl_index",
