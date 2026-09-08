@@ -163,6 +163,24 @@ class DynamicRefError(ValueError):
     """
 
 
+class DynamicRefCellLimitError(DynamicRefError):
+    """Raised when inferred dynamic-ref targets exceed `max_cells`.
+
+    Candidate scanning propagates this error instead of returning a silently
+    incomplete leaf list. Raise `DynamicRefLimits.max_cells` or tighten the
+    selector domain.
+    """
+
+
+def _raise_cell_limit(count: int, limit: int, *, what: str) -> None:
+    """Raise `DynamicRefCellLimitError` for an over-budget target set."""
+    raise DynamicRefCellLimitError(
+        f"{what} exceed limit ({count} > {limit}). "
+        "Refusing to drop inferred targets. Raise DynamicRefLimits.max_cells "
+        "or tighten the selector domain."
+    )
+
+
 def _apply_constraint_to_schema(schema: dict[str, Any], address: str, annotation: Any) -> None:
     """Assign *annotation* to every sheet-qualified cell implied by *address* in *schema*."""
     sheet_name, range_a1 = _split_addr_sheet_coord(address)
@@ -1078,6 +1096,7 @@ def infer_dynamic_offset_targets(
     named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
     current_row: int | None = None,
     current_col: int | None = None,
+    allow_wide_bounds: bool = False,
 ) -> set[str]:
     """Infer the union of all possible OFFSET targets for a formula.
 
@@ -1088,7 +1107,11 @@ def infer_dynamic_offset_targets(
     - Leaf cells referenced by OFFSET/INDEX arguments must have a numeric
       domain in `cell_type_env` unless they appear only in ref_only
       argument positions (see `excel_grapher.core.excel_function_meta`).
-    - Integer interval domains must be finite and small enough to enumerate.
+    - Integer interval domains must be finite and small enough to enumerate,
+      unless `allow_wide_bounds` is True. In that case intervals wider than
+      `max_branches` become a bounding rectangle of possible OFFSET results
+      instead of raising `DynamicRefError`, so constraint-candidate scanning
+      can still reach downstream leaves.
     """
     if not isinstance(formula, str) or not formula.startswith("="):
         return set()
@@ -1111,10 +1134,11 @@ def infer_dynamic_offset_targets(
             named_range_ranges=named_range_ranges,
             current_row=current_row,
             current_col=current_col,
+            allow_wide_bounds=allow_wide_bounds,
         )
         out |= targets
         if len(out) > lim.max_cells:
-            raise DynamicRefError(f"Dynamic ref cells exceed limit ({len(out)} > {lim.max_cells})")
+            _raise_cell_limit(len(out), lim.max_cells, what="Dynamic ref cells")
 
     _emit_trace(
         DynamicRefTraceEvent(
@@ -1186,7 +1210,7 @@ def infer_dynamic_index_targets(
         )
         out |= targets
         if len(out) > lim.max_cells:
-            raise DynamicRefError(f"Dynamic ref cells exceed limit ({len(out)} > {lim.max_cells})")
+            _raise_cell_limit(len(out), lim.max_cells, what="Dynamic ref cells")
 
     _emit_trace(
         DynamicRefTraceEvent(
@@ -1339,6 +1363,7 @@ def _infer_single_offset_call(
     named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
     current_row: int | None = None,
     current_col: int | None = None,
+    allow_wide_bounds: bool = False,
 ) -> set[str]:
     """Infer targets for a single OFFSET(...) call body."""
     args = _split_top_level_args(inner_args)
@@ -1439,11 +1464,62 @@ def _infer_single_offset_call(
                             if isinstance(result, ExcelRange):
                                 targets |= set(result.cell_addresses())
                                 if len(targets) > limits.max_cells:
-                                    raise DynamicRefError(
-                                        f"Dynamic ref cells from single OFFSET call exceed limit "
-                                        f"({len(targets)} > {limits.max_cells})"
+                                    _raise_cell_limit(
+                                        len(targets),
+                                        limits.max_cells,
+                                        what="Dynamic ref cells from single OFFSET call",
                                     )
         return targets
+
+    if allow_wide_bounds:
+        rows_dom = _infer_numeric_domain(
+            rows_ast,
+            cell_type_env,
+            limits,
+            context=eval_context,
+            current_sheet=current_sheet,
+        )
+        cols_dom = _infer_numeric_domain(
+            cols_ast,
+            cell_type_env,
+            limits,
+            context=eval_context,
+            current_sheet=current_sheet,
+        )
+        height_dom = (
+            None
+            if height_ast is None
+            else _infer_numeric_domain(
+                height_ast,
+                cell_type_env,
+                limits,
+                context=eval_context,
+                current_sheet=current_sheet,
+            )
+        )
+        width_dom = (
+            None
+            if width_ast is None
+            else _infer_numeric_domain(
+                width_ast,
+                cell_type_env,
+                limits,
+                context=eval_context,
+                current_sheet=current_sheet,
+            )
+        )
+        height_ok = height_ast is None or height_dom is not None
+        width_ok = width_ast is None or width_dom is not None
+        if rows_dom is not None and cols_dom is not None and height_ok and width_ok:
+            return _emit_offset_targets_from_domains(
+                base_ranges,
+                rows_dom,
+                cols_dom,
+                height_dom,
+                width_dom,
+                bounds=bounds,
+                limits=limits,
+            )
 
     leaf_addrs: set[str] = set()
     leaf_addrs |= _collect_addresses(rows_ast)
@@ -1498,11 +1574,71 @@ def _infer_single_offset_call(
             if isinstance(result, ExcelRange):
                 targets |= set(result.cell_addresses())
                 if len(targets) > limits.max_cells:
-                    raise DynamicRefError(
-                        f"Dynamic ref cells from single OFFSET call exceed limit "
-                        f"({len(targets)} > {limits.max_cells})"
+                    _raise_cell_limit(
+                        len(targets),
+                        limits.max_cells,
+                        what="Dynamic ref cells from single OFFSET call",
                     )
 
+    return targets
+
+
+def _emit_offset_targets_from_domains(
+    base_ranges: list[ExcelRange],
+    rows_dom: _FiniteInts | _IntBounds,
+    cols_dom: _FiniteInts | _IntBounds,
+    height_dom: _FiniteInts | _IntBounds | None,
+    width_dom: _FiniteInts | _IntBounds | None,
+    *,
+    bounds: WorkbookBoundsProtocol | None,
+    limits: DynamicRefLimits,
+) -> set[str]:
+    """Emit OFFSET targets from numeric domains without enumerating assignments.
+
+    Wide integer intervals become the bounding rectangle of possible OFFSET
+    results. That is exact for contiguous offset intervals of a fixed-size base
+    and a conservative over-approximation when a finite enum has holes.
+    """
+    rb = _normalize_to_bounds(rows_dom)
+    cb = _normalize_to_bounds(cols_dom)
+    targets: set[str] = set()
+    for base_range in base_ranges:
+        base_bounds = _bounds_for_sheet(bounds, sheet=base_range.sheet)
+        base_h = base_range.end_row - base_range.start_row + 1
+        base_w = base_range.end_col - base_range.start_col + 1
+        if height_dom is None:
+            h_hi = base_h
+        else:
+            h_hi = _normalize_to_bounds(height_dom).hi
+            if h_hi < 1:
+                continue
+        if width_dom is None:
+            w_hi = base_w
+        else:
+            w_hi = _normalize_to_bounds(width_dom).hi
+            if w_hi < 1:
+                continue
+        start_row = max(base_range.start_row + rb.lo, base_bounds.min_row)
+        start_col = max(base_range.start_col + cb.lo, base_bounds.min_col)
+        end_row = min(base_range.start_row + rb.hi + h_hi - 1, base_bounds.max_row)
+        end_col = min(base_range.start_col + cb.hi + w_hi - 1, base_bounds.max_col)
+        if start_row > end_row or start_col > end_col:
+            continue
+        n_cells = (end_row - start_row + 1) * (end_col - start_col + 1)
+        if len(targets) + n_cells > limits.max_cells:
+            _raise_cell_limit(
+                len(targets) + n_cells,
+                limits.max_cells,
+                what="Dynamic ref cells from single OFFSET call",
+            )
+        rng = ExcelRange(
+            sheet=base_range.sheet,
+            start_row=start_row,
+            start_col=start_col,
+            end_row=end_row,
+            end_col=end_col,
+        )
+        targets.update(rng.cell_addresses())
     return targets
 
 
@@ -3376,9 +3512,7 @@ def _emit_index_targets_from_domains(
             for c in cs:
                 targets |= _index_pair_to_addresses(array_range, r, c, nrows=nrows, ncols=ncols)
         if len(targets) > limits.max_cells:
-            raise DynamicRefError(
-                f"INDEX target cells exceed limit ({len(targets)} > {limits.max_cells})"
-            )
+            _raise_cell_limit(len(targets), limits.max_cells, what="INDEX target cells")
         return targets
 
     if isinstance(row_dom, _FiniteInts) and isinstance(col_dom, _IntBounds):
@@ -3399,9 +3533,7 @@ def _emit_index_targets_from_domains(
                             array_range, r, c, nrows=nrows, ncols=ncols
                         )
         if len(targets) > limits.max_cells:
-            raise DynamicRefError(
-                f"INDEX target cells exceed limit ({len(targets)} > {limits.max_cells})"
-            )
+            _raise_cell_limit(len(targets), limits.max_cells, what="INDEX target cells")
         return targets
 
     if isinstance(row_dom, _IntBounds) and isinstance(col_dom, _FiniteInts):
@@ -3422,9 +3554,7 @@ def _emit_index_targets_from_domains(
                             array_range, r, c, nrows=nrows, ncols=ncols
                         )
         if len(targets) > limits.max_cells:
-            raise DynamicRefError(
-                f"INDEX target cells exceed limit ({len(targets)} > {limits.max_cells})"
-            )
+            _raise_cell_limit(len(targets), limits.max_cells, what="INDEX target cells")
         return targets
 
     rb = _normalize_to_bounds(row_dom)
@@ -3457,9 +3587,7 @@ def _emit_index_targets_from_domains(
                 targets.add(f"{array_range.sheet}!{get_column_letter(cc)}{rr}")
 
     if len(targets) > limits.max_cells:
-        raise DynamicRefError(
-            f"INDEX target cells exceed limit ({len(targets)} > {limits.max_cells})"
-        )
+        _raise_cell_limit(len(targets), limits.max_cells, what="INDEX target cells")
     return targets
 
 
@@ -3538,9 +3666,7 @@ def _infer_index_targets_core(
         r1, c1 = int(row_val), int(col_val)
         targets |= _index_pair_to_addresses(array_range, r1, c1, nrows=nrows, ncols=ncols)
     if len(targets) > limits.max_cells:
-        raise DynamicRefError(
-            f"INDEX target cells exceed limit ({len(targets)} > {limits.max_cells})"
-        )
+        _raise_cell_limit(len(targets), limits.max_cells, what="INDEX target cells")
     _emit_trace(
         DynamicRefTraceEvent(
             kind="index-enumerated",
@@ -4080,7 +4206,7 @@ def infer_dynamic_indirect_targets(
         )
         out |= targets
         if len(out) > lim.max_cells:
-            raise DynamicRefError(f"Dynamic ref cells exceed limit ({len(out)} > {lim.max_cells})")
+            _raise_cell_limit(len(out), lim.max_cells, what="Dynamic ref cells")
 
     _emit_trace(
         DynamicRefTraceEvent(

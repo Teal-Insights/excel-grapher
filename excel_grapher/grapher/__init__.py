@@ -30,6 +30,7 @@ from .constraints import (
 )
 from .dependency_provenance import DependencyCause, EdgeProvenance
 from .dynamic_refs import (
+    DynamicRefCellLimitError,
     DynamicRefConfig,
     DynamicRefError,
     DynamicRefLimits,
@@ -107,6 +108,7 @@ __all__ = [
     "load_constraints_module",
     "resolve_constraints_path",
     "DynamicRefConfig",
+    "DynamicRefCellLimitError",
     "DynamicRefError",
     "DynamicRefLimits",
     "DynamicRefTraceEvent",
