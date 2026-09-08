@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.7.1 (2026-09-08)
+
+### Bug Fixes
+
+- **export**: Resolve per-member aggregate windows and schedule recursive ranges
+  ([#794](https://github.com/Teal-Insights/excel-grapher/pull/794),
+  [`8da8b6a`](https://github.com/Teal-Insights/excel-grapher/commit/8da8b6a2509f1009354adebbe74f404c51269560))
+
+
 ## v14.7.0 (2026-09-08)
 
 ### Features
