@@ -62,7 +62,7 @@ from excel_grapher.grapher.blank_ranges import (
     address_in_blank_ranges,
 )
 from excel_grapher.series_bindings.geometry import parse_value_map
-from excel_grapher.series_bindings.normalize import component_for_field, is_override_input
+from excel_grapher.series_bindings.normalize import is_override_input
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
@@ -1530,12 +1530,7 @@ def _is_consistent_lag(
 
 def _dimension_bind(series: BoundSeries, field: str) -> Mapping[str, Any] | None:
     """Return the bind mapping for `field`, if the series declares one."""
-    raw = dict(series.raw)
-    component = component_for_field(raw, field)
-    if component is None:
-        return None
-    bind = component.get("bind")
-    return bind if isinstance(bind, dict) else None
+    return series.dimension_bind(field)
 
 
 def _infer_key_field_axis(series: BoundSeries, field: str) -> Literal["sheet", "row", "col"] | None:

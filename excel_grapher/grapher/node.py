@@ -4,13 +4,14 @@ from collections import OrderedDict
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 import fastpyxl.utils.cell
 
 from excel_grapher.core.address_keys import (
     CellKey,
     NodeShape,
+    as_canonical,
 )
 from excel_grapher.core.address_keys import format_cell_key as _format_cell_key
 from excel_grapher.core.address_keys import parse_node_key as _parse_node_key
@@ -20,6 +21,9 @@ from excel_grapher.core.formula_ast import (
     parse_formula_text,
     render_formula,
 )
+
+if TYPE_CHECKING:
+    from excel_grapher.exporter.inverted_tree.catalog import KeyPoint, SeriesCatalog
 
 # Graph node identity; canonical sheet-qualified cell address string.
 NodeKey: TypeAlias = str
@@ -235,6 +239,10 @@ class Node:
     `node.metadata["k"] = v` is not supported (it raises `TypeError` on a node
     with no metadata yet). Writers — node hooks included — use
     `set_metadata` / `update_metadata`, or `DependencyGraph.set_node_metadata`.
+
+    Dimension binds and key coordinates live on `SeriesCatalog`, not on this
+    node. `key_point(catalog)` and `dimension_binds(catalog)` are thin adapters
+    that return `None` for unbound cells.
     """
 
     sheet: str | None
@@ -415,6 +423,14 @@ class Node:
         """True when this cell has a formula AST or unparseable formula text."""
         return self.formula_ast is not None or self._unparseable_formula is not None
 
+    def key_point(self, catalog: SeriesCatalog) -> KeyPoint | None:
+        """Resolved key coordinates for this cell in `catalog`, or `None` if unbound."""
+        return catalog.key_point_for(as_canonical(self.key))
+
+    def dimension_binds(self, catalog: SeriesCatalog) -> Mapping[str, Mapping[str, Any]] | None:
+        """Series-level dimension binds for this cell in `catalog`, or `None` if unbound."""
+        return catalog.binds_for(as_canonical(self.key))
+
     def apply_formula_text(self, text: str | None) -> None:
         """Parse `text` into `formula_ast`, or keep it as unparseable fallback.
 
@@ -441,6 +457,8 @@ class NodeView:
     node's state at the time of the lookup. To observe subsequent mutations,
     re-fetch the view. Durable mutation is done via
     `DependencyGraph.set_node_value(...)` and `set_node_metadata(...)`.
+    `key_point(catalog)` and `dimension_binds(catalog)` delegate to
+    `SeriesCatalog` and return `None` for unbound cells.
     """
 
     sheet: str | None
@@ -493,6 +511,14 @@ class NodeView:
     def has_formula(self) -> bool:
         """True when this cell has a formula AST or unparseable formula text."""
         return self.formula_ast is not None or self._unparseable_formula is not None
+
+    def key_point(self, catalog: SeriesCatalog) -> KeyPoint | None:
+        """Resolved key coordinates for this cell in `catalog`, or `None` if unbound."""
+        return catalog.key_point_for(as_canonical(self.key))
+
+    def dimension_binds(self, catalog: SeriesCatalog) -> Mapping[str, Mapping[str, Any]] | None:
+        """Series-level dimension binds for this cell in `catalog`, or `None` if unbound."""
+        return catalog.binds_for(as_canonical(self.key))
 
 
 def _view_metadata(metadata: Mapping[str, Any]) -> Mapping[str, Any]:
