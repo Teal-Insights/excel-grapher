@@ -587,6 +587,23 @@ def test_may_cycle_is_reported_when_guards_are_jointly_feasible(
     assert set(report.example_may_cycle_path) == {"Sheet1!C1", "Sheet1!D1"}
 
 
+def test_may_cycle_drops_when_leaf_domain_makes_guards_unsatisfiable(
+    workbook_factory: WorkbookFactory,
+) -> None:
+    path = workbook_factory(
+        lambda ws, _wb: write_single_row(ws, ("May cycle", 0, "=IF(B1=0,1,D1)", "=IF(B1=1,2,C1)"))
+    )
+    config = DynamicRefConfig.from_constraints({"Sheet1!B1": TypingLiteral[0, 1]}, {})
+    graph: DependencyGraph = create_dependency_graph(
+        path, ["Sheet1!C1"], load_values=False, dynamic_refs=config
+    )
+    report: CycleReport = graph.cycle_report()
+    assert report.has_must_cycles is False
+    assert report.has_may_cycles is False
+    assert report.may_cycles == []
+    assert report.example_may_cycle_path is None
+
+
 def test_offset_with_scalar_arguments_resolves_to_static_dependency(
     workbook_factory: WorkbookFactory,
 ) -> None:

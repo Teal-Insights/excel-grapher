@@ -1870,6 +1870,8 @@ def create_dependency_graph(
             graph.preparsed_formulas = parsed
         if warm_formula_shapes:
             graph.formula_shapes = intern_graph_formula_shapes(graph, parsed=parsed)
+    if dynamic_refs is not None:
+        graph.cell_type_env = dict(dynamic_refs.cell_type_env)
     return graph
 
 

@@ -204,7 +204,7 @@ report = graph.cycle_report()
 print_text(pformat(report, indent=4, width=100))
 ```
 
-In theory, this constraint should render the cycle infeasible: the conjunction of guards `NOT(Sheet1!B8=0) AND NOT(Sheet1!B8=1)` is unsatisfiable under the domain `{0, 1}`, so the may-cycle should drop out of the report. In practice, however, the cycle feasibility check (`_subgraph_has_feasible_cycle`) currently only consults guard mutual exclusion and does not yet consume leaf-cell domain constraints from `cell_type_env`. Wiring leaf domains into may-cycle feasibility is on the project roadmap; for now, this example demonstrates the intended API surface.
+`create_dependency_graph` stores that config on `graph.cell_type_env`, and `cycle_report` uses it: the conjunction of guards `NOT(Sheet1!B8=0) AND NOT(Sheet1!B8=1)` is unsatisfiable under the domain `{0, 1}`, so the may-cycle drops out of the report. Pass `cell_type_env=` to `cycle_report` to override the attached env without rebuilding the graph.
 
 ### A note on domain constraints
 
@@ -258,7 +258,7 @@ In practice, this gets very hard as the complexity of the formula chain increase
 
 However, I believe the combinatorial blowup problem can be solved in 95% of cases with some combination of clever heuristics, logical solving, and/or AI. For the other 5%, we can perhaps short-circuit the problem by setting constraints directly on the dynamic ref cell rather than on the input cells, and then accepting that an exception might be raised if the constraint is not satisfied at runtime.
 
-As in the "may cycle" example above, the expected user behavior would be to declare constraints for the cells that inform the `row` and `column` arguments of `OFFSET` or `INDIRECT` in a `dict[str, type]`, then pass a `DynamicRefConfig` built with `DynamicRefConfig.from_constraints` to `create_dependency_graph`. This tells grapher to use the constraints to resolve the dynamic references.
+As in the "may cycle" example above, the expected user behavior would be to declare constraints for the cells that inform the `row` and `column` arguments of `OFFSET` or `INDIRECT` in a `dict[str, type]`, then pass a `DynamicRefConfig` built with `DynamicRefConfig.from_constraints` to `create_dependency_graph`. This tells grapher to use the constraints to resolve the dynamic references. The same config is attached as `graph.cell_type_env` and is consulted by may-cycle feasibility.
 
 Currently, this works for easy cases like the one in Row 10, but runs into combinatorial explosion for more complex cases.
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 from weakref import WeakValueDictionary
@@ -13,6 +14,7 @@ from excel_grapher.core.address_keys import (
     format_range_key,
     parse_node_key,
 )
+from excel_grapher.core.cell_types import CellTypeEnv, normalize_cell_type_env_key
 
 from .node import NodeKey
 
@@ -452,6 +454,61 @@ def rewrite_guard_keys(expr: GuardExpr, old_key: NodeKey, new_key: NodeKey) -> G
     return walk(expr)
 
 
+def _constraint_key(key: NodeKey) -> NodeKey:
+    """Canonicalize a guard cell key so quoted graph keys match `CellTypeEnv` keys."""
+    try:
+        return normalize_cell_type_env_key(str(key))
+    except (ValueError, IndexError):
+        return key
+
+
+def _find_parent(parent: dict[NodeKey, NodeKey], key: NodeKey) -> NodeKey:
+    root = key
+    seen: list[NodeKey] = []
+    while parent.get(root, root) != root:
+        seen.append(root)
+        root = parent[root]
+    for node in seen:
+        parent[node] = root
+    return root
+
+
+def _value_allowed_by_env(env: CellTypeEnv | None, key: NodeKey, val: Any) -> bool:
+    """Return whether `val` is allowed for `key` under `env` (unknown -> True)."""
+    if env is None:
+        return True
+    cell_type = env.get(_constraint_key(key))
+    if cell_type is None:
+        return True
+    if cell_type.enum is not None and val not in cell_type.enum.values:
+        return False
+    if isinstance(val, bool) or not isinstance(val, (int, float)):
+        return True
+    if cell_type.interval is not None:
+        lo, hi = cell_type.interval.min, cell_type.interval.max
+        if lo is not None and val < lo:
+            return False
+        if hi is not None and val > hi:
+            return False
+    if cell_type.real_interval is not None:
+        lo_r, hi_r = cell_type.real_interval.min, cell_type.real_interval.max
+        if lo_r is not None and float(val) < lo_r:
+            return False
+        if hi_r is not None and float(val) > hi_r:
+            return False
+    return True
+
+
+def _enum_remaining(env: CellTypeEnv | None, key: NodeKey, forbidden: set[Any]) -> bool:
+    """Return False when every enum member for `key` is forbidden."""
+    if env is None:
+        return True
+    cell_type = env.get(_constraint_key(key))
+    if cell_type is None or cell_type.enum is None:
+        return True
+    return bool(cell_type.enum.values - forbidden)
+
+
 @dataclass(frozen=True)
 class GuardConstraints:
     """A minimal, conservative constraint set derived from a conjunction of guards.
@@ -463,16 +520,45 @@ class GuardConstraints:
     equalities: tuple[tuple[NodeKey, Any], ...] = ()
     inequalities: tuple[tuple[NodeKey, tuple[Any, ...]], ...] = ()
     opaque: tuple[str, ...] = ()
+    cell_parents: tuple[tuple[NodeKey, NodeKey], ...] = ()
+    cell_ne: tuple[tuple[NodeKey, NodeKey], ...] = ()
 
-    def add(self, g: GuardExpr) -> GuardConstraints | None:
+    def seed_cell_type_env(self, env: CellTypeEnv) -> GuardConstraints | None:
+        """Conjoin singleton enum domains as equalities.
+
+        Interval and multi-value enum domains are not seeded; they only reject
+        assignments during `add`.
+        """
+        out: GuardConstraints | None = self
+        for key, cell_type in env.items():
+            if cell_type.enum is None or len(cell_type.enum.values) != 1:
+                continue
+            value = next(iter(cell_type.enum.values))
+            assert out is not None
+            out = out.add(
+                Compare(left=CellRef(key=key), op="=", right=Literal(value=value)),
+                cell_type_env=env,
+            )
+            if out is None:
+                return None
+        return out
+
+    def add(
+        self, g: GuardExpr, *, cell_type_env: CellTypeEnv | None = None
+    ) -> GuardConstraints | None:
         """Return a new GuardConstraints with g conjoined, or None if inconsistent.
 
-        Only a small subset of GuardExpr forms participate in consistency checking:
-        - Compare(CellRef(key), "=", Literal(v))
-        - Compare(CellRef(key), "<>", Literal(v))
+        Forms that participate in consistency checking:
+        - Compare(CellRef(key), "=", Literal(v)) and the swapped operand order
+        - Compare(CellRef(key), "<>", Literal(v)) and the swapped operand order
+        - Compare(CellRef(a), "=", CellRef(b)) / "<>" (unification)
         - Not(Compare(...)) is rewritten when possible
         - And(...) is flattened into its operands
         Everything else is tracked as opaque (string form) without consistency checks.
+
+        When `cell_type_env` is provided, equalities outside a cell's enum or
+        interval are inconsistent, and complementary inequalities that exhaust
+        a finite enum are inconsistent.
         """
 
         def flatten(expr: GuardExpr) -> list[GuardExpr]:
@@ -486,6 +572,70 @@ class GuardConstraints:
         eq: dict[NodeKey, Any] = dict(self.equalities)
         ne: dict[NodeKey, set[Any]] = {k: set(vs) for k, vs in self.inequalities}
         opaque: set[str] = set(self.opaque)
+        parent: dict[NodeKey, NodeKey] = dict(self.cell_parents)
+        ne_pairs: set[tuple[NodeKey, NodeKey]] = set(self.cell_ne)
+
+        def find(key: NodeKey) -> NodeKey:
+            return _find_parent(parent, _constraint_key(key))
+
+        def add_eq_lit(raw_key: NodeKey, val: Any) -> bool:
+            key = find(raw_key)
+            existing = eq.get(key)
+            if existing is not None and existing != val:
+                return False
+            if key in ne and val in ne[key]:
+                return False
+            if not _value_allowed_by_env(cell_type_env, key, val):
+                return False
+            eq[key] = val
+            return True
+
+        def add_ne_lit(raw_key: NodeKey, val: Any) -> bool:
+            key = find(raw_key)
+            existing = eq.get(key)
+            if existing is not None and existing == val:
+                return False
+            ne.setdefault(key, set()).add(val)
+            return _enum_remaining(cell_type_env, key, ne[key])
+
+        def add_eq_cells(a: NodeKey, b: NodeKey) -> bool:
+            ra, rb = find(a), find(b)
+            pair = (min(ra, rb), max(ra, rb))
+            if ra == rb:
+                return True
+            if pair in ne_pairs:
+                return False
+            va, vb = eq.get(ra), eq.get(rb)
+            if va is not None and vb is not None and va != vb:
+                return False
+            parent[rb] = ra
+            if vb is not None:
+                if ra in eq and eq[ra] != vb:
+                    return False
+                eq[ra] = vb
+            if ra in ne and rb in ne:
+                ne[ra] = ne[ra] | ne[rb]
+            elif rb in ne:
+                ne.setdefault(ra, set()).update(ne[rb])
+            remapped: set[tuple[NodeKey, NodeKey]] = set()
+            for x, y in ne_pairs:
+                xx, yy = find(x), find(y)
+                if xx == yy:
+                    return False
+                remapped.add((min(xx, yy), max(xx, yy)))
+            ne_pairs.clear()
+            ne_pairs.update(remapped)
+            return ra not in ne or _enum_remaining(cell_type_env, ra, ne[ra])
+
+        def add_ne_cells(a: NodeKey, b: NodeKey) -> bool:
+            ra, rb = find(a), find(b)
+            if ra == rb:
+                return False
+            va, vb = eq.get(ra), eq.get(rb)
+            if va is not None and vb is not None and va == vb:
+                return False
+            ne_pairs.add((min(ra, rb), max(ra, rb)))
+            return True
 
         for expr in flatten(canonicalize_guard(g)):
             expr2: GuardExpr = expr
@@ -496,26 +646,35 @@ class GuardConstraints:
                 elif c.op == "<>":
                     expr2 = Compare(left=c.left, op="=", right=c.right)
 
-            if (
-                isinstance(expr2, Compare)
-                and isinstance(expr2.left, CellRef)
-                and isinstance(expr2.right, Literal)
-            ):
-                key = expr2.left.key
-                val = expr2.right.value
-                if expr2.op == "=":
-                    existing = eq.get(key)
-                    if existing is not None and existing != val:
+            if isinstance(expr2, Compare) and expr2.op in ("=", "<>"):
+                left, right = expr2.left, expr2.right
+                cell: CellRef | None = None
+                lit: Literal | None = None
+                other: CellRef | None = None
+                if isinstance(left, CellRef) and isinstance(right, Literal):
+                    cell, lit = left, right
+                elif isinstance(right, CellRef) and isinstance(left, Literal):
+                    cell, lit = right, left
+                elif isinstance(left, CellRef) and isinstance(right, CellRef):
+                    cell, other = left, right
+
+                if cell is not None and lit is not None:
+                    ok = (
+                        add_eq_lit(cell.key, lit.value)
+                        if expr2.op == "="
+                        else add_ne_lit(cell.key, lit.value)
+                    )
+                    if not ok:
                         return None
-                    if key in ne and val in ne[key]:
-                        return None
-                    eq[key] = val
                     continue
-                if expr2.op == "<>":
-                    existing = eq.get(key)
-                    if existing is not None and existing == val:
+                if cell is not None and other is not None:
+                    ok = (
+                        add_eq_cells(cell.key, other.key)
+                        if expr2.op == "="
+                        else add_ne_cells(cell.key, other.key)
+                    )
+                    if not ok:
                         return None
-                    ne.setdefault(key, set()).add(val)
                     continue
 
             opaque.add(str(expr2))
@@ -524,5 +683,111 @@ class GuardConstraints:
         ne_items = tuple(
             sorted(((k, tuple(sorted(vs))) for k, vs in ne.items()), key=lambda kv: kv[0])
         )
-        opaque_items = tuple(sorted(opaque))
-        return GuardConstraints(equalities=eq_items, inequalities=ne_items, opaque=opaque_items)
+        parent_items = tuple(sorted((k, p) for k, p in parent.items() if k != p))
+        ne_pair_items = tuple(sorted(ne_pairs))
+        return GuardConstraints(
+            equalities=eq_items,
+            inequalities=ne_items,
+            opaque=tuple(sorted(opaque)),
+            cell_parents=parent_items,
+            cell_ne=ne_pair_items,
+        )
+
+
+def rewrite_guard_aliases(expr: GuardExpr, aliases: Mapping[NodeKey, NodeKey]) -> GuardExpr:
+    """Replace `CellRef` keys that identity-alias to another cell.
+
+    Keys absent from `aliases`, or that already equal their image, are left
+    unchanged. Composite nodes are rebuilt and interned.
+    """
+    if not aliases:
+        return intern_guard(expr)
+
+    def walk(node: GuardExpr) -> GuardExpr:
+        if isinstance(node, CellRef):
+            dest = aliases.get(node.key)
+            if dest is None or dest == node.key:
+                return intern_guard(node)
+            return intern_guard(CellRef(dest))
+        if isinstance(node, Compare):
+            left = walk(node.left)
+            right = walk(node.right)
+            if left is node.left and right is node.right:
+                return intern_guard(node)
+            return intern_guard(Compare(left=left, op=node.op, right=right))
+        if isinstance(node, Not):
+            operand = walk(node.operand)
+            if operand is node.operand:
+                return intern_guard(node)
+            return intern_guard(Not(operand=operand))
+        if isinstance(node, And):
+            ops = tuple(walk(o) for o in node.operands)
+            if all(a is b for a, b in zip(ops, node.operands, strict=True)):
+                return intern_guard(node)
+            return intern_guard(And(ops))
+        if isinstance(node, Or):
+            ops = tuple(walk(o) for o in node.operands)
+            if all(a is b for a, b in zip(ops, node.operands, strict=True)):
+                return intern_guard(node)
+            return intern_guard(Or(ops))
+        return intern_guard(node)
+
+    return walk(expr)
+
+
+_UNKNOWN = object()
+
+
+def evaluate_guard(expr: GuardExpr | None, values: Mapping[NodeKey, Any]) -> bool | None:
+    """Evaluate a guard under a concrete assignment.
+
+    Returns:
+        `True` / `False` when every referenced cell is present and the
+        comparison is one of `=` / `<>`. `None` when a cell is missing or the
+        expression is not a concrete boolean (conservative three-valued logic).
+        `None` (the guard) is treated as unconditionally true.
+    """
+    if expr is None:
+        return True
+    if isinstance(expr, Literal):
+        val = expr.value
+        if isinstance(val, bool):
+            return val
+        return None
+    if isinstance(expr, Not):
+        inner = evaluate_guard(expr.operand, values)
+        return None if inner is None else (not inner)
+    if isinstance(expr, And):
+        unknown = False
+        for operand in expr.operands:
+            result = evaluate_guard(operand, values)
+            if result is False:
+                return False
+            if result is None:
+                unknown = True
+        return None if unknown else True
+    if isinstance(expr, Or):
+        unknown = False
+        for operand in expr.operands:
+            result = evaluate_guard(operand, values)
+            if result is True:
+                return True
+            if result is None:
+                unknown = True
+        return None if unknown else False
+    if isinstance(expr, Compare) and expr.op in ("=", "<>"):
+        left = _eval_guard_atom(expr.left, values)
+        right = _eval_guard_atom(expr.right, values)
+        if left is _UNKNOWN or right is _UNKNOWN:
+            return None
+        equal = left == right
+        return equal if expr.op == "=" else (not equal)
+    return None
+
+
+def _eval_guard_atom(expr: GuardExpr, values: Mapping[NodeKey, Any]) -> Any:
+    if isinstance(expr, Literal):
+        return expr.value
+    if isinstance(expr, CellRef) and expr.key in values:
+        return values[expr.key]
+    return _UNKNOWN
