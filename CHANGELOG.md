@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.5.2 (2026-09-08)
+
+### Code Style
+
+- Trim trailing blank line in key-axis cache test
+  ([#770](https://github.com/Teal-Insights/excel-grapher/pull/770),
+  [`3d55e09`](https://github.com/Teal-Insights/excel-grapher/commit/3d55e099b7a3e17a5e8c13abbb0eaf52427e340c))
+
+### Performance Improvements
+
+- **export**: Cache key-axis inference per BoundSeries
+  ([#770](https://github.com/Teal-Insights/excel-grapher/pull/770),
+  [`3d55e09`](https://github.com/Teal-Insights/excel-grapher/commit/3d55e099b7a3e17a5e8c13abbb0eaf52427e340c))
+
+
 ## v14.5.1 (2026-09-08)
 
 ### Bug Fixes
