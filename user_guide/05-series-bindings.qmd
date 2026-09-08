@@ -13,9 +13,10 @@ Validation uses the JSON Schema shipped with the package at
 `excel_grapher/series_bindings/series_binding.schema.json`.
 
 Package exports (`generate_modules(...)`) use **inverted-tree**: `compute_*` functions take
-explicit inputs and return tuples. Single-file `generate()` supports `set_*` / `read_*` /
-`Records`. The context-based package exporter has been removed. See
-[Exporting standalone Python](06-export.qmd) for the migration and `as_records` recipe.
+explicit inputs and return tuples. Use `as_records(compute, result)` for a Records view.
+Single-file `generate()` is address-keyed cell functions (`make_context`, `compute_all`) for
+evaluator↔export parity and teaching; it does not emit `set_*` / `read_*` / Records.
+See [Exporting standalone Python](06-export.qmd) for the migration recipe.
 
 **Example workbook:** [series_bindings.xlsx](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/series_bindings.xlsx)
 with [series_bindings.bindings.yaml](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/series_bindings.bindings.yaml)
@@ -51,7 +52,7 @@ display(
 |--------|------------|
 | **Format** | YAML by default (`.bindings.yaml`); JSON (`.bindings.json`) also accepted |
 | **Location** | One sidecar per workbook, colocated with the `.xlsx` |
-| **Granularity (MVP)** | One `series[]` entry per logical indicator → one `set_*` function (`layout: series`) |
+| **Granularity (MVP)** | One `series[]` entry per logical indicator → one `compute_*` argument (`layout: series`) |
 | **Naming** | Stable `id` (snake_case); `setter.name` must match `set_[a-z][a-z0-9_]*` |
 | **Non-executable prose** | `sdmx_notes`, `notes` — documentation only |
 
@@ -303,7 +304,7 @@ Suggested workflow:
 | Setter name | `setter.name` |
 
 4. **Validate** against the dependency graph (see [Python API](#python-api)).
-5. **Export.** Package: `CodeGenerator.generate_modules(series_bindings=..., bindings_workbook=...)` emits inverted-tree `compute_*` (explicit inputs, tuples). Single-file: `generate(...)` still emits `set_*` / `read_*` / Records (see [Code export](export.qmd)).
+5. **Export.** `CodeGenerator.generate_modules(series_bindings=..., bindings_workbook=...)` emits inverted-tree `compute_*` (explicit inputs, tuples). Single-file `generate()` is bindings-free (`make_context` / `compute_all`) and does not emit `set_*` / `read_*` / Records (see [Code export](export.qmd)).
 
 Offset projection years (1..5) vs calendar years (1999..2000) are distinguished only by what you bind in `column_header` — declare the intended semantics in `sdmx_notes`. Use `read: int` for offset-style headers and `read: datetime` (or `read: auto` when Excel stores native date cells) for calendar `TIME_PERIOD` keys.
 
@@ -314,23 +315,28 @@ Offset projection years (1..5) vs calendar years (1999..2000) are distinguished 
 1. Extract a dependency graph whose targets include the cells you need (targets seed extraction; output bindings may also cover intermediate formula cells present in the graph).
 2. Declare `data_range`, `layout`, `structure.measure`, `structure.dimensions`, and `key` (input matching uses `key` only).
 3. Add dimension binds (`column_header`, `row_label`, `cell`, `constant`, …). Use `bind.kind: constant` for fixed dimensions such as `FREQUENCY: A`.
-4. Add `output.compute.name` (e.g. `compute_borvelia_primary_balance`). Package `compute_*` functions take input leaves and return measure tuples; use `as_records` for a Records view. Single-file `generate()` still emits Records-shaped `compute_*`.
-5. `output.compute.helper` applies to single-file `generate()` only (dim-keyed internals instead of `xl_cell`). Inverted-tree packages already emit one leaf-closure function per output.
-6. Optionally add `input.setter` in the same series or a mergeable shard. Setters are emitted by `generate()`, not by `generate_modules()`.
-7. Pass `series_bindings` and `bindings_workbook` to `generate()` or `generate_modules()`. For packages, call `compute_*` with catalog-order arguments (or `as_records` afterward). For single-file, call `set_*` / `compute_*` with `ctx`.
+4. Add `output.compute.name` (e.g. `compute_borvelia_primary_balance`). Package `compute_*` functions take input leaves and return measure tuples; use `as_records` for a Records view.
+5. `output.compute.helper` applies to the library `emit_compute_function` path only (dim-keyed internals instead of `xl_cell`). Inverted-tree packages already emit one leaf-closure function per output.
+6. Optionally add `input.setter` in the same series or a mergeable shard. Setters are library emitters (`emit_setter_function`); `generate_modules()` takes catalog-order arguments instead.
+7. Pass `series_bindings` and `bindings_workbook` to `generate_modules()`. Call `compute_*` with catalog-order arguments (or `as_records` afterward).
 
-### Upgrade notes (1.10.0): helper-backed compute (`generate()` only)
+### Upgrade notes (1.10.0): helper-backed compute (library emitters)
 
-- **Default unchanged on single-file export:** without `output.compute.helper`, `compute_*` still fills measures via `xl_cell(ctx, address)`.
-- **Helper coverage:** when a helper covers the published leaves, codegen emits dim-keyed calls such as `helper(ctx, time_period=static_record['TIME_PERIOD'])`. Partial coverage keeps `xl_cell` for uncovered leaves.
+- **Library default:** without `output.compute.helper`, `emit_compute_function` still fills measures via `xl_cell(ctx, address)`.
+- **Helper coverage:** when a helper covers the published leaves, that emitter uses dim-keyed calls such as `helper(ctx, time_period=static_record['TIME_PERIOD'])`. Partial coverage keeps `xl_cell` for uncovered leaves.
 - Package exports do not use `output.compute.helper` or address overlays; every output is already a leaf-closure function.
 
 ## Records contract
 
-Generated **series** and **matrix** setters accept `SeriesInput`: records or a **tidy**
-pandas/polars `DataFrame`. **Series** setters also accept a 1D iterable of measure values when
-the binding has a single key. **Scalar** setters accept a bare measure value, one record dict, or
-a one-element record list. `ctx: EvalContext` is always the first argument.
+Package `compute_*` functions take catalog-order sequences (or scalars) and return measure
+tuples. Use `as_records(compute, result)` for a tidy `list[dict]` view.
+
+The library emitters `emit_setter_function` / `emit_compute_function` still accept **series**
+and **matrix** `SeriesInput`: records or a **tidy** pandas/polars `DataFrame`. Those helpers
+are not wired into `generate()` or `generate_modules()`. **Series** setters also accept a 1D
+iterable of measure values when the binding has a single key. **Scalar** setters accept a bare
+measure value, one record dict, or a one-element record list. `ctx: EvalContext` is always the
+first argument.
 
 ```python
 # Records (always supported)
@@ -361,8 +367,8 @@ set_macro_matrix(
 `layout: matrix` setters accept records or a tidy DataFrame with all `key` fields plus the measure
 concept; positional 1D measure values are rejected for matrix bindings.
 
-See also `examples/micro_workbooks/setter_dataframe_example.py` (single-key series) and
-`examples/micro_workbooks/matrix_dataframe_example.py` (matrix).
+See also `examples/micro_workbooks/setter_dataframe_example.py` (single-key series → catalog-order
+tuple) and `examples/micro_workbooks/matrix_dataframe_example.py` (matrix).
 
 ### Record dicts
 
@@ -957,8 +963,7 @@ input_series = derive_input_series(graph, bindings, workbook=workbook)
 internal_series = derive_internal_series(graph, bindings, workbook=workbook)
 
 with CodeGenerator(graph) as gen:
-    code = gen.generate(
-        targets,
+    modules = gen.generate_modules(
         series_bindings=bindings,
         bindings_workbook=workbook,
     )
@@ -967,25 +972,18 @@ with CodeGenerator(graph) as gen:
 After export:
 
 ```python
-ctx = make_context()
-set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 3, "OBS_VALUE": -0.5}])
-records = compute_borvelia_primary_balance(ctx=ctx)
+from generated import as_records, compute_borvelia_primary_balance
+
+result = compute_borvelia_primary_balance(
+    borvelia_primary_balance=(-0.5, -0.5, -0.5, -0.5, -0.5),
+)
+records = as_records(compute_borvelia_primary_balance, result)
 ```
 
-When every export target is covered by an output series binding, address-keyed
-`compute_all` is omitted from the public API (prefer the semantic `compute_*`
-functions). Pass `include_compute_all=True` to `generate()` to keep it anyway.
+Address-keyed `compute_all` is the bindings-free `generate()` entry point, not the series API.
+Package discovery is `api.__all__` (compute names). `list_groups()` is not emitted.
 
-The generated module also exposes two zero-argument discovery helpers for enumerating the series
-API without parsing source:
-
-```python
-list_setters()  # ["set_borvelia_primary_balance"]
-list_computes()  # ["compute_borvelia_primary_balance"]
-```
-
-`list_groups()` is emitted by `generate()` when the sidecar declares view-level `groups`.
-Package exports (`generate_modules`) omit setters, readers, `make_context`, and `list_groups`.
+`generate_modules` omits setters, readers, `make_context`, and `list_groups`.
 
 ## Command-line validation
 

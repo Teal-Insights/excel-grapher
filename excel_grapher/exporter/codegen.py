@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast as py_ast
-import re
 from collections.abc import Iterable, Mapping, Sequence, Set
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -68,13 +67,6 @@ __all__ = ["CodeGenerator", "GraphLike", "GraphNode"]
 if TYPE_CHECKING:
     from excel_grapher.exporter.projection import ProjectionManifest
     from excel_grapher.grapher import DependencyGraph
-    from excel_grapher.series_bindings.docstring_renderers import SeriesDocstringRendererSpec
-    from excel_grapher.series_bindings.docstrings import SeriesBindingDocstringCallbackSpec
-    from excel_grapher.series_bindings.output_helper_index import (
-        OutputHelperIndex,
-        OutputHelperSpec,
-    )
-    from excel_grapher.series_bindings.reader_index import ReaderIndex
     from excel_grapher.series_bindings.types import InputSeries, WorkbookSeriesBindings
 
 
@@ -223,8 +215,6 @@ class CodeGenerator:
         self._formula_cell_address: str | None = None
         self._return_unpack_state: _ReturnUnpackState | None = None
         self._return_unpack_stack: list[_ReturnUnpackFrame] = []
-        self._reader_index: ReaderIndex | None = None
-        self._used_readers: set[str] = set()
         self._shape_helper_names: dict[str, str] = {}
 
     def __enter__(self) -> CodeGenerator:
@@ -246,24 +236,11 @@ class CodeGenerator:
         self._formula_cell_address = None
         self._return_unpack_state = None
         self._return_unpack_stack = []
-        self._reader_index = None
-        self._used_readers.clear()
         self._shape_helper_names.clear()
 
-    def _include_dep_tracking(
-        self,
-        series_bindings: WorkbookSeriesBindings | None,
-    ) -> bool:
+    def _include_dep_tracking(self) -> bool:
         """Return whether exported runtime should embed dependency invalidation."""
-        if self._iterate_enabled:
-            return True
-        if series_bindings is not None:
-            from excel_grapher.series_bindings.normalize import has_input_direction
-
-            for series in series_bindings.get("series", []):
-                if isinstance(series, dict) and has_input_direction(series):
-                    return True
-        return False
+        return bool(self._iterate_enabled)
 
     def _public_graph(self) -> DependencyGraph | GraphLike:
         original = getattr(self.graph, "original_graph", None)
@@ -298,70 +275,9 @@ class CodeGenerator:
                 aliases[public_addr] = projected_addr
         return aliases
 
-    def _export_addresses_with_aliases(
-        self,
-        export_addresses: Iterable[str],
-        public_addresses: Iterable[str],
-    ) -> list[str]:
-        addresses = [normalize_address(addr) for addr in export_addresses]
-        alias_map = self._projection_alias_map(public_addresses, addresses)
-        if not alias_map:
-            return addresses
-        merged = list(addresses)
-        seen = set(addresses)
-        for alias in sorted(alias_map):
-            if alias not in seen:
-                merged.append(alias)
-                seen.add(alias)
-        return merged
-
-    def _series_binding_public_addresses(
-        self,
-        bindings: WorkbookSeriesBindings | None,
-        workbook: Path | str | None,
-    ) -> frozenset[str]:
-        if bindings is None:
-            return frozenset()
-        if workbook is None:
-            raise ValueError("bindings_workbook is required when series_bindings is set")
-        from excel_grapher.series_bindings.workflow import series_binding_public_addresses
-
-        return series_binding_public_addresses(
-            cast("DependencyGraph", self._public_graph()),
-            bindings,
-            workbook=workbook,
-        )
-
-    def _should_emit_compute_all(
-        self,
-        targets: Sequence[str],
-        *,
-        series_bindings: WorkbookSeriesBindings | None,
-        bindings_workbook: Path | str | None,
-        export_addresses: Iterable[str] | None,
-        include_compute_all: bool | None,
-    ) -> bool:
+    def _should_emit_compute_all(self, include_compute_all: bool | None) -> bool:
         """Return whether public `compute_all` / `TARGETS` should be emitted."""
-        from excel_grapher.series_bindings.workflow import (
-            output_binding_covered_addresses,
-            should_emit_compute_all,
-        )
-
-        covered: frozenset[str] = frozenset()
-        if series_bindings is not None:
-            if bindings_workbook is None:
-                raise ValueError("bindings_workbook is required when series_bindings is set")
-            covered = output_binding_covered_addresses(
-                cast("DependencyGraph", self._public_graph()),
-                series_bindings,
-                workbook=bindings_workbook,
-                export_addresses=export_addresses,
-            )
-        return should_emit_compute_all(
-            targets,
-            covered_by_output=covered,
-            include_compute_all=include_compute_all,
-        )
+        return include_compute_all is not False
 
     def _emit_compute_all_block(self, targets: Sequence[str]) -> list[str]:
         """Emit `TARGETS` map and public `compute_all` entry point."""
@@ -593,15 +509,7 @@ class CodeGenerator:
         start_cell = f"{fastpyxl.utils.cell.get_column_letter(c1)}{r1}"
         end_cell = f"{fastpyxl.utils.cell.get_column_letter(c2)}{r2}"
         range_key = format_range_key(sheet, start_cell, end_cell)
-        if self._reader_index is not None:
-            from excel_grapher.series_bindings.reader_index import resolve_reader_ref
-
-            resolved = resolve_reader_ref(range_key, index=self._reader_index)
-            if resolved["reader"] is not None:
-                self._used_readers.add(resolved["reader"])
-            expr = resolved["call_form"]
-        else:
-            expr = f"xl_range(ctx, {repr(range_key)})"
+        expr = f"xl_range(ctx, {repr(range_key)})"
         return self._hoist_return_expr(expr)
 
     def _emit_cell_eval(self, address: str) -> str:
@@ -613,13 +521,6 @@ class CodeGenerator:
             if node is not None and _node_has_formula(node):
                 func_name = address_to_python_name(normalized)
                 expr = f"xl_eval(ctx, {repr(normalized)}, {func_name})"
-            elif self._reader_index is not None:
-                from excel_grapher.series_bindings.reader_index import resolve_reader_ref
-
-                resolved = resolve_reader_ref(normalized, index=self._reader_index)
-                if resolved["reader"] is not None:
-                    self._used_readers.add(resolved["reader"])
-                expr = resolved["call_form"]
             else:
                 expr = f"xl_cell(ctx, {repr(normalized)})"
         return self._hoist_return_expr(expr)
@@ -658,101 +559,6 @@ class CodeGenerator:
                 return "0"
         return "0"
 
-    def _emit_series_binding_setters(
-        self,
-        bindings: WorkbookSeriesBindings,
-        workbook: Path | str,
-        *,
-        export_addresses: Iterable[str],
-        public_addresses: Iterable[str],
-        include_helpers: bool = True,
-        include_readers: bool = True,
-        include_leaf_indexes: bool = True,
-        include_leaves_tables: bool = True,
-        series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
-        docstring_renderer: SeriesDocstringRendererSpec = "google",
-        helper_index: OutputHelperIndex | None = None,
-        address_helpers: Mapping[str, OutputHelperSpec] | None = None,
-    ) -> list[str]:
-        from excel_grapher.series_bindings.bindings_codegen import emit_series_bindings_block
-
-        return emit_series_bindings_block(
-            cast("DependencyGraph", self._public_graph()),
-            workbook,
-            bindings,
-            export_addresses=self._export_addresses_with_aliases(
-                export_addresses,
-                public_addresses,
-            ),
-            include_helpers=include_helpers,
-            include_readers=include_readers,
-            include_leaf_indexes=include_leaf_indexes,
-            include_leaves_tables=include_leaves_tables,
-            series_docstring_callback=series_docstring_callback,
-            docstring_renderer=docstring_renderer,
-            helper_index=helper_index,
-            address_helpers=address_helpers,
-        )
-
-    @staticmethod
-    def _series_bindings_have_input(bindings: WorkbookSeriesBindings) -> bool:
-        """Return True when any series declares an input (setter) direction."""
-        from excel_grapher.series_bindings.normalize import has_input_direction
-
-        return any(
-            isinstance(series, dict) and has_input_direction(series)
-            for series in bindings.get("series", [])
-        )
-
-    @staticmethod
-    def _series_bindings_have_readers(bindings: WorkbookSeriesBindings) -> bool:
-        """Return True when any series emits a public `read_*` (input or constant)."""
-        from excel_grapher.series_bindings.normalize import has_reader_direction
-
-        return any(
-            isinstance(series, dict) and has_reader_direction(series)
-            for series in bindings.get("series", [])
-        )
-
-    @staticmethod
-    def _series_bindings_have_output(bindings: WorkbookSeriesBindings) -> bool:
-        """Return True when any series declares an output (compute) direction."""
-        from excel_grapher.series_bindings.normalize import has_output_direction
-
-        return any(
-            isinstance(series, dict) and has_output_direction(series)
-            for series in bindings.get("series", [])
-        )
-
-    @staticmethod
-    def _series_bindings_may_emit_range_readers(bindings: WorkbookSeriesBindings) -> bool:
-        """Return True when reader series may emit `read_*_range` helpers needing `xl_range`."""
-        from excel_grapher.series_bindings.normalize import has_reader_direction
-
-        for series in bindings.get("series", []):
-            if not isinstance(series, dict) or not has_reader_direction(series):
-                continue
-            if series.get("layout") == "scalar":
-                continue
-            from excel_grapher.series_bindings.ranges import series_data_ranges
-
-            for data_range in series_data_ranges(series):
-                if ":" in data_range:
-                    return True
-        return False
-
-    @staticmethod
-    def _series_binding_emitted_range_reader_names(lines: Sequence[str]) -> list[str]:
-        """Extract `read_*_range` function names from emitted bindings code."""
-        names: list[str] = []
-        for line in lines:
-            match = re.match(r"^def (read_[a-z0-9_]+_range)\(", line)
-            if match:
-                name = match.group(1)
-                if name not in names:
-                    names.append(name)
-        return names
-
     def derive_input_series(
         self,
         bindings: WorkbookSeriesBindings,
@@ -765,129 +571,6 @@ class CodeGenerator:
         return derive_input_series(
             cast("DependencyGraph", self._public_graph()), bindings, workbook=workbook
         )
-
-    @staticmethod
-    def _series_binding_public_names(
-        bindings: WorkbookSeriesBindings,
-    ) -> tuple[list[str], list[str], list[str]]:
-        """Return declared public setter, reader, and compute function names.
-
-        Without groups the names sort alphabetically (flat export); with
-        view-level groups they follow the grouped export order.
-        """
-        from excel_grapher.series_bindings.groups import (
-            bindings_have_groups,
-            grouped_public_names,
-        )
-        from excel_grapher.series_bindings.workflow import (
-            compute_names,
-            reader_names,
-            setter_names,
-        )
-
-        if bindings_have_groups(bindings):
-            return grouped_public_names(bindings)
-        return setter_names(bindings), reader_names(bindings), compute_names(bindings)
-
-    @staticmethod
-    def _series_binding_groups_manifest(
-        bindings: WorkbookSeriesBindings | None,
-    ) -> dict[str, Any] | None:
-        """Return the group manifest when any binding declares groups."""
-        if bindings is None:
-            return None
-        from excel_grapher.series_bindings.groups import bindings_have_groups, group_manifest
-
-        if not bindings_have_groups(bindings):
-            return None
-        return dict(group_manifest(bindings))
-
-    @staticmethod
-    def _series_binding_reader_discovery(
-        graph: DependencyGraph,
-        bindings: WorkbookSeriesBindings | None,
-        *,
-        workbook: Path | str | None,
-        export_addresses: Iterable[str] | None = None,
-    ) -> tuple[dict[str, dict[str, object]] | None, dict[str, dict[str, object]] | None]:
-        """Return discovery payloads for `list_reader_leaves` / `list_reader_ranges`."""
-        if bindings is None or workbook is None:
-            return None, None
-        from excel_grapher.series_bindings.normalize import has_reader_direction
-        from excel_grapher.series_bindings.reader_index import (
-            build_reader_index,
-            reader_index_as_discovery_dicts,
-        )
-
-        if not any(
-            isinstance(series, dict) and has_reader_direction(series)
-            for series in bindings.get("series", [])
-        ):
-            return None, None
-        index = build_reader_index(
-            graph,
-            bindings,
-            workbook=workbook,
-            export_addresses=export_addresses,
-        )
-        return reader_index_as_discovery_dicts(index)
-
-    @staticmethod
-    def _emit_series_binding_discovery_lines(
-        setter_names: Sequence[str],
-        compute_names: Sequence[str],
-        groups_manifest: Mapping[str, Any] | None = None,
-        reader_names: Sequence[str] | None = None,
-        reader_leaves: Mapping[str, Mapping[str, object]] | None = None,
-        reader_ranges: Mapping[str, Mapping[str, object]] | None = None,
-    ) -> list[str]:
-        """Emit generated-code helpers that list public series-binding functions."""
-        lines = [
-            "def list_setters() -> list[str]:",
-            '    """Return generated series-binding setter function names."""',
-            f"    return {list(setter_names)!r}",
-            "",
-            "",
-            "def list_readers() -> list[str]:",
-            '    """Return generated series-binding reader function names."""',
-            f"    return {list(reader_names or ())!r}",
-            "",
-            "",
-            "def list_computes() -> list[str]:",
-            '    """Return generated series-binding compute function names."""',
-            f"    return {list(compute_names)!r}",
-        ]
-        if reader_leaves is not None:
-            lines.extend(
-                [
-                    "",
-                    "",
-                    "def list_reader_leaves() -> dict[str, dict[str, object]]:",
-                    '    """Return address → semantic reader call metadata."""',
-                    f"    return {dict(reader_leaves)!r}",
-                ]
-            )
-        if reader_ranges is not None:
-            lines.extend(
-                [
-                    "",
-                    "",
-                    "def list_reader_ranges() -> dict[str, dict[str, object]]:",
-                    '    """Return binding-aligned data_range → range-reader metadata."""',
-                    f"    return {dict(reader_ranges)!r}",
-                ]
-            )
-        if groups_manifest is not None:
-            lines.extend(
-                [
-                    "",
-                    "",
-                    "def list_groups() -> dict[str, object]:",
-                    '    """Return the view-level group manifest for the generated API."""',
-                    f"    return {dict(groups_manifest)!r}",
-                ]
-            )
-        return lines
 
     def _range_addresses_2d(self, start: str, end: str) -> list[list[str]]:
         """Generate all cell addresses in a range as a 2D list (rows x cols)."""
@@ -2159,8 +1842,6 @@ class CodeGenerator:
     def _plan_shape_helpers(self, formula_addresses: Sequence[str]) -> None:
         """Record profitable shape helper names for this generate() pass."""
         self._shape_helper_names.clear()
-        if self._reader_index is not None:
-            return
         table = getattr(self.graph, "formula_shapes", None)
         if table is None:
             return
@@ -2548,13 +2229,14 @@ class CodeGenerator:
         constant_blanks: bool = False,
         input_ranges: Sequence[str] | None = None,
         blank_ranges: Sequence[str] | None = None,
-        series_bindings: WorkbookSeriesBindings | None = None,
-        bindings_workbook: Path | str | None = None,
-        series_docstring_callback: SeriesBindingDocstringCallbackSpec | None = None,
-        docstring_renderer: SeriesDocstringRendererSpec = "google",
         include_compute_all: bool | None = None,
     ) -> str:
         """Generate standalone Python code for target cells.
+
+        Address-keyed cell-function export (`make_context`, `cell_*`,
+        `compute_all`). Series I/O uses `generate_modules()` (inverted-tree).
+        This method stays for evaluator↔export parity and teaching until a
+        bindings-free inverted-tree path replaces it (#764 Phase A).
 
         When `graph.formula_shapes` is set, this pass may emit shared
         per-shape helpers. The overlay is read at generate time (not an init
@@ -2569,17 +2251,8 @@ class CodeGenerator:
                 When a cell would otherwise be a constant, `input_ranges` take precedence.
             blank_ranges: Sheet-qualified rectangles whose cells are omitted from the graph
                 but resolve as empty (`None`) at runtime; must match builder/evaluator.
-            series_bindings: Optional workbook binding manifest; when set with
-                `bindings_workbook`, emits `set_*` functions that accept Records.
-            bindings_workbook: Path to the `.xlsx` file used to resolve binds.
-            series_docstring_callback: Optional registered callback name for structured
-                docstrings on generated `set_*` and series output `compute_*` functions.
-            docstring_renderer: Built-in renderer name or custom renderer object/callable
-                for structured series-binding docstrings (`plain`, `rst`,
-                `google`, `numpy`).
-            include_compute_all: Control emission of public `compute_all`. `True` always
-                emits it, `False` never emits it, and `None` (default) omits it when
-                every export target is covered by an output series binding.
+            include_compute_all: Control emission of public `compute_all`. `True` or `None`
+                (default) emits it; `False` omits it.
 
         Returns:
             Standalone Python source code as a string.
@@ -2594,19 +2267,12 @@ class CodeGenerator:
             constant_blanks=constant_blanks,
             input_ranges=input_ranges,
             blank_ranges=blank_ranges,
-            series_bindings=series_bindings,
-            bindings_workbook=bindings_workbook,
         )
         runtime_code = parts["runtime_code"]
         cell_code_lines = parts["cell_code_lines"]
-        _formula_cells = parts["formula_cells"]
         _all_cells = parts["all_cells"]
         normalized_targets = parts["targets"]
-        series_public_addresses = self._series_binding_public_addresses(
-            series_bindings,
-            bindings_workbook,
-        )
-        public_addresses = frozenset(normalized_targets) | series_public_addresses
+        public_addresses = frozenset(normalized_targets)
 
         # Combine: runtime + inputs + formulas + entry point
         if parts["has_constants"]:
@@ -2646,63 +2312,7 @@ class CodeGenerator:
             f"iterate_count={int(self._iterate_count)}, "
             f"iterate_delta={float(self._iterate_delta)!r})"
         )
-        lines.append("")
-        lines.append("")
-        series_setter_names: list[str] = []
-        series_reader_names: list[str] = []
-        series_compute_names: list[str] = []
-        reader_leaves: dict[str, dict[str, object]] | None = None
-        reader_ranges: dict[str, dict[str, object]] | None = None
-        if series_bindings is not None:
-            if bindings_workbook is None:
-                raise ValueError("bindings_workbook is required when series_bindings is set")
-            (
-                series_setter_names,
-                series_reader_names,
-                series_compute_names,
-            ) = self._series_binding_public_names(series_bindings)
-            lines.extend(
-                self._emit_series_binding_setters(
-                    series_bindings,
-                    bindings_workbook,
-                    export_addresses=_all_cells,
-                    public_addresses=series_public_addresses,
-                    series_docstring_callback=series_docstring_callback,
-                    docstring_renderer=docstring_renderer,
-                )
-            )
-            lines.append("")
-            if self._reader_index is not None:
-                from excel_grapher.series_bindings.reader_index import (
-                    reader_index_as_discovery_dicts,
-                )
-
-                reader_leaves, reader_ranges = reader_index_as_discovery_dicts(self._reader_index)
-            else:
-                reader_leaves, reader_ranges = self._series_binding_reader_discovery(
-                    cast("DependencyGraph", self._public_graph()),
-                    series_bindings,
-                    workbook=bindings_workbook,
-                    export_addresses=_all_cells,
-                )
-        lines.extend(
-            self._emit_series_binding_discovery_lines(
-                series_setter_names,
-                series_compute_names,
-                self._series_binding_groups_manifest(series_bindings),
-                reader_names=series_reader_names,
-                reader_leaves=reader_leaves,
-                reader_ranges=reader_ranges,
-            )
-        )
-        emit_compute_all = self._should_emit_compute_all(
-            normalized_targets,
-            series_bindings=series_bindings,
-            bindings_workbook=bindings_workbook,
-            export_addresses=_all_cells,
-            include_compute_all=include_compute_all,
-        )
-        if emit_compute_all:
+        if self._should_emit_compute_all(include_compute_all):
             lines.append("")
             lines.append("")
             lines.extend(self._emit_compute_all_block(normalized_targets))
@@ -2758,8 +2368,6 @@ class CodeGenerator:
         constant_blanks: bool = False,
         input_ranges: Sequence[str] | None = None,
         blank_ranges: Sequence[str] | None = None,
-        series_bindings: WorkbookSeriesBindings | None = None,
-        bindings_workbook: Path | str | None = None,
     ) -> GenerationParts:
         """Generate shared intermediate artifacts for single-file exports."""
         self._reset_transient_state()
@@ -2831,34 +2439,6 @@ class CodeGenerator:
                     _track_cell(address)
                     all_cells.append(address)
 
-        # Build the reader index after the export surface is final (including any
-        # OFFSET widening) so discovery and body rewrite share one map. Clear
-        # `_used_readers` first: the probe `_emit_ast` pass above may have
-        # touched the (previously unset) index without contributing to emit.
-        self._used_readers.clear()
-        if (
-            series_bindings is not None
-            and bindings_workbook is not None
-            and self._series_bindings_have_readers(series_bindings)
-        ):
-            from excel_grapher.series_bindings.reader_index import build_reader_index
-
-            series_public = self._series_binding_public_addresses(
-                series_bindings,
-                bindings_workbook,
-            )
-            self._reader_index = build_reader_index(
-                cast("DependencyGraph", self._public_graph()),
-                series_bindings,
-                workbook=bindings_workbook,
-                export_addresses=self._export_addresses_with_aliases(
-                    all_cells,
-                    series_public,
-                ),
-            )
-        else:
-            self._reader_index = None
-
         self._plan_shape_helpers(formula_emit_order)
         helper_lines = self._emit_shape_helpers()
         if helper_lines:
@@ -2896,18 +2476,9 @@ class CodeGenerator:
             for _, handler in self._targets_to_entries(normalized_targets)
         ):
             runtime_symbols.add("xl_range_rows")
-        # Binding-aligned `read_*_range` helpers call `xl_range` even when no formula
-        # AST or target-entry coalescing would otherwise pull it into the runtime.
-        if series_bindings is not None and self._series_bindings_may_emit_range_readers(
-            series_bindings
-        ):
-            runtime_symbols.add("xl_range")
-        if series_bindings is not None and self._series_bindings_have_readers(series_bindings):
-            # Generated `read_*` annotations return `CellValue`.
-            runtime_symbols.add("CellValue")
         if self._iterate_enabled:
             runtime_symbols.add("xl_iterative_compute")
-        include_dep_tracking = self._include_dep_tracking(series_bindings)
+        include_dep_tracking = self._include_dep_tracking()
         runtime_code = emit_runtime(
             runtime_symbols,
             include_offset_table=False,

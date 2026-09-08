@@ -8,7 +8,6 @@ from typing import Any
 
 import xlsxwriter
 
-from excel_grapher.exporter.codegen import CodeGenerator
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings import (
     build_reader_index,
@@ -572,18 +571,3 @@ def test_resolve_ambiguous_overlapping_range_falls_back(tmp_path: Path) -> None:
     assert result["mode"] == "xl_range"
     assert result["reason"] == "ambiguous_owner"
     assert result["call_form"] == "xl_range(ctx, 'Inputs!A2:B2')"
-
-
-def test_single_file_generate_emits_reader_discovery(tmp_path: Path) -> None:
-    wb_path = tmp_path / "lic_inputs.xlsx"
-    _write_borvelia_workbook(wb_path)
-    graph = create_dependency_graph(wb_path, expand_data_range("Inputs!F5:J5"), load_values=True)
-    bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
-    source = CodeGenerator(graph).generate(
-        expand_data_range("Inputs!F5:J5"),
-        series_bindings=bindings,
-        bindings_workbook=wb_path,
-    )
-    assert "def list_reader_leaves(" in source
-    assert "def list_reader_ranges(" in source
-    assert "read_borvelia_primary_balance(ctx, time_period=3)" in source

@@ -67,10 +67,14 @@ Prefer explicit, typed extension points over ad hoc keyword flags when users nee
 For local Python usage, accept direct objects or callables when they are easy to type and configure:
 
 ```python
-code = CodeGenerator(graph).generate(
-    targets,
-    series_bindings=bindings,
-    bindings_workbook=workbook_path,
+from excel_grapher.series_bindings import emit_setter_function
+
+lines = emit_setter_function(
+    series,
+    resolved,
+    graph=graph,
+    workbook=workbook_path,
+    bindings=bindings,
     series_docstring_callback=my_callback,
 )
 
@@ -94,10 +98,12 @@ Duplicate registration should fail by default. Support `replace=True` as an expl
 ```python
 register_series_docstring_callback("project_docs", my_callback)
 
-code = CodeGenerator(graph).generate(
-    targets,
-    series_bindings=bindings,
-    bindings_workbook=workbook_path,
+lines = emit_setter_function(
+    series,
+    resolved,
+    graph=graph,
+    workbook=workbook_path,
+    bindings=bindings,
     series_docstring_callback="project_docs",
 )
 

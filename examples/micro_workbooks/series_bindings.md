@@ -16,6 +16,7 @@ import yaml
 from excel_grapher.grapher import create_dependency_graph, DependencyGraph
 from excel_grapher.series_bindings import (
     derive_input_series,
+    derive_internal_series,
     derive_output_series,
     expand_data_range,
     resolve_series_binding,
@@ -44,9 +45,10 @@ given series.
 | Primary balance (% of GDP)       | -1  | -0.5 | 0   | 0.5 | 1   |
 
 We will target Borvelia’s primary balance series and extract the
-dependency graph. The cells are constants (no formulas), so each leaf is
-both an input and, trivially, its own output. Normally we would load the
-workbook bindings from a sidecar file like `bindings.yaml` with the
+dependency graph. The cells are constants (no formulas), so they are
+input leaves. Package export needs a formula output series — the
+walkthrough adds identity formulas on `F6:J6`. Normally we would load
+the workbook bindings from a sidecar file like `bindings.yaml` with the
 `load_series_bindings` function, but for educational purposes below we
 inline the bindings we care about:
 
@@ -265,191 +267,6 @@ print(
   'key_fields': ['TIME_PERIOD']}
 ```
 
-### Generated setter (SeriesInput API)
-
-Passing the same binding into `CodeGenerator` appends a
-`set_borvelia_primary_balance` function. Callers pass **`SeriesInput`**:
-`list[dict]` records, a 1D iterable of measure values (single-key
-series), or a tidy pandas/polars `DataFrame` with binding `key` columns
-plus `OBS_VALUE`. The setter writes into the graph’s input map via
-`EvalContext.set_inputs`.
-
-``` python
-from excel_grapher.exporter import CodeGenerator
-
-targets = expand_data_range(series["data_range"], workbook=workbook_path)
-with CodeGenerator(graph) as gen:
-    code = gen.generate(
-        targets,
-        series_bindings=bindings,
-        bindings_workbook=workbook_path,
-    )
-
-signature_start = code.index("def set_borvelia_primary_balance(")
-signature_end = code.index(") -> None:", signature_start) + len(") -> None:")
-print(f"```text\n{code[signature_start:signature_end]}\n```\n")
-```
-
-``` text
-def set_borvelia_primary_balance(
-    ctx: EvalContext,
-    records: SeriesInput,
-    *,
-    strict: bool = True,
-) -> None:
-```
-
-### Calling the setter
-
-In an exported model, the generated setter is imported and called like
-any other package function. `ctx` is always required. For this binding,
-input needs only `TIME_PERIOD` and `OBS_VALUE` — not `REF_AREA` or
-`INDICATOR` (those come from the binding manifest).
-
-**Records:**
-
-``` python
-from exported_model import make_context, set_borvelia_primary_balance
-
-ctx = make_context()
-set_borvelia_primary_balance(
-    ctx,
-    [
-        {"TIME_PERIOD": 4, "OBS_VALUE": 7.5},
-        {"TIME_PERIOD": 5, "OBS_VALUE": 8.0},
-    ],
-)
-```
-
-**Positional measure values** (periods 1..5 in binding order):
-
-``` python
-set_borvelia_primary_balance(ctx, [-2.0, -1.0, 0.0, 7.5, 8.0])
-```
-
-**Tidy DataFrame** (pandas or polars, if installed):
-
-See [setter_dataframe_example.py](setter_dataframe_example.py) for a
-runnable script. In short, pass a tidy table with binding `key` columns
-plus `OBS_VALUE` only:
-
-``` python
-import pandas as pd
-
-df = pd.DataFrame({"TIME_PERIOD": [4, 5], "OBS_VALUE": [7.5, 8.0]})
-set_borvelia_primary_balance(ctx, df)
-```
-
-**Wide grid → tidy** (caller responsibility; setters do not accept wide
-grids):
-
-``` python
-# One indicator row, periods as columns:
-tidy = df_wide.T.reset_index().rename(columns={"index": "TIME_PERIOD", 0: "OBS_VALUE"})
-set_borvelia_primary_balance(ctx, tidy)
-```
-
-The notebook below verifies records and positional input against
-dynamically executed codegen:
-
-``` text
-Sheet1!I5 after records: 7.5
-Sheet1!J5 after records: 8.0
-```
-
-``` text
-Sheet1!I5 after positional: 7.5
-Sheet1!J5 after positional: 8.0
-```
-
-Periods **4** and **5** correspond to columns I and J. Records and
-positional input both update those leaves without requiring sheet
-addresses in the input.
-
-### Structured docstring callback
-
-If you want richer generated docstrings for series APIs, register a
-named callback and pass `series_docstring_callback` to `generate`. The
-callback receives deterministic binding metadata through `ctx.contract`
-and returns prose fields via `SeriesFunctionDoc`.
-
-The callback runs once for each generated series API function. In this
-workbook that means `set_borvelia_primary_balance` (setter) and
-`compute_borvelia_primary_balance` (output compute). Use
-`ctx.function_kind` and `ctx.function_name` to branch wording if you
-want different prose for setters vs computes.
-
-``` python
-from excel_grapher.exporter import (
-    CodeGenerator,
-    FieldDoc,
-    SeriesFunctionDoc,
-    register_series_docstring_callback,
-)
-
-callback_name = "micro_workbook_series_docs"
-
-register_series_docstring_callback(
-    callback_name,
-    lambda ctx: SeriesFunctionDoc(
-        summary=f"Set {ctx.contract.series_id}.",
-        purpose="Updates workbook inputs from Records.",
-        record_matching="Records match cells by key fields.",
-        field_descriptions={
-            field: FieldDoc(description=f"Value for {field}.")
-            for field in ctx.contract.required_fields
-        },
-    ),
-    replace=True,
-)
-
-with CodeGenerator(graph) as gen:
-    code_with_docs = gen.generate(
-        targets,
-        series_bindings=bindings,
-        bindings_workbook=workbook_path,
-        series_docstring_callback=callback_name,
-    )
-
-namespace_with_docs: dict = {}
-exec(code_with_docs, namespace_with_docs)
-doc = namespace_with_docs["set_borvelia_primary_balance"].__doc__
-print(f"```text\n{doc}\n```\n")
-```
-
-``` text
-Set borvelia_primary_balance.
-
-Updates workbook inputs from Records.
-Records match cells by key fields.
-
-Args:
-    records (SeriesInput): A list of records, a single record dict, a tidy pandas/polars DataFrame, or a 1-D iterable of measure values in key order.
-        Required record fields:
-            - TIME_PERIOD: Value for TIME_PERIOD.
-            - OBS_VALUE: Value for OBS_VALUE.
-        Optional record fields:
-            - REF_AREA: REF_AREA If supplied, expected value: "Borvelia".
-            - INDICATOR: INDICATOR If supplied, expected value: "Primary balance (% of GDP)".
-            - UNIT_MEASURE: UNIT_MEASURE If supplied, expected value: "PC_GDP".
-
-Returns:
-    None: Applies the input updates to ctx.
-
-Source binding:
-    Workbook range: Sheet1!F5:J5
-    Layout: series
-    Value type: float
-
-Examples:
-    set_borvelia_primary_balance(ctx, [
-        {'TIME_PERIOD': 1, 'OBS_VALUE': -1.0},
-        {'TIME_PERIOD': 2, 'OBS_VALUE': -0.5},
-    ])
-
-    set_borvelia_primary_balance(ctx, [-1.0, -0.5])
-```
-
 ### Output series
 
 Bindings with an `output.compute` block can be projected into **output
@@ -486,125 +303,216 @@ print(
 ```
 
 Output records include **all declared dimensions** (and attributes such
-as `UNIT_MEASURE`), not only the `key` fields required by the setter.
+as `UNIT_MEASURE`), not only the `key` fields used for input matching.
 Here `OBS_VALUE` in the resolved record is a placeholder until
-evaluation; the generated function overwrites it with `xl_cell`.
+evaluation.
 
-### Generated compute function (Records API)
+### Package export (`generate_modules`)
 
-The same `CodeGenerator.generate` call that emitted the setter also
-appends `compute_borvelia_primary_balance` when `output.compute` is
-present. It returns **`Records`** (`list[Record]`) with one dict per
-graph cell in the series, each including `OBS_VALUE` and the bound
-dimensions.
+Series I/O is an inverted-tree **package**. `generate()` stays
+bindings-free (`make_context` / `compute_all`) for parity and teaching.
+Package `compute_*` functions take catalog-order input tuples and return
+measure tuples; `as_records` zips the published domain into a Records
+view.
+
+The input row `F5:J5` is values, so export adds identity formulas on
+`F6:J6` as the output series:
 
 ``` python
-compute_sig_start = code.index("def compute_borvelia_primary_balance(")
-compute_sig_end = code.index(") -> Records:", compute_sig_start) + len(") -> Records:")
-print(f"```text\n{code[compute_sig_start:compute_sig_end]}\n```\n")
-assert "Record = dict[str, object]" in code
-assert "Records = list[Record]" in code
+import inspect
+import sys
+import tempfile
+from copy import deepcopy
+from shutil import copyfile
+
+from fastpyxl import load_workbook
+
+from excel_grapher.exporter import CodeGenerator
+from excel_grapher.series_bindings.workflow import all_series_targets
+
+export_dir = Path(tempfile.mkdtemp())
+export_workbook = export_dir / "series_bindings_export.xlsx"
+copyfile(workbook_path, export_workbook)
+wb = load_workbook(export_workbook)
+ws = wb.active
+for letter in "FGHIJ":
+    ws[f"{letter}6"] = f"={letter}5"
+wb.save(export_workbook)
+
+export_bindings = deepcopy(bindings)
+input_entry = export_bindings["series"][0]
+input_entry.pop("output", None)
+output_entry = deepcopy(input_entry)
+output_entry["id"] = "borvelia_primary_balance_out"
+output_entry.pop("input", None)
+output_entry.pop("editable", None)
+output_entry["data_range"] = "Sheet1!F6:J6"
+output_entry["output"] = {"compute": {"name": "compute_borvelia_primary_balance_out"}}
+export_bindings["series"] = [input_entry, output_entry]
+export_bindings = validate_bindings_document(export_bindings)
+
+export_targets = all_series_targets(export_bindings, workbook=export_workbook)
+export_graph = create_dependency_graph(export_workbook, export_targets, load_values=True)
+with CodeGenerator(export_graph) as gen:
+    modules = gen.generate_modules(
+        series_bindings=export_bindings,
+        bindings_workbook=export_workbook,
+    )
+
+pkg_dir = export_dir / "series_bindings_pkg"
+pkg_dir.mkdir(parents=True, exist_ok=True)
+for filename, source in modules.items():
+    (pkg_dir / filename).write_text(source, encoding="utf-8")
+sys.path.insert(0, str(export_dir))
+import series_bindings_pkg as exported
+
+sig = inspect.signature(exported.compute_borvelia_primary_balance_out)
+print(f"```text\ncompute_borvelia_primary_balance_out{sig}\n```\n")
+assert "def set_borvelia_primary_balance(" not in modules["api.py"]
+assert "def list_setters(" not in modules["api.py"]
 ```
 
 ``` text
-def compute_borvelia_primary_balance(ctx=None, *, inputs=None) -> Records:
+compute_borvelia_primary_balance_out(*, borvelia_primary_balance: 'Sequence[float | str]') -> 'tuple[float | str, ...]'
 ```
 
-### Calling the compute function
+### Calling `compute_*`
 
-In an exported model, import the compute function alongside the setter.
-Pass an optional shared `ctx` (for example after applying inputs with
-the setter):
+Pass the input series in catalog order (periods 1..5). Convert a tidy
+DataFrame to that tuple yourself — see
+[setter_dataframe_example.py](setter_dataframe_example.py).
 
 ``` python
-from tabulate import tabulate
+from generated import as_records, compute_borvelia_primary_balance_out
 
-from exported_model import (
-    make_context,
-    set_borvelia_primary_balance,
-    compute_borvelia_primary_balance,
+result = compute_borvelia_primary_balance_out(
+    borvelia_primary_balance=(-1.0, -0.5, 0.0, 7.5, 8.0),
 )
-
-ctx = make_context()
-set_borvelia_primary_balance(
-    ctx,
-    [
-        {"TIME_PERIOD": 4, "OBS_VALUE": 7.5},
-        {"TIME_PERIOD": 5, "OBS_VALUE": 8.0},
-    ],
-)
-records = compute_borvelia_primary_balance(ctx=ctx)
-print(tabulate(records, headers="keys", tablefmt="pipe"))
+records = as_records(compute_borvelia_primary_balance_out, result)
 ```
 
-The compute function evaluates each bound cell via `xl_cell` by default.
-When `output.compute.helper` names a parameterized internals helper (for example
-after a cluster-collapse refactor), `compute_*` calls that helper from the
-static record dims instead — for example
-`scenario_primary_expenditure_pct_gdp_hot(ctx, time_period=static_record['TIME_PERIOD'])`.
-Leaves without a helper mapping still use `xl_cell`. Excel errors
-(`#VALUE!`, `#DIV/0!`, and so on) are captured into the measure field as
-`XlError` values so a mixed numeric/error horizon still returns a full
-`Records` list; non-Excel exceptions still abort. Callers do not pass sheet
-addresses unless `include_address: true` is set on `output.compute`.
+| TIME_PERIOD | OBS_VALUE |
+|-------------|-----------|
+| 1           | -1.0      |
+| 2           | -0.5      |
+| 3           | 0.0       |
+| 4           | 7.5       |
+| 5           | 8.0       |
 
-In modular exports, `_OUTPUT_LEAVES_*` tables live in `_output_leaves.py` (imported
-by `api.py`), analogous to how `_LEAF_INDEX_*` / `read_*` live in `_readers.py`.
-Consumers that previously assumed every published output address kept a `cell_*`
-projection alias in `internals.py` can drop those aliases once a helper covers
-the full published span.
+Period **4** and **5** values (`7.5` and `8.0`) are the measures you
+passed; `as_records` attaches `TIME_PERIOD` from `__domain__`. Package
+discovery is `exported.__all__` (compute names). Docstring callbacks
+apply to `emit_setter_function` / `emit_compute_function`, not
+`generate_modules()`.
 
-| INDICATOR       | REF_AREA | TIME_PERIOD | UNIT_MEASURE | OBS_VALUE |
-|-----------------|----------|-------------|--------------|-----------|
-| Primary balance | Borvelia | 1           | PC_GDP       | -1        |
-| Primary balance | Borvelia | 2           | PC_GDP       | -0.5      |
-| Primary balance | Borvelia | 3           | PC_GDP       | 0         |
-| Primary balance | Borvelia | 4           | PC_GDP       | 7.5       |
-| Primary balance | Borvelia | 5           | PC_GDP       | 8.0       |
+## 02. Formula-cell overrides (`input.mode: override`)
 
-After the setter runs, period **4** and **5** records reflect the
-updated input values (`7.5` and `8.0`) while still carrying dimensions
-such as `REF_AREA` and `UNIT_MEASURE` from the binding. Because the
-output binding covers every export target, address-keyed `compute_all`
-is omitted from the public API by default;
-`compute_borvelia_primary_balance` is the tabular, dimension-keyed view
-of this series. Pass `include_compute_all=True` to `generate()`
-if you still want the address-keyed map.
+Schema **1.6.0** still accepts `input.mode: override` for Excel
+typed-over-formula cells. Package export does **not** emit override
+setters: bind those cells as **inputs** if callers must vary them. See
+the migration table in [Exporting standalone
+Python](../../user_guide/06-export.qmd).
 
-### Discovering the generated API
+Example manifest:
+[formula_override.bindings.yaml](formula_override.bindings.yaml).
 
-The generated module also exposes two zero-argument discovery helpers,
-`list_setters()` and `list_computes()`. They return the names of the
-emitted `set_*` and `compute_*` functions, so tooling can enumerate the
-series API without parsing source:
+``` yaml
+schema_version: "1.6.0"
+workbook: formula_override.xlsx
+series:
+  - id: engine_override
+    sheet: Engine
+    data_range: Engine!B1
+    layout: scalar
+    input:
+      mode: override
+      setter:
+        name: set_engine_b1
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind: { kind: data_cell, read: float }
+      dimensions: []
+    key: []
+```
+
+**Leaf mode (default)** requires every bound cell to be a graph leaf. If
+`data_range` includes a formula cell, validation fails with
+`non_leaf_input_overlap`.
+
+## 03. Internal formula-cell triangulation (`internal: {}`)
+
+Schema **1.7.0** adds `internal: {}` for formula cells that need
+dimensional keys without public `set_*` or `compute_*` APIs. Pipelines
+can shard these as `internals.bindings.yaml` alongside input and output
+manifests.
+
+Example fixture:
+[internal_engine_row.yaml](../../tests/fixtures/series_bindings/internal_engine_row.yaml)
+(uses [formula_override.xlsx](formula_override.xlsx)).
+
+``` yaml
+schema_version: "1.7.0"
+workbook: formula_override.xlsx
+series:
+  - id: engine_primary_balance
+    sheet: Engine
+    data_range: Engine!B2:D2
+    layout: series
+    internal: {}
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind: { kind: data_cell, read: float }
+      dimensions:
+        - concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind: { kind: column_header, header_row: 1, read: int }
+    key: [TIME_PERIOD]
+    series_context:
+      INDICATOR: Primary balance
+    validation:
+      intersect_graph_formulas: true
+      require_unique_key: true
+```
 
 ``` python
-from exported_model import list_setters, list_computes
+from excel_grapher.series_bindings import load_series_bindings, validate_bindings_document
 
-list_setters()  # ["set_borvelia_primary_balance"]
-list_computes()  # ["compute_borvelia_primary_balance"]
+internal_fixture = Path("../../tests/fixtures/series_bindings/internal_engine_row.yaml")
+internal_bindings = load_series_bindings(internal_fixture)
+validate_bindings_document(internal_bindings)
+
+override_graph = create_dependency_graph(
+    Path("formula_override.xlsx"),
+    ["Engine!B2", "Engine!C2", "Engine!D2"],
+    load_values=True,
+)
+internal_series = derive_internal_series(
+    override_graph,
+    internal_bindings,
+    workbook=Path("formula_override.xlsx"),
+)
+print(pformat(internal_series[0]["cells"][:2]))
 ```
 
-``` text
-list_setters():  ['set_borvelia_primary_balance']
-list_computes(): ['compute_borvelia_primary_balance']
-```
+\[{‘address’: ‘Engine!B2’, ‘coordinates’: {‘TIME_PERIOD’: 1}, ‘key’:
+{‘TIME_PERIOD’: 1}, ‘record’: {‘INDICATOR’: ‘Primary balance’,
+‘OBS_VALUE’: None, ‘TIME_PERIOD’: 1}}, {‘address’: ‘Engine!C2’,
+‘coordinates’: {‘TIME_PERIOD’: 2}, ‘key’: {‘TIME_PERIOD’: 2}, ‘record’:
+{‘INDICATOR’: ‘Primary balance’, ‘OBS_VALUE’: None, ‘TIME_PERIOD’: 2}}\]
 
-### Modular exports
-
-For package-style exports, generated series setters and output compute
-functions are emitted from the package entrypoint and re-exported from
-the package root. This keeps the callable surface next to `make_context`
-(and `compute_all` when it is emitted):
+Internal bindings intersect `data_range` with **formula graph nodes**
+(default). They emit **no codegen**; validate first, then derive:
 
 ``` python
-from exported_series import (
-    make_context,
-    set_borvelia_primary_balance,
-    compute_borvelia_primary_balance,
+report = validate_series_bindings(
+    override_graph,
+    internal_bindings,
+    workbook=Path("formula_override.xlsx"),
 )
-
-ctx = make_context()
-set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 4, "OBS_VALUE": 7.5}])
-records = compute_borvelia_primary_balance(ctx=ctx)
+assert report["ok"]
 ```
