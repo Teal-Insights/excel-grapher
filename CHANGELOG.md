@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.8.1 (2026-09-08)
+
+### Performance Improvements
+
+- **export**: Compact and intern patterned take index mappings
+  ([#803](https://github.com/Teal-Insights/excel-grapher/pull/803),
+  [`8d4c6e2`](https://github.com/Teal-Insights/excel-grapher/commit/8d4c6e2502334e6d005678beb8e4f618e115e0d1))
+
+
 ## v14.8.0 (2026-09-08)
 
 ### Documentation
