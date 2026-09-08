@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
@@ -2003,6 +2004,43 @@ def _region_measure(
     return _as_measure_call(expr, series), set(ctx.used_runtime)
 
 
+def _coalesce_adjacent_bodies(
+    runs: Sequence[tuple[str, int, int]],
+    bodies: Sequence[str],
+) -> list[tuple[int, int, str]]:
+    """Merge adjacent shape-runs whose emitted bodies are identical.
+
+    Each run is `(shape_key, start, stop)` over catalog indexes. The result
+    keeps the first start and last stop of each identical span so slot
+    boundaries stay exact. Shape keys are ignored: equal Excel shapes can
+    still lower to different index expressions.
+    """
+    if not runs:
+        return []
+    if len(runs) != len(bodies):
+        raise ValueError("runs and bodies must have the same length")
+    coalesced: list[tuple[int, int, str]] = [(runs[0][1], runs[0][2], bodies[0])]
+    for (_key, start, stop), body in zip(runs[1:], bodies[1:], strict=True):
+        last_start, _last_stop, last_body = coalesced[-1]
+        if body == last_body:
+            coalesced[-1] = (last_start, stop, last_body)
+        else:
+            coalesced.append((start, stop, body))
+    return coalesced
+
+
+def _cannot_raise_xl_error(expr: str) -> bool:
+    """True when evaluating `expr` cannot raise `XlError`."""
+    text = expr.strip()
+    inner = _as_measure_literal(text)
+    candidate = inner.split(",", 1)[0].strip() if inner is not None else text
+    try:
+        ast.literal_eval(candidate)
+    except (ValueError, SyntaxError):
+        return False
+    return True
+
+
 def _emit_region_chain(
     series: BoundSeries,
     *,
@@ -2017,8 +2055,8 @@ def _emit_region_chain(
 ) -> tuple[list[str], set[str]]:
     """Emit an if/elif chain that assigns each shape-run formula."""
     used: set[str] = set()
-    lines: list[str] = []
-    for run_index, (_key, start, stop) in enumerate(runs):
+    bodies: list[str] = []
+    for _key, start, _stop in runs:
         coerce, expr_used = _region_measure(
             series,
             catalog=catalog,
@@ -2029,8 +2067,12 @@ def _emit_region_chain(
             prior_var=prior_var,
         )
         used |= expr_used
+        bodies.append(coerce)
+    regions = _coalesce_adjacent_bodies(runs, bodies)
+    lines: list[str] = []
+    for run_index, (_start, stop, coerce) in enumerate(regions):
         statement = f"{prefix}{coerce}{suffix}"
-        if run_index < len(runs) - 1:
+        if run_index < len(regions) - 1:
             keyword = "if" if run_index == 0 else "elif"
             lines.append(f"{indent}{keyword} i < {stop}:")
             lines.append(f"{indent}    {statement}")
@@ -2271,6 +2313,45 @@ def _emit_region_return(
     return _as_measure_call(expr, series), set(ctx.used_runtime)
 
 
+def _emit_demand_dispatch(
+    regions: Sequence[tuple[int, int, str]],
+    *,
+    indent: str = "        ",
+) -> tuple[list[str], bool]:
+    """Emit a coalesced `if i < stop` return ladder.
+
+    Literal bodies that cannot raise `XlError` are returned directly.
+    Consecutive raising bodies share one `try/except XlError`.
+    """
+    lines: list[str] = []
+    catches_error = False
+    count = len(regions)
+    index = 0
+    while index < count:
+        can_raise = not _cannot_raise_xl_error(regions[index][2])
+        end = index + 1
+        while end < count and (not _cannot_raise_xl_error(regions[end][2])) == can_raise:
+            end += 1
+        group = regions[index:end]
+        body_indent = indent
+        if can_raise:
+            catches_error = True
+            lines.append(f"{indent}try:")
+            body_indent = f"{indent}    "
+        for offset, (_start, stop, expr) in enumerate(group):
+            guarded = index + offset < count - 1
+            if guarded:
+                lines.append(f"{body_indent}if i < {stop}:")
+                lines.append(f"{body_indent}    return {expr}")
+            else:
+                lines.append(f"{body_indent}return {expr}")
+        if can_raise:
+            lines.append(f"{indent}except XlError as err:")
+            lines.append(f"{indent}    return err.code")
+        index = end
+    return lines, catches_error
+
+
 def emit_rung3_scc(
     scc: tuple[str, ...],
     *,
@@ -2280,7 +2361,7 @@ def emit_rung3_scc(
     edges: Sequence[DependenceEdge] | None = None,
 ) -> tuple[list[str], set[str]]:
     """Emit demand-driven instance evaluation for an SCC (the rung-3 floor)."""
-    used: set[str] = {"as_measure", "XlError", "eval_instance"}
+    used: set[str] = {"as_measure", "eval_instance"}
     scc_ids = frozenset(scc)
     compute_names = {sid: _compute_fn_name(sid) for sid in scc}
     lines: list[str] = [
@@ -2295,7 +2376,8 @@ def emit_rung3_scc(
             raise InvertedTreeExportError(f"series {sid!r} has no members to evaluate")
         fn = compute_names[sid]
         lines.append(f"    def {fn}(i: int) -> {python_measure_type(series)}:")
-        for run_index, (_key, start, stop) in enumerate(runs):
+        bodies: list[str] = []
+        for _key, start, _stop in runs:
             expr, expr_used = _emit_region_return(
                 series,
                 catalog=catalog,
@@ -2306,16 +2388,12 @@ def emit_rung3_scc(
                 compute_names=compute_names,
             )
             used |= expr_used
-            guarded = run_index < len(runs) - 1
-            if guarded:
-                lines.append(f"        if i < {stop}:")
-                indent = "            "
-            else:
-                indent = "        "
-            lines.append(f"{indent}try:")
-            lines.append(f"{indent}    return {expr}")
-            lines.append(f"{indent}except XlError as err:")
-            lines.append(f"{indent}    return err.code")
+            bodies.append(expr)
+        regions = _coalesce_adjacent_bodies(runs, bodies)
+        dispatch, catches_error = _emit_demand_dispatch(regions)
+        if catches_error:
+            used.add("XlError")
+        lines.extend(dispatch)
         lines.append("")
     edges = collect_dependence_edges(catalog, graph, scc, edges=edges)
     intra = [edge for edge in edges if edge.consumer_id in scc_ids and edge.producer_id in scc_ids]
