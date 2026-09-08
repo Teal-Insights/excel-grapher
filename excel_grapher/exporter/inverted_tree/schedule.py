@@ -664,21 +664,53 @@ def _cross_partition_cycle_message(
     return prefix
 
 
+def _unconditional_cell_graph_is_cyclic(
+    scc: tuple[str, ...],
+    edges: Sequence[DependenceEdge],
+) -> bool:
+    """Return True when unguarded intra-SCC cell edges contain a cycle."""
+    members = set(scc)
+    residual: dict[str, list[str]] = {}
+    for edge in edges:
+        if edge.guarded:
+            continue
+        if edge.consumer_id not in members or edge.producer_id not in members:
+            continue
+        residual.setdefault(edge.consumer_cell, []).append(edge.producer_cell)
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def dfs(node: str) -> bool:
+        visiting.add(node)
+        for pred in residual.get(node, ()):
+            if pred in visiting:
+                return True
+            if pred not in visited and dfs(pred):
+                return True
+        visiting.remove(node)
+        visited.add(node)
+        return False
+
+    return any(node not in visited and dfs(node) for node in residual)
+
+
 def _assert_cross_partition_legal(
     scc: tuple[str, ...],
     edges: Sequence[DependenceEdge],
     catalog: SeriesCatalog,
     partitions: Sequence[tuple[Scalar, ...]],
 ) -> bool:
-    """Fail closed on a partition cycle; return False for a forward outer read.
+    """Return whether fused outer iteration is legal.
 
-    A `cross_partition` edge is legal only when it points at an already
-    completed outer iteration under `partitions` order. Mutual same-index
-    reads are a real circular reference and raise.
+    A `cross_partition` edge is legal when it points at an already
+    completed outer iteration under `partitions` order. A cycle in the
+    contracted partition graph is not enough to reject: check
+    unconditional cell-grain edges first. A real circular reference at
+    cell grain raises; an acyclic cell graph demotes to demand-driven
+    evaluation (return False).
 
     Raises:
-        InvertedTreeExportError: Two partitions read each other at the same
-            index.
+        InvertedTreeExportError: Unguarded cell edges form a cycle.
     """
     members = set(scc)
     cross = [
@@ -701,7 +733,9 @@ def _assert_cross_partition_legal(
         residual[consumer_part].append(producer_part)
     pair = _first_partition_cycle(residual)
     if pair is not None:
-        raise InvertedTreeExportError(_cross_partition_cycle_message(scc, pair, cross, catalog))
+        if _unconditional_cell_graph_is_cyclic(scc, edges):
+            raise InvertedTreeExportError(_cross_partition_cycle_message(scc, pair, cross, catalog))
+        return False
     rank = {part: index for index, part in enumerate(partitions)}
     for edge in cross:
         consumer_part = schedule_partition(edge.consumer_cell, catalog)
@@ -733,7 +767,7 @@ def plan_fused_scc(
 
     Raises:
         InvertedTreeExportError: Some index's residual is a real same-index
-            cycle, including a mutual cross-partition read.
+            cycle, or unguarded cell-grain edges form a circular reference.
     """
     if not scc:
         return None

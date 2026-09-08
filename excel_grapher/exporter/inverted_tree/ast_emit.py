@@ -30,6 +30,7 @@ from excel_grapher.exporter.inverted_tree.access import (
     AccessFunction,
     AxisAccess,
     catalog_index_affine,
+    cell_ref_catalog_pairs,
     classify_cell_ref_access,
     classify_producer_access,
     indirect_argument_addresses,
@@ -892,6 +893,66 @@ def _emit_fused_ref(
     return f"live_measure({name}[{index_expr}])"
 
 
+def _remap_instance_index(owner: BoundSeries, idx: int, ctx: EmitContext) -> int:
+    """Map a producer catalog slot into the aligned argument window when needed."""
+    if (
+        owner.series_id not in ctx.scc_ids
+        and owner.series_id in ctx.deps.aligned_ids
+        and not owner.is_scalar
+    ):
+        return _aligned_taken_index(owner.series_id, idx, ctx)
+    return idx
+
+
+def _instance_ref_index_pairs(
+    owner: BoundSeries,
+    ctx: EmitContext,
+    ref: CellRefNode | None,
+) -> list[tuple[int, int]]:
+    """Return `(host_index, producer_index)` for `ref` over the host statement."""
+    if ref is None or ctx.graph is None:
+        return []
+    try:
+        raw = cell_ref_catalog_pairs(
+            ctx.host,
+            owner,
+            ctx.graph,
+            host_cell=ctx.host_cell,
+            ref=ref,
+            cells=_statement_cells(ctx),
+        )
+    except InvertedTreeExportError:
+        return []
+    return [(host_i, _remap_instance_index(owner, prod_i, ctx)) for host_i, prod_i in raw]
+
+
+def _instance_index_expr(
+    owner: BoundSeries,
+    idx: int,
+    ctx: EmitContext,
+    ref: CellRefNode | None,
+) -> str:
+    """Return the producer catalog index as a function of the host index.
+
+    A formula-shape statement may map `i -> a*i + b` (opposite
+    cross-partition reads) rather than `i + offset`. When the site is not
+    affine, emit an explicit slot table indexed by `i`.
+    """
+    index_var = ctx.index_var or "i"
+    idx = _remap_instance_index(owner, idx, ctx)
+    pairs = _instance_ref_index_pairs(owner, ctx, ref)
+    if len(pairs) >= 2:
+        fitted = fit_affine_map(pairs)
+        if fitted is not None:
+            return _linear_index_expr(fitted[0], fitted[1], index_var)
+        table = [idx] * len(ctx.host.cells)
+        for host_i, prod_i in pairs:
+            if 0 <= host_i < len(table):
+                table[host_i] = prod_i
+        return f"{indices_to_source(table)}[{index_var}]"
+    return _index_expr(idx - ctx.host_index, index_var)
+
+
 def _emit_instance_ref(
     address: CanonicalAddress, ctx: EmitContext, *, ref: CellRefNode | None = None
 ) -> str:
@@ -906,15 +967,7 @@ def _emit_instance_ref(
         raise InvertedTreeExportError(
             f"series {ctx.host.series_id!r}: instance ref {address} is unbound"
         )
-    if (
-        owner.series_id not in ctx.scc_ids
-        and owner.series_id in ctx.deps.aligned_ids
-        and not owner.is_scalar
-    ):
-        idx = _aligned_taken_index(owner.series_id, idx, ctx)
-    offset = idx - ctx.host_index
-    index_var = ctx.index_var or "i"
-    index_expr = _index_expr(offset, index_var)
+    index_expr = _instance_index_expr(owner, idx, ctx, ref)
     if owner.series_id in ctx.scc_ids:
         fn = ctx.compute_names[owner.series_id]
         ctx.use("demand_instance")

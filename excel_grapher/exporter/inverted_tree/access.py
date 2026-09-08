@@ -397,6 +397,25 @@ def _catalog_pairs_for_slot(
     return pairs
 
 
+def cell_ref_catalog_pairs(
+    host: BoundSeries,
+    producer: BoundSeries,
+    graph: DependencyGraph,
+    *,
+    host_cell: CanonicalAddress,
+    ref: CellRefNode,
+    cells: Sequence[CanonicalAddress] | None = None,
+) -> list[tuple[int, int]]:
+    """Return `(host_index, producer_index)` for one `CellRefNode` site.
+
+    Sites are matched by walk order over `cells` (the host statement, or
+    every host member when `cells` is omitted).
+    """
+    members = tuple(host.cells if cells is None else cells)
+    slot = _cell_ref_walk_slot(_formula_ast(graph, host_cell), ref)
+    return _catalog_pairs_for_slot(host, producer, graph, members, slot)
+
+
 def classify_cell_ref_accesses(
     host: BoundSeries,
     producer: BoundSeries,
