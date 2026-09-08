@@ -192,6 +192,7 @@ class SubgraphCollapse:
         #     add_edge(root, external_dep, ...)              # rewire to surviving deps
         #     remove_node(internal)                          # delete collapsed internals
         #     set_node_metadata(root, {"collapsed_from": [...]})  # tag the condensed node
+        # projected.validate_consistency()  # fail closed on formula/edge disagreement
         manifest = BaseProjectionManifest(
             kind="subgraph_collapse",
             forwarding_map={},  # internal nodes are not forwarded
@@ -208,10 +209,17 @@ register_projection_manifest("subgraph_collapse", BaseProjectionManifest.from_di
 ```
 
 Public graph-mutation primitives for projection authors: `DependencyGraph.copy`,
-`set_node_formula`, `remove_node`, `set_node_metadata`, `add_edge`. Compose steps with
-`apply_projection(graph, [step_a, step_b])`; multiple steps fold into a
-`CompositeProjectionManifest` that chains the forwarding map and preserves each component
-manifest (heterogeneous kinds supported).
+`set_node_formula`, `remove_node`, `set_node_metadata`, `add_edge`. Those
+formula and topology edits stay **manual** — `set_node_formula` parses into
+`formula_ast` and does not recompute edges; `remove_node` drops the node and
+incident edges and does not rewrite dependents. After rewiring, call
+`projected.validate_consistency()` (or `ProjectionResult.validate()`, or
+`apply_projection(..., validate=True)`) to **fail closed** on formula/edge
+disagreement. The helper reports structured errors and never "fixes" the graph.
+
+Compose steps with `apply_projection(graph, [step_a, step_b])`; multiple steps
+fold into a `CompositeProjectionManifest` that chains the forwarding map and
+preserves each component manifest (heterogeneous kinds supported).
 
 A parity-tested formula-inlining/subgraph-collapse engine is a planned follow-up; until
 then, authors own the substitution logic in their projection step. A config-driven registry
