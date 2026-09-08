@@ -516,4 +516,3 @@ def test_key_axis_is_inferred_once_per_series(
     other = replace(series, domain=tuple(KeyPoint((("VINTAGE", 1),)) for _ in series.cells))
     assert deps_mod._key_field_axis(other, field) is None
     assert calls == 2
-
