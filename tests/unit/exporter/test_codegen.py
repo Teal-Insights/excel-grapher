@@ -1,8 +1,6 @@
 """Tests for codegen module."""
 
-from collections.abc import Callable
 from types import MappingProxyType
-from typing import cast
 
 import pytest
 
