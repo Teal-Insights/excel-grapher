@@ -77,9 +77,9 @@ def test_coalesce_adjacent_bodies_merges_identical_runs() -> None:
     runs = [("", 0, 1), ("", 1, 2), ("a", 2, 3), ("a", 3, 5), ("b", 5, 6)]
     bodies = ["None", "None", "x[i]", "x[i]", "y[i]"]
     assert _coalesce_adjacent_bodies(runs, bodies) == [
-        (0, 2, "None"),
-        (2, 5, "x[i]"),
-        (5, 6, "y[i]"),
+        (0, 2, "None", ()),
+        (2, 5, "x[i]", ()),
+        (5, 6, "y[i]", ()),
     ]
 
 
