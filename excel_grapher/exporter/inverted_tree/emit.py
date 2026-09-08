@@ -484,6 +484,7 @@ _HOLE_DOC_LABELS = {
     "off_closure": "not computed",
     "literal": "cached literal",
     "graph_leaf": "cached literal",
+    "bound_leaf": "bound leaf",
 }
 
 
