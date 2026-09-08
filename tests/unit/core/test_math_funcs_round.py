@@ -25,6 +25,8 @@ from excel_grapher.core.types import CellValue, XlError
         (0, 0, 0.0),
         (True, 0, 1.0),
         ("1.25", 1, 1.3),
+        (1.25, 400, 1.25),
+        (1.25, -400, 0.0),
     ],
 )
 def test_round_number_excel_half_away_from_zero(

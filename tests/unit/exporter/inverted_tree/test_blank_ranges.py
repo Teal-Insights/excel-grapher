@@ -401,7 +401,7 @@ def test_generate_inverted_tree_modules_accepts_blank_cellref(tmp_path: Path) ->
     internals = modules["internals.py"]
     assert "Lookup!A1" not in internals
     assert "None" in internals
-    assert "xl_isnumber(" in internals
+    assert "xl_isnumber_lazy(lambda: None)" in internals
 
 
 def test_generate_modules_forwards_blank_ranges_for_cellref(tmp_path: Path) -> None:

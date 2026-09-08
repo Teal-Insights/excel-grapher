@@ -119,7 +119,9 @@ _RUNTIME_FUNCTIONS = frozenset(
     for name, value in vars(inverted_runtime).items()
     if name.startswith("xl_") and callable(value)
 )
-_AGGREGATE_FUNCTIONS = frozenset({"SUM", "SUMPRODUCT", "AVERAGE", "MAX"})
+_AGGREGATE_FUNCTIONS = frozenset(
+    {"SUM", "SUMPRODUCT", "AVERAGE", "MAX", "MIN", "NPV", "STDEV", "RANK", "LARGE", "COUNTIF"}
+)
 _RANGE_REDUCE_FUNCTIONS = _AGGREGATE_FUNCTIONS | frozenset({"AND", "OR"})
 _LOOKUP_TABLE_FUNCTIONS = frozenset({"VLOOKUP", "HLOOKUP", "LOOKUP", "XLOOKUP"})
 _ARRAY_IF_VALUE_OPS = frozenset(_ARITHMETIC_HELPERS) | frozenset(_COMPARE_HELPERS)
@@ -1235,6 +1237,15 @@ def _emit_unary(node: UnaryOpNode, ctx: EmitContext) -> str:
 
 def _emit_function(node: FunctionCallNode, ctx: EmitContext) -> str:
     name = normalize_excel_function_name(node.name)
+    if name in {"IFERROR", "IFNA", "ISERROR", "ISNA", "ISBLANK", "ISNUMBER"}:
+        required = 2 if name in {"IFERROR", "IFNA"} else 1
+        if len(node.args) != required:
+            return f"{ctx.use('xl_raise')}('#VALUE!')"
+        helper = "xl_isnumber_lazy" if name == "ISNUMBER" else f"xl_{name.lower()}"
+        args = ", ".join(f"lambda: {emit_expr(arg, ctx)}" for arg in node.args)
+        return f"{ctx.use(helper)}({args})"
+    if name == "NA":
+        return f"{ctx.use('xl_raise')}('#N/A')"
     if name == "IF":
         return _emit_if(node, ctx)
     if name == "CHOOSE":
@@ -1247,6 +1258,8 @@ def _emit_function(node: FunctionCallNode, ctx: EmitContext) -> str:
         return _emit_row(node, ctx)
     if name == "COLUMN":
         return _emit_column(node, ctx)
+    if name == "COLUMNS":
+        return _emit_reference_geometry(node, ctx)
     if name == "INDIRECT":
         return _emit_indirect(node, ctx)
     if name == "MATCH":
@@ -1269,6 +1282,43 @@ def _emit_function(node: FunctionCallNode, ctx: EmitContext) -> str:
         )
     ctx.use(func)
     return f"{func}({args})"
+
+
+def _emit_reference_geometry(node: FunctionCallNode, ctx: EmitContext) -> str:
+    """Lower reference metadata without evaluating the referenced cell values."""
+    name = normalize_excel_function_name(node.name)
+    if len(node.args) > 1 or (name == "COLUMNS" and not node.args):
+        return f"{ctx.use('xl_raise')}('#VALUE!')"
+    ref = node.args[0] if node.args else None
+    if ref is not None and not isinstance(
+        ref, (CellRefNode, RangeNode, WholeColumnNode, WholeRowNode)
+    ):
+        raise _host_export_error(ctx, f"{name} requires a worksheet reference")
+
+    def coordinate(host_cell: CanonicalAddress) -> int:
+        if ref is None:
+            _sheet, row, col = parse_cell_coords(host_cell)
+            return row if name == "ROW" else col
+        if isinstance(ref, CellRefNode):
+            addresses = (as_canonical(resolve_cell_ref(ref, host_cell)),)
+        elif isinstance(ref, RangeNode):
+            addresses = (
+                as_canonical(resolve_cell_ref(CellRefNode(ref.start_ref), host_cell)),
+                as_canonical(resolve_cell_ref(CellRefNode(ref.end_ref), host_cell)),
+            )
+        else:
+            addresses = tuple(iter_ref_addresses(ref, host_cell, ctx.graph))
+        _sheet, row, col = parse_cell_coords(addresses[0])
+        if name == "COLUMNS":
+            return abs(parse_cell_coords(addresses[-1])[2] - col) + 1
+        return row if name == "ROW" else col
+
+    if ctx.index_var is None:
+        return str(coordinate(ctx.host_cell))
+    values = tuple(coordinate(cell) for cell in ctx.host.cells)
+    if len(set(values)) == 1:
+        return str(values[0])
+    return f"{values!r}[{ctx.index_var}]"
 
 
 def _emit_if(node: FunctionCallNode, ctx: EmitContext) -> str:

@@ -122,6 +122,10 @@ def max_cells(*args: CellValue) -> float | XlError:
 
 def _round_half_away_from_zero(number: float, digits: int) -> float:
     """Round `number` to `digits` places using Excel ROUND (ties away from 0)."""
+    if digits > 308:
+        return number
+    if digits < -308:
+        return 0.0
     factor = Decimal(10) ** digits
     shifted = Decimal(str(number)) * factor
     return float(shifted.to_integral_value(rounding=ROUND_HALF_UP) / factor)
