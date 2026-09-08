@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v15.0.0 (2026-09-08)
+
+### Bug Fixes
+
+- Drop leftover generate() internals from tests and scripts
+  ([#805](https://github.com/Teal-Insights/excel-grapher/pull/805),
+  [`d096c19`](https://github.com/Teal-Insights/excel-grapher/commit/d096c190ee1fbf480d2447c3f45182a203dc748a))
+
+### Documentation
+
+- Drop generated-export mention from formula_test
+  ([#805](https://github.com/Teal-Insights/excel-grapher/pull/805),
+  [`d096c19`](https://github.com/Teal-Insights/excel-grapher/commit/d096c190ee1fbf480d2447c3f45182a203dc748a))
+
+### Features
+
+- Remove address-keyed CodeGenerator.generate
+  ([#805](https://github.com/Teal-Insights/excel-grapher/pull/805),
+  [`d096c19`](https://github.com/Teal-Insights/excel-grapher/commit/d096c190ee1fbf480d2447c3f45182a203dc748a))
+
+
 ## v14.8.1 (2026-09-08)
 
 ### Performance Improvements
