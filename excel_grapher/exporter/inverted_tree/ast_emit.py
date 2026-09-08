@@ -60,6 +60,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
     addresses_outside_blank_ranges,
     covering_series_for_index_window,
     current_blank_rects,
+    index_call_is_ref,
     index_window_corners,
     iter_ref_addresses,
     node_formula_ast,
@@ -999,6 +1000,10 @@ def _emit_function(node: FunctionCallNode, ctx: EmitContext) -> str:
         return _emit_offset(node, ctx)
     if name == "INDEX":
         return _emit_index(node, ctx)
+    if name == "ROW":
+        return _emit_row(node, ctx)
+    if name == "COLUMN":
+        return _emit_column(node, ctx)
     if name == "INDIRECT":
         return _emit_indirect(node, ctx)
     if name == "MATCH":
@@ -1275,12 +1280,32 @@ def _lookup_anchors(node: AstNode, host_cell: CanonicalAddress) -> list[Canonica
     """Return INDEX range starts and OFFSET anchors in preorder."""
     found: list[CanonicalAddress] = []
 
-    def walk(item: AstNode) -> None:
+    def walk(item: AstNode, *, skip_index_array: bool = False) -> None:
         if isinstance(item, FunctionCallNode):
             name = normalize_excel_function_name(item.name)
-            if item.args and (
-                (name == "OFFSET" and not isinstance(item.args[0], FunctionCallNode))
-                or (name == "INDEX" and isinstance(item.args[0], RangeNode))
+            if name == "OFFSET" and item.args:
+                base = item.args[0]
+                if isinstance(base, FunctionCallNode):
+                    dest = offset_index_destination(item, host_cell)
+                    if dest is not None and not (
+                        normalize_excel_function_name(base.name) == "INDEX"
+                        and index_call_is_ref(base, host_cell)
+                    ):
+                        found.append(dest[0])
+                    walk(base, skip_index_array=True)
+                else:
+                    start = _ref_anchor_address(base, host_cell)
+                    if start is not None:
+                        found.append(start)
+                    walk(base)
+                for arg in item.args[1:]:
+                    walk(arg)
+                return
+            if (
+                name == "INDEX"
+                and item.args
+                and isinstance(item.args[0], RangeNode)
+                and not skip_index_array
             ):
                 start = _ref_anchor_address(item.args[0], host_cell)
                 if start is not None:
@@ -1418,6 +1443,9 @@ def _emit_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
 
 
 def _emit_offset_from_expr(node: FunctionCallNode, ctx: EmitContext) -> str:
+    base = node.args[0]
+    if isinstance(base, FunctionCallNode) and (normalize_excel_function_name(base.name) == "INDEX"):
+        return _emit_offset_index(node, ctx)
     resolved = resolve_offset_destination_series(
         node,
         ctx.host_cell,
@@ -1429,6 +1457,98 @@ def _emit_offset_from_expr(node: FunctionCallNode, ctx: EmitContext) -> str:
         raise _host_export_error(ctx, "reference is not a bound series")
     table, _anchor = resolved
     return _emit_bound_series_lookup(table, ctx)
+
+
+def _offset_index_provably_ref(index_node: FunctionCallNode, ctx: EmitContext) -> bool:
+    """True when every host cell in the current statement yields INDEX `#REF!`."""
+    cells = _statement_cells(ctx) or (ctx.host_cell,)
+    return all(index_call_is_ref(index_node, cell) for cell in cells)
+
+
+def _emit_offset_index(node: FunctionCallNode, ctx: EmitContext) -> str:
+    """Emit `OFFSET(INDEX(...), rows, cols)` from the INDEX selector, not graph edges.
+
+    Zero-displacement wrappers keep the INDEX pick even when constraint
+    extraction attaches a whole-array edge set. A selector that is `#REF!` on
+    every host cell emits `xl_raise('#REF!')`.
+    """
+    base = node.args[0]
+    if not isinstance(base, FunctionCallNode):
+        raise _host_export_error(ctx, "OFFSET base must be INDEX")
+    if len(base.args) < 2:
+        raise _host_export_error(ctx, "INDEX expects a range and row")
+    if _offset_index_provably_ref(base, ctx):
+        return f"{ctx.use('xl_raise')}('#REF!')"
+    row_expr = emit_expr(base.args[1], ctx)
+    col_arg = base.args[2] if len(base.args) > 2 else None
+    col_expr, _col_literal = _emit_index_column_arg(col_arg, ctx)
+    resolved = resolve_offset_destination_series(
+        node,
+        ctx.host_cell,
+        ctx.catalog,
+        ctx.graph,
+        blank_rects=ctx.blank_rects,
+    )
+    if resolved is None:
+        raise _host_export_error(ctx, "reference is not a bound series")
+    table, anchor = resolved
+    slot = ctx.lookup_anchor_slot
+    ctx.lookup_anchor_slot += 1
+    return _emit_index_into_block(
+        table, anchor, row_expr, col_expr, ctx, slot, require_access=False
+    )
+
+
+def _row_column_args_omitted(node: FunctionCallNode) -> bool:
+    return not node.args or (len(node.args) == 1 and isinstance(node.args[0], EmptyArgNode))
+
+
+def _host_coord_expr(ctx: EmitContext, *, axis: str) -> str:
+    """Return the host cell's row or column as an affine expression of `index_var`."""
+    _sheet, row, col = parse_cell_coords(ctx.host_cell)
+    current = row if axis == "row" else col
+    if ctx.index_var is None:
+        return str(current)
+    cells = _statement_cells(ctx) or ctx.host.cells
+    pairs: list[tuple[int, int]] = []
+    for cell in cells:
+        idx = ctx.host.index_of(cell)
+        if idx is None:
+            continue
+        _cell_sheet, cell_row, cell_col = parse_cell_coords(cell)
+        pairs.append((idx, cell_row if axis == "row" else cell_col))
+    if len(pairs) < 2:
+        return str(current)
+    fit = fit_affine_map(pairs)
+    if fit is None:
+        raise _host_export_error(
+            ctx, f"{axis.upper()}() is not an affine function of the host index"
+        )
+    return _linear_index_expr(fit[0], fit[1], ctx.index_var)
+
+
+def _emit_row_or_column_ref(arg: AstNode, ctx: EmitContext, *, axis: str) -> str:
+    if isinstance(arg, CellRefNode):
+        address = as_canonical(resolve_cell_ref(arg, ctx.host_cell))
+        _sheet, row, col = parse_cell_coords(address)
+        return str(row if axis == "row" else col)
+    if isinstance(arg, RangeNode):
+        start = as_canonical(resolve_cell_ref(arg.start_ref, ctx.host_cell))
+        _sheet, row, col = parse_cell_coords(start)
+        return str(row if axis == "row" else col)
+    raise _host_export_error(ctx, f"{axis.upper()} argument cannot be lowered")
+
+
+def _emit_row(node: FunctionCallNode, ctx: EmitContext) -> str:
+    if _row_column_args_omitted(node):
+        return _host_coord_expr(ctx, axis="row")
+    return _emit_row_or_column_ref(node.args[0], ctx, axis="row")
+
+
+def _emit_column(node: FunctionCallNode, ctx: EmitContext) -> str:
+    if _row_column_args_omitted(node):
+        return _host_coord_expr(ctx, axis="col")
+    return _emit_row_or_column_ref(node.args[0], ctx, axis="col")
 
 
 def _emit_bound_series_lookup(covered: BoundSeries, ctx: EmitContext) -> str:
@@ -1480,8 +1600,13 @@ def _emit_index_into_block(
     col_expr: str,
     ctx: EmitContext,
     slot: int,
+    *,
+    require_access: bool = True,
 ) -> str:
-    _access_or_fail(block, ctx)
+    if require_access:
+        _access_or_fail(block, ctx)
+    if block.is_scalar:
+        return ctx.param(block.series_id)
     width = block.block_width
     coeff, offset = _block_anchor_map(block, ctx, slot, start)
     anchor_expr = _linear_index_expr(coeff, offset, ctx.index_var)

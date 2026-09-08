@@ -12,8 +12,10 @@ from excel_grapher.exporter.inverted_tree import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.deps import (
     ast_literal_int,
     collect_all_dependence_edges,
+    index_call_is_ref,
     offset_index_destination,
 )
+from excel_grapher.grapher.dynamic_refs import DynamicRefConfig
 from tests.unit.exporter.inverted_tree.helpers import (
     all_param_names,
     bindings_document,
@@ -195,6 +197,123 @@ def test_offset_index_named_range_array(tmp_path: Path) -> None:
         name="offset_index_named",
     )
     assert pkg.compute_result(codes=(111.0, 222.0)) == pytest.approx((111.0, 222.0))
+
+
+def _constraint_refs() -> DynamicRefConfig:
+    return DynamicRefConfig.from_constraints({}, {})
+
+
+def _row_select_sheets(*, formula: str) -> dict[str, dict[str, object]]:
+    return {
+        "Data": {
+            "A1": 1,
+            "A2": 2,
+            "B1": 10.0,
+            "B2": 20.0,
+            "C1": formula,
+            "C2": formula,
+        }
+    }
+
+
+def _row_select_bindings(*, include_labels: bool = False) -> dict:
+    series = []
+    if include_labels:
+        series.append(
+            series_entry(
+                "labels",
+                "Data!A1:A2",
+                layout="series",
+                direction="constant",
+                label_column="A",
+            )
+        )
+    series.extend(
+        [
+            series_entry(
+                "values",
+                "Data!B1:B2",
+                layout="series",
+                direction="constant",
+                label_column="A",
+            ),
+            series_entry(
+                "selected",
+                "Data!C1:C2",
+                layout="series",
+                direction="output",
+                label_column="A",
+            ),
+        ]
+    )
+    return bindings_document(*series)
+
+
+def test_index_call_is_ref_when_row_is_past_the_array() -> None:
+    ast = parse("=INDEX(Data!$B$1:$B$2,ROW()+2,1)")
+    assert isinstance(ast, FunctionCallNode)
+    assert index_call_is_ref(ast, as_canonical("Data!C1")) is True
+    in_bounds = parse("=INDEX(Data!$B$1:$B$2,ROW(),1)")
+    assert isinstance(in_bounds, FunctionCallNode)
+    assert index_call_is_ref(in_bounds, as_canonical("Data!C1")) is False
+
+
+def test_offset_index_zero_offset_constraint_extraction_uses_row_selector(
+    tmp_path: Path,
+) -> None:
+    """Issue 778: whole-array OFFSET edges still emit each host's INDEX pick."""
+    workbook = write_workbook(
+        tmp_path / "offset_index_row.xlsx",
+        _row_select_sheets(formula="=OFFSET(INDEX($B$1:$B$2,ROW(),1),0,0)"),
+    )
+    _catalog, _deps, graph = inverted_graph_parts(
+        workbook, _row_select_bindings(), dynamic_refs=_constraint_refs()
+    )
+    assert sorted(graph.get_dependencies("Data!C1")) == ["Data!B1", "Data!B2"]
+
+    modules = generate_inverted(workbook, _row_select_bindings(), dynamic_refs=_constraint_refs())
+    internals = modules["internals.py"]
+    assert "INDIRECT edge sets" not in internals
+    pkg = load_package(modules, tmp_path, name="offset_index_row_sel")
+    assert pkg.compute_selected() == pytest.approx((10.0, 20.0))
+
+
+def test_offset_index_constraint_shift_uses_index_row_not_graph_edges(
+    tmp_path: Path,
+) -> None:
+    workbook = write_workbook(
+        tmp_path / "offset_index_row_shift.xlsx",
+        _row_select_sheets(formula="=OFFSET(INDEX($B$1:$B$2,ROW(),1),0,-1)"),
+    )
+    pkg = load_package(
+        generate_inverted(
+            workbook,
+            _row_select_bindings(include_labels=True),
+            dynamic_refs=_constraint_refs(),
+        ),
+        tmp_path,
+        name="offset_index_row_shift",
+    )
+    assert pkg.compute_selected() == pytest.approx((1.0, 2.0))
+
+
+def test_offset_index_provably_oob_emits_ref_under_constraint_extraction(
+    tmp_path: Path,
+) -> None:
+    """Issue 778: out-of-bounds INDEX is `#REF!`, not a missing-edge classify."""
+    workbook = write_workbook(
+        tmp_path / "offset_index_oob.xlsx",
+        _row_select_sheets(formula="=OFFSET(INDEX($B$1:$B$2,ROW()+2,1),0,-1)"),
+    )
+    modules = generate_inverted(
+        workbook,
+        _row_select_bindings(include_labels=True),
+        dynamic_refs=_constraint_refs(),
+    )
+    internals = modules["internals.py"]
+    assert "xl_raise('#REF!')" in internals
+    pkg = load_package(modules, tmp_path, name="offset_index_oob")
+    assert pkg.compute_selected() == ("#REF!", "#REF!")
 
 
 def test_offset_index_unbound_destination_fail_closed(tmp_path: Path) -> None:

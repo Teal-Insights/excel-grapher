@@ -17,12 +17,14 @@ from excel_grapher.core.address_keys import (
     format_key,
     parse_cell_coords,
 )
+from excel_grapher.core.addressing import index_excel_range
 from excel_grapher.core.excel_function_names import normalize_excel_function_name
 from excel_grapher.core.formula_ast import (
     AbsoluteAxis,
     AstNode,
     BinaryOpNode,
     CellRefNode,
+    EmptyArgNode,
     FunctionCallNode,
     NumberNode,
     RangeNode,
@@ -34,6 +36,7 @@ from excel_grapher.core.formula_ast import (
     resolve_whole_row_ref,
 )
 from excel_grapher.core.range_shorthand import expand_whole_column_deps, expand_whole_row_deps
+from excel_grapher.core.types import ExcelRange, XlError
 from excel_grapher.exporter.inverted_tree.access import (
     indirect_argument_addresses,
     indirect_target_addresses,
@@ -368,6 +371,60 @@ def ast_literal_int(node: AstNode) -> int | None:
     return None
 
 
+def eval_host_selector(node: AstNode, host_cell: CanonicalAddress) -> int | None:
+    """Evaluate a ROW/COLUMN/arithmetic INDEX selector at `host_cell`.
+
+    Returns `None` when the selector is not a closed integer form of literals,
+    `ROW` / `COLUMN` of the host or of a cell, and `+` `-` `*` `/`.
+    """
+    literal = ast_literal_int(node)
+    if literal is not None:
+        return literal
+    if isinstance(node, UnaryOpNode) and node.op in {"+", "-"}:
+        inner = eval_host_selector(node.operand, host_cell)
+        if inner is None:
+            return None
+        return inner if node.op == "+" else -inner
+    if isinstance(node, BinaryOpNode) and node.op in {"+", "-", "*", "/"}:
+        left = eval_host_selector(node.left, host_cell)
+        right = eval_host_selector(node.right, host_cell)
+        if left is None or right is None:
+            return None
+        if node.op == "+":
+            return left + right
+        if node.op == "-":
+            return left - right
+        if node.op == "*":
+            return left * right
+        if right == 0:
+            return None
+        return int(left / right)
+    if not isinstance(node, FunctionCallNode):
+        return None
+    name = normalize_excel_function_name(node.name)
+    if name not in {"ROW", "COLUMN"}:
+        return None
+    if not node.args or (len(node.args) == 1 and isinstance(node.args[0], EmptyArgNode)):
+        _sheet, row, col = parse_cell_coords(host_cell)
+        return row if name == "ROW" else col
+    if len(node.args) != 1:
+        return None
+    arg = node.args[0]
+    corners = None
+    if isinstance(arg, CellRefNode):
+        address = as_canonical(resolve_cell_ref(arg, host_cell))
+        corners = address, address
+    elif isinstance(arg, RangeNode):
+        corners = (
+            as_canonical(resolve_cell_ref(arg.start_ref, host_cell)),
+            as_canonical(resolve_cell_ref(arg.end_ref, host_cell)),
+        )
+    if corners is None:
+        return None
+    _sheet, row, col = parse_cell_coords(corners[0])
+    return row if name == "ROW" else col
+
+
 def ref_window_corners(
     node: AstNode, host_cell: CanonicalAddress
 ) -> tuple[CanonicalAddress, CanonicalAddress] | None:
@@ -412,6 +469,42 @@ def index_window_corners(
         as_canonical(format_cell_key(sheet1, get_column_letter(col), r1)),
         as_canonical(format_cell_key(sheet1, get_column_letter(col), r2)),
     )
+
+
+def index_call_is_ref(node: FunctionCallNode, host_cell: CanonicalAddress) -> bool:
+    """Return whether `INDEX` is out of bounds at `host_cell`.
+
+    Unevaluable selectors return `False` so export stays fail-closed until
+    runtime `INDEX` can raise `#REF!`.
+    """
+    if normalize_excel_function_name(node.name) != "INDEX" or len(node.args) < 2:
+        return False
+    corners = ref_window_corners(node.args[0], host_cell)
+    if corners is None:
+        return False
+    row_sel = eval_host_selector(node.args[1], host_cell)
+    if row_sel is None:
+        return False
+    col_arg = node.args[2] if len(node.args) > 2 else None
+    if col_arg is None or isinstance(col_arg, EmptyArgNode):
+        col_sel: int | None = None
+    else:
+        col_sel = eval_host_selector(col_arg, host_cell)
+        if col_sel is None:
+            return False
+    sheet, row1, col1 = parse_cell_coords(corners[0])
+    _sheet2, row2, col2 = parse_cell_coords(corners[1])
+    if sheet != _sheet2:
+        return False
+    base = ExcelRange(
+        sheet,
+        min(row1, row2),
+        min(col1, col2),
+        max(row1, row2),
+        max(col1, col2),
+    )
+    result = index_excel_range(base, row_sel, col_sel)
+    return isinstance(result, XlError) and result == XlError.REF
 
 
 def shift_range_corners(
@@ -1069,6 +1162,10 @@ class _DepCollector:
                     f"series {self.host.series_id!r}: INDEX expects a range and row"
                 )
             self._visit_index_selectors(base, host_cell=host_cell, host_index=host_index)
+            if index_call_is_ref(base, host_cell):
+                for arg in node.args[1:]:
+                    self.visit(arg, host_cell=host_cell, host_index=host_index)
+                return
         else:
             self.visit(base, host_cell=host_cell, host_index=host_index)
         resolved = resolve_offset_destination_series(
