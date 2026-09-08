@@ -307,8 +307,9 @@ def test_variant_dual_read_emits_host_scenario_and_matches_evaluator(tmp_path: P
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     modules = generate_inverted(workbook, document)
     internals = modules["internals.py"]
-    assert "(('shock', 'combo')[i], 'FDI to GDP', 'Historical average')" in internals
-    assert "(('shock', 'combo')[i], 'FDI to GDP', 'Standard deviation')" in internals
+    assert "stats[2 * i]" in internals
+    assert "stats[2 * i + 1]" in internals
+    assert ".index(" not in internals
     pkg = load_package(modules, tmp_path, name="a31_eval")
     cells = ["Outputs!A1", "Outputs!A2"]
     expected = FormulaEvaluator(
@@ -358,8 +359,10 @@ def test_row_pinned_indicator_dual_read_is_keyed(tmp_path: Path) -> None:
     assert "stats" not in fdi.lagged_ids
     document = _row_indicator_bindings()
     modules = generate_inverted(workbook, document)
-    assert "(('shock', 'combo')[i], 'Historical average')" in modules["internals.py"]
-    assert "(('shock', 'combo')[i], 'Standard deviation')" in modules["internals.py"]
+    internals = modules["internals.py"]
+    assert "stats[2 * i]" in internals
+    assert "stats[2 * i + 1]" in internals
+    assert ".index(" not in internals
     pkg = load_package(modules, tmp_path, name="a31_rows")
     cells = ["Outputs!A1", "Outputs!A2"]
     expected = FormulaEvaluator(
@@ -390,8 +393,9 @@ def test_cross_sheet_pin_keeps_other_scenario_literal(tmp_path: Path) -> None:
     document = _cross_sheet_bindings()
     modules = generate_inverted(workbook, document)
     internals = modules["internals.py"]
-    assert "(('shock', 'combo')[i], 'FDI to GDP', 'Historical average')" in internals
+    assert "stats[2 * i]" in internals
     assert "stats[4]" in internals
+    assert ".index(" not in internals
     pkg = load_package(modules, tmp_path, name="a31_cross")
     cells = ["Outputs!A1", "Outputs!A2"]
     expected = FormulaEvaluator(

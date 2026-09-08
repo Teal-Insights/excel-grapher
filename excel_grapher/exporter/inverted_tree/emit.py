@@ -8,13 +8,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from excel_grapher.exporter.inverted_tree.ast_emit import (
+    KeyedReadIntern,
     _is_identity_aligned,
+    bind_keyed_intern,
     emit_helper_body,
     emit_rung2_scc,
     emit_rung3_scc,
     python_annotation,
     python_data_annotation,
     python_return_annotation,
+    reset_keyed_intern,
 )
 from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, SeriesCatalog, build_catalog
 from excel_grapher.exporter.inverted_tree.deps import (
@@ -376,62 +379,72 @@ def emit_internals_module(
     if force_rung not in (None, 2, 3):
         raise ValueError(f"force_rung must be 2, 3, or None; got {force_rung!r}")
     plan = domains if domains is not None else plan_domain_emission(catalog, scc_map)
+    intern = KeyedReadIntern(plan)
     used_runtime: set[str] = set()
     functions: list[str] = []
     emitted_scans: set[tuple[str, ...]] = set()
     edges = catalog_edges.edges
     deps_map = dict(deps)
     needs_data = False
-    for series in catalog.formula_series():
-        info = deps[series.series_id]
-        scc = scc_map.get(series.series_id, (series.series_id,))
-        if len(scc) > 1 and scc in emitted_scans:
-            continue
-        choice = plan_scc(scc, catalog=catalog, graph=graph, edges=edges)
-        rung = _effective_rung(choice, force_rung)
-        body, used = _emit_by_rung(
-            scc,
-            series=series,
-            catalog=catalog,
-            deps=deps_map,
-            graph=graph,
-            edges=edges,
-            choice=choice,
-            rung=rung,
-        )
-        used_runtime |= used
-        if len(scc) > 1:
-            emitted_scans.add(scc)
-            param_ids = scc_external_params(scc, deps, catalog.order)
-            kind = "Demand-driven co-evaluation" if rung == 3 else "Fused union-domain evaluation"
-            joined = ", ".join(f"`{sid}`" for sid in scc)
-            doc = _helper_docstring(f"{kind} of zipper series {joined}.")
-            source = "\n".join([_scan_signature(scc, param_ids, catalog), doc, *body])
-            source = f"{_key_domain_attrs(scc=scc, plan=plan)}\n{source}"
+    intern_token = bind_keyed_intern(intern)
+    try:
+        for series in catalog.formula_series():
+            info = deps[series.series_id]
+            scc = scc_map.get(series.series_id, (series.series_id,))
+            if len(scc) > 1 and scc in emitted_scans:
+                continue
+            choice = plan_scc(scc, catalog=catalog, graph=graph, edges=edges)
+            rung = _effective_rung(choice, force_rung)
+            body, used = _emit_by_rung(
+                scc,
+                series=series,
+                catalog=catalog,
+                deps=deps_map,
+                graph=graph,
+                edges=edges,
+                choice=choice,
+                rung=rung,
+            )
+            used_runtime |= used
+            if len(scc) > 1:
+                emitted_scans.add(scc)
+                param_ids = scc_external_params(scc, deps, catalog.order)
+                kind = (
+                    "Demand-driven co-evaluation" if rung == 3 else "Fused union-domain evaluation"
+                )
+                joined = ", ".join(f"`{sid}`" for sid in scc)
+                doc = _helper_docstring(f"{kind} of zipper series {joined}.")
+                source = "\n".join([_scan_signature(scc, param_ids, catalog), doc, *body])
+                source = f"{_key_domain_attrs(scc=scc, plan=plan)}\n{source}"
+                functions.append(source)
+                needs_data = needs_data or plan.uses_data_scc(scc)
+                continue
+            if rung == 0 and any(
+                catalog.get(param).is_sequence and param in info.aligned_ids
+                for param in info.param_ids
+            ):
+                used_runtime.add("require_aligned")
+            if rung == 3:
+                summary = f"Demand-driven evaluation of series `{series.series_id}`."
+            else:
+                summary = f"First-level helper for bound series `{series.series_id}`."
+            doc = _helper_docstring(summary, series)
+            source = "\n".join([_helper_signature(series, info, catalog), doc, *body])
+            attrs = _key_domain_attrs(
+                series_id=series.series_id,
+                plan=plan,
+                holes=series.hole_indices,
+            )
+            source = f"{attrs}\n{source}"
             functions.append(source)
-            needs_data = needs_data or plan.uses_data_scc(scc)
-            continue
-        if rung == 0 and any(
-            catalog.get(param).is_sequence and param in info.aligned_ids for param in info.param_ids
-        ):
-            used_runtime.add("require_aligned")
-        if rung == 3:
-            summary = f"Demand-driven evaluation of series `{series.series_id}`."
-        else:
-            summary = f"First-level helper for bound series `{series.series_id}`."
-        doc = _helper_docstring(summary, series)
-        source = "\n".join([_helper_signature(series, info, catalog), doc, *body])
-        attrs = _key_domain_attrs(
-            series_id=series.series_id,
-            plan=plan,
-            holes=series.hole_indices,
-        )
-        source = f"{attrs}\n{source}"
-        functions.append(source)
-        needs_data = needs_data or plan.uses_data(series.series_id)
+            needs_data = needs_data or plan.uses_data(series.series_id)
+    finally:
+        reset_keyed_intern(intern_token)
+    needs_data = needs_data or intern.uses_data
     if functions:
         used_runtime.add("publish")
     runtime_names = sorted(used_runtime)
+    intern_lines = intern.emit_lines()
     lines = [
         '"""First-level-dependency internals for the inverted graph."""',
         "",
@@ -440,7 +453,7 @@ def emit_internals_module(
         "from collections.abc import Sequence",
         "",
     ]
-    if _uses_datetime(catalog, plan):
+    if _uses_datetime(catalog, plan) or intern.uses_datetime:
         lines.extend(["from datetime import datetime", ""])
     if needs_data:
         lines.append("from . import data")
@@ -449,6 +462,8 @@ def emit_internals_module(
         names = ", ".join(runtime_names)
         lines.append(f"from .runtime import {names}")
         lines.append("")
+    if intern_lines:
+        lines.extend([*intern_lines, ""])
     lines.append("")
     lines.append("\n\n".join(functions))
     lines.append("")

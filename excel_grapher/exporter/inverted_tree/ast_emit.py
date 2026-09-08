@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
@@ -74,7 +75,11 @@ from excel_grapher.exporter.inverted_tree.deps import (
     successor_address,
     try_formula_ast,
 )
-from excel_grapher.exporter.inverted_tree.domains import series_domain_points
+from excel_grapher.exporter.inverted_tree.domains import (
+    DomainEmitPlan,
+    series_domain_points,
+    uses_datetime_values,
+)
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.schedule import (
     FusedPlan,
@@ -130,6 +135,96 @@ _ARRAY_IF_UNSOUND_FNS = frozenset(
         "AGGREGATE",
     }
 )
+
+
+@dataclass
+class KeyedReadIntern:
+    """Intern domain tuples, slot maps, and catalog-index tables for internals.
+
+    `emit_internals_module` binds one instance for a package so repeated keyed
+    reads share metadata instead of embedding it at every site (#786).
+    """
+
+    plan: DomainEmitPlan
+    _sequences: dict[tuple[object, ...], str] = field(default_factory=dict)
+    _slot_maps: dict[str, str] = field(default_factory=dict)
+    _slot_tables: dict[tuple[int, ...], str] = field(default_factory=dict)
+    uses_data: bool = False
+    uses_datetime: bool = False
+
+    def sequence(self, values: tuple[object, ...], *, field: str | None = None) -> str:
+        """Return an expression for `values`, interned or reused from `data`."""
+        expr = self.plan.sequence_expr(values, field=field)
+        if expr is not None:
+            if "data." in expr:
+                self.uses_data = True
+            return expr
+        existing = self._sequences.get(values)
+        if existing is not None:
+            return existing
+        if uses_datetime_values(values):
+            self.uses_datetime = True
+        name = f"_KEYS_{len(self._sequences)}"
+        self._sequences[values] = name
+        return name
+
+    def slot_map(self, series_id: str) -> str:
+        """Return the interned `{key: catalog_index}` name for `series_id`."""
+        existing = self._slot_maps.get(series_id)
+        if existing is not None:
+            return existing
+        name = f"_INDEX_{series_id}"
+        if not name.isidentifier():
+            name = f"_INDEX_{len(self._slot_maps)}"
+        self._slot_maps[series_id] = name
+        if "data." in self.plan.series_expr.get(series_id, ""):
+            self.uses_data = True
+        return name
+
+    def slots(self, indices: tuple[int, ...]) -> str:
+        """Return a compact or interned expression for catalog-index `indices`."""
+        source = indices_to_source(indices)
+        if source.startswith("range(") or len(indices) <= 2:
+            return source
+        existing = self._slot_tables.get(indices)
+        if existing is not None:
+            return existing
+        name = f"_SLOTS_{len(self._slot_tables)}"
+        self._slot_tables[indices] = name
+        return name
+
+    def emit_lines(self) -> list[str]:
+        """Return module-level assignments for interned keyed-read metadata."""
+        lines: list[str] = []
+        for values, name in self._sequences.items():
+            lines.append(f"{name} = {values!r}")
+        for indices, name in self._slot_tables.items():
+            lines.append(f"{name} = {indices_to_source(indices)}")
+        for series_id, name in self._slot_maps.items():
+            domain = self.plan.series_expr[series_id]
+            lines.append(f"{name} = {{key: i for i, key in enumerate({domain})}}")
+        return lines
+
+
+_KEYED_INTERN: ContextVar[KeyedReadIntern | None] = ContextVar(
+    "excel_grapher_inverted_tree_keyed_intern",
+    default=None,
+)
+
+
+def bind_keyed_intern(intern: KeyedReadIntern) -> Token[KeyedReadIntern | None]:
+    """Install `intern` for the current inverted-tree emit walk."""
+    return _KEYED_INTERN.set(intern)
+
+
+def reset_keyed_intern(token: Token[KeyedReadIntern | None]) -> None:
+    """Restore the keyed-read intern installed by `bind_keyed_intern`."""
+    _KEYED_INTERN.reset(token)
+
+
+def current_keyed_intern() -> KeyedReadIntern | None:
+    """Keyed-read intern for the current emit walk, if any."""
+    return _KEYED_INTERN.get()
 
 
 @dataclass
@@ -414,13 +509,13 @@ def _host_key_value_expr(
     points = series_domain_points(ctx.host)
     if len(fields) == 1:
         column = tuple(_value(point) for point in points)
-        if column == points:
-            return f"{points!r}[{ctx.index_var}]"
-        return f"{column!r}[{ctx.index_var}]"
+        hint = field if column == points else None
+        return f"{_interned_sequence(column, field=hint)}[{ctx.index_var}]"
     pos = fields.index(field)
     raw_column = tuple(point[pos] if isinstance(point, tuple) else point for point in points)
     column = tuple(_value(item) for item in raw_column)
-    return f"{column!r}[{ctx.index_var}]"
+    hint = field if column == raw_column else None
+    return f"{_interned_sequence(column, field=hint)}[{ctx.index_var}]"
 
 
 def _pair_key_value_expr(
@@ -472,7 +567,7 @@ def _pair_key_value_expr(
             )
         column.append(pair)
     index_expr = _index_expr(-origin, ctx.index_var)
-    return f"{tuple(column)!r}[{index_expr}][{branch}]"
+    return f"{_interned_sequence(tuple(column))}[{index_expr}][{branch}]"
 
 
 def _producer_field_binding(
@@ -619,13 +714,75 @@ def _verify_keyed_binding(
             )
 
 
+def _interned_sequence(values: tuple[object, ...], *, field: str | None = None) -> str:
+    """Return `values` as an interned name, a `data` domain, or a tuple literal."""
+    intern = current_keyed_intern()
+    if intern is None:
+        return repr(values)
+    return intern.sequence(values, field=field)
+
+
+def _keyed_index_from_catalog_pairs(
+    owner: BoundSeries,
+    address: CanonicalAddress,
+    ctx: EmitContext,
+    ref: CellRefNode | None,
+) -> str | None:
+    """Return an affine or interned catalog-index expression when the site is static.
+
+    Statement-local `(host, producer)` pairs are preferred over embedding the
+    producer domain and calling `.index`. A one-cell host (no loop) uses the
+    precomputed catalog slot.
+    """
+    if ctx.index_var is None:
+        idx = owner.index_of(address)
+        return None if idx is None else str(idx)
+    if ref is None or ctx.graph is None:
+        return None
+    try:
+        pairs = cell_ref_catalog_pairs(
+            ctx.host,
+            owner,
+            ctx.graph,
+            host_cell=ctx.host_cell,
+            ref=ref,
+            cells=_statement_cells(ctx),
+        )
+    except InvertedTreeExportError:
+        return None
+    if len(pairs) >= 2:
+        fitted = fit_affine_map(pairs)
+        if fitted is not None:
+            return _linear_index_expr(fitted[0], fitted[1], ctx.index_var)
+        stmt = _current_statement(ctx)
+        members = ctx.host.cells if stmt is None else stmt.cells
+        origin = 0 if stmt is None else stmt.start
+        by_host = dict(pairs)
+        table: list[int] = []
+        for cell in members:
+            host_i = ctx.host.index_of(cell)
+            if host_i is None or host_i not in by_host:
+                return None
+            table.append(by_host[host_i])
+        intern = current_keyed_intern()
+        slots = intern.slots(tuple(table)) if intern is not None else indices_to_source(table)
+        return f"{slots}[{_index_expr(-origin, ctx.index_var)}]"
+    if len(pairs) == 1:
+        return str(pairs[0][1])
+    return None
+
+
 def _keyed_catalog_index_expr(
     owner: BoundSeries,
     address: CanonicalAddress,
     ctx: EmitContext,
     ref: CellRefNode | None = None,
 ) -> str:
-    """Return `domain.index(key)` for a keyed multi-read of `address`."""
+    """Return a catalog index for a keyed multi-read of `address`.
+
+    Prefers an affine map or interned slot table. Otherwise looks up a shared
+    key-to-slot map instead of embedding `domain.index(...)` at each site.
+    """
     follow = _host_follow_for(owner, ctx)
     pairs = _host_pair_for(owner, ctx)
     binding = _producer_field_binding(
@@ -637,7 +794,15 @@ def _keyed_catalog_index_expr(
             f"{owner.series_id!r} at {address}"
         )
     _verify_keyed_binding(owner, binding, ctx, host_follow=follow, pair_maps=pairs)
-    domain = series_domain_points(owner)
+    static = _keyed_index_from_catalog_pairs(owner, address, ctx, ref)
+    if static is not None:
+        return static
+    intern = current_keyed_intern()
+    if intern is not None:
+        map_name = intern.slot_map(owner.series_id)
+    else:
+        domain = series_domain_points(owner)
+        map_name = f"{{key: i for i, key in enumerate({domain!r})}}"
     if (
         ctx.index_var is not None
         and owner.key_fields == ctx.host.key_fields
@@ -645,7 +810,7 @@ def _keyed_catalog_index_expr(
         and _follow_is_identity(follow, owner.key_fields)
     ):
         host_domain = series_domain_points(ctx.host)
-        return f"{domain!r}.index({host_domain!r}[{ctx.index_var}])"
+        return f"{map_name}[{_interned_sequence(host_domain)}[{ctx.index_var}]]"
     key_parts: list[str] = []
     for key_name in owner.key_fields:
         spec = binding[key_name]
@@ -667,7 +832,7 @@ def _keyed_catalog_index_expr(
                 f"series {ctx.host.series_id!r}: invalid keyed binding {spec!r} for {key_name}"
             )
     key_expr = key_parts[0] if len(key_parts) == 1 else f"({', '.join(key_parts)})"
-    return f"{domain!r}.index({key_expr})"
+    return f"{map_name}[{key_expr}]"
 
 
 def _emit_address(
