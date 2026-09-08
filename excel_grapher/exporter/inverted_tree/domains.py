@@ -8,8 +8,9 @@ count (#676). Generated modules attach that metadata with `@publish` (#766).
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from dataclasses import field as data_field
 from datetime import datetime
 from itertools import product
 
@@ -119,12 +120,215 @@ def _loop_var(field: str, used: set[str]) -> str:
     return candidate
 
 
-def _product_comprehension(fields: tuple[str, ...], field_exprs: Sequence[str]) -> str:
+_MAX_PRODUCT_SCAN = 250_000
+_MAX_EXCEPTIONS = 8
+
+
+def _product_comprehension(
+    fields: tuple[str, ...],
+    field_exprs: Sequence[str],
+    *,
+    exclude: Sequence[str] = (),
+) -> str:
     used: set[str] = set()
     names = [_loop_var(field, used) for field in fields]
     tuple_body = ", ".join(names)
     gens = " ".join(f"for {name} in {expr}" for name, expr in zip(names, field_exprs, strict=True))
-    return f"tuple(({tuple_body}) {gens})"
+    if not exclude:
+        return f"tuple(({tuple_body}) {gens})"
+    if len(exclude) == 1:
+        return f"tuple(({tuple_body}) {gens} if ({tuple_body}) != {exclude[0]})"
+    inner = ", ".join(exclude)
+    return f"tuple(({tuple_body}) {gens} if ({tuple_body}) not in {{{inner}}})"
+
+
+def _maybe_product(axes: Sequence[tuple[object, ...]]) -> tuple[object, ...] | None:
+    """Return `tuple(product(*axes))` when the product is small enough to scan."""
+    size = 1
+    for axis in axes:
+        if not axis:
+            return ()
+        size *= len(axis)
+        if size > _MAX_PRODUCT_SCAN:
+            return None
+    return tuple(product(*axes))
+
+
+def _worth_emitting(source: str, points: tuple[object, ...]) -> bool:
+    """True when `source` is shorter than a tuple literal of `points`."""
+    if not points:
+        return False
+    sample_n = min(8, len(points))
+    sample = sum(len(repr(point)) + 2 for point in points[:sample_n]) / sample_n
+    estimated = int(sample * len(points)) + 2
+    return len(source) < estimated
+
+
+def _cover_rectangles(
+    points: tuple[tuple[object, ...], ...],
+) -> list[tuple[tuple[object, ...], ...]] | None:
+    """Split `points` into consecutive Cartesian blocks, preserving order.
+
+    Each block is a tuple of per-dimension value tuples such that
+    `product(*block)` reproduces that block's points. Returns `None` when
+    `points` are not uniform tuples.
+    """
+    if not points:
+        return []
+    ndim = len(points[0])
+    if any(not isinstance(point, tuple) or len(point) != ndim for point in points):
+        return None
+    if ndim == 1:
+        return [(tuple(point[0] for point in points),)]
+
+    groups: list[tuple[object, tuple[tuple[object, ...], ...]]] = []
+    index = 0
+    while index < len(points):
+        outer = points[index][0]
+        inner: list[tuple[object, ...]] = []
+        while index < len(points) and points[index][0] == outer:
+            inner.append(points[index][1:])
+            index += 1
+        groups.append((outer, tuple(inner)))
+
+    covered: list[tuple[object, list[tuple[tuple[object, ...], ...]]]] = []
+    for outer, inner_points in groups:
+        inner_blocks = _cover_rectangles(inner_points)
+        if inner_blocks is None:
+            return None
+        covered.append((outer, inner_blocks))
+
+    blocks: list[tuple[tuple[object, ...], ...]] = []
+    group_index = 0
+    while group_index < len(covered):
+        outer, inner_blocks = covered[group_index]
+        if len(inner_blocks) == 1:
+            inner_axes = inner_blocks[0]
+            outers = [outer]
+            group_index += 1
+            while (
+                group_index < len(covered)
+                and len(covered[group_index][1]) == 1
+                and covered[group_index][1][0] == inner_axes
+            ):
+                outers.append(covered[group_index][0])
+                group_index += 1
+            blocks.append((tuple(outers), *inner_axes))
+        else:
+            for inner_axes in inner_blocks:
+                blocks.append(((outer,), *inner_axes))
+            group_index += 1
+
+    rebuilt: list[object] = []
+    for block in blocks:
+        rebuilt.extend(product(*block))
+    if tuple(rebuilt) != points:
+        return None
+    return blocks
+
+
+def _triangle_source(
+    keys: tuple[str, ...],
+    points: tuple[object, ...],
+    per_field: Sequence[tuple[object, ...]],
+    axis_exprs: Sequence[str],
+) -> str | None:
+    """Return an enumerate comprehension for a 2-D triangular domain."""
+    if len(keys) != 2 or len(per_field) != 2:
+        return None
+    groups: list[tuple[object, tuple[object, ...]]] = []
+    index = 0
+    while index < len(points):
+        point = points[index]
+        if not isinstance(point, tuple) or len(point) != 2:
+            return None
+        outer = point[0]
+        inners: list[object] = []
+        while index < len(points):
+            current = points[index]
+            if not isinstance(current, tuple) or current[0] != outer:
+                break
+            inners.append(current[1])
+            index += 1
+        groups.append((outer, tuple(inners)))
+    outers = tuple(group[0] for group in groups)
+    if outers != per_field[0]:
+        return None
+    inner_full = per_field[1]
+    count = len(groups)
+    got = tuple(group[1] for group in groups)
+    used: set[str] = set()
+    outer_var = _loop_var(keys[0], used)
+    inner_var = _loop_var(keys[1], used)
+    idx = "i"
+    while idx in used:
+        idx = f"{idx}x"
+    outer_expr, inner_expr = axis_exprs
+    if got == tuple(inner_full[: i + 1] for i in range(count)):
+        return (
+            f"tuple(({outer_var}, {inner_var}) for {idx}, {outer_var} in enumerate({outer_expr}) "
+            f"for {inner_var} in {inner_expr}[: {idx} + 1])"
+        )
+    if got == tuple(inner_full[: count - i] for i in range(count)):
+        return (
+            f"tuple(({outer_var}, {inner_var}) for {idx}, {outer_var} in enumerate({outer_expr}) "
+            f"for {inner_var} in {inner_expr}[: {count} - {idx}])"
+        )
+    if got == tuple(inner_full[i:] for i in range(count)):
+        return (
+            f"tuple(({outer_var}, {inner_var}) for {idx}, {outer_var} in enumerate({outer_expr}) "
+            f"for {inner_var} in {inner_expr}[{idx}:])"
+        )
+    if got == tuple(inner_full[count - i - 1 :] for i in range(count)):
+        return (
+            f"tuple(({outer_var}, {inner_var}) for {idx}, {outer_var} in enumerate({outer_expr}) "
+            f"for {inner_var} in {inner_expr}[{count} - {idx} - 1 :])"
+        )
+    return None
+
+
+def _product_variant_source(
+    keys: tuple[str, ...],
+    points: tuple[object, ...],
+    per_field: Sequence[tuple[object, ...]],
+    axis_exprs: Sequence[str],
+    point_expr: Callable[[tuple[str, ...], object], str],
+) -> str | None:
+    """Return a product comprehension, slice, or small-exception filter."""
+    generated = _maybe_product(per_field)
+    if generated is None:
+        return None
+    comprehension = _product_comprehension(keys, axis_exprs)
+    if generated == points:
+        return comprehension
+    extra = len(generated) - len(points)
+    if extra <= 0 or extra > _MAX_EXCEPTIONS:
+        return None
+    if generated[: len(points)] == points:
+        return f"{comprehension}[:-1]" if extra == 1 else f"{comprehension}[:-{extra}]"
+    if generated[-len(points) :] == points:
+        return f"{comprehension}[{extra}:]"
+    missing: list[object] = []
+    gen_iter = iter(generated)
+    try:
+        current = next(gen_iter)
+        for point in points:
+            while current != point:
+                missing.append(current)
+                current = next(gen_iter)
+            current = next(gen_iter, _MISSING)
+        if current is not _MISSING:
+            missing.append(current)
+            missing.extend(gen_iter)
+    except StopIteration:
+        return None
+    if len(missing) != extra:
+        return None
+    exclude = [point_expr(keys, item) for item in missing]
+    return _product_comprehension(keys, axis_exprs, exclude=exclude)
+
+
+_MISSING = object()
 
 
 def _field_values_from_points(
@@ -183,7 +387,11 @@ def uses_datetime_values(values: Sequence[object]) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class DomainEmitPlan:
-    """Expressions and interned tuples for one catalog's key domains."""
+    """Expressions and interned tuples for one catalog's key domains.
+
+    `interned_source` maps `_DOMAIN_N` names to compact `data.py` right-hand
+    sides. Names absent from the map are emitted as tuple literals.
+    """
 
     field_domains: dict[str, tuple[Scalar, ...]]
     interned: tuple[tuple[str, tuple[object, ...]], ...]
@@ -191,6 +399,7 @@ class DomainEmitPlan:
     series_key: dict[str, tuple[str, ...]]
     scc_expr: dict[tuple[str, ...], str]
     scc_key: dict[tuple[str, ...], tuple[str, ...]]
+    interned_source: dict[str, str] = data_field(default_factory=dict)
 
     def uses_data(self, series_id: str) -> bool:
         """True when this series' `__domain__` expression reads `data`."""
@@ -246,26 +455,131 @@ class _Planner:
     def __init__(self, field_domains: dict[str, tuple[Scalar, ...]]) -> None:
         self.field_domains = field_domains
         self.interned: list[tuple[str, tuple[object, ...]]] = []
+        self.interned_source: dict[str, str] = {}
 
-    def intern(self, points: tuple[object, ...]) -> str:
+    def intern(self, points: tuple[object, ...], source: str | None = None) -> str:
         for name, values in self.interned:
             if values == points:
                 return f"data.{name}"
         name = f"_DOMAIN_{len(self.interned)}"
         self.interned.append((name, points))
+        if source is not None:
+            self.interned_source[name] = source
         return f"data.{name}"
 
-    def field_ref(self, field: str, values: tuple[object, ...]) -> str | None:
+    def field_ref(
+        self, field: str, values: tuple[object, ...], *, qualified: bool = True
+    ) -> str | None:
         full = self.field_domains.get(field)
         if full is None:
             return None
         slc = _contiguous_slice(full, values)
         if slc is None:
             return None
-        name = f"data.{domain_const_name(field)}"
+        name = domain_const_name(field)
+        ref = f"data.{name}" if qualified else name
         if slc == slice(None):
-            return name
-        return f"{name}{_slice_source(slc)}"
+            return ref
+        return f"{ref}{_slice_source(slc)}"
+
+    def axis_expr(self, field: str, values: tuple[object, ...], *, qualified: bool) -> str:
+        ref = self.field_ref(field, values, qualified=qualified)
+        return ref if ref is not None else repr(values)
+
+    def value_expr(self, field: str, value: object, *, qualified: bool) -> str:
+        full = self.field_domains.get(field)
+        if full is None:
+            return repr(value)
+        try:
+            index = full.index(value)
+        except ValueError:
+            return repr(value)
+        name = domain_const_name(field)
+        ref = f"data.{name}" if qualified else name
+        if index == len(full) - 1:
+            return f"{ref}[-1]"
+        return f"{ref}[{index}]"
+
+    def point_expr(self, keys: tuple[str, ...], point: object, *, qualified: bool) -> str:
+        if not isinstance(point, tuple) or len(point) != len(keys):
+            return repr(point)
+        parts = [
+            self.value_expr(field, value, qualified=qualified)
+            for field, value in zip(keys, point, strict=True)
+        ]
+        return f"({', '.join(parts)})"
+
+    def _block_source(
+        self,
+        keys: tuple[str, ...],
+        block: tuple[tuple[object, ...], ...],
+        *,
+        qualified: bool,
+    ) -> tuple[str, int]:
+        count = 1
+        for axis in block:
+            count *= len(axis)
+        if count == 1:
+            point = tuple(axis[0] for axis in block)
+            return self.point_expr(keys, point, qualified=qualified), 1
+        exprs = [
+            self.axis_expr(field, axis, qualified=qualified)
+            for field, axis in zip(keys, block, strict=True)
+        ]
+        return _product_comprehension(keys, exprs), count
+
+    def _blocks_source(
+        self,
+        keys: tuple[str, ...],
+        blocks: list[tuple[tuple[object, ...], ...]],
+        *,
+        qualified: bool,
+    ) -> str | None:
+        parts: list[tuple[str, int]] = []
+        for block in blocks:
+            if len(block) != len(keys):
+                return None
+            parts.append(self._block_source(keys, block, qualified=qualified))
+        if len(parts) == 1:
+            return parts[0][0]
+        bits = [expr if n == 1 else f"*{expr}" for expr, n in parts]
+        return f"({', '.join(bits)})"
+
+    def _compact_source(
+        self,
+        keys: tuple[str, ...],
+        points: tuple[object, ...],
+        per_field: list[tuple[object, ...]],
+        *,
+        qualified: bool,
+    ) -> str | None:
+        axis_exprs = [
+            self.axis_expr(field, values, qualified=qualified)
+            for field, values in zip(keys, per_field, strict=True)
+        ]
+        candidates: list[str] = []
+        product_form = _product_variant_source(
+            keys,
+            points,
+            per_field,
+            axis_exprs,
+            lambda ks, pt: self.point_expr(ks, pt, qualified=qualified),
+        )
+        if product_form is not None:
+            candidates.append(product_form)
+        triangle = _triangle_source(keys, points, per_field, axis_exprs)
+        if triangle is not None:
+            candidates.append(triangle)
+        tuple_points = tuple(point for point in points if isinstance(point, tuple))
+        if len(tuple_points) == len(points):
+            blocks = _cover_rectangles(tuple_points)
+            if blocks is not None:
+                block_expr = self._blocks_source(keys, blocks, qualified=qualified)
+                if block_expr is not None:
+                    candidates.append(block_expr)
+        if not candidates:
+            return None
+        return min(candidates, key=len)
 
     def expr_for(self, keys: tuple[str, ...], points: tuple[object, ...]) -> str:
         if not keys:
@@ -281,7 +595,7 @@ class _Planner:
             ref = self.field_ref(keys[0], scalars)
             return ref if ref is not None else self.intern(scalars)
         per_field = _field_values_from_points(keys, points)
-        generated = tuple(product(*per_field))
+        generated = _maybe_product(per_field)
         if generated == points:
             refs: list[str] = []
             for field, values in zip(keys, per_field, strict=True):
@@ -291,6 +605,9 @@ class _Planner:
                 refs.append(ref)
             else:
                 return _product_comprehension(keys, refs)
+        source = self._compact_source(keys, points, per_field, qualified=False)
+        if source is not None and _worth_emitting(source, points):
+            return self.intern(points, source=source)
         return self.intern(points)
 
 
@@ -372,6 +689,7 @@ def plan_domain_emission(
         series_key=series_key,
         scc_expr=scc_expr,
         scc_key=scc_key,
+        interned_source=dict(planner.interned_source),
     )
 
 

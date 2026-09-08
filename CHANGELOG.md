@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.8.0 (2026-09-08)
+
+### Documentation
+
+- **export**: Describe compact interned domain emission
+  ([#804](https://github.com/Teal-Insights/excel-grapher/pull/804),
+  [`42e486f`](https://github.com/Teal-Insights/excel-grapher/commit/42e486f7b0f3cfa5e1262091a15b77b6d9aa4e01))
+
+### Features
+
+- **export**: Compact mostly-regular sparse multidimensional domains
+  ([#804](https://github.com/Teal-Insights/excel-grapher/pull/804),
+  [`42e486f`](https://github.com/Teal-Insights/excel-grapher/commit/42e486f7b0f3cfa5e1262091a15b77b6d9aa4e01))
+
+### Performance Improvements
+
+- **export**: Factor shared formula prefixes across generated API functions
+  ([#801](https://github.com/Teal-Insights/excel-grapher/pull/801),
+  [`d1afdbf`](https://github.com/Teal-Insights/excel-grapher/commit/d1afdbf79c2173f6ea679fb03aa2b21ec1758382))
+
+
+## v14.7.3 (2026-09-08)
+
+### Performance Improvements
+
+- **export**: Reuse lookup tables and identical eager lookups
+  ([#802](https://github.com/Teal-Insights/excel-grapher/pull/802),
+  [`dc1a099`](https://github.com/Teal-Insights/excel-grapher/commit/dc1a0991688b140d9c5e79f797b3fc00ba565176))
+
+
+## v14.7.2 (2026-09-08)
+
+### Performance Improvements
+
+- **export**: Compact inverted-tree aggregate member tables
+  ([#800](https://github.com/Teal-Insights/excel-grapher/pull/800),
+  [`2f50ab3`](https://github.com/Teal-Insights/excel-grapher/commit/2f50ab3cad9724fb339c5bc2afaed799d7b8fd09))
+
+### Testing
+
+- **export**: Treat Excel errors as success in the eager closure sweep
+  ([#791](https://github.com/Teal-Insights/excel-grapher/pull/791),
+  [`0053be2`](https://github.com/Teal-Insights/excel-grapher/commit/0053be2bdf3bb8b498e3cb417294869178a25c4e))
+
+
 ## v14.7.1 (2026-09-08)
 
 ### Bug Fixes

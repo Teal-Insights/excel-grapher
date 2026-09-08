@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -190,14 +191,19 @@ def _uses_datetime(catalog: SeriesCatalog, plan: DomainEmitPlan | None = None) -
 
 
 def _emit_domain_constants(plan: DomainEmitPlan) -> list[str]:
-    """Emit one tuple per distinct key domain, then interned subset domains."""
+    """Emit one tuple per distinct key domain, then interned subset domains.
+
+    Interned domains use a compact Cartesian/slice expression when the planner
+    stored one, otherwise a tuple literal of the interned points.
+    """
     lines: list[str] = []
     for field, values in plan.field_domains.items():
         name = domain_const_name(field)
         lines.append(f"{name}: {domain_annotation(values)} = {_py_literal(values)}")
         lines.append("")
     for name, values in plan.interned:
-        lines.append(f"{name}: {domain_annotation(values)} = {_py_literal(values)}")
+        rhs = plan.interned_source.get(name) or _py_literal(values)
+        lines.append(f"{name}: {domain_annotation(values)} = {rhs}")
         lines.append("")
     return lines
 
@@ -636,6 +642,143 @@ def _union_plan_indices(
     return result, call
 
 
+_MIN_SHARED_FORMULAS = 2
+
+
+@dataclass(slots=True)
+class _SharedSubplan:
+    """A formula prefix shared by outputs with different input closures."""
+
+    name: str
+    formula_ids: tuple[str, ...]
+    consumers: frozenset[str]
+    returns: tuple[str, ...]
+    param_ids: tuple[str, ...]
+    result_indices: dict[str, tuple[int, ...]]
+    call_indices: dict[str, tuple[int, ...]]
+
+
+def _subplan_signature_params(
+    formula_ids: Sequence[str],
+    *,
+    catalog: SeriesCatalog,
+    deps: dict[str, SeriesDeps],
+) -> tuple[str, ...]:
+    """Return input and external-formula params a shared helper must receive."""
+    inside = set(formula_ids)
+    needed: set[str] = set()
+    for series_id in formula_ids:
+        info = deps.get(series_id)
+        if info is None:
+            continue
+        for param_id in info.param_ids:
+            if param_id in inside:
+                continue
+            series = catalog.get(param_id)
+            if series.direction == "constant":
+                continue
+            needed.add(param_id)
+    return tuple(sid for sid in catalog.order if sid in needed)
+
+
+def _subplan_frontier(
+    formula_ids: Sequence[str],
+    *,
+    consumers: frozenset[str],
+    closures: Mapping[str, tuple[str, ...]],
+    deps: dict[str, SeriesDeps],
+) -> tuple[str, ...]:
+    """Return series the helper must hand back to private tails."""
+    inside = set(formula_ids)
+    needed: set[str] = set()
+    for output_id in consumers:
+        for series_id in closures[output_id]:
+            if series_id in inside:
+                if series_id == output_id:
+                    needed.add(series_id)
+                continue
+            info = deps.get(series_id)
+            if info is None:
+                continue
+            for param_id in info.param_ids:
+                if param_id in inside:
+                    needed.add(param_id)
+    if not needed and formula_ids:
+        needed.add(formula_ids[-1])
+    return tuple(sid for sid in formula_ids if sid in needed)
+
+
+def _plan_shared_subplans(
+    catalog: SeriesCatalog,
+    deps: dict[str, SeriesDeps],
+    scc_map: dict[str, tuple[str, ...]] | None,
+) -> tuple[_SharedSubplan, ...]:
+    """Extract sufficiently large prefixes shared across distinct input closures.
+
+    Outputs that already share a runner (identical required inputs) are one
+    emission site. A helper is emitted only when the same formula series appear
+    in two or more input-closure groups, so baseline/shocked splits stay apart
+    unless they truly share internals.
+    """
+    outputs = list(catalog.output_series())
+    closures: dict[str, tuple[str, ...]] = {}
+    group_keys: dict[str, tuple[str, ...]] = {}
+    for output in outputs:
+        closures[output.series_id] = formula_closure(
+            output.series_id, catalog=catalog, deps=deps, scc_map=scc_map
+        )
+        group_keys[output.series_id] = _group_key(output, catalog=catalog, deps=deps)
+    consumers: dict[str, set[str]] = {}
+    for output_id, formula_ids in closures.items():
+        for series_id in formula_ids:
+            if series_id == output_id:
+                continue
+            consumers.setdefault(series_id, set()).add(output_id)
+    mapping = scc_map or {}
+    dropped: set[str] = set()
+    seen_units: set[tuple[str, ...]] = set()
+    for unit in mapping.values():
+        if len(unit) <= 1 or unit in seen_units:
+            continue
+        seen_units.add(unit)
+        member_consumers = [consumers.get(member, set()) for member in unit]
+        if any(group != member_consumers[0] for group in member_consumers):
+            dropped.update(unit)
+    by_consumers: dict[frozenset[str], list[str]] = {}
+    for series_id, group in consumers.items():
+        if series_id in dropped or len(group) < 2:
+            continue
+        keys = {group_keys[output_id] for output_id in group}
+        if len(keys) < 2:
+            continue
+        by_consumers.setdefault(frozenset(group), []).append(series_id)
+    subplans: list[_SharedSubplan] = []
+    index = 0
+    for group in sorted(by_consumers, key=lambda item: (-len(item), tuple(sorted(item)))):
+        series_ids = set(by_consumers[group])
+        sample = min(group)
+        ordered = tuple(sid for sid in closures[sample] if sid in series_ids)
+        if len(ordered) < _MIN_SHARED_FORMULAS:
+            continue
+        members = [catalog.get(output_id) for output_id in sorted(group)]
+        result_indices, call_indices = _union_plan_indices(
+            members, catalog=catalog, deps=deps, scc_map=scc_map
+        )
+        subplans.append(
+            _SharedSubplan(
+                name=f"_shared_{index}",
+                formula_ids=ordered,
+                consumers=group,
+                returns=_subplan_frontier(ordered, consumers=group, closures=closures, deps=deps),
+                param_ids=_subplan_signature_params(ordered, catalog=catalog, deps=deps),
+                result_indices=result_indices,
+                call_indices=call_indices,
+            )
+        )
+        index += 1
+    return tuple(subplans)
+
+
 def _leaf_signature_parts(
     leaves: Sequence[str],
     catalog: SeriesCatalog,
@@ -734,16 +877,28 @@ def _emit_evaluation_body(
     catalog: SeriesCatalog,
     deps: Mapping[str, SeriesDeps],
     scc_map: Mapping[str, tuple[str, ...]] | None,
+    emit_guards: bool = True,
+    emit_lengths: bool = True,
+    emit_leaf_takes: bool = True,
+    subplans: Sequence[_SharedSubplan] = (),
+    bound_windows: Mapping[str, tuple[int, ...]] | None = None,
 ) -> tuple[list[str], set[str], set[str]]:
     """Emit domain/map guards, length checks, takes, and internals calls."""
     runtime: set[str] = set()
-    body, domain_runtime = _emit_input_domain_checks(leaves, catalog)
-    runtime |= domain_runtime
-    map_lines, map_runtime = _emit_input_value_maps(leaves, catalog)
-    body.extend(map_lines)
-    runtime |= map_runtime
+    body: list[str] = []
+    if emit_guards:
+        domain_lines, domain_runtime = _emit_input_domain_checks(leaves, catalog)
+        body.extend(domain_lines)
+        runtime |= domain_runtime
+        map_lines, map_runtime = _emit_input_value_maps(leaves, catalog)
+        body.extend(map_lines)
+        runtime |= map_runtime
     local_indices: dict[str, tuple[int, ...]] = {}
     leaf_source = _leaf_source_map(leaves, catalog)
+    if bound_windows:
+        for sid, window in bound_windows.items():
+            leaf_source[sid] = sid
+            local_indices[sid] = window
     for sid in leaves:
         series = catalog.get(sid)
         identity = _identity_indices(series)
@@ -751,22 +906,66 @@ def _emit_evaluation_body(
         is_constant = series.direction == "constant"
         if not series.is_sequence:
             continue
-        if not is_constant:
+        if emit_lengths and not is_constant:
             runtime.add("require_length")
             body.append(f"    require_length({sid}, {len(series.cells)})")
         wanted = result_indices.get(sid)
-        if wanted is None or wanted == identity:
+        if not emit_leaf_takes or wanted is None or wanted == identity:
             continue
         runtime.add("take")
         body.append(f"    {sid} = take({leaf_source[sid]}, {index_mapping_source(wanted)})")
         leaf_source[sid] = sid
         local_indices[sid] = wanted
+    if bound_windows and emit_leaf_takes:
+        for sid, window in bound_windows.items():
+            wanted = result_indices.get(sid)
+            if wanted is None or wanted == window:
+                continue
+            work = IndexSet.from_indices(wanted).positions_in(IndexSet.from_indices(window))
+            if work.materialize() == tuple(range(len(window))):
+                continue
+            runtime.add("take")
+            body.append(f"    {sid} = take({sid}, {index_mapping_source(work.materialize())})")
+            local_indices[sid] = wanted
+            leaf_source[sid] = sid
     locals_bound: set[str] = {
         sid for sid in leaves if catalog.get(sid).direction != "constant" or leaf_source[sid] == sid
     }
+    if bound_windows:
+        locals_bound.update(bound_windows)
     seen_sccs: set[tuple[str, ...]] = set()
     mapping = scc_map or {}
+    formula_set = set(formula_ids)
+    applicable = [plan for plan in subplans if set(plan.formula_ids) <= formula_set]
+    covered: set[str] = set()
     for series_id in formula_ids:
+        if series_id in covered:
+            continue
+        matched = next(
+            (
+                plan
+                for plan in applicable
+                if plan.formula_ids
+                and plan.formula_ids[0] == series_id
+                and covered.isdisjoint(plan.formula_ids)
+            ),
+            None,
+        )
+        if matched is not None:
+            args = ", ".join(f"{sid}={leaf_source.get(sid, sid)}" for sid in matched.param_ids)
+            if len(matched.returns) == 1:
+                body.append(f"    {matched.returns[0]} = {matched.name}({args})")
+            else:
+                unpack = ", ".join(matched.returns)
+                body.append(f"    {unpack} = {matched.name}({args})")
+            covered.update(matched.formula_ids)
+            for sid in matched.returns:
+                locals_bound.add(sid)
+                leaf_source[sid] = sid
+                local_indices[sid] = matched.result_indices.get(
+                    sid, _identity_indices(catalog.get(sid))
+                )
+            continue
         scc = mapping.get(series_id, (series_id,))
         if len(scc) > 1:
             if scc in seen_sccs:
@@ -847,6 +1046,7 @@ def emit_orchestrator(
     deps: Mapping[str, SeriesDeps],
     scc_map: Mapping[str, tuple[str, ...]] | None = None,
     domains: DomainEmitPlan | None = None,
+    subplans: Sequence[_SharedSubplan] = (),
 ) -> tuple[str, set[str], bool]:
     """Emit one public `compute_*` function.
 
@@ -872,6 +1072,7 @@ def emit_orchestrator(
     _required, constants, params = _leaf_signature_parts(leaves, catalog)
     compute_name = output.compute_name or f"compute_{output.series_id}"
     signature = _keyword_signature(compute_name, params, python_return_annotation(output))
+    applicable = [plan for plan in subplans if set(plan.formula_ids) <= set(formula_ids)]
     body, runtime, locals_bound = _emit_evaluation_body(
         leaves=leaves,
         formula_ids=formula_ids,
@@ -880,6 +1081,8 @@ def emit_orchestrator(
         catalog=catalog,
         deps=deps,
         scc_map=scc_map,
+        emit_leaf_takes=not applicable,
+        subplans=subplans,
     )
     if output.series_id in locals_bound:
         body.append(_emit_result_return(output))
@@ -898,6 +1101,7 @@ def _emit_shared_runner(
     catalog: SeriesCatalog,
     deps: dict[str, SeriesDeps],
     scc_map: dict[str, tuple[str, ...]] | None,
+    subplans: Sequence[_SharedSubplan] = (),
 ) -> tuple[str, set[str], bool]:
     """Emit one private evaluation walk shared by `outputs`."""
     leaves = _union_leaves(outputs, catalog=catalog, deps=deps)
@@ -908,6 +1112,7 @@ def _emit_shared_runner(
     _required, constants, params = _leaf_signature_parts(leaves, catalog)
     returns = ", ".join(python_return_annotation(output) for output in outputs)
     signature = _keyword_signature(name, params, f"tuple[{returns}]")
+    applicable = [plan for plan in subplans if set(plan.formula_ids) <= set(formula_ids)]
     body, runtime, _bound = _emit_evaluation_body(
         leaves=leaves,
         formula_ids=formula_ids,
@@ -916,12 +1121,67 @@ def _emit_shared_runner(
         catalog=catalog,
         deps=deps,
         scc_map=scc_map,
+        emit_leaf_takes=not applicable,
+        subplans=subplans,
     )
     returned = ", ".join(output.series_id for output in outputs)
     body.append(f"    return {returned}")
     joined = ", ".join(f"`{output.series_id}`" for output in outputs)
     doc = f'    """Evaluate the shared formula closure of {joined}."""'
     return "\n".join([signature, doc, *body]), runtime, bool(constants)
+
+
+def _emit_shared_subplan(
+    subplan: _SharedSubplan,
+    *,
+    catalog: SeriesCatalog,
+    deps: dict[str, SeriesDeps],
+    scc_map: dict[str, tuple[str, ...]] | None,
+    subplans: Sequence[_SharedSubplan],
+) -> tuple[str, set[str], bool]:
+    """Emit a private helper for one shared formula prefix."""
+    seen: set[str] = set()
+    for series_id in subplan.formula_ids:
+        seen.update(leaf_closure(series_id, catalog=catalog, deps=deps))
+    leaves = tuple(sid for sid in catalog.order if sid in seen)
+    params = [f"{sid}: {python_annotation(catalog.get(sid))}" for sid in subplan.param_ids]
+    if len(subplan.returns) == 1:
+        returns = python_return_annotation(catalog.get(subplan.returns[0]))
+    else:
+        parts = ", ".join(python_return_annotation(catalog.get(sid)) for sid in subplan.returns)
+        returns = f"tuple[{parts}]"
+    signature = _keyword_signature(subplan.name, params, returns)
+    bound_windows = {
+        sid: _identity_indices(catalog.get(sid))
+        for sid in subplan.param_ids
+        if catalog.get(sid).is_formula_series
+    }
+    for other in subplans:
+        if other.name == subplan.name:
+            continue
+        for sid in subplan.param_ids:
+            if sid in other.returns and sid in other.result_indices:
+                bound_windows[sid] = other.result_indices[sid]
+    body, runtime, _bound = _emit_evaluation_body(
+        leaves=leaves,
+        formula_ids=subplan.formula_ids,
+        result_indices=subplan.result_indices,
+        call_indices=subplan.call_indices,
+        catalog=catalog,
+        deps=deps,
+        scc_map=scc_map,
+        emit_guards=False,
+        emit_lengths=False,
+        bound_windows=bound_windows or None,
+    )
+    if len(subplan.returns) == 1:
+        body.append(f"    return {subplan.returns[0]}")
+    else:
+        body.append(f"    return {', '.join(subplan.returns)}")
+    joined = ", ".join(f"`{sid}`" for sid in sorted(subplan.consumers))
+    doc = f'    """Evaluate the shared formula prefix of {joined}."""'
+    uses_data = any(catalog.get(sid).direction == "constant" for sid in leaves)
+    return "\n".join([signature, doc, *body]), runtime, uses_data
 
 
 def _emit_thin_orchestrator(
@@ -973,8 +1233,10 @@ def emit_api_module(
     Outputs that share the same required input leaves share one private
     runner; each `compute_*` keeps its own input-leaf signature and unpacks
     its slot. Baseline and shocked closures stay apart because their required
-    inputs differ. Constant leaves are read from `data`. Each `compute_*`
-    publishes `__key__` / `__domain__` alongside `__constants__`.
+    inputs differ. Formula prefixes shared across those distinct closures are
+    factored into private `_shared_*` helpers so each public function still
+    evaluates only its own tail. Constant leaves are read from `data`. Each
+    `compute_*` publishes `__key__` / `__domain__` alongside `__constants__`.
     """
     functions: list[str] = []
     runtime: set[str] = set()
@@ -984,18 +1246,32 @@ def emit_api_module(
     deps_map = dict(deps)
     scc_map_dict = dict(scc_map) if scc_map is not None else None
     plan = domains if domains is not None else plan_domain_emission(catalog, scc_map_dict)
-    groups: dict[tuple[str, ...], list[BoundSeries]] = {}
-    group_order: list[tuple[str, ...]] = []
-    for output in catalog.output_series():
-        key = _group_key(output, catalog=catalog, deps=deps_map)
-        if key not in groups:
-            groups[key] = []
-            group_order.append(key)
-        groups[key].append(output)
+    subplans = _plan_shared_subplans(catalog, deps_map, scc_map_dict)
     intern = IndexSourceIntern(prefix="_TAKE_", inline_max_chars=80)
     intern_token = bind_index_intern(intern)
-    runner_index = 0
     try:
+        for subplan in subplans:
+            source, used_runtime, used_data = _emit_shared_subplan(
+                subplan,
+                catalog=catalog,
+                deps=deps_map,
+                scc_map=scc_map_dict,
+                subplans=subplans,
+            )
+            functions.append(source)
+            runtime |= used_runtime
+            uses_data = uses_data or used_data
+            if any(not catalog.get(sid).is_scalar for sid in subplan.param_ids):
+                needs_sequence = True
+        groups: dict[tuple[str, ...], list[BoundSeries]] = {}
+        group_order: list[tuple[str, ...]] = []
+        for output in catalog.output_series():
+            key = _group_key(output, catalog=catalog, deps=deps_map)
+            if key not in groups:
+                groups[key] = []
+                group_order.append(key)
+            groups[key].append(output)
+        runner_index = 0
         for key in group_order:
             members = groups[key]
             compute_names.extend(
@@ -1005,7 +1281,12 @@ def emit_api_module(
                 needs_sequence = True
             if len(members) == 1:
                 source, used_runtime, used_data = emit_orchestrator(
-                    members[0], catalog=catalog, deps=deps, scc_map=scc_map, domains=plan
+                    members[0],
+                    catalog=catalog,
+                    deps=deps,
+                    scc_map=scc_map,
+                    domains=plan,
+                    subplans=subplans,
                 )
                 functions.append(source)
                 runtime |= used_runtime
@@ -1019,6 +1300,7 @@ def emit_api_module(
                 catalog=catalog,
                 deps=deps_map,
                 scc_map=scc_map_dict,
+                subplans=subplans,
             )
             functions.append(runner_source)
             runtime |= used_runtime
