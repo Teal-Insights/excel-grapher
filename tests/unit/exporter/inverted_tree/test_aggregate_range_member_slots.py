@@ -26,6 +26,46 @@ _DENSE_TOTALS = (16.0, 122.0, 1033.0)
 _SCC_TOTALS = (66.0, 55.0, 33.0)
 
 
+@pytest.mark.parametrize("force_rung", [None, 3])
+def test_aggregate_uses_each_members_actual_range(
+    tmp_path: Path, force_rung: Literal[3] | None
+) -> None:
+    workbook = write_workbook(
+        tmp_path / "diagonal.xlsx",
+        {
+            "Engine": {
+                "A2": "a",
+                "A3": "b",
+                "B1": 2020,
+                "C1": 2021,
+                "D1": 2022,
+                "B2": 1,
+                "C2": 2,
+                "D2": 3,
+                "B3": 10,
+                "C3": 20,
+                "D3": 30,
+                "B6": "=SUM(B2:C2)",
+                "C6": "=SUM(C3:D3)",
+            }
+        },
+    )
+    document = bindings_document(
+        _grid_entry("vintages", "Engine!B2:D3"),
+        series_entry(
+            "totals",
+            "Engine!B6:C6",
+            layout="series",
+            direction="output",
+            header_row=1,
+            compute_name="compute_totals",
+        ),
+    )
+    modules = generate_inverted(workbook, document, force_rung=force_rung)
+    package = load_package(modules, tmp_path, name=f"diagonal_{force_rung}")
+    assert package.compute_totals() == (3.0, 50.0)
+
+
 def _time_dim() -> dict[str, Any]:
     return {
         "id": "TIME_PERIOD",

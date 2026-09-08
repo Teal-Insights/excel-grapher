@@ -1416,6 +1416,42 @@ def collect_series_edges(
     return refine_access_classes(collector.edges, catalog)
 
 
+def requires_catalog_instance_ranges(
+    scc: Sequence[str], catalog: SeriesCatalog, graph: DependencyGraph | None
+) -> bool:
+    """Whether a range reads members of the SCC's still-growing series.
+
+    Catalog-slot range emission needs completed arrays or instance callbacks.
+    Fused buffers use schedule order and cannot provide that interface.
+    """
+    if graph is None:
+        return False
+    members = frozenset(scc)
+
+    def visits_range(node: AstNode, host: CanonicalAddress) -> bool:
+        if isinstance(node, (RangeNode, WholeColumnNode, WholeRowNode)):
+            return any(
+                (owner := catalog.series_for(address)) is not None
+                and owner.series_id in members
+                and not address_in_blank_ranges(address, current_blank_rects())
+                for address in iter_ref_addresses(node, host, graph)
+            )
+        if isinstance(node, BinaryOpNode):
+            return visits_range(node.left, host) or visits_range(node.right, host)
+        if isinstance(node, UnaryOpNode):
+            return visits_range(node.operand, host)
+        if isinstance(node, FunctionCallNode):
+            return any(visits_range(arg, host) for arg in node.args)
+        return False
+
+    return any(
+        ast is not None and visits_range(ast, address)
+        for sid in scc
+        for address in catalog.get(sid).cells
+        for ast in (try_formula_ast(graph, address),)
+    )
+
+
 def requires_demand_driven(
     series: BoundSeries,
     *,
