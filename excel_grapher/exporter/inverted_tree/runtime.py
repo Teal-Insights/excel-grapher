@@ -19,10 +19,15 @@ from typing import Any, Literal, NoReturn, Protocol, TypeGuard, TypeVar, cast, o
 from excel_grapher.core import operators as _core_ops
 from excel_grapher.core.logic_funcs import logical_and, logical_if, logical_not, logical_or
 from excel_grapher.core.lookup_funcs import index_cells, match_cells, vlookup_cells
-from excel_grapher.core.math_funcs import average_cells, exp_number, max_cells, sum_cells
+from excel_grapher.core.math_funcs import average_cells, exp_number, max_cells, min_cells, sum_cells
 from excel_grapher.core.sumproduct import sumproduct_cells
 from excel_grapher.core.types import CellValue, FormulaValue
 from excel_grapher.core.types import XlError as CoreXlError
+from excel_grapher.core.types import XlErrorException as SharedXlError
+from excel_grapher.exporter.export_runtime import error_funcs as _shared_errors
+from excel_grapher.exporter.export_runtime import lookup as _shared_lookup
+from excel_grapher.exporter.export_runtime import math as _shared_math
+from excel_grapher.exporter.export_runtime import text as _shared_text
 from excel_grapher.runtime.info import xl_isnumber as _info_isnumber
 from excel_grapher.series_bindings.input_coerce import (
     apply_input_value_map as apply_input_value_map,
@@ -314,6 +319,13 @@ def xl_average(*args: object) -> object:
     return _adapt_core(average_cells(*cast(tuple[CellValue, ...], args)))
 
 
+def xl_min(*args: object) -> object:
+    """Excel `MIN` via `core.math_funcs.min_cells`."""
+    for arg in args:
+        _raise_stored_errors_in(arg)
+    return _adapt_core(min_cells(*cast(tuple[CellValue, ...], args)))
+
+
 def xl_max(*args: object) -> object:
     """Excel `MAX` via `core.math_funcs.max_cells`."""
     for arg in args:
@@ -389,6 +401,132 @@ def xl_isnumber(value: object) -> bool:
     if isinstance(value, str) and is_error(value):
         return False
     return _info_isnumber(cast(CellValue, value))
+
+
+def _call_shared(function: Callable[..., object], *args: object) -> object:
+    """Translate the shared runtime's exception channel at the export boundary."""
+    try:
+        return function(*args)
+    except SharedXlError as exc:
+        raise XlError(exc.code.value) from exc
+
+
+def _shared_value(function: Callable[..., object], *args: object) -> object:
+    """Pass scalar and range values to a shared worksheet function."""
+    return _call_shared(function, *(_shared_operand(arg) for arg in args))
+
+
+def _shared_operand(value: object) -> object:
+    """Preserve error cells for each shared function to consume or propagate."""
+    if isinstance(value, str):
+        return CoreXlError(value) if is_error(value) else value
+    if isinstance(value, Sequence):
+        return tuple(_shared_operand(item) for item in value)
+    return value
+
+
+def _shared_thunk(value: Callable[[], object]) -> Callable[[], object]:
+    """Expose stored or raised inverted-tree errors to a shared lazy consumer."""
+
+    def evaluate() -> object:
+        try:
+            result = value()
+            _raise_stored_error(result)
+            return result
+        except XlError as exc:
+            raise SharedXlError(CoreXlError(exc.code)) from exc
+
+    return evaluate
+
+
+def xl_iferror(value: Callable[[], object], fallback: Callable[[], object]) -> object:
+    """Evaluate IFERROR lazily with shared error-consumer semantics."""
+    return _call_shared(_shared_errors.xl_iferror, _shared_thunk(value), _shared_thunk(fallback))
+
+
+def xl_ifna(value: Callable[[], object], fallback: Callable[[], object]) -> object:
+    """Evaluate IFNA lazily, catching only NA errors."""
+    return _call_shared(_shared_errors.xl_ifna, _shared_thunk(value), _shared_thunk(fallback))
+
+
+def xl_iserror(value: Callable[[], object]) -> object:
+    """Inspect an expression for errors without propagating them."""
+    return _call_shared(_shared_errors.xl_iserror, _shared_thunk(value))
+
+
+def xl_isna(value: Callable[[], object]) -> object:
+    """Inspect an expression for an NA error."""
+    return _call_shared(_shared_errors.xl_isna, _shared_thunk(value))
+
+
+def xl_isblank(value: Callable[[], object]) -> object:
+    """Inspect an expression for a blank using shared semantics."""
+    return _call_shared(_shared_errors.xl_isblank, _shared_thunk(value))
+
+
+def xl_isnumber_lazy(value: Callable[[], object]) -> object:
+    """Inspect a possibly failing expression for a numeric value."""
+    return _call_shared(_shared_errors.xl_isnumber, _shared_thunk(value))
+
+
+def xl_npv(*args: object) -> object:
+    """Compute NPV with the shared financial implementation."""
+    return _shared_value(_shared_math.xl_npv, *args)
+
+
+def xl_rank(*args: object) -> object:
+    """Compute RANK with the shared statistical implementation."""
+    return _shared_value(_shared_math.xl_rank, *args)
+
+
+def xl_large(*args: object) -> object:
+    """Compute LARGE with the shared statistical implementation."""
+    return _shared_value(_shared_math.xl_large, *args)
+
+
+def xl_stdev(*args: object) -> object:
+    """Compute STDEV with the shared statistical implementation."""
+    return _shared_value(_shared_math.xl_stdev, *args)
+
+
+def xl_countif(*args: object) -> object:
+    """Compute COUNTIF with the shared criteria implementation."""
+    return _shared_value(_shared_math.xl_countif, *args)
+
+
+def xl_round(*args: object) -> object:
+    """Round numbers with the shared Excel implementation."""
+    return _shared_value(_shared_math.xl_round, *args)
+
+
+def xl_rounddown(*args: object) -> object:
+    """Round toward zero with the shared Excel implementation."""
+    return _shared_value(_shared_math.xl_rounddown, *args)
+
+
+def xl_numbervalue(*args: object) -> object:
+    """Parse numeric text with the shared Excel implementation."""
+    return _shared_value(_shared_text.xl_numbervalue, *args)
+
+
+def xl_left(*args: object) -> object:
+    """Extract leading text with the shared Excel implementation."""
+    return _shared_value(_shared_text.xl_left, *args)
+
+
+def xl_hlookup(*args: object) -> object:
+    """Look up a horizontal table with shared Excel semantics."""
+    return _shared_value(_shared_lookup.xl_hlookup, *args)
+
+
+def xl_lookup(*args: object) -> object:
+    """Look up a vector or table with shared Excel semantics."""
+    return _shared_value(_shared_lookup.xl_lookup, *args)
+
+
+def xl_xlookup(*args: object) -> object:
+    """Look up corresponding arrays with shared Excel semantics."""
+    return _shared_value(_shared_lookup.xl_xlookup, *args)
 
 
 def xl_at(values: Sequence[T], index: object) -> T:

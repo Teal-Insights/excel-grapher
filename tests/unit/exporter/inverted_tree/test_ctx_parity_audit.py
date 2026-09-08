@@ -235,11 +235,6 @@ def test_named_range_formula_expands_to_bound_cell(tmp_path: Path) -> None:
             {"Z99": 9.0},
             r"INDIRECT|not one bound series|no resolved edges",
         ),
-        (
-            "=IFERROR(1/Inputs!A1,0)",
-            {},
-            r"no inverted-tree runtime helper|IFERROR",
-        ),
     ],
 )
 def test_ctx_library_shapes_fail_closed(
@@ -282,6 +277,20 @@ def test_ctx_library_shapes_fail_closed(
         )
     with pytest.raises(InvertedTreeExportError, match=match):
         generate_inverted(workbook, document)
+
+
+@pytest.mark.parametrize("value", [0.0, 2.0])
+def test_iferror_matches_evaluator(tmp_path: Path, value: float) -> None:
+    workbook = write_workbook(
+        tmp_path / "iferror.xlsx",
+        {"Inputs": {"A1": value}, "Outputs": {"A1": "=IFERROR(1/Inputs!A1,0)"}},
+    )
+    document = _copy_bindings("Inputs!A1", "Outputs!A1")
+    package = load_package(generate_inverted(workbook, document), tmp_path)
+    _catalog, _deps, graph = inverted_graph_parts(workbook, document)
+    with FormulaEvaluator(graph) as evaluator:
+        expected = evaluator.evaluate(["Outputs!A1"])["Outputs!A1"]
+    assert _scalar(package.compute_out(src=value)) == expected
 
 
 def test_sum_if_array_matches_evaluator(tmp_path: Path) -> None:
