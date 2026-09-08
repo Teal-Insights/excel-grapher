@@ -2,15 +2,18 @@
 
 Builds graphs with `use_cached_dynamic_refs=True` and asserts `FormulaEvaluator`
 matches last-saved workbook numbers for figure and stress ranges (evaluator ↔ Excel).
-Live recalculation is covered elsewhere; strict dynamic-ref resolution without cache
-remains tracked separately via `xfail` (issue #255).
+Live recalculation is covered elsewhere. Strict dynamic-ref resolution for the
+chart shortlist uses `chart_shortlist_dynamic_refs` (issue #255).
 """
 
 from __future__ import annotations
 
 import pytest
 
-from excel_grapher import DynamicRefError, create_dependency_graph
+from excel_grapher import create_dependency_graph
+from tests.integration.evaluator.utils.lic_dsf_chart_constraints import (
+    chart_shortlist_dynamic_refs,
+)
 from tests.integration.evaluator.utils.lic_dsf_chart_targets import (
     GRAPH_MAX_DEPTH,
     WORKBOOK_PATH,
@@ -69,21 +72,21 @@ def test_lic_dsf_chart_shortlist_evaluator_matches_excel_cache(
 
 
 @pytest.mark.slow
-@pytest.mark.xfail(
-    raises=DynamicRefError,
-    strict=True,
-    reason="Issue #255: strict dynamic-ref resolution for the chart slice is incomplete.",
-)
-def test_lic_dsf_chart_shortlist_without_cached_dynamic_refs_raises() -> None:
+def test_lic_dsf_chart_shortlist_without_cached_dynamic_refs() -> None:
+    """Strict constraint-based resolution builds the Chart Data U63/U66 slice."""
     if not WORKBOOK_PATH.exists():
         pytest.skip(f"Test workbook not found at {WORKBOOK_PATH}")
-    create_dependency_graph(
+    targets = chart_parity_shortlist_keys()
+    graph = create_dependency_graph(
         WORKBOOK_PATH,
-        chart_parity_shortlist_keys(),
+        targets,
         load_values=True,
         max_depth=GRAPH_MAX_DEPTH,
         use_cached_dynamic_refs=False,
+        dynamic_refs=chart_shortlist_dynamic_refs(WORKBOOK_PATH),
     )
+    for key in targets:
+        assert graph.get_node(key) is not None, f"missing node {key}"
 
 
 @pytest.fixture(scope="module")
