@@ -23,6 +23,7 @@ from excel_grapher.exporter.inverted_tree.runtime import (
     require_length,
     take,
     xl_add,
+    xl_and,
     xl_at,
     xl_average,
     xl_choose,
@@ -40,6 +41,8 @@ from excel_grapher.exporter.inverted_tree.runtime import (
     xl_max,
     xl_mul,
     xl_ne,
+    xl_not,
+    xl_or,
     xl_pow,
     xl_raise,
     xl_sub,
@@ -280,6 +283,25 @@ def test_xl_if_elementwise_and_scalar() -> None:
     assert xl_if(((True,), (False,)), ((10,), (20,)), 0) == [[10], [0]]
     with pytest.raises(XlError) as exc:
         xl_if(((True,), (False,)), ((1,), (2,), (3,)), 0)
+    assert exc.value.code == "#VALUE!"
+
+
+def test_xl_and_or_not_scalars_and_ranges() -> None:
+    assert xl_and(True, True) is True
+    assert xl_and(True, False) is False
+    assert xl_or(False, True) is True
+    assert xl_or(False, False) is False
+    assert xl_not(True) is False
+    assert xl_not(False) is True
+    assert xl_and((True, False, True)) is False
+    assert xl_or((False, False, True)) is True
+    assert xl_and((False, "#DIV/0!")) is False
+    assert xl_or((True, "#DIV/0!")) is True
+    with pytest.raises(XlError) as exc:
+        xl_and(("#DIV/0!", False))
+    assert exc.value.code == "#DIV/0!"
+    with pytest.raises(XlError) as exc:
+        xl_not("#VALUE!")
     assert exc.value.code == "#VALUE!"
 
 

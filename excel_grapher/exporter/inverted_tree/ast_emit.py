@@ -111,6 +111,7 @@ _RUNTIME_FUNCTIONS = frozenset(
     if name.startswith("xl_") and callable(value)
 )
 _AGGREGATE_FUNCTIONS = frozenset({"SUM", "SUMPRODUCT", "AVERAGE", "MAX"})
+_RANGE_REDUCE_FUNCTIONS = _AGGREGATE_FUNCTIONS | frozenset({"AND", "OR"})
 _LOOKUP_TABLE_FUNCTIONS = frozenset({"VLOOKUP", "HLOOKUP", "LOOKUP", "XLOOKUP"})
 _ARRAY_IF_VALUE_OPS = frozenset(_ARITHMETIC_HELPERS) | frozenset(_COMPARE_HELPERS)
 _ARRAY_IF_UNSOUND_FNS = frozenset(
@@ -1006,7 +1007,7 @@ def _emit_function(node: FunctionCallNode, ctx: EmitContext) -> str:
         return "True"
     if name == "FALSE":
         return "False"
-    if name in _AGGREGATE_FUNCTIONS:
+    if name in _RANGE_REDUCE_FUNCTIONS:
         return _emit_aggregate(node, ctx)
     if name in _LOOKUP_TABLE_FUNCTIONS:
         args = ", ".join(_emit_lookup_arg(arg, ctx) for arg in node.args)
@@ -1127,6 +1128,7 @@ def _emit_choose(node: FunctionCallNode, ctx: EmitContext) -> str:
 
 
 def _emit_aggregate(node: FunctionCallNode, ctx: EmitContext) -> str:
+    """Emit a range-reducing call (`SUM`, `AND`, …) with bound range arguments."""
     name = normalize_excel_function_name(node.name)
     func = f"xl_{name.lower()}"
     if func not in _RUNTIME_FUNCTIONS:
