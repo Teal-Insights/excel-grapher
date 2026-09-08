@@ -187,7 +187,11 @@ def _uses_datetime(catalog: SeriesCatalog, plan: DomainEmitPlan | None = None) -
 
 
 def _emit_domain_constants(plan: DomainEmitPlan) -> list[str]:
-    """Emit one tuple per distinct key domain, then interned subset domains."""
+    """Emit one tuple per distinct key domain, then interned subset domains.
+
+    Interned domains use a compact Cartesian/slice expression when the planner
+    stored one, otherwise a tuple literal of the interned points.
+    """
     lines: list[str] = []
     for field, values in plan.field_domains.items():
         name = domain_const_name(field)
