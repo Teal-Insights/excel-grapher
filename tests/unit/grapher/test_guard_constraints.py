@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import random
+from typing import Annotated
+from typing import Literal as TypingLiteral
 
+from excel_grapher.core.cell_types import Between, constraints_to_cell_type_env
 from excel_grapher.grapher.guard import (
     CellRef,
     Compare,
@@ -64,3 +67,49 @@ def test_canonicalize_guard_random_not_depth_matches_odd_even_parity() -> None:
         assert normalized == eq_one
     else:
         assert normalized == Not(eq_one)
+
+
+def test_guard_constraints_cell_cell_equality_contradicts_its_negation() -> None:
+    """Compare(CellRef, CellRef) must participate in consistency, not stay opaque."""
+    eq = Compare(left=CellRef(key="Sheet1!A1"), op="=", right=CellRef(key="Sheet1!B1"))
+    seed = GuardConstraints().add(eq)
+    assert seed is not None
+    assert seed.add(Not(eq)) is None
+
+
+def test_guard_constraints_accepts_literal_on_either_side() -> None:
+    left_lit = Compare(left=Literal(value=0), op="=", right=CellRef(key="Sheet1!A1"))
+    seed = GuardConstraints().add(left_lit)
+    assert seed is not None
+    assert seed.add(Compare(left=CellRef(key="Sheet1!A1"), op="=", right=Literal(value=1))) is None
+
+
+def test_guard_constraints_enum_domain_makes_complementary_inequalities_unsat() -> None:
+    env = constraints_to_cell_type_env({"Sheet1!B1": TypingLiteral[0, 1]}, {})
+    ne0 = Not(Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=0)))
+    ne1 = Not(Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=1)))
+    seed = GuardConstraints().add(ne0, cell_type_env=env)
+    assert seed is not None
+    assert seed.add(ne1, cell_type_env=env) is None
+
+
+def test_guard_constraints_rejects_equality_outside_interval() -> None:
+    env = constraints_to_cell_type_env(
+        {"Sheet1!C1": Annotated[int, Between(min=0, max=1)]},
+        {},
+    )
+    eq2 = Compare(left=CellRef(key="Sheet1!C1"), op="=", right=Literal(value=2))
+    assert GuardConstraints().add(eq2, cell_type_env=env) is None
+
+
+def test_guard_constraints_quoted_guard_key_matches_unquoted_env_key() -> None:
+    env = constraints_to_cell_type_env(
+        {"'Input 5 - Local-debt Financing'!C78": TypingLiteral[0, 1]},
+        {},
+    )
+    eq2 = Compare(
+        left=CellRef(key="'Input 5 - Local-debt Financing'!C78"),
+        op="=",
+        right=Literal(value=2),
+    )
+    assert GuardConstraints().add(eq2, cell_type_env=env) is None

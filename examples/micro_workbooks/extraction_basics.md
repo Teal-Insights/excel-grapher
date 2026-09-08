@@ -439,22 +439,19 @@ print_text(pformat(report, indent=4, width=100))
 
 ``` text
 CycleReport(has_must_cycles=False,
-            has_may_cycles=True,
+            has_may_cycles=False,
             must_cycles=[],
-            may_cycles=[{'Sheet1!D8', 'Sheet1!C8'}],
+            may_cycles=[],
             example_must_cycle_path=None,
-            example_may_cycle_path=['Sheet1!D8', 'Sheet1!C8', 'Sheet1!D8'])
+            example_may_cycle_path=None)
 ```
 
-In theory, this constraint should render the cycle infeasible: the
-conjunction of guards `NOT(Sheet1!B8=0) AND NOT(Sheet1!B8=1)` is
-unsatisfiable under the domain `{0, 1}`, so the may-cycle should drop
-out of the report. In practice, however, the cycle feasibility check
-(`_subgraph_has_feasible_cycle`) currently only consults guard mutual
-exclusion and does not yet consume leaf-cell domain constraints from
-`cell_type_env`. Wiring leaf domains into may-cycle feasibility is on
-the project roadmap; for now, this example demonstrates the intended API
-surface.
+`create_dependency_graph` stores that config on `graph.cell_type_env`,
+and `cycle_report` uses it: the conjunction of guards
+`NOT(Sheet1!B8=0) AND NOT(Sheet1!B8=1)` is unsatisfiable under the
+domain `{0, 1}`, so the may-cycle drops out of the report. Pass
+`cell_type_env=` to `cycle_report` to override the attached env without
+rebuilding the graph.
 
 ### A note on domain constraints
 
@@ -566,7 +563,8 @@ to declare constraints for the cells that inform the `row` and `column`
 arguments of `OFFSET` or `INDIRECT` in a `dict[str, type]`, then pass a
 `DynamicRefConfig` built with `DynamicRefConfig.from_constraints` to
 `create_dependency_graph`. This tells grapher to use the constraints to
-resolve the dynamic references.
+resolve the dynamic references. The same config is attached as
+`graph.cell_type_env` and is consulted by may-cycle feasibility.
 
 Currently, this works for easy cases like the one in Row 10, but runs
 into combinatorial explosion for more complex cases.

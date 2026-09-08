@@ -16,6 +16,7 @@ from excel_grapher.core.address_keys import (
     parse_node_key,
     sort_node_keys,
 )
+from excel_grapher.core.cell_types import CellTypeEnv
 from excel_grapher.core.formula_ast import (
     AstNode,
     bind_axes,
@@ -40,8 +41,10 @@ from .guard import (
     Or,
     intern_guard,
     or_guard,
+    rewrite_guard_aliases,
     rewrite_guard_keys,
 )
+from .may_cycle import identity_alias_map
 from .node import Node, NodeKey, NodeView, copy_node, node_to_view
 
 # Sentinel so `set_node_ast(..., formula=None)` can clear the raw audit string
@@ -154,10 +157,10 @@ class GraphReadView(Protocol):
     def target_keys(self) -> list[NodeKey]: ...
 
     def evaluation_order(
-        self, *, strict: bool = ..., iterate_enabled: bool | None = ...
+        self, *, strict: bool = ..., iterate_enabled: bool | None = ..., cell_type_env: Any = ...
     ) -> list[NodeKey]: ...
 
-    def cycle_report(self) -> CycleReport: ...
+    def cycle_report(self, *, cell_type_env: Any = ...) -> CycleReport: ...
 
 
 @dataclass
@@ -198,6 +201,9 @@ class DependencyGraph:
     # authoritative; missing overlay falls back. Not JSON/pickle serialized;
     # compression and formula rewrite drop it. Callers must rewarm.
     formula_shapes: FormulaShapeTable | None = None
+    # Optional leaf domains used by `cycle_report` when the caller does not pass
+    # `cell_type_env`. Not pickled (same as `formula_shapes`).
+    cell_type_env: CellTypeEnv | None = None
 
     def copy(self) -> DependencyGraph:
         """Return a deep copy of this graph (node hooks are not copied)."""
@@ -240,6 +246,7 @@ class DependencyGraph:
         cloned.formula_shapes = (
             self.formula_shapes.copy() if self.formula_shapes is not None else None
         )
+        cloned.cell_type_env = dict(self.cell_type_env) if self.cell_type_env is not None else None
         return cloned
 
     # ---- node insertion and iteration ---------------------------------------
@@ -804,7 +811,16 @@ class DependencyGraph:
                     out[k].add(resolved)
         return out
 
-    def cycle_report(self) -> CycleReport:
+    def cycle_report(self, *, cell_type_env: CellTypeEnv | None = None) -> CycleReport:
+        """Classify must-cycles vs may-cycles, dropping guard-infeasible SCCs.
+
+        When `cell_type_env` is omitted, uses `self.cell_type_env` (set by
+        `create_dependency_graph` from `DynamicRefConfig`). Identity-formula
+        cells are rewritten to their copied cell before guards are conjoined, so
+        singleton leaf domains apply through aliases.
+        """
+        env = self.cell_type_env if cell_type_env is None else cell_type_env
+        aliases = identity_alias_map(self._nodes)
         uncond = self._unconditional_adjacency()
         all_edges = self._all_adjacency()
 
@@ -819,13 +835,15 @@ class DependencyGraph:
             if _subgraph_has_cycle(uncond, scc):
                 continue
             # Filter out SCCs whose only cycles are infeasible due to contradictory guards.
-            if not _subgraph_has_feasible_cycle(self, scc):
+            if not _subgraph_has_feasible_cycle(self, scc, cell_type_env=env, aliases=aliases):
                 continue
             may_sccs.append(scc)
 
         if may_sccs:
             # Best-effort: find a feasible example path inside the first may-SCC.
-            example_may = _find_feasible_cycle_path(self, may_sccs[0])
+            example_may = _find_feasible_cycle_path(
+                self, may_sccs[0], cell_type_env=env, aliases=aliases
+            )
 
         return CycleReport(
             has_must_cycles=bool(must_sccs),
@@ -846,7 +864,11 @@ class DependencyGraph:
         return sorted(materialized)
 
     def evaluation_order(
-        self, *, strict: bool = True, iterate_enabled: bool | None = None
+        self,
+        *,
+        strict: bool = True,
+        iterate_enabled: bool | None = None,
+        cell_type_env: CellTypeEnv | None = None,
     ) -> list[NodeKey]:
         """Return nodes in dependency-first order (leaves before formulas that use them).
 
@@ -857,8 +879,11 @@ class DependencyGraph:
         must-cycle or may-cycle is rejected: generated Python does not emulate Excel's
         iterative convergence. Pass `False` or `None` to apply the usual strict /
         non-strict rules without this check.
+
+        `cell_type_env` is forwarded to `cycle_report` so leaf-domain constraints
+        can prove guarded cycles infeasible.
         """
-        report = self.cycle_report()
+        report = self.cycle_report(cell_type_env=cell_type_env)
         if iterate_enabled is True:
             if report.has_must_cycles:
                 raise CycleError(
@@ -1216,6 +1241,7 @@ class DependencyGraph:
         self.sheet_bounds = None
         self.preparsed_formulas = None
         self.formula_shapes = None
+        self.cell_type_env = None
         state.clear()
 
     def _invalidate_formula_shapes(self) -> None:
@@ -1600,7 +1626,11 @@ def _find_cycle_path(adj: dict[NodeKey, set[NodeKey]], nodes: set[NodeKey]) -> l
 
 
 def _apply_guard_constraints(
-    constraints: GuardConstraints, guard: GuardExpr | None
+    constraints: GuardConstraints,
+    guard: GuardExpr | None,
+    *,
+    cell_type_env: CellTypeEnv | None = None,
+    aliases: Mapping[NodeKey, NodeKey] | None = None,
 ) -> list[GuardConstraints]:
     """Conjoin an edge guard onto the current constraints.
 
@@ -1608,13 +1638,15 @@ def _apply_guard_constraints(
     one per feasible disjunct (best-effort). This keeps cycle feasibility checks
     conservative without requiring full boolean reasoning.
     """
+    if guard is not None and aliases:
+        guard = rewrite_guard_aliases(guard, aliases)
     if guard is None:
         return [constraints]
     if isinstance(guard, Or):
         out: list[GuardConstraints] = []
         # Best-effort: branch on each disjunct and keep feasible ones.
         for g in guard.operands:
-            nxt = constraints.add(g)
+            nxt = constraints.add(g, cell_type_env=cell_type_env)
             if nxt is None:
                 continue
             out.append(nxt)
@@ -1622,11 +1654,25 @@ def _apply_guard_constraints(
             if len(out) >= 32:
                 break
         return out
-    nxt = constraints.add(guard)
+    nxt = constraints.add(guard, cell_type_env=cell_type_env)
     return [] if nxt is None else [nxt]
 
 
-def _subgraph_has_feasible_cycle(graph: DependencyGraph, nodes: set[NodeKey]) -> bool:
+def _seed_guard_constraints(cell_type_env: CellTypeEnv | None) -> GuardConstraints:
+    seed = GuardConstraints()
+    if cell_type_env is None:
+        return seed
+    seeded = seed.seed_cell_type_env(cell_type_env)
+    return seed if seeded is None else seeded
+
+
+def _subgraph_has_feasible_cycle(
+    graph: DependencyGraph,
+    nodes: set[NodeKey],
+    *,
+    cell_type_env: CellTypeEnv | None = None,
+    aliases: Mapping[NodeKey, NodeKey] | None = None,
+) -> bool:
     """Return whether `nodes` contains a guard-feasible cycle.
 
     True when at least one cycle within `nodes` has jointly consistent
@@ -1649,7 +1695,9 @@ def _subgraph_has_feasible_cycle(graph: DependencyGraph, nodes: set[NodeKey]) ->
             guard = graph._guards.get((v, raw_w))
             if guard is None:
                 guard = graph._guards.get((v, w))
-            for c2 in _apply_guard_constraints(c, guard):
+            for c2 in _apply_guard_constraints(
+                c, guard, cell_type_env=cell_type_env, aliases=aliases
+            ):
                 if w in on_stack:
                     return True
                 if dfs(w, c2):
@@ -1658,11 +1706,17 @@ def _subgraph_has_feasible_cycle(graph: DependencyGraph, nodes: set[NodeKey]) ->
         on_stack.remove(v)
         return False
 
-    seed = GuardConstraints()
+    seed = _seed_guard_constraints(cell_type_env)
     return any(dfs(n, seed) for n in nodes)
 
 
-def _find_feasible_cycle_path(graph: DependencyGraph, nodes: set[NodeKey]) -> list[NodeKey] | None:
+def _find_feasible_cycle_path(
+    graph: DependencyGraph,
+    nodes: set[NodeKey],
+    *,
+    cell_type_env: CellTypeEnv | None = None,
+    aliases: Mapping[NodeKey, NodeKey] | None = None,
+) -> list[NodeKey] | None:
     """Best-effort: find one feasible cycle path within `nodes` (symbolic constraints)."""
     visited: set[tuple[NodeKey, GuardConstraints]] = set()
     stack: list[NodeKey] = []
@@ -1683,7 +1737,9 @@ def _find_feasible_cycle_path(graph: DependencyGraph, nodes: set[NodeKey]) -> li
             guard = graph._guards.get((v, raw_w))
             if guard is None:
                 guard = graph._guards.get((v, w))
-            for c2 in _apply_guard_constraints(c, guard):
+            for c2 in _apply_guard_constraints(
+                c, guard, cell_type_env=cell_type_env, aliases=aliases
+            ):
                 if w in on_stack:
                     i = stack.index(w)
                     return stack[i:] + [w]
@@ -1695,7 +1751,7 @@ def _find_feasible_cycle_path(graph: DependencyGraph, nodes: set[NodeKey]) -> li
         on_stack.remove(v)
         return None
 
-    seed = GuardConstraints()
+    seed = _seed_guard_constraints(cell_type_env)
     for n in nodes:
         out = dfs(n, seed)
         if out is not None:

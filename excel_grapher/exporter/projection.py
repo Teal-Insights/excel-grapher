@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from excel_grapher.core.address_keys import normalize_key
+from excel_grapher.core.cell_types import CellTypeEnv
 from excel_grapher.grapher.compression import (
     FormulaRewrite,
     IdentityTransitCompressionRecord,
@@ -551,15 +552,20 @@ class ProjectionResult:
         return self.original_graph.target_keys()
 
     def evaluation_order(
-        self, *, strict: bool = True, iterate_enabled: bool | None = None
+        self,
+        *,
+        strict: bool = True,
+        iterate_enabled: bool | None = None,
+        cell_type_env: CellTypeEnv | None = None,
     ) -> list[NodeKey]:
         return self.projected_graph.evaluation_order(
             strict=strict,
             iterate_enabled=iterate_enabled,
+            cell_type_env=cell_type_env,
         )
 
-    def cycle_report(self) -> CycleReport:
-        return self.projected_graph.cycle_report()
+    def cycle_report(self, *, cell_type_env: CellTypeEnv | None = None) -> CycleReport:
+        return self.projected_graph.cycle_report(cell_type_env=cell_type_env)
 
     def map_to_projected(self, address: str) -> str:
         """Map a canonical workbook address to its projected computation address."""
