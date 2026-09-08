@@ -1,6 +1,6 @@
 """Integration tests for formula patterns in formula_test_cases.xlsx.
 
-Verifies that ``FormulaEvaluator`` and generated export code compute G3:G10 to
+Verifies that ``FormulaEvaluator`` computes G3:G10 to
 the workbook cached values (Excel reference).
 Run:
     uv run pytest tests/integration/user_flows/formula_test.py -v
