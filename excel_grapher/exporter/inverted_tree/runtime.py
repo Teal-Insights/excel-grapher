@@ -17,7 +17,7 @@ from datetime import date, datetime
 from typing import Literal, NoReturn, Protocol, TypeGuard, TypeVar, cast, overload
 
 from excel_grapher.core import operators as _core_ops
-from excel_grapher.core.logic_funcs import logical_if
+from excel_grapher.core.logic_funcs import logical_and, logical_if, logical_not, logical_or
 from excel_grapher.core.lookup_funcs import index_cells, match_cells, vlookup_cells
 from excel_grapher.core.math_funcs import average_cells, exp_number, max_cells, sum_cells
 from excel_grapher.core.sumproduct import sumproduct_cells
@@ -131,6 +131,16 @@ def _raise_stored_errors_in(value: object) -> None:
         return
     for item in value:
         _raise_stored_errors_in(item)
+
+
+def _as_core_cells(value: object) -> CellValue:
+    """Convert stored error-code measures to core sentinels for shared helpers."""
+    if isinstance(value, str):
+        converted = CoreXlError.from_text(value)
+        return converted if converted is not None else value
+    if isinstance(value, Sequence):
+        return cast(CellValue, [_as_core_cells(item) for item in value])
+    return cast(CellValue, value)
 
 
 def _adapt_core(value: object) -> object:
@@ -288,6 +298,21 @@ def xl_max(*args: object) -> object:
 def xl_if(cond: object, then_value: object, else_value: object = False) -> object:
     """Excel `IF` via `core.logic_funcs.logical_if` (scalar or element-wise)."""
     return _adapt_core(logical_if(cond, then_value, else_value))
+
+
+def xl_and(*args: object) -> object:
+    """Excel `AND` via `core.logic_funcs.logical_and`."""
+    return _adapt_core(logical_and(*(_as_core_cells(arg) for arg in args)))
+
+
+def xl_or(*args: object) -> object:
+    """Excel `OR` via `core.logic_funcs.logical_or`."""
+    return _adapt_core(logical_or(*(_as_core_cells(arg) for arg in args)))
+
+
+def xl_not(arg: object) -> object:
+    """Excel `NOT` via `core.logic_funcs.logical_not`."""
+    return _adapt_core(logical_not(_as_core_cells(arg)))
 
 
 def xl_sumproduct(*args: object) -> object:
