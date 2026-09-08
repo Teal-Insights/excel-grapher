@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.5.3 (2026-09-08)
+
+### Bug Fixes
+
+- **core**: Use Excel ties-away-from-zero for ROUND
+  ([#774](https://github.com/Teal-Insights/excel-grapher/pull/774),
+  [`01ab493`](https://github.com/Teal-Insights/excel-grapher/commit/01ab49323c8776101ce99faaabbff974afc186d6))
+
+- **export**: Infer OFFSET anchors only within the current statement
+  ([#773](https://github.com/Teal-Insights/excel-grapher/pull/773),
+  [`b14ca10`](https://github.com/Teal-Insights/excel-grapher/commit/b14ca107914c7c6899a6f0ca83222c8eeda4b391))
+
+### Code Style
+
+- **test**: Drop unused imports after generate() bindings strip
+  ([`84c3bde`](https://github.com/Teal-Insights/excel-grapher/commit/84c3bde8dabd2f03cae459ad19713d94e13b87a5))
+
+
 ## v14.5.2 (2026-09-08)
 
 ### Code Style

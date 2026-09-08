@@ -1,6 +1,6 @@
 [project]
 name = "excel-grapher"
-version = "14.5.2"
+version = "14.5.3"
 
 description = "Build and analyze dependency graphs from Excel workbooks"
 readme = "README.md"
