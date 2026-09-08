@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.5.1 (2026-09-08)
+
+### Bug Fixes
+
+- **export**: Add inverted-tree AND, OR, NOT runtime helpers
+  ([#768](https://github.com/Teal-Insights/excel-grapher/pull/768),
+  [`37fb23b`](https://github.com/Teal-Insights/excel-grapher/commit/37fb23bb916ce7d896632bf800d8932ec71c4e21))
+
+
 ## v14.5.0 (2026-09-08)
 
 ### Features
