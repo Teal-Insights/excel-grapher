@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.7.2 (2026-09-08)
+
+### Performance Improvements
+
+- **export**: Compact inverted-tree aggregate member tables
+  ([#800](https://github.com/Teal-Insights/excel-grapher/pull/800),
+  [`2f50ab3`](https://github.com/Teal-Insights/excel-grapher/commit/2f50ab3cad9724fb339c5bc2afaed799d7b8fd09))
+
+### Testing
+
+- **export**: Treat Excel errors as success in the eager closure sweep
+  ([#791](https://github.com/Teal-Insights/excel-grapher/pull/791),
+  [`0053be2`](https://github.com/Teal-Insights/excel-grapher/commit/0053be2bdf3bb8b498e3cb417294869178a25c4e))
+
+
 ## v14.7.1 (2026-09-08)
 
 ### Bug Fixes
