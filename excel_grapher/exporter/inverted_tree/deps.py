@@ -1574,26 +1574,41 @@ def _key_field_axis(series: BoundSeries, field: str) -> Literal["sheet", "row", 
     Bind kind wins when declared (`sheet_name`, `column_header`, `row_label`,
     `value_map`). Otherwise the catalog geometry is used: a field that is
     constant on one axis and varies on another belongs to the varying axis.
+
+    Results, including unknown axes, are cached on the `BoundSeries` instance
+    so formula-reference walks do not rescan catalog geometry. Caches are not
+    shared by `series_id` across catalog instances.
     """
+    cache = series._key_axis_cache
+    if field in cache:
+        return cache[field]
     bind = _dimension_bind(series, field)
+    axis: Literal["sheet", "row", "col"] | None = None
     if bind is not None:
         kind = bind.get("kind")
         if kind == "sheet_name":
-            return "sheet"
-        if kind == "column_header":
-            return "col"
-        if kind == "row_label":
-            return "row"
-        if kind == "value_map":
+            axis = "sheet"
+        elif kind == "column_header":
+            axis = "col"
+        elif kind == "row_label":
+            axis = "row"
+        elif kind == "value_map":
             try:
-                axis, _parsed = parse_value_map(bind.get("values") or {})
+                parsed_axis, _parsed = parse_value_map(bind.get("values") or {})
             except ValueError:
-                axis = None
-            if axis == "columns":
-                return "col"
-            if axis == "rows":
-                return "row"
-    return _infer_key_field_axis(series, field)
+                parsed_axis = None
+            if parsed_axis == "columns":
+                axis = "col"
+            elif parsed_axis == "rows":
+                axis = "row"
+            else:
+                axis = _infer_key_field_axis(series, field)
+        else:
+            axis = _infer_key_field_axis(series, field)
+    else:
+        axis = _infer_key_field_axis(series, field)
+    cache[field] = axis
+    return axis
 
 
 def _ref_pinned_fields(

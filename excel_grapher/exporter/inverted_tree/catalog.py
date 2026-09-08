@@ -137,6 +137,9 @@ class BoundSeries:
     _cell_indices: dict[CanonicalAddress, int] = field(init=False, repr=False, compare=False)
     _rect: tuple[str, int, int, int, int] | None = field(init=False, repr=False, compare=False)
     _holes_by_index: dict[int, SeriesHole] = field(init=False, repr=False, compare=False)
+    _key_axis_cache: dict[str, Literal["sheet", "row", "col"] | None] = field(
+        init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -146,6 +149,7 @@ class BoundSeries:
         )
         object.__setattr__(self, "_rect", _dense_rect(self.cells))
         object.__setattr__(self, "_holes_by_index", {hole.index: hole for hole in self.holes})
+        object.__setattr__(self, "_key_axis_cache", {})
 
     @property
     def is_scalar(self) -> bool:
