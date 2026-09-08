@@ -165,6 +165,9 @@ def test_payload_traces_cells_and_writes_html(tmp_path: Path) -> None:
     html = html_path.read_text(encoding="utf-8")
     assert "debt" in html
     assert "statement_graph" in html or "adjustment" in html
+    assert "marker-end" in html
+    assert "orient', 'auto'" in html or 'orient", "auto"' in html
+    assert "auto-start-reverse" not in html
 
 
 def test_remainder_node_when_graph_has_unbound_cells(tmp_path: Path) -> None:

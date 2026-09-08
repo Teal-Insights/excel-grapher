@@ -13,15 +13,15 @@
       font-size: 13px;
     }
     #wrap { position: relative; width: 100%; height: calc(100% - 48px); background: #fff; }
-    svg { width: 100%; height: 100%; display: block; }
+    svg { width: 100%; height: 100%; display: block; overflow: visible; }
     .node rect { stroke: #1f2328; stroke-width: 1.2; cursor: pointer; }
     .node text { font-size: 12px; pointer-events: none; fill: #1f2328; }
-    .bundle { fill: none; stroke-width: 1.6; }
+    .bundle { fill: none; stroke-width: 1.8; }
     .bundle.identity { stroke: #0969da; }
     .bundle.shift, .bundle.discharged { stroke: #8250df; stroke-dasharray: 6 4; }
     .bundle.affine { stroke: #1a7f37; }
     .bundle.gather, .bundle.whole, .bundle.dynamic, .bundle.cross_partition { stroke: #9a6700; }
-    .bundle.guarded { opacity: 0.45; }
+    .bundle.guarded { opacity: 0.55; }
     #tip {
       position: fixed; z-index: 20; pointer-events: none; display: none;
       max-width: 360px; padding: 8px 10px; background: #fff; border: 1px solid #d0d7de;
@@ -39,11 +39,7 @@
   </div>
   <div id="wrap">
     <svg id="canvas" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="#57606a"></path>
-        </marker>
-      </defs>
+      <defs id="markers"></defs>
       <g id="viewport"></g>
     </svg>
   </div>
@@ -78,6 +74,56 @@
     });
   }
 
+  var MARKER_COLORS = {
+    identity: '#0969da',
+    shift: '#8250df',
+    affine: '#1a7f37',
+    gather: '#9a6700',
+    whole: '#9a6700',
+    dynamic: '#9a6700',
+    cross_partition: '#9a6700'
+  };
+
+  function addArrowMarker(defs, id, color) {
+    var marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+    marker.setAttribute('id', id);
+    marker.setAttribute('viewBox', '0 0 12 12');
+    marker.setAttribute('refX', '12');
+    marker.setAttribute('refY', '6');
+    marker.setAttribute('markerWidth', '9');
+    marker.setAttribute('markerHeight', '9');
+    marker.setAttribute('markerUnits', 'userSpaceOnUse');
+    marker.setAttribute('orient', 'auto');
+    marker.setAttribute('overflow', 'visible');
+    var tip = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    tip.setAttribute('d', 'M 0 1 L 12 6 L 0 11 z');
+    tip.setAttribute('fill', color);
+    marker.appendChild(tip);
+    defs.appendChild(marker);
+  }
+
+  function nodeLabel(n) {
+    if (n.is_remainder) return 'unbound (' + n.cell_count + ')';
+    if (n.id !== n.series_id) return n.series_id + ' [' + n.start + ':' + n.stop + ']';
+    return n.series_id;
+  }
+
+  function boxPoint(fromX, fromY, node) {
+    var dx = node._x - fromX;
+    var dy = node._y - fromY;
+    if (dx === 0 && dy === 0) return {x: node._x, y: node._y};
+    var hw = node._w / 2 + 4;
+    var hh = node._h / 2 + 4;
+    var t = Math.min(hw / Math.abs(dx), hh / Math.abs(dy));
+    return {x: node._x - dx * t, y: node._y - dy * t};
+  }
+
+  function markerFor(b) {
+    var access = b.access || 'identity';
+    if (b.discharged && access === 'identity') return 'arrow-shift';
+    return 'arrow-' + (MARKER_COLORS[access] ? access : 'identity');
+  }
+
   loadData().then(function (data) {
     var stats = data.stats || {};
     document.getElementById('stats').textContent =
@@ -92,6 +138,10 @@
 
     var svg = document.getElementById('canvas');
     var viewport = document.getElementById('viewport');
+    var defs = document.getElementById('markers');
+    Object.keys(MARKER_COLORS).forEach(function (access) {
+      addArrowMarker(defs, 'arrow-' + access, MARKER_COLORS[access]);
+    });
     var nodes = data.nodes || [];
     var bundles = data.bundles || [];
     var seriesIds = [];
@@ -102,11 +152,15 @@
     var w = 920, h = 640;
     var pad = 80;
     var byId = {};
-    nodes.forEach(function (n, i) {
+    nodes.forEach(function (n) {
       var x = pad + (n.x + 1) * 0.5 * (w - 2 * pad);
       var y = pad + (1 - n.y) * 0.5 * (h - 2 * pad);
+      var label = nodeLabel(n);
       n._x = x;
       n._y = y;
+      n._w = Math.max(72, label.length * 7 + 16);
+      n._h = 28;
+      n._label = label;
       byId[n.id] = n;
     });
 
@@ -119,11 +173,23 @@
       if (b.discharged) cls += ' discharged';
       if (b.guarded) cls += ' guarded';
       path.setAttribute('class', cls);
-      path.setAttribute('marker-end', 'url(#arrow)');
-      var dx = c._x - a._x;
-      var dy = c._y - a._y;
-      var bend = (b.discharged ? 40 : 0) * (dx >= 0 ? 1 : -1);
-      var d = 'M ' + a._x + ' ' + a._y + ' Q ' + ((a._x + c._x) / 2 + bend) + ' ' + ((a._y + c._y) / 2) + ' ' + c._x + ' ' + c._y;
+      path.setAttribute('marker-end', 'url(#' + markerFor(b) + ')');
+      var d;
+      if (a === c) {
+        var r = Math.max(a._w, 56) * 0.45;
+        d = 'M ' + (a._x + 12) + ' ' + (a._y - a._h / 2) +
+          ' C ' + (a._x + r) + ' ' + (a._y - r - 18) + ' ' +
+          (a._x - r) + ' ' + (a._y - r - 18) + ' ' +
+          (a._x - 12) + ' ' + (a._y - a._h / 2);
+      } else {
+        var start = boxPoint(c._x, c._y, a);
+        var end = boxPoint(a._x, a._y, c);
+        var dx = end.x - start.x;
+        var bend = (b.discharged ? 36 : 0) * (dx >= 0 ? 1 : -1);
+        d = 'M ' + start.x + ' ' + start.y +
+          ' Q ' + ((start.x + end.x) / 2 + bend) + ' ' + ((start.y + end.y) / 2) +
+          ' ' + end.x + ' ' + end.y;
+      }
       path.setAttribute('d', d);
       path.dataset.tip = [
         b.consumer_id + ' → ' + b.producer_id,
@@ -139,20 +205,17 @@
       var g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       g.setAttribute('class', 'node');
       var rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-      var label = n.is_remainder ? 'unbound (' + n.cell_count + ')' : n.series_id;
-      if (!n.is_remainder && n.id !== n.series_id) label = n.series_id + ' [' + n.start + ':' + n.stop + ']';
-      var tw = Math.max(72, label.length * 7 + 16);
-      rect.setAttribute('x', n._x - tw / 2);
-      rect.setAttribute('y', n._y - 14);
-      rect.setAttribute('width', tw);
-      rect.setAttribute('height', 28);
+      rect.setAttribute('x', n._x - n._w / 2);
+      rect.setAttribute('y', n._y - n._h / 2);
+      rect.setAttribute('width', n._w);
+      rect.setAttribute('height', n._h);
       rect.setAttribute('rx', 6);
       rect.setAttribute('fill', n.is_remainder ? '#d0d7de' : seriesColor(n.series_id, seriesIds));
       var text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       text.setAttribute('x', n._x);
       text.setAttribute('y', n._y + 4);
       text.setAttribute('text-anchor', 'middle');
-      text.textContent = label;
+      text.textContent = n._label;
       g.appendChild(rect);
       g.appendChild(text);
       g.dataset.tip = [
