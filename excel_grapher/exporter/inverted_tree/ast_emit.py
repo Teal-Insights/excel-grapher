@@ -87,6 +87,7 @@ from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.schedule import (
     FusedPlan,
     FusedRegion,
+    IndexSourceIntern,
     collect_dependence_edges,
     indices_to_source,
     plan_fused_scc,
@@ -159,7 +160,9 @@ class KeyedReadIntern:
     plan: DomainEmitPlan
     _sequences: dict[tuple[object, ...], str] = field(default_factory=dict)
     _slot_maps: dict[str, str] = field(default_factory=dict)
-    _slot_tables: dict[tuple[int, ...], str] = field(default_factory=dict)
+    _index_intern: IndexSourceIntern = field(
+        default_factory=lambda: IndexSourceIntern(prefix="_SLOTS_")
+    )
     _member_tables: dict[tuple[tuple[int, ...], ...], str] = field(default_factory=dict)
     uses_data: bool = False
     uses_datetime: bool = False
@@ -195,15 +198,7 @@ class KeyedReadIntern:
 
     def slots(self, indices: tuple[int, ...]) -> str:
         """Return a compact or interned expression for catalog-index `indices`."""
-        source = indices_to_source(indices)
-        if source.startswith("range(") or len(indices) <= 2:
-            return source
-        existing = self._slot_tables.get(indices)
-        if existing is not None:
-            return existing
-        name = f"_SLOTS_{len(self._slot_tables)}"
-        self._slot_tables[indices] = name
-        return name
+        return self._index_intern.expr(indices)
 
     def member_slots(self, table: tuple[tuple[int, ...], ...]) -> str:
         """Return a compact or interned expression for a nested member-slot table.
@@ -226,8 +221,7 @@ class KeyedReadIntern:
         lines: list[str] = []
         for values, name in self._sequences.items():
             lines.append(f"{name} = {values!r}")
-        for indices, name in self._slot_tables.items():
-            lines.append(f"{name} = {indices_to_source(indices)}")
+        lines.extend(self._index_intern.emit_lines())
         for table, name in self._member_tables.items():
             lines.append(f"{name} = {slot_table_to_source(table)}")
         for series_id, name in self._slot_maps.items():
@@ -882,6 +876,15 @@ def _interned_sequence(values: tuple[object, ...], *, field: str | None = None) 
     return intern.sequence(values, field=field)
 
 
+def _catalog_indices_expr(indices: Sequence[int]) -> str:
+    """Return a compact or interned expression for catalog-index `indices`."""
+    intern = current_keyed_intern()
+    items = tuple(indices)
+    if intern is None:
+        return indices_to_source(items)
+    return intern.slots(items)
+
+
 def _keyed_index_from_catalog_pairs(
     owner: BoundSeries,
     address: CanonicalAddress,
@@ -924,8 +927,7 @@ def _keyed_index_from_catalog_pairs(
             if host_i is None or host_i not in by_host:
                 return None
             table.append(by_host[host_i])
-        intern = current_keyed_intern()
-        slots = intern.slots(tuple(table)) if intern is not None else indices_to_source(table)
+        slots = _catalog_indices_expr(table)
         return f"{slots}[{_index_expr(-origin, ctx.index_var)}]"
     if len(pairs) == 1:
         return str(pairs[0][1])
@@ -1298,7 +1300,7 @@ def _instance_index_expr(
         for host_i, prod_i in pairs:
             if 0 <= host_i < len(table):
                 table[host_i] = prod_i
-        return f"{indices_to_source(table)}[{index_var}]"
+        return f"{_catalog_indices_expr(table)}[{index_var}]"
     return _index_expr(idx - ctx.host_index, index_var)
 
 
@@ -1670,10 +1672,10 @@ def _emit_static_slots(covered: BoundSeries, slots: Sequence[int], ctx: EmitCont
     """Emit a covering window whose catalog slots are the same for every member."""
     name = ctx.param(covered.series_id)
     if covered.series_id in ctx.scc_ids:
-        return _emit_demanded_slots(covered, indices_to_source(slots), ctx)
+        return _emit_demanded_slots(covered, _catalog_indices_expr(slots), ctx)
     if tuple(slots) == tuple(range(len(covered.cells))):
         return name
-    return f"{ctx.use('take')}({name}, {indices_to_source(slots)})"
+    return f"{ctx.use('take')}({name}, {_catalog_indices_expr(slots)})"
 
 
 def _emit_indexed_slots(
@@ -1971,7 +1973,7 @@ def _emit_covering_values(
         indices.append(idx)
     if indices == list(range(len(covered.cells))):
         return name
-    return f"{ctx.use('take')}({name}, {indices_to_source(indices)})"
+    return f"{ctx.use('take')}({name}, {_catalog_indices_expr(indices)})"
 
 
 def _host_export_error(ctx: EmitContext, message: str) -> InvertedTreeExportError:

@@ -67,12 +67,62 @@ def test_fit_affine_map_recovers_integer_line() -> None:
     assert fit_affine_map(((0, 0), (0, 1))) is None
 
 
+def _eval_index_source(source: str) -> tuple[int, ...]:
+    return tuple(eval(source, {"range": range}))
+
+
 def test_indices_to_source_preserves_decreasing_range() -> None:
     assert indices_to_source((0, 2, 4)) == "range(0, 6, 2)"
     assert indices_to_source((2, 1, 0)) == "range(2, -1, -1)"
     assert indices_to_source((3, 3, 3)) == "(3, 3, 3)"
     assert indices_to_source((7,)) == "(7,)"
     assert indices_to_source(()) == "()"
+
+
+def test_indices_to_source_compacts_repeated_values() -> None:
+    repeated = tuple(i for i in range(10) for _ in range(21))
+    source = indices_to_source(repeated)
+    assert source == "tuple(i for i in range(0, 10) for _ in range(21))"
+    assert _eval_index_source(source) == repeated
+    assert len(source) < 80
+
+
+def test_indices_to_source_compacts_strided_blocks() -> None:
+    blocks = tuple(27 * i + j for i in range(10) for j in range(21))
+    source = indices_to_source(blocks)
+    assert source == "tuple(27 * i + j for i in range(10) for j in range(21))"
+    assert _eval_index_source(source) == blocks
+    assert len(source) < 80
+
+
+def test_indices_to_source_compacts_tiled_range() -> None:
+    tiled = tuple(j for _ in range(3) for j in range(10))
+    source = indices_to_source(tiled)
+    assert source == "tuple(range(0, 10)) * 3"
+    assert _eval_index_source(source) == tiled
+
+
+def test_indices_to_source_compacts_constant_repeat_when_shorter() -> None:
+    values = (7,) * 40
+    source = indices_to_source(values)
+    assert source == "(7,) * 40"
+    assert _eval_index_source(source) == values
+
+
+def test_indices_to_source_compacts_offset_strided_blocks() -> None:
+    blocks = tuple(5 + 27 * i + j for i in range(10) for j in range(21))
+    source = indices_to_source(blocks)
+    assert source == "tuple(5 + 27 * i + j for i in range(10) for j in range(21))"
+    assert _eval_index_source(source) == blocks
+    assert len(source) < 80
+
+
+def test_indices_to_source_keeps_irregular_order_duplicates_and_holes() -> None:
+    irregular = (0, 2, 5, 5, 1)
+    source = indices_to_source(irregular)
+    assert source == "(0, 2, 5, 5, 1)"
+    assert _eval_index_source(source) == irregular
+    assert indices_to_source((0, 2, 5)) == "(0, 2, 5)"
 
 
 def test_residue_predicate_compresses_to_slice() -> None:
