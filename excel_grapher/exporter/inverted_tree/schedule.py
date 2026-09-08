@@ -21,6 +21,7 @@ from excel_grapher.exporter.inverted_tree.catalog import (
 from excel_grapher.exporter.inverted_tree.deps import (
     DependenceEdge,
     collect_series_edges,
+    requires_catalog_instance_ranges,
     requires_demand_driven,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
@@ -771,6 +772,8 @@ def plan_fused_scc(
     """
     if not scc:
         return None
+    if requires_catalog_instance_ranges(scc, catalog, graph):
+        return None
     members = set(scc)
     edges = collect_dependence_edges(catalog, graph, scc, edges=edges)
     intra = [edge for edge in edges if edge.consumer_id in members and edge.producer_id in members]
@@ -886,8 +889,10 @@ def plan_scc(
     fused = plan_fused_scc(scc, catalog=catalog, graph=graph, edges=edges)
     if fused is not None:
         return SccPlan(rung=2 if len(scc) > 1 else 1, plan=fused)
-    if len(scc) > 1 or requires_demand_driven(
-        catalog.get(scc[0]), catalog=catalog, graph=graph, edges=edges
+    if (
+        len(scc) > 1
+        or requires_catalog_instance_ranges(scc, catalog, graph)
+        or requires_demand_driven(catalog.get(scc[0]), catalog=catalog, graph=graph, edges=edges)
     ):
         return SccPlan(rung=3)
     return SccPlan(rung=0)

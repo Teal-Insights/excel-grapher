@@ -1528,6 +1528,19 @@ def _emit_indexed_slots(
     return f"{ctx.use('take')}({name}, {selector})"
 
 
+def _range_nodes(node: AstNode) -> list[AstNode]:
+    """Return range sites in expression order without walking their endpoints."""
+    if isinstance(node, (RangeNode, WholeColumnNode, WholeRowNode)):
+        return [node]
+    if isinstance(node, BinaryOpNode):
+        return _range_nodes(node.left) + _range_nodes(node.right)
+    if isinstance(node, UnaryOpNode):
+        return _range_nodes(node.operand)
+    if isinstance(node, FunctionCallNode):
+        return [item for arg in node.args for item in _range_nodes(arg)]
+    return []
+
+
 def _aggregate_member_slot_table(
     covered: BoundSeries,
     node: AstNode,
@@ -1541,6 +1554,8 @@ def _aggregate_member_slot_table(
     """
     if ctx.graph is None:
         return None
+    template_ranges = _range_nodes(node_formula_ast(ctx.graph, ctx.host_cell))
+    range_slot = template_ranges.index(node)
     members = _statement_cells(ctx) or tuple(ctx.host.cells)
     table: list[tuple[int, ...]] = [() for _ in ctx.host.cells]
     seen = False
@@ -1548,8 +1563,11 @@ def _aggregate_member_slot_table(
         host_i = ctx.host.index_of(cell)
         if host_i is None:
             continue
+        member_ranges = _range_nodes(node_formula_ast(ctx.graph, cell))
+        if range_slot >= len(member_ranges):
+            raise _host_export_error(ctx, f"aggregate range site is missing at {cell}")
         addresses = addresses_outside_blank_ranges(
-            iter_ref_addresses(node, cell, ctx.graph),
+            iter_ref_addresses(member_ranges[range_slot], cell, ctx.graph),
             ctx.blank_rects,
         )
         table[host_i] = _catalog_slots(covered, addresses, ctx)
