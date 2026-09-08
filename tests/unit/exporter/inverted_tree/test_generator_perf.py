@@ -1,14 +1,17 @@
-"""Generator-side inverted-tree hot spots (#618, #636, #653, #683)."""
+"""Generator-side inverted-tree hot spots (#618, #636, #653, #683, #769)."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
+from typing import Literal
 
 import pytest
 from fastpyxl.utils.cell import get_column_letter
 
 from excel_grapher.core import address_keys as address_keys_mod
+from excel_grapher.core.address_keys import normalize_key
 from excel_grapher.exporter.inverted_tree import access as access_mod
 from excel_grapher.exporter.inverted_tree import catalog as catalog_mod
 from excel_grapher.exporter.inverted_tree import deps as deps_mod
@@ -479,3 +482,37 @@ def test_covering_series_column_parses_are_o1(monkeypatch: pytest.MonkeyPatch) -
     assert first["format"] <= 2, first
     assert last_in_block["format"] == first["format"]
     assert outside["format"] == first["format"]
+
+
+@pytest.mark.parametrize("field, expected", [("VINTAGE", "row"), ("UNKNOWN", None)])
+def test_key_axis_is_inferred_once_per_series(
+    monkeypatch: pytest.MonkeyPatch, field: str, expected: Literal["row"] | None
+) -> None:
+    """Key-axis analysis must scale with series size, not reference count (#769)."""
+    series = BoundSeries(
+        series_id="vintages",
+        layout="series",
+        direction="internal",
+        cells=tuple(normalize_key(f"Engine!A{row}") for row in range(1, 101)),
+        key_fields=("VINTAGE",),
+        dtype="float",
+        compute_name=None,
+        raw={},
+        domain=tuple(KeyPoint((("VINTAGE", row),)) for row in range(1, 101)),
+        statements=(),
+    )
+    original = deps_mod._infer_key_field_axis
+    calls = 0
+
+    def counted(series: BoundSeries, field: str) -> Literal["sheet", "row", "col"] | None:
+        nonlocal calls
+        calls += 1
+        return original(series, field)
+
+    monkeypatch.setattr(deps_mod, "_infer_key_field_axis", counted)
+    for _ in range(20):
+        assert deps_mod._key_field_axis(series, field) == expected
+    assert calls == 1
+    other = replace(series, domain=tuple(KeyPoint((("VINTAGE", 1),)) for _ in series.cells))
+    assert deps_mod._key_field_axis(other, field) is None
+    assert calls == 2
