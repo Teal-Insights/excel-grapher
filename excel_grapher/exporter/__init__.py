@@ -52,6 +52,18 @@ from .projection import (
     resolve_projection_manifest,
     unregister_projection_manifest,
 )
+from .semantic_catalog import (
+    SemanticCatalogError,
+    SemanticCatalogView,
+    load_semantic_catalog,
+)
+from .semantic_graph import StatementGraph, build_statement_graph
+from .semantic_viz import (
+    SEMANTIC_VIZ_PAYLOAD_VERSION,
+    SemanticVizPayload,
+    to_semantic_viz_payload,
+    write_semantic_viz_html,
+)
 from .web_viz_layout import (
     LAYOUT_FORCEATLAS2,
     LAYOUT_GRAPHVIZ_DOT,
@@ -71,6 +83,15 @@ __all__ = [
     "CodeGenerator",
     "WebVizPayload",
     "to_web_viz_payload",
+    "SemanticCatalogError",
+    "SemanticCatalogView",
+    "SemanticVizPayload",
+    "SEMANTIC_VIZ_PAYLOAD_VERSION",
+    "StatementGraph",
+    "build_statement_graph",
+    "load_semantic_catalog",
+    "to_semantic_viz_payload",
+    "write_semantic_viz_html",
     "BaseProjectionManifest",
     "CollapsedGroup",
     "CompositeProjectionManifest",
