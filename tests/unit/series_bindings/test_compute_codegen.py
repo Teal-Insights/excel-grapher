@@ -10,7 +10,6 @@ import pytest
 import xlsxwriter
 
 from excel_grapher.core.types import XlError, XlErrorException
-from excel_grapher.exporter import CodeGenerator
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.runtime.cache import EvalContext, coerce_inputs_dict, xl_cell
 from excel_grapher.series_bindings import (
@@ -262,7 +261,7 @@ def test_emit_computes_block_warns_when_output_has_no_graph_overlap(tmp_path: Pa
             ],
         },
     )
-    export = frozenset(CodeGenerator(graph)._generate_parts(["Sheet1!B2"])["all_cells"])
+    export = frozenset(graph)
     with pytest.warns(UserWarning, match="No resolved output cells"):
         lines = emit_computes_block(graph, wb_path, bindings, export_addresses=export)
 
@@ -279,11 +278,7 @@ def test_emit_computes_block_intersects_with_export_closure(tmp_path: Path) -> N
     _write_output_workbook(wb_path)
     bindings = cast(WorkbookSeriesBindings, BINDINGS_DOCUMENT)
     graph = create_dependency_graph(wb_path, ["Sheet1!G5"], load_values=True)
-    export = frozenset(
-        CodeGenerator(graph)._generate_parts(["Sheet1!G5"], dependency_targets=["Sheet1!G5"])[
-            "all_cells"
-        ]
-    )
+    export = frozenset(graph)
 
     with pytest.warns(UserWarning, match="codegen export closure"):
         lines = emit_computes_block(

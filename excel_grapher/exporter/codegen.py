@@ -40,7 +40,7 @@ class CodeGenerator:
         original = getattr(self.graph, "original_graph", None)
         if original is not None:
             return cast("DependencyGraph", original)
-        return cast("DependencyGraph", self.graph)
+        return self.graph
 
     def derive_input_series(
         self,

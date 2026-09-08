@@ -96,16 +96,11 @@ def test_output_partial_overlap_warns(tmp_path: Path) -> None:
 
 def test_output_export_addresses_partial_overlap(tmp_path: Path) -> None:
     wb_path = tmp_path / "lic_inputs.xlsx"
-    from excel_grapher.exporter import CodeGenerator
     from tests.unit.series_bindings.test_resolve import _write_borvelia_workbook
 
     _write_borvelia_workbook(wb_path)
     graph = create_dependency_graph(wb_path, ["Inputs!H5"], load_values=True)
-    export = frozenset(
-        CodeGenerator(graph)._generate_parts(["Inputs!H5"], dependency_targets=["Inputs!H5"])[
-            "all_cells"
-        ]
-    )
+    export = frozenset(graph)
     bindings = load_series_bindings(FIXTURES / "shard_borvelia_output.yaml")
     series = dict(bindings["series"][0])
     resolved = resolve_series_binding(
