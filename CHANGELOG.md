@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v15.1.0 (2026-09-08)
+
+### Documentation
+
+- Record LIC-DSF may-cycle SCC#0 investigation
+  ([#809](https://github.com/Teal-Insights/excel-grapher/pull/809),
+  [`68eda27`](https://github.com/Teal-Insights/excel-grapher/commit/68eda2780a6209c850124ff7c33759ce27c23873))
+
+### Features
+
+- **guards**: Consult leaf domains and cell-cell equality in may-cycle feasibility
+  ([#809](https://github.com/Teal-Insights/excel-grapher/pull/809),
+  [`68eda27`](https://github.com/Teal-Insights/excel-grapher/commit/68eda2780a6209c850124ff7c33759ce27c23873))
+
+- **guards**: Load may-cycle solver MCVE fragments for feasibility replay
+  ([#809](https://github.com/Teal-Insights/excel-grapher/pull/809),
+  [`68eda27`](https://github.com/Teal-Insights/excel-grapher/commit/68eda2780a6209c850124ff7c33759ce27c23873))
+
+- **guards**: Tighten may-cycle feasibility for LIC-DSF SCC#0 (#533)
+  ([#809](https://github.com/Teal-Insights/excel-grapher/pull/809),
+  [`68eda27`](https://github.com/Teal-Insights/excel-grapher/commit/68eda2780a6209c850124ff7c33759ce27c23873))
+
+### Testing
+
+- Build LIC-DSF chart shortlist without cached dynamic refs
+  ([#807](https://github.com/Teal-Insights/excel-grapher/pull/807),
+  [`c1aecdb`](https://github.com/Teal-Insights/excel-grapher/commit/c1aecdb626a182750a35861621a3a63ccdf65858))
+
+
 ## v15.0.0 (2026-09-08)
 
 ### Bug Fixes
