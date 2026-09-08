@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import types
 from collections.abc import Callable
 
 import pytest
@@ -16,6 +17,7 @@ from excel_grapher.exporter.inverted_tree.runtime import (
     eval_instance,
     is_error,
     live_measure,
+    publish,
     require_aligned,
     require_length,
     take,
@@ -361,6 +363,47 @@ def test_xl_sum_over_sequence_and_stored_errors() -> None:
     with pytest.raises(XlError) as exc:
         xl_sum((1.0, "#DIV/0!"))
     assert exc.value.code == "#DIV/0!"
+
+
+def test_publish_mutates_and_returns_the_same_function() -> None:
+    def sample(value: int) -> int:
+        return value
+
+    decorated = publish(key=("TIME_PERIOD",), domain=(2020, 2021), holes=(1,))(sample)
+    assert decorated is sample
+    assert type(sample) is types.FunctionType
+    assert sample.__key__ == ("TIME_PERIOD",)
+    assert sample.__domain__ == (2020, 2021)
+    assert sample.__holes__ == (1,)
+    assert not hasattr(sample, "__constants__")
+
+
+def test_publish_sets_constants_only_when_given() -> None:
+    def without_constants() -> None:
+        return None
+
+    publish(key=(), domain=((),))(without_constants)
+    assert without_constants.__holes__ == ()
+    assert not hasattr(without_constants, "__constants__")
+
+    def with_constants() -> None:
+        return None
+
+    publish(key=(), domain=((),), constants=("gdp_deflator",))(with_constants)
+    assert with_constants.__constants__ == ("gdp_deflator",)
+    publish(key=(), domain=((),), constants=())(with_constants)
+    assert with_constants.__constants__ == ()
+
+
+def test_as_records_reads_metadata_from_published_function() -> None:
+    def compute() -> tuple[float, ...]:
+        return (1.5, 2.5)
+
+    publish(key=("TIME_PERIOD",), domain=(2008, 2009))(compute)
+    assert as_records(compute, compute()) == [
+        {"TIME_PERIOD": 2008, "OBS_VALUE": 1.5},
+        {"TIME_PERIOD": 2009, "OBS_VALUE": 2.5},
+    ]
 
 
 def test_as_records_zips_one_key_and_matrix_keys() -> None:

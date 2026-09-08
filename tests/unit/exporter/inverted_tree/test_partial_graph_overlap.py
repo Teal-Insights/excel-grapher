@@ -442,6 +442,10 @@ def test_matrix_interior_blank_emits_none_and_keeps_stride(tmp_path: Path) -> No
     assert "Profile!C2" in internals
     assert "blank" in internals
     assert "float | str | None" in internals
+    assert "holes=(1,)" in internals
+    assert "holes=()" not in internals
+    assert "@publish(" in internals
+    assert "setattr(" not in internals
     pkg = load_package(modules, tmp_path, name="matrix_blank")
     helper = pkg.internals.profile_table
     assert helper.__domain__ == (

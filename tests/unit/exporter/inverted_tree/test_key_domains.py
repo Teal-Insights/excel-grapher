@@ -1,7 +1,7 @@
 """Issue 676 — key domains in data.py and __key__/__domain__ on compute_*.
 
-Issue 688 publishes that metadata with setattr so type checkers accept the
-generated modules.
+Issue 766 publishes that metadata with `@publish(...)` so generated modules
+stay setattr-free. Empty `holes=()` is the decorator default and is omitted.
 """
 
 from __future__ import annotations
@@ -17,8 +17,7 @@ from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter.inverted_tree.catalog import build_catalog
 from excel_grapher.exporter.inverted_tree.domains import (
     collect_field_domains,
-    constants_attr_source,
-    key_domain_attr_source,
+    publish_decorator_source,
     series_domain_points,
 )
 from excel_grapher.grapher import create_dependency_graph
@@ -203,24 +202,43 @@ _DIRECT_DUNDER_ASSIGN = re.compile(
 _KEYED_META_NAMES = ("__key__", "__domain__", "__constants__")
 
 
-def test_key_domain_attr_source_uses_setattr() -> None:
-    source = key_domain_attr_source(
-        "compute_gdp",
+def test_publish_decorator_source_omits_empty_holes() -> None:
+    source = publish_decorator_source(
         keys=("TIME_PERIOD",),
         domain_expr="data.TIME_PERIOD_DOMAIN[8:]",
     )
     assert source == (
-        "setattr(compute_gdp, '__key__', ('TIME_PERIOD',))\n"
-        "setattr(compute_gdp, '__domain__', data.TIME_PERIOD_DOMAIN[8:])"
+        "@publish(\n    key=('TIME_PERIOD',),\n    domain=data.TIME_PERIOD_DOMAIN[8:],\n)"
     )
+    assert "holes" not in source
+    assert "constants" not in source
     assert _DIRECT_DUNDER_ASSIGN.search(source) is None
 
 
-def test_constants_attr_source_uses_setattr() -> None:
-    assert constants_attr_source("compute_gdp", ("gdp_deflator",)) == (
-        "setattr(compute_gdp, '__constants__', ('gdp_deflator',))"
+def test_publish_decorator_source_includes_constants_and_holes() -> None:
+    source = publish_decorator_source(
+        keys=("TIME_PERIOD",),
+        domain_expr="data.TIME_PERIOD_DOMAIN",
+        holes=(1,),
+        constants=("gdp_deflator",),
     )
-    assert constants_attr_source("compute_path", ()) == "setattr(compute_path, '__constants__', ())"
+    assert source == (
+        "@publish(\n"
+        "    key=('TIME_PERIOD',),\n"
+        "    domain=data.TIME_PERIOD_DOMAIN,\n"
+        "    holes=(1,),\n"
+        "    constants=('gdp_deflator',),\n"
+        ")"
+    )
+
+
+def test_publish_decorator_source_emits_empty_constants() -> None:
+    source = publish_decorator_source(
+        keys=(),
+        domain_expr="((),)",
+        constants=(),
+    )
+    assert source == ("@publish(\n    key=(),\n    domain=((),),\n    constants=(),\n)")
 
 
 def test_collect_field_domains_is_first_seen_catalog_order(tmp_path: Path) -> None:
@@ -350,7 +368,7 @@ def test_domain_literals_stay_out_of_api_and_internals(tmp_path: Path) -> None:
     assert "data.TIME_PERIOD_DOMAIN" in modules["internals.py"]
 
 
-def test_generated_modules_publish_keyed_meta_via_setattr(tmp_path: Path) -> None:
+def test_generated_modules_publish_keyed_meta_via_decorator(tmp_path: Path) -> None:
     years = (2008, 2009, 2010)
     year_modules = generate_inverted(_years_workbook(tmp_path, years), _years_bindings(years))
     matrix_modules = generate_inverted(_matrix_workbook(tmp_path), _matrix_bindings())
@@ -358,12 +376,23 @@ def test_generated_modules_publish_keyed_meta_via_setattr(tmp_path: Path) -> Non
         for filename in ("api.py", "internals.py"):
             source = modules[filename]
             assert _DIRECT_DUNDER_ASSIGN.search(source) is None, source
-            assert "setattr(" in source
-            assert "'__key__'" in source
-            assert "'__domain__'" in source
-    assert "setattr(compute_path, '__constants__', ())" in year_modules["api.py"]
-    assert "setattr(path, '__key__', ('TIME_PERIOD',))" in year_modules["internals.py"]
-    assert "setattr(compute_ratio, '__constants__', ('gdp', 'revenue'))" in matrix_modules["api.py"]
+            assert "setattr(" not in source
+            assert "@publish(" in source
+            assert "holes=()" not in source
+            assert "from .runtime import" in source
+            assert re.search(r"from \.runtime import .*\bpublish\b", source)
+    assert (
+        "@publish(\n"
+        "    key=('TIME_PERIOD',),\n"
+        "    domain=data.TIME_PERIOD_DOMAIN,\n"
+        "    constants=(),\n"
+        ")\ndef compute_path("
+    ) in year_modules["api.py"]
+    assert (
+        "@publish(\n    key=('TIME_PERIOD',),\n    domain=data.TIME_PERIOD_DOMAIN,\n)\ndef path("
+    ) in year_modules["internals.py"]
+    assert "constants=" not in year_modules["internals.py"]
+    assert "constants=('gdp', 'revenue')" in matrix_modules["api.py"]
 
 
 def test_ty_check_generated_keyed_meta_has_no_unresolved_attribute(tmp_path: Path) -> None:

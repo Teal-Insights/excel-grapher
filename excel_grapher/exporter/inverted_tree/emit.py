@@ -33,12 +33,10 @@ from excel_grapher.exporter.inverted_tree.deps import (
 )
 from excel_grapher.exporter.inverted_tree.domains import (
     DomainEmitPlan,
-    constants_attr_source,
     domain_annotation,
     domain_const_name,
-    key_domain_attr_source,
     plan_domain_emission,
-    publish_attr_source,
+    publish_decorator_source,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.schedule import (
@@ -341,24 +339,27 @@ def _emit_by_rung(
 
 
 def _key_domain_attrs(
-    name: str,
     *,
     series_id: str | None = None,
     scc: tuple[str, ...] | None = None,
     plan: DomainEmitPlan,
     holes: tuple[int, ...] = (),
+    constants: Sequence[str] | None = None,
 ) -> str:
     if scc is not None:
-        source = key_domain_attr_source(
-            name, keys=plan.scc_key[scc], domain_expr=plan.scc_expr[scc]
-        )
+        keys = plan.scc_key[scc]
+        domain_expr = plan.scc_expr[scc]
     elif series_id is None:
         raise ValueError("series_id or scc is required")
     else:
-        source = key_domain_attr_source(
-            name, keys=plan.series_key[series_id], domain_expr=plan.series_expr[series_id]
-        )
-    return f"{source}\n{publish_attr_source(name, '__holes__', repr(holes))}"
+        keys = plan.series_key[series_id]
+        domain_expr = plan.series_expr[series_id]
+    return publish_decorator_source(
+        keys=keys,
+        domain_expr=domain_expr,
+        holes=holes,
+        constants=constants,
+    )
 
 
 def emit_internals_module(
@@ -406,7 +407,7 @@ def emit_internals_module(
             joined = ", ".join(f"`{sid}`" for sid in scc)
             doc = _helper_docstring(f"{kind} of zipper series {joined}.")
             source = "\n".join([_scan_signature(scc, param_ids, catalog), doc, *body])
-            source = f"{source}\n{_key_domain_attrs(scan_function_name(scc), scc=scc, plan=plan)}"
+            source = f"{_key_domain_attrs(scc=scc, plan=plan)}\n{source}"
             functions.append(source)
             needs_data = needs_data or plan.uses_data_scc(scc)
             continue
@@ -421,14 +422,15 @@ def emit_internals_module(
         doc = _helper_docstring(summary, series)
         source = "\n".join([_helper_signature(series, info, catalog), doc, *body])
         attrs = _key_domain_attrs(
-            series.series_id,
             series_id=series.series_id,
             plan=plan,
             holes=series.hole_indices,
         )
-        source = f"{source}\n{attrs}"
+        source = f"{attrs}\n{source}"
         functions.append(source)
         needs_data = needs_data or plan.uses_data(series.series_id)
+    if functions:
+        used_runtime.add("publish")
     runtime_names = sorted(used_runtime)
     lines = [
         '"""First-level-dependency internals for the inverted graph."""',
@@ -628,21 +630,15 @@ def _leaf_signature_parts(
 
 
 def _compute_attrs(
-    name: str,
     constants: Sequence[str],
     series: BoundSeries,
     plan: DomainEmitPlan,
 ) -> str:
-    return "\n".join(
-        [
-            constants_attr_source(name, constants),
-            _key_domain_attrs(
-                name,
-                series_id=series.series_id,
-                plan=plan,
-                holes=series.hole_indices,
-            ),
-        ]
+    return _key_domain_attrs(
+        series_id=series.series_id,
+        plan=plan,
+        holes=series.hole_indices,
+        constants=constants,
     )
 
 
@@ -875,7 +871,7 @@ def emit_orchestrator(
         body.append(f"    return internals.{output.series_id}()")
     doc = f'    """Compute `{output.series_id}` from its input leaf closure."""'
     source = "\n".join([signature, doc, *body])
-    source = f"{source}\n{_compute_attrs(compute_name, constants, output, plan)}"
+    source = f"{_compute_attrs(constants, output, plan)}\n{source}"
     return source, runtime, bool(constants) or plan.uses_data(output.series_id)
 
 
@@ -944,7 +940,7 @@ def _emit_thin_orchestrator(
     doc = f'    """Compute `{output.series_id}` from its input leaf closure."""'
     source = "\n".join([signature, doc, *body])
     return (
-        f"{source}\n{_compute_attrs(compute_name, constants, output, domains)}",
+        f"{_compute_attrs(constants, output, domains)}\n{source}",
         domain_runtime,
     )
 
@@ -1022,6 +1018,7 @@ def emit_api_module(
             functions.append(source)
             runtime |= used_runtime
             uses_data = uses_data or plan.uses_data(output.series_id)
+    runtime.add("publish")
     lines = [
         '"""Output orchestrators for the inverted graph.',
         "",
