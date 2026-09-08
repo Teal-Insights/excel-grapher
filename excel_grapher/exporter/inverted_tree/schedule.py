@@ -10,7 +10,8 @@ the distance-zero residual to be a DAG per outer-key partition
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
+from contextvars import ContextVar, Token
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 from excel_grapher.exporter.inverted_tree.catalog import (
@@ -76,7 +77,7 @@ class IndexSet:
             if self._step == 1:
                 return f"range({self._start}, {self._stop})"
             return f"range({self._start}, {self._stop}, {self._step})"
-        return f"({', '.join(str(i) for i in items)})"
+        return indices_to_source(items)
 
     def union(self, other: IndexSet) -> IndexSet:
         """Return the set-theoretic union, recompressed if it is a progression."""
@@ -249,25 +250,190 @@ class IndexSet:
         return base.map_affine(coeff, offset)
 
 
+def _flat_tuple_source(items: Sequence[int]) -> str:
+    if not items:
+        return "()"
+    if len(items) == 1:
+        return f"({items[0]},)"
+    return f"({', '.join(str(i) for i in items)})"
+
+
+def _progression_source(items: tuple[int, ...]) -> str | None:
+    """Return `range(...)` when `items` is a non-empty arithmetic progression."""
+    if len(items) < 2:
+        return None
+    step = items[1] - items[0]
+    if step == 0:
+        return None
+    stop = items[-1] + step
+    if items != tuple(range(items[0], stop, step)):
+        return None
+    if step == 1:
+        return f"range({items[0]}, {stop})"
+    return f"range({items[0]}, {stop}, {step})"
+
+
+def _repeated_values_source(items: tuple[int, ...]) -> str | None:
+    """Return a compact form when each AP member is repeated `k` times."""
+    if len(items) < 2:
+        return None
+    k = 1
+    while k < len(items) and items[k] == items[0]:
+        k += 1
+    if k == 1 or len(items) % k != 0:
+        return None
+    n = len(items) // k
+    for i in range(n):
+        value = items[i * k]
+        start = i * k
+        if items[start : start + k] != (value,) * k:
+            return None
+    if n == 1:
+        return f"({items[0]},) * {k}"
+    inner = _progression_source(items[::k])
+    if inner is None:
+        return None
+    return f"tuple(i for i in {inner} for _ in range({k}))"
+
+
+def _tiled_range_source(items: tuple[int, ...]) -> str | None:
+    """Return `tuple(range(...)) * n` when `items` repeats an AP block."""
+    if len(items) < 4:
+        return None
+    try:
+        period = items.index(items[0], 1)
+    except ValueError:
+        return None
+    if period < 2 or len(items) % period != 0:
+        return None
+    n = len(items) // period
+    if n < 2:
+        return None
+    block = items[:period]
+    if items != block * n:
+        return None
+    inner = _progression_source(block)
+    if inner is None:
+        return None
+    return f"tuple({inner}) * {n}"
+
+
+def _strided_blocks_source(items: tuple[int, ...]) -> str | None:
+    """Return a compact form for consecutive blocks with a constant stride."""
+    if len(items) < 4:
+        return None
+    block_len = 1
+    while block_len < len(items) and items[block_len] == items[0] + block_len:
+        block_len += 1
+    if block_len < 2 or len(items) % block_len != 0:
+        return None
+    n = len(items) // block_len
+    if n < 2:
+        return None
+    start = items[0]
+    stride = items[block_len] - start
+    if stride <= 0 or stride == block_len:
+        return None
+    for i in range(n):
+        base = start + stride * i
+        if items[i * block_len : (i + 1) * block_len] != tuple(range(base, base + block_len)):
+            return None
+    i_term = "i" if stride == 1 else f"{stride} * i"
+    head = i_term if start == 0 else f"{start} + {i_term}"
+    return f"tuple({head} + j for i in range({n}) for j in range({block_len}))"
+
+
 def indices_to_source(indices: Sequence[int]) -> str:
     """Return a Python expression for an ordered index sequence.
 
     Unlike `IndexSet.to_source`, this preserves decreasing progressions so
-    `take` can realign an anti-monotone affine map.
+    `take` can realign an anti-monotone affine map. Repeated values, tiled
+    ranges, and strided consecutive blocks emit compact forms when they are
+    shorter than a flat tuple; irregular gathers keep the literal.
     """
     items = tuple(indices)
     if len(items) <= 1:
-        if not items:
-            return "()"
-        return f"({items[0]},)"
-    step = items[1] - items[0]
-    if step != 0:
-        stop = items[-1] + step
-        if items == tuple(range(items[0], stop, step)):
-            if step == 1:
-                return f"range({items[0]}, {stop})"
-            return f"range({items[0]}, {stop}, {step})"
-    return f"({', '.join(str(i) for i in items)})"
+        return _flat_tuple_source(items)
+    progression = _progression_source(items)
+    if progression is not None:
+        return progression
+    flat = _flat_tuple_source(items)
+    if len(items) < 8:
+        return flat
+    best = flat
+    for candidate in (
+        _repeated_values_source(items),
+        _tiled_range_source(items),
+        _strided_blocks_source(items),
+    ):
+        if candidate is not None and len(candidate) < len(best):
+            best = candidate
+    return best
+
+
+@dataclass
+class IndexSourceIntern:
+    """Intern compact or large static index mappings as module constants.
+
+    `range(...)` and short tuple literals stay inline. Comprehensions, tiled
+    repeats, and long irregular tuples become `{prefix}N` so identical mappings
+    share one allocation.
+    """
+
+    prefix: str = "_TAKE_"
+    inline_max_items: int = 2
+    inline_max_chars: int | None = None
+    _tables: dict[tuple[int, ...], str] = field(default_factory=dict, init=False)
+
+    def expr(self, indices: Sequence[int]) -> str:
+        """Return an inline or interned expression for `indices`."""
+        items = tuple(indices)
+        source = indices_to_source(items)
+        if self._inline(source, items):
+            return source
+        existing = self._tables.get(items)
+        if existing is not None:
+            return existing
+        name = f"{self.prefix}{len(self._tables)}"
+        self._tables[items] = name
+        return name
+
+    def emit_lines(self) -> list[str]:
+        """Return module-level assignments for interned mappings."""
+        return [f"{name} = {indices_to_source(indices)}" for indices, name in self._tables.items()]
+
+    def _inline(self, source: str, items: tuple[int, ...]) -> bool:
+        if source.startswith("range("):
+            return True
+        if source.startswith("tuple(") or " * " in source:
+            return False
+        if len(items) <= self.inline_max_items:
+            return True
+        return self.inline_max_chars is not None and len(source) < self.inline_max_chars
+
+
+_INDEX_INTERN: ContextVar[IndexSourceIntern | None] = ContextVar(
+    "excel_grapher_inverted_tree_index_intern",
+    default=None,
+)
+
+
+def bind_index_intern(intern: IndexSourceIntern) -> Token[IndexSourceIntern | None]:
+    """Install `intern` for the current inverted-tree emit walk."""
+    return _INDEX_INTERN.set(intern)
+
+
+def reset_index_intern(token: Token[IndexSourceIntern | None]) -> None:
+    """Restore the index intern installed by `bind_index_intern`."""
+    _INDEX_INTERN.reset(token)
+
+
+def index_mapping_source(indices: Sequence[int]) -> str:
+    """Return a compact, possibly interned, expression for `indices`."""
+    intern = _INDEX_INTERN.get()
+    if intern is None:
+        return indices_to_source(indices)
+    return intern.expr(indices)
 
 
 def scan_function_name(scc: tuple[str, ...]) -> str:

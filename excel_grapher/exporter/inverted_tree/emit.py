@@ -44,11 +44,14 @@ from excel_grapher.exporter.inverted_tree.domains import (
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.schedule import (
     IndexSet,
+    IndexSourceIntern,
     Rung,
     SccPlan,
+    bind_index_intern,
     build_scc_map,
-    indices_to_source,
+    index_mapping_source,
     plan_scc,
+    reset_index_intern,
     scan_function_name,
     scc_external_params,
 )
@@ -524,7 +527,7 @@ def _take_after_call(
     if work.materialize() == tuple(range(len(computed))):
         return None
     runtime.add("take")
-    return f"    {series_id} = take({series_id}, {work.to_source()})"
+    return f"    {series_id} = take({series_id}, {index_mapping_source(work.materialize())})"
 
 
 def _aligned_call_arg(
@@ -564,7 +567,7 @@ def _aligned_call_arg(
     if work == tuple(range(len(current))):
         return expr
     runtime.add("take")
-    return f"take({expr}, {indices_to_source(work)})"
+    return f"take({expr}, {index_mapping_source(work)})"
 
 
 def _group_key(
@@ -755,9 +758,7 @@ def _emit_evaluation_body(
         if wanted is None or wanted == identity:
             continue
         runtime.add("take")
-        body.append(
-            f"    {sid} = take({leaf_source[sid]}, {IndexSet.from_indices(wanted).to_source()})"
-        )
+        body.append(f"    {sid} = take({leaf_source[sid]}, {index_mapping_source(wanted)})")
         leaf_source[sid] = sid
         local_indices[sid] = wanted
     locals_bound: set[str] = {
@@ -991,49 +992,55 @@ def emit_api_module(
             groups[key] = []
             group_order.append(key)
         groups[key].append(output)
+    intern = IndexSourceIntern(prefix="_TAKE_", inline_max_chars=80)
+    intern_token = bind_index_intern(intern)
     runner_index = 0
-    for key in group_order:
-        members = groups[key]
-        compute_names.extend(
-            output.compute_name or f"compute_{output.series_id}" for output in members
-        )
-        if any(not catalog.get(sid).is_scalar for sid in key):
-            needs_sequence = True
-        if len(members) == 1:
-            source, used_runtime, used_data = emit_orchestrator(
-                members[0], catalog=catalog, deps=deps, scc_map=scc_map, domains=plan
+    try:
+        for key in group_order:
+            members = groups[key]
+            compute_names.extend(
+                output.compute_name or f"compute_{output.series_id}" for output in members
             )
-            functions.append(source)
-            runtime |= used_runtime
-            uses_data = uses_data or used_data
-            continue
-        runner_name = f"_run_{runner_index}"
-        runner_index += 1
-        runner_source, used_runtime, used_data = _emit_shared_runner(
-            members,
-            name=runner_name,
-            catalog=catalog,
-            deps=deps_map,
-            scc_map=scc_map_dict,
-        )
-        functions.append(runner_source)
-        runtime |= used_runtime
-        uses_data = uses_data or used_data
-        runner_leaves = _union_leaves(members, catalog=catalog, deps=deps_map)
-        for output in members:
-            source, used_runtime = _emit_thin_orchestrator(
-                output,
-                runner_name=runner_name,
-                outputs=members,
-                runner_leaves=runner_leaves,
+            if any(not catalog.get(sid).is_scalar for sid in key):
+                needs_sequence = True
+            if len(members) == 1:
+                source, used_runtime, used_data = emit_orchestrator(
+                    members[0], catalog=catalog, deps=deps, scc_map=scc_map, domains=plan
+                )
+                functions.append(source)
+                runtime |= used_runtime
+                uses_data = uses_data or used_data
+                continue
+            runner_name = f"_run_{runner_index}"
+            runner_index += 1
+            runner_source, used_runtime, used_data = _emit_shared_runner(
+                members,
+                name=runner_name,
                 catalog=catalog,
                 deps=deps_map,
-                domains=plan,
+                scc_map=scc_map_dict,
             )
-            functions.append(source)
+            functions.append(runner_source)
             runtime |= used_runtime
-            uses_data = uses_data or plan.uses_data(output.series_id)
+            uses_data = uses_data or used_data
+            runner_leaves = _union_leaves(members, catalog=catalog, deps=deps_map)
+            for output in members:
+                source, used_runtime = _emit_thin_orchestrator(
+                    output,
+                    runner_name=runner_name,
+                    outputs=members,
+                    runner_leaves=runner_leaves,
+                    catalog=catalog,
+                    deps=deps_map,
+                    domains=plan,
+                )
+                functions.append(source)
+                runtime |= used_runtime
+                uses_data = uses_data or plan.uses_data(output.series_id)
+    finally:
+        reset_index_intern(intern_token)
     runtime.add("publish")
+    intern_lines = intern.emit_lines()
     lines = [
         '"""Output orchestrators for the inverted graph.',
         "",
@@ -1059,6 +1066,8 @@ def emit_api_module(
     if runtime:
         lines.append(f"from .runtime import {', '.join(sorted(runtime))}")
     lines.append("")
+    if intern_lines:
+        lines.extend([*intern_lines, ""])
     lines.append("")
     lines.append("\n\n".join(functions))
     lines.append("")
