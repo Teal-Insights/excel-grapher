@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.6.0 (2026-09-08)
+
+### Bug Fixes
+
+- **grapher**: Avoid exporter import in Node bind lookup adapters
+  ([#787](https://github.com/Teal-Insights/excel-grapher/pull/787),
+  [`d1740f4`](https://github.com/Teal-Insights/excel-grapher/commit/d1740f46de87f76c1fcaa60bb79d25b22d3dcf0b))
+
+### Features
+
+- **export**: Look up dimension binds and key points from graph nodes
+  ([#787](https://github.com/Teal-Insights/excel-grapher/pull/787),
+  [`d1740f4`](https://github.com/Teal-Insights/excel-grapher/commit/d1740f46de87f76c1fcaa60bb79d25b22d3dcf0b))
+
+### Performance Improvements
+
+- **export**: Coalesce identical inverted-tree branches
+  ([`94a317d`](https://github.com/Teal-Insights/excel-grapher/commit/94a317d4ed696917d78f3b9863be585e916bcdf1))
+
+
 ## v14.5.5 (2026-09-08)
 
 ### Bug Fixes
