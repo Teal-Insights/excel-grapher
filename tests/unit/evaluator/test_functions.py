@@ -543,7 +543,7 @@ def test_round() -> None:
     with FormulaEvaluator(graph) as ev:
         result = ev.evaluate(["S!A1", "S!A2"])
         assert result["S!A1"] == 2.57
-        assert result["S!A2"] == 2.0  # Python's banker's rounding
+        assert result["S!A2"] == 3.0  # Excel ties-away-from-zero
 
 
 def test_rounddown() -> None:

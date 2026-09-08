@@ -6,6 +6,7 @@ import math
 import numbers
 import re
 from collections.abc import Iterator
+from decimal import ROUND_HALF_UP, Decimal
 from typing import TypeVar, cast
 
 from .coercions import (
@@ -119,15 +120,26 @@ def max_cells(*args: CellValue) -> float | XlError:
     return current
 
 
+def _round_half_away_from_zero(number: float, digits: int) -> float:
+    """Round `number` to `digits` places using Excel ROUND (ties away from 0)."""
+    factor = Decimal(10) ** digits
+    shifted = Decimal(str(number)) * factor
+    return float(shifted.to_integral_value(rounding=ROUND_HALF_UP) / factor)
+
+
 def round_number(number: CellValue, num_digits: CellValue) -> float | XlError:
-    """Round a number to the given number of digits."""
+    """Round a number to the given number of digits (Excel `ROUND`).
+
+    Halfway cases round away from zero (`ROUND(2.5, 0)` is `3`), matching Excel
+    rather than Python's ties-to-even `round`.
+    """
     n = to_number(number)
     if isinstance(n, XlError):
         return n
     d = to_number(num_digits)
     if isinstance(d, XlError):
         return d
-    return float(round(n, int(d)))
+    return _round_half_away_from_zero(n, int(d))
 
 
 def rounddown_number(number: CellValue, num_digits: CellValue) -> float | XlError:
