@@ -6,8 +6,8 @@ import re
 import time
 import warnings
 from collections import deque
-from collections.abc import Iterable, Mapping
-from contextlib import suppress
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 
 import fastpyxl
@@ -40,6 +40,7 @@ from .blank_ranges import (
 from .dependency_provenance import DependencyCause, EdgeProvenance
 from .dynamic_ref_walk import DynamicRefWalkContext
 from .dynamic_refs import (
+    DynamicRefCellLimitError,
     DynamicRefConfig,
     DynamicRefError,
     DynamicRefLimits,
@@ -1874,6 +1875,21 @@ def create_dependency_graph(
     return graph
 
 
+@contextmanager
+def _suppress_recoverable_dynamic_ref_errors() -> Iterator[None]:
+    """Swallow analysis errors, but not `max_cells` overflows.
+
+    A bounding rectangle that exceeds `max_cells` is a known target set we
+    refuse to drop; other `DynamicRefError` kinds stay best-effort.
+    """
+    try:
+        yield
+    except DynamicRefCellLimitError:
+        raise
+    except DynamicRefError:
+        pass
+
+
 def list_dynamic_ref_constraint_candidates(
     workbook: Path | str | fastpyxl.Workbook,
     targets: Iterable[str],
@@ -1904,6 +1920,10 @@ def list_dynamic_ref_constraint_candidates(
     OFFSET argument domains that are known but too wide to enumerate under
     `max_branches` still walk the bounding rectangle of possible targets, so a
     failed exact inference does not hide downstream missing leaves.
+
+    Raises:
+        DynamicRefCellLimitError: An inferred OFFSET/INDEX/INDIRECT target set
+            exceeds `max_cells`. The scan refuses to return an incomplete list.
     """
     if isinstance(workbook, fastpyxl.Workbook):
         wb_formulas = workbook
@@ -2196,7 +2216,7 @@ def list_dynamic_ref_constraint_candidates(
                     bounds = GlobalWorkbookBounds(sheet=current_sheet)
                     formula_for_infer = formula_for_infer_cand
                     expanded_env = dynamic_refs.cell_type_env
-                    with suppress(DynamicRefError):
+                    with _suppress_recoverable_dynamic_ref_errors():
                         if all_refs and all(
                             addr in _shared_cell_type_cache_cand for addr in all_refs
                         ):
@@ -2243,7 +2263,7 @@ def list_dynamic_ref_constraint_candidates(
                             )
 
                     dyn_targets: set[str] = set()
-                    with suppress(DynamicRefError):
+                    with _suppress_recoverable_dynamic_ref_errors():
                         dyn_targets |= infer_dynamic_offset_targets(
                             formula_for_infer,
                             current_sheet=current_sheet,
@@ -2256,7 +2276,7 @@ def list_dynamic_ref_constraint_candidates(
                             current_col=_current_col,
                             allow_wide_bounds=True,
                         )
-                    with suppress(DynamicRefError):
+                    with _suppress_recoverable_dynamic_ref_errors():
                         dyn_targets |= infer_dynamic_indirect_targets(
                             formula_for_infer,
                             current_sheet=current_sheet,
@@ -2266,7 +2286,7 @@ def list_dynamic_ref_constraint_candidates(
                             named_ranges=named_ranges,
                             named_range_ranges=named_range_ranges,
                         )
-                    with suppress(DynamicRefError):
+                    with _suppress_recoverable_dynamic_ref_errors():
                         dyn_targets |= infer_dynamic_index_targets(
                             formula_for_infer,
                             current_sheet=current_sheet,

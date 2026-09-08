@@ -28,6 +28,7 @@ from excel_grapher.grapher import parser as parser_mod
 from excel_grapher.grapher.builder import _format_missing_leaves
 from excel_grapher.grapher.dependency_provenance import DependencyCause
 from excel_grapher.grapher.dynamic_refs import (
+    DynamicRefCellLimitError,
     DynamicRefConfig,
     DynamicRefError,
     DynamicRefLimits,
@@ -342,6 +343,69 @@ def test_dynamic_offset_wide_bounds_survive_branch_limit() -> None:
     assert targets == {f"Sheet1!A{i}" for i in range(1, 12)}
 
 
+def test_dynamic_offset_wide_bounds_includes_height_and_width() -> None:
+    """OFFSET height/width expand the bounding rectangle past `max_branches`."""
+    formula = "=OFFSET(Sheet1!A1,Sheet1!B1,0,2,1)"
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntervalDomain(min=0, max=2),
+            )
+        }
+    )
+    targets = infer_dynamic_offset_targets(
+        formula,
+        current_sheet="Sheet1",
+        cell_type_env=env,
+        limits=DynamicRefLimits(max_branches=1),
+        allow_wide_bounds=True,
+    )
+    assert targets == {f"Sheet1!A{i}" for i in range(1, 5)}
+
+
+def test_dynamic_offset_wide_bounds_clips_negative_row_offset() -> None:
+    """Negative OFFSET rows clip to the sheet minimum rather than going off-grid."""
+    formula = "=OFFSET(Sheet1!A5,Sheet1!B1,0)"
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntervalDomain(min=-10, max=0),
+            )
+        }
+    )
+    targets = infer_dynamic_offset_targets(
+        formula,
+        current_sheet="Sheet1",
+        cell_type_env=env,
+        limits=DynamicRefLimits(max_branches=1),
+        allow_wide_bounds=True,
+    )
+    assert targets == {f"Sheet1!A{i}" for i in range(1, 6)}
+
+
+def test_dynamic_offset_wide_bounds_raises_cell_limit() -> None:
+    """A bounding rectangle larger than `max_cells` raises instead of truncating."""
+    formula = "=OFFSET(Sheet1!A1,Sheet1!B1,0)"
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntervalDomain(min=0, max=10),
+            )
+        }
+    )
+    with pytest.raises(DynamicRefCellLimitError, match="max_cells"):
+        infer_dynamic_offset_targets(
+            formula,
+            current_sheet="Sheet1",
+            cell_type_env=env,
+            limits=DynamicRefLimits(max_branches=1, max_cells=5),
+            allow_wide_bounds=True,
+        )
+
+
 def test_dynamic_offset_argument_formulas_over_domains() -> None:
     # A1 = OFFSET(A1, SUM(B1:B3), 0) with each Bi in {0,1}.
     # SUM(B1:B3) ranges over {0,1,2,3}, so reachable rows are 1..4.
@@ -396,6 +460,7 @@ def test_dynamic_offset_respects_cell_limit() -> None:
     except DynamicRefError as exc:
         msg = str(exc)
         assert "cells" in msg or "exceed limit" in msg
+        assert isinstance(exc, DynamicRefCellLimitError)
     else:
         raise AssertionError("Expected DynamicRefError for cell limit")
 

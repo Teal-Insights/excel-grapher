@@ -163,6 +163,24 @@ class DynamicRefError(ValueError):
     """
 
 
+class DynamicRefCellLimitError(DynamicRefError):
+    """Raised when inferred dynamic-ref targets exceed `max_cells`.
+
+    Candidate scanning propagates this error instead of returning a silently
+    incomplete leaf list. Raise `DynamicRefLimits.max_cells` or tighten the
+    selector domain.
+    """
+
+
+def _raise_cell_limit(count: int, limit: int, *, what: str) -> None:
+    """Raise `DynamicRefCellLimitError` for an over-budget target set."""
+    raise DynamicRefCellLimitError(
+        f"{what} exceed limit ({count} > {limit}). "
+        "Refusing to drop inferred targets. Raise DynamicRefLimits.max_cells "
+        "or tighten the selector domain."
+    )
+
+
 def _apply_constraint_to_schema(schema: dict[str, Any], address: str, annotation: Any) -> None:
     """Assign *annotation* to every sheet-qualified cell implied by *address* in *schema*."""
     sheet_name, range_a1 = _split_addr_sheet_coord(address)
@@ -1120,7 +1138,7 @@ def infer_dynamic_offset_targets(
         )
         out |= targets
         if len(out) > lim.max_cells:
-            raise DynamicRefError(f"Dynamic ref cells exceed limit ({len(out)} > {lim.max_cells})")
+            _raise_cell_limit(len(out), lim.max_cells, what="Dynamic ref cells")
 
     _emit_trace(
         DynamicRefTraceEvent(
@@ -1192,7 +1210,7 @@ def infer_dynamic_index_targets(
         )
         out |= targets
         if len(out) > lim.max_cells:
-            raise DynamicRefError(f"Dynamic ref cells exceed limit ({len(out)} > {lim.max_cells})")
+            _raise_cell_limit(len(out), lim.max_cells, what="Dynamic ref cells")
 
     _emit_trace(
         DynamicRefTraceEvent(
@@ -1446,9 +1464,10 @@ def _infer_single_offset_call(
                             if isinstance(result, ExcelRange):
                                 targets |= set(result.cell_addresses())
                                 if len(targets) > limits.max_cells:
-                                    raise DynamicRefError(
-                                        f"Dynamic ref cells from single OFFSET call exceed limit "
-                                        f"({len(targets)} > {limits.max_cells})"
+                                    _raise_cell_limit(
+                                        len(targets),
+                                        limits.max_cells,
+                                        what="Dynamic ref cells from single OFFSET call",
                                     )
         return targets
 
@@ -1555,9 +1574,10 @@ def _infer_single_offset_call(
             if isinstance(result, ExcelRange):
                 targets |= set(result.cell_addresses())
                 if len(targets) > limits.max_cells:
-                    raise DynamicRefError(
-                        f"Dynamic ref cells from single OFFSET call exceed limit "
-                        f"({len(targets)} > {limits.max_cells})"
+                    _raise_cell_limit(
+                        len(targets),
+                        limits.max_cells,
+                        what="Dynamic ref cells from single OFFSET call",
                     )
 
     return targets
@@ -1606,9 +1626,10 @@ def _emit_offset_targets_from_domains(
             continue
         n_cells = (end_row - start_row + 1) * (end_col - start_col + 1)
         if len(targets) + n_cells > limits.max_cells:
-            raise DynamicRefError(
-                f"Dynamic ref cells from single OFFSET call exceed limit "
-                f"({len(targets) + n_cells} > {limits.max_cells})"
+            _raise_cell_limit(
+                len(targets) + n_cells,
+                limits.max_cells,
+                what="Dynamic ref cells from single OFFSET call",
             )
         rng = ExcelRange(
             sheet=base_range.sheet,
@@ -3491,9 +3512,7 @@ def _emit_index_targets_from_domains(
             for c in cs:
                 targets |= _index_pair_to_addresses(array_range, r, c, nrows=nrows, ncols=ncols)
         if len(targets) > limits.max_cells:
-            raise DynamicRefError(
-                f"INDEX target cells exceed limit ({len(targets)} > {limits.max_cells})"
-            )
+            _raise_cell_limit(len(targets), limits.max_cells, what="INDEX target cells")
         return targets
 
     if isinstance(row_dom, _FiniteInts) and isinstance(col_dom, _IntBounds):
@@ -3514,9 +3533,7 @@ def _emit_index_targets_from_domains(
                             array_range, r, c, nrows=nrows, ncols=ncols
                         )
         if len(targets) > limits.max_cells:
-            raise DynamicRefError(
-                f"INDEX target cells exceed limit ({len(targets)} > {limits.max_cells})"
-            )
+            _raise_cell_limit(len(targets), limits.max_cells, what="INDEX target cells")
         return targets
 
     if isinstance(row_dom, _IntBounds) and isinstance(col_dom, _FiniteInts):
@@ -3537,9 +3554,7 @@ def _emit_index_targets_from_domains(
                             array_range, r, c, nrows=nrows, ncols=ncols
                         )
         if len(targets) > limits.max_cells:
-            raise DynamicRefError(
-                f"INDEX target cells exceed limit ({len(targets)} > {limits.max_cells})"
-            )
+            _raise_cell_limit(len(targets), limits.max_cells, what="INDEX target cells")
         return targets
 
     rb = _normalize_to_bounds(row_dom)
@@ -3572,9 +3587,7 @@ def _emit_index_targets_from_domains(
                 targets.add(f"{array_range.sheet}!{get_column_letter(cc)}{rr}")
 
     if len(targets) > limits.max_cells:
-        raise DynamicRefError(
-            f"INDEX target cells exceed limit ({len(targets)} > {limits.max_cells})"
-        )
+        _raise_cell_limit(len(targets), limits.max_cells, what="INDEX target cells")
     return targets
 
 
@@ -3653,9 +3666,7 @@ def _infer_index_targets_core(
         r1, c1 = int(row_val), int(col_val)
         targets |= _index_pair_to_addresses(array_range, r1, c1, nrows=nrows, ncols=ncols)
     if len(targets) > limits.max_cells:
-        raise DynamicRefError(
-            f"INDEX target cells exceed limit ({len(targets)} > {limits.max_cells})"
-        )
+        _raise_cell_limit(len(targets), limits.max_cells, what="INDEX target cells")
     _emit_trace(
         DynamicRefTraceEvent(
             kind="index-enumerated",
@@ -4195,7 +4206,7 @@ def infer_dynamic_indirect_targets(
         )
         out |= targets
         if len(out) > lim.max_cells:
-            raise DynamicRefError(f"Dynamic ref cells exceed limit ({len(out)} > {lim.max_cells})")
+            _raise_cell_limit(len(out), lim.max_cells, what="Dynamic ref cells")
 
     _emit_trace(
         DynamicRefTraceEvent(

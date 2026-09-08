@@ -15,7 +15,11 @@ from excel_grapher.core.cell_types import (
     IntervalDomain,
 )
 from excel_grapher.grapher.builder import list_dynamic_ref_constraint_candidates
-from excel_grapher.grapher.dynamic_refs import DynamicRefConfig, DynamicRefLimits
+from excel_grapher.grapher.dynamic_refs import (
+    DynamicRefCellLimitError,
+    DynamicRefConfig,
+    DynamicRefLimits,
+)
 
 # ---------------------------------------------------------------------------
 # Workbook factories
@@ -288,28 +292,18 @@ def test_no_offset_indirect_index_returns_empty(tmp_path: Path) -> None:
 
 
 def test_infer_raises_dynamic_ref_error_is_caught(tmp_path: Path) -> None:
-    """Return an empty list when infer raises DynamicRefError.
+    """Swallow recoverable infer errors; do not propagate `DynamicRefError`.
 
-    When all leaves are constrained but infer itself raises `DynamicRefError`
-    (e.g. branch limit exceeded), the function catches it and returns `[]`
-    rather than propagating.
+    When every argument leaf is present in `cell_type_env` but OFFSET still
+    cannot infer (here a string-typed selector), the scan returns `[]` rather
+    than raising. Cell-limit overflows are a separate fail-closed path.
     """
     path = tmp_path / "infer_raises.xlsx"
     _build_infer_raises_branch_limit(path)
-    # C1 is constrained with a large interval; max_branches=1 forces branch explosion
-    env = _make_env(
-        {
-            "Sheet1!C1": CellType(
-                kind=CellKind.NUMBER,
-                interval=IntervalDomain(min=0, max=100),
-            )
-        }
-    )
-    limits = DynamicRefLimits(max_branches=1)
-    config = DynamicRefConfig(cell_type_env=env, limits=limits)
-    # Must not raise — branch explosion is swallowed
+    env = _make_env({"Sheet1!C1": CellType(kind=CellKind.STRING)})
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
     result = list_dynamic_ref_constraint_candidates(path, ["Sheet1!A1"], dynamic_refs=config)
-    assert isinstance(result, list)
+    assert result == []
 
 
 def test_candidate_scan_surfaces_downstream_blank_leaf_despite_blocking_infer_issue_97(
@@ -334,6 +328,110 @@ def test_candidate_scan_surfaces_downstream_blank_leaf_despite_blocking_infer_is
 
     result = list_dynamic_ref_constraint_candidates(path, ["Sheet1!A1"], dynamic_refs=config)
 
+    assert result == ["Sheet1!G1"]
+
+
+def test_candidate_scan_raises_when_offset_rectangle_exceeds_max_cells(tmp_path: Path) -> None:
+    """Fail closed when a known OFFSET rectangle will not fit in `max_cells`.
+
+    Wide-bounds inference already computed the target rectangle; dropping it
+    and returning `[]` would hide downstream leaves. Raise instead of a used-range
+    clip, which would miss cells that only exist after a series grows.
+    """
+    path = tmp_path / "offset_rect_too_wide.xlsx"
+    _build_blocked_downstream_blank_leaf(path)
+    env = _make_env(
+        {
+            "Sheet1!C1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntervalDomain(min=0, max=100),
+            )
+        }
+    )
+    config = DynamicRefConfig(
+        cell_type_env=env,
+        limits=DynamicRefLimits(max_branches=1, max_cells=10),
+    )
+
+    with pytest.raises(DynamicRefCellLimitError, match="max_cells"):
+        list_dynamic_ref_constraint_candidates(path, ["Sheet1!A1"], dynamic_refs=config)
+
+
+def test_candidate_scan_isolates_offset_infer_failure_from_indirect(tmp_path: Path) -> None:
+    """An unboundable OFFSET must not hide INDIRECT targets on the same formula."""
+    path = tmp_path / "offset_plus_indirect.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_formula(
+        0,
+        0,
+        "=OFFSET(Sheet1!B1,Sheet1!C1,0)+INDIRECT(Sheet1!D1)",
+        None,
+        0,
+    )  # A1
+    ws.write_number(0, 1, 10)  # B1 OFFSET base
+    ws.write_string(0, 2, "nope")  # C1 string selector (OFFSET infer fails)
+    ws.write_string(0, 3, "Sheet1!H1")  # D1 INDIRECT text
+    ws.write_formula(0, 7, "=INDIRECT(Sheet1!G1)", None, 0)  # H1
+    wb.close()
+
+    env = _make_env(
+        {
+            "Sheet1!C1": CellType(kind=CellKind.STRING),
+            "Sheet1!D1": CellType(
+                kind=CellKind.STRING,
+                enum=EnumDomain(values=frozenset({"Sheet1!H1"})),
+            ),
+        }
+    )
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+    result = list_dynamic_ref_constraint_candidates(path, ["Sheet1!A1"], dynamic_refs=config)
+    assert result == ["Sheet1!G1"]
+
+
+def test_candidate_scan_uses_leaf_env_when_expand_hits_divisor(tmp_path: Path) -> None:
+    """Expand failure on an INDIRECT intermediate must not drop a leaf OFFSET."""
+    path = tmp_path / "expand_divisor.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_formula(
+        0,
+        0,
+        "=OFFSET(Sheet1!F1,Sheet1!C1,0)+INDIRECT(Sheet1!D1)",
+        None,
+        0,
+    )  # A1
+    ws.write_number(0, 1, 1)  # B1
+    ws.write_number(0, 2, 0)  # C1 OFFSET row
+    ws.write_formula(0, 3, "=Sheet1!E1/(Sheet1!B1-Sheet1!B2)", None, 0)  # D1
+    ws.write_number(1, 1, 1)  # B2
+    ws.write_number(0, 4, 1)  # E1
+    ws.write_number(0, 5, 999)  # F1
+    ws.write_formula(1, 5, "=INDIRECT(Sheet1!G1)", None, 0)  # F2
+    wb.close()
+
+    env = _make_env(
+        {
+            "Sheet1!C1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntervalDomain(min=0, max=1),
+            ),
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntervalDomain(min=0, max=2),
+            ),
+            "Sheet1!B2": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntervalDomain(min=0, max=2),
+            ),
+            "Sheet1!E1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({1})),
+            ),
+        }
+    )
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits(max_branches=8))
+    result = list_dynamic_ref_constraint_candidates(path, ["Sheet1!A1"], dynamic_refs=config)
     assert result == ["Sheet1!G1"]
 
 
