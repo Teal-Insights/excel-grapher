@@ -1330,7 +1330,12 @@ def _block_anchor_map(
     slot: int,
     current_anchor: CanonicalAddress,
 ) -> tuple[int, int]:
-    """Return `(coeff, offset)` mapping host index to the lookup's block slot."""
+    """Return `(coeff, offset)` mapping host index to the lookup's block slot.
+
+    Fit the affine map over the current statement only. Same-shape formulas
+    in other statements may read a different bound block; their anchors
+    must not be required to belong to this one.
+    """
     current_idx = block.index_of(current_anchor)
     if current_idx is None:
         raise _host_export_error(
@@ -1341,7 +1346,11 @@ def _block_anchor_map(
         return 0, current_idx
     shape = fingerprint_formula_shape(node_formula_ast(ctx.graph, ctx.host_cell)).shape_key
     pairs: list[tuple[int, int]] = []
-    for index, cell in enumerate(ctx.host.cells):
+    members = _statement_cells(ctx) or ctx.host.cells
+    for cell in members:
+        index = ctx.host.index_of(cell)
+        if index is None:
+            continue
         ast = try_formula_ast(ctx.graph, cell)
         if ast is None:
             continue
@@ -1372,11 +1381,9 @@ def _access_or_fail(producer: BoundSeries, ctx: EmitContext) -> AccessFunction:
         raise _host_export_error(ctx, f"producer {producer.series_id!r} has no graph to classify")
     # Classify over the statement that owns the host cell, not the whole series:
     # an INDEX seed followed by a recurrence has block reads in one statement only.
-    cells = next(
-        (stmt.cells for stmt in ctx.host.statements if ctx.host_cell in stmt.cells),
-        None,
+    return classify_producer_access(
+        ctx.host, producer, ctx.catalog, ctx.graph, cells=_statement_cells(ctx)
     )
-    return classify_producer_access(ctx.host, producer, ctx.catalog, ctx.graph, cells=cells)
 
 
 def _emit_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
