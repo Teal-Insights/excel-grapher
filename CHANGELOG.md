@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.7.0 (2026-09-08)
+
+### Features
+
+- **export**: Emit inverted-tree shared worksheet functions
+  ([#790](https://github.com/Teal-Insights/excel-grapher/pull/790),
+  [`f75bf7c`](https://github.com/Teal-Insights/excel-grapher/commit/f75bf7c5dfa8fe4aa1103443bb9416ca542ec2a3))
+
+
 ## v14.6.1 (2026-09-08)
 
 ### Performance Improvements
