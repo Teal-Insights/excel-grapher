@@ -3,69 +3,7 @@ title: "Exporting standalone Python"
 guide-section: "Export & quality"
 ---
 
-The exporter turns a `DependencyGraph` into a standalone Python module:
-
-```python
-from excel_grapher.exporter import CodeGenerator
-
-code = CodeGenerator(graph).generate(targets)
-print("\n".join(code.splitlines()[:120]))
-```
-
-When graph nodes are target-marked (`Node.is_target=True`), `generate()` can infer export targets directly from the graph:
-
-```python
-with CodeGenerator(graph) as gen:
-    code = gen.generate()  # defaults to graph.target_keys()
-```
-
-If neither explicit targets nor target-marked nodes are available, code generation raises a `ValueError`.
-
-When `graph.formula_shapes` is set, `generate()` may emit shared per-shape
-helpers, and `write_workbook` may emit Excel shared formulas for contiguous
-autofill runs. That overlay is read at generate / write time (not an init
-snapshot). Missing shapes fall back to per-node AST (and per-cell A1 on
-write). Shapes are opt-in
-(`create_dependency_graph(..., warm_formula_shapes=False)` by default);
-after compression, formula rewrite, or JSON/pickle load the overlay is
-dropped and callers must rewarm. See
-[Formula-shape overlay](01-dependency-graphs.qmd#formula-shape-overlay).
-
-## Return-line unpacking
-
-By default, each formula cell function returns a single nested expression. For easier
-debugging of generated exports, you can hoist nested runtime calls into statement-level
-temporaries in evaluation order:
-
-```python
-code = CodeGenerator(graph, unpack_return=True).generate(targets)
-```
-
-With unpacking enabled, a cell like `=C5+1` that depends on a formula neighbour may emit:
-
-```python
-def cell_sheet1_c5(ctx):
-    _t1 = xl_eval(ctx, "Sheet1!B5", cell_sheet1_b5)
-    return xl_number(_t1) + xl_number(1.0)
-```
-
-Unpacking is conservative: `IF`/`CHOOSE` branches, `IFERROR`/`IFNA` thunks, and `IS*`
-argument lambdas stay lazy. Coercion helpers such as `xl_number` remain inline. The flag
-applies to formula cells and projected public-address alias wrappers.
-
-For a multi-file package, `generate_modules()` returns a `dict[str, str]` keyed by module filename
-(`__init__.py`, `api.py`, `data.py`, `runtime.py`, `internals.py`). Write those files into a package
-directory of your choice, then import the package as usual.
-
-Package exports use inverted-tree: each `compute_*` takes the input leaves of its output
-as ordinary arguments. `generate_modules()` requires `series_bindings` and
-`bindings_workbook`. The `paradigm` argument and CLI `--paradigm` option have been removed.
-
-Single-file `generate()` retains the cell-function API (`compute_all`,
-`make_context`, return-line unpacking) for evaluator↔export parity and teaching.
-Series I/O uses `generate_modules()` only.
-
-## Inverted-tree packages
+The exporter turns a `DependencyGraph` into a standalone Python **package**:
 
 ```python
 from pathlib import Path
@@ -83,7 +21,27 @@ with CodeGenerator(graph) as gen:
     )
 ```
 
-CLI equivalent:
+`generate_modules()` returns a `dict[str, str]` keyed by module filename
+(`__init__.py`, `api.py`, `data.py`, `runtime.py`, `internals.py`). Write those files into a package
+directory of your choice, then import the package as usual.
+
+Package exports use inverted-tree: each `compute_*` takes the input leaves of its output
+as ordinary arguments. `generate_modules()` requires `series_bindings` and
+`bindings_workbook`. There is no bindings-free, address-keyed `generate()` path; callers who
+want a named `compute_*` API provide a sidecar. The `paradigm` argument and CLI `--paradigm`
+option have been removed.
+
+When `graph.formula_shapes` is set, `FormulaEvaluator` compiles shared per-shape helpers, and
+`write_workbook` may emit Excel shared formulas for contiguous autofill runs. Missing shapes
+fall back to per-node AST (and per-cell A1 on write). Shapes are opt-in
+(`create_dependency_graph(..., warm_formula_shapes=False)` by default);
+after compression, formula rewrite, or JSON/pickle load the overlay is
+dropped and callers must rewarm. See
+[Formula-shape overlay](01-dependency-graphs.qmd#formula-shape-overlay).
+
+## Inverted-tree packages
+
+CLI equivalent of `generate_modules()`:
 
 ```bash
 uv run excel-grapher bindings validate model.xlsx \
@@ -179,8 +137,8 @@ Projection, `embed`, and visualization exports are not codegen paradigms; they a
 
 The deprecated context-based package exporter has been removed. Use the migration
 table above to replace package setters and context calls with explicit compute arguments.
-Single-file `generate()` remains a thin address-keyed cell-function exporter until a
-bindings-free inverted-tree path replaces it ([issue 764](https://github.com/Teal-Insights/excel-grapher/issues/764)).
+Address-keyed `CodeGenerator.generate()` was removed ([issue 764](https://github.com/Teal-Insights/excel-grapher/issues/764));
+export is `generate_modules()` with series bindings.
 
 ## Series bindings
 
@@ -204,14 +162,14 @@ with CodeGenerator(graph) as gen:
     )
 ```
 
-`generate()` does not accept `series_bindings`. Address-keyed cell functions stay available
-as `CodeGenerator(graph).generate(["S!B1"])` for parity and teaching.
+`generate_modules()` requires `series_bindings` and `bindings_workbook`. Outputs come from
+the bindings catalog, not from a cell-address list.
 
 ## Series docstring callbacks
 
 `emit_setter_function` and `emit_compute_function` can attach structured docstrings to
 library-emitted `set_*` / Records `compute_*` helpers. Pass a callback directly or register
-a reusable name. These callbacks are not wired into `generate()` or `generate_modules()`.
+a reusable name. These callbacks are not wired into `generate_modules()`.
 
 ```python
 from excel_grapher.series_bindings import (
@@ -334,76 +292,13 @@ In-place `DependencyGraph.compress_identity_transits()` remains available for de
 graph simplification; prefer projections for Python codegen, Excel write-back, and viz
 workflows.
 
-## Exported code sketch (`generate()`, ctx)
-
-Build a tiny two-cell graph (`S!A1` leaf, `S!B1 = S!A1*2`) and generate standalone **single-file**
-code. This is the ctx cell-function export, not an inverted-tree package:
-
-```{python}
-from excel_grapher import DependencyGraph, Node
-from excel_grapher.exporter import CodeGenerator
-
-graph = DependencyGraph()
-graph.add_node(
-    Node(
-        sheet="S",
-        column="A",
-        row=1,
-        formula=None,
-        value=10.0,
-        is_leaf=True,
-    )
-)
-graph.add_node(
-    Node(
-        sheet="S",
-        column="B",
-        row=1,
-        formula="=S!A1*2",
-        value=None,
-        is_leaf=False,
-        normalized_formula="=S!A1*2",
-    )
-)
-graph.add_edge("S!B1", "S!A1")
-
-code = CodeGenerator(graph).generate(["S!B1"])
-```
-
-The exported module opens with the embedded `xl_*` runtime (a few hundred lines, elided here).
-The workbook-specific tail below shows the shape of the output: leaf cells become a sparse
-`DEFAULT_INPUTS` coordinate store (`sheet -> {(row, col): value}`), formula cells become `ctx`-taking
-functions dispatched through a `TARGETS` map, and the public entry points are `make_context` and
-`compute_all`. `make_context(inputs={"Sheet1!A1": v})` still accepts NodeKey overlays; storage is
-coordinates. Pass `include_compute_all=False` to omit `compute_all` / `TARGETS`. Series I/O
-(`set_*`, Records, `list_setters`) is not emitted here — use `generate_modules()`:
-
-```{python}
-# | echo: false
-from IPython.display import Markdown, display
-
-_lines = code.splitlines()
-_start = next(i for i, line in enumerate(_lines) if line.startswith("DEFAULT_INPUTS"))
-display(Markdown("```python\n" + "\n".join(_lines[_start:]) + "\n```"))
-```
-
-### Exported code results
-
-The generated module is plain Python; execute it and call `compute_all()`:
-
-```{python}
-namespace: dict = {}
-exec(code, namespace)
-namespace["compute_all"]()
-```
-
 **Tradeoffs for the exported-code approach:**
 
 - **Advantages**
   - **Standalone artifact**: output is plain Python; no need to distribute `excel_grapher` or the evaluator with it.
   - **Partial obfuscation**: does not expose the extraction engine directly.
-  - **Minimal runtime surface**: embeds only the Excel-equivalent `xl_*` helpers actually needed by the exported graph.
+  - **Minimal runtime surface**: embeds only the Excel-equivalent helpers actually needed by the exported graph.
   - **Repeatable execution**: freezes workbook logic at a point in time; downstream runs are deterministic and Excel-free.
 - **Disadvantages**
-  - **Still Excel-shaped**: the structure is still cell-centric and Excel-like; interpretability gains are incremental.
+  - **Still Excel-shaped**: the structure is still series- and cell-centric; interpretability gains are incremental.
   - **Regeneration required**: changes to the workbook require re-extracting and re-exporting.

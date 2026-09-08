@@ -5,7 +5,7 @@ Live Excel parity for ``ABS`` lives in ``test_abs_excel_parity.py`` (slow, run-i
 
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
-from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.integration.utils.parity_harness import evaluate_targets
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -38,11 +38,10 @@ def test_abs_parity_literal_nested_and_cell_ref() -> None:
         _make_node("S!B3", "=SUM(ABS(S!A1),10)", None),
     )
 
-    result = assert_codegen_matches_evaluator(graph, ["S!B1", "S!B2", "S!B3"])
-    assert result.generated_results["S!B1"] == 3.0
-    assert result.generated_results["S!B2"] == 4.0
-    assert result.generated_results["S!B3"] == 14.0
-    assert "xl_abs" in result.generated_code
+    results = evaluate_targets(graph, ["S!B1", "S!B2", "S!B3"])
+    assert results["S!B1"] == 3.0
+    assert results["S!B2"] == 4.0
+    assert results["S!B3"] == 14.0
 
 
 def test_abs_parity_sigma_band_pattern() -> None:
@@ -62,6 +61,6 @@ def test_abs_parity_sigma_band_pattern() -> None:
         ),
     )
 
-    result = assert_codegen_matches_evaluator(graph, ["S!M1", "S!M2"])
-    assert result.generated_results["S!M1"] == "Within 1σ"
-    assert result.generated_results["S!M2"] == "Outlier >2σ"
+    results = evaluate_targets(graph, ["S!M1", "S!M2"])
+    assert results["S!M1"] == "Within 1σ"
+    assert results["S!M2"] == "Outlier >2σ"

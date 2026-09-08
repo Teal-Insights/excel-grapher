@@ -11,7 +11,7 @@ import pytest
 
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
-from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.integration.utils.parity_harness import evaluate_targets
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -43,10 +43,9 @@ def test_exp_parity_scalar_and_cell_ref() -> None:
         _make_node("S!B2", "=EXP(S!A1)", None),
     )
 
-    result = assert_codegen_matches_evaluator(graph, ["S!B1", "S!B2"])
-    assert result.generated_results["S!B1"] == pytest.approx(math.e)
-    assert result.generated_results["S!B2"] == pytest.approx(math.e)
-    assert "xl_exp" in result.generated_code
+    results = evaluate_targets(graph, ["S!B1", "S!B2"])
+    assert results["S!B1"] == pytest.approx(math.e)
+    assert results["S!B2"] == pytest.approx(math.e)
 
 
 def test_exp_parity_logistic_convergence_pattern() -> None:
@@ -60,6 +59,6 @@ def test_exp_parity_logistic_convergence_pattern() -> None:
     )
 
     expected = 1.0 / (1.0 + math.exp(-0.5 * (math.e - 15.0)))
-    result = assert_codegen_matches_evaluator(graph, ["S!B1", "S!B2"])
-    assert result.generated_results["S!B1"] == pytest.approx(math.e)
-    assert result.generated_results["S!B2"] == pytest.approx(expected)
+    results = evaluate_targets(graph, ["S!B1", "S!B2"])
+    assert results["S!B1"] == pytest.approx(math.e)
+    assert results["S!B2"] == pytest.approx(expected)

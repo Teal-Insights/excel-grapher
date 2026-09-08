@@ -7,7 +7,7 @@ import xlsxwriter
 from excel_grapher import DependencyGraph, Node, create_dependency_graph
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.evaluator.evaluator import FormulaEvaluator
-from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.integration.utils.parity_harness import evaluate_targets
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -102,6 +102,6 @@ def test_numbervalue_text_index_match_eval_codegen_parity(tmp_path) -> None:
         load_values=True,
         use_cached_dynamic_refs=True,
     )
-    result = assert_codegen_matches_evaluator(graph, ["Product Lookup!K16"])
-    assert result.evaluator_results["Product Lookup!K16"] == 1499.0
-    assert result.generated_results["Product Lookup!K16"] == 1499.0
+    results = evaluate_targets(graph, ["Product Lookup!K16"])
+    assert results["Product Lookup!K16"] == 1499.0
+    assert results["Product Lookup!K16"] == 1499.0

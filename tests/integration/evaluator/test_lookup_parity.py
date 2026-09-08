@@ -1,13 +1,13 @@
 """LOOKUP: evaluator and generated export runtime agree on synthetic graphs (integration).
 
-Exercises vector lookup parity with `assert_codegen_matches_evaluator` across
+Exercises vector lookup parity with `evaluate_targets` across
 representative formulas and error paths.
 """
 
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.evaluator.types import XlError
-from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.integration.utils.parity_harness import evaluate_targets
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -66,16 +66,14 @@ def test_vlookup_parity_exact_and_approximate() -> None:
         _make_node("S!F1", '=VLOOKUP("alpha", S!D1:E3, 2, FALSE)', None),
     )
 
-    result = assert_codegen_matches_evaluator(
-        graph, ["S!C1", "S!C2", "S!C3", "S!C4", "S!C5", "S!C6", "S!F1"]
-    )
-    assert result.generated_results["S!C1"] == "twenty"
-    assert result.generated_results["S!C2"] == XlError.NA
-    assert result.generated_results["S!C3"] == "twenty"
-    assert result.generated_results["S!C4"] == XlError.NA
-    assert result.generated_results["S!C5"] == "fifty"
-    assert result.generated_results["S!C6"] == 30
-    assert result.generated_results["S!F1"] == 1
+    results = evaluate_targets(graph, ["S!C1", "S!C2", "S!C3", "S!C4", "S!C5", "S!C6", "S!F1"])
+    assert results["S!C1"] == "twenty"
+    assert results["S!C2"] == XlError.NA
+    assert results["S!C3"] == "twenty"
+    assert results["S!C4"] == XlError.NA
+    assert results["S!C5"] == "fifty"
+    assert results["S!C6"] == 30
+    assert results["S!F1"] == 1
 
 
 def test_lookup_parity_vector_and_array_forms() -> None:
@@ -106,15 +104,13 @@ def test_lookup_parity_vector_and_array_forms() -> None:
         _make_node("S!J1", "=LOOKUP(2.5, S!G1:I2)", None),
     )
 
-    result = assert_codegen_matches_evaluator(
-        graph, ["S!C1", "S!C2", "S!C3", "S!C4", "S!F1", "S!J1"]
-    )
-    assert result.generated_results["S!C1"] == 20
-    assert result.generated_results["S!C2"] == XlError.NA
-    assert result.generated_results["S!C3"] == 30
-    assert result.generated_results["S!C4"] == 2
-    assert result.generated_results["S!F1"] == 20
-    assert result.generated_results["S!J1"] == 20
+    results = evaluate_targets(graph, ["S!C1", "S!C2", "S!C3", "S!C4", "S!F1", "S!J1"])
+    assert results["S!C1"] == 20
+    assert results["S!C2"] == XlError.NA
+    assert results["S!C3"] == 30
+    assert results["S!C4"] == 2
+    assert results["S!F1"] == 20
+    assert results["S!J1"] == 20
 
 
 def test_lookup_last_nonzero_idiom_parity() -> None:
@@ -125,5 +121,5 @@ def test_lookup_last_nonzero_idiom_parity() -> None:
         _make_node("S!A3", None, 7),
         _make_node("S!B1", "=LOOKUP(2,1/(S!A1:S!A3<>0),S!A1:S!A3)", None),
     )
-    result = assert_codegen_matches_evaluator(graph, ["S!B1"])
-    assert result.generated_results["S!B1"] == 7
+    results = evaluate_targets(graph, ["S!B1"])
+    assert results["S!B1"] == 7

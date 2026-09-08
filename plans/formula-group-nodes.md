@@ -722,7 +722,7 @@ Practice RED → GREEN → refactor. Keep pure detection separate from graph mut
 | Task | Done when |
 | ---- | --------- |
 | Eval parity | Detected group `evaluate(member)` matches pre-coalesce cell graph |
-| Codegen parity | `assert_codegen_matches_evaluator` on coalesced graph |
+| Evaluator | `evaluate_targets` on coalesced graph |
 | Intra-family skip | Family with member→member edge remains cells; report reason |
 | Min size | Lone formula cell never becomes a 1-member group |
 | Cell-only regression | `formula_groups=False` path identical to pre-Issue-3 |

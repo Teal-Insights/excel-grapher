@@ -21,7 +21,7 @@ import pytest
 
 from excel_grapher import FormulaEvaluator, create_dependency_graph
 from excel_grapher.core.numpy_support import HAS_NUMPY
-from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.integration.utils.parity_harness import evaluate_targets
 from tests.unit.gaps.workbook_helpers import write_large_string_criteria_sumproduct
 
 LARGE_CRITERIA_ROWS = 10_000
@@ -71,10 +71,10 @@ def test_large_string_criteria_sumproduct_10k_eval_codegen_parity(tmp_path: Path
         use_cached_dynamic_refs=True,
         max_range_cells=LARGE_GRAPH_MAX_RANGE_CELLS,
     )
-    result = assert_codegen_matches_evaluator(graph, ["Data!C1"])
+    results = evaluate_targets(graph, ["Data!C1"])
     expected = (LARGE_CRITERIA_ROWS // 2) * 500.0
-    assert result.evaluator_results["Data!C1"] == pytest.approx(expected)
-    assert result.generated_results["Data!C1"] == pytest.approx(expected)
+    assert results["Data!C1"] == pytest.approx(expected)
+    assert results["Data!C1"] == pytest.approx(expected)
 
 
 @pytest.mark.slow

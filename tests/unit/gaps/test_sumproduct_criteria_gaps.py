@@ -17,7 +17,7 @@ np = pytest.importorskip("numpy")
 from excel_grapher import DependencyGraph, FormulaEvaluator, Node, create_dependency_graph
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.evaluator.types import XlError
-from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.integration.utils.parity_harness import evaluate_targets
 from tests.unit.gaps.workbook_helpers import (
     write_software_revenue_sumproduct,
     write_sumproduct_category_filter,
@@ -126,9 +126,9 @@ def test_sumproduct_category_filter_eval_codegen_parity(tmp_path: Path) -> None:
         load_values=True,
         use_cached_dynamic_refs=True,
     )
-    result = assert_codegen_matches_evaluator(graph, ["Product Lookup!I14"])
-    assert result.evaluator_results["Product Lookup!I14"] == pytest.approx(630.0)
-    assert result.generated_results["Product Lookup!I14"] == pytest.approx(630.0)
+    results = evaluate_targets(graph, ["Product Lookup!I14"])
+    assert results["Product Lookup!I14"] == pytest.approx(630.0)
+    assert results["Product Lookup!I14"] == pytest.approx(630.0)
 
 
 def test_sumproduct_threshold_count_eval_codegen_parity(tmp_path: Path) -> None:
@@ -140,9 +140,9 @@ def test_sumproduct_threshold_count_eval_codegen_parity(tmp_path: Path) -> None:
         load_values=True,
         use_cached_dynamic_refs=True,
     )
-    result = assert_codegen_matches_evaluator(graph, ["Product Lookup!I18"])
-    assert result.evaluator_results["Product Lookup!I18"] == pytest.approx(3.0)
-    assert result.generated_results["Product Lookup!I18"] == pytest.approx(3.0)
+    results = evaluate_targets(graph, ["Product Lookup!I18"])
+    assert results["Product Lookup!I18"] == pytest.approx(3.0)
+    assert results["Product Lookup!I18"] == pytest.approx(3.0)
 
 
 def test_software_revenue_sumproduct_eval_codegen_parity(tmp_path: Path) -> None:
@@ -154,9 +154,9 @@ def test_software_revenue_sumproduct_eval_codegen_parity(tmp_path: Path) -> None
         load_values=True,
         use_cached_dynamic_refs=True,
     )
-    result = assert_codegen_matches_evaluator(graph, ["Product Lookup!K21"])
-    assert result.evaluator_results["Product Lookup!K21"] == pytest.approx(10598.0)
-    assert result.generated_results["Product Lookup!K21"] == pytest.approx(10598.0)
+    results = evaluate_targets(graph, ["Product Lookup!K21"])
+    assert results["Product Lookup!K21"] == pytest.approx(10598.0)
+    assert results["Product Lookup!K21"] == pytest.approx(10598.0)
 
 
 def test_sumproduct_price_threshold_k24_eval_codegen_parity(tmp_path: Path) -> None:
@@ -168,6 +168,6 @@ def test_sumproduct_price_threshold_k24_eval_codegen_parity(tmp_path: Path) -> N
         load_values=True,
         use_cached_dynamic_refs=True,
     )
-    result = assert_codegen_matches_evaluator(graph, ["Product Lookup!K24"])
-    assert result.evaluator_results["Product Lookup!K24"] == pytest.approx(7.0)
-    assert result.generated_results["Product Lookup!K24"] == pytest.approx(7.0)
+    results = evaluate_targets(graph, ["Product Lookup!K24"])
+    assert results["Product Lookup!K24"] == pytest.approx(7.0)
+    assert results["Product Lookup!K24"] == pytest.approx(7.0)

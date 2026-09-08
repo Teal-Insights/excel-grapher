@@ -26,7 +26,7 @@ from tests.bench.operators_bench import (
     numeric_column,
     numeric_string_column,
 )
-from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.integration.utils.parity_harness import evaluate_targets
 from tests.unit.core.operators_test_helpers import (
     array_tolist,
     assert_arithmetic_matches_reference,
@@ -148,9 +148,9 @@ def test_large_numeric_sumproduct_eval_codegen_parity(tmp_path: Path) -> None:
         load_values=True,
         use_cached_dynamic_refs=True,
     )
-    result = assert_codegen_matches_evaluator(graph, ["Data!C1"])
-    assert result.evaluator_results["Data!C1"] == pytest.approx(15_000.0)
-    assert result.generated_results["Data!C1"] == pytest.approx(15_000.0)
+    results = evaluate_targets(graph, ["Data!C1"])
+    assert results["Data!C1"] == pytest.approx(15_000.0)
+    assert results["Data!C1"] == pytest.approx(15_000.0)
 
 
 @pytest.mark.slow

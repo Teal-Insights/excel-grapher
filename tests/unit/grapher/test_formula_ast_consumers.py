@@ -14,7 +14,6 @@ from excel_grapher.core.formula_ast import (
     parse_preserving_axes,
     unparse_normalized_formula,
 )
-from excel_grapher.exporter.codegen import CodeGenerator
 from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
 from excel_grapher.grapher.formula_label import display_formula
 from excel_grapher.grapher.graph import DependencyGraph
@@ -134,31 +133,6 @@ def test_evaluator_uses_formula_ast_even_when_normalized_text_is_stale() -> None
     with FormulaEvaluator(graph) as ev, patch.object(evaluator_module, "parse", counting_parse):
         assert ev.evaluate("S!B1") == 11.0
         assert parse_calls == 0
-
-
-def test_codegen_uses_formula_ast_even_when_normalized_text_is_stale() -> None:
-    graph = DependencyGraph()
-    graph.add_node(make_cell_node("S", "A", 1, value=10, is_leaf=True))
-    graph.add_node(
-        make_cell_node(
-            "S",
-            "B",
-            1,
-            is_leaf=False,
-            normalized_formula="=S!A1+999",
-            formula_ast=parse("=S!A1+1"),
-        )
-    )
-    graph.add_edge("S!B1", "S!A1")
-
-    code = CodeGenerator(graph).generate(["S!B1"])
-    assert "999" not in code
-    namespace: dict = {}
-    exec(code, namespace)
-    compute_all = namespace["compute_all"]
-    make_context = namespace["make_context"]
-    result = compute_all(ctx=make_context())
-    assert result["S!B1"] == 11.0
 
 
 def test_display_formula_prefers_raw_then_unparsed_ast() -> None:

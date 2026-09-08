@@ -583,8 +583,9 @@ def create_dependency_graph(
     created for those cells (edges into them are kept), and dynamic-ref leaf
     constraints are not required for addresses inside these ranges. Pair with the
     same declarations on `excel_grapher.FormulaEvaluator` and
-    `excel_grapher.exporter.codegen.CodeGenerator.generate` for **evaluator
-    <-> export** parity (consistent behavior between evaluation and generated code).
+    `excel_grapher.exporter.codegen.CodeGenerator.generate_modules` for
+    **evaluator <-> export** parity (consistent behavior between evaluation and
+    generated packages).
 
     When `warm_ast_cache` is True, each distinct derived `normalized_formula`
     in the built graph is stored on `DependencyGraph.preparsed_formulas` as an
@@ -607,12 +608,13 @@ def create_dependency_graph(
     When `warm_formula_shapes` is True, the same parse pass interns punched AST
     skeletons on `DependencyGraph.formula_shapes`, keyed by `NodeKey`.
     `FormulaEvaluator` compiles each shape once at construction.
-    `CodeGenerator.generate` reads the overlay at generate time and emits a
-    shared helper per shape when profitable. The table is not JSON/pickle
-    serialized. Compression and formula rewrite drop it (`None`). After those
-    events, call `warm_formula_shapes(graph)` and assign the result; the graph
-    does not auto-rewarm. Rewarming does not refresh `_shape_fns` on a live
-    `FormulaEvaluator` -- construct a new one (GitHub #560).
+    `write_workbook` may emit Excel shared formulas for contiguous autofill runs.
+    Package export (`CodeGenerator.generate_modules`) compiles per-node formula
+    ASTs. The table is not JSON/pickle serialized. Compression and formula rewrite
+    drop it (`None`). After those events, call `warm_formula_shapes(graph)` and
+    assign the result; the graph does not auto-rewarm. Rewarming does not refresh
+    `_shape_fns` on a live `FormulaEvaluator` -- construct a new one
+    (GitHub #560).
 
     **Cost model**: constraint-based dynamic-ref expansion (`dynamic_refs` set,
     `use_cached_dynamic_refs=False`) skips `argument_subgraph_refs` and

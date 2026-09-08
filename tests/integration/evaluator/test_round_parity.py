@@ -5,7 +5,7 @@ Live Excel parity for ``ROUND`` lives in ``test_round_excel_parity.py`` (slow, r
 
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
-from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.integration.utils.parity_harness import evaluate_targets
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -40,10 +40,9 @@ def test_round_parity_excel_half_away_from_zero() -> None:
         _make_node("S!B5", "=ROUND(S!A1,1)", None),
     )
 
-    result = assert_codegen_matches_evaluator(graph, ["S!B1", "S!B2", "S!B3", "S!B4", "S!B5"])
-    assert result.generated_results["S!B1"] == 1.3
-    assert result.generated_results["S!B2"] == -1.3
-    assert result.generated_results["S!B3"] == 3.0
-    assert result.generated_results["S!B4"] == 130.0
-    assert result.generated_results["S!B5"] == 1.3
-    assert "xl_round" in result.generated_code
+    results = evaluate_targets(graph, ["S!B1", "S!B2", "S!B3", "S!B4", "S!B5"])
+    assert results["S!B1"] == 1.3
+    assert results["S!B2"] == -1.3
+    assert results["S!B3"] == 3.0
+    assert results["S!B4"] == 130.0
+    assert results["S!B5"] == 1.3

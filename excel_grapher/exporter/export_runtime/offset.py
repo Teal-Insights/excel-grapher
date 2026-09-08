@@ -252,8 +252,8 @@ def xl_range(ctx: EvalContext, address: str) -> CellValue:
 def xl_range_rows(ctx: EvalContext, address: str) -> CellValue:
     """Evaluate a sheet-qualified range eagerly into nested row lists.
 
-    Public boundary handler for range targets: results returned from
-    `compute_all` are materialized values, not lazy range views.
+    Public boundary handler for range targets: results returned to callers
+    are materialized values, not lazy range views.
     """
     rng = xl_range(ctx, address)
     if isinstance(rng, Range):

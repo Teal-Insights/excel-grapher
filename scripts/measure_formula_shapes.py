@@ -198,45 +198,11 @@ def measure_eval_times(
     }
 
 
-def measure_codegen_sizes(
-    graph: DependencyGraph,
-    targets: Sequence[str],
-) -> dict[str, float]:
-    """Compare emitted LOC / helper count with and without interned shapes."""
-    from excel_grapher.exporter.codegen import CodeGenerator
-    from excel_grapher.grapher.formula_shapes import warm_formula_shapes
-
-    original = graph.formula_shapes
-    table = original if original is not None else warm_formula_shapes(graph)
-
-    def _stats(code: str) -> dict[str, float]:
-        return {
-            "loc": float(code.count("\n") + 1),
-            "shape_helpers": float(code.count("def _shape_")),
-            "cell_functions": float(code.count("def cell_")),
-        }
-
-    try:
-        graph.formula_shapes = None
-        plain = _stats(CodeGenerator(graph).generate(list(targets)))
-        graph.formula_shapes = table
-        shaped = _stats(CodeGenerator(graph).generate(list(targets)))
-    finally:
-        graph.formula_shapes = original
-    return {
-        "string_keyed_loc": plain["loc"],
-        "shape_keyed_loc": shaped["loc"],
-        "shape_helpers": shaped["shape_helpers"],
-        "cell_functions": shaped["cell_functions"],
-    }
-
-
 def render_report(
     summary: FormulaShapeSummary,
     *,
     parse_times: dict[str, float] | None = None,
     eval_times: dict[str, float] | None = None,
-    codegen: dict[str, float] | None = None,
     top_n: int = 15,
 ) -> str:
     """Format a human-readable shape cardinality report."""
@@ -272,15 +238,6 @@ def render_report(
             f"  string-keyed:  {string_s * 1000:.3f} ms",
             f"  shape-keyed:   {shape_s * 1000:.3f} ms",
             f"  speedup:       {speedup:.2f}x",
-        ]
-    if codegen is not None:
-        lines += [
-            "",
-            "codegen:",
-            f"  string-keyed LOC: {int(codegen['string_keyed_loc']):,}",
-            f"  shape-keyed LOC:  {int(codegen['shape_keyed_loc']):,}",
-            f"  shape helpers:    {int(codegen['shape_helpers']):,}",
-            f"  cell functions:   {int(codegen['cell_functions']):,}",
         ]
     if summary.shape_counts:
         lines += ["", f"top shapes (up to {top_n}):"]
@@ -356,11 +313,6 @@ def main(argv: list[str] | None = None) -> int:
         help="Skip evaluator timings (graph mode only)",
     )
     parser.add_argument(
-        "--no-codegen",
-        action="store_true",
-        help="Skip codegen LOC / helper counts (graph mode only)",
-    )
-    parser.add_argument(
         "--scan-workbook",
         action="store_true",
         help=(
@@ -396,11 +348,6 @@ def main(argv: list[str] | None = None) -> int:
         if graph is None or args.no_eval_timing
         else measure_eval_times(graph, repeats=args.eval_repeats)
     )
-    codegen = (
-        None
-        if graph is None or args.no_codegen
-        else measure_codegen_sizes(graph, list(args.targets))
-    )
 
     if args.json:
         payload: dict[str, object] = {
@@ -412,8 +359,6 @@ def main(argv: list[str] | None = None) -> int:
             payload["parse_warm"] = parse_times
         if eval_times is not None:
             payload["eval"] = eval_times
-        if codegen is not None:
-            payload["codegen"] = codegen
         print(json.dumps(payload, indent=2))
     else:
         print(f"workbook: {args.workbook}")
@@ -423,7 +368,6 @@ def main(argv: list[str] | None = None) -> int:
                 summary,
                 parse_times=parse_times,
                 eval_times=eval_times,
-                codegen=codegen,
                 top_n=args.top,
             )
         )

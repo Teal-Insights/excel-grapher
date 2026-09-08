@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, TypedDict
 
@@ -171,33 +171,6 @@ def output_binding_covered_addresses(
         for leaf in resolved["leaves"]:
             addresses.add(normalize_address(leaf["address"]))
     return frozenset(addresses)
-
-
-def should_emit_compute_all(
-    targets: Sequence[str],
-    *,
-    covered_by_output: frozenset[str],
-    include_compute_all: bool | None = None,
-) -> bool:
-    """Decide whether generated exports should include public `compute_all`.
-
-    Args:
-        targets: Normalized export target cell addresses.
-        covered_by_output: Addresses covered by resolved output series computes.
-        include_compute_all: Explicit override. `True` always emits, `False`
-            never emits, and `None` (default) omits only when every target is
-            covered by an output binding.
-
-    Returns:
-        True when `compute_all` should be part of the generated public API.
-    """
-    if include_compute_all is True:
-        return True
-    if include_compute_all is False:
-        return False
-    if not targets:
-        return True
-    return not all(normalize_address(target) in covered_by_output for target in targets)
 
 
 def _explicit_bindings_candidates(workbook: Path, bindings: Path) -> list[Path]:

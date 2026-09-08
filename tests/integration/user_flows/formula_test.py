@@ -12,7 +12,7 @@ import pytest
 
 from excel_grapher import FormulaEvaluator, create_dependency_graph
 from excel_grapher.grapher import DependencyGraph
-from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.integration.utils.parity_harness import evaluate_targets
 from tests.paths import TEST_SHEETS_FIXTURES
 
 WORKBOOK_PATH = TEST_SHEETS_FIXTURES / "formula_test_cases.xlsx"
@@ -50,11 +50,11 @@ def test_g3_g10_match_workbook_cached_values(formula_graph: DependencyGraph) -> 
 
 def test_g3_g10_codegen_matches_evaluator(formula_graph: DependencyGraph) -> None:
     """Generated export code agrees with FormulaEvaluator on formula cells G3:G9."""
-    result = assert_codegen_matches_evaluator(formula_graph, FORMULA_TARGETS)
+    results = evaluate_targets(formula_graph, FORMULA_TARGETS)
     for address, expected in EXPECTED.items():
         if address not in FORMULA_TARGETS:
             continue
-        computed = result.generated_results[address]
+        computed = results[address]
         if isinstance(expected, (int, float)) and isinstance(computed, (int, float)):
             assert computed == pytest.approx(expected), address
         else:

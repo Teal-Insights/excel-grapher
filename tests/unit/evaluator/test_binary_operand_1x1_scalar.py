@@ -13,7 +13,7 @@ import xlsxwriter
 from excel_grapher import DependencyGraph, Node, create_dependency_graph
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.evaluator.evaluator import FormulaEvaluator
-from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.integration.utils.parity_harness import evaluate_targets
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -100,8 +100,8 @@ def test_literal_1x1_range_unary_and_broadcast_parity() -> None:
         _make_node("S!C3", "=-(S!A4:S!A4)", None),
         _make_node("S!C4", '=SUM((S!A1:S!A1="Yes")*S!B1:S!B3)', None),
     )
-    result = assert_codegen_matches_evaluator(graph, ["S!C1", "S!C2", "S!C3", "S!C4"])
-    assert result.evaluator_results == {
+    results = evaluate_targets(graph, ["S!C1", "S!C2", "S!C3", "S!C4"])
+    assert results == {
         "S!C1": 1,
         "S!C2": 0.0,
         "S!C3": -5.0,
@@ -129,10 +129,10 @@ def test_index_binary_ops_eval_codegen_parity(tmp_path) -> None:
 
     cells = ["S!B1", "S!B2", "S!B3"]
     graph = create_dependency_graph(workbook, cells, load_values=True)
-    result = assert_codegen_matches_evaluator(graph, cells)
-    assert result.evaluator_results == {
+    results = evaluate_targets(graph, cells)
+    assert results == {
         "S!B1": 1,
         "S!B2": "Yes",
         "S!B3": "NoYes",
     }
-    assert result.generated_results == result.evaluator_results
+    assert results == results

@@ -1,13 +1,13 @@
 """INDEX edge cases: evaluator and generated export runtime stay aligned (integration).
 
-Uses `assert_codegen_matches_evaluator` for INDEX variants that commonly diverge
+Uses `evaluate_targets` for INDEX variants that commonly diverge
 between hand-rolled evaluators and transpiled code.
 """
 
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.evaluator.types import XlError
-from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.integration.utils.parity_harness import evaluate_targets
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -41,10 +41,10 @@ def test_index_parity_with_non_array_input() -> None:
         _make_node("S!A3", '=INDEX("text",1)', None),
     )
 
-    result = assert_codegen_matches_evaluator(graph, ["S!A1", "S!A2", "S!A3"])
-    assert result.generated_results["S!A1"] == XlError.VALUE
-    assert result.generated_results["S!A2"] == XlError.VALUE
-    assert result.generated_results["S!A3"] == XlError.VALUE
+    results = evaluate_targets(graph, ["S!A1", "S!A2", "S!A3"])
+    assert results["S!A1"] == XlError.VALUE
+    assert results["S!A2"] == XlError.VALUE
+    assert results["S!A3"] == XlError.VALUE
 
 
 def test_index_omit_row_returns_column_for_match() -> None:
@@ -62,9 +62,9 @@ def test_index_omit_row_returns_column_for_match() -> None:
         _make_node("S!D1", "5", None),
         _make_node("S!E1", "=MATCH(S!D1, INDEX(S!A1:S!C3,,2), 0)", None),
     )
-    result = assert_codegen_matches_evaluator(graph, ["S!E1"])
-    assert result.evaluator_results["S!E1"] == 2
-    assert result.generated_results["S!E1"] == 2
+    results = evaluate_targets(graph, ["S!E1"])
+    assert results["S!E1"] == 2
+    assert results["S!E1"] == 2
 
 
 def test_index_omit_col_returns_row_for_match() -> None:
@@ -82,9 +82,9 @@ def test_index_omit_col_returns_row_for_match() -> None:
         _make_node("S!D1", "5", None),
         _make_node("S!E1", "=MATCH(S!D1, INDEX(S!A1:S!C3,2,), 0)", None),
     )
-    result = assert_codegen_matches_evaluator(graph, ["S!E1"])
-    assert result.evaluator_results["S!E1"] == 2
-    assert result.generated_results["S!E1"] == 2
+    results = evaluate_targets(graph, ["S!E1"])
+    assert results["S!E1"] == 2
+    assert results["S!E1"] == 2
 
 
 def test_index_scalar_out_of_bounds_returns_ref_error() -> None:
@@ -96,9 +96,9 @@ def test_index_scalar_out_of_bounds_returns_ref_error() -> None:
         _make_node("S!B2", "4", None),
         _make_node("S!C1", "=INDEX(S!A1:S!B2,3,1)", None),
     )
-    result = assert_codegen_matches_evaluator(graph, ["S!C1"])
-    assert result.evaluator_results["S!C1"] == XlError.REF
-    assert result.generated_results["S!C1"] == XlError.REF
+    results = evaluate_targets(graph, ["S!C1"])
+    assert results["S!C1"] == XlError.REF
+    assert results["S!C1"] == XlError.REF
 
 
 def test_index_row_zero_whole_column_match_and_sum() -> None:
@@ -110,11 +110,11 @@ def test_index_row_zero_whole_column_match_and_sum() -> None:
         _make_node("S!B1", "=MATCH(7, INDEX(S!A1:S!A3, 0), 0)", None),
         _make_node("S!B2", "=SUM(INDEX(S!A1:S!A3, 0))", None),
     )
-    result = assert_codegen_matches_evaluator(graph, ["S!B1", "S!B2"])
-    assert result.evaluator_results["S!B1"] == 3
-    assert result.generated_results["S!B1"] == 3
-    assert result.evaluator_results["S!B2"] == 12
-    assert result.generated_results["S!B2"] == 12
+    results = evaluate_targets(graph, ["S!B1", "S!B2"])
+    assert results["S!B1"] == 3
+    assert results["S!B1"] == 3
+    assert results["S!B2"] == 12
+    assert results["S!B2"] == 12
 
 
 def test_index_computed_array_row_zero_match_parity() -> None:
@@ -127,13 +127,13 @@ def test_index_computed_array_row_zero_match_parity() -> None:
         _make_node("S!B2", "=MATCH(TRUE, INDEX((S!A1:S!A3<>0), 0), 0)", None),
         _make_node("S!B3", "=SUM(INDEX((S!A1:S!A3<>0)*1, 0))", None),
     )
-    result = assert_codegen_matches_evaluator(graph, ["S!B1", "S!B2", "S!B3"])
-    assert result.evaluator_results["S!B1"] == 1
-    assert result.generated_results["S!B1"] == 1
-    assert result.evaluator_results["S!B2"] == 1
-    assert result.generated_results["S!B2"] == 1
-    assert result.evaluator_results["S!B3"] == 2
-    assert result.generated_results["S!B3"] == 2
+    results = evaluate_targets(graph, ["S!B1", "S!B2", "S!B3"])
+    assert results["S!B1"] == 1
+    assert results["S!B1"] == 1
+    assert results["S!B2"] == 1
+    assert results["S!B2"] == 1
+    assert results["S!B3"] == 2
+    assert results["S!B3"] == 2
 
 
 def test_index_zero_axis_selectors_on_2d_array() -> None:
@@ -152,13 +152,13 @@ def test_index_zero_axis_selectors_on_2d_array() -> None:
         _make_node("S!E2", "=SUM(INDEX(S!A1:S!C3,2,0))", None),
         _make_node("S!E3", "=SUM(INDEX(S!A1:S!C3,0,0))", None),
     )
-    result = assert_codegen_matches_evaluator(graph, ["S!E1", "S!E2", "S!E3"])
-    assert result.evaluator_results["S!E1"] == 15
-    assert result.generated_results["S!E1"] == 15
-    assert result.evaluator_results["S!E2"] == 15
-    assert result.generated_results["S!E2"] == 15
-    assert result.evaluator_results["S!E3"] == 45
-    assert result.generated_results["S!E3"] == 45
+    results = evaluate_targets(graph, ["S!E1", "S!E2", "S!E3"])
+    assert results["S!E1"] == 15
+    assert results["S!E1"] == 15
+    assert results["S!E2"] == 15
+    assert results["S!E2"] == 15
+    assert results["S!E3"] == 45
+    assert results["S!E3"] == 45
 
 
 def test_index_zero_over_computed_array_finds_later_nonzero() -> None:
@@ -169,6 +169,6 @@ def test_index_zero_over_computed_array_finds_later_nonzero() -> None:
         _make_node("S!A3", None, 7),
         _make_node("S!B1", "=MATCH(TRUE,INDEX((S!A1:S!A3<>0),0),0)", None),
     )
-    result = assert_codegen_matches_evaluator(graph, ["S!B1"])
-    assert result.evaluator_results["S!B1"] == 3
-    assert result.generated_results["S!B1"] == 3
+    results = evaluate_targets(graph, ["S!B1"])
+    assert results["S!B1"] == 3
+    assert results["S!B1"] == 3
