@@ -216,6 +216,9 @@ incident edges and does not rewrite dependents. After rewiring, call
 `projected.validate_consistency()` (or `ProjectionResult.validate()`, or
 `apply_projection(..., validate=True)`) to **fail closed** on formula/edge
 disagreement. The helper reports structured errors and never "fixes" the graph.
+Unlabeled edges are treated as formula-ref claims unless the host formula
+contains `OFFSET` / `INDIRECT` / dynamic `INDEX`; edges whose provenance is
+dynamic-only are exempt from that reverse check.
 
 Compose steps with `apply_projection(graph, [step_a, step_b])`; multiple steps
 fold into a `CompositeProjectionManifest` that chains the forwarding map and

@@ -7,11 +7,18 @@ from pathlib import Path
 import pytest
 import xlsxwriter
 
+from excel_grapher.core.formula_ast import (
+    AbsoluteAxis,
+    CellRef,
+    CellRefNode,
+    RelativeAxis,
+)
 from excel_grapher.exporter.projection import (
     IdentityTransitCompression,
     ProjectionResult,
     apply_projection,
 )
+from excel_grapher.grapher.builder import create_dependency_graph
 from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.graph_consistency import (
@@ -19,6 +26,7 @@ from excel_grapher.grapher.graph_consistency import (
     GraphConsistencyKind,
 )
 from excel_grapher.grapher.node import Node, make_cell_node
+from excel_grapher.grapher.parser import DEFAULT_MAX_RANGE_CELLS
 
 
 def _cell(
@@ -237,8 +245,6 @@ def test_extracted_workbook_is_consistent(tmp_path: Path) -> None:
     sheet.write_formula(0, 1, "=A1+1")
     workbook.close()
 
-    from excel_grapher.grapher.builder import create_dependency_graph
-
     graph = create_dependency_graph(path, ["Sheet1!B1"], load_values=False)
     graph.validate_consistency()
 
@@ -301,3 +307,109 @@ def test_apply_projection_default_does_not_validate() -> None:
 
     result = apply_projection(graph, [StaleFormula()])
     assert result.get_dependencies("Sheet1!A1") == frozenset({"Sheet1!B1"})
+
+
+def test_unlabeled_stale_edge_after_extracted_rewrite(tmp_path: Path) -> None:
+    path = tmp_path / "rewrite.xlsx"
+    workbook = xlsxwriter.Workbook(path)
+    sheet = workbook.add_worksheet("Sheet1")
+    sheet.write(0, 0, 1)
+    sheet.write(0, 1, 2)
+    sheet.write_formula(0, 2, "=A1")
+    workbook.close()
+
+    graph = create_dependency_graph(path, ["Sheet1!C1"], load_values=False)
+    assert graph.get_edge_attrs("Sheet1!C1", "Sheet1!A1").provenance is None
+    graph.set_node_formula("Sheet1!C1", "=Sheet1!B1", "=Sheet1!B1")
+
+    with pytest.raises(GraphConsistencyError) as exc_info:
+        graph.validate_consistency()
+    tuples = _issue_tuples(exc_info.value)
+    assert (
+        GraphConsistencyKind.missing_formula_edge.value,
+        "Sheet1!C1",
+        "Sheet1!B1",
+    ) in tuples
+    assert (
+        GraphConsistencyKind.extra_formula_edge.value,
+        "Sheet1!C1",
+        "Sheet1!A1",
+    ) in tuples
+
+
+def test_offset_extracted_graph_is_consistent(tmp_path: Path) -> None:
+    path = tmp_path / "offset.xlsx"
+    workbook = xlsxwriter.Workbook(path)
+    sheet = workbook.add_worksheet("Sheet1")
+    sheet.write(0, 0, 1)
+    sheet.write(1, 0, 2)
+    sheet.write(2, 0, 3)
+    sheet.write_formula(0, 1, "=OFFSET(A1:A3,1,0)")
+    workbook.close()
+
+    graph = create_dependency_graph(
+        path, ["Sheet1!B1"], load_values=False, use_cached_dynamic_refs=True
+    )
+    graph.validate_consistency()
+
+
+def test_unlabeled_extra_edge_on_static_formula() -> None:
+    graph = DependencyGraph()
+    graph.add_node(_cell("Sheet1!B1"))
+    graph.add_node(_cell("Sheet1!C1"))
+    graph.add_node(_cell("Sheet1!A1", "=Sheet1!B1"))
+    graph.add_edge("Sheet1!A1", "Sheet1!B1")
+    graph.add_edge("Sheet1!A1", "Sheet1!C1")
+
+    with pytest.raises(GraphConsistencyError) as exc_info:
+        graph.validate_consistency()
+    assert (
+        GraphConsistencyKind.extra_formula_edge.value,
+        "Sheet1!A1",
+        "Sheet1!C1",
+    ) in _issue_tuples(exc_info.value)
+
+
+def test_range_too_large_is_issue() -> None:
+    graph = DependencyGraph()
+    end = DEFAULT_MAX_RANGE_CELLS + 1
+    graph.add_node(_cell("Sheet1!B1", f"=SUM(Sheet1!A1:A{end})", is_leaf=True))
+
+    with pytest.raises(GraphConsistencyError) as exc_info:
+        graph.validate_consistency()
+    assert (
+        GraphConsistencyKind.range_too_large.value,
+        "Sheet1!B1",
+        None,
+    ) in _issue_tuples(exc_info.value)
+
+
+def test_unbounded_whole_column_without_sheet_bounds() -> None:
+    graph = DependencyGraph()
+    graph.add_node(_cell("Sheet1!B1", "=SUM(C:C)", is_leaf=True))
+
+    with pytest.raises(GraphConsistencyError) as exc_info:
+        graph.validate_consistency()
+    assert (
+        GraphConsistencyKind.unbounded_whole_ref.value,
+        "Sheet1!B1",
+        None,
+    ) in _issue_tuples(exc_info.value)
+
+
+def test_unresolved_relative_ref_is_issue() -> None:
+    graph = DependencyGraph()
+    graph.add_node(_cell("Sheet1!A1", is_leaf=True))
+    graph.set_node_ast(
+        "Sheet1!A1",
+        CellRefNode(CellRef(sheet="Sheet1", col=AbsoluteAxis(1), row=RelativeAxis(-5))),
+        formula="=A[-5]",
+    )
+
+    with pytest.raises(GraphConsistencyError) as exc_info:
+        graph.validate_consistency()
+    assert (
+        GraphConsistencyKind.unresolved_formula_ref.value,
+        "Sheet1!A1",
+        None,
+    ) in _issue_tuples(exc_info.value)

@@ -5,6 +5,12 @@ edges. Codegen and `to_networkx` trust the stored edge set, so a projected
 graph whose formulas and edges disagree can emit quietly wrong artifacts.
 
 This module only *detects* disagreement. It never rewrites the graph.
+
+Unlabeled edges count as static formula-ref claims unless the host formula
+contains `OFFSET`, `INDIRECT`, or dynamic `INDEX`. Range interiors of those
+calls are not treated as static extraction edges. Resolve failures, ranges
+over `max_cells`, and whole-column/row refs without `sheet_bounds` are
+reported as issues rather than skipped.
 """
 
 from __future__ import annotations
@@ -14,14 +20,21 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from fastpyxl.utils.cell import column_index_from_string, coordinate_from_string
+from fastpyxl.utils.cell import coordinate_from_string
 
-from excel_grapher.core.address_keys import format_key, normalize_key, parse_address
+from excel_grapher.core.address_keys import (
+    format_key,
+    format_range_key,
+    normalize_key,
+    parse_address,
+)
+from excel_grapher.core.excel_function_names import normalize_excel_function_name
 from excel_grapher.core.formula_ast import (
     AstNode,
     BinaryOpNode,
     CellRefNode,
     FunctionCallNode,
+    NumberNode,
     RangeNode,
     UnaryOpNode,
     WholeColumnNode,
@@ -51,6 +64,11 @@ __all__ = [
 ]
 
 _FORMULA_REF_CAUSES = DependencyCause.direct_ref | DependencyCause.static_range
+_DYNAMIC_CAUSES = (
+    DependencyCause.dynamic_offset
+    | DependencyCause.dynamic_indirect
+    | DependencyCause.dynamic_index
+)
 
 
 class GraphConsistencyKind(StrEnum):
@@ -62,6 +80,9 @@ class GraphConsistencyKind(StrEnum):
     edge_to_missing_node = "edge_to_missing_node"
     leaf_flag_mismatch = "leaf_flag_mismatch"
     formula_flag_mismatch = "formula_flag_mismatch"
+    unresolved_formula_ref = "unresolved_formula_ref"
+    range_too_large = "range_too_large"
+    unbounded_whole_ref = "unbounded_whole_ref"
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,11 +217,20 @@ def validate_graph_consistency(graph: DependencyGraph) -> None:
         raise GraphConsistencyError(issues)
 
 
-def _claims_formula_ref(provenance: EdgeProvenance | None) -> bool:
-    """True when an edge is labeled as a formula CellRef or static range."""
-    if provenance is None:
-        return False
-    return bool(provenance.causes & _FORMULA_REF_CAUSES)
+def _claims_formula_ref(provenance: EdgeProvenance | None, *, host_has_dynamic: bool) -> bool:
+    """True when an outgoing edge should match a static formula CellRef/range.
+
+    Unlabeled edges (`provenance` missing or empty) count as formula-ref
+    claims unless the host formula contains OFFSET/INDIRECT/dynamic INDEX.
+    Dynamic-only provenance is never a static formula-ref claim.
+    """
+    if provenance is not None:
+        causes = provenance.causes
+        if causes & _FORMULA_REF_CAUSES:
+            return True
+        if causes & _DYNAMIC_CAUSES:
+            return False
+    return not host_has_dynamic
 
 
 def _add_formula_edge_issues(
@@ -212,7 +242,8 @@ def _add_formula_edge_issues(
 ) -> None:
     if node.formula_ast is None:
         return
-    expected = _expected_formula_ref_keys(graph, node, key)
+    host_has_dynamic = _formula_has_dynamic_call(node.formula_ast)
+    expected = _expected_formula_ref_keys(graph, node, key, add)
     for dest in sorted(expected - deps):
         add(
             GraphConsistencyIssue(
@@ -227,7 +258,7 @@ def _add_formula_edge_issues(
         if dest in expected:
             continue
         provenance = graph.get_edge_attrs(key, dest).provenance
-        if not _claims_formula_ref(provenance):
+        if not _claims_formula_ref(provenance, host_has_dynamic=host_has_dynamic):
             continue
         add(
             GraphConsistencyIssue(
@@ -244,33 +275,86 @@ def _expected_formula_ref_keys(
     graph: DependencyGraph,
     node: Node,
     key: NodeKey,
+    add: Callable[[GraphConsistencyIssue], None],
 ) -> set[NodeKey]:
     ast = node.formula_ast
     if ast is None:
         return set()
     anchor = node.address or key
     expected: set[NodeKey] = set()
-    for leaf in _iter_address_leaves(ast):
-        expected.update(_keys_for_address_leaf(graph, leaf, anchor=str(anchor)))
+    for leaf in _iter_static_address_leaves(ast):
+        expected.update(
+            _keys_for_address_leaf(graph, leaf, anchor=str(anchor), host_key=key, add=add)
+        )
     return expected
 
 
-def _iter_address_leaves(
-    node: AstNode,
+def _iter_static_address_leaves(
+    node: AstNode, *, dynamic_mask: bool = False
 ) -> Iterator[CellRefNode | RangeNode | WholeColumnNode | WholeRowNode]:
+    """Yield address leaves extraction would record as static formula refs.
+
+    CellRefs inside OFFSET/INDIRECT/dynamic INDEX still count (argument
+    refs). Range and whole-column/row leaves inside those calls are masked,
+    matching builder extraction.
+    """
     match node:
-        case CellRefNode() | RangeNode() | WholeColumnNode() | WholeRowNode():
+        case CellRefNode():
+            yield node
+        case RangeNode() | WholeColumnNode() | WholeRowNode() if dynamic_mask:
+            return
+        case RangeNode() | WholeColumnNode() | WholeRowNode():
             yield node
         case BinaryOpNode(left=left, right=right):
-            yield from _iter_address_leaves(left)
-            yield from _iter_address_leaves(right)
+            yield from _iter_static_address_leaves(left, dynamic_mask=dynamic_mask)
+            yield from _iter_static_address_leaves(right, dynamic_mask=dynamic_mask)
         case UnaryOpNode(operand=operand):
-            yield from _iter_address_leaves(operand)
+            yield from _iter_static_address_leaves(operand, dynamic_mask=dynamic_mask)
         case FunctionCallNode(args=args):
+            nested = dynamic_mask or _masks_static_ranges(node)
             for arg in args:
-                yield from _iter_address_leaves(arg)
+                yield from _iter_static_address_leaves(arg, dynamic_mask=nested)
         case _:
             return
+
+
+def _formula_has_dynamic_call(node: AstNode) -> bool:
+    match node:
+        case FunctionCallNode() if _masks_static_ranges(node):
+            return True
+        case FunctionCallNode(args=args):
+            return any(_formula_has_dynamic_call(arg) for arg in args)
+        case BinaryOpNode(left=left, right=right):
+            return _formula_has_dynamic_call(left) or _formula_has_dynamic_call(right)
+        case UnaryOpNode(operand=operand):
+            return _formula_has_dynamic_call(operand)
+        case _:
+            return False
+
+
+def _masks_static_ranges(node: FunctionCallNode) -> bool:
+    name = normalize_excel_function_name(node.name)
+    if name in {"OFFSET", "INDIRECT"}:
+        return True
+    if name == "INDEX":
+        return _index_row_col_non_literal(node)
+    return False
+
+
+def _index_row_col_non_literal(node: FunctionCallNode) -> bool:
+    if len(node.args) < 2:
+        return False
+    return any(not _is_numeric_literal(arg) for arg in node.args[1:])
+
+
+def _is_numeric_literal(node: AstNode) -> bool:
+    match node:
+        case NumberNode():
+            return True
+        case UnaryOpNode(op=op, operand=operand) if op in {"+", "-"}:
+            return _is_numeric_literal(operand)
+        case _:
+            return False
 
 
 def _keys_for_address_leaf(
@@ -278,18 +362,30 @@ def _keys_for_address_leaf(
     leaf: CellRefNode | RangeNode | WholeColumnNode | WholeRowNode,
     *,
     anchor: str,
+    host_key: NodeKey,
+    add: Callable[[GraphConsistencyIssue], None],
 ) -> set[NodeKey]:
     try:
         match leaf:
             case CellRefNode():
                 return {normalize_key(resolve_cell_ref(leaf, anchor))}
             case RangeNode():
-                return _keys_for_range(graph, leaf, anchor=anchor)
+                return _keys_for_range(graph, leaf, anchor=anchor, host_key=host_key, add=add)
             case WholeColumnNode():
-                return _keys_for_whole_column(graph, leaf, anchor=anchor)
+                return _keys_for_whole_column(
+                    graph, leaf, anchor=anchor, host_key=host_key, add=add
+                )
             case WholeRowNode():
-                return _keys_for_whole_row(graph, leaf, anchor=anchor)
-    except ValueError:
+                return _keys_for_whole_row(graph, leaf, anchor=anchor, host_key=host_key, add=add)
+    except ValueError as exc:
+        add(
+            GraphConsistencyIssue(
+                kind=GraphConsistencyKind.unresolved_formula_ref,
+                node=host_key,
+                from_key=host_key,
+                message=f"{host_key} formula ref could not be resolved: {exc}",
+            )
+        )
         return set()
     return set()
 
@@ -299,13 +395,23 @@ def _keys_for_range(
     leaf: RangeNode,
     *,
     anchor: str,
+    host_key: NodeKey,
+    add: Callable[[GraphConsistencyIssue], None],
 ) -> set[NodeKey]:
     start = normalize_key(resolve_cell_ref(leaf.start_ref, anchor))
     end = normalize_key(resolve_cell_ref(leaf.end_ref, anchor))
     start_sheet, start_a1 = parse_address(start)
     end_sheet, end_a1 = parse_address(end)
     if start_sheet != end_sheet:
-        return {start, end}
+        add(
+            GraphConsistencyIssue(
+                kind=GraphConsistencyKind.unresolved_formula_ref,
+                node=host_key,
+                from_key=host_key,
+                message=(f"{host_key} range spans sheets {start_sheet!r} and {end_sheet!r}"),
+            )
+        )
+        return set()
     start_col, start_row = coordinate_from_string(start_a1)
     end_col, end_row = coordinate_from_string(end_a1)
     try:
@@ -317,39 +423,17 @@ def _keys_for_range(
             end_row=int(end_row),
             max_cells=DEFAULT_MAX_RANGE_CELLS,
         )
-    except ValueError:
-        return _graph_nodes_in_rectangle(
-            graph,
-            sheet=start_sheet,
-            start_col=start_col,
-            start_row=int(start_row),
-            end_col=end_col,
-            end_row=int(end_row),
+    except ValueError as exc:
+        add(
+            GraphConsistencyIssue(
+                kind=GraphConsistencyKind.range_too_large,
+                node=host_key,
+                from_key=host_key,
+                message=f"{host_key} range exceeds expansion budget: {exc}",
+            )
         )
+        return set()
     return {format_key(sheet, a1) for sheet, a1 in pairs}
-
-
-def _graph_nodes_in_rectangle(
-    graph: DependencyGraph,
-    *,
-    sheet: str,
-    start_col: str,
-    start_row: int,
-    end_col: str,
-    end_row: int,
-) -> set[NodeKey]:
-    c1 = column_index_from_string(start_col)
-    c2 = column_index_from_string(end_col)
-    clo, chi = (c1, c2) if c1 <= c2 else (c2, c1)
-    rlo, rhi = (start_row, end_row) if start_row <= end_row else (end_row, start_row)
-    out: set[NodeKey] = set()
-    for key, node in graph._nodes.items():
-        if node.sheet != sheet or node.column is None or node.row is None:
-            continue
-        col_i = column_index_from_string(node.column)
-        if clo <= col_i <= chi and rlo <= int(node.row) <= rhi:
-            out.add(key)
-    return out
 
 
 def _keys_for_whole_column(
@@ -357,15 +441,26 @@ def _keys_for_whole_column(
     leaf: WholeColumnNode,
     *,
     anchor: str,
+    host_key: NodeKey,
+    add: Callable[[GraphConsistencyIssue], None],
 ) -> set[NodeKey]:
     sheet, letter = resolve_whole_column_ref(leaf, anchor)
     bounds = graph.sheet_bounds
-    if bounds and sheet in bounds:
-        pairs = expand_whole_column_deps(sheet, letter, bounds)
-        return {format_key(dep_sheet, a1) for dep_sheet, a1 in pairs}
-    return {
-        key for key, node in graph._nodes.items() if node.sheet == sheet and node.column == letter
-    }
+    if not bounds or sheet not in bounds:
+        add(
+            GraphConsistencyIssue(
+                kind=GraphConsistencyKind.unbounded_whole_ref,
+                node=host_key,
+                from_key=host_key,
+                message=(
+                    f"{host_key} whole-column ref {format_range_key(sheet, letter, letter)} "
+                    "requires sheet_bounds"
+                ),
+            )
+        )
+        return set()
+    pairs = expand_whole_column_deps(sheet, letter, bounds)
+    return {format_key(dep_sheet, a1) for dep_sheet, a1 in pairs}
 
 
 def _keys_for_whole_row(
@@ -373,10 +468,23 @@ def _keys_for_whole_row(
     leaf: WholeRowNode,
     *,
     anchor: str,
+    host_key: NodeKey,
+    add: Callable[[GraphConsistencyIssue], None],
 ) -> set[NodeKey]:
     sheet, row = resolve_whole_row_ref(leaf, anchor)
     bounds = graph.sheet_bounds
-    if bounds and sheet in bounds:
-        pairs = expand_whole_row_deps(sheet, row, bounds)
-        return {format_key(dep_sheet, a1) for dep_sheet, a1 in pairs}
-    return {key for key, node in graph._nodes.items() if node.sheet == sheet and node.row == row}
+    if not bounds or sheet not in bounds:
+        add(
+            GraphConsistencyIssue(
+                kind=GraphConsistencyKind.unbounded_whole_ref,
+                node=host_key,
+                from_key=host_key,
+                message=(
+                    f"{host_key} whole-row ref {format_range_key(sheet, str(row), str(row))} "
+                    "requires sheet_bounds"
+                ),
+            )
+        )
+        return set()
+    pairs = expand_whole_row_deps(sheet, row, bounds)
+    return {format_key(dep_sheet, a1) for dep_sheet, a1 in pairs}
