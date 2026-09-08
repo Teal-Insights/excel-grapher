@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v15.3.0 (2026-09-08)
+
+### Documentation
+
+- Document mixed-series bound-leaf authoring
+  ([#810](https://github.com/Teal-Insights/excel-grapher/pull/810),
+  [`dfb498f`](https://github.com/Teal-Insights/excel-grapher/commit/dfb498fbff90a6f00f9b88aaf662bd5a5a365eb6))
+
+### Features
+
+- **export**: Double-bind retained graph leaves to input/constant series
+  ([#810](https://github.com/Teal-Insights/excel-grapher/pull/810),
+  [`dfb498f`](https://github.com/Teal-Insights/excel-grapher/commit/dfb498fbff90a6f00f9b88aaf662bd5a5a365eb6))
+
+
 ## v15.2.0 (2026-09-08)
 
 ### Bug Fixes
