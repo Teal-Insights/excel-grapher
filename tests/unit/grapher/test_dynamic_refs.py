@@ -320,6 +320,28 @@ def test_dynamic_offset_respects_branch_limit() -> None:
         raise AssertionError("Expected DynamicRefError for branch limit")
 
 
+def test_dynamic_offset_wide_bounds_survive_branch_limit() -> None:
+    """Candidate-scan OFFSET path walks the bounding box past `max_branches`."""
+    formula = "=OFFSET(Sheet1!A1,Sheet1!B1,0)"
+    env = _make_env(
+        {
+            "Sheet1!B1": CellType(
+                kind=CellKind.NUMBER,
+                interval=IntervalDomain(min=0, max=10),
+            )
+        }
+    )
+    limits = DynamicRefLimits(max_branches=8)
+    targets = infer_dynamic_offset_targets(
+        formula,
+        current_sheet="Sheet1",
+        cell_type_env=env,
+        limits=limits,
+        allow_wide_bounds=True,
+    )
+    assert targets == {f"Sheet1!A{i}" for i in range(1, 12)}
+
+
 def test_dynamic_offset_argument_formulas_over_domains() -> None:
     # A1 = OFFSET(A1, SUM(B1:B3), 0) with each Bi in {0,1}.
     # SUM(B1:B3) ranges over {0,1,2,3}, so reachable rows are 1..4.

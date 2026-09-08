@@ -7,6 +7,7 @@ import time
 import warnings
 from collections import deque
 from collections.abc import Iterable, Mapping
+from contextlib import suppress
 from pathlib import Path
 
 import fastpyxl
@@ -1899,6 +1900,10 @@ def list_dynamic_ref_constraint_candidates(
     will not be visited, so their constraint candidates won't appear in the output.
     A second call after adding the first batch of constraints will quickly find any
     remaining missing entries.
+
+    OFFSET argument domains that are known but too wide to enumerate under
+    `max_branches` still walk the bounding rectangle of possible targets, so a
+    failed exact inference does not hide downstream missing leaves.
     """
     if isinstance(workbook, fastpyxl.Workbook):
         wb_formulas = workbook
@@ -2185,14 +2190,13 @@ def list_dynamic_ref_constraint_candidates(
                     # Skip infer — dynamic targets unknown without full constraints.
                 elif dynamic_refs is not None:
                     # All leaves constrained — run infer to discover dynamic targets.
-                    try:
-                        bounds = GlobalWorkbookBounds(sheet=current_sheet)
-                        formula_for_infer = normalizer.normalize(f, current_sheet)
-                        _col_letter, _current_row = fastpyxl.utils.cell.coordinate_from_string(
-                            current_a1
-                        )
-                        _current_col = fastpyxl.utils.cell.column_index_from_string(_col_letter)
-
+                    # Expand and each infer kind are isolated so one DynamicRefError
+                    # (branch limit, divisor, missing domain) does not hide targets
+                    # that another path can still resolve.
+                    bounds = GlobalWorkbookBounds(sheet=current_sheet)
+                    formula_for_infer = formula_for_infer_cand
+                    expanded_env = dynamic_refs.cell_type_env
+                    with suppress(DynamicRefError):
                         if all_refs and all(
                             addr in _shared_cell_type_cache_cand for addr in all_refs
                         ):
@@ -2237,7 +2241,33 @@ def list_dynamic_ref_constraint_candidates(
                                 workbook_sha256=_wb_sha256_cand,
                                 get_cell_ast=_get_cell_ast,
                             )
-                        offset_targets = infer_dynamic_offset_targets(
+
+                    dyn_targets: set[str] = set()
+                    with suppress(DynamicRefError):
+                        dyn_targets |= infer_dynamic_offset_targets(
+                            formula_for_infer,
+                            current_sheet=current_sheet,
+                            cell_type_env=expanded_env,
+                            limits=dynamic_refs.limits,
+                            bounds=bounds,
+                            named_ranges=named_ranges,
+                            named_range_ranges=named_range_ranges,
+                            current_row=_current_row,
+                            current_col=_current_col,
+                            allow_wide_bounds=True,
+                        )
+                    with suppress(DynamicRefError):
+                        dyn_targets |= infer_dynamic_indirect_targets(
+                            formula_for_infer,
+                            current_sheet=current_sheet,
+                            cell_type_env=expanded_env,
+                            limits=dynamic_refs.limits,
+                            bounds=bounds,
+                            named_ranges=named_ranges,
+                            named_range_ranges=named_range_ranges,
+                        )
+                    with suppress(DynamicRefError):
+                        dyn_targets |= infer_dynamic_index_targets(
                             formula_for_infer,
                             current_sheet=current_sheet,
                             cell_type_env=expanded_env,
@@ -2248,34 +2278,9 @@ def list_dynamic_ref_constraint_candidates(
                             current_row=_current_row,
                             current_col=_current_col,
                         )
-                        indirect_targets = infer_dynamic_indirect_targets(
-                            formula_for_infer,
-                            current_sheet=current_sheet,
-                            cell_type_env=expanded_env,
-                            limits=dynamic_refs.limits,
-                            bounds=bounds,
-                            named_ranges=named_ranges,
-                            named_range_ranges=named_range_ranges,
-                        )
-                        index_targets = infer_dynamic_index_targets(
-                            formula_for_infer,
-                            current_sheet=current_sheet,
-                            cell_type_env=expanded_env,
-                            limits=dynamic_refs.limits,
-                            bounds=bounds,
-                            named_ranges=named_ranges,
-                            named_range_ranges=named_range_ranges,
-                            current_row=_current_row,
-                            current_col=_current_col,
-                        )
-                        for addr in sort_node_keys(
-                            offset_targets | indirect_targets | index_targets,
-                            sheet_order=sheetnames,
-                        ):
-                            sh, a1 = parse_address(addr)
-                            queue.append((sh, a1, depth + 1))
-                    except DynamicRefError:
-                        pass  # best-effort: skip dynamic targets for this formula
+                    for addr in sort_node_keys(dyn_targets, sheet_order=sheetnames):
+                        sh, a1 = parse_address(addr)
+                        queue.append((sh, a1, depth + 1))
 
             # Queue static (non-dynamic-ref) deps for continued BFS.
             for addr in _refs_without_dynamic(f, current_sheet):
