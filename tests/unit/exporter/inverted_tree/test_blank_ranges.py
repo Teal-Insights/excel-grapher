@@ -144,7 +144,7 @@ def test_generate_inverted_tree_modules_accepts_blank_vlookup_table(tmp_path: Pa
     workbook = _mcve_workbook(tmp_path)
     modules = generate_inverted(workbook, _mcve_bindings(), blank_ranges=_BLANK)
     assert "xl_vlookup(" in modules["internals.py"]
-    assert "None, None, None" in modules["internals.py"]
+    assert "(None,)" in modules["internals.py"]
 
 
 def test_generate_modules_forwards_blank_ranges_to_inverted_tree(tmp_path: Path) -> None:
