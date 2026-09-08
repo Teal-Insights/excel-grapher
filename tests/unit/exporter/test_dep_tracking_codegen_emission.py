@@ -1,29 +1,26 @@
 """Codegen emission contract for gating dependency tracking in exports (#238).
 
-Non-iterative exports without input-direction series bindings omit ``deps`` /
-``reverse_deps``, ``_record_dependency``, ``invalidate``, ``set_inputs``, and the
+Non-iterative address-keyed ``generate()`` omits ``deps`` / ``reverse_deps``,
+``_record_dependency``, ``invalidate``, ``set_inputs``, and the
 ``ctx._record_dependency`` call site in ``_evaluate_address``.
 Minimal non-iterative export baseline (``S!A1`` leaf + ``S!B1`` formula):
 
-- **794 total lines**; embedded runtime **719 lines** (~90.6% of export)
+- **779 total lines**; embedded runtime **719 lines** (~92.3% of export)
 - **0 dep-tracking lines**
 - **62 cache-eval scaffold lines** (``_evaluate_address``, ``xl_cell``, ``xl_eval``)
 
-Iterative exports and series bindings with input setters retain the full scaffold.
+Iterative exports retain the full scaffold. Series I/O uses inverted-tree
+``generate_modules()`` and does not embed ctx invalidation.
 """
 
 from __future__ import annotations
 
 import json
-from copy import deepcopy
-from pathlib import Path
 from typing import Any, cast
 
-from excel_grapher import DependencyGraph, Node, create_dependency_graph
+from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.exporter.codegen import CodeGenerator
-from excel_grapher.series_bindings import expand_data_range, validate_bindings_document
-from tests.integration.user_flows.test_series_bindings_codegen import BINDINGS_DOCUMENT
 from tests.integration.utils.parity_harness import (
     DEP_TRACKING_BASELINE_VERSION,
     SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET,
@@ -114,31 +111,6 @@ def test_iterative_export_retains_dep_tracking() -> None:
     code = CodeGenerator(graph, iterate_enabled=True).generate(["S!A1"])
 
     assert "xl_iterative_compute" in code
-    assert_dep_tracking_present(code)
-
-
-def test_series_binding_export_retains_dep_tracking_and_setters(
-    tmp_path: Path,
-) -> None:
-    """Input setters call ``ctx.set_inputs``; export must keep invalidation scaffold."""
-    from tests.integration.user_flows.utils import write_series_bindings_workbook
-
-    workbook = tmp_path / "series_bindings.xlsx"
-    write_series_bindings_workbook(workbook)
-    bindings = validate_bindings_document(deepcopy(BINDINGS_DOCUMENT))
-    targets: list[str] = []
-    for series in bindings["series"]:
-        targets.extend(expand_data_range(series["data_range"], workbook=workbook))
-    graph = create_dependency_graph(workbook, targets, load_values=True)
-
-    code = CodeGenerator(graph).generate(
-        targets,
-        series_bindings=bindings,
-        bindings_workbook=workbook,
-    )
-
-    assert "def set_borvelia_primary_balance(" in code
-    assert "ctx.set_inputs(" in code
     assert_dep_tracking_present(code)
 
 

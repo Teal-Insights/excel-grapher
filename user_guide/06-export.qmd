@@ -61,8 +61,9 @@ Package exports use inverted-tree: each `compute_*` takes the input leaves of it
 as ordinary arguments. `generate_modules()` requires `series_bindings` and
 `bindings_workbook`. The `paradigm` argument and CLI `--paradigm` option have been removed.
 
-Single-file `generate()` retains the cell-function API, including `compute_all`,
-`make_context`, return-line unpacking, and optional series-binding helpers.
+Single-file `generate()` retains the cell-function API (`compute_all`,
+`make_context`, return-line unpacking) for evaluator↔export parity and teaching.
+Series I/O uses `generate_modules()` only.
 
 ## Inverted-tree packages
 
@@ -178,13 +179,14 @@ Projection, `embed`, and visualization exports are not codegen paradigms; they a
 
 The deprecated context-based package exporter has been removed. Use the migration
 table above to replace package setters and context calls with explicit compute arguments.
-Single-file `generate()` remains available.
+Single-file `generate()` remains a thin address-keyed cell-function exporter until a
+bindings-free inverted-tree path replaces it ([issue 764](https://github.com/Teal-Insights/excel-grapher/issues/764)).
 
 ## Series bindings
 
 Optional sidecar manifests (`.bindings.yaml`) declare structured input/output APIs on exported code.
 See the dedicated [Series bindings](series-bindings.qmd) guide for the JSON Schema, authoring
-conventions, validation rules, and Python API. Minimal codegen hook:
+conventions, validation rules, and Python API. Series I/O is inverted-tree only:
 
 ```python
 from pathlib import Path
@@ -195,22 +197,25 @@ from excel_grapher.series_bindings import load_series_bindings
 workbook_path = Path("lic_inputs.xlsx")
 bindings = load_series_bindings(workbook_path.with_suffix(".bindings.yaml"))
 
-code = CodeGenerator(graph).generate(
-    targets,
-    series_bindings=bindings,
-    bindings_workbook=workbook_path,
-)
+with CodeGenerator(graph) as gen:
+    modules = gen.generate_modules(
+        series_bindings=bindings,
+        bindings_workbook=workbook_path,
+    )
 ```
+
+`generate()` does not accept `series_bindings`. Address-keyed cell functions stay available
+as `CodeGenerator(graph).generate(["S!B1"])` for parity and teaching.
 
 ## Series docstring callbacks
 
-When exporting single-file series bindings, you can attach structured docstrings to generated `set_*` and
-series output `compute_*` functions by passing a callback directly or by registering a reusable
-callback name for project-wide use:
+`emit_setter_function` and `emit_compute_function` can attach structured docstrings to
+library-emitted `set_*` / Records `compute_*` helpers. Pass a callback directly or register
+a reusable name. These callbacks are not wired into `generate()` or `generate_modules()`.
 
 ```python
-from excel_grapher.exporter import (
-    CodeGenerator,
+from excel_grapher.series_bindings import (
+    emit_setter_function,
     FieldDoc,
     GoogleSeriesDocstringRenderer,
     SeriesFunctionDoc,
@@ -239,12 +244,16 @@ def compact_google_renderer(contract, doc, *, series=None):
     return GoogleSeriesDocstringRenderer().render(contract, doc, series=series)
 
 
-code = CodeGenerator(graph).generate(
-    targets,
-    series_bindings=bindings,
-    bindings_workbook=workbook_path,
-    series_docstring_callback="my_docs",  # or my_series_docstring
-    docstring_renderer=compact_google_renderer,  # or "plain" | "rst" | "google" | "numpy"
+code = "\n".join(
+    emit_setter_function(
+        series,
+        resolved,
+        graph=graph,
+        workbook=workbook_path,
+        bindings=bindings,
+        series_docstring_callback="my_docs",  # or my_series_docstring
+        docstring_renderer=compact_google_renderer,  # or "plain" | "rst" | "google" | "numpy"
+    )
 )
 ```
 
@@ -258,7 +267,7 @@ Callback contract highlights:
 - `ctx.contract` contains deterministic binding facts for that specific function (required fields, field dtypes, examples, layout, and data range).
 - Docstring callbacks may be direct callables or registered names (`series_docstring_callback="..."`).
 - Docstring renderers can be built-in names (`"plain"`, `"rst"`, `"google"`, `"numpy"`), renderer objects implementing `SeriesDocstringRenderer`, or simple callables `(contract, doc, *, series=None) -> str`.
-- If callback rendering is requested, codegen requires full series context (`series_bindings` + `bindings_workbook`).
+- If callback rendering is requested, the emitter requires full series context (`graph`, `workbook`, and `bindings`).
 
 ## Graph projection for export
 
@@ -364,11 +373,10 @@ code = CodeGenerator(graph).generate(["S!B1"])
 The exported module opens with the embedded `xl_*` runtime (a few hundred lines, elided here).
 The workbook-specific tail below shows the shape of the output: leaf cells become a sparse
 `DEFAULT_INPUTS` coordinate store (`sheet -> {(row, col): value}`), formula cells become `ctx`-taking
-functions dispatched through a `TARGETS` map, and the public entry points are `make_context`,
-`compute_all`, and (when series bindings are supplied) the discovery helpers `list_setters` /
-`list_computes`. `make_context(inputs={"Sheet1!A1": v})` still accepts NodeKey overlays; storage is
-coordinates. When every export target is covered by an output series binding, `compute_all` /
-`TARGETS` are omitted by default; pass `include_compute_all=True` to keep them:
+functions dispatched through a `TARGETS` map, and the public entry points are `make_context` and
+`compute_all`. `make_context(inputs={"Sheet1!A1": v})` still accepts NodeKey overlays; storage is
+coordinates. Pass `include_compute_all=False` to omit `compute_all` / `TARGETS`. Series I/O
+(`set_*`, Records, `list_setters`) is not emitted here — use `generate_modules()`:
 
 ```{python}
 # | echo: false

@@ -872,20 +872,19 @@ class TestCodeGeneratorContextManager:
         ) in code
         assert "'Sheet1!A1'" in code
 
-    def test_generate_includes_empty_series_binding_discovery_helpers(self):
-        """Generated code should expose discovery helpers even without bindings."""
+    def test_generate_omits_series_binding_discovery_helpers(self):
+        """Bindings-free `generate()` does not emit `set_*` / `read_*` discovery."""
         graph = _make_graph(_make_node("Sheet1!A1", None, 100.0))
         code = CodeGenerator(graph).generate(["Sheet1!A1"])
 
         namespace: dict[str, object] = {}
         exec(code, namespace)
-        list_setters = cast(Callable[[], list[str]], namespace["list_setters"])
-        list_readers = cast(Callable[[], list[str]], namespace["list_readers"])
-        list_computes = cast(Callable[[], list[str]], namespace["list_computes"])
-
-        assert list_setters() == []
-        assert list_readers() == []
-        assert list_computes() == []
+        assert "list_setters" not in namespace
+        assert "list_readers" not in namespace
+        assert "list_computes" not in namespace
+        assert "list_groups" not in namespace
+        assert "def set_" not in code
+        assert "def read_" not in code
 
     def test_generate_entrypoint_uses_target_map(self):
         """Generated compute_all should iterate a shared targets map."""

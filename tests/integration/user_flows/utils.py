@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from itertools import count
 from pathlib import Path
+from typing import Any
 
 import xlsxwriter
 from xlsxwriter.worksheet import Worksheet
@@ -65,6 +66,44 @@ def write_series_bindings_workbook(path: Path) -> None:
     worksheet = workbook.add_worksheet("Sheet1")
     write_series_bindings_workbook_blocks(worksheet, workbook)
     workbook.close()
+
+
+def add_formula_mirror_row(
+    path: Path,
+    *,
+    source_row: int,
+    dest_row: int,
+    columns: str = "FGHIJ",
+    sheet: str | None = None,
+) -> None:
+    """Write `={col}{source_row}` into `{col}{dest_row}` for each letter in `columns`."""
+    from fastpyxl import load_workbook
+
+    workbook = load_workbook(path)
+    worksheet = workbook[sheet] if sheet is not None else workbook.active
+    for letter in columns:
+        worksheet[f"{letter}{dest_row}"] = f"={letter}{source_row}"
+    workbook.save(path)
+
+
+def load_generated_package(
+    graph: Any,
+    bindings: Any,
+    workbook: Path,
+    tmp_path: Path,
+    *,
+    name: str = "exported",
+) -> tuple[Any, dict[str, str]]:
+    """Emit an inverted-tree package and import it from `tmp_path`."""
+    from excel_grapher.exporter import CodeGenerator
+    from tests.unit.exporter.inverted_tree.helpers import load_package
+
+    with CodeGenerator(graph) as gen:
+        modules = gen.generate_modules(
+            series_bindings=bindings,
+            bindings_workbook=workbook,
+        )
+    return load_package(modules, tmp_path, name=name), modules
 
 
 def write_calendar_flags_workbook(path: Path) -> None:

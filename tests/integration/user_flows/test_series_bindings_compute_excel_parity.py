@@ -1,7 +1,7 @@
 """Excel parity for soft-error `compute_*` measure capture (issue #436).
 
-A mixed numeric / `#DIV/0!` output series must return a full Records list with
-`OBS_VALUE` matching Excel's displayed cell values (`XlError` for error years).
+A mixed numeric / `#DIV/0!` output series must return a full result with
+`OBS_VALUE` matching Excel's displayed cell values (error-code strings).
 
 Cached path always runs in CI. Live Excel path is `@pytest.mark.slow` and
 skips when automation is unavailable.
@@ -9,18 +9,18 @@ skips when automation is unavailable.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 import xlsxwriter
 
 from excel_grapher.core.types import XlError
-from excel_grapher.exporter import CodeGenerator
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings import validate_bindings_document
+from excel_grapher.series_bindings.workflow import all_series_targets
+from tests.integration.user_flows.utils import load_generated_package
 from tests.utils.excel_workbook_parity import (
     assert_workbook_parity,
     compare_cached_to_evaluator,
@@ -30,14 +30,28 @@ from tests.utils.modify_and_recalculate import (
     modify_and_recalculate_workbook,
 )
 
-TARGETS = ("Sheet1!C2", "Sheet1!D2")
-
 
 def _mixed_error_bindings(*, workbook: str) -> dict[str, Any]:
     return {
         "schema_version": "1.3.0",
         "workbook": workbook,
         "series": [
+            {
+                "id": "scale_input",
+                "sheet": "Sheet1",
+                "data_range": "Sheet1!B2",
+                "layout": "scalar",
+                "input": {"setter": {"name": "set_scale_input"}},
+                "structure": {
+                    "measure": {
+                        "concept": "OBS_VALUE",
+                        "dtype": "float",
+                        "bind": {"kind": "data_cell", "read": "float"},
+                    },
+                    "dimensions": [],
+                },
+                "key": [],
+            },
             {
                 "id": "mixed_output",
                 "sheet": "Sheet1",
@@ -64,7 +78,7 @@ def _mixed_error_bindings(*, workbook: str) -> dict[str, Any]:
                     ],
                 },
                 "key": ["TIME_PERIOD"],
-            }
+            },
         ],
     }
 
@@ -93,22 +107,17 @@ def _normalize_obs_value(value: object) -> object:
     return err if err is not None else value
 
 
-def _compute_records(workbook: Path) -> list[dict[str, object]]:
+def _compute_records(workbook: Path, tmp_path: Path) -> list[dict[str, object]]:
     bindings = validate_bindings_document(deepcopy(_mixed_error_bindings(workbook=workbook.name)))
-    graph = create_dependency_graph(workbook, list(TARGETS), load_values=True)
-    assert_workbook_parity(graph, list(TARGETS))
+    targets = all_series_targets(bindings, workbook=workbook)
+    graph = create_dependency_graph(workbook, targets, load_values=True)
+    assert_workbook_parity(graph, ["Sheet1!C2", "Sheet1!D2"])
 
-    with CodeGenerator(graph) as gen:
-        code = gen.generate(
-            list(TARGETS),
-            series_bindings=bindings,
-            bindings_workbook=workbook,
-        )
-
-    ns: dict[str, object] = {}
-    exec(code, ns)
-    compute = cast(Callable[..., list[dict[str, object]]], ns["compute_mixed_output"])
-    records = compute()
+    pkg, _modules = load_generated_package(
+        graph, bindings, workbook, tmp_path, name="mixed_error_export"
+    )
+    result = pkg.compute_mixed_output(scale_input=5.0)
+    records = pkg.as_records(pkg.compute_mixed_output, result)
     assert len(records) == 2
 
     by_address = {
@@ -125,8 +134,7 @@ def _compute_records(workbook: Path) -> list[dict[str, object]]:
         )
 
     assert by_address["Sheet1!C2"]["OBS_VALUE"] == pytest.approx(10.0)
-    assert _normalize_obs_value(by_address["Sheet1!D2"]["OBS_VALUE"]) == XlError.DIV
-    assert str(by_address["Sheet1!D2"]["OBS_VALUE"]) == "#DIV/0!"
+    assert by_address["Sheet1!D2"]["OBS_VALUE"] == "#DIV/0!"
     return records
 
 
@@ -134,7 +142,7 @@ def test_compute_mixed_obs_value_matches_excel_cache(tmp_path: Path) -> None:
     """Cached Excel values ↔ evaluator ↔ soft-error `compute_*` OBS_VALUE."""
     workbook = tmp_path / "mixed_error_cache.xlsx"
     _write_mixed_error_workbook(workbook, with_cached_values=True)
-    _compute_records(workbook)
+    _compute_records(workbook, tmp_path)
 
 
 @pytest.mark.slow
@@ -149,4 +157,4 @@ def test_compute_mixed_obs_value_matches_live_excel(tmp_path: Path) -> None:
     except (ExcelRecalculationError, RuntimeError, ImportError) as exc:
         pytest.skip(f"Excel recalculation not available: {exc}")
 
-    _compute_records(output_path)
+    _compute_records(output_path, tmp_path)

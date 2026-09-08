@@ -22,8 +22,8 @@ workbook_path = Path("codegen_basics.xlsx")
 
 The first example is a single-cell formula with no dependencies. We can
 extract the graph with the `create_dependency_graph` function (see
-[Extraction Basics](extraction_basics.md) for more details);
-then, instead of running the graph using the `FormulaEvaluator` Excel
+[Extraction Basics](extraction_basics.md) for more details); then,
+instead of running the graph using the `FormulaEvaluator` Excel
 emulator, we can transpile the graph to standalone Python code using the
 `CodeGenerator` class. We’ll write the code to a file called
 `formula_with_no_dependencies.py` in the `codegen_outputs` folder.
@@ -139,8 +139,9 @@ print(f"```text\n{str(result)}\n```")
 
 An unordered dictionary does seem like the right output shape for
 `compute_all` outputs representing non-adjacent target cells. For named,
-records-shaped output APIs (dimensions plus `OBS_VALUE`), use **series
-bindings** instead — see [Series bindings](series_bindings.qmd).
+records-shaped output APIs (dimensions plus `OBS_VALUE`), export an
+inverted-tree **package** with series bindings (`generate_modules`) —
+see [Series bindings](series_bindings.qmd).
 
 ## 04. Multiple adjacent targets
 
@@ -162,7 +163,7 @@ print(f"```text\n{str(result)}\n```")
 ```
 
 ``` text
-{'Sheet1!C4:Sheet1!D4': array([[2.0, 3.0]], dtype=object)}
+{'Sheet1!C4:D4': [[2.0, 3.0]]}
 ```
 
 Here, the adjacent cell addresses are automatically aggregated into a
@@ -172,8 +173,9 @@ values for each cell in the range.
 
 This is probably a good default in *most* cases, because contiguous
 cells will often comprise a logical unit. For stable tabular contracts
-with named `compute_*` functions that return `Records`, use **series
-bindings** — see [Series bindings](series_bindings.qmd).
+with named `compute_*` functions that return tuples (and `as_records`
+for a Records view), export an inverted-tree **package** with series
+bindings — see [Series bindings](series_bindings.qmd).
 
 ## 05. Must cycle
 
@@ -202,8 +204,8 @@ print(f"```text\n{str(result)}\n```")
 ```
 
 ``` text
-{'Sheet1!B5:Sheet1!C5': array([[2.0, 1.0]], dtype=object)}
+{'Sheet1!B5:C5': [[2.0, 1.0]]}
 ```
 
-    C:\Users\chris\Software\excel-grapher\examples\micro_workbooks\codegen_outputs\must_cycle.py:297: CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).
-      return xl_circular_reference()
+    /workspace/examples/micro_workbooks/codegen_outputs/must_cycle.py:719: CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).
+      warn_circular_reference(stacklevel=2)

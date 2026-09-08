@@ -1,9 +1,8 @@
-"""View-level series binding groups: export sequencing and group manifest.
+"""View-level series binding groups: catalog metadata for export sequencing.
 
-Groups are a presentation concern of the single-file `generate()` `set_*` /
-`compute_*` / `read_*` API. They sequence code export and power `list_groups()`
-discovery; they never affect graph extraction, binding resolution, or record
-semantics. Inverted-tree packages from `generate_modules()` omit `list_groups()`.
+Groups never affect graph extraction, binding resolution, or record semantics.
+`emit_series_bindings_block` may sequence library setters using group order.
+Inverted-tree packages from `generate_modules()` omit `list_groups()`.
 """
 
 from __future__ import annotations
@@ -36,7 +35,7 @@ class GroupNode(TypedDict):
 
 
 class GroupsManifest(TypedDict):
-    """Machine-readable group structure returned by generated `list_groups()`."""
+    """Machine-readable group structure for library setter sequencing."""
 
     groups: list[GroupNode]
     ungrouped: list[GroupMember]
@@ -234,7 +233,7 @@ def _manifest_node(node: _TreeNode) -> GroupNode:
 def group_manifest(
     bindings: WorkbookSeriesBindings | dict[str, Any],
 ) -> GroupsManifest:
-    """Build the nested group manifest returned by generated `list_groups()`.
+    """Build the nested group manifest used for library setter sequencing.
 
     Unlike `bindings_export_order`, a multi-membership binding appears under
     every group it references.

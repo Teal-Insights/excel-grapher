@@ -314,47 +314,6 @@ def test_emit_computes_block_intersects_with_export_closure(tmp_path: Path) -> N
     assert by_period[2]["OBS_VALUE"] == 42.0
 
 
-def test_codegen_generate_output_compute_uses_export_closure(tmp_path: Path) -> None:
-    wb_path = tmp_path / "series_output.xlsx"
-    from copy import deepcopy
-
-    from excel_grapher.series_bindings import validate_bindings_document
-    from tests.integration.user_flows.test_series_bindings_output_codegen import (
-        BINDINGS_DOCUMENT,
-        _write_output_workbook,
-    )
-
-    _write_output_workbook(wb_path)
-    bindings = validate_bindings_document(deepcopy(BINDINGS_DOCUMENT))
-    graph = create_dependency_graph(wb_path, ["Sheet1!G5"], load_values=True)
-
-    with CodeGenerator(graph) as gen, pytest.warns(UserWarning) as captured_warnings:
-        code = gen.generate(
-            ["Sheet1!G5"],
-            series_bindings=bindings,
-            bindings_workbook=wb_path,
-        )
-
-    warning_messages = [str(warning.message) for warning in captured_warnings]
-    assert (
-        warning_messages.count(
-            "Skipped 3 cell(s) in data_range not included in codegen export closure"
-        )
-        == 2
-    )
-    assert "Skipped 1 cell(s) in data_range not graph input leaf cells" in warning_messages
-    assert (
-        "Skipped 4 cell(s) in data_range not included in codegen export closure"
-        not in warning_messages
-    )
-
-    ns: dict[str, object] = {}
-    exec(code, ns)
-    compute = cast(Callable[..., Records], ns["compute_borvelia_primary_balance"])
-    records = compute()
-    assert len(records) == 2
-
-
 def test_emit_compute_structured_docstring_callback(tmp_path: Path) -> None:
     callback_name = "_test_compute_structured_docstring"
     register_series_docstring_callback(
@@ -691,31 +650,27 @@ def test_emit_computes_block_includes_datetime_import_when_needed(tmp_path: Path
 
 
 def test_emit_compute_matrix_evaluates_formula_outputs(tmp_path: Path) -> None:
+    from excel_grapher.series_bindings.workflow import all_series_targets
     from tests.fixtures.series_bindings.matrix_helpers import (
         macro_matrix_bindings_document,
         write_matrix_explicit_workbook,
     )
+    from tests.integration.user_flows.utils import load_generated_package
 
     wb_path = tmp_path / "matrix_compute.xlsx"
     write_matrix_explicit_workbook(wb_path, use_formulas=True)
     bindings = validate_bindings_document(
         macro_matrix_bindings_document(direction="output", workbook="matrix_compute.xlsx")
     )
-    targets = expand_data_range("Inputs!B3:D5", workbook=wb_path)
+    targets = all_series_targets(bindings, workbook=wb_path)
     graph = create_dependency_graph(wb_path, targets, load_values=True)
+    pkg, modules = load_generated_package(
+        graph, bindings, wb_path, tmp_path, name="matrix_compute_export"
+    )
 
-    with CodeGenerator(graph) as gen:
-        code = gen.generate(
-            targets,
-            series_bindings=bindings,
-            bindings_workbook=wb_path,
-        )
-
-    assert "def compute_macro_matrix(" in code
-    ns: dict[str, object] = {}
-    exec(code, ns)
-    compute = cast(Callable[..., Records], ns["compute_macro_matrix"])
-    records = compute()
+    assert "def compute_macro_matrix(" in modules["api.py"]
+    result = pkg.compute_macro_matrix()
+    records = pkg.as_records(pkg.compute_macro_matrix, result)
     assert len(records) == 9
     by_key = {
         (record["INDICATOR"], record["TIME_PERIOD"]): record["OBS_VALUE"] for record in records

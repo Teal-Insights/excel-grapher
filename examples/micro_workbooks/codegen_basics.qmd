@@ -96,8 +96,8 @@ print(f"```text\n{str(result)}\n```")
 
 An unordered dictionary does seem like the right output shape for
 `compute_all` outputs representing non-adjacent target cells. For named,
-records-shaped output APIs (dimensions plus `OBS_VALUE`), use **series
-bindings** instead — see [Series bindings](series_bindings.qmd).
+records-shaped output APIs (dimensions plus `OBS_VALUE`), export an inverted-tree
+**package** with series bindings (`generate_modules`) — see [Series bindings](series_bindings.qmd).
 
 ## 04. Multiple adjacent targets
 
@@ -119,7 +119,7 @@ print(f"```text\n{str(result)}\n```")
 
 Here, the adjacent cell addresses are automatically aggregated into a single Excel *range address*, which is used as the key in the returned dictionary. The value for that key is a NumPy array of the computed values for each cell in the range.
 
-This is probably a good default in *most* cases, because contiguous cells will often comprise a logical unit. For stable tabular contracts with named `compute_*` functions that return `Records`, use **series bindings** — see [Series bindings](series_bindings.qmd).
+This is probably a good default in *most* cases, because contiguous cells will often comprise a logical unit. For stable tabular contracts with named `compute_*` functions that return tuples (and `as_records` for a Records view), export an inverted-tree **package** with series bindings — see [Series bindings](series_bindings.qmd).
 
 ## 05. Must cycle
 

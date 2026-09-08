@@ -5,7 +5,9 @@ Historical audit: the context-based **package** exporter has been removed.
 `paradigm` and `--paradigm` are no longer accepted.
 
 Single-file `generate()` remains the ctx cell-function exporter (`make_context`,
-`set_*` / `read_*`, Records). That is a later cut, not this one.
+`compute_all`). Series-binding helpers (`set_*` / `read_*`, Records, `list_groups`)
+were removed from `generate()` (#764 Phase C); series I/O uses `generate_modules()`
+only. Removing `generate()` entirely is a later cut.
 
 The #662 default-flip gate (LIC-DSF pool green) was waived for package removal:
 inverted-tree was already the only package path that matched the product, and
