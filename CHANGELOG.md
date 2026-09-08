@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.7.3 (2026-09-08)
+
+### Performance Improvements
+
+- **export**: Reuse lookup tables and identical eager lookups
+  ([#802](https://github.com/Teal-Insights/excel-grapher/pull/802),
+  [`dc1a099`](https://github.com/Teal-Insights/excel-grapher/commit/dc1a0991688b140d9c5e79f797b3fc00ba565176))
+
+
 ## v14.7.2 (2026-09-08)
 
 ### Performance Improvements
