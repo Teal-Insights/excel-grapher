@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.5.0 (2026-09-08)
+
+### Features
+
+- **export**: Emit inverted-tree series metadata with @publish
+  ([#767](https://github.com/Teal-Insights/excel-grapher/pull/767),
+  [`00d047c`](https://github.com/Teal-Insights/excel-grapher/commit/00d047c877c593430a8b5beb13b2ad663181896f))
+
+### Testing
+
+- **export**: Satisfy ty when reading publish metadata
+  ([#767](https://github.com/Teal-Insights/excel-grapher/pull/767),
+  [`00d047c`](https://github.com/Teal-Insights/excel-grapher/commit/00d047c877c593430a8b5beb13b2ad663181896f))
+
+
 ## v14.4.5 (2026-09-07)
 
 ### Bug Fixes
