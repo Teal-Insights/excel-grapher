@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import types
 from collections.abc import Callable
+from typing import Any, cast
 
 import pytest
 
@@ -372,9 +373,10 @@ def test_publish_mutates_and_returns_the_same_function() -> None:
     decorated = publish(key=("TIME_PERIOD",), domain=(2020, 2021), holes=(1,))(sample)
     assert decorated is sample
     assert type(sample) is types.FunctionType
-    assert sample.__key__ == ("TIME_PERIOD",)
-    assert sample.__domain__ == (2020, 2021)
-    assert sample.__holes__ == (1,)
+    meta = cast(Any, sample)
+    assert meta.__key__ == ("TIME_PERIOD",)
+    assert meta.__domain__ == (2020, 2021)
+    assert meta.__holes__ == (1,)
     assert not hasattr(sample, "__constants__")
 
 
@@ -383,16 +385,16 @@ def test_publish_sets_constants_only_when_given() -> None:
         return None
 
     publish(key=(), domain=((),))(without_constants)
-    assert without_constants.__holes__ == ()
+    assert cast(Any, without_constants).__holes__ == ()
     assert not hasattr(without_constants, "__constants__")
 
     def with_constants() -> None:
         return None
 
     publish(key=(), domain=((),), constants=("gdp_deflator",))(with_constants)
-    assert with_constants.__constants__ == ("gdp_deflator",)
+    assert cast(Any, with_constants).__constants__ == ("gdp_deflator",)
     publish(key=(), domain=((),), constants=())(with_constants)
-    assert with_constants.__constants__ == ()
+    assert cast(Any, with_constants).__constants__ == ()
 
 
 def test_as_records_reads_metadata_from_published_function() -> None:
