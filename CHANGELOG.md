@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.5.4 (2026-09-08)
+
+### Bug Fixes
+
+- **export**: Emit INDEX selection for zero-offset OFFSET wrappers
+  ([#782](https://github.com/Teal-Insights/excel-grapher/pull/782),
+  [`f05acb0`](https://github.com/Teal-Insights/excel-grapher/commit/f05acb004fb7c833f1b181fe689265271437f7f7))
+
+- **export**: Resolve aggregate range slots per statement member
+  ([#781](https://github.com/Teal-Insights/excel-grapher/pull/781),
+  [`b6d1ffd`](https://github.com/Teal-Insights/excel-grapher/commit/b6d1ffdf645ca5650fce37704ca4c2f8e918d8f2))
+
+
 ## v14.5.3 (2026-09-08)
 
 ### Bug Fixes
